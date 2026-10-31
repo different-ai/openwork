@@ -12,7 +12,6 @@ const ownedDom = typeof window === "undefined";
 if (ownedDom) GlobalRegistrator.register({ url: "http://localhost/" });
 const previousAct = Reflect.get(globalThis, "IS_REACT_ACT_ENVIRONMENT");
 Reflect.set(globalThis, "IS_REACT_ACT_ENVIRONMENT", true);
-const features = await import("../src/react-app/domains/session/status/use-desktop-feature");
 const lifecycle = await import("../src/components/chat/current-tool-lifecycle-context");
 const messageList = await import("../src/components/chat/message-list-provider");
 const previews = await import("../src/react-app/domains/apps/built-app-chat-preview");
@@ -20,19 +19,16 @@ const { AppBuilderStep } = await import("../src/components/chat/app-builder-step
 let root: Root;
 let host: HTMLDivElement;
 let client: QueryClient;
-let enabled = true;
 let waiting = false;
 let reconnecting = false;
 
 beforeEach(() => {
-  enabled = true;
   waiting = false;
   reconnecting = false;
   host = document.createElement("div");
   document.body.append(host);
   root = createRoot(host);
   client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-  spyOn(features, "useDesktopFeature").mockImplementation(key => key === "artifactsListFirst" && enabled);
   spyOn(lifecycle, "useCurrentSessionActivityStatus").mockImplementation(() => waiting ? "waiting" : "responding");
   spyOn(messageList, "useOptionalMessageList").mockImplementation(() => ({
     mcpAppOrigin: null, readOnly: false, workspaceId: "workspace", sessionId: "session",
@@ -106,13 +102,11 @@ test("preparation reports only the current connection check, never verified data
   expect(host.textContent).not.toContain("Created artifact");
 });
 
-test("flag off retains the original expanded MCP App checklist", async () => {
-  enabled = false;
+test("artifact progress is compact without a rollout setting", async () => {
   await render(run());
-  expect(host.querySelector("[data-artifact-progress]")).toBeNull();
-  expect(host.textContent).toContain("Creating MCP App “Revenue pulse”");
-  expect(host.querySelectorAll("[data-app-builder-checklist] li")).toHaveLength(5);
-  expect(host.querySelector("section")?.className).toContain("rounded-xl border");
+  expect(host.querySelector("[data-artifact-progress]")).not.toBeNull();
+  expect(host.querySelector("[data-app-builder-checklist]")).toBeNull();
+  expect(host.querySelector("section")?.className).not.toContain("rounded-xl border");
 });
 
 test("paused, waiting and reconnecting keep the artifact and actionable status", async () => {

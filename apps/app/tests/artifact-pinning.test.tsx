@@ -13,7 +13,6 @@ const previousAct = Reflect.get(globalThis, "IS_REACT_ACT_ENVIRONMENT");
 Reflect.set(globalThis, "IS_REACT_ACT_ENVIRONMENT", true);
 const { createDenClient } = await import("../src/app/lib/den");
 const appsClient = await import("../src/react-app/domains/apps/use-apps");
-const features = await import("../src/react-app/domains/session/status/use-desktop-feature");
 const { BuiltAppPinButton } = await import("../src/react-app/domains/apps/built-app-pin-button");
 const { BuiltAppCatalogSync } = await import("../src/react-app/domains/apps/built-app-catalog-sync");
 const { builtDashboardScope, readBuiltDashboardApps, useBuiltDashboardApps } = await import("../src/react-app/domains/dashboard/built-dashboard-apps");
@@ -29,7 +28,6 @@ const entry = {
   resourceUri, title: "Inventory", description: null, pluginId: `plg_0${"0".repeat(25)}`, pluginName: "Inventory", requiresApproval: false,
 };
 let context: ReturnType<typeof appsClient.useAppsClient>;
-let enabled = true;
 let root: Root | null = null;
 let host: HTMLDivElement;
 let queryClient: QueryClient;
@@ -39,7 +37,6 @@ beforeEach(() => {
   host = document.createElement("div");
   document.body.append(host);
   root = createRoot(host);
-  enabled = true;
   queryClient = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: Infinity } } });
   const client = createDenClient({ baseUrl: "https://den.example.test", token: "fixture" });
   spyOn(client, "listBuiltMcpApps").mockResolvedValue([{ ...entry, toolName: "open_app" }]);
@@ -49,7 +46,6 @@ beforeEach(() => {
   };
   queryClient.setQueryData(["built-dashboard-apps", ...context.scope], [entry]);
   spyOn(appsClient, "useAppsClient").mockImplementation(() => context);
-  spyOn(features, "useDesktopFeature").mockImplementation(() => enabled);
 });
 afterEach(async () => {
   await act(async () => root?.unmount());
@@ -105,11 +101,10 @@ test("mounted placements stay reactive when local storage cannot persist the cha
   expect(placements()).toEqual(["", ""]);
 });
 
-test("flag off preserves the header without catalog fetches or placement changes", async () => {
-  enabled = false;
+test("pinning is available without a rollout setting and never pins automatically", async () => {
   await render(<BuiltAppPinButton appId={appId} />);
-  expect(host.innerHTML).toBe("");
-  expect(context.client?.listBuiltMcpApps).not.toHaveBeenCalled();
+  expect(host.querySelector("button")?.textContent).toBe("Pin");
+  expect(host.querySelector("button")?.disabled).toBe(false);
   expect(readBuiltDashboardApps(builtDashboardScope(context.scope))).toEqual([]);
 });
 

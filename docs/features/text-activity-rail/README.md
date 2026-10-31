@@ -1,12 +1,11 @@
 # Text-first activity in chat
 
-Feature key: `textActivityRail`. Deployments: cloud and self-hosted. Default:
-off. Author: [@benjaminshafii](https://github.com/benjaminshafii).
+Generally available on cloud and self-hosted. Former rollout key:
+`textActivityRail` (retired). Author: [@benjaminshafii](https://github.com/benjaminshafii).
 
 ## What changes
 
-With the feature on, a turn's steps read as plain sentences instead of an
-icon rail:
+A turn's steps read as plain sentences instead of an icon rail:
 
 - Each step is "Verb object": `Ran List the notes folder`, `Read brief.md`,
   `Edited brief.md +2 −1`, `Searched for “pricing”`. The verb is darker than
@@ -36,20 +35,18 @@ icon rail:
 - GitHub pull request and issue links in replies show the GitHub glyph
   (neutral; the app does not fetch their state).
 
-| Off | On |
+| Historical icon rail | Text-first activity (now generally available) |
 | --- | --- |
 | ![Flag off](off.png) | ![Flag on](on.png) |
 | ![Flag off, finished turn](off-folded.png) | ![Flag on, finished turn](on-folded.png) |
 
-Opened steps with the flag on: a command card, an edit's change and a failed
-command.
+Opened steps: a command card, an edit's change and a failed command.
 
 ![Flag on, opened steps](on-open.png)
 
-Dark, with the composer's Agents list on (designed as if
-`composerSubagentTracker` is on for everyone):
+Dark, with the composer's generally available Agents list:
 
-| Off | On |
+| Historical icon rail | Text-first activity (now generally available) |
 | --- | --- |
 | ![Flag off, dark, Agents list](off-dark-agents.png) | ![Flag on, dark, Agents list](on-dark-agents.png) |
 
@@ -59,16 +56,14 @@ dev-only control action `eval.text_activity.seed`).
 
 ## How to try it
 
-1. Turn `textActivityRail` on for your organization in `/admin`.
-2. Reload the app; any chat with tool steps shows the new rail.
-3. In a dev build, run the control action `eval.text_activity.seed` on an
-   open session to render a fixed turn with every kind of step.
+Open any chat with tool steps; no organization override or admin setup is
+needed. In a dev build, run the control action `eval.text_activity.seed` on an
+open session to render a fixed turn with every kind of step. The proof
+`evals/proofs/text-activity-rail.proof.test.ts` runs a real deterministic turn
+without rail or tracker overrides.
 
-## Turning it off
-
-Every row reads the flag from one store, so turning it off (or the kill
-switch) returns the previous rail on the next features refresh, with no
-reload and no data change. Nothing is stored differently: reasoning timing
+The former rollout's disabled overrides, kill switch and operator locks no
+longer restore the icon rail. Nothing is stored differently: reasoning timing
 and edit line counts are read from what the engine already reports.
 
 ## What to watch

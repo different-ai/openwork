@@ -161,14 +161,14 @@ async function startRunner(seed: Seed, input: { apiUrl: string; member: Paramete
 
 /**
  * A member whose chat hands a task to their other computer, with the task
- * opening like a helper (`remoteSessionHelperView`) and the composer's Agents
- * list on (`composerSubagentTracker`), in dark mode: the chat's agent calls
+ * opening like a helper (`remoteSessionHelperView`) and the generally available
+ * composer's Agents list, in dark mode: the chat's agent calls
  * remote-session:create (answered with the real Den receipt), Den hands the
  * command to a registered runner, and the task reads that runner's transcript.
  */
 export async function remoteSessionHelperViewWorld(seed: Seed) {
   const { den, webPort } = await denForAppWeb(seed, { web: false, org: { name: "Launch team", admin: { name: "Launch Owner" } } });
-  const orgId = await enableOrganizationCapabilities(seed, den.admin, { remoteSessionHelperView: true, composerSubagentTracker: true });
+  const orgId = await enableOrganizationCapabilities(seed, den.admin, { remoteSessionHelperView: true });
 
   const runner = await startRunner(seed, { apiUrl: den.ref.apiUrl, member: den.admin, orgId });
   try {

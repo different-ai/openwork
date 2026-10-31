@@ -6,7 +6,7 @@ import { parseGitHubReference, type GitHubReference } from "@/lib/text-activity"
  * mark (DESIGN.md V5): the pull request or issue glyph inline before the
  * link text. The transcript does not know their state, so the mark stays
  * neutral; nothing is fetched. A bare URL reads as `repo#123`.
- * Text-first rail only (flag `textActivityRail`).
+ * Text-first rail only.
  */
 
 const SVG_NS = "http://www.w3.org/2000/svg"

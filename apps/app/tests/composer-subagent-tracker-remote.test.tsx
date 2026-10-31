@@ -125,27 +125,21 @@ test("a stopped task and one that failed read differently, and a settled list go
 })
 
 test("text-first rail: remote rows drop the status dot like local rows, the word carries the state", async () => {
-  const { useTextActivityRailStore } = await import("../src/components/chat/text-activity-rail-store")
   const tasks = tracker.currentTurnRemoteTasks(turn([createCall("c1", "rsc_1", "Record the demo videos")]))
   const [first] = tasks
   if (!first) throw new Error("expected a task")
   store.setState({ helperView: true, threads: { [first.start.key]: entry(first.start, { state: "running" }) } })
-  useTextActivityRailStore.getState().setEnabled(true)
-  try {
-    const container = document.createElement("div")
-    document.body.append(container)
-    root = createRoot(container)
-    await act(async () => {
-      root?.render(
-        <tracker.ComposerSubagentTracker messages={[]} workspaceId="ws_1" parentActive syncDegraded={false} includeLocal={false}
-          remote={{ tasks, owner: { workspaceId: "ws_1", sessionId: "ses_parent" }, onOpen: () => {} }} />,
-      )
-    })
-    const row = container.querySelector<HTMLElement>("[data-subagent-tracker-remote]")
-    expect(row?.querySelector(".rounded-full")).toBeNull()
-    expect(row?.firstElementChild?.querySelector("[data-subagent-tracker-agent]")?.textContent).toBe("Studio computer")
-    expect(row?.querySelector("[data-subagent-tracker-status]")?.textContent).toBe("Working 0s")
-  } finally {
-    useTextActivityRailStore.getState().setEnabled(false)
-  }
+  const container = document.createElement("div")
+  document.body.append(container)
+  root = createRoot(container)
+  await act(async () => {
+    root?.render(
+      <tracker.ComposerSubagentTracker messages={[]} workspaceId="ws_1" parentActive syncDegraded={false} includeLocal={false}
+        remote={{ tasks, owner: { workspaceId: "ws_1", sessionId: "ses_parent" }, onOpen: () => {} }} />,
+    )
+  })
+  const row = container.querySelector<HTMLElement>("[data-subagent-tracker-remote]")
+  expect(row?.querySelector(".rounded-full")).toBeNull()
+  expect(row?.firstElementChild?.querySelector("[data-subagent-tracker-agent]")?.textContent).toBe("Studio computer")
+  expect(row?.querySelector("[data-subagent-tracker-status]")?.textContent).toBe("Working 0s")
 })

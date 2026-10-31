@@ -9,7 +9,6 @@ import { z } from "zod"
  * that key (and the minimum supported client version enforces that boundary).
  * sandboxOrgs is deliberately absent: sandbox availability is cloud-only and
  * is advertised by its deployment-checked admin API, not a client rollout key.
- * composerSubagentTracker remains an organization-controlled registry feature.
  */
 const retired = z.literal(true).default(true).meta({
   deprecated: true,
@@ -41,6 +40,10 @@ const retiredClientFeaturesSchema = z.object({
   libraryConnectorOrgSetup: retired,
   workbotIncludedModels: retired,
   workbotUsageRecovery: retired,
+  liveReplyModel: retired,
+  composerSubagentTracker: retired,
+  textActivityRail: retired,
+  artifactsListFirst: retired,
   automationIntervalSchedules: retired,
   automationCalendarTriggers: retired,
 })

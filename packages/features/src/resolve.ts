@@ -89,6 +89,8 @@ export const RETIRED_FEATURE_KEYS = [
   "guidedSlackSetup", "libraryConnectorOrgSetup",
   // Generally available (2026-10): included models and permission-aware recovery; entitlement still applies.
   "workbotIncludedModels", "workbotUsageRecovery",
+  // Generally available (2026-10): live reply model, composer Agents list, text-first activity, list-first Artifacts.
+  "liveReplyModel", "composerSubagentTracker", "textActivityRail", "artifactsListFirst",
   // Generally available (2026-10): every-few-hours and before/after-meetings schedules are always on;
   // Desktop or Cloud placement, calendar scope and the headless runner stay enforced without a flag.
   "automationIntervalSchedules", "automationCalendarTriggers",

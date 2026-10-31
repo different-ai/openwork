@@ -2,6 +2,7 @@ import { afterAll, afterEach, expect, mock, test } from "bun:test"
 import { GlobalRegistrator } from "@happy-dom/global-registrator"
 import { act, createElement } from "react"
 import { createRoot, type Root } from "react-dom/client"
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
 
 GlobalRegistrator.register({ url: "https://web.example/" })
 // This notice fixture does not mount the signed-in app or its artifact surface.
@@ -20,6 +21,7 @@ afterEach(async () => {
   }
 })
 afterAll(() => {
+  queryClient.clear()
   Reflect.set(globalThis, "IS_REACT_ACT_ENVIRONMENT", previousAct)
   GlobalRegistrator.unregister()
 })
@@ -30,6 +32,8 @@ const { snapshotToUIMessages } = await import("../src/react-app/domains/session/
 const { subagentNoticeFromMessage } = await import("../src/components/chat/background-tasks")
 const { PlatformProvider, createDefaultPlatform } = await import("../src/react-app/kernel/platform")
 const { MessageListProvider } = await import("../src/components/chat/message-list-provider")
+const { DenAuthProvider } = await import("../src/react-app/domains/cloud/den-auth-provider")
+const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: Infinity } } })
 const { MessageList } = await import("../src/components/chat/message-list")
 
 const SESSION = "ses_parent"
@@ -96,7 +100,8 @@ test("the row opens the sub-agent's chat", async () => {
     type: "text" as const, text: "Sub-agent finished", state: "done" as const,
     providerMetadata: { opencode: { subagentNotice: { childSessionId: CHILD, description: "Sort the photos", outcome: "finished" } } },
   }] }
-  await act(async () => root.render(createElement(PlatformProvider, {
+  await act(async () => root.render(createElement(QueryClientProvider, { client: queryClient,
+    children: createElement(DenAuthProvider, { children: createElement(PlatformProvider, {
     value: createDefaultPlatform(),
     children: createElement(MessageListProvider, {
       workspaceId: "workspace_fixture", sessionId: SESSION,
@@ -108,7 +113,7 @@ test("the row opens the sub-agent's chat", async () => {
       onOpenSubagentSession: (sessionId: string) => opened.push(sessionId),
       children: createElement(MessageList, { messages: [notice], status: "ready", activityStatus: "idle" }),
     }),
-  })))
+  }) }), })))
   const row = container.querySelector<HTMLButtonElement>('button[data-subagent-notice="finished"]')
   expect(row?.textContent).toBe("Sub-agent finishedSort the photos")
   await act(async () => row?.click())

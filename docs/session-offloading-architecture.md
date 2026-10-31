@@ -118,8 +118,8 @@ rollouts are retired.
   `send`, Stop goes through `stop`, and Esc returns to the parent chat
   through the same `child-navigation.ts` return as local helpers. The task
   and its parent are kept per window in sessionStorage so a reload on the
-  route still renders it. With `composerSubagentTracker`, the composer's
-  Agents list shows the turn's remote tasks beside local helpers (computer,
+  route still renders it. The generally available composer's Agents list
+  shows the turn's remote tasks beside local helpers (computer,
   task, status word, Open, Stop) on either engine, from the same shared
   follower. The sidebar also lists followed tasks under their chat with a
   status word. Off, the generally available row and side-panel conversation remain.

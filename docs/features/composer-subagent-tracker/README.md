@@ -1,6 +1,7 @@
 # Sub-agents above the composer
 
-Feature key: `composerSubagentTracker` · Deployments: cloud and self-hosted · Default: off · Author: @benjaminshafii
+Generally available on cloud and self-hosted. Former rollout key:
+`composerSubagentTracker` (retired). Author: @benjaminshafii.
 
 ## What people get
 

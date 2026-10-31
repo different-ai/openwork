@@ -61,16 +61,6 @@
           "type": "object",
           "additionalProperties": false,
           "properties": {
-            "artifactsListFirst": {
-              "enum": [
-                "",
-                "true",
-                "false",
-                true,
-                false
-              ],
-              "description": "Artifacts: list-first workspace: Browse pinned, personal and team artifacts in a list, open one live view at a time, and pin new artifacts directly from their chat preview. Renders DEN_FEATURE_ARTIFACTS_LIST_FIRST."
-            },
             "desktopUpdateDownloadWindow": {
               "enum": [
                 "",
@@ -340,36 +330,6 @@
                 false
               ],
               "description": "Remember last sign-in method: People who last signed in with a password, Google or GitHub skip the email step next time: Den web lists the sign-in methods with a Last used badge, and Single sign-on returns to the email step. Signing in with SSO forgets the method. Renders DEN_FEATURE_LAST_USED_SIGN_IN."
-            },
-            "liveReplyModel": {
-              "enum": [
-                "",
-                "true",
-                "false",
-                true,
-                false
-              ],
-              "description": "Desktop: see a reply's model while it streams: While a turn runs, hovering its Working line shows which model is writing it, right after the timer. Turning it off shows the model only after the reply finishes. Renders DEN_FEATURE_LIVE_REPLY_MODEL."
-            },
-            "composerSubagentTracker": {
-              "enum": [
-                "",
-                "true",
-                "false",
-                true,
-                false
-              ],
-              "description": "Desktop: sub-agents above the composer: While a turn's sub-agents run on OpenCode v2, a compact Agents list sits on top of the composer and stays in view as the chat scrolls: each agent's name, whether it is working, needs permission, waits for an answer, is done, stopped or hit an error, with Open, Stop and Review. Turning it off leaves only the sub-agent rows in the chat. Renders DEN_FEATURE_COMPOSER_SUBAGENT_TRACKER."
-            },
-            "textActivityRail": {
-              "enum": [
-                "",
-                "true",
-                "false",
-                true,
-                false
-              ],
-              "description": "Desktop: text-first activity in chat: A turn's steps read as plain sentences (Ran, Read, Edited, Searched, Thought 12s) with no icon column or duration lane; grouped steps say what they explored, opened commands show their output, and GitHub links in replies show their pull request or issue mark. Turning it off restores the previous activity rail. Renders DEN_FEATURE_TEXT_ACTIVITY_RAIL."
             },
             "gatewayDashboard": {
               "enum": [
@@ -1512,6 +1472,46 @@
               "description": "Retired: no longer a feature switch. Ignored."
             },
             "workbotUsageRecovery": {
+              "enum": [
+                "",
+                "true",
+                "false",
+                true,
+                false
+              ],
+              "description": "Retired: no longer a feature switch. Ignored."
+            },
+            "liveReplyModel": {
+              "enum": [
+                "",
+                "true",
+                "false",
+                true,
+                false
+              ],
+              "description": "Retired: no longer a feature switch. Ignored."
+            },
+            "composerSubagentTracker": {
+              "enum": [
+                "",
+                "true",
+                "false",
+                true,
+                false
+              ],
+              "description": "Retired: no longer a feature switch. Ignored."
+            },
+            "textActivityRail": {
+              "enum": [
+                "",
+                "true",
+                "false",
+                true,
+                false
+              ],
+              "description": "Retired: no longer a feature switch. Ignored."
+            },
+            "artifactsListFirst": {
               "enum": [
                 "",
                 "true",

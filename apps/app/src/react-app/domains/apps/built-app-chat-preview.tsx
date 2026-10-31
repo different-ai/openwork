@@ -6,7 +6,6 @@ import { Button } from "@/components/ui/button";
 import { usePanelTabStore } from "../session/panel/panel-tab-store";
 import { useUiStateStore } from "@/react-app/shell/ui-state-store";
 import { appCreationRuns, appRead } from "./app-creation-progress";
-import { useDesktopFeature } from "../session/status/use-desktop-feature";
 import { BuiltAppCatalogSync } from "./built-app-catalog-sync";
 import {
   builtAppSummary,
@@ -79,7 +78,6 @@ export function BuiltAppPreviewSync({
   children?: ReactNode;
 }) {
   const { sessionId, mcpAppOrigin, readOnly } = useMessageList();
-  const artifactsListFirst = useDesktopFeature("artifactsListFirst");
   const seen = useRef<Set<string> | null>(null);
   const pending = useRef(new Set<string>());
   const latestParts = useMemo(() => latestBuiltAppParts(messages), [messages]);
@@ -165,7 +163,7 @@ export function BuiltAppPreviewSync({
     }
   }, [messages, mcpAppOrigin, readOnly, sessionId, active]);
   return <LatestBuiltAppPartsContext.Provider value={latestParts}>
-    {artifactsListFirst ? <BuiltAppCatalogSync messages={messages} /> : null}
+    <BuiltAppCatalogSync messages={messages} />
     {children}
   </LatestBuiltAppPartsContext.Provider>;
 }

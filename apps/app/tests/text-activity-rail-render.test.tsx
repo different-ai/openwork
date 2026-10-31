@@ -3,14 +3,16 @@ import { GlobalRegistrator } from "@happy-dom/global-registrator"
 import { act, createElement } from "react"
 import { createRoot, type Root } from "react-dom/client"
 import type { DynamicToolUIPart, UIMessage } from "ai"
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
 
 GlobalRegistrator.register({ url: "https://web.example/" })
 const previousAct = Reflect.get(globalThis, "IS_REACT_ACT_ENVIRONMENT")
 Reflect.set(globalThis, "IS_REACT_ACT_ENVIRONMENT", true)
 const { PlatformProvider, createDefaultPlatform } = await import("../src/react-app/kernel/platform")
 const { MessageListProvider } = await import("../src/components/chat/message-list-provider")
+const { DenAuthProvider } = await import("../src/react-app/domains/cloud/den-auth-provider")
+const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: Infinity } } })
 const { MessageList } = await import("../src/components/chat/message-list")
-const { useTextActivityRailStore } = await import("../src/components/chat/text-activity-rail-store")
 let mounted: { root: Root; container: HTMLElement } | null = null
 
 afterEach(async () => {
@@ -20,9 +22,9 @@ afterEach(async () => {
     container.remove()
     mounted = null
   }
-  useTextActivityRailStore.getState().setEnabled(false)
 })
 afterAll(() => {
+  queryClient.clear()
   Reflect.set(globalThis, "IS_REACT_ACT_ENVIRONMENT", previousAct)
   GlobalRegistrator.unregister()
 })
@@ -55,13 +57,13 @@ function turn(): UIMessage[] {
   ]
 }
 
-async function render(messages: UIMessage[], textRail: boolean) {
-  useTextActivityRailStore.getState().setEnabled(textRail)
+async function render(messages: UIMessage[]) {
   const container = document.createElement("div")
   document.body.append(container)
   const root = createRoot(container)
   mounted = { root, container }
-  await act(async () => root.render(createElement(PlatformProvider, {
+  await act(async () => root.render(createElement(QueryClientProvider, { client: queryClient,
+    children: createElement(DenAuthProvider, { children: createElement(PlatformProvider, {
     value: createDefaultPlatform(),
     children: createElement(MessageListProvider, {
       workspaceId: "workspace_fixture", sessionId: "session_fixture",
@@ -71,7 +73,7 @@ async function render(messages: UIMessage[], textRail: boolean) {
       onMcpReconnect: async () => {}, onMcpReopenAuthorization: async () => {},
       children: createElement(MessageList, { messages, status: "ready", activityStatus: "idle" }),
     }),
-  })))
+  }) }), })))
   // Markdown decorations run after a microtask.
   await act(async () => { await new Promise((resolve) => setTimeout(resolve, 20)) })
   return container
@@ -82,20 +84,8 @@ async function click(element: Element | null | undefined) {
   await act(async () => element.click())
 }
 
-test("flag off: the previous rail, with its leading lanes and no text-first rows", async () => {
-  const container = await render(turn(), false)
-  expect(container.querySelector("[data-tool-aggregate]")).not.toBeNull()
-  expect(container.querySelector("[data-text-step]")).toBeNull()
-  expect(container.querySelector("[data-text-rail-chevron]")).toBeNull()
-  expect(container.querySelector("[data-github-reference]")).toBeNull()
-  // The answer still reserves the 20px lane the previous rail uses.
-  const proseRow = container.querySelector('[data-message-role="assistant"] .prose')?.parentElement
-  expect(proseRow?.querySelector(":scope > span[aria-hidden='true']")?.className).toContain("size-5")
-  expect(container.textContent).toContain("Edited 1 file, ran 2 commands, read 1 file")
-})
-
-test("flag on: one text-first summary, steps as sentences, a red failure, a timed thought and a marked PR link", async () => {
-  const container = await render(turn(), true)
+test("one text-first summary, steps as sentences, a red failure, a timed thought and a marked PR link", async () => {
+  const container = await render(turn())
   // No leading lane anywhere on the rail.
   expect(container.querySelector('[data-tool-aggregate] span.size-5[aria-hidden="true"]')).toBeNull()
   const summary = container.querySelector("[data-text-group-summary]")
@@ -138,8 +128,8 @@ function turnWithCapability(): UIMessage[] {
   return [user, { ...reply, parts }]
 }
 
-test("flag on: every rail line starts on the reply's left edge, chevrons trail, marks sit after the verb", async () => {
-  const container = await render(turnWithCapability(), true)
+test("every rail line starts on the reply's left edge, chevrons trail, marks sit after the verb", async () => {
+  const container = await render(turnWithCapability())
 
   // No leading lane anywhere: no reserved 20px slot and no indented step list.
   expect(container.querySelector('span.size-5[aria-hidden="true"]')).toBeNull()
@@ -180,7 +170,7 @@ test("the OpenWork mark is recognised however the identity reaches the row", asy
   expect(isOpenWorkIdentity({ ...base, id: "connection:evil", iconUrl: null, serviceUrl: "https://openworklabs.com.evil.example" })).toBe(false)
 })
 
-test("flag on, mid-turn: the Working line is the one shimmer and the group line carries only its totals", async () => {
+test("mid-turn: the Working line is the one shimmer and the group line carries only its totals", async () => {
   const running: DynamicToolUIPart = {
     type: "dynamic-tool", toolName: "bash", toolCallId: "call_live", state: "input-available",
     input: { command: "pnpm test", description: "run the tests" },
@@ -202,12 +192,12 @@ test("flag on, mid-turn: the Working line is the one shimmer and the group line 
       ],
     },
   ]
-  useTextActivityRailStore.getState().setEnabled(true)
   const container = document.createElement("div")
   document.body.append(container)
   const root = createRoot(container)
   mounted = { root, container }
-  await act(async () => root.render(createElement(PlatformProvider, {
+  await act(async () => root.render(createElement(QueryClientProvider, { client: queryClient,
+    children: createElement(DenAuthProvider, { children: createElement(PlatformProvider, {
     value: createDefaultPlatform(),
     children: createElement(MessageListProvider, {
       workspaceId: "workspace_fixture", sessionId: "session_fixture",
@@ -217,7 +207,7 @@ test("flag on, mid-turn: the Working line is the one shimmer and the group line 
       onMcpReconnect: async () => {}, onMcpReopenAuthorization: async () => {},
       children: createElement(MessageList, { messages, status: "streaming", activityStatus: "busy" }),
     }),
-  })))
+  }) }), })))
 
   const group = container.querySelector("[data-text-group-summary]")?.closest("button")
   expect(group).not.toBeNull()

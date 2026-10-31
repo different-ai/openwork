@@ -122,8 +122,6 @@ import { useRemoteSessionSubagentsFeature } from "@/react-app/domains/session/re
 import { remoteThreadAttentionBySession, useRemoteThreadAttentionKey, useRemoteThreadHelperViewEnabled } from "@/react-app/domains/session/remote-threads/remote-thread-store";
 import { RemoteSessionHeader, RemoteSessionSurface } from "@/react-app/domains/session/remote-threads/remote-session-surface";
 import { remoteSessionRouteId } from "@/lib/remote-session-route";
-import { useTextActivityRailFeature } from "@/react-app/domains/session/chat/use-text-activity-rail-feature";
-import { useLiveReplyModelFeature } from "@/react-app/domains/session/chat/use-live-reply-model-feature";
 import { AppsPage } from "@/react-app/domains/apps/apps-page";
 import { DashboardPage } from "@/react-app/domains/dashboard/dashboard-page";
 import { useDashboardDeploymentAvailability } from "@/react-app/domains/dashboard/dashboard-availability";
@@ -432,8 +430,7 @@ export function SessionRoute() {
   const platform = usePlatform();
   const toggleSidebar = useUiStateStore((state) => state.toggleSidebar);
   const denAuth = useDenAuth();
-  const artifactsListFirstEnabled = useDesktopFeature("artifactsListFirst");
-  const artifactsLabel = artifactsListFirstEnabled ? "Artifacts" : "Dashboard";
+  const artifactsLabel = "Artifacts";
   // On desktop, Dashboard and Automations stay in the sidebar while signed
   // out: each page explains that it needs OpenWork Cloud and calls nothing.
   const denAuthChecking = denAuth.status === "checking";
@@ -454,13 +451,11 @@ export function SessionRoute() {
   // The Calendar is an Automations view behind the automationCalendar feature.
   const calendarFeature = useOrgFeatureState("automationCalendar");
   useRemoteSessionSubagentsFeature();
-  useTextActivityRailFeature();
-  useLiveReplyModelFeature();
   const calendarSurfaceAvailable = automationsEnabled && denAuth.isSignedIn && calendarFeature.data === true;
   const calendarAvailabilityPending = denAuthChecking || (automationsEnabled && denAuth.isSignedIn && calendarFeature.isLoading);
   const calendarRouteActive = calendarSurfaceAvailable && calendarRouteRequested;
   const denSettings = readDenSettings();
-  const retainedArtifactsScope = artifactsListFirstEnabled && dashboardSurfaceAvailable && denAuth.isSignedIn && denAuth.verifiedIdentity
+  const retainedArtifactsScope = dashboardSurfaceAvailable && denAuth.isSignedIn && denAuth.verifiedIdentity
     && denAuth.verifiedIdentity.organizationId === denSettings.activeOrgId
     ? JSON.stringify([denSettings.baseUrl, denSettings.apiBaseUrl, denAuth.verifiedIdentity.principalId, denAuth.verifiedIdentity.organizationId])
     : null;

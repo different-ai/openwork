@@ -2,7 +2,6 @@
 
 import { Fragment } from "react"
 
-import { markFeatureUsed } from "@/app/lib/den"
 import { RAIL_LINE, RAIL_ROW, RailMeta, TextSentenceLine, TrailingChevron } from "@/components/chat/activity-rail"
 import { useCurrentToolLifecycleResolver } from "@/components/chat/current-tool-lifecycle-context"
 import { ReasoningBlock } from "@/components/chat/reasoning-block"
@@ -101,7 +100,6 @@ function TextStepRow({ row, status, disclosureKey }: {
           aria-expanded={open}
           aria-label={open ? t("text_activity.hide_details", { label: `${sentence.verb} ${sentence.object}` }) : t("text_activity.show_details", { label: `${sentence.verb} ${sentence.object}` })}
           onClick={() => {
-            if (!open) markFeatureUsed("textActivityRail")
             setOpen(!open)
           }}
           className={cn(RAIL_ROW, RAIL_LINE, "w-full cursor-pointer text-start hover:text-foreground")}
@@ -179,7 +177,6 @@ export function TextToolAggregateGroup({ parts, messageId, thoughts = [], classN
         type="button"
         aria-expanded={expanded}
         onClick={() => {
-          if (!expanded) markFeatureUsed("textActivityRail")
           setExpanded(!expanded)
         }}
         className={cn(RAIL_ROW, RAIL_LINE, "w-full cursor-pointer text-start hover:text-foreground")}

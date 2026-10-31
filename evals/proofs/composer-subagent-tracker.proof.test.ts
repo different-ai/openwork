@@ -18,19 +18,7 @@ test("a member running several sub-agents on OpenCode v2 keeps track of them fro
   const rowText = async () => (await probe.dom(`${ROWS} [data-subagent-tracker-status]`)).elements.map((element) => element.text);
   const summary = async () => (await probe.dom("[data-subagent-tracker-summary]")).elements[0]?.text ?? "";
 
-  await step("before: with the Agents list off, a turn's sub-agents only show as rows in the chat", async () => {
-    await agent.run("session.open", { sessionId });
-    await seedAgents("mixed");
-    await user.see({ text: "Map the billing service" }, { timeoutMs: 30_000 });
-    const found = (await tracker()).length;
-    evidence.recordAssertionEvidence("Nothing is attached to the composer while the switch is off", `Agents lists on screen: ${found}`, found === 0);
-    expect(found).toBe(0);
-    await user.screenshot();
-  });
-
-  await step("after: one running sub-agent sits on top of the composer with its name, task and time", async () => {
-    await world.setTracker(true);
-    await user.reload();
+  await step("one running sub-agent sits on top of the composer with its name, task and time without organization setup", async () => {
     await agent.run("session.open", { sessionId });
     await seedAgents("one");
     const rows = await probe.eventually(rowText, { within: 30_000, intervalMs: 200, label: "the Agents list", until: (found) => found.length === 1 });

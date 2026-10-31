@@ -288,6 +288,8 @@ test("completed GA rollouts have no active keys and legacy operator locks cannot
     "activationChecklist", "gatewayProviderAuthErrors", "providerCredentialStatus", "sessionTokenHashing",
     "customConnectorSetup", "expandedMcpPresets", "analyticsDailyTrends", "gatewayProviderRemovalLimits",
     "guidedSlackSetup", "libraryConnectorOrgSetup",
+    "liveReplyModel", "composerSubagentTracker", "textActivityRail", "artifactsListFirst",
+    "automationIntervalSchedules", "automationCalendarTriggers",
   ]
   for (const key of retired) {
     assert.equal(featureKeySchema.safeParse(key).success, false, key)
@@ -301,8 +303,6 @@ test("completed GA rollouts have no active keys and legacy operator locks cannot
   assert.deepEqual(parsed.locks, {})
   assert.equal(parsed.problems.length, retired.length)
   assert.ok(parsed.problems.every((problem) => !problem.fatal && problem.message.includes("ignored")))
-  // A rollout with an explicit opt-out is not part of this graduation.
-  assert.equal(featureKeySchema.safeParse("composerSubagentTracker").success, true)
 })
 
 test("Workbot included models and recovery are GA and ignore old operator opt-outs", () => {

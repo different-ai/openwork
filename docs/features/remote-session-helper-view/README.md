@@ -4,7 +4,8 @@ Feature key: `remoteSessionHelperView`
 Deployments: cloud and self-hosted, off by default
 Author: [@benjaminshafii](https://github.com/benjaminshafii)
 Task progress and conversation views are generally available (no prerequisite flags).
-Designed for `composerSubagentTracker` (the Agents list above the composer) being on.
+The Agents list above the composer is generally available; its former
+`composerSubagentTracker` rollout needs no override.
 
 ## What changes
 
@@ -42,7 +43,7 @@ task in the main pane instead of beside the chat:
   from the last few messages Den already reads. Older runners and Den deployments
   leave it out and the row shows just the duration.
 
-All screenshots are dark mode with `composerSubagentTracker` on.
+All screenshots are dark mode with the Agents list, which is now generally available.
 
 | Off (today) | On |
 | --- | --- |
@@ -58,8 +59,8 @@ After Stop, with the unsent follow-up kept:
 
 ## How to try it
 
-Turn on `remoteSessionHelperView` and keep `composerSubagentTracker` enabled
-for an organization, sign in on two computers, and ask the
+Turn on `remoteSessionHelperView` for an organization (it remains a separate
+opt-in rollout), sign in on two computers, and ask the
 agent to start a task on the other one. `evals/proofs/remote-session-helper-view.proof.test.ts`
 walks the whole flow against a registered runner.
 
