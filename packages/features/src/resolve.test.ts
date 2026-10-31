@@ -305,6 +305,19 @@ test("completed GA rollouts have no active keys and legacy operator locks cannot
   assert.equal(featureKeySchema.safeParse("composerSubagentTracker").success, true)
 })
 
+test("Workbot included models and recovery are GA and ignore old operator opt-outs", () => {
+  for (const key of ["workbotIncludedModels", "workbotUsageRecovery"]) {
+    assert.equal(featureKeySchema.safeParse(key).success, false, key)
+    assert.ok(RETIRED_FEATURE_KEYS.some((retiredKey) => retiredKey === key), key)
+  }
+  const parsed = parseFeatureEnvironment({
+    DEN_FEATURE_WORKBOT_INCLUDED_MODELS: "false",
+    DEN_FEATURE_WORKBOT_USAGE_RECOVERY: "false",
+  })
+  assert.deepEqual(parsed.locks, {})
+  assert.equal(parsed.problems.length, 2)
+})
+
 test("billing has no plan flags: Team checkout and self-serve Enterprise keys are retired", () => {
   for (const key of ["teamPlan", "selfServeEnterprise"]) {
     assert.equal(featureKeySchema.safeParse(key).success, false, key)

@@ -135,7 +135,7 @@ async function setupApps(seed: Seed, external: boolean) {
     resources.defer(() => vite.close());
     await vite.listen();
     const workbotUrl = text(vite.resolvedUrls?.local[0], "Workbot URL");
-    den = await seed.den({ org: { name: "Acme", admin: { name: "Avery Owner" }, members: {} }, trustedOrigins: [provider.url, workbotUrl], env: { DEN_WORKBOT_URL: workbotUrl, DEN_API_PUBLIC_URL: provider.url, DEN_GOOGLE_API_BASE_URL: provider.url, DEN_GOOGLE_OAUTH_AUTHORIZE_URL: `${provider.url}/authorize`, DEN_GOOGLE_OAUTH_TOKEN_URL: `${provider.url}/token`, DEN_GOOGLE_OAUTH_USERINFO_URL: `${provider.url}/userinfo`, DEN_ALLOW_PRIVATE_MCP_URLS: "true", DEN_PLAN_GATING_ENABLED: "false", DEN_FEATURE_WORKBOT_INCLUDED_MODELS: "false", DEN_FEATURE_WORKBOT_USAGE_RECOVERY: "false", RESEND_API_KEY: "", SMTP_HOST: "", LOOPS_API_KEY: "", STRIPE_SECRET_KEY: "" } });
+    den = await seed.den({ org: { name: "Acme", admin: { name: "Avery Owner" }, members: {} }, trustedOrigins: [provider.url, workbotUrl], env: { DEN_WORKBOT_URL: workbotUrl, DEN_API_PUBLIC_URL: provider.url, DEN_GOOGLE_API_BASE_URL: provider.url, DEN_GOOGLE_OAUTH_AUTHORIZE_URL: `${provider.url}/authorize`, DEN_GOOGLE_OAUTH_TOKEN_URL: `${provider.url}/token`, DEN_GOOGLE_OAUTH_USERINFO_URL: `${provider.url}/userinfo`, DEN_ALLOW_PRIVATE_MCP_URLS: "true", DEN_PLAN_GATING_ENABLED: "false", RESEND_API_KEY: "", SMTP_HOST: "", LOOPS_API_KEY: "", STRIPE_SECRET_KEY: "" } });
     const owner = den.admin;
     organizationId = await seededOrganizationId(seed, owner);
     if (!organizationId) throw new Error("The seeded organization is missing.");
@@ -143,8 +143,6 @@ async function setupApps(seed: Seed, external: boolean) {
     if (configured.status !== 200) throw new Error(configured.text);
     const issued = await requestDen(owner.token, "POST", "/v1/mcp/token", { orgId: organizationId, body: { scopes: ["mcp:read", "mcp:write"] } });
     token = text(field(issued.body, "token"), "Workbot token");
-    const context = await requestDen(owner.token, "GET", "/v1/org", { orgId: organizationId });
-    if (field(context.body, "features", "workbotIncludedModels") !== false || field(context.body, "features", "workbotUsageRecovery") !== false) throw new Error("Setup links must work with both model recovery features disabled");
     // Workbot's token stays in Acme while the browser's Den session starts in another workspace.
     const other = await requestDen(owner.token, "POST", "/v1/org", { body: { name: "Other team" } });
     if (other.status !== 200 && other.status !== 201) throw new Error(other.text);

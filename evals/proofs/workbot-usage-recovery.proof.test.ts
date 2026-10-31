@@ -7,17 +7,19 @@ const test = spec.world(workbotUsageRecovery, { timeout: 90_000, needs: { placem
 
 test("a signed-in member can recover from a model limit without losing the conversation", async ({ world, user, probe, step, evidence }) => {
   await user.resizeViewport({ width: 1280, height: 900, deviceScaleFactor: 1 });
-  await step("before: a used-up free allowance looks like an unreachable model", async () => {
-    await user.see({ text: "I couldn't reach the AI model just now." });
+  await step("a used-up free allowance shows its reset and keeps the conversation without a rollout", async () => {
+    await user.see({ text: /You've used the free model allowance for now/ });
+    await user.see({ text: /^Resets / });
+    await user.see({ text: "Your message is saved" });
     await user.see({ text: "Keep our earlier work" });
-    await user.notSee({ role: "link", label: /^Get OpenWork Models/ });
+    await user.see({ role: "link", label: /^Get OpenWork Models/ });
     const witness = world.witness("free");
     evidence.recordAssertionEvidence("The real model request hit a hard free limit once", `Model attempts=${witness.attempts}; automatic retry offered=${witness.retryable}`, witness.attempts === 1 && witness.retryable === false);
     expect(witness).toEqual({ attempts: 1, retryable: false });
     await user.screenshot();
   });
   await step("after: an eligible purchaser can upgrade from exhausted Auto to paid Luna", async () => {
-    await user.navigate(`${world.url}?recovery=on`);
+    await user.navigate(`${world.url}`);
     await user.see({ text: /You've used the free model allowance for now/ });
     await user.see({ text: /^Resets / });
     await user.see({ text: "Your message is saved" });
@@ -28,12 +30,12 @@ test("a signed-in member can recover from a model limit without losing the conve
     await user.notSee({ role: "button", label: "Try again" });
     const links = await probe.dom('a[href="https://den.example.test/dashboard/ai-gateway?tab=openwork-models&workbotOrganizationId=org_recovery"][target="_blank"][rel~="noopener"]');
     await user.see({ role: "textbox", label: "Message Workbot" }, { value: "Keep this draft" });
-    evidence.recordAssertionEvidence("Checkout opens for the exact workspace and keeps the draft", `Exact workspace/new-tab links=${links.elements.length}; draft remains visible`, links.elements.length === 1);
+    evidence.recordAssertionEvidence("The purchase link targets the exact workspace and keeps the draft", `Exact workspace/new-tab links=${links.elements.length}; draft remains visible`, links.elements.length === 1);
     expect(links.elements.length).toBe(1);
     await user.screenshot();
   });
   await step("a member without billing access gets an admin next step", async () => {
-    await user.navigate(`${world.url}?recovery=on&persona=member`);
+    await user.navigate(`${world.url}?persona=member`);
     await user.see({ text: /^Ask an admin for OpenWork Models/ });
     await user.notSee({ role: "link", label: /^Get OpenWork Models/ });
     await user.notSee({ role: "link", label: /^Manage billing/ });
@@ -43,7 +45,7 @@ test("a signed-in member can recover from a model limit without losing the conve
     await user.screenshot();
   });
   await step("an existing subscriber waits for usable Models access without another checkout", async () => {
-    await user.navigate(`${world.url}?recovery=on&persona=subscriber`);
+    await user.navigate(`${world.url}?persona=subscriber`);
     await user.see({ text: /Your Models access isn’t ready yet/ });
     await user.notSee({ role: "link", label: /^Get OpenWork Models/ });
     const purchase = await probe.dom('[data-testid="workbot-model-recovery"] a[href*="openwork-models"]');
@@ -52,12 +54,12 @@ test("a signed-in member can recover from a model limit without losing the conve
     await user.screenshot();
   });
   await step("a workspace cap offers a model change while a payment problem offers billing", async () => {
-    await user.navigate(`${world.url}?recovery=on&issue=usage`);
+    await user.navigate(`${world.url}?issue=usage`);
     await user.see({ text: "Your workspace reached its model usage limit" });
     await user.see({ role: "link", label: /^Change model/ });
     await user.notSee({ role: "link", label: /^Get OpenWork Models/ });
     const usage = world.witness("usage");
-    await user.navigate(`${world.url}?recovery=on&issue=payment`);
+    await user.navigate(`${world.url}?issue=payment`);
     await user.see({ role: "link", label: /^Manage billing/ });
     await user.notSee({ role: "link", label: /^Get OpenWork Models/ });
     const payment = world.witness("payment");
@@ -66,7 +68,7 @@ test("a signed-in member can recover from a model limit without losing the conve
     await user.screenshot();
   });
   await step("a temporary rate limit retries without a purchase prompt", async () => {
-    await user.navigate(`${world.url}?recovery=on&issue=temporary`);
+    await user.navigate(`${world.url}?issue=temporary`);
     await user.see({ text: "I couldn't reach the AI model just now." });
     await user.see({ role: "button", label: "Try again" });
     await user.notSee({ testId: "workbot-model-recovery" });
@@ -76,7 +78,7 @@ test("a signed-in member can recover from a model limit without losing the conve
     await user.screenshot();
   });
   await step("a Gateway refusal offers access recovery without an upgrade or execution", async () => {
-    await user.navigate(`${world.url}?recovery=on&issue=access`);
+    await user.navigate(`${world.url}?issue=access`);
     await user.type({ role: "textbox", label: "Message Workbot" }, "Continue with the paid model");
     await user.click({ role: "button", label: "Send" });
     await user.see({ text: /You haven’t been granted access to Workbot’s selected model/ });
@@ -101,7 +103,7 @@ test("a signed-in member can recover from a model limit without losing the conve
     await user.screenshot();
   });
   await step("after Models activation the next message uses paid Luna in the same conversation", async () => {
-    await user.navigate(`${world.url}?recovery=on`);
+    await user.navigate(`${world.url}`);
     world.activateModels();
     await user.click({ role: "button", label: "Check access" });
     await user.see({ text: /Paid Luna is ready. Your next message in this conversation uses your Models subscription/ });
@@ -118,7 +120,7 @@ test("a signed-in member can recover from a model limit without losing the conve
     await user.screenshot();
   });
   await step("after the allowance resets the member explicitly retries the same message", async () => {
-    await user.navigate(`${world.url}?recovery=on&issue=reset&cleared=1`);
+    await user.navigate(`${world.url}?issue=reset&cleared=1`);
     await user.resizeViewport({ width: 390, height: 844, deviceScaleFactor: 1 });
     await user.see({ role: "button", label: "Try again" });
     await user.click({ role: "button", label: "Try again" });

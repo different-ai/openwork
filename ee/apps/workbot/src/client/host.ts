@@ -125,7 +125,7 @@ export function createHost(me: Me, recovery: { authorization?: WorkbotHost["docu
     nativeDictation: me.nativeDictation,
     workspaceAssistant: me.workspaceAssistant,
     guidedNavigation: me.workspaceAssistant && me.guidedNavigation,
-    usageRecovery: me.usageRecovery && me.denUrl && me.organizationId ? { denUrl: me.denUrl, organizationId: me.organizationId } : undefined,
+    usageRecovery: me.denUrl && me.organizationId ? { denUrl: me.denUrl, organizationId: me.organizationId } : undefined,
     activation: me.denUrl && me.organizationId ? { denUrl: me.denUrl, organizationId: me.organizationId } : undefined,
     canSchedule: me.canSchedule,
     connectionsHref: me.denUrl ? `${me.denUrl}/dashboard/your-connections` : null,

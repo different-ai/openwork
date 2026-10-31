@@ -87,7 +87,7 @@ limit("when the free allowance runs out, a billing admin can get OpenWork Models
   await user.resizeViewport({ width: 1280, height: 900, deviceScaleFactor: 1 });
 
   await step("after: the billing admin's card says what ran out, when it resets and that the message is saved, with Get OpenWork Models first", async () => {
-    await user.navigate(`${world.url}?recovery=on`);
+    await user.navigate(`${world.url}`);
     await user.see({ text: "You've used the free model allowance for now" });
     await user.see({ text: /^Resets / });
     await user.see({ text: "Your message is saved" });
@@ -105,7 +105,7 @@ limit("when the free allowance runs out, a billing admin can get OpenWork Models
   });
 
   await step("a member sees who can buy instead of a purchase link", async () => {
-    await user.navigate(`${world.url}?recovery=on&persona=member`);
+    await user.navigate(`${world.url}?persona=member`);
     await user.see({ text: "You've used the free model allowance for now" });
     await user.see({ text: /^Ask an admin for OpenWork Models/ });
     await user.notSee({ role: "link", label: /^Get OpenWork Models/ });
@@ -118,7 +118,7 @@ limit("when the free allowance runs out, a billing admin can get OpenWork Models
   });
 
   await step("a used-up OpenWork Models allowance reads as the workspace's limit, once, never as an outage", async () => {
-    await user.navigate(`${world.url}?recovery=on&issue=allowance&persona=member`);
+    await user.navigate(`${world.url}?issue=allowance&persona=member`);
     await user.see({ text: "Your workspace reached its model usage limit" });
     await user.see({ text: /^Ask an admin for more/ });
     await user.notSee({ text: "I couldn't reach the AI model just now." });

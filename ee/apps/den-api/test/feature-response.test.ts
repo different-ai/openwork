@@ -11,6 +11,7 @@ const retiredKeys = [
   "gatewayProviderAuthErrors", "providerCredentialStatus", "sessionTokenHashing",
   "customConnectorSetup", "expandedMcpPresets", "analyticsDailyTrends",
   "gatewayProviderRemovalLimits", "guidedSlackSetup", "libraryConnectorOrgSetup",
+  "workbotIncludedModels", "workbotUsageRecovery",
 ]
 
 test("API-first upgrades keep graduated behavior on for published clients", () => {

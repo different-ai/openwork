@@ -1,3 +1,4 @@
+import { freeInferenceWindow } from "@openwork/types/den/inference";
 import { workbotAccessFixture } from "../../ee/apps/workbot/scripts/workbot-access-fixture.ts";
 import { fileURLToPath } from "node:url";
 import { createServer } from "vite";
@@ -11,6 +12,7 @@ import { modelProbeFixture, type ProbeFixtureMode } from "../../ee/apps/headless
 /** Real UI, runner, model adapter and transcript projection. Only Den identity/options and upstream replies are synthetic. */
 export async function workbotUsageRecovery(_seed: Seed, { place }: { place: Place }) {
   const resources = new AsyncDisposableStack();
+  const freeResetsAt = freeInferenceWindow().end.toISOString();
   try {
     const cases = new Map<string, { workbot: ReturnType<typeof createWorkbot>; actor: WorkbotActor; runner: Awaited<ReturnType<typeof modelProbeFixture>>; attempts: number; error: string | null; retryable: boolean }>();
     for (const [key, mode] of new Map<string, ProbeFixtureMode>([["free", "free_limit"], ["reset", "free_limit"], ["usage", "usage_limit"], ["allowance", "models_allowance"], ["payment", "payment_required"], ["temporary", "rate_limited"], ["access", "answered"], ["provider", "answered"]])) {
@@ -42,7 +44,7 @@ export async function workbotUsageRecovery(_seed: Seed, { place }: { place: Plac
     const accessServer = await workbotAccessFixture({ actor: access.actor, runnerUrl: access.runner.url, modelAccess: access.runner.modelAccess });
     resources.defer(() => accessServer.close());
     const sendAccess = accessServer.send;
-    // No included models and no Gateway provider: Den refuses before any model call.
+    // Managed models unavailable by entitlement/policy and no Gateway provider: Den refuses before any model call.
     const provider = cases.get("provider");
     if (!provider) throw new Error("Missing provider fixture");
     const providerServer = await workbotAccessFixture({ actor: provider.actor, runnerUrl: provider.runner.url, modelAccess: provider.runner.modelAccess, refusal: "gateway_provider_missing" });
@@ -68,11 +70,10 @@ export async function workbotUsageRecovery(_seed: Seed, { place }: { place: Plac
             if (!entry) throw new Error("Unknown recovery fixture");
             const owner = page.searchParams.get("persona") !== "member";
             const subscribed = page.searchParams.get("persona") === "subscriber" || modelsActivated && key === "free";
-            const enabled = page.searchParams.get("recovery") === "on";
             const json = (body: unknown) => { res.setHeader("content-type", "application/json"); res.end(JSON.stringify(body)); };
-            if (url.pathname === "/v1/workbot/me") return json({ name: "Alex", email: "alex@example.test", userId: entry.actor.userId, organizationId: entry.actor.organizationId, organizationName: "Recovery workspace", enabled: true, calendar: false, sideChats: false, usageRecovery: enabled, denUrl: "https://den.example.test" });
-            const upgrades = page.searchParams.get("upgrades") !== "off";
-            if (url.pathname === "/v1/workbot/model-recovery") return json({ canUpgrade: upgrades && owner && key === "free" && !subscribed, purchaseEligible: upgrades && owner && key === "free" && !subscribed, managedLuna: key === "free" || key === "provider", hasModelsSubscription: subscribed, paidContinuation: key === "free" && modelsActivated ? "authorized" : upgrades && owner && key === "free" && !subscribed ? "after_upgrade" : "unavailable", upgradeBlockedReason: key === "free" && (modelsActivated || upgrades && owner && !subscribed) ? null : "paid_workbot_route_unavailable", canManageModels: owner, canManageBilling: owner, freeExhausted: key === "free" && !page.searchParams.has("cleared"), freeResetsAt: key === "free" ? "2026-10-26T00:00:00.000Z" : null });
+            if (url.pathname === "/v1/workbot/me") return json({ name: "Alex", email: "alex@example.test", userId: entry.actor.userId, organizationId: entry.actor.organizationId, organizationName: "Recovery workspace", enabled: true, calendar: false, sideChats: false, denUrl: "https://den.example.test" });
+            const canPurchase = owner && page.searchParams.get("persona") !== "models-admin";
+            if (url.pathname === "/v1/workbot/model-recovery") return json({ canUpgrade: canPurchase && key === "free" && !subscribed, purchaseEligible: canPurchase && key === "free" && !subscribed, managedLuna: key === "free" || key === "provider", hasModelsSubscription: subscribed, paidContinuation: key === "free" && modelsActivated ? "authorized" : canPurchase && key === "free" && !subscribed ? "after_upgrade" : "unavailable", upgradeBlockedReason: key === "free" && (modelsActivated || canPurchase && !subscribed) ? null : "paid_workbot_route_unavailable", canManageModels: owner, canManageBilling: owner, freeExhausted: key === "free" && !page.searchParams.has("cleared"), freeResetsAt: key === "free" ? freeResetsAt : null });
             if (url.pathname === "/v1/workbot") return json({ available: true, ...await entry.workbot.readThread(entry.actor) });
             if (url.pathname === "/v1/workbot/events") { res.setHeader("content-type", "text/event-stream"); res.end(": fixture\n\n"); return; }
             if (url.pathname === "/v1/workbot/messages/message_limited/retry" && req.method === "POST") {

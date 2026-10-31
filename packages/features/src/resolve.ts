@@ -87,6 +87,8 @@ export const RETIRED_FEATURE_KEYS = [
   "activationChecklist", "gatewayProviderAuthErrors", "providerCredentialStatus", "sessionTokenHashing",
   "customConnectorSetup", "expandedMcpPresets", "analyticsDailyTrends", "gatewayProviderRemovalLimits",
   "guidedSlackSetup", "libraryConnectorOrgSetup",
+  // Generally available (2026-10): included models and permission-aware recovery; entitlement still applies.
+  "workbotIncludedModels", "workbotUsageRecovery",
 ] as const
 
 export function isFeatureKey(value: string): value is FeatureKey {

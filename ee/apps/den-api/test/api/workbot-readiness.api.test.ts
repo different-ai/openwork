@@ -1,6 +1,6 @@
 /**
  * GET /v1/org/workbot-readiness: Den web asks it before sending someone to Workbot.
- * - gatewayRequired is always true;
+ * - with the operational free allowance disabled, gatewayRequired is true;
  * - hasGatewayProvider is true only for an active AI Gateway provider of this organization: a disabled one and
  *   another organization's do not count;
  * - any member can read it (they cannot list providers), it names nothing, and non-members are refused.
@@ -21,7 +21,7 @@ globalThis.fetch = async (input, init) => {
   })
 }
 const gatewayBaseUrl = "http://127.0.0.1:8791"
-const den = await bootDen({ env: { GATEWAY_ENABLED: "true", GATEWAY_PROXY_BASE_URL: gatewayBaseUrl, GATEWAY_PUBLIC_BASE_URL: gatewayBaseUrl } })
+const den = await bootDen({ env: { INFERENCE_FREE_ENABLED: "false", GATEWAY_ENABLED: "true", GATEWAY_PROXY_BASE_URL: gatewayBaseUrl, GATEWAY_PUBLIC_BASE_URL: gatewayBaseUrl } })
 after(async () => { globalThis.fetch = realFetch; await den.close() })
 
 const path = "/v1/org/workbot-readiness"
@@ -70,6 +70,23 @@ test("Workbot readiness counts only this organization's active AI Gateway provid
   const paused = await owner("PATCH", `/v1/inference-providers/${providerId}`, { status: "disabled" })
   assert.equal(paused.status, 200, summary(paused))
   assert.deepEqual(readiness(await asMember("GET", path)), { gatewayRequired: true, hasGatewayProvider: false })
+})
+
+test("GA does not enable the operational free allowance or offer unconfigured purchases", async () => {
+  const workspace = await den.createOrg(await den.signUp("Operational Setting Owner"), "Operational settings workspace")
+  const token = await den.mintMcpToken(workspace.owner, workspace.orgId)
+  const options = await den.request(token, "GET", "/v1/workbot/model-recovery")
+  assert.equal(options.status, 200, summary(options))
+  assert.equal(field(options.body, "purchaseEligible"), false)
+  assert.equal(field(options.body, "canUpgrade"), false)
+  assert.equal(field(options.body, "freeExhausted"), false)
+  assert.equal(field(options.body, "freeResetsAt"), null)
+  const { WORKBOT_FREE_LUNA_ID, WORKBOT_PAID_LUNA_ID } = await import("@openwork/types/den/workbot-settings")
+  for (const model of [WORKBOT_FREE_LUNA_ID, WORKBOT_PAID_LUNA_ID]) {
+    const turn = await den.request(token, "POST", "/v1/workbot/run-token", { body: { model, modelAccessRequired: true } })
+    assert.equal(turn.status, 403, summary(turn))
+    assert.equal(field(turn.body, "modelAccess"), undefined, "claiming recovery cannot bypass entitlement")
+  }
 })
 
 test("Workbot readiness is refused without a session or outside the organization", { timeout: 60_000 }, async () => {
