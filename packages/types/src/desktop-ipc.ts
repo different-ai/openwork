@@ -327,7 +327,7 @@ export type DesktopFetchResult = {
  * resolves elsewhere is shown in its folder instead of being handed to an application.
  */
 export type DesktopWorkspaceFileOpenResult =
-  | { ok: true; action: "opened" | "revealed" }
+  | { ok: true; action: "opened" | "revealed" | "unavailable" }
   | { ok: false; error: string };
 
 export type DesktopBinaryDownloadResult = {
@@ -582,7 +582,7 @@ export type DesktopCommandMap = {
   __showContextMenu: { args: [request: NativeContextMenuRequest]; result: string | null };
   __cancelContextMenu: { args: [requestId: string]; result: boolean };
   __openPath: { args: [target: string]; result: unknown };
-  __openWorkspaceFile: { args: [workspaceRoot: string, target: string]; result: DesktopWorkspaceFileOpenResult };
+  __openWorkspaceFile: { args: [workspaceRoot: string, target: string, options?: { reveal?: boolean }]; result: DesktopWorkspaceFileOpenResult };
   __revealItemInDir: { args: [target: string]; result: unknown };
   __applyBrandAppName: { args: [appName: string | null]; result: { ok: true; appName: string } };
   __applyBrandIcon: { args: [url: string | null]; result: BrandIconApplyResult };

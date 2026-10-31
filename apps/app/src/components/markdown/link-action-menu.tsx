@@ -38,7 +38,9 @@ export function LinkActionMenu({ target, anchor, onOpenTarget, onClose }: LinkAc
   const native = isLocalWorkspace && platform.capabilities.revealInFileManager && target.kind === "file"
     ? nativeFileAction(workspaceRoot, target.value, { homeDir }) : null;
   const canOpenExternally = native !== null;
-  const canLaunch = native?.action === "open";
+  // Named-app launches bypass the chat opener: offer them only for a file the
+  // owning workspace has verified, never a guessed root + bare filename.
+  const canLaunch = native?.action === "open" && target.exists === true;
   const nativePath = native?.path;
   const copyPath = localArtifactPath(workspaceRoot, target.value, homeDir) ?? target.value;
 
