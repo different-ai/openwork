@@ -7,12 +7,12 @@ OpenWork analyzes code with the checked-in `.github/workflows/codeql.yml`
 autobuild on every PR: about 14 minutes waiting for a macOS runner, then about
 8 minutes of build discovery before a 5-minute compile.
 
-* `actions`, `javascript-typescript` and `python` are analyzed without a build
-  on every PR, every push to `dev`, and weekly.
-* `swift` is built directly with `swift build` for the `ComputerUse` product.
-  On PRs it builds only when `packages/computer-use/native/` or the workflow
-  changes. Otherwise its matrix leg uploads an empty Swift result from Linux
-  in seconds. Pushes to `dev` and the weekly schedule always analyze Swift.
+* Every push to `dev`, the weekly schedule and manual runs analyze all four
+  languages: `actions`, `javascript-typescript` and `python` without a build,
+  and `swift` built directly with `swift build` for the `ComputerUse` product
+  on macOS. JavaScript/TypeScript runs on a 16-vCPU runner.
+* PRs do not analyze. Each PR uploads an empty result per category from Linux
+  in seconds. Empty results are only ever uploaded for PRs, never for `dev`.
 * All analyses keep the `/language:<language>` categories default setup used,
   and load `.github/codeql/codeql-config.yml` directly.
 
@@ -22,19 +22,19 @@ count: Settings → Code security → CodeQL analysis → ⋯ → Switch to adva
 `gh api -X PATCH repos/different-ai/openwork/code-scanning/default-setup -f state=not-configured`.
 Re-enable default setup the same way (`-f state=configured`) to revert.
 
-The `code_scanning` rule on `dev` waits for every category `dev` has. Without
-a Swift upload, PRs would be blocked with "Code scanning is still expecting 1
-result from CodeQL" and need an admin bypass; the empty result prevents that.
-This hides nothing: those PRs do not change Swift code, and `dev` pushes
-always run the real Swift scan.
+The `code_scanning` rule on `dev` waits for every category `dev` has; without a
+result per category, PRs would be blocked with "Code scanning is still
+expecting N results from CodeQL" and need an admin bypass. The empty PR results
+satisfy it.
 
-CodeQL stays on PRs. The `code_scanning` rule blocks a merge until every
-category has a result for the PR, and the PR result is what blocks new
-high/critical alerts: between September 15 and October 31, 2026 it flagged 127
-PR commits with new high or critical alerts, 46 of them fixed in the next
-commit. Uploading empty results for every language would make PRs mergeable
-sooner but silently turn that rule off. JavaScript/TypeScript, the slowest
-analysis, runs on a 16-vCPU runner instead.
+**What this trades.** Between September 15 and October 31, 2026 the PR scan
+flagged 127 PR commits with new high or critical alerts, 46 of them fixed in the
+next commit. Those alerts now appear on the `dev` push scan of the merged
+commit (Security → Code scanning, and the CodeQL check on that commit) instead
+of blocking the PR. Triage new `dev` alerts as regressions. To bring the PR
+gate back, revert the PR path in `codeql.yml`; to drop the empty uploads
+instead, an admin must remove or relax the `code_scanning` rule in the `dev`
+ruleset.
 
 ## Missing results after configuration changes
 

@@ -1,10 +1,9 @@
 name: Build and core checks
 run-name: ${{ github.event_name == 'schedule' && 'Full regression — component checks' || 'Build and core checks' }}
 
+# Dev pushes, nightly and manual runs. PRs run only the quick check
+# (quick-check.yml); every job here also guards what merges, one push later.
 on:
-  pull_request:
-    branches:
-      - dev
   push:
     branches:
       - dev
@@ -32,11 +31,9 @@ jobs:
     outputs:
       lane: ${{ steps.classify.outputs.lane }}
       core: ${{ steps.classify.outputs.core }}
-      desktop_smoke: ${{ steps.classify.outputs.desktop_smoke }}
       den_api: ${{ steps.classify.outputs.den_api }}
       snapshot: ${{ steps.classify.outputs.snapshot }}
       docs: ${{ steps.classify.outputs.docs }}
-      den_contract: ${{ steps.classify.outputs.den_contract }}
     steps:
       # Classification reads only its scripts and the workspace manifests.
       - name: Checkout build inputs
@@ -59,16 +56,9 @@ jobs:
             const { execFileSync } = require("node:child_process")
             const scripts = pathToFileURL(`${process.env.GITHUB_WORKSPACE}/.github/scripts/`)
             const { changedFiles, isBuildAffected } = await import(new URL("build-inputs.mjs", scripts))
-            const { classifyCiChanges, pullRequestChanges, pushChanges } = await import(new URL("classify-ci-changes.mjs", scripts))
+            const { classifyCiChanges, pushChanges } = await import(new URL("classify-ci-changes.mjs", scripts))
             let files = null
-            let expectedCount = null
-            if (context.eventName === "pull_request") {
-              ;({ files, expectedCount } = await pullRequestChanges({
-                github, ...context.repo,
-                number: context.payload.pull_request.number,
-                head: context.payload.pull_request.head.sha,
-              }))
-            } else if (context.eventName === "push") {
+            if (context.eventName === "push") {
               files = pushChanges({
                 base: context.payload.before,
                 head: context.sha,
@@ -78,44 +68,12 @@ jobs:
                 fetchBase: (base) => execFileSync("git", ["fetch", "--no-tags", "--no-recurse-submodules", "--depth=1", "origin", base], { stdio: "pipe", timeout: 60000 }),
               })
             }
-            if (files === null && ["pull_request", "push"].includes(context.eventName)) {
+            if (files === null && context.eventName === "push") {
               core.warning("A complete changed-file comparison is unavailable; selecting full regression.")
             }
-            const selection = classifyCiChanges({ eventName: context.eventName, files, expectedCount }, isBuildAffected)
+            const selection = classifyCiChanges({ eventName: context.eventName, files }, isBuildAffected)
             for (const [name, value] of Object.entries(selection)) core.setOutput(name, String(value))
             core.info(`Selected checks: ${JSON.stringify(selection)}`)
-
-  # These checks read source only. They must not wait for installs, generated
-  # packages, MySQL, pinned engines, or the packaged desktop they help guard.
-  static-checks:
-    name: Static CI and outbound access checks
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v6
-      - name: Setup Node
-        uses: actions/setup-node@v6
-        with:
-          node-version: 24.22.1
-      - name: Test fork authorization and free screening policy
-        run: node --test .github/scripts/contributor-pr.test.mjs .github/scripts/contributor-screen.test.mjs .github/scripts/warden-check.test.mjs .github/scripts/warden-report.test.mjs .github/scripts/warden-fast.test.mjs .github/scripts/setup-browser.test.mjs
-      - name: Test on-demand PR proof review builds and CI timing
-        run: node --test .github/scripts/pr-proof-review-build.test.mjs .github/scripts/pr-proof-selection.test.mjs .github/scripts/ci-time-to-green.test.mjs evals/scripts/engine-parity-binaries.test.mjs evals/scripts/run-parity-proof.test.mjs
-      - name: Test build inputs, publication recovery and deployment boundaries
-        run: >-
-          node --test
-          .github/scripts/build-inputs.test.mjs
-          .github/scripts/classify-ci-changes.test.mjs
-          .github/scripts/docs-validation.test.mjs
-          .github/scripts/ee-image-inputs.test.mjs
-          .github/scripts/render-build-filters.test.mjs
-          .github/scripts/runtime-scope.test.mjs
-          .github/scripts/build-boundaries-native.test.mjs
-          .github/scripts/build-boundaries-codeql.test.mjs
-      - name: Test CodeQL scope and coverage accounting
-        run: node --test scripts/ci/codeql-config.test.mjs scripts/ci/check-codeql-results.test.mjs
-      - name: Check outbound access manifest
-        run: node scripts/check-outbound-access.mjs
 
   # Unit tests run as parallel jobs of about 25s of work each, so the slowest
   # finishes in about the time one step group takes. Every job keeps its
@@ -352,7 +310,7 @@ jobs:
       - name: Setup tests
         id: setup
         uses: ./.github/actions/setup-tests
-      # About 20s. Runs on every PR so spec lint cannot drift;
+      # About 20s. Runs on every dev push so spec lint cannot drift;
       # it used to run only nightly, and debt piled up unnoticed.
       - name: Check the test framework (lint and spec lint)
         run: |
@@ -360,10 +318,10 @@ jobs:
           pnpm evals:check
 
   # Security rules (roles, tenants, keys, OAuth, audit) against the real den-api
-  # app and a throwaway database per test file on MySQL (root:password). PRs run
-  # them when Den API inputs change (build-inputs.mjs "den-api-tests"); every
-  # dev push that runs unit tests runs them too. Node's --test-shard splits the
-  # files across jobs; every file runs in exactly one shard.
+  # app and a throwaway database per test file on MySQL (root:password), on
+  # every dev push that runs unit tests. PRs run the auth and permission subset
+  # in the quick check. Node's --test-shard splits the files across jobs; every
+  # file runs in exactly one shard.
   den-api-security:
     name: Den API security tests (${{ matrix.shard }}/6)
     needs: classify-changes
@@ -391,7 +349,10 @@ jobs:
           pnpm ci:den:mysql
           DEN_API_TEST_SHARD="$SHARD/6" pnpm --filter @openwork-ee/den-api test:api:shard
 
-  # Cheap "does the desktop build" checks for every non-docs PR.
+  # "Does the desktop build": the server bundle the way packaged builds use it
+  # and Electron main's shipped code. PRs typecheck Electron main in the quick
+  # check; the packaged build and boot runs before each alpha release
+  # (packaged-smoke.yml).
   openwork-tests-desktop-build:
     name: Build the desktop app (Electron typecheck and server bundle)
     needs: classify-changes
@@ -413,154 +374,6 @@ jobs:
           pnpm --filter openwork-server build
       - name: Typecheck Electron main against the IPC contract
         run: pnpm --filter @openwork/desktop typecheck:electron
-
-  # Packages and boots the real desktop. PRs run it when the desktop shell, its
-  # embedded server, engine pins, dependencies, embedded docs or the app-smoke
-  # harness change (build-inputs.mjs "desktop-package"). Dev pushes run it for
-  # every packaged input, including app UI and shared packages ("desktop-smoke").
-  openwork-tests-build:
-    name: Build and boot the desktop app
-    needs: classify-changes
-    if: needs.classify-changes.outputs.desktop_smoke == 'true'
-    runs-on: blacksmith-16vcpu-ubuntu-2204
-    timeout-minutes: 15
-    steps:
-      # Bootstrap before checkout or any action can execute repository code.
-      - name: Prepare virtual display
-        timeout-minutes: 6
-        shell: bash
-        run: |
-          set -euo pipefail
-          export PATH=/usr/sbin:/usr/bin:/sbin:/bin LC_ALL=C
-          unset APT_CONFIG
-          . /etc/os-release
-          if [[ "${ID:-}" != ubuntu || "${VERSION_ID:-}" != 22.04 || "${VERSION_CODENAME:-}" != jammy ]] \
-            || [[ "$(/usr/bin/dpkg --print-architecture)" != amd64 ]] \
-            || [[ ! -r /usr/share/keyrings/ubuntu-archive-keyring.gpg || ! -s /usr/share/keyrings/ubuntu-archive-keyring.gpg ]]; then
-            echo 'Virtual display bootstrap requires Ubuntu 22.04/jammy amd64 and its archive keyring.' >&2
-            exit 1
-          fi
-          if command -v xvfb-run >/dev/null && command -v xdpyinfo >/dev/null; then
-            echo 'Virtual display commands already installed; skipping APT.'
-            exit 0
-          fi
-
-          umask 077
-          apt_dir=$(mktemp -d /tmp/openwork-apt.XXXXXXXX)
-          trap 'rm -rf -- "$apt_dir"' EXIT
-          trap 'exit 130' INT
-          trap 'exit 143' TERM
-          mkdir "$apt_dir/sourceparts"
-          printf '%s\n' \
-            'deb [signed-by=/usr/share/keyrings/ubuntu-archive-keyring.gpg] https://archive.ubuntu.com/ubuntu jammy main universe' \
-            'deb [signed-by=/usr/share/keyrings/ubuntu-archive-keyring.gpg] https://archive.ubuntu.com/ubuntu jammy-updates main universe' \
-            'deb [signed-by=/usr/share/keyrings/ubuntu-archive-keyring.gpg] https://security.ubuntu.com/ubuntu jammy-security main universe' \
-            > "$apt_dir/sources.list"
-          chmod 0755 "$apt_dir" "$apt_dir/sourceparts"
-          chmod 0644 "$apt_dir/sources.list"
-          # Keep trusted image APT settings, but select only these signed Ubuntu sources.
-          apt_options=(-o "Dir::Etc::sourcelist=$apt_dir/sources.list" -o "Dir::Etc::sourceparts=$apt_dir/sourceparts"
-            -o Acquire::http::Timeout=20 -o Acquire::https::Timeout=20 -o Acquire::Retries=1)
-
-          retryable_update() {
-            local line pending_error=false saw_transport=false
-            local transport='TLSWaitFd|Could not wait for server fd|Connection timed out|Connection failed|Could not connect to|Unable to connect to|Connection refused|Connection reset by peer|Temporary failure resolving|Could not resolve|Network is unreachable'
-            local fatal='[Cc]ertificate|[Ss]ignature|NO_PUBKEY|BADSIG|EXPKEYSIG|REVKEYSIG|[Nn]ot signed|[Rr]elease file|[Hh]ash [Ss]um mismatch|[Cc]onflicting values|[Mm]alformed|[Ss]yntax error|[Ii]nvalid operation|[Pp]ermission denied'
-            [[ "$status" == 100 || "$status" == 124 || "$status" == 137 ]] || return 1
-            while IFS= read -r line || [[ -n "$line" ]]; do
-              [[ ! "$line" =~ $fatal ]] || return 1
-              if [[ "$pending_error" == true ]]; then
-                [[ "$line" =~ $transport ]] || return 1
-                pending_error=false
-                saw_transport=true
-                continue
-              fi
-              case "$line" in
-                ''|Hit:*|Get:*|Ign:*|'Reading package lists...'*|'Fetched '*) ;;
-                Err:*) pending_error=true ;;
-                'E: Some index files failed to download. They have been ignored, or old ones used instead.') ;;
-                E:*|W:*|'  '*)
-                  [[ "$line" =~ $transport ]] || return 1
-                  saw_transport=true
-                  ;;
-                *) return 1 ;;
-              esac
-            done < "$apt_dir/update.log"
-            [[ "$pending_error" == false ]] && { [[ "$saw_transport" == true ]] || [[ "$status" == 124 || "$status" == 137 ]]; }
-          }
-
-          updated=false
-          source_mode=security
-          for attempt in 1 2 3; do
-            if [[ "$attempt" == 2 ]]; then sleep 5; fi
-            if [[ "$attempt" == 3 ]]; then
-              sleep 10
-              # Same signed jammy-security pocket; DNS may still select the same backend.
-              sources=$(<"$apt_dir/sources.list")
-              printf '%s\n' "${sources/security.ubuntu.com/archive.ubuntu.com}" > "$apt_dir/sources.list"
-              source_mode=archive-security-fallback
-            fi
-            echo "APT update attempt $attempt/3 source=$source_mode"
-            if sudo /usr/bin/timeout --signal=TERM --kill-after=5s 60s /usr/bin/apt-get "${apt_options[@]}" update --error-on=any > "$apt_dir/update.log" 2>&1; then
-              status=0
-            else
-              status=$?
-            fi
-            cat "$apt_dir/update.log"
-            echo "APT update attempt $attempt/3 source=$source_mode status=$status"
-            if [[ "$status" == 0 ]]; then
-              updated=true
-              break
-            fi
-            if ! retryable_update || [[ "$attempt" == 3 ]]; then
-              echo 'APT update failed; refusing to install from stale or unverified indexes.' >&2
-              exit "$status"
-            fi
-          done
-          [[ "$updated" == true ]] || exit 1
-          sudo /usr/bin/timeout --signal=TERM --kill-after=5s 120s /usr/bin/apt-get "${apt_options[@]}" install -y xvfb x11-utils
-          command -v xvfb-run >/dev/null && command -v xdpyinfo >/dev/null || {
-            echo 'Virtual display installation did not provide both required commands.' >&2
-            exit 1
-          }
-      - name: Checkout
-        uses: actions/checkout@v6
-        with:
-          ref: ${{ github.event.pull_request.head.sha || github.sha }}
-      - name: Cache Electron and pinned sidecars
-        uses: actions/cache@v5
-        with:
-          path: |
-            ~/.cache/electron
-            ~/.cache/electron-builder
-            apps/desktop/resources/sidecars
-          key: ${{ runner.os }}-${{ runner.arch }}-desktop-smoke-${{ hashFiles('constants.json', 'pnpm-lock.yaml', 'apps/desktop/scripts/prepare-sidecar.mjs') }}
-      - name: Setup tests
-        id: setup
-        uses: ./.github/actions/setup-tests
-      # Test source resolution differs from packaged Node plugin resolution.
-      - name: Bundle the server plugins the way packaged builds do
-        run: |
-          rm -rf packages/types/dist
-          pnpm --filter openwork-server build
-      - name: Package and smoke-test the installed desktop
-        timeout-minutes: 7
-        env:
-          OPENWORK_PACKAGED_SMOKE_DIR: ${{ runner.temp }}/openwork-packaged-smoke
-          CSC_IDENTITY_AUTO_DISCOVERY: 'false'
-        run: node apps/desktop/scripts/packaged-smoke.mjs --server-built
-      - name: Upload packaged smoke evidence and timings
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: packaged-desktop-smoke-${{ github.run_attempt }}
-          path: |
-            ${{ runner.temp }}/openwork-packaged-smoke/timing.json
-            ${{ runner.temp }}/openwork-packaged-smoke/profiles/**/electron.log
-            ${{ runner.temp }}/openwork-packaged-smoke/logs/**
-            evals/results/test-runs/**
-          include-hidden-files: true
-          retention-days: 7
 
   # Broad journeys, source-layout guards, and test-framework checks remain visible
   # here without blocking unrelated PRs. No retries or ignored failures.
@@ -746,62 +559,13 @@ jobs:
       - name: Check for broken links and images
         run: pnpm dlx "mint@$MINT_VERSION" broken-links
 
-  # Pull requests that change Den API routes or schemas generate and validate
-  # OpenAPI and SDK artifacts directly from their source. Pushes to dev keep the
-  # dedicated Generated Den SDK and API Contract workflows.
-  # MySQL stays: importing the live app initializes Better Auth's OAuth resource
-  # registry, which writes to the database, and den:contract pushes the schema
-  # into a disposable database first. The audit route coverage check imports
-  # the same app, so it shares this database rather than moving to dev pushes.
-  den-contract:
-    needs: classify-changes
-    if: needs.classify-changes.outputs.den_contract == 'true'
-    runs-on: blacksmith-16vcpu-ubuntu-2204
-    timeout-minutes: 15
-    env:
-      DATABASE_URL: mysql://root:password@127.0.0.1:3306/openwork_den
-      DEN_DB_ENCRYPTION_KEY: local-dev-db-encryption-key-please-change-1234567890
-    steps:
-      - name: Checkout
-        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
-        with:
-          persist-credentials: false
-      # MySQL boots while dependencies install; generation waits for it below.
-      - name: Start MySQL
-        run: docker compose -p openwork-den-local -f packaging/docker/docker-compose.web-local.yml -f packaging/docker/docker-compose.ci-mysql.yml up -d mysql
-      - name: Setup tests
-        uses: ./.github/actions/setup-tests
-      - name: Test contract generation guards
-        run: node --test scripts/tests/den-contract-hook.test.mjs scripts/tests/den-contract-database.test.mjs scripts/tests/den-contract-cache.test.mjs scripts/tests/den-contract-format.test.mjs
-      - name: Wait for MySQL
-        run: docker compose -p openwork-den-local -f packaging/docker/docker-compose.web-local.yml -f packaging/docker/docker-compose.ci-mysql.yml up -d --wait mysql
-      # den:contract owns schema preparation and cleanup, just as locally.
-      - name: Regenerate the OpenAPI snapshot and SDK
-        run: pnpm den:contract
-      - name: Upload generated API contract and SDK
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
-        with:
-          name: den-api-contract
-          path: |
-            packages/docs/openapi.json
-            packages/sdk/src/gen/**/*.ts
-          if-no-files-found: error
-      # den:contract drops its own disposable database. Route introspection below
-      # uses DATABASE_URL instead, and importing Better Auth seeds oauthResource.
-      - name: Prepare the CI database for audit route introspection
-        run: pnpm --filter @openwork-ee/den-db exec node --import tsx ./node_modules/drizzle-kit/bin.cjs push --force
-      # Every den-api route and better-auth endpoint must carry an audit
-      # declaration (src/audit/routes); validate it without a generated report.
-      - name: Check audit route coverage
-        run: pnpm --filter @openwork-ee/den-api audit:coverage
-      - name: Lint the contract and typecheck the SDK
-        run: pnpm api:lint && pnpm --filter @openwork/sdk typecheck
-
-  # Single stable context for branch rulesets to require. Each selected check
-  # must succeed, every unselected check must be skipped, and static guards
-  # always run. Classification failure/cancellation must never green-skip a gate.
-  openwork-tests-required:
-    needs: [classify-changes, static-checks, openwork-tests-app, openwork-tests-headless, openwork-tests-workbot, openwork-tests-den, openwork-tests-evals, openwork-tests-evals-lint, openwork-tests-desktop-build, openwork-tests-build, den-api-security, validate-models-snapshot, validate-docs, den-contract]
+  # One summary context for dev pushes and the nightly run: each selected job
+  # must succeed and every unselected job must be skipped. Classification
+  # failure/cancellation never green-skips a check. PRs require the quick check's
+  # `openwork-tests-required` instead (quick-check.yml).
+  openwork-tests-full:
+    name: Build and core checks passed
+    needs: [classify-changes, openwork-tests-app, openwork-tests-headless, openwork-tests-workbot, openwork-tests-den, openwork-tests-evals, openwork-tests-evals-lint, openwork-tests-desktop-build, den-api-security, validate-models-snapshot, validate-docs]
     if: always()
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -816,13 +580,10 @@ jobs:
       - name: Require every selected check to pass
         env:
           CLASSIFY_RESULT: ${{ needs.classify-changes.result }}
-          STATIC_RESULT: ${{ needs.static-checks.result }}
           CORE: ${{ needs.classify-changes.outputs.core }}
-          DESKTOP_SMOKE: ${{ needs.classify-changes.outputs.desktop_smoke }}
           DEN_API: ${{ needs.classify-changes.outputs.den_api }}
           SNAPSHOT: ${{ needs.classify-changes.outputs.snapshot }}
           DOCS: ${{ needs.classify-changes.outputs.docs }}
-          DEN_CONTRACT: ${{ needs.classify-changes.outputs.den_contract }}
           CORE_APP_RESULT: ${{ needs.openwork-tests-app.result }}
           CORE_HEADLESS_RESULT: ${{ needs.openwork-tests-headless.result }}
           CORE_WORKBOT_RESULT: ${{ needs.openwork-tests-workbot.result }}
@@ -830,25 +591,20 @@ jobs:
           CORE_EVALS_RESULT: ${{ needs.openwork-tests-evals.result }}
           CORE_EVALS_LINT_RESULT: ${{ needs.openwork-tests-evals-lint.result }}
           DESKTOP_BUILD_RESULT: ${{ needs.openwork-tests-desktop-build.result }}
-          BUILD_RESULT: ${{ needs.openwork-tests-build.result }}
           DEN_API_RESULT: ${{ needs.den-api-security.result }}
           SNAPSHOT_RESULT: ${{ needs.validate-models-snapshot.result }}
           DOCS_RESULT: ${{ needs.validate-docs.result }}
-          DEN_CONTRACT_RESULT: ${{ needs.den-contract.result }}
         run: |
           node --input-type=module <<'NODE'
           import { assertSelectedChecks } from "./.github/scripts/classify-ci-changes.mjs"
           const { env } = process
           const checks = {
             classification: env.CLASSIFY_RESULT,
-            staticChecks: env.STATIC_RESULT,
             selected: {
               core: env.CORE,
-              desktop_smoke: env.DESKTOP_SMOKE,
               den_api: env.DEN_API,
               snapshot: env.SNAPSHOT,
               docs: env.DOCS,
-              den_contract: env.DEN_CONTRACT,
             },
             results: {
               core_app: env.CORE_APP_RESULT,
@@ -858,11 +614,9 @@ jobs:
               core_evals: env.CORE_EVALS_RESULT,
               core_evals_lint: env.CORE_EVALS_LINT_RESULT,
               desktop_build: env.DESKTOP_BUILD_RESULT,
-              desktop_smoke: env.BUILD_RESULT,
               den_api: env.DEN_API_RESULT,
               snapshot: env.SNAPSHOT_RESULT,
               docs: env.DOCS_RESULT,
-              den_contract: env.DEN_CONTRACT_RESULT,
             },
           }
           console.log(JSON.stringify(checks, null, 2))

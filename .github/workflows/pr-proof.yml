@@ -1,15 +1,25 @@
 name: PR change proof
 
+# Author evidence, not a merge gate: PRs do not run it. Run it by hand on a PR's
+# head branch to get its changed specs' records as artifacts:
+#   gh workflow run pr-proof.yml --ref <branch> -f pr=<number>
+# Manual runs use the secret-free lanes only (changed specs and packaged
+# specs); the core journeys run on every dev push and nightly (core-journeys.yml),
+# and changed specs run nightly in "Build and core checks".
 on:
-  pull_request:
-    branches: [dev]
+  workflow_dispatch:
+    inputs:
+      pr:
+        description: PR number (dispatch on that PR's head branch)
+        required: true
+        type: string
 
 permissions:
   contents: read
   pull-requests: read
 
 concurrency:
-  group: pr-change-proof-${{ github.event.pull_request.number }}
+  group: pr-change-proof-${{ github.event.pull_request.number || inputs.pr }}
   cancel-in-progress: true
 
 jobs:
@@ -17,6 +27,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 3
     outputs:
+      head: ${{ steps.select.outputs.head }}
       internalContributor: ${{ steps.select.outputs.internalContributor }}
       coreMatrix: ${{ steps.select.outputs.coreMatrix }}
       coreSelected: ${{ steps.select.outputs.coreSelected }}
@@ -29,7 +40,7 @@ jobs:
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
         with:
-          ref: ${{ github.event.pull_request.head.sha }}
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
           persist-credentials: false
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
@@ -37,6 +48,7 @@ jobs:
       - id: select
         env:
           GH_TOKEN: ${{ github.token }}
+          PROOF_PR: ${{ inputs.pr }}
         run: node .github/scripts/pr-proof-controller.mjs
 
   # Core journeys: the app, Den, gateway and model run in a Freestyle world built
@@ -140,7 +152,7 @@ jobs:
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
         with:
-          ref: ${{ github.event.pull_request.head.sha }}
+          ref: ${{ needs.select.outputs.head }}
           persist-credentials: false
       - uses: ./.github/actions/setup-tests
       - uses: ./.github/actions/setup-browser
@@ -200,7 +212,7 @@ jobs:
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
         with:
-          ref: ${{ github.event.pull_request.head.sha }}
+          ref: ${{ needs.select.outputs.head }}
           persist-credentials: false
       - name: Cache Electron and pinned sidecars
         uses: actions/cache@v5

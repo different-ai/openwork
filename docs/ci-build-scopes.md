@@ -28,11 +28,13 @@ included too, even when only a manifest is copied.
 Missing history, incomplete file lists, unknown inputs, or failed comparisons
 must select work rather than skip it. Push classification compares the full
 `before` to `sha` range with both rename ends and deletions, not only the latest
-commit. PR selection keeps its existing broad core/smoke coverage and checks
-paginated file counts and head consistency. The stable
-`openwork-tests-required` context requires every selected job to succeed and
-every unselected job to be skipped. Bare-Node/static assertions run independently
-of builds, package installation and services, and still gate that context.
+commit. PRs run only the quick check (`quick-check.yml`): its classifier checks
+paginated file counts and head consistency, and selects the Den API auth tests
+when their inputs change (`den-api-tests`). Its `openwork-tests-required`
+context requires the always-run static and typecheck jobs to succeed, and the
+Den job to succeed when selected and be skipped otherwise. "Build and core
+checks" runs the rest on dev pushes with the same rule in
+`openwork-tests-full`.
 
 ### EE publication and cancellation
 
@@ -50,9 +52,10 @@ API build cannot be cancelled merely because a Workbot-only merge arrives.
 Unchanged images retain their original source/version provenance; they are not
 claimed to have been built from current HEAD.
 
-Tag/manual runs still select all six EE images and Helm. Targeted infrastructure
-PRs exercise all image builds and existing health/migration assertions without
-publishing or entering the production environment. Chart validation is
+Tag/manual runs still select all six EE images and Helm. A nightly build-only run
+(and manual runs with push off) exercises all image builds and the existing
+health/migration assertions without publishing or entering the production
+environment. Chart validation is
 independent of image builds. The gateway deploy hook follows only its own actual
 publication; it is not evidence that a native Render source service consumes
 GHCR images, and it does not replace the Render filters below.
@@ -92,7 +95,7 @@ publish C without a fourth push. The final per-target freshness check still
 prevents promotion if relevant inputs advance during the build. Build or
 publication failures cannot advance the successful-publication baseline.
 
-Build-only runs, including PRs and the default manual dry-run, use a separate
+Build-only runs, including the nightly run and the default manual dry-run, use a separate
 channel unique to their run ID and attempt. They cannot replace a pending
 publisher. Publishing dev dispatches share the automatic publication channel and
 must reconcile the latest compatible dev source too; keeping their originally
@@ -132,9 +135,9 @@ refresh waiting for that unrelated commit to appear in production.
 CodeQL retains real Swift scans on every dev push, schedule and manual run. Its
 all-language required scanning rule and coverage monitor currently expect a
 complete commit baseline. Skipping that scan needs a separate proven accounting
-change; never upload empty results on dev just to save a macOS build. PR Swift
-selection fails open when comparison data is incomplete and scans analyzer
-configuration changes too.
+change; never upload empty results on dev just to save a macOS build. PRs do
+not analyze: each uploads an empty result per category for the merge rule (see
+docs/codeql-results.md).
 
 When adding a workspace dependency or an external build-time source read, add a
 boundary regression and check the relevant workflow's coarse trigger as well as

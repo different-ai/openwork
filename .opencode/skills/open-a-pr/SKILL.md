@@ -54,10 +54,12 @@ Title: conventional commit, imperative, under 70 characters.
 
 ## Evidence
 
-CI runs every spec the PR changes on the PR head and posts one sticky
-`<!-- test-evidence -->` comment linking the report. You never run the
-publisher or attach screenshots by hand. The body names the spec and says
-what the reader will see; it does not copy verdicts, SHAs, screenshots or
+PRs run only the quick check; specs do not run on PRs automatically. Run the
+spec yourself (`run-tests`) before opening the PR, or have CI run the PR's
+changed specs on its head and keep their records as artifacts:
+`gh workflow run pr-proof.yml --ref <branch> -f pr=<number>`. After merge, the
+dev push runs every proof it adds or changes and every core journey. The body names the spec and
+says what the reader will see; it does not copy verdicts, SHAs, screenshots or
 links, which go stale.
 
 ```markdown
@@ -69,13 +71,9 @@ shows Suspend; after: it does not, and a page still opens and can be used.
 - The `before:` here and "What was the situation before?" are the same
   moment. If they disagree, fix one.
 - No spec changed? Say why in one line, e.g. `No E2E; typecheck and build only`.
-  If no evidence comment appears, that is why; do not run a spec locally and
-  paste its output.
-- Red evidence needs no sentence in the body: CI's comment says Failed on
-  that SHA and flips on its own when the head goes green. Fix the spec or the
-  code; do not narrate the verdict.
-- Evidence binds to a commit. After a rebase or cherry-pick, wait for CI to
-  rerun on the new head; do not cite the old comment.
+- Red evidence is fixed, not narrated: fix the spec or the code and rerun it.
+- Evidence binds to a commit. After a rebase or cherry-pick, rerun the spec on
+  the new head; do not cite the old run.
 - UI changes: one trailing line `Design: P3, S4, C6` (DESIGN.md rule ids).
 
 ## Leave out
