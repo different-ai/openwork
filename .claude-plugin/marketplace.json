@@ -1,0 +1,14 @@
+{
+  "name": "openwork",
+  "description": "OpenWork Connect skills and organization-scoped MCP connections.",
+  "owner": {
+    "name": "OpenWork"
+  },
+  "plugins": [
+    {
+      "name": "openwork-connect",
+      "source": "./integrations/agent-plugins/openwork-connect",
+      "description": "Use your organization's OpenWork skills and connections."
+    }
+  ]
+}
