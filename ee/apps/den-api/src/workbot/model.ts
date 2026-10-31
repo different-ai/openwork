@@ -66,8 +66,9 @@ export async function workbotModelCatalog(actor: CloudModelActor): Promise<Headl
     cloudAgentModelCatalog(actor).catch(() => null), workbotManagedLunaState(actor),
   ])
   const ready = state.paid ? state.paidReady : workbotManagedLunaRoutable(state)
-  // Without included access the workspace's Gateway default stays the default, when managed models are unavailable.
-  if (!workbotManagedLunaRoutable(state) && catalog) return catalog
+  // Without included access the workspace's Gateway default stays the default. When the Gateway cannot be read
+  // either, nothing is verified: report that (null) instead of an empty catalog that reads as "unavailable".
+  if (!workbotManagedLunaRoutable(state)) return catalog
   return { defaultModel: state.model, verified: true, models: [
     ...(ready ? [{ id: state.model, name: state.paid ? "OpenWork: GPT-6 Luna" : "Auto", provider: state.paid ? "openwork" : "openwork-free" }] : []),
     ...(catalog?.models ?? []),
