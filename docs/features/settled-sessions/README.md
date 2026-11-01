@@ -24,7 +24,7 @@ Automation, an approval request) brings it back.
   Settled sessions from every workspace sit in a collapsed **Settled** shelf.
   Pinned folders, Settled and Archived stay fixed below the scrolling Feed,
   apart from live work; one opens at a time, showing about three rows that
-  scroll. The choice of view is remembered on the device.
+  scroll. Workspaces is the default; the last view chosen is remembered on the device.
 - In Feed, the header's **+** starts a new session, and the group-and-sort
   menu next to it groups by day, by activity (**Active**: working or with an
   unread result; **Inactive**: the rest) or not at all, and sorts by last

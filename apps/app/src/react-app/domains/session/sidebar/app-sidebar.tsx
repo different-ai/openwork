@@ -1111,7 +1111,7 @@ function GlobalPinnedSessions({ entries }: { entries: GlobalPinnedSessionEntry[]
   );
 }
 
-const SIDEBAR_VIEWS: SidebarView[] = ["feed", "workspaces"];
+const SIDEBAR_VIEWS: SidebarView[] = ["workspaces", "feed"];
 
 const SIDEBAR_HEADER_ICON_BUTTON = "flex size-5 items-center justify-center rounded text-muted-foreground/60 transition-colors hover:bg-sidebar-accent hover:text-foreground disabled:pointer-events-none disabled:opacity-50 data-popup-open:bg-sidebar-accent data-popup-open:text-foreground";
 
