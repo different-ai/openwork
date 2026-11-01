@@ -61,6 +61,16 @@
           "type": "object",
           "additionalProperties": false,
           "properties": {
+            "googleCalendarRecurrence": {
+              "enum": [
+                "",
+                "true",
+                "false",
+                true,
+                false
+              ],
+              "description": "Google Calendar recurring meetings: Create and change recurring meeting series through the native Google Calendar capabilities. Renders DEN_FEATURE_GOOGLE_CALENDAR_RECURRENCE."
+            },
             "autoRouter": {
               "enum": [
                 "",

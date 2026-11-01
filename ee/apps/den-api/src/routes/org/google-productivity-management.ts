@@ -3,6 +3,9 @@ import { bodyLimit } from "hono/body-limit"
 import { describeRoute } from "hono-openapi"
 import { z } from "zod"
 import { env } from "../../env.js"
+import { organizationFeatureEnabled } from "../../features.js"
+import { markFeaturesUsed } from "../../feature-usage.js"
+import { calendarRecurrenceMatches, calendarRecurrenceFields, calendarRecurrenceSchema, calendarTimeZoneSchema, recurrenceToRrule, validateRecurrenceChoice, validateRecurrenceUntil } from "../../capability-sources/google-calendar-events.js"
 import { orgMemberRoute } from "../../middleware/route-access.js"
 import { jsonValidator, paramValidator, queryValidator } from "../../middleware/validation.js"
 import { invalidRequestSchema, jsonResponse, unauthorizedSchema } from "../../openapi.js"
@@ -18,15 +21,13 @@ const sheetsWriteScopes = [...driveWriteScopes, scope + "spreadsheets"]
 const sheetsReadScopes = [...sheetsWriteScopes, scope + "spreadsheets.readonly", scope + "drive.readonly"]
 const base = "/v1/capabilities/google-workspace"
 const idSchema = z.string().min(1).max(512).regex(/^[A-Za-z0-9_-]+$/)
-const eventParams = z.object({ eventId: idSchema })
+const eventParams = z.object({ eventId: idSchema.describe("Use an occurrence ID to read/edit/cancel one recurring meeting, or its recurringEventId (series master ID) to read/edit/cancel the whole series. Recurrence can only be changed on a master.") })
 const spreadsheetParams = z.object({ spreadsheetId: idSchema })
 const fileParams = z.object({ fileId: idSchema })
 const calendarQuery = z.object({ calendarId: z.string().min(1).max(512).regex(/^[^\s\x00-\x1f]+$/).default("primary") }).strict()
 const sendUpdatesSchema = z.enum(["none", "all", "externalOnly"]).default("none")
   .describe("Notification policy. all/externalOnly requires confirmNotifications=true after explicit user approval. Google may still send some service emails with none.")
-const timeZoneSchema = z.string().min(1).max(128).refine((value) => {
-  try { new Intl.DateTimeFormat("en", { timeZone: value }); return true } catch { return false }
-}, "Use a valid IANA time zone.")
+const timeZoneSchema = calendarTimeZoneSchema
 const eventTimeSchema = z.union([
   z.object({ dateTime: z.string().datetime({ offset: true }), timeZone: timeZoneSchema.optional() }).strict(),
   z.object({ date: z.string().date() }).strict(),
@@ -41,7 +42,17 @@ const eventPatchSchema = z.object({
     .describe("Replaces the entire attendee list; [] removes all attendees. Read the event first to preserve existing guests."),
   sendUpdates: sendUpdatesSchema,
   confirmNotifications: z.boolean().optional(),
+  ...calendarRecurrenceFields,
+  recurrence: calendarRecurrenceSchema.nullable().optional().describe("Replace recurrence on the series master, not an occurrence. null clears recurrence. Setting recurrence/rrule requires both start and end dateTime values with explicit matching IANA timeZone. Requires googleCalendarRecurrence."),
 }).strict().superRefine((input, ctx) => {
+  validateRecurrenceChoice(input, ctx)
+  if (input.start && "dateTime" in input.start && z.string().datetime({ offset: true }).safeParse(input.start.dateTime).success) validateRecurrenceUntil(input, input.start.dateTime, ctx)
+  if (input.recurrence || input.rrule) {
+    if (!input.start || !input.end || !("dateTime" in input.start) || !("dateTime" in input.end)
+      || !input.start.timeZone || !input.end.timeZone || input.start.timeZone !== input.end.timeZone) {
+      ctx.addIssue({ code: "custom", path: ["start"], message: "Setting recurrence requires both start and end dateTime values with the same explicit IANA timeZone." })
+    }
+  }
   const { sendUpdates, confirmNotifications, ...patch } = input
   if (!Object.values(patch).some((value) => value !== undefined)) ctx.addIssue({ code: "custom", message: "Provide at least one event field to update." })
   if (sendUpdates !== "none" && confirmNotifications !== true) ctx.addIssue({ code: "custom", path: ["confirmNotifications"], message: "Explicit user approval to notify guests is required." })
@@ -73,7 +84,8 @@ const eventSchema = z.object({
   summary: z.string().optional(), description: z.string().optional(), location: z.string().optional(),
   start: eventResponseTimeSchema.optional(), end: eventResponseTimeSchema.optional(),
   htmlLink: z.string().optional(), etag: z.string().optional(),
-  recurringEventId: z.string().optional(),
+  recurringEventId: z.string().optional().describe("Series master ID when this event is one occurrence of a recurring meeting."),
+  recurrence: z.array(z.string()).optional().describe("Google recurrence rules on a series master; absent for an occurrence or a one-time event."),
   attendeesOmitted: z.boolean().optional(),
   attendees: z.array(z.object({ email: z.string().optional(), displayName: z.string().optional(), responseStatus: z.string().optional(), optional: z.boolean().optional() })).max(100).optional(),
 })
@@ -205,11 +217,26 @@ export function registerGoogleProductivityManagementRoutes<T extends { Variables
     return c.json({ ok: true, calendarId, event })
   })
 
-  app.patch(`${base}/calendar-events/:eventId`, routeDescription("updateGoogleCalendarEvent", "Update or reschedule a Google Calendar event; explicitly approve guest notifications", eventReceiptSchema), orgMemberRoute(), boundedBody(), paramValidator(eventParams), queryValidator(calendarQuery), jsonValidator(eventPatchSchema), async (c) => {
+  app.patch(`${base}/calendar-events/:eventId`, routeDescription("updateGoogleCalendarEvent", "Update or reschedule a Google Calendar event or recurring meeting; use the master ID to change the whole series or recurrence", eventReceiptSchema), orgMemberRoute(), boundedBody(), paramValidator(eventParams), queryValidator(calendarQuery), jsonValidator(eventPatchSchema), async (c) => {
     const { eventId } = c.req.valid("param")
     const { calendarId } = c.req.valid("query")
-    const { sendUpdates, confirmNotifications: _confirmation, ...patch } = c.req.valid("json")
+    const { sendUpdates, confirmNotifications: _confirmation, recurrence, rrule, ...fields } = c.req.valid("json")
+    const changingRecurrence = recurrence !== undefined || rrule !== undefined
+    const context = c.get("organizationContext")
+    if (!context) return c.json({ error: "unauthorized", message: "Sign in to an organization first." }, 401)
+    if (changingRecurrence && !await organizationFeatureEnabled(context.organization.id, "googleCalendarRecurrence", { userId: context.currentMember.userId })) {
+      return c.json({ error: "invalid_request", message: "Recurring meeting changes are disabled (googleCalendarRecurrence); omit recurrence/rrule." }, 400)
+    }
+    const patch = { ...fields, ...(changingRecurrence ? { recurrence: recurrence === null ? [] : recurrence ? recurrenceToRrule(recurrence) : rrule } : {}) }
     const url = calendarUrl(calendarId, eventId)
+    if (changingRecurrence) {
+      const current = await requestGoogleAction(c, deps, calendarReadScopes, url)
+      if (!current.ok) return current.reply
+      const event = await confirmedBody(current.response, eventSchema)
+      if (!event || event.id !== eventId) return unconfirmed(c, false)
+      if (event.recurringEventId) return c.json({ error: "invalid_request", message: "Change recurrence on the series master using recurringEventId, not this occurrence ID. Use this occurrence ID only to edit one meeting." }, 400)
+      markFeaturesUsed({ organizationId: context.organization.id, memberId: context.currentMember.id, keys: ["googleCalendarRecurrence"] })
+    }
     url.searchParams.set("sendUpdates", sendUpdates)
     url.searchParams.set("maxAttendees", "100")
     const result = await requestGoogleAction(c, deps, calendarWriteScopes, url, { method: "PATCH", body: JSON.stringify(patch) })
@@ -220,6 +247,7 @@ export function registerGoogleProductivityManagementRoutes<T extends { Variables
       || (patch.description !== undefined && (event.description ?? "") !== patch.description)
       || (patch.location !== undefined && (event.location ?? "") !== patch.location)
       || !confirmsEventTime(patch.start, event.start) || !confirmsEventTime(patch.end, event.end)
+      || (patch.recurrence !== undefined && !calendarRecurrenceMatches(patch.recurrence, event.recurrence))
       || (patch.attendees && (event.attendeesOmitted || patch.attendees.length !== (event.attendees?.length ?? 0)
         || patch.attendees.some((guest) => !event.attendees?.some((actual) => actual.email?.toLowerCase() === guest.email.toLowerCase()
           && (guest.optional === undefined || Boolean(actual.optional) === guest.optional)))))) return unconfirmed(c, true)
