@@ -223,6 +223,13 @@ export const EXTERNAL_MCP_PRESETS_EXPANDED: readonly ExternalMcpPreset[] = [
     authType: "oauth",
   },
   {
+    presetId: "grafana",
+    displayName: "Grafana Cloud",
+    description: "Query metrics, logs, traces, and profiles, and review dashboards, alerts, and incidents. Sign in with your Grafana Cloud account and choose read, query, or write access on Grafana's consent screen.",
+    url: "https://mcp.grafana.com/mcp",
+    authType: "oauth",
+  },
+  {
     presetId: "huggingface",
     displayName: "Hugging Face",
     description: "Browse Hugging Face models, datasets, and Spaces. Sign in with your Hugging Face account.",
