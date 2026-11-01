@@ -124,6 +124,9 @@ import { ComputerRequestPanel } from "@/react-app/domains/session/computer/compu
 import { useComputerRequest, useComputerStore } from "@/react-app/domains/session/computer/computer-store";
 import { QuestionPanel } from "@/react-app/domains/session/modals/question-modal";
 import { ComposerSubagentTracker, currentTurnSubagentParts, useComposerRemoteTasks } from "@/react-app/domains/session/surface/composer/composer-subagent-tracker";
+import { ComposerBackgroundTasks } from "@/react-app/domains/session/surface/composer/composer-background-tasks";
+import { sessionBackgroundShells, useBackgroundShellStore } from "@/react-app/domains/session/status/background-shell-store";
+import { useDesktopFeature } from "@/react-app/domains/session/status/use-desktop-feature";
 import { QueuedMessagesPanel } from "@/react-app/domains/session/modals/queued-messages-panel";
 import { deriveOpenTargets, sameOpenTargets, type OpenTarget } from "@/react-app/domains/session/artifacts/open-target";
 import { usePanelTabStore } from "@/react-app/domains/session/panel/panel-tab-store";
@@ -2268,6 +2271,11 @@ export function SessionSurface(props: SessionSurfaceProps) {
     remoteTrackerOwner,
   );
   const subagentTrackerShown = subagentTrackerToolCallIds.size > 0 || remoteTrackerTasks.length > 0;
+  // Commands the agent left running, listed under the Agents list until each exits.
+  const runningShells = useBackgroundShellStore((state) => state.booksByWorkspaceId[props.workspaceId]?.running);
+  const backgroundShells = useMemo(() => sessionBackgroundShells(runningShells, props.sessionId), [runningShells, props.sessionId]);
+  const composerBackgroundTasksEnabled = useDesktopFeature("composerBackgroundTasks");
+  const backgroundTasksShown = composerBackgroundTasksEnabled && backgroundShells.length > 0 && !archived;
 
   useEffect(() => {
     if (!hasFullHistory || admissionOutcome !== "unresolved") {
@@ -3936,6 +3944,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
                         activityStatus={effectiveActivityStatus}
                         retryStatus={liveStatus.type === "retry" ? liveStatus : null}
                         syncHealth={runSyncHealth}
+                        backgroundTasksInComposer={composerBackgroundTasksEnabled}
                       />
                     </MessageListProvider>
                   </EnvironmentVariableProvider>
@@ -4097,9 +4106,9 @@ export function SessionSurface(props: SessionSurfaceProps) {
         pastedText={pasteParts}
         onExpandPastedText={handleExpandPastedText}
         onRemovePastedText={handleRemovePastedText}
-          compactTopSpacing={Boolean(composerQuestion || (props.todos ?? []).some((todo) => todo.content.trim()) || props.activePermission || computerRequest || queuedItems.length > 0 || subagentTrackerShown)}
+          compactTopSpacing={Boolean(composerQuestion || (props.todos ?? []).some((todo) => todo.content.trim()) || props.activePermission || computerRequest || queuedItems.length > 0 || subagentTrackerShown || backgroundTasksShown)}
           topAccessory={
-            composerQuestion || (props.todos ?? []).some((todo) => todo.content.trim()) || props.activePermission || computerRequest || queuedItems.length > 0 || subagentTrackerShown ? (
+            composerQuestion || (props.todos ?? []).some((todo) => todo.content.trim()) || props.activePermission || computerRequest || queuedItems.length > 0 || subagentTrackerShown || backgroundTasksShown ? (
               <div>
                 {queuedItems.length > 0 ? (
                   <QueuedMessagesPanel
@@ -4126,6 +4135,13 @@ export function SessionSurface(props: SessionSurfaceProps) {
                       owner: remoteTrackerOwner,
                       onOpen: props.onOpenRemoteTask ? openRemoteTask : undefined,
                     } : undefined}
+                  />
+                ) : null}
+                {backgroundTasksShown ? (
+                  <ComposerBackgroundTasks
+                    shells={backgroundShells}
+                    syncDegraded={runSyncHealth.degraded}
+                    belowAgents={subagentTrackerShown}
                   />
                 ) : null}
                 {composerQuestion ? (

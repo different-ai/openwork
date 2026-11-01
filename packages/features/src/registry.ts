@@ -137,6 +137,17 @@ export const FEATURES = defineFeatures({
     deployments: everywhere,
     default: false,
   },
+  composerBackgroundTasks: {
+    label: "Desktop: background tasks on the composer",
+    description: "Commands the agent leaves running in the background are listed on top of the composer, under the Agents list, with how long each has run, instead of a count in the chat.",
+    category: "experience",
+    added: "2026-11-01",
+    since: "2026-11",
+    author: "benjaminshafii",
+    docs: "docs/features/composer-background-tasks/README.md",
+    deployments: everywhere,
+    default: false,
+  },
   administratorRecovery: {
     label: "Deploy-time administrator recovery",
     description: "Run a one-time, operator-selected Admin-team permission repair at deployment; disabling stops future repairs, not existing grants.",

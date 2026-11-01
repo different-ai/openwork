@@ -91,6 +91,16 @@
               ],
               "description": "Desktop: settle finished sessions: Finished sessions can be settled into a collapsed Settled row at the end of their workspace, by hand or after a few idle days, and come back on new activity. Renders DEN_FEATURE_SETTLED_SESSIONS."
             },
+            "composerBackgroundTasks": {
+              "enum": [
+                "",
+                "true",
+                "false",
+                true,
+                false
+              ],
+              "description": "Desktop: background tasks on the composer: Commands the agent leaves running in the background are listed on top of the composer, under the Agents list, with how long each has run, instead of a count in the chat. Renders DEN_FEATURE_COMPOSER_BACKGROUND_TASKS."
+            },
             "administratorRecovery": {
               "enum": [
                 "",
