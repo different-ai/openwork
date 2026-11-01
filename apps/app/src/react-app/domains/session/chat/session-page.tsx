@@ -56,6 +56,7 @@ import { WorkbenchPanelGroup, PRIMARY_PANEL_ID, SECONDARY_PANEL_ID } from "./wor
 import ProviderAuthModal, { type ProviderAuthModalProps } from "../../connections/provider-auth/provider-auth-modal";
 import { RenameSessionModal } from "../modals/rename-session-modal";
 import { AppSidebar } from "../sidebar/app-sidebar";
+import { WorkbenchPaneStatus } from "./workbench-pane-status";
 import { MainSidebarControls } from "../sidebar/sidebar-chrome";
 import { MobileChatActions, MobileChatNavigation } from "./mobile-chat-navigation";
 import { useSessionManagementStore } from "../sidebar/session-management-store";
@@ -352,6 +353,8 @@ function WorkbenchPaneHeader(props: {
   onFocus: () => void;
   onClose: () => void;
   onExpand?: () => void;
+  status?: string;
+  attentionLabel?: string;
 }) {
   const title = props.session.title?.trim() || t("session.default_title");
   return (
@@ -361,6 +364,7 @@ function WorkbenchPaneHeader(props: {
       data-workbench-pane-workspace-name={props.workspaceTitle}
     >
       <button type="button" className="flex min-w-0 flex-1 items-center gap-2 text-left text-xs" onClick={props.onFocus}>
+        {props.pane === "secondary" ? <WorkbenchPaneStatus status={props.status} attentionLabel={props.attentionLabel} /> : null}
         <span className="truncate" title={title}>{title}</span>
         {props.showWorkspace ? <span className="truncate text-muted-foreground">{props.workspaceTitle}</span> : null}
       </button>
@@ -1953,6 +1957,8 @@ export function SessionPage(props: SessionPageProps) {
                               onFocus={() => focusWorkbenchPane("secondary")}
                               onClose={closeSecondaryWorkbenchPane}
                               onExpand={splitSession.draftDestination ? undefined : closePrimaryWorkbenchPane}
+                              status={props.sidebar.sessionStatusById[splitSession.sessionId]}
+                              attentionLabel={props.sidebar.sessionAttentionLabelById?.[splitSession.sessionId]}
                             />
                             {pendingSideConversation && pendingSideConversation.scope === props.newTaskComposer?.draftScope ? (
                               <PendingConversationView conversation={pendingSideConversation} composer={props.newTaskComposer ?? null} />

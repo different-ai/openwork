@@ -167,6 +167,7 @@ import {
 } from "./sidebar-lanes";
 import { WorkspaceAvatarPicker } from "./workspace-avatar-picker";
 import { isSameWorkbenchSession, useWorkbenchStore } from "../chat/workbench-store";
+import { shouldHideAttachedSideChat } from "./side-chat-status";
 import { SidebarDestination } from "./sidebar-destination";
 import { SessionTitle } from "./session-title";
 import { isKeyboardFocus } from "./session-title-marquee";
@@ -1111,7 +1112,7 @@ function GlobalPinnedSessions({ entries }: { entries: GlobalPinnedSessionEntry[]
   );
 }
 
-const SIDEBAR_VIEWS: SidebarView[] = ["feed", "workspaces"];
+const SIDEBAR_VIEWS: SidebarView[] = ["workspaces", "feed"];
 
 const SIDEBAR_HEADER_ICON_BUTTON = "flex size-5 items-center justify-center rounded text-muted-foreground/60 transition-colors hover:bg-sidebar-accent hover:text-foreground disabled:pointer-events-none disabled:opacity-50 data-popup-open:bg-sidebar-accent data-popup-open:text-foreground";
 
@@ -2645,7 +2646,7 @@ export function SessionMenuItem({
     </SidebarMenuSubItem>
   );
 
-  if (attachedAsSideChat && !isSelected) return null;
+  if (shouldHideAttachedSideChat(attachedAsSideChat, isSelected, sessionActivityStatus)) return null;
   if (subtitle || workspaceName) return item;
   return (
     <>
