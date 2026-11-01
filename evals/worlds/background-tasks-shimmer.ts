@@ -3,6 +3,7 @@ import { join } from "node:path";
 import { allocateFreePorts } from "@openwork/cdp";
 import type { Seed } from "@openwork/env";
 import { configureProvider } from "./chat.ts";
+import { enableOrganizationCapabilities } from "./organization-capabilities.ts";
 
 /** One command the agent leaves running, and how its run ends. */
 type BackgroundJob = { name: string; command: string; output: string; prompt: string; started: string; wake: string };
@@ -19,7 +20,7 @@ function job(name: string, output: string, prompt: string, started: string, wake
  * waits until the world releases it; when it ends, the engine wakes the agent
  * with its output and the model replies.
  */
-export async function backgroundTasksShimmer(seed: Seed) {
+export async function backgroundTasksShimmer(seed: Seed, options: { composerList?: boolean } = {}) {
   const engine = "v2";
   const dir = seed.tmpPath("background-tasks-shimmer");
   await mkdir(join(dir, "scripts"), { recursive: true });
@@ -41,6 +42,7 @@ export async function backgroundTasksShimmer(seed: Seed) {
   const [webPort] = await allocateFreePorts(1);
   if (!webPort) throw new Error("No app-web port available for the background tasks world");
   const den = await seed.den({ trustedOrigins: [`http://127.0.0.1:${webPort}`] });
+  if (options.composerList) await enableOrganizationCapabilities(seed, den.admin, { composerBackgroundTasks: true });
 
   const providerId = "background-shell-mock";
   const modelId = "background-shell-model";
@@ -71,4 +73,9 @@ export async function backgroundTasksShimmer(seed: Seed) {
     /** Let one command finish; it prints its output and exits 0. */
     release: (item: BackgroundJob) => writeFile(join(workspacePath, ".release", item.name), "go\n"),
   };
+}
+
+/** The same member with `composerBackgroundTasks` on: running commands are listed on the composer. */
+export function backgroundTasksComposer(seed: Seed) {
+  return backgroundTasksShimmer(seed, { composerList: true });
 }

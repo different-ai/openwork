@@ -18,7 +18,8 @@ import type { BackgroundShell } from "@/react-app/domains/session/status/backgro
 
 const COMMAND_PREVIEW_LENGTH = 80
 
-function commandPreview(command: string): string {
+/** One line of a command, cut to fit a row. */
+export function commandPreview(command: string): string {
   const oneLine = command.replace(/\s+/g, " ").trim()
   return oneLine.length > COMMAND_PREVIEW_LENGTH ? `${oneLine.slice(0, COMMAND_PREVIEW_LENGTH - 1)}…` : oneLine
 }

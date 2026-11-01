@@ -28,6 +28,7 @@ config:
   features:
     autoRouter: ""                # default off (cloud only) · Admins create Smart Routers for everyone, teams or people, listing AI Gateway models and the tasks each handles. Members pick "Smart: <name>": each prompt goes to the model whose tasks fit it best, at the thinking level it needs.
     settledSessions: ""           # default off · Finished sessions can be settled into a collapsed Settled row at the end of their workspace, by hand or after a few idle days, and come back on new activity.
+    composerBackgroundTasks: ""   # default off · Commands the agent leaves running in the background are listed on top of the composer, under the Agents list, with how long each has run, instead of a count in the chat.
     administratorRecovery: ""     # default off · Run a one-time, operator-selected Admin-team permission repair at deployment; disabling stops future repairs, not existing grants.
     nativeDictation: ""           # default off · Dictate editable prompts in OpenWork and Workbot using native desktop dictation or live browser speech recognition.
     connectionMcpServers: ""      # default off · Members can add one connected service, such as Gmail or Linear, to an agent like Claude Code as its own MCP server that lists only that service's tools.
