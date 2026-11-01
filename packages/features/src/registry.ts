@@ -104,6 +104,17 @@ function defineFeatures<const T extends Record<string, FeatureDefinition>>(featu
 const everywhere = ["cloud", "self_hosted"] as const
 
 export const FEATURES = defineFeatures({
+  googleCalendarRecurrence: {
+    label: "Google Calendar recurring meetings",
+    description: "Create and change recurring meeting series through the native Google Calendar capabilities.",
+    category: "connect",
+    added: "2026-11-01",
+    since: "2026-11",
+    author: "benjaminshafii",
+    docs: "docs/features/google-calendar-recurrence/README.md",
+    deployments: everywhere,
+    default: false,
+  },
   autoRouter: {
     label: "AI Gateway: Smart Model Router",
     description: "Admins create Smart Routers for everyone, teams or people, listing AI Gateway models and the tasks each handles. Members pick \"Smart: <name>\": each prompt goes to the model whose tasks fit it best, at the thinking level it needs.",

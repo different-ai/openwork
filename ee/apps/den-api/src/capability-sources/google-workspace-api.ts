@@ -40,6 +40,8 @@ export type GoogleWorkspaceCalendarEvent = {
   htmlLink: string
   attendees: string[]
   meetLink: string | null
+  recurringEventId: string | null
+  recurrence: string[] | null
 }
 
 export type GoogleWorkspaceDriveFile = {
@@ -400,6 +402,8 @@ export function extractCalendarEvents(json: unknown): GoogleWorkspaceCalendarEve
       htmlLink: readString(item, "htmlLink"),
       attendees,
       meetLink: calendarEventMeetLink(item),
+      recurringEventId: readString(item, "recurringEventId") || null,
+      recurrence: Array.isArray(item.recurrence) ? item.recurrence.filter((line): line is string => typeof line === "string") : null,
     })
   }
   return events
