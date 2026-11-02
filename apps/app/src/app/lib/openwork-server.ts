@@ -1477,6 +1477,9 @@ const resolveFetch = (url?: string) => {
 
 const DEFAULT_OPENWORK_SERVER_TIMEOUT_MS = 10_000;
 const ENGINE_RELOAD_TIMEOUT_MS = 60_000;
+// The upload deadline grows with the file, so a slow connection can finish a
+// large one while a stalled upload still fails.
+const UPLOAD_MIN_BYTES_PER_SECOND = 256 * 1024;
 
 type FetchLike = (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>;
 
@@ -1593,10 +1596,10 @@ async function requestAgentContextDiagnosticsJson(
   return result.payload;
 }
 
-async function requestMultipartRaw(
+async function requestUploadRaw(
   baseUrl: string,
   path: string,
-  options: { method?: string; token?: string; hostToken?: string; body?: FormData; timeoutMs?: number } = {},
+  options: { method?: string; token?: string; hostToken?: string; body?: FormData | File; contentType?: string; timeoutMs?: number } = {},
 ): Promise<{ ok: boolean; status: number; text: string }>{
   const url = `${baseUrl}${path}`;
   const fetchImpl = resolveFetch(url);
@@ -1605,7 +1608,7 @@ async function requestMultipartRaw(
     url,
     {
       method: options.method ?? "POST",
-      headers: buildAuthHeaders(options.token, options.hostToken),
+      headers: buildAuthHeaders(options.token, options.hostToken, options.contentType ? { "Content-Type": options.contentType } : undefined),
       body: options.body,
     },
     options.timeoutMs ?? DEFAULT_OPENWORK_SERVER_TIMEOUT_MS,
@@ -2359,7 +2362,7 @@ export function createOpenworkServerClient(options: { baseUrl: string; token?: s
       form.append("file", file);
       form.append("mode", selection ? "import" : "preview");
       if (selection) form.append("ids", JSON.stringify(selection.importIds));
-      const result = await requestMultipartRaw(baseUrl, `/workspace/${encodeURIComponent(workspaceId)}/claude-import/export`, {
+      const result = await requestUploadRaw(baseUrl, `/workspace/${encodeURIComponent(workspaceId)}/claude-import/export`, {
         token,
         hostToken,
         method: "POST",
@@ -2383,16 +2386,25 @@ export function createOpenworkServerClient(options: { baseUrl: string; token?: s
       if (!id) throw new Error("workspaceId is required");
       if (!file) throw new Error("file is required");
       const uploadPath = `/workspace/${encodeURIComponent(id)}/inbox`;
-      const form = new FormData();
-      form.append("file", file);
-      if (options?.path?.trim()) form.append("path", options.path.trim());
-      const result = await requestMultipartRaw(baseUrl, uploadPath, {
+      const targetPath = options?.path?.trim() || file.name;
+      const request = {
         token,
         hostToken,
         method: "POST",
-        body: form,
-        timeoutMs: timeouts.binary,
+        timeoutMs: Math.max(timeouts.binary, (file.size / UPLOAD_MIN_BYTES_PER_SECOND) * 1000),
+      };
+      let result = await requestUploadRaw(baseUrl, `${uploadPath}?path=${encodeURIComponent(targetPath)}`, {
+        ...request,
+        contentType: "application/octet-stream",
+        body: file,
       });
+      // Workers that have not updated yet accept only multipart.
+      if (result.status === 400 && result.text.includes("Expected multipart/form-data")) {
+        const form = new FormData();
+        form.append("file", file);
+        form.append("path", targetPath);
+        result = await requestUploadRaw(baseUrl, uploadPath, { ...request, body: form });
+      }
 
       if (!result.ok) {
         let message = result.text.trim();
