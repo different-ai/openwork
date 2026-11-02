@@ -184,14 +184,14 @@ function CredentialRequest({ sessionId, request, credential }: { sessionId: stri
             <div className="text-[13px] font-medium leading-5 text-dls-text">Enter your password or code {site ? "on" : "in"} <span dir="ltr" style={{ unicodeBidi: "bidi-override" }} className="break-all font-mono" data-testid="session-computer-credential-site">{name ? <>{name.parts} (</> : null}{id.parts}{name ? ")" : null}</span>?</div>
             <div className="mt-0.5 text-[12px] leading-5 text-dls-secondary">{site
               ? "The agent types what you gave it into this site's sign-in field. Check the address is the site you meant; any other site asks again."
-              : `The agent types what you gave it into this app on ${request.computer}. Any other app asks again.`}</div>
+              : `The agent types what you gave it into this app on ${request.computer}. It asks again each time.`}</div>
             {hidden ? <div className="mt-2 text-[12px] font-medium leading-5 text-amber-11" data-testid="session-computer-credential-hidden">This name has {hidden === 1 ? "1 hidden character" : `${hidden} hidden characters`}, shown as &lt;U+…&gt;. Don't enter anything unless you expected that.</div> : null}
             {error ? <div role="alert" className="mt-1 text-[12px] leading-5 text-red-11">{error}</div> : null}
           </div>
         </div>
         <div className="flex flex-wrap items-center justify-end gap-2">
           <Button type="button" variant="ghost" size="sm" disabled={busy !== null} aria-busy={busy === "dismiss"} data-testid="session-computer-credential-dismiss" onClick={() => void answer("dismiss")}>Don't enter</Button>
-          <Button type="button" variant="outline" size="sm" disabled={busy !== null} aria-busy={busy === "always"} data-testid="session-computer-credential-always" onClick={() => void answer("always")}>Always for this {site ? "site" : "app"} in this chat</Button>
+          {request.standing !== false ? <Button type="button" variant="outline" size="sm" disabled={busy !== null} aria-busy={busy === "always"} data-testid="session-computer-credential-always" onClick={() => void answer("always")}>Always for this site in this chat</Button> : null}
           <Button type="button" size="sm" disabled={busy !== null} aria-busy={busy === "allow"} data-testid="session-computer-credential-allow" onClick={() => void answer("allow")}>Enter</Button>
         </div>
       </div>

@@ -989,13 +989,21 @@ test("text marked secret goes only to an app the person confirmed, where no fiel
   assert.equal(payload(await declined).code, "credential_declined");
   assert.equal(f.acts().length, 0, "A declined secret never reaches the computer");
   const allowed = typeInto(f.control, { type: "type", text: "given-password", secret: true });
-  await f.answer("com.example.editor", "always");
+  await f.answer("com.example.editor", "allow");
   assert.equal(payload(await allowed).status, "dispatched");
   // One question covered both the mark and the helper's own check, and the mark never reaches it.
   assert.equal(f.cards().length, 2);
   assert.ok(f.acts().every((args) => !("secret" in args.action)));
-  assert.equal(payload(await typeInto(f.control, { type: "type", text: "given-password", secret: true })).status, "dispatched");
-  assert.equal(f.cards().length, 2, "Always covers this app in this chat");
+  // Another program can carry the same id, so an app never gets a standing approval.
+  assert.equal(f.cards().at(-1).standing, false);
+  const again = typeInto(f.control, { type: "type", text: "given-password", secret: true });
+  await f.answer("com.example.editor", "always");
+  assert.equal(payload(await again).status, "dispatched");
+  const asked = f.cards().length;
+  const third = typeInto(f.control, { type: "type", text: "given-password", secret: true });
+  await f.answer("com.example.editor", "dismiss");
+  assert.equal(payload(await third).code, "credential_declined");
+  assert.equal(f.cards().length, asked + 1, "An app is asked about every time, even after an always answer");
 });
 
 test("a browser app never takes a password: the site cannot be confirmed there", async (t) => {

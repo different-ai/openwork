@@ -126,10 +126,15 @@ test("a given password is filled only on the site the person confirms, and never
   field.focus = () => { document.activeElement = field; url = "https://elsewhere.example/"; };
   assert.equal((await fill(host, given)).code, "page_changed");
   assert.equal(field.value, "");
-  delete field.focus; url = "https://example.com/login";
+  // Enter on the page it landed on would submit what the browser autofilled there.
+  url = "https://example.com/login"; document.activeElement = null;
+  field.matches = selector => selector.includes('input[type="password"]') || selector.startsWith("input,textarea");
+  assert.equal((await press(host)).code, "page_changed");
+  assert.deepEqual(keysSent, []);
+  delete field.matches; delete field.focus; url = "https://example.com/login";
   const filled = await fill(host, given);
   assert.equal(filled.ok, true, JSON.stringify(filled));
-  assert.deepEqual(asked, Array(4).fill(["chat", "https://example.com"]), "The person confirms the exact origin");
+  assert.deepEqual(asked, Array(5).fill(["chat", "https://example.com"]), "The person confirms the exact origin");
   assert.equal(field.value, given);
   assert.equal(filled.control.filled, true);
   assert.equal(filled.control.value, undefined);

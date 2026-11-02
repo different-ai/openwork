@@ -982,6 +982,9 @@ export function createBrowserTaskHost({ getTab, tabsFor, ownerOf, activeFor, isV
         // that fills its field or presses a key in it: Enter can submit what the browser
         // autofilled, and a click earlier in a batch can focus the field.
         let confirmedSite = null;
+        // Taking focus gives a page a moment to leave: nothing goes out unless it is still on that site.
+        const leftConfirmedSite = () => confirmedSite !== null && originOf(contents.getURL()) !== confirmedSite;
+        const LEFT_SITE = "The page left the site the person confirmed, so nothing was sent to it.";
         for (const [index, action] of actions.entries()) {
           checkNavigation(navigationScope);
           if (!confirmedSite && observed.url === contents.getURL() && (action.type === "key" || action.type === "fill" && action.text)
@@ -1024,13 +1027,16 @@ export function createBrowserTaskHost({ getTab, tabsFor, ownerOf, activeFor, isV
           if (sent) observed.sent.add(sent);
           const since = Date.now();
           if (["click", "key", "scroll"].includes(action.type)) await isolated(contents, readSettle, true).catch(() => null);
+          if (action.type === "key" && leftConfirmedSite()) {
+            if (!steps.length) fail("page_changed", LEFT_SITE);
+            interrupted = "page_changed";
+            break;
+          }
           if (action.type === "fill" || action.type === "select") {
             const prepared = await isolated(contents, applyFormAction, action);
             if (action.type === "fill" && !prepared.inserted) {
-              // Taking focus gave the page a moment to leave: nothing is typed unless the
-              // page is still on the site the person confirmed.
-              if (confirmedSite && originOf(contents.getURL()) !== confirmedSite) {
-                if (!steps.length) fail("page_changed", "The page changed before the password or code was typed. Nothing was typed.");
+              if (leftConfirmedSite()) {
+                if (!steps.length) fail("page_changed", LEFT_SITE);
                 interrupted = "page_changed";
                 break;
               }

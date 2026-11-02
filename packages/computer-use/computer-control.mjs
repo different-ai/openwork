@@ -307,6 +307,8 @@ export function createComputerControl({ adapters, runProgram, runScript, onTimin
    * browser (`site`, an exact origin) or into a native app (`app`, its id). The person
    * confirms that recipient, so a credential given for one never reaches another
    * (a redirect, a lookalike, a window the agent was steered to) without their yes.
+   * "Always" covers one exact site. An app is asked about every time: another program
+   * can carry the same id, so nothing standing may rest on it.
    * @param {{ site?: string, app?: string, label?: string }} recipient
    * @returns {Promise<"allow" | "always" | "dismiss" | "aborted" | "timeout" | "busy" | "too_many">}
    */
@@ -314,14 +316,13 @@ export function createComputerControl({ adapters, runProgram, runScript, onTimin
     const { site, app, label } = recipient;
     const shown = site ?? label ?? app;
     if (!(site || app) || !shown || shown.length > 200) return "too_many";
-    const key = site ? `site:${site}` : `app:${app}`;
-    if (grant.credentialsAlwaysFor?.has(key)) return "always";
+    if (site && grant.credentialsAlwaysFor?.has(site)) return "always";
     if (scriptRequests.has(grant.sessionId)) return "busy";
     const target = targetFor(grant);
     // An app's name can be copied by another app; its id is shown beside it.
     const answer = await approve(grant, { id: randomUUID(), reason: /** @type {const} */ ("credential"), computer: target.label, placement: target.placement,
-      credential: site ? { site } : { app: shown, appId: app } }, signal);
-    if (answer === "always") (grant.credentialsAlwaysFor ??= new Set()).add(key);
+      ...(site ? { credential: { site } } : { standing: false, credential: { app: shown, appId: app } }) }, signal);
+    if (site && answer === "always") (grant.credentialsAlwaysFor ??= new Set()).add(site);
     return answer;
   }
   /** One in-chat approval at a time per chat; answered through answerRequest. */
