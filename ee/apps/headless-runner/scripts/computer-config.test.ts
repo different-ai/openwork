@@ -46,6 +46,9 @@ test("the sandbox gateway is its own setting, off unless chosen, and needs its U
     { kind: config.computerGateway?.kind, url: config.computerGateway?.url, template: config.computerGateway?.template, scope: config.computerGateway?.scope },
     { kind: "differently", url: "https://gateway.example.com", template: "workbot-computer", scope: "cell-a" },
   )
+  assert.equal(config.computerGateway?.idlePauseMs, 300_000)
+  const patient = loadConfig({ ...env, HEADLESS_COMPUTER: "freestyle", FREESTYLE_API_KEY: "test", SANDBOX_GATEWAY_URL: "https://gateway.example.com", SANDBOX_GATEWAY_API_KEY: "k", SANDBOX_GATEWAY_TEMPLATE: "t", SANDBOX_GATEWAY_PAUSE_SECONDS: "1800" })
+  assert.deepEqual([patient.computerGateway?.idlePauseMs, patient.computer?.idlePauseMs], [1_800_000, 300_000])
   // A gateway alone is enough: only conversations with the setting on get a computer.
   assert.equal(loadConfig({ ...env, SANDBOX_GATEWAY_URL: "http://127.0.0.1:8080", SANDBOX_GATEWAY_API_KEY: "k", SANDBOX_GATEWAY_TEMPLATE: "t" }).computer, undefined)
   assert.throws(() => loadConfig({ ...base, HEADLESS_COMPUTER: "differently" }))

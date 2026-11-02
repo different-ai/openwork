@@ -39,6 +39,11 @@ export const KEY_LABEL = "openwork.sandbox.key"
 const IDLE_LABEL = "openwork.sandbox.idle-minutes"
 const LIVE = "queued,provisioning,running,paused,stopped,terminating"
 const DEFAULT_PERSISTENT_TTL_MINUTES = 365 * 1440
+/**
+ * How long one pause, resume or stop request stays open. Differently finishes a change after its caller stops waiting,
+ * and a Fast Sandbox checkpoint takes minutes, so the rest of the wait polls: hosts cut requests that long.
+ */
+const LIFECYCLE_REQUEST_MS = 30_000
 
 type Sandbox = { id: string; status: string; statusReason?: string; region?: string; labels?: Record<string, string> }
 type ErrorBody = { error?: { code?: string; message?: string } }
@@ -173,6 +178,16 @@ export function createDifferentlyProvider(options: DifferentlyProviderOptions, d
       await sleep(poll)
     }
   }
+  /** Asks for a lifecycle change; the caller then waits on the sandbox's status, which also covers a change someone else finished. */
+  async function ask(sandboxId: string, action: "pause" | "resume" | "start" | "stop", timeoutMs: number) {
+    try { await call("POST", path(sandboxId, `/${action}`), { timeoutMs: Math.min(timeoutMs, LIFECYCLE_REQUEST_MS) }) }
+    catch (error) { if (!(error instanceof SandboxError) || (error.code !== "timeout" && error.code !== "conflict")) throw error }
+  }
+  async function pause(sandboxId: string, timeoutMs: number) {
+    const deadline = now() + timeoutMs
+    await ask(sandboxId, "pause", timeoutMs)
+    await settle(sandboxId, ["paused"], Math.max(1, deadline - now()))
+  }
   async function live(sandboxId: string): Promise<Sandbox> {
     const s = await read(sandboxId)
     if (!s || s.status === "terminated") throw new SandboxError({ providerId: id, code: "not_found", message: `Sandbox ${sandboxId} no longer exists` })
@@ -258,8 +273,8 @@ export function createDifferentlyProvider(options: DifferentlyProviderOptions, d
     async start(h, opts) {
       const deadline = now() + opts.timeoutMs
       const s = await live(identity(h.ref))
-      if (s.status === "paused") await call("POST", path(s.id, "/resume"), { timeoutMs: opts.timeoutMs })
-      else if (s.status === "stopped") await call("POST", path(s.id, "/start"), { timeoutMs: opts.timeoutMs })
+      if (s.status === "paused") await ask(s.id, "resume", opts.timeoutMs)
+      else if (s.status === "stopped") await ask(s.id, "start", opts.timeoutMs)
       await running(s.status === "running" ? s : await live(s.id), Math.max(1, deadline - now()))
       // A computer's idle clock restarts when it resumes: the backend deletes it N minutes after its last use.
       const minutes = Number(s.labels?.[IDLE_LABEL])
@@ -270,12 +285,12 @@ export function createDifferentlyProvider(options: DifferentlyProviderOptions, d
       if (s.status === "stopped" || s.status === "paused") return
       const sandboxId = s.id
       if (lifecycle && !lifecycle.stop && !lifecycle.pause) unsupported("stopping or pausing on these pools")
-      if (lifecycle && !lifecycle.stop) return void await call("POST", path(sandboxId, "/pause"), { timeoutMs: opts.timeoutMs })
+      if (lifecycle && !lifecycle.stop) return pause(sandboxId, opts.timeoutMs)
       try { await call("POST", path(sandboxId, "/stop"), { timeoutMs: opts.timeoutMs }) }
       catch (error) {
         // OpenSandbox has no stop; pausing keeps memory as well as the disk.
         if (!(error instanceof SandboxError) || error.code !== "invalid_state") throw error
-        await call("POST", path(sandboxId, "/pause"), { timeoutMs: opts.timeoutMs })
+        await pause(sandboxId, opts.timeoutMs)
       }
     },
     async destroy(h, opts) {
@@ -330,12 +345,12 @@ export function createDifferentlyProvider(options: DifferentlyProviderOptions, d
           // Discovered after hosts read the block (wrappers copy it): pools that can only stop do that, keeping the disk.
           if (lifecycle && !lifecycle.pause) {
             if (!lifecycle.stop) unsupported("pausing or stopping on these pools")
-            await call("POST", path(sandboxId, "/stop"), { timeoutMs: opts.timeoutMs })
-            await settle(sandboxId, ["stopped"], opts.timeoutMs)
+            const deadline = now() + opts.timeoutMs
+            await ask(sandboxId, "stop", opts.timeoutMs)
+            await settle(sandboxId, ["stopped"], Math.max(1, deadline - now()))
             return
           }
-          await call("POST", path(sandboxId, "/pause"), { timeoutMs: opts.timeoutMs })
-          await settle(sandboxId, ["paused"], opts.timeoutMs)
+          await pause(sandboxId, opts.timeoutMs)
         },
       }),
       snapshots: {

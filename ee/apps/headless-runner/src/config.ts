@@ -118,6 +118,7 @@ const configSchema = z.object({
   /** The gateway's template for Workbot's computer image (Differently maps it to each provider's own image). */
   SANDBOX_GATEWAY_TEMPLATE: z.string().min(1).optional(),
   HEADLESS_COMPUTER_PAUSE_SECONDS: z.coerce.number().int().min(10).default(300),
+  SANDBOX_GATEWAY_PAUSE_SECONDS: z.coerce.number().int().min(10).optional(),
   HEADLESS_COMPUTER_KEEP_DAYS: z.coerce.number().int().min(1).max(365).default(14),
   /** true keeps each conversation's computer (paused, memory intact) until removed, instead of deleting it after KEEP_DAYS unused. */
   HEADLESS_COMPUTER_PERSISTENT: z.enum(["true", "false"]).default("false"),
@@ -294,7 +295,7 @@ function gatewayConfig(value: z.infer<typeof configSchema>): Config["computerGat
     template: value.SANDBOX_GATEWAY_TEMPLATE!,
     scope: value.HEADLESS_COMPUTER_SCOPE,
     desktop: value.HEADLESS_COMPUTER_DESKTOP === "true",
-    idlePauseMs: value.HEADLESS_COMPUTER_PAUSE_SECONDS * 1000,
+    idlePauseMs: (value.SANDBOX_GATEWAY_PAUSE_SECONDS ?? value.HEADLESS_COMPUTER_PAUSE_SECONDS) * 1000,
     keepDays: value.HEADLESS_COMPUTER_KEEP_DAYS,
     persistent: value.HEADLESS_COMPUTER_PERSISTENT === "true",
   }

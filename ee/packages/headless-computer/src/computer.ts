@@ -42,6 +42,11 @@ const GUEST_PATH = "/home/ubuntu/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/
 const MAX_COMMAND_SECONDS = 300
 /** A microVM pause writes a full checkpoint of disk and memory: about three minutes for a desktop on Fast Sandbox. */
 export const PAUSE_TIMEOUT_MS = 5 * 60_000
+/**
+ * Resuming on a node that no longer holds the computer's checkpoint fetches it first: over two minutes on Fast Sandbox.
+ * Stays inside the three minutes Workbot gives a desktop request.
+ */
+const START_TIMEOUT_MS = 170_000
 const DEFAULT_COMMAND_SECONDS = 120
 /** Each of stdout and stderr is cut to its last this-many characters: errors and results are at the end. */
 const OUTPUT_TAIL_CHARS = 30_000
@@ -290,7 +295,7 @@ export class Computers {
   }
 
   private resolve(sessionId: string): Promise<SandboxHandle> {
-    return ensureRunning(this.provider, this.spec(sessionId), { timeoutMs: 120_000 })
+    return ensureRunning(this.provider, this.spec(sessionId), { timeoutMs: START_TIMEOUT_MS })
   }
 
   private execute(box: SandboxHandle, spec: RunSpec) {
