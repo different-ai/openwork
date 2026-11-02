@@ -1,0 +1,98 @@
+---
+title: "Spend limits"
+description: "Cap AI spend per day, week, or month for everyone, a team, or one person. Pause or warn when a limit runs out, and approve requests for more."
+keywords: ["spend limits", "usage limits", "budget", "team budget", "AI Gateway", "cost control", "increase request"]
+---
+
+Give people a daily, weekly, or monthly USD allowance for models in the AI Gateway. Limits apply to providers that use an organization key. Members' own keys aren't priced or limited by OpenWork.
+
+## Set a limit
+
+<Steps>
+  <Step title="Open Limits">
+    In the OpenWork Cloud dashboard, open `AI Gateway` > `Limits` and click `New limit`.
+  </Step>
+  <Step title="Pick a provider">
+    Keep `Providers without their own limit` for a default limit, or pick one provider. See [Provider limits](#provider-limits).
+  </Step>
+  <Step title="Choose who it applies to">
+    Keep `Everyone in the organization`, or turn it off and use `Add team` or `Add person`. Teams include people who join later.
+  </Step>
+  <Step title="Set the amounts">
+    Under `How much, for each person`, turn on `Per day`, `Per week`, `Per month`, or any mix. Whichever runs out first applies.
+    <Frame>
+      <img src="https://b8tgacyg507ru26g.public.blob.vercel-storage.com/docs/ai-gateway/2026-09/new-spend-limit-MVlmRqN5nFVJM5LcyTW7iFvPSo80Ox.png" alt="New spend limit: Design team, $20 a day and $300 a month" />
+    </Frame>
+  </Step>
+  <Step title="Choose what happens at the limit">
+    Under `When someone reaches it`, pick `Pause their models` or `Only warn`. Turn on `Let them ask for 25% more` to allow increase requests.
+  </Step>
+  <Step title="Save">
+    Click `Save limit`.
+  </Step>
+</Steps>
+
+## How limits combine
+
+- **Amounts are per person.** A team limit of $300 a month gives each team member $300. It isn't a shared pool.
+- **The highest amount wins.** If someone is covered by more than one limit, such as everyone in the org at $100 a month and their team at $300 a month, they get $300. Each period (day, week, month) is compared on its own.
+- **Ties** go to the limit that pauses, then the one that allows increase requests.
+
+To give one team more room, keep a lower limit for everyone and add a higher limit for that team.
+
+## Provider limits
+
+A limit for one provider replaces the default for that provider. People with a provider limit count that provider's spend only toward it, not toward their default limit. Other providers still use the default.
+
+Use this to cap an expensive provider separately, for example $50 a month on Anthropic while everything else shares the default.
+
+## When someone reaches a limit
+
+| Choice | What happens |
+| --- | --- |
+| `Pause their models` | Gateway requests stop until the limit resets or you approve more. |
+| `Only warn` | Requests keep working and the limit shows as over. |
+| `Let them ask for 25% more` | The person can request more. You approve or deny it in `Limits`. |
+
+In the desktop app, the chat says which limit was reached and when it resets. Members see what's left in the account menu and in `Settings` > `Usage`.
+
+Limits reset at 05:00 UTC: daily every day, weekly on Monday, monthly on the 1st. The editor shows the time in your time zone.
+
+## Approve increase requests
+
+Requests appear under `Limit increase requests` in `Limits`, with the person's reason and current usage.
+
+- `Approve 25%` adds 25% of the base amount until that period resets. There's no undo.
+- `Deny` keeps the limit as is.
+
+Past decisions are under `Previous requests`.
+
+## Check someone's usage
+
+In `Limits`, use `Check someone's usage` to open a person's page. It shows each limit that applies to them, what they've used, what's left, and when it resets. Expand `Effective policy and assignment context` to see which limit won and why: everyone in the org, a team, or a direct assignment.
+
+`Users & Teams` shows everyone's providers, limits, and last 31 days of spend.
+
+## Edit or remove a limit
+
+Click `Edit` on a limit to change it, then `Save changes`. Click `Remove` to delete it; use `Undo` on the confirmation to restore it.
+
+## FAQ
+
+<AccordionGroup>
+  <Accordion title="Can I set a budget for a team?">
+    Yes. [Create the team](/cloud/members-and-rbac#create-teams), then add a limit for it. Each member gets the amount. Teams synced from SCIM work the same way.
+  </Accordion>
+  <Accordion title="Can a team share one budget?">
+    No. Amounts are per person. To cap a group's total, set each person's amount to the total divided by the team size.
+  </Accordion>
+  <Accordion title="Do limits cover OpenWork Models?">
+    No. OpenWork Models has its own included usage. See [OpenWork vs OpenCode models](/start-here/connect-your-stack/openwork-vs-opencode-models).
+  </Accordion>
+  <Accordion title="Do limits cover members' own keys?">
+    No. Requests with a person's own key, including LiteLLM keys OpenWork creates, are counted in tokens but not priced or blocked. See [How requests flow](/ai-gateway/how-requests-flow#spend-tracking).
+  </Accordion>
+  <Accordion title="How accurate is spend?">
+    Spend is estimated from reported tokens and model prices, or a provider-reported cost when available. See [Token costs](/ai-gateway/token-costs) and [Counting usage](/ai-gateway/counting-usage).
+  </Accordion>
+</AccordionGroup>
