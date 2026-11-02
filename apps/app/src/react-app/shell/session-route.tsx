@@ -4088,6 +4088,7 @@ export function SessionRoute() {
             <CreatorPage
               workspace={selectedWorkspace}
               openworkServerClient={selectedWorkspaceEndpoint?.client ?? null}
+              onSend={(buildPrompt) => handleCreateTaskWithPrompt(selectedWorkspace.id, buildPrompt)}
             />
           ) : (
             <Empty variant="ghost" className="h-full">

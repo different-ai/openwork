@@ -4,6 +4,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   Blocks,
   FlaskConical,
+  Hammer,
   Plug,
   RefreshCw,
   Save,
@@ -23,6 +24,7 @@ import {
 } from "@/components/ui/empty";
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
+import { Textarea } from "@/components/ui/textarea";
 import { toast } from "@/components/ui/sonner";
 import type {
   OpenworkServerClient,
@@ -39,11 +41,31 @@ import {
 type CreatorPageProps = {
   workspace: RouteWorkspace;
   openworkServerClient: OpenworkServerClient | null;
+  /** Starts an agent session in this workspace with the given build request. */
+  onSend: (prompt: string) => void;
 };
 
-export function CreatorPage({ workspace, openworkServerClient: client }: CreatorPageProps) {
+/** The DSH-style creator loop in one prompt: the agent (which IS the OpenCode
+ * engine) designs, writes, tests and installs the tool into the workspace's
+ * `.opencode/` plugin surface. The engine reloads as those files change. */
+function buildRequestPrompt(request: string): string {
+  return [
+    `Actúa como constructor de herramientas de este workspace (modo Creador). Petición del usuario: ${request.trim()}`,
+    "",
+    "Diseña, escribe, prueba e instala la herramienta directamente, sin pedir permiso para escribir en el workspace:",
+    "1. Elige el tipo correcto y dilo en una línea: plugin de OpenCode (`.opencode/plugin/<slug>.js`, usando la API real de plugins del motor), skill (`.opencode/skill/<slug>/SKILL.md` con frontmatter name/description) o agente (`.opencode/agent/<slug>.md`).",
+    "2. Escribe el fichero completo y funcional — nada de esqueletos ni pseudocódigo.",
+    "3. Pruébalo con el shell cuando sea posible (un smoke test que falle ruidosamente si la herramienta no funciona) y corrige hasta que pase.",
+    "4. Termina con un resumen: qué instalaste, dónde, cómo se usa y cómo se desinstala.",
+    "",
+    "Si la petición es ambigua, elige la interpretación más simple que funcione y documenta las decisiones en el resumen final.",
+  ].join("\n");
+}
+
+export function CreatorPage({ workspace, openworkServerClient: client, onSend }: CreatorPageProps) {
   const queryClient = useQueryClient();
   const workspaceId = workspace.id;
+  const [buildRequest, setBuildRequest] = useState("");
   const [presetName, setPresetName] = useState("");
   const [presets, setPresets] = useState<CreatorPreset[]>(() => listPresets());
   const importInputRef = useRef<HTMLInputElement | null>(null);
@@ -54,17 +76,23 @@ export function CreatorPage({ workspace, openworkServerClient: client }: Creator
     queryKey: compositionKey,
     queryFn: async () => {
       if (!client) throw new Error("not connected");
-      const [skills, plugins, mcp, commands, reloadEvents] = await Promise.all([
+      const [skills, plugins, mcp, commands, reloadEvents, files] = await Promise.all([
         client.listSkills(workspaceId, { includeGlobal: true }),
         client.listPlugins(workspaceId, { includeGlobal: true }),
         client.listMcp(workspaceId),
         client.listCommands(workspaceId, "workspace"),
         client.listReloadEvents(workspaceId),
+        client.listWorkspaceFiles(workspaceId),
       ]);
-      return { skills: skills.items, plugins: plugins.items, mcp: mcp.items, commands: commands.items, reloadEvents: reloadEvents.items };
+      const toolPrefixes = [".opencode/plugin/", ".opencode/skill/", ".opencode/agent/"];
+      const recentToolFiles = (files.items ?? [])
+        .filter((file) => file.kind === "file" && toolPrefixes.some((prefix) => file.path.startsWith(prefix)))
+        .sort((a, b) => (b.mtimeMs ?? 0) - (a.mtimeMs ?? 0))
+        .slice(0, 8);
+      return { skills: skills.items, plugins: plugins.items, mcp: mcp.items, commands: commands.items, reloadEvents: reloadEvents.items, recentToolFiles };
     },
     enabled: Boolean(client && workspaceId),
-    refetchInterval: 30_000,
+    refetchInterval: 15_000,
   });
 
   const invalidate = useCallback(async () => {
@@ -76,6 +104,15 @@ export function CreatorPage({ workspace, openworkServerClient: client }: Creator
   const mcpServers = compositionQuery.data?.mcp ?? [];
   const commands = compositionQuery.data?.commands ?? [];
   const reloadEvents = compositionQuery.data?.reloadEvents ?? [];
+  const recentToolFiles = compositionQuery.data?.recentToolFiles ?? [];
+
+  const startBuild = () => {
+    const request = buildRequest.trim();
+    if (!request) return;
+    onSend(buildRequestPrompt(request));
+    setBuildRequest("");
+    toast.success("El agente está construyendo la herramienta. Sigue la sesión para verla en vivo.");
+  };
 
   const reloadEngine = async () => {
     if (!client) return;
@@ -266,9 +303,34 @@ export function CreatorPage({ workspace, openworkServerClient: client }: Creator
         </Button>
       </div>
       <p className="px-10 pt-1 text-xs text-muted-foreground">
-        ComposiciÃ³n en vivo del motor de {workspace.displayNameResolved}: skills, plugins, conectores y comandos.
-        Cambia piezas, observa las recargas y guarda la combinaciÃ³n como preset reutilizable.
+        Describe una herramienta en lenguaje natural y el agente la diseña, escribe, prueba e instala en este workspace.
+        O compón a mano: inspecciona, cambia piezas y guarda presets.
       </p>
+
+      <div className="px-10 pt-4">
+        <div className="rounded-2xl border border-border bg-muted/40 p-4">
+          <Textarea
+            value={buildRequest}
+            onChange={(event) => setBuildRequest(event.target.value)}
+            onKeyDown={(event) => {
+              if (event.key === "Enter" && (event.metaKey || event.ctrlKey)) {
+                event.preventDefault();
+                startBuild();
+              }
+            }}
+            placeholder="Ej.: un plugin que vigile los contenedores docker caídos y escriba un informe en context/informes/… o una skill que revise PRs con el estándar del equipo…"
+            aria-label="Describe la herramienta a construir"
+            className="min-h-16 resize-none border-0 bg-transparent px-0 text-sm shadow-none focus-visible:ring-0"
+          />
+          <div className="flex items-center justify-between pt-1">
+            <span className="text-xs text-muted-foreground">El agente escribirá en .opencode/ y el motor se recargará solo.</span>
+            <Button size="sm" disabled={!buildRequest.trim()} onClick={startBuild}>
+              <Hammer className="size-4" aria-hidden />
+              Construir
+            </Button>
+          </div>
+        </div>
+      </div>
 
       <div className="flex flex-1 gap-8 px-10 pt-6 pb-10">
         {/* Composition column */}
@@ -358,6 +420,22 @@ export function CreatorPage({ workspace, openworkServerClient: client }: Creator
               </li>
             ))}
           </CompositionSection>
+
+          {recentToolFiles.length > 0 ? (
+            <div className="mt-6">
+              <p className="mb-2 text-xs font-medium text-muted-foreground">Construcciones recientes del agente (.opencode/)</p>
+              <ul className="flex flex-col gap-1">
+                {recentToolFiles.map((file) => (
+                  <li key={file.path} className="flex items-center gap-2 text-xs">
+                    <span className="min-w-0 flex-1 truncate font-mono text-foreground">{file.path}</span>
+                    <span className="shrink-0 text-muted-foreground">
+                      {file.mtimeMs ? new Date(file.mtimeMs).toLocaleString() : ""}
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          ) : null}
 
           {reloadEvents.length > 0 ? (
             <div className="mt-6">
