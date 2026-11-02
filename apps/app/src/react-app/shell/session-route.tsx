@@ -15,6 +15,7 @@ import {
   useState,
 } from "react";
 import { useLocation, useNavigate } from "react-router";
+import { useQuery } from "@tanstack/react-query";
 import { toast } from "@/components/ui/sonner";
 import type { ProviderListResponse } from "@opencode-ai/sdk/v2/client";
 
@@ -1622,6 +1623,14 @@ export function SessionRoute() {
     const list = unwrap(await opencodeClient.app.agents());
     return list.filter(isLibraryAgent);
   }, [engineReloadVersion, opencodeClient]);
+
+  /** Agent options for the project detail composer's agent selector. */
+  const projectAgentsQuery = useQuery({
+    queryKey: ["route-project-agents", engineReloadVersion, Boolean(opencodeClient)],
+    queryFn: () => listAgents(),
+    enabled: Boolean(opencodeClient),
+    staleTime: 60_000,
+  });
 
   const handleOpenSettings = useCallback((route = "/settings/general", workspaceId = sidebarActiveWorkspaceId) => {
     const sessionId = workspaceId === sidebarActiveWorkspaceId ? selectedSessionId : null;
@@ -3841,11 +3850,13 @@ export function SessionRoute() {
 
   /** New task with a known prompt in a specific workspace: pending conversation,
    * navigate to that workspace's session route, then create the real session.
-   * Shared by the sidebar and the project detail composer. */
-  const handleCreateTaskWithPrompt = useCallback((workspaceId: string, prompt: string, attachments?: ComposerAttachment[], handoff?: NewTaskComposerHandoff) => {
+   * Shared by the sidebar and the project detail composer. The optional
+   * selection (model/variant/agent) is remembered on the created session, the
+   * same way picking them inside the session would be. */
+  const handleCreateTaskWithPrompt = useCallback((workspaceId: string, prompt: string, attachments?: ComposerAttachment[], handoff?: NewTaskComposerHandoff, selection?: { model?: ModelRef | null; variant?: string | null; agent?: string | null }) => {
     const destination = handoff?.destination ?? { workspaceId };
     const targetWorkspaceId = destination.workspaceId;
-    const agent = newTaskAgent;
+    const agent = selection && "agent" in selection && typeof selection.agent === "string" ? selection.agent : newTaskAgent;
     const pending = beginPendingConversation({
       scope: sessionDraftScope, destination,
       submitted: handoff?.submitted ?? { draft: prompt, attachments: attachments ?? [], mentions: {}, pasteParts: [], revertMessageId: null },
@@ -3868,7 +3879,12 @@ export function SessionRoute() {
       const workspaceEndpoint = endpointForWorkspace(currentWorkspace);
       if (!workspaceEndpoint?.token) throw new Error("Workspace is disconnected. Reconnect and try again.");
       return createRouteSessionOnEngine(workspaceEndpoint, currentWorkspace.path?.trim() || undefined);
-    }, (created) => publishCreatedConversation(pending, created, agent, workspace?.displayNameResolved));
+    }, (created) => {
+      publishCreatedConversation(pending, created, agent, workspace?.displayNameResolved);
+      if (selection?.model) {
+        useSessionModelStore.getState().setModel(created.session.id, selection.model, selection.variant ?? null);
+      }
+    });
   }, [endpointForWorkspace, navigate, newTaskAgent, publishCreatedConversation, sessionDraftScope, workspaces, workspacesRef]);
 
   return (
@@ -4011,7 +4027,10 @@ export function SessionRoute() {
                   workspace={detailWorkspace}
                   openworkServerClient={endpointForWorkspace(detailWorkspace)?.client ?? null}
                   sessions={sessionsByWorkspaceId[detailWorkspace.id] ?? []}
-                  onSend={(prompt) => handleCreateTaskWithPrompt(detailWorkspace.id, prompt)}
+                  agents={(projectAgentsQuery.data ?? []).map((agent) => agent.name)}
+                  providerCatalog={providerCatalog}
+                  connectedProviderIds={providerConnectedIds}
+                  onSend={(prompt, selection) => handleCreateTaskWithPrompt(detailWorkspace.id, prompt, undefined, undefined, selection)}
                   onOpenSession={(sessionId) => navigateToWorkspaceSession(detailWorkspace.id, sessionId)}
                   onOpenScheduled={() => navigate(scheduledRoute())}
                 />

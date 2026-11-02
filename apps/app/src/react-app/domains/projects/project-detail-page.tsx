@@ -15,8 +15,11 @@ import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Textarea } from "@/components/ui/textarea";
 import { toast } from "@/components/ui/sonner";
+import { getModelBehaviorSummary, sanitizeModelBehaviorValue } from "@/app/lib/model-behavior";
+import type { ModelRef } from "@/app/types";
 import type { OpenworkServerClient } from "@/app/lib/openwork-server";
 import type { RouteSession, RouteWorkspace } from "@/react-app/shell/route-workspaces";
+import type { ProviderCatalog } from "@/react-app/domains/session/surface/use-model-behavior";
 import { sentenceTime } from "@/react-app/lib/relative-time";
 import { cn } from "@/lib/utils";
 
@@ -34,11 +37,24 @@ const SECTION_FILE: Record<RailSection, string | null> = {
   memory: "MEMORY.md",
 };
 
+export type ProjectTaskSelection = {
+  model: ModelRef | null;
+  variant: string | null;
+  agent: string | null;
+};
+
 type ProjectDetailPageProps = {
   workspace: RouteWorkspace;
   openworkServerClient: OpenworkServerClient | null;
   sessions: RouteSession[];
-  onSend: (prompt: string) => void;
+  /** Agent names from the engine's app.agents(), like the main composer offers. */
+  agents: string[];
+  /** The route's provider catalog (provider → model metadata), for the model
+   * picker and each model's thinking/effort options. */
+  providerCatalog: ProviderCatalog;
+  /** Provider ids the user can actually use, like the main model picker. */
+  connectedProviderIds: string[];
+  onSend: (prompt: string, selection: ProjectTaskSelection) => void;
   onOpenSession: (sessionId: string) => void;
   onOpenScheduled: () => void;
 };
@@ -47,15 +63,42 @@ export function ProjectDetailPage({
   workspace,
   openworkServerClient: client,
   sessions,
+  agents,
+  providerCatalog,
+  connectedProviderIds,
   onSend,
   onOpenSession,
   onOpenScheduled,
 }: ProjectDetailPageProps) {
   const queryClient = useQueryClient();
   const [prompt, setPrompt] = useState("");
+  const [selectedModel, setSelectedModel] = useState<ModelRef | null>(null);
+  const [variant, setVariant] = useState<string | null>(null);
+  const [agent, setAgent] = useState<string | null>(null);
   const [openSection, setOpenSection] = useState<RailSection | null>(null);
   const [draft, setDraft] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
+
+  const modelGroups = useMemo(() => connectedProviderIds
+    .map((providerId) => ({ providerId, models: Object.keys(providerCatalog[providerId] ?? {}) }))
+    .filter((group) => group.models.length > 0), [connectedProviderIds, providerCatalog]);
+
+  // Thinking/reasoning options for the selected model, straight from the
+  // model's behavior metadata — the same source the main composer's pill uses.
+  const variantOptions = useMemo(() => {
+    if (!selectedModel) return [] as Array<{ value: string; label: string }>;
+    const model = providerCatalog[selectedModel.providerID]?.[selectedModel.modelID];
+    const summary = getModelBehaviorSummary(
+      selectedModel.providerID,
+      model,
+      sanitizeModelBehaviorValue(selectedModel.providerID, model, variant),
+    );
+    const options: Array<{ value: string; label: string }> = [];
+    for (const option of summary.options ?? []) {
+      if (typeof option.value === "string") options.push({ value: option.value, label: option.label });
+    }
+    return options;
+  }, [providerCatalog, selectedModel, variant]);
 
   const workspaceId = workspace.id;
   const sectionFile = openSection ? SECTION_FILE[openSection] : null;
@@ -110,7 +153,11 @@ export function ProjectDetailPage({
   const submit = () => {
     const trimmed = prompt.trim();
     if (!trimmed) return;
-    onSend(trimmed);
+    onSend(trimmed, {
+      model: selectedModel,
+      variant: selectedModel ? variant : null,
+      agent,
+    });
     setPrompt("");
   };
 
@@ -142,20 +189,71 @@ export function ProjectDetailPage({
               aria-label={`Nueva sesión en ${workspace.displayNameResolved || "este proyecto"}`}
               className="min-h-20 resize-none border-0 bg-transparent px-0 text-[15px] shadow-none focus-visible:ring-0"
             />
-            <div className="flex items-center justify-between pt-1">
+            <div className="flex items-center justify-between gap-3 pt-1">
               <Button variant="ghost" size="sm" className="text-muted-foreground" disabled title="Adjuntar carpetas (próximamente)">
                 <Paperclip className="size-4" aria-hidden />
                 Agregar carpeta
               </Button>
-              <Button
-                size="icon"
-                className="size-8 rounded-full"
-                disabled={!prompt.trim()}
-                onClick={submit}
-                aria-label="Enviar tarea"
-              >
-                <ArrowUp className="size-4" aria-hidden />
-              </Button>
+              <div className="flex items-center gap-2">
+                <select
+                  value={selectedModel ? `${selectedModel.providerID}|${selectedModel.modelID}` : ""}
+                  onChange={(event) => {
+                    const value = event.target.value;
+                    if (!value) {
+                      setSelectedModel(null);
+                      setVariant(null);
+                      return;
+                    }
+                    const separator = value.indexOf("|");
+                    setSelectedModel({ providerID: value.slice(0, separator), modelID: value.slice(separator + 1) });
+                    setVariant(null);
+                  }}
+                  aria-label="Modelo"
+                  className="h-7 max-w-44 rounded-md border border-border bg-background px-2 text-xs text-foreground"
+                >
+                  <option value="">Modelo predeterminado</option>
+                  {modelGroups.map((group) => (
+                    <optgroup key={group.providerId} label={group.providerId}>
+                      {group.models.map((modelId) => (
+                        <option key={modelId} value={`${group.providerId}|${modelId}`}>{modelId}</option>
+                      ))}
+                    </optgroup>
+                  ))}
+                </select>
+                <select
+                  value={variant ?? ""}
+                  onChange={(event) => setVariant(event.target.value || null)}
+                  disabled={!selectedModel || variantOptions.length === 0}
+                  aria-label="Pensamiento"
+                  title={!selectedModel ? "Elige un modelo para ajustar el pensamiento" : "Nivel de pensamiento"}
+                  className="h-7 max-w-32 rounded-md border border-border bg-background px-2 text-xs text-foreground disabled:opacity-50"
+                >
+                  <option value="">{selectedModel ? "Predeterminado" : "Pensamiento"}</option>
+                  {variantOptions.map((option) => (
+                    <option key={option.value} value={option.value}>{option.label}</option>
+                  ))}
+                </select>
+                <select
+                  value={agent ?? ""}
+                  onChange={(event) => setAgent(event.target.value || null)}
+                  aria-label="Agente"
+                  className="h-7 max-w-32 rounded-md border border-border bg-background px-2 text-xs text-foreground"
+                >
+                  <option value="">Agente predeterminado</option>
+                  {agents.map((name) => (
+                    <option key={name} value={name}>{name}</option>
+                  ))}
+                </select>
+                <Button
+                  size="icon"
+                  className="size-8 rounded-full"
+                  disabled={!prompt.trim()}
+                  onClick={submit}
+                  aria-label="Enviar tarea"
+                >
+                  <ArrowUp className="size-4" aria-hidden />
+                </Button>
+              </div>
             </div>
           </div>
 
