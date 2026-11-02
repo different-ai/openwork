@@ -17,6 +17,12 @@ import {
 import { useLocation, useNavigate } from "react-router";
 import { useQuery } from "@tanstack/react-query";
 import { toast } from "@/components/ui/sonner";
+import {
+  Empty,
+  EmptyDescription,
+  EmptyHeader,
+  EmptyTitle,
+} from "@/components/ui/empty";
 import type { ProviderListResponse } from "@opencode-ai/sdk/v2/client";
 
 import { captureAnalyticsEvent, markTaskRunStart } from "@/app/lib/analytics";
@@ -4056,10 +4062,25 @@ export function SessionRoute() {
             workspaceName={selectedWorkspace ? workspaceLabel(selectedWorkspace) : ""}
           />
         ) : masterPlanSection === "design" ? (
-          <DesignPage
-            openworkServerClient={selectedWorkspaceEndpoint?.client ?? null}
-            projectPath={selectedWorkspaceRoot ?? ""}
-          />
+          selectedWorkspace ? (
+            <DesignPage
+              workspace={selectedWorkspace}
+              openworkServerClient={selectedWorkspaceEndpoint?.client ?? null}
+              agents={(projectAgentsQuery.data ?? []).map((agent) => agent.name)}
+              providerCatalog={providerCatalog}
+              connectedProviderIds={providerConnectedIds}
+              onSend={(prompt, designSelection) => handleCreateTaskWithPrompt(selectedWorkspace.id, prompt, undefined, undefined, designSelection)}
+            />
+          ) : (
+            <Empty variant="ghost" className="h-full">
+              <EmptyHeader>
+                <EmptyTitle>Elige un proyecto</EmptyTitle>
+                <EmptyDescription>
+                  Las referencias de diseño viven en un proyecto. Abre o crea uno en la sección Proyectos.
+                </EmptyDescription>
+              </EmptyHeader>
+            </Empty>
+          )
         ) : (
           <PersonalizacionPage
             openworkServerClient={selectedWorkspaceEndpoint?.client ?? null}
