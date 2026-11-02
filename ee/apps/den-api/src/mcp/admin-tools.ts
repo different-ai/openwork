@@ -867,7 +867,7 @@ export function registerAdminMcpTools(server: McpServer, admin: AdminToolCaller 
         if (!input.success) throw new Error(input.error.issues[0]?.message ?? "Invalid sandbox.")
         const admin = requireAdmin()
         const sandbox = await runPlatformAdminPlatformAction("sandbox_organization.create", admin, { type: "sandbox_organization", id: null }, () =>
-          createSandbox(normalizeDenTypeId("user", admin.userId), input.data))
+          createSandbox(normalizeDenTypeId("user", admin.userId), input.data, { callbackBaseUrl: env.apiPublicUrl ?? null }))
         return { ok: true, sandbox }
       }),
   )

@@ -5,7 +5,8 @@ import { describeRoute } from "hono-openapi"
 import { env } from "../../env.js"
 import { adminRoute, jsonValidator } from "../../middleware/index.js"
 import { forbiddenSchema, invalidRequestSchema, jsonResponse, notFoundSchema, unauthorizedSchema } from "../../openapi.js"
-import { closeSandbox, createSandbox, extendSandbox, listSandboxes, rotateSandboxLink, SandboxInputError, sandboxDefaults, setSandboxCredit, setSandboxJoinRole } from "../../sandbox-organizations.js"
+import { resolvePublicOrigin } from "../../capability-sources/generic-oauth.js"
+import { addMicrosoft365ToSandbox, closeSandbox, createSandbox, extendSandbox, listSandboxes, rotateSandboxLink, SandboxInputError, sandboxDefaults, setSandboxCredit, setSandboxJoinRole } from "../../sandbox-organizations.js"
 import type { AuthContextVariables } from "../../session.js"
 
 const base = "/v1/admin/sandbox-orgs"
@@ -27,7 +28,7 @@ export function registerAdminSandboxOrganizationRoutes<T extends { Variables: Au
   app.post(base, describeRoute({ tags: ["Admin"], summary: "Create a sandbox organization", description: "Creates an organization owned by the calling admin on the Enterprise plan until the sandbox ends, with included models, AI Gateway models for everyone (the sandbox's own OpenRouter key capped at creditUsd when the deployment mints them), Free Auto until the sandbox closes or expires, one per-person OAuth connector for each fictional workplace app, and a join link that joins people as members until the sandbox ends. Platform administrators only.", responses: { 200: jsonResponse("Sandbox created.", sandboxCreatedSchema), ...errors } }), adminRoute(), jsonValidator(sandboxCreateInputSchema), async c => {
     if (env.features.deployment !== "cloud") return c.json(disabled, 404)
     try {
-      const sandbox = await createSandbox(normalizeDenTypeId("user", c.get("user").id), c.req.valid("json"))
+      const sandbox = await createSandbox(normalizeDenTypeId("user", c.get("user").id), c.req.valid("json"), { callbackBaseUrl: resolvePublicOrigin(c.req.raw, env.apiPublicUrl) })
       return c.json({ sandbox })
     } catch (error) {
       if (error instanceof SandboxInputError) return c.json({ error: "invalid_request", message: error.message }, 400)
@@ -67,6 +68,19 @@ export function registerAdminSandboxOrganizationRoutes<T extends { Variables: Au
     if (!isDenTypeId("sandboxOrganization", id)) return c.json({ error: "invalid_request", message: "Invalid sandbox id." }, 400)
     try {
       const sandbox = await setSandboxCredit(normalizeDenTypeId("sandboxOrganization", id), c.req.valid("json").creditUsd)
+      return sandbox ? c.json({ sandbox }) : c.json({ error: "not_found", message: "Sandbox not found." }, 404)
+    } catch (error) {
+      if (error instanceof SandboxInputError) return c.json({ error: "invalid_request", message: error.message }, 400)
+      throw error
+    }
+  })
+
+  app.post(`${base}/:sandboxId/microsoft-365`, updated("Add sample Microsoft 365 to a sandbox", "Adds one per-person Microsoft 365 connector signed in at the sandbox's sample work apps, so Workbot can read each member's sample mail, calendar and files. Needs an open sandbox with a sample work apps address and Sandboxes: sample Microsoft 365 (sandboxMicrosoft365) on for its organization. Does nothing when it is already there; existing Outlook, Calendar and Drive connectors are kept. Platform administrators only."), adminRoute(), async c => {
+    if (env.features.deployment !== "cloud") return c.json(disabled, 404)
+    const id = c.req.param("sandboxId")
+    if (!isDenTypeId("sandboxOrganization", id)) return c.json({ error: "invalid_request", message: "Invalid sandbox id." }, 400)
+    try {
+      const sandbox = await addMicrosoft365ToSandbox(normalizeDenTypeId("sandboxOrganization", id), resolvePublicOrigin(c.req.raw, env.apiPublicUrl))
       return sandbox ? c.json({ sandbox }) : c.json({ error: "not_found", message: "Sandbox not found." }, 404)
     } catch (error) {
       if (error instanceof SandboxInputError) return c.json({ error: "invalid_request", message: error.message }, 400)

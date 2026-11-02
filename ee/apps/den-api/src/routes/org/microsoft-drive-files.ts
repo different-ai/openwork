@@ -152,6 +152,8 @@ const linkPayloadSchema = z.object({
 })
 const uploadTokenSchema = z.object({
   v: z.literal(1), o: z.string(), m: z.string(), url: z.string().url(), s: z.number().int().min(1), e: z.number().int(),
+  /** The Graph the session came from, when it is a sandbox workplace rather than Microsoft. */
+  g: z.string().url().optional(),
 })
 
 type DriveContext = Pick<Context<{ Variables: OrgRouteVariables }>, "get" | "json" | "req" | "header" | "body">
@@ -293,13 +295,13 @@ export function registerMicrosoftDriveFileRoutes<T extends { Variables: OrgRoute
   }
 
   /** Runs with a Graph client for the request's member, or answers why there is none. */
-  async function withGraph(c: DriveContext, features: readonly string[], label: string, connectionId: string | null | undefined, run: (graph: MicrosoftGraphClient, context: OrganizationContext) => Promise<Response>, timeoutMs?: number) {
+  async function withGraph(c: DriveContext, features: readonly string[], label: string, connectionId: string | null | undefined, run: (graph: MicrosoftGraphClient, context: OrganizationContext, graphBaseUrl: string | undefined) => Promise<Response>, timeoutMs?: number) {
     const context = c.get("organizationContext")
     if (!context) return c.json({ error: "unauthorized", message: "Sign in to an organization first." }, 401)
     const granted = await options.access({ organizationId: context.organization.id, orgMembershipId: context.currentMember.id, connectionId, features, label })
     if (!granted.ok) return c.json(granted.body, granted.status)
     try {
-      return await run(granted.graph({ signal: c.req.raw.signal, timeoutMs }), context)
+      return await run(granted.graph({ signal: c.req.raw.signal, timeoutMs }), context, granted.graphBaseUrl)
     } catch (error) {
       return c.json(graphError(error), graphErrorStatus(error))
     }
@@ -466,12 +468,12 @@ export function registerMicrosoftDriveFileRoutes<T extends { Variables: OrgRoute
     responses: { 200: jsonResponse("Opaque upload token; file not yet uploaded.", hostUploadSessionSchema), ...errors },
   }), transportRoute, jsonValidator(hostUploadBody), (c) => {
     const { connectionId, ...input } = c.req.valid("json")
-    return withGraph(c, FILE_WRITE, "OneDrive write", connectionId ?? null, async (graph, context) => {
+    return withGraph(c, FILE_WRITE, "OneDrive write", connectionId ?? null, async (graph, context, sessionGraphBaseUrl) => {
       const prepared = await prepareUpload(graph, input)
       if (!prepared.ok) return c.json(prepared.body, prepared.status)
       const graphExpiry = Date.parse(prepared.session.expirationDateTime)
       const expires = Math.floor(Math.min(Number.isFinite(graphExpiry) ? graphExpiry : Date.now() + 60 * 60 * 1000, Date.now() + UPLOAD_TOKEN_MAX_SECONDS * 1000) / 1000)
-      const uploadToken = sealToken(UPLOAD_TOKEN_DOMAIN, { v: 1, o: context.organization.id, m: context.currentMember.id, url: prepared.session.uploadUrl, s: input.size, e: expires })
+      const uploadToken = sealToken(UPLOAD_TOKEN_DOMAIN, { v: 1, o: context.organization.id, m: context.currentMember.id, url: prepared.session.uploadUrl, s: input.size, e: expires, ...(sessionGraphBaseUrl ? { g: sessionGraphBaseUrl } : {}) })
       c.header("cache-control", "no-store")
       return c.json({
         ok: true, uploadToken, size: input.size, chunkSize: MICROSOFT_DRIVE_UPLOAD_CHUNK_BYTES, expiresAt: new Date(expires * 1000).toISOString(),
@@ -484,7 +486,7 @@ export function registerMicrosoftDriveFileRoutes<T extends { Variables: OrgRoute
   async function relay(c: DriveContext, init: { method: "PUT" | "GET"; contentRange?: string; total?: number; body?: Uint8Array<ArrayBuffer> }) {
     const context = c.get("organizationContext")
     const session = openToken(UPLOAD_TOKEN_DOMAIN, c.req.query("token") ?? "", uploadTokenSchema)
-    if (!session || !context || session.o !== context.organization.id || session.m !== context.currentMember.id || !isMicrosoftUploadSessionUrl(session.url, graphBaseUrl)) {
+    if (!session || !context || session.o !== context.organization.id || session.m !== context.currentMember.id || !isMicrosoftUploadSessionUrl(session.url, session.g ?? graphBaseUrl)) {
       return c.json({ error: "upload_session_expired", message: "This upload is unknown or expired. Check the file before starting another upload." }, 404)
     }
     if (init.total !== undefined && init.total !== session.s) {

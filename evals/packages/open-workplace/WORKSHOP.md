@@ -56,6 +56,22 @@ The server supports discovery, dynamic public-client registration, mandatory S25
 
 Access tokens last one hour; refresh grants last at most eight hours from initial approval. Reusing a consumed refresh revokes its family. After grant expiry, approve again from the same remembered browser to retain the workspace. Automatic browser sessions last 30 days. Secure hosted cookies are HTTP-only, host-only and SameSite=Lax so legitimate top-level OAuth redirects reuse the workspace across client origins; unsafe mutations still require same-origin protection.
 
+## Microsoft 365 sign-in for an app's ordinary connector
+
+Apps with a native Microsoft 365 connector (OpenWork Den's, used by Workbot) can use the same private workspaces
+through an Entra-compatible front door (`src/workshop-microsoft.mjs`):
+
+- `POST /_workshop/microsoft/clients` with `{"client_name","redirect_uris":["https://…/callback"]}` registers a
+  confidential client and answers its `client_id`, `client_secret` (shown once, stored hashed), `tenant_id` and
+  endpoints. Clients last 120 days.
+- `/<tenant_id>/oauth2/v2.0/authorize` and `/token`: authorization code with mandatory S256 PKCE, client secret,
+  rotating refresh tokens (reuse revokes the family; grants last up to 30 days). The consent page shows the browser's
+  own workspace; a browser without one is sent through `/login` first. Deny works.
+- `/v1.0/...` with `Authorization: Bearer <access token>` is Microsoft Graph for that workspace only, within the
+  granted Graph scopes. An id_token (unsigned, a hint only) carries the workspace's sample email.
+
+It is clearly labeled as a sample sign-in, not a Microsoft account. `GET /health` reports `microsoftSignIn: true`.
+
 ## Isolation and lifecycle
 
 - Mail, drafts, folders, calendars, files, Jira issues, Confluence pages/comments/history and audits are private to the workspace.

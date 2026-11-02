@@ -251,6 +251,16 @@
               ],
               "description": "Workbot: computers through the sandbox gateway: Workbot's cloud computers for this organization run through the runner's sandbox gateway (Differently), which holds the provider keys and picks the provider, instead of the runner's own Freestyle or Daytona account. Needs a runner with SANDBOX_GATEWAY set; without one, or while it is down, new computers use the runner's own provider. Renders DEN_FEATURE_SANDBOX_GATEWAY."
             },
+            "sandboxMicrosoft365": {
+              "enum": [
+                "",
+                "true",
+                "false",
+                true,
+                false
+              ],
+              "description": "Sandboxes: sample Microsoft 365 for Workbot: New sandbox organizations get one Microsoft 365 connector for the sample Outlook, Calendar and Drive instead of three separate ones, so Workbot chat, Calendar, Documents and the first hello read each person's own sample mail, calendar and files. Each person approves once in their own browser. Only sandbox organizations are affected; every other organization keeps Microsoft's real sign-in. Turning it off stops the sample connector without sending anything to Microsoft. Renders DEN_FEATURE_SANDBOX_MICROSOFT365."
+            },
             "connectStandardTools": {
               "enum": [
                 "",

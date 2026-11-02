@@ -33,6 +33,9 @@ import { ensureMemberGatewayKey } from "./gateway-keys.js"
 import { runPostOrganizationMemberChangeHooks } from "./organization-member-hooks.js"
 import { createOrganizationForUser, isEmailAllowedForOrganization, updateOrganizationMemberRole } from "./orgs.js"
 import { getInvitationOrigin } from "./routes/org/shared.js"
+import { organizationFeatureEnabled } from "./features.js"
+import { addSandboxMicrosoft365, SANDBOX_MICROSOFT_APP_KEYS, SANDBOX_MICROSOFT_EXTERNAL_KEY, SandboxMicrosoftUnavailableError } from "./sandbox-microsoft-365.js"
+import { getExternalMcpConnectionByExternalKey } from "./capability-sources/external-mcp-connections.js"
 
 type UserId = DenTypeId<"user">
 type SandboxRow = typeof SandboxOrganizationTable.$inferSelect
@@ -166,6 +169,9 @@ async function serialize(rows: SandboxRow[], now = new Date()): Promise<Sandbox[
   const providerRows = await db.$primary.select({ organizationId: GatewayProviderTable.organization_id, total: count() }).from(GatewayProviderTable)
     .where(inArray(GatewayProviderTable.organization_id, ids)).groupBy(GatewayProviderTable.organization_id)
   const providerCount = new Map(providerRows.map(row => [row.organizationId, Number(row.total)]))
+  const microsoftRows = await db.select({ organizationId: ExternalMcpConnectionTable.organizationId }).from(ExternalMcpConnectionTable)
+    .where(and(inArray(ExternalMcpConnectionTable.organizationId, ids), eq(ExternalMcpConnectionTable.externalKey, SANDBOX_MICROSOFT_EXTERNAL_KEY)))
+  const withMicrosoft = new Set(microsoftRows.map(row => row.organizationId))
   // What is left on each open sandbox's own key, read live from OpenRouter (null when it cannot be reached).
   const credit = new Map(await Promise.all(rows.map(async row => {
     const live = row.modelKeyHash && sandboxState(row, now) === "open" && env.openRouterManagementApiKey ? await readSandboxModelKey(row.modelKeyHash) : null
@@ -181,6 +187,7 @@ async function serialize(rows: SandboxRow[], now = new Date()): Promise<Sandbox[
     memberLimit: row.memberLimit,
     connectorBaseUrl: row.connectorBaseUrl,
     connectorCount: connectorCount.get(row.organizationId) ?? 0,
+    sampleMicrosoft365: withMicrosoft.has(row.organizationId),
     modelProviderCount: providerCount.get(row.organizationId) ?? 0,
     planTier: readPlanTier(org.get(row.organizationId)?.metadata),
     modelCredit: row.modelKeyHash && row.modelCreditUsd !== null ? { limitUsd: row.modelCreditUsd, remainingUsd: credit.get(row.id) ?? null } : null,
@@ -237,8 +244,12 @@ export async function getSandbox(id: DenTypeId<"sandboxOrganization">): Promise<
  * models for everyone (from the sandbox's own capped OpenRouter key when the deployment mints them, else the
  * shared sandbox key), one per-person OAuth connector for each fictional workplace app, and a join link. Every
  * member connects their own account, so each person's workplace data stays separate.
+ *
+ * With `sandboxMicrosoft365` on, Outlook, Calendar and Drive come as one Microsoft 365 connector signed in at the
+ * workplace (so Workbot's chat, Calendar, Documents and first hello can read them); `callbackBaseUrl` is Den's public
+ * API address the workplace sends people back to. If the workplace can't offer it, the separate connectors are used.
  */
-export async function createSandbox(actor: UserId, input: SandboxCreateInput): Promise<Sandbox> {
+export async function createSandbox(actor: UserId, input: SandboxCreateInput, options: { callbackBaseUrl?: string | null } = {}): Promise<Sandbox> {
   const connectors = input.connectorBaseUrl ? sandboxConnectorUrls(input.connectorBaseUrl) : []
   if (!env.allowPrivateMcpUrls) {
     for (const connector of connectors) {
@@ -271,8 +282,18 @@ export async function createSandbox(actor: UserId, input: SandboxCreateInput): P
   await addSandboxModels({ id, organizationId, ownerMemberId: owner.id, name: input.name, creditUsd: input.creditUsd }).catch((error: unknown) => {
     appLogger.error("sandbox gateway provider failed", { organization_id: organizationId, error: error instanceof Error ? error.message : "unknown" })
   })
+  let microsoft = false
+  if (connectors.length > 0 && input.connectorBaseUrl && options.callbackBaseUrl && await organizationFeatureEnabled(organizationId, "sandboxMicrosoft365")) {
+    microsoft = await addSandboxMicrosoft365({ organizationId, ownerMemberId: owner.id, workplaceUrl: input.connectorBaseUrl, callbackBaseUrl: options.callbackBaseUrl })
+      .then(() => true)
+      .catch((error: unknown) => {
+        appLogger.error("sandbox microsoft 365 failed", { organization_id: organizationId, error: error instanceof Error ? error.message : "unknown" })
+        return false
+      })
+  }
   if (connectors.length > 0) {
     for (const connector of connectors) {
+      if (microsoft && SANDBOX_MICROSOFT_APP_KEYS.has(connector.key)) continue
       await createExternalMcpConnection({
         organizationId,
         name: connector.name,
@@ -473,4 +494,27 @@ export function startSandboxExpiryLoop(intervalMs = SANDBOX_EXPIRY_INTERVAL_MS) 
     clearInterval(timer)
     await running
   }
+}
+
+/**
+ * Adds the sample Microsoft 365 connector to an existing open sandbox (one created before `sandboxMicrosoft365` was
+ * on for it). Its separate Outlook, Calendar and Drive connectors are left for an admin to remove.
+ */
+export async function addMicrosoft365ToSandbox(id: DenTypeId<"sandboxOrganization">, callbackBaseUrl: string) {
+  const [row] = await db.select().from(SandboxOrganizationTable).where(eq(SandboxOrganizationTable.id, id)).limit(1)
+  if (!row) return null
+  if (sandboxState(row) !== "open") throw new SandboxInputError("Reopen this sandbox first.")
+  if (!row.connectorBaseUrl) throw new SandboxInputError("This sandbox has no sample work apps address.")
+  if (!await organizationFeatureEnabled(row.organizationId, "sandboxMicrosoft365")) throw new SandboxInputError("Turn on Sandboxes: sample Microsoft 365 for this organization first.")
+  if (await getExternalMcpConnectionByExternalKey({ organizationId: row.organizationId, externalKey: SANDBOX_MICROSOFT_EXTERNAL_KEY })) return getSandbox(id)
+  const [owner] = await db.select({ id: MemberTable.id }).from(MemberTable)
+    .where(and(eq(MemberTable.organizationId, row.organizationId), eq(MemberTable.userId, row.createdByUserId), isNull(MemberTable.removedAt))).limit(1)
+  if (!owner) throw new SandboxInputError("The sandbox's creator is no longer a member.")
+  try {
+    await addSandboxMicrosoft365({ organizationId: row.organizationId, ownerMemberId: owner.id, workplaceUrl: row.connectorBaseUrl, callbackBaseUrl })
+  } catch (error) {
+    if (error instanceof SandboxMicrosoftUnavailableError) throw new SandboxInputError(error.message)
+    throw error
+  }
+  return getSandbox(id)
 }

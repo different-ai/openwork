@@ -7,6 +7,7 @@ import {
 import { createDenTypeId, type DenTypeId } from "@openwork-ee/utils/typeid"
 import { db } from "../db.js"
 import { requestRead, requestReadMany } from "../request-reads.js"
+import { isSandboxMicrosoftClient, resolveSandboxMicrosoftEndpoints, type SandboxMicrosoftEndpoints } from "./sandbox-microsoft-endpoints.js"
 
 /**
  * Generic, provider-agnostic reads/writes for the two credential tables.
@@ -15,7 +16,13 @@ import { requestRead, requestReadMany } from "../request-reads.js"
  * goes through this same, single implementation.
  */
 
-export type OrgOAuthClientRow = typeof OrgOAuthClientTable.$inferSelect
+export type OrgOAuthClientRow = typeof OrgOAuthClientTable.$inferSelect & {
+  /**
+   * Only on a sandbox's sample Microsoft 365 client: where it signs in and reads Graph instead of Microsoft, or why it
+   * cannot be used now. Worked out on every read, never stored. See sandbox-microsoft-endpoints.ts.
+   */
+  sandboxEndpoints?: SandboxMicrosoftEndpoints
+}
 export type ConnectedAccountRow = typeof ConnectedAccountTable.$inferSelect
 
 type OrganizationId = DenTypeId<"organization">
@@ -50,8 +57,10 @@ export function parseGrantedOAuthScopes(scope: string | undefined): string[] | n
   return scope === undefined ? null : scope.split(" ").filter(Boolean)
 }
 
-function normalizeOrgOAuthClientRow(row: OrgOAuthClientRow): OrgOAuthClientRow {
-  return { ...row, extra: normalizeOAuthClientExtra(row.extra) }
+async function normalizeOrgOAuthClientRow(row: OrgOAuthClientRow): Promise<OrgOAuthClientRow> {
+  const normalized = { ...row, extra: normalizeOAuthClientExtra(row.extra) }
+  if (!isSandboxMicrosoftClient(normalized.extra)) return normalized
+  return { ...normalized, sandboxEndpoints: await resolveSandboxMicrosoftEndpoints(normalized.organizationId) }
 }
 
 function normalizeConnectedAccountRow(row: ConnectedAccountRow): ConnectedAccountRow {
@@ -99,7 +108,7 @@ export function getOrgOAuthClients(organizationId: OrganizationId, providerIds: 
       .select()
       .from(OrgOAuthClientTable)
       .where(and(eq(OrgOAuthClientTable.organizationId, organizationId), inArray(OrgOAuthClientTable.providerId, missing)))
-    return new Map(rows.map((row) => [row.providerId, normalizeOrgOAuthClientRow(row)]))
+    return new Map(await Promise.all(rows.map(async (row) => [row.providerId, await normalizeOrgOAuthClientRow(row)] as const)))
   }, null)
 }
 
@@ -114,7 +123,7 @@ async function readOrgOAuthClient(organizationId: OrganizationId, providerId: st
     .from(OrgOAuthClientTable)
     .where(and(eq(OrgOAuthClientTable.organizationId, organizationId), eq(OrgOAuthClientTable.providerId, providerId)))
     .limit(1)
-  return rows[0] ? normalizeOrgOAuthClientRow(rows[0]) : null
+  return rows[0] ? await normalizeOrgOAuthClientRow(rows[0]) : null
 }
 
 export async function deleteOrgOAuthClient(organizationId: OrganizationId, providerId: string): Promise<void> {

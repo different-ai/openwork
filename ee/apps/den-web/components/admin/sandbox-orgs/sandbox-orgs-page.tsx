@@ -122,6 +122,7 @@ export function SandboxOrgsPage() {
             onRotate={() => void mutate(`${base}/${encodeURIComponent(sandbox.id)}/rotate-link`, undefined, "New link ready. The old link no longer works.")}
             onJoinRole={(joinRole) => void mutate(`${base}/${encodeURIComponent(sandbox.id)}/join-role`, { joinRole }, `People who join ${sandbox.name} now become ${joinRole === "admin" ? "admins" : "members"}. People who already joined keep their role.`)}
             onAddCredit={(limitUsd) => void mutate(`${base}/${encodeURIComponent(sandbox.id)}/credit`, { creditUsd: limitUsd + CREDIT_STEP_USD }, `${sandbox.name} can now spend up to ${dollars(limitUsd + CREDIT_STEP_USD)} on models.`)}
+            onAddMicrosoft={() => void mutate(`${base}/${encodeURIComponent(sandbox.id)}/microsoft-365`, undefined, `${sandbox.name} now has sample Microsoft 365 for Workbot. Members approve it once from Workbot or their connections.`)}
             onExtend={() => void mutate(`${base}/${encodeURIComponent(sandbox.id)}/extend`, { days: 7 }, `${sandbox.name} is open for 7 more days.`)}
             onClose={() => void mutate(`${base}/${encodeURIComponent(sandbox.id)}/close`, undefined, `${sandbox.name} is closed. Members and data are kept.`)} />)}
       </div>
@@ -156,7 +157,7 @@ export function SandboxOrgsPage() {
   </section>;
 }
 
-function SandboxRow({ sandbox, busy, onRotate, onExtend, onClose, onJoinRole, onAddCredit }: { sandbox: Sandbox; busy: boolean; onRotate: () => void; onExtend: () => void; onClose: () => void; onJoinRole: (joinRole: SandboxJoinRole) => void; onAddCredit: (currentLimitUsd: number) => void }) {
+function SandboxRow({ sandbox, busy, onRotate, onExtend, onClose, onJoinRole, onAddCredit, onAddMicrosoft }: { sandbox: Sandbox; busy: boolean; onRotate: () => void; onExtend: () => void; onAddMicrosoft: () => void; onClose: () => void; onJoinRole: (joinRole: SandboxJoinRole) => void; onAddCredit: (currentLimitUsd: number) => void }) {
   const credit = sandbox.modelCredit ?? null;
   const [copied, setCopied] = useState(false);
   async function copy() {
@@ -173,6 +174,7 @@ function SandboxRow({ sandbox, busy, onRotate, onExtend, onClose, onJoinRole, on
           {" · "}{sandbox.state === "open" ? `Ends ${date(sandbox.expiresAt)}` : sandbox.closedAt ? `Closed ${date(sandbox.closedAt)}` : `Ended ${date(sandbox.expiresAt)}`}
           {" · "}<span className="tabular-nums">{sandbox.memberCount} / {sandbox.memberLimit} seats</span>
           {" · "}{sandbox.connectorCount ? `${sandbox.connectorCount} sample apps` : "No connectors"}
+          {sandbox.sampleMicrosoft365 ? <span data-testid="admin-sandbox-microsoft">{" · "}Microsoft 365 for Workbot</span> : null}
           {sandbox.planTier === "enterprise" ? " · Enterprise" : ""}
           {credit ? <>{" · "}<span className="tabular-nums" data-testid="admin-sandbox-credit">{credit.remainingUsd === null ? `${dollars(credit.limitUsd)} model credit` : `${dollars(credit.remainingUsd)} of ${dollars(credit.limitUsd)} left`}</span></>
             : sandbox.modelProviderCount ? ` · ${sandbox.modelProviderCount} AI Gateway provider${sandbox.modelProviderCount === 1 ? "" : "s"}` : ""}
@@ -183,6 +185,8 @@ function SandboxRow({ sandbox, busy, onRotate, onExtend, onClose, onJoinRole, on
       <div className="flex flex-wrap gap-2">
         <DenSelect aria-label={`${sandbox.name}: people who join become`} value={sandbox.joinRole} disabled={busy} onChange={event => { const parsed = sandboxJoinRoleSchema.safeParse(event.target.value); if (parsed.success && parsed.data !== sandbox.joinRole) onJoinRole(parsed.data); }}><option value="member">Join as members</option><option value="admin">Join as admins</option></DenSelect>
         {credit ? <DenButton variant="secondary" size="sm" disabled={busy || credit.limitUsd + CREDIT_STEP_USD > SANDBOX_MAX_CREDIT_USD} onClick={() => onAddCredit(credit.limitUsd)}>Add {dollars(CREDIT_STEP_USD)}</DenButton> : null}
+        {sandbox.state === "open" && sandbox.connectorBaseUrl && sandbox.sampleMicrosoft365 === false
+          ? <DenButton variant="secondary" size="sm" disabled={busy} onClick={onAddMicrosoft} data-testid="admin-sandbox-add-microsoft">Add Microsoft 365</DenButton> : null}
         <DenButton variant="secondary" size="sm" disabled={busy} onClick={onExtend}>{sandbox.state === "open" ? "Add 7 days" : "Reopen for 7 days"}</DenButton>
         {sandbox.state === "open" ? <DenButton variant="secondary" size="sm" disabled={busy} onClick={onClose}>Close</DenButton> : null}
       </div>
