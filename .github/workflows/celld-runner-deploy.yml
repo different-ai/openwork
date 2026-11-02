@@ -171,6 +171,39 @@ jobs:
       - name: Check model and smoke result boundaries
         run: pnpm --filter @openwork-ee/headless-runner exec tsx --test scripts/model-responses.test.ts scripts/celld-smoke-result.test.ts
 
+      # A sandbox gateway keeps its own copies of the desktop: its template names a Fast Sandbox template and a Freestyle
+      # snapshot, and this run can update neither. Those computers stay on the older image until a person rebuilds them
+      # (the runner README's "Fast Sandbox microVMs"), which is worth a warning, not worth holding back every other
+      # computer. The snapshot's slug names the image both entries were built for. A guest-only change needs nothing.
+      - name: Check the sandbox gateway's computer template
+        id: gateway
+        continue-on-error: true
+        run: |
+          set -euo pipefail
+          gateway="$(printf '%s' "$RUNNER_VARS" | jq -r '.SANDBOX_GATEWAY // ""')"
+          url="$(printf '%s' "$RUNNER_VARS" | jq -r '.SANDBOX_GATEWAY_URL // ""')"
+          key="$(printf '%s' "$RUNNER_VARS" | jq -r '.SANDBOX_GATEWAY_API_KEY // ""')"
+          template="$(printf '%s' "$RUNNER_VARS" | jq -r '.SANDBOX_GATEWAY_TEMPLATE // ""')"
+          if [ "$gateway" != "differently" ] || [ -z "$template" ]; then
+            echo "No sandbox gateway template configured; nothing to check."
+            exit 0
+          fi
+          echo "::add-mask::$key"
+          identity="$(head -c 16 ee/packages/headless-computer/dist/desktop-image.version)"
+          slug="$(printf 'Authorization: Bearer %s\n' "$key" | curl -fsS --max-time 20 -H @- "${url%/}/v1/templates" \
+            | jq -r --arg name "$template" '.items[] | select(.name == $name) | .images.freestyle // empty' || true)"
+          if ! [[ "$slug" =~ ^workbot-desktop-freestyle-([0-9a-f]{16})(-[0-9a-f]{16})?$ ]]; then
+            echo "::warning title=Gateway computer template not checked::$template has no Freestyle snapshot named by its desktop image (found '${slug:-nothing}'), so it can't be compared with this runner's ($identity)."
+            exit 0
+          fi
+          built="${BASH_REMATCH[1]}"
+          if [ "$built" = "$identity" ]; then
+            echo "$template was built for this runner's desktop."
+            exit 0
+          fi
+          echo "::warning title=Gateway computer template is out of date::$template was built for desktop $built, but this runner's desktop is $identity. Rebuild it and update both of its entries."
+          echo "behind=$built" >> "$GITHUB_OUTPUT"
+
       - name: Install celld
         run: |
           set -euo pipefail
@@ -372,6 +405,7 @@ jobs:
           FLEET_OUTCOME: ${{ steps.fleet.outcome }}
           COMPAT_OUTCOME: ${{ steps.compat.outcome }}
           SNAPSHOT_OUTCOME: ${{ steps.snapshot.outcome }}
+          GATEWAY_BEHIND: ${{ steps.gateway.outputs.behind }}
           UNCHANGED: ${{ steps.fleet.outputs.unchanged }}
           VERSION: ${{ steps.fleet.outputs.version }}
           PREVIOUS: ${{ steps.live.outputs.version }}
@@ -407,6 +441,9 @@ jobs:
             summary=":red_circle: Runner deploy $ended before the fleet changed. The fleet stays on \`$previous\`."
           fi
           text="$summary"$'\n'"Commit <$COMMIT_URL|${GITHUB_SHA:0:12}> · <$RUN_URL|run $GITHUB_RUN_ID>"
+          if [ -n "$GATEWAY_BEHIND" ]; then
+            text="$text"$'\n'":warning: The sandbox gateway's computer template is still on desktop \`$GATEWAY_BEHIND\`: rebuild it and update both of its entries."
+          fi
           if ! jq -n --arg text "$text" '{text: $text, unfurl_links: false}' \
             | curl -sS --fail --max-time 20 -X POST -H 'Content-Type: application/json' --data-binary @- "$SLACK_WEBHOOK_URL" > /dev/null; then
             echo "::warning::Could not post the $outcome deploy message to Slack."
