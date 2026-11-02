@@ -3,11 +3,13 @@ import { z } from "zod";
 /**
  * Agent permissions: what agents may do on members' computers. An
  * organization's admins set them for everyone and override them per team in
- * Den; each member's desktop app applies them to every agent turn, on both
- * engines, and to its built-in browser.
+ * Den; each member's desktop app applies engine permissions on OpenCode v2,
+ * website permissions in its built-in browser, and computer use and app
+ * scripting permissions at the desktop host on both engines.
  *
- * A permission is one family of agent actions (commands, file edits,
- * websites, web search, local skills, local MCP servers) with
+ * A permission is one family of agent actions (commands, file edits, folders
+ * outside the workspace, computer use, app scripting, websites, web search,
+ * local skills, local MCP servers) with
  *
  *   - a decision: Allow, Ask first or Block (a picklist), or on/off for the
  *     families that cannot ask (a switch);
@@ -32,17 +34,21 @@ import { z } from "zod";
 export const AGENT_PERMISSION_DECISIONS = ["allow", "ask", "deny"] as const;
 export type AgentPermissionDecision = (typeof AGENT_PERMISSION_DECISIONS)[number];
 
-/** OpenCode permission actions, plus `mcp` for local MCP servers, which OpenWork enforces itself. */
-export const AGENT_PERMISSION_ACTIONS = ["shell", "edit", "webfetch", "websearch", "skill", "mcp"] as const;
+/** OpenCode permission actions, plus local MCP, computer use and app scripting enforced by OpenWork. */
+export const AGENT_PERMISSION_ACTIONS = ["shell", "edit", "webfetch", "websearch", "skill", "mcp", "external_directory", "computer", "script"] as const;
+
+export const AGENT_HARNESS_PERMISSION_KEYS = ["externalFolders", "computerUse", "appScripting"] as const;
+export const AGENT_HARNESS_PERMISSION_ACTIONS = ["external_directory", "computer", "script"] as const;
 export type AgentPermissionAction = (typeof AGENT_PERMISSION_ACTIONS)[number];
 
 export type AgentPermissionPatternKind = "command" | "website";
 
-export type AgentPermissionSection = "commands" | "files" | "web" | "extensions";
+export type AgentPermissionSection = "commands" | "files" | "computer" | "web" | "extensions";
 
 export const agentPermissionSections: readonly { id: AgentPermissionSection; label: string }[] = [
   { id: "commands", label: "Commands" },
   { id: "files", label: "Files" },
+  { id: "computer", label: "Computer use" },
   { id: "web", label: "Web" },
   { id: "extensions", label: "Skills and MCP servers" },
 ];
@@ -80,6 +86,36 @@ export const agentPermissionDefinitions = [
     label: "Edit files",
     description: "Creating, changing and deleting files in the member's workspace. Blocking it also blocks running commands, since any command can change files.",
     action: "edit",
+    control: "choice",
+    patterns: null,
+    patternNoun: null,
+  },
+  {
+    key: "externalFolders",
+    section: "files",
+    label: "Use folders outside the workspace",
+    description: "Reading and changing files in folders outside the member's workspace. Ask first asks the member each time.",
+    action: "external_directory",
+    control: "choice",
+    patterns: null,
+    patternNoun: null,
+  },
+  {
+    key: "computerUse",
+    section: "computer",
+    label: "Use apps on the computer",
+    description: "Seeing and controlling apps and remote computers through computer use. Ask first asks the member before the agent takes control in each chat. Blocking it also blocks app scripting.",
+    action: "computer",
+    control: "choice",
+    patterns: null,
+    patternNoun: null,
+  },
+  {
+    key: "appScripting",
+    section: "computer",
+    label: "Script Mac apps",
+    description: "AppleScript, JavaScript for Automation and Blender scripts the agent runs in the member's Mac apps. Ask first shows the member every script, with no standing approval.",
+    action: "script",
     control: "choice",
     patterns: null,
     patternNoun: null,
@@ -403,6 +439,13 @@ export const agentPermissionSettingsSchema = z
 
 export type AgentPermissionSettings = Partial<Record<AgentPermissionKey, AgentPermissionSetting>>;
 
+/** Settings exposed while the harness permission feature is off, without changing stored settings. */
+export function withoutAgentHarnessPermissions(settings: AgentPermissionSettings): AgentPermissionSettings {
+  const visible = { ...settings };
+  for (const key of AGENT_HARNESS_PERMISSION_KEYS) delete visible[key];
+  return visible;
+}
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
@@ -469,6 +512,11 @@ export const agentPermissionRuleSchema = z.object({
 });
 
 export type AgentPermissionRule = z.infer<typeof agentPermissionRuleSchema>;
+
+/** Rules delivered while the harness permission feature is off. */
+export function withoutAgentHarnessRules(rules: readonly AgentPermissionRule[]): AgentPermissionRule[] {
+  return rules.filter((rule) => !AGENT_HARNESS_PERMISSION_ACTIONS.some((action) => action === rule.action));
+}
 
 export const AGENT_PERMISSION_EVERYONE = "Everyone";
 
@@ -561,12 +609,22 @@ export function agentPermissionRules(resolved: readonly ResolvedAgentPermission[
   if (edits?.decision === "deny" && edits.decisionSource !== null) {
     rules.push({ action: "shell", resource: "*", effect: "deny", source: edits.decisionSource });
   }
+  // App scripts control apps too, so blocking computer use blocks scripts last.
+  const computer = resolved.find((entry) => entry.definition.action === "computer");
+  if (computer?.decision === "deny" && computer.decisionSource !== null) {
+    rules.push({ action: "script", resource: "*", effect: "deny", source: computer.decisionSource });
+  }
   return rules;
 }
 
 /** Whether these settings block file edits, which also blocks every command. */
 export function agentPermissionCommandsBlockedByEdits(rules: readonly AgentPermissionRule[]): boolean {
   return rules.some((rule) => rule.action === "edit" && rule.resource === "*" && rule.effect === "deny");
+}
+
+/** Whether these settings block computer use, which also blocks every app script. */
+export function agentPermissionScriptingBlockedByComputerUse(rules: readonly AgentPermissionRule[]): boolean {
+  return rules.some((rule) => rule.action === "computer" && rule.resource === "*" && rule.effect === "deny");
 }
 
 export function resolveAgentPermissionRules(input: {
@@ -620,6 +678,9 @@ export function decideAgentPermission(
 const BLOCKED_SUBJECT: Record<AgentPermissionAction, (resource: string) => string> = {
   shell: (resource) => resource === "*" ? "running commands" : `the command \`${resource}\``,
   edit: () => "editing files",
+  external_directory: (resource) => resource === "*" ? "folders outside the workspace" : `the folder ${resource}`,
+  computer: () => "using apps on this computer",
+  script: () => "running app scripts",
   webfetch: (resource) => resource === "*" ? "opening websites" : `opening ${resource}`,
   websearch: () => "searching the web",
   skill: (resource) => resource === "*" ? "local skills" : `the local skill "${resource}"`,
