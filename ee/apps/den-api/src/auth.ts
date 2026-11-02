@@ -92,7 +92,7 @@ import { SSO_DOMAIN_VERIFICATION_TOKEN_PREFIX } from "./sso-domain-verification.
 import {
   authorizeOrganizationSsoSignIn,
   completeOrganizationSsoTestIntent,
-  failOrganizationSsoTestIntent,
+  failOrganizationSsoTestAuthentication,
   getSsoTestIntentIdFromCallbackUrl,
 } from "./sso-test-lifecycle.js";
 import {
@@ -1306,7 +1306,7 @@ export const auth = betterAuth({
 
         const newSession = ctx.context.newSession;
         if (!newSession) {
-          await failOrganizationSsoTestIntent(intentId, "authentication");
+          await failOrganizationSsoTestAuthentication(intentId);
           return;
         }
 
