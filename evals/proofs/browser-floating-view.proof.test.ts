@@ -80,10 +80,12 @@ test("a person pops the page the agent opened out into a real browser window, br
     sideWidth = view?.bounds.width ?? 0;
     expect(sideWidth).toBeGreaterThan(0);
     await user.see({ testId: "browser-mode-float" });
+    // Witness: a page the agent loads never takes the keyboard from the person.
+    expect(view?.focused).toBe(false);
     evidence.recordAssertionEvidence(
       "The agent's page opens beside the chat",
-      `Without a consent prompt, the page opened in the side panel (${sideWidth}px wide); the side rail's Browser button reads "side" and it is the only Browser button.`,
-      sideWidth > 0 && browserButtons.elements.length === 1,
+      `Without a consent prompt, the page opened in the side panel (${sideWidth}px wide) without taking the keyboard; the side rail's Browser button reads "side" and it is the only Browser button.`,
+      sideWidth > 0 && browserButtons.elements.length === 1 && view?.focused === false,
     );
     await user.screenshot();
   });

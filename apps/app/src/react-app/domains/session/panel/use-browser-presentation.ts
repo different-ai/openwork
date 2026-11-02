@@ -232,7 +232,8 @@ export function useBrowserPresentationController({
 
   // A page needing attention opens beside the chat, and an agent that needs
   // the page on screen to act brings it beside the chat. In its own window the
-  // page is already on screen: show that tab and bring the window forward.
+  // page is already on screen, so only show that tab. This state covers every
+  // failed agent step, so it never takes focus from what the person is doing.
   const attentionTab = browserTabs.find(browserNeedsPerson);
   const attentionId = attentionTab
     ? `${attentionTab.id}:${attentionTab.browserTask?.operation ?? "needs_attention"}`
@@ -243,9 +244,7 @@ export function useBrowserPresentationController({
     handledAttention.current.add(attentionId);
     if (mode === "side" || mode === "fullscreen") return;
     if (mode === "floating") {
-      const browser = getElectronBrowser();
-      void browser?.selectTab?.(attentionTab.id).catch(() => undefined);
-      void browser?.focusWindow?.().catch(() => undefined);
+      void getElectronBrowser()?.selectTab?.(attentionTab.id).catch(() => undefined);
       return;
     }
     useBrowserPresentationStore.getState().setMode(sessionKey, "side");
