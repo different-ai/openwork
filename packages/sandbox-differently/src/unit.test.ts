@@ -188,6 +188,7 @@ test("a pause that outlives its request is followed to the end, and one that nev
 
 test("a computer being paused is found, reads as stopped, and starting it calls the pause off", async () => {
   const { fake, p } = provider()
+  assert.equal(p.describe().callsOffPause, true)
   const h = await p.create(spec(), { timeoutMs: 5_000 })
   const box = fake.boxes.get(h.ref.ref.sandboxId)!
   box.status = "pausing"

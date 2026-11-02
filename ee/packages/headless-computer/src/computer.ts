@@ -75,6 +75,8 @@ export class Computers {
   private readonly vms = new Map<string, Promise<SandboxHandle>>()
   private readonly pauseTimers = new Map<string, ReturnType<typeof setTimeout>>()
   private readonly pausing = new Map<string, Promise<void>>()
+  /** Sessions in a pause that starting the computer calls off, so `vm()` doesn't wait for it. */
+  private readonly checkpointing = new Set<string>()
   /** Saved file ids already copied into each session's VM by this process. */
   private readonly copied = new Map<string, Set<string>>()
   /** The desktop request being timed for each VM, by its slug. */
@@ -271,7 +273,9 @@ export class Computers {
     this.cancelPause(sessionId)
     // In use: should this process stop before releasing it, it still pauses once the longest command would be done.
     this.options.pauses?.set(sessionId, Date.now() + this.options.idlePauseMs + MAX_COMMAND_SECONDS * 1000)
-    await this.pausing.get(sessionId)
+    // Calling a checkpoint off takes a moment and waiting it out takes minutes. What runs before it, like an idle
+    // replacement, is still waited for.
+    if (!this.checkpointing.delete(sessionId)) await this.pausing.get(sessionId)
     const prior = this.vms.get(sessionId)
     // Reserve the transition before awaiting provider state. Concurrent viewer
     // and tool requests must not both issue a start against the same paused VM.
@@ -369,9 +373,14 @@ export class Computers {
       if (!this.working.has(sessionId) && await this.staleImage(sessionId, vm)) vm = await this.replace(sessionId, vm, { required: false }) ?? vm
       // A provider that can neither pause nor stop keeps the computer running until its own expiry.
       if (!this.provider.describe().stopResume) return this.options.pauses?.clear(sessionId)
+      const callsOff = this.provider.describe().callsOffPause === true
+      if (callsOff) this.checkpointing.add(sessionId)
       await (this.provider.blocks?.pause ? this.provider.blocks.pause(vm, { timeoutMs: PAUSE_TIMEOUT_MS }) : this.provider.stop(vm, { timeoutMs: PAUSE_TIMEOUT_MS }))
+      // Called off: the computer is in use again, and `vm()` set when it is next due.
+      if (callsOff && !this.checkpointing.delete(sessionId)) return
       this.options.pauses?.clear(sessionId)
     } catch {
+      this.checkpointing.delete(sessionId)
       // Not fatal: tried again after another idle period, and Freestyle's own idle timeout pauses it later.
       this.options.pauses?.set(sessionId, Date.now() + this.options.idlePauseMs)
     }

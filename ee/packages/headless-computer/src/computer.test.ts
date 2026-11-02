@@ -93,6 +93,83 @@ test("an idle timer leaves a computer alone while a command is running", async (
   await computers.delete("busy")
 })
 
+/** A computer whose pause lasts until `finish`, or until a start calls it off where `callsOff` says it can. */
+function pausable(callsOff: boolean, onRun?: (spec: RunSpec) => Promise<{ exitCode: number; stdout: string; stderr: string }>) {
+  const fake = createFakeProvider({ onRun: onRun ?? (() => ({ exitCode: 0, stdout: "0", stderr: "" })) })
+  let finish = () => {}
+  const state = { pausing: false, finish: () => finish() }
+  const pauses = new Map<string, number>()
+  const provider: SandboxProvider = {
+    ...fake,
+    describe: () => ({ ...fake.describe(), callsOffPause: callsOff }),
+    inspect: async box => ({ ...await fake.inspect(box), ...(state.pausing ? { state: "stopped" as const } : {}) }),
+    start: async () => { state.pausing = false; finish() },
+    blocks: { ...fake.blocks, pause: () => { state.pausing = true; return new Promise<void>(resolve => { finish = resolve }) } },
+  }
+  const computers = new Computers({ provider, idlePauseMs: 60_000, keepDays: 1, pauses: { set: (id, at) => { pauses.set(id, at) }, clear: id => { pauses.delete(id) } } }, { readFile: async () => ({ text: "" }) })
+  return { computers, state, pauses }
+}
+
+async function until(done: () => boolean) {
+  for (let i = 0; i < 200 && !done(); i++) await new Promise(resolve => setTimeout(resolve, 5))
+  assert.ok(done())
+}
+
+test("coming back during a pause calls it off, and the computer stays due to pause", async () => {
+  const { computers, state, pauses } = pausable(true)
+  await computers.vm("back")
+  const idle = computers.pauseIdle("back")
+  await until(() => state.pausing)
+  const box = await computers.vm("back") // would hang here if it waited for the pause
+  assert.equal(box.state, "running")
+  assert.equal(state.pausing, false)
+  await idle
+  assert.ok(pauses.has("back"), "still pauses if this process stops before releasing it")
+  await computers.delete("back")
+})
+
+test("a pause nothing can call off is waited for, and leaves nothing due", async () => {
+  const { computers, state, pauses } = pausable(false)
+  await computers.vm("wait")
+  const idle = computers.pauseIdle("wait")
+  await until(() => state.pausing)
+  let back = false
+  const returning = computers.vm("wait").then(() => { back = true })
+  await new Promise(resolve => setTimeout(resolve, 20))
+  assert.equal(back, false)
+  state.pausing = false
+  state.finish()
+  await idle
+  await returning
+  assert.equal(back, true)
+  await computers.delete("wait")
+  assert.equal(pauses.has("wait"), false)
+})
+
+test("what runs before a pause is still waited for, even where the pause can be called off", async () => {
+  let checked = () => {}
+  const checking = new Promise<void>(resolve => { checked = resolve })
+  let probing = false
+  const { computers, state } = pausable(true, async spec => {
+    if (spec.command.includes(".jobs/")) { probing = true; await checking }
+    return { exitCode: 0, stdout: "0", stderr: "" }
+  })
+  await computers.vm("checks")
+  const idle = computers.pauseIdle("checks")
+  await until(() => probing)
+  let back = false
+  const returning = computers.vm("checks").then(() => { back = true })
+  await new Promise(resolve => setTimeout(resolve, 20))
+  assert.equal(back, false)
+  checked()
+  await until(() => state.pausing)
+  state.pausing = false
+  state.finish()
+  await idle
+  await returning
+  await computers.delete("checks")
+})
+
 test("a computer pauses from its stored time after the process that used it is gone", async () => {
   const f = fixture()
   const due = new Map<string, number>()
