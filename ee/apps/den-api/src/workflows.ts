@@ -35,7 +35,7 @@ import { keysetAfter, keysetPage, type KeysetCursor } from "./list-pagination.js
 import { resolveOrganizationMemberAuthority } from "./organization-team-roles.js"
 import { parseCodemodeScriptPayload, validateCodemodeScriptInput } from "./mcp/codemode-script-object.js"
 import { codemodeCallName } from "./mcp/codemode-namespaces.js"
-import type { BuiltCodemodeTools, CodemodeManifestEntry } from "./mcp/codemode-tools.js"
+import type { BuildCodemodeTools, BuiltCodemodeTools, CodemodeManifestEntry } from "./mcp/codemode-tools.js"
 import { executeWorkflow } from "./mcp/workflow-service.js"
 import {
   artifactDigest,
@@ -566,7 +566,7 @@ export async function testWorkflowDraft(input: {
   context: PluginArchActorContext
   configObjectId: string
   draft: WorkflowDraft
-  buildTools: () => Promise<BuiltCodemodeTools>
+  buildTools: BuildCodemodeTools
 }) {
   const resource = await workflowResource(input.context, input.configObjectId, "manager")
   const payload = normalizedPayload(input.draft)
@@ -1090,7 +1090,7 @@ export async function executeLiveArtifactWorkflow(input: {
   expectedOutputSchemaDigest: string
   timeZone?: string
   describeUnavailable?: (missing: readonly { capabilityName: string }[]) => ReturnType<typeof liveArtifactConnectionFailure>
-  buildTools: () => Promise<BuiltCodemodeTools>
+  buildTools: BuildCodemodeTools
 }) {
   const resource = await workflowResource(input.context, input.configObjectId, "viewer")
   const rows = await db.select().from(ConfigObjectVersionTable).where(and(

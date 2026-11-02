@@ -36,7 +36,7 @@ import { recordSkillUse } from "../capability-usage.js"
 import { resolvePluginArchGrantRole } from "../routes/org/plugin-system/access.js"
 import { openworkOrganizationConnectionsUrl, openworkYourConnectionsUrl } from "./connection-navigation.js"
 import { parseCodemodeScriptPayload, type CodemodeScriptInputIssue } from "./codemode-script-object.js"
-import { type BuiltCodemodeTools } from "./codemode-tools.js"
+import { type BuildCodemodeTools } from "./codemode-tools.js"
 import { AUDIT_UNAVAILABLE_TOOL_MESSAGE, AuditUnavailableError } from "../audit/mcp-service-audit.js"
 import { executeWorkflow, type WorkflowExecutionResult } from "./workflow-service.js"
 import { artifactRunInputSchema, artifactRuntime } from "../artifact-runtime.js"
@@ -1703,7 +1703,7 @@ export async function listAccessibleWorkflows(input: {
 }
 
 export async function executeMarketplaceCapability(input: {
-  buildTools?: () => Promise<BuiltCodemodeTools>
+  buildTools?: BuildCodemodeTools
   body?: unknown
   configObjectId: string
   configObjectVersionId?: string
