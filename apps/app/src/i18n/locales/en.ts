@@ -69,6 +69,7 @@ export default {
   "common.off": "Off",
   "common.on": "On",
   "common.question": "Question",
+  "common.permission": "Permission",
   "common.refresh": "Refresh",
   "common.remove": "Remove",
   "common.reset": "Reset",

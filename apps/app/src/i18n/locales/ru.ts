@@ -19,6 +19,7 @@ export default {
   "common.hide": "Скрыть",
   "common.next": "Далее",
   "common.question": "Вопрос",
+  "common.permission": "Разрешение",
   "common.refresh": "Обновить",
   "common.remove": "Удалить",
   "common.reset": "Сбросить",

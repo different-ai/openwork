@@ -18,6 +18,7 @@ export default {
   "common.hide": "Ocultar",
   "common.next": "Siguiente",
   "common.question": "Pregunta",
+  "common.permission": "Permiso",
   "common.refresh": "Actualizar",
   "common.remove": "Eliminar",
   "common.reset": "Restablecer",
