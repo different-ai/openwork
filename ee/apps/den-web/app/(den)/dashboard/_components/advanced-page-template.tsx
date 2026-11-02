@@ -7,6 +7,7 @@ import { type TabItem, UnderlineTabs } from "../../_components/ui/tabs";
 import {
   getBrandAppearanceRoute,
   getDesktopPoliciesRoute,
+  getDesktopPolicyAssignmentsRoute,
   getMarketplacesRoute,
 } from "../../_lib/den-org";
 import { desktopPolicyScreenRemoved } from "../_lib/desktop-policy-screen-rollout";
@@ -26,14 +27,14 @@ const ADVANCED_DESCRIPTIONS: Record<AdvancedTab, string> = {
   "brand-appearance": "Customize how your workspace appears across OpenWork.",
 };
 
-export function AdvancedPageTemplate({ tab, children }: { tab: AdvancedTab; children: React.ReactNode }) {
+export function AdvancedPageTemplate({ tab, children, assignmentRecovery = false }: { tab: AdvancedTab; children: React.ReactNode; assignmentRecovery?: boolean }) {
   const router = useRouter();
   const { orgSlug, orgContext } = useOrgDashboard();
 
   function routeFor(next: AdvancedTab) {
     const routes: Record<AdvancedTab, string> = {
       collections: getMarketplacesRoute(orgSlug),
-      "desktop-policies": getDesktopPoliciesRoute(orgSlug),
+      "desktop-policies": assignmentRecovery ? getDesktopPolicyAssignmentsRoute(orgSlug) : getDesktopPoliciesRoute(orgSlug),
       "brand-appearance": getBrandAppearanceRoute(orgSlug),
     };
     return routes[next];
@@ -46,7 +47,7 @@ export function AdvancedPageTemplate({ tab, children }: { tab: AdvancedTab; chil
     >
       <div data-testid="advanced-tabs" className="mb-6">
         <UnderlineTabs
-          tabs={ADVANCED_TABS.filter((entry) => entry.value !== "desktop-policies" || !desktopPolicyScreenRemoved(orgContext))}
+          tabs={ADVANCED_TABS.filter((entry) => entry.value !== "desktop-policies" || assignmentRecovery || !desktopPolicyScreenRemoved(orgContext))}
           activeTab={tab}
           onChange={(next) => router.push(routeFor(next))}
         />

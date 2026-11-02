@@ -18,7 +18,8 @@ import { DashboardPageTemplate } from "../../_components/ui/dashboard-page-templ
 import { DenButton } from "../../_components/ui/button";
 import { DenInput } from "../../_components/ui/input";
 import { DenTextarea } from "../../_components/ui/textarea";
-import { getDesktopPoliciesRoute, getMembersRoute, getTeamRoute, getOrgAccessFlags, permissionLockReason } from "../../_lib/den-org";
+import { DenSwitch } from "../../_components/ui/switch";
+import { getDesktopPolicyAssignmentsRoute, getDesktopPoliciesRoute, getMembersRoute, getTeamRoute, getOrgAccessFlags, permissionLockReason } from "../../_lib/den-org";
 import { useOrgDashboard } from "../_providers/org-dashboard-provider";
 import {
   createDesktopPolicy,
@@ -224,7 +225,7 @@ function policyDocumentFromDraft(draft: PolicyDraft): DesktopPolicyDocumentWrite
   };
 }
 
-export function DesktopPolicyEditorScreen({ desktopPolicyId }: { desktopPolicyId?: string }) {
+export function DesktopPolicyEditorScreen({ desktopPolicyId, assignmentRecovery = false }: { desktopPolicyId?: string; assignmentRecovery?: boolean }) {
   const router = useRouter();
   const { orgId, orgSlug, orgContext, runReauthableAction } = useOrgDashboard();
   const { definitions, desktopPolicies, busy, error, reloadPolicies } = useOrgDesktopPolicies(orgId);
@@ -258,13 +259,15 @@ export function DesktopPolicyEditorScreen({ desktopPolicyId }: { desktopPolicyId
   const canView = access.canViewDesktopPolicies;
   const isEditing = Boolean(desktopPolicyId);
   const isDefault = policy?.isDefault === true;
-  const listRoute = getDesktopPoliciesRoute(orgSlug);
+  const listRoute = assignmentRecovery ? getDesktopPolicyAssignmentsRoute(orgSlug) : getDesktopPoliciesRoute(orgSlug);
 
   const initialLoad = busy && (definitions.length === 0 || (isEditing && !policy));
   const notFound = isEditing && !busy && !policy && desktopPolicies.length > 0;
   const priorityError = getPriorityError(draft, isDefault);
   const disabledPromptCopy = getDisabledPromptCopy(isDefault);
   const formDisabled = saving || togglingEnabled || !canManage;
+  const recoveringAssignments = assignmentRecovery && isEditing;
+  const policyFieldsDisabled = formDisabled || recoveringAssignments;
   const restrictedMode = draft.mode === "restricted";
 
   const handleSelectMode = (mode: PolicyMode) => {
@@ -305,9 +308,9 @@ export function DesktopPolicyEditorScreen({ desktopPolicyId }: { desktopPolicyId
       await runReauthableAction("save-desktop-policy", async () => {
         setSaving(true);
         const payload: DesktopPolicyPayload = {
-          policyName,
-          policy: policyDocumentFromDraft(draft),
-          priority: isDefault ? 0 : draft.priority,
+          policyName: recoveringAssignments && policy ? policy.policyName : policyName,
+          policy: recoveringAssignments && policy ? policy.policy : policyDocumentFromDraft(draft),
+          priority: recoveringAssignments && policy ? policy.priority : isDefault ? 0 : draft.priority,
           memberIds: isDefault ? [] : draft.memberIds,
           teamIds: isDefault ? [] : draft.teamIds,
           roles: isDefault ? [] : draft.roles,
@@ -363,8 +366,8 @@ export function DesktopPolicyEditorScreen({ desktopPolicyId }: { desktopPolicyId
   return (
     <DashboardPageTemplate
       icon={Laptop}
-      title={isEditing ? "Edit desktop policy" : "New desktop policy"}
-      description="Advanced app defaults and grants. Manage team modes and permissions from Team → Access."
+      title={recoveringAssignments ? "Review policy assignments" : isEditing ? "Edit desktop policy" : "New desktop policy"}
+      description={recoveringAssignments ? undefined : "Advanced app defaults and grants. Manage team modes and permissions from Team → Access."}
     >
       <div className="mb-6 flex flex-wrap items-center justify-between gap-3">
         <Link
@@ -419,7 +422,7 @@ export function DesktopPolicyEditorScreen({ desktopPolicyId }: { desktopPolicyId
               <DenInput
                 value={draft.policyName}
                 onChange={(event) => setDraft({ ...draft, policyName: event.target.value })}
-                disabled={formDisabled || isDefault}
+                disabled={policyFieldsDisabled || isDefault}
               />
               {isDefault ? (
                 <span className="text-[12px] text-gray-500">The default desktop policy name cannot be changed.</span>
@@ -443,7 +446,7 @@ export function DesktopPolicyEditorScreen({ desktopPolicyId }: { desktopPolicyId
                       priority: Number.isInteger(nextPriority) ? nextPriority : 0,
                     });
                   }}
-                  disabled={formDisabled}
+                  disabled={policyFieldsDisabled}
                 />
                 <span id={PRIORITY_HELP_ID} className="text-[12px] text-gray-500">Higher wins when multiple targeted policies match.</span>
                 {priorityError ? (
@@ -464,6 +467,7 @@ export function DesktopPolicyEditorScreen({ desktopPolicyId }: { desktopPolicyId
             ) : null}
           </div>
 
+          {!recoveringAssignments ? <>
           <fieldset className="grid gap-3" aria-describedby={POLICY_MODE_HELP_ID} data-testid="desktop-policy-mode">
             <legend className="text-[13px] font-medium text-gray-700">Policy mode</legend>
             <div className="grid gap-3 sm:grid-cols-2">
@@ -614,6 +618,22 @@ export function DesktopPolicyEditorScreen({ desktopPolicyId }: { desktopPolicyId
               <p className="text-[13px] leading-6 text-gray-500">{disabledPromptCopy}</p>
             )}
           </div>
+
+          </> : <p className="text-[13px] text-gray-500">Policy values and priority are unchanged. Only the assignments below are saved.</p>}
+
+          {recoveringAssignments && !isDefault && policy?.roles.length ? (
+            <fieldset className="grid gap-2 text-[13px] text-gray-700">
+              <legend className="mb-2 font-medium">Existing role assignments</legend>
+              {policy.roles.map((role) => (
+                <label key={role} className="flex items-center gap-3">
+                  <DenSwitch checked={draft.roles.includes(role)} disabled={formDisabled}
+                    aria-label={`${role === "owner" ? "Owner" : role === "admin" ? "Admin" : "Member"} role`}
+                    onChange={(checked) => setDraft({ ...draft, roles: checked ? [...draft.roles, role] : draft.roles.filter((entry) => entry !== role) })} />
+                  {role === "owner" ? "Owner" : role === "admin" ? "Admin" : "Member"} role
+                </label>
+              ))}
+            </fieldset>
+          ) : null}
 
           {!isDefault ? (
             <div className="grid items-start gap-5 lg:grid-cols-2">

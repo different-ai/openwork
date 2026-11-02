@@ -12,7 +12,7 @@ import {
 import { DenButton, buttonVariants } from "../../_components/ui/button";
 import { DenCatalogList, DenCatalogRow } from "../../_components/ui/catalog-row";
 import { DenNotice } from "../../_components/ui/notice";
-import { getDesktopPolicyRoute, getNewDesktopPolicyRoute, getOrgAccessFlags, permissionLockReason } from "../../_lib/den-org";
+import { getDesktopPolicyAssignmentsRoute, getDesktopPolicyRoute, getNewDesktopPolicyRoute, getOrgAccessFlags, permissionLockReason } from "../../_lib/den-org";
 import { useOrgDashboard } from "../_providers/org-dashboard-provider";
 import {
   deleteDesktopPolicy,
@@ -42,7 +42,7 @@ function isRestrictedPolicy(policy: DesktopPolicyDocument) {
   );
 }
 
-export function DesktopPoliciesScreen() {
+export function DesktopPoliciesScreen({ assignmentRecovery = false }: { assignmentRecovery?: boolean }) {
   const { orgId, orgSlug, orgContext, runReauthableAction } = useOrgDashboard();
   const { desktopPolicies, busy, error, reloadPolicies } = useOrgDesktopPolicies(orgId);
   const [deleting, setDeleting] = useState(false);
@@ -91,10 +91,10 @@ export function DesktopPoliciesScreen() {
   };
 
   return (
-    <AdvancedPageTemplate tab="desktop-policies">
+    <AdvancedPageTemplate tab="desktop-policies" assignmentRecovery={assignmentRecovery}>
       <div className="mb-6 flex items-center justify-end">
         {canManage ? (
-          <Link href={getNewDesktopPolicyRoute(orgSlug)} className={buttonVariants({ variant: "primary" })}>
+          <Link href={assignmentRecovery ? getDesktopPolicyAssignmentsRoute(orgSlug, "new") : getNewDesktopPolicyRoute(orgSlug)} className={buttonVariants({ variant: "primary" })}>
             <Plus className="h-4 w-4" aria-hidden="true" />
             New policy
           </Link>
@@ -153,7 +153,7 @@ export function DesktopPoliciesScreen() {
               valueWidth="150px"
               action={
                 <div className="flex shrink-0 items-center gap-2">
-                  <Link href={getDesktopPolicyRoute(orgSlug, policy.id)} className={buttonVariants({ variant: "secondary", size: "sm" })}>
+                  <Link href={assignmentRecovery ? getDesktopPolicyAssignmentsRoute(orgSlug, policy.id) : getDesktopPolicyRoute(orgSlug, policy.id)} aria-label={assignmentRecovery ? `Review assignments for ${policy.policyName}` : undefined} className={buttonVariants({ variant: "secondary", size: "sm" })}>
                     {policy.policy.access ? "View team access" : canManage ? "Edit" : "View"}
                   </Link>
                   {!policy.isDefault ? (
