@@ -1,6 +1,7 @@
 // Engine-side agent permissions (packages/types/src/den/agent-permissions.ts)
-// apply on OpenCode v2, including folders outside the workspace; v1 does not
-// enforce these engine rules. Computer use and scripting are enforced separately
+// apply natively on OpenCode v2, including folders outside the workspace. The
+// server refuses v1 execution when external-folder rules restrict access, since
+// v1 cannot reliably enforce them. Computer use and scripting are enforced separately
 // by the desktop host on both engines. Den delivers ordered rules; this module
 // maps them onto v2's permissions and says which tool calls, local skills and
 // local MCP servers they block. It has no engine SDK or server dependency so
