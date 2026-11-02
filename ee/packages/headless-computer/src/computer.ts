@@ -28,6 +28,14 @@ export type ComputerOptions = {
 const DESKTOP_VIEWER_PORT = 6080
 /** What the model and the person are told while a computer waits to move to a new version. */
 const UPDATING = "This computer is updating to a new version, which starts once its other commands and background jobs finish. Try again in a moment."
+/**
+ * How long a computer whose replacement came up on an older image stays put before another try. A gateway's template
+ * keeps its name when it is rebuilt, so what a new computer comes up on is the only sign that it moved on. Each try costs
+ * a pause and the running computer's memory, so an idle one waits a day; one that can't serve this runner has someone
+ * waiting, and little to lose.
+ */
+const IDLE_REPLACEMENT_RETRY_MS = 24 * 60 * 60_000
+const NEEDED_REPLACEMENT_RETRY_MS = 10 * 60_000
 
 const WORKSPACE = "/workspace"
 const FILES_DIR = `${WORKSPACE}/files`
@@ -399,6 +407,7 @@ export class Computers {
     } catch (error) {
       if (!(error instanceof DesktopError) || error.desktopCode !== "desktop_outdated") throw error
       if ((this.working.get(sessionId) ?? 0) > self || await this.runningJobs(box).catch(() => 1) > 0) throw new DesktopError("desktop_updating", UPDATING)
+      if (await desktop.replacedInVain(box, NEEDED_REPLACEMENT_RETRY_MS)) throw error
       const fresh = await this.replace(sessionId, box, { required: true })
       if (!fresh) throw error
       this.desktops.set(sessionId, await desktop.start(fresh))
@@ -406,15 +415,21 @@ export class Computers {
     }
   }
 
-  /** Whether the session's computer was built from an older image: known from its last start here, else asked. */
+  /**
+   * Whether the session's computer was built from an older image (known from its last start here, else asked) and
+   * moving it could help: a replacement that just came up on an older image shows new computers aren't there yet.
+   */
   private async staleImage(sessionId: string, box: SandboxHandle) {
     if (!this.desktop) return false
     const known = this.desktops.get(sessionId)
-    if (known) return known === "stale"
-    // A helper from before in-place updates can't carry anything over, so such a computer is only replaced once its
-    // desktop is needed, never while idle.
-    const versions = await this.desktop.versions(box).catch(() => null)
-    return versions !== null && versions.image !== this.desktop.image
+    if (known === "current") return false
+    if (!known) {
+      // A helper from before in-place updates can't carry anything over, so such a computer is only replaced once its
+      // desktop is needed, never while idle.
+      const versions = await this.desktop.versions(box).catch(() => null)
+      if (versions === null || versions.image === this.desktop.image) return false
+    }
+    return !await this.desktop.replacedInVain(box, IDLE_REPLACEMENT_RETRY_MS)
   }
 
   /**
@@ -454,6 +469,7 @@ export class Computers {
         console.error("[headless-computer] carrying state over failed", { sessionId, name, error: error instanceof Error ? error.message : "unknown" })
       }
     }
+    await this.desktop?.noteReplacement(fresh).catch(() => undefined)
     console.log("[headless-computer] computer replaced", { sessionId, required: options.required, carried: kept, ms: Date.now() - started, image: this.snapshot })
     return fresh
   }
