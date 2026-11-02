@@ -304,12 +304,15 @@ into it, and on demand (Actions → "Deploy runner to celld" → Run workflow). 
    `workbot-desktop-freestyle-<desktop>` with the runner's `FREESTYLE_API_KEY` and bundles the runner with it. A
    snapshot that already exists is reused. A failed build stops the run before the fleet changes.
 2. **Checks the live runner and the new one can serve each other** (`scripts/compat-check.ts`, below).
-3. Deploys to a throwaway bucket prefix and runs a real turn there.
-4. Deploys to the fleet and waits until every Render instance logs `deployment_adopted` for the new version. The
+3. **Warns when a sandbox gateway's template is behind the runner's desktop.** The run can't build that template, so
+   it warns in its log and in Slack and carries on. The [Fast Sandbox section](README.md#fast-sandbox-microvms) of the
+   README says what to rebuild.
+4. Deploys to a throwaway bucket prefix and runs a real turn there.
+5. Deploys to the fleet and waits until every Render instance logs `deployment_adopted` for the new version. The
    version is a content hash, so an unchanged bundle is reported as `unchanged` and nothing switches.
-5. Records which commit produced the live version in `s3://openwork-celld/ci/fleet-deployed.json` (outside the
+6. Records which commit produced the live version in `s3://openwork-celld/ci/fleet-deployed.json` (outside the
    fleet prefix; celld never reads it), for the next run's check.
-6. Posts the outcome to Slack, when `CELLD_DEPLOY_SLACK_WEBHOOK_URL` is set: deployed / unchanged / failed, the
+7. Posts the outcome to Slack, when `CELLD_DEPLOY_SLACK_WEBHOOK_URL` is set: deployed / unchanged / failed, the
    version and the one before it, the commit and run, and how many nodes adopted it. Cells switched and cells
    force-cancelled are not counted yet: celld 0.6.3 logs no line for a forced switch.
 

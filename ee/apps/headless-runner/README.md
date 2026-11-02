@@ -502,6 +502,22 @@ template is on the node; pause, which writes a full checkpoint of disk and
 memory, takes about three minutes and resume about a second, with processes and
 open windows kept.
 
+Keep the template on the runner's desktop image. When
+`dist/desktop-image.version` changes, rebuild it and update both of the
+Differently template's entries: this pool's template id and the Freestyle
+snapshot the runner deploy built. Until then the template's computers stay on
+the older image, and the deploy warns, in its log and in Slack. A node's template
+cache holds one desktop-sized template by default, and Fast Sandbox doesn't fetch
+an evicted one again (Differently's Azure guide): boot a computer from the new
+template to put it on the node, switch Differently to it right away, then delete
+the old one.
+
+A new guest on the same image needs no rebuild. The runner installs its guest
+into the computers it starts, which adds about 4 s to a new computer's first
+open. Guests change most days, and a template takes about five minutes to build
+and a Differently configuration change to adopt, so the template follows the
+image and not the guest.
+
 Opt-in verification, creating and cleaning one real computer:
 
 ```sh
