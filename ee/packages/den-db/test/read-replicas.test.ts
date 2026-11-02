@@ -68,3 +68,28 @@ test("selects run on the replica; writes and $primary reads run on the primary",
 
   assert.deepEqual(calls, ["replica:select", "primary:select", "primary:update"])
 })
+
+test("readFromPrimary sends replica-routed reads to the primary while it returns true", async () => {
+  let pinned = false
+  const { client, readClient, db } = createDenDb({
+    mode: "planetscale",
+    planetscale,
+    readReplica: { username: "reader", password: "reader-secret" },
+    readFromPrimary: () => pinned,
+  })
+  assert.ok(readClient)
+  const calls: string[] = []
+  const record = (target: string) => async (query: string) => {
+    calls.push(`${target}:${query.trimStart().split(/\s+/, 1)[0]?.toLowerCase()}`)
+    return { headers: [], types: {}, fields: [], rows: [], rowsAffected: 0, insertId: "0", size: 0, statement: query, time: 0 }
+  }
+  Object.assign(client, { execute: record("primary") })
+  Object.assign(readClient, { execute: record("replica") })
+
+  const { user } = await import("../src/schema.ts")
+  await db.select().from(user).limit(1)
+  pinned = true
+  await db.select().from(user).limit(1)
+
+  assert.deepEqual(calls, ["replica:select", "primary:select"])
+})

@@ -233,10 +233,17 @@ export function createDenDb(input: {
   planetscale?: PlanetScaleCredentials | null
   /** Optional replica credentials for the same host; reads use the primary when absent. */
   readReplica?: ReadReplicaCredentials | null
+  /**
+   * Checked on every replica-routed read; returning true sends that read to the
+   * primary instead (e.g. once the current request has written).
+   */
+  readFromPrimary?: () => boolean
   logger?: Logger
 }) {
   const mode = resolveDbMode(input)
   const readReplica = input.readReplica ?? null
+  const route = (primary: DenPrimaryDb, replica: DenPrimaryDb): DenDb =>
+    withReplicas(primary, [replica], () => (input.readFromPrimary?.() ? primary : replica))
 
   if (mode === "planetscale") {
     const credentials = input.planetscale ?? (input.databaseUrl ? parsePlanetScaleConfigFromDatabaseUrl(input.databaseUrl) : null)
@@ -250,7 +257,7 @@ export function createDenDb(input: {
       ? new Client({ host: credentials.host, ...readReplica, fetch: createRetryingPlanetScaleFetch() })
       : null
     const replica: DenPrimaryDb = readClient ? drizzlePlanetScale(readClient, { schema, logger: input.logger }) : primary
-    return { client, readClient, db: withReplicas(primary, [replica]) }
+    return { client, readClient, db: route(primary, replica) }
   }
 
   if (!input.databaseUrl) {
@@ -267,5 +274,5 @@ export function createDenDb(input: {
   const replica = readClient
     ? (drizzle(readClient, { schema, mode: "default", logger: input.logger }) as unknown as DenPrimaryDb)
     : primary
-  return { client, readClient, db: withReplicas(primary, [replica]) }
+  return { client, readClient, db: route(primary, replica) }
 }

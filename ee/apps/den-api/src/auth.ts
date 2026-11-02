@@ -1574,7 +1574,8 @@ export const auth = betterAuth({
           }
 
           if (hasRole(role, ORGANIZATION_OWNER_ROLE)) {
-            const existingMembers = await db
+            // primary: a lagging replica could miss members added moments ago and allow a second owner.
+            const existingMembers = await db.$primary
               .select({ id: schema.MemberTable.id })
               .from(schema.MemberTable)
               .where(eq(schema.MemberTable.organizationId, normalizeDenTypeId("organization", member.organizationId)))

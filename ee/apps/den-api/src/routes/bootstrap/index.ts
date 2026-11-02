@@ -242,7 +242,8 @@ function skillMetadata(skillText: string) {
 }
 
 async function checkBootstrapRateLimit(key: string, now: number) {
-  const [row] = await db
+  // primary: the counter is read back right after earlier requests wrote it.
+  const [row] = await db.$primary
     .select({ id: RateLimitTable.id, count: RateLimitTable.count, lastRequest: RateLimitTable.lastRequest })
     .from(RateLimitTable)
     .where(eq(RateLimitTable.key, key))

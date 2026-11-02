@@ -111,7 +111,8 @@ async function syncExternalIdentityForProvider(input: {
     return deleted.ok
   }
 
-  const existingRows = await db
+  // primary: the IdP often creates then patches a user back to back.
+  const existingRows = await db.$primary
     .select()
     .from(ExternalIdentityTable)
     .where(and(eq(ExternalIdentityTable.organizationId, input.provider.organizationId), eq(ExternalIdentityTable.userId, userId)))
@@ -192,7 +193,8 @@ async function syncExternalIdentityFromScimUserIdForProvider(input: {
   provider: ScimProvider
   userId: UserId
 }) {
-  const userRows = await db
+  // primary: Better Auth wrote the user and account in this same SCIM request.
+  const userRows = await db.$primary
     .select()
     .from(AuthUserTable)
     .where(eq(AuthUserTable.id, input.userId))
@@ -202,7 +204,7 @@ async function syncExternalIdentityFromScimUserIdForProvider(input: {
     return false
   }
 
-  const accountRows = await db
+  const accountRows = await db.$primary
     .select()
     .from(AuthAccountTable)
     .where(and(eq(AuthAccountTable.userId, input.userId), eq(AuthAccountTable.providerId, input.provider.providerId)))
@@ -239,7 +241,8 @@ async function deactivateExternalIdentityForScimUserForProvider(input: {
   provider: ScimProvider
   userId: UserId
 }) {
-  const rows = await db
+  // primary: a user provisioned moments ago must be deactivated too.
+  const rows = await db.$primary
     .select()
     .from(ExternalIdentityTable)
     .where(and(eq(ExternalIdentityTable.organizationId, input.provider.organizationId), eq(ExternalIdentityTable.userId, input.userId)))
@@ -277,8 +280,8 @@ export function getScimBaseUrl() {
   return `${env.betterAuthUrl}/api/auth/scim/v2`
 }
 
-export async function getOrganizationScimConnection(organizationId: OrganizationId) {
-  const rows = await db
+export async function getOrganizationScimConnection(organizationId: OrganizationId, reader: Pick<typeof db.$primary, "select"> = db) {
+  const rows = await reader
     .select()
     .from(ScimProviderTable)
     .where(eq(ScimProviderTable.organizationId, organizationId))
@@ -306,7 +309,8 @@ export async function rotateOrganizationScimToken(input: {
     headers: input.headers,
   })
 
-  const connection = await getOrganizationScimConnection(input.organizationId)
+  // primary: Better Auth wrote the connection just above.
+  const connection = await getOrganizationScimConnection(input.organizationId, db.$primary)
   if (!connection) {
     throw new Error("SCIM connection was created, but could not be loaded.")
   }
@@ -405,13 +409,14 @@ export async function deleteScimProvisionedAccessForProvider(input: {
   provider: ScimProvider
   userId: UserId
 }) {
-  const accountRows = await db
+  // primary: deprovisioning must see a user the IdP provisioned moments ago.
+  const accountRows = await db.$primary
     .select()
     .from(AuthAccountTable)
     .where(and(eq(AuthAccountTable.userId, input.userId), eq(AuthAccountTable.providerId, input.provider.providerId)))
     .limit(1)
 
-  const memberRows = await db
+  const memberRows = await db.$primary
     .select()
     .from(MemberTable)
     .where(and(eq(MemberTable.userId, input.userId), eq(MemberTable.organizationId, input.provider.organizationId), isNull(MemberTable.removedAt)))
@@ -420,8 +425,8 @@ export async function deleteScimProvisionedAccessForProvider(input: {
   const account = accountRows[0] ?? null
   const member = memberRows[0] ?? null
   const [userRows, identityRows] = await Promise.all([
-    db.select().from(AuthUserTable).where(eq(AuthUserTable.id, input.userId)).limit(1),
-    db
+    db.$primary.select().from(AuthUserTable).where(eq(AuthUserTable.id, input.userId)).limit(1),
+    db.$primary
       .select()
       .from(ExternalIdentityTable)
       .where(and(
@@ -483,7 +488,8 @@ export async function deleteScimProvisionedAccessForProvider(input: {
       .where(and(eq(ExternalIdentityTable.organizationId, input.provider.organizationId), eq(ExternalIdentityTable.userId, input.userId)))
   })
 
-  const otherActiveMembershipRows = await db
+  // primary: reads after the member removal above.
+  const otherActiveMembershipRows = await db.$primary
     .select({ value: count() })
     .from(MemberTable)
     .where(and(eq(MemberTable.userId, input.userId), isNull(MemberTable.removedAt)))

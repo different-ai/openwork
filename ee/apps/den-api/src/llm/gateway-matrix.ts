@@ -454,7 +454,11 @@ export function publicGatewayPinnedModelIds(pinnedModelIds: readonly string[], u
  * are dropped (attentionCount stays); createdBy, oauthTenantId, awsSso and settings.upstreamBaseUrl
  * are omitted, and oauthClientId and litellm.baseUrl are null.
  */
-export type GatewaySummaryOptions = { managerDetails?: boolean }
+export type GatewaySummaryOptions = {
+  managerDetails?: boolean
+  /** Read from the primary: the caller just wrote this provider's rows and returns them. */
+  primary?: boolean
+}
 
 type GatewaySummaryRows = {
   access: Array<typeof GatewayProviderAccessTable.$inferSelect>
@@ -495,24 +499,25 @@ function rowsByProvider<Row>(rows: Row[], providerId: (row: Row) => GatewayProvi
  * GET /v1/inference-providers/:id/models. Throws 403 unless the member is
  * active in the organization.
  */
-export async function readGatewaySummaries(input: { identities: boolean; manage: boolean; memberId: GatewayMemberId; organizationId: GatewayProvider["organization_id"]; providers: GatewayProvider[] }): Promise<GatewaySummaryReads> {
+export async function readGatewaySummaries(input: { identities: boolean; manage: boolean; memberId: GatewayMemberId; organizationId: GatewayProvider["organization_id"]; providers: GatewayProvider[]; primary?: boolean }): Promise<GatewaySummaryReads> {
   const { manage, memberId, organizationId } = input
+  const reader = input.primary ? db.$primary : db
   const providerIds = input.providers.map((provider) => provider.id)
   if (input.providers.some((provider) => provider.organization_id !== organizationId)) throw new Error("gateway_summary_organization_mismatch")
   const [[member], catalogModels, groups, sets, links, access, credentials, teams] = await Promise.all([
-    db.select({ userId: MemberTable.userId }).from(MemberTable).where(and(eq(MemberTable.id, memberId), eq(MemberTable.organizationId, organizationId), isNull(MemberTable.removedAt))),
-    providerIds.length ? db.select().from(GatewayProviderModelTable).where(inArray(GatewayProviderModelTable.gateway_provider_id, providerIds))
+    reader.select({ userId: MemberTable.userId }).from(MemberTable).where(and(eq(MemberTable.id, memberId), eq(MemberTable.organizationId, organizationId), isNull(MemberTable.removedAt))),
+    providerIds.length ? reader.select().from(GatewayProviderModelTable).where(inArray(GatewayProviderModelTable.gateway_provider_id, providerIds))
       .orderBy(asc(GatewayProviderModelTable.gateway_provider_id), asc(GatewayProviderModelTable.model_id)) : [],
-    providerIds.length ? db.select().from(GatewayModelGroupTable).where(inArray(GatewayModelGroupTable.gateway_provider_id, providerIds))
+    providerIds.length ? reader.select().from(GatewayModelGroupTable).where(inArray(GatewayModelGroupTable.gateway_provider_id, providerIds))
       .orderBy(asc(GatewayModelGroupTable.gateway_provider_id), asc(GatewayModelGroupTable.id)) : [],
-    providerIds.length ? db.select().from(GatewayCredentialSetTable).where(inArray(GatewayCredentialSetTable.gateway_provider_id, providerIds))
+    providerIds.length ? reader.select().from(GatewayCredentialSetTable).where(inArray(GatewayCredentialSetTable.gateway_provider_id, providerIds))
       .orderBy(asc(GatewayCredentialSetTable.gateway_provider_id), asc(GatewayCredentialSetTable.id)) : [],
-    providerIds.length ? db.select({ link: GatewayModelGroupModelTable, providerId: GatewayModelGroupTable.gateway_provider_id }).from(GatewayModelGroupModelTable)
+    providerIds.length ? reader.select({ link: GatewayModelGroupModelTable, providerId: GatewayModelGroupTable.gateway_provider_id }).from(GatewayModelGroupModelTable)
       .innerJoin(GatewayModelGroupTable, eq(GatewayModelGroupTable.id, GatewayModelGroupModelTable.model_group_id))
       .where(inArray(GatewayModelGroupTable.gateway_provider_id, providerIds)) : [],
-    providerIds.length ? db.select().from(GatewayProviderAccessTable).where(inArray(GatewayProviderAccessTable.gateway_provider_id, providerIds))
+    providerIds.length ? reader.select().from(GatewayProviderAccessTable).where(inArray(GatewayProviderAccessTable.gateway_provider_id, providerIds))
       .orderBy(asc(GatewayProviderAccessTable.gateway_provider_id), asc(GatewayProviderAccessTable.audience_key), asc(GatewayProviderAccessTable.model_group_id), asc(GatewayProviderAccessTable.credential_set_id)) : [],
-    providerIds.length ? db.select({ credential: GatewayProviderCredentialTable, memberName: AuthUserTable.name, memberEmail: AuthUserTable.email }).from(GatewayProviderCredentialTable)
+    providerIds.length ? reader.select({ credential: GatewayProviderCredentialTable, memberName: AuthUserTable.name, memberEmail: AuthUserTable.email }).from(GatewayProviderCredentialTable)
       .leftJoin(MemberTable, and(eq(MemberTable.id, GatewayProviderCredentialTable.org_membership_id), eq(MemberTable.organizationId, organizationId))).leftJoin(AuthUserTable, eq(AuthUserTable.id, MemberTable.userId))
       .where(and(inArray(GatewayProviderCredentialTable.gateway_provider_id, providerIds), eq(GatewayProviderCredentialTable.organization_id, organizationId),
         manage ? undefined : or(
@@ -520,11 +525,11 @@ export async function readGatewaySummaries(input: { identities: boolean; manage:
           and(eq(GatewayProviderCredentialTable.subject, memberId), eq(GatewayProviderCredentialTable.org_membership_id, memberId)),
         )))
       .orderBy(asc(GatewayProviderCredentialTable.gateway_provider_id), asc(GatewayProviderCredentialTable.id)) : [],
-    memberGatewayTeams(db, organizationId, memberId),
+    memberGatewayTeams(reader, organizationId, memberId),
   ])
   if (!member?.userId) throw new GatewayWriteError(403, "forbidden")
   const creatorIds = [...new Set(sets.flatMap((set) => set.created_by_org_membership_id ? [set.created_by_org_membership_id] : []))]
-  const creators = input.identities && creatorIds.length ? await db.select({ id: MemberTable.id, name: AuthUserTable.name, email: AuthUserTable.email }).from(MemberTable)
+  const creators = input.identities && creatorIds.length ? await reader.select({ id: MemberTable.id, name: AuthUserTable.name, email: AuthUserTable.email }).from(MemberTable)
     .leftJoin(AuthUserTable, eq(AuthUserTable.id, MemberTable.userId))
     .where(and(inArray(MemberTable.id, creatorIds), eq(MemberTable.organizationId, organizationId), isNull(MemberTable.removedAt))) : []
   const modelsByProvider = rowsByProvider(catalogModels, (row) => row.gateway_provider_id)
@@ -565,7 +570,7 @@ export function gatewaySummary(provider: GatewayProvider, memberId: GatewayMembe
 export async function gatewaySummary(provider: GatewayProvider, memberId: GatewayMemberId, baseUrl: string, manage: boolean, options: GatewaySummaryOptions = {}, reads?: GatewaySummaryReads): Promise<GatewayProviderDetails | GatewayProviderSummary> {
   const identities = manage && options.managerDetails === true
   // A list (or the connect payload) passes the rows it already read; otherwise read this provider's.
-  const summaryReads = reads ?? await readGatewaySummaries({ identities, manage, memberId, organizationId: provider.organization_id, providers: [provider] })
+  const summaryReads = reads ?? await readGatewaySummaries({ identities, manage, memberId, organizationId: provider.organization_id, providers: [provider], primary: options.primary })
   const rows = summaryReads.providers.get(provider.id)
   if (!rows || summaryReads.memberId !== memberId || summaryReads.manage !== manage || summaryReads.identities !== identities) throw new Error("gateway_summary_reads_mismatch")
   const { access, catalogModels, credentials, groups, links, sets } = rows
@@ -672,7 +677,7 @@ export async function gatewaySummary(provider: GatewayProvider, memberId: Gatewa
   if (!manage) return summary
   const modelGroups: GatewayModelGroup[] = groups.map((group) => ({ id: group.id, name: group.name, description: group.description, status: group.status,
     modelIds: (modelsByGroupId.get(group.id) ?? []).map((model) => model.model_id) }))
-  const status = await liteLlmStatus(provider)
+  const status = await liteLlmStatus(provider, options.primary)
   const litellm = status && !identities ? { ...status, baseUrl: null, attention: [] } : status
   const settings = publicProviderSettings(provider.settings)
   if (!identities) delete settings.upstreamBaseUrl

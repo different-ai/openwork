@@ -1,6 +1,6 @@
 import { peopleMemberCondition } from "./setup-agent-members.js"
 import { asc, and, eq, gt, isNull, lt, lte } from "@openwork-ee/den-db/drizzle"
-import { readFeatureRollouts, readMemberFeatureOverrides, readOrganizationFeatureOverrides, readMembersWithFeatureOverrides } from "@openwork-ee/den-db/organization-features"
+import { readFeatureRollouts, readMemberFeatureOverrides, readOrganizationFeatureOverrides, readMembersWithFeatureOverrides, type FeatureDatabase } from "@openwork-ee/den-db/organization-features"
 import { AuthSessionTable, AuthUserTable, InvitationTable, MemberTable, OAuthConsentTable, OrganizationTable, TeamTable } from "@openwork-ee/den-db/schema"
 import { isFeatureKey, type FeatureOverrides, type FeatureRollouts } from "@openwork/features"
 import { normalizeDenTypeId, type DenTypeId, type DenTypeIdName } from "@openwork-ee/utils/typeid"
@@ -152,6 +152,21 @@ let activeOrgMembershipLoader = loadOrgMembership
 let activeAuthSessionLoader = loadAuthSession
 let activeAuthSessionIdLoader = loadActiveSessionId
 let activeAuthGrantLoader = loadActiveGrant
+
+/**
+ * Database for loaders whose result is cached. With Redis they read the
+ * primary: they run right after an invalidating write, and a lagging replica
+ * row would be cached for the whole TTL. Without Redis nothing is cached and
+ * they run on every request, so the replica serves them.
+ */
+function cachedLoaderDb() {
+  return activeRedisClient ? db.$primary : db
+}
+
+/** cachedLoaderDb for the feature readers, which take the root database or a transaction (one reads the primary). */
+function readCachedFeatures<T>(read: (database: FeatureDatabase) => Promise<T>): Promise<T> {
+  return activeRedisClient ? db.transaction((tx) => read(tx)) : read(db)
+}
 
 function cacheKey(input: CacheKeyInput) {
   return `cache:${input.parent}:${input.child}:${input.id}`
@@ -504,7 +519,7 @@ async function getOrSet<T>(input: {
 }
 
 async function loadOrgMembers(organizationId: OrgId): Promise<CachedOrgMember[]> {
-  const members = await db
+  const members = await cachedLoaderDb()
     .select({
       id: MemberTable.id,
       userId: MemberTable.userId,
@@ -566,7 +581,7 @@ async function hashLegacySessionToken(sessionId: DenTypeId<"session">, token: st
 }
 
 async function loadAuthSession(token: string, now: Date): Promise<CachedAuthSession | null> {
-  const rows = await db
+  const rows = await cachedLoaderDb()
     .select({
       session: {
         id: AuthSessionTable.id,
@@ -635,7 +650,7 @@ async function loadActiveSessionId(sessionId: DenTypeId<"session">, now: Date) {
       lt(AuthSessionTable.expiresAt, nextExpiresAt),
     ))
 
-  const rows = await db
+  const rows = await cachedLoaderDb()
     .select({
       id: AuthSessionTable.id,
       expiresAt: AuthSessionTable.expiresAt,
@@ -655,7 +670,7 @@ async function loadActiveSessionId(sessionId: DenTypeId<"session">, now: Date) {
 }
 
 async function loadActiveGrant(grantId: OAuthConsentId) {
-  const rows = await db
+  const rows = await cachedLoaderDb()
     .select({ id: OAuthConsentTable.id })
     .from(OAuthConsentTable)
     .where(eq(OAuthConsentTable.id, grantId))
@@ -666,7 +681,7 @@ async function loadActiveGrant(grantId: OAuthConsentId) {
 }
 
 async function loadOrgMembership(input: { organizationId: OrgId; userId: UserId }): Promise<CachedOrgMembership | null> {
-  const rows = await db
+  const rows = await cachedLoaderDb()
     .select({ id: MemberTable.id, role: MemberTable.role })
     .from(MemberTable)
     .where(and(
@@ -696,14 +711,14 @@ function logFeatureCacheError(stage: "get" | "set", child: CacheChild, id: strin
 const featureRolloutsEntry: GenerationCacheEntry<FeatureRollouts> = {
   entryKey: (generation) => cacheKey({ parent: "features", child: "rollouts", id: generation }),
   parse: parseCachedFeatureRollouts,
-  load: () => readFeatureRollouts(db),
+  load: () => readCachedFeatures(readFeatureRollouts),
 }
 
 function featureOverridesEntry(organizationId: OrgId): GenerationCacheEntry<FeatureOverrides> {
   return {
     entryKey: (generation) => cacheKey({ parent: "features", child: "overrides", id: `${generation}:${organizationId}` }),
     parse: parseCachedFeatureOverrides,
-    load: () => readOrganizationFeatureOverrides(db, organizationId),
+    load: () => readCachedFeatures((database) => readOrganizationFeatureOverrides(database, organizationId)),
   }
 }
 
@@ -714,7 +729,7 @@ function featureOverridesEntry(organizationId: OrgId): GenerationCacheEntry<Feat
 const membersWithFeatureOverridesEntry: GenerationCacheEntry<string[]> = {
   entryKey: (generation) => cacheKey({ parent: "features", child: "member-overrides", id: generation }),
   parse: parseCachedStringList,
-  load: () => readMembersWithFeatureOverrides(db),
+  load: () => readCachedFeatures(readMembersWithFeatureOverrides),
 }
 
 function getFeatureRollouts(): Promise<FeatureRollouts> {
@@ -1064,7 +1079,8 @@ async function getOrgMembership(input: { organizationId: OrgId; userId: UserId }
 }
 
 async function deleteAuthSessionsForUser(userId: UserId) {
-  const sessions = await db
+  // primary: a session created moments ago must have its cached entry cleared too.
+  const sessions = await db.$primary
     .select({ id: AuthSessionTable.id, token: AuthSessionTable.token })
     .from(AuthSessionTable)
     .where(eq(AuthSessionTable.userId, userId))

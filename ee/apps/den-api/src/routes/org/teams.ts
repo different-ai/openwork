@@ -550,7 +550,8 @@ export function registerOrgTeamRoutes<T extends { Variables: OrgRouteVariables }
       }
       const { externalKey } = c.req.valid("param")
       const input = c.req.valid("json")
-      const [existing] = await db.select().from(TeamTable).where(and(
+      // primary: create-or-update by key must see a team written moments ago (re-applied configuration).
+      const [existing] = await db.$primary.select().from(TeamTable).where(and(
         eq(TeamTable.organizationId, payload.organization.id),
         eq(TeamTable.externalKey, externalKey),
       )).limit(1)
@@ -561,7 +562,7 @@ export function registerOrgTeamRoutes<T extends { Variables: OrgRouteVariables }
         if (!isDuplicateEntry(error)) throw error
         // A concurrent creator can win between lookup and insert. Retry against
         // its identity instead of creating a second resource.
-        const [winner] = await db.select().from(TeamTable).where(and(
+        const [winner] = await db.$primary.select().from(TeamTable).where(and(
         eq(TeamTable.organizationId, payload.organization.id),
         eq(TeamTable.externalKey, externalKey),
       )).limit(1)
@@ -584,7 +585,8 @@ export function registerOrgTeamRoutes<T extends { Variables: OrgRouteVariables }
     async (c) => {
       const payload = c.get("organizationContext")
       const { externalKey } = c.req.valid("param")
-      const [existing] = await db.select().from(TeamTable).where(and(
+      // primary: deleting a team created moments ago must not report it as already removed.
+      const [existing] = await db.$primary.select().from(TeamTable).where(and(
         eq(TeamTable.organizationId, payload.organization.id),
         eq(TeamTable.externalKey, externalKey),
       )).limit(1)

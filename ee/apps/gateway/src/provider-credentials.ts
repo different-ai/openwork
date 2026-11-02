@@ -204,7 +204,9 @@ export const loadProviderCredentialFromDb: LoadProviderCredential = async (input
   const set = authorized.selection.row.credentialSet
   if (input.subject !== (set.credential_mode === "member" ? input.scope.orgMembershipId : ORG_CREDENTIAL_SUBJECT)) return null
   const table = GatewayProviderCredentialTable
-  const [row] = await db
+  // primary: the isCurrent recheck runs right after an OAuth refresh writes a new
+  // secret; a lagging replica would return the old one and fail the request.
+  const [row] = await db.$primary
     .select({
       id: table.id,
       kind: table.kind,

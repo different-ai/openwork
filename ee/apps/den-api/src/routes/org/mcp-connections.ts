@@ -112,7 +112,7 @@ import { listNativeProviderUsableEntries } from "../../capability-sources/native
 import { getNativeOAuthProvider } from "../../capability-sources/provider-registry.js"
 import { connectCallbackPage } from "../../capability-sources/oauth-callback-page.js"
 import { workbotConnectReturn, workbotCallbackReturn } from "../../workbot/connect-return.js"
-import { getConnectedAccount, getConnectedAccountsForListing, getOrgOAuthClient, getOrgOAuthClients, upsertOrgOAuthClient, type ConnectedAccountRow, type OrgOAuthClientRow } from "../../capability-sources/oauth-credentials.js"
+import { getConnectedAccount, getConnectedAccountsForListing, getOrgOAuthClient, getOrgOAuthClientFromPrimary, getOrgOAuthClients, upsertOrgOAuthClient, type ConnectedAccountRow, type OrgOAuthClientRow } from "../../capability-sources/oauth-credentials.js"
 import { assertPublicUrl, createGuardedFetch, createRealmSafeFetch } from "../../capability-sources/url-guard.js"
 import {
   externalMcpCallbackUrl,
@@ -1047,7 +1047,8 @@ async function checkConnectionReadiness(connection: ExternalMcpConnectionRow, me
     }
   }
   // Never turn a probe of an old key or endpoint into Ready for its replacement.
-  const current = await getExternalMcpConnection({ organizationId: connection.organizationId, connectionId: connection.id })
+  // primary: a check that runs right after a save must compare against that save.
+  const current = await getExternalMcpConnection({ organizationId: connection.organizationId, connectionId: connection.id }, db.$primary)
   const currentAccount = connection.credentialMode === "per_member" ? await getConnectedAccount({
     organizationId: connection.organizationId, orgMembershipId: memberId, providerId: connection.id,
   }) : null
@@ -1364,11 +1365,14 @@ type ConnectionResponseReads = {
  */
 async function readConnectionResponses(input: {
   callerOrgMembershipId: DenTypeId<"member">
+  /** Read grants and OAuth clients from the primary: the caller just wrote them. */
+  fresh?: boolean
   includeAccess: (row: ExternalMcpConnectionRow) => boolean
   organizationId: DenTypeId<"organization">
   rows: ExternalMcpConnectionRow[]
 }): Promise<ConnectionResponseReads> {
   const accessRows = input.rows.filter(input.includeAccess)
+  const oauthClientIds = input.rows.filter((row) => row.authType === "oauth" || input.includeAccess(row)).map((row) => row.id)
   const [accounts, accountStates, grants, oauthClients] = await Promise.all([
     getConnectedAccountsForListing({
       organizationId: input.organizationId,
@@ -1382,8 +1386,10 @@ async function readConnectionResponses(input: {
     listDirectExternalMcpConnectionAccessByConnection({
       organizationId: input.organizationId,
       connectionIds: accessRows.map((row) => row.id),
-    }),
-    getOrgOAuthClients(input.organizationId, input.rows.filter((row) => row.authType === "oauth" || input.includeAccess(row)).map((row) => row.id)),
+    }, input.fresh ? db.$primary : db),
+    input.fresh
+      ? Promise.all(oauthClientIds.map(async (id) => [id, await getOrgOAuthClientFromPrimary(input.organizationId, id)] as const)).then((entries) => new Map(entries))
+      : getOrgOAuthClients(input.organizationId, oauthClientIds),
   ])
   return { accounts, accountStates, grants, oauthClients }
 }
@@ -1402,10 +1408,13 @@ async function toConnectionResponse(
     requiredAuthTypes: Set<"apikey" | "none" | "oauth">
     /** Reads shared by a whole list; a single connection reads its own. */
     reads?: ConnectionResponseReads
+    /** The caller just wrote this connection's grants or OAuth client. */
+    fresh?: boolean
   },
 ) {
   const reads = options.reads ?? await readConnectionResponses({
     callerOrgMembershipId: options.callerOrgMembershipId,
+    fresh: options.fresh,
     includeAccess: () => options.includeAccess,
     organizationId: row.organizationId,
     rows: [row],
@@ -1658,10 +1667,12 @@ async function handleExternalMcpOAuthCallback(input: {
     return invalidMcpOAuthCallback("Invalid or expired state.")
   }
   const [connection, members] = await Promise.all([
+    // primary: the provider can redirect back instantly, before a replica has
+    // the verifier and configuration the authorization start just saved.
     getExternalMcpConnection({
       organizationId: statePayload.organizationId,
       connectionId,
-    }),
+    }, db.$primary),
     db.select({ id: MemberTable.id, userId: MemberTable.userId })
       .from(MemberTable)
       .where(and(
@@ -1682,7 +1693,7 @@ async function handleExternalMcpOAuthCallback(input: {
   // The completion page never tells the opener why; the apps read this instead.
   const recordConnectFailure = async (diagnostic: ExternalMcpDiagnostic) => {
     try {
-      const current = await getExternalMcpConnection({ organizationId: connection.organizationId, connectionId: connection.id })
+      const current = await getExternalMcpConnection({ organizationId: connection.organizationId, connectionId: connection.id }, db.$primary)
       if (current) await recordFailedConnectAttempt({ connection: current, memberId: statePayload.orgMembershipId, diagnostic })
     } catch {
       logger.error("external_mcp_connect_callback_failure_record_failed", {
@@ -1865,7 +1876,7 @@ async function handleExternalMcpOAuthCallback(input: {
   // Re-grants invalidate earlier checks. Ordinary SDK refresh writes never
   // change this separate grant binding.
   await rotateReadinessCredentialBinding(connection, statePayload.orgMembershipId)
-  const refreshedConnection = await getExternalMcpConnection({ organizationId: connection.organizationId, connectionId: connection.id })
+  const refreshedConnection = await getExternalMcpConnection({ organizationId: connection.organizationId, connectionId: connection.id }, db.$primary)
   const readiness = refreshedConnection ? await checkConnectionReadiness(refreshedConnection, statePayload.orgMembershipId, input.requestId) : null
   if (member) {
     const { bindSlackOAuthMember } = await import("../../slack-assistant/repository.js")
@@ -2095,12 +2106,14 @@ async function createExternalConnectionResponse(
     }
   }
 
-  let refreshed = await getExternalMcpConnection({ organizationId: payload.organization.id, connectionId: created.id })
+  // primary: reads back the connection created and checked above.
+  let refreshed = await getExternalMcpConnection({ organizationId: payload.organization.id, connectionId: created.id }, db.$primary)
   if (refreshed && body.authType !== "oauth" && body.credentialMode === "shared" && !awaitingSharedKey) {
     await checkConnectionReadiness(refreshed, payload.currentMember.id, requestId)
-    refreshed = await getExternalMcpConnection({ organizationId: payload.organization.id, connectionId: created.id })
+    refreshed = await getExternalMcpConnection({ organizationId: payload.organization.id, connectionId: created.id }, db.$primary)
   }
   const response = await toConnectionResponse(refreshed ?? created, {
+    fresh: true,
     callerOrgMembershipId: payload.currentMember.id,
     callerCanRemoveAnyConnection: await callerHasPermission(payload, "connections.delete"),
     createdByName: resolveCreatorName(await organizationMembers(payload), (refreshed ?? created).createdByOrgMembershipId),
@@ -2417,6 +2430,7 @@ async function replaceExternalConnectionResponse(
     rows: [result.connection],
   })
   const response = await toConnectionResponse(result.connection, {
+    fresh: true,
     callerOrgMembershipId: payload.currentMember.id,
     callerCanRemoveAnyConnection: await callerHasPermission(payload, "connections.delete"),
     createdByName: resolveCreatorName(await organizationMembers(payload), result.connection.createdByOrgMembershipId),
@@ -2478,7 +2492,8 @@ async function switchToSharedApiKey(
     credentialMode: "shared",
     apiKey,
     apiKeyAuthScheme: connection.apiKeyAuthScheme,
-    access: directAccessInput(await listDirectExternalMcpConnectionAccess({ organizationId: payload.organization.id, connectionId })),
+    // primary: this full-replace update must keep the latest access, not a lagging copy.
+    access: directAccessInput(await listDirectExternalMcpConnectionAccess({ organizationId: payload.organization.id, connectionId }, db.$primary)),
     updatedByOrgMembershipId: payload.currentMember.id,
     ...(canUpdateAnyConnection ? {} : { createdByOrgMembershipId: payload.currentMember.id }),
     validatedAt: new Date(),
@@ -3431,6 +3446,7 @@ export function registerMcpConnectionRoutes<T extends { Variables: OrgRouteVaria
           createdByOrgMembershipId: payload.currentMember.id,
         })
         const response = await toConnectionResponse(created, {
+          fresh: true,
           callerOrgMembershipId: payload.currentMember.id,
           callerCanRemoveAnyConnection: await callerHasPermission(payload, "connections.delete"),
           createdByName: resolveCreatorName(await organizationMembers(payload), created.createdByOrgMembershipId),
@@ -3677,6 +3693,7 @@ export function registerMcpConnectionRoutes<T extends { Variables: OrgRouteVaria
         rows: [connection],
       })
       return c.json(await toConnectionResponse(connection, {
+        fresh: true,
         callerOrgMembershipId: payload.currentMember.id,
         callerCanRemoveAnyConnection: await callerHasPermission(payload, "connections.delete"),
         createdByName: resolveCreatorName(await organizationMembers(payload), connection.createdByOrgMembershipId),
@@ -4178,10 +4195,11 @@ export function registerMcpConnectionRoutes<T extends { Variables: OrgRouteVaria
           } catch (error) {
             const diagnostic = externalMcpDiagnosticForResponse(error, c.get("requestId"), "AUTH_CLIENT_REGISTRATION")
             if (diagnostic.code !== "MCP_OAUTH_CONFIGURATION_CHANGED") throw error
+            // primary: re-reads the configuration the failed start just saved.
             const refreshed = await getExternalMcpConnection({
               organizationId: payload.organization.id,
               connectionId: externalMcpConnectionId,
-            })
+            }, db.$primary)
             if (!refreshed || externalMcpIdentityBinding(refreshed) !== externalMcpIdentityBinding(target)) {
               throw error
             }
@@ -4248,7 +4266,7 @@ export function registerMcpConnectionRoutes<T extends { Variables: OrgRouteVaria
             const refreshed = await getExternalMcpConnection({
               organizationId: payload.organization.id,
               connectionId: externalMcpConnectionId,
-            })
+            }, db.$primary)
             if (refreshed?.oauthConfiguration?.authorizationServerIssuer !== replacementIssuer) throw error
             connection = refreshed
           }
@@ -4261,10 +4279,11 @@ export function registerMcpConnectionRoutes<T extends { Variables: OrgRouteVaria
           started = await beginAuthorizationWithConfigurationRefresh(connection)
         }
         if (started.result.status === "needs_auth" && connection.oauthConfiguration?.callbackMode === "shared-v1") {
+          // primary: reads the discovery the authorization start just saved.
           const discovered = await getExternalMcpConnection({
             organizationId: payload.organization.id,
             connectionId: externalMcpConnectionId,
-          })
+          }, db.$primary)
           if (discovered) {
             const discoveredResponseIssuerRequired = authorizationResponseIssuerRequired(discovered)
             const signedBindingChanged = started.authorizationServerIssuer
@@ -4299,7 +4318,7 @@ export function registerMcpConnectionRoutes<T extends { Variables: OrgRouteVaria
           connection,
           diagnostic,
           reference: c.get("requestId"),
-          reload: () => getExternalMcpConnection({ organizationId: payload.organization.id, connectionId: externalMcpConnectionId }),
+          reload: () => getExternalMcpConnection({ organizationId: payload.organization.id, connectionId: externalMcpConnectionId }, db.$primary),
         })
         logger.error("external_mcp_connect_start_oauth_handshake_failed", {
           connection_id: connection.id,

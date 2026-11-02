@@ -13,7 +13,7 @@ import { db } from "./db.js"
 type OrganizationId = DenTypeId<"organization">
 type TeamId = DenTypeId<"team">
 type MemberId = DenTypeId<"member">
-type Database = typeof db | Parameters<Parameters<typeof db["transaction"]>[0]>[0]
+type Database = typeof db.$primary | Parameters<Parameters<typeof db["transaction"]>[0]>[0]
 
 /** Where the Den web UI keeps a prompt: the Everyone page or one team's page. */
 export type PromptScope = { kind: "everyone" } | { kind: "team"; teamId: TeamId; teamName: string }
@@ -67,10 +67,11 @@ function scopePrompt(prompts: StoredPrompt[], scope: { kind: "everyone" } | { ki
 }
 
 /** The prompt for everyone and each team's own prompt, teams by name. */
-export async function listPromptSettings(organizationId: OrganizationId): Promise<Omit<OrgPromptSettings, "canEdit">> {
+/** Pass `db.$primary` to read back a save made just before. */
+export async function listPromptSettings(organizationId: OrganizationId, database: typeof db.$primary = db): Promise<Omit<OrgPromptSettings, "canEdit">> {
   const [prompts, teams] = await Promise.all([
-    readOrganizationPrompts(db, organizationId),
-    db.select({ id: TeamTable.id, name: TeamTable.name }).from(TeamTable).where(eq(TeamTable.organizationId, organizationId)).orderBy(asc(TeamTable.name)),
+    readOrganizationPrompts(database, organizationId),
+    database.select({ id: TeamTable.id, name: TeamTable.name }).from(TeamTable).where(eq(TeamTable.organizationId, organizationId)).orderBy(asc(TeamTable.name)),
   ])
   const everyone = scopePrompt(prompts, { kind: "everyone" })
   return {

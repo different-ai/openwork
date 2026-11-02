@@ -683,7 +683,8 @@ function relayStreamResponse(upstream: Response, protocol: GatewayRequestProtoco
 function refreshMemberTokenWithDb(): RefreshMemberToken {
   let refresher: Promise<RefreshMemberToken> | null = null
   return (input) => {
-    refresher ??= import("./db.js").then(({ db }) => createOauthRefresher({ store: createDbOauthRefreshStore(db) }))
+    // primary: each step re-reads the row it just compare-and-set; a lagging replica would fail every refresh.
+    refresher ??= import("./db.js").then(({ db }) => createOauthRefresher({ store: createDbOauthRefreshStore(db.$primary) }))
     return refresher.then((refresh) => refresh(input))
   }
 }

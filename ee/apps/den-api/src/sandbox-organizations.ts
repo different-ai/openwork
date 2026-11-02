@@ -145,23 +145,25 @@ export function sandboxConnectorUrls(baseUrl: string) {
   return SANDBOX_WORKPLACE_APPS.map(app => ({ ...app, url: `${root}/${app.key}/mcp` }))
 }
 
+// Admin tooling only, and every caller has just written (create, extend, close, expiry
+// sweep...): read the sandbox rows and their summaries from the primary.
 async function serialize(rows: SandboxRow[], now = new Date()): Promise<Sandbox[]> {
   if (rows.length === 0) return []
   const ids = rows.map(row => row.organizationId)
   const [orgs, members, connectors] = await Promise.all([
-    db.select({ id: OrganizationTable.id, name: OrganizationTable.name, allowedEmailDomains: OrganizationTable.allowedEmailDomains, metadata: OrganizationTable.metadata })
+    db.$primary.select({ id: OrganizationTable.id, name: OrganizationTable.name, allowedEmailDomains: OrganizationTable.allowedEmailDomains, metadata: OrganizationTable.metadata })
       .from(OrganizationTable).where(inArray(OrganizationTable.id, ids)),
-    db.select({ organizationId: MemberTable.organizationId, total: count() }).from(MemberTable)
+    db.$primary.select({ organizationId: MemberTable.organizationId, total: count() }).from(MemberTable)
       .where(and(inArray(MemberTable.organizationId, ids), isNull(MemberTable.removedAt), isNotNull(MemberTable.joinedAt)))
       .groupBy(MemberTable.organizationId),
-    db.select({ organizationId: ExternalMcpConnectionTable.organizationId, total: count() }).from(ExternalMcpConnectionTable)
+    db.$primary.select({ organizationId: ExternalMcpConnectionTable.organizationId, total: count() }).from(ExternalMcpConnectionTable)
       .where(inArray(ExternalMcpConnectionTable.organizationId, ids))
       .groupBy(ExternalMcpConnectionTable.organizationId),
   ])
   const org = new Map(orgs.map(row => [row.id, row]))
   const memberCount = new Map(members.map(row => [row.organizationId, Number(row.total)]))
   const connectorCount = new Map(connectors.map(row => [row.organizationId, Number(row.total)]))
-  const providerRows = await db.select({ organizationId: GatewayProviderTable.organization_id, total: count() }).from(GatewayProviderTable)
+  const providerRows = await db.$primary.select({ organizationId: GatewayProviderTable.organization_id, total: count() }).from(GatewayProviderTable)
     .where(inArray(GatewayProviderTable.organization_id, ids)).groupBy(GatewayProviderTable.organization_id)
   const providerCount = new Map(providerRows.map(row => [row.organizationId, Number(row.total)]))
   // What is left on each open sandbox's own key, read live from OpenRouter (null when it cannot be reached).
@@ -220,12 +222,12 @@ export function sandboxDefaults(): SandboxDefaults {
 
 export async function listSandboxes(): Promise<Sandbox[]> {
   await closeExpiredSandboxes()
-  const rows = await db.select().from(SandboxOrganizationTable).orderBy(desc(SandboxOrganizationTable.createdAt)).limit(200)
+  const rows = await db.$primary.select().from(SandboxOrganizationTable).orderBy(desc(SandboxOrganizationTable.createdAt)).limit(200)
   return serialize(rows)
 }
 
 export async function getSandbox(id: DenTypeId<"sandboxOrganization">): Promise<Sandbox | null> {
-  const rows = await db.select().from(SandboxOrganizationTable).where(eq(SandboxOrganizationTable.id, id)).limit(1)
+  const rows = await db.$primary.select().from(SandboxOrganizationTable).where(eq(SandboxOrganizationTable.id, id)).limit(1)
   return (await serialize(rows))[0] ?? null
 }
 
@@ -260,7 +262,8 @@ export async function createSandbox(actor: UserId, input: SandboxCreateInput): P
     await db.update(OrganizationTable).set({ allowedEmailDomains: [...new Set(input.allowedEmailDomains)] }).where(eq(OrganizationTable.id, organizationId))
   }
 
-  const [owner] = await db.select({ id: MemberTable.id }).from(MemberTable)
+  // primary: the organization and its owner were created just above.
+  const [owner] = await db.$primary.select({ id: MemberTable.id }).from(MemberTable)
     .where(and(eq(MemberTable.organizationId, organizationId), eq(MemberTable.userId, actor), isNull(MemberTable.removedAt))).limit(1)
   if (!owner) throw new Error("sandbox_owner_missing")
   // Models through the AI Gateway for everyone, from the deployment's sandbox key. A failure leaves the sandbox on

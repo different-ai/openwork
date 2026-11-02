@@ -405,7 +405,8 @@ export async function revokeBearerSession(headers: Headers) {
     return false
   }
 
-  const rows = await db
+  // primary: a session created moments ago must still have its cached id revoked.
+  const rows = await db.$primary
     .select({ id: AuthSessionTable.id, userId: AuthSessionTable.userId, expiresAt: AuthSessionTable.expiresAt, activeOrganizationId: AuthSessionTable.activeOrganizationId })
     .from(AuthSessionTable)
     .where(sessionTokenMatches(token))
