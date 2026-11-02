@@ -12,6 +12,7 @@ import {
   type OpenworkMcpAppToolResult,
   type OpenworkServerClient,
 } from "@/app/lib/openwork-server";
+import { keptMcpAppResultIdentity } from "@/app/lib/mcp-app-result-cache";
 import { McpAppSandboxView, sameMcpAppDocument, type PreservedMcpAppResult } from "@/components/chat/mcp-app-frame";
 import { snapshotMcpAppArguments, type McpAppOrigin } from "@/components/chat/mcp-app-origin";
 import { Button } from "@/components/ui/button";
@@ -21,13 +22,16 @@ import { onCloudCredentialRefreshed, readCloudCredentialRevision } from "@/react
 import { DashboardTileShell, type DashboardTileActions } from "./dashboard-tile-shell";
 import { resolveDashboardMcpApp } from "./dashboard-mcp-app-resolution";
 import { scheduleDashboardLaunch } from "./dashboard-launch-scheduler";
+import { useArtifactSurfaceActive } from "./retained-artifact-surface";
 import { useDashboardTileGeometry } from "./use-dashboard-tile-geometry";
 import {
   DASHBOARD_AUTO_REFRESH_INTERVAL_MS,
   dashboardTileLaunchIsApproved,
   dashboardTileRunsAutomatically,
   readDashboardTileCache,
+  rememberDashboardTileRead,
   removeDashboardTileCache,
+  savedLaunchResult,
   shouldAutoRefreshDashboardTile,
   writeDashboardTileCache,
 } from "./dashboard-tile-cache";
@@ -44,6 +48,9 @@ export type DashboardLaunchEndpoint = {
  * zero-config apps). Every launch and refresh reuses that exact stored input.
  */
 const EMPTY_ARGUMENTS: Record<string, unknown> = {};
+
+/** A saved App usually starts faster than a placeholder can be read, so one waits this long. */
+const SAVED_VIEW_PLACEHOLDER_DELAY_MS = 250;
 
 /** When the host obtained a tile's launch result; set by OpenWork, never by the App. */
 const MCP_APP_LAUNCHED_AT_META = "openwork/launchedAt";
@@ -213,6 +220,7 @@ function McpAppTileContent({
 }) {
   const workspace = useWorkspace();
   const { openworkServerClient, workspaceId } = workspace;
+  const surfaceActive = useArtifactSurfaceActive();
   // Provider annotations are not an authorization boundary. A safe-looking
   // tile runs on load only after this user has successfully run this exact
   // element once; approval-gated tools stay run-on-request forever.
@@ -252,7 +260,7 @@ function McpAppTileContent({
   const lastHeight = useRef<number | undefined>(undefined);
   const [state, setState] = useState<TileState>(() => cached && cachedEndpoint
     ? {
-        phase: "ready", app: cached.app, result: cached.result, endpoint: cachedEndpoint, cachedAt: cached.cachedAt,
+        phase: "ready", app: cached.app, result: savedLaunchResult(cached), endpoint: cachedEndpoint, cachedAt: cached.cachedAt,
         origin: { ...cachedEndpoint, sessionId: null, readOnly: true }, argumentsSignature,
         lifetime: { id: ++documentSequence.current, active: true, failed: false },
       }
@@ -650,7 +658,8 @@ function McpAppTileContent({
   }, [cacheScopeKey, entry, launchArguments, argumentsSignature, manualLaunch, nonce, started, geometry.ref, clearDocument, releaseLaunch, releaseLaunches, updateState, updateRefresh, requestRefresh, wakeLaunchWaiters]);
 
   useEffect(() => {
-    if (manualLaunch) return;
+    // A kept App out of view makes no calls, and catches up when it comes back.
+    if (manualLaunch || !surfaceActive) return;
     const refreshIfStale = () => {
       if (stateRef.current.phase === "idle" || stateRef.current.phase === "closed" || !shouldAutoRefreshDashboardTile({
         visible: !document.hidden,
@@ -659,6 +668,7 @@ function McpAppTileContent({
       })) return;
       requestRefresh(false);
     };
+    refreshIfStale();
     const interval = window.setInterval(refreshIfStale, DASHBOARD_AUTO_REFRESH_INTERVAL_MS);
     window.addEventListener("focus", refreshIfStale);
     document.addEventListener("visibilitychange", refreshIfStale);
@@ -667,7 +677,7 @@ function McpAppTileContent({
       window.removeEventListener("focus", refreshIfStale);
       document.removeEventListener("visibilitychange", refreshIfStale);
     };
-  }, [manualLaunch, requestRefresh]);
+  }, [manualLaunch, surfaceActive, requestRefresh]);
 
   // The relative freshness label must age even when nothing else re-renders.
   const [freshnessNow, setFreshnessNow] = useState(() => Date.now());
@@ -686,6 +696,14 @@ function McpAppTileContent({
   const origin = state.phase === "ready" && interactiveEndpoint ? state.origin : null;
   const awaitingReady = state.phase === "ready" && !state.lifetime.failed && readyDocument !== state.lifetime;
   const loadingDocument = state.phase === "loading" || awaitingReady || (state.phase === "ready" && state.argumentsSignature !== argumentsSignature);
+  const startingSavedView = state.phase === "ready" && awaitingReady && state.origin.readOnly ? state.lifetime : null;
+  const [slowSavedView, setSlowSavedView] = useState<TileDocument | null>(null);
+  useEffect(() => {
+    if (!startingSavedView) return;
+    const timer = window.setTimeout(() => setSlowSavedView(startingSavedView), SAVED_VIEW_PLACEHOLDER_DELAY_MS);
+    return () => window.clearTimeout(timer);
+  }, [startingSavedView]);
+  const holdsPlaceholder = startingSavedView !== null && slowSavedView !== startingSavedView;
   const reservedHeight = geometry.reservedHeight ?? lastHeight.current ?? geometry.initialHeight ?? 320;
   const currentDocument = (document: TileDocument) => lifetime.current.active && document.active
     && stateRef.current.phase === "ready" && stateRef.current.lifetime === document
@@ -786,6 +804,12 @@ function McpAppTileContent({
                   releaseLaunches();
                   updateRefresh("idle");
                 }}
+                onKeptRead={(read, result) => {
+                  if (!currentDocument(state.lifetime)) return;
+                  const providerIdentity = result ? keptMcpAppResultIdentity(result) : null;
+                  rememberDashboardTileRead(cacheScopeKey, entry.id, read, result && providerIdentity
+                    ? { providerIdentity, result: result as PreservedMcpAppResult } : null);
+                }}
                 initialHeight={geometry.initialHeight ?? lastHeight.current}
                 onReady={() => { if (currentDocument(state.lifetime) && !state.lifetime.failed) setReadyDocument(state.lifetime); }}
                 onHeightChange={(height) => {
@@ -821,7 +845,8 @@ function McpAppTileContent({
           )
         ) : null}
       </DashboardTileShell>
-      {loadingDocument ? (
+      {holdsPlaceholder ? <span className="sr-only" role="status">Loading {entry.title}</span> : null}
+      {loadingDocument && !holdsPlaceholder ? (
         <div className="absolute inset-0 z-10 flex flex-col gap-3 rounded-xl bg-background p-3" role="status" aria-label={`Loading ${entry.title}`} data-dashboard-loading>
           <span className="text-xs text-muted-foreground">Loading {entry.title}</span>
           <Skeleton className="h-4 w-2/3" />
