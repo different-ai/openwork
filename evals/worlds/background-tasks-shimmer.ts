@@ -20,7 +20,7 @@ function job(name: string, output: string, prompt: string, started: string, wake
  * waits until the world releases it; when it ends, the engine wakes the agent
  * with its output and the model replies.
  */
-export async function backgroundTasksShimmer(seed: Seed, options: { composerList?: boolean } = {}) {
+async function buildBackgroundTasks(seed: Seed, composerList: boolean) {
   const engine = "v2";
   const dir = seed.tmpPath("background-tasks-shimmer");
   await mkdir(join(dir, "scripts"), { recursive: true });
@@ -47,7 +47,7 @@ export async function backgroundTasksShimmer(seed: Seed, options: { composerList
     trustedOrigins: [`http://127.0.0.1:${webPort}`],
     org: { name: "Background tasks workspace", admin: { name: "Background tasks owner" } },
   });
-  if (options.composerList) await enableOrganizationCapabilities(seed, den.admin, { composerBackgroundTasks: true });
+  if (composerList) await enableOrganizationCapabilities(seed, den.admin, { composerBackgroundTasks: true });
 
   const providerId = "background-shell-mock";
   const modelId = "background-shell-model";
@@ -80,7 +80,12 @@ export async function backgroundTasksShimmer(seed: Seed, options: { composerList
   };
 }
 
+/** The current count-in-chat presentation, with the composer list flag off. */
+export function backgroundTasksShimmer(seed: Seed) {
+  return buildBackgroundTasks(seed, false);
+}
+
 /** The same member with `composerBackgroundTasks` on: running commands are listed on the composer. */
 export function backgroundTasksComposer(seed: Seed) {
-  return backgroundTasksShimmer(seed, { composerList: true });
+  return buildBackgroundTasks(seed, true);
 }

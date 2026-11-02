@@ -55,7 +55,7 @@ test("a member whose agent leaves commands running sees them listed on the compo
   });
 
   await step("Stop ends only the report command, leaving the other background task running", async () => {
-    await user.click({ role: "button", name: `Stop background task: ${world.report.command}` });
+    await user.click({ role: "button", label: `Stop background task: ${world.report.command}` });
     const remaining = await probe.eventually(rows, {
       within: 30_000, intervalMs: 150, label: "only the image command is left", until: (found) => found.length === 1 && found[0] === world.images.command,
     });
