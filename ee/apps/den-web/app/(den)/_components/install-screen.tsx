@@ -2,12 +2,18 @@
 
 import { detectPlatform, DownloadPlatformGrid, type DetectedPlatform, type DownloadPlatformGroup, type DownloadPlatformOption } from "@openwork/ui/react";
 import { Check, ChevronDown, ShieldCheck } from "lucide-react";
-import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { useSearchParams } from "next/navigation";
-import { requestJson } from "../_lib/den-flow";
+import { getErrorMessage, requestJson } from "../_lib/den-flow";
+import { parseOrgListPayload, type DenOrgSummary } from "../_lib/den-org";
+import { ORG_SCOPE_HEADER } from "../_lib/org-scope";
+import { useDenFlow } from "../_providers/den-flow-provider";
+import { OrgSelectionScreen } from "../dashboard/_features/org-selection/org-selection-screen";
+import { DenButton } from "./ui/button";
+import { DenSkeleton } from "./ui/skeleton";
 import { getInstallConfigErrorMessage } from "../_lib/install-errors";
 import { LINK_STEP, parseGuideStep, type GuideStep } from "../_lib/install-guide";
-import { installDownloadHref, type InstallPlatform, installerFileName } from "../_lib/install-download";
+import { installDownloadHref, installPageUrl, type InstallPlatform, installerFileName } from "../_lib/install-download";
 import { isMobileUserAgent } from "../_lib/platform";
 import { InstallVisual } from "./install-visual";
 import { OnboardingShell } from "./onboarding-shell";
@@ -153,10 +159,10 @@ function parseInstallConfig(value: unknown): InstallConfig | null {
   };
 }
 
-async function fetchInstallConfig() {
+async function fetchInstallConfig(organizationId: string) {
   const { response, payload } = await requestJson(
     "/v1/me/install-config",
-    { method: "GET" },
+    { method: "GET", headers: { [ORG_SCOPE_HEADER]: organizationId } },
     12000,
   );
   if (!response.ok) {
@@ -218,13 +224,74 @@ function InstallStep({
 }
 
 export function InstallScreen() {
+  const { user } = useDenFlow();
+  return <InstallOrganizationPicker key={user?.id} />;
+}
+
+async function selectInstallOrganization(organizationId: string) {
+  const { response, payload } = await requestJson("/v1/me/active-organization", {
+    method: "POST", body: JSON.stringify({ organizationId }),
+  }, 12000);
+  if (!response.ok) throw new Error(getErrorMessage(payload, "Could not select this organization. Try again."));
+}
+
+/** Generic install links confer no membership and carry no organization credential. */
+function InstallOrganizationPicker() {
+  const { signOut } = useDenFlow();
+  const [orgs, setOrgs] = useState<DenOrgSummary[] | null>(null);
+  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [pending, setPending] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [attempt, setAttempt] = useState(0);
+  useEffect(() => {
+    let cancelled = false;
+    setOrgs(null); setSelectedId(null); setError(null);
+    const url = new URL(window.location.href);
+    if (url.searchParams.has("token")) { url.searchParams.delete("token"); window.history.replaceState(null, "", url); }
+    void (async () => {
+      try {
+        const { response, payload } = await requestJson("/v1/me/orgs", { method: "GET", cache: "no-store" }, 12000);
+        if (!response.ok) throw new Error("Could not verify your organizations. Try again.");
+        const directory = parseOrgListPayload(payload);
+        if (!isRecord(payload) || !Array.isArray(payload.orgs) || directory.orgs.length !== payload.orgs.length) throw new Error("Could not verify your organizations. Try again.");
+        const onlyOrg = directory.orgs[0];
+        if (directory.orgs.length === 1 && onlyOrg && !cancelled) {
+          await selectInstallOrganization(onlyOrg.id);
+          if (!cancelled) setSelectedId(onlyOrg.id);
+        }
+        if (!cancelled) setOrgs(directory.orgs);
+      } catch (failure) {
+        if (!cancelled) setError(failure instanceof Error ? failure.message : "Could not verify your organizations. Try again.");
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [attempt]);
+  async function pick(slug: string) {
+    const org = orgs?.find((entry) => entry.slug === slug);
+    if (!org || pending) return;
+    setPending(true); setError(null);
+    try { await selectInstallOrganization(org.id); setSelectedId(org.id); }
+    catch (failure) { setError(failure instanceof Error ? failure.message : "Could not select this organization. Try again."); }
+    finally { setPending(false); }
+  }
+  if (selectedId) return <InstallGuide key={selectedId} organizationId={selectedId} />;
+  if (orgs?.length) return <OrgSelectionScreen orgs={orgs} pending={pending} errorMessage={error} onPick={(slug) => void pick(slug)} onSignOut={() => void signOut()} />;
+  return <OnboardingShell state="install-loading" width="wide" background="surface"><section className="grid gap-4" aria-busy={!error && orgs === null} aria-label={!error && orgs === null ? "Checking organization access" : undefined}>
+    {!error && orgs === null ? <><DenSkeleton className="h-8 w-64" /><DenSkeleton className="h-12 w-full" /><DenSkeleton className="h-12 w-full" /></> : <>
+      <h1 className="den-title-lg">{error ? "Organization check unavailable" : "Join an organization to install"}</h1>
+      {error ? <><p className="den-copy" role="alert">{error}</p><DenButton onClick={() => setAttempt((value) => value + 1)}>Try again</DenButton></> : <DenButton href="/organization">Create or join an organization</DenButton>}
+    </>}
+  </section></OnboardingShell>;
+}
+
+function InstallGuide({ organizationId }: { organizationId: string }) {
   const searchParams = useSearchParams();
   const [config, setConfig] = useState<InstallConfig | null>(null);
   const [busy, setBusy] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [isMobile, setIsMobile] = useState<boolean | null>(null);
   const [copied, setCopied] = useState(false);
-  const [downloadState, setDownloadState] = useState<"idle" | "preparing" | "started">("idle");
+  const [downloadState, setDownloadState] = useState<"idle" | "requested">("idle");
   const [downloadLabel, setDownloadLabel] = useState("");
   const [downloadHref, setDownloadHref] = useState("");
   const [downloadPlatform, setDownloadPlatform] = useState<InstallPlatform | null>(null);
@@ -235,18 +302,10 @@ export function InstallScreen() {
   const [expandedStep, setExpandedStep] = useState<GuideStep>(initialStep);
   const [connectError, setConnectError] = useState<string | null>(null);
   const [addressCopied, setAddressCopied] = useState(false);
-  const downloadStartedTimer = useRef<number | null>(null);
 
   useEffect(() => {
     setIsMobile(isMobileUserAgent());
-    // Install pages once carried a one-off token; it is ignored now, so drop
-    // it from the address before anyone copies and shares it again.
-    const url = new URL(window.location.href);
-    if (url.searchParams.has("token")) {
-      url.searchParams.delete("token");
-      window.history.replaceState(null, "", url);
-    }
-    setCurrentLink(url.toString());
+    setCurrentLink(installPageUrl());
     let cancelled = false;
     void detectPlatform().then((platform) => {
       if (!cancelled) setDetected(platform);
@@ -263,7 +322,7 @@ export function InstallScreen() {
       setBusy(true);
       setError(null);
       try {
-        const parsed = await fetchInstallConfig();
+        const parsed = await fetchInstallConfig(organizationId);
         if (cancelled) {
           return;
         }
@@ -284,13 +343,7 @@ export function InstallScreen() {
     return () => {
       cancelled = true;
     };
-  }, []);
-
-  useEffect(() => () => {
-    if (downloadStartedTimer.current !== null) {
-      window.clearTimeout(downloadStartedTimer.current);
-    }
-  }, []);
+  }, [organizationId]);
 
   const downloadGroups = useMemo<DownloadPlatformGroup[]>(() => {
     if (!config) {
@@ -374,15 +427,7 @@ export function InstallScreen() {
     setDownloadLabel(label);
     setDownloadHref(href);
     setDownloadPlatform(platformByHref[href] ?? null);
-    setDownloadState("preparing");
-    advanceGuide(2);
-    if (downloadStartedTimer.current !== null) {
-      window.clearTimeout(downloadStartedTimer.current);
-    }
-    downloadStartedTimer.current = window.setTimeout(() => {
-      setDownloadState("started");
-      downloadStartedTimer.current = null;
-    }, 5000);
+    setDownloadState("requested");
   }
 
   if (busy) {
@@ -420,7 +465,7 @@ export function InstallScreen() {
               <h1 className="m-0 text-[2rem] font-semibold leading-[1.04] tracking-[-0.05em] text-slate-950 sm:text-[2.4rem]">
                 Download OpenWork
               </h1>
-              <p className="den-copy max-w-2xl">Choose the version for your computer, install it, and open OpenWork.</p>
+              <p className="den-copy max-w-2xl" data-testid="install-organization">Organization: {config.clientName}</p>
             </div>
 
             {isMobile ? (
@@ -433,7 +478,7 @@ export function InstallScreen() {
               </div>
             ) : (
               <div className="grid gap-5 text-left">
-                <DownloadPlatformGrid groups={downloadGroups} />
+                <DownloadPlatformGrid groups={downloadGroups} openInNewTab />
                 {/* Reload so the auth provider reads the desktop handoff parameters on mount. */}
                 <a className="den-button-secondary w-fit" href={DESKTOP_SIGN_IN_PATH}>
                   I already installed OpenWork
@@ -488,6 +533,7 @@ export function InstallScreen() {
             >
                   <DownloadPlatformGrid
                     groups={downloadGroups}
+                    openInNewTab
                     recommendedTestId="install-download-primary"
                     onDownload={(option: DownloadPlatformOption) => beginDownload(option.label, option.href)}
                     variant="flat"
@@ -502,21 +548,10 @@ export function InstallScreen() {
                   </button>
                   {downloadState !== "idle" ? (
                     <div className="grid gap-2 rounded-xl border border-slate-100 bg-slate-50 p-4" aria-live="polite" data-testid="install-download-status">
-                      {downloadState === "preparing" ? (
-                        <>
-                          <span className="size-5 animate-spin rounded-full border-2 border-[var(--dls-border-strong)] border-t-[var(--dls-accent)]" aria-hidden="true" />
-                          <p className="m-0 text-sm font-medium text-slate-950">Preparing your {downloadLabel} download...</p>
-                          <p className="m-0 text-[13px] leading-5 text-slate-500">The first download may take up to a minute. Your browser will begin downloading when it is ready.</p>
-                        </>
-                      ) : (
-                        <>
-                          <p className="m-0 text-sm font-medium text-slate-950">Download started</p>
-                          <p className="m-0 text-[13px] leading-5 text-slate-500">Your browser is preparing the file. If it does not appear, try the download again.</p>
-                          <a className="den-button-secondary w-fit" href={downloadHref} onClick={() => beginDownload(downloadLabel, downloadHref)}>
-                            Try again
-                          </a>
-                        </>
-                      )}
+                      <p className="m-0 text-sm font-medium text-slate-950">Download requested</p>
+                      <p className="m-0 text-[13px] leading-5 text-slate-500">Check your browser's downloads for {downloadLabel}. If the file does not appear, retry the download.</p>
+                      <a className="den-button-secondary w-fit" href={downloadHref} target="_blank" rel="noreferrer" onClick={() => beginDownload(downloadLabel, downloadHref)}>Retry download</a>
+                      <DenButton className="w-fit" onClick={() => advanceGuide(2)}>I have the installer</DenButton>
                     </div>
                   ) : null}
             </InstallStep>

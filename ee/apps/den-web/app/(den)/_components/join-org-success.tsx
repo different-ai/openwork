@@ -39,7 +39,7 @@ function ReturnToOpenWorkStatus({
   if (status === "consumed") {
     return (
       <div className="rounded-2xl bg-emerald-50 px-4 py-3 text-sm font-medium text-emerald-700" data-testid="desktop-connected" aria-live="polite">
-        Connected — {organizationName} is ready in OpenWork.
+        Desktop sign-in confirmed for {organizationName}.
       </div>
     );
   }
@@ -224,7 +224,7 @@ export function JoinOrgSuccess({
             </h1>
             <p className="m-0 max-w-2xl text-[15px] leading-[23px] text-slate-600">
               {desktopAuthRequested
-                ? "Your team setup is ready. Return to OpenWork to continue where you left off."
+                ? "You joined the organization. Return to OpenWork to finish signing in on your computer."
                 : "The desktop app is where OpenWork runs on your computer and puts your team's setup to work."}
             </p>
           </div>
@@ -291,8 +291,8 @@ export function JoinOrgSuccess({
           )}
 
           {desktopAuthRequested && desktopOpenworkUrl ? null : (
-            <div className="rounded-2xl bg-emerald-50 px-4 py-3 text-sm font-medium text-emerald-700" data-testid="join-org-connected">
-              Connected — OpenWork is set up for {organizationName}
+            <div className="rounded-2xl bg-emerald-50 px-4 py-3 text-sm font-medium text-emerald-700" data-testid="join-org-joined">
+              Joined {organizationName}
             </div>
           )}
 
