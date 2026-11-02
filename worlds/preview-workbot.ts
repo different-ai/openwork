@@ -1,4 +1,4 @@
-export const summary = "Workbot with Den sign-in and the headless runner: the seeded Acme org with demo Slack, Gmail, Calendar, Notion and Linear; -- --live adds a real model locally; Daytona -- --computer-snapshot <name> adds a managed desktop; -- --calendar adds seeded Automations, model choices and mock meetings to Workbot's Calendar locally.";
+export const summary = "Workbot with Den sign-in and the headless runner: the seeded Acme org with demo Slack, Gmail, Calendar, Notion and Linear; -- --live adds a real model locally; Daytona -- --computer-snapshot <name> adds a managed desktop; -- --calendar adds seeded Automations, model choices and mock meetings to Workbot's Calendar locally; -- --open-workplace makes Open Outlook, Open Calendar and Open Drive each person's Microsoft 365 locally.";
 export const supportedTargets = ["local/host", "daytona/linux", "freestyle/linux"];
 
 import { execFile } from "node:child_process";
@@ -42,6 +42,7 @@ export async function main(argv = process.argv.slice(2)): Promise<void> {
   const place = resolvePlace();
   const parsed = parseWorkbotOptions(argv);
   if (place.kind === "daytona") {
+    if (parsed.openWorkplace) throw new Error("--open-workplace runs locally only: the sign-in page must reach your browser.");
     const { bootWorkbotOnDaytona } = await import("./lib/workbot.ts");
     const outputs = await bootWorkbotOnDaytona(stack, place, parsed);
     const expires = normalizeOutputs(outputs).values.expires;

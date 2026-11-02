@@ -84,3 +84,43 @@ test("the browser and background-then-screen nudges are only given when the comp
     assert.ok(workbotInstructions({ ...base, browser: true }).includes(rule))
   }
 })
+
+test("work in Microsoft 365 is named for the app the person uses, with the verb its operation names", () => {
+  const capability = (id: string, name: string) => ({ id, name: "execute_capability", input: { name } })
+  const calls = [
+    capability("c1", "native:microsoft-365:getCapabilitiesMicrosoft365CalendarEvents"),
+    capability("c2", "native:microsoft-365:updateMicrosoft365CalendarEvent"),
+    capability("c3", "native:microsoft-365:postCapabilitiesMicrosoft365CalendarEvents"),
+    capability("c4", "native:microsoft-365:getCapabilitiesMicrosoft365MailMessages"),
+    capability("c5", "native:microsoft-365:createMicrosoft365ReplyDraft"),
+    capability("c6", "native:microsoft-365:sendMicrosoft365MailDraft"),
+    capability("c7", "native:microsoft-365:putCapabilitiesMicrosoft365DriveFiles"),
+    capability("c8", "native:microsoft-365:getCapabilitiesMicrosoft365TeamsChats"),
+    capability("c9", "native:google-workspace:getCapabilitiesGoogleWorkspaceCalendarEvents"),
+    capability("c10", "gmail_create_draft"),
+  ]
+  const snapshot = {
+    status: "idle", finalAssistantText: "Done.", hasEarlier: false,
+    turns: [{ messageId: "wb_m365", status: "done", createdAt: 100, error: null }],
+    messages: [
+      { messageId: "wb_m365", role: "user", text: "Move my supplier sync" },
+      { messageId: "wb_m365", role: "assistant", text: "", createdAt: 110, toolCalls: calls },
+      ...calls.map((call, index) => ({ messageId: "wb_m365", role: "tool" as const, callId: call.id, name: "execute_capability", isError: false, createdAt: 120 + index })),
+      { messageId: "wb_m365", role: "assistant", text: "Done.", createdAt: 200, toolCalls: [] },
+    ],
+  } satisfies RunnerSnapshot
+  const [turn] = buildWorkbotTurns(snapshot)
+  const steps = turn?.parts.flatMap((part) => (part.kind === "steps" ? part.steps : [])) ?? []
+  assert.deepEqual(steps.map((step) => step.label), [
+    "Checking Outlook Calendar",
+    "Updating Outlook Calendar",
+    "Adding to Outlook Calendar",
+    "Checking Outlook",
+    "Drafting in Outlook",
+    "Sending in Outlook",
+    "Updating OneDrive",
+    "Checking Microsoft Teams",
+    "Checking Google Calendar",
+    "Drafting in Gmail",
+  ])
+})
