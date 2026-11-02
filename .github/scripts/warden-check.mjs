@@ -1,8 +1,9 @@
 #!/usr/bin/env node
-// The `warden-clear` check: Warden's verdict on a PR head, posted as a check
-// run by the diff-warden App. The dev ruleset requires this check from that
-// App (its key is only in the warden-clearance environment, which only dev
-// and v* tags can use), so no workflow on a branch can create it.
+// The advisory-only `warden-clear` check: Warden's verdict on a PR head,
+// posted by the diff-warden App. Clear reviews succeed; findings and incomplete
+// reviews are neutral. Neither this check nor Warden workflow jobs are merge
+// requirements; incomplete jobs still fail for observability. The App key is
+// only in the warden-clearance environment, which only dev and v* tags can use.
 //
 // Posted by:
 //   warden-clearance.mjs        same-repository PRs, after every Warden run
@@ -13,7 +14,7 @@ import { pathToFileURL } from "node:url";
 export const CHECK_NAME = "warden-clear";
 
 const REASONS = {
-  "changes-warden": "This PR changes Warden itself, so Warden can't clear it. A maintainer reviews it and an admin merges it.",
+  "changes-warden": "This PR changes Warden itself; a person should inspect the reviewer changes. Warden cannot independently assess its own changes.",
   "confidentiality-findings": "The confidentiality review flagged something. See the Warden comment on the PR.",
   "major-security-findings": "The security review found high or medium findings. See the Warden comment on the PR.",
   "review-incomplete": "The review didn't finish. Re-run Warden or push again.",
@@ -31,13 +32,13 @@ export function checkRunBody({ sha, verdict, reason, detailsUrl, source = "Warde
     name: CHECK_NAME,
     head_sha: sha,
     status: "completed",
-    conclusion: clear ? "success" : "failure",
+    // Advisory even when a review is incomplete or reports findings. Do not
+    // turn uncertainty into success, or into a merge-blocking failure.
+    conclusion: clear ? "success" : "neutral",
     ...(detailsUrl ? { details_url: detailsUrl } : {}),
     output: {
-      title: clear ? `${source}: clear` : `${source}: not clear`,
-      summary: clear
-        ? "No high or medium security findings and no confidentiality findings."
-        : why,
+      title: clear ? `${source}: clear (advisory)` : `${source}: needs attention (advisory)`,
+      summary: `${clear ? "No high or medium security findings and no confidentiality findings." : why}\n\nWarden is advisory only and does not block merging. Tests and human review are separate requirements.`,
     },
   };
 }
