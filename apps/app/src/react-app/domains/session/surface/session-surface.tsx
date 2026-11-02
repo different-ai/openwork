@@ -125,7 +125,7 @@ import { useComputerRequest, useComputerStore } from "@/react-app/domains/sessio
 import { QuestionPanel } from "@/react-app/domains/session/modals/question-modal";
 import { ComposerSubagentTracker, currentTurnSubagentParts, useComposerRemoteTasks } from "@/react-app/domains/session/surface/composer/composer-subagent-tracker";
 import { ComposerBackgroundTasks } from "@/react-app/domains/session/surface/composer/composer-background-tasks";
-import { sessionBackgroundShells, useBackgroundShellStore } from "@/react-app/domains/session/status/background-shell-store";
+import { sessionBackgroundShells, settleBackgroundShell, useBackgroundShellStore } from "@/react-app/domains/session/status/background-shell-store";
 import { useDesktopFeature } from "@/react-app/domains/session/status/use-desktop-feature";
 import { QueuedMessagesPanel } from "@/react-app/domains/session/modals/queued-messages-panel";
 import { deriveOpenTargets, sameOpenTargets, type OpenTarget } from "@/react-app/domains/session/artifacts/open-target";
@@ -2794,6 +2794,16 @@ export function SessionSurface(props: SessionSurfaceProps) {
     setCloudQueueRetryVersion((version) => version + 1);
   }, [attachments.length, draft, handleSend, props.sessionId, sendQueuedDraftNow, sessionOwner]);
 
+  const handleStopBackgroundTask = useCallback(async (shellID: string) => {
+    if (snapshotEngine !== "v2" || archived) throw new Error("Background tasks cannot be stopped here.");
+    const shell = useBackgroundShellStore.getState().booksByWorkspaceId[props.workspaceId]?.running[shellID];
+    if (!shell || shell.sessionId !== props.sessionId) throw new Error("Background task is no longer available.");
+    const client = createClientV2(props.opencodeBaseUrl, props.workspaceRoot.trim() || undefined, { token: props.openworkToken });
+    unwrap(await client.removeBackgroundShell({ shellID, sessionID: props.sessionId }));
+    // The DELETE response confirms it stopped even if the volatile deletion event was lost.
+    useBackgroundShellStore.getState().update(props.workspaceId, (book) => settleBackgroundShell(book, shellID));
+  }, [snapshotEngine, archived, props.workspaceId, props.sessionId, props.opencodeBaseUrl, props.workspaceRoot, props.openworkToken]);
+
   // Stop one helper without stopping the turn it belongs to. Uses the same
   // directory-scoped client as the turn's own Stop, so the abort reaches the
   // engine and project that actually run the child (#2014).
@@ -4142,6 +4152,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
                     shells={backgroundShells}
                     syncDegraded={runSyncHealth.degraded}
                     belowAgents={subagentTrackerShown}
+                    onStop={snapshotEngine === "v2" ? handleStopBackgroundTask : undefined}
                   />
                 ) : null}
                 {composerQuestion ? (

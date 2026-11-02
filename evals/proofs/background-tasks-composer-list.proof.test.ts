@@ -54,10 +54,19 @@ test("a member whose agent leaves commands running sees them listed on the compo
     await user.screenshot();
   });
 
-  await step("when both commands finish, the list goes away", async () => {
-    await world.release(world.report);
+  await step("Stop ends only the report command, leaving the other background task running", async () => {
+    await user.click({ role: "button", label: `Stop background task: ${world.report.command}` });
+    const remaining = await probe.eventually(rows, {
+      within: 30_000, intervalMs: 150, label: "only the image command is left", until: (found) => found.length === 1 && found[0] === world.images.command,
+    });
+    await user.see({ text: world.stoppedReply }, { timeoutMs: 60_000 });
+    expect(remaining).toEqual([world.images.command]);
+    evidence.recordAssertionEvidence("Stop removes only its command; the other command stays running", JSON.stringify(remaining), remaining.length === 1 && remaining[0] === world.images.command);
+    await user.screenshot();
+  });
+
+  await step("when the remaining command finishes, the list goes away", async () => {
     await world.release(world.images);
-    await user.see({ text: world.report.wake }, { timeoutMs: 60_000 });
     await user.see({ text: world.images.wake }, { timeoutMs: 60_000 });
     const left = (await probe.eventually(async () => (await probe.dom("[data-background-tasks]")).elements, {
       within: 30_000, intervalMs: 150, label: "the list goes away", until: (found) => found.length === 0,
