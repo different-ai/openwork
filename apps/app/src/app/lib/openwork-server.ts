@@ -2666,6 +2666,23 @@ export function createOpenworkServerClient(options: { baseUrl: string; token?: s
         { token, hostToken, method: "POST", body: { targets, sessionId: options?.sessionId } },
       ),
 
+    /** Download a web page's og:image into context/design/referencias/ with a
+     * source sidecar. Server-side fetch, so cross-origin pages work. */
+    captureDesignReference: (workspaceId: string, url: string) =>
+      requestJson<{ items: Array<{ path: string; sourceUrl: string; title: string | null; bytes: number }> }>(
+        baseUrl,
+        `/workspace/${encodeURIComponent(workspaceId)}/design/references/capture`,
+        { token, hostToken, method: "POST", body: { url } },
+      ),
+
+    /** Read-only proxy of the public designeer.xyz Markdown catalog. */
+    fetchDesigneerCatalog: (cursor?: string) =>
+      requestJson<{ items: Array<{ title: string; url: string; author: string | null; description: string | null }>; nextCursor: string | null }>(
+        baseUrl,
+        `/design/catalog/designeer${cursor ? `?cursor=${encodeURIComponent(cursor)}` : ""}`,
+        { token, hostToken },
+      ),
+
     // User-level env vars (host-auth only — desktop shell is the sole caller).
     // See apps/server/src/env-file.ts and apps/app/pr/environment-variables.md.
     listUserEnvKeys: (options?: { desktopTransport?: "main" }) =>
