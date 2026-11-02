@@ -50,6 +50,18 @@ function getReauthCompleteMessage(data: unknown): ReauthCompleteMessage | null {
   return { type: "openwork:reauth-complete", nonce: data.nonce, error };
 }
 
+/**
+ * The sign-in window came back as another OpenWork user, e.g. after the
+ * identity provider renamed the person's email (ENG-815). Say which account
+ * it was instead of asking them to sign in as an address that may no longer exist.
+ */
+function getDifferentAccountMessage(signedInEmail: string | null | undefined, expectedEmail: string | null | undefined) {
+  if (!signedInEmail || !expectedEmail) {
+    return "You signed in with a different OpenWork account. Sign in with the account you are using here to confirm this change.";
+  }
+  return `You signed in as ${signedInEmail}, which is a different OpenWork account than ${expectedEmail}. If your work email changed, ask your organization admin to update your account.`;
+}
+
 const REAUTH_SOCIAL_PROVIDERS: readonly SocialAuthProvider[] = ["google", "github"];
 
 export function ReauthDialog({
@@ -214,8 +226,11 @@ export function ReauthDialog({
           // Verify the cookie created by the popup, not a cached web bearer token.
           const result = await requestJson("/api/auth/get-session", { method: "GET" });
           const verifiedUser = getUser(result.payload);
-          if (!result.response.ok || !verifiedUser || verifiedUser.id !== user?.id) {
+          if (!result.response.ok || !verifiedUser) {
             throw new Error(`Sign in as ${user?.email} to confirm this change.`);
+          }
+          if (verifiedUser.id !== user?.id) {
+            throw new Error(getDifferentAccountMessage(verifiedUser.email, user?.email));
           }
           await onVerifiedRef.current();
         } catch (nextError) {
