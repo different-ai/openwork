@@ -41,6 +41,7 @@ async function fixture(t) {
     const html = await consent.text();
     assert.match(html, /Allow workplace access/);
     assert.match(html, /not a Microsoft account/);
+    assert.match(consent.headers.get("content-security-policy"), /form-action 'self' https:\/\/den\.example\.test;/, "the browser may follow the approval back to the app");
     const request = html.match(/name="request" value="([^"]+)"/)[1];
     const allowed = await fetch(base + `/${tenant}/oauth2/v2.0/authorize`, { method: "POST", redirect: "manual", headers: { cookie, origin: base, "content-type": "application/x-www-form-urlencoded" }, body: new URLSearchParams({ request, decision: "allow" }) });
     assert.equal(allowed.status, 303);

@@ -108,7 +108,8 @@ export function createWorkshopMicrosoft({ origin, auth, storage }) {
     res.writeHead(status, {
       "content-type": html ? "text/html; charset=utf-8" : "application/json; charset=utf-8", "cache-control": "no-store", pragma: "no-cache",
       "x-content-type-options": "nosniff", "referrer-policy": "same-origin",
-      ...(html ? { "content-security-policy": "default-src 'none'; style-src 'unsafe-inline'; form-action 'self'; frame-ancestors 'none'; base-uri 'none'" } : {}),
+      // The consent page widens form-action to the app's own callback: browsers check a form's redirect against it too.
+      ...(html ? { "content-security-policy": res.getHeader("content-security-policy") || "default-src 'none'; style-src 'unsafe-inline'; form-action 'self'; frame-ancestors 'none'; base-uri 'none'" } : {}),
       ...headers,
     });
     res.end(value === null ? undefined : html ? value : JSON.stringify(value));
