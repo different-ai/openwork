@@ -13,6 +13,7 @@ import type { AuditChangeCapture } from "./audit/request-capture.js"
 import { db } from "./db.js"
 import { env } from "./env.js"
 import { isOrganizationSsoReady } from "./sso-readiness.js"
+import { ssoStateVerificationIdentifier } from "./sso-state-identifier.js"
 
 type SsoConnection = typeof SsoConnectionTable.$inferSelect
 type SsoTestUserId = NonNullable<SsoConnection["activeTestUserId"]>
@@ -254,12 +255,12 @@ export async function authorizeOrganizationSsoSignIn(input: {
   return { ok: true as const, mode: "test" as const, intentId }
 }
 
-async function getIntentIdFromVerification(identifier: string | null) {
-  if (!identifier) return null
+async function getIntentIdFromVerification(state: string | null) {
+  if (!state) return null
   const [verification] = await db
     .select({ value: AuthVerificationTable.value })
     .from(AuthVerificationTable)
-    .where(eq(AuthVerificationTable.identifier, identifier))
+    .where(eq(AuthVerificationTable.identifier, ssoStateVerificationIdentifier(state)))
     .limit(1)
   return verification ? testIntentIdFromUrl(parseVerificationCallbackUrl(verification.value)) : null
 }
