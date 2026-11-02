@@ -202,7 +202,7 @@ declare global {
         /** Tells the host how the visible conversation shows its browser, so Escape inside a full-screen page can leave full screen. */
         setPresentation?: (sessionId: string | null, mode: BrowserPresentationMode) => Promise<boolean>;
         /** A small JPEG preview of the visible conversation's on-screen tab, or null when none may be captured. */
-        /** Brings the popped-out browser window to the front. */
+        /** Brings the popped-out browser window to the front. Only for the person's own action. */
         focusWindow?: () => Promise<boolean>;
         /** A new thread's first message made it this session: its browser tabs become the session's. */
         claimDraftTabs?: (sessionId: string) => Promise<boolean>;

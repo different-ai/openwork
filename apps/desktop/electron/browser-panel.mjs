@@ -606,6 +606,7 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink, che
         // BrowserWindow's primary renderer is below the entire contentView.
         aboveApp: index !== -1,
         poppedOut: Boolean(popOutWindow && !popOutWindow.isDestroyed() && popOutWindow.contentView.children.includes(view)),
+        focused: !view.webContents.isDestroyed() && view.webContents.isFocused(),
         visible: view.getVisible(),
         bounds: view.getBounds(),
       };
@@ -985,7 +986,7 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink, che
     callback(browserProxy.username, browserProxy.password);
   });
 
-  function createBrowserTab(url = "about:blank", { select = true, initializeBlank = true, deferBackground = false, ownerSessionId = null, restoreTabId = null, automationProtected = false, contentsOptions = /** @type {import("electron").WebContentsViewConstructorOptions} */ ({}) } = {}) {
+  function createBrowserTab(url = "about:blank", { select = true, initializeBlank = true, deferBackground = false, ownerSessionId = null, restoreTabId = null, automationProtected = false, forPerson = false, contentsOptions = /** @type {import("electron").WebContentsViewConstructorOptions} */ ({}) } = {}) {
     // Check synchronously before creating a WebContentsView, including pending
     // opens, popups, transcript links and the tab-strip button.
     if (browserTabs.size >= MAX_BROWSER_TABS) {
@@ -1000,6 +1001,9 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink, che
       webPreferences: {
         ...contentsOptions.webPreferences,
         backgroundThrottling: false,
+        // The agent and policy checks load pages too: a load must never take the
+        // keyboard from what the person is typing. Their own navigations focus the page.
+        focusOnNavigation: false,
         ...BROWSER_SECURITY_PREFERENCES,
         preload: path.join(__dirname, "browser-content-preload.cjs"),
         partition: BROWSER_SESSION_PARTITION,
@@ -1238,9 +1242,26 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink, che
     }
     const finalUrl = normalizeBrowserUrl(url, "about:blank");
     if (finalUrl !== "about:blank") {
-      runDetachedTask("navigate new browser tab", () => view.webContents.loadURL(finalUrl));
+      runDetachedTask("navigate new browser tab", () => (forPerson ? loadForPerson(view, finalUrl) : view.webContents.loadURL(finalUrl)));
     }
     return tab;
+  }
+
+  /**
+   * A page the person asked for takes the keyboard, as in any browser. A page
+   * that changes process commits unfocused, so it takes it again then, but only
+   * if they have not moved on: focus() also raises the window over other apps.
+   */
+  function loadForPerson(view, url) {
+    const contents = view.webContents;
+    const focusIfUntouched = () => {
+      const host = viewHost();
+      if (!contents.isDestroyed() && host?.isFocused() && !host.webContents.isFocused()) contents.focus();
+    };
+    contents.once("did-navigate", focusIfUntouched);
+    const loading = contents.loadURL(url).finally(() => contents.removeListener("did-navigate", focusIfUntouched));
+    contents.focus();
+    return loading;
   }
 
   function detachBrowserView(view) {
@@ -2109,7 +2130,7 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink, che
       getActiveWebContents(); // Reject navigation while suspension is pending.
       const view = getActiveBrowserView()
         ?? createBrowserTab("about:blank", { select: true, ownerSessionId: registry.visibleSessionId() }).view;
-      runDetachedTask("navigate browser tab", () => view.webContents.loadURL(normalizeBrowserUrl(url)));
+      runDetachedTask("navigate browser tab", () => loadForPerson(view, normalizeBrowserUrl(url)));
     });
     ipcMain.handle("openwork:browser:back", (event) => {
       authorizeManualNavigation(event);
@@ -2148,7 +2169,7 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink, che
     ipcMain.handle("openwork:browser:createTab", (_event, url, sessionId) => {
       const target = typeof url === "string" && url.trim() ? url : BROWSER_NEW_TAB_URL;
       const ownerSessionId = sessionId === undefined ? registry.visibleSessionId() : normalizeSessionId(sessionId);
-      const tab = createBrowserTab(target, { select: true, ownerSessionId });
+      const tab = createBrowserTab(target, { select: true, ownerSessionId, forPerson: true });
       return { tabId: tab.tabId };
     });
     ipcMain.handle("openwork:browser:closeTab", (_event, tabId) => closeUserBrowserTab(tabId == null ? undefined : String(tabId)));
