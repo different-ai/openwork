@@ -404,12 +404,15 @@ function prepareAction(id, action) {
   }
   return { x, y, unchanged: action.type === "set_checked" && control.checked === action.checked };
 }
-/** Whether this step would fill, or press a key in, a password or one-time-code field. */
+/** Whether this step would click, fill or press a key in a password or one-time-code field. */
 function credentialTarget(id, action) {
   const registry = globalThis.__openworkBrowserRefs;
   if (!registry?.observations.get(id)) return false;
-  const element = action.ref ? registry.byRef.get(action.ref)?.deref() : document.activeElement;
-  return element?.isConnected === true && registry.isCredential(element);
+  const point = action.type === "click" && Number.isFinite(action.x) && Number.isFinite(action.y);
+  const element = action.ref ? registry.byRef.get(action.ref)?.deref() : point ? document.elementFromPoint(action.x, action.y) : document.activeElement;
+  // Clicking a field's label focuses the field.
+  const control = element?.control ?? element;
+  return control?.isConnected === true && registry.isCredential(control);
 }
 function applyFormAction(action) {
   const registry = globalThis.__openworkBrowserRefs;
@@ -979,15 +982,15 @@ export function createBrowserTaskHost({ getTab, tabsFor, ownerOf, activeFor, isV
         const steps = [];
         let failure = null, page = null, interrupted = null;
         // A password or code goes only to the exact site the person confirmed, asked at the step
-        // that fills its field or presses a key in it: Enter can submit what the browser
-        // autofilled, and a click earlier in a batch can focus the field.
+        // that clicks, fills or presses a key in its field: focusing it can autofill a saved
+        // password, Enter can submit one, and a click earlier in a batch can focus the field.
         let confirmedSite = null;
         // Taking focus gives a page a moment to leave: nothing goes out unless it is still on that site.
         const leftConfirmedSite = () => confirmedSite !== null && originOf(contents.getURL()) !== confirmedSite;
         const LEFT_SITE = "The page left the site the person confirmed, so nothing was sent to it.";
         for (const [index, action] of actions.entries()) {
           checkNavigation(navigationScope);
-          if (!confirmedSite && observed.url === contents.getURL() && (action.type === "key" || action.type === "fill" && action.text)
+          if (!confirmedSite && observed.url === contents.getURL() && ["click", "fill", "key"].includes(action.type)
             && await isolated(contents, credentialTarget, observed.id, action)) {
             const site = new URL(observed.url).origin;
             const refused = !approveCredential ? ["sign_in_required", "Take over and sign in directly in the browser, then resume."]

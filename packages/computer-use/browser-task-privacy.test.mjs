@@ -121,6 +121,19 @@ test("a given password is filled only on the site the person confirms, and never
   assert.equal((await press(host)).code, "credential_declined");
   assert.equal((await press(hostWith(undefined))).code, "sign_in_required");
   assert.deepEqual(keysSent, []);
+  // So do clicks in it, or on its label, since focusing the field can autofill a saved password.
+  const click = async (target, control = field) => {
+    const seen = await observe(target);
+    const { ref } = seen.elements.find(element => element.name === control.attributes["aria-label"]);
+    return target.request({ sessionId: "chat", operation: "act", args: { tabId: "tab", observationId: seen.observationId, action: { type: "click", ref } } });
+  };
+  assert.equal((await click(host)).code, "credential_declined");
+  assert.equal((await click(hostWith(undefined))).code, "sign_in_required");
+  const label = new Input(); label.type = "text"; label.attributes = { "aria-label": "Your password" }; label.control = field;
+  fields = [field, label];
+  assert.equal((await click(host, label)).code, "credential_declined");
+  fields = [field];
+  assert.equal(document.activeElement, null, "Nothing touched the field");
   // A page that leaves while the field takes focus gets nothing, even after the person's yes.
   confirm = true;
   field.focus = () => { document.activeElement = field; url = "https://elsewhere.example/"; };
@@ -134,7 +147,7 @@ test("a given password is filled only on the site the person confirms, and never
   delete field.matches; delete field.focus; url = "https://example.com/login";
   const filled = await fill(host, given);
   assert.equal(filled.ok, true, JSON.stringify(filled));
-  assert.deepEqual(asked, Array(5).fill(["chat", "https://example.com"]), "The person confirms the exact origin");
+  assert.deepEqual(asked, Array(7).fill(["chat", "https://example.com"]), "The person confirms the exact origin");
   assert.equal(field.value, given);
   assert.equal(filled.control.filled, true);
   assert.equal(filled.control.value, undefined);
