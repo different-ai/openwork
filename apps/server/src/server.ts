@@ -1954,6 +1954,10 @@ async function validateEngineRequestBody(request: Request): Promise<void> {
 }
 
 export async function proxyOpencodeRequest(input: Parameters<typeof forwardOpencodeRequest>[0]) {
+  // All v1 mounts (including background/recovery sends) converge here. Check
+  // before forwarding or acquiring a mutation lease; local engine config cannot
+  // weaken the verified organization policy. v2 keeps its native/plugin checks.
+  await managedDesktopPolicy(input.config).assertLegacyExecutionRequest(input.request, input.proxyPath ?? input.url.pathname);
   if (["GET", "HEAD"].includes(input.request.method.toUpperCase())) return forwardOpencodeRequest(input);
   const release = await enterEngineMutation(input.config, "v1", input.request.signal);
   try { return await forwardOpencodeRequest(input); }
