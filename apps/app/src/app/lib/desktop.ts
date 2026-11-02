@@ -204,6 +204,8 @@ declare global {
         /** A small JPEG preview of the visible conversation's on-screen tab, or null when none may be captured. */
         /** Brings the popped-out browser window to the front. */
         focusWindow?: () => Promise<boolean>;
+        /** A new thread's first message made it this session: its browser tabs become the session's. */
+        claimDraftTabs?: (sessionId: string) => Promise<boolean>;
         navigate?: (url: string) => Promise<void>;
         back?: () => Promise<void>;
         forward?: () => Promise<void>;

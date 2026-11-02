@@ -101,6 +101,7 @@ export type BrowserTabRegistry = {
   add(tab: { tabId: string; ownerSessionId?: string | null }): RegistryTab;
   select(tabId: string): RegistryTab;
   remove(tabId: string): RemovedRegistryTab | null;
+  reassignOwner(fromOwnerSessionId: string | null | undefined, toOwnerSessionId: string | null | undefined): string[];
   reorder(tabIds: string[]): RegistryTab[];
   get(tabId: string): RegistryTab | null;
   has(tabId: string): boolean;
@@ -117,6 +118,7 @@ export type BrowserTabRegistry = {
   size(): number;
 };
 
+export const DRAFT_OWNER_KEY: "__openwork_no_session__";
 export const SHARED_OWNER_KEY: "*";
 export const BACKGROUND_TAB_VIEWPORT: Readonly<Viewport>;
 

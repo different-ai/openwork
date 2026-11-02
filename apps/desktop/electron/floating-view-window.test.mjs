@@ -4,14 +4,14 @@ import assert from "node:assert/strict";
 import { FLOATING_VIEW_PREFIX, attachFloatingViewWindow, floatingViewWindowOptions } from "./floating-view-window.mjs";
 
 describe("floating view windows", () => {
-  it("opens only empty pages under the reserved name, as ordinary resizable windows", () => {
+  it("opens only empty pages under the reserved name, as real resizable windows", () => {
     const options = floatingViewWindowOptions({ url: "about:blank", frameName: `${FLOATING_VIEW_PREFIX}browser` });
     assert.equal(options?.show, false);
     assert.equal(options?.webPreferences.preload, undefined);
     assert.equal(options?.webPreferences.sandbox, true);
-    // Nothing turns off what the system gives a window: no frameless card, no
-    // staying above other apps, and it resizes, minimizes and full-screens.
-    for (const key of /** @type {const} */ (["frame", "transparent", "alwaysOnTop", "skipTaskbar", "resizable", "minimizable", "maximizable", "fullscreenable"])) {
+    // Nothing turns off what the system gives a window: no frameless card, and
+    // it resizes, minimizes and full-screens.
+    for (const key of /** @type {const} */ (["frame", "transparent", "skipTaskbar", "resizable", "minimizable", "maximizable", "fullscreenable"])) {
       assert.equal(options?.[key], undefined, key);
     }
     assert.equal(floatingViewWindowOptions({ url: "https://example.com", frameName: `${FLOATING_VIEW_PREFIX}browser` }), null);
@@ -28,7 +28,7 @@ describe("floating view windows", () => {
     assert.deepEqual(floatingViewWindowOptions({ url: "about:blank", frameName, platform: "linux" })?.titleBarOverlay, { height: 40 });
   });
 
-  it("shows the window without taking focus, and never navigates it", () => {
+  it("keeps the window above other windows without taking focus or the Dock icon, and never navigates it", () => {
     /** @type {unknown[][]} */
     const calls = [];
     /** @type {(event: { preventDefault: () => void }) => void} */
@@ -36,6 +36,8 @@ describe("floating view windows", () => {
     /** @type {() => unknown} */
     let openHandler = () => undefined;
     const child = {
+      setAlwaysOnTop: (/** @type {unknown[]} */ ...args) => calls.push(["setAlwaysOnTop", ...args]),
+      setVisibleOnAllWorkspaces: (/** @type {unknown[]} */ ...args) => calls.push(["setVisibleOnAllWorkspaces", ...args]),
       showInactive: () => calls.push(["showInactive"]),
       webContents: {
         setWindowOpenHandler: (/** @type {() => unknown} */ handler) => { openHandler = handler; },
@@ -43,7 +45,11 @@ describe("floating view windows", () => {
       },
     };
     attachFloatingViewWindow(child);
-    assert.deepEqual(calls, [["showInactive"]]);
+    assert.deepEqual(calls, [
+      ["setAlwaysOnTop", true, "floating"],
+      ["setVisibleOnAllWorkspaces", true, { visibleOnFullScreen: true, skipTransformProcessType: true }],
+      ["showInactive"],
+    ]);
     assert.deepEqual(openHandler(), { action: "deny" });
     let prevented = false;
     navigate({ preventDefault: () => { prevented = true; } });

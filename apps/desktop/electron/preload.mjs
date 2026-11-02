@@ -276,6 +276,7 @@ contextBridge.exposeInMainWorld("__OPENWORK_ELECTRON__", {
     setVisibleSession(sessionId) { return ipcRenderer.invoke("openwork:browser:setVisibleSession", sessionId); },
     setPresentation(sessionId, mode) { return ipcRenderer.invoke("openwork:browser:presentation", { sessionId, mode }); },
     focusWindow() { return ipcRenderer.invoke("openwork:browser:focusWindow"); },
+    claimDraftTabs(sessionId) { return ipcRenderer.invoke("openwork:browser:claimDraftTabs", sessionId); },
     navigate(url) { return ipcRenderer.invoke("openwork:browser:navigate", url); },
     back() { return ipcRenderer.invoke("openwork:browser:back"); },
     forward() { return ipcRenderer.invoke("openwork:browser:forward"); },

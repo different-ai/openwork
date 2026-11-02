@@ -19,6 +19,8 @@ export type BrowserPresentation = {
 type BrowserPresentationStore = {
   sessions: Record<string, BrowserPresentation>;
   setMode: (sessionId: string, mode: BrowserPresentationMode, returnMode?: BrowserShownMode) => void;
+  /** A new thread became a session: how it shows its browser goes with it. */
+  moveSession: (from: string, to: string) => void;
   /** Full screen never outlives its conversation or its page: fall back to `returnMode`. */
   dropFullscreen: (sessionId: string) => void;
 };
@@ -44,6 +46,12 @@ export const useBrowserPresentationStore = create<BrowserPresentationStore>()((s
   setMode: (sessionId, mode, returnMode) => set((state) => ({
     sessions: update(state.sessions, sessionId, returnMode ? { mode, returnMode } : { mode }),
   })),
+  moveSession: (from, to) => set((state) => {
+    const moved = state.sessions[from];
+    if (!moved) return state;
+    const { [from]: _moved, ...sessions } = state.sessions;
+    return { sessions: { ...sessions, [to]: moved } };
+  }),
   dropFullscreen: (sessionId) => set((state) => {
     const current = state.sessions[sessionId];
     if (current?.mode !== "fullscreen") return state;

@@ -11,6 +11,7 @@ import {
   AGENT_VIEWPORTS,
   BACKGROUND_TAB_VIEWPORT,
   DEFAULT_AGENT_VIEWPORT,
+  DRAFT_OWNER_KEY,
   agentViewportEmulationCommands,
   backgroundTabEmulationCommands,
   createBrowserTabRegistry,
@@ -1992,6 +1993,18 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink, che
     invalidateBrowserBounds();
   }
 
+  // A new thread's first message makes it a conversation. Its pages go with it
+  // and stay on screen, so nothing leaves the window or reloads on the way.
+  function claimDraftTabs(sessionId) {
+    const onScreen = registry.visibleSessionId() === DRAFT_OWNER_KEY;
+    registry.reassignOwner(DRAFT_OWNER_KEY, sessionId);
+    if (onScreen) registry.setVisibleSession(sessionId);
+    closedTabs = closedTabs.map((entry) => (entry.ownerSessionId === DRAFT_OWNER_KEY ? { ...entry, ownerSessionId: sessionId } : entry));
+    if (shortcutFocus?.ownerSessionId === DRAFT_OWNER_KEY) shortcutFocus = null;
+    sendBrowserState();
+    return true;
+  }
+
   /** The app's renderer draws the popped-out window, so it cannot outlive that document. */
   function closePresentedBrowser() {
     hideBrowserView();
@@ -2071,6 +2084,11 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink, che
       if (!isMainRenderer(event)) return false;
       return setVisibleSession(normalizeSessionId(sessionId));
     });
+    ipcMain.handle("openwork:browser:claimDraftTabs", (event, sessionId) => {
+      const owner = normalizeSessionId(sessionId);
+      if (!isMainRenderer(event) || !owner) return false;
+      return claimDraftTabs(owner);
+    });
     ipcMain.handle("openwork:browser:presentation", (event, input) => {
       if (!isMainRenderer(event)) return false;
       return setBrowserPresentation(input);
@@ -2124,6 +2142,7 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink, che
       tabLimit: MAX_BROWSER_TABS,
       backgroundWindowCount: Number(Boolean(backgroundWindow && !backgroundWindow.isDestroyed())),
       backgroundWindowVisible: Boolean(backgroundWindow && !backgroundWindow.isDestroyed() && backgroundWindow.isVisible()),
+      popOutAboveOthers: Boolean(popOutWindow && !popOutWindow.isDestroyed() && popOutWindow.isAlwaysOnTop()),
       visibleWindowCount: BrowserWindow.getAllWindows().filter((host) => host.isVisible()).length,
     }));
     ipcMain.handle("openwork:browser:createTab", (_event, url, sessionId) => {

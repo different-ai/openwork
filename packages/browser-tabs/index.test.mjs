@@ -3,11 +3,32 @@ import test from "node:test";
 import {
   AGENT_VIEWPORTS,
   BACKGROUND_TAB_VIEWPORT,
+  DRAFT_OWNER_KEY,
   agentViewportEmulationCommands,
   agentViewportFor,
+  createBrowserTabRegistry,
   fitAgentViewport,
   lockedAgentViewport,
 } from "./index.mjs";
+
+test("a draft's tabs become its session's, and its active tab stays on screen", () => {
+  const registry = createBrowserTabRegistry();
+  registry.add({ tabId: "a", ownerSessionId: DRAFT_OWNER_KEY });
+  registry.add({ tabId: "b", ownerSessionId: DRAFT_OWNER_KEY });
+  registry.add({ tabId: "other", ownerSessionId: "another-conversation" });
+  registry.select("b");
+  registry.setVisibleSession(DRAFT_OWNER_KEY);
+
+  assert.deepEqual(registry.reassignOwner(DRAFT_OWNER_KEY, "session-1"), ["a", "b"]);
+  registry.setVisibleSession("session-1");
+
+  assert.equal(registry.ownerOf("a"), "session-1");
+  assert.equal(registry.ownerOf("other"), "another-conversation");
+  assert.equal(registry.onScreenTabId(), "b");
+  assert.equal(registry.activeTabIdFor(DRAFT_OWNER_KEY), null);
+  assert.equal(registry.surfacingFor("b"), "foreground");
+  assert.equal(registry.surfacingFor("other"), "background");
+});
 
 test("an agent viewport scales down to fit the panel, centered at the top, and never up", () => {
   const desktop = AGENT_VIEWPORTS.desktop;

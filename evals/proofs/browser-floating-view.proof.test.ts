@@ -100,10 +100,13 @@ test("a person pops the page the agent opened out into a real browser window, br
     await win.user.see(addressBar);
     expect((await win.probe.dom('[data-testid="browser-window-tab"]')).elements).toHaveLength(1);
     await user.notSee({ testId: "browser-mode-float" });
+    // Witness: going back to the chat cannot bury a window that stays above the app.
+    const aboveOthers = (await probe.browserState()).popOutAboveOthers;
+    expect(aboveOthers).toBe(true);
     evidence.recordAssertionEvidence(
       "Pop out moves the page into a real browser window",
-      `The live tab is painted ${width}px wide inside a separate window (${sideWidth}px beside the chat), with its own tab strip and address bar, and nothing is painted over the chat.`,
-      width > sideWidth,
+      `The live tab is painted ${width}px wide inside a separate window (${sideWidth}px beside the chat) that stays above other windows, with its own tab strip and address bar, and nothing is painted over the chat.`,
+      width > sideWidth && aboveOthers,
     );
     await win.user.screenshot();
   });
