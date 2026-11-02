@@ -88,6 +88,12 @@ test("an app's Microsoft 365 connector reaches the same private workspace the br
   // Graph refuses what the token does not grant, and anything without a valid token.
   const calendarOnly = await (await w.redeem(client, await w.approve(client, b, "openid offline_access Calendars.Read"))).json();
   assert.equal((await w.graph(calendarOnly.access_token, "/me/messages")).status, 403);
+  const calendarOnlyProfile = await (await w.redeem(client, await w.approve(client, b, "Calendars.Read"))).json();
+  assert.equal(calendarOnlyProfile.id_token, undefined, "No identity token without openid");
+  assert.equal((await fetch(w.base + "/oidc/userinfo", { headers: { authorization: `Bearer ${calendarOnlyProfile.access_token}` } })).status, 403, "No userinfo without openid");
+  const openidOnly = await (await w.redeem(client, await w.approve(client, b, "openid Calendars.Read"))).json();
+  const bare = JSON.parse(Buffer.from(openidOnly.id_token.split(".")[1], "base64url").toString());
+  assert.equal(bare.email, undefined, "No email claim without the email scope"); assert.equal(bare.name, undefined, "No name without profile");
   assert.equal((await w.graph(calendarOnly.access_token, "/me/events")).status, 200);
   assert.equal((await w.graph("x".repeat(43), "/me")).status, 401);
 

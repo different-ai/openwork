@@ -152,10 +152,18 @@ export function createWorkshopMicrosoft({ origin, auth, storage, appOrigins = tr
     try { return new URL(req.headers.referer).origin === origin; } catch { return false; }
   }
   const email = (participant) => `${participant.id}@acme.test`;
-  function idToken(participant, audience, nonce) {
+  /** OpenID Connect claims a grant may see: the name with `profile`, the email with `email`. */
+  function identityClaims(participant, scopes) {
+    return {
+      sub: digest(`${tenantId}:${participant.id}`),
+      ...(scopes.includes("profile") ? { name: participant.name } : {}),
+      ...(scopes.includes("email") ? { email: email(participant), preferred_username: email(participant) } : {}),
+    };
+  }
+  function idToken(participant, audience, nonce, scopes) {
     // Unsigned: a fictional identity hint for the app, not a credential. The access token is what grants access.
     const now = Math.floor(Date.now() / 1000);
-    const claims = { iss: `${origin}/${tenantId}/v2.0`, aud: audience, tid: tenantId, sub: digest(`${tenantId}:${participant.id}`), oid: digest(`oid:${participant.id}`).slice(0, 32), name: participant.name, email: email(participant), preferred_username: email(participant), iat: now, exp: now + TOKEN_MS / 1000, ...(nonce ? { nonce } : {}) };
+    const claims = { iss: `${origin}/${tenantId}/v2.0`, aud: audience, tid: tenantId, oid: digest(`oid:${participant.id}`).slice(0, 32), ...identityClaims(participant, scopes), iat: now, exp: now + TOKEN_MS / 1000, ...(nonce ? { nonce } : {}) };
     return `${Buffer.from(JSON.stringify({ alg: "none", typ: "JWT" })).toString("base64url")}.${Buffer.from(JSON.stringify(claims)).toString("base64url")}.`;
   }
   function revokeFamily(family) { for (const table of [tokens, refreshes]) for (const [key, entry] of table) if (entry.family === family) table.delete(key); }
@@ -167,7 +175,7 @@ export function createWorkshopMicrosoft({ origin, auth, storage, appOrigins = tr
     tokens.set(digest(access), { ...fields, expires: Math.min(Date.now() + TOKEN_MS, grant.familyExpires) });
     refreshes.set(digest(refresh), { ...fields, familyExpires: grant.familyExpires, expires: grant.familyExpires });
     save();
-    return { token_type: "Bearer", scope: grant.scopes.join(" "), expires_in: TOKEN_MS / 1000, ext_expires_in: TOKEN_MS / 1000, access_token: access, refresh_token: refresh, id_token: idToken(grant.participant, grant.clientId, grant.nonce) };
+    return { token_type: "Bearer", scope: grant.scopes.join(" "), expires_in: TOKEN_MS / 1000, ext_expires_in: TOKEN_MS / 1000, access_token: access, refresh_token: refresh, ...(grant.scopes.includes("openid") ? { id_token: idToken(grant.participant, grant.clientId, grant.nonce, grant.scopes) } : {}) };
   }
   function authenticatedClient(req, params) {
     let id = params.get("client_id"); let key = params.get("client_secret");
@@ -300,7 +308,8 @@ export function createWorkshopMicrosoft({ origin, auth, storage, appOrigins = tr
     const grant = match ? tokens.get(digest(match[1])) : undefined;
     if (!grant) { graphError(res, 401, "InvalidAuthenticationToken", "Access token is missing, invalid or expired.", { "www-authenticate": 'Bearer error="invalid_token"' }); return null; }
     if (url.pathname === "/oidc/userinfo") {
-      send(res, 200, { sub: digest(`${tenantId}:${grant.participant.id}`), name: grant.participant.name, email: email(grant.participant), preferred_username: email(grant.participant) });
+      if (!grant.scopes.includes("openid")) graphError(res, 403, "ErrorAccessDenied", "Userinfo needs the openid permission.");
+      else send(res, 200, identityClaims(grant.participant, grant.scopes));
       return null;
     }
     let graphPath;
