@@ -20,6 +20,9 @@ export function browserTaskUrl(value) {
 function safeUrl(value) {
   try { const url = new URL(value); return `${url.origin}${url.pathname}`; } catch { return ""; }
 }
+function originOf(value) {
+  try { return new URL(value).origin; } catch { return null; }
+}
 
 // After click, key or scroll: wait for navigation, network idle and a DOM that
 // stops changing structure (text-only tickers and clocks do not count).
@@ -279,6 +282,7 @@ function observePage(id, options = {}) {
   registry.describe = describe;
   registry.optionRef = optionRef;
   registry.identify = identify;
+  registry.isCredential = isCredential;
   registry.observations.set(id, { createdAt: performance.now(), width: innerWidth, height: innerHeight, x: scrollX, y: scrollY });
   registry.latest = id;
   for (const old of registry.observations.keys()) { if (registry.observations.size <= 20) break; registry.observations.delete(old); }
@@ -400,15 +404,12 @@ function prepareAction(id, action) {
   }
   return { x, y, unchanged: action.type === "set_checked" && control.checked === action.checked };
 }
-/** The observed controls among `refs` that take a password or one-time code. */
-function credentialRefs(id, refs) {
+/** Whether this step would fill, or press a key in, a password or one-time-code field. */
+function credentialTarget(id, action) {
   const registry = globalThis.__openworkBrowserRefs;
-  if (!registry?.observations.get(id)) throw new Error("stale_observation");
-  return refs.filter((ref) => {
-    const element = registry.byRef.get(ref)?.deref();
-    return element?.isConnected && (element.matches('input[type="password"]') || (element.getAttribute("autocomplete") || "").toLowerCase()
-      .split(/\s+/).some((token) => ["current-password", "new-password", "one-time-code"].includes(token)));
-  });
+  if (!registry?.observations.get(id)) return false;
+  const element = action.ref ? registry.byRef.get(action.ref)?.deref() : document.activeElement;
+  return element?.isConnected === true && registry.isCredential(element);
 }
 function applyFormAction(action) {
   const registry = globalThis.__openworkBrowserRefs;
@@ -417,8 +418,7 @@ function applyFormAction(action) {
   if (registry.identities.get(element) !== registry.identify(element, registry.describe(element))) throw new Error("stale_element");
   if (registry.snapshots.get(element) !== JSON.stringify(registry.describe(element, true))) throw new Error("stale_observation");
   // Once a password or code was filled in this document, it takes no more images.
-  if (action.type === "fill" && (element.matches('input[type="password"]') || (element.getAttribute("autocomplete") || "").toLowerCase()
-    .split(/\s+/).some((token) => ["current-password", "new-password", "one-time-code"].includes(token)))) globalThis.__openworkCredentialEntered = true;
+  if (action.type === "fill" && registry.isCredential(element)) globalThis.__openworkCredentialEntered = true;
   // The agent may read back exactly what it entered.
   if (action.type === "fill" || action.type === "select") globalThis.__openworkAgentEntered?.set(element, action.type === "select"
     ? JSON.stringify([...element.options].filter(option => action.values.includes(registry.optionRefs.get(option)?.ref)).map(option => option.value))
@@ -960,17 +960,6 @@ export function createBrowserTaskHost({ getTab, tabsFor, ownerOf, activeFor, isV
           try { await checkFiles(attaching); }
           catch { fail("file_unavailable", "Attach readable regular files by their real absolute paths, not links. Nothing was dispatched."); }
         }
-        // A password or code goes only to the exact site the person confirmed; the URL is
-        // checked again before every action, so a redirect after the answer stops the batch.
-        const filling = actions.filter((action) => action.type === "fill" && action.text).map((action) => action.ref);
-        if (filling.length && (await isolated(tab.view.webContents, credentialRefs, observed.id, filling)).length) {
-          if (!approveCredential) fail("sign_in_required", "Take over and sign in directly in the browser, then resume. Nothing was dispatched.");
-          const site = new URL(observed.url).origin;
-          if (!await approveCredential(sessionId, { site }, requestSignal)) {
-            fail("credential_declined", "The person did not confirm entering a password or code on this site. Nothing was dispatched.");
-          }
-          requestSignal.throwIfAborted();
-        }
         if (!await allowed(observed.url) || state.observations.get(observed.id) !== observed || observed.revision !== tab.webMcpRevision || observed.url !== tab.view.webContents.getURL()) fail("page_changed", "The page changed or access was blocked while preparing the action. Observe again.");
         requestSignal.throwIfAborted();
         if (actions[0].type === "click" && !actions[0].ref && imageDigest(await captureObservation(tab.view.webContents, observed.viewport, (viewport) => capture(tab, viewport))) !== observed.digest) fail("stale_observation", "The image changed. Observe again before choosing coordinates.");
@@ -989,8 +978,26 @@ export function createBrowserTaskHost({ getTab, tabsFor, ownerOf, activeFor, isV
         const contents = tab.view.webContents;
         const steps = [];
         let failure = null, page = null, interrupted = null;
+        // A password or code goes only to the exact site the person confirmed, asked at the step
+        // that fills its field or presses a key in it: Enter can submit what the browser
+        // autofilled, and a click earlier in a batch can focus the field.
+        let confirmedSite = null;
         for (const [index, action] of actions.entries()) {
           checkNavigation(navigationScope);
+          if (!confirmedSite && observed.url === contents.getURL() && (action.type === "key" || action.type === "fill" && action.text)
+            && await isolated(contents, credentialTarget, observed.id, action)) {
+            const site = new URL(observed.url).origin;
+            const refused = !approveCredential ? ["sign_in_required", "Take over and sign in directly in the browser, then resume."]
+              : !await approveCredential(sessionId, { site }, requestSignal) ? ["credential_declined", "The person did not confirm entering a password or code on this site."] : null;
+            requestSignal.throwIfAborted();
+            if (refused) {
+              if (!batch) fail(refused[0], refused[1]);
+              failure = { index, type: action.type, ...(action.ref ? { ref: action.ref } : {}), code: refused[0], error: refused[1] };
+              break;
+            }
+            confirmedSite = site;
+          }
+          // Runs after the person's answer too, so a redirect while they decide stops here.
           if (state.observations.get(observed.id) !== observed || observed.revision !== tab.webMcpRevision || observed.url !== contents.getURL()) {
             if (!steps.length) fail("stale_observation", "The page or observation changed while preparing the action. Observe again.");
             interrupted = "page_changed";
@@ -1020,6 +1027,13 @@ export function createBrowserTaskHost({ getTab, tabsFor, ownerOf, activeFor, isV
           if (action.type === "fill" || action.type === "select") {
             const prepared = await isolated(contents, applyFormAction, action);
             if (action.type === "fill" && !prepared.inserted) {
+              // Taking focus gave the page a moment to leave: nothing is typed unless the
+              // page is still on the site the person confirmed.
+              if (confirmedSite && originOf(contents.getURL()) !== confirmedSite) {
+                if (!steps.length) fail("page_changed", "The page changed before the password or code was typed. Nothing was typed.");
+                interrupted = "page_changed";
+                break;
+              }
               if (action.text) await contents.insertText(action.text);
               else {
                 await contents.sendInputEvent({ type: "keyDown", keyCode: "Backspace" });

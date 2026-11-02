@@ -82,8 +82,11 @@ test("a given password is filled only on the site the person confirms, and never
     HTMLSelectElement: class {}, HTMLTextAreaElement: class {}, HTMLLabelElement: class {},
     getComputedStyle: () => ({ visibility: "visible", display: "block", overflowX: "visible", overflowY: "visible" }),
     innerWidth: 800, innerHeight: 600, scrollX: 0, scrollY: 0, performance, setTimeout });
+  let url = "https://example.com/login";
+  const keysSent = [];
   const tab = { tabId: "tab", webMcpRevision: 0, view: { webContents: { isDestroyed: () => false,
-    getURL: () => "https://example.com/login", insertText: async text => { field.value = text; },
+    getURL: () => url, insertText: async text => { field.value = text; },
+    sendInputEvent: async event => { keysSent.push(event); },
     captureObservation: async () => Buffer.from("png"),
     executeJavaScriptInIsolatedWorld: async (_world, scripts) => vm.runInContext(scripts[0].code, context) } } };
   const asked = [];
@@ -109,10 +112,24 @@ test("a given password is filled only on the site the person confirms, and never
   assert.equal(field.value, "", "Nothing is typed without the person's yes");
   assert.equal((await fill(hostWith(undefined), given)).code, "sign_in_required", "A host that cannot ask leaves sign-in to the person");
   assert.equal(field.value, "");
+  // Enter in the field can submit what the browser autofilled, so keys wait for the same yes.
+  const press = async (target) => {
+    const seen = await observe(target);
+    return target.request({ sessionId: "chat", operation: "act", args: { tabId: "tab", observationId: seen.observationId,
+      action: { type: "key", key: "Enter", ref: seen.elements[0].ref } } });
+  };
+  assert.equal((await press(host)).code, "credential_declined");
+  assert.equal((await press(hostWith(undefined))).code, "sign_in_required");
+  assert.deepEqual(keysSent, []);
+  // A page that leaves while the field takes focus gets nothing, even after the person's yes.
   confirm = true;
+  field.focus = () => { document.activeElement = field; url = "https://elsewhere.example/"; };
+  assert.equal((await fill(host, given)).code, "page_changed");
+  assert.equal(field.value, "");
+  delete field.focus; url = "https://example.com/login";
   const filled = await fill(host, given);
   assert.equal(filled.ok, true, JSON.stringify(filled));
-  assert.deepEqual(asked, [["chat", "https://example.com"], ["chat", "https://example.com"]], "The person confirms the exact origin");
+  assert.deepEqual(asked, Array(4).fill(["chat", "https://example.com"]), "The person confirms the exact origin");
   assert.equal(field.value, given);
   assert.equal(filled.control.filled, true);
   assert.equal(filled.control.value, undefined);
