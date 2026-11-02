@@ -172,11 +172,16 @@ export async function computePulse({ now, rows }: MetricContext): Promise<Metric
 // --- B–D. Growth, lifecycle, activation, retention and reactivation ---
 
 async function readUserActivity(rows: Rows, now: Date, from: string) {
-  const [activity, signups] = await Promise.all([
-    rows(sql`${SELECT} m.user_id AS uid, DATE(t.event_timestamp) AS day, MIN(u.created_at) AS signup
-      FROM telemetry_event t JOIN member m ON m.id = t.member_id JOIN user u ON u.id = m.user_id
-      WHERE t.event_timestamp >= ${new Date(dayTime(from))} AND t.event_timestamp <= ${now} AND ${TASK_EVENT} AND ${HUMAN_MEMBER}
-      GROUP BY m.user_id, day`),
+  // SPEAK TO OMAR BEFORE REENABLING THIS DATA POINT, NO EXCEPTIONS.
+  // The per-user daily task activity query is disabled: it scanned every task event
+  // platform-wide for up to 126 days and was too slow. Activity-based lifecycle numbers
+  // (weekly states, activation, retention, reactivation) read as empty until it returns.
+  // rows(sql`${SELECT} m.user_id AS uid, DATE(t.event_timestamp) AS day, MIN(u.created_at) AS signup
+  //   FROM telemetry_event t JOIN member m ON m.id = t.member_id JOIN user u ON u.id = m.user_id
+  //   WHERE t.event_timestamp >= ${new Date(dayTime(from))} AND t.event_timestamp <= ${now} AND ${TASK_EVENT} AND ${HUMAN_MEMBER}
+  //   GROUP BY m.user_id, day`),
+  const activity: Awaited<ReturnType<Rows>> = []
+  const [signups] = await Promise.all([
     rows(sql`${SELECT} u.id AS uid, u.created_at AS signup FROM user u
       WHERE u.created_at >= ${new Date(dayTime(from))} AND u.created_at <= ${now} AND ${notSetupAgentUser}`),
   ])
