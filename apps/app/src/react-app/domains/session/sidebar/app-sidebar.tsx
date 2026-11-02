@@ -2409,7 +2409,7 @@ function SessionNumberShortcutSlot({ digit, children, sharedWithMenu = false }: 
           data-session-shortcut-badge={digit}
           className={cn(
             "col-start-1 row-start-1 inline-flex h-[18px] items-center justify-center rounded-[4px] border border-sidebar-border/70 bg-sidebar-accent/80 px-1.5 font-sans text-[11px] font-medium leading-4 tracking-tight text-sidebar-foreground/60 animate-in fade-in duration-1000 ease-out motion-reduce:animate-none",
-            sharedWithMenu && "group-has-data-popup-open/menu-sub-item:invisible",
+            sharedWithMenu && "group-has-data-popup-open/menu-sub-item:invisible group-has-[[data-session-row-menu]:focus-visible]/menu-sub-item:invisible",
           )}
         >
           {label}
@@ -2520,7 +2520,7 @@ export function SessionMenuItem({
       isArchived={isArchived}
       settle={settle}
       className={subtitle
-        ? "absolute bottom-1 end-3 z-10"
+        ? cn("absolute bottom-1 end-3 z-10", shortcutDigit !== undefined && "invisible data-popup-open:visible focus-visible:visible")
         : cn("absolute end-2.5 top-1/2 z-10 -translate-y-1/2", shortcutDigit !== undefined && "invisible data-popup-open:visible focus-visible:visible")}
     />
   ) : (
@@ -2579,16 +2579,19 @@ export function SessionMenuItem({
               <>
                 <span className="flex h-[18px] w-4 shrink-0 items-center justify-center">{leading}</span>
                 <span className="flex min-w-0 flex-1 flex-col gap-0.5">
-                  <span className="flex h-[18px] min-w-0 items-center gap-2 leading-[18px]">
+                  <span className="flex h-[18px] min-w-0 items-center leading-[18px]">
                     <SessionTitle intent={titleIntent} title={displayTitle} tooltip={itemTitle} />
-                    <SessionNumberShortcutSlot digit={shortcutDigit} />
                   </span>
                   <span className="flex h-4 min-w-0 items-center gap-2 text-[11px] leading-4 text-muted-foreground" data-session-feed-subtitle>
-                    <span className="min-w-0 flex-1 truncate">{subtitle}</span>
-                    {decisionLabel ? <span className="shrink-0" data-session-decision={waitingKind}>{decisionLabel}</span> : null}
-                    <span aria-hidden="true" className="h-4 w-5 shrink-0" data-session-action-slot="menu" />
+                    {decisionLabel ? (
+                      <span className="min-w-0 flex-1 truncate" data-session-decision={waitingKind} title={subtitle}>{decisionLabel}</span>
+                    ) : (
+                      <span className="min-w-0 flex-1 truncate">{subtitle}</span>
+                    )}
+                    <SessionNumberShortcutSlot digit={shortcutDigit} sharedWithMenu />
                   </span>
                 </span>
+                <span aria-hidden="true" className="absolute bottom-1 end-3 h-5 w-5" data-session-action-slot="menu" />
               </>
             ) : (
               <>

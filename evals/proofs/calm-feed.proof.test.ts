@@ -106,11 +106,14 @@ test("a member on the Feed sees calm rows that never move and still knows which 
   const rest = await step("a waiting row at rest: status dot, title, shortcut lane, decision word and menu slot each have a fixed place", async () => {
     await user.hover({ role: "tab", label: "Feed" });
     const measured = await lanes(question.sessionId);
-    const ok = Math.round(measured.row.height) === 48 && measured.menuSlot.width >= 20 && measured.shortcut.width > 0;
-    evidence.recordAssertionEvidence("row lanes at rest", `row ${describe(measured.row)}; title ${describe(measured.title)}; shortcut lane ${describe(measured.shortcut)}; decision ${describe(measured.decision)}; menu slot ${describe(measured.menuSlot)}`, ok);
+    const fullWidthTitle = Math.abs(measured.title.width - measured.subtitle.width) <= 1;
+    const shortcutBelowTitle = measured.shortcut.top >= measured.title.bottom - 1;
+    const ok = Math.round(measured.row.height) === 48 && measured.menuSlot.width >= 20 && fullWidthTitle && shortcutBelowTitle;
+    evidence.recordAssertionEvidence("row lanes at rest", `row ${describe(measured.row)}; full-width title ${describe(measured.title)}; second-line shortcut lane ${describe(measured.shortcut)}; decision ${describe(measured.decision)}; menu slot ${describe(measured.menuSlot)}`, ok);
     expect(Math.round(measured.row.height)).toBe(48);
     expect(measured.menuSlot.width).toBeGreaterThanOrEqual(20);
-    expect(measured.shortcut.width).toBeGreaterThan(0);
+    expect(fullWidthTitle).toBe(true);
+    expect(shortcutBelowTitle).toBe(true);
     return measured;
   });
 
@@ -142,6 +145,7 @@ test("a member on the Feed sees calm rows that never move and still knows which 
   });
 
   await step(`holding ${world.shortcutModifierLabel} shows each row's number in the shortcut lane without moving the title`, async () => {
+    await user.click({ testId: `sidebar-session-${question.sessionId}` });
     await user.hover({ role: "tab", label: "Feed" });
     await world.holdShortcutModifier();
     try {

@@ -20,12 +20,14 @@ Automation, an approval request) brings it back.
 - A **Workspaces · Feed** switch replaces the Workspaces label. Feed lists every
   workspace's sessions in one stream: Today, Yesterday and Earlier by last
   activity. Waiting sessions stay in their normal section, never settle, and
-  appear only once. Each 48px row has a quiet second line with its workspace
-  and group, plus muted **Permission** or **Question** when a decision is owed.
+  appear only once. Each 48px row gives the title the full first line. The quiet
+  second line names the workspace and group, or **Permission** / **Question**
+  when a decision is owed (workspace context remains in the tooltip).
   The leading loader communicates activity without repeating a status subtitle;
   read/idle rows have no indicator, and outcomes use a small dot. Feed rows have
-  no timestamp. Fixed indicator, shortcut and More-menu lanes keep titles and
-  metadata still on hover, keyboard focus and shortcut hold/release.
+  no timestamp. Shortcuts share the lower-right More-menu lane instead of
+  reserving empty space beside the title. Fixed lanes keep titles and metadata
+  still on hover, keyboard focus and shortcut hold/release.
   Settled sessions from every workspace sit in a collapsed **Settled** shelf.
   Pinned folders, Settled and Archived stay fixed below the scrolling Feed,
   apart from live work; one opens at a time, showing about three rows that
@@ -71,14 +73,20 @@ and repeated attention text.
 
 ![Feed before Calm Feed](./feed-before-calm.png)
 
-After: a waiting Question stays below newer finished work; hover reveals More
-without moving the title, workspace or decision label.
+After: a waiting Question stays below newer finished work. The title uses the
+full first line, and the decision replaces competing workspace metadata. Hover
+reveals More without moving the title or second line.
 
 ![Calm Feed with one quiet More menu](./calm-feed.png)
 
 The same menu keeps existing commands; Settle is disabled while a task waits.
 
 ![More menu on a waiting task](./calm-feed-menu.png)
+
+Held shortcuts share the lower-right action lane; no empty slot clips the title.
+An open or keyboard-focused More menu takes priority over its shortcut badge.
+
+![Shortcuts below full-width Feed titles](./calm-feed-shortcuts.png)
 
 ## Verification
 
@@ -87,8 +95,10 @@ saved Feed selection, native Question, fixed row lanes through hover, focus and
 held shortcuts, and Settle/Un-settle, Pin/Unpin and Rename. Its 11 assertion
 steps pass on this implementation; the pre-change `deac6bd446` control fails
 because the waiting row has no quiet decision label and still appears under
-Needs you. Screenshots are manually reviewed; automated visual validation is
-not included.
+Needs you. The width follow-up also checks that titles span the full text column
+and shortcuts sit below them. Screenshots are manually reviewed; automated visual
+validation is not included. Measured review flags unchanged header truncation
+and 10.5px account metadata, not Feed-row defects.
 
 Remaining real-UI coverage gaps: Permission prompts, folder drop/reorder,
 Move-to-group, Archive and Delete execution. Unit tests cover waiting placement,
