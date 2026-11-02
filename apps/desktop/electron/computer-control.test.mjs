@@ -555,6 +555,31 @@ test("declined scripts never run, always-run skips the question for that app, an
   assert.deepEqual(ran, ["second", "third", "slow"]);
 });
 
+test("organization ask requires every script, ignores standing grants and never remembers always", async (t) => {
+  const ran = [];
+  const f = fixture({ runScript: async input => { ran.push(input.code); return { ok: true }; } });
+  t.after(() => f.control.reset(true));
+  await f.control.setFeatureEnabled(true);
+  const standing = f.control.script({ sessionId: "chat", app: "jxa", code: "standing" });
+  await f.control.answerRequest({ sessionId: "chat", answer: "always", id: (await scriptRequest(f, "standing")).id });
+  assert.equal((await standing).ok, true);
+  for (const code of ["first", "second"]) {
+    const pending = f.control.script({ sessionId: "chat", app: "jxa", code }, { approveEachScript: true });
+    const request = await scriptRequest(f, code);
+    assert.equal(request.standing, false);
+    await f.control.answerRequest({ sessionId: "chat", answer: "always", id: request.id });
+    assert.equal((await pending).ok, true);
+  }
+  // A new app with no earlier grant must not remember an Always answer either.
+  const once = f.control.script({ sessionId: "chat", app: "applescript", code: "once" }, { approveEachScript: true });
+  await f.control.answerRequest({ sessionId: "chat", answer: "always", id: (await scriptRequest(f, "once")).id });
+  assert.equal((await once).ok, true);
+  const again = f.control.script({ sessionId: "chat", app: "applescript", code: "again" });
+  await f.control.answerRequest({ sessionId: "chat", answer: "dismiss", id: (await scriptRequest(f, "again")).id });
+  assert.equal((await again).error.code, "script_declined");
+  assert.deepEqual(ran, ["standing", "first", "second", "once"]);
+});
+
 /** A fake osascript: records its arguments and stdin, then exits as told. */
 function fakeOsascript(result) {
   const runs = [];
