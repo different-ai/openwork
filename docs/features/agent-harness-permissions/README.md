@@ -21,7 +21,7 @@ The kill switch hides the new settings in Den responses and removes `computer`, 
 
 ## What to watch
 
-Watch permission-save errors, the agent permission audit trail, desktop config responses and desktop policy refresh errors. Verify blocked actions never execute, computer approval lasts only for its chat and resets when rules change, and scripting Ask first never offers standing approval. Exercise both Everyone and team policies, flag-off saves and re-enabling, member overrides and the deployment kill switch. A desktop must refresh settings before a rollout change reaches it; computer rules may be cached briefly. On a policy read failure the desktop retains its last known rules, or current behavior if no rules are known.
+Watch permission-save errors, the agent permission audit trail, desktop config responses and desktop policy refresh errors. Verify blocked actions never execute, computer approval lasts only for its chat and resets when rules change, and scripting Ask first never offers standing approval. Exercise both Everyone and team policies, flag-off saves and re-enabling, member overrides and the deployment kill switch. A desktop must refresh settings before a rollout change reaches it; computer rules may be cached briefly. On a policy read failure the desktop retains its last verified rules. Until the first successful read, it blocks computer and scripting use and retries on the next check; a successful empty policy allows use.
 
 ## Screenshots
 
