@@ -25,4 +25,14 @@ Watch permission-save errors, the agent permission audit trail, desktop config r
 
 ## Screenshots
 
-Pending the editor phase: add a real Agents tab screenshot as `agents-tab.png` next to this document. No image reference is included until that file exists so `features:check` can validate this backend phase.
+Real local Den, with `agentHarnessPermissions` enabled for a generic demo workspace:
+
+- Everyone: outside folders, computer use and app scripting set to Ask first; an outside-folder request also asks first.
+  ![Everyone's Agents tab with harness permissions](agents-tab.png)
+- Team: computer use set to Block, with the neutral lock explaining why app scripting is blocked even though its saved setting follows Everyone.
+  ![Team Agents tab with computer use blocked](agents-tab-team.png)
+
+- Feature off: the existing Agents tab, with no harness rows or Computer use group.
+  ![Everyone's Agents tab with harness permissions disabled](agents-tab-off.png)
+
+The editor reuses the existing rows, selects, source lane and neutral blocked-state treatment (DESIGN.md P4, P5, S2, C3, C5, P10). Disabling the rollout removes these rows, the Computer use group and the Outside folder request kind; the Browser tab is unchanged.
