@@ -7,6 +7,8 @@ import { registerProviderTestRoute, runProviderTest } from "../src/provider-test
 import type { ProviderTestDependencies, ProviderTestEnv } from "../src/provider-test.js"
 
 const catalog = createProviderCatalog({
+  "google-vertex": { npm: "@ai-sdk/google-vertex", env: [] },
+  "google-vertex-anthropic": { npm: "@ai-sdk/google-vertex/anthropic", env: [] },
   anthropic: { npm: "@ai-sdk/anthropic", env: ["ANTHROPIC_API_KEY"] },
   openai: { npm: "@ai-sdk/openai", env: ["OPENAI_API_KEY"] },
   "amazon-bedrock": { npm: "@ai-sdk/amazon-bedrock", env: ["AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"] },
@@ -135,3 +137,31 @@ test("the gateway serves a test only when Den signed this exact request for this
   assert.equal(signed.status, 200)
   assert.equal(sent.length, 1)
 })
+
+for (const location of ["eu", "us"]) {
+  for (const providerId of ["google-vertex", "google-vertex-anthropic"]) {
+    test(`${providerId} tests service-account credentials through the ${location} multi-region endpoint`, async () => {
+      const sent: Sent[] = []
+      const anthropic = providerId === "google-vertex-anthropic"
+      const publisher = anthropic ? "anthropic" : "google"
+      const model = anthropic ? "claude-opus-5-5" : "gemini-4-argon"
+      const result = await runProviderTest({
+        providerId, model, settings: { project: "example-project", location },
+        credential: { kind: "gcp_service_account", secret: JSON.stringify({
+          client_email: "inference@example-project.iam.gserviceaccount.com",
+          private_key: "fixture-private-key", token_uri: "https://oauth2.googleapis.com/token",
+        }) },
+      }, {
+        ...dependencies(() => Response.json({}), sent),
+        mintGcpAccessToken: async () => ({ kind: "token", accessToken: "fixture-google-access-token" }),
+      })
+      assert.equal(result.ok, true)
+      assert.equal(sent.length, 1)
+      assert.equal(sent[0]?.url, `https://aiplatform.${location}.rep.googleapis.com/v1/projects/example-project/locations/${location}/publishers/${publisher}/models/${model}:${anthropic ? "rawPredict" : "generateContent"}`)
+      assert.equal(sent[0]?.headers.get("authorization"), "Bearer fixture-google-access-token")
+      assert.deepEqual(sent[0]?.body, anthropic
+        ? { max_tokens: 16, messages: [{ role: "user", content: "Reply with the single word OK." }], anthropic_version: "vertex-2023-10-16" }
+        : { contents: [{ role: "user", parts: [{ text: "Reply with the single word OK." }] }], generationConfig: { maxOutputTokens: 16 } })
+    })
+  }
+}
