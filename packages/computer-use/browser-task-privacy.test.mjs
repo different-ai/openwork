@@ -129,9 +129,12 @@ test("a given password is filled only on the site the person confirms, and never
   };
   assert.equal((await click(host)).code, "credential_declined");
   assert.equal((await click(hostWith(undefined))).code, "sign_in_required");
-  const label = new Input(); label.type = "text"; label.attributes = { "aria-label": "Your password" }; label.control = field;
-  fields = [field, label];
+  const inLabel = selector => selector === "label" ? label : null;
+  const label = new Input(); label.type = "text"; label.attributes = { "aria-label": "Your password" }; label.control = field; label.closest = inLabel;
+  const inside = new Input(); inside.type = "text"; inside.attributes = { "aria-label": "Password hint" }; inside.closest = inLabel;
+  fields = [field, label, inside];
   assert.equal((await click(host, label)).code, "credential_declined");
+  assert.equal((await click(host, inside)).code, "credential_declined", "Anything inside the label focuses the field too");
   fields = [field];
   assert.equal(document.activeElement, null, "Nothing touched the field");
   // A page that leaves while the field takes focus gets nothing, even after the person's yes.
@@ -147,7 +150,7 @@ test("a given password is filled only on the site the person confirms, and never
   delete field.matches; delete field.focus; url = "https://example.com/login";
   const filled = await fill(host, given);
   assert.equal(filled.ok, true, JSON.stringify(filled));
-  assert.deepEqual(asked, Array(7).fill(["chat", "https://example.com"]), "The person confirms the exact origin");
+  assert.deepEqual(asked, Array(8).fill(["chat", "https://example.com"]), "The person confirms the exact origin");
   assert.equal(field.value, given);
   assert.equal(filled.control.filled, true);
   assert.equal(filled.control.value, undefined);

@@ -410,8 +410,8 @@ function credentialTarget(id, action) {
   if (!registry?.observations.get(id)) return false;
   const point = action.type === "click" && Number.isFinite(action.x) && Number.isFinite(action.y);
   const element = action.ref ? registry.byRef.get(action.ref)?.deref() : point ? document.elementFromPoint(action.x, action.y) : document.activeElement;
-  // Clicking a field's label focuses the field.
-  const control = element?.control ?? element;
+  // Clicking a label, or anything inside one, focuses its field.
+  const control = element?.closest?.("label")?.control ?? element;
   return control?.isConnected === true && registry.isCredential(control);
 }
 function applyFormAction(action) {
