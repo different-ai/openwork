@@ -350,8 +350,9 @@ class ManagedDesktopPolicy {
    * The member's rules for a desktop host surface, read by the desktop
    * process itself rather than taken from the app window. Den is asked first
    * (briefly); when it cannot answer, the policy verified for this sign-in,
-   * else the latest rules stored on this computer, so the member keeps
-   * working offline. Signed out there are none.
+   * else (for non-strict callers only) the latest rules stored on this
+   * computer. Strict legacy execution requires verification bound to the
+   * current sign-in, never the unscoped disk row. Signed out there are none.
    */
   private async agentPermissionRulesFor(actions: readonly AgentPermissionAction[], requireVerified = false): Promise<AgentPermissionRule[]> {
     if (!this.session) return [];
@@ -359,13 +360,14 @@ class ManagedDesktopPolicy {
       this.current().catch(() => null),
       new Promise<null>((resolve) => setTimeout(() => resolve(null), 5_000)),
     ]);
-    const policy = fresh ?? this.knownPolicy()
-      ?? (await readGlobalRuntimeOpencodeConfig(this.config)).managedPolicy;
-    // An unverified first sign-in is not an empty policy. v1 must not start a
-    // turn while we cannot establish whether an external-folder rule applies.
-    if (!policy && requireVerified) {
+    const verified = fresh ?? this.knownPolicy();
+    // The global runtime row is not bound to a sign-in: a previous org's Allow
+    // (or empty policy) must never authorize legacy execution for this member.
+    // Only a fresh read or the in-memory policy verified for this session can.
+    if (!verified && requireVerified) {
       throw new ApiError(403, "policy_unavailable", "Your organization's folder permissions could not be verified. Reconnect and try again, or use the default OpenCode v2 engine.");
     }
+    const policy = verified ?? (await readGlobalRuntimeOpencodeConfig(this.config)).managedPolicy;
     return agentPermissionRulesForActions(agentPermissionRulesOf(policy), actions);
   }
   websiteRules(): Promise<AgentPermissionRule[]> {

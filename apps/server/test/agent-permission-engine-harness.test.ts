@@ -8,7 +8,7 @@ import { join } from "node:path";
 import { proxyOpencodeRequest } from "../src/server.js";
 import { ApiError } from "../src/errors.js";
 import type { ServerConfig, WorkspaceInfo } from "../src/types.js";
-import { writeGlobalRuntimeOpencodeConfig } from "../src/runtime-opencode-config-store.js";
+import { writeGlobalRuntimeOpencodeConfig, writeManagedDesktopPolicy } from "../src/runtime-opencode-config-store.js";
 import { withoutAgentHarnessRules } from "@openwork/types/den/agent-permissions-runtime";
 
 const outside: AgentPermissionRule = { action: "external_directory", resource: "*", effect: "deny", source: "Contractors" };
@@ -62,9 +62,19 @@ test("legacy forwarding fails closed for Block and Ask, regardless of local conf
     // Neither the project nor the editable runtime row can loosen the guard.
     await writeFile(join(directory, "opencode.json"), JSON.stringify({ permission: { external_directory: "allow" } }));
     await writeGlobalRuntimeOpencodeConfig(config, (current) => ({ ...current, permission: { external_directory: { "*": "allow" } } }));
+    // Another host/sign-in previously verified Allow for a different org and
+    // left it in the shared runtime DB. This new service has no bound policy.
+    rules = [{ ...outside, effect: "allow", source: "Previous organization" }];
+    const previousIdentityPolicy = managedDesktopPolicy({ ...config });
+    await previousIdentityPolicy.setSession({ baseUrl: `http://127.0.0.1:${den.port}`, orgId: "org_previous", token: "den-previous" });
+    await previousIdentityPolicy.current();
     unavailable = true;
     await policy.setSession({ baseUrl: `http://127.0.0.1:${den.port}`, orgId: "org_test", token: "den-test" });
-    // A cold/offline sign-in must not mistake an unknown policy for Allow.
+    // Neither a previous org's persisted Allow nor a persisted empty policy
+    // can stand in for verification of this sign-in when Den is unavailable.
+    await expect(forward("/opencode/session/chat/prompt_async")).rejects.toMatchObject({ status: 403, code: "policy_unavailable" });
+    expect(forwarded).toBe(0);
+    await writeManagedDesktopPolicy(config, { agentPermissions: { rules: [] } });
     await expect(forward("/opencode/session/chat/prompt_async")).rejects.toMatchObject({ status: 403, code: "policy_unavailable" });
     expect(forwarded).toBe(0);
     unavailable = false;
@@ -95,6 +105,22 @@ test("legacy forwarding fails closed for Block and Ask, regardless of local conf
       expect(await (await forward("/opencode/session/chat/prompt_async")).json()).toEqual({ accepted: true });
     }
     expect(forwarded).toBe(3);
+    // In-memory verification for this exact sign-in still works offline.
+    unavailable = true;
+    expect(await (await forward("/opencode/session/chat/prompt_async")).json()).toEqual({ accepted: true });
+    expect(forwarded).toBe(4);
+    // An org switch discards that Allow, even though the previous sign-in was
+    // verified. A new token in the same org must also verify independently.
+    for (const identity of [{ orgId: "org_other", token: "den-other" }, { orgId: "org_other", token: "den-other-new-token" }]) {
+      await policy.setSession({ baseUrl: `http://127.0.0.1:${den.port}`, ...identity });
+      await expect(forward("/opencode/session/chat/prompt_async")).rejects.toMatchObject({ status: 403, code: "policy_unavailable" });
+      expect(forwarded).toBe(4);
+      unavailable = false;
+      await policy.current();
+      unavailable = true;
+      await expect(policy.assertLegacyExecutionRequest(requestFor("/opencode/session/chat/prompt_async"), "/opencode/session/chat/prompt_async")).resolves.toBeUndefined();
+    }
+    unavailable = false;
     // Signing out ends policy enforcement; overrides themselves are not removed.
     rules = [outside];
     await policy.current();
