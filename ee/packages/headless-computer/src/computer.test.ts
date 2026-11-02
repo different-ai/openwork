@@ -72,6 +72,27 @@ test("idle policy uses stop when pause is absent", async () => {
   await computers.delete("idle")
 })
 
+test("an idle timer leaves a computer alone while a command is running", async () => {
+  let finish = () => {}
+  const running = new Promise<void>(resolve => { finish = resolve })
+  const provider = createFakeProvider({ async onRun(spec) {
+    if (spec.env?.WORKBOT_COMMAND) await running
+    return { exitCode: 0, stdout: "0", stderr: "" }
+  } })
+  const computers = new Computers({ provider, idlePauseMs: 10, keepDays: 1 }, { readFile: async () => ({ text: "" }) })
+  const box = await computers.vm("busy")
+  const command = computers.run("busy", "bash", { command: "sleep 100", timeout: 10 })
+  await new Promise(resolve => setTimeout(resolve, 20))
+  await computers.pauseIdle("busy")
+  assert.equal((await provider.inspect(box)).state, "running")
+  finish()
+  await command
+  computers.release("busy")
+  await new Promise(resolve => setTimeout(resolve, 40))
+  assert.equal((await provider.inspect(box)).state, "stopped")
+  await computers.delete("busy")
+})
+
 test("a computer pauses from its stored time after the process that used it is gone", async () => {
   const f = fixture()
   const due = new Map<string, number>()

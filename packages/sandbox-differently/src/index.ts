@@ -37,7 +37,7 @@ export type DifferentlyProviderDeps = { fetch?: typeof fetch; now?: () => number
 /** Labels the adapter owns on every sandbox. */
 export const KEY_LABEL = "openwork.sandbox.key"
 const IDLE_LABEL = "openwork.sandbox.idle-minutes"
-const LIVE = "queued,provisioning,running,paused,stopped,terminating"
+const LIVE = "queued,provisioning,running,pausing,paused,stopped,terminating"
 const DEFAULT_PERSISTENT_TTL_MINUTES = 365 * 1440
 /**
  * How long one pause, resume or stop request stays open. Differently finishes a change after its caller stops waiting,
@@ -155,7 +155,7 @@ export function createDifferentlyProvider(options: DifferentlyProviderOptions, d
     switch (status) {
       case "queued": case "provisioning": return "creating"
       case "running": return "running"
-      case "paused": case "stopped": return "stopped" // start resumes a paused sandbox; the pause block distinguishes them
+      case "pausing": case "paused": case "stopped": return "stopped" // start resumes a paused sandbox, and calls off a pause in progress; the pause block distinguishes them
       case "terminating": return "stopping"
       case "terminated": return "missing"
       default: return "error"
@@ -167,12 +167,12 @@ export function createDifferentlyProvider(options: DifferentlyProviderOptions, d
   async function read(sandboxId: string): Promise<Sandbox | null> {
     try { return await json<Sandbox>("GET", path(sandboxId)) } catch (error) { if (error instanceof SandboxError && error.code === "not_found") return null; throw error }
   }
-  /** Polls until the sandbox reaches one of `want`; a terminal state ends the wait early. */
-  async function settle(sandboxId: string, want: readonly string[], timeoutMs: number): Promise<Sandbox | null> {
+  /** Polls until the sandbox reaches one of `want` or `over` says it won't; a terminal state ends the wait early. */
+  async function settle(sandboxId: string, want: readonly string[], timeoutMs: number, over?: (s: Sandbox) => boolean): Promise<Sandbox | null> {
     const deadline = now() + timeoutMs
     while (true) {
       const s = await read(sandboxId)
-      if (!s || want.includes(s.status)) return s
+      if (!s || want.includes(s.status) || over?.(s)) return s
       if (s.status === "terminated" || s.status === "failed") return s
       if (now() >= deadline) throw new SandboxError({ providerId: id, code: "timeout", retryable: false, message: `Sandbox is still ${s.status} after ${timeoutMs} ms` })
       await sleep(poll)
@@ -181,12 +181,17 @@ export function createDifferentlyProvider(options: DifferentlyProviderOptions, d
   /** Asks for a lifecycle change; the caller then waits on the sandbox's status, which also covers a change someone else finished. */
   async function ask(sandboxId: string, action: "pause" | "resume" | "start" | "stop", timeoutMs: number) {
     try { await call("POST", path(sandboxId, `/${action}`), { timeoutMs: Math.min(timeoutMs, LIFECYCLE_REQUEST_MS) }) }
-    catch (error) { if (!(error instanceof SandboxError) || (error.code !== "timeout" && error.code !== "conflict")) throw error }
+    catch (error) {
+      if (!(error instanceof SandboxError) || (error.code !== "timeout" && error.code !== "conflict")) throw error
+      return error.code
+    }
+    return null
   }
   async function pause(sandboxId: string, timeoutMs: number) {
     const deadline = now() + timeoutMs
-    await ask(sandboxId, "pause", timeoutMs)
-    await settle(sandboxId, ["paused"], Math.max(1, deadline - now()))
+    // A resume calls a pause off, so running after pausing means it won't finish. A server without `pausing` says running throughout.
+    let pausing = await ask(sandboxId, "pause", timeoutMs) === "conflict"
+    await settle(sandboxId, ["paused"], Math.max(1, deadline - now()), s => (pausing ||= s.status === "pausing") && s.status === "running")
   }
   async function live(sandboxId: string): Promise<Sandbox> {
     const s = await read(sandboxId)
@@ -273,7 +278,7 @@ export function createDifferentlyProvider(options: DifferentlyProviderOptions, d
     async start(h, opts) {
       const deadline = now() + opts.timeoutMs
       const s = await live(identity(h.ref))
-      if (s.status === "paused") await ask(s.id, "resume", opts.timeoutMs)
+      if (s.status === "paused" || s.status === "pausing") await ask(s.id, "resume", opts.timeoutMs)
       else if (s.status === "stopped") await ask(s.id, "start", opts.timeoutMs)
       await running(s.status === "running" ? s : await live(s.id), Math.max(1, deadline - now()))
       // A computer's idle clock restarts when it resumes: the backend deletes it N minutes after its last use.
@@ -282,7 +287,7 @@ export function createDifferentlyProvider(options: DifferentlyProviderOptions, d
     },
     async stop(h, opts) {
       const s = await live(identity(h.ref))
-      if (s.status === "stopped" || s.status === "paused") return
+      if (s.status === "stopped" || s.status === "paused" || s.status === "pausing") return
       const sandboxId = s.id
       if (lifecycle && !lifecycle.stop && !lifecycle.pause) unsupported("stopping or pausing on these pools")
       if (lifecycle && !lifecycle.stop) return pause(sandboxId, opts.timeoutMs)

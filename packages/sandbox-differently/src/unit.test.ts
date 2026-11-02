@@ -186,6 +186,42 @@ test("a pause that outlives its request is followed to the end, and one that nev
   await assert.rejects(withBlocks(never, ["pause"]).pause(other, { timeoutMs: 2_000 }), (error: SandboxError) => error.code === "timeout")
 })
 
+test("a computer being paused is found, reads as stopped, and starting it calls the pause off", async () => {
+  const { fake, p } = provider()
+  const h = await p.create(spec(), { timeoutMs: 5_000 })
+  const box = fake.boxes.get(h.ref.ref.sandboxId)!
+  box.status = "pausing"
+  const found = await p.find({ idempotencyKey: "computer-1" })
+  assert.equal(found?.state, "stopped")
+  await p.start(found!, { timeoutMs: 5_000 })
+  assert.equal(box.status, "running")
+  assert.ok(fake.requests.some(r => r.method === "POST" && r.path.endsWith("/resume")))
+})
+
+test("stopping a computer already being paused leaves its pause alone", async () => {
+  const { fake, p } = provider()
+  const h = await p.create(spec(), { timeoutMs: 5_000 })
+  fake.boxes.get(h.ref.ref.sandboxId)!.status = "pausing"
+  await p.stop(h, { timeoutMs: 5_000 })
+  assert.equal(fake.requests.some(r => r.method === "POST" && /\/(stop|pause)$/.test(r.path)), false)
+})
+
+test("a pause a resume calls off stops being waited for, whether it is noticed by reading or by the answer", async () => {
+  const fake = fakeDifferently()
+  const stepped = createDifferentlyProvider({ url: "https://differently.test", apiKey: "dly_test" }, { sleep: async () => {}, fetch: slowChange(fake, "pause", "running", timedOut) })
+  const h = await stepped.create(spec(), { timeoutMs: 5_000 })
+  fake.boxes.get(h.ref.ref.sandboxId)!.status = "pausing"
+  await withBlocks(stepped, ["pause"]).pause(h, { timeoutMs: 5_000 })
+  assert.equal(fake.boxes.get(h.ref.ref.sandboxId)!.status, "running")
+
+  const answered = fakeDifferently()
+  const refused: typeof fetch = async (input, init = {}) => init.method === "POST" && String(input).endsWith("/pause")
+    ? new Response(JSON.stringify({ error: { code: "conflict", message: "sandbox changed to running during the pause" } }), { status: 409, headers: { "content-type": "application/json" } })
+    : answered.fetch(input, init)
+  const off = createDifferentlyProvider({ url: "https://differently.test", apiKey: "dly_test" }, { sleep: async () => {}, fetch: refused })
+  await withBlocks(off, ["pause"]).pause(await off.create(spec(), { timeoutMs: 5_000 }), { timeoutMs: 5_000 })
+})
+
 test("an unreachable Differently still fails a resume at once", async () => {
   const fake = fakeDifferently()
   const fetch: typeof globalThis.fetch = async (input, init = {}) => {
