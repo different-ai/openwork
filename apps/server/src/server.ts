@@ -4143,6 +4143,8 @@ function createRoutes(
             workspaceRoot: workspace.path,
             projectedToolName,
           });
+      // The App closed while this resolved, so nothing will use or release this lease.
+      if (ctx.request.signal.aborted && app?.launchId) releaseMcpAppLaunch(config, workspace.id, app.launchId);
       return jsonResponse({ app });
     } catch (error) {
       rethrowMcpAppHostError(error);

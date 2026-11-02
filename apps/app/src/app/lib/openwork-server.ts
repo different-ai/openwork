@@ -2113,6 +2113,7 @@ export function createOpenworkServerClient(options: { baseUrl: string; token?: s
       projectedToolName: string,
       launch?: OpenworkMcpAppLaunchReference,
       context?: { sessionId: string | null; readOnly: boolean; engine?: "v1" | "v2" },
+      options?: { signal?: AbortSignal },
     ) =>
       requestJson<{ app: OpenworkMcpAppResource | null }>(
         baseUrl,
@@ -2123,6 +2124,7 @@ export function createOpenworkServerClient(options: { baseUrl: string; token?: s
           method: "POST",
           body: { projectedToolName, ...(launch ? { launch } : {}), ...(context ? { context: { sessionId: context.sessionId, readOnly: context.readOnly, engine: context.engine } } : {}) },
           timeoutMs: timeouts.binary,
+          signal: options?.signal,
         },
       ),
     mcpAppSandbox: (app: OpenworkMcpAppResource, hostOrigin: string): OpenworkMcpAppSandbox => {
@@ -2159,6 +2161,7 @@ export function createOpenworkServerClient(options: { baseUrl: string; token?: s
         approved?: boolean;
         checkOnly?: boolean;
       },
+      options?: { signal?: AbortSignal },
     ) => requestJson<OpenworkMcpAppToolResult>(
       baseUrl,
       `/workspace/${encodeURIComponent(workspaceId)}/mcp-apps/call`,
@@ -2168,6 +2171,7 @@ export function createOpenworkServerClient(options: { baseUrl: string; token?: s
         method: "POST",
         body: payload,
         timeoutMs: timeouts.binary,
+        signal: options?.signal,
       },
     ),
     releaseMcpApp: (workspaceId: string, launchId: string) => requestJson<{ released: boolean }>(

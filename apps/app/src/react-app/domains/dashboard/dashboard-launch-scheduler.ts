@@ -74,13 +74,23 @@ export function createDashboardLaunchScheduler(limit = 4) {
           queueTiming();
           signal.removeEventListener("abort", abort);
           active += 1;
+          // A launch the person left stops counting at once, so the App on
+          // screen never queues behind one nobody is waiting for.
+          let released = false;
+          const release = () => {
+            if (released) return;
+            released = true;
+            signal.removeEventListener("abort", release);
+            active -= 1;
+            pump();
+          };
+          signal.addEventListener("abort", release, { once: true });
           try {
             resolve(await run());
           } catch (error) {
             reject(error);
           } finally {
-            active -= 1;
-            pump();
+            release();
           }
         },
       };
