@@ -139,10 +139,16 @@ export function fileOriginForRuntime(input: { desktop: boolean; serverUrl?: stri
   }
 }
 
-/** Copy a reference in its own machine's namespace, never expand a remote `~/` locally. */
+/**
+ * Copy a reference in its own machine's namespace, never expand a remote `~/` locally.
+ * A relative reference the workspace has not verified has no known absolute location
+ * yet; keep it as written instead of guessing a workspace-root path that is not there.
+ */
 export function filePathForCopy(target: OpenTarget, context: { origin: FileOrigin; workspaceRoot?: string | null; homeDir?: string | null }): string {
   if (target.resolvedPath) return target.resolvedPath;
   if (context.origin !== "local") return target.value;
+  const reference = parseLocalPathReference(target.value);
+  if (reference?.anchor === "relative" && target.exists !== true) return target.value;
   return localArtifactPath(context.workspaceRoot, target.value, context.homeDir) ?? target.value;
 }
 
