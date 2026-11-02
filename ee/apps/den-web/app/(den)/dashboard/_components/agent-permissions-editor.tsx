@@ -52,6 +52,7 @@ import {
 } from "./agent-permissions-data";
 import {
   agentPermissionBlockedBy,
+  effectiveAgentPermissionSettings,
   visibleAgentPermissionGroups,
   visibleAgentPermissionTryKinds,
   type AgentPermissionsArea,
@@ -401,10 +402,13 @@ export function AgentPermissionsEditor({ scopeId, team, settings, everyone, team
 }) {
   const { orgContext } = useOrgDashboard();
   const harnessEnabled = orgFeatureEnabled(orgContext, "agentHarnessPermissions");
+  const computerUseEnabled = orgFeatureEnabled(orgContext, "computerUse");
+  const effectiveSettings = effectiveAgentPermissionSettings(settings, computerUseEnabled);
+  const effectiveEveryone = effectiveAgentPermissionSettings(everyone, computerUseEnabled);
   return (
     <div className="min-w-0" data-testid="agent-permissions-editor" data-scope={scopeId}>
       <div className="divide-y divide-gray-100 rounded-2xl border border-gray-100 bg-white">
-        {visibleAgentPermissionGroups(area, harnessEnabled).map((group) => (
+        {visibleAgentPermissionGroups(area, harnessEnabled, computerUseEnabled).map((group) => (
           <div key={group.label} className="pb-1">
             <h3 className="px-5 pb-1 pt-3 text-[12px] font-medium text-gray-500">{group.label}</h3>
             {group.definitions.map((definition) => {
@@ -418,7 +422,7 @@ export function AgentPermissionsEditor({ scopeId, team, settings, everyone, team
                   everyoneSetting={team === null ? settings[definition.key] : everyone[definition.key]}
                   everyoneStatus={changedBy.length === 0 ? null : changedBy.length === 1 ? `Changed for ${changedBy[0]?.name ?? ""}` : `Changed for ${changedBy.length} teams`}
                   editable={editable}
-                  blockedBy={agentPermissionBlockedBy(definition.key, settings, team === null ? null : everyone)}
+                  blockedBy={agentPermissionBlockedBy(definition.key, effectiveSettings, team === null ? null : effectiveEveryone)}
                   onChange={(setting) => onChange(withSetting(settings, definition.key, setting))}
                 />
               );
@@ -426,7 +430,7 @@ export function AgentPermissionsEditor({ scopeId, team, settings, everyone, team
           </div>
         ))}
       </div>
-      <TryRequest area={area} harnessEnabled={harnessEnabled} everyone={team === null ? settings : everyone} team={team === null ? null : { name: team, settings }} />
+      <TryRequest area={area} harnessEnabled={harnessEnabled} computerUseEnabled={computerUseEnabled} everyone={team === null ? effectiveSettings : effectiveEveryone} team={team === null ? null : { name: team, settings: effectiveSettings }} />
     </div>
   );
 }
@@ -691,8 +695,8 @@ function PatternLine({ list, label, noun, testId, kind, patterns, inherited, edi
 // Try a request
 // ---------------------------------------------------------------------------
 
-function TryRequest({ area, harnessEnabled, everyone, team }: { area: AgentPermissionsArea; harnessEnabled: boolean; everyone: AgentPermissionSettings; team: { name: string; settings: AgentPermissionSettings } | null }) {
-  const kinds = visibleAgentPermissionTryKinds(area, harnessEnabled);
+function TryRequest({ area, harnessEnabled, computerUseEnabled, everyone, team }: { area: AgentPermissionsArea; harnessEnabled: boolean; computerUseEnabled: boolean; everyone: AgentPermissionSettings; team: { name: string; settings: AgentPermissionSettings } | null }) {
+  const kinds = visibleAgentPermissionTryKinds(area, harnessEnabled, computerUseEnabled);
   const [selectedAction, setAction] = useState<AgentPermissionAction>(kinds[0]?.action ?? "shell");
   // A rollout refresh can hide the selected kind without remounting this draft.
   const action = kinds.find((entry) => entry.action === selectedAction)?.action ?? kinds[0]?.action ?? "shell";

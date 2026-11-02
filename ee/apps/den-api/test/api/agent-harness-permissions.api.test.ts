@@ -21,6 +21,8 @@ const harness = {
 async function setFeature(enabled: boolean) {
   const result = await den.setFeature(org.orgId, "agentHarnessPermissions", enabled)
   assert.equal(result.status, 200, summary(result))
+  const computer = await den.setFeature(org.orgId, "computerUse", true)
+  assert.equal(computer.status, 200, summary(computer))
 }
 
 async function readPolicies() {
@@ -98,6 +100,48 @@ test("clearing a team's visible settings while off preserves its harness setting
   await setFeature(true)
   const restored = await readPolicies()
   assert.deepEqual(list(field(restored.body, "teams")).find(entry => entry.teamId === teamId)?.settings, harness)
+})
+
+test("computer use flag gates application before deriving scripting rules and preserves saved policies", async () => {
+  await setFeature(true)
+  const settings = { computerUse: { decision: "deny" }, appScripting: { decision: "ask" }, externalFolders: { decision: "deny" }, commands: { decision: "ask" } }
+  // Exercise both Everyone's and team-only computer deny, including inheritance.
+  for (const scope of [everyonePath, teamPath]) {
+    assert.equal((await owner("PUT", everyonePath, { settings: {} })).status, 200)
+    assert.equal((await owner("DELETE", teamPath)).status, 204)
+    assert.equal((await owner("PUT", scope, { settings })).status, 200)
+    for (const enabled of [false, true, false]) {
+      const feature = await den.setFeature(org.orgId, "computerUse", enabled)
+      assert.equal(feature.status, 200, summary(feature))
+      const rules = await desktopRules()
+      assert.equal(rules.some(rule => rule.action === "computer"), enabled, JSON.stringify(rules))
+      assert.ok(rules.some(rule => rule.action === "script" && rule.effect === (enabled ? "deny" : "ask")), JSON.stringify(rules))
+      assert.equal(rules.some(rule => rule.action === "script" && rule.effect === "deny"), enabled)
+      assert.ok(rules.some(rule => rule.action === "external_directory" && rule.effect === "deny"))
+      assert.ok(rules.some(rule => rule.action === "shell" && rule.effect === "ask"))
+      const policies = await readPolicies()
+      const stored = scope === everyonePath ? field(policies.body, "everyone", "settings") : list(field(policies.body, "teams")).find(entry => entry.teamId === teamId)?.settings
+      assert.deepEqual(stored, settings)
+    }
+  }
+})
+
+test("computer use application respects the caller's member override", async () => {
+  await setFeature(true)
+  assert.equal((await owner("DELETE", teamPath)).status, 204)
+  assert.equal((await owner("PUT", everyonePath, { settings: { computerUse: { decision: "deny" }, appScripting: { decision: "ask" } } })).status, 200)
+  const signedIn = await den.signIn(`platform-admin+${den.stamp}@example.test`)
+  const adminToken = text(field(signedIn.body, "token"), "platform admin session")
+  const path = `/v1/admin/organizations/${org.orgId}/members/${member.memberId}/capabilities`
+  for (const enabled of [false, true]) {
+    const result = await den.request(adminToken, "PUT", path, { body: { capabilities: { computerUse: enabled } } })
+    assert.equal(result.status, 200, summary(result))
+    const rules = await desktopRules()
+    assert.equal(rules.some(rule => rule.action === "computer"), enabled)
+    assert.ok(rules.some(rule => rule.action === "script" && rule.effect === (enabled ? "deny" : "ask")))
+  }
+  const reset = await den.request(adminToken, "PUT", path, { body: { capabilities: { computerUse: null } } })
+  assert.equal(reset.status, 200, summary(reset))
 })
 
 test("member overrides govern list, save and desktop delivery rather than only organization state", async () => {

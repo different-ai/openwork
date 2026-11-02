@@ -24,14 +24,23 @@ const EDITOR_GROUPS: readonly { label: string; sections: readonly AgentPermissio
   { label: "Skills and MCP servers", sections: ["extensions"] },
 ];
 
-export function visibleAgentPermissionGroups(area: AgentPermissionsArea, harnessEnabled: boolean) {
+/** Preview only: keep saved and draft settings intact while computer use is unavailable. */
+export function effectiveAgentPermissionSettings(settings: AgentPermissionSettings, computerUseEnabled: boolean): AgentPermissionSettings {
+  if (computerUseEnabled) return settings;
+  const effective = { ...settings };
+  delete effective.computerUse;
+  return effective;
+}
+
+export function visibleAgentPermissionGroups(area: AgentPermissionsArea, harnessEnabled: boolean, computerUseEnabled: boolean) {
   const groups = area === "browser" ? [{ label: "Websites", sections: ["web"] }] : EDITOR_GROUPS;
   return groups.map((group) => ({
     label: group.label,
     definitions: agentPermissionDefinitions.filter((definition) =>
       group.sections.includes(definition.section)
       && inArea(area, definition.key)
-      && (harnessEnabled || !HARNESS_KEYS.includes(definition.key))),
+      && (harnessEnabled || !HARNESS_KEYS.includes(definition.key))
+      && (computerUseEnabled || definition.key !== "computerUse")),
   })).filter((group) => group.definitions.length > 0);
 }
 
@@ -43,8 +52,8 @@ const TRY_KINDS: readonly { action: AgentPermissionAction; label: string; placeh
   { action: "mcp", label: "Local MCP server", placeholder: "issue-tracker" },
 ];
 
-export function visibleAgentPermissionTryKinds(area: AgentPermissionsArea, harnessEnabled: boolean) {
-  const keys = visibleAgentPermissionGroups(area, harnessEnabled).flatMap((group) => group.definitions.map((definition) => definition.key));
+export function visibleAgentPermissionTryKinds(area: AgentPermissionsArea, harnessEnabled: boolean, computerUseEnabled: boolean) {
+  const keys = visibleAgentPermissionGroups(area, harnessEnabled, computerUseEnabled).flatMap((group) => group.definitions.map((definition) => definition.key));
   return TRY_KINDS.filter((entry) => agentPermissionDefinitions.some((definition) => definition.action === entry.action && keys.includes(definition.key)));
 }
 

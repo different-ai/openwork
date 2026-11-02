@@ -450,7 +450,7 @@ export function registerMeRoutes<T extends { Variables: AuthContextVariables & P
     describeRoute({
       tags: ["Users"],
       summary: "Get current user's desktop config",
-      description: "Returns the authenticated desktop app restrictions for the caller's active organization, including the caller's agent permissions as ordered OpenCode permission rules and the model new chats start with (defaultModel, applied by OpenCode v2 desktops only) when the organization has chosen one the caller can use. Computer use, Mac app scripting and outside-folder rules are delivered only when agentHarnessPermissions is enabled for the caller.",
+      description: "Returns the authenticated desktop app restrictions for the caller's active organization, including the caller's agent permissions as ordered OpenCode permission rules and the model new chats start with (defaultModel, applied by OpenCode v2 desktops only) when the organization has chosen one the caller can use. Computer use, Mac app scripting and outside-folder rules are delivered only when agentHarnessPermissions is enabled for the caller. Computer use rules and their scripting dependency additionally require the caller's computerUse feature.",
       responses: {
         200: jsonResponse("Current user desktop config returned successfully.", meDesktopConfigResponseSchema),
         401: jsonResponse("The caller must be signed in to read desktop config.", unauthorizedSchema),
@@ -466,7 +466,7 @@ export function registerMeRoutes<T extends { Variables: AuthContextVariables & P
         orgMemberId: currentMember.id,
       })
       const features = await getOrganizationFeatures(organization.id, { userId: currentMember.userId })
-      const rules = await readAgentPermissionRulesForMember({ organizationId: organization.id, orgMemberId: currentMember.id })
+      const rules = await readAgentPermissionRulesForMember({ organizationId: organization.id, orgMemberId: currentMember.id, computerUseEnabled: features.computerUse })
       const agentPermissions = { rules: features.agentHarnessPermissions ? rules : withoutAgentHarnessRules(rules) }
       // The model new chats start with; only v2 desktops apply it. A failure leaves desktops on their own default.
       const defaultModel = await desktopConfigDefaultModel({ organizationId: organization.id, memberId: currentMember.id })

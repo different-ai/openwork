@@ -9,11 +9,13 @@
 
 Organization admins can choose Allow, Ask first or Block for folders outside the workspace, computer use and Mac app scripting on Everyone's or a team's Agents tab. Team overrides inherit Everyone's settings when unset; the strictest decision among a member's teams wins. Nothing set means no additional rules, preserving today's behavior.
 
-Blocking computer use also blocks app scripting. Computer use Ask first requests approval before taking control in each chat. App scripting Ask first requires approval for every script, without a standing approval. Folder access uses the OpenCode v2 `external_directory` permission; OpenCode v1 does not enforce folder rules, like the existing engine permissions. Computer and scripting permissions apply at the desktop host for both engines. Organization-provided skills and connections are unaffected.
+The existing `computerUse` feature additionally gates only the computer-use permission row and its application. Mac app scripting, outside folders and general permissions do not require `computerUse`. With `computerUse` off, saved computer settings remain intact but are excluded before resolving effective rules and editor previews, so a saved computer Block cannot block scripting. Turning it back on restores the row and its rules.
+
+When both features are on, blocking computer use also blocks app scripting. Computer use Ask first requests approval before taking control in each chat. App scripting Ask first requires approval for every script, without a standing approval. Folder access uses the OpenCode v2 `external_directory` permission; OpenCode v1 does not enforce folder rules, like the existing engine permissions. Computer and scripting permissions apply at the desktop host for both engines. Organization-provided skills and connections are unaffected.
 
 ## How to try it
 
-Enable `agentHarnessPermissions` for a test organization or selected active members in `/admin`. Member overrides affect both the admin editor and the rules delivered to that member; turn it on for the admin and test member when testing both. Open Everyone's or a team's Agents tab, set the three permissions, save, and refresh the member's desktop organization settings. Check `/v1/agent-permissions` and `/v1/me/desktop-config` for the saved settings and delivered rules. Try computer use, an app script and access outside the workspace with Allow, Ask first and Block, including a member in several teams.
+Enable both `agentHarnessPermissions` and the existing `computerUse` feature for a test organization or selected active members in `/admin`. Member overrides affect both the admin editor and the rules delivered to that member; turn it on for the admin and test member when testing both. Open Everyone's or a team's Agents tab, set the three permissions, save, and refresh the member's desktop organization settings. Check `/v1/agent-permissions` and `/v1/me/desktop-config` for the saved settings and delivered rules. Try computer use, an app script and access outside the workspace with Allow, Ask first and Block, including a member in several teams.
 
 ## Turning it off
 
@@ -26,6 +28,13 @@ Watch permission-save errors, the agent permission audit trail, desktop config r
 ## Screenshots
 
 Real local Den, with `agentHarnessPermissions` enabled for a generic demo workspace:
+
+- Existing `computerUse` on (with `agentHarnessPermissions` on): the computer-use row is visible alongside app scripting and outside folders.
+  ![Everyone's Agents tab with computer use enabled](computer-use-on.png)
+- Existing `computerUse` off (with `agentHarnessPermissions` still on): only the computer-use row is hidden; app scripting, outside folders and general rows remain unchanged. Verified on the Engineering team too: its persisted computer Block does not lock scripting, which still follows Everyone's Ask first.
+  ![Everyone's Agents tab with only computer use disabled](computer-use-off.png)
+
+Earlier rollout evidence (both features on for the harness-enabled shots):
 
 - Everyone: outside folders, computer use and app scripting set to Ask first; an outside-folder request also asks first.
   ![Everyone's Agents tab with harness permissions](agents-tab.png)
