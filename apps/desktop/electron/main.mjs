@@ -24,6 +24,7 @@ import { globalOpencodeConfigDir, workspaceOpencodeConfigCandidates } from "@ope
 import { configureFakeMediaForTests, installMediaPermissionHandlers } from "./media-permissions.mjs";
 import { registerMigrationIpc } from "./migration.mjs";
 import { createRuntimeManager, createSystemCaCertificateVerifyProc } from "./runtime.mjs";
+import { driveFileApprovalOptions } from "./drive-file-approval.mjs";
 import { registerUpdaterIpc, resolveAppVersion } from "./updater.mjs";
 import { createUiControlServer } from "./ui-control-server.mjs";
 import { createApplicationMenu } from "./app-menu.mjs";
@@ -1482,21 +1483,9 @@ const runtimeManager = createRuntimeManager({
   listLocalWorkspacePaths: () => workspaceStore.listLocalWorkspacePaths(),
   // This callback stays in Electron's main process. Engine tools and shell
   // commands cannot approve a Drive write by replaying a token or HTTP reply.
-  driveFileApproval: async ({ provider, action, path: filePath, name, fileId, webViewLink, mode }) => {
+  driveFileApproval: async (request) => {
     const win = await createMainWindow();
-    const saving = action === "push";
-    const microsoft = provider === "microsoft-365";
-    const service = microsoft ? "OneDrive or SharePoint" : "Google Drive";
-    const label = saving ? (mode === "copy" ? "Save a copy" : microsoft ? "Save to Microsoft 365" : "Save to Drive") : action === "pull" ? (microsoft ? "Download from Microsoft 365" : "Download from Drive") : "Discard local edits";
-    const identity = `${service}: ${name}\nFile ID: ${fileId}${webViewLink ? `\n${webViewLink}` : ""}`;
-    const { response } = await dialog.showMessageBox(win, {
-      type: "question",
-      message: action === "overwrite" ? `Replace the local copy of ${name}?` : `${label}: ${name}`,
-      detail: saving
-        ? `${identity}\n\n${filePath}\n\n${mode === "copy" ? `Creates a new file next to the original in ${service}.` : `Replaces the file in ${service}. People with access to it will see your changes.`}`
-        : `${identity}\n\n${filePath}\n\n${action === "pull" ? "Downloads this file from your connected account into the workspace." : `Discards the local edits and downloads the current ${service} file.`}`,
-      buttons: ["Cancel", label], defaultId: 0, cancelId: 0, noLink: true,
-    });
+    const { response } = await dialog.showMessageBox(win, driveFileApprovalOptions(request));
     return response === 1;
   },
   anonymousInference: {

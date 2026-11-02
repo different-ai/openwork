@@ -274,14 +274,31 @@ async function realRoots(config: ServerConfig) {
   return roots;
 }
 
+/** Engines may report the real directory of a workspace opened through a symlink. */
+function workspacePathAliases(config: ServerConfig) {
+  const roots = allowedRoots(config);
+  return [...new Set(roots.flatMap((root) => {
+    try {
+      return [root, realpathSync(root)];
+    } catch (error) {
+      if (!isRecord(error) || error.code !== "ENOENT") throw error;
+      return [root];
+    }
+  }))];
+}
+
+function pullPathError() {
+  return new ApiError(403, "path_outside_workspace", 'Use a workspace-relative path such as "reports/file.docx", or omit path to save under "drive/". The destination must stay inside an authorized workspace, including symlink targets. Open the destination folder as a workspace to save elsewhere.');
+}
+
 function workspaceBase(config: ServerConfig, context: Record<string, unknown>) {
-  const base = searchRoots(config, context, allowedRoots(config))[0];
+  const base = searchRoots(config, context, workspacePathAliases(config))[0];
   if (!base) throw new ApiError(400, "invalid_payload", "No authorized workspace roots are available.");
   return base;
 }
 
 function displayPath(config: ServerConfig, context: Record<string, unknown>, path: string) {
-  const base = searchRoots(config, context, allowedRoots(config))[0];
+  const base = searchRoots(config, context, workspacePathAliases(config))[0];
   if (!base) return path;
   if (isWithinRoot(path, base)) return relative(base, path);
   try {
@@ -298,8 +315,8 @@ function displayPath(config: ServerConfig, context: Record<string, unknown>, pat
 async function resolvePullTarget(config: ServerConfig, context: Record<string, unknown>, requested: string | null, defaultName: string) {
   const base = workspaceBase(config, context);
   const candidate = requested ? (isAbsolute(requested) ? resolve(requested) : resolve(base, requested)) : resolve(base, "drive", defaultName);
-  if (!allowedRoots(config).some((root) => isWithinRoot(candidate, root))) {
-    throw new ApiError(403, "path_outside_workspace", "Files can only be saved inside an authorized workspace.");
+  if (!workspacePathAliases(config).some((root) => isWithinRoot(candidate, root))) {
+    throw pullPathError();
   }
   const roots = await realRoots(config);
   let existing = dirname(candidate);
@@ -315,7 +332,7 @@ async function resolvePullTarget(config: ServerConfig, context: Record<string, u
     }
   }
   if (!roots.some((root) => isWithinRoot(existing, root))) {
-    throw new ApiError(403, "path_outside_workspace", "Files can only be saved inside an authorized workspace.");
+    throw pullPathError();
   }
   const parent = join(existing, ...missing);
   await mkdir(parent, { recursive: true });
@@ -591,7 +608,11 @@ async function pullDriveFile(config: ServerConfig, args: Record<string, unknown>
   }
 
   let saved: Awaited<ReturnType<typeof download>> | null = null;
-  await confirmDriveTransfer(config, { provider, action: before && overwrite ? "overwrite" : "pull", path: target, fileId: info.file.id, name: info.file.name, webViewLink: info.file.webViewLink }, dependencies.signal);
+  // A new workspace copy needs no extra approval. Replacing an existing copy
+  // (even a clean tracked one) and saving back to the service still ask first.
+  if (before) {
+    await confirmDriveTransfer(config, { provider, action: "overwrite", path: target, displayPath: displayPath(config, context, target), fileId: info.file.id, name: info.file.name, webViewLink: info.file.webViewLink }, dependencies.signal);
+  }
   for (let attempt = 1; attempt <= 2 && !saved; attempt += 1) {
     const temporary = await privateDriveFile(config);
     try {
@@ -601,7 +622,7 @@ async function pullDriveFile(config: ServerConfig, args: Record<string, unknown>
           throw new ApiError(409, "local_changes", "The file at that path changed while pulling, so it was not replaced. Pull again once it is saved or pushed.", { path: displayPath(config, context, target) });
         }
         const root = (await realRoots(config)).find((candidate) => isWithinRoot(target, candidate));
-        if (!root) throw new ApiError(403, "path_outside_workspace", "Files can only be saved inside an authorized workspace.");
+        if (!root) throw pullPathError();
         // Match the workbook/attachment writer: prove the opened inode before
         // truncating or writing, then use only its handle. No path-based rename
         // can follow a swapped parent into another file.
@@ -746,7 +767,9 @@ function copyName(link: DriveLink, requested: string, convert: boolean) {
 async function pushDriveFile(config: ServerConfig, args: Record<string, unknown>, context: Record<string, unknown>, dependencies: CloudUploadDependencies) {
   const requested = readArgString(args, "path");
   if (!requested) throw new ApiError(400, "invalid_payload", "path is required.");
-  const path = await resolveAuthorizedFile(config, context, requested, GOOGLE_DRIVE_UPLOAD_MAX_BYTES);
+  // Use the same authorized path aliases as pull so its returned relative path
+  // also resolves in a canonical calling subdirectory when saving back.
+  const path = await resolveAuthorizedFile({ ...config, authorizedRoots: workspacePathAliases(config) }, context, requested, GOOGLE_DRIVE_UPLOAD_MAX_BYTES);
   return oneAtATime(path, async () => {
     const handle = await openAuthorizedFile(config, path);
     try {
@@ -785,7 +808,7 @@ async function pushOpenFile(config: ServerConfig, args: Record<string, unknown>,
     if (mode === "replace" && remote.file.native) throw new ApiError(400, "native_file_replace_unsupported", "Save this Google file as a copy instead.");
     const target = { ...link, name: remote.file.name, driveMimeType: remote.file.mimeType, native: remote.file.native, parents: remote.file.parents };
     const convert = mode === "copy" && target.native && (CONVERTIBLE_FORMATS[target.driveMimeType] ?? []).includes(link.format ?? "");
-    await confirmDriveTransfer(config, { provider: "google-workspace", action: "push", path, fileId: remote.file.id, name: remote.file.name, webViewLink: remote.file.webViewLink, mode: mode === "copy" ? "copy" : "replace" }, dependencies.signal);
+    await confirmDriveTransfer(config, { provider: "google-workspace", action: "push", path, displayPath: displayPath(config, context, path), fileId: remote.file.id, name: remote.file.name, webViewLink: remote.file.webViewLink, mode: mode === "copy" ? "copy" : "replace" }, dependencies.signal);
     await assertStableFolder(config, dirname(path));
     await assertSameFile(path, await handle.stat());
     if ((await hashHandle(handle)).sha256 !== local.sha256) {
@@ -928,7 +951,7 @@ async function pushMicrosoftFile(config: ServerConfig, args: Record<string, unkn
   try {
     const remote = await describe(config, dependencies, linkTarget(link), undefined, link.connectionId ?? undefined);
     if (remote.file.id !== link.fileId) throw new ApiError(409, "drive_conflict", "The OneDrive or SharePoint target changed. Pull it again before saving.");
-    await confirmDriveTransfer(config, { provider: "microsoft-365", action: "push", path, fileId: remote.file.id, name: remote.file.name, webViewLink: remote.file.webViewLink, mode: mode === "copy" ? "copy" : "replace" }, dependencies.signal);
+    await confirmDriveTransfer(config, { provider: "microsoft-365", action: "push", path, displayPath: displayPath(config, context, path), fileId: remote.file.id, name: remote.file.name, webViewLink: remote.file.webViewLink, mode: mode === "copy" ? "copy" : "replace" }, dependencies.signal);
     await assertStableFolder(config, dirname(path));
     await assertSameFile(path, await handle.stat());
     if ((await hashHandle(handle)).sha256 !== local.sha256) {

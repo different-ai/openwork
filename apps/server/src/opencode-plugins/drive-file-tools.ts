@@ -14,7 +14,7 @@ export const drivePullFileArgs = z.object({
   fileId: z.string().min(1).max(2048).describe("Google Drive file ID or link, or a OneDrive, SharePoint or Teams file link or item id."),
   driveId: z.string().min(1).max(512).optional().describe("Microsoft 365 only: the driveId that came with the item id from a search or folder listing."),
   provider: z.enum(["google-workspace", "microsoft-365"]).optional().describe("Only needed for a Microsoft item id without driveId; links and driveId identify Microsoft 365 files."),
-  path: workspacePath.optional().describe("Workspace path to save to. Defaults to drive/<file name>."),
+  path: workspacePath.optional().describe("Path inside the calling workspace, preferably relative, e.g. reports/file.docx. Defaults to drive/<file name>. Absolute paths must stay inside an authorized workspace."),
   format: z.string().regex(/^[a-z]{2,5}$/).optional().describe("Docs, Sheets, Slides and Drawings: xlsx, csv (first tab only), docx, md, txt, pptx, pdf, png or svg. OneDrive and SharePoint: pdf converts an Office file."),
   connectionId,
   overwrite: z.boolean().optional().describe("Replace a local copy even if it has edits not in Drive. Asks the person first."),
@@ -50,7 +50,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-/** Engine permissions check writes; Desktop separately confirms every transfer at the host boundary. */
+/** Engine permissions check writes; Desktop separately confirms destructive replacements and saves back to the service. */
 async function askPermission(context: unknown, permission: DriveFileAction, patterns: string[], metadata: Record<string, unknown>) {
   const ask = isRecord(context) && typeof context.ask === "function" ? context.ask : null;
   if (!ask) throw new Error("This OpenWork engine cannot ask for approval, so nothing was changed. Update OpenWork to save files to Drive.");
