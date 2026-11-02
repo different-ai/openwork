@@ -60,6 +60,7 @@ export interface BrowserState {
   visibleWindowCount: number;
   backgroundWindowCount: number;
   backgroundWindowVisible: boolean;
+  popOutAboveOthers: boolean;
   tabs: Array<{ id: string; label: string; url: string; ownerSessionId: string | null }>;
   nativeViews: Array<{ tabId: string; attached: boolean; aboveApp: boolean; poppedOut: boolean; visible: boolean; bounds: { x: number; y: number; width: number; height: number } }>;
 }
@@ -123,6 +124,7 @@ export async function readBrowserState(app: Surface): Promise<BrowserState> {
     visibleWindowCount: value.visibleWindowCount,
     backgroundWindowCount: value.backgroundWindowCount,
     backgroundWindowVisible: value.backgroundWindowVisible,
+    popOutAboveOthers: value.popOutAboveOthers === true,
     tabs: value.tabs.map((tab: unknown) => {
       if (!record(tab)) throw new Error("Invalid browser tab.");
       return { id: string(tab.id), label: string(tab.label), url: typeof tab.url === "string" ? tab.url : "", ownerSessionId: typeof tab.ownerSessionId === "string" ? tab.ownerSessionId : null };

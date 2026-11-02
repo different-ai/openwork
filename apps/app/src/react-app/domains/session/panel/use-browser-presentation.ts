@@ -12,8 +12,8 @@ import {
   type BrowserPresentationMode,
 } from "./browser-presentation-store";
 import { browserNeedsPerson, browserStatusLabel } from "./browser-status";
-import { useActivePanelTab, useSessionPanelState, type BrowserPanelTab } from "./panel-tab-store";
-import { getSidePanelSessionKey } from "./side-panel-session";
+import { useActivePanelTab, usePanelTabStore, useSessionPanelState, type BrowserPanelTab } from "./panel-tab-store";
+import { NO_SESSION_SIDE_PANEL_KEY, getSidePanelSessionKey } from "./side-panel-session";
 import { useOpenBrowserRailPane, useSelectTab } from "./use-side-panel-tabs";
 import { getElectronBrowser } from "./utils";
 
@@ -54,6 +54,28 @@ type Options = {
   sidePanel: SidePanelItem | null;
   setSidePanel: (panel: "panel" | null) => void;
 };
+
+/**
+ * A new thread's first message makes it a session, under a new key. Its browser
+ * goes with it, beside the chat or in its own window, so sending never loses the
+ * page. Runs before the route changes, so the window stays open throughout.
+ */
+export function carryDraftBrowser(sessionId: string) {
+  const panels = usePanelTabStore.getState();
+  const draft = panels.sessions[NO_SESSION_SIDE_PANEL_KEY];
+  const tabs = draft?.tabs.filter((tab): tab is BrowserPanelTab => tab.type === "browser") ?? [];
+  if (!draft || tabs.length === 0) return;
+  void getElectronBrowser()?.claimDraftTabs?.(sessionId)?.catch(() => undefined);
+  const browserInPanel = tabs.some((tab) => tab.id === draft.activeTabId);
+  panels.syncBrowserTabs(sessionId, tabs, browserInPanel ? draft.activeTabId : null);
+  panels.syncBrowserTabs(NO_SESSION_SIDE_PANEL_KEY, [], null);
+  useBrowserPresentationStore.getState().moveSession(NO_SESSION_SIDE_PANEL_KEY, sessionId);
+  const ui = useUiStateStore.getState();
+  if (browserInPanel && ui.sidePanelState[NO_SESSION_SIDE_PANEL_KEY] === "panel") {
+    ui.setSidePanelState(sessionId, "panel");
+    ui.setSidePanelState(NO_SESSION_SIDE_PANEL_KEY, null);
+  }
+}
 
 export function useBrowserPresentationController({
   enabled,
