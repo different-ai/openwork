@@ -337,6 +337,15 @@ test("cheap source guards need no install, build or classification", () => {
   for (const name of tests) assert.ok(staticJob.includes(`.github/scripts/${name}`), name);
 });
 
+test("desktop Node permission tests build their shared runtime before importing it", () => {
+  const app = job("openwork-tests-app");
+  const testCommand = app.split("\n").find((line) => line.includes("node --test ") && line.includes("apps/desktop/electron/computer-agent-permissions.test.mjs"));
+  assert.ok(testCommand, "keep the desktop permission tests in the app job");
+  const build = app.indexOf("pnpm --filter @openwork/types build");
+  assert.ok(build !== -1 && build < app.indexOf(testCommand), "build @openwork/types before Node resolves its dist exports");
+  assert.doesNotMatch(testCommand, /--conditions=development/, "exercise the production runtime export, not the TypeScript source");
+});
+
 test("the PR gate requires the always-run checks and the Den job only when selected", () => {
   const required = job("openwork-tests-required", quickCheck);
   assert.match(required, /needs: \[quick-select, quick-static, quick-typecheck, den-quick\]/);
