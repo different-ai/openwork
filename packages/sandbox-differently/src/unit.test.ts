@@ -134,6 +134,70 @@ test("resuming a paused computer restarts its idle clock", async () => {
   assert.equal(fake.boxes.get(h.ref.ref.sandboxId)!.ttl, 120 * 60)
 })
 
+/** Differently still working on `action` after the request ended: the box settles to `status` a few reads later. */
+function slowChange(fake: ReturnType<typeof fakeDifferently>, action: string, status: string, end: () => Response | never) {
+  const fetch: typeof globalThis.fetch = async (input, init = {}) => {
+    const url = String(input)
+    if (init.method === "POST" && url.endsWith(`/${action}`)) {
+      const box = fake.boxes.get(url.split("/").at(-2)!)!
+      let reads = 0
+      const read = fake.fetch
+      fake.fetch = async (input, init) => { if (++reads === 3) box.status = status; return read(input, init) }
+      return end()
+    }
+    return fake.fetch(input, init)
+  }
+  return fetch
+}
+const timedOut = () => { throw new DOMException("timed out", "TimeoutError") }
+
+test("a resume that outlives its request is followed to the end", async () => {
+  const fake = fakeDifferently()
+  const p = createDifferentlyProvider({ url: "https://differently.test", apiKey: "dly_test" }, { sleep: async () => {}, fetch: slowChange(fake, "resume", "running", timedOut) })
+  const h = await p.create(spec({ lifecycle: { autoDeleteMinutes: 120 } }), { timeoutMs: 5_000 })
+  fake.boxes.get(h.ref.ref.sandboxId)!.status = "paused"
+  await p.start(h, { timeoutMs: 5_000 })
+  assert.equal((await p.inspect(h)).state, "running")
+  assert.equal(fake.requests.filter(r => r.path.endsWith("/resume")).length, 0, "the request ended before it reached the fake")
+  assert.equal(fake.boxes.get(h.ref.ref.sandboxId)!.ttl, 120 * 60)
+})
+
+test("a resume another caller finished first counts as resumed", async () => {
+  const fake = fakeDifferently()
+  const conflict = () => new Response(JSON.stringify({ error: { code: "conflict", message: "sandbox changed to running concurrently" } }), { status: 409 })
+  const p = createDifferentlyProvider({ url: "https://differently.test", apiKey: "dly_test" }, { sleep: async () => {}, fetch: slowChange(fake, "resume", "running", conflict) })
+  const h = await p.create(spec(), { timeoutMs: 5_000 })
+  fake.boxes.get(h.ref.ref.sandboxId)!.status = "paused"
+  await p.start(h, { timeoutMs: 5_000 })
+  assert.equal((await p.inspect(h)).state, "running")
+})
+
+test("a pause that outlives its request is followed to the end, and one that never finishes is reported", async () => {
+  const fake = fakeDifferently()
+  const p = createDifferentlyProvider({ url: "https://differently.test", apiKey: "dly_test" }, { sleep: async () => {}, fetch: slowChange(fake, "pause", "paused", timedOut) })
+  const h = await p.create(spec(), { timeoutMs: 5_000 })
+  await withBlocks(p, ["pause"]).pause(h, { timeoutMs: 5_000 })
+  assert.equal(fake.boxes.get(h.ref.ref.sandboxId)!.status, "paused")
+
+  let clock = 0
+  const stuck = fakeDifferently()
+  const never = createDifferentlyProvider({ url: "https://differently.test", apiKey: "dly_test" }, { now: () => clock, sleep: async ms => { clock += ms }, fetch: slowChange(stuck, "pause", "running", timedOut) })
+  const other = await never.create(spec(), { timeoutMs: 5_000 })
+  await assert.rejects(withBlocks(never, ["pause"]).pause(other, { timeoutMs: 2_000 }), (error: SandboxError) => error.code === "timeout")
+})
+
+test("an unreachable Differently still fails a resume at once", async () => {
+  const fake = fakeDifferently()
+  const fetch: typeof globalThis.fetch = async (input, init = {}) => {
+    if (init.method === "POST" && String(input).endsWith("/resume")) throw new TypeError("fetch failed")
+    return fake.fetch(input, init)
+  }
+  const p = createDifferentlyProvider({ url: "https://differently.test", apiKey: "dly_test" }, { sleep: async () => {}, fetch })
+  const h = await p.create(spec(), { timeoutMs: 5_000 })
+  fake.boxes.get(h.ref.ref.sandboxId)!.status = "paused"
+  await assert.rejects(p.start(h, { timeoutMs: 5_000 }), (error: SandboxError) => error.code === "transient")
+})
+
 test("stop pauses on a pool that cannot stop, and a stopped sandbox starts again", async () => {
   const { fake, p } = provider({ stopStart: false })
   const h = await p.create(spec(), { timeoutMs: 5_000 })

@@ -339,6 +339,7 @@ Nothing on celld changes, so pointing the URLs back is the rollback.
 | `SANDBOX_GATEWAY_URL`, `SANDBOX_GATEWAY_API_KEY` | | For the gateway: its HTTPS API and a project-scoped key. The gateway holds the provider credentials |
 | `SANDBOX_GATEWAY_TEMPLATE` | | For the gateway: its template for the computer image, which it maps to each provider's own image |
 | `HEADLESS_COMPUTER_PAUSE_SECONDS` | `300` | Pause a computer this long after its last turn, unless a `background` job runs |
+| `SANDBOX_GATEWAY_PAUSE_SECONDS` | `HEADLESS_COMPUTER_PAUSE_SECONDS` | The same for gateway computers. Worth raising on private pools: a Fast Sandbox pause writes a full checkpoint for minutes, and the gateway reclaims idle computers itself when its pool fills |
 | `HEADLESS_COMPUTER_KEEP_DAYS` | `14` | Freestyle deletes a computer unused this long |
 | `HEADLESS_SENTRY_DSN` | unset | Optional Sentry error reports (both hosts, posted over `fetch`): failed turns by error code, startup recovery errors and 500s. Codes, ids and counts only, never content or credentials. Unset sends nothing |
 | `HEADLESS_SENTRY_ENVIRONMENT`, `HEADLESS_SENTRY_RELEASE` | unset, `headless-runner@<HEADLESS_RUNNER_VERSION>` | Tags on those reports |
