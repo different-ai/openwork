@@ -37,7 +37,9 @@ export const mcpAppToolNameSchema = z.string()
  * runs a saved Workflow read-only with server-supplied time inputs.
  * `loadOnOpen` is the author's judgment that the tool only reads data the
  * person asked for, so it may run without a click even when its provider does
- * not mark it read-only. Den refuses it for anything known to write.
+ * not mark it read-only, for everyone who opens the App. Den refuses it for
+ * anything known to write, and for a connection tool bound directly and marked
+ * destructive; a saved Workflow may read through one.
  */
 export const mcpAppToolDeclarationSchema = z.object({
   name: mcpAppToolNameSchema,

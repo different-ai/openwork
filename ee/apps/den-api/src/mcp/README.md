@@ -196,6 +196,17 @@ are not read-only, so hosts ask before each call. The App server advertises the
 flag, but every connection-tool call still needs `mcp:write`, as all external
 dispatch does.
 
+An author can set `loadOnOpen` on a tool that only reads but carries no
+read-only label, so it runs without a click for everyone who opens the App. Den
+refuses that for anything that reaches a Den or native write, a capability it
+cannot inspect or look up, or a connection tool bound directly and marked
+destructive. A Workflow is judged by what it reaches, in either mode, and a
+destructive label does not stop it: a code executor that can read or delete
+carries that label even where a saved Workflow only reads through it, so the
+author's judgment decides, as for an unlabeled tool. Each call of a Workflow that
+skips the click rechecks what it reaches; a connection the caller cannot use
+stops the call with its connection card.
+
 Calls run through the ordinary executor as the caller. `api` tools take
 `{ path, query, body }` and are rechecked as GETs on every call; `mcp` tools
 take the tool's own arguments and fail closed once the provider's input schema
