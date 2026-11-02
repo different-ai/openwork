@@ -131,7 +131,7 @@ jobs:
         run: |
           pnpm --filter @openwork/computer-use build
           node --test ee/packages/headless-computer/src/viewer-tickets.test.mjs
-          node --test apps/desktop/electron/computer-control.test.mjs apps/desktop/electron/computer-remote.test.mjs apps/desktop/electron/computer-windows.test.mjs packages/computer-use/cloud.test.mjs packages/computer-use/browser-task-privacy.test.mjs packages/computer-use/browser-task-viewport.test.mjs packages/computer-use/browser-task-attach.test.mjs packages/browser-tabs/index.test.mjs packages/computer-use/chromium.test.mjs apps/desktop/electron/computer-program.test.mjs apps/desktop/electron/floating-view-window.test.mjs apps/desktop/electron/window-state.test.mjs apps/desktop/electron/keep-awake.test.mjs
+          node --test apps/desktop/electron/computer-control.test.mjs apps/desktop/electron/computer-agent-permissions.test.mjs apps/desktop/electron/computer-remote.test.mjs apps/desktop/electron/computer-windows.test.mjs packages/computer-use/cloud.test.mjs packages/computer-use/browser-task-privacy.test.mjs packages/computer-use/browser-task-viewport.test.mjs packages/computer-use/browser-task-attach.test.mjs packages/browser-tabs/index.test.mjs packages/computer-use/chromium.test.mjs apps/desktop/electron/computer-program.test.mjs apps/desktop/electron/floating-view-window.test.mjs apps/desktop/electron/window-state.test.mjs apps/desktop/electron/keep-awake.test.mjs
           python3 ee/packages/headless-computer/scripts/desktop-bridge.test.py
           python3 ee/packages/headless-computer/scripts/app-scripting.test.py
           python3 ee/packages/headless-computer/scripts/configure-desktop-files.test.py
@@ -151,6 +151,8 @@ jobs:
           bun test apps/server/test/engine-auto-upgrade-boot.test.ts apps/server/test/engine-auto-upgrade.test.ts apps/server/test/engine-auto-upgrade-safety.test.ts
       - name: Test providers reaching OpenCode v2 and the organization's provider rule
         run: bun test apps/server/test/engine-v2-provider-mapping.test.ts apps/server/test/opencode-v2-local-auth.test.ts
+      - name: Test organization agent permissions for outside folders, computer use and app scripting
+        run: bun test apps/server/test/agent-permission-engine-harness.test.ts apps/server/test/computer-harness-policy-results.test.ts
       - name: Test OpenCode v2 starting again after it fails or exits
         run: bun test apps/server/test/engine-v2-restart.test.ts
       - name: Test v2 chat lists survive unreadable and migrated chats
