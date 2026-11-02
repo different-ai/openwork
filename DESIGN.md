@@ -54,7 +54,15 @@ advanced options discoverable but quiet.
   message, row, or document stays put), and add a visible intermediate state
   only when it needs a decision or recovery. Interstitials such as
   "Creating…", "Preparing…", or setup screens invented from implementation
-  steps are defects.
+  steps are defects. Submitted work and the next draft have separate owners;
+  pending, failed, switched, and reloaded surfaces retain recoverable work.
+  Retention stays scoped and expiring; revoked content is masked, not exposed
+  by a recovery path.
+- **P12 · Full or honestly smaller.** Familiar controls make familiar promises:
+  Save preserves the actual document, Open reaches the right machine and
+  account, and Live reflects a current connection. Deliver the promise or
+  choose a smaller form (preview and download, open in the native app, a task
+  with updates). A disclaimer does not repair a control that cannot do its job.
 
 ## Structure
 
@@ -86,6 +94,10 @@ advanced options discoverable but quiet.
   (`absolute top-full` / `bottom-full`, fixed coordinates from
   `getBoundingClientRect()`) or close one from a `document`/`window`
   listener; `apps/app/tests/floating-surface-guard.test.ts` enforces this.
+- **S8** Bound the overview, not the person's access to their data. Lists,
+  libraries and calendars stay usable at 0, 1, 20 and 10,000 items through
+  search, bounded sections and working pagination. Show partial coverage and
+  failed reads; a hidden cap must not look like the end of the collection.
 
 ## Copy
 
@@ -114,6 +126,16 @@ error, blocked/locked, offline or "couldn't verify" (show the last known
 state and when it was confirmed), and success. Never rely on model text alone
 to communicate system status. Loading preserves the destination layout: the
 object appears where it will live, then fills in.
+
+Requested, accepted and completed are distinct facts. Unknown or stale is not
+empty, removed or successful. An unconfirmed write is not automatically retried.
+Keep cached last-known data with its age during refresh failures, unless access
+is revoked. A denial stays a barrier through later failures, retries and
+remounts until a fresh authorized read; scope it to the resource and its owner,
+not a component's lifetime. Show one actionable failure inline; diagnostics are
+one labeled disclosure away. The same action has the same outcome semantics across direct
+tools, scripts, native and cloud delivery; presentation may differ, not action
+semantics.
 
 ## Visual system
 
@@ -166,6 +188,16 @@ Tokens live in `apps/app/src/app/index.css`, `styles/colors.css`,
   risk, and offers primary / edit / decline with keyboard chords.
 - **T5** Composer: one round send/stop button, model and run-mode as quiet
   pills, queue/steer hints as chords only.
+- **T6** Chat feels like messaging: answer first, real milestone updates, one
+  actionable blocker. No fake typing, invented acknowledgements or artificial
+  status delays. Workbot hides skill/catalog plumbing; desktop makes verified
+  instruction delivery inspectable without claiming that retrieval proves use.
+- **T7** Acknowledge local actions promptly and paint streamed output when it
+  arrives. Text and available App fallbacks do not wait for iframe decoration.
+  Measure input-to-feedback, arrival-to-paint and cold/warm useful state
+  separately from provider time, with repeated samples and p50/p95. Failure
+  deadlines are not startup measurements; do not invent a blanket task SLA,
+  global loading delay or cancellation a backend cannot honor.
 
 ## Before opening a UI PR
 
@@ -184,3 +216,19 @@ Tokens live in `apps/app/src/app/index.css`, `styles/colors.css`,
 - [ ] Motion within V6; focus ring visible; reduced-motion respected.
 - [ ] Async flows keep the user's object and layout in place; no interstitial
       built from an internal step (P11).
+- [ ] Behavior proof witnesses pending/failure/switch recovery, partial or stale
+      reads, and the negative half of the affected capability (P11, P12, S8).
+      Use the real file/engine for save claims and an unauthorized identity for
+      access boundaries; a unit fixture is not runtime fidelity proof.
+- [ ] Result delivery does not change focus, selection or open panels; direct
+      and scripted calls preserve the same results and failures (S5, States).
+- [ ] For live layout changes, compare fixed-viewport flicker before/after
+      (`measure-chat-flicker`). For responsiveness claims, record actual phase
+      samples and p50/p95; state what remains unmeasured (V6, T7).
+
+These are behavior checks in the affected unit/API test or headless product
+proof (`verify-openwork`, `write-a-spec`), not a universal source-pattern score.
+A regression proof should fail on the unchanged base and pass on the fix; a
+feature proof also exercises its disabled and killed states. Screenshots show
+the claimed state at real size, including recovery, and do not replace an
+observable assertion.
