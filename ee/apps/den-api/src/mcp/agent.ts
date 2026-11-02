@@ -761,7 +761,7 @@ export function registerAgentMcpRoutes<T extends { Variables: RequestIdVariables
       toolShapes,
       remoteSessionStatus: Boolean(memberIdentity),
       canSendSlackMessages: slackSendAsBotAvailable(capabilityContext),
-      myAgent: Boolean(memberIdentity && organizationFeatures.workbotProactive && organizationFeatures.workbotAgentLibrary && principal.scopes.has(DEN_MCP_WRITE_SCOPE)),
+      myAgent: Boolean(memberIdentity && organizationFeatures.workbotProactive && principal.scopes.has(DEN_MCP_WRITE_SCOPE)),
       skillsExtension,
       skills: skillsExtension && advertisesInstructions && !listsSkillsNatively ? await loadRemoteSkills() : undefined,
       engine: engineTools,

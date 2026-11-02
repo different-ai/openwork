@@ -28,7 +28,7 @@ async function pointAt(connectionId: string, url: string) {
 
 async function workspace(name: string) {
   const created = await den.createOrg(await den.signUp(`${name} Owner`), name)
-  for (const feature of ["workbotProactive", "workbotAgentLibrary"]) assert.equal((await den.setFeature(created.orgId, feature, true)).status, 200)
+  assert.equal((await den.setFeature(created.orgId, "workbotProactive", true)).status, 200)
   const owner = den.as(created.owner, created.orgId)
   assert.equal((await owner("PUT", proactive, { enabled: true })).status, 200)
   const connect = async (label: string, url: string) => {

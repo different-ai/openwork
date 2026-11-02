@@ -10,12 +10,15 @@ import { t } from "../../../i18n";
 import { useDenAuth } from "@/react-app/domains/cloud/den-auth-provider";
 import { dashboardTileCacheScopeKey } from "./dashboard-tile-cache";
 import type { DashboardLaunchEndpoint } from "./mcp-app-tile";
-import { DashboardApps, type CreateDashboardApp } from "./dashboard-apps";
+import type { CreateDashboardApp } from "./dashboard-apps";
 import { useSavedApps } from "../apps/use-apps";
+import { ArtifactsPage } from "./artifacts-page";
 
 /** The member's dashboard. Placement belongs to each member. */
-export function DashboardPage({ fallbackEndpoints, onCreateApp, headerActionsTarget, onSignIn }: {
+export function DashboardPage({ fallbackEndpoints, onCreateApp, headerActionsTarget, onSignIn, active = true }: {
   onCreateApp: CreateDashboardApp;
+  /** Retained pages refresh access when navigation makes them visible again. */
+  active?: boolean;
   /** Opens OpenWork Cloud sign-in, the same action Library offers when signed out. */
   onSignIn?: () => void;
   /** Titlebar slot for the Add control, matching Library. */
@@ -51,7 +54,7 @@ export function DashboardPage({ fallbackEndpoints, onCreateApp, headerActionsTar
     || (Boolean(personal.client && personal.orgId) && personal.query.isPending && !personal.query.isFetched)) {
     return (
       <div className="mx-auto w-full max-w-5xl px-6 py-8 sm:px-8" data-dashboard-page>
-        <div className="space-y-2 pt-3" role="status" aria-label="Loading dashboard">
+        <div className="space-y-2 pt-3" role="status" aria-label="Loading artifacts">
           <Skeleton className="h-8 w-1/3" />
           <Skeleton className="h-40 w-full" />
         </div>
@@ -60,11 +63,11 @@ export function DashboardPage({ fallbackEndpoints, onCreateApp, headerActionsTar
   }
   return (
     <div
-      className="mx-auto w-full max-w-5xl px-6 py-8 sm:px-8"
+      className="h-full w-full"
       data-dashboard-page
       data-dashboard-cache-scope={cacheScopeKey}
     >
-      <DashboardApps key={cacheScopeKey} onCreateApp={onCreateApp} fallbackEndpoints={fallbackEndpoints} headerActionsTarget={headerActionsTarget} />
+      <ArtifactsPage key={cacheScopeKey} active={active} onCreateApp={onCreateApp} fallbackEndpoints={fallbackEndpoints} headerActionsTarget={headerActionsTarget} />
     </div>
   );
 }

@@ -5,10 +5,10 @@ description: "Let OpenWork pick the right model and thinking level for every pro
 
 The Smart Model Router lets members choose a **Smart** model instead of a specific one. You create Smart Routers, each with a name, the people it applies to, and a few AI Gateway models tagged with the tasks they're good at. For every prompt, OpenWork sends it to the model whose tasks fit it best, and decides how much that model should think.
 
-You set it up in OpenWork Cloud under **AI Gateway → Smart Model Router**. Members don't configure anything: each Smart Router that applies to them appears at the top of their model picker as **Smart:** followed by the router's name, for example **Smart: Engineering**.
+You set it up in OpenWork Cloud under **AI Gateway → AI Providers**, where Smart Routers are listed above your providers. Members don't configure anything: each Smart Router that applies to them appears at the top of their model picker as **Smart:** followed by the router's name, for example **Smart: Engineering**.
 
 <Note>
-The Smart Model Router is rolling out on OpenWork Cloud. If you don't see the **Smart Model Router** tab, ask OpenWork to turn it on for your organization.
+The Smart Model Router is rolling out on OpenWork Cloud. If you don't see **Add a Smart Router** under AI Providers, ask OpenWork to turn it on for your organization.
 </Note>
 
 ## Why use it
@@ -24,18 +24,24 @@ The Smart Model Router is rolling out on OpenWork Cloud. If you don't see the **
   <Step title="Add the models to your AI Gateway">
     A Smart Router can only use models that are already in your AI Gateway, in an active model group. If you haven't yet, [add a provider](/cloud/share-with-your-team/managed-llm-provider) and its models first.
   </Step>
-  <Step title="Create a Smart Router and choose who it applies to">
-    Open **AI Gateway → Smart Model Router** and select **New Smart Router**. First choose who it applies to: everyone in the organization, teams, or individual people. Then give it a name; a router named Engineering appears to members as **Smart: Engineering**.
+  <Step title="Add a Smart Router with its models and tasks">
+    Open **AI Gateway → AI Providers** and select **Add a Smart Router**, next to **Add a provider**. Give it a name; a router named Engineering appears to members as **Smart: Engineering**.
+
+    Choose a model, then add the tasks it should handle. Pick tasks your organization already uses from the list, or type a new one and press Enter. A task can be one word ("translation") or several ("debugging failing tests"), and the same task can be added to more than one model. Select **Add model** for each other model you want it to use.
+
+    Select **Continue**.
+
+    <Frame caption="Step one: name the router and give each model its tasks.">
+      <img src="/images/auto-model-routing/smart-router-editor.png" alt="The Add a Smart Router page with the name Engineering, Claude Haiku 5.5 and the tasks Debugging and Code review" />
+    </Frame>
   </Step>
-  <Step title="Add models and the tasks each handles">
-    Select **Add model** for each model, then add the tasks it should handle. Pick tasks your organization already uses from the list, or type a new one and press Enter. A task can be one word ("translation") or several ("debugging failing tests"), and the same task can be added to more than one model.
+  <Step title="Choose who can use it">
+    Choose who the router applies to: everyone in the organization, teams, or individual people. If some of them can't use one of its models, the model is marked; hover over the mark to see who. Those people's prompts go to the router's other models.
 
-    You can choose any model in your AI Gateway. If some of the people the router applies to can't use a model, it's marked; hover over the mark to see who. Those people's prompts go to the router's other models.
+    Select **Save**. Until you do, the router applies to nobody and shows **Give access** in the list.
 
-    Select **Save**.
-
-    <Frame caption="Choose who the router applies to, name it, and give each model its tasks.">
-      <img src="/images/auto-model-routing/smart-router-editor.png" alt="The New Smart Router editor with Everyone on, the name Engineering, Claude Haiku 5.5 and the tasks Debugging and Code review" />
+    <Frame caption="Step two: who can use it.">
+      <img src="/images/auto-model-routing/smart-router-access.png" alt="Step two with the Who can use it block and the router's model and tasks" />
     </Frame>
   </Step>
 </Steps>
@@ -43,6 +49,12 @@ The Smart Model Router is rolling out on OpenWork Cloud. If you don't see the **
 <Tip>
 Give each model a few specific tasks. "Quick questions", "short emails" for a fast model and "debugging", "architecture", "planning" for your strongest model route better than one vague task per model.
 </Tip>
+
+Smart Routers are listed at the top of AI Providers, like providers. Select **Manage** to change one's models, tasks or who can use it.
+
+<Frame caption="Smart Routers are listed first under AI Providers.">
+  <img src="/images/auto-model-routing/smart-router-list.png" alt="AI Providers listing Smart: Engineering above the Acme AI Gateway provider, with Add a Smart Router next to Add a provider" />
+</Frame>
 
 ## What members see
 
@@ -90,10 +102,10 @@ sequenceDiagram
 
 Tasks are shared across your organization, so every Smart Router offers the same list to choose from. Names are matched without regard to capitals: "Code review" and "code review" are the same task. A task is removed from the list once no Smart Router uses it anymore.
 
-## Delete a Smart Router
+## Remove a Smart Router
 
-Select **Delete** on a Smart Router. Its Smart model disappears from members' model pickers the next time their app syncs with your organization, and requests already using it stop routing.
+Open a Smart Router with **Manage** and select **Remove**. Its Smart model disappears from members' model pickers the next time their app syncs with your organization, and requests already using it stop routing.
 
 ## Self-hosted
 
-The Smart Model Router is offered on OpenWork Cloud first. Where it is available on a self-hosted install, give the AI Gateway a TypeSafe API key through the Helm chart's `secret.values.typesafeApiKey` (or the `TYPESAFE_API_KEY` key in your existing Secret). Without a key, Smart is off: the Smart Model Router tab explains how to add the key, and members don't see Smart models. See the chart's README for details.
+The Smart Model Router is offered on OpenWork Cloud first. Where it is available on a self-hosted install, give the AI Gateway a TypeSafe API key through the Helm chart's `secret.values.typesafeApiKey` (or the `TYPESAFE_API_KEY` key in your existing Secret). Without a key, Smart is off: **Add a Smart Router** explains how to add the key, and members don't see Smart models. See the chart's README for details.

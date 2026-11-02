@@ -3,7 +3,7 @@ import { after, test } from "node:test"
 import type { AgentCheckRecord } from "../../src/workbot-proactive/checks.js"
 import { bootDen, field, list, summary, text, type Den } from "./harness.js"
 
-// My agent (workbotAgentLibrary): each member reads what their agent did and why, and changes it in their own words
+// My agent (workbotProactive): each member reads what their agent did and why, and changes it in their own words
 // from chat (Connect) or the Library page. The server only lets them narrow the admin's limits. No runner, Slack or
 // Google is contacted; check records are written the way the wake writes them.
 const den = await bootDen({ env: { DEN_WORKBOT_URL: "http://localhost:3020" } })
@@ -26,24 +26,37 @@ async function sayInChat(target: Den, token: string, name: string, body?: unknow
   return result.body
 }
 
-test("off until My agent is on: the new fields are refused, the checks are hidden and the guidance is silent", async () => {
-  const space = await workspace("Agent library off")
+test("the parent rollout controls the whole agent: fields, checks and chat guidance", async () => {
+  const space = await workspace("Agent parent rollout")
   const before = await space.call("GET", "/v1/me/agent")
   assert.equal(before.status, 200, summary(before))
-  for (const key of ["lastCheck", "todayChecks", "preferences", "limits", "changes"]) assert.equal(field(before.body, key), undefined, key)
-  const refused = await space.call("PUT", "/v1/me/agent", { preferences: { when: "Mornings only" } })
-  assert.equal(refused.status, 404, summary(refused))
-  assert.equal(field(refused.body, "feature"), "workbotAgentLibrary")
-  assert.equal((await space.call("PUT", "/v1/me/agent", { undo: "last" })).status, 404)
-  assert.equal((await space.call("GET", "/v1/me/agent/checks")).status, 404)
-  assert.equal(field((await space.call("PUT", "/v1/me/agent", { mute: ["calendar_changes"] })).body, "saved"), undefined, "the existing controls answer as before")
+  for (const key of ["lastCheck", "todayChecks", "preferences", "limits", "changes"]) assert.notEqual(field(before.body, key), undefined, key)
+  assert.equal((await space.call("GET", "/v1/me/agent/checks")).status, 200)
   const token = await den.mintMcpToken(space.member, space.orgId)
+  assert.match(await initializeInstructions(token), /putMeAgent/)
+
+  assert.equal((await den.setFeature(space.orgId, "workbotProactive", false)).status, 200)
+  const refusedRequests = await Promise.all([
+    space.call("GET", "/v1/me/agent"),
+    space.call("GET", "/v1/me/agent/checks"),
+    space.call("PUT", "/v1/me/agent", { preferences: { when: "Mornings only" } }),
+    space.call("PUT", "/v1/me/agent", { mute: ["calendar_changes"] }),
+    space.call("PUT", "/v1/me/agent", { undo: "last" }),
+  ])
+  for (const refused of refusedRequests) {
+    assert.equal(refused.status, 404, summary(refused))
+    assert.equal(field(refused.body, "feature"), "workbotProactive")
+  }
   assert.doesNotMatch(await initializeInstructions(token), /putMeAgent/)
+
+  assert.equal((await den.setFeature(space.orgId, "workbotProactive", true)).status, 200)
+  const restored = await space.call("PUT", "/v1/me/agent", { preferences: { when: "Mornings only" } })
+  assert.equal(restored.status, 200, summary(restored))
+  assert.equal(field(restored.body, "preferences", "when"), "Mornings only")
 })
 
 test("a member narrows the admin's limits but can't widen them; a later admin change still wins", async () => {
   const space = await workspace("Agent library limits")
-  assert.equal((await den.setFeature(space.orgId, "workbotAgentLibrary", true)).status, 200)
   const wider = await space.call("PUT", "/v1/me/agent", { hours: { startHour: 7, endHour: 17 } })
   assert.equal(wider.status, 400, summary(wider))
   assert.deepEqual(wider.body, { error: "limit_wider_than_admin", message: "Your admin allows 8 AM–7 PM. Choose hours inside that." })
@@ -65,7 +78,6 @@ test("a member narrows the admin's limits but can't widen them; a later admin ch
 
 test("chat and the Library page change the same agent: each change says where it came from, and undo reverts it", async () => {
   const space = await workspace("Agent library chat")
-  assert.equal((await den.setFeature(space.orgId, "workbotAgentLibrary", true)).status, 200)
   const token = await den.mintMcpToken(space.member, space.orgId)
   assert.match(await initializeInstructions(token), /To change what Your agent tells the user, use putMeAgent; to explain why it was quiet, read the user's agent checks\./)
 
@@ -112,7 +124,6 @@ test("chat and the Library page change the same agent: each change says where it
 
 test("each member reads only their own checks: today's, the last one, and the week; old records are pruned", async () => {
   const space = await workspace("Agent library checks")
-  assert.equal((await den.setFeature(space.orgId, "workbotAgentLibrary", true)).status, 200)
   const repository = await import("../../src/workbot-proactive/repository.js")
   const { normalizeDenTypeId } = await import("@openwork-ee/utils/typeid")
   const organizationId = normalizeDenTypeId("organization", space.orgId)

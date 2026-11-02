@@ -274,7 +274,7 @@ export const useSessionManagementStore = create<SessionManagementStore>()(
       unreadIds: [],
       settledById: {},
       autoSettleDays: DEFAULT_AUTO_SETTLE_DAYS,
-      sidebarView: "feed",
+      sidebarView: "workspaces",
       feedFolders: [],
       feedGroupBy: DEFAULT_FEED_GROUP_BY,
       feedSortBy: DEFAULT_FEED_SORT_BY,
@@ -352,7 +352,7 @@ export const useSessionManagementStore = create<SessionManagementStore>()(
           };
         }),
 
-      setSidebarView: (view) => set({ sidebarView: view === "workspaces" ? "workspaces" : "feed" }),
+      setSidebarView: (view) => set({ sidebarView: view === "feed" ? "feed" : "workspaces" }),
 
       setFeedGroupBy: (groupBy) =>
         set({ feedGroupBy: FEED_GROUP_BY_OPTIONS.includes(groupBy) ? groupBy : DEFAULT_FEED_GROUP_BY }),

@@ -62,11 +62,10 @@ import {
 } from "./mcp-app-host.js";
 import { CONNECT_MCP_SERVER_NAME_PREFIX } from "./connect-mcp-server-catalog.js";
 import {
-  buildMcpAppSandboxCsp,
   MCP_APP_SANDBOX_PROXY_CSS,
   MCP_APP_SANDBOX_PROXY_HTML,
   MCP_APP_SANDBOX_PROXY_SCRIPT,
-  parseMcpAppSandboxCsp,
+  mcpAppSandboxPageHeaders,
 } from "./mcp-app-sandbox.js";
 import { deleteSkill, listSkills, renderSkillContentForResponse, upsertSkill } from "./skills.js";
 import { deleteCommand, listCommands, repairCommands, upsertCommand } from "./commands.js";
@@ -1955,6 +1954,10 @@ async function validateEngineRequestBody(request: Request): Promise<void> {
 }
 
 export async function proxyOpencodeRequest(input: Parameters<typeof forwardOpencodeRequest>[0]) {
+  // All v1 mounts (including background/recovery sends) converge here. Check
+  // before forwarding or acquiring a mutation lease; local engine config cannot
+  // weaken the verified organization policy. v2 keeps its native/plugin checks.
+  await managedDesktopPolicy(input.config).assertLegacyExecutionRequest(input.request, input.proxyPath ?? input.url.pathname);
   if (["GET", "HEAD"].includes(input.request.method.toUpperCase())) return forwardOpencodeRequest(input);
   const release = await enterEngineMutation(input.config, "v1", input.request.signal);
   try { return await forwardOpencodeRequest(input); }
@@ -3479,6 +3482,8 @@ function createRoutes(
   // The desktop process reads the built-in browser's website rules here itself.
   addRoute(routes, "GET", "/managed-policy/website-rules", "client", async () =>
     jsonResponse({ rules: await managedDesktopPolicy(config).websiteRules() }));
+  addRoute(routes, "GET", "/managed-policy/computer-rules", "client", async () =>
+    jsonResponse({ rules: await managedDesktopPolicy(config).computerRules() }));
   addRoute(routes, "POST", "/managed-policy/evaluate", "policy", async (ctx) => {
     const body = await readJsonBody(ctx.request);
     const action = managedPolicyActionSchema.safeParse(body.action);
@@ -4062,13 +4067,7 @@ function createRoutes(
   });
 
   addRoute(routes, "GET", "/mcp-apps/sandbox.html", "none", async (ctx) => new Response(MCP_APP_SANDBOX_PROXY_HTML, {
-    headers: {
-      "Content-Type": "text/html; charset=utf-8",
-      "Content-Security-Policy": buildMcpAppSandboxCsp(parseMcpAppSandboxCsp(ctx.url.searchParams.get("csp"))),
-      "Cache-Control": "no-store",
-      "Referrer-Policy": "strict-origin",
-      "X-Content-Type-Options": "nosniff",
-    },
+    headers: mcpAppSandboxPageHeaders(ctx.url.searchParams),
   }));
   addRoute(routes, "GET", "/mcp-apps/sandbox.js", "none", async () => new Response(MCP_APP_SANDBOX_PROXY_SCRIPT, {
     headers: { "Content-Type": "text/javascript; charset=utf-8", "Cache-Control": "no-store", "X-Content-Type-Options": "nosniff" },

@@ -1,8 +1,9 @@
 # Warden security review
 
-Warden runs two skills: new security regressions and public-repository
+Warden runs two skills on PRs: new security regressions and public-repository
 confidentiality. It does not review design, provenance, or Desktop/Den parity
-automatically. Those skill files remain available for optional local use.
+on PRs; the post-merge sweep (below) checks security, bugs, design and failing
+tests on what merged. Those skill files remain available for optional local use.
 Rendered UI is reviewed from evidence screenshots instead, where the pixels
 and layout exist: see `evals/design-review/README.md`.
 
@@ -23,8 +24,11 @@ hold:
 - No confidentiality findings at any severity.
 - The PR does not change Warden itself: `.github/workflows/warden.yml`,
   `.github/workflows/warden-clearance.yml`, `.github/workflows/warden-quick.yml`,
+  `.github/workflows/warden-sweep.yml`,
   `.github/scripts/warden-report.mjs`, `.github/scripts/warden-clearance.mjs`,
-  `.github/scripts/warden-fast.mjs`, `warden.toml`, or `.warden/`.
+  `.github/scripts/warden-fast.mjs`, `.github/scripts/warden-sweep.mjs`,
+  `.github/scripts/warden-fixer.mjs`,
+  `warden.toml`, or `.warden/`.
   `warden.yml` runs inside the PR's own review and could forge its result; the
   others would let one PR rewrite the reviewer for every later PR.
 
@@ -168,6 +172,73 @@ so enable it only in checkouts whose branches you trust.
 Fast reviews see less of the PR at once than the full review, so an
 interaction between a moved file and an unchanged one can be missed until the
 full review runs. That is why they never clear a PR.
+
+## Post-merge sweep: what to fix in what already merged
+
+`.github/workflows/warden-sweep.yml` runs every 3 hours (and on demand) on
+`dev`. It reviews each PR merged since the last sweep, one squash-merge
+commit at a time so every finding names the PR that caused it, with
+`.warden/sweep.toml`:
+
+- `diff-security-review`: the same security skill PRs get.
+- `diff-bug-review`: concrete bugs (a trigger and a wrong result), sweep only.
+- `design-spec-review`: `DESIGN.md` rule drift in UI code.
+- `ui-skills-review`: UI code against pinned rule sets from the
+  [UI Skills](https://www.ui-skills.com/mcp/docs) catalog: `baseline-ui`,
+  `fixing-accessibility` and `fixing-motion-performance` (ibelick) and
+  Vercel's Web Interface Guidelines. `DESIGN.md` wins where they disagree
+  (sentence case, skeletons, tracking, shadows), as listed in
+  `.warden/ui-skills/header.md`.
+- Failing tests: workflows that failed on dev at the merge commit, marked
+  "first failure on dev" when the same workflow passed on the run before.
+  Commits whose CI is still running are re-checked by the next sweeps for
+  up to 24 hours.
+
+Results go to the Slack channel in the `SLACK_WARDEN_SWEEP_CHANNEL_ID`
+repository variable (via `SLACK_BOT_TOKEN`), only when something needs
+fixing. The job summary has the same table; since the repository is public,
+security findings appear there only as counts.
+
+**Fix PRs.** When Warden is confident of a small fix, the sweep opens a PR
+against dev for it: one per merged PR (branch
+`warden-fix/merged-<pr>-<sha>`), built only from Warden's own
+high-confidence suggested diffs under the `warden-fixer` rules (text only, at
+most 3 files and 40 lines per fix, files that PR changed, never `.github/`,
+`.warden/` or agent config). Security, bug and design findings (both
+`DESIGN.md` and UI Skills) qualify; failing tests have no suggested diff and
+stay in the report for a person. A separate `fix`
+job opens the PRs, so Warden's model never runs next to a write token. It uses
+the automation App so CI and Warden run on the fix PR like any other; without
+the App it falls back to `GITHUB_TOKEN` and CI won't start until someone
+pushes. Security fix PRs name the file, not the issue. Fix PRs go through
+normal review and merge; the sweep never approves, merges or reverts. Turn
+fix PRs off with the repository variable `WARDEN_SWEEP_FIXES=off`.
+
+The last reviewed dev commit is saved in the `warden-sweep-state` artifact,
+so each PR is reviewed once; up to 20 PRs per sweep, the rest wait for the
+next one. A review that can't finish is reported and fails the run rather than
+being retried. To re-review a range, run the workflow with `since` set to the
+dev commit before it. Locally, without Slack or saved state:
+
+```sh
+SINCE=<dev sha> NO_SLACK=1 PI_CODING_AGENT_DIR=.warden/pi node .github/scripts/warden-sweep.mjs
+```
+
+### Updating the UI Skills rules
+
+The rule sets are copied into `.warden/ui-skills/rules/` with their source,
+sha256 and MIT licenses (`sources.json`, `LICENSES.md`). Warden never fetches
+them at review time, because third-party text would become reviewer
+instructions without review. To pick up upstream changes, or to add a rule set
+to `SOURCES` in the script:
+
+```sh
+node .warden/scripts/sync-ui-skills.mjs             # fetch from the UI Skills MCP, re-pin, regenerate
+node .warden/scripts/sync-ui-skills.mjs --generate  # after editing header.md, offline
+node .warden/scripts/sync-ui-skills.mjs --check     # CI: SKILL.md matches the pins
+```
+
+Review the rules diff in the PR like any other policy change.
 
 ## Rollout
 

@@ -9,7 +9,9 @@ name: Feature registry check
 # See .opencode/skills/add-a-feature/SKILL.md.
 
 on:
-  pull_request:
+  # Not on PRs: the quick check runs these same steps (quick-check.yml).
+  push:
+    branches: [dev]
     paths:
       - "packages/features/**"
       - "packaging/helm/openwork-ee/**"

@@ -1,4 +1,5 @@
 import assert from "node:assert/strict"
+import { readFileSync } from "node:fs"
 import test from "node:test"
 import {
   LAST_SIGN_IN_METHOD_COOKIE,
@@ -6,6 +7,14 @@ import {
   lastSignInCookieChange,
   lastSignInCookieWrites,
 } from "../src/last-sign-in-method.js"
+
+test("the authentication hook remembers sign-ins without consulting deployment features", () => {
+  const source = readFileSync(new URL("../src/auth.ts", import.meta.url), "utf8")
+  assert.doesNotMatch(source, /lastUsedSignIn|deploymentFeatureEnabled/)
+  assert.match(source, /const change = lastSignInCookieChange\(/)
+  assert.match(source, /const writes = lastSignInCookieWrites\(change,/)
+  assert.match(source, /ctx\.setCookie\(write\.name, write\.value, write\.options\)/)
+})
 
 test("password and social sign-ins are remembered, SSO sign-ins forget", () => {
   assert.deepEqual(lastSignInCookieChange({ path: "/sign-in/email", provider: null, signedIn: true }), { type: "remember", method: "password" })
@@ -34,6 +43,17 @@ test("remembering writes one long-lived cookie the browser can read", () => {
   const [hostOnly] = lastSignInCookieWrites({ type: "remember", method: "password" }, { secure: false, cookieDomain: null })
   assert.equal(hostOnly?.options.domain, undefined)
   assert.equal(hostOnly?.options.secure, false)
+})
+
+test("successful SSO clears both remembered-cookie scopes without any rollout state", () => {
+  for (const path of ["/sso/callback/:providerId", "/sso/saml2/sp/acs/:providerId"]) {
+    const change = lastSignInCookieChange({ path, provider: null, signedIn: true })
+    assert.ok(change)
+    assert.deepEqual(lastSignInCookieWrites(change, { secure: true, cookieDomain: "openwork.example" }), [
+      { name: LAST_SIGN_IN_METHOD_COOKIE, value: "", options: { path: "/", sameSite: "lax", secure: true, httpOnly: false, maxAge: 0 } },
+      { name: LAST_SIGN_IN_METHOD_COOKIE, value: "", options: { path: "/", sameSite: "lax", secure: true, httpOnly: false, maxAge: 0, domain: "openwork.example" } },
+    ])
+  }
 })
 
 test("forgetting expires the host-only and the shared-domain cookie", () => {

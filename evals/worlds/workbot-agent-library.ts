@@ -61,7 +61,7 @@ function hashId(...parts: string[]) {
 }
 
 /**
- * My agent in the Library (`workbotAgentLibrary`): Den with Workbot and Your agent on for one organization, the
+ * My agent in the Library (`workbotProactive`): Den with Workbot and Your agent on for one organization, the
  * Workbot Slack app installed (synthetic credentials, nobody linked), and the member's agent as the wake left it this
  * morning: its time zone, a DM it sent (in the delivery ledger and as a check), a quiet check, and earlier checks this
  * week. My agent starts off, so the proof shows the Library before and after. No calendar, model or Slack is reached:
@@ -154,6 +154,14 @@ export async function workbotAgentLibraryWorld(seed: Seed) {
 
     const sayInChat = (name: string, body?: unknown) => chatAs(den.members.member, organizationId, name, body);
 
+    // Seed settings and check history with the parent on, then prove its off/on UI and API boundary.
+    const disabled = await denFetch(den.admin, `/v1/admin/organizations/${organizationId}/capabilities`, {
+      method: "PUT",
+      headers: headers(den.admin),
+      body: JSON.stringify({ capabilities: { workbotProactive: false } }),
+    });
+    if (!disabled.response.ok) throw new Error(`Turning off Your agent failed: ${disabled.text.slice(0, 300)}`);
+
     const viewport = { width: 1280, height: 2000, deviceScaleFactor: 1 };
     const web = await seed.web({ den, signedInAs: den.members.member, startPath: "/dashboard/library", headless: true, viewport });
     return {
@@ -167,7 +175,7 @@ export async function workbotAgentLibraryWorld(seed: Seed) {
         const result = await denFetch(den.admin, `/v1/admin/organizations/${organizationId}/capabilities`, {
           method: "PUT",
           headers: headers(den.admin),
-          body: JSON.stringify({ capabilities: { workbotAgentLibrary: true } }),
+          body: JSON.stringify({ capabilities: { workbotProactive: true } }),
         });
         if (!result.response.ok) throw new Error(`Turning on My agent failed: ${result.text.slice(0, 300)}`);
       },

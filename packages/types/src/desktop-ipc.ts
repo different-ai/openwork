@@ -327,7 +327,7 @@ export type DesktopFetchResult = {
  * resolves elsewhere is shown in its folder instead of being handed to an application.
  */
 export type DesktopWorkspaceFileOpenResult =
-  | { ok: true; action: "opened" | "revealed" }
+  | { ok: true; action: "opened" | "revealed" | "unavailable" }
   | { ok: false; error: string };
 
 export type DesktopBinaryDownloadResult = {
@@ -364,6 +364,8 @@ export type ComputerRequest = {
   detail?: string;
   appId?: string;
   purpose?: string;
+  /** False when organization policy requires approval of each individual script. */
+  standing?: boolean;
   /** The exact script that runs if the person approves it. */
   script?: { app: "applescript" | "jxa" | "blender"; code: string };
   /** The files handed over if the person approves: names or full paths, and the app or site receiving them. */
@@ -492,6 +494,7 @@ export type DesktopCommandMap = {
   computerAnswerRequest: { args: [input: { sessionId: string; answer: "dismiss" | "allow" | "always"; id?: string }]; result: ComputerSnapshot };
   computerSetFeatureEnabled: { args: [enabled: boolean]; result: boolean };
   computerSetRemoteEnabled: { args: [enabled: boolean]; result: boolean };
+  /** Compatibility-only no-op for older renderers; returns the computerUse state. */
   computerSetBackgroundEnabled: { args: [enabled: boolean]; result: boolean };
   computerResetPermission: { args: [permission: ComputerPermission]; result: { setupId: string } };
   computerEndTurn: { args: [sessionId: string]; result: boolean };
@@ -582,7 +585,7 @@ export type DesktopCommandMap = {
   __showContextMenu: { args: [request: NativeContextMenuRequest]; result: string | null };
   __cancelContextMenu: { args: [requestId: string]; result: boolean };
   __openPath: { args: [target: string]; result: unknown };
-  __openWorkspaceFile: { args: [workspaceRoot: string, target: string]; result: DesktopWorkspaceFileOpenResult };
+  __openWorkspaceFile: { args: [workspaceRoot: string, target: string, options?: { reveal?: boolean }]; result: DesktopWorkspaceFileOpenResult };
   __revealItemInDir: { args: [target: string]; result: unknown };
   __applyBrandAppName: { args: [appName: string | null]; result: { ok: true; appName: string } };
   __applyBrandIcon: { args: [url: string | null]; result: BrandIconApplyResult };

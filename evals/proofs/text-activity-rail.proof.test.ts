@@ -6,12 +6,18 @@ const test = spec.world(textActivityRailWorld, {
   resources: { surfaces: ["appWeb"], services: ["den", "mock"] }, timeout: 720_000,
 });
 
-const RAIL = "[data-capability-call], [data-tool-aggregate], [data-code-mode-call]";
-
-test("a member reads their agent's turn as plain sentences once text-first activity is on, and the same turn keeps the previous rail while it is off", async ({ world, user, probe, step, evidence }) => {
-  const railText = async () => (await probe.dom(RAIL)).elements.map((element) => element.text).join(" | ");
-
-  await step("before: with the feature off, the turn's steps sit on the icon rail and nothing reads text-first", async () => {
+test("a member reads their agent's turn as plain sentences without organization setup", async ({ user, probe, step, evidence }) => {
+  await step("the member opts into model reasoning, then asks the agent to update notes", async () => {
+    await user.see("composer", { editable: true });
+    await user.click({ testId: "account-status-menu" });
+    await user.click({ role: "menuitem", label: "Settings" });
+    await user.click({ role: "button", label: "Preferences" });
+    await user.click({ role: "switch", label: "Show model reasoning" });
+    await probe.eventually(() => probe.dom('[role="switch"][aria-label="Show model reasoning"][aria-checked="true"], [role="switch"][aria-label="Show model reasoning"][data-checked]'), {
+      within: 10_000, label: "Show model reasoning is on", until: (value) => value.elements.length === 1,
+    });
+    // Settings is a page, not a dialog: return to the conversation the way a person does.
+    await user.click({ role: "button", label: "Back to app" });
     await user.see("composer", { editable: true });
     await user.type("composer", RAIL_PROMPT);
     await probe.eventually(() => probe.dom('button[aria-label="Run task"]:not(:disabled)'), {
@@ -20,16 +26,13 @@ test("a member reads their agent's turn as plain sentences once text-first activ
     await user.click("Run task");
     await user.see({ text: RAIL_REPLY }, { timeoutMs: 180_000 });
     await user.see("Run task", { timeoutMs: 60_000 });
-    const textRows = (await probe.dom("[data-text-step], [data-text-group-summary]")).elements.length;
-    const text = await railText();
-    evidence.recordAssertionEvidence("The previous rail, no text-first rows", `text-first rows: ${textRows}; rail: ${text.slice(0, 200)}`, textRows === 0 && text.length > 0);
-    expect(textRows).toBe(0);
+    const calls = (await probe.dom("[data-text-step], [data-text-group-summary]")).elements.length;
+    evidence.recordAssertionEvidence("The completed turn already has text-first activity", `text-first rows: ${calls}`, calls > 0);
+    expect(calls).toBeGreaterThan(0);
     await user.screenshot();
   });
 
-  await step("after: with the feature on, the same turn reads as one summary, a timed thought and OpenWork's own mark inline", async () => {
-    await world.setTextRail(true);
-    await user.reload();
+  await step("the turn reads as one summary, a timed thought and OpenWork's own mark inline", async () => {
     await user.see({ text: RAIL_REPLY }, { timeoutMs: 60_000 });
     const summary = await probe.eventually(async () => (await probe.dom("[data-text-group-summary]")).elements.map((element) => element.text), {
       within: 30_000, label: "the text-first summary", until: (found) => found.length > 0,

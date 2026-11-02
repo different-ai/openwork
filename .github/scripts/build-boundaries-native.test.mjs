@@ -69,10 +69,23 @@ test("both alpha platforms depend on the desktop scope while retaining manual pl
     ["publish-alpha-windows-x64", "macos-arm64"],
   ]) {
     const publish = job(workflow, name);
-    assert.match(publish, /needs: changes/);
+    // The packaged Linux smoke must pass before any alpha is published.
+    assert.match(publish, /needs: \[changes, packaged-smoke\]/);
     assert.ok(publish.includes(`if: needs.changes.outputs.affected == 'true' && (github.event_name == 'push' || inputs.platform != '${otherPlatform}')`));
     assert.match(publish, /pnpm --filter @openwork\/desktop\.\.\. --filter @openwork\/app\.\.\. --filter openwork-server\.\.\. install --frozen-lockfile --prefer-offline/);
   }
+});
+
+test("the packaged desktop builds and boots before every alpha release", () => {
+  const smoke = job(workflows.get("desktop"), "packaged-smoke");
+  assert.match(smoke, /needs: changes/);
+  assert.ok(smoke.includes("if: needs.changes.outputs.affected == 'true'"));
+  assert.match(smoke, /uses: \.\/\.github\/workflows\/packaged-smoke\.yml/);
+  const reusable = readFileSync(new URL("../workflows/packaged-smoke.yml", import.meta.url), "utf8");
+  assert.match(reusable, /workflow_call:/);
+  assert.match(reusable, /workflow_dispatch:/);
+  assert.doesNotMatch(reusable.split("\njobs:\n")[0], /pull_request|push:|schedule:/);
+  assert.match(reusable, /node apps\/desktop\/scripts\/packaged-smoke\.mjs --server-built/);
 });
 
 test("deployment scope gates retain repository, environment and authentication checks", () => {

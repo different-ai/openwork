@@ -41,7 +41,7 @@ export function claimActivationReport(key: string): boolean {
 const DEN_PAGES = {
   invite_teammate: "members",
   use_skill: "library?show=skills",
-  own_provider: "library?show=models",
+  own_provider: "library/model-providers/new",
   gateway_provider: "ai-gateway?tab=ai-providers",
   connector: "library?show=connectors",
 } as const;

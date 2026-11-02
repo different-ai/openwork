@@ -21,32 +21,14 @@ import { BuiltAppShareDialog } from "../apps/built-app-share-button";
 import { McpAppTile, type DashboardLaunchEndpoint } from "./mcp-app-tile";
 import { DashboardMasonry } from "./dashboard-masonry";
 import { dashboardTileCacheScopeKey } from "./dashboard-tile-cache";
-import { mcpAppIdSchema } from "@openwork/types/mcp-app";
+import { readBuiltDashboardApps, subscribeBuiltDashboardApps, writeBuiltDashboardApps } from "./built-dashboard-placement";
+
+export { readBuiltDashboardApps } from "./built-dashboard-placement";
 
 export function builtDashboardScope(
   scope: ReturnType<typeof useAppsClient>["scope"],
 ) {
   return `openwork:personal-mcp-apps:v1:${JSON.stringify(scope)}`;
-}
-
-export function readBuiltDashboardApps(scope: string): string[] {
-  if (typeof window === "undefined") return [];
-  try {
-    const value: unknown = JSON.parse(
-      window.localStorage.getItem(scope) ?? "[]",
-    );
-    return Array.isArray(value)
-      ? [
-          ...new Set(
-            value.filter(
-              (id): id is string => mcpAppIdSchema.safeParse(id).success,
-            ),
-          ),
-        ]
-      : [];
-  } catch {
-    return [];
-  }
 }
 
 export function useBuiltDashboardApps() {
@@ -60,7 +42,13 @@ export function useBuiltDashboardApps() {
   const currentPlacement = useRef({ key, ids });
   currentPlacement.current = { key, ids };
   useEffect(() => {
-    setPlacement({ key, ids: readBuiltDashboardApps(key) });
+    const sync = (next: string[]) => {
+      currentPlacement.current = { key, ids: next };
+      setPlacement({ key, ids: next });
+    };
+    const unsubscribe = subscribeBuiltDashboardApps(key, sync);
+    sync(readBuiltDashboardApps(key));
+    return unsubscribe;
   }, [key]);
   const query = useQuery({
     queryKey: ["built-dashboard-apps", ...context.scope],
@@ -104,11 +92,7 @@ export function useBuiltDashboardApps() {
         : current.filter((id) => id !== appId);
       setPlacement({ key, ids: next });
       currentPlacement.current = { key, ids: next };
-      try {
-        window.localStorage.setItem(key, JSON.stringify(next));
-      } catch {
-        /* In-memory placement remains usable. */
-      }
+      writeBuiltDashboardApps(key, next);
     },
   };
 }

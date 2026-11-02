@@ -28,7 +28,7 @@ afterEach(async () => {
   if (root) await act(async () => root?.unmount())
   root = null
   document.body.innerHTML = ""
-  store.setState({ helperView: false, threads: {} })
+  store.setState({ threads: {} })
 })
 
 function createCall(id: string, commandId: string, title: string): UIMessage["parts"][number] {
@@ -71,7 +71,7 @@ test("remote tasks list with where they run, a status word, Open and Stop, and c
   const tasks = tracker.currentTurnRemoteTasks(turn([createCall("c1", "rsc_1", "Record the demo videos"), createCall("c2", "rsc_2", "Draft the changelog")]))
   const [first, second] = tasks
   if (!first || !second) throw new Error("expected two tasks")
-  store.setState({ helperView: true, threads: {
+  store.setState({ threads: {
     [first.start.key]: entry(first.start, { state: "running" }),
     [second.start.key]: entry(second.start, { state: "waiting", waitingFor: "question" }),
   } })
@@ -89,7 +89,10 @@ test("remote tasks list with where they run, a status word, Open and Stop, and c
   expect(rows.map((row) => row.dataset.subagentTrackerKind)).toEqual(["working", "attention"])
   expect(rows[0]?.querySelector("[data-subagent-tracker-agent]")?.textContent).toBe("Studio computer")
   expect(rows[0]?.querySelector("[data-subagent-tracker-task]")?.textContent).toBe("Record the demo videos")
-  expect(rows.map((row) => row.querySelector("[data-subagent-tracker-status]")?.textContent)).toEqual(["Working", "Needs you"])
+  expect(rows.map((row) => row.querySelector("[data-subagent-tracker-status]")?.textContent)).toEqual(["Working 0s", "Waiting for your answer"])
+  // The same row as a local helper: a waiting task offers Review, and its visible status is the time alone.
+  expect(rows[1]?.querySelector("[data-subagent-tracker-review]")?.textContent).toBe("Review")
+  expect(rows[0]?.querySelector("[data-subagent-tracker-status] .sr-only")?.textContent).toBe("Working ")
   expect(container.querySelector("[data-subagent-tracker-summary]")?.textContent).toBe("1 need you, 1 working")
   expect(rows[0]?.querySelector("[data-subagent-tracker-stop]")?.textContent).toBe("Stop")
   await act(async () => { rows[1]?.querySelector<HTMLButtonElement>("[data-subagent-tracker-open]")?.click() })
@@ -100,7 +103,7 @@ test("a stopped task and one that failed read differently, and a settled list go
   const tasks = tracker.currentTurnRemoteTasks(turn([createCall("c1", "rsc_1", "Record the demo videos"), createCall("c2", "rsc_2", "Draft the changelog")]))
   const [first, second] = tasks
   if (!first || !second) throw new Error("expected two tasks")
-  store.setState({ helperView: true, threads: {
+  store.setState({ threads: {
     [first.start.key]: entry(first.start, { state: "error", error: { code: "MessageAbortedError", message: "The task was stopped." } }),
     [second.start.key]: entry(second.start, { state: "error", error: { code: "session_error", message: "Disk full" } }),
   } })
@@ -115,34 +118,28 @@ test("a stopped task and one that failed read differently, and a settled list go
   })
   await render(true)
   const words = [...container.querySelectorAll("[data-subagent-tracker-remote] [data-subagent-tracker-status]")].map((node) => node.textContent)
-  expect(words).toEqual(["Stopped", "Couldn't finish"])
+  expect(words).toEqual(["Stopped", "Failed"])
   expect(container.querySelector("[data-subagent-tracker-open]")).toBeNull()
   await render(false)
   expect(container.querySelector("[data-subagent-tracker]")).toBeNull()
 })
 
 test("text-first rail: remote rows drop the status dot like local rows, the word carries the state", async () => {
-  const { useTextActivityRailStore } = await import("../src/components/chat/text-activity-rail-store")
   const tasks = tracker.currentTurnRemoteTasks(turn([createCall("c1", "rsc_1", "Record the demo videos")]))
   const [first] = tasks
   if (!first) throw new Error("expected a task")
-  store.setState({ helperView: true, threads: { [first.start.key]: entry(first.start, { state: "running" }) } })
-  useTextActivityRailStore.getState().setEnabled(true)
-  try {
-    const container = document.createElement("div")
-    document.body.append(container)
-    root = createRoot(container)
-    await act(async () => {
-      root?.render(
-        <tracker.ComposerSubagentTracker messages={[]} workspaceId="ws_1" parentActive syncDegraded={false} includeLocal={false}
-          remote={{ tasks, owner: { workspaceId: "ws_1", sessionId: "ses_parent" }, onOpen: () => {} }} />,
-      )
-    })
-    const row = container.querySelector<HTMLElement>("[data-subagent-tracker-remote]")
-    expect(row?.querySelector(".rounded-full")).toBeNull()
-    expect(row?.firstElementChild?.querySelector("[data-subagent-tracker-agent]")?.textContent).toBe("Studio computer")
-    expect(row?.querySelector("[data-subagent-tracker-status]")?.textContent).toBe("Working")
-  } finally {
-    useTextActivityRailStore.getState().setEnabled(false)
-  }
+  store.setState({ threads: { [first.start.key]: entry(first.start, { state: "running" }) } })
+  const container = document.createElement("div")
+  document.body.append(container)
+  root = createRoot(container)
+  await act(async () => {
+    root?.render(
+      <tracker.ComposerSubagentTracker messages={[]} workspaceId="ws_1" parentActive syncDegraded={false} includeLocal={false}
+        remote={{ tasks, owner: { workspaceId: "ws_1", sessionId: "ses_parent" }, onOpen: () => {} }} />,
+    )
+  })
+  const row = container.querySelector<HTMLElement>("[data-subagent-tracker-remote]")
+  expect(row?.querySelector(".rounded-full")).toBeNull()
+  expect(row?.firstElementChild?.querySelector("[data-subagent-tracker-agent]")?.textContent).toBe("Studio computer")
+  expect(row?.querySelector("[data-subagent-tracker-status]")?.textContent).toBe("Working 0s")
 })

@@ -121,7 +121,7 @@ export function registerOrgWorkbotSettingsRoutes<T extends { Variables: OrgRoute
       tags: ["Organizations"],
       summary: "Get how members' agents are doing",
       description:
-        "For the last 7 days (UTC) and each responsibility: how many checks members' agents ran about it, how many of those stayed quiet, how many messages it produced, and how many members muted it, with the number of members who have an agent. Counts only: no member names, message text or email content. Requires the workbotProactive and workbotAgentHealthView features, Workbot on this deployment, and View OpenWork Models settings or Manage OpenWork Models.",
+        "For the last 7 days (UTC) and each responsibility: how many checks members' agents ran about it, how many of those stayed quiet, how many messages it produced, and how many members muted it, with the number of members who have an agent. Counts only: no member names, message text or email content. Requires the workbotProactive feature, Workbot on this deployment, and View OpenWork Models settings or Manage OpenWork Models.",
       responses: {
         200: jsonResponse("Agent health returned.", workbotProactiveHealthDocumentSchema),
         401: jsonResponse("Authentication required.", unauthorizedSchema),
@@ -131,7 +131,6 @@ export function registerOrgWorkbotSettingsRoutes<T extends { Variables: OrgRoute
     }),
     orgMemberRoute(),
     requireFeature("workbotProactive"),
-    requireFeature("workbotAgentHealthView"),
     requireWorkbotDeployed,
     requireWorkbotSettingsRead,
     async (c) => {
@@ -235,7 +234,7 @@ export function registerOrgWorkbotSettingsRoutes<T extends { Variables: OrgRoute
       tags: ["Organizations"],
       summary: "Get Workbot settings",
       description:
-        "Returns the organization's default model for Workbot, the Slack assistant and cloud Automations set to the cloud default (null means the caller's AI Gateway default), and the caller's credential-ready, supported Gateway assignments. defaultModel identifies that default and defaultReadiness reports whether it is available; an organization default never grants inference access. With workbotIncludedModels or workbotUsageRecovery, Workbot’s default is free Auto or paid Models Luna using this member’s entitlement; no custom provider is needed. Requires View OpenWork Models settings or Manage OpenWork Models.",
+        "Returns the organization's default model for Workbot, the Slack assistant and cloud Automations set to the cloud default (null means the caller's AI Gateway default), and the caller's credential-ready, supported Gateway assignments. defaultModel identifies that default and defaultReadiness reports whether it is available; an organization default never grants inference access. Workbot’s default is free Auto or paid Models Luna using this member’s entitlement; no custom provider is needed. Requires View OpenWork Models settings or Manage OpenWork Models.",
       responses: {
         200: jsonResponse("Workbot settings returned.", workbotSettingsDocumentSchema),
         401: jsonResponse("Authentication required.", unauthorizedSchema),
@@ -262,7 +261,7 @@ export function registerOrgWorkbotSettingsRoutes<T extends { Variables: OrgRoute
       tags: ["Organizations"],
       summary: "Set Workbot's default model",
       description:
-        "Sets the organization's default model for Workbot, the Slack assistant and cloud Automations set to the cloud default, from their next message or run; null uses the AI Gateway default. Automations with their own model keep it. Only the caller's supported, credential-ready Gateway aliases are accepted. Each executing member still needs their own assignment and credentials. With workbotIncludedModels or workbotUsageRecovery, selecting the managed Luna starter keeps the shared saved choice null; other cloud agents retain their existing default policy. Requires the Manage OpenWork Models permission and a recent sign-in.",
+        "Sets the organization's default model for Workbot, the Slack assistant and cloud Automations set to the cloud default, from their next message or run; null uses the AI Gateway default. Automations with their own model keep it. Only the caller's supported, credential-ready Gateway aliases are accepted. Each executing member still needs their own assignment and credentials. Selecting the managed Luna starter keeps the shared saved choice null; other cloud agents retain their existing default policy. Requires the Manage OpenWork Models permission and a recent sign-in.",
       responses: {
         200: jsonResponse("Workbot settings saved.", workbotSettingsDocumentSchema),
         400: jsonResponse("The model is not one the runner serves, or the request was invalid.", z.union([unknownModelSchema, invalidRequestSchema])),

@@ -1,7 +1,8 @@
 /**
- * Calendar triggers: Cloud Automations that run around each meeting. Gated by
- * `automationCalendarTriggers`, cloud only, hidden from desktops that cannot
- * read them, and claimed once per meeting from the owner's calendar.
+ * Calendar triggers: Cloud Automations that run around each meeting.
+ * Generally available (the `automationCalendarTriggers` flag is retired), cloud
+ * only, hidden from desktops that cannot read them, and claimed once per meeting
+ * from the owner's calendar.
  */
 import {
   AUTOMATION_CLOUD_DEFAULT_MODEL,
@@ -57,14 +58,7 @@ function meeting(id: string, endsAt: number, overrides: Record<string, unknown> 
   }
 }
 
-test("a calendar trigger is refused while the organization does not have the feature", async () => {
-  const refused = await asOwner("POST", "/v1/cloud-automations", cloudDefinition(afterMeetings))
-  assert.equal(refused.status, 400, summary(refused))
-  assert.equal(field(refused.body, "error"), "automation_calendar_trigger_disabled")
-})
-
-test("with the feature on it runs only in the cloud and has no clock time", async () => {
-  assert.equal((await den.setFeature(orgId, "automationCalendarTriggers", true)).status, 200)
+test("a calendar trigger is accepted without a feature flag and runs only in the cloud", async () => {
   const desktop = await asOwner("POST", "/v1/automations", {
     name: "Desktop follow-up", instructions: "Write up the action items.", schedule: afterMeetings,
     model: { providerId: AUTOMATION_FREE_MODEL.providerId, modelId: AUTOMATION_FREE_MODEL.modelId },
@@ -111,7 +105,6 @@ test("each matching meeting is claimed once, and the run learns its facts but ne
     ],
   }
   const service = new AutomationService({
-    calendarTriggersEnabled: async () => true,
     readCalendar: async (input) => {
       reads.push(input.ownerMemberId)
       return { kind: "ok", json: calendar }
@@ -121,7 +114,7 @@ test("each matching meeting is claimed once, and the run learns its facts but ne
   await service.tick({ now: dueAt + 1_000 })
   await service.tick({ now: dueAt + 30_000 })
   // Another replica with its own cache reads again but finds the occurrence already claimed.
-  await new AutomationService({ calendarTriggersEnabled: async () => true, readCalendar: async () => ({ kind: "ok", json: calendar }) }).tick({ now: dueAt + 60_000 })
+  await new AutomationService({ readCalendar: async () => ({ kind: "ok", json: calendar }) }).tick({ now: dueAt + 60_000 })
   assert.equal(reads.length, 1, "one read per owner per poll window")
 
   const runs = list(field((await asOwner("GET", `/v1/automations/${automationId}/runs`)).body, "items"))
@@ -142,13 +135,8 @@ test("each matching meeting is claimed once, and the run learns its facts but ne
   assert.doesNotMatch(prompt, /buyer@northwind/)
 })
 
-test("an owner without the feature has no calendar read; a calendar that is not connected needs attention", async () => {
-  let reads = 0
-  await new AutomationService({ calendarTriggersEnabled: async () => false, readCalendar: async () => { reads += 1; return { kind: "ok", json: {} } } })
-    .tick({ now: Date.now() })
-  assert.equal(reads, 0)
-
-  await new AutomationService({ calendarTriggersEnabled: async () => true, readCalendar: async () => ({ kind: "needs_connection" }) }).tick({ now: Date.now() })
+test("a calendar that is not connected needs attention", async () => {
+  await new AutomationService({ readCalendar: async () => ({ kind: "needs_connection" }) }).tick({ now: Date.now() })
   const detail = await asOwner("GET", `/v1/automations/${automationId}`)
   assert.equal(field(detail.body, "automation", "state"), "needs_attention", summary(detail))
   assert.equal(field(detail.body, "automation", "needsAttentionReason", "code"), "connect_access_unavailable")

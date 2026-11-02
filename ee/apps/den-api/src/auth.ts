@@ -46,7 +46,6 @@ import {
 } from "./session-lifetime.js";
 import { DEN_ACCOUNT_CONFIG, DEN_USER_CONFIG } from "./account-linking-policy.js";
 import { cache } from "./cache.js";
-import { deploymentFeatureEnabled } from "./features.js";
 import { lastSignInCookieChange, lastSignInCookieWrites } from "./last-sign-in-method.js";
 import { hashSessionTokens } from "./session-token.js";
 import { auditBetterAuthAfter, auditBetterAuthBefore, auditBetterAuthRefusal, auditBetterAuthSessionAfter, auditBetterAuthSessionBefore, BETTER_AUTH_AUDIT_AFTER_PATHS, BETTER_AUTH_AUDIT_BEFORE_PATHS, BETTER_AUTH_SESSION_AFTER_PATHS, BETTER_AUTH_SESSION_BEFORE_PATHS, noteOAuthConsentReference, noteOAuthRevocation, noteOAuthTokenIssuance, type BetterAuthHookSession } from "./audit/better-auth.js";
@@ -107,7 +106,7 @@ import {
 } from "./enterprise-auth-requirement.js";
 import { normalizeLoginEmail } from "./auth-login-options.js";
 import { getAuthBodyEmail, getSingleOrgEmailSignupPolicyViolation } from "./single-org-signup-policy.js";
-import { readInitialAdminBootstrapGrantFromBody } from "./initial-admin-bootstrap.js";
+import { authorizeInitialAdminBootstrapSignup, readInitialAdminBootstrapGrantFromBody } from "./initial-admin-bootstrap.js";
 import { createDenTypeId, normalizeDenTypeId } from "@openwork-ee/utils/typeid";
 import * as schema from "@openwork-ee/den-db/schema";
 import { apiKey } from "@better-auth/api-key";
@@ -755,12 +754,10 @@ function getEnterpriseAuthRedirectUrl(input: {
   return url.toString();
 }
 
-const lastSignInLogger = appLogger.child({ component: "last_sign_in_method" });
-
 /**
  * Remembers a password, Google or GitHub sign-in in a long-lived cookie, and
- * forgets it after an SSO sign-in (feature `lastUsedSignIn`). Never fails the
- * sign-in: a broken feature lookup only skips remembering.
+ * forgets it after an SSO sign-in. Available on every deployment without a
+ * feature-service lookup during authentication.
  */
 async function updateLastSignInCookie(ctx: Parameters<Parameters<typeof createAuthMiddleware>[0]>[0]) {
   const change = lastSignInCookieChange({
@@ -769,13 +766,6 @@ async function updateLastSignInCookie(ctx: Parameters<Parameters<typeof createAu
     signedIn: Boolean(ctx.context.newSession),
   });
   if (!change) return;
-  if (change.type === "remember") {
-    const enabled = await deploymentFeatureEnabled("lastUsedSignIn").catch((error: unknown) => {
-      lastSignInLogger.warn("could not read lastUsedSignIn; not remembering the sign-in method", { auth_path: ctx.path, error_name: error instanceof Error ? error.name : typeof error });
-      return false;
-    });
-    if (!enabled) return;
-  }
   const writes = lastSignInCookieWrites(change, {
     secure: env.betterAuthUrl.startsWith("https:"),
     cookieDomain: env.betterAuthCookieDomain,
@@ -840,11 +830,17 @@ export const auth = betterAuth({
           }
           const verifiedByInvitation = context?.path === "/sign-up/email"
             && await invitationLinkVerifiesEmail({ inviteToken: readSignUpInvite(context), email });
+          // The /setup administrator's email is one the operator configured,
+          // and the one-time setup code proves the person signing up is that
+          // operator. Like an invitation link, that vouches for the address,
+          // so linking SSO later keeps their password and session.
+          const verifiedByBootstrap = !verifiedByInvitation && context?.path === "/sign-up/email"
+            && Boolean(await authorizeInitialAdminBootstrapSignup({ body: context.body, email }));
           return {
             data: {
               ...user,
               email,
-              ...(verifiedByInvitation ? { emailVerified: true } : {}),
+              ...(verifiedByInvitation || verifiedByBootstrap ? { emailVerified: true } : {}),
             },
           };
         },

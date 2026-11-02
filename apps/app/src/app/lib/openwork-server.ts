@@ -1059,6 +1059,9 @@ export type OpenworkResolvedArtifactTarget = {
   size?: number;
   updatedAt?: number;
   contentType?: string;
+  /** Absolute path on the owning server; never implies native/local access. */
+  resolvedPath?: string;
+  fileScope?: "workspace" | "conversation";
 };
 
 export type OpenworkWorkspaceFileStat = {
@@ -2127,6 +2130,10 @@ export function createOpenworkServerClient(options: { baseUrl: string; token?: s
       const url = new URL(`${baseUrl}/mcp-apps/sandbox.html`);
       if (url.origin === hostOrigin && url.hostname === "localhost") url.hostname = "127.0.0.1";
       else if (url.origin === hostOrigin && url.hostname === "127.0.0.1") url.hostname = "localhost";
+      // A server with this exact page lets the browser keep it, so later Apps
+      // start without fetching it again. Any other server ignores the version.
+      const version = String(import.meta.env.VITE_OPENWORK_MCP_APP_SANDBOX_VERSION ?? "").trim();
+      if (version) url.searchParams.set("v", version);
       url.searchParams.set("csp", JSON.stringify(app.csp));
       url.searchParams.set("hostOrigin", messageOrigin);
       // Hosted Web serves the trusted proxy on its own origin. Keep that frame
@@ -2437,10 +2444,10 @@ export function createOpenworkServerClient(options: { baseUrl: string; token?: s
       ),
 
     /** `sessionId` also finds files the conversation wrote after moving into a worktree. */
-    readWorkspaceFile: (workspaceId: string, path: string, options?: { sessionId?: string }) =>
+    readWorkspaceFile: (workspaceId: string, path: string, options?: { sessionId?: string; fileScope?: "workspace" | "conversation" }) =>
       requestJson<OpenworkWorkspaceFileContent>(
         baseUrl,
-        `/workspace/${encodeURIComponent(workspaceId)}/files/content?path=${encodeURIComponent(path)}${options?.sessionId ? `&session=${encodeURIComponent(options.sessionId)}` : ""}`,
+        `/workspace/${encodeURIComponent(workspaceId)}/files/content?path=${encodeURIComponent(path)}${options?.sessionId ? `&session=${encodeURIComponent(options.sessionId)}` : ""}${options?.fileScope ? `&fileScope=${encodeURIComponent(options.fileScope)}` : ""}`,
         { token, hostToken },
       ),
 
@@ -2475,7 +2482,7 @@ export function createOpenworkServerClient(options: { baseUrl: string; token?: s
 
     writeWorkspaceFile: (
       workspaceId: string,
-      payload: { path: string; content: string; baseUpdatedAt?: number | null; force?: boolean; sessionId?: string },
+      payload: { path: string; content: string; baseUpdatedAt?: number | null; force?: boolean; sessionId?: string; fileScope?: "workspace" | "conversation" },
     ) =>
       requestJson<OpenworkWorkspaceFileWriteResult>(
         baseUrl,
@@ -2532,7 +2539,7 @@ export function createOpenworkServerClient(options: { baseUrl: string; token?: s
 
     writeWorkspaceBinaryFile: (
       workspaceId: string,
-      payload: { path: string; data: ArrayBuffer; baseUpdatedAt?: number | null; force?: boolean; sessionId?: string },
+      payload: { path: string; data: ArrayBuffer; baseUpdatedAt?: number | null; force?: boolean; sessionId?: string; fileScope?: "workspace" | "conversation" },
     ) =>
       requestJson<OpenworkWorkspaceFileWriteResult>(
         baseUrl,
@@ -2547,15 +2554,16 @@ export function createOpenworkServerClient(options: { baseUrl: string; token?: s
             baseUpdatedAt: payload.baseUpdatedAt,
             force: payload.force,
             sessionId: payload.sessionId,
+            fileScope: payload.fileScope,
           },
         },
       ),
 
     /** `sessionId` also finds files the conversation wrote after moving into a worktree. */
-    downloadWorkspaceFile: (workspaceId: string, path: string, options?: { sessionId?: string }) =>
+    downloadWorkspaceFile: (workspaceId: string, path: string, options?: { sessionId?: string; fileScope?: "workspace" | "conversation" }) =>
       requestBinary(
         baseUrl,
-        `/workspace/${encodeURIComponent(workspaceId)}/files/raw?path=${encodeURIComponent(path)}${options?.sessionId ? `&session=${encodeURIComponent(options.sessionId)}` : ""}`,
+        `/workspace/${encodeURIComponent(workspaceId)}/files/raw?path=${encodeURIComponent(path)}${options?.sessionId ? `&session=${encodeURIComponent(options.sessionId)}` : ""}${options?.fileScope ? `&fileScope=${encodeURIComponent(options.fileScope)}` : ""}`,
         { token, hostToken, timeoutMs: timeouts.binary },
       ),
 
@@ -2568,13 +2576,20 @@ export function createOpenworkServerClient(options: { baseUrl: string; token?: s
         preview?: string;
         confidence?: number;
         reason?: string;
+        fileScope?: "workspace" | "conversation";
       }>,
-      options?: { sessionId?: string },
+      /** `search` also finds a file by name anywhere in the workspace when its path misses. */
+      options?: { sessionId?: string; search?: boolean },
     ) =>
       requestJson<{ items: OpenworkResolvedArtifactTarget[] }>(
         baseUrl,
         `/workspace/${encodeURIComponent(workspaceId)}/artifacts/resolve`,
-        { token, hostToken, method: "POST", body: { targets, sessionId: options?.sessionId } },
+        {
+          token,
+          hostToken,
+          method: "POST",
+          body: { targets, sessionId: options?.sessionId, ...(options?.search ? { search: true } : {}) },
+        },
       ),
 
     // User-level env vars (host-auth only — desktop shell is the sole caller).

@@ -1,6 +1,15 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import { test } from "node:test";
 import { readLastSignInMethod } from "./last-sign-in";
+
+test("the returning sign-in panel uses the browser cookie without a feature request", () => {
+  const source = readFileSync(new URL("../_components/auth-panel.tsx", import.meta.url), "utf8");
+  assert.doesNotMatch(source, /lastUsedSignIn|fetchDeploymentFeatureEnabled|deployment-features/);
+  assert.match(source, /readLastSignInMethod\(document\.cookie\)/);
+  assert.match(source, /setRememberedMethod\(method\)/);
+  assert.match(source, /setRememberedPasswordOpen\(method === "password"\)/);
+});
 
 test("reads the remembered password or social method", () => {
   assert.equal(readLastSignInMethod("openwork-last-sign-in=google"), "google");

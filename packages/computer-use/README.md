@@ -27,10 +27,13 @@ with the helper's status; the relaunched helper stops if that parent goes away.
 A session covers one app, one window and one mode. Technical leases and action
 accounting renew silently; idle cleanup and follow-up requests preserve enabled
 access. Neither renewal nor cleanup clears a human takeover. The modes are
-`observe` (read only), `assist` (accessibility press/set value) and `control`
-(also targeted mouse and keyboard input). Control brings the selected window to
-the front for each step; with `computerUseBackground` on it works in the window
-where it is ([docs](../../docs/features/computer-use-background/README.md)).
+`control` (the default: accessibility plus targeted mouse and keyboard input),
+`assist` (accessibility press/set value) and `observe` (read only). The agent is
+told to use control to finish the task and to pick a narrower mode only when the
+person asks for one. On a parallel Mac computer, control works in the window
+where it is, without taking the front unless the app or step needs it
+([docs](../../docs/features/computer-use-background/README.md)). This is
+included in `computerUse`, not a separate rollout.
 A kernel-held lock allows one session per window, so chats in different windows
 work at once. Grants, element references,
 screenshots and receipts live in process memory and are discarded on close.
@@ -54,6 +57,17 @@ receipt is not proof the task succeeded: observe again to verify. Terminal,
 permission, credential and host apps (`com.differentai.openwork*`,
 `com.differentai.opencoworker*`) can never be targeted. Failures are MCP
 `isError: true` results with machine-readable `code` and `next` fields.
+
+On this Mac an observation carries a screenshot only when it adds something,
+unless `include_image` (or `computer_act`'s `screenshot`) says otherwise.
+Observe and assist sessions, and background delivery, read the elements first
+and add an image when they name fewer than eight controls or leave most of them
+unnamed. A control session in front always gets one. An automatic image that
+matches the last one sent from the same window is not sent again
+(`image.omitted: "unchanged"`, `same_as_observation`); its coordinates still
+apply. Observe and assist images, used only for reading, are 1024 pixels on
+the long side; control keeps 1280 for coordinate accuracy, and `computer_zoom`
+shows detail at full resolution.
 
 Person input in the selected app or a deliberate app switch pauses
 the session and releases held input. Only the person's Continue resumes it;
@@ -286,10 +300,39 @@ visual fallbacks. Targets accept `role`, `name`, `text`, `exact` (default true)
 and `nth`; ambiguous targets fail before dispatch. Fields are replaced by
 default; `fill({..., append: true})` appends. `setChecked` verifies the desired
 state and does not toggle an already-correct checkbox. `findText` handles a
-native Find field's focus transition; browser text is searched directly.
-Menu and select helpers need controls exposed by the app's accessibility tree
-or browser DOM. Unsupported custom controls return a diagnostic; inspect an
-image and use `act` rather than guessing.
+native Find field's focus transition, including unnamed find fields that take
+focus after Command-F; browser text is searched directly. Menu and select
+helpers need controls exposed by the app's accessibility tree or browser DOM.
+Menu-bar menus are outside the selected window, so `menu` fails at once with
+`menu_not_in_window` when its first item is not in the window. Unsupported
+custom controls return a diagnostic; inspect an image and use `act` rather
+than guessing. A caught helper error's message starts with its code (for
+example `scope_denied: ...`), so a program can branch on it.
+
+Native observations keep each control's ref across reads of the same window and
+never reuse a ref for another control. After the model's own `computer_act`, the
+returned observation lists only the elements that changed or appeared
+(`elements_listing: "changes"`, with `elements_unchanged` and
+`elements_removed`); programs always get the full list. In a batch, presses,
+`set_value` and menu commands can follow a press while nothing opens over the
+window and their controls read back unchanged.
+
+`computer_act` takes a `pacing` for batches: `fast` (default) checks briefly
+after each press; `wait` lets the app stop changing after every step (at most
+1.5 s); `wait_retry` also re-checks a control that is briefly disabled, moving
+or gone, until `retry_ms` (100–5000, default 1500), and presses it where it is
+now. Nothing waits past a window, dialog, menu or system prompt that opened.
+
+On a Mac, `computer_open` lists the app's enabled menu-bar commands in
+`menus` (`"Format › Font › Bold (command+b)"`), read in one accessibility call
+per item without opening a menu; `computer_observe({ menus: true })` lists
+them again. `{ type: "menu", path: ["Format", "Font", "Bold"] }` runs one
+through accessibility: no menu opens, no keyboard focus is needed and it works
+in assist mode. The agent cursor still visits the menu title and a light copy
+of the path shows the command being picked, without delaying input. The Apple
+and app menus, the Window menu, recent-document lists and any command whose
+shortcut is a blocked chord (Quit, Close, Hide, Minimize, clipboard) are never
+listed or pressed. Commands go to the app's focused window only.
 
 A program defaults to 30 seconds, accepts a timeout up to 60 seconds, and is
 limited to 80 helper calls and 32 KB of returned program data. The desktop

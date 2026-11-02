@@ -28,7 +28,6 @@ export function parseRemoteTaskRows(key: string): RemoteTaskRow[] {
 /** Tasks a chat started, as a string that only changes when their rows would, so status checks don't re-render the sidebar. */
 function useRemoteTaskRowsKey(sessionId: string): string {
   return useRemoteThreadStore((state) => {
-    if (!state.helperView) return "[]";
     const rows: [string, string, string, boolean][] = [];
     for (const entry of Object.values(state.threads)) {
       if (!Object.values(entry.owners).some((owner) => owner.sessionId === sessionId)) continue;
@@ -40,7 +39,7 @@ function useRemoteTaskRowsKey(sessionId: string): string {
 }
 
 /**
- * `remoteSessionHelperView`: tasks a chat started on other computers, listed
+ * Tasks a chat started on other computers, listed
  * under that chat with a status word (`Needs you`, `Done`) instead of a dot.
  * The title sits on the sidebar's label lane, the same left edge as the chat
  * title above it, with no glyph of its own. Only tasks this window follows.

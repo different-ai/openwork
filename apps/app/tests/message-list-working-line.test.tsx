@@ -3,6 +3,7 @@ import { GlobalRegistrator } from "@happy-dom/global-registrator"
 import { act, createElement } from "react"
 import { createRoot, type Root } from "react-dom/client"
 import type { UIMessage } from "ai"
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
 
 GlobalRegistrator.register({ url: "https://web.example/" })
 const previousAct = Reflect.get(globalThis, "IS_REACT_ACT_ENVIRONMENT")
@@ -15,6 +16,9 @@ afterAll(() => {
 const { PlatformProvider, createDefaultPlatform } = await import("../src/react-app/kernel/platform")
 const { MessageListProvider } = await import("../src/components/chat/message-list-provider")
 const { MessageList } = await import("../src/components/chat/message-list")
+// The chat refreshes the Artifacts catalog when an artifact is built, so it mounts under the app's signed-out auth.
+const { DenAuthProvider } = await import("../src/react-app/domains/cloud/den-auth-provider")
+const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: Infinity } } })
 const { useSessionActivityStore } = await import("../src/react-app/domains/session/status/session-activity-store")
 const { NO_NEW_ACTIVITY_AFTER_MS } = await import("../src/react-app/domains/session/status/session-progress")
 
@@ -100,7 +104,8 @@ async function renderBusyRun(silentForMs: number, options: RunOptions = {}) {
   document.body.append(container)
   const root = createRoot(container)
   mounted = { root, container }
-  await act(async () => root.render(createElement(PlatformProvider, {
+  await act(async () => root.render(createElement(QueryClientProvider, { client: queryClient,
+    children: createElement(DenAuthProvider, { children: createElement(PlatformProvider, {
     value: createDefaultPlatform(),
     children: createElement(MessageListProvider, {
       workspaceId, sessionId,
@@ -116,7 +121,7 @@ async function renderBusyRun(silentForMs: number, options: RunOptions = {}) {
         syncHealth: { degraded: options.syncDegraded === true, lastConfirmedAt: startedAt },
       }),
     }),
-  })))
+  }) }) })))
   return {
     working: container.querySelector('[data-loading-message="working"]')?.textContent ?? null,
     reconnecting: container.querySelector('[data-loading-message="reconnecting"]') !== null,

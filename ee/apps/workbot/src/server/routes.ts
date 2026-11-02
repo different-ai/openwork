@@ -104,6 +104,10 @@ function actorOf(member: Member): WorkbotActor {
   }
 }
 
+export function workbotConnectionUrl(denWeb: string, organizationId: string, connectionId: string) {
+  return `${denWeb}/dashboard/your-connections?${new URLSearchParams({ connectionId, workbotOrganizationId: organizationId })}`
+}
+
 export function registerWorkbotRoutes(app: Hono<AppEnv>, input: { config: Config; den: Den; member: MiddlewareHandler<AppEnv>; sameOrigin: MiddlewareHandler }) {
   const { config, den } = input
   const sent = new Map<string, number[]>()
@@ -237,12 +241,13 @@ export function registerWorkbotRoutes(app: Hono<AppEnv>, input: { config: Config
       computer: who.enabled && who.computer,
       browser: who.enabled && who.browser,
       browserDemonstrations: who.enabled && who.browser && who.browserDemonstrations,
-      browserLiveView: who.enabled && who.browser && who.browserLiveView,
+      // Older clients still read this field; the Browser view now always uses the page stream.
+      browserLiveView: who.enabled && who.browser,
       documentEditing: who.enabled && who.documents === true && who.documentEditing,
       nativeDictation: who.enabled && who.nativeDictation,
       workspaceAssistant: who.enabled && who.workspaceAssistant,
       guidedNavigation: who.enabled && who.workspaceAssistant && who.guidedNavigation,
-      usageRecovery: who.enabled && who.usageRecovery,
+      usageRecovery: who.enabled,
       activationChecklist: who.enabled,
       canSchedule: who.enabled && who.canSchedule,
       sideChats: who.enabled && who.sideChats,
@@ -364,7 +369,7 @@ export function registerWorkbotRoutes(app: Hono<AppEnv>, input: { config: Config
 
   app.get("/v1/workbot/model-recovery", async (c) => {
     const member = c.get("member")
-    if (!member.den.enabled || !member.den.usageRecovery) return c.json({ error: "feature_disabled" }, 404)
+    if (!member.den.enabled) return c.json({ error: "feature_disabled" }, 404)
     const result = await den.modelRecovery(member.accessToken)
     return new Response(JSON.stringify(result.payload), { status: result.status, headers: { "Content-Type": "application/json", "Cache-Control": "no-store" } })
   })
@@ -491,7 +496,7 @@ export function registerWorkbotRoutes(app: Hono<AppEnv>, input: { config: Config
       connections: connections.map((connection) => ({
         ...connection,
         // Den's own link, at the Den web origin this Workbot is configured with.
-        connectUrl: connection.ready || !denWeb ? connection.connectUrl : `${denWeb}/dashboard/your-connections?connectionId=${encodeURIComponent(connection.id)}`,
+        connectUrl: connection.ready || !denWeb ? connection.connectUrl : workbotConnectionUrl(denWeb, member.den.organization.id, connection.id),
       })),
     })
   })

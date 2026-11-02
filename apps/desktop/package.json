@@ -48,7 +48,7 @@
     "electron-updater": "^6.3.9",
     "htmlparser2": "8.0.2",
     "jsonc-parser": "^3.2.1",
-    "minimatch": "^10.2.5",
+    "minimatch": "^11.0.1",
     "node-pty": "npm:@lydell/node-pty@1.2.0-beta.12",
     "undici": "6.29.1",
     "yaml": "^2.9.0",
@@ -59,7 +59,7 @@
     "@electron/asar": "^3.4.1",
     "@electron/rebuild": "^4.2.0",
     "electron": "^43.8.1",
-    "electron-builder": "^26.15.3"
+    "electron-builder": "^26.18.0"
   },
   "packageManager": "pnpm@10.27.0"
 }

@@ -68,6 +68,8 @@ final class AgentCursor {
     private var idle: DispatchWorkItem?
     private var hidden = false
     private var generation = 0
+    /// Bumped by each input, so a menu replay never pulls the cursor back from a newer step.
+    private var motion = 0
 
     private static let font = NSFont.systemFont(ofSize: 12, weight: .semibold)
     private var scale: CGFloat { NSScreen.main?.backingScaleFactor ?? 2 }
@@ -147,6 +149,7 @@ final class AgentCursor {
 
     func feedback(action: String, phase: InputFeedback.Phase, screenPoint: CGPoint?, windowFrame frame: CGRect) {
         guard window != nil, !paused, phase != .uncertain else { return }
+        motion += 1
         place(frame)
         stopThinking()
         let target = screenPoint.flatMap(local) ?? cursorPoint
@@ -155,7 +158,7 @@ final class AgentCursor {
             if phase == .down { trailPoints = [target] } else if phase == .move { trailPoints.append(target) }
             drawTrail(fading: phase == .up)
         }
-        if phase == .down || (phase == .dispatched && screenPoint != nil && !["scroll", "type", "key", "set_value", "press"].contains(action)) {
+        if phase == .down || (phase == .dispatched && screenPoint != nil && !["scroll", "type", "key", "set_value", "press", "menu"].contains(action)) {
             // Aim, then click: the ripple lands when the cursor arrives.
             let press = CAKeyframeAnimation(keyPath: "transform.scale")
             press.values = [1, 0.8, 1]; press.duration = 0.22
@@ -169,6 +172,70 @@ final class AgentCursor {
         guard phase != .up, phase != .move || action == "move" else { return }
         let typing = action == "type" || action == "set_value"
         say("\(presence.name) · \(narration ?? Self.verb(action))", busy: typing, hold: 1.6)
+    }
+
+    /// Replays a menu command over the menu bar without opening the app's menu: the cursor
+    /// visits the menu title, a light copy of the path drops below it and the command is
+    /// picked. Purely visual and never waited on; the command has already run.
+    func showMenu(titleFrame: CGRect?, path: [String], shortcut: String?) {
+        guard let window, let root = window.contentView?.layer, !paused, let titleFrame, Geometry.valid(titleFrame), path.count > 1 else { return }
+        let title = Self.cocoa(titleFrame).offsetBy(dx: -window.frame.minX, dy: -window.frame.minY)
+        let rows = Array(path.dropFirst())
+        let rowHeight: CGFloat = 22
+        let labels = rows.enumerated().map { index, name in
+            index == rows.count - 1 ? name + (shortcut.map { "    " + Self.glyphs($0) } ?? "") : name + "  ›"
+        }
+        let width = max(150, (labels.map { ceil(($0 as NSString).size(withAttributes: [.font: Self.font]).width) }.max() ?? 0) + 28)
+        let height = CGFloat(rows.count) * rowHeight + 8
+        let panel = CALayer()
+        panel.frame = CGRect(x: title.minX, y: title.minY - height - 2, width: width, height: height)
+        panel.backgroundColor = NSColor.windowBackgroundColor.withAlphaComponent(0.94).cgColor
+        panel.cornerRadius = 8; panel.borderWidth = 1; panel.borderColor = presence.color.withAlphaComponent(0.55).cgColor
+        panel.shadowOpacity = 0.22; panel.shadowRadius = 10; panel.shadowOffset = CGSize(width: 0, height: -3)
+        for (index, label) in labels.enumerated() {
+            let y = height - 4 - CGFloat(index + 1) * rowHeight
+            let picked = index == labels.count - 1
+            if picked {
+                let pick = CALayer()
+                pick.frame = CGRect(x: 4, y: y, width: width - 8, height: rowHeight)
+                pick.backgroundColor = presence.color.withAlphaComponent(0.9).cgColor; pick.cornerRadius = 5
+                panel.addSublayer(pick)
+            }
+            let text = CATextLayer()
+            text.string = label; text.font = Self.font; text.fontSize = Self.font.pointSize
+            text.foregroundColor = (picked ? NSColor.white : NSColor.labelColor).cgColor
+            text.contentsScale = window.backingScaleFactor
+            text.frame = CGRect(x: 12, y: y + 3, width: width - 20, height: rowHeight - 6)
+            panel.addSublayer(text)
+        }
+        let appear = CABasicAnimation(keyPath: "opacity"); appear.fromValue = 0; appear.toValue = 1; appear.duration = 0.12
+        panel.add(appear, forKey: "appear")
+        root.insertSublayer(panel, below: cursor)
+        highlight(screenRect: titleFrame)
+        let mark = motion
+        let pickPoint = CGPoint(x: panel.frame.minX + 28, y: panel.frame.minY + 4 + rowHeight / 2)
+        let travel = glide(to: CGPoint(x: title.midX, y: title.midY))
+        DispatchQueue.main.asyncAfter(deadline: .now() + travel + 0.1) { [weak self] in
+            guard let self, self.motion == mark, !self.paused else { return }
+            let more = self.glide(to: pickPoint)
+            DispatchQueue.main.asyncAfter(deadline: .now() + more) { [weak self] in
+                guard let self, self.motion == mark else { return }
+                self.ripple(at: pickPoint)
+            }
+        }
+        let fade = CABasicAnimation(keyPath: "opacity")
+        fade.fromValue = 1; fade.toValue = 0; fade.beginTime = CACurrentMediaTime() + 0.75; fade.duration = 0.3
+        fade.fillMode = .forwards; fade.isRemovedOnCompletion = false
+        panel.add(fade, forKey: "fade")
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.1) { panel.removeFromSuperlayer() }
+    }
+
+    /// "command+shift+b" as the menu shows it: ⇧⌘B.
+    nonisolated static func glyphs(_ chord: String) -> String {
+        let parts = chord.split(separator: "+").map(String.init)
+        let order: [(String, String)] = [("control", "⌃"), ("option", "⌥"), ("shift", "⇧"), ("command", "⌘")]
+        let held = order.filter { parts.contains($0.0) }.map(\.1).joined()
+        return held + (parts.last.map { $0.count == 1 ? $0.uppercased() : $0 } ?? "")
     }
 
     /// Briefly outline the accessible control that was pressed or filled.
@@ -221,6 +288,7 @@ final class AgentCursor {
         case "scroll": return "scrolling"
         case "drag": return "dragging"
         case "press": return "pressing"
+        case "menu": return "choosing a menu command"
         case "move": return "pointing"
         default: return "working"
         }

@@ -8,6 +8,7 @@ import { SYNTHETIC_SESSION_ERROR_MESSAGE_PREFIX } from "../../../../app/types";
 import {
   parseDynamicToolUIPart,
   parseStructuredOutputUIPart,
+  withToolAttachmentOwner,
   reasoningTime,
   STRUCTURED_OUTPUT_TOOL,
 } from "./parse-tool-parts";
@@ -119,7 +120,7 @@ function mapSnapshotToolParts(part: ToolPart): UIMessage["parts"] {
   if (!mapped) return [];
 
   if (part.state.status === "completed" && part.state.attachments) {
-    return [mapped, ...part.state.attachments.flatMap(mapFileParts)];
+    return [mapped, ...withToolAttachmentOwner(part.state.attachments.flatMap(mapFileParts), part.callID)];
   }
 
   return [mapped];

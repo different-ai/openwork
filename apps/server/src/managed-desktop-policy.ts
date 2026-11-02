@@ -9,6 +9,12 @@ import { ApiError } from "./errors.js";
 import { clearManagedDesktopPolicy, readGlobalRuntimeOpencodeConfig, writeManagedDesktopPolicy, runtimeProviderMap } from "./runtime-opencode-config-store.js";
 import { policyDenial, policyRequestActions, type ManagedPolicyAction } from "./managed-policy-rules.js";
 import { agentPermissionDenial, agentPermissionRulesOf } from "./agent-permission-engine.js";
+import type { AgentPermissionAction, AgentPermissionRule } from "@openwork/types/den/agent-permissions-runtime";
+
+/** Only the rules enforced by the host surface requesting them. */
+export function agentPermissionRulesForActions(rules: readonly AgentPermissionRule[], actions: readonly AgentPermissionAction[]): AgentPermissionRule[] {
+  return rules.filter((rule) => actions.includes(rule.action));
+}
 
 const services = new WeakMap<ServerConfig, ManagedDesktopPolicy>();
 /** Org-managed providers: Den-imported (lpr_), Gateway (ipr_), hosted OpenWork Models and Smart Routers. */
@@ -206,6 +212,26 @@ class ManagedDesktopPolicy {
     if (result.changed) this.onChange?.();
     return policy;
   }
+  /**
+   * v1 has no reliable organization external-folder enforcement. Refuse its
+   * execution instead of silently treating either Ask first or Block as Allow.
+   * Guard the forwarding boundary, not request bodies or project config: even
+   * a custom agent, saved command, permission reply or terminal cannot opt out.
+   * Reads and Stop stay available so old chats can be viewed and stopped.
+   */
+  async assertLegacyExecutionRequest(request: Request, path: string): Promise<void> {
+    const decoded = decodeURIComponent(path);
+    const terminal = /\/(?:pty|persistent-pty|terminal)(?:\/|$)/.test(decoded);
+    if (["GET", "HEAD", "OPTIONS"].includes(request.method) && !terminal) return;
+    if (request.method === "POST" && /\/session\/[^/]+\/abort\/?$/.test(decoded)) return;
+    const generation = this.generation;
+    const rules = await this.agentPermissionRulesFor(["external_directory"], true);
+    this.identityChanged(generation);
+    const restrictive = rules.find((rule) => rule.effect !== "allow");
+    if (!restrictive) return;
+    throw new ApiError(403, "organization_policy_denied",
+      `Your organization's agent permissions restrict folders outside the workspace (set for ${restrictive.source}). OpenCode v1 cannot enforce this policy. Use the default OpenCode v2 engine to continue.`);
+  }
   async assertRequest(request: Request, path: string, engine = false): Promise<void> {
     if (!DESKTOP_POLICY_ENFORCEMENT_ENABLED) return this.assertProviderUse(request, path, engine);
     const generation = this.generation;
@@ -321,23 +347,34 @@ class ManagedDesktopPolicy {
   }
 
   /**
-   * The member's website rules for the built-in browser, read by the desktop
+   * The member's rules for a desktop host surface, read by the desktop
    * process itself rather than taken from the app window. Den is asked first
    * (briefly); when it cannot answer, the policy verified for this sign-in,
-   * else the latest rules stored on this computer, so the member keeps
-   * working offline. Signed out there are none.
+   * else (for non-strict callers only) the latest rules stored on this
+   * computer. Strict legacy execution requires verification bound to the
+   * current sign-in, never the unscoped disk row. Signed out there are none.
    */
-  async websiteRules(): Promise<ReturnType<typeof agentPermissionRulesOf>> {
+  private async agentPermissionRulesFor(actions: readonly AgentPermissionAction[], requireVerified = false): Promise<AgentPermissionRule[]> {
     if (!this.session) return [];
     const fresh = await Promise.race([
       this.current().catch(() => null),
       new Promise<null>((resolve) => setTimeout(() => resolve(null), 5_000)),
     ]);
-    const policy = fresh ?? this.knownPolicy();
-    const rules = policy
-      ? agentPermissionRulesOf(policy)
-      : agentPermissionRulesOf((await readGlobalRuntimeOpencodeConfig(this.config)).managedPolicy);
-    return rules.filter((rule) => rule.action === "webfetch");
+    const verified = fresh ?? this.knownPolicy();
+    // The global runtime row is not bound to a sign-in: a previous org's Allow
+    // (or empty policy) must never authorize legacy execution for this member.
+    // Only a fresh read or the in-memory policy verified for this session can.
+    if (!verified && requireVerified) {
+      throw new ApiError(403, "policy_unavailable", "Your organization's folder permissions could not be verified. Reconnect and try again, or use the default OpenCode v2 engine.");
+    }
+    const policy = verified ?? (await readGlobalRuntimeOpencodeConfig(this.config)).managedPolicy;
+    return agentPermissionRulesForActions(agentPermissionRulesOf(policy), actions);
+  }
+  websiteRules(): Promise<AgentPermissionRule[]> {
+    return this.agentPermissionRulesFor(["webfetch"]);
+  }
+  computerRules(): Promise<AgentPermissionRule[]> {
+    return this.agentPermissionRulesFor(["computer", "script"]);
   }
   /** The desktop config verified for this sign-in, without waiting on Den. Null signed out or before Den first answered. */
   known(): DesktopConfig | null {

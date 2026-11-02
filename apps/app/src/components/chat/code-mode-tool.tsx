@@ -1,9 +1,8 @@
 import { useEffect, useState } from "react";
 import type { DynamicToolUIPart } from "ai";
-import { LoaderCircle } from "lucide-react";
+
 import { CapabilityCallLine, ConnectorMark, DetailsToggle, isOpenWorkActivity, OPENWORK_IDENTITY, TechnicalDetailsPanel } from "./capability-call-line";
-import { LaneChevron, LeadingLane, RAIL_LINE, RAIL_ROW, RailDuration, RailMeta, TextSentenceLine, TrailingChevron } from "./activity-rail";
-import { useTextActivityRail } from "./text-activity-rail-store";
+import { RAIL_LINE, RAIL_ROW, RailMeta, TextSentenceLine, TrailingChevron } from "./activity-rail";
 import { isOpenWorkSkillCall } from "@/lib/created-skill";
 import { splitSentence } from "@/lib/text-activity";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
@@ -15,7 +14,6 @@ import { openWorkNativeSentence } from "@/lib/openwork-native-activity";
 import { useCreatedSkills } from "./created-skill-card";
 import { codeModeScriptError, codeModeToolCalls } from "@/lib/code-mode-tools";
 import type { CurrentToolLifecycle } from "@/lib/current-tool-lifecycle";
-import { formatElapsedSeconds, getToolCallStartedAt, trackToolCallDuration } from "@/lib/tool-call-duration";
 import { isToolPartInFlight } from "@/lib/tool-activity";
 import { cn } from "@/lib/utils";
 import { resolveConnectorToolIdentity, type ConnectorToolIdentity } from "@/react-app/domains/connections/connector-tool-identity";
@@ -56,7 +54,6 @@ export function CodeModeTool({ part, calls: allCalls, lifecycle, connectors }: {
   const calls = allCalls.filter((call) => !isToolLookup(call));
   // A finished group folds unless the person explicitly chose otherwise.
   const [userOpen, setUserOpen] = useState<boolean | null>(null);
-  const textRail = useTextActivityRail();
   const [detailsOpen, setDetailsOpen] = useState(false);
   const [now, setNow] = useState(Date.now());
   const [lastActivityAt, setLastActivityAt] = useState(Date.now());
@@ -87,11 +84,6 @@ export function CodeModeTool({ part, calls: allCalls, lifecycle, connectors }: {
   const blockedCalls = calls.filter(isBlocked);
   const failedCalls = calls.filter(call => call.state === "output-error" && !isBlocked(call));
   const failed = part.state === "output-error";
-  const startedAt = running ? getToolCallStartedAt(part) : null;
-  const liveDuration = startedAt === null ? null : Math.floor((now - startedAt) / 1_000);
-  const duration = running && liveDuration !== null && liveDuration >= 1
-    ? formatElapsedSeconds(liveDuration)
-    : statusUnknown ? null : trackToolCallDuration(part);
   const serviceName = (call: DynamicToolUIPart) => {
     // Catalog search is an OpenWork mechanism, not a service the person used.
     if (call.toolName.endsWith("search_capabilities")) return null;
@@ -129,12 +121,8 @@ export function CodeModeTool({ part, calls: allCalls, lifecycle, connectors }: {
     return (
       <div data-code-mode-call={part.toolCallId} className={RAIL_ROW}>
         <div className={RAIL_LINE}>
-          <LeadingLane>{running && !textRail ? <LoaderCircle aria-hidden="true" className="size-3.5 animate-spin text-muted-foreground motion-reduce:animate-none" /> : null}</LeadingLane>
-          {textRail
-            ? <TextSentenceLine {...splitSentence(label)} tone={failed ? "failed" : running ? "running" : "normal"} className="shrink-0" />
-            : <span className={cn("shrink-0", failed && "text-destructive", running && "ow-text-shimmer motion-reduce:animate-none")}>{label}</span>}
+          <TextSentenceLine {...splitSentence(label)} tone={failed ? "failed" : running ? "running" : "normal"} className="shrink-0" />
           {failed && reason ? <span className="min-w-0 flex-1 truncate text-xs text-muted-foreground">{reason}</span> : null}
-          <RailDuration value={duration} />
           <DetailsToggle open={detailsOpen} onToggle={() => setDetailsOpen(!detailsOpen)} label={label} alwaysVisible={failed} />
         </div>
         {detailsOpen ? <TechnicalDetailsPanel part={part} /> : null}
@@ -156,7 +144,6 @@ export function CodeModeTool({ part, calls: allCalls, lifecycle, connectors }: {
           part={merged}
           connector={resolveConnectorToolIdentity(only, connectors)}
           quietFailure
-          hideDuration
           shimmer={running}
           statusUnknown={isToolPartInFlight(only) && (!running || !inFlight)}
         />
@@ -178,11 +165,11 @@ export function CodeModeTool({ part, calls: allCalls, lifecycle, connectors }: {
 
   // Text-first: a group whose calls all reached one service carries that
   // service's real mark inline ("[OpenWork] Looked up 2 tools"), never a glyph.
-  const groupMarks = textRail ? [...new Map(calls.map((call) => {
+  const groupMarks = [...new Map(calls.map((call) => {
     const identity = resolveConnectorToolIdentity(call, connectors)
       ?? (isOpenWorkSkillCall(call) || isOpenWorkActivity(call) || call.toolName.startsWith("openwork-cloud_") ? OPENWORK_IDENTITY : null);
     return [identity?.id ?? "", identity] as const;
-  })).values()] : [];
+  })).values()];
   const groupMark = groupMarks.length === 1 ? groupMarks[0] ?? null : null;
 
   return (
@@ -192,27 +179,18 @@ export function CodeModeTool({ part, calls: allCalls, lifecycle, connectors }: {
           className="group flex min-h-6.5 min-w-0 flex-1 items-center gap-2 text-start text-sm text-muted-foreground hover:text-foreground"
           aria-label={`${label}. ${open ? "Hide steps" : "Show steps"}`}
         >
-          <LaneChevron open={open} />
-          {textRail ? (
-            <>
-              <TextSentenceLine {...splitSentence(label)} mark={groupMark ? <ConnectorMark connector={groupMark} /> : null} tone={running && !current ? "running" : "normal"} />
-            </>
-          ) : (
-            <span className={cn("min-w-0 truncate", running && !current && "ow-text-shimmer motion-reduce:animate-none")}>{label}</span>
-          )}
-          {calls.length > 0 && !textRail ? <RailMeta>{calls.length} {calls.length === 1 ? "step" : "steps"}</RailMeta> : null}
+          <TextSentenceLine {...splitSentence(label)} mark={groupMark ? <ConnectorMark connector={groupMark} /> : null} tone={running && !current ? "running" : "normal"} />
           {waitingOn ? <RailMeta>Waiting on {waitingOn}</RailMeta> : null}
-          {failedCalls.length > 0 ? <RailMeta className={textRail ? "text-red-11" : "text-destructive"}>{failedCalls.length} failed</RailMeta> : null}
+          {failedCalls.length > 0 ? <RailMeta className="text-red-11">{failedCalls.length} failed</RailMeta> : null}
           {blockedCalls.length > 0 ? <RailMeta>{blockedCalls.length} blocked</RailMeta> : null}
-          <RailDuration value={duration} />
           <TrailingChevron open={open} />
         </CollapsibleTrigger>
         <DetailsToggle open={detailsOpen} onToggle={() => setDetailsOpen(!detailsOpen)} label={label} alwaysVisible={failed} />
       </div>
       {detailsOpen ? <TechnicalDetailsPanel part={part} /> : null}
       <CollapsibleContent className="h-(--collapsible-panel-height) overflow-hidden transition-[height] duration-180 ease-out data-starting-style:h-0 data-ending-style:h-0 motion-reduce:transition-none [&[hidden]:not([hidden='until-found'])]:hidden">
-        {/* Flat, not boxed (S1): the group's steps indent under its label. */}
-        <div className={cn("mt-2 flex flex-col gap-2", !textRail && "ps-7")}>
+        {/* Flat, not boxed (S1): steps share the summary's left edge. */}
+        <div className="mt-2 flex flex-col gap-2">
           {rows.map(({ call, repeat }) => (
             <CapabilityCallLine
               key={call.toolCallId}
@@ -220,7 +198,6 @@ export function CodeModeTool({ part, calls: allCalls, lifecycle, connectors }: {
               connector={resolveConnectorToolIdentity(call, connectors)}
               statusUnknown={isToolPartInFlight(call) && (!running || !inFlight)}
               quietFailure
-              hideDuration
               groupService={groupService}
               repeat={repeat}
               shimmer={running && call.toolCallId === current?.toolCallId}
