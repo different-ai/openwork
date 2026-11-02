@@ -41,7 +41,12 @@ export async function backgroundTasksShimmer(seed: Seed, options: { composerList
 
   const [webPort] = await allocateFreePorts(1);
   if (!webPort) throw new Error("No app-web port available for the background tasks world");
-  const den = await seed.den({ trustedOrigins: [`http://127.0.0.1:${webPort}`] });
+  // Explicit org shape makes Daytona provision the same admin identity it bootstraps,
+  // rather than falling back to the demo owner when this world enables its flag.
+  const den = await seed.den({
+    trustedOrigins: [`http://127.0.0.1:${webPort}`],
+    org: { name: "Background tasks workspace", admin: { name: "Background tasks owner" } },
+  });
   if (options.composerList) await enableOrganizationCapabilities(seed, den.admin, { composerBackgroundTasks: true });
 
   const providerId = "background-shell-mock";
