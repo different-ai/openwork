@@ -114,10 +114,11 @@ import { encodeConnectSkillToken } from "@/react-app/domains/session/surface/com
 import { AutomationsPage } from "@/react-app/domains/automations/automations-page";
 import { automationProviderCatalog } from "@/react-app/domains/automations/automation-model-options";
 import { CodePage } from "@/react-app/domains/code/code-page";
-import { SectionPlaceholder } from "@/react-app/domains/sidebar-sections/section-placeholder";
 import { ProjectsPage } from "@/react-app/domains/projects/projects-page";
 import { ArtefactosPage } from "@/react-app/domains/artifacts/artifacts-page";
 import { ProgramadasPage } from "@/react-app/domains/scheduled/scheduled-page";
+import { DesignPage } from "@/react-app/domains/design/design-page";
+import { PersonalizacionPage } from "@/react-app/domains/personalization/personalization-page";
 import { CalendarPage } from "@/react-app/domains/calendar/calendar-page";
 import { useOrgFeatureState } from "@/react-app/domains/cloud/use-org-feature";
 import { useRemoteSessionSubagentsFeature } from "@/react-app/domains/session/remote-threads/use-remote-session-subagents-feature";
@@ -3980,10 +3981,15 @@ export function SessionRoute() {
           <ProgramadasPage
             workspaceName={selectedWorkspace ? workspaceLabel(selectedWorkspace) : ""}
           />
+        ) : masterPlanSection === "design" ? (
+          <DesignPage
+            openworkServerClient={selectedWorkspaceEndpoint?.client ?? null}
+            projectPath={selectedWorkspaceRoot ?? ""}
+          />
         ) : (
-          <SectionPlaceholder
-            title={masterPlanSection === "artifacts" ? "Artefactos" : masterPlanSection === "design" ? "Design" : "Personalización"}
-            description="Esta sección está en construcción."
+          <PersonalizacionPage
+            openworkServerClient={selectedWorkspaceEndpoint?.client ?? null}
+            workspaceId={selectedWorkspaceId}
           />
         )
       ) : pendingConversation ? <PendingConversationView conversation={pendingConversation} composer={newTaskComposerContext} /> : appsRouteActive ? (
