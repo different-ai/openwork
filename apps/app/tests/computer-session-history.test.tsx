@@ -5,7 +5,7 @@ import { createRoot, type Root } from "react-dom/client"
 import type { DynamicToolUIPart, UIMessage } from "ai"
 import { collectComputerSessionHistory, withoutComputerHistory } from "../src/lib/computer-session-history"
 import { parseDynamicToolUIPart, withToolAttachmentOwner } from "../src/react-app/domains/session/sync/parse-tool-parts"
-import { computerHistoryMessages } from "../test-fixtures/computer-session-history-data"
+import { browserHistoryMessages, computerHistoryMessages } from "../test-fixtures/computer-session-history-data"
 
 GlobalRegistrator.register({ url: "https://web.example/" })
 Reflect.set(globalThis, "IS_REACT_ACT_ENVIRONMENT", true)
@@ -44,6 +44,20 @@ test("failed, denied, waiting and native error results stay out of the card", ()
   expect(collectComputerSessionHistory([{ id: "failures", role: "assistant", parts }])).toBeNull()
 })
 
+test("browser steps share the card, while a sign-in handoff and a failed step stay in the conversation", () => {
+  const messages = browserHistoryMessages(images)
+  const handoff: DynamicToolUIPart = { type: "dynamic-tool", toolName: "browser_handoff", toolCallId: "handoff", state: "output-available", input: {}, output: '{"ok":true}' }
+  const failed: DynamicToolUIPart = { ...handoff, toolName: "browser_act", toolCallId: "failed", output: '{"ok":false,"code":"stale_observation"}' }
+  messages[1]!.parts.push(handoff, failed)
+  const history = collectComputerSessionHistory(messages)!
+  expect(history.parts.map(part => part.toolName)).toEqual(["browser_open", "browser_observe", "browser_act", "browser_observe", "browser_act", "browser_observe"])
+  expect(history.frames.map(frame => frame.label)).toEqual(["Checked the page", "Checked the page", "Checked the page"])
+  const remaining = messages.flatMap(message => withoutComputerHistory(message.parts, history))
+  expect(remaining.filter(part => part.type === "dynamic-tool")).toEqual([handoff, failed])
+  expect(remaining.filter(part => part.type === "file")).toHaveLength(0)
+  expect(remaining.filter(part => part.type === "text")).toHaveLength(3)
+})
+
 test("duplicate observations share a view, while returning to an earlier screen remains chronological", () => {
   const messages = computerHistoryMessages([images[0]!, images[0]!, images[1]!])
   messages[3]!.parts.push(...withToolAttachmentOwner([{ type: "file", mediaType: "image/png", url: images[0]! }], "clouds"))
@@ -54,6 +68,9 @@ test("native timing and failure metadata survive hydration", () => {
   const part = parseDynamicToolUIPart({ type: "tool", id: "part", sessionID: "session", messageID: "message", callID: "call", tool: "computer_observe",
     state: { status: "completed", input: {}, output: "unavailable", title: "Computer", metadata: { isError: true }, time: { start: 100, end: 150 } } })!
   expect(part.callProviderMetadata?.openwork).toMatchObject({ toolStartedAt: 100, toolCompletedAt: 150, computerFailure: true })
+  const browser = parseDynamicToolUIPart({ type: "tool", id: "part", sessionID: "session", messageID: "message", callID: "call", tool: "browser_observe",
+    state: { status: "completed", input: {}, output: "{}", title: "Browser observation", metadata: {}, time: { start: 100, end: 150 } } })!
+  expect(browser.callProviderMetadata?.openwork).toMatchObject({ toolStartedAt: 100, toolCompletedAt: 150 })
 })
 
 async function mount(messages = computerHistoryMessages(images), active = false) {
@@ -101,6 +118,19 @@ test("browsing pins a capture while live work gains frames; missing screenshots 
   await render(noViews)
   expect(container.textContent).toContain("Using computer")
   expect(container.textContent).toContain("No captured views")
+})
+
+test("the card says browser only while the whole turn stayed in the browser", async () => {
+  const messages = browserHistoryMessages(images)
+  const { container, render, click } = await mount(messages)
+  expect(container.textContent).toContain("Used browser")
+  expect(container.querySelector('[role="group"]')?.getAttribute("aria-label")).toBe("Browser session history")
+  await click("View browser session history")
+  expect(container.querySelector('[data-computer-view-count]')?.textContent).toBe("3 / 3")
+  await click("View browser actions")
+  expect(container.textContent).toContain("third-look")
+  await render(collectComputerSessionHistory([...messages, ...computerHistoryMessages(images)])!)
+  expect(container.textContent).toContain("Used computer")
 })
 
 test("streaming transcript updates do not keep restarting playback", async () => {

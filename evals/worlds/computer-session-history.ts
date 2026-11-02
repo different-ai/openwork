@@ -4,7 +4,7 @@ import type { Place, Seed } from "@openwork/env"
 import { chrome } from "@openwork/hosts"
 
 /** The production transcript and history controls, with deterministic native tool captures. */
-export async function computerSessionHistory(_seed: Seed, { place }: { place: Place }) {
+async function sessionHistoryFixture(place: Place, search: string) {
   const resources = new AsyncDisposableStack()
   try {
     const vite = await createServer({
@@ -16,7 +16,15 @@ export async function computerSessionHistory(_seed: Seed, { place }: { place: Pl
     await vite.listen()
     const url = vite.resolvedUrls?.local[0]
     if (!url) throw new Error("The history fixture did not start")
-    const web = resources.use(await chrome({ host: place.host(), name: "computer-session-history", startUrl: `${url}test-fixtures/computer-session-history.html`, headless: true }))
+    const web = resources.use(await chrome({ host: place.host(), name: "computer-session-history", startUrl: `${url}test-fixtures/computer-session-history.html${search}`, headless: true }))
     return { web, async [Symbol.asyncDispose]() { await resources.disposeAsync() } }
   } catch (error) { await resources.disposeAsync(); throw error }
+}
+
+export async function computerSessionHistory(_seed: Seed, { place }: { place: Place }) {
+  return sessionHistoryFixture(place, "")
+}
+
+export async function browserSessionHistory(_seed: Seed, { place }: { place: Place }) {
+  return sessionHistoryFixture(place, "?browser")
 }
