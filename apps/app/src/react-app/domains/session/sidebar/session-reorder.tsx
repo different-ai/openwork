@@ -57,6 +57,8 @@ export function useSessionReorderTarget(id: string, workspaceId: string, enabled
 
   return {
     dropPosition: accepts ? dropPosition : null,
+    /** This row is the one being dragged: it stays as a dimmed placeholder. */
+    isDragging: drag.session?.id === id && drag.session.workspaceId === workspaceId,
     dragProps: {
       draggable: true,
       onDragStart: (event: React.DragEvent) => {

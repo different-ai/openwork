@@ -18,6 +18,7 @@ export default {
   "common.hide": "Ẩn",
   "common.next": "Tiếp",
   "common.question": "Câu hỏi",
+  "common.permission": "Quyền",
   "common.refresh": "Làm mới",
   "common.remove": "Xóa",
   "common.reset": "Đặt lại",

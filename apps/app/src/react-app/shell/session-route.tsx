@@ -134,7 +134,7 @@ import { useCheckDesktopRestriction, useOrgRestrictions } from "@/react-app/doma
 import { newChatDefaultModel, orgDefaultModelForEngine } from "@/react-app/domains/models/org-default-model";
 import { useRestrictionNotice } from "@/react-app/domains/cloud/restriction-notice-provider";
 import { ReactSessionRuntime } from "@/react-app/domains/session/sync/runtime-sync";
-import { createSessionChildIdsSelector, useSessionActivityStore } from "@/react-app/domains/session/status/session-activity-store";
+import { createSessionChildIdsSelector, useSessionActivityStore, type SessionWaitingKind } from "@/react-app/domains/session/status/session-activity-store";
 import { createWorkspaceSessionAttentionSelector, sessionAttentionLabel, sessionAttentionSidebarStatus } from "@/react-app/domains/session/status/session-attention";
 import { buildOpenworkSessionSystemContext } from "@/react-app/domains/session/sync/env-context";
 import {
@@ -908,6 +908,7 @@ export function SessionRoute() {
     const statusById: Record<string, string> = {};
     const labelById: Record<string, string> = {};
     const sourceById: Record<string, "child" | "descendant"> = {};
+    const kindById: Record<string, SessionWaitingKind> = {};
     for (const group of workspaceSessionGroups) {
       const attention = selectWorkspaceAttention(group.sessions, {
         statuses: sessionActivityByWorkspaceId[group.workspace.id],
@@ -918,6 +919,8 @@ export function SessionRoute() {
         const entry = attention.get(session.id);
         if (!entry) continue;
         statusById[session.id] = sessionAttentionSidebarStatus(entry);
+        const kind = entry.blockedBy?.kind ?? sessionWaitingByWorkspaceId[group.workspace.id]?.[session.id];
+        if (entry.status === "waiting" && kind) kindById[session.id] = kind;
         if (entry.blockedBy) {
           labelById[session.id] = sessionAttentionLabel(entry.blockedBy);
           sourceById[session.id] = entry.blockedBy.relationship;
@@ -931,9 +934,10 @@ export function SessionRoute() {
         statusById[session.id] = "waiting";
         labelById[session.id] = sessionAttentionLabel({ sessionId: session.id, title: remote.title, kind: remote.kind });
         sourceById[session.id] = "child";
+        kindById[session.id] = remote.kind;
       }
     }
-    return { statusById: withSideChatActivity(statusById, sideChats, workspaceSessionGroups), labelById, sourceById };
+    return { statusById: withSideChatActivity(statusById, sideChats, workspaceSessionGroups), labelById, sourceById, kindById };
   }, [attentionLocale, remoteAttentionKey, selectWorkspaceAttention, sideChats, sessionActivityByWorkspaceId, sessionWaitingByWorkspaceId, sessionChildIdsByWorkspaceId, workspaceSessionGroups]);
   const sidebarSessionStatusById = sidebarSessionAttention.statusById;
   // Settling ships behind `settledSessions` and for OpenCode v2 only; v1 workspaces keep today's sidebar.
@@ -4074,6 +4078,7 @@ export function SessionRoute() {
         feedEnabled: settledSessionsEnabled,
         sessionAttentionLabelById: sidebarSessionAttention.labelById,
         sessionAttentionSourceById: sidebarSessionAttention.sourceById,
+        sessionAttentionKindById: sidebarSessionAttention.kindById,
         connectingWorkspaceId: null,
         workspaceConnectionStateById,
         newTaskDisabled: !canCreateTask,

@@ -1,6 +1,7 @@
 // The Feed view of the sidebar: every workspace's sessions in one list, newest
-// first, with sessions waiting on the person on top and settled ones in a shelf
-// at the bottom.
+// first, with settled ones in a shelf at the bottom. Sessions waiting on the
+// person stay in their normal place (the row itself shows they need you) and
+// never settle.
 import type { WorkspaceSessionGroup } from "../../../../app/types";
 import type { FeedFolder, FeedGroupBy, FeedSortBy, SessionSettleEntry, WorkspaceGroupState } from "./session-management-store";
 import { filterSettledSessions, sessionActivityAt, sessionCreatedAt } from "./session-settle";
@@ -32,7 +33,6 @@ export type FeedFolderShelf = FeedFolder & {
 
 export type SessionFeed = {
   folders: FeedFolderShelf[];
-  needsYou: FeedEntry[];
   sections: { section: FeedSection; entries: FeedEntry[] }[];
   settled: FeedEntry[];
 };
@@ -101,26 +101,23 @@ export function buildSessionFeed(groups: readonly WorkspaceSessionGroup[], conte
   const midnight = new Date(context.now);
   midnight.setHours(0, 0, 0, 0);
   const today = midnight.getTime();
-  // Active: the agent is working, or it finished with a result not read yet.
+  // Active: the agent is working, it is waiting on the person, or it finished
+  // with a result not read yet.
   const sectionOf = ({ session }: FeedEntry): FeedSection => {
     if (context.groupBy === "none") return "all";
     if (context.groupBy === "activity") {
-      return isActiveWorkSessionStatus(context.statusById?.[session.id]) || context.unreadIds.has(session.id) ? "active" : "inactive";
+      const status = context.statusById?.[session.id];
+      return isActiveWorkSessionStatus(status) || isNeedsAttentionSessionStatus(status) || context.unreadIds.has(session.id)
+        ? "active"
+        : "inactive";
     }
     const at = timeOf(session);
     return at >= today ? "today" : at >= today - DAY_MS ? "yesterday" : "earlier";
   };
-  const needsYou: FeedEntry[] = [];
   const bySection = new Map(SECTION_ORDER[context.groupBy].map((section): [FeedSection, FeedEntry[]] => [section, []]));
-  for (const entry of active) {
-    if (isNeedsAttentionSessionStatus(context.statusById?.[entry.session.id])) {
-      needsYou.push(entry);
-      continue;
-    }
-    bySection.get(sectionOf(entry))?.push(entry);
-  }
+  for (const entry of active) bySection.get(sectionOf(entry))?.push(entry);
   const sections = [...bySection]
     .filter(([, entries]) => entries.length > 0)
     .map(([section, entries]) => ({ section, entries }));
-  return { folders, needsYou, sections, settled };
+  return { folders, sections, settled };
 }
