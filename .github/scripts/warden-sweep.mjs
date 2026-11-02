@@ -4,7 +4,9 @@
 //
 //   security  diff-security-review on the merged diff
 //   bugs      diff-bug-review on the merged diff
-//   design    design-spec-review (DESIGN.md rules) on the merged diff
+//   design    design-spec-review (DESIGN.md rules) and ui-skills-review (pinned
+//             UI Skills rule sets: baseline UI, accessibility, motion
+//             performance, Web Interface Guidelines) on the merged diff
 //   tests     workflow runs on dev that failed at the merge commit
 //
 // Each merge commit on dev's first-parent line is one squash-merged PR, so
@@ -33,8 +35,8 @@ import { parseWardenJsonl } from "./contributor-screen.mjs";
 import { qualifyingFixes } from "./warden-fixer.mjs";
 import { redact, wardenEnvironment } from "./warden-fast.mjs";
 
-export const SKILLS = ["diff-security-review", "diff-bug-review", "design-spec-review"];
-export const KIND = { "diff-security-review": "security", "diff-bug-review": "bug", "design-spec-review": "design" };
+export const SKILLS = ["diff-security-review", "diff-bug-review", "design-spec-review", "ui-skills-review"];
+export const KIND = { "diff-security-review": "security", "diff-bug-review": "bug", "design-spec-review": "design", "ui-skills-review": "design" };
 export const STATE_ARTIFACT = "warden-sweep-state";
 // A busy window is finished by the next sweep rather than one very long job.
 export const MAX_PRS = 20;
@@ -109,11 +111,12 @@ export function fixBranch(pr) {
 /**
  * The fix PR for one merged PR, or null. Only Warden's high-confidence
  * suggested diffs that pass the warden-fixer rules against the files that
- * merge changed. Design findings are left to people: their fixes are taste.
+ * merge changed. Bugs, security and design (DESIGN.md and UI Skills) all
+ * qualify; failing tests have no suggested diff and stay in the report.
  */
 export function planFix(pr, changedFiles) {
   if (!pr.complete) return null;
-  const candidates = pr.findings.filter((finding) => finding.kind !== "design");
+  const candidates = pr.findings;
   const { fixes, skipped } = qualifyingFixes({ findings: candidates }, changedFiles);
   if (!fixes.length) return null;
   const ref = pr.number ? `#${pr.number}` : `\`${pr.sha.slice(0, 12)}\``;
@@ -129,12 +132,12 @@ export function planFix(pr, changedFiles) {
   const left = candidates.length - fixes.length;
   if (left || skipped.length) lines.push("", `${left} other finding(s) in ${ref} still need a person; see the sweep report.`);
   lines.push("", "Release note: none");
-  const security = fixes.some((fix) => kinds.get(fix.title) === "security");
   return {
     branch: fixBranch(pr),
     number: pr.number,
     sha: pr.sha,
-    title: `fix: ${security ? "security and bug" : "bug"} fixes from Warden's post-merge sweep for ${pr.number ? `#${pr.number}` : pr.sha.slice(0, 12)}`,
+    // The title never says "security": the body names files, Slack has the details.
+    title: `fix: apply Warden's post-merge fixes for ${pr.number ? `#${pr.number}` : pr.sha.slice(0, 12)}`,
     body: `${lines.join("\n")}\n`,
     patches: fixes.map((fix) => (fix.diff.endsWith("\n") ? fix.diff : `${fix.diff}\n`)),
   };

@@ -183,6 +183,12 @@ commit at a time so every finding names the PR that caused it, with
 - `diff-security-review`: the same security skill PRs get.
 - `diff-bug-review`: concrete bugs (a trigger and a wrong result), sweep only.
 - `design-spec-review`: `DESIGN.md` rule drift in UI code.
+- `ui-skills-review`: UI code against pinned rule sets from the
+  [UI Skills](https://www.ui-skills.com/mcp/docs) catalog: `baseline-ui`,
+  `fixing-accessibility` and `fixing-motion-performance` (ibelick) and
+  Vercel's Web Interface Guidelines. `DESIGN.md` wins where they disagree
+  (sentence case, skeletons, tracking, shadows), as listed in
+  `.warden/ui-skills/header.md`.
 - Failing tests: workflows that failed on dev at the merge commit, marked
   "first failure on dev" when the same workflow passed on the run before.
   Commits whose CI is still running are re-checked by the next sweeps for
@@ -198,8 +204,9 @@ against dev for it: one per merged PR (branch
 `warden-fix/merged-<pr>-<sha>`), built only from Warden's own
 high-confidence suggested diffs under the `warden-fixer` rules (text only, at
 most 3 files and 40 lines per fix, files that PR changed, never `.github/`,
-`.warden/` or agent config). Bug and security findings qualify; design
-findings and failing tests stay in the report for a person. A separate `fix`
+`.warden/` or agent config). Security, bug and design findings (both
+`DESIGN.md` and UI Skills) qualify; failing tests have no suggested diff and
+stay in the report for a person. A separate `fix`
 job opens the PRs, so Warden's model never runs next to a write token. It uses
 the automation App so CI and Warden run on the fix PR like any other; without
 the App it falls back to `GITHUB_TOKEN` and CI won't start until someone
@@ -216,6 +223,22 @@ dev commit before it. Locally, without Slack or saved state:
 ```sh
 SINCE=<dev sha> NO_SLACK=1 PI_CODING_AGENT_DIR=.warden/pi node .github/scripts/warden-sweep.mjs
 ```
+
+### Updating the UI Skills rules
+
+The rule sets are copied into `.warden/ui-skills/rules/` with their source,
+sha256 and MIT licenses (`sources.json`, `LICENSES.md`). Warden never fetches
+them at review time, because third-party text would become reviewer
+instructions without review. To pick up upstream changes, or to add a rule set
+to `SOURCES` in the script:
+
+```sh
+node .warden/scripts/sync-ui-skills.mjs             # fetch from the UI Skills MCP, re-pin, regenerate
+node .warden/scripts/sync-ui-skills.mjs --generate  # after editing header.md, offline
+node .warden/scripts/sync-ui-skills.mjs --check     # CI: SKILL.md matches the pins
+```
+
+Review the rules diff in the PR like any other policy change.
 
 ## Rollout
 

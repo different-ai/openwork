@@ -45,3 +45,12 @@ name = "design-spec-review"
 [[skills.triggers]]
 type = "local"
 failOn = "off"
+
+# Pinned UI Skills rule sets (ui-skills.com); regenerate with
+# .warden/scripts/sync-ui-skills.mjs. DESIGN.md wins where they disagree.
+[[skills]]
+name = "ui-skills-review"
+
+[[skills.triggers]]
+type = "local"
+failOn = "off"

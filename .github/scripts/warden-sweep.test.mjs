@@ -101,14 +101,15 @@ test("plans one fix PR per merged PR from high-confidence suggested fixes only",
   const plan = planFix(pr({ findings: [
     fixable(),
     fixable({ title: "Unsure", confidence: "medium" }),
-    fixable({ kind: "design", title: "P2 drift" }),
+    fixable({ kind: "design", title: "baseline-ui: icon-only button needs aria-label", suggested_fix: { diff: diff("src/b.tsx") } }),
     fixable({ title: "Elsewhere", suggested_fix: { diff: diff("src/other.ts") } }),
     fixable({ title: "Workflow", suggested_fix: { diff: diff(".github/workflows/x.yml") } }),
-  ] }), ["src/a.ts", ".github/workflows/x.yml"]);
+  ] }), ["src/a.ts", "src/b.tsx", ".github/workflows/x.yml"]);
   assert.equal(plan.branch, `warden-fix/merged-101-${sha(1).slice(0, 12)}`);
-  assert.equal(plan.patches.length, 1);
+  assert.equal(plan.patches.length, 2);
   assert.match(plan.title, /#101/);
   assert.match(plan.body, /Crash on empty list/);
+  assert.match(plan.body, /design · high\*\*: baseline-ui: icon-only button needs aria-label/);
   assert.match(plan.body, /3 other finding\(s\)/);
 });
 
@@ -121,7 +122,12 @@ test("security fix PRs name the file, never the issue", () => {
   const plan = planFix(pr({ findings: [fixable({ kind: "security", title: "SSRF via proxy URL" })] }), ["src/a.ts"]);
   assert.doesNotMatch(plan.body, /SSRF/);
   assert.match(plan.body, /security · high\*\* in `src\/a.ts`/);
-  assert.match(plan.title, /security/);
+  assert.doesNotMatch(plan.title, /security/i);
+});
+
+test("UI Skills findings count as design", () => {
+  const [finding] = sweepFindings(parsed([{ skill: "ui-skills-review", severity: "medium", title: "fixing-accessibility: div used as a button" }]));
+  assert.equal(finding.kind, "design");
 });
 
 test("sweep findings keep Warden's confidence and suggested diff for planning", () => {
