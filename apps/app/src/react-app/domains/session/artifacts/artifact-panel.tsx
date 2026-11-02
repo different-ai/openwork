@@ -13,6 +13,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { TaskRecovery } from "@/components/chat/task-recovery";
+import { isEditableSpreadsheet, READ_ONLY_WORKBOOK_MESSAGE } from "./artifact-spreadsheet-model";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { usePlatform } from "@/react-app/kernel/platform";
 import { type ArtifactPanelTab, usePanelTabStore } from "../panel/panel-tab-store";
@@ -183,6 +184,11 @@ function ArtifactPanelView({ sessionId, client, workspaceId, workspaceRoot, targ
     mutationFn: async (input: SaveArtifactInput) => {
       if (target.kind !== "file") {
         throw new Error("Cannot save non-file artifact.");
+      }
+      // Defense in depth: even a stale editor callback cannot replace a workbook
+      // with a values-only export (or text). Only delimited tables can save.
+      if (target.preview === "sheet" && !isEditableSpreadsheet(target.value)) {
+        throw new Error(READ_ONLY_WORKBOOK_MESSAGE);
       }
 
       if (input.kind === "text") {
