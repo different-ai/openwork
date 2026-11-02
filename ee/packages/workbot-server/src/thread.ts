@@ -209,15 +209,21 @@ function friendlyError(code: string | null): string {
   return "Something went wrong on my side."
 }
 
+// Microsoft 365 comes first: its capabilities are named like Google's ("…Microsoft365CalendarEvent…"), and the
+// person should see the app they actually use, never "Google Calendar" for their Outlook calendar.
 const APPS: Array<[RegExp, string]> = [
   [/slack/i, "Slack"],
+  [/teams/i, "Microsoft Teams"],
+  [/(outlook|microsoft|office365).*calendar|outlook.*event/i, "Outlook Calendar"],
+  [/(microsoft|office365).*(mail|message|draft)|outlook/i, "Outlook"],
+  [/(microsoft|office365).*(drive|file|folder|document|upload)|onedrive|sharepoint/i, "OneDrive"],
+  [/microsoft|office365/i, "Microsoft 365"],
   [/gmail|mail/i, "Gmail"],
   [/calendar|gcal/i, "Google Calendar"],
   [/drive|docs|sheets/i, "Google Drive"],
   [/notion/i, "Notion"],
   [/linear/i, "Linear"],
   [/github/i, "GitHub"],
-  [/outlook|microsoft|teams|onedrive|sharepoint/i, "Microsoft 365"],
   [/hubspot/i, "HubSpot"],
   [/salesforce/i, "Salesforce"],
   [/jira|confluence|atlassian/i, "Atlassian"],
@@ -235,8 +241,15 @@ const APP_ACTIONS: Array<[RegExp, (app: string) => string]> = [
 ]
 
 function appActionLabel(app: string, capability: string) {
-  const action = capability.split(/[:/]/).pop()?.toLowerCase() ?? ""
-  return APP_ACTIONS.find(([pattern]) => pattern.test(action))?.[1](app) ?? `Looking in ${app}`
+  const segment = capability.split(/[:/]/).pop() ?? ""
+  const action = segment.toLowerCase()
+  // Den's capabilities are camelCase operations whose first word is the verb ("updateMicrosoft365CalendarEvent",
+  // "postCapabilitiesMicrosoft365CalendarEvents"); the rest of the name must not decide it ("…Messages" is a read).
+  const verb = segment.match(/^[a-z]+(?=[A-Z0-9])/)?.[0]
+  const plain = verb === "post" ? "create" : verb === "put" ? "update" : verb
+  if (/draft/.test(action) && plain !== "send") return `Drafting in ${app}`
+  const byVerb = plain ? APP_ACTIONS.find(([pattern]) => pattern.test(plain)) : undefined
+  return (byVerb ?? APP_ACTIONS.find(([pattern]) => pattern.test(action)))?.[1](app) ?? `Looking in ${app}`
 }
 
 const graphemes = new Intl.Segmenter(undefined, { granularity: "grapheme" })
