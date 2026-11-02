@@ -76,7 +76,7 @@ test("OneDrive and SharePoint links pull into the workspace through OpenWork Clo
   assert.equal(calls[0].url.searchParams.get("url"), LINK);
   const content = calls.find(({ url }) => url.pathname.endsWith("/content"))!;
   assert.deepEqual([content.url.searchParams.get("itemId"), content.url.searchParams.get("driveId"), content.headers.get("range")], ["item-1", "b!lib", `bytes=0-${CONTENT.length - 1}`]);
-  assert.deepEqual([workspace.approvals[0].provider, workspace.approvals[0].action], ["microsoft-365", "pull"]);
+  assert.deepEqual(workspace.approvals, [], "a new local copy needs no native approval");
 
   const status = await callDriveFileAction(workspace.config, "drive_file_status", {}, {}, dependencies) as Record<string, any>;
   assert.deepEqual([status.files[0].provider, status.files[0].driveId, status.files[0].local, status.files[0].drive], ["microsoft-365", "b!lib", "unchanged", "unchanged"]);

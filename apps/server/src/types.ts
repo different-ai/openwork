@@ -74,8 +74,10 @@ export type LocalManagedMcpVaultKeyProvider = () => Promise<Uint8Array>;
 export type DriveFileApprovalRequest = {
   /** Where the file lives, so the confirmation names the right service. */
   provider: "google-workspace" | "microsoft-365";
-  action: "push" | "overwrite" | "pull";
+  action: "push" | "overwrite";
   path: string;
+  /** Workspace-relative label for the native confirmation; never use raw paths as copy. */
+  displayPath?: string;
   fileId: string;
   name: string;
   webViewLink?: string | null;
