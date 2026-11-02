@@ -358,7 +358,7 @@ configureCloudWorkflowExecutor(async ({ organizationId, ownerMemberId, automatio
     automationRunId: normalizeDenTypeId("automationRun", automationRunId),
     body: action.input,
     validateScriptOutput: true,
-    buildTools: () => buildCapabilityToolTree(capabilityContext),
+    buildTools: (required) => buildCapabilityToolTree(capabilityContext, required),
   })
   if (!result.ok) return {
     ok: false,

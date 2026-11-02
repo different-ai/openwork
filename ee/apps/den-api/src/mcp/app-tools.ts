@@ -259,7 +259,7 @@ export async function callMcpAppTool(
     if (binding.mode !== "live") return withoutAgentServerMeta(await executeCapability(ctx, { name: binding.capability, body: args }))
     const timeZone = typeof args.timeZone === "string" ? args.timeZone : undefined
     const result = await executeMarketplaceCapability({
-      buildTools: () => buildCapabilityToolTree(ctx),
+      buildTools: (required) => buildCapabilityToolTree(ctx, required),
       organizationId: ctx.organizationId,
       member: ctx.member,
       pluginId: parsed.pluginId,

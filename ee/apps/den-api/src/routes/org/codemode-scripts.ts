@@ -32,6 +32,7 @@ import { env } from "../../env.js"
 import { getOrganizationFeatures } from "../../features.js"
 import { getCatalog } from "../../mcp/index.js"
 import { buildCapabilityToolTree, createCapabilityRegistryContext } from "../../mcp/capability-registry.js"
+import type { BuildCodemodeTools } from "../../mcp/codemode-tools.js"
 import {
   executeMarketplaceCapability,
   listAccessibleWorkflows,
@@ -262,7 +263,7 @@ export function registerOrgWorkflowRoutes<T extends { Variables: OrgRouteVariabl
       // Den web and REST callers run saved Workflows here.
       usageSource: "workflow",
     })
-    const buildTools = () => buildCapabilityToolTree(capabilityContext)
+    const buildTools: BuildCodemodeTools = (required) => buildCapabilityToolTree(capabilityContext, required)
     const actorContext = { organizationContext: context, memberTeams: teams, session: c.get("session") }
     return { context, member, actorContext, buildTools, describeUnavailable: (missing: readonly { capabilityName: string }[]) => liveArtifactConnectionFailure(capabilityContext, missing) }
   }
