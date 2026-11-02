@@ -9,7 +9,7 @@ import {
   type DefaultModelSettings,
 } from "@openwork/types/den/default-model";
 import { Lock } from "lucide-react";
-import { useId, useState, type ReactNode } from "react";
+import { useEffect, useId, useState, type ReactNode } from "react";
 import { DenBrandMark } from "../../_components/ui/brand-mark";
 import { DenButton } from "../../_components/ui/button";
 import { DenCard } from "../../_components/ui/card";
@@ -21,6 +21,7 @@ import { getAiGatewayRoute, permissionLockReason } from "../../_lib/den-org";
 import { useOrgDashboard } from "../_providers/org-dashboard-provider";
 import { providerIconSlug } from "./library-models";
 import { useDefaultModelOptions, useDefaultModelSettings, useSaveDefaultModel } from "./default-model-data";
+import { savedDefaultModelState } from "./default-model-presentation";
 
 /** The combobox value for "no model of its own": no default (organization) or use the organization's (team). */
 const INHERIT_VALUE = "";
@@ -44,11 +45,20 @@ function findOption(options: DefaultModelOptions | undefined, choice: DefaultMod
   return choice ? options?.options.find((option) => sameDefaultModel(option, choice)) ?? null : null;
 }
 
-/** "Claude Sonnet 4.5 (Anthropic)", or the bare model id when the organization no longer has it. */
+/** Keep a previously verified display name when a source cannot be read. */
+function useSavedModelOption(orgId: string, options: DefaultModelOptions | undefined, choice: DefaultModelChoice | null) {
+  const listed = findOption(options, choice);
+  const [remembered, setRemembered] = useState<{ orgId: string; option: DefaultModelOption } | null>(null);
+  useEffect(() => {
+    if (listed) setRemembered({ orgId, option: listed });
+  }, [orgId, listed]);
+  return listed ?? (remembered?.orgId === orgId && sameDefaultModel(remembered.option, choice) ? remembered.option : null);
+}
+
 export function defaultModelName(options: DefaultModelOptions | undefined, choice: DefaultModelChoice | null): string | null {
   if (!choice) return null;
   const option = findOption(options, choice);
-  return option ? `${option.modelName} (${option.providerName})` : choice.modelId;
+  return option ? `${option.modelName} (${option.providerName})` : "Saved model";
 }
 
 function ModelMark({ option }: { option: Pick<DefaultModelOption, "providerName" | "logoProviderId"> }) {
@@ -65,6 +75,7 @@ function ModelMark({ option }: { option: Pick<DefaultModelOption, "providerName"
 function comboboxOptions(input: {
   options: DefaultModelOptions;
   saved: DefaultModelChoice | null;
+  savedState: ReturnType<typeof savedDefaultModelState>;
   inherit: { label: string; description?: string; icon?: ReactNode };
 }): DenComboboxOption[] {
   const listed: DenComboboxOption[] = input.options.options.map((option) => ({
@@ -75,9 +86,10 @@ function comboboxOptions(input: {
     keywords: [option.providerName, option.modelId, DEFAULT_MODEL_SOURCE_LABELS[option.source]],
     icon: <ModelMark option={option} />,
   }));
-  // A saved model the organization no longer has stays visible as the current value.
+  // A failed/partial list never relabels a saved choice as removed.
   const missing = input.saved && !findOption(input.options, input.saved)
-    ? [{ value: valueOf(input.saved), label: input.saved.modelId, description: "No longer available" }]
+    ? [{ value: valueOf(input.saved), label: input.savedState.label,
+      description: input.savedState.availability === "unknown" ? "Availability not verified" : "Not in the current model list" }]
     : [];
   return [{ value: INHERIT_VALUE, label: input.inherit.label, description: input.inherit.description, icon: input.inherit.icon }, ...missing, ...listed];
 }
@@ -138,9 +150,12 @@ function DefaultModelPicker({ scope, label, canManage, settings, saved, inherit,
   const gatewayUnavailable = options.data?.unavailableSources.includes("gateway") ?? false;
   const otherUnavailable = options.data?.unavailableSources.filter((source) => source !== "gateway") ?? [];
   const noModels = options.data !== undefined && options.data.options.length === 0 && options.data.unavailableSources.length === 0;
-  const savedMissing = Boolean(saved && options.data && !findOption(options.data, saved) && options.data.unavailableSources.length === 0);
+  const lastKnown = useSavedModelOption(orgId, options.data, saved);
+  const savedState = savedDefaultModelState({ choice: saved, options: options.data, failed: options.isError, lastKnown });
+  const savedMissing = Boolean(saved && savedState.availability === "not-listed");
   const loading = !settings || options.isPending;
-  const savedName = (choice: DefaultModelChoice | null) => defaultModelName(options.data, choice);
+  const savedName = (choice: DefaultModelChoice | null) => sameDefaultModel(choice, saved) && lastKnown
+    ? `${lastKnown.modelName} (${lastKnown.providerName})` : defaultModelName(options.data, choice);
 
   let control: ReactNode;
   if (settingsError) {
@@ -162,7 +177,7 @@ function DefaultModelPicker({ scope, label, canManage, settings, saved, inherit,
         <DenCombobox
           ariaLabel={label}
           value={valueOf(saved)}
-          options={comboboxOptions({ options: options.data ?? { options: [], unavailableSources: [] }, saved, inherit })}
+          options={comboboxOptions({ options: options.data ?? { options: [], unavailableSources: [] }, saved, savedState, inherit })}
           disabled={!canManage || save.isPending || options.isError}
           placeholder={inherit.label}
           searchPlaceholder="Search models"
@@ -205,9 +220,7 @@ function DefaultModelPicker({ scope, label, canManage, settings, saved, inherit,
       {savedMissing ? (
         <DenNotice
           tone="warning"
-          message={scope.kind === "team"
-            ? "This team's model is no longer available. Its members start on the organization default until you choose another."
-            : "The default model is no longer available. Desktops keep their own default until you choose another."}
+          message="This saved model is not in the current list. Members who can't use the resolved default keep their desktop default. Choose another model."
         />
       ) : null}
 
@@ -221,7 +234,7 @@ function DefaultModelPicker({ scope, label, canManage, settings, saved, inherit,
         <div role="status" className="flex items-center justify-between gap-3 px-1 text-[13px] text-gray-600">
           <span className="min-w-0 [overflow-wrap:anywhere]">
             {savedChange.next
-              ? `Saved. New desktop chats start on ${savedName(savedChange.next)}.`
+              ? `Saved ${scope.kind === "team" ? "team" : "organization"} default: ${savedName(savedChange.next)}.`
               : scope.kind === "team" ? "Saved. This team uses the organization default." : "Saved. No organization default."}
           </span>
           <DenButton variant="ghost" size="xs" loading={save.isPending} onClick={() => void store(savedChange.previous, savedChange.next)}>
@@ -267,8 +280,8 @@ export function OrgDefaultModelSection({ canManage, embedded = false }: { canMan
 
 function conflictLine(count: number): string {
   return count === 1
-    ? "1 member is also on a team with a different model, so they start on the organization default."
-    : `${count} members are also on a team with a different model, so they start on the organization default.`;
+    ? "1 member has conflicting team defaults. Their teams resolve to the organization default."
+    : `${count} members have conflicting team defaults. Their teams resolve to the organization default.`;
 }
 
 /** A team's Access tab › Default model: use the organization default or pick the team's own. */
@@ -278,20 +291,20 @@ export function TeamDefaultModelSection({ teamId, canManage, embedded = false }:
   const options = useDefaultModelOptions(orgId, true);
   const team = settings.data?.teams.find((entry) => entry.teamId === teamId);
   const orgDefault = settings.data?.everyone ?? null;
-  const orgDefaultOption = findOption(options.data, orgDefault);
+  const orgDefaultOption = useSavedModelOption(orgId, options.data, orgDefault);
   const overridden = Boolean(team?.model);
   return (
     <section className={embedded ? "grid gap-3" : "mb-8 grid gap-3"} aria-label={embedded ? "Default model" : undefined} aria-labelledby={embedded ? undefined : "team-default-model-heading"} data-testid="team-default-model-section">
       {embedded ? null : <h2 id="team-default-model-heading" className="text-lg font-semibold text-gray-950">Default model</h2>}
       <DefaultModelPicker
         scope={{ kind: "team", teamId }}
-        label="New desktop chats start on"
+        label="Default model"
         canManage={canManage && (settings.data?.canEdit ?? true)}
         settings={settings.data}
         saved={team?.model ?? null}
         inherit={orgDefault ? {
           // Inheriting shows which model that is; the chip beside the label says it is inherited.
-          label: orgDefaultOption?.modelName ?? orgDefault.modelId,
+          label: orgDefaultOption?.modelName ?? "Saved organization default",
           description: orgDefaultOption ? `Organization default, ${orgDefaultOption.providerName}` : "Organization default",
           icon: orgDefaultOption ? <ModelMark option={orgDefaultOption} /> : undefined,
         } : { label: "Use organization default", description: "No organization default" }}
