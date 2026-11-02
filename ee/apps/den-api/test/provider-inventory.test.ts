@@ -3,7 +3,7 @@ import { test } from "node:test"
 import { createDenTypeId } from "@openwork-ee/utils/typeid"
 import { normalizeDesktopConfig } from "@openwork/types/den/desktop-policies"
 import { providerInventoryReadiness, providerInventoryRevision } from "../src/llm/provider-inventory-revision.js"
-import { providerInventoryEvents, type InventoryWatchClock } from "../src/llm/provider-inventory-watch.js"
+import { PROVIDER_INVENTORY_MAX_AGE_MS, providerInventoryEvents, type InventoryWatchClock } from "../src/llm/provider-inventory-watch.js"
 
 async function flush() { for (let index = 0; index < 30; index++) await Promise.resolve() }
 class Clock implements InventoryWatchClock {
@@ -182,6 +182,110 @@ test("existing streams fail closed when the authorized inventory reader rejects 
   assert.equal(f.clock.timers.size, 0)
 })
 
+/** Keeps reading like a client that drains its body, so a slow-consumer close cannot end the test early. */
+function drained(reader: ReadableStreamDefaultReader<Uint8Array>) {
+  const frames: string[] = []
+  void (async () => {
+    for (let chunk = await reader.read(); !chunk.done; chunk = await reader.read()) frames.push(decode(chunk.value))
+  })()
+  return frames
+}
+
+test("an unchanged marker skips the database until the maximum age", async () => {
+  const f = watchFixture()
+  const reader = (await providerInventoryEvents({ ...f.input, expiresAt: 600_000, marker: async () => "generation" })).body!.getReader()
+  drained(reader)
+  await flush()
+  assert.equal(f.reads(), 1)
+  await f.clock.advance(PROVIDER_INVENTORY_MAX_AGE_MS - 2_000)
+  assert.equal(f.reads(), 1)
+  await f.clock.advance(2_000)
+  assert.equal(f.reads(), 2)
+  await f.clock.advance(PROVIDER_INVENTORY_MAX_AGE_MS - 2_000)
+  assert.equal(f.reads(), 2)
+  await reader.cancel()
+})
+
+test("a maximum-age read finds what a marker cannot show", async () => {
+  const f = watchFixture()
+  const reader = (await providerInventoryEvents({ ...f.input, expiresAt: 600_000, marker: async () => "generation" })).body!.getReader()
+  const frames = drained(reader)
+  await flush()
+  f.setRevision("expired-credential")
+  await f.clock.advance(PROVIDER_INVENTORY_MAX_AGE_MS)
+  assert.ok(frames.includes('event: inventory.changed\ndata: {"revision":"expired-credential"}\n\n'))
+  await reader.cancel()
+})
+
+test("a changed marker delivers the new revision on the next poll and reads once", async () => {
+  const f = watchFixture()
+  let marker = "one"
+  const reader = (await providerInventoryEvents({ ...f.input, marker: async () => marker })).body!.getReader()
+  await reader.read()
+  f.setRevision("revision-two")
+  marker = "two"
+  const next = reader.read()
+  await f.clock.advance(2_000)
+  assert.equal(decode((await next).value), 'event: inventory.changed\ndata: {"revision":"revision-two"}\n\n')
+  await f.clock.advance(4_000)
+  assert.equal(f.reads(), 2)
+  await reader.cancel()
+})
+
+test("a write that lands during a read is read again on the next poll", async () => {
+  const f = watchFixture()
+  let marker = "before-write"
+  const read = f.input.read
+  const input = { ...f.input, marker: async () => marker, read: async () => {
+    const value = await read()
+    marker = "after-write"
+    return value
+  } }
+  const reader = (await providerInventoryEvents(input)).body!.getReader()
+  await reader.read()
+  await f.clock.advance(4_000)
+  assert.equal(f.reads(), 2)
+  await reader.cancel()
+})
+
+test("without a marker answer every poll reads the database", async () => {
+  const f = watchFixture()
+  const reader = (await providerInventoryEvents({ ...f.input, marker: async () => null })).body!.getReader()
+  await reader.read()
+  await f.clock.advance(4_000)
+  assert.equal(f.reads(), 3)
+  await reader.cancel()
+})
+
+test("a hung marker falls back to the database and keeps the stream", async () => {
+  const f = watchFixture()
+  let hang = false
+  const reader = (await providerInventoryEvents({ ...f.input, marker: () => hang ? new Promise<string>(() => {}) : Promise.resolve("generation") })).body!.getReader()
+  await reader.read()
+  hang = true
+  await f.clock.advance(7_000)
+  assert.equal(f.reads(), 2)
+  assert.equal(f.released(), 0)
+  await reader.cancel()
+})
+
+test("a rejected marker closes the stream without reading", async () => {
+  const f = watchFixture()
+  let revoked = false
+  const reader = (await providerInventoryEvents({ ...f.input, marker: async () => {
+    if (revoked) throw new Error("Provider inventory is no longer authorized.")
+    return "generation"
+  } })).body!.getReader()
+  await reader.read()
+  revoked = true
+  const next = reader.read()
+  await f.clock.advance(2_000)
+  assert.equal((await next).done, true)
+  assert.equal(f.reads(), 1)
+  assert.equal(f.released(), 1)
+  assert.equal(f.clock.timers.size, 0)
+})
+
 test("hung DB checks time out and close instead of retaining a stream indefinitely", async () => {
   const f = watchFixture()
   const reader = (await providerInventoryEvents(f.input)).body!.getReader()
@@ -199,6 +303,7 @@ test("initial hung checks time out before returning a response", async () => {
   f.hang()
   const response = providerInventoryEvents(f.input)
   const rejected = assert.rejects(response, /timed out/)
+  await flush()
   await f.clock.advance(5_000)
   await rejected
   assert.equal(f.released(), 1)

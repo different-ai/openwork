@@ -21,6 +21,7 @@ const { auth } = await import("../src/auth.js")
 await auth.$context
 bootstrapSelect.mock.restore()
 const { cache, setCacheDependenciesForTest } = await import("../src/cache.js")
+const { readProviderInventoryMarker } = await import("../src/llm/provider-inventory.js")
 const { sealSessionTokenDigest, sessionTokenDigest } = await import("../src/session-token.js")
 
 /** In-memory Redis with the Lua tombstone check; `refuseWrites` mimics a full Redis that still accepts deletes. */
@@ -164,6 +165,58 @@ test("revoking a session id clears its cache entry even when Redis refuses the t
     assert.equal(redis.values.has(`cache:auth:session-id:${sessionId}`), false)
   } finally {
     restore()
+  }
+})
+
+test("the provider inventory marker moves only on provider writes and fails once the session is revoked", async () => {
+  const organizationId = createDenTypeId("organization")
+  const principal = {
+    organizationId, memberId: createDenTypeId("member"), userId: createDenTypeId("user"),
+    sessionId: createDenTypeId("session"), sessionToken: "Pr0viderInvent0ryT0kenPr0viderIn",
+  }
+  const redis = fakeRedis()
+  const restore = setCacheDependenciesForTest({ redis })
+  try {
+    const before = await readProviderInventoryMarker(principal)
+    assert.equal(before, "0")
+    await cache.inventory.bump([organizationId])
+    assert.equal(await readProviderInventoryMarker(principal), before)
+    await cache.inventory.bump([organizationId], { providerInventory: true })
+    assert.notEqual(await readProviderInventoryMarker(principal), before)
+    assert.equal(redis.calls.some((call) => call.includes(principal.sessionToken)), false)
+
+    await cache.auth.revokeSession(principal.sessionToken)
+    await assert.rejects(readProviderInventoryMarker(principal), /no longer authorized/)
+  } finally {
+    restore()
+  }
+
+  const byId = setCacheDependenciesForTest({ redis: fakeRedis() })
+  try {
+    await cache.auth.revokeSessionId(principal.sessionId)
+    await assert.rejects(readProviderInventoryMarker(principal), /no longer authorized/)
+  } finally {
+    byId()
+  }
+})
+
+test("the provider inventory marker has no answer without a working Redis", async (t) => {
+  t.mock.method(console, "error", () => {})
+  const principal = {
+    organizationId: createDenTypeId("organization"), memberId: createDenTypeId("member"), userId: createDenTypeId("user"),
+    sessionId: createDenTypeId("session"), sessionToken: "N0RedisT0kenN0RedisT0kenN0RedisT",
+  }
+  const absent = setCacheDependenciesForTest({ redis: null })
+  try {
+    assert.equal(await readProviderInventoryMarker(principal), null)
+  } finally {
+    absent()
+  }
+  const failing = setCacheDependenciesForTest({ redis: { ...fakeRedis(), async get() { throw new Error("connection lost") } } })
+  try {
+    assert.equal(await readProviderInventoryMarker(principal), null)
+  } finally {
+    failing()
   }
 })
 
