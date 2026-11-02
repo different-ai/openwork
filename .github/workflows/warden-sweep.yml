@@ -2,8 +2,12 @@ name: Warden post-merge sweep
 
 # Every 3 hours, review each PR merged to dev since the last sweep for things
 # to fix after the fact: security issues, bugs, DESIGN.md drift, and workflows
-# that failed on the merge commit. Reports to Slack and the job summary; never
-# comments, approves, reverts or opens PRs. See .warden/README.md.
+# that failed on the merge commit. Reports to Slack and the job summary, and
+# opens a fix PR against dev where Warden is confident of a small fix. Never
+# approves, merges or reverts. See .warden/README.md.
+#
+# Kill switch for fix PRs: set the repository variable WARDEN_SWEEP_FIXES to
+# off. Reports keep coming.
 on:
   schedule:
     - cron: "23 */3 * * *"
@@ -28,6 +32,9 @@ jobs:
     if: github.repository == 'different-ai/openwork'
     runs-on: ubuntu-latest
     timeout-minutes: 180
+    outputs:
+      fixes: ${{ steps.sweep.outputs.fixes }}
+      head: ${{ steps.sweep.outputs.head }}
     steps:
       # Only merged dev code runs here: policy, skills and the script come from
       # the same trusted commit that is being reviewed.
@@ -73,6 +80,7 @@ jobs:
           npm install --no-audit --no-fund --no-save --ignore-scripts @sentry/warden@0.43.0
 
       - name: Sweep merged PRs
+        id: sweep
         env:
           GH_TOKEN: ${{ github.token }}
           REPO: ${{ github.repository }}
@@ -96,3 +104,97 @@ jobs:
           path: ${{ runner.temp }}/warden-sweep/state.json
           retention-days: 30
           if-no-files-found: ignore
+
+      - name: Save planned fix PRs
+        if: always() && steps.sweep.outputs.fixes == 'true'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: warden-sweep-fixes
+          path: ${{ runner.temp }}/warden-sweep/fixes
+          retention-days: 7
+          if-no-files-found: ignore
+
+  # Separate from the review so Warden's model never runs next to a write
+  # token. Applies only the sweep's planned patches with git apply; builds and
+  # runs nothing.
+  fix:
+    needs: sweep
+    if: always() && needs.sweep.outputs.fixes == 'true' && vars.WARDEN_SWEEP_FIXES != 'off'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    # AUTOMATION_APP_* live here (dev and v* tags only), as in update-models.yml.
+    environment: warden-clearance
+    permissions:
+      contents: write
+      pull-requests: write
+    env:
+      HAS_AUTOMATION_APP: ${{ secrets.AUTOMATION_PRIVATE_KEY != '' }}
+    steps:
+      - name: Checkout dev as reviewed
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ needs.sweep.outputs.head }}
+          persist-credentials: true
+
+      - name: Download planned fix PRs
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: warden-sweep-fixes
+          path: ${{ runner.temp }}/fixes
+
+      # PRs opened by GITHUB_TOKEN start no workflows, so CI and Warden would
+      # never run on them. The automation App's PRs get the normal checks. It is
+      # not diff-warden: the App that approves PRs never authors them.
+      - name: Mint PR token
+        id: automation
+        if: env.HAS_AUTOMATION_APP == 'true'
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3
+        with:
+          app-id: ${{ secrets.AUTOMATION_APP_ID }}
+          private-key: ${{ secrets.AUTOMATION_PRIVATE_KEY }}
+          permission-pull-requests: write
+          permission-contents: read
+
+      - name: Open fix PRs
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_TOKEN: ${{ steps.automation.outputs.token || github.token }}
+          BASE: ${{ needs.sweep.outputs.head }}
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          [ "$HAS_AUTOMATION_APP" = "true" ] || echo "::warning::No automation App: fix PRs are opened with GITHUB_TOKEN, so CI won't start on them until someone pushes."
+          for dir in "$RUNNER_TEMP"/fixes/*/; do
+            branch=$(jq -r .branch "$dir/plan.json")
+            title=$(jq -r .title "$dir/plan.json")
+            if ! [[ "$branch" =~ ^warden-fix/merged-[a-z0-9]+-[0-9a-f]{12}$ ]]; then
+              echo "::warning::Unexpected branch name $branch; skipped"
+              continue
+            fi
+            if git ls-remote --exit-code --heads origin "$branch" >/dev/null; then
+              echo "- $branch already exists; skipped" >> "$GITHUB_STEP_SUMMARY"
+              continue
+            fi
+            git switch --quiet --detach "$BASE"
+            git switch --quiet -c "$branch"
+            applied=0
+            for patch in "$dir"*.patch; do
+              if git apply --check "$patch" 2>/dev/null; then git apply "$patch"; applied=$((applied + 1)); else echo "::warning::$branch: $(basename "$patch") no longer applies to dev; skipped"; fi
+            done
+            if [ "$applied" -eq 0 ] || git diff --quiet; then
+              echo "- $branch: no fix applied cleanly" >> "$GITHUB_STEP_SUMMARY"
+              continue
+            fi
+            # Defense in depth: fixes never touch CI or review machinery.
+            if git diff --name-only | grep -Eq '^(\.github/|\.opencode/|opencode\.jsonc?$|warden\.toml$|\.warden/|\.agents/skills/|\.claude/skills/)'; then
+              echo "::error::$branch touches CI or review machinery; refusing"
+              git checkout --quiet -- .
+              continue
+            fi
+            git commit --quiet -am "$title" -m "Release note: none"
+            git push --quiet origin "HEAD:refs/heads/$branch"
+            url=$(GH_TOKEN="$PR_TOKEN" gh pr create --base dev --head "$branch" --title "$title" --body-file "$dir/body.md")
+            echo "- Opened $url" >> "$GITHUB_STEP_SUMMARY"
+          done

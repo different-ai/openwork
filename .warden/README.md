@@ -27,6 +27,7 @@ hold:
   `.github/workflows/warden-sweep.yml`,
   `.github/scripts/warden-report.mjs`, `.github/scripts/warden-clearance.mjs`,
   `.github/scripts/warden-fast.mjs`, `.github/scripts/warden-sweep.mjs`,
+  `.github/scripts/warden-fixer.mjs`,
   `warden.toml`, or `.warden/`.
   `warden.yml` runs inside the PR's own review and could forge its result; the
   others would let one PR rewrite the reviewer for every later PR.
@@ -190,8 +191,21 @@ commit at a time so every finding names the PR that caused it, with
 Results go to the Slack channel in the `SLACK_WARDEN_SWEEP_CHANNEL_ID`
 repository variable (via `SLACK_BOT_TOKEN`), only when something needs
 fixing. The job summary has the same table; since the repository is public,
-security findings appear there only as counts. The sweep never comments,
-approves, reverts or opens PRs.
+security findings appear there only as counts.
+
+**Fix PRs.** When Warden is confident of a small fix, the sweep opens a PR
+against dev for it: one per merged PR (branch
+`warden-fix/merged-<pr>-<sha>`), built only from Warden's own
+high-confidence suggested diffs under the `warden-fixer` rules (text only, at
+most 3 files and 40 lines per fix, files that PR changed, never `.github/`,
+`.warden/` or agent config). Bug and security findings qualify; design
+findings and failing tests stay in the report for a person. A separate `fix`
+job opens the PRs, so Warden's model never runs next to a write token. It uses
+the automation App so CI and Warden run on the fix PR like any other; without
+the App it falls back to `GITHUB_TOKEN` and CI won't start until someone
+pushes. Security fix PRs name the file, not the issue. Fix PRs go through
+normal review and merge; the sweep never approves, merges or reverts. Turn
+fix PRs off with the repository variable `WARDEN_SWEEP_FIXES=off`.
 
 The last reviewed dev commit is saved in the `warden-sweep-state` artifact,
 so each PR is reviewed once; up to 20 PRs per sweep, the rest wait for the

@@ -10,7 +10,14 @@
 // Each merge commit on dev's first-parent line is one squash-merged PR, so
 // every finding is attributed to the PR that introduced it. The result goes to
 // a Slack channel (full text) and the job summary (public: security findings
-// as counts only). It never comments, approves, reverts or opens PRs.
+// as counts only).
+//
+// When Warden is sure of a small fix, the sweep also plans a fix PR against
+// dev: one per merged PR, built only from Warden's own high-confidence
+// suggested diffs under the warden-fixer rules (small, text only, files that
+// PR changed, never CI or review machinery). The `fix` job in
+// warden-sweep.yml opens it; people review and merge it like any PR. The
+// sweep never approves, merges or reverts anything.
 //
 // The last reviewed dev commit is kept in the `warden-sweep-state` artifact of
 // the newest earlier run that saved one, so each PR is reviewed once. See
@@ -23,6 +30,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { parseWardenJsonl } from "./contributor-screen.mjs";
+import { qualifyingFixes } from "./warden-fixer.mjs";
 import { redact, wardenEnvironment } from "./warden-fast.mjs";
 
 export const SKILLS = ["diff-security-review", "diff-bug-review", "design-spec-review"];
@@ -81,8 +89,55 @@ export function sweepFindings(parsed) {
       description: clean(finding.description, 600),
       path: typeof finding.location?.path === "string" ? finding.location.path.slice(0, 240) : null,
       line: Number.isSafeInteger(finding.location?.startLine) && finding.location.startLine > 0 ? finding.location.startLine : null,
+      // Used only to plan fix PRs; never rendered.
+      confidence: ["high", "medium", "low"].includes(finding.confidence) ? finding.confidence : null,
+      suggested_fix: typeof finding.suggestedFix?.diff === "string" && finding.suggestedFix.diff.length <= 20_000
+        ? { description: clean(finding.suggestedFix.description, 500), diff: finding.suggestedFix.diff } : null,
     }))
     .sort((a, b) => SEVERITIES.indexOf(a.severity) - SEVERITIES.indexOf(b.severity));
+}
+
+// --- Fix PRs ----------------------------------------------------------------------
+
+export const FIX_BRANCH_PREFIX = "warden-fix/merged-";
+
+/** One fix branch per merged PR (or commit): reruns never stack a second PR. */
+export function fixBranch(pr) {
+  return `${FIX_BRANCH_PREFIX}${pr.number ?? "commit"}-${pr.sha.slice(0, 12)}`;
+}
+
+/**
+ * The fix PR for one merged PR, or null. Only Warden's high-confidence
+ * suggested diffs that pass the warden-fixer rules against the files that
+ * merge changed. Design findings are left to people: their fixes are taste.
+ */
+export function planFix(pr, changedFiles) {
+  if (!pr.complete) return null;
+  const candidates = pr.findings.filter((finding) => finding.kind !== "design");
+  const { fixes, skipped } = qualifyingFixes({ findings: candidates }, changedFiles);
+  if (!fixes.length) return null;
+  const ref = pr.number ? `#${pr.number}` : `\`${pr.sha.slice(0, 12)}\``;
+  const kinds = new Map(candidates.map((finding) => [finding.title, finding.kind]));
+  const lines = [
+    `Warden's post-merge sweep found ${fixes.length} problem(s) in ${ref} and is confident of the fix. Review and merge to accept, or close to reject.`,
+    "",
+    // Security fixes land in a public repository: name the file, not the issue.
+    ...fixes.map((fix) => kinds.get(fix.title) === "security"
+      ? `- **security · ${fix.severity}**${fix.path ? ` in \`${fix.path.slice(0, 200)}\`` : ""}: details are in the team's Slack sweep report.`
+      : `- **${kinds.get(fix.title) ?? "bug"} · ${fix.severity}**: ${mdEscape(fix.title)}${fix.path ? ` (\`${fix.path.slice(0, 200)}\`)` : ""}`),
+  ];
+  const left = candidates.length - fixes.length;
+  if (left || skipped.length) lines.push("", `${left} other finding(s) in ${ref} still need a person; see the sweep report.`);
+  lines.push("", "Release note: none");
+  const security = fixes.some((fix) => kinds.get(fix.title) === "security");
+  return {
+    branch: fixBranch(pr),
+    number: pr.number,
+    sha: pr.sha,
+    title: `fix: ${security ? "security and bug" : "bug"} fixes from Warden's post-merge sweep for ${pr.number ? `#${pr.number}` : pr.sha.slice(0, 12)}`,
+    body: `${lines.join("\n")}\n`,
+    patches: fixes.map((fix) => (fix.diff.endsWith("\n") ? fix.diff : `${fix.diff}\n`)),
+  };
 }
 
 // --- CI -----------------------------------------------------------------------------
@@ -143,7 +198,7 @@ function countLine(total) {
 }
 
 /** Slack message (private channel): full finding text. Null when there is nothing to report. */
-export function slackMessage({ repo, prs, runUrl, deferred, lateCi }) {
+export function slackMessage({ repo, prs, runUrl, deferred, lateCi, fixPlans = 0 }) {
   const flagged = prs.filter(needsAttention);
   const lateFailures = lateCi.filter((entry) => entry.ci.failed.length);
   if (!flagged.length && !lateFailures.length) return null;
@@ -163,6 +218,7 @@ export function slackMessage({ repo, prs, runUrl, deferred, lateCi }) {
     lines.push("", `*Late CI results for #${entry.number ?? entry.sha.slice(0, 10)}*`);
     for (const run of entry.ci.failed) lines.push(`• [tests] <${run.url}|${slackEscape(run.name)}> failed${run.newlyFailing ? " (first failure on dev)" : " (already failing before)"}`);
   }
+  if (fixPlans) lines.push("", `Opening ${fixPlans} fix PR(s) where Warden is confident of the fix (branches \`warden-fix/merged-*\`).`);
   if (deferred) lines.push("", `${deferred} more merged PR(s) will be reviewed in the next sweep.`);
   lines.push("", `<${runUrl}|View run>`);
   let text = lines.join("\n");
@@ -171,7 +227,7 @@ export function slackMessage({ repo, prs, runUrl, deferred, lateCi }) {
 }
 
 /** Job summary (public repository): security findings appear only as counts. */
-export function jobSummary({ repo, prs, deferred, lateCi, base, head, slack }) {
+export function jobSummary({ repo, prs, deferred, lateCi, base, head, slack, fixPlans = 0 }) {
   const lines = ["## Warden post-merge sweep", "", `Reviewed ${prs.length} PR(s) merged to dev: \`${base.slice(0, 10)}..${head.slice(0, 10)}\`. Found ${countLine(counts(prs))}.`, ""];
   if (prs.length) {
     lines.push("| PR | Security | Bugs | Design | Failing workflows | Review |", "| --- | --- | --- | --- | --- | --- |");
@@ -191,6 +247,7 @@ export function jobSummary({ repo, prs, deferred, lateCi, base, head, slack }) {
   if (details.length) lines.push("<details><summary>Bugs, design and failing workflows</summary>", "", ...details, "", "</details>", "");
   if (counts(prs).security) lines.push("Security finding text is sent to the team's Slack channel only.", "");
   if (deferred) lines.push(`${deferred} more merged PR(s) wait for the next sweep.`, "");
+  if (fixPlans) lines.push(`Planned ${fixPlans} fix PR(s) from Warden's high-confidence suggested fixes; see the fix job.`, "");
   lines.push(slack);
   return lines.join("\n");
 }
@@ -345,8 +402,23 @@ async function main() {
   }
   for (const pr of prs) if (pr.ci.pending) ciPending.push({ sha: pr.sha, number: pr.number, since: new Date(now).toISOString() });
 
+  // Fix PRs, opened by the workflow's `fix` job with its own token.
+  const fixesDir = join(outDir, "fixes");
+  rmSync(fixesDir, { recursive: true, force: true });
+  const plans = prs.map((pr) => planFix(pr, git(cwd, ["diff-tree", "--no-commit-id", "--name-only", "-r", "--no-renames", pr.sha]).split("\n").filter(Boolean)))
+    .filter(Boolean);
+  plans.forEach((plan, index) => {
+    const dir = join(fixesDir, String(index + 1).padStart(2, "0"));
+    mkdirSync(dir, { recursive: true });
+    plan.patches.forEach((patch, n) => writeFileSync(join(dir, `${String(n + 1).padStart(2, "0")}.patch`), patch));
+    writeFileSync(join(dir, "plan.json"), `${JSON.stringify({ branch: plan.branch, title: plan.title, number: plan.number, sha: plan.sha }, null, 2)}\n`);
+    writeFileSync(join(dir, "body.md"), plan.body);
+  });
+  if (env.GITHUB_OUTPUT) appendFileSync(env.GITHUB_OUTPUT, `fixes=${plans.length ? "true" : "false"}\nhead=${head}\n`);
+  if (plans.length) console.log(`Planned ${plans.length} fix PR(s).`);
+
   const runUrl = `${env.GITHUB_SERVER_URL || "https://github.com"}/${repo}/actions/runs/${env.GITHUB_RUN_ID || ""}`;
-  const message = slackMessage({ repo, prs, runUrl, deferred, lateCi });
+  const message = slackMessage({ repo, prs, runUrl, deferred, lateCi, fixPlans: plans.length });
   let slack = "Nothing to report to Slack.";
   if (message && local) {
     slack = "Local run: Slack skipped.";
@@ -359,7 +431,7 @@ async function main() {
     console.warn(slack);
   }
 
-  const summary = jobSummary({ repo, prs, deferred, lateCi, base, head: reviewedThrough ?? head, slack });
+  const summary = jobSummary({ repo, prs, deferred, lateCi, base, head: reviewedThrough ?? head, slack, fixPlans: plans.length });
   if (env.GITHUB_STEP_SUMMARY) appendFileSync(env.GITHUB_STEP_SUMMARY, `${summary}\n`);
   else console.log(summary);
 

@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import {
-  ciStatus, counts, jobSummary, MAX_PRS, needsAttention, planWindow, prNumber, slackMessage, sweepEnvironment, sweepFindings, validState,
+  ciStatus, counts, jobSummary, MAX_PRS, needsAttention, planFix, planWindow, prNumber, slackMessage, sweepEnvironment, sweepFindings, validState,
 } from "./warden-sweep.mjs";
 
 const sha = (n) => String(n).padStart(40, "a");
@@ -89,4 +89,43 @@ test("Slack lists every kind with escaped model text; the public summary hides s
 test("Warden's agent never sees GitHub or Slack credentials", () => {
   const env = sweepEnvironment({ PATH: "/bin", GH_TOKEN: "t", GITHUB_TOKEN: "t", SLACK_BOT_TOKEN: "s", SLACK_WARDEN_SWEEP_CHANNEL_ID: "c", WARDEN_OPENAI_API_KEY: "k" });
   assert.deepEqual(Object.keys(env).sort(), ["PATH", "WARDEN_OPENAI_API_KEY"]);
+});
+
+const diff = (path, from = "a", to = "b") => `--- a/${path}\n+++ b/${path}\n@@ -1 +1 @@\n-${from}\n+${to}\n`;
+const fixable = (overrides = {}) => ({
+  kind: "bug", severity: "high", title: "Crash on empty list", description: "", path: "src/a.ts", line: 1,
+  confidence: "high", suggested_fix: { description: "", diff: diff("src/a.ts") }, ...overrides,
+});
+
+test("plans one fix PR per merged PR from high-confidence suggested fixes only", () => {
+  const plan = planFix(pr({ findings: [
+    fixable(),
+    fixable({ title: "Unsure", confidence: "medium" }),
+    fixable({ kind: "design", title: "P2 drift" }),
+    fixable({ title: "Elsewhere", suggested_fix: { diff: diff("src/other.ts") } }),
+    fixable({ title: "Workflow", suggested_fix: { diff: diff(".github/workflows/x.yml") } }),
+  ] }), ["src/a.ts", ".github/workflows/x.yml"]);
+  assert.equal(plan.branch, `warden-fix/merged-101-${sha(1).slice(0, 12)}`);
+  assert.equal(plan.patches.length, 1);
+  assert.match(plan.title, /#101/);
+  assert.match(plan.body, /Crash on empty list/);
+  assert.match(plan.body, /3 other finding\(s\)/);
+});
+
+test("no fix PR for incomplete reviews or nothing fixable", () => {
+  assert.equal(planFix(pr({ complete: false, findings: [fixable()] }), ["src/a.ts"]), null);
+  assert.equal(planFix(pr({ findings: [fixable({ suggested_fix: null })] }), ["src/a.ts"]), null);
+});
+
+test("security fix PRs name the file, never the issue", () => {
+  const plan = planFix(pr({ findings: [fixable({ kind: "security", title: "SSRF via proxy URL" })] }), ["src/a.ts"]);
+  assert.doesNotMatch(plan.body, /SSRF/);
+  assert.match(plan.body, /security · high\*\* in `src\/a.ts`/);
+  assert.match(plan.title, /security/);
+});
+
+test("sweep findings keep Warden's confidence and suggested diff for planning", () => {
+  const [finding] = sweepFindings(parsed([{ skill: "diff-bug-review", severity: "high", title: "t", confidence: "high", suggestedFix: { diff: "d", description: "x" } }]));
+  assert.equal(finding.confidence, "high");
+  assert.equal(finding.suggested_fix.diff, "d");
 });
