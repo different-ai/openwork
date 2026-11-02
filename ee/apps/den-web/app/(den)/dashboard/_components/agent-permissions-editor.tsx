@@ -17,7 +17,6 @@ import {
   type AgentPermissionAction,
   type AgentPermissionDecision,
   type AgentPermissionDefinition,
-  type AgentPermissionSection,
   type AgentPermissionSetting,
   type AgentPermissionSettings,
 } from "@openwork/types/den/agent-permissions";
@@ -38,6 +37,7 @@ import {
   getEveryoneBrowserRoute,
   getOrgAccessFlags,
   permissionLockReason,
+  orgFeatureEnabled,
   type DenOrgContext,
 } from "../../_lib/den-org";
 import { useOrgDashboard } from "../_providers/org-dashboard-provider";
@@ -50,7 +50,15 @@ import {
   type AgentPermissionPolicy,
   type AgentPermissionScopeId,
 } from "./agent-permissions-data";
+import {
+  agentPermissionBlockedBy,
+  visibleAgentPermissionGroups,
+  visibleAgentPermissionTryKinds,
+  type AgentPermissionsArea,
+} from "./agent-permissions-presentation";
 import { useDenToast } from "./den-toast";
+
+export type { AgentPermissionsArea } from "./agent-permissions-presentation";
 
 // ---------------------------------------------------------------------------
 // Settings helpers
@@ -150,20 +158,6 @@ const PROPAGATION_NOTE = "Members' desktop apps can take up to 5 minutes to pick
 // ---------------------------------------------------------------------------
 // One scope's Agents panel: Everyone's, or a team's changes from Everyone
 // ---------------------------------------------------------------------------
-
-/**
- * Which rows a panel edits. "all" is the single Agents tab; with the Browser
- * tab (teamPageTabs) the Agents tab is "agents" and Open websites moves to "browser".
- */
-export type AgentPermissionsArea = "all" | "agents" | "browser";
-
-/** The rows on the Browser tab: what the built-in browser (and the agent's page fetches) may open. */
-const BROWSER_KEYS: readonly string[] = ["websites"];
-
-function inArea(area: AgentPermissionsArea, key: string): boolean {
-  if (area === "all") return true;
-  return area === "browser" ? BROWSER_KEYS.includes(key) : !BROWSER_KEYS.includes(key);
-}
 
 /** Everyone's Agents or Browser tab, or a team's. Loads, checks access, then edits. */
 export function AgentsPanel({ team, area = "all" }: { team: { id: string; name: string } | null; area?: AgentPermissionsArea }) {
@@ -378,20 +372,13 @@ function ResetToEveryone({ team, changes, previous, remove, removeError, removin
 // The editor: one panel of rows, then Try a request
 // ---------------------------------------------------------------------------
 
-const EDITOR_GROUPS: readonly { label: string; sections: readonly AgentPermissionSection[] }[] = [
-  { label: "Commands and files", sections: ["commands", "files"] },
-  { label: "Web", sections: ["web"] },
-  { label: "Skills and MCP servers", sections: ["extensions"] },
-];
-
-const BROWSER_GROUPS: readonly { label: string; sections: readonly AgentPermissionSection[] }[] = [
-  { label: "Websites", sections: ["web"] },
-];
-
 /** One line per row, in the words people use (DESIGN.md C3); the full detail stays in the type's description. */
 const ROW_COPY: Record<string, string> = {
   commands: "Commands the agent runs in the terminal, like npm test",
   fileEdits: "Create, change and delete files in the member's folders",
+  externalFolders: "Read and change files outside the member's workspace folders",
+  computerUse: "See and control apps on the member's computer",
+  appScripting: "Run AppleScript and other scripts in Mac apps",
   websites: "Pages the agent fetches and the built-in browser opens",
   webSearch: "Look things up with a web search",
   localSkills: "Skills installed on the member's computer",
@@ -412,15 +399,12 @@ export function AgentPermissionsEditor({ scopeId, team, settings, everyone, team
   editable: boolean;
   onChange: (settings: AgentPermissionSettings) => void;
 }) {
-  // Blocking file edits blocks every command too (any command can change files).
-  const editsBlocked = (team === null ? settings.fileEdits?.decision : settings.fileEdits?.decision ?? everyone.fileEdits?.decision) === "deny";
+  const { orgContext } = useOrgDashboard();
+  const harnessEnabled = orgFeatureEnabled(orgContext, "agentHarnessPermissions");
   return (
     <div className="min-w-0" data-testid="agent-permissions-editor" data-scope={scopeId}>
       <div className="divide-y divide-gray-100 rounded-2xl border border-gray-100 bg-white">
-        {(area === "browser" ? BROWSER_GROUPS : EDITOR_GROUPS).map((group) => ({
-          label: group.label,
-          definitions: agentPermissionDefinitions.filter((definition) => group.sections.includes(definition.section) && inArea(area, definition.key)),
-        })).filter((group) => group.definitions.length > 0).map((group) => (
+        {visibleAgentPermissionGroups(area, harnessEnabled).map((group) => (
           <div key={group.label} className="pb-1">
             <h3 className="px-5 pb-1 pt-3 text-[12px] font-medium text-gray-500">{group.label}</h3>
             {group.definitions.map((definition) => {
@@ -434,7 +418,7 @@ export function AgentPermissionsEditor({ scopeId, team, settings, everyone, team
                   everyoneSetting={team === null ? settings[definition.key] : everyone[definition.key]}
                   everyoneStatus={changedBy.length === 0 ? null : changedBy.length === 1 ? `Changed for ${changedBy[0]?.name ?? ""}` : `Changed for ${changedBy.length} teams`}
                   editable={editable}
-                  blockedByEdits={definition.action === "shell" && editsBlocked}
+                  blockedBy={agentPermissionBlockedBy(definition.key, settings, team === null ? null : everyone)}
                   onChange={(setting) => onChange(withSetting(settings, definition.key, setting))}
                 />
               );
@@ -442,12 +426,12 @@ export function AgentPermissionsEditor({ scopeId, team, settings, everyone, team
           </div>
         ))}
       </div>
-      <TryRequest area={area} everyone={team === null ? settings : everyone} team={team === null ? null : { name: team, settings }} />
+      <TryRequest area={area} harnessEnabled={harnessEnabled} everyone={team === null ? settings : everyone} team={team === null ? null : { name: team, settings }} />
     </div>
   );
 }
 
-function PermissionRow({ definition, team, setting, everyoneSetting, everyoneStatus, editable, blockedByEdits = false, onChange }: {
+function PermissionRow({ definition, team, setting, everyoneSetting, everyoneStatus, editable, blockedBy, onChange }: {
   definition: AgentPermissionDefinition;
   team: string | null;
   setting: AgentPermissionSetting | undefined;
@@ -455,7 +439,7 @@ function PermissionRow({ definition, team, setting, everyoneSetting, everyoneSta
   /** On Everyone's tab: which teams changed this row, or null. */
   everyoneStatus: string | null;
   editable: boolean;
-  blockedByEdits?: boolean;
+  blockedBy: { key: string; reason: string } | null;
   onChange: (setting: AgentPermissionSetting | null) => void;
 }) {
   const labelId = useId();
@@ -527,10 +511,10 @@ function PermissionRow({ definition, team, setting, everyoneSetting, everyoneSta
           )}
         </div>
       </div>
-      {blockedByEdits ? (
-        <p className="mt-1.5 flex items-center gap-1.5 text-[12px] text-gray-600" data-testid={`agent-permission-${definition.key}-blocked-by-edits`}>
+      {blockedBy ? (
+        <p className="mt-1.5 flex items-center gap-1.5 text-[12px] text-gray-600" data-testid={`agent-permission-${definition.key}-blocked-by-${blockedBy.key}`}>
           <Lock className="size-3.5 shrink-0" aria-hidden="true" />
-          Blocked while Edit files is blocked, because any command can change files.
+          {blockedBy.reason}
         </p>
       ) : null}
       {definition.patterns && definition.patternNoun ? (
@@ -707,19 +691,11 @@ function PatternLine({ list, label, noun, testId, kind, patterns, inherited, edi
 // Try a request
 // ---------------------------------------------------------------------------
 
-const TRY_KINDS: readonly { action: AgentPermissionAction; label: string; placeholder: string }[] = [
-  { action: "shell", label: "Command", placeholder: "git push origin main" },
-  { action: "webfetch", label: "Website", placeholder: "https://docs.example.com/guide" },
-  { action: "skill", label: "Local skill", placeholder: "meeting-notes" },
-  { action: "mcp", label: "Local MCP server", placeholder: "issue-tracker" },
-];
-
-function TryRequest({ area, everyone, team }: { area: AgentPermissionsArea; everyone: AgentPermissionSettings; team: { name: string; settings: AgentPermissionSettings } | null }) {
-  const kinds = TRY_KINDS.filter((entry) => {
-    const key = agentPermissionDefinitions.find((definition) => definition.action === entry.action)?.key;
-    return key === undefined || inArea(area, key);
-  });
-  const [action, setAction] = useState<AgentPermissionAction>(kinds[0]?.action ?? "shell");
+function TryRequest({ area, harnessEnabled, everyone, team }: { area: AgentPermissionsArea; harnessEnabled: boolean; everyone: AgentPermissionSettings; team: { name: string; settings: AgentPermissionSettings } | null }) {
+  const kinds = visibleAgentPermissionTryKinds(area, harnessEnabled);
+  const [selectedAction, setAction] = useState<AgentPermissionAction>(kinds[0]?.action ?? "shell");
+  // A rollout refresh can hide the selected kind without remounting this draft.
+  const action = kinds.find((entry) => entry.action === selectedAction)?.action ?? kinds[0]?.action ?? "shell";
   const [value, setValue] = useState("");
   const kind = kinds.find((entry) => entry.action === action);
   const resource = action === "webfetch" && value.trim() && !/^[a-z][a-z0-9+.-]*:\/\//i.test(value.trim()) ? `https://${value.trim()}` : value.trim();

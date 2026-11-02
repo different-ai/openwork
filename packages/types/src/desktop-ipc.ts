@@ -364,6 +364,8 @@ export type ComputerRequest = {
   detail?: string;
   appId?: string;
   purpose?: string;
+  /** False when organization policy requires approval of each individual script. */
+  standing?: boolean;
   /** The exact script that runs if the person approves it. */
   script?: { app: "applescript" | "jxa" | "blender"; code: string };
   /** The files handed over if the person approves: names or full paths, and the app or site receiving them. */

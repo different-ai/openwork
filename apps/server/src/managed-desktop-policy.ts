@@ -9,6 +9,12 @@ import { ApiError } from "./errors.js";
 import { clearManagedDesktopPolicy, readGlobalRuntimeOpencodeConfig, writeManagedDesktopPolicy, runtimeProviderMap } from "./runtime-opencode-config-store.js";
 import { policyDenial, policyRequestActions, type ManagedPolicyAction } from "./managed-policy-rules.js";
 import { agentPermissionDenial, agentPermissionRulesOf } from "./agent-permission-engine.js";
+import type { AgentPermissionAction, AgentPermissionRule } from "@openwork/types/den/agent-permissions-runtime";
+
+/** Only the rules enforced by the host surface requesting them. */
+export function agentPermissionRulesForActions(rules: readonly AgentPermissionRule[], actions: readonly AgentPermissionAction[]): AgentPermissionRule[] {
+  return rules.filter((rule) => actions.includes(rule.action));
+}
 
 const services = new WeakMap<ServerConfig, ManagedDesktopPolicy>();
 /** Org-managed providers: Den-imported (lpr_), Gateway (ipr_), hosted OpenWork Models and Smart Routers. */
@@ -321,13 +327,13 @@ class ManagedDesktopPolicy {
   }
 
   /**
-   * The member's website rules for the built-in browser, read by the desktop
+   * The member's rules for a desktop host surface, read by the desktop
    * process itself rather than taken from the app window. Den is asked first
    * (briefly); when it cannot answer, the policy verified for this sign-in,
    * else the latest rules stored on this computer, so the member keeps
    * working offline. Signed out there are none.
    */
-  async websiteRules(): Promise<ReturnType<typeof agentPermissionRulesOf>> {
+  private async agentPermissionRulesFor(actions: readonly AgentPermissionAction[]): Promise<AgentPermissionRule[]> {
     if (!this.session) return [];
     const fresh = await Promise.race([
       this.current().catch(() => null),
@@ -337,7 +343,13 @@ class ManagedDesktopPolicy {
     const rules = policy
       ? agentPermissionRulesOf(policy)
       : agentPermissionRulesOf((await readGlobalRuntimeOpencodeConfig(this.config)).managedPolicy);
-    return rules.filter((rule) => rule.action === "webfetch");
+    return agentPermissionRulesForActions(rules, actions);
+  }
+  websiteRules(): Promise<AgentPermissionRule[]> {
+    return this.agentPermissionRulesFor(["webfetch"]);
+  }
+  computerRules(): Promise<AgentPermissionRule[]> {
+    return this.agentPermissionRulesFor(["computer", "script"]);
   }
   /** The desktop config verified for this sign-in, without waiting on Den. Null signed out or before Den first answered. */
   known(): DesktopConfig | null {
