@@ -144,7 +144,8 @@ export async function verifyPreclaimAssertion(assertion: string, now = new Date(
   } catch {
     return { ok: false, error: "invalid_grant", description: "The assertion is missing its workspace." }
   }
-  const [bootstrap] = await db
+  // primary: agents exchange the assertion right after bootstrap, and a claim must revoke it at once.
+  const [bootstrap] = await db.$primary
     .select()
     .from(WorkspaceBootstrapTable)
     .where(eq(WorkspaceBootstrapTable.id, normalizeDenTypeId("workspaceBootstrap", normalizedBootstrapId)))
@@ -228,7 +229,8 @@ export async function findPreclaimWorkspaceForUser(input: { userId: string; emai
   } catch {
     return null
   }
-  const [row] = await db
+  // primary: only setup agents reach this; a lagging row would skip the pre-claim limits right after bootstrap or claim.
+  const [row] = await db.$primary
     .select({ id: WorkspaceBootstrapTable.id, organizationId: WorkspaceBootstrapTable.organizationId, status: WorkspaceBootstrapTable.status })
     .from(WorkspaceBootstrapTable)
     .where(eq(WorkspaceBootstrapTable.agentUserId, normalizeDenTypeId("user", userId)))
@@ -379,7 +381,8 @@ export async function revokePreclaimCredentials(bootstrapId: string, now = new D
     .where(and(eq(WorkspaceBootstrapTable.id, normalizeDenTypeId("workspaceBootstrap", bootstrapId)), isNull(WorkspaceBootstrapTable.credentialsRevokedAt)))
   if (!bootstrap?.agentUserId) return
   const agentUserId = normalizeDenTypeId("user", bootstrap.agentUserId)
-  const sessions = await db
+  // primary: a session minted moments ago must have its cache entries revoked too.
+  const sessions = await db.$primary
     .select({ id: AuthSessionTable.id, token: AuthSessionTable.token, userId: AuthSessionTable.userId, expiresAt: AuthSessionTable.expiresAt, activeOrganizationId: AuthSessionTable.activeOrganizationId })
     .from(AuthSessionTable)
     .where(eq(AuthSessionTable.userId, agentUserId))

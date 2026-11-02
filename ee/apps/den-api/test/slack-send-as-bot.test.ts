@@ -19,7 +19,7 @@ process.env.OPENWORK_DEV_MODE ??= "1"
 const { db } = await import("../src/db.js")
 // Better Auth seeds its resource registry on import. Return an already-present
 // synthetic registry row while the modules initialize, without SQL I/O.
-const bootstrapSelect = mock.method(db, "select", () => ({
+const bootstrapSelect = mock.method(db.$primary, "select", () => ({
   from() { return { async where() { return [{ id: "unit_oauth_resource", identifier: "http://unit.test/mcp/agent", policyVersion: 1 }] } } },
 }))
 const { auth } = await import("../src/auth.js")

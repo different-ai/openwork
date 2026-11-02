@@ -96,7 +96,8 @@ export async function purgeOrganizationHistory(organizationId: OrganizationId): 
     // Usage events have no organization index; charges have no organization column.
     const events = and(inArray(GatewayUsageEventTable.memberId, memberIds), eq(GatewayUsageEventTable.organizationId, organizationId))
     await deleteParentsInBatches(
-      async (limit) => (await db.select({ id: GatewayUsageEventTable.id }).from(GatewayUsageEventTable).where(events).limit(limit)).map((row) => row.id),
+      // primary: each page must not include the rows the previous page just deleted.
+      async (limit) => (await db.$primary.select({ id: GatewayUsageEventTable.id }).from(GatewayUsageEventTable).where(events).limit(limit)).map((row) => row.id),
       async (ids) => {
         await db.delete(GatewayUsageChargeTable).where(inArray(GatewayUsageChargeTable.eventId, ids))
         await db.delete(GatewayUsageEventTable).where(inArray(GatewayUsageEventTable.id, ids))
@@ -104,7 +105,8 @@ export async function purgeOrganizationHistory(organizationId: OrganizationId): 
     )
   }
   await deleteParentsInBatches(
-    async (limit) => (await db
+    // primary: each page must not include the rows the previous page just deleted.
+    async (limit) => (await db.$primary
       .select({ id: InferenceUsageLedgerEntryTable.id })
       .from(InferenceUsageLedgerEntryTable)
       .where(eq(InferenceUsageLedgerEntryTable.organization_id, organizationId))

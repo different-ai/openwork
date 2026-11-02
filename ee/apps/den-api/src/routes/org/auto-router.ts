@@ -57,8 +57,8 @@ const notFound = jsonResponse("The organization or Smart Router was not found, o
 const unauthorized = jsonResponse("Authentication required.", unauthorizedSchema)
 const manageForbidden = jsonResponse("The caller lacks the Manage Gateway providers permission or needs to sign in again.", forbiddenSchema)
 
-async function listView(c: PermissionRouteContext, organizationId: DenTypeId<"organization">) {
-  const [list, routing, canEdit] = await Promise.all([listAutoRouters(organizationId), readAutoRouterRouting(), hasPermission(c, "gateway_providers.manage")])
+async function listView(c: PermissionRouteContext, organizationId: DenTypeId<"organization">, options: { primary?: boolean } = {}) {
+  const [list, routing, canEdit] = await Promise.all([listAutoRouters(organizationId, options), readAutoRouterRouting(), hasPermission(c, "gateway_providers.manage")])
   return { ...list, routing, canEdit }
 }
 
@@ -110,7 +110,7 @@ export function registerOrgAutoRouterRoutes<T extends { Variables: OrgRouteVaria
     if (problem) return c.json(problem, 400)
     const saved = await saveAutoRouter({ organizationId, memberId: payload.currentMember.id, routerId, write })
     if (!saved) return c.json({ error: "auto_router_not_found" }, 404)
-    return c.json({ ...await listView(c, organizationId), routerId: saved })
+    return c.json({ ...await listView(c, organizationId, { primary: true }), routerId: saved })
   }
 
   /** Checks who a router should apply to and saves it. */
@@ -135,7 +135,7 @@ export function registerOrgAutoRouterRoutes<T extends { Variables: OrgRouteVaria
       const denied = { ...permissionDeniedResponse("sharing.share_org_wide"), message: ORG_WIDE_SHARE_DENIED_MESSAGE }
       return c.json(denied, 403, permissionFailureHeaders(denied))
     }
-    return c.json({ ...await listView(c, organizationId), routerId })
+    return c.json({ ...await listView(c, organizationId, { primary: true }), routerId })
   }
 
   app.get(
@@ -250,7 +250,7 @@ export function registerOrgAutoRouterRoutes<T extends { Variables: OrgRouteVaria
     async (c) => {
       const organizationId = c.get("organizationContext").organization.id
       if (!await deleteAutoRouter(organizationId, c.req.valid("param").routerId)) return c.json({ error: "auto_router_not_found" }, 404)
-      return c.json(await listView(c, organizationId))
+      return c.json(await listView(c, organizationId, { primary: true }))
     },
   )
 

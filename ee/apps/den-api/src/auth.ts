@@ -803,7 +803,9 @@ export const auth = betterAuth({
   socialProviders:
     Object.keys(socialProviders).length > 0 ? socialProviders : undefined,
   // Session tokens are stored hashed (src/session-token.ts).
-  database: hashSessionTokens(drizzleAdapter(db, {
+  // Primary only: the MySQL adapter inserts then selects the row back, which a
+  // lagging read replica would miss.
+  database: hashSessionTokens(drizzleAdapter(db.$primary, {
     provider: "mysql",
     schema,
   }), {
@@ -1572,7 +1574,8 @@ export const auth = betterAuth({
           }
 
           if (hasRole(role, ORGANIZATION_OWNER_ROLE)) {
-            const existingMembers = await db
+            // primary: a lagging replica could miss members added moments ago and allow a second owner.
+            const existingMembers = await db.$primary
               .select({ id: schema.MemberTable.id })
               .from(schema.MemberTable)
               .where(eq(schema.MemberTable.organizationId, normalizeDenTypeId("organization", member.organizationId)))

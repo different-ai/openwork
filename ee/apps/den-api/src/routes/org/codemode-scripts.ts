@@ -49,6 +49,7 @@ import {
 } from "../../artifact-views.js"
 
 import { getSavedApp, listSavedApps, setAppOnDashboard, shareSavedApp } from "../../saved-apps.js"
+import { primaryReadsMiddleware } from "../../read-routing.js"
 
 const capabilitySchema = z.object({ capabilityName: z.string(), scriptPath: z.string() })
 const scriptSchema = z.object({
@@ -293,7 +294,7 @@ export function registerOrgWorkflowRoutes<T extends { Variables: OrgRouteVariabl
         404: jsonResponse("Plugin not found.", notFoundSchema),
       },
     }),
-    orgMemberRoute(), jsonValidator(saveSchema),
+    orgMemberRoute(), primaryReadsMiddleware, jsonValidator(saveSchema),
     async (c) => {
       try {
         const { context, actorContext, buildTools } = await contextFor(c)
@@ -377,7 +378,7 @@ export function registerOrgWorkflowRoutes<T extends { Variables: OrgRouteVariabl
         404: jsonResponse("App or teammate not found.", notFoundSchema),
       },
     }),
-    orgMemberRoute(),
+    orgMemberRoute(), primaryReadsMiddleware,
     jsonValidator(z.object({ email: z.string().trim().email().max(320) })),
     async (c) => {
       if (!env.generatedArtifactViewsEnabled) return c.json({ error: "artifact_view_not_found" }, 404)
@@ -425,7 +426,7 @@ export function registerOrgWorkflowRoutes<T extends { Variables: OrgRouteVariabl
         200: jsonResponse("Dashboard updated.", z.object({ ok: z.literal(true) })),
       },
     }),
-    orgMemberRoute(), jsonValidator(z.object({ added: z.boolean() })),
+    orgMemberRoute(), primaryReadsMiddleware, jsonValidator(z.object({ added: z.boolean() })),
     async (c) => {
       if (!env.generatedArtifactViewsEnabled) return c.json({ error: "artifact_view_not_found" }, 404)
       try {
@@ -448,7 +449,7 @@ export function registerOrgWorkflowRoutes<T extends { Variables: OrgRouteVariabl
         200: jsonResponse("App saved.", generatedArtifactViewSchema),
       },
     }),
-    orgMemberRoute(),
+    orgMemberRoute(), primaryReadsMiddleware,
     jsonValidator(saveAppSchema),
     async (c) => {
       if (!env.generatedArtifactViewsEnabled) return c.json({ error: "artifact_view_not_found" }, 404)
@@ -502,7 +503,7 @@ export function registerOrgWorkflowRoutes<T extends { Variables: OrgRouteVariabl
         404: jsonResponse("Artifact view or revision not found, or generated Artifact views are disabled.", notFoundSchema),
       },
     }),
-    orgMemberRoute(),
+    orgMemberRoute(), primaryReadsMiddleware,
     async (c) => {
       if (!env.generatedArtifactViewsEnabled) return c.json({ error: "artifact_view_not_found" }, 404)
       const params = artifactViewParamsSchema.safeParse(c.req.param())
@@ -529,7 +530,7 @@ export function registerOrgWorkflowRoutes<T extends { Variables: OrgRouteVariabl
         404: jsonResponse("Artifact view not found, or generated Artifact views are disabled.", notFoundSchema),
       },
     }),
-    orgMemberRoute(),
+    orgMemberRoute(), primaryReadsMiddleware,
     async (c) => {
       if (!env.generatedArtifactViewsEnabled) return c.json({ error: "artifact_view_not_found" }, 404)
       const params = artifactViewParamsSchema.safeParse(c.req.param())
@@ -673,7 +674,7 @@ export function registerOrgWorkflowRoutes<T extends { Variables: OrgRouteVariabl
       description: "Appends a new immutable version to the Workflow and updates its name and description. receiptId must reference a successful draft test by the caller that is less than 15 minutes old, has not already produced a version, and whose code, exampleInput, inputSchema, outputSchema, name, description, and requiredCapabilities all match this body byte-for-byte (400 workflow_matching_test_receipt_required). Every capability the test actually called must be listed in requiredCapabilities and still be available to the caller (400 workflow_capability_unavailable). Requires manager access to the Workflow.",
       responses: { 201: jsonResponse("Workflow version created.", workflowDetailSchema), 400: jsonResponse("Version rejected.", invalidRequestSchema) },
     }),
-    orgMemberRoute(), jsonValidator(versionSchema),
+    orgMemberRoute(), primaryReadsMiddleware, jsonValidator(versionSchema),
     async (c) => {
       const params = detailParamsSchema.safeParse(c.req.param())
       if (!params.success) return c.json({ error: "invalid_request", message: "Invalid Workflow id." }, 400)
@@ -756,7 +757,7 @@ export function registerOrgWorkflowRoutes<T extends { Variables: OrgRouteVariabl
         404: jsonResponse("Workflow or snapshot not found.", notFoundSchema),
       },
     }),
-    orgMemberRoute(),
+    orgMemberRoute(), primaryReadsMiddleware,
     async (c) => {
       const params = detailParamsSchema.safeParse(c.req.param())
       if (!params.success || !params.data.receiptId) return c.json({ error: "invalid_request", message: "Invalid snapshot id." }, 400)

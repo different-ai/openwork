@@ -373,8 +373,11 @@ export function openWorkWebPaymentStatus(status: string | null | undefined, paym
 // configured the 402 would be a dead end the operator cannot resolve.
 export { isSeatBillingGateEnabled } from "./organization-plan.js"
 
-async function findOrgSubscriptionByType(organizationId: OrgId, subscriptionType: OrgSubscriptionTypeValue) {
-  return db
+/** Billing writes pass `db.$primary` so their decisions never use a lagging replica row. */
+type SubscriptionReader = typeof db | typeof db.$primary
+
+async function findOrgSubscriptionByType(organizationId: OrgId, subscriptionType: OrgSubscriptionTypeValue, database: SubscriptionReader = db) {
+  return database
     .select()
     .from(OrgSubscriptionTable)
     .where(and(
@@ -385,20 +388,20 @@ async function findOrgSubscriptionByType(organizationId: OrgId, subscriptionType
     .then((rows) => rows[0] ?? null)
 }
 
-async function findInferenceSubscriptionByOrg(organizationId: OrgId) {
-  return findOrgSubscriptionByType(organizationId, INFERENCE_SUBSCRIPTION_TYPE)
+async function findInferenceSubscriptionByOrg(organizationId: OrgId, database: SubscriptionReader = db) {
+  return findOrgSubscriptionByType(organizationId, INFERENCE_SUBSCRIPTION_TYPE, database)
 }
 
-async function findSeatSubscriptionByOrg(organizationId: OrgId) {
-  return findOrgSubscriptionByType(organizationId, SEAT_SUBSCRIPTION_TYPE)
+async function findSeatSubscriptionByOrg(organizationId: OrgId, database: SubscriptionReader = db) {
+  return findOrgSubscriptionByType(organizationId, SEAT_SUBSCRIPTION_TYPE, database)
 }
 
-async function findWebSubscriptionByOrg(organizationId: OrgId) {
-  return findOrgSubscriptionByType(organizationId, WEB_SUBSCRIPTION_TYPE)
+async function findWebSubscriptionByOrg(organizationId: OrgId, database: SubscriptionReader = db) {
+  return findOrgSubscriptionByType(organizationId, WEB_SUBSCRIPTION_TYPE, database)
 }
 
-async function findOrgSubscriptionByStripeId(stripeSubscriptionId: string) {
-  return db
+async function findOrgSubscriptionByStripeId(stripeSubscriptionId: string, database: SubscriptionReader = db) {
+  return database
     .select()
     .from(OrgSubscriptionTable)
     .where(eq(OrgSubscriptionTable.stripe_subscription_id, stripeSubscriptionId))
@@ -504,7 +507,8 @@ export async function organizationHasActiveSeatSubscription(organizationId: OrgI
  * plan Stripe set to Free. Admin-set and grandfathered plans are left alone.
  */
 async function syncOrganizationPlanFromSubscriptions(organizationId: OrgId, seatSubscription?: Stripe.Subscription) {
-  const seatRow = await findSeatSubscriptionByOrg(organizationId)
+  // Primary: always runs right after the seat subscription row was written.
+  const seatRow = await findSeatSubscriptionByOrg(organizationId, db.$primary)
   const seatTier = seatSubscription ? planTierFromSubscriptionMetadata(seatSubscription.metadata) : "team"
   await updateOrganizationMetadata(organizationId, (current) => {
     const next = reconcileOrganizationPlan({
@@ -588,7 +592,7 @@ export async function upsertOrgSubscriptionFromStripe(subscription: Stripe.Subsc
   const organizationId = metadata.organizationId as OrgId
   const status = subscriptionStatus(subscription.status)
   const subscriptionType = subscriptionTypeFromStripeSubscription(subscription, item)
-  const existingSubscription = await findOrgSubscriptionByType(organizationId, subscriptionType)
+  const existingSubscription = await findOrgSubscriptionByType(organizationId, subscriptionType, db.$primary)
   const sameSubscription = existingSubscription?.stripe_subscription_id === subscription.id
 
   if (existingSubscription && !sameSubscription) {
@@ -699,7 +703,7 @@ export async function upsertOrgSubscriptionFromStripe(subscription: Stripe.Subsc
     await syncOrganizationPlanFromSubscriptions(organizationId, subscriptionType === SEAT_SUBSCRIPTION_TYPE ? subscription : undefined)
   }
 
-  return findOrgSubscriptionByStripeId(subscription.id)
+  return findOrgSubscriptionByStripeId(subscription.id, db.$primary)
 }
 
 async function currentStripeSubscriptionStatus(stripeSubscriptionId: string) {
@@ -724,7 +728,7 @@ export async function refreshOrgSubscriptionFromStripe(stripeSubscriptionId: str
     return findOrgSubscriptionByStripeId(stripeSubscriptionId)
   }
 
-  const existing = await findOrgSubscriptionByStripeId(stripeSubscriptionId)
+  const existing = await findOrgSubscriptionByStripeId(stripeSubscriptionId, db.$primary)
   const subscription = await stripe().subscriptions.retrieve(stripeSubscriptionId)
   const item = firstSubscriptionItem(subscription)
   const status = subscriptionStatus(subscription.status)
@@ -753,7 +757,7 @@ export async function refreshOrgSubscriptionFromStripe(stripeSubscriptionId: str
     })
     .where(eq(OrgSubscriptionTable.stripe_subscription_id, subscription.id))
 
-  const row = await findOrgSubscriptionByStripeId(subscription.id)
+  const row = await findOrgSubscriptionByStripeId(subscription.id, db.$primary)
   if (row && isPlanSubscriptionType(row.type)) {
     await syncOrganizationPlanFromSubscriptions(row.organization_id)
   }
@@ -1473,11 +1477,12 @@ export async function syncOrganizationBillingQuantities(input: { organizationId:
   if (!env.stripe.secretKey) {
     return
   }
+  // Primary: row.quantity decides whether Stripe is updated, and the last sync may have just written it.
   const [quantities, seatRow, inferenceRow, webRow] = await Promise.all([
     getOrganizationBillingQuantities(input.organizationId),
-    findSeatSubscriptionByOrg(input.organizationId),
-    findInferenceSubscriptionByOrg(input.organizationId),
-    findWebSubscriptionByOrg(input.organizationId),
+    findSeatSubscriptionByOrg(input.organizationId, db.$primary),
+    findInferenceSubscriptionByOrg(input.organizationId, db.$primary),
+    findWebSubscriptionByOrg(input.organizationId, db.$primary),
   ])
   for (const row of [seatRow, inferenceRow, webRow]) {
     await syncSubscriptionQuantity(row, quantities)
@@ -1490,7 +1495,7 @@ async function syncOpenWorkWebQuantity(organizationId: OrgId) {
   }
   const [quantities, row] = await Promise.all([
     getOrganizationBillingQuantities(organizationId),
-    findWebSubscriptionByOrg(organizationId),
+    findWebSubscriptionByOrg(organizationId, db.$primary),
   ])
   await syncSubscriptionQuantity(row, quantities)
 }
@@ -1505,7 +1510,7 @@ async function createSeatSubscriptionFromSetupCheckoutSession(session: Stripe.Ch
     return null
   }
 
-  const existingSeatSubscription = await findSeatSubscriptionByOrg(metadata.organizationId as OrgId)
+  const existingSeatSubscription = await findSeatSubscriptionByOrg(metadata.organizationId as OrgId, db.$primary)
   if (existingSeatSubscription && ACTIVE_STATUSES.has(existingSeatSubscription.status)) {
     return existingSeatSubscription
   }
@@ -1616,7 +1621,7 @@ async function syncCurrentStripeSubscription(stripeSubscriptionId: string, event
   const subscriptionType = subscriptionTypeFromStripeSubscription(subscription, item)
 
   if (subscriptionType === WEB_SUBSCRIPTION_TYPE && metadata.organizationId) {
-    const existing = await findWebSubscriptionByOrg(metadata.organizationId as OrgId)
+    const existing = await findWebSubscriptionByOrg(metadata.organizationId as OrgId, db.$primary)
     if (existing?.stripe_subscription_id && existing.stripe_subscription_id !== subscription.id) {
       const refreshedExisting = await refreshOrgSubscriptionFromStripe(existing.stripe_subscription_id)
       if (isOngoingConfiguredOpenWorkWebSubscriptionRow(refreshedExisting)) {
@@ -1797,7 +1802,8 @@ function stripeEventSubscriptionId(event: Stripe.Event): string | null {
 async function stripeEventOrganizationId(event: Stripe.Event): Promise<OrgId | null> {
   const subscriptionId = stripeEventSubscriptionId(event)
   if (subscriptionId) {
-    const row = await findOrgSubscriptionByStripeId(subscriptionId)
+    // Primary: the "after" lookup reads the row this event just created.
+    const row = await findOrgSubscriptionByStripeId(subscriptionId, db.$primary)
     if (row) return row.organization_id
   }
   if ((event.type === "checkout.session.completed" || event.type === "checkout.session.async_payment_succeeded") && event.data.object.mode === "setup") {
@@ -1805,7 +1811,7 @@ async function stripeEventOrganizationId(event: Stripe.Event): Promise<OrgId | n
     let metadataOrganizationId: OrgId | null = null
     try { metadataOrganizationId = metadata.organizationId ? normalizeDenTypeId("organization", metadata.organizationId) : null } catch { metadataOrganizationId = null }
     if (metadata.subscriptionType === SEAT_SUBSCRIPTION_TYPE && metadataOrganizationId) {
-      const row = await findSeatSubscriptionByOrg(metadataOrganizationId)
+      const row = await findSeatSubscriptionByOrg(metadataOrganizationId, db.$primary)
       if (row && typeof event.data.object.customer === "string" && row.stripe_customer_id === event.data.object.customer) return row.organization_id
     }
   }

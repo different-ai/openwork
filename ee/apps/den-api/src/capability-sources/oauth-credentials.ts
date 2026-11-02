@@ -103,8 +103,13 @@ export function getOrgOAuthClients(organizationId: OrganizationId, providerIds: 
   }, null)
 }
 
-async function readOrgOAuthClient(organizationId: OrganizationId, providerId: string): Promise<OrgOAuthClientRow | null> {
-  const rows = await db
+/** One provider's client read from the primary, for a writer reading back its own change. */
+export function getOrgOAuthClientFromPrimary(organizationId: OrganizationId, providerId: string): Promise<OrgOAuthClientRow | null> {
+  return readOrgOAuthClient(organizationId, providerId, db.$primary)
+}
+
+async function readOrgOAuthClient(organizationId: OrganizationId, providerId: string, database: typeof db.$primary = db): Promise<OrgOAuthClientRow | null> {
+  const rows = await database
     .select()
     .from(OrgOAuthClientTable)
     .where(and(eq(OrgOAuthClientTable.organizationId, organizationId), eq(OrgOAuthClientTable.providerId, providerId)))
@@ -127,7 +132,8 @@ export async function upsertOrgOAuthClient(input: {
   extra?: Record<string, unknown> | null
   createdByOrgMembershipId: OrgMembershipId
 }): Promise<OrgOAuthClientRow> {
-  const existing = await getOrgOAuthClient(input.organizationId, input.providerId)
+  // primary: decides update vs insert and reads back the row written here.
+  const existing = await readOrgOAuthClient(input.organizationId, input.providerId, db.$primary)
   if (existing) {
     await db
       .update(OrgOAuthClientTable)
@@ -137,7 +143,7 @@ export async function upsertOrgOAuthClient(input: {
         ...(input.extra !== undefined ? { extra: input.extra } : {}),
       })
       .where(eq(OrgOAuthClientTable.id, existing.id))
-    return (await getOrgOAuthClient(input.organizationId, input.providerId))!
+    return (await readOrgOAuthClient(input.organizationId, input.providerId, db.$primary))!
   }
 
   const id = createDenTypeId("orgOAuthClient")
@@ -150,7 +156,7 @@ export async function upsertOrgOAuthClient(input: {
     extra: input.extra ?? null,
     createdByOrgMembershipId: input.createdByOrgMembershipId,
   })
-  return (await readOrgOAuthClient(input.organizationId, input.providerId))!
+  return (await readOrgOAuthClient(input.organizationId, input.providerId, db.$primary))!
 }
 
 /**
@@ -159,7 +165,7 @@ export async function upsertOrgOAuthClient(input: {
  * always reads fresh: a refresh that lost a race re-reads without writing.
  */
 export function getConnectedAccountForListing(input: Parameters<typeof getConnectedAccount>[0]): Promise<ConnectedAccountRow | null> {
-  return requestRead(connectedAccountReadKey(input), () => getConnectedAccount(input))
+  return requestRead(connectedAccountReadKey(input), () => readConnectedAccount(input, db))
 }
 
 /** getConnectedAccountForListing for one member's accounts with many providers, in one query. */
@@ -185,12 +191,21 @@ function connectedAccountReadKey(input: { organizationId: OrganizationId; orgMem
   return `connected-account:${input.organizationId}:${input.orgMembershipId}:${input.providerId}`
 }
 
+/** Reads the primary: token refresh and upserts must see the latest write. */
 export async function getConnectedAccount(input: {
   organizationId: OrganizationId
   orgMembershipId: OrgMembershipId
   providerId: string
 }): Promise<ConnectedAccountRow | null> {
-  const rows = await db
+  return readConnectedAccount(input, db.$primary)
+}
+
+async function readConnectedAccount(input: {
+  organizationId: OrganizationId
+  orgMembershipId: OrgMembershipId
+  providerId: string
+}, database: typeof db.$primary): Promise<ConnectedAccountRow | null> {
+  const rows = await database
     .select()
     .from(ConnectedAccountTable)
     .where(and(

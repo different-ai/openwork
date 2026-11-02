@@ -31,7 +31,8 @@ type PendingDeviceOrganization = { userId: string; organizationId: string }
 const pendingDeviceOrganizations = new Map<string, PendingDeviceOrganization>()
 
 export async function stageDeviceSessionOrganization(deviceCode: string): Promise<void> {
-  const [row] = await db
+  // primary: the CLI's poll can arrive right after approval.
+  const [row] = await db.$primary
     .select({
       status: DeviceCodeTable.status,
       userId: DeviceCodeTable.userId,
@@ -55,7 +56,8 @@ async function isActiveMember(input: { userId: string; organizationId: string })
 }
 
 async function activeMemberId(input: { userId: string; organizationId: string }): Promise<string | null> {
-  const [member] = await db
+  // primary: a person removed moments ago must not land in the organization.
+  const [member] = await db.$primary
     .select({ id: MemberTable.id })
     .from(MemberTable)
     .where(and(
@@ -87,7 +89,8 @@ export type DeviceCodeLookup =
 
 /** What the verification page shows before the person decides. Never exposes the device code. */
 export async function lookupDeviceUserCode(userCode: string, now = new Date()): Promise<DeviceCodeLookup> {
-  const [row] = await db
+  // primary: the code is usually opened right after the CLI created it.
+  const [row] = await db.$primary
     .select({ status: DeviceCodeTable.status, clientId: DeviceCodeTable.clientId, expiresAt: DeviceCodeTable.expiresAt })
     .from(DeviceCodeTable)
     .where(eq(DeviceCodeTable.userCode, normalizeDeviceUserCode(userCode)))
@@ -129,7 +132,7 @@ export async function decideDeviceUserCode(input: {
     const blocked = input.beforeEffect ? await input.beforeEffect({ organizationId, memberId, userId }) : null
     if (blocked) return { ok: false, response: blocked }
   }
-  const [row] = await db
+  const [row] = await db.$primary
     .select({ id: DeviceCodeTable.id, status: DeviceCodeTable.status, userId: DeviceCodeTable.userId, expiresAt: DeviceCodeTable.expiresAt })
     .from(DeviceCodeTable)
     .where(eq(DeviceCodeTable.userCode, normalizeDeviceUserCode(input.userCode)))

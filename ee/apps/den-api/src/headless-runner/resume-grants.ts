@@ -176,7 +176,8 @@ export type HeadlessResumeGrantError =
 /** The stored grant behind a presented one, or null when it is malformed or unknown. */
 export async function findHeadlessResumeGrant(grant: string): Promise<GrantRow | null> {
   if (!HEADLESS_RESUME_GRANT_PATTERN.test(grant)) return null
-  const [row] = await db
+  // primary: a grant is minted at turn start and may be presented moments later; revocation must be visible.
+  const [row] = await db.$primary
     .select()
     .from(HeadlessResumeGrantTable)
     .where(eq(HeadlessResumeGrantTable.tokenHash, hashHeadlessResumeGrant(grant)))
@@ -192,7 +193,8 @@ export function headlessResumeGrantCovers(row: Pick<GrantRow, "sessionId" | "mes
 
 /** The member id when the grant's user is still an active member of its organization. */
 export async function activeHeadlessResumeGrantMember(row: Pick<GrantRow, "userId" | "organizationId">): Promise<string | null> {
-  const [member] = await db
+  // primary: a just-removed member must not resume.
+  const [member] = await db.$primary
     .select({ id: MemberTable.id })
     .from(MemberTable)
     .where(and(eq(MemberTable.organizationId, row.organizationId), eq(MemberTable.userId, row.userId), isNull(MemberTable.removedAt)))
@@ -206,7 +208,8 @@ export async function activeHeadlessResumeGrantMember(row: Pick<GrantRow, "userI
  * concurrently can be written after that sweep; this check refuses it anyway.
  */
 export async function headlessResumeGrantAuthorizedBeforeRevocation(row: Pick<GrantRow, "userId" | "organizationId" | "createdAt">) {
-  const [revocation] = await db
+  // primary: the revocation race below relies on seeing a revocation as soon as it is written.
+  const [revocation] = await db.$primary
     .select({ revokedAt: HeadlessResumeRevocationTable.revokedAt })
     .from(HeadlessResumeRevocationTable)
     .where(and(eq(HeadlessResumeRevocationTable.organizationId, row.organizationId), eq(HeadlessResumeRevocationTable.userId, row.userId)))
@@ -217,7 +220,7 @@ export async function headlessResumeGrantAuthorizedBeforeRevocation(row: Pick<Gr
 
 /** The grant read again: marked revoked, or authorized before the member's latest credential revocation. */
 async function headlessResumeGrantRevokedNow(row: GrantRow) {
-  const [current] = await db
+  const [current] = await db.$primary
     .select({ revokedAt: HeadlessResumeGrantTable.revokedAt })
     .from(HeadlessResumeGrantTable)
     .where(eq(HeadlessResumeGrantTable.id, row.id))

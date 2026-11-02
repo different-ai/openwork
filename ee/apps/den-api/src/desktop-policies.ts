@@ -28,7 +28,8 @@ export async function ensureDefaultDesktopPolicyForOrganization(input: {
   organizationId: OrgId
   createdByOrgMemberId: OrgMemberId
 }) {
-  const existing = await db
+  // primary: a stale miss would insert a second default policy.
+  const existing = await db.$primary
     .select({ id: DesktopPolicyTable.id })
     .from(DesktopPolicyTable)
     .where(and(

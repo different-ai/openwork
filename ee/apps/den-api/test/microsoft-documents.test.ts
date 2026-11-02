@@ -10,7 +10,7 @@ process.env.BETTER_AUTH_SECRET ??= "synthetic-microsoft-documents-unit-test-secr
 process.env.DEN_DB_ENCRYPTION_KEY ??= "synthetic-microsoft-documents-unit-test-encryption-key"
 process.env.OPENWORK_DEV_MODE ??= "1"
 const { db } = await import("../src/db.js")
-const bootstrapSelect = mock.method(db, "select", () => ({
+const bootstrapSelect = mock.method(db.$primary, "select", () => ({
   from() { return { async where() { return [{ id: "unit_oauth_resource", identifier: "http://unit.test/mcp/agent", policyVersion: 1 }] } } },
 }))
 const { auth } = await import("../src/auth.js")

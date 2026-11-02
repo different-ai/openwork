@@ -164,7 +164,8 @@ export const dbSnapshotStore: SnapshotStore = {
         lease_until: sql`IF(${AdminMetricRefreshLeaseTable.owner} <=> ${owner}, ${until}, ${AdminMetricRefreshLeaseTable.lease_until})`,
       },
     })
-    const [row] = await db.select({ owner: AdminMetricRefreshLeaseTable.owner }).from(AdminMetricRefreshLeaseTable)
+    // Primary: reads back the claim upserted above.
+    const [row] = await db.$primary.select({ owner: AdminMetricRefreshLeaseTable.owner }).from(AdminMetricRefreshLeaseTable)
       .where(eq(AdminMetricRefreshLeaseTable.metric_key, metricKey)).limit(1)
     return row?.owner === owner
   },
@@ -202,7 +203,8 @@ export const dbSnapshotStore: SnapshotStore = {
     return { accepted: false, retryAfterMs: Math.max(1_000, last.getTime() + minIntervalMs - now.getTime()) }
   },
   async lastRequestedAt() {
-    const [row] = await db.select({ requestedAt: AdminMetricRefreshLeaseTable.requested_at }).from(AdminMetricRefreshLeaseTable)
+    // Primary: requestRefresh reads back the request it just upserted.
+    const [row] = await db.$primary.select({ requestedAt: AdminMetricRefreshLeaseTable.requested_at }).from(AdminMetricRefreshLeaseTable)
       .where(eq(AdminMetricRefreshLeaseTable.metric_key, MANUAL_REFRESH_KEY)).limit(1)
     return row?.requestedAt ? toDate(row.requestedAt) : null
   },

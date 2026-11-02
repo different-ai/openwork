@@ -27,7 +27,7 @@ process.env.OPENWORK_DEV_MODE ??= "1"
 const { db } = await import("../src/db.js")
 // Better Auth seeds its resource registry on import. Return an already-present
 // synthetic registry row while the route module initializes, without SQL I/O.
-const bootstrapSelect = mock.method(db, "select", () => ({
+const bootstrapSelect = mock.method(db.$primary, "select", () => ({
   from() { return { async where() { return [{ id: "unit_oauth_resource", identifier: "http://api.unit.test/mcp/agent", policyVersion: 1 }] } } },
 }))
 const { registerSessionRunnerRoutes } = await import("../src/routes/session-runners/index.js")
@@ -281,7 +281,8 @@ function storeDatabase(t: TestContext, options: { commandExists?: boolean } = {}
   }
   type Table = typeof RemoteSessionCommandTable | typeof RemoteSessionRequestTable
   const rowFor = (table: Table): Record<string, unknown> => table === RemoteSessionCommandTable ? commandRow : requestRow
-  const realSelect = db.select.bind(db)
+  // Bound before both select methods are faked; `db.select` itself delegates to the primary's.
+  const realSelect = db.$primary.select.bind(db.$primary)
   const compiled: string[] = []
   const matches = (table: Table, condition: SQL | undefined) => {
     const query = realSelect().from(table).where(condition).toSQL()
@@ -302,7 +303,7 @@ function storeDatabase(t: TestContext, options: { commandExists?: boolean } = {}
     return true
   }
   t.mock.method(db, "transaction", async (body: (database: typeof db) => Promise<unknown>) => body(db))
-  t.mock.method(db, "select", () => ({
+  const fakeSelect = () => ({
     from(table: Table) {
       return { where(condition: SQL | undefined) {
         const rows = (table !== RemoteSessionCommandTable || commandExists) && matches(table, condition) ? [rowFor(table)] : []
@@ -312,7 +313,10 @@ function storeDatabase(t: TestContext, options: { commandExists?: boolean } = {}
         }
       } }
     },
-  }))
+  })
+  t.mock.method(db, "select", fakeSelect)
+  // Reads that must see a just-made write go to the primary.
+  t.mock.method(db.$primary, "select", fakeSelect)
   let updates = 0
   t.mock.method(db, "update", (table: Table) => ({
     set(values: Record<string, unknown>) {

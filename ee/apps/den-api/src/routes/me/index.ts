@@ -140,7 +140,8 @@ function normalizeNamePart(value: string) {
 
 async function checkDownloadLinkRateLimit(userId: string, now: number) {
   const key = `me:send-download-link:${userId}`
-  const [row] = await db
+  // primary: the counter is read back right after earlier requests wrote it.
+  const [row] = await db.$primary
     .select({ id: RateLimitTable.id, count: RateLimitTable.count, lastRequest: RateLimitTable.lastRequest })
     .from(RateLimitTable)
     .where(eq(RateLimitTable.key, key))
