@@ -2820,13 +2820,27 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
       }));
     } catch (error) {
       const message = describeProviderError(error, t("providers.load_failed"));
+      if (!options.client()) {
+        // No workspace engine yet: callers send the person to AI Providers.
+        mutateState((current) => ({
+          ...current,
+          providerAuthPreferredProviderId: null,
+          providerAuthReturnFocusTarget: "none",
+          providerAuthError: message,
+        }));
+        throw error;
+      }
+      // The engine answered but could not list sign-in methods, for example
+      // when a provider in opencode.json is missing its npm package or
+      // baseURL. Open the dialog with the error so Connect never fails
+      // silently and the person sees what to fix (#6283).
       mutateState((current) => ({
         ...current,
+        providerAuthMethods: {},
         providerAuthPreferredProviderId: null,
-        providerAuthReturnFocusTarget: "none",
+        providerAuthModalOpen: true,
         providerAuthError: message,
       }));
-      throw error;
     } finally {
       setStateField("providerAuthBusy", false);
     }
