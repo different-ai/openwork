@@ -56,6 +56,10 @@ The server supports discovery, dynamic public-client registration, mandatory S25
 
 Access tokens last one hour; refresh grants last at most eight hours from initial approval. Reusing a consumed refresh revokes its family. After grant expiry, approve again from the same remembered browser to retain the workspace. Automatic browser sessions last 30 days. Secure hosted cookies are HTTP-only, host-only and SameSite=Lax so legitimate top-level OAuth redirects reuse the workspace across client origins; unsafe mutations still require same-origin protection.
 
+Each new workspace's sample week starts when the workspace is first created, so "this week" questions find meetings
+whenever someone joins. Its clock is kept in the workshop's own metadata: restarts, idle eviction and resets bring back
+the same baseline. Workspaces saved before this keep the workshop-wide clock their data was made with.
+
 ## Microsoft 365 sign-in for an app's ordinary connector
 
 Apps with a native Microsoft 365 connector (OpenWork Den's, used by Workbot) can use the same private workspaces
