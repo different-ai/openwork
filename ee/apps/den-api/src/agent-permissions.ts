@@ -6,6 +6,7 @@ import {
   agentPermissionDefinitions,
   normalizeAgentPermissionSetting,
   resolveAgentPermissionRules,
+  type AgentPermissionKey,
   type AgentPermissionRule,
   type AgentPermissionSettings,
 } from "@openwork/types/den/agent-permissions"
@@ -145,18 +146,14 @@ export async function saveAgentPermissionPolicy(input: {
   organizationId: OrganizationId
   teamId: TeamId | null
   settings: AgentPermissionSettings
+  /** Stored settings for these keys survive replacement; incoming settings for them are ignored. */
+  preserveKeys?: readonly AgentPermissionKey[]
   updatedByOrgMemberId: MemberId
   /** Runs inside the save's transaction, after the write, with what was stored before and after (audit). */
   onChange?: AgentPermissionPolicyChange
 }): Promise<{ settings: AgentPermissionSettings; updatedAt: Date | null }> {
   const scopeKey = input.teamId ?? EVERYONE_SCOPE
   const now = new Date()
-  const settings: AgentPermissionSettings = {}
-  const entries = agentPermissionDefinitions.flatMap((definition) => {
-    const setting = normalizeAgentPermissionSetting(definition, input.settings[definition.key])
-    if (setting) settings[definition.key] = setting
-    return setting ? [{ key: definition.key, setting }] : []
-  })
   return db.transaction(async (tx) => {
     const scope = and(
       eq(AgentPermissionPolicyTable.organizationId, input.organizationId),
@@ -167,6 +164,13 @@ export async function saveAgentPermissionPolicy(input: {
       policyId: existing?.id ?? null,
       settings: existing ? (await readSettings(tx, [existing.id])).get(existing.id) ?? {} : {},
     }
+    const settings: AgentPermissionSettings = {}
+    const entries = agentPermissionDefinitions.flatMap((definition) => {
+      const value = input.preserveKeys?.includes(definition.key) ? before.settings[definition.key] : input.settings[definition.key]
+      const setting = normalizeAgentPermissionSetting(definition, value)
+      if (setting) settings[definition.key] = setting
+      return setting ? [{ key: definition.key, setting }] : []
+    })
     if (existing) {
       await tx.delete(AgentPermissionSettingTable).where(eq(AgentPermissionSettingTable.policyId, existing.id))
     }
