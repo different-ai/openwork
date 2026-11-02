@@ -1,0 +1,98 @@
+name: Warden post-merge sweep
+
+# Every 3 hours, review each PR merged to dev since the last sweep for things
+# to fix after the fact: security issues, bugs, DESIGN.md drift, and workflows
+# that failed on the merge commit. Reports to Slack and the job summary; never
+# comments, approves, reverts or opens PRs. See .warden/README.md.
+on:
+  schedule:
+    - cron: "23 */3 * * *"
+  workflow_dispatch:
+    inputs:
+      since:
+        description: "Review merges after this dev commit (full SHA). Empty: since the last sweep."
+        required: false
+        default: ""
+
+# Reading earlier sweep state and workflow runs needs actions: read.
+permissions:
+  actions: read
+  contents: read
+
+concurrency:
+  group: warden-sweep
+  cancel-in-progress: false
+
+jobs:
+  sweep:
+    if: github.repository == 'different-ai/openwork'
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    steps:
+      # Only merged dev code runs here: policy, skills and the script come from
+      # the same trusted commit that is being reviewed.
+      - name: Checkout dev
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: dev
+          fetch-depth: 0
+          filter: blob:none
+          persist-credentials: false
+
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: 24.22.1
+
+      # Same model override as warden.yml.
+      - name: Apply model variable
+        if: vars.WARDEN_MODEL != ''
+        env:
+          MODEL: ${{ vars.WARDEN_MODEL }}
+        run: |
+          if ! printf '%s' "$MODEL" | grep -Eq '^[a-z0-9-]+/[A-Za-z0-9._-]+$'; then
+            echo "::error::WARDEN_MODEL must be provider/model-id, got: $MODEL"
+            exit 1
+          fi
+          sed -i -E "s|^model = \".*\"$|model = \"$MODEL\"|" .warden/sweep.toml
+
+      - name: Check the requested starting commit
+        if: inputs.since != ''
+        env:
+          SINCE: ${{ inputs.since }}
+        run: |
+          if ! printf '%s' "$SINCE" | grep -Eq '^[0-9a-f]{40}$'; then
+            echo "::error::since must be a full 40-character commit SHA"
+            exit 1
+          fi
+
+      - name: Install the pinned Warden CLI
+        working-directory: ${{ runner.temp }}
+        run: |
+          mkdir warden-cli && cd warden-cli
+          npm init -y > /dev/null
+          npm install --no-audit --no-fund --no-save --ignore-scripts @sentry/warden@0.43.0
+
+      - name: Sweep merged PRs
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          REPO_DIR: ${{ github.workspace }}
+          SINCE: ${{ inputs.since }}
+          OUT_DIR: ${{ runner.temp }}/warden-sweep
+          POLICY_PATH: ${{ github.workspace }}/.warden/sweep.toml
+          WARDEN_BIN: ${{ runner.temp }}/warden-cli/node_modules/@sentry/warden/bin/warden.js
+          PI_CODING_AGENT_DIR: ${{ github.workspace }}/.warden/pi
+          WARDEN_OPENAI_API_KEY: ${{ secrets.WARDEN_OPENAI_API_KEY }}
+          SLACK_BOT_TOKEN: ${{ secrets.SLACK_BOT_TOKEN }}
+          SLACK_WARDEN_SWEEP_CHANNEL_ID: ${{ vars.SLACK_WARDEN_SWEEP_CHANNEL_ID }}
+        run: node .github/scripts/warden-sweep.mjs
+
+      # Where the next sweep starts, and commits whose CI was still running.
+      - name: Save sweep state
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: warden-sweep-state
+          path: ${{ runner.temp }}/warden-sweep/state.json
+          retention-days: 30
+          if-no-files-found: ignore

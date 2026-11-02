@@ -1,0 +1,47 @@
+version = 1
+
+# Post-merge sweep: every 3 hours, reviews each PR merged to dev since the last
+# sweep for things to fix after the fact. Used only by
+# .github/workflows/warden-sweep.yml; see .warden/README.md. Never approves or
+# blocks anything.
+[defaults]
+defaultBranch = "dev"
+reportOn = "low"
+ignorePaths = ["**/node_modules/**", "**/pnpm-lock.yaml", "**/dist/**", "**/*.min.js"]
+
+[defaults.scan]
+maxFileLines = 5000
+maxFiles = 400
+maxChangedLines = 60000
+
+[defaults.chunking.coalesce]
+enabled = true
+maxGapLines = 30
+maxChunkSize = 12000
+
+[defaults.agent]
+model = "openai/gpt-6-luna"
+
+[defaults.auxiliary]
+model = "openai/gpt-6-luna"
+
+[[skills]]
+name = "diff-security-review"
+
+[[skills.triggers]]
+type = "local"
+failOn = "off"
+
+[[skills]]
+name = "diff-bug-review"
+
+[[skills.triggers]]
+type = "local"
+failOn = "off"
+
+[[skills]]
+name = "design-spec-review"
+
+[[skills.triggers]]
+type = "local"
+failOn = "off"
