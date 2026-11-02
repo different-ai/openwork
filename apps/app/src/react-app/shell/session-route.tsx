@@ -303,6 +303,7 @@ import {
   workspaceExtensionsRoute,
   workspaceSessionRoute,
   workspaceSettingsRoute,
+  masterPlanSectionFromPathname,
 } from "./workspace-routes";
 import { WorkspaceProvider } from "./workspace-provider";
 import type { OpenTarget } from "@/react-app/domains/session/artifacts/open-target";
@@ -428,7 +429,7 @@ export function SessionRoute() {
   const dashboardRouteRequested = /^\/dashboard(?:\/|$)/.test(location.pathname);
   const calendarRouteRequested = /^\/calendar(?:\/|$)/.test(location.pathname);
   const codeRouteActive = /^\/code(?:\/|$)/.test(location.pathname);
-  const masterPlanSection = /^(?:\/projects|\/artifacts|\/scheduled|\/design|\/personalization)(?:\/|$)/.exec(location.pathname)?.[1]?.replace(/^\//, "") ?? null;
+  const masterPlanSection = masterPlanSectionFromPathname(location.pathname);
   const masterPlanRouteActive = masterPlanSection !== null;
   const activityRouteRequested = location.pathname === "/activity";
   const {
@@ -585,7 +586,7 @@ export function SessionRoute() {
   } = useWorkspaceRouteState({
     preservePendingConversationRoute: Boolean(requestedPendingId && pendingConversations[requestedPendingId]?.scope === sessionDraftScope),
     developerMode,
-    workspaceRoute: activityRouteActive ? "activity" : appsRouteActive ? "apps" : automationsRouteActive ? "automations" : calendarRouteActive || (calendarRouteRequested && calendarAvailabilityPending) ? "calendar" : dashboardWorkspaceRoute ? "dashboard" : codeRouteActive ? "code" : masterPlanRouteActive ? "projects" : "session",
+    workspaceRoute: activityRouteActive ? "activity" : appsRouteActive ? "apps" : automationsRouteActive ? "automations" : calendarRouteActive || (calendarRouteRequested && calendarAvailabilityPending) ? "calendar" : dashboardWorkspaceRoute ? "dashboard" : codeRouteActive ? "code" : masterPlanSection ?? "session",
     onServerSettingsChanged: () => undefined,
     onHostInfo: setOpenworkServerHostInfoState,
   });

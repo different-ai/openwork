@@ -75,6 +75,20 @@ export function personalizationRoute() {
   return "/personalization";
 }
 
+export type MasterPlanSection = "projects" | "artifacts" | "scheduled" | "design" | "personalization";
+
+export function masterPlanSectionFromPathname(pathname: string): MasterPlanSection | null {
+  const match = /^\/(projects|artifacts|scheduled|design|personalization)(?:\/|$)/.exec(pathname);
+  switch (match?.[1]) {
+    case "projects": return "projects";
+    case "artifacts": return "artifacts";
+    case "scheduled": return "scheduled";
+    case "design": return "design";
+    case "personalization": return "personalization";
+    default: return null;
+  }
+}
+
 export function calendarRoute() {
   return "/calendar";
 }
