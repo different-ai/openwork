@@ -7,7 +7,7 @@ import { useCallback, useEffect, useRef, useState, type KeyboardEvent as ReactKe
 import { z } from "zod";
 import type { BrowserTeachingContext } from "@openwork/types/browser-demonstration";
 import type { WorkbotViewContext } from "@openwork/types/workbot-context";
-import { WorkbotTeaching } from "./teaching";
+import { TeachButton, WorkbotTeaching } from "./teaching";
 import { addressFor, ScreencastViewer, type ScreencastPage } from "./screencast";
 import { computerViews, errorMessage, workbotHost } from "./host";
 import { inChat, useWorkbotChat } from "./data";
@@ -59,6 +59,8 @@ export function WorkbotComputer({ onTeachingChange, onRun, canTeach = true, onVi
   }, []);
   useEffect(() => { onViewChange?.(view); }, [view, onViewChange]);
   const [control, setControl] = useState(false);
+  const [teachOpen, setTeachOpen] = useState(false);
+  const teachable = canTeach && host.browserDemonstrations === true && views.includes("browser");
   const [agentPaused, setAgentPaused] = useState(false);
   const [paused, setPaused] = useState(false);
   const [connected, setConnected] = useState(false);
@@ -118,6 +120,7 @@ export function WorkbotComputer({ onTeachingChange, onRun, canTeach = true, onVi
       </div>
       <div className="flex items-center gap-1">
         <span className="mr-2 hidden text-[12px] text-[var(--wb-muted)] sm:inline" role="status">{paused ? "Paused" : error ? "Disconnected" : connected ? control ? "You have control" : "Live" : "Connecting…"}</span>
+        {teachable && view === "browser" ? <TeachButton open={teachOpen} recording={teaching?.phase === "recording"} suspended={paused} onClick={() => setTeachOpen(current => !current)} /> : null}
         {paused ? <button type="button" className={button} disabled={changing} onClick={() => void action("resume")}><Play size={14} aria-hidden />Resume</button> : <>
           <button type="button" className={button} disabled={changing || !connected || recording} onClick={() => control ? void action("continue") : setControl(true)}>{control ? "Return to Workbot" : "Take control"}</button>
           {agentPaused && !control ? <button type="button" className={button} disabled={changing} onClick={() => void action("continue")}>Continue Workbot</button> : null}
@@ -127,7 +130,6 @@ export function WorkbotComputer({ onTeachingChange, onRun, canTeach = true, onVi
       </div>
     </div>
     {view === "browser" && livePage && !paused && !error ? <BrowserFrame page={livePage} stream={stream} /> : null}
-    {canTeach && host.browserDemonstrations === true && views.includes("browser") && <div hidden={view !== "browser"} style={{ display: view === "browser" ? undefined : "none" }}><WorkbotTeaching suspended={paused} liveTabs={frontId && livePage?.tabs?.length ? { frontId, tabs: livePage.tabs.map(tab => ({ id: tab.id, label: tabTitle(tab) })) } : undefined} onShowTab={stream ? id => stream.tab("activate", id) : undefined} onTeachingChange={teachingChange} onTakeControl={() => setControl(true)} onRun={onRun ? async text => { if (!await action("continue")) throw new Error("Return browser control to Workbot before starting the run. Your inputs are still here."); await onRun(text); } : undefined} /></div>}
     <div className="relative flex min-h-0 flex-1 items-center justify-center overflow-hidden bg-[#f5f6f7]">
       <div ref={screen} className={`relative h-full w-full ${paused || error ? "hidden" : ""}`} aria-label={`${view === "browser" ? "Browser" : "Computer"} live view`} />
       {!paused && !error && !connected ? <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 px-6 text-center">
@@ -142,6 +144,8 @@ export function WorkbotComputer({ onTeachingChange, onRun, canTeach = true, onVi
           {paused ? null : <RebuildComputer disabled={changing} onRebuild={() => void action("rebuild")} />}
         </div>
       </div> : null}
+      {/* Floats over the page, which keeps its space; empty while the window is closed. */}
+      {teachable && <div hidden={view !== "browser"} style={{ display: view === "browser" ? undefined : "none" }} className="absolute bottom-3 right-3 z-10 flex max-h-[calc(100%-24px)] w-[min(22rem,calc(100%-24px))] flex-col"><WorkbotTeaching open={teachOpen} onOpenChange={setTeachOpen} suspended={paused} liveTabs={frontId && livePage?.tabs?.length ? { frontId, tabs: livePage.tabs.map(tab => ({ id: tab.id, label: tabTitle(tab) })) } : undefined} onShowTab={stream ? id => stream.tab("activate", id) : undefined} onTeachingChange={teachingChange} onTakeControl={() => setControl(true)} onRun={onRun ? async text => { if (!await action("continue")) throw new Error("Return browser control to Workbot before starting the run. Your inputs are still here."); await onRun(text); } : undefined} /></div>}
     </div>
   </section>;
 }
