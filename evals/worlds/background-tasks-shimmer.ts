@@ -52,18 +52,16 @@ async function buildBackgroundTasks(seed: Seed, composerList: boolean) {
   const providerId = "background-shell-mock";
   const modelId = "background-shell-model";
   const stoppedReply = "The report export was stopped.";
-  const mock = seed.mock({ isolatedProcessEnv: true, agentWorkloads: [...jobs.flatMap((item) => [
+  const mock = seed.mock({ isolatedProcessEnv: true, agentWorkloads: jobs.flatMap((item) => [
     { promptMarker: item.prompt, latestUserTurn: true, finalReply: item.started,
       // The images turn keeps working a few seconds after starting its command, so the chat can be seen mid-turn.
       ...(item === images ? { finalReplyDelayMs: 8_000 } : {}),
       steps: [{ tool: "shell", arguments: { command: item.command, description: `Run ${item.name}`, background: true } }] },
-    // The engine wakes the agent with the command's output once it ends.
-    { promptMarker: item.output, latestUserTurn: true, finalReply: item.wake, steps: [] },
-  ]),
-    // V2 wakes the parent with a failed shell notice after shell.remove terminates it.
-    // Handle that synthetic turn as well as successful command output.
-    { promptMarker: 'state="failed"', latestUserTurn: true, finalReply: stoppedReply, steps: [] },
-  ] });
+    // Match the command in the engine's completion notice, not its stdout:
+    // shell.remove can wake the parent without any successful output.
+    { promptMarker: item.command, latestUserTurn: true,
+      finalReply: composerList && item === report ? stoppedReply : item.wake, steps: [] },
+  ]) });
   const app = await seed.appWeb({ name: "background-tasks-shimmer", workspacePath, webPort, den: den.ref, engine, mocks: { agent: mock } });
   const witness = app.mocks.agent;
   if (!witness) throw new Error("Missing background shell model witness");
