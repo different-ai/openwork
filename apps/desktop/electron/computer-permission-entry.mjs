@@ -1,8 +1,9 @@
 // macOS grants Accessibility and Screen Recording to the *responsible* app.
-// The computer use helper disclaims responsibility when it starts, so System
-// Settings lists its own bundle ("OpenWork Computer Use") and a grant never
-// waits for OpenWork to restart. Without the helper bundle (a raw development
-// build), this falls back to the outermost app that started this process.
+// The computer use helper disclaims responsibility when it starts and runs from
+// outside OpenWork.app (see computer-helper-install.mjs), so System Settings
+// lists its own bundle ("OpenWork Computer Use") and a grant never waits for
+// OpenWork to restart. Without the helper bundle (a raw development build),
+// this falls back to the outermost app that started this process.
 // Setup guidance names exactly that entry instead of asking people to guess.
 import { execFile } from "node:child_process";
 import path from "node:path";
