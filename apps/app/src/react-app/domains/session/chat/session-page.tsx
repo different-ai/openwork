@@ -660,7 +660,7 @@ export function SessionPage(props: SessionPageProps) {
     sidePanel: activeSidePanel,
     setSidePanel: setCurrentSidePanel,
   });
-  const { placeOpenedBrowser, handlePanelClosed: handleBrowserPanelClosed } = browserPresentation;
+  const { isPoppedOut: browserIsPoppedOut, placeOpenedBrowser, handlePanelClosed: handleBrowserPanelClosed } = browserPresentation;
   // Computer use on this Mac, behind its feature flag: the header Computer
   // button, its floating view, in-chat requests and the hand-back at turn end.
   const computerUseFeature = useDesktopFeature("computerUse");
@@ -696,6 +696,8 @@ export function SessionPage(props: SessionPageProps) {
     const browser = (window as Window).__OPENWORK_ELECTRON__?.browser;
     if (!browser) return;
     const unsubOpen = browser.onPanelOpened?.((payload) => {
+      // The page arrives as a tab in the browser's own window; nothing moves here.
+      if (browserIsPoppedOut(payload?.ownerSessionId)) return;
       const ownerSessionId = payload?.ownerSessionId ?? props.selectedSessionId;
       if (ownerSessionId && payload?.tab) {
         // A requested navigation selects its page, even when an artifact was
@@ -716,7 +718,7 @@ export function SessionPage(props: SessionPageProps) {
       setSidePanelState(ownerKey, null);
     });
     return () => { unsubOpen?.(); unsubClose?.(); };
-  }, [handleBrowserPanelClosed, openOwnerSidePanel, openTab, placeOpenedBrowser, props.selectedSessionId, setCurrentSidePanel, setSidePanelState, sidePanelSessionKey]);
+  }, [browserIsPoppedOut, handleBrowserPanelClosed, openOwnerSidePanel, openTab, placeOpenedBrowser, props.selectedSessionId, setCurrentSidePanel, setSidePanelState, sidePanelSessionKey]);
   const {
     leftSidebarResizing,
     leftSidebarWidth,

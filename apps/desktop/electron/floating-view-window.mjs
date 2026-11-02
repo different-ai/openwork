@@ -1,33 +1,30 @@
-// The floating browser card lives in its own borderless window so it floats
-// over every app, not just inside OpenWork. The renderer opens an empty
-// same-origin window by name and draws into it; this module decides which
-// window.open requests get that treatment. (The computer view's pop-out window
-// has its own name and handler in main.mjs.)
+// A popped-out browser is an ordinary window of the app: the person moves,
+// resizes, minimizes and full-screens it like any other, and other apps can
+// cover it. The renderer opens an empty same-origin window by name and draws
+// the tabs and toolbar into it; the browser panel moves the live page in below
+// them. This module decides which window.open requests get that treatment.
+// (The computer view's pop-out window has its own name and handler in main.mjs.)
 
 export const FLOATING_VIEW_PREFIX = "openwork-floating-";
 
 /**
- * BrowserWindow options for a floating view, or null when the request is not
- * one. Only an empty page under the reserved name qualifies: the renderer
- * draws every pixel itself, so no page ever loads there.
+ * BrowserWindow options for a popped-out browser, or null when the request is
+ * not one. Only an empty page under the reserved name qualifies: the renderer
+ * draws its toolbar itself, so no page ever loads in the window's own document.
+ * @returns {import("electron").BrowserWindowConstructorOptions | null}
  */
-export function floatingViewWindowOptions({ url, frameName }) {
+export function floatingViewWindowOptions({ url, frameName, dark = false, platform = process.platform }) {
   if (url !== "about:blank" || typeof frameName !== "string" || !frameName.startsWith(FLOATING_VIEW_PREFIX)) return null;
   return {
     show: false,
-    frame: false,
-    transparent: true,
-    hasShadow: true,
-    roundedCorners: true,
-    resizable: true,
-    minimizable: false,
-    maximizable: false,
-    fullscreenable: true,
-    skipTaskbar: true,
-    alwaysOnTop: true,
-    minWidth: 220,
-    minHeight: 44,
-    backgroundColor: "#00000000",
+    // The tab strip sits in the title bar, with the same controls as the app window.
+    ...(platform === "darwin"
+      ? { titleBarStyle: "hiddenInset", trafficLightPosition: { x: 20, y: 18 } }
+      : { titleBarStyle: "hidden", titleBarOverlay: { height: 40 } }),
+    minWidth: 480,
+    minHeight: 320,
+    // The app's --background, so the window never flashes before styles arrive.
+    backgroundColor: dark ? "#111113" : "#fcfcfd",
     webPreferences: {
       // No preload: the window has no bridge of its own; the opener owns it.
       preload: undefined,
@@ -39,10 +36,8 @@ export function floatingViewWindowOptions({ url, frameName }) {
   };
 }
 
-/** Shows a new floating view without taking focus from the chat, above other apps. */
+/** Shows a new window without taking focus: reopening one with its conversation must not steal the keyboard. */
 export function attachFloatingViewWindow(child) {
-  child.setAlwaysOnTop(true, "floating");
-  child.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
   child.webContents.setWindowOpenHandler(() => ({ action: "deny" }));
   child.webContents.on("will-navigate", (event) => event.preventDefault());
   child.showInactive();

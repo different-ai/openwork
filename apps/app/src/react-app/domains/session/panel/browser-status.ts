@@ -14,16 +14,7 @@ export function browserNeedsPerson(tab: BrowserPanelTab | null | undefined): boo
   return tab?.browserTask?.status === "needs_attention";
 }
 
-export function browserSiteHost(url: string): string {
-  if (!url || url === "about:blank") return "New tab";
-  try {
-    return new URL(url).host || url;
-  } catch {
-    return url;
-  }
-}
-
-/** One short state line for the browser's header button and floating card. */
+/** One short state line for the browser's header button. */
 export function browserStatusLabel(tab: BrowserPanelTab | null | undefined): string {
   if (!tab) return "No page open";
   if (browserNeedsPerson(tab)) return "Needs you";

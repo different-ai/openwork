@@ -65,7 +65,7 @@ export type BrowserStatePayload = {
   visibleSessionId?: string | null;
   tabs?: BrowserPanelTab[];
   /** Actual native hierarchy and bounds, included by getState (not state events). */
-  nativeViews?: Array<{ tabId: string; attached: boolean; aboveApp: boolean; bounds: Bounds }>;
+  nativeViews?: Array<{ tabId: string; attached: boolean; aboveApp: boolean; poppedOut?: boolean; bounds: Bounds }>;
 };
 
 export type BrowserPanelOwnerPayload = {
