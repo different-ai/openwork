@@ -116,6 +116,7 @@ import { automationProviderCatalog } from "@/react-app/domains/automations/autom
 import { CodePage } from "@/react-app/domains/code/code-page";
 import { SectionPlaceholder } from "@/react-app/domains/sidebar-sections/section-placeholder";
 import { ProjectsPage } from "@/react-app/domains/projects/projects-page";
+import { ArtefactosPage } from "@/react-app/domains/artifacts/artifacts-page";
 import { ProgramadasPage } from "@/react-app/domains/scheduled/scheduled-page";
 import { CalendarPage } from "@/react-app/domains/calendar/calendar-page";
 import { useOrgFeatureState } from "@/react-app/domains/cloud/use-org-feature";
@@ -3969,6 +3970,11 @@ export function SessionRoute() {
             openworkServerClient={selectedWorkspaceEndpoint?.client ?? null}
             workspaceId={selectedWorkspaceId}
             workspaceName={selectedWorkspace ? workspaceLabel(selectedWorkspace) : ""}
+          />
+        ) : masterPlanSection === "artifacts" ? (
+          <ArtefactosPage
+            openworkServerClient={selectedWorkspaceEndpoint?.client ?? null}
+            workspaceId={selectedWorkspaceId}
           />
         ) : masterPlanSection === "scheduled" ? (
           <ProgramadasPage
