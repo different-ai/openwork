@@ -2355,8 +2355,6 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink, che
     destroy: destroyBrowserView,
     isMainWindowAllowedNavigation,
     browserTask: (args, options) => taskHost.request(args, options),
-    listWebMcpTools: (args, options) => taskHost.request({ sessionId: args?.sessionId, operation: "site_tools", args }, options),
-    executeWebMcpTool: (args, options) => taskHost.request({ sessionId: args?.sessionId, operation: "site_tool", args }, options),
     registerIpc,
     routeBlockedMainWindowNavigation,
   };
