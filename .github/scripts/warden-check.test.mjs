@@ -13,9 +13,9 @@ test('a clear verdict is a successful warden-clear check on that commit', () => 
   assert.equal(body.details_url, 'https://example.test/run');
 });
 
-test('anything other than clear fails, with a reason a person can act on', () => {
+test('findings and incomplete reviews are neutral, with honest advisory reasons', () => {
   for (const [reason, text] of [
-    ['changes-warden', /admin merges/],
+    ['changes-warden', /person should inspect/],
     ['confidentiality-findings', /confidentiality/],
     ['major-security-findings', /high or medium/],
     ['review-incomplete', /didn't finish/],
@@ -24,10 +24,12 @@ test('anything other than clear fails, with a reason a person can act on', () =>
     ['analysis-cancelled', /analysis-cancelled/],
   ]) {
     const body = checkRunBody({ sha, verdict: 'flagged', reason });
-    assert.equal(body.conclusion, 'failure', reason);
+    assert.equal(body.conclusion, 'neutral', reason);
     assert.match(body.output.summary, text, reason);
+    assert.match(body.output.summary, /does not block merging/);
+    assert.match(body.output.title, /advisory/);
   }
-  assert.equal(checkRunBody({ sha, verdict: undefined }).conclusion, 'failure');
+  assert.equal(checkRunBody({ sha, verdict: undefined }).conclusion, 'neutral');
 });
 
 test('backfill only trusts a diff-warden approval of the exact current head', () => {
