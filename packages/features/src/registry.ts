@@ -313,6 +313,17 @@ export const FEATURES = defineFeatures({
     deployments: everywhere,
     default: false,
   },
+  sandboxMicrosoft365: {
+    label: "Sandboxes: sample Microsoft 365 for Workbot",
+    description: "New sandbox organizations get one Microsoft 365 connector for the sample Outlook, Calendar and Drive instead of three separate ones, so Workbot chat, Calendar, Documents and the first hello read each person's own sample mail, calendar and files. Each person approves once in their own browser. Only sandbox organizations are affected; every other organization keeps Microsoft's real sign-in. Turning it off stops the sample connector without sending anything to Microsoft.",
+    category: "connect",
+    added: "2026-11-02",
+    since: "2026-11",
+    author: "benjaminshafii",
+    docs: "docs/features/sandbox-microsoft-365/README.md",
+    deployments: ["cloud"],
+    default: false,
+  },
   connectStandardTools: {
     label: "Connect: standard tools",
     description: "Claude Code and standalone OpenCode discover connected actions, Workflows and Apps as individual tools; OpenWork Desktop, Web and automation runs keep capability search. Capability search uses MCP tool schemas with older fields kept for compatibility. Turning this off restores the previous search view and schemas.",

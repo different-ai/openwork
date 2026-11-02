@@ -166,7 +166,7 @@ export function buildInputPatterns(target, options = {}) {
     // The MySQL-backed Den API tests (ee/apps/den-api/test/api) and the files
     // they read outside the den-api workspace closure.
     case "den-api-tests": patterns = [
-      ...api(), ...closure("@openwork-ee/headless-runner"), "evals/packages/labs/**",
+      ...api(), ...closure("@openwork-ee/headless-runner"), "evals/packages/labs/**", "evals/packages/open-workplace/**",
       "packaging/helm/openwork-ee/values.schema.json",
       "packaging/docker/docker-compose.web-local.yml", "packaging/docker/docker-compose.ci-mysql.yml",
       CI_WORKFLOW, ".github/scripts/classify-ci-changes.mjs", ".github/actions/setup-tests/**",

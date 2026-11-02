@@ -452,7 +452,11 @@ export function createWorkshopAuth({ origin, participants = [], storage, automat
     queue = operation.catch(() => { unavailable = true; });
     return operation;
   }
-  return { authenticate, handle, requireMutationOrigin, isReady: () => initialized && !unavailable && !closed, async close() {
+  /** The workspace this browser is signed into, from its session cookie only (never a bearer token). */
+  function sessionParticipant(req) { return browserParticipant(req); }
+  /** A participant or guest by ID, for grants other front doors keep (null once they no longer exist). */
+  function participant(id) { return typeof id === "string" ? byId.get(id) ?? null : null; }
+  return { authenticate, handle, requireMutationOrigin, browserParticipant: sessionParticipant, participant, isReady: () => initialized && !unavailable && !closed, async close() {
     closed = true;
     await queue; await ready;
     for (const table of Object.values(tables)) table.clear(); rates.clear();

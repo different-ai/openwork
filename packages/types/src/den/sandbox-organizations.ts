@@ -58,6 +58,8 @@ export const sandboxSchema = z.object({
   memberLimit: z.number().int(),
   connectorBaseUrl: z.string().nullable(),
   connectorCount: z.number().int(),
+  /** Outlook, Calendar and Drive come as one Microsoft 365 connector Workbot can use (sandboxMicrosoft365). Older servers omit it. */
+  sampleMicrosoft365: z.boolean().optional(),
   /** AI Gateway providers in the sandbox organization. Older servers omit it. */
   modelProviderCount: z.number().int().optional(),
   /** The organization's plan tier; sandboxes are created on Enterprise. Older servers omit it. */

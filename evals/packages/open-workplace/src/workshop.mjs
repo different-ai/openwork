@@ -9,6 +9,7 @@ import { join, isAbsolute } from "node:path";
 import { createSnapshotStore } from "./workshop-store.mjs";
 import { fileURLToPath } from "node:url";
 import { createWorkshopAuth } from "./workshop-auth.mjs";
+import { createWorkshopMicrosoft } from "./workshop-microsoft.mjs";
 import { workshopPage as page, escapeHtml as escape } from "./workshop-html.mjs";
 
 const MAX_BODY = 10 * 1024 * 1024;
@@ -87,7 +88,7 @@ export async function startWorkshop({ participants = [], origin, host = "127.0.0
   storage?.write("workshop-sample-clock", sampleClock);
   const stacks = new Map(), uploads = new Map(), active = new Map(), resetting = new Set(), idleTimers = new Map(), disposals = new Map();
   const handlers = new Set(), cleanups = new Set();
-  let auth, closing = false, resetAll = false, admissions = Promise.resolve();
+  let auth, microsoft, closing = false, resetAll = false, admissions = Promise.resolve();
   function cancelIdle(id) { clearTimeout(idleTimers.get(id)); idleTimers.delete(id); }
   function scheduleIdle(id) {
     cancelIdle(id);
@@ -267,9 +268,17 @@ export async function startWorkshop({ participants = [], origin, host = "127.0.0
       if (!req.url?.startsWith("/") || req.url.startsWith("//") || /\\|%2f|%5c|%2e|[\x00-\x20]/i.test(req.url.split("?")[0])) return send(res, 400, { error: "invalid_path" });
       const url = new URL(req.url, publicOrigin);
       if (url.pathname === "/_workshop/reset-all") return await operatorReset(req, res, url);
-      if (url.pathname === "/health" && req.method === "GET") return send(res, auth?.isReady() ? 200 : 503, { ok: Boolean(auth?.isReady()), service: "open-workplace-workshop", isolated: true, storage: dataDir ? "sqlite" : "memory", joinMode, startedAt });
+      if (url.pathname === "/health" && req.method === "GET") return send(res, auth?.isReady() ? 200 : 503, { ok: Boolean(auth?.isReady()), service: "open-workplace-workshop", isolated: true, storage: dataDir ? "sqlite" : "memory", joinMode, startedAt, microsoftSignIn: Boolean(microsoft) });
       if (await auth.handle(req, res, url)) return;
+      // Den's Microsoft 365 connector: Entra-compatible sign-in, then Graph with a bearer token for one workspace.
+      if (await microsoft.handle(req, res, url)) return;
+      // Assigned workshop tokens and browser sessions first; then a Microsoft 365 bearer token for Graph.
       participant = auth.authenticate(req);
+      const graphBearer = !participant && microsoft.isGraphBearer(req, url);
+      if (graphBearer) {
+        participant = microsoft.authenticate(req, res, url);
+        if (!participant) return;
+      }
       let uploadToken;
       const upload = /^\/_workshop\/uploads\/([A-Za-z0-9_-]{43})$/.exec(url.pathname);
       if (upload) {
@@ -284,7 +293,8 @@ export async function startWorkshop({ participants = [], origin, host = "127.0.0
         if (req.method === "GET" && String(req.headers.accept).includes("text/html")) return send(res, 303, "", { location: `/login?next=${encodeURIComponent(url.pathname + url.search)}` });
         return send(res, 401, { error: "authentication_required" }, { "www-authenticate": `Bearer resource_metadata="${publicOrigin}/.well-known/oauth-protected-resource${url.pathname.endsWith("/mcp") ? url.pathname : ""}"` });
       }
-      if (!uploadToken && !auth.requireMutationOrigin(req)) return send(res, 403, { error: "cross_origin_denied" });
+      // A bearer token carries no ambient browser credential, so it needs no same-origin check.
+      if (!uploadToken && !graphBearer && !auth.requireMutationOrigin(req)) return send(res, 403, { error: "cross_origin_denied" });
       if (resetting.has(participant.id)) return send(res, 409, { error: "sandbox_resetting" });
       cancelIdle(participant.id);
       if (disposals.has(participant.id)) await disposals.get(participant.id);
@@ -332,7 +342,10 @@ export async function startWorkshop({ participants = [], origin, host = "127.0.0
   try { await new Promise((resolve, reject) => { server.once("error", reject); server.listen(port, host, resolve); }); }
   catch (error) { storage?.close(); throw error; }
   publicOrigin ||= `http://${host === "::1" ? "[::1]" : host}:${server.address().port}`;
-  try { auth = createWorkshopAuth({ origin: publicOrigin, participants: roster, storage, automaticJoin: joinMode === "automatic" }); }
+  try {
+    auth = createWorkshopAuth({ origin: publicOrigin, participants: roster, storage, automaticJoin: joinMode === "automatic" });
+    microsoft = createWorkshopMicrosoft({ origin: publicOrigin, auth, storage });
+  }
   catch (error) {
     server.closeAllConnections(); await new Promise((resolve) => server.close(resolve)); storage?.close(); throw error;
   }
