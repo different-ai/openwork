@@ -9,6 +9,11 @@ import { DESKTOP_PROTOCOL } from "./desktop-protocol.mjs"
 const BRIDGE = "/usr/local/sbin/openwork-desktop-bridge"
 /** Files the runner hands the helper live in the provider account's home, which only that account can write. */
 const UPLOADS = "/home/ubuntu"
+/**
+ * On a replacement that came up on an older image: the image it was made for and when. On the computer itself because
+ * the process that made it rarely outlasts an idle chat.
+ */
+const REPLACED_NOTE = `${UPLOADS}/.openwork-replaced-on-older-image`
 /** The most either carried archive may be (desktop-bridge.py's MAX_CARRIED_BYTES). */
 const MAX_CARRIED_BYTES = 100 * 1024 * 1024
 const viewerSchema = z.object({ token: z.string().regex(/^[A-Za-z0-9_-]{43}$/), paused: z.boolean() })
@@ -112,6 +117,19 @@ export class Desktop {
     const result = await this.bridge(box, "versions", 10_000).catch(() => null)
     const parsed = result?.exitCode === 0 ? versionsSchema.safeParse(safeJson(result.stdout)) : null
     return parsed?.success ? parsed.data : null
+  }
+
+  /** Notes on `box`, a replacement made just now, that it came up on an older image than this runner's. */
+  async noteReplacement(box: SandboxHandle) {
+    const versions = await this.versions(box)
+    if (versions && versions.image !== this.image) await this.provider.blocks?.run?.(box, { command: `echo ${this.image} ${Date.now()} > ${REPLACED_NOTE}`, activity: "maintenance", timeoutMs: 10_000 })
+  }
+
+  /** Whether `box` came up on an older image within the last `withinMs` when replaced for this runner's: another try would gain nothing. */
+  async replacedInVain(box: SandboxHandle, withinMs: number) {
+    const note = await this.provider.blocks?.run?.(box, { command: `cat ${REPLACED_NOTE} 2>/dev/null`, activity: "maintenance", timeoutMs: 10_000 }).catch(() => null)
+    const [image, at] = note?.stdout.trim().split(" ") ?? []
+    return image === this.image && Date.now() - Number(at) < withinMs
   }
 
   /** Hands the helper this runner's guest bundle; it checks the checksum and that the image is its own. */

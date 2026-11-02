@@ -168,6 +168,11 @@ person's Files are copied in again on next use. Computers from before this
 existed carry only `/workspace`. An idle replacement happens only when both
 carry over. **Rebuild computer** still starts clean, carrying nothing.
 
+A sandbox gateway's template is rebuilt by hand, so a replacement can come up on
+the same older image. The computer then stays where it is and the runner tries
+again a day later, or 10 minutes later if the computer can't serve this runner
+at all.
+
 ### Freestyle instead of Daytona
 
 Freestyle runs the same desktop from a snapshot captured while the desktop is
