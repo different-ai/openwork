@@ -84,24 +84,29 @@ function workEmail(column: string) {
 const notSetupAgentUser = sql.raw(`NOT EXISTS (SELECT 1 FROM member sa WHERE sa.user_id = u.id AND sa.is_setup_agent = 1)`)
 
 /** Distinct people who ran a task in the last 1, 7 and 30 days. Shared with den_overview. */
-export async function readTaskUserWindows(rows: Rows, now: Date) {
-  const [row] = await rows(sql`${SELECT}
-      COUNT(DISTINCT CASE WHEN t.event_timestamp >= ${ago(now, 1)} THEN m.user_id END) AS daily,
-      COUNT(DISTINCT CASE WHEN t.event_timestamp >= ${ago(now, 7)} THEN m.user_id END) AS weekly,
-      COUNT(DISTINCT m.user_id) AS monthly,
-      COUNT(DISTINCT CASE WHEN t.event_timestamp >= ${ago(now, 14)} AND t.event_timestamp < ${ago(now, 7)} THEN m.user_id END) AS previous_weekly,
-      SUM(t.event_type = 'task.started' AND t.event_timestamp >= ${ago(now, 7)}) AS started,
-      SUM(t.event_type = 'task.completed' AND t.event_timestamp >= ${ago(now, 7)}) AS completed,
-      SUM(t.event_type = 'task.failed' AND t.event_timestamp >= ${ago(now, 7)}) AS failed,
-      SUM(t.event_type = 'task.started' AND t.event_timestamp >= ${ago(now, 14)} AND t.event_timestamp < ${ago(now, 7)}) AS previous_started,
-      SUM(t.event_type = 'task.failed' AND t.event_timestamp >= ${ago(now, 14)} AND t.event_timestamp < ${ago(now, 7)}) AS previous_failed
-    FROM telemetry_event t JOIN member m ON m.id = t.member_id
-    WHERE t.event_timestamp >= ${ago(now, 30)} AND t.event_timestamp <= ${now} AND ${TASK_EVENT} AND ${HUMAN_MEMBER}`)
-  return {
-    daily: num(row?.daily), weekly: num(row?.weekly), monthly: num(row?.monthly), previousWeekly: num(row?.previous_weekly),
-    started: num(row?.started), completed: num(row?.completed), failed: num(row?.failed),
-    previousStarted: num(row?.previous_started), previousFailed: num(row?.previous_failed),
-  }
+// SPEAK TO OMAR BEFORE REENABLING THIS DATA POINT, NO EXCEPTIONS
+// Disabled: this query scanned 30 days of telemetry_event across every organization
+// with four COUNT(DISTINCT) aggregates every refresh and slowed the database down a lot.
+// Until it comes back, every value below is 0.
+export async function readTaskUserWindows(_rows: Rows, _now: Date) {
+  // const [row] = await rows(sql`${SELECT}
+  //     COUNT(DISTINCT CASE WHEN t.event_timestamp >= ${ago(now, 1)} THEN m.user_id END) AS daily,
+  //     COUNT(DISTINCT CASE WHEN t.event_timestamp >= ${ago(now, 7)} THEN m.user_id END) AS weekly,
+  //     COUNT(DISTINCT m.user_id) AS monthly,
+  //     COUNT(DISTINCT CASE WHEN t.event_timestamp >= ${ago(now, 14)} AND t.event_timestamp < ${ago(now, 7)} THEN m.user_id END) AS previous_weekly,
+  //     SUM(t.event_type = 'task.started' AND t.event_timestamp >= ${ago(now, 7)}) AS started,
+  //     SUM(t.event_type = 'task.completed' AND t.event_timestamp >= ${ago(now, 7)}) AS completed,
+  //     SUM(t.event_type = 'task.failed' AND t.event_timestamp >= ${ago(now, 7)}) AS failed,
+  //     SUM(t.event_type = 'task.started' AND t.event_timestamp >= ${ago(now, 14)} AND t.event_timestamp < ${ago(now, 7)}) AS previous_started,
+  //     SUM(t.event_type = 'task.failed' AND t.event_timestamp >= ${ago(now, 14)} AND t.event_timestamp < ${ago(now, 7)}) AS previous_failed
+  //   FROM telemetry_event t JOIN member m ON m.id = t.member_id
+  //   WHERE t.event_timestamp >= ${ago(now, 30)} AND t.event_timestamp <= ${now} AND ${TASK_EVENT} AND ${HUMAN_MEMBER}`)
+  // return {
+  //   daily: num(row?.daily), weekly: num(row?.weekly), monthly: num(row?.monthly), previousWeekly: num(row?.previous_weekly),
+  //   started: num(row?.started), completed: num(row?.completed), failed: num(row?.failed),
+  //   previousStarted: num(row?.previous_started), previousFailed: num(row?.previous_failed),
+  // }
+  return { daily: 0, weekly: 0, monthly: 0, previousWeekly: 0, started: 0, completed: 0, failed: 0, previousStarted: 0, previousFailed: 0 }
 }
 
 /** Organizations with at least two people in them. */

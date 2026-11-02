@@ -397,7 +397,8 @@ export function registerAdminMcpTools(server: McpServer, admin: AdminToolCaller 
             status: row.status,
             count: n(row.count),
           })),
-          note: "active = sign-in session day or any telemetry event; realActive = ran at least one task in a session from the app (task.* events with a session id), excluding setup agents and removed members, as in the admin Control Center",
+          // SPEAK TO OMAR BEFORE REENABLING THIS DATA POINT, NO EXCEPTIONS (see readTaskUserWindows).
+          note: "active = sign-in session day or any telemetry event; realActiveUsers is disabled and always 0 for now (the query was too expensive)",
         }
       }),
   )
