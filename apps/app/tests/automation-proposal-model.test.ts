@@ -19,3 +19,14 @@ test("the free starter model still wins on Desktop when it is offered", () => {
   expect(resolved.resolution).toBe("default");
   expect(resolved.model.modelId).not.toBe("team-model");
 });
+
+test("an explicitly selected available model replaces an unavailable proposal without silent fallback", () => {
+  const unavailable = { providerId: "revoked-provider", modelId: "removed-model", variant: null };
+  expect(resolveProposalModel(unavailable, [custom], { includeFreeStarter: false }).resolution).toBe("unavailable");
+
+  const selected = { providerId: "lpr_team", modelId: "team-model", variant: "high" };
+  expect(resolveProposalModel(selected, [custom], { includeFreeStarter: false })).toEqual({
+    model: selected,
+    resolution: "exact",
+  });
+});
