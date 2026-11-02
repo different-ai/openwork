@@ -355,7 +355,8 @@ export class Computers {
     if (!pending) return this.options.pauses?.clear(sessionId)
     try {
       let vm = await pending
-      if (await this.runningJobs(vm) > 0) return this.release(sessionId)
+      // A command already running would carry on past the checkpoint, and its work would be lost.
+      if (this.working.has(sessionId) || await this.runningJobs(vm) > 0) return this.release(sessionId)
       // Nobody is using it: the moment to move a computer built from an older image onto the current one.
       if (!this.working.has(sessionId) && await this.staleImage(sessionId, vm)) vm = await this.replace(sessionId, vm, { required: false }) ?? vm
       // A provider that can neither pause nor stop keeps the computer running until its own expiry.
