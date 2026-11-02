@@ -2595,10 +2595,9 @@ function resolveInboxMaxBytes(): number {
   if (Number.isFinite(parsed) && parsed > 0) {
     return Math.trunc(parsed);
   }
-  // Generous default: the composer no longer caps attachment sizes, so large
-  // uploads should be bounded here (memory: formData buffers the body) and by
-  // downstream provider/tool limits rather than an arbitrary small cap.
-  return 250_000_000;
+  // The composer does not cap attachment sizes and uploads stream to disk, so
+  // this only keeps one file from filling a worker's disk.
+  return 10_000_000_000;
 }
 
 // Dev-only log sink target. When OPENWORK_DEV_LOG_FILE is set to a path, the
