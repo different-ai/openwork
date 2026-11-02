@@ -63,5 +63,34 @@ back on restores them.
 
 ## Screenshots
 
-Not captured yet; add them from the real app before turning this on beyond our
-own organization.
+Captured from the real app in headless Chrome with an isolated Den and OpenCode
+v2; only the model response is scripted.
+
+Before: waiting sessions were lifted into a separate section, with timestamps
+and repeated attention text.
+
+![Feed before Calm Feed](./feed-before-calm.png)
+
+After: a waiting Question stays below newer finished work; hover reveals More
+without moving the title, workspace or decision label.
+
+![Calm Feed with one quiet More menu](./calm-feed.png)
+
+The same menu keeps existing commands; Settle is disabled while a task waits.
+
+![More menu on a waiting task](./calm-feed-menu.png)
+
+## Verification
+
+`evals/proofs/calm-feed.proof.test.ts` exercises the real UI: Workspaces default,
+saved Feed selection, native Question, fixed row lanes through hover, focus and
+held shortcuts, and Settle/Un-settle, Pin/Unpin and Rename. Its 11 assertion
+steps pass on this implementation; the pre-change `deac6bd446` control fails
+because the waiting row has no quiet decision label and still appears under
+Needs you. Screenshots are manually reviewed; automated visual validation is
+not included.
+
+Remaining real-UI coverage gaps: Permission prompts, folder drop/reorder,
+Move-to-group, Archive and Delete execution. Unit tests cover waiting placement,
+non-settling and folder derivation. The existing same-workspace drag boundaries
+and command implementations are reused.
