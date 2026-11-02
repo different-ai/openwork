@@ -31,6 +31,7 @@ import {
   Trash2,
   RotateCcw,
   FolderOpen,
+  FlaskConical,
   SquarePen,
   SquareTerminal,
   Tag,
@@ -684,6 +685,8 @@ export type AppSidebarProps = {
   onOpenDesign?: () => void;
   personalizationActive?: boolean;
   onOpenPersonalization?: () => void;
+  creatorActive?: boolean;
+  onOpenCreator?: () => void;
   dashboardActive?: boolean;
   onOpenDashboard?: () => void;
   /** Opens the cross-session message search dialog (Cmd/Ctrl+Shift+F). */
@@ -938,6 +941,14 @@ export function AppSidebar(props: AppSidebarProps) {
                 icon={Settings2}
                 label="Personalización"
                 onSelect={props.onOpenPersonalization}
+              />
+            ) : null}
+            {props.onOpenCreator ? (
+              <SidebarDestination
+                active={props.creatorActive === true}
+                icon={FlaskConical}
+                label="Creador"
+                onSelect={props.onOpenCreator}
               />
             ) : null}
             <SidebarDestination

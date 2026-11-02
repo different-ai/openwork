@@ -127,6 +127,7 @@ import { ArtefactosPage } from "@/react-app/domains/artifacts/artifacts-page";
 import { ProgramadasPage } from "@/react-app/domains/scheduled/scheduled-page";
 import { DesignPage } from "@/react-app/domains/design/design-page";
 import { PersonalizacionPage } from "@/react-app/domains/personalization/personalization-page";
+import { CreatorPage } from "@/react-app/domains/creator/creator-page";
 import { CalendarPage } from "@/react-app/domains/calendar/calendar-page";
 import { useOrgFeatureState } from "@/react-app/domains/cloud/use-org-feature";
 import { useRemoteSessionSubagentsFeature } from "@/react-app/domains/session/remote-threads/use-remote-session-subagents-feature";
@@ -306,6 +307,7 @@ import {
   dashboardRoute,
   designRoute,
   personalizationRoute,
+  creatorRoute,
   projectsRoute,
   scheduledRoute,
   workspaceExtensionsRoute,
@@ -4081,6 +4083,22 @@ export function SessionRoute() {
               </EmptyHeader>
             </Empty>
           )
+        ) : masterPlanSection === "creator" ? (
+          selectedWorkspace ? (
+            <CreatorPage
+              workspace={selectedWorkspace}
+              openworkServerClient={selectedWorkspaceEndpoint?.client ?? null}
+            />
+          ) : (
+            <Empty variant="ghost" className="h-full">
+              <EmptyHeader>
+                <EmptyTitle>Elige un proyecto</EmptyTitle>
+                <EmptyDescription>
+                  El Creador inspecciona y compone el motor de un proyecto concreto.
+                </EmptyDescription>
+              </EmptyHeader>
+            </Empty>
+          )
         ) : (
           <PersonalizacionPage
             openworkServerClient={selectedWorkspaceEndpoint?.client ?? null}
@@ -4181,6 +4199,10 @@ export function SessionRoute() {
         personalizationActive: masterPlanRouteActive && masterPlanSection === "personalization",
         onOpenPersonalization: () => {
           navigate(personalizationRoute());
+        },
+        creatorActive: masterPlanRouteActive && masterPlanSection === "creator",
+        onOpenCreator: () => {
+          navigate(creatorRoute());
         },
         dashboardActive: dashboardRouteActive || appsRouteActive,
         onOpenDashboard: dashboardSurfaceAvailable

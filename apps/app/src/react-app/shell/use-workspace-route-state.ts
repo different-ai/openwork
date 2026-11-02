@@ -93,6 +93,7 @@ import {
   scheduledRoute,
   designRoute,
   personalizationRoute,
+  creatorRoute,
   workspaceExtensionsRoute,
   workspaceSessionRoute,
 } from "./workspace-routes";
@@ -101,7 +102,7 @@ export type UseWorkspaceRouteStateInput = {
   /** A local first-send owner must survive workspace preparation until it has a real session. */
   preservePendingConversationRoute?: boolean;
   developerMode: boolean;
-  workspaceRoute?: "session" | "automations" | "calendar" | "dashboard" | "apps" | "activity" | "code" | "projects" | "artifacts" | "scheduled" | "design" | "personalization";
+  workspaceRoute?: "session" | "automations" | "calendar" | "dashboard" | "apps" | "activity" | "code" | "projects" | "artifacts" | "scheduled" | "design" | "personalization" | "creator";
   /** Invoked when the openwork-server settings-changed event fires (the route bumps its settings version). */
   onServerSettingsChanged: () => void;
   /** Receives the local openwork-server host info discovered during refresh. */
@@ -233,6 +234,11 @@ export function useWorkspaceRouteState(input: UseWorkspaceRouteStateInput) {
     if (workspaceRoute === "personalization") {
       if (/^\/personalization(?:\/|$)/.test(location.pathname)) return;
       navigate(personalizationRoute(), options);
+      return;
+    }
+    if (workspaceRoute === "creator") {
+      if (/^\/creator(?:\/|$)/.test(location.pathname)) return;
+      navigate(creatorRoute(), options);
       return;
     }
     navigateToWorkspaceSession(workspaceId, sessionId, options);

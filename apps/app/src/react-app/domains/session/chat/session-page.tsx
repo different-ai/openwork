@@ -207,6 +207,8 @@ export type SessionPageSidebarProps = {
   onOpenDesign?: () => void;
   personalizationActive?: boolean;
   onOpenPersonalization?: () => void;
+  creatorActive?: boolean;
+  onOpenCreator?: () => void;
   dashboardActive?: boolean;
   onOpenDashboard?: () => void;
   /** Opens the cross-session message search dialog (Cmd/Ctrl+Shift+F). */
@@ -1480,6 +1482,8 @@ export function SessionPage(props: SessionPageProps) {
           onOpenDesign={props.sidebar.onOpenDesign}
           personalizationActive={props.sidebar.personalizationActive}
           onOpenPersonalization={props.sidebar.onOpenPersonalization}
+          creatorActive={props.sidebar.creatorActive}
+          onOpenCreator={props.sidebar.onOpenCreator}
           dashboardActive={props.sidebar.dashboardActive}
           onOpenDashboard={props.sidebar.onOpenDashboard}
           conversationHistory={{
