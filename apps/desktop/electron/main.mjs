@@ -2864,7 +2864,7 @@ async function createMainWindowInner() {
         },
       };
     }
-    const floatingView = floatingViewWindowOptions({ url, frameName });
+    const floatingView = floatingViewWindowOptions({ url, frameName, dark: nativeTheme.shouldUseDarkColors });
     if (floatingView) return { action: "allow", overrideBrowserWindowOptions: floatingView };
 
     if (url.startsWith("file://")) {
@@ -2891,6 +2891,8 @@ async function createMainWindowInner() {
   mainWindow.webContents.on("did-create-window", (child, { frameName }) => {
     if (!floatingViewWindowOptions({ url: "about:blank", frameName })) return;
     attachFloatingViewWindow(child);
+    applicationMenu.applyVisibility(child);
+    browserPanel.adoptPopOutWindow(child);
     const closeWithMain = () => { if (!child.isDestroyed()) child.close(); };
     mainWindow?.once("closed", closeWithMain);
     child.once("closed", () => mainWindow?.off("closed", closeWithMain));

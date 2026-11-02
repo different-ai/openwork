@@ -59,15 +59,6 @@ export type { BrowserStatePayload } from "@openwork/browser-tabs";
 
 export type BrowserPresentationMode = "hidden" | "floating" | "side" | "fullscreen";
 
-export type BrowserThumbnail = {
-  tabId: string;
-  url: string;
-  dataUrl: string;
-  width: number;
-  height: number;
-  capturedAt: number;
-};
-
 export type BrowserProxyState = {
   proxy: { rules: string; authenticated: boolean } | null;
 };
@@ -211,7 +202,8 @@ declare global {
         /** Tells the host how the visible conversation shows its browser, so Escape inside a full-screen page can leave full screen. */
         setPresentation?: (sessionId: string | null, mode: BrowserPresentationMode) => Promise<boolean>;
         /** A small JPEG preview of the visible conversation's on-screen tab, or null when none may be captured. */
-        thumbnail?: (tabId: string) => Promise<BrowserThumbnail | null>;
+        /** Brings the popped-out browser window to the front. */
+        focusWindow?: () => Promise<boolean>;
         navigate?: (url: string) => Promise<void>;
         back?: () => Promise<void>;
         forward?: () => Promise<void>;

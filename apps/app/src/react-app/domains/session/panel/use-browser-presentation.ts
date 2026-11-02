@@ -8,7 +8,6 @@ import {
   DEFAULT_BROWSER_PRESENTATION,
   useBrowserPresentation,
   useBrowserPresentationStore,
-  type BrowserFloatingSnap,
   type BrowserPresentation,
   type BrowserPresentationMode,
 } from "./browser-presentation-store";
@@ -26,19 +25,24 @@ export type BrowserPresentationController = {
   presentation: BrowserPresentation;
   /** The conversation's on-screen browser tab, if it has one. */
   tab: BrowserPanelTab | null;
+  /** The conversation's browser tabs, for the popped-out window's tab strip. */
+  browserTabs: BrowserPanelTab[];
   status: string;
   needsYou: boolean;
   present: (mode: BrowserPresentationMode) => void;
   /** The side rail's Browser button: opens or closes the browser beside the chat. */
   toggle: () => void;
   exitFullscreen: () => void;
-  setSnap: (snap: BrowserFloatingSnap) => void;
+  /** Whether the conversation's browser is in its own window, where new pages arrive as tabs. */
+  isPoppedOut: (ownerSessionId: string | null | undefined) => boolean;
   /** Places a page the agent opened. False when the feature is off and the caller keeps today's behavior. */
   placeOpenedBrowser: (ownerSessionId: string | null | undefined) => boolean;
   /** The host closed the owner's browser panel. */
   handlePanelClosed: (ownerSessionId: string | null | undefined) => void;
   /** Where focus returns after full screen. */
   fullscreenReturnFocus: React.RefObject<HTMLElement | null>;
+  /** The person just popped the browser out, so its window takes focus when it opens. */
+  focusWindowOnOpen: React.RefObject<boolean>;
 };
 
 type Options = {
@@ -63,6 +67,7 @@ export function useBrowserPresentationController({
   const activePanelTab = useActivePanelTab(sessionKey);
   const [nativeActiveTabId, setNativeActiveTabId] = React.useState<string | null>(null);
   const fullscreenReturnFocus = React.useRef<HTMLElement | null>(null);
+  const focusWindowOnOpen = React.useRef(false);
   const handledAttention = React.useRef(new Set<string>());
   const openBrowserSide = useOpenBrowserRailPane(sessionKey, false, setSidePanel);
   const selectTab = useSelectTab();
@@ -127,6 +132,7 @@ export function useBrowserPresentationController({
       fullscreenReturnFocus.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
       store.setMode(sessionKey, "fullscreen", returnMode);
     } else {
+      if (next === "floating") focusWindowOnOpen.current = true;
       store.setMode(sessionKey, next, next === "floating" ? "floating" : undefined);
     }
     if (current.browserInSide) setSidePanel(null);
@@ -144,14 +150,17 @@ export function useBrowserPresentationController({
     present(latest.current.mode === "side" ? "hidden" : "side");
   }, [present]);
 
-  const setSnap = React.useCallback((snap: BrowserFloatingSnap) => {
-    useBrowserPresentationStore.getState().setSnap(sessionKey, snap);
-  }, [sessionKey]);
+  const presentationKey = React.useCallback((ownerSessionId: string | null | undefined) => (
+    ownerSessionId == null ? sessionKey : getSidePanelSessionKey(ownerSessionId)
+  ), [sessionKey]);
+
+  const isPoppedOut = React.useCallback((ownerSessionId: string | null | undefined) => (
+    enabled && useBrowserPresentationStore.getState().sessions[presentationKey(ownerSessionId)]?.mode === "floating"
+  ), [enabled, presentationKey]);
 
   const placeOpenedBrowser = React.useCallback((ownerSessionId: string | null | undefined) => {
     if (!enabled) return false;
-    const ownerKey = getSidePanelSessionKey(ownerSessionId ?? null);
-    const key = ownerSessionId == null ? sessionKey : ownerKey;
+    const key = presentationKey(ownerSessionId);
     const ownerPresentation = useBrowserPresentationStore.getState().sessions[key] ?? DEFAULT_BROWSER_PRESENTATION;
     if (ownerPresentation.mode === "fullscreen") return true;
     // The agent acts only on a page the person can see, so a page it opens
@@ -160,13 +169,12 @@ export function useBrowserPresentationController({
     if (key === sessionKey) setSidePanel("panel");
     else useUiStateStore.getState().setSidePanelState(key, "panel");
     return true;
-  }, [enabled, sessionKey, setSidePanel]);
+  }, [enabled, presentationKey, sessionKey, setSidePanel]);
 
   const handlePanelClosed = React.useCallback((ownerSessionId: string | null | undefined) => {
     if (!enabled) return;
-    const key = ownerSessionId == null ? sessionKey : getSidePanelSessionKey(ownerSessionId);
-    useBrowserPresentationStore.getState().setMode(key, "hidden");
-  }, [enabled, sessionKey]);
+    useBrowserPresentationStore.getState().setMode(presentationKey(ownerSessionId), "hidden");
+  }, [enabled, presentationKey]);
 
   // Showing the browser in the side panel by any route is choosing the side.
   React.useEffect(() => {
@@ -200,8 +208,9 @@ export function useBrowserPresentationController({
     }
   }, [enabled, presentation.mode, sessionKey, tab]);
 
-  // A page needing attention opens beside the chat, and an
-  // agent that needs the page on screen to act brings it beside the chat.
+  // A page needing attention opens beside the chat, and an agent that needs
+  // the page on screen to act brings it beside the chat. In its own window the
+  // page is already on screen: show that tab and bring the window forward.
   const attentionTab = browserTabs.find(browserNeedsPerson);
   const attentionId = attentionTab
     ? `${attentionTab.id}:${attentionTab.browserTask?.operation ?? "needs_attention"}`
@@ -211,6 +220,12 @@ export function useBrowserPresentationController({
     if (!enabled || !attentionTab || !attentionId || handledAttention.current.has(attentionId)) return;
     handledAttention.current.add(attentionId);
     if (mode === "side" || mode === "fullscreen") return;
+    if (mode === "floating") {
+      const browser = getElectronBrowser();
+      void browser?.selectTab?.(attentionTab.id).catch(() => undefined);
+      void browser?.focusWindow?.().catch(() => undefined);
+      return;
+    }
     useBrowserPresentationStore.getState().setMode(sessionKey, "side");
     selectTab(sessionKey, attentionTab.id);
     setSidePanel("panel");
@@ -235,14 +250,16 @@ export function useBrowserPresentationController({
     mode,
     presentation,
     tab,
+    browserTabs,
     status: browserStatusLabel(tab),
     needsYou: browserTabs.some(browserNeedsPerson),
     present,
     toggle,
     exitFullscreen,
-    setSnap,
+    isPoppedOut,
     placeOpenedBrowser,
     handlePanelClosed,
     fullscreenReturnFocus,
+    focusWindowOnOpen,
   };
 }
