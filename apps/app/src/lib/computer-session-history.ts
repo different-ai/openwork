@@ -4,6 +4,20 @@ export function isComputerToolName(name: string): boolean {
   return name === "computer" || /(?:^|_)computer_(?:apps|launch|app_script|discover|open(?:_session)?|observe|act|zoom|status|session_status|close(?:_session)?)$/.test(name)
 }
 
+/** browser_handoff stays out of this list: it asks the person to act in the browser panel. */
+const BROWSER_ACTIONS = new Map([
+  ["browser_tabs", "Checked the tabs"],
+  ["browser_open", "Opened a page"],
+  ["browser_navigate", "Opened a page"],
+  ["browser_observe", "Checked the page"],
+  ["browser_extract", "Read the page"],
+  ["browser_act", "Worked on the page"],
+])
+
+export function isBrowserToolName(name: string): boolean {
+  return BROWSER_ACTIONS.has(name)
+}
+
 function record(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value)
 }
@@ -16,7 +30,7 @@ function result(part: DynamicToolUIPart): unknown {
 
 /** Waiting/denied/failed calls keep their original, actionable chat row. */
 export function isGroupedComputerPart(part: UIMessage["parts"][number]): part is DynamicToolUIPart {
-  if (part.type !== "dynamic-tool" || !isComputerToolName(part.toolName)) return false
+  if (part.type !== "dynamic-tool" || !(isComputerToolName(part.toolName) || isBrowserToolName(part.toolName))) return false
   if (part.callProviderMetadata?.openwork?.computerFailure === true) return false
   if (part.state !== "input-streaming" && part.state !== "input-available" && part.state !== "output-available") return false
   const output = result(part)
@@ -28,6 +42,8 @@ export function computerActionLabel(part: DynamicToolUIPart): string {
     const intent = part.input.intent
     if (typeof intent === "string" && intent.trim()) return intent.trim().slice(0, 120)
   }
+  const browserAction = BROWSER_ACTIONS.get(part.toolName)
+  if (browserAction) return browserAction
   if (/(?:^|_)computer_open(?:_session)?$/.test(part.toolName)) return "Opened an app"
   if (/(?:^|_)computer_close(?:_session)?$/.test(part.toolName)) return "Closed the computer session"
   if (/(?:^|_)computer_observe$/.test(part.toolName)) return "Checked the screen"

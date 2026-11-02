@@ -257,7 +257,7 @@ export const FEATURES = defineFeatures({
 
   computerSessionHistory: {
     label: "Desktop: computer session history",
-    description: "Computer actions share one compact session card in chat, with captured views to browse or replay. Turning it off restores individual actions and screenshots.",
+    description: "Computer and browser actions share one compact session card in chat, with captured views to browse or replay. Turning it off restores individual actions and screenshots.",
     category: "computerUse",
     added: "2026-10-30",
     since: "2026-10",
