@@ -1,11 +1,11 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, mkdirSync, writeFileSync, symlinkSync, rmSync, readFileSync } from "node:fs";
+import { mkdtempSync, mkdirSync, writeFileSync, symlinkSync, rmSync, readFileSync, chmodSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { generateFixes, editsToPatch, safeFile, validatePatch, responsesRequest, generationModel, fixOutcomeLine } from "./warden-generate.mjs";
-import { readPlan } from "./warden-sweep-open.mjs";
+import { readPlan, main as openFixPrs } from "./warden-sweep-open.mjs";
 import { planFix, validState, slackMessage, jobSummary, sweepFindings, relatedOpenFixes, queueFixRetry } from "./warden-sweep.mjs";
 import { parseWardenJsonl } from "./contributor-screen.mjs";
 import { guardedFiles } from "./warden-clearance.mjs";
@@ -171,4 +171,43 @@ test("workflow preserves token isolation, draft-only normal CI and quick-check c
   assert.match(writer, /chat.postMessage/);
   assert.deepEqual(guardedFiles([".github/scripts/warden-generate.mjs", ".github/scripts/warden-sweep-open.mjs"]), [".github/scripts/warden-generate.mjs", ".github/scripts/warden-sweep-open.mjs"]);
   assert.match(readFileSync(new URL("../workflows/quick-check.yml", import.meta.url), "utf8"), /warden-generate.test.mjs/);
+});
+
+test("writer applies a verified generated patch, pushes its branch and reports a draft PR receipt", async (t) => {
+  const cwd = fixture(t);
+  const temp = mkdtempSync(join(tmpdir(), "warden-writer-boundary-"));
+  const originalCwd = process.cwd(), originalPath = process.env.PATH, originalFetch = globalThis.fetch;
+  t.after(() => { process.chdir(originalCwd); process.env.PATH = originalPath; globalThis.fetch = originalFetch; rmSync(temp, { recursive: true, force: true }); });
+  const remote = join(temp, "remote.git");
+  execFileSync("git", ["init", "--bare", remote], { stdio: "ignore" });
+  git(cwd, ["remote", "add", "origin", remote]);
+  const result = await generateFixes(options(cwd, async ({ stage }) => stage === "generate" ? proposed : verified));
+  const sha = git(cwd, ["rev-parse", "HEAD"]);
+  const plan = planFix({ sha, number: 12, complete: true, findings: result.findings }, [finding.path]);
+  const fixes = join(temp, "fixes"), dir = join(fixes, "01"); mkdirSync(dir, { recursive: true });
+  writeFileSync(join(dir, "plan.json"), JSON.stringify(plan));
+  writeFileSync(join(dir, "body.md"), plan.body);
+  writeFileSync(join(dir, "01.patch"), plan.patches[0]);
+  const bin = join(temp, "bin"); mkdirSync(bin);
+  const receipt = join(temp, "gh-operations.jsonl");
+  writeFileSync(join(bin, "gh"), `#!/usr/bin/env node\nconst fs=require('node:fs');const args=process.argv.slice(2);fs.appendFileSync(${JSON.stringify(receipt)},JSON.stringify(args)+'\\n'); if(args[0]==='pr'&&args[1]==='list') console.log('[]');else if(args[0]==='pr'&&args[1]==='create') console.log('https://github.com/example/repo/pull/123');else process.exit(1);\n`);
+  chmodSync(join(bin, "gh"), 0o755);
+  process.env.PATH = `${bin}:${originalPath}`;
+  const messages = [];
+  globalThis.fetch = async (url, init) => {
+    assert.equal(url, "https://slack.com/api/chat.postMessage");
+    messages.push(JSON.parse(init.body).text);
+    return { ok: true, json: async () => ({ ok: true }) };
+  };
+  process.chdir(cwd);
+  await openFixPrs({ BASE: sha, FIXES_DIR: fixes, PR_TOKEN: "test-app", GH_TOKEN: "test-read", HAS_AUTOMATION_APP: "true", GITHUB_REPOSITORY: "example/repo", SLACK_BOT_TOKEN: "test-slack", SLACK_WARDEN_SWEEP_CHANNEL_ID: "test-channel" });
+  const pushed = git(cwd, ["ls-remote", "origin", `refs/heads/${plan.branch}`]);
+  assert.match(pushed, new RegExp(plan.branch));
+  assert.equal(git(cwd, ["show", "HEAD:src/a.tsx"]), 'const label = "Good";');
+  const operations = readFileSync(receipt, "utf8").trim().split("\n").map(JSON.parse);
+  assert.equal(operations.length, 2);
+  assert.ok(operations[1].includes("--draft"));
+  assert.ok(operations[1].includes("--base"));
+  assert.match(messages[0], /1 PR\(s\) opened/);
+  assert.match(messages[0], /https:\/\/github.com\/example\/repo\/pull\/123/);
 });
