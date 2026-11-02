@@ -151,7 +151,7 @@ jobs:
 
       # PRs opened by GITHUB_TOKEN start no workflows, so CI and Warden would
       # never run on them. The automation App's PRs get the normal checks. It is
-      # not diff-warden: the App that approves PRs never authors them.
+      # not diff-warden: advisory reporting and fix authorship stay separate.
       - name: Mint PR token
         id: automation
         if: env.HAS_AUTOMATION_APP == 'true'

@@ -201,7 +201,8 @@ function graphWallTime(value) {
   const instant = eventTime(value);
   if (!/(?:Z|[+-]\d\d:\d\d)$/.test(value.dateTime)) return { dateTime: value.dateTime, timeZone: value.timeZone };
   const parts = Object.fromEntries(new Intl.DateTimeFormat("en-CA", { timeZone: ZONE_ALIASES[value.timeZone] || value.timeZone, year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", second: "2-digit", hourCycle: "h23" }).formatToParts(new Date(instant)).map((part) => [part.type, part.value]));
-  return { dateTime: `${parts.year}-${parts.month}-${parts.day}T${parts.hour}:${parts.minute}:${parts.second}.0000000`, timeZone: value.timeZone };
+  const milliseconds = String(new Date(instant).getUTCMilliseconds()).padStart(3, "0");
+  return { dateTime: `${parts.year}-${parts.month}-${parts.day}T${parts.hour}:${parts.minute}:${parts.second}.${milliseconds}0000`, timeZone: value.timeZone };
 }
 function event(input, existing) {
   object(input); const subject = text(input.subject, "Subject", 1000);

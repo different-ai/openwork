@@ -335,9 +335,11 @@ export type McpAppSandboxViewProps = {
    * A cached Dashboard may paint now, but its tools must await a fresh,
    * access-checked lease. Called again for each call, so a host that keeps
    * this view open across launches can hand it each newer lease. Given the
-   * lease a call just found stale, it renews that lease or throws.
+   * lease a call just found stale, it renews that lease or throws. With need
+   * "lease" it may hand out the lease of a launch still running, for a stored
+   * read that only confirms access.
    */
-  resolveLiveActions?: (staleLaunchId?: string) => Promise<{ origin: McpAppOrigin; app: OpenworkMcpAppResource }>
+  resolveLiveActions?: (staleLaunchId?: string, need?: "lease") => Promise<{ origin: McpAppOrigin; app: OpenworkMcpAppResource }>
   /**
    * With resolveLiveActions: this saved view goes live in place, so the App
    * may ask for its kept read-only results. Like every call, such a read
@@ -448,9 +450,9 @@ export function McpAppSandboxView({ origin, app, resolveLiveActions, goesLiveInP
     const loads = createMcpAppOpenLoads(openKey === undefined ? undefined : JSON.stringify([openKey, retryAttempt]))
     // The lease the current actions use, once a cached view has one.
     let liveLaunchId: string | undefined
-    const bindLiveActions = async (staleLaunchId?: string) => {
+    const bindLiveActions = async (staleLaunchId?: string, need?: "lease") => {
       if (!resolveLiveActions) return
-      const live = await resolveLiveActions(staleLaunchId)
+      const live = await resolveLiveActions(staleLaunchId, need)
       if (disposed || failed) throw new Error("This artifact view has closed or changed.")
       if (live.origin.readOnly || !live.app.launchId || live.app.serverName !== app.serverName
         || live.app.toolName !== app.toolName || live.app.resourceUri !== app.resourceUri) {
@@ -599,14 +601,16 @@ export function McpAppSandboxView({ origin, app, resolveLiveActions, goesLiveInP
       const cacheRequest = _meta?.[MCP_APP_CACHE_REQUEST_META]
       const call = { serverName: app.serverName, resourceUri: app.resourceUri, name, args: args ?? {} }
       try {
-        await bindLiveActions()
         // The App's last read-only result for this call, from storage. The host
         // first rechecks that the call is allowed now without approval (lease,
         // visibility, workspace denies, read-only label); the tool never runs.
+        // That takes a lease, not the launch's result, which may be running
+        // the App's reads, so the stored answer can arrive first.
         if (cacheRequest === "read") {
           const miss = { content: [], isError: true, _meta: { [MCP_APP_CACHED_RESULT_META]: false } }
           const cached = await cachedMcpAppResult(origin, app, name, args ?? {})
           if (!cached) return miss
+          await bindLiveActions(undefined, "lease")
           const identity = await actions.checkRead(name, args ?? {}).catch(() => null)
           if (disposed || failed) throw new Error("This artifact view has closed or changed.")
           // Kept from this same verified server only; a replaced server starts empty.
@@ -616,6 +620,7 @@ export function McpAppSandboxView({ origin, app, resolveLiveActions, goesLiveInP
           }
           return cached.result
         }
+        await bindLiveActions()
         const userInteraction = _meta?.["openwork/userInteraction"] === true
         const callOnce = async () => connectionController
           ? await connectionController.callTool(actions, app, name, args, userInteraction)

@@ -92,6 +92,8 @@ type TileAttempt = {
   admitted: boolean;
   endpoint?: DashboardLaunchEndpoint;
   document?: TileDocument;
+  /** The lease this launch holds as soon as it has one, before its result returns. */
+  lease?: LiveTarget;
 };
 
 type RefreshState = "idle" | "refreshing" | "failed";
@@ -316,18 +318,24 @@ function McpAppTileContent({
     setStarted(true);
     setNonce(next);
   }, [updateRefresh]);
-  const resolveLiveActions = useCallback(async (staleLaunchId?: string): Promise<LiveTarget> => {
+  const resolveLiveActions = useCallback(async (staleLaunchId?: string, need?: "lease"): Promise<LiveTarget> => {
     const document = stateRef.current.phase === "ready" ? stateRef.current.lifetime : null;
     let renewing = false;
     for (;;) {
       const attempt = launchRef.current;
+      // Confirming a stored read needs the lease a running launch holds, not its result.
+      while (need === "lease" && attempt?.promise && !attempt.lease) {
+        await Promise.race([attempt.promise.catch(() => undefined), new Promise<void>((resolve) => { launchWaiters.current.push(resolve); })]);
+      }
+      const lease = need === "lease" && attempt?.promise ? attempt.lease : undefined;
       // The launch's own handler settles the tile first, so the state read below is its outcome.
-      if (attempt?.promise) await attempt.promise.catch(() => undefined);
+      if (!lease && attempt?.promise) await attempt.promise.catch(() => undefined);
       const current = stateRef.current;
       // A launch for a different document retires this one; only its replacement may use the new lease.
       if (!document?.active || current.phase !== "ready" || current.lifetime !== document) {
         throw new Error("This artifact view has closed or changed.");
       }
+      if (lease) return lease;
       const live = liveTargetOf(current);
       const leaseId = live?.app.launchId;
       const expired = live?.app.refresh ? live.app.refresh.expiresAt <= Date.now() : false;
@@ -405,6 +413,10 @@ function McpAppTileContent({
     const requiresApproval = entry.requiresApproval === true;
     let canRetryCredentials = !manualLaunch && !requiresApproval && !memberApproved;
     const launchIsApproved = dashboardTileLaunchIsApproved(entry.organizationAutoLaunch === true, memberApproved);
+    const holdLease = (lease: LiveTarget | null) => {
+      attempt.lease = lease ?? undefined;
+      wakeLaunchWaiters();
+    };
     const isCurrent = () => lifetime.current.active && !attempt.controller.signal.aborted && launchRef.current === attempt && retiredNonceRef.current !== nonce;
     const assertActive = () => {
       if (!isCurrent()) throw new Error("This artifact launch has closed or changed. Run the tile again.");
@@ -420,6 +432,9 @@ function McpAppTileContent({
     };
     discardInvalidDocument();
     let credentialRevision = readCloudCredentialRevision();
+    // Leaving this tile cancels what it is loading, so the next App starts at
+    // once. A launch a person approved keeps running: it may be changing data.
+    const { signal } = attempt.controller;
     const promise = scheduleDashboardLaunch<TileState>(async () => {
       await Promise.resolve();
       assertActive();
@@ -449,12 +464,13 @@ function McpAppTileContent({
           && ownedLaunches.current.get(live.launchId) === current.endpoint) {
           attempt.endpoint = current.endpoint;
           attempt.document = current.lifetime;
+          holdLease(liveTargetOf(current));
           try {
             result = await current.endpoint.client.callMcpAppTool(current.endpoint.workspaceId, {
               launchId: live.launchId, sessionId: null, serverName: live.serverName,
               name: live.toolName, resourceUri: live.resourceUri, arguments: launchCallArguments(entry, live.toolName, argumentsSnapshot),
               expectedResourceDigest: live.refresh.resourceDigest,
-            });
+            }, { signal });
             assertActive();
             if (!current.lifetime.active || current.lifetime.failed) throw new Error("This artifact view has closed or changed. Run the tile again.");
             target = { endpoint: current.endpoint, app: live };
@@ -473,14 +489,14 @@ function McpAppTileContent({
         }
         if (!target) {
           if (fallbackEndpoint) {
-            const { app } = await fallbackEndpoint.client.resolveMcpApp(fallbackEndpoint.workspaceId, entry.projectedToolName, launch, { sessionId: null, readOnly: false });
+            const { app } = await fallbackEndpoint.client.resolveMcpApp(fallbackEndpoint.workspaceId, entry.projectedToolName, launch, { sessionId: null, readOnly: false }, { signal });
             if (app && endpointIsActive(fallbackEndpoint) && appMatchesEntry(app, entry)) target = { endpoint: fallbackEndpoint, app };
             else if (app?.launchId) void fallbackEndpoint.client.releaseMcpApp(fallbackEndpoint.workspaceId, app.launchId).catch(() => undefined);
           } else {
             target = await resolveDashboardMcpApp({
               endpoints: attempt.candidates, projectedToolName: entry.projectedToolName,
               expected: { serverName: entry.serverName, toolName: entry.toolName, resourceUri: entry.resourceUri },
-              launch, isActive: endpointIsActive,
+              launch, isActive: endpointIsActive, signal,
             });
           }
           if (target && !endpointIsActive(target.endpoint)) {
@@ -494,13 +510,14 @@ function McpAppTileContent({
           if (!app.launchId) throw new OpenworkServerError(422, "missing_launch_context", "This artifact has no live launch context. Update OpenWork and run the tile again.");
           acquiredLaunchId = app.launchId;
           ownedLaunches.current.set(app.launchId, endpoint);
+          holdLease({ origin: { ...endpoint, sessionId: null, readOnly: false }, app });
           const request = {
             launchId: app.launchId, sessionId: null, serverName: app.serverName,
             name: app.toolName, resourceUri: app.resourceUri, arguments: launchCallArguments(entry, app.toolName, argumentsSnapshot),
             ...(!fallbackEndpoint && launchIsApproved ? { approved: true } : {}),
           };
           try {
-            result = await endpoint.client.callMcpAppTool(endpoint.workspaceId, request);
+            result = await endpoint.client.callMcpAppTool(endpoint.workspaceId, request, request.approved ? undefined : { signal });
           } catch (cause) {
             assertActive();
             if (!(cause instanceof OpenworkServerError) || cause.code !== "tool_requires_approval") throw cause;
