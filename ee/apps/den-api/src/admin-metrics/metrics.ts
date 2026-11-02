@@ -338,7 +338,7 @@ export async function computeSharing({ now, rows }: MetricContext): Promise<Metr
   const from = later(CONTROL_CENTER_CAPABILITY_TRACKING_STARTED, addDays(today, -89))
   const fromTime = new Date(dayTime(from))
   const builtInMarketplaces = inList(BUILT_IN_MARKETPLACES)
-  const [teams, builtInPlugins, builtInSkills, uses, skills, plugins, marketplaces] = await Promise.all([
+  const [teams, builtInPlugins, builtInSkills, uses, skills, marketplaces] = await Promise.all([
     readTeamOrganizations(rows),
     rows(sql`${SELECT} DISTINCT mp.plugin_id AS id FROM marketplace_plugin mp JOIN marketplace mk ON mk.id = mp.marketplace_id WHERE mk.name IN (${builtInMarketplaces})`),
     rows(sql`${SELECT} DISTINCT pco.config_object_id AS id FROM plugin_config_object pco
@@ -362,7 +362,8 @@ export async function computeSharing({ now, rows }: MetricContext): Promise<Metr
         g.org_wide AS org_wide, g.team_id AS team, g.org_membership_id AS grantee
       FROM config_object co LEFT JOIN config_object_access_grant g ON g.config_object_id = co.id AND g.removed_at IS NULL
       WHERE co.object_type = 'skill' AND co.status = 'active' AND co.deleted_at IS NULL`),
-    rows(sql`${SELECT} p.id AS id, p.created_at AS created FROM plugin p WHERE p.status = 'active' AND p.created_at >= ${ago(now, 90)}`),
+    // The plugin-created count query is disabled: it returned 100k+ rows and failed every run.
+    // Talk to Omar before bringing it back.
     rows(sql`${SELECT} mk.created_at AS created FROM marketplace mk WHERE mk.status = 'active' AND mk.created_at >= ${ago(now, 90)} AND mk.name NOT IN (${builtInMarketplaces})`),
   ])
   const builtInPluginIds = new Set(builtInPlugins.map((row) => String(row.id)))
@@ -446,7 +447,8 @@ export async function computeSharing({ now, rows }: MetricContext): Promise<Metr
         .sort((a, b) => b.people - a.people || b.calls - a.calls)
         .slice(0, 10),
       catalog: {
-        plugins: plugins.filter((row) => !builtInPluginIds.has(String(row.id)) && createdInRange(row.created)).length,
+        // Disabled; see the note on the queries above. The UI shows a notice instead of this number.
+        plugins: 0,
         marketplaces: marketplaces.filter((row) => createdInRange(row.created)).length,
       },
     }
