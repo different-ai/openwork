@@ -224,7 +224,7 @@ export function createDifferentlyProvider(options: DifferentlyProviderOptions, d
 
   const provider: SandboxProvider = {
     id,
-    describe: () => ({ stopResume: lifecycle ? lifecycle.pause || lifecycle.stop : true, persistentStorage: false, memorySnapshotRestore: false, warmPool: false, endpointKind: "stable", exec: true, regions: [], createEnvironment: true, detachedExec: false, endpoints: options.endpoints ?? true, platform: options.platform ?? { os: "linux", isolation: "unknown" } }),
+    describe: () => ({ stopResume: lifecycle ? lifecycle.pause || lifecycle.stop : true, callsOffPause: true, persistentStorage: false, memorySnapshotRestore: false, warmPool: false, endpointKind: "stable", exec: true, regions: [], createEnvironment: true, detachedExec: false, endpoints: options.endpoints ?? true, platform: options.platform ?? { os: "linux", isolation: "unknown" } }),
     currentImage: () => options.template ? { id: options.template, version: options.template } : null,
     async create(spec, opts) {
       if (spec.storage.length) unsupported("storage attachments")
