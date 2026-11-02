@@ -1,4 +1,4 @@
-import type { DynamicToolUIPart, JSONValue, ProviderMetadata, TextUIPart } from "ai";
+import type { DynamicToolUIPart, JSONValue, ProviderMetadata, TextUIPart, UIMessage } from "ai";
 import type { ToolPart } from "@opencode-ai/sdk/v2/client";
 import {
   connectionActionAppSchemaVersion,
@@ -7,6 +7,14 @@ import {
 
 import { safeStringify } from "@/app/utils";
 import { normalizeErrorText } from "@/lib/error-text";
+import { isComputerToolName } from "@/lib/computer-session-history";
+
+export function withToolAttachmentOwner(parts: UIMessage["parts"], toolCallId: string): UIMessage["parts"] {
+  return parts.map(part => part.type === "file" ? {
+    ...part,
+    providerMetadata: { ...part.providerMetadata, openwork: { ...part.providerMetadata?.openwork, toolCallId } },
+  } : part);
+}
 
 export const STRUCTURED_OUTPUT_TOOL = "StructuredOutput";
 
@@ -75,18 +83,25 @@ function toolCallProviderMetadata(part: ToolPart): ProviderMetadata {
   // A task started or followed up on another computer keeps its start time after it returns.
   const remoteSession = /(?:^|_)execute_capability$/.test(part.tool) && isRecord(part.state.input)
     && typeof part.state.input.name === "string" && part.state.input.name.startsWith("remote-session:");
-  const toolStartedAt = (appBuilder || remoteSession || part.tool === "task" || part.metadata?.openworkV2CodeMode === true) && "time" in part.state && typeof part.state.time?.start === "number"
+  const computer = isComputerToolName(part.tool);
+  const toolStartedAt = (appBuilder || computer || remoteSession || part.tool === "task" || part.metadata?.openworkV2CodeMode === true) && "time" in part.state && typeof part.state.time?.start === "number"
     && Number.isFinite(part.state.time.start)
     ? part.state.time.start
     : null;
-  const toolCompletedAt = appBuilder && "time" in part.state && "end" in part.state.time && typeof part.state.time.end === "number"
+  const toolCompletedAt = (appBuilder || computer) && "time" in part.state && "end" in part.state.time && typeof part.state.time.end === "number"
     && Number.isFinite(part.state.time.end) ? part.state.time.end : null;
   const fileDestination = part.tool === "write" && typeof stateMetadata.filepath === "string" ? stateMetadata.filepath
     : part.tool === "edit" && isRecord(stateMetadata.filediff) && typeof stateMetadata.filediff.file === "string" ? stateMetadata.filediff.file : null;
   const workspacePaths = isJsonValue(stateMetadata.openworkWorkspacePaths) ? stateMetadata.openworkWorkspacePaths : null;
+  // An edit's own line counts, for the text-first rail's "+11 −3".
+  const filediff = part.tool === "edit" && isRecord(stateMetadata.filediff) ? stateMetadata.filediff : null;
+  const diffStats = filediff && typeof filediff.additions === "number" && typeof filediff.deletions === "number"
+    ? { added: filediff.additions, removed: filediff.deletions } : null;
   const openwork = {
+    ...(computer && stateMetadata.isError === true ? { computerFailure: true } : {}),
     ...(fileDestination ? { fileDestination } : {}),
     ...(workspacePaths ? { workspacePaths } : {}),
+    ...(diffStats ? { diffStats } : {}),
     ...(part.id !== part.callID ? { sourcePartId: part.id } : {}),
     ...(mcpResult ? { mcpResult } : {}),
     ...(childSessionId ? { childSessionId } : {}),
@@ -186,4 +201,16 @@ export function parseDynamicToolUIPart(part: ToolPart): DynamicToolUIPart | null
     input: part.state.input,
     callProviderMetadata: toolCallProviderMetadata(part),
   };
+}
+
+/**
+ * A finished reasoning part's engine timing, kept on the UI part so the chat
+ * can say how long the model thought ("Thought 12s"). Unknown stays absent.
+ */
+export function reasoningTime(part: { time?: { start?: number; end?: number } }): { time?: { start: number; end: number } } {
+  const start = part.time?.start
+  const end = part.time?.end
+  return typeof start === "number" && typeof end === "number" && Number.isFinite(start) && Number.isFinite(end) && end >= start
+    ? { time: { start, end } }
+    : {}
 }

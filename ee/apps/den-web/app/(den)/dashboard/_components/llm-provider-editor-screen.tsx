@@ -23,6 +23,8 @@ import { getErrorMessage, getRequestError, requestJson } from "../../_lib/den-fl
 import {
     getLlmProviderRoute,
     getLlmProvidersRoute,
+    getLibraryRoute,
+    getLibraryLlmProviderRoute,
 } from "../../_lib/den-org";
 import { useOrgDashboard } from "../_providers/org-dashboard-provider";
 import {
@@ -78,11 +80,15 @@ function getLockMemberId(
 
 export function LlmProviderEditorScreen({
     llmProviderId,
+    library = false,
 }: {
     llmProviderId?: string;
+    library?: boolean;
 }) {
     const router = useRouter();
     const { orgId, orgSlug, orgContext, runReauthableAction } = useOrgDashboard();
+    const providerRoute = (id: string) => library ? getLibraryLlmProviderRoute(orgSlug, id) : getLlmProviderRoute(orgSlug, id);
+    const listRoute = library ? `${getLibraryRoute(orgSlug)}?show=models` : getLlmProvidersRoute(orgSlug);
     const { llmProviders, busy, error, reloadProviders } =
         useOrgLlmProviders(orgId);
     const provider = useMemo(
@@ -732,7 +738,7 @@ export function LlmProviderEditorScreen({
             }
 
             await reloadProviders();
-            router.push(getLlmProviderRoute(orgSlug, nextProviderId));
+            router.push(providerRoute(nextProviderId));
             router.refresh();
             });
         } catch (nextError) {
@@ -904,8 +910,8 @@ export function LlmProviderEditorScreen({
                 <Link
                     href={
                         provider
-                            ? getLlmProviderRoute(orgSlug, provider.id)
-                            : getLlmProvidersRoute(orgSlug)
+                            ? providerRoute(provider.id)
+                            : listRoute
                     }
                     className="inline-flex items-center gap-2 text-[15px] font-medium text-gray-500 transition hover:text-gray-900"
                 >
@@ -1222,6 +1228,7 @@ export function LlmProviderEditorScreen({
                             Custom provider JSON / JSONC
                         </span>
                         <DenTextarea
+                            aria-label="Custom provider JSON / JSONC"
                             value={customConfigText}
                             onChange={(event) =>
                                 setCustomConfigText(event.target.value)
@@ -1427,8 +1434,8 @@ export function LlmProviderEditorScreen({
                 <Link
                     href={
                         provider
-                            ? getLlmProviderRoute(orgSlug, provider.id)
-                            : getLlmProvidersRoute(orgSlug)
+                            ? providerRoute(provider.id)
+                            : listRoute
                     }
                     className="px-2 text-[13px] font-medium text-gray-500 transition hover:text-gray-900"
                 >

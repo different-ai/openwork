@@ -1,9 +1,11 @@
 import { and, asc, desc, eq, gt, inArray, isNotNull, isNull, lt, lte, or } from "@openwork-ee/den-db/drizzle"
 import { RemoteSessionCommandTable } from "@openwork-ee/den-db/schema/remote-session-commands"
 import { createDenTypeId, normalizeDenTypeId, type DenTypeId } from "@openwork-ee/utils/typeid"
-import type {
-  RemoteSessionCommandCompleteRequest,
-  RemoteSessionCommandSessionReport,
+import {
+  remoteSessionPendingSchema,
+  type RemoteSessionCommandCompleteRequest,
+  type RemoteSessionCommandSessionReport,
+  type RemoteSessionPending,
 } from "@openwork/types/automations"
 import { db } from "../db.js"
 import { automationUpdateChangedRows } from "../automations/update-result.js"
@@ -27,6 +29,10 @@ export type RemoteSessionProgress = {
   finalText: string | null
   lastError: { code: string; message: string } | null
   messageCount: number | null
+  /** The step the session ran last, as a short sentence; null from older runners. */
+  latestStep: string | null
+  /** What the session waits on, from runners that read it; null otherwise. */
+  pending: RemoteSessionPending | null
   observedAt: number
 }
 
@@ -187,6 +193,12 @@ function commandIdOrNull(value: string): DenTypeId<"remoteSessionCommand"> | nul
   }
 }
 
+function mapPending(row: CommandRow): RemoteSessionPending | null {
+  if (row.session_status !== "waiting" || row.session_pending === null) return null
+  const parsed = remoteSessionPendingSchema.safeParse(row.session_pending)
+  return parsed.success ? parsed.data : null
+}
+
 function mapSession(row: CommandRow): RemoteSessionProgress | null {
   if (!row.session_status || !row.session_observed_at) return null
   return {
@@ -205,6 +217,8 @@ function mapSession(row: CommandRow): RemoteSessionProgress | null {
       ? { code: row.session_error_code, message: row.session_error_message }
       : null,
     messageCount: row.session_message_count,
+    latestStep: row.session_latest_step,
+    pending: mapPending(row),
     observedAt: row.session_observed_at.getTime(),
   }
 }
@@ -467,6 +481,8 @@ export const databaseRemoteSessionCommandStore: RemoteSessionCommandStore = {
       session_error_code: input.error?.code ?? null,
       session_error_message: input.error?.message ?? null,
       ...(input.messageCount === undefined ? {} : { session_message_count: input.messageCount }),
+      session_latest_step: input.latestStep ?? null,
+      session_pending: input.status === "waiting" && input.pending ? input.pending : null,
       session_observed_at: new Date(input.observedAt),
       updated_at: new Date(),
     }).where(and(
@@ -598,6 +614,7 @@ export const databaseRemoteSessionCommandStore: RemoteSessionCommandStore = {
     await db.update(RemoteSessionCommandTable).set({
       session_status: "running",
       session_waiting_for: null,
+      session_pending: null,
       session_final_text: null,
       session_error_code: null,
       session_error_message: null,

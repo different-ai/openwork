@@ -2,7 +2,6 @@ import { randomInt } from "node:crypto";
 import { queryDenDatabase, type Seed } from "@openwork/env";
 import { gatewayUsageLimitPolicySchema } from "@openwork/types/den/gateway-usage-limits";
 import { isRecord } from "./library.ts";
-import { enableOrganizationCapabilities } from "./organization-capabilities.ts";
 
 /** A provider id of the right shape that no organization owns: the provider row of a limit orphaned before the fix. */
 function removedProviderId() {
@@ -13,7 +12,7 @@ function removedProviderId() {
 /**
  * An Acme owner with two OpenRouter-style Gateway providers: the old one (bad key) carries the organization's
  * $4,000 monthly hard limit. A second limit points at a provider that was deleted before deletions asked what to
- * do with limits, the state some organizations are already in. gatewayProviderRemovalLimits is on for Acme.
+ * do with limits, the state some organizations are already in. Provider removal cleanup is generally available.
  */
 export async function providerRemovalLimits(seed: Seed) {
   await using setup = new AsyncDisposableStack();
@@ -22,7 +21,6 @@ export async function providerRemovalLimits(seed: Seed) {
     env: { GATEWAY_ENABLED: "true", GATEWAY_PROXY_BASE_URL: "http://127.0.0.1:1", GATEWAY_PUBLIC_BASE_URL: "http://127.0.0.1:1" },
     org: { name: "Acme", admin: { name: "Acme Owner" } },
   }));
-  await enableOrganizationCapabilities(seed, den.admin, { gatewayProviderRemovalLimits: true });
   const databaseUrl = den.database?.url;
   if (!databaseUrl) throw new Error("The orphaned limit needs the isolated Den database");
   async function createProvider(name: string) {

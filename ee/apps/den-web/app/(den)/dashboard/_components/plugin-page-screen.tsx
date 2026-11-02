@@ -9,13 +9,10 @@ import { getRequestError, requestJson } from "../../_lib/den-flow";
 import { useDenFlow } from "../../_providers/den-flow-provider";
 import {
   getLibraryPluginShareRoute,
-  getLibraryPluginSkillRoute,
   getLibraryRoute,
   getOrgAccessFlags,
   getPluginDetailsRoute,
-  getPluginSkillRoute,
   getPluginsRoute,
-  orgFeatureEnabled,
 } from "../../_lib/den-org";
 import { useOrgDashboard } from "../_providers/org-dashboard-provider";
 import { type AccessDraft, accessAddedToast, ownedAccessStatus } from "./access-summary";
@@ -43,15 +40,9 @@ export function pluginChatDeepLink(plugin: Pick<DenPlugin, "name">): string {
 export function WhatsInside({
   plugin,
   appMcpServersEnabled = false,
-  skillPreviews = false,
-  skillHref,
 }: {
   plugin: DenPlugin;
   appMcpServersEnabled?: boolean;
-  /** Skills expand inline (libraryConnectorNavigation); takes precedence over skillHref. */
-  skillPreviews?: boolean;
-  /** Opens a skill's own page; omitted rows stay plain text. */
-  skillHref?: (skillId: string) => string;
 }) {
   const rows = [
     ...plugin.authoredApps.map((app) => ({
@@ -68,7 +59,6 @@ export function WhatsInside({
       title: skillTitle(skill.name),
       description: skill.description,
       kind: "Skill",
-      href: skillHref?.(skill.id),
     })),
     ...plugin.mcps.map((mcp) => ({
       key: `mcp:${mcp.id}`,
@@ -91,7 +81,7 @@ export function WhatsInside({
       <ItemPanel>
         {rows.length === 0 ? <p className="px-5 py-4 text-[13px] text-gray-500">Nothing inside yet.</p> : null}
         {rows.map((row) => {
-          const skill = skillPreviews ? plugin.skills.find((entry) => row.key === `skill:${entry.id}`) : undefined;
+          const skill = plugin.skills.find((entry) => row.key === `skill:${entry.id}`);
           return skill ? <SkillPreview key={row.key} skill={skill} /> : (
             <ItemRow compact key={row.key} logo={row.logo} title={row.title} description={row.description || undefined} href={"href" in row && typeof row.href === "string" ? row.href : undefined} action={<span className="text-[12px] text-gray-500">{row.kind}</span>} />
           );
@@ -274,8 +264,6 @@ function PluginPage({ pluginId, mode, libraryItems }: { pluginId: string; mode: 
       <WhatsInside
         plugin={data}
         appMcpServersEnabled={orgContext?.capabilities.appMcpServers === true}
-        skillPreviews={orgFeatureEnabled(orgContext, "libraryConnectorNavigation")}
-        skillHref={(skillId) => mode === "admin" ? getPluginSkillRoute(orgSlug, pluginId, skillId) : getLibraryPluginSkillRoute(orgSlug, pluginId, skillId)}
       />
       <AppMcpServers plugin={data} />
 

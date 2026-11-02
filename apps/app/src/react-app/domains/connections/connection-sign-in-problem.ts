@@ -84,14 +84,13 @@ export type ConnectPollOutcome =
 export function connectPollOutcome(
   match: (ProblemConnection & Pick<DenExternalMcpConnection, "connectedForMe" | "connectedAt">) | undefined,
   attempt: ConnectAttempt,
-  options: { previousConnectedAt: string | null; reconnectPending: boolean; reportFailure: boolean },
+  options: { previousConnectedAt: string | null; reconnectPending: boolean },
 ): ConnectPollOutcome {
   if (!match) return { kind: "waiting" };
   if (match.connectedForMe && !options.reconnectPending && typeof match.connectedAt === "string"
     && match.connectedAt.length > 0 && match.connectedAt !== options.previousConnectedAt) {
     return { kind: "connected" };
   }
-  if (!options.reportFailure) return { kind: "waiting" };
   const readiness = match.readiness;
   if (!readiness || readiness.status !== "could_not_verify" || readiness.checkedAt === attempt.previousCheckedAt) return { kind: "waiting" };
   const checkedAt = Date.parse(readiness.checkedAt);

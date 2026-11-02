@@ -108,6 +108,7 @@ import { z } from "zod"
 import { deleteOrganizationAgentPermissions } from "../../agent-permissions.js"
 import { deleteOrganizationDefaultModels } from "../../default-model.js"
 import { deleteOrganizationPrompts } from "../../prompts.js"
+import { deleteOrganizationAutoRouters } from "../../auto-router.js"
 import { deleteHeadlessSessionIndexForOrganization } from "../../headless-runner/session-index.js"
 import { unlessResumeTableMissing } from "../../headless-runner/resume-grant-revocation.js"
 import { addAuditRequestResource } from "../../audit/request-capture.js"
@@ -454,11 +455,18 @@ export function registerDeleteOrganizationRoutes<T extends { Variables: OrgRoute
       await purgeOrganizationHistory(organizationId)
 
       let affectedSessions: Array<{ id: typeof AuthSessionTable.$inferSelect.id; token: typeof AuthSessionTable.$inferSelect.token }> = []
+      let alreadyDeleted = false
       await db.transaction(async (tx) => {
         const [locked] = await tx.select({ metadata: OrganizationTable.metadata }).from(OrganizationTable)
           .where(eq(OrganizationTable.id, organizationId)).for("update")
         // A concurrent attempt may have recorded the ticket after this one read the progress.
         linearIssueId = (locked ? readDeletionProgress(readOrganizationMetadata(locked.metadata))?.linearIssueId : undefined) ?? linearIssueId
+        if (!locked) {
+          // A concurrent attempt already deleted the organization (and its rows) in this same transaction body,
+          // so there is nothing left to delete; finish as a successful, idempotent deletion.
+          alreadyDeleted = true
+          return
+        }
         await deleteGatewayUsageForOrganization(tx, organizationId)
         await deleteModelsAnalyticsForOrganization(tx, organizationId)
         const memberRows = await tx
@@ -644,6 +652,7 @@ export function registerDeleteOrganizationRoutes<T extends { Variables: OrgRoute
         await deleteOrganizationAgentPermissions(tx, organizationId)
         await deleteOrganizationDefaultModels(tx, organizationId)
         await deleteOrganizationPrompts(tx, organizationId)
+        await deleteOrganizationAutoRouters(tx, organizationId)
         await tx.delete(DesktopPolicyTable).where(eq(DesktopPolicyTable.organizationId, organizationId))
 
         await tx.delete(OrganizationDiagnosticCredentialTable).where(eq(OrganizationDiagnosticCredentialTable.organizationId, organizationId))
@@ -698,6 +707,7 @@ export function registerDeleteOrganizationRoutes<T extends { Variables: OrgRoute
         account_deletion_request_id: progress.requestId,
         account_deletion_request_type: "self serve request",
         account_deletion_resumed: !claimed,
+        account_deletion_already_completed: alreadyDeleted,
         linear_issue_created: Boolean(linearIssueId),
         linear_issue_id: linearIssueId,
       })

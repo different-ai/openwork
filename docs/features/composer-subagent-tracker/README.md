@@ -1,6 +1,7 @@
 # Sub-agents above the composer
 
-Feature key: `composerSubagentTracker` · Deployments: cloud and self-hosted · Default: off · Author: @benjaminshafii
+Generally available on cloud and self-hosted. Former rollout key:
+`composerSubagentTracker` (retired). Author: @benjaminshafii.
 
 ## What people get
 
@@ -10,17 +11,24 @@ sub-agents (the engine's `subagent` tool, shown as `task` in the app), an
 to-do progress, questions and approvals. The composer is sticky, so the list
 stays in view while the sub-agent rows in the chat scroll away.
 
-- The header reads `Agents` and the counts, attention first:
-  `1 need you, 1 working, 1 with an error, 2 done`. Click it to fold or open.
-- One row per agent: a status dot, the agent's name, its task (hidden in a
-  narrow window), one status word, then a fixed action lane.
-- Status words: `Working 12s`, `Retrying`, `Reconnecting`, `Needs permission`,
-  `Waiting for your answer`, `Done`, `Stopped`, `Error`. Colour marks only the
-  dot and the word (amber for attention, red for an error), never the row.
-- Actions: **Open** (the agent's own chat), **Stop** (only that agent, while
-  it runs) and **Review** when it needs the person. Review moves focus to the
+- The header reads `Agents`, the counts (attention first:
+  `1 need you, 1 working, 1 failed, 2 done`) and a chevron after them. Click it
+  to fold or open.
+- One row per agent, the same row for a local helper and for a task on another
+  computer (`AgentTrackerRow`): the agent's name (or the computer), its task
+  (hidden in a narrow window), one status word, then a fixed action lane. Names
+  start on the composer text's left edge.
+- Status: while an agent works only its time shows (`12s`; screen readers hear
+  `Working 12s`), since the header already says how many work. Otherwise one
+  word: `Retrying`, `Reconnecting`, `Starting`, `Needs permission`,
+  `Waiting for your answer`, `Done`, `Stopped`, `Failed`. Colour marks only the
+  word (amber for attention, red for a failure), never the row. Settled rows fade.
+- Actions: **Open** (the agent's own chat) and **Stop** (only that agent, while
+  it runs) appear when the row is hovered or focused; **Review** stays visible
+  when it needs the person. Review moves focus to the
   approval or question card that already sits above the composer for that
-  agent, or opens the agent's chat when there is none.
+  agent, or opens the agent's chat when there is none. Clicking the agent's
+  name or task opens its chat too, the same as Open.
 - The list opens on its own when an agent needs the person, or when there are
   at most three agents still busy; several quiet agents start folded. Once the
   turn ends and every agent has settled, the list goes away; the chat rows

@@ -3,7 +3,6 @@ import { AuthSessionTable, GatewayCredentialSetTable, GatewayKeyTable, GatewayMo
 import { db } from "../db.js"
 import { env } from "../env.js"
 import { sessionTokenMatches } from "../session-token.js"
-import { organizationFeatureEnabled } from "../features.js"
 import { effectiveGatewayGrants, memberGatewayTeams } from "./inference-provider-lifecycle.js"
 import { buildGatewayModelConfig, buildGatewayProviderConfig, gatewayConfigurationError, gatewayModelConfigurationError } from "./inference-provider-config.js"
 import { providerInventoryReadiness, providerInventoryRevision } from "./provider-inventory-revision.js"
@@ -36,9 +35,8 @@ export async function readProviderInventoryRevision(principal: ProviderInventory
     const [member] = await tx.select({ id: MemberTable.id }).from(MemberTable)
       .innerJoin(OrganizationTable, eq(OrganizationTable.id, MemberTable.organizationId))
       .where(and(eq(MemberTable.id, principal.memberId), eq(MemberTable.userId, principal.userId), eq(MemberTable.organizationId, principal.organizationId), isNull(MemberTable.removedAt)))
-    // Passing the transaction deliberately bypasses the feature cache. A kill
-    // switch or org revocation closes an already-open stream on its next check.
-    if (!session || !member || !await organizationFeatureEnabled(principal.organizationId, "liveProviderSync", { database: tx, userId: principal.userId })) {
+    // Revalidate the session and membership on every check of an open stream.
+    if (!session || !member) {
       throw new Error("Provider inventory is no longer authorized.")
     }
     const providers = await tx.select().from(GatewayProviderTable).where(and(eq(GatewayProviderTable.organization_id, principal.organizationId), eq(GatewayProviderTable.status, "active")))

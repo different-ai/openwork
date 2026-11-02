@@ -49,22 +49,52 @@ describe("sidebar feed", () => {
     group("flow", [session("today-new", NOW - 60_000), session("earlier", MIDNIGHT - 2 * DAY)]),
   ];
 
+  const all = (result: ReturnType<typeof feed>) =>
+    ids([...result.sections.flatMap((section) => section.entries), ...result.settled]);
+
   test("merges every workspace, newest first, by day", () => {
-    const result = feed(groups, { statusById: { approval: "waiting" } });
-    expect(ids(result.needsYou)).toEqual(["approval"]);
+    const result = feed(groups);
+    expect(result).not.toHaveProperty("needsYou");
     expect(sections(result)).toEqual([
       "today:today-new,today-old",
       "yesterday:yesterday",
-      "earlier:earlier",
+      "earlier:approval,earlier",
     ]);
     expect(ids(result.settled)).toEqual(["idle-week"]);
   });
 
+  test("a waiting session stays in its normal day section, listed once", () => {
+    const result = feed(groups, { statusById: { approval: "waiting" } });
+    expect(sections(result)).toEqual([
+      "today:today-new,today-old",
+      "yesterday:yesterday",
+      "earlier:approval,earlier",
+    ]);
+    expect(all(result).filter((id) => id === "approval")).toHaveLength(1);
+  });
+
+  test("a waiting session never settles, even when idle or settled by hand", () => {
+    const result = feed(groups, {
+      statusById: { "idle-week": "waiting", approval: "waiting" },
+      settledById: { approval: { settledThrough: NOW } },
+    });
+    expect(result.settled).toEqual([]);
+    expect(sections(result)).toEqual([
+      "today:today-new,today-old",
+      "yesterday:yesterday",
+      "earlier:approval,earlier,idle-week",
+    ]);
+  });
+
   test("leaves out pinned and sub-agent sessions", () => {
     const result = feed(groups, { pinnedIds: new Set(["today-new"]) });
-    const all = [...result.needsYou, ...result.sections.flatMap((section) => section.entries), ...result.settled];
-    expect(ids(all)).not.toContain("today-new");
-    expect(ids(all)).not.toContain("child");
+    expect(all(result)).not.toContain("today-new");
+    expect(all(result)).not.toContain("child");
+  });
+
+  test("a pinned session that is waiting stays in Pinned, out of the feed", () => {
+    const result = feed(groups, { pinnedIds: new Set(["approval"]), statusById: { approval: "waiting" } });
+    expect(all(result)).not.toContain("approval");
   });
 
   test("workspaces that cannot settle keep every session active", () => {
@@ -84,26 +114,39 @@ describe("sidebar feed", () => {
     expect(result.folders.map((folder) => `${folder.label}:${ids(folder.entries).join(",")}:${folder.attention}`)).toEqual([
       "Later:today-new,earlier:unread",
     ]);
-    const outside = [...result.needsYou, ...result.sections.flatMap((section) => section.entries), ...result.settled];
-    expect(ids(outside)).not.toContain("today-new");
-    expect(ids(outside)).not.toContain("earlier");
+    expect(all(result)).not.toContain("today-new");
+    expect(all(result)).not.toContain("earlier");
   });
 
-  test("groups into active and inactive, keeping Needs you on top", () => {
+  test("a waiting session filed in a pinned folder stays there and flags the folder", () => {
+    const result = feed(groups, {
+      feedFolders: [{ workspaceId: "lounge", groupId: "later" }],
+      groupsByWorkspace: {
+        lounge: { groups: [{ id: "later", label: "Later" }], assignments: { approval: "later" } },
+      },
+      statusById: { approval: "waiting" },
+      unreadIds: new Set(["approval"]),
+    });
+    expect(result.folders.map((folder) => `${folder.label}:${ids(folder.entries).join(",")}:${folder.attention}`)).toEqual([
+      "Later:approval:needs-you",
+    ]);
+    expect(all(result)).not.toContain("approval");
+  });
+
+  test("groups into active and inactive, with waiting sessions among the active ones", () => {
     const result = feed(groups, {
       groupBy: "activity",
       statusById: { approval: "waiting", yesterday: "running" },
       unreadIds: new Set(["earlier"]),
     });
-    expect(ids(result.needsYou)).toEqual(["approval"]);
     expect(sections(result)).toEqual([
-      "active:yesterday,earlier",
+      "active:yesterday,approval,earlier",
       "inactive:today-new,today-old",
     ]);
   });
 
-  test("lists everything in one section when not grouped", () => {
-    expect(sections(feed(groups, { groupBy: "none" }))).toEqual([
+  test("lists everything in one section when not grouped, waiting sessions included", () => {
+    expect(sections(feed(groups, { groupBy: "none", statusById: { approval: "waiting" } }))).toEqual([
       "all:today-new,today-old,yesterday,approval,earlier",
     ]);
   });

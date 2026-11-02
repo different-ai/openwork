@@ -1,8 +1,11 @@
 # Revised custom connector setup
 
-Feature key: `customConnectorSetup` · Deployments: cloud and self-hosted · Default: off · Author: @benjaminshafii
+> **GA:** Available without a feature flag. The former rollout key is retired.
+> Off/on screenshots below are historical comparisons, not current deployment options.
 
-One rollout controls the live discovery checklist, revised custom-MCP setup and meaningful Tool Tester results. There is no separate CIMD/DCR rollout or selector.
+Retired rollout key: `customConnectorSetup` · Deployments: cloud and self-hosted · Status: generally available (no flag) · Author: @benjaminshafii
+
+The live discovery checklist, revised custom-MCP setup and meaningful Tool Tester results are generally available. There is no CIMD/DCR rollout or selector.
 
 ## What changes
 
@@ -17,7 +20,7 @@ One rollout controls the live discovery checklist, revised custom-MCP setup and 
 
 The actual form submit handler validates both addresses, including external footer submission and Enter. Partial pairs never silently become automatic discovery. On issuer mismatch, complete reviewed endpoints and explicit destination confirmation are required. Confirmation resets if endpoints/reviewed suggestions change. Review and Undo keep their existing semantics; no published metadata is silently trusted.
 
-Flagged OAuth creates and changed OAuth configurations also recheck strict discovery before persistence. Proven issuer mismatches fail with generic actionable guidance unless the admin supplied the existing complete manual-endpoint/own-client override. Ordinary name/access updates do not add probes. Strict SDK issuer validation always remains active.
+OAuth creates and changed OAuth configurations also recheck strict discovery before persistence. Proven issuer mismatches fail with generic actionable guidance unless the admin supplied the existing complete manual-endpoint/own-client override. Ordinary name/access updates do not add probes. Strict SDK issuer validation always remains active.
 
 ### Tool results
 
@@ -27,7 +30,7 @@ Tool Tester prioritizes structured content or readable text. Complete original r
 
 Synthetic providers exercise the real Den HTTP, OAuth and browser paths; these are not mock screens.
 
-![Feature off: existing setup](./off.png)
+![Historical before GA: existing setup](./off.png)
 
 ![Actual 401 connection and 200 settings results while provider metadata is held](./checking.png)
 
@@ -43,15 +46,15 @@ Synthetic providers exercise the real Den HTTP, OAuth and browser paths; these a
 
 ![Issuer inconsistency stays failed even with HTTP 200](./issuer-mismatch.png)
 
-## Rollout / turning it off
+## Availability
 
-Enable only this flag for a test organization in `/admin`. With it off, existing setup and Tool Tester presentation remain, the streaming route returns canonical feature-disabled 404, and old JSON discovery stays compatible. The browser falls back to JSON discovery for an older/off backend without inventing live check receipts. Saved connections, tokens, request headers and explicit scope settings are not removed or rewritten by a rollout change.
-
-The discovery-only name was renamed within this PR before merge, consolidating the changes into this single registry entry. Existing custom connector support is not removed when this flag is off.
+Generally available. The rollout flag is retired; organization/member overrides,
+operator locks and old kill-switch rows no longer disable this behavior.
+Authorization, provider setup, consent and runtime compatibility still apply.
 
 ## Verification
 
-- `evals/proofs/custom-connector-discovery-checks.proof.test.ts`: off/on comparison, guarded stream, held metadata witness, real HTTP statuses, alternate client choice, draft retention, header-aware retry, optional/conflicting scopes, partial endpoint rejection and unconfirmed mismatch rejection.
+- `evals/proofs/custom-connector-discovery-checks.proof.test.ts`: default-enabled streaming checks, held metadata witness, real HTTP statuses, alternate client choice, draft retention, header-aware retry, optional/conflicting scopes, partial endpoint rejection and unconfirmed mismatch rejection.
 - `evals/proofs/revised-custom-connector-flows.proof.test.ts`: confidential own-client OAuth through actual token exchange, meaningful Tool Tester result, Bearer API key, a server that genuinely requires the configured custom header, and anonymous access. It also verifies the reviewed scopes are exactly those saved and sent to the provider, and fences delayed anonymous/header saves after Edit or Cancel.
 - `ee/apps/den-api/test/api/mcp-custom-oauth-setup.api.test.ts`: real HTTP/disposable DB enforcement before save, unchanged-update preservation, endpoint-scoped headers and existing manual trust boundary.
 - Focused frontend, package and API unit tests cover parser safety, callback/labels, endpoint policy, consent reset, scopes and structured/text/binary result presentation.

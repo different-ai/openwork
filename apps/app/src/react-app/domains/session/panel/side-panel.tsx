@@ -43,6 +43,7 @@ import {
 } from "./panel-tab-store";
 import { useControlAction, type OpenworkControlAction } from "../../../shell/control/control-provider";
 import type { OpenTarget } from "../artifacts/open-target";
+import type { OpenTargetOptions } from "@/lib/target-provider";
 import { useSidePanelTabs } from "./use-side-panel-tabs";
 import { handlePanelEscape, PanelEmpty } from "./panel-empty";
 import {
@@ -65,6 +66,8 @@ type SidePanelProps = {
   client: OpenworkServerClient | null;
   workspaceId: string | null;
   workspaceRoot: string;
+  onOpenTarget?: (target: OpenTarget, options?: OpenTargetOptions) => void;
+  isLocalWorkspace?: boolean;
   onClose: () => void;
   onOpenExtensions?: () => void;
   /** Floating browser presentation; undefined keeps the docked-only browser. */
@@ -593,6 +596,8 @@ export function SidePanel({
   client,
   workspaceId,
   workspaceRoot,
+  onOpenTarget,
+  isLocalWorkspace,
   onClose,
   onOpenExtensions,
   browserPresentation,
@@ -867,6 +872,8 @@ export function SidePanel({
               client={client}
               workspaceId={workspaceId}
               workspaceRoot={workspaceRoot}
+              onOpenTarget={onOpenTarget}
+              isLocalWorkspace={isLocalWorkspace}
               onClose={onClose}
             />
           </div>

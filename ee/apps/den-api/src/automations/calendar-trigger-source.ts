@@ -22,8 +22,6 @@ export type CalendarTriggerOwner = { organizationId: string; ownerMemberId: stri
 
 export type CalendarTriggerSourceDeps = {
   list: (limit: number) => Promise<AutomationListItem[]>
-  /** `automationCalendarTriggers` for the owner; off means Den does not read their calendar at all. */
-  enabled: (owner: CalendarTriggerOwner) => Promise<boolean>
   read: (input: CalendarTriggerOwner & { timeMin: string; timeMax: string }) => Promise<MemberCalendarRead>
   /** Claims one occurrence (idempotent by its nonce) and starts its run; the run id when work started. */
   claim: (item: AutomationListItem, occurrence: { scheduledFor: number; nonce: string; triggerContext: AutomationRunTriggerContext }) => Promise<string | null>
@@ -69,10 +67,6 @@ export class CalendarTriggerSource {
     const first = items[0]
     if (!first) return []
     const owner = { organizationId: first.automation.organizationId, ownerMemberId: first.automation.ownerMemberId }
-    if (!await this.deps.enabled(owner)) {
-      this.reads.delete(key)
-      return []
-    }
     const events = await this.events(key, owner, items, now)
     if (!events) return []
     const started: string[] = []

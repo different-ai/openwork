@@ -99,14 +99,14 @@ export const LEGACY_AGENT_MCP_INSTRUCTIONS = agentMcpInstructions(false)
 /** Rolled out with `remote-session:status`; one rule, the details live in its description. */
 const REMOTE_SESSION_STATUS_INSTRUCTIONS = "To follow remote sessions, call remote-session:status with all of their commandIds or Cloud sessionIds and waitMs instead of calling remote-session:read repeatedly; read only for the transcript or the full answer."
 
-/** Rolled out with `slackSendAsBot` for callers who may write; who a Slack message comes from decides the tool. */
+/** For callers who may write; who a Slack message comes from decides the tool. */
 function slackSendAsBotInstructions(toolView: InstructionView = "search"): string {
   const tool = toolView === "full" ? "openwork-bot.slack_send_as_bot" : toolView === "engine" ? "openwork-bot_slack_send_as_bot" : "slack_send_as_bot"
   return `To notify the user or "send me" something on Slack (DM me, ping me, remind me, let me know; also in Automations and their instructions), use ${tool} with target me; slack_send_message posts as the user and does not notify them, so use it only to post as the user.`
 }
 
 /**
- * Rolled out with My agent (`workbotAgentLibrary`) for members who may write: chat is the main way to change Your
+ * Rolled out with My agent (`workbotProactive`) for members who may write: chat is the main way to change Your
  * agent, and "why so quiet?" is answered from its check records.
  */
 export const MY_AGENT_INSTRUCTIONS = "To change what Your agent tells the user, use putMeAgent; to explain why it was quiet, read the user's agent checks."
@@ -122,8 +122,8 @@ export function createAgentMcpServer(options: {
   appServers?: boolean
   remoteSessionStatus?: boolean
   /** slack_send_as_bot is available to this caller (feature on, a member, and the write scope). */
-  slackSendAsBot?: boolean
-  /** My agent is on for this member and they may change it (`workbotAgentLibrary`, a member, and the write scope). */
+  canSendSlackMessages?: boolean
+  /** My agent is on for this member and they may change it (`workbotProactive`, a member, and the write scope). */
   myAgent?: boolean
   /** Which tools/list this request gets; see connect-tool-view.ts. */
   toolView?: ConnectToolView
@@ -141,7 +141,7 @@ export function createAgentMcpServer(options: {
   const view: InstructionView = options.toolView === "full" && options.engine ? "engine" : options.toolView ?? "search"
   const rules = [agentMcpInstructions(options.appServers !== false, view, options.toolShapes),
     ...(options.remoteSessionStatus ? [REMOTE_SESSION_STATUS_INSTRUCTIONS] : []),
-    ...(options.slackSendAsBot ? [slackSendAsBotInstructions(view)] : []),
+    ...(options.canSendSlackMessages ? [slackSendAsBotInstructions(view)] : []),
     ...(options.myAgent ? [MY_AGENT_INSTRUCTIONS] : [])].join("\n")
   const directory = view === "engine" && options.services
     ? serviceDirectoryInstructions(options.services, AGENT_MCP_INSTRUCTIONS_MAX_CHARS - rules.length - 1)

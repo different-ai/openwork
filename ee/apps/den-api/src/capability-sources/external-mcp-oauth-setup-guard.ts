@@ -4,7 +4,7 @@ import type { EnterpriseMcpFetch } from "@openwork/enterprise-mcp-client"
 export const CUSTOM_OAUTH_ISSUER_REVIEW_MESSAGE = "The server's published sign-in configuration could not be verified because its issuer does not match. Ask the server owner to fix it, or have an administrator review and save both manual sign-in addresses with their own OAuth app credentials."
 
 /**
- * Called only for a new/changed automatic OAuth identity, behind customConnectorSetup.
+ * Called only for a new/changed automatic OAuth identity,.
  * A saved manual pair is a separate, already permission-checked trust boundary.
  * Discovery failures do not become evidence of a mismatch or a claim of verification;
  * strict SDK issuer validation still applies when the person actually signs in.

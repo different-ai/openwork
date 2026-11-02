@@ -6,7 +6,7 @@ import { join } from "node:path";
 import { test } from "node:test";
 import { CloudProviderSync, type CloudProviderDenSession } from "../src/cloud-provider-sync.js";
 import { EnvService } from "../src/env-file.js";
-import { createEngineV2Preview, resolveLiveProviderSyncForEngineStart, shouldSyncLiveProviderOwnerTransition, shouldWaitForMirroredProviders, waitForEngineV2Catalog } from "../src/engine-v2-preview.js";
+import { createEngineV2Preview, shouldSyncLiveProviderOwnerTransition, shouldWaitForMirroredProviders, waitForEngineV2Catalog } from "../src/engine-v2-preview.js";
 import { managedDesktopPolicy } from "../src/managed-desktop-policy.js";
 import { serve } from "../src/serve-node.js";
 import { renderOpencodeV2Config, type OpencodeV2ProviderSpec } from "../src/managed-opencode-v2.js";
@@ -24,29 +24,19 @@ function config(dir: string): ServerConfig {
     startedAt: Date.now(), tokenSource: "generated", hostTokenSource: "generated", logFormat: "json", logRequests: false };
 }
 
-test("flag off keeps Gateway config and never registers the provider sync plugin", () => {
+test("unmanaged v2 keeps Gateway config without a private identity bridge", () => {
   const rendered = renderOpencodeV2Config({ providers: [gateway, legacy], skills: [], providerSyncPluginDirectory: "/plugins/live" });
   assert.ok(JSON.stringify(rendered).includes("gateway-test-secret"));
   assert.ok(!JSON.stringify(rendered).includes("/plugins/live"));
 });
 
-test("flag-off managed boot consumes the private channel before tools without activating live ownership", () => {
-  const rendered = renderOpencodeV2Config({ providers: [gateway], skills: [], providerSyncPluginDirectory: "/plugins/live",
-    providerSessionEndpoint: "http://127.0.0.1:1234/session" });
-  const serialized = JSON.stringify(rendered);
-  assert.ok(serialized.includes('"liveProviderSync":false'));
-  assert.ok(serialized.includes('"desktopSession":"http://127.0.0.1:1234/session"'));
-  assert.ok(serialized.includes("gateway-test-secret"), "flag-off boot retains the legacy owner");
-  assert.ok(!serialized.includes("den-test-secret"));
-  assert.ok(!serialized.includes("OPENWORK_PROVIDER_SESSION_TOKEN"));
-});
 
 test("live owner strips the entire Gateway config row while retaining local/legacy rows and filters", () => {
   const rendered = renderOpencodeV2Config({ providers: [gateway, legacy], skills: [], providerSyncPluginDirectory: "/plugins/live",
     providerFiltersPluginDirectory: "/plugins/filters", desktopSession: "http://127.0.0.1:1234/session" });
   assert.deepEqual(Object.keys(Object(rendered.providers)), ["lpr_test"]);
   const serialized = JSON.stringify(rendered);
-  assert.ok(serialized.includes('"liveProviderSync":true'));
+  assert.ok(!serialized.includes("liveProviderSync"), "the plugin needs no rollout option");
   assert.ok(serialized.includes('"ipr_test":{"whitelist":["model"],"blacklist":["blocked"]}'));
   assert.ok(!serialized.includes("den-test-secret"));
   assert.ok(!serialized.includes("OPENWORK_PROVIDER_SESSION_TOKEN"));
@@ -86,7 +76,7 @@ test("credential handoff requires its dedicated capability and reads the current
   } finally { await bridge.close(); }
 });
 
-for (const live of [false, true]) test(`cloud sync ${live ? "suppresses Gateway polling and retains legacy" : "keeps legacy Gateway polling when off"}`, async () => {
+for (const live of [false, true]) test(`cloud sync ${live ? "v2 suppresses Gateway polling and retains legacy" : "v1 keeps legacy Gateway polling"}`, async () => {
   const dir = await mkdtemp(join(tmpdir(), "openwork-provider-sync-"));
   const previous = process.env.OPENWORK_RUNTIME_DB;
   process.env.OPENWORK_RUNTIME_DB = join(dir, "runtime.sqlite");
@@ -151,38 +141,22 @@ for (const live of [false, true]) test(`cloud sync ${live ? "suppresses Gateway 
   }
 });
 
-test("late signed-in hydration activates once; runtime kill does not resume an old owner", async () => {
+test("managed v2 owns Gateway inventory before sign-in hydration; v1 retains its own writer", async () => {
   const dir = await mkdtemp(join(tmpdir(), "openwork-live-owner-"));
   await writeFile(join(dir, "engine-v2-preview.json"), JSON.stringify({ enabled: true, chatRouting: true }));
-  const engine = createEngineV2Preview({ config: config(dir), deferStart: true });
+  const engine = createEngineV2Preview({ config: config(dir), deferStart: true, providerSession: () => null });
   try {
-    assert.equal(engine.status().liveProviderSync, false);
-    await engine.setLiveProviderSync(true);
     assert.equal(engine.status().liveProviderSync, true);
-    await engine.setLiveProviderSync(false);
-    assert.equal(engine.status().liveProviderSync, true, "effective owner is frozen despite a killed rollout");
     await engine.setChatRouting(false);
-    assert.equal(engine.status().liveProviderSync, false, "v1 selection always uses the old path");
+    assert.equal(engine.status().liveProviderSync, false);
   } finally { await engine.stop(); await rm(dir, { recursive: true, force: true }); }
 });
 
-test("every next-engine start resolves the fresh rollout and fails closed", async () => {
-  let reads = 0;
-  let enabled = true;
-  const resolve = async () => { reads++; return enabled; };
-  assert.equal(await resolveLiveProviderSyncForEngineStart(resolve), true);
-  enabled = false; // killed before the periodic cloud sync observes it
-  assert.equal(await resolveLiveProviderSyncForEngineStart(resolve), false);
-  assert.equal(reads, 2);
-  assert.equal(await resolveLiveProviderSyncForEngineStart(async () => { throw new Error("Den unavailable"); }), false);
-  assert.equal(await resolveLiveProviderSyncForEngineStart(), false);
-});
-
-test("flag-off engine switches do not trigger a new cloud sync pass", () => {
-  assert.equal(shouldSyncLiveProviderOwnerTransition(false, false, false), false);
-  assert.equal(shouldSyncLiveProviderOwnerTransition(true, false, false), true);
-  assert.equal(shouldSyncLiveProviderOwnerTransition(false, true, false), true);
-  assert.equal(shouldSyncLiveProviderOwnerTransition(false, false, true), true);
+test("only provider ownership transitions trigger a cloud sync pass", () => {
+  assert.equal(shouldSyncLiveProviderOwnerTransition(false, false), false);
+  assert.equal(shouldSyncLiveProviderOwnerTransition(true, false), true);
+  assert.equal(shouldSyncLiveProviderOwnerTransition(false, true), true);
+  assert.equal(shouldSyncLiveProviderOwnerTransition(true, true), false);
 });
 
 test("Gateway-only live mode performs no old catalog reads or push/readiness waits", async () => {
@@ -199,24 +173,20 @@ test("Gateway-only live mode performs no old catalog reads or push/readiness wai
   assert.equal(reads, 1);
 });
 
-test("unreachable Den disables rollout grants but keeps model access in cached policy", async () => {
+test("unreachable Den keeps model access in cached policy", async () => {
   const dir = await mkdtemp(join(tmpdir(), "openwork-live-fresh-policy-"));
   const previous = process.env.OPENWORK_RUNTIME_DB;
   process.env.OPENWORK_RUNTIME_DB = join(dir, "runtime.sqlite");
   let unavailable = false;
   const server = await serve({ hostname: "127.0.0.1", port: 0, fetch: () => unavailable
     ? new Response(null, { status: 500 })
-    : Response.json({ liveProviderSync: true, nativeAffordanceCodeMode: true, allowCustomProviders: false }) });
+    : Response.json({ allowCustomProviders: false }) });
   const policy = managedDesktopPolicy(config(dir));
   try {
     await policy.setSession({ ...session, baseUrl: `http://127.0.0.1:${server.port}` });
     const current = await policy.current();
-    assert.equal(current?.liveProviderSync, true);
-    assert.equal(current?.nativeAffordanceCodeMode, true);
     unavailable = true;
     const fallback = await policy.current();
-    assert.equal(fallback?.liveProviderSync, false);
-    assert.equal(fallback?.nativeAffordanceCodeMode, false);
     assert.equal(fallback?.allowCustomProviders, false);
   } finally {
     await server.stop();

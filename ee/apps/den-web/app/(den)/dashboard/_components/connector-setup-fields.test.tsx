@@ -7,13 +7,13 @@ import { DenCheckbox } from "../../_components/ui/checkbox";
 
 const callbackUrl = "https://api.example.test/custom/path/callback?runtime=verified";
 const addresses = { authorizationEndpoint: "https://identity.example.test/authorize", tokenEndpoint: "https://tokens.example.test/token" };
-function render({ revisedSetup = false, secretRequired = true, manual = false, callback = true, confirmed = false } = {}) {
+function render({ setupValidation = false, secretRequired = true, manual = false, callback = true, confirmed = false } = {}) {
   const draft = { ...createOAuthAppDraft(), clientId: "test-client", clientSecret: "", trustConfirmed: confirmed, manualDraft: manual ? reviewPublishedAddresses(manualOAuthDraft(), addresses, true) : manualOAuthDraft() };
   // Omit url: these app fields render independently of the organization-backed discovery row.
-  return renderToStaticMarkup(<OAuthAppFields revisedSetup={revisedSetup} secretRequired={secretRequired} saving={false} error={null} onSave={() => undefined} draft={draft} onDraftChange={() => undefined} callbackUrl={callback ? callbackUrl : undefined} formId="oauth-test-form" />);
+  return renderToStaticMarkup(<OAuthAppFields setupValidation={setupValidation} secretRequired={secretRequired} saving={false} error={null} onSave={() => undefined} draft={draft} onDraftChange={() => undefined} callbackUrl={callback ? callbackUrl : undefined} formId="oauth-test-form" />);
 }
 
-test("flag off retains placeholder-only app fields, with no callback or confirmation", () => {
+test("preset setup retains placeholder-only app fields, with no callback or confirmation", () => {
   const html = render({ manual: true });
   assert.doesNotMatch(html, /<label[^>]*>Client ID<\/label>/);
   assert.doesNotMatch(html, /<label[^>]*>Client secret/);
@@ -22,21 +22,21 @@ test("flag off retains placeholder-only app fields, with no callback or confirma
 });
 
 test("revised app fields have persistent credential labels and accurate optionality", () => {
-  const required = render({ revisedSetup: true });
+  const required = render({ setupValidation: true });
   assert.match(required, /<label[^>]*>Client ID<\/label>/);
   assert.match(required, /<label[^>]*>Client secret<\/label>/);
   assert.doesNotMatch(required, /Client secret \(optional\)/);
-  assert.match(render({ revisedSetup: true, secretRequired: false }), /<label[^>]*>Client secret \(optional\)<\/label>/);
+  assert.match(render({ setupValidation: true, secretRequired: false }), /<label[^>]*>Client secret \(optional\)<\/label>/);
   assert.match(required, /aria-label="Client ID"/);
   assert.match(required, /aria-label="Client secret"/);
   assert.match(required, /novalidate=""/i);
 });
 
 test("revised callback shows only the exact supplied address with a non-submit Copy action", () => {
-  const html = render({ revisedSetup: true });
+  const html = render({ setupValidation: true });
   assert.match(html, /<code[^>]*>https:\/\/api.example.test\/custom\/path\/callback\?runtime=verified<\/code>/);
   assert.match(html, /<button[^>]*type="button"[^>]*aria-label="Copy callback URL"/);
-  assert.doesNotMatch(render({ revisedSetup: true, callback: false }), /oauth-app-callback|Copy callback URL/);
+  assert.doesNotMatch(render({ setupValidation: true, callback: false }), /oauth-app-callback|Copy callback URL/);
 });
 
 test("the shared confirmation checkbox retains accessible and native checked form state", () => {
@@ -52,8 +52,8 @@ test("the shared confirmation checkbox retains accessible and native checked for
 });
 
 test("both presentations retain password masking, no-capture and password-manager protections", () => {
-  for (const revisedSetup of [false, true]) {
-    const html = render({ revisedSetup });
+  for (const setupValidation of [false, true]) {
+    const html = render({ setupValidation });
     assert.match(html, /type="password"/);
     assert.match(html, /data-ph-no-capture/);
     assert.match(html, /data-1p-ignore="true"/);

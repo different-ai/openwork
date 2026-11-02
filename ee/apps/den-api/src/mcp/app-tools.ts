@@ -16,6 +16,7 @@ import {
   type ParsedCapability,
   workflowExecutionAudit,
 } from "./capability-registry.js"
+import { bindingAccess, type CapabilityAccess } from "./app-tool-access.js"
 import { describeExternalCapability } from "./external-capabilities.js"
 import { externalMcpToolSchemaDigest } from "./external-mcp-tool-arguments.js"
 import { executeMarketplaceCapability, listAccessibleWorkflows } from "./marketplace-capabilities.js"
@@ -68,14 +69,33 @@ function unavailable(tool: McpAppToolDeclaration, reason: string): McpAppError {
   return new McpAppError(422, "mcp_app_tool_unavailable", `Tool ${tool.name}: ${reason} No revision was published.`)
 }
 
+async function capabilityAccess(ctx: CapabilityRegistryContext, capabilityName: string): Promise<CapabilityAccess> {
+  const parsed = parseCapability(capabilityName)
+  if (parsed?.kind === "catalog" || parsed?.kind === "native") return isDenRead(ctx, parsed) ? "read" : "writes"
+  if (parsed?.kind !== "externalMcp") return "writes"
+  const described = await describeExternalCapability({
+    organizationId: ctx.organizationId,
+    member: ctx.member,
+    connectionId: parsed.connectionId,
+    toolName: parsed.toolName,
+    redirectUriBase: ctx.redirectUriBase,
+  })
+  if (!described.ok || described.destructive) return "writes"
+  return described.readOnly ? "read" : "unlabeled"
+}
+
+function workflowAccesses(ctx: CapabilityRegistryContext, required: Array<{ capabilityName: string }>): Promise<CapabilityAccess[]> {
+  return Promise.all(required.map((capability) => capabilityAccess(ctx, capability.capabilityName)))
+}
+
 /**
  * Resolves declared App tools as their author, looking up only the
  * capabilities they name. Each binding records how its arguments reach the
  * capability, the schema the App's server advertises, and whether it is
- * read-only: OpenWork reads and live Workflows that only call OpenWork reads
- * are, and so is a connection tool its provider marks read-only, which every
- * call checks again. Other connection tools and Workflows are not, so a host
- * asks before each call.
+ * read-only: OpenWork reads, connection tools their provider marks read-only,
+ * and live Workflows that only call those are, which every call checks again.
+ * Other connection tools and Workflows are not, so a host asks before each
+ * call, unless the author declared loadOnOpen and nothing they reach writes.
  */
 export async function resolveMcpAppTools(ctx: CapabilityRegistryContext, declarations: McpAppToolDeclaration[]): Promise<McpAppToolBinding[]> {
   const parsedDeclarations = declarations.map((tool) => ({ tool, parsed: parseCapability(tool.capability) }))
@@ -107,6 +127,11 @@ export async function resolveMcpAppTools(ctx: CapabilityRegistryContext, declara
       if (!workflow) throw unavailable(tool, `${tool.capability} is not a saved Workflow you can use. Apps can bind Workflows, connection tools, and OpenWork actions that read.`)
       const inputSchema = mode === "live" ? LIVE_WORKFLOW_TOOL_INPUT_SCHEMA : objectJsonSchema(workflow.inputSchema ?? { type: "object" })
       if (!inputSchema) throw unavailable(tool, "the Workflow input schema must describe an object. Use mode live for Workflows that read input.runtime.")
+      // Workflows may call any capability, so a live one loads without asking
+      // only when every capability it calls reads, or its author chose to load
+      // it on open and none of them writes. Input Workflows always ask.
+      const access = bindingAccess(mode === "live" ? await workflowAccesses(ctx, workflow.requiredCapabilities) : ["writes"], tool.loadOnOpen)
+      if ("refused" in access) throw unavailable(tool, access.refused)
       binding = {
         name: tool.name,
         description: tool.description,
@@ -114,12 +139,7 @@ export async function resolveMcpAppTools(ctx: CapabilityRegistryContext, declara
         kind: "workflow",
         mode,
         inputSchema,
-        // Workflows may call any capability, so a live one loads without asking
-        // only when every capability it calls is an OpenWork read.
-        readOnly: mode === "live" && workflow.requiredCapabilities.every((required) => {
-          const capability = parseCapability(required.capabilityName)
-          return (capability?.kind === "catalog" || capability?.kind === "native") && isDenRead(ctx, capability)
-        }),
+        ...access,
       }
     } else if (parsed.kind === "catalog" || parsed.kind === "native") {
       const leaf = (await apiLeaves(parsed.kind)).find((candidate) => candidate.capabilityName === tool.capability)
@@ -145,6 +165,10 @@ export async function resolveMcpAppTools(ctx: CapabilityRegistryContext, declara
         redirectUriBase: ctx.redirectUriBase,
       })
       if (!described.ok) throw unavailable(tool, described.message)
+      // The provider's labels as the author sees them now; callMcpAppTool checks
+      // them again, in the caller's own tool list, on every call.
+      const access = bindingAccess([described.destructive ? "writes" : described.readOnly ? "read" : "unlabeled"], tool.loadOnOpen)
+      if ("refused" in access) throw unavailable(tool, access.refused)
       binding = {
         name: tool.name,
         description: tool.description,
@@ -152,10 +176,8 @@ export async function resolveMcpAppTools(ctx: CapabilityRegistryContext, declara
         kind: "mcp",
         mode,
         inputSchema: objectJsonSchema(described.inputSchema) ?? { type: "object" },
-        // The provider's label as the author sees it now; callMcpAppTool requires
-        // it again, in the caller's own tool list, on every call.
-        readOnly: described.readOnly,
         schemaDigest: externalMcpToolSchemaDigest(described.inputSchema),
+        ...access,
       }
     } else {
       throw unavailable(tool, "Apps can bind saved Workflows, connection tools, and OpenWork actions that read, not skills, remote sessions, or admin tools.")
@@ -209,6 +231,16 @@ export async function callMcpAppTool(
   const parsed = parseCapability(binding.capability)
   if (binding.kind === "workflow" && binding.mode === "live") {
     if (parsed?.kind !== "marketplace") return errorResult("unknown_capability", "This App tool is no longer available.")
+    // A Workflow that loads without a click must still only reach what it did when it was bound.
+    const [workflow] = (binding.readOnly || binding.loadOnOpen) && ctx.member
+      ? await listAccessibleWorkflows({ member: ctx.member, organizationId: ctx.organizationId, configObjectIds: new Set([parsed.configObjectId]) })
+      : []
+    if (workflow) {
+      const access = bindingAccess(await workflowAccesses(ctx, workflow.requiredCapabilities), binding.loadOnOpen)
+      if ("refused" in access || (binding.readOnly && !access.readOnly)) {
+        return errorResult("policy_blocked", `${binding.name} now reaches tools that are not marked read-only, so OpenWork blocked it. An editor of this App needs to update its tools.`)
+      }
+    }
     const timeZone = typeof args.timeZone === "string" ? args.timeZone : undefined
     const result = await executeMarketplaceCapability({
       buildTools: () => buildCapabilityToolTree(ctx),
@@ -245,9 +277,25 @@ export async function callMcpAppTool(
     body: args,
     ...(binding.schemaDigest ? { schemaDigest: binding.schemaDigest, requireSchemaMatch: true } : {}),
     ...(binding.readOnly ? { requireReadOnly: true } : {}),
+    ...(binding.loadOnOpen ? { refuseDestructive: true } : {}),
   })
+  if (binding.loadOnOpen && refusalReason(result) === "provider_destructive") {
+    return errorResult("policy_blocked", `${binding.name} is now marked destructive by its provider, so OpenWork blocked it. An editor of this App needs to update its tools.`)
+  }
   if (binding.readOnly && refusalReason(result) === "provider_not_read_only") {
     return errorResult("policy_blocked", `${binding.name} is no longer marked read-only by its provider, so OpenWork blocked it. An editor of this App needs to update its tools.`)
   }
   return withoutAgentServerMeta(result)
+}
+
+/**
+ * Whether a read's result may be kept for this caller's next open: only a
+ * read of OpenWork's own data. This only controls storage; launchInitialResults
+ * still runs the checked read before using a snapshot. Provider data is never
+ * stored here.
+ */
+export function mcpAppToolKeepable(ctx: CapabilityRegistryContext, binding: McpAppToolBinding): boolean {
+  if (!binding.readOnly || binding.kind !== "api") return false
+  const parsed = parseCapability(binding.capability)
+  return parsed?.kind === "catalog" && isDenRead(ctx, parsed)
 }

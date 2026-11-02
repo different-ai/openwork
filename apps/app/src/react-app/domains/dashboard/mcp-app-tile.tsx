@@ -3,7 +3,7 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, typ
 import { DashboardConnectionCard } from "./dashboard-connection-card";
 import { appToolResultConnectionToolName, connectionCardFromMcpToolResult } from "@/components/tools/error-attribution";
 import type { ConnectionActionPayload } from "@openwork/types/connection-action-app";
-import { mcpAppResourceIdentity } from "@openwork/types/mcp-app";
+import { MCP_APP_LAUNCH_TOOL_NAME, mcpAppIdSchema, mcpAppResourceIdentity } from "@openwork/types/mcp-app";
 import { Play } from "lucide-react";
 
 import {
@@ -12,7 +12,7 @@ import {
   type OpenworkMcpAppToolResult,
   type OpenworkServerClient,
 } from "@/app/lib/openwork-server";
-import { McpAppSandboxView, type PreservedMcpAppResult } from "@/components/chat/mcp-app-frame";
+import { McpAppSandboxView, sameMcpAppDocument, type PreservedMcpAppResult } from "@/components/chat/mcp-app-frame";
 import { snapshotMcpAppArguments, type McpAppOrigin } from "@/components/chat/mcp-app-origin";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -74,15 +74,6 @@ type LiveTarget = { origin: McpAppOrigin; app: OpenworkMcpAppResource };
 function liveTargetOf(state: ReadyTileState): LiveTarget | null {
   if (state.live) return state.live;
   return state.origin.readOnly ? null : { origin: state.origin, app: state.app };
-}
-
-const CSP_KEYS: ReadonlyArray<keyof OpenworkMcpAppResource["csp"]> = ["connectDomains", "resourceDomains", "frameDomains", "baseUriDomains"];
-
-/** A launch that serves exactly the document a saved tile is already showing. */
-function sameAppDocument(saved: OpenworkMcpAppResource, live: OpenworkMcpAppResource) {
-  return saved.serverName === live.serverName && saved.toolName === live.toolName && saved.resourceUri === live.resourceUri
-    && saved.html === live.html && saved.prefersBorder === live.prefersBorder
-    && CSP_KEYS.every(key => JSON.stringify(saved.csp[key]) === JSON.stringify(live.csp[key]));
 }
 
 type TileState =
@@ -157,6 +148,15 @@ function dashboardEntryIdentity(entry: DashboardMcpAppEntry, signature: string) 
 /** The same workspace on the same server keeps its live view when the route rebuilds its client object. */
 function sameLaunchEndpoint(left: DashboardLaunchEndpoint, right: DashboardLaunchEndpoint) {
   return left.workspaceId === right.workspaceId && (left.client === right.client || left.client.baseUrl === right.client.baseUrl);
+}
+
+/**
+ * An App built in OpenWork loads its read-only data as it opens; it needs the
+ * viewer's time zone so that data matches what the App would ask for itself.
+ */
+function launchCallArguments(entry: DashboardMcpAppEntry, toolName: string, args: Record<string, unknown> | undefined) {
+  if (toolName !== MCP_APP_LAUNCH_TOOL_NAME || !mcpAppIdSchema.safeParse(entry.connectionId).success) return args;
+  return { ...args, timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone };
 }
 
 function appMatchesEntry(app: OpenworkMcpAppResource, entry: DashboardMcpAppEntry) {
@@ -453,7 +453,7 @@ function McpAppTileContent({
           try {
             result = await current.endpoint.client.callMcpAppTool(current.endpoint.workspaceId, {
               launchId: live.launchId, sessionId: null, serverName: live.serverName,
-              name: live.toolName, resourceUri: live.resourceUri, arguments: argumentsSnapshot,
+              name: live.toolName, resourceUri: live.resourceUri, arguments: launchCallArguments(entry, live.toolName, argumentsSnapshot),
               expectedResourceDigest: live.refresh.resourceDigest,
             });
             assertActive();
@@ -497,7 +497,7 @@ function McpAppTileContent({
           ownedLaunches.current.set(app.launchId, endpoint);
           const request = {
             launchId: app.launchId, sessionId: null, serverName: app.serverName,
-            name: app.toolName, resourceUri: app.resourceUri, arguments: argumentsSnapshot,
+            name: app.toolName, resourceUri: app.resourceUri, arguments: launchCallArguments(entry, app.toolName, argumentsSnapshot),
             ...(!fallbackEndpoint && launchIsApproved ? { approved: true } : {}),
           };
           try {
@@ -571,7 +571,7 @@ function McpAppTileContent({
         const settled: ReadyTileState = previous.phase === "ready" && previous.lifetime !== next.lifetime
           && previous.origin.readOnly && !next.origin.readOnly && previous.lifetime.active && !previous.lifetime.failed
           && previous.argumentsSignature === next.argumentsSignature && sameLaunchEndpoint(previous.endpoint, next.endpoint)
-          && sameAppDocument(previous.app, next.app)
+          && sameMcpAppDocument(previous.app, next.app)
           ? { ...next, app: previous.app, origin: previous.origin, lifetime: previous.lifetime, live: { origin: next.origin, app: next.app } }
           : next;
         if (previous.phase === "ready" && previous.lifetime !== settled.lifetime) previous.lifetime.active = false;
@@ -580,7 +580,7 @@ function McpAppTileContent({
         // The picture stays only for the same App document and launch input it shows.
         const saved = readDashboardTileCache(cacheScopeKey, entry.id);
         const snapshot = saved?.snapshot !== undefined && saved.argumentsSignature === argumentsSignature
-          && saved.workspaceId === settled.endpoint.workspaceId && sameAppDocument(saved.app, live) ? saved.snapshot : undefined;
+          && saved.workspaceId === settled.endpoint.workspaceId && sameMcpAppDocument(saved.app, live) ? saved.snapshot : undefined;
         writeDashboardTileCache(cacheScopeKey, entry.id, {
           argumentsSignature, cachedAt: settled.cachedAt, workspaceId: settled.endpoint.workspaceId, app: live, result: settled.result,
           ...(snapshot !== undefined ? { snapshot } : {}),
@@ -680,7 +680,7 @@ function McpAppTileContent({
   if (state.phase === "ready" && documentSnapshot.current?.document !== state.lifetime) {
     documentSnapshot.current = {
       document: state.lifetime,
-      snapshot: cached?.snapshot !== undefined && sameAppDocument(cached.app, state.app) ? cached.snapshot : undefined,
+      snapshot: cached?.snapshot !== undefined && sameMcpAppDocument(cached.app, state.app) ? cached.snapshot : undefined,
     };
   }
   const snapshot = state.phase === "ready" ? documentSnapshot.current?.snapshot : undefined;
@@ -792,7 +792,7 @@ function McpAppTileContent({
                   if (!currentDocument(state.lifetime) || state.lifetime.failed) return;
                   // Kept with the entry this document shows, so it is removed with it.
                   const saved = readDashboardTileCache(cacheScopeKey, entry.id);
-                  if (!saved || saved.argumentsSignature !== argumentsRef.current.signature || !sameAppDocument(saved.app, state.app)) return;
+                  if (!saved || saved.argumentsSignature !== argumentsRef.current.signature || !sameMcpAppDocument(saved.app, state.app)) return;
                   writeDashboardTileCache(cacheScopeKey, entry.id, { ...saved, snapshot: html });
                 }}
                 onHeightChange={(height) => {

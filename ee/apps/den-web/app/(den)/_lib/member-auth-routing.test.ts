@@ -133,3 +133,15 @@ for (const path of ["/connect/mcp", "/device", "/claim"]) {
     assert.equal(getSocialCallbackUrl("https://callback.example", "/setup"), `https://callback.example${path}${search}`);
   });
 }
+
+test("social sign-in keeps the validated Workbot destination on a separate configured auth domain", () => {
+  const destination = "/dashboard/members?workbotOrganizationId=org_workbot";
+  browserLocation(`/?mode=sign-in&${new URLSearchParams({ workbotReturnTo: destination })}`);
+  const callback = new URL(getSocialCallbackUrl("https://login.example.test"));
+  assert.equal(callback.origin, "https://login.example.test");
+  assert.equal(callback.searchParams.get("workbotReturnTo"), destination);
+  for (const value of ["https://attacker.invalid/", "//attacker.invalid", `${destination}&token=secret`]) {
+    browserLocation(`/?${new URLSearchParams({ workbotReturnTo: value })}`);
+    assert.equal(new URL(getSocialCallbackUrl()).searchParams.has("workbotReturnTo"), false);
+  }
+});

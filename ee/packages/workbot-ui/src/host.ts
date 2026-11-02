@@ -31,8 +31,6 @@ export type WorkbotHost = {
   browser?: boolean
   /** Teach browser tasks and save private Cloud skills; omitted means off. */
   browserDemonstrations?: boolean
-  /** The Browser view streams the page with Chromium's screencast instead of VNC; omitted means off. */
-  browserLiveView?: boolean
   /** Explicit document editing is enabled; omitted means preview only. */
   documentEditing?: boolean
   /** Native dictation entry point; omitted means off. Speech stays with the OS. */

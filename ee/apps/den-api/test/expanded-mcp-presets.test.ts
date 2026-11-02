@@ -35,31 +35,21 @@ test("the core presets are the original eleven and the expanded set only adds", 
   }
 })
 
-test("the catalog hides expanded presets when the flag is off and shows them when on", () => {
-  const off = externalMcpPresetsForCatalog({ expanded: false })
-  assert.deepEqual([...off.map((preset) => preset.presetId)].sort(), [...CORE_IDS].sort())
-  assert.equal(off.length, EXTERNAL_MCP_PRESETS.length)
-
-  const on = externalMcpPresetsForCatalog({ expanded: true })
+test("the catalog includes all reviewed expanded presets", () => {
+  const on = externalMcpPresetsForCatalog()
   assert.deepEqual([...on.map((preset) => preset.presetId)].sort(), [...CORE_IDS, ...EXPANDED_IDS].sort())
   assert.equal(on.length, EXTERNAL_MCP_PRESETS.length + EXTERNAL_MCP_PRESETS_EXPANDED.length)
 })
 
-test("the connector catalog only offers expanded entries behind the flag", () => {
-  const off = connectorCatalogForQuery("airtable canva", false, { expandedMcpPresets: false })
-  const offIds = off?.entries.map((entry) => entry.id) ?? []
-  assert.ok(!offIds.includes("airtable"))
-  assert.ok(!offIds.includes("canva"))
-
-  const on = connectorCatalogForQuery("airtable canva", false, { expandedMcpPresets: true })
+test("the connector catalog offers expanded entries", () => {
+  const on = connectorCatalogForQuery("airtable canva", false)
   const onIds = on?.entries.map((entry) => entry.id) ?? []
   assert.ok(onIds.includes("airtable"))
   assert.ok(onIds.includes("canva"))
 })
 
-test("turning the flag off never revokes an existing expanded-preset connection's auth match", () => {
-  // An existing connection to an expanded-preset server is still recognized by
-  // the auth policy's preset match, so its stored auth behavior survives a kill.
+test("every expanded-preset connection retains its auth match", () => {
+  // Existing connections and new catalog entries use the same preset auth policy.
   for (const expanded of EXTERNAL_MCP_PRESETS_EXPANDED) {
     const matched = matchExternalMcpPresetForUrl(expanded.url)
     assert.equal(matched?.presetId, expanded.presetId)
@@ -74,7 +64,7 @@ test("Tavily is the only API-key preset among the expanded set", () => {
 })
 
 test("the connectors catalog states each new server's setup: Tavily needs an API key, the rest sign in with OAuth", () => {
-  const catalog = connectorCatalogForQuery("", true, { expandedMcpPresets: true })
+  const catalog = connectorCatalogForQuery("", true)
   const setup = new Map((catalog?.entries ?? []).map((entry) => [entry.id, entry.setup]))
   assert.equal(setup.get("tavily"), "api_key")
   for (const id of EXPANDED_IDS.filter((presetId) => presetId !== "tavily")) {

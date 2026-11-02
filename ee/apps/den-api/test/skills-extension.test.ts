@@ -105,7 +105,7 @@ test("the skill index fits the budget it is given and points at list_skills for 
 
 test("the instructions stay within the characters clients keep, with as much of the skill index as fits", async () => {
   for (const toolView of ["search", "full"] as const) {
-    const call = fixture({ skills: manySkills, toolView, toolShapes: true, remoteSessionStatus: true, slackSendAsBot: true, myAgent: true })
+    const call = fixture({ skills: manySkills, toolView, toolShapes: true, remoteSessionStatus: true, canSendSlackMessages: true, myAgent: true })
     const { instructions } = z.object({ result: z.looseObject({ instructions: z.string() }) }).parse(await call("server/discover", {})).result
     assert.ok(instructions.length <= AGENT_MCP_INSTRUCTIONS_MAX_CHARS, `${toolView}: ${instructions.length}`)
     assert.match(instructions, /^Read openwork:\/\/agent\/guidance\.md/)

@@ -30,7 +30,7 @@ for (const [name, body] of [
 ]) {
   test(`draft body preserves ${name} line breaks in both alternatives`, () => {
     const { plain, html } = bodyParts(body)
-    assert.equal(plain, name === "list" ? body.replace(/^- /gm, "") : body)
+    assert.equal(plain, body)
     assert.equal((html.match(/<(?:div|li)[ >]/g) ?? []).length, body.split("\n").length)
   })
 }

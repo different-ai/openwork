@@ -23,7 +23,7 @@ export async function computerWindowApproval(_seed: Seed, { place }: { place: Pl
     runProgram: async () => { throw new Error("A paused program must not execute"); },
     browserTask: async () => { inputs++; return { ok: true, tabId: "owned" }; },
   });
-  resources.defer(() => control.reset(true));
+  resources.defer(async () => { await control.reset(true); });
   const sessionId = "fixture-chat";
   try {
     await control.setFeatureEnabled(true);

@@ -1,5 +1,4 @@
 import type { Seed } from "@openwork/env";
-import { enableOrganizationCapabilities } from "./organization-capabilities.ts";
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -38,8 +37,7 @@ const SLACK_DISCOVERY = {
 
 /**
  * An organization admin on Manage › Connectors › Add connector › Slack, with
- * `guidedSlackSetup` off as it ships; the proof turns it on through the
- * platform-admin route /admin uses.
+ * guided Slack setup available by default, without feature setup.
  * Den is real; only the browser's discovery request for Slack's address is
  * answered from the fixture above, through a second CDP connection on the
  * same page (no renderer JavaScript). Nobody signs in to real Slack.
@@ -89,7 +87,6 @@ export async function denSlackGuidedSetup(seed: Seed) {
     web,
     url: (path: string) => new URL(path, den.ref.webUrl).toString(),
     discoveries: () => discoveries,
-    enableGuidedSlackSetup: () => enableOrganizationCapabilities(seed, den.admin, { guidedSlackSetup: true }),
     async presets() {
       const result = await seed.api(den.admin, "/v1/mcp-connections/presets");
       return isRecord(result.body) && Array.isArray(result.body.presets) ? result.body.presets.filter(isRecord) : [];

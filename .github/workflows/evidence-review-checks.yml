@@ -1,7 +1,11 @@
 name: Evidence review candidate checks
 
+# Not on PRs (only the quick check runs there): dev pushes that change the
+# review app, evidence tooling or its workflows, and manual runs.
 on:
-  pull_request:
+  workflow_dispatch:
+  push:
+    branches: [dev]
     paths:
       - apps/review/**
       - packages/review/**
@@ -23,8 +27,8 @@ permissions:
   contents: read
 
 concurrency:
-  group: evidence-review-checks-${{ github.event.pull_request.number }}
-  cancel-in-progress: true
+  group: evidence-review-checks-${{ github.ref }}
+  cancel-in-progress: false
 
 jobs:
   check-browser:
@@ -33,7 +37,7 @@ jobs:
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
         with:
-          ref: ${{ github.event.pull_request.head.sha }}
+          ref: ${{ github.sha }}
           persist-credentials: false
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
@@ -53,7 +57,7 @@ jobs:
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
         with:
-          ref: ${{ github.event.pull_request.head.sha }}
+          ref: ${{ github.sha }}
           persist-credentials: false
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:

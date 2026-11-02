@@ -45,6 +45,7 @@ import {
 import { consumeOrgSelectionRequest, requestOrgSelectionOnNextLoad } from "../_lib/org-selection";
 import { restoreRememberedOrganization } from "../_lib/org-memory";
 import { ORG_SCOPE_HEADER } from "../_lib/org-scope";
+import { workbotAuthReturnTo } from "../dashboard/_lib/workbot-team-link";
 
 type AuthNavigationResult = "dashboard" | "join-org" | null;
 
@@ -699,6 +700,10 @@ export function DenFlowProvider({ children }: { children: ReactNode }) {
     );
     if (returnTo) {
       return returnTo;
+    }
+    if (!desktopAuthRequested && !webAuthRequested) {
+      const workbotReturnTo = workbotAuthReturnTo(new URLSearchParams(window.location.search).get("workbotReturnTo"));
+      if (workbotReturnTo) return workbotReturnTo;
     }
     if (runtimeConfig === EMPTY_RUNTIME_CONFIG) {
       setAuthError("Could not load workspace configuration. Refresh to try again.");

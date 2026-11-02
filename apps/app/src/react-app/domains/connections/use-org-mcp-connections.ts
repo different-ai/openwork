@@ -61,11 +61,6 @@ async function disconnectMemberAccount(
 
 export type OrgMcpConnectOptions = {
   forceFreshAuthorization?: boolean;
-  /**
-   * Stop waiting as soon as Den records that this member's sign-in came back
-   * but did not connect, and say why (libraryConnectorOrgSetup).
-   */
-  reportReadinessFailure?: boolean;
 };
 
 /** A sign-in that came back to Den but did not connect, with Den's reason. */
@@ -314,7 +309,6 @@ export function useOrgMcpConnections() {
           const outcome = connectPollOutcome(match, attempt, {
             previousConnectedAt,
             reconnectPending: match ? connectionNeedsReconnect(match) : false,
-            reportFailure: options?.reportReadinessFailure === true,
           });
           if (outcome.kind === "connected") {
             stopPolling();

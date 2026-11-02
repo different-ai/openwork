@@ -71,11 +71,11 @@ test("an admin navigates organizations and member usage without loading every de
     await admin.see({ role: "heading", label: "Overview workspace" });
     await admin.see({ role: "heading", label: "Features" });
     await admin.see({ testId: "admin-breadcrumb-current" }, { text: "Features" });
-    await admin.see({ testId: "admin-capability-liveProviderSync" });
+    await admin.see({ testId: "admin-capability-settledSessions" });
     const tabs = await adminProbe.dom('nav[aria-label="Organization sections"] [aria-current="page"]');
     const traffic = await world.traffic("admin");
     const location = await world.location();
-    const blocked = await adminProbe.dom('[data-testid="admin-capability-automationCalendar"][disabled]');
+    const blocked = await adminProbe.dom('[data-testid="admin-capability-computerUse"][disabled]');
     const ok = location.pathname === `${world.detailPath}/features` && tabs.elements[0]?.text === "Features"
       && traffic.features === 1 && traffic.organizationUsage === 0 && traffic.organizationInsights === 0 && blocked.elements.length === 1;
     evidence.recordAssertionEvidence("The Features tab loads only this organization's flags and keeps the global kill switch locked", `${JSON.stringify(location)}; feature reads=${traffic.features}; locked controls=${blocked.elements.length}`, ok);
@@ -84,13 +84,13 @@ test("an admin navigates organizations and member usage without loading every de
   });
 
   await step("the admin's override survives refresh and leaves other organizations unchanged", async () => {
-    const otherBefore = await world.featureState("liveProviderSync", true);
-    await admin.click({ testId: "admin-capability-liveProviderSync" });
-    const saved = await adminProbe.eventually(() => world.featureState("liveProviderSync"), { within: 10_000, until: (value) => value.override === true, label: "saved organization override" });
+    const otherBefore = await world.featureState("settledSessions", true);
+    await admin.click({ testId: "admin-capability-settledSessions" });
+    const saved = await adminProbe.eventually(() => world.featureState("settledSessions"), { within: 10_000, until: (value) => value.override === true, label: "saved organization override" });
     await admin.reload();
-    await admin.see({ testId: "admin-capability-source-liveProviderSync" }, { text: "Set for this organization" });
-    const enabled = await adminProbe.dom('[data-testid="admin-capability-liveProviderSync"][aria-checked="true"]');
-    const otherAfter = await world.featureState("liveProviderSync", true);
+    await admin.see({ testId: "admin-capability-source-settledSessions" }, { text: "Set for this organization" });
+    const enabled = await adminProbe.dom('[data-testid="admin-capability-settledSessions"][aria-checked="true"]');
+    const otherAfter = await world.featureState("settledSessions", true);
     const ok = saved.enabled === true && enabled.elements.length === 1 && JSON.stringify(otherAfter) === JSON.stringify(otherBefore);
     evidence.recordAssertionEvidence("A feature override persists for the selected organization only", `own=${JSON.stringify(saved)}; other=${JSON.stringify(otherAfter)}; checked controls=${enabled.elements.length}`, ok);
     expect(ok).toBe(true);
@@ -114,14 +114,14 @@ test("an admin navigates organizations and member usage without loading every de
   });
 
   await step("the admin can turn a feature off and then return to everyone's setting", async () => {
-    await admin.click({ testId: "admin-capability-liveProviderSync" });
-    const off = await adminProbe.eventually(() => world.featureState("liveProviderSync"), { within: 10_000, until: (value) => value.override === false, label: "disabled organization override" });
+    await admin.click({ testId: "admin-capability-settledSessions" });
+    const off = await adminProbe.eventually(() => world.featureState("settledSessions"), { within: 10_000, until: (value) => value.override === false, label: "disabled organization override" });
     expect(off.enabled).toBe(false);
-    await admin.click({ testId: "admin-capability-reset-liveProviderSync" });
-    const reset = await adminProbe.eventually(() => world.featureState("liveProviderSync"), { within: 10_000, until: (value) => value.override === null, label: "reset organization override" });
+    await admin.click({ testId: "admin-capability-reset-settledSessions" });
+    const reset = await adminProbe.eventually(() => world.featureState("settledSessions"), { within: 10_000, until: (value) => value.override === null, label: "reset organization override" });
     await admin.reload();
-    await admin.see({ testId: "admin-capability-source-liveProviderSync" }, { text: "Off for everyone" });
-    const resetButtons = await adminProbe.dom('[data-testid="admin-capability-reset-liveProviderSync"]');
+    await admin.see({ testId: "admin-capability-source-settledSessions" }, { text: "Off for everyone" });
+    const resetButtons = await adminProbe.dom('[data-testid="admin-capability-reset-settledSessions"]');
     const ok = reset.override === null && reset.source === "everyone" && reset.enabled === false && resetButtons.elements.length === 0;
     evidence.recordAssertionEvidence("Both an explicit off override and reset to the deployment default survive saving", `off=${JSON.stringify(off)}; reset=${JSON.stringify(reset)}; reset buttons=${resetButtons.elements.length}`, ok);
     expect(ok).toBe(true);
@@ -133,7 +133,7 @@ test("an admin navigates organizations and member usage without loading every de
     await admin.resizeViewport({ width: 320, height: 740, deviceScaleFactor: 1 });
     await admin.navigate(world.url("/admin/features"));
     await admin.see({ role: "heading", label: "Features" });
-    await admin.see({ testId: "admin-feature-liveProviderSync" });
+    await admin.see({ testId: "admin-feature-settledSessions" });
     const layout = await adminProbe.dom('li[data-testid^="admin-feature-"], li[data-testid^="admin-feature-"] button');
     const ok = layout.documentWidth <= layout.viewportWidth && layout.elements.length > 0 && layout.elements.every((entry) => entry.rect.left >= 0 && entry.rect.left + entry.rect.width <= layout.viewportWidth);
     evidence.recordAssertionEvidence("The global rollout and kill-switch actions wrap without horizontal overflow at 320px", `document=${layout.documentWidth}; viewport=${layout.viewportWidth}; controls=${layout.elements.length}`, ok);

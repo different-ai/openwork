@@ -3,7 +3,7 @@
  * the stores that already own the outcomes (automation_run, Your agent's checks, slack_send_as_bot's limits), seeded
  * here as the product writes them; background work marks feature_usage once per day.
  */
-import { AUTOMATION_FREE_MODEL, type AutomationIntervalSchedule } from "@openwork/types/automations"
+import { AUTOMATION_FREE_MODEL } from "@openwork/types/automations"
 import assert from "node:assert/strict"
 import { randomUUID } from "node:crypto"
 import { after, test } from "node:test"
@@ -27,9 +27,10 @@ after(() => den.close())
 const acme = await den.createOrg(await den.signUp("Sam Rivera"), "Acme Robotics")
 const acmeMember = await den.newMember(acme.owner, acme.orgId, "Alex Chen")
 const northwind = await den.createOrg(await den.signUp("Jordan Lee"), "Northwind Labs")
+// Your agent is the remaining background feature that reports outcomes; the schedule-trigger
+// outcome features are retired (GA), so they are no longer seeded or asserted here.
 const turnedOn: Array<[string, string]> = [
-  [acme.orgId, "automationCalendarTriggers"], [northwind.orgId, "automationCalendarTriggers"],
-  [acme.orgId, "automationIntervalSchedules"], [acme.orgId, "workbotProactive"], [acme.orgId, "slackSendAsBot"],
+  [acme.orgId, "workbotProactive"],
 ]
 for (const [orgId, key] of turnedOn) {
   const set = await den.setFeature(orgId, key, true)
@@ -39,7 +40,6 @@ const signedIn = await den.signIn(`platform-admin+${den.stamp}@example.test`)
 const adminToken = text(field(signedIn.body, "token"), "platform admin session")
 const { db } = await import("../../src/db.js")
 const { recordFeatureUsage } = await import("@openwork-ee/den-db/organization-features")
-const { createFeatureUsageMarker } = await import("../../src/feature-usage.js")
 
 const HOUR = 3_600_000
 const DAY = 24 * HOUR
@@ -80,22 +80,6 @@ async function seedRun(automation: { automationId: string; revisionId: string },
   })
 }
 
-// Calendar triggers: Acme mostly skipped this week, Northwind ran; an older Acme run is only in 30 days.
-const acmeCalendar = await seedAutomation(acme.orgId, acmeMember.memberId, "calendar")
-const northwindCalendar = await seedAutomation(northwind.orgId, northwind.owner.memberId, "calendar")
-const calendarRuns: Array<[typeof acmeCalendar, RunStatus, Date, ErrorCode?]> = [
-  [acmeCalendar, "succeeded", daysAgo(1)],
-  ...[daysAgo(0, 1), daysAgo(0, 2), daysAgo(1, 2), daysAgo(2), daysAgo(2, 1)].map((at): [typeof acmeCalendar, RunStatus, Date, ErrorCode] => [acmeCalendar, "skipped", at, "execution_runtime_unavailable"]),
-  ...[daysAgo(3), daysAgo(4), daysAgo(5)].map((at): [typeof acmeCalendar, RunStatus, Date, ErrorCode] => [acmeCalendar, "skipped", at, "model_access_lost"]),
-  [acmeCalendar, "failed", daysAgo(3, 1), "execution_failed"],
-  [acmeCalendar, "succeeded", daysAgo(20)],
-  ...[daysAgo(0, 3), daysAgo(1), daysAgo(2), daysAgo(4)].map((at): [typeof acmeCalendar, RunStatus, Date] => [northwindCalendar, "succeeded", at]),
-]
-for (const [automation, status, at, code] of calendarRuns) await seedRun(automation, status, at, code)
-// Every few hours: Acme, healthy.
-const acmeInterval = await seedAutomation(acme.orgId, acme.owner.memberId, "interval")
-for (const hours of [1, 4, 7]) await seedRun(acmeInterval, "succeeded", daysAgo(0, hours))
-
 // Your agent: counters for every member, check records for members with My agent.
 const today = new Date(now).toISOString().slice(0, 10)
 await db.insert(AgentInstanceTable).values({ memberId: normalizeDenTypeId("member", acmeMember.memberId), organizationId: normalizeDenTypeId("organization", acme.orgId) })
@@ -128,8 +112,7 @@ await db.insert(RateLimitTable).values([
 ])
 
 // Who used what: this week in Acme, three weeks ago in Northwind.
-await recordFeatureUsage(db, { organizationId: acme.orgId, memberId: acmeMember.memberId, keys: ["automationCalendarTriggers", "workbotProactive"], at: daysAgo(0, 1) })
-await recordFeatureUsage(db, { organizationId: northwind.orgId, memberId: northwind.owner.memberId, keys: ["automationCalendarTriggers"], at: daysAgo(20) })
+await recordFeatureUsage(db, { organizationId: acme.orgId, memberId: acmeMember.memberId, keys: ["workbotProactive"], at: daysAgo(0, 1) })
 
 const report = (range?: string) => den.request(adminToken, "GET", `/v1/admin/feature-usage${range ? `?range=${range}` : ""}`)
 const detail = (key: string, range = "7d") => den.request(adminToken, "GET", `/v1/admin/feature-usage/${key}?range=${range}`)
@@ -140,7 +123,7 @@ function feature(call: Call, key: string) {
 }
 
 test("only platform administrators read feature outcomes", async () => {
-  for (const path of ["/v1/admin/feature-usage", "/v1/admin/feature-usage/automationCalendarTriggers"]) {
+  for (const path of ["/v1/admin/feature-usage", "/v1/admin/feature-usage/workbotProactive"]) {
     for (const token of [null, acme.owner.token, acmeMember.token, northwind.owner.token]) {
       const result = await den.request(token, "GET", path)
       assert.equal(result.status, token ? 403 : 401, `${path}: ${summary(result)}`)
@@ -150,67 +133,10 @@ test("only platform administrators read feature outcomes", async () => {
   assert.equal((await detail("notARealFeature")).status, 400)
 })
 
-test("calendar triggers: runs, how they ended and why, by organization, this week", async () => {
+test("Your agent: runs, how they ended and why, by organization, this week", async () => {
   const result = await report()
   assert.equal(result.status, 200, summary(result))
   assert.equal(field(result.body, "range"), "7d")
-  const calendar = feature(result, "automationCalendarTriggers")
-  assert.equal(calendar.organizationsOn, 2)
-  assert.equal(calendar.membersUsing, 1, "the Northwind use three weeks ago is outside 7 days")
-  assert.deepEqual(field(calendar, "health"), { status: "mostly_skipped", count: null })
-  const outcomes = field(calendar, "outcomes")
-  assert.deepEqual(
-    { runs: field(outcomes, "runs"), succeeded: field(outcomes, "succeeded"), failed: field(outcomes, "failed"), skipped: field(outcomes, "skipped"), unit: field(outcomes, "unit") },
-    { runs: 14, succeeded: 5, failed: 1, skipped: 8, unit: "meeting" },
-  )
-  const days = list(field(outcomes, "days"))
-  assert.equal(days.length, 7)
-  assert.equal(days.at(-1)?.day, today)
-  assert.equal(days.at(-1)?.runs, calendarRuns.filter(([, , at]) => at.toISOString().slice(0, 10) === today).length)
-  assert.doesNotMatch(result.text, new RegExp(MEETING_TITLE), "never a meeting title")
-
-  const one = await detail("automationCalendarTriggers")
-  assert.equal(one.status, 200, summary(one))
-  assert.deepEqual(field(one.body, "feature", "reasons"), [
-    { reason: "execution_runtime_unavailable", outcome: "skipped", count: 5 },
-    { reason: "model_access_lost", outcome: "skipped", count: 3 },
-    { reason: "execution_failed", outcome: "failed", count: 1 },
-  ])
-  const organizations = list(field(one.body, "feature", "byOrganization"))
-  assert.deepEqual(organizations.map((row) => row.name), ["Acme Robotics", "Northwind Labs"])
-  const [acmeRow, northwindRow] = organizations
-  assert.equal(acmeRow?.organizationId, acme.orgId)
-  assert.equal(acmeRow?.enabled, true)
-  assert.equal(acmeRow?.membersUsing, 1)
-  assert.equal(field(acmeRow, "outcomes", "runs"), 10)
-  assert.equal(field(acmeRow, "outcomes", "skipped"), 8)
-  assert.equal(field(northwindRow, "outcomes", "runs"), 4)
-  assert.equal(northwindRow?.membersUsing, 0)
-  assert.doesNotMatch(one.text, new RegExp(MEETING_TITLE))
-})
-
-test("30 days include the older runs, uses and counters", async () => {
-  const result = await report("30d")
-  assert.equal(result.status, 200, summary(result))
-  const calendar = feature(result, "automationCalendarTriggers")
-  assert.equal(field(calendar, "outcomes", "runs"), 15)
-  assert.equal(list(field(calendar, "outcomes", "days")).length, 30)
-  assert.equal(calendar.membersUsing, 2)
-  const agent = feature(result, "workbotProactive")
-  assert.equal(field(agent, "outcomes", "succeeded"), 21)
-  // Check records are kept two weeks, so failures before then are not known.
-  assert.equal(field(agent, "outcomes", "coverage", "counts"), "failed")
-  const one = await detail("automationCalendarTriggers", "30d")
-  assert.equal(field(list(field(one.body, "feature", "byOrganization")).find((row) => row.name === "Northwind Labs"), "membersUsing"), 1)
-})
-
-test("every few hours, Your agent and Slack messages from the bot report what they did", async () => {
-  const result = await report()
-  const interval = feature(result, "automationIntervalSchedules")
-  assert.equal(field(interval, "outcomes", "runs"), 3)
-  assert.equal(field(interval, "outcomes", "unit"), "run")
-  assert.equal(field(interval, "health", "status"), "healthy")
-
   const agent = feature(result, "workbotProactive")
   const agentOutcomes = field(agent, "outcomes")
   assert.equal(field(agentOutcomes, "unit"), "check")
@@ -224,76 +150,33 @@ test("every few hours, Your agent and Slack messages from the bot report what th
   assert.deepEqual(new Set(list(field(agentDetail.body, "feature", "reasons")).map((row) => row.reason)), new Set(["google_disconnected", "member_not_linked"]))
   assert.doesNotMatch(agentDetail.text, /Fixture sentence/, "never the sentence a member reads")
 
-  const slack = feature(result, "slackSendAsBot")
-  const slackOutcomes = field(slack, "outcomes")
-  assert.equal(field(slackOutcomes, "unit"), "message")
-  assert.equal(field(slackOutcomes, "delivered"), 21)
-  assert.equal(field(slackOutcomes, "failed"), 2)
-  assert.equal(field(slackOutcomes, "limited"), 1, "the window from three days ago is not counted")
-  assert.equal(field(slackOutcomes, "coverage", "counts"), "all")
-  assert.deepEqual(field(slack, "health"), { status: "limited", count: 1 })
-  const slackDetail = await detail("slackSendAsBot")
-  const byName = new Map(list(field(slackDetail.body, "feature", "byOrganization")).map((row) => [row.name, row]))
-  assert.equal(field(byName.get("Acme Robotics"), "outcomes", "limited"), 1)
-  assert.equal(field(byName.get("Northwind Labs"), "outcomes", "delivered"), 3)
-
   // A feature with no reader shows adoption only.
-  const plain = feature(result, "mermaidZoom")
+  const plain = feature(result, "settledSessions")
   assert.equal(plain.outcomes, null)
   assert.deepEqual(field(plain, "health"), { status: "not_used", count: null })
 })
 
-test("an interval Automation's occurrences mark its owner's use of the feature once per day", async () => {
-  const { AutomationService } = await import("../../src/automations/service.js")
-  const asOwner = den.as(acme.owner, acme.orgId)
-  const schedule: AutomationIntervalSchedule = { kind: "interval", timezone: "UTC", everyHours: 3, daysOfWeek: [0, 1, 2, 3, 4, 5, 6], startHour: 0, endHour: 23 }
-  const created = await asOwner("POST", "/v1/automations", {
-    name: "Inbox sweep", instructions: "Sweep my inbox for anything urgent.", schedule,
-    model: { providerId: AUTOMATION_FREE_MODEL.providerId, modelId: AUTOMATION_FREE_MODEL.modelId },
-  })
-  assert.equal(created.status, 201, summary(created))
-  const automationId = text(field(created.body, "automation", "id"), "Automation id")
-  let clock = Number(field(created.body, "automation", "nextDueAt"))
-  let measuring = false
-  const markFeaturesUsed = createFeatureUsageMarker((input) => recordFeatureUsage(db, input), () => new Date(clock))
-  const service = new AutomationService({
-    intervalSchedulesEnabled: async () => true,
-    calendarTriggersEnabled: async () => false,
-    markFeaturesUsed: (input) => { if (measuring) markFeaturesUsed(input) },
-  })
-  const usage = async () => {
-    const [row] = await db.select({ daysUsed: FeatureUsageTable.days_used, lastUsedDay: FeatureUsageTable.last_used_day }).from(FeatureUsageTable).where(and(
-      eq(FeatureUsageTable.member_id, normalizeDenTypeId("member", acme.owner.memberId)),
-      eq(FeatureUsageTable.feature_key, "automationIntervalSchedules"),
-    ))
-    return row
-  }
-  const eventually = async (until: (row: Awaited<ReturnType<typeof usage>>) => boolean) => {
-    for (let attempt = 0; attempt < 50 && !until(await usage()); attempt += 1) await new Promise((resolve) => setTimeout(resolve, 50))
-    return usage()
-  }
-  /** Runs the due occurrence, then finishes it so the next one is not an overlap. */
-  const occurrence = async () => {
-    await service.tick({ now: clock })
-    await db.update(AutomationRunTable).set({ status: "succeeded" }).where(eq(AutomationRunTable.automation_id, normalizeDenTypeId("automation", automationId)))
-    const next = await asOwner("GET", `/v1/automations/${automationId}`)
-    clock = Number(field(next.body, "automation", "nextDueAt"))
-  }
-  const day = (at: number) => new Date(at).toISOString().slice(0, 10)
-  // The first occurrence follows the real clock, so after 18:00 UTC it is the day's last (21:00). Run on to the
-  // next day's first occurrence without recording use, so the measured day has several occurrences at any hour.
-  const createdDay = day(clock)
-  while (day(clock) === createdDay) await occurrence()
-  measuring = true
-  const firstDay = day(clock)
-  await occurrence()
-  const first = await eventually((row) => row !== undefined)
-  assert.deepEqual(first, { daysUsed: 1, lastUsedDay: firstDay })
-  // Further occurrences that day write nothing more; the first one on the next day counts a second day.
-  while (day(clock) === firstDay) await occurrence()
-  const secondDay = day(clock)
-  await occurrence()
-  assert.deepEqual(await eventually((row) => row?.daysUsed === 2), { daysUsed: 2, lastUsedDay: secondDay })
-  const runs = await asOwner("GET", `/v1/automations/${automationId}/runs`)
-  assert.ok(list(field(runs.body, "items")).length >= 3, "several occurrences ran")
+test("30 days include the older runs, uses and counters", async () => {
+  const result = await report("30d")
+  assert.equal(result.status, 200, summary(result))
+  const agent = feature(result, "workbotProactive")
+  assert.equal(field(agent, "outcomes", "succeeded"), 21)
+  // Check records are kept two weeks, so failures before then are not known.
+  assert.equal(field(agent, "outcomes", "coverage", "counts"), "failed")
+})
+
+test("Slack bot operational outcomes remain visible after its rollout graduates", async () => {
+  const result = await den.request(adminToken, "GET", "/v1/admin/slack-send-as-bot/outcomes?range=7d")
+  assert.equal(result.status, 200, summary(result))
+  const outcomes = field(result.body, "outcomes")
+  assert.equal(field(outcomes, "unit"), "message")
+  assert.equal(field(outcomes, "delivered"), 21)
+  assert.equal(field(outcomes, "failed"), 2)
+  assert.equal(field(outcomes, "limited"), 1)
+  assert.equal(field(outcomes, "coverage", "counts"), "all")
+  assert.deepEqual(field(result.body, "health"), { status: "limited", count: 1 })
+  const byOrg = new Map(list(field(result.body, "byOrganization")).map((row) => [row.organizationId, row]))
+  assert.equal(field(byOrg.get(acme.orgId), "outcomes", "limited"), 1)
+  assert.equal(field(byOrg.get(northwind.orgId), "outcomes", "delivered"), 3)
+  assert.equal((await den.request(acme.owner.token, "GET", "/v1/admin/slack-send-as-bot/outcomes")).status, 403)
 })

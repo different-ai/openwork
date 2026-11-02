@@ -29,22 +29,7 @@ test("an admin sets up Slack from one guided checklist: an explicit access choic
   let presetScopes: string[] = [];
   let defaultScopes: string[] = [];
 
-  await step("before: with guided Slack setup off, Add Slack shows the shared connector checks as it does today", async () => {
-    await admin.navigate(world.url("/dashboard/mcp-connections/new/slack"));
-    await admin.see({ testId: "setup-check-find" }, { timeoutMs: 90_000 });
-    await admin.see({ text: "Knows how you sign in" });
-    const guided = (await observed.dom('[data-testid="setup-check-slack-app"]')).elements.length
-      + (await observed.dom('[data-testid="slack-setup-create-app"]')).elements.length;
-    const shared = ["find", "sign-in-method", "sign-in", "tools"];
-    const present = (await Promise.all(shared.map(async (id) => (await observed.dom(`[data-testid="setup-check-${id}"]`)).elements.length === 1))).filter(Boolean).length;
-    const ok = guided === 0 && present === shared.length;
-    evidence.recordAssertionEvidence("With the flag off nothing changes: the four shared checks, no Slack app step", `shared checks shown=${present}/${shared.length}; guided Slack steps shown=${guided}`, ok);
-    expect(ok).toBe(true);
-    await admin.screenshot();
-  });
-
-  await step("before: with guided setup on, nothing is chosen for the admin and the Slack app link stays locked", async () => {
-    await world.enableGuidedSlackSetup();
+  await step("by default nothing is chosen for the admin and the Slack app link stays locked", async () => {
     const slack = (await world.presets()).find((preset) => preset.presetId === "slack");
     callbackUrl = typeof slack?.oauthCallbackUrl === "string" ? slack.oauthCallbackUrl : "";
     defaultScopes = stringArray(slack?.defaultOAuthScopes);

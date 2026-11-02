@@ -1,13 +1,11 @@
 import { expect } from "vitest";
 import { spec } from "@openwork/testkit";
 import {
-  AUTO_ROUTER_DEFAULT_PROMPT,
-  AUTO_ROUTER_MODEL_ID,
   AUTO_ROUTER_PROVIDER_ID,
   AUTO_ROUTER_RESPONSE_MODEL_HEADER,
   AUTO_ROUTER_RESPONSE_REASON_HEADER,
-  AUTO_ROUTER_THINKING_LABELS,
-  AUTO_ROUTER_THINKING_LEVELS,
+  autoRouterModelId,
+  autoRouterModelName,
 } from "@openwork/types/den/auto-router";
 import { ACME_MODEL, ACME_REPLY } from "../../worlds/lib/acme-gateway.ts";
 import { autoRouterDesktopWorld, autoRouterMissingKeyWorld, autoRouterWorld } from "../worlds/auto-router.ts";
@@ -21,88 +19,98 @@ const desktopTest = spec.world(autoRouterDesktopWorld, {
   needs: { commands: ["bun"] }, timeout: 900_000,
 });
 
-test("an admin turns on the Auto Router with a default model and Auto answers through it", async ({ world, user, probe, step, evidence }) => {
-  await step("before: AI Gateway has an Auto Router tab, off until a default model is chosen", async () => {
-    await user.see({ testId: "ai-gateway-panel-auto-router" }, { timeoutMs: 60_000 });
-    await user.see({ role: "tab", text: "Auto Router" });
-    await user.see({ testId: "auto-router-section" }, { timeoutMs: 60_000 });
-    await user.see({ testId: "auto-router-enable" }, { text: "Turn on" });
+function routersOf(body: unknown) {
+  return isRecord(body) && Array.isArray(body.routers) ? body.routers.filter(isRecord) : [];
+}
+
+test("an admin adds a Smart Router in two steps from AI Providers and its Smart model answers through it", async ({ world, user, probe, step, evidence }) => {
+  const modelLabel = world.provider.modelName.replace(/ \(.*\)$/, "");
+  let routerId = "";
+
+  await step("before: AI Providers offers Add a Smart Router beside Add a provider, and no router is listed", async () => {
+    await user.see({ testId: "ai-gateway-panel-ai-providers" }, { timeoutMs: 60_000 });
+    await user.see({ testId: "gateway-provider-row" }, { timeoutMs: 60_000 });
+    await user.see({ testId: "auto-router-new" }, { text: "Add a Smart Router", timeoutMs: 30_000 });
+    await user.see({ testId: "gateway-provider-create" }, { text: "Add a provider" });
+    const tabs = await probe.dom('[data-testid="ai-gateway-tabs"] [role="tab"]');
+    const tabNames = tabs.elements.map((entry) => entry.text);
+    expect(tabNames).not.toContain("Smart Model Router");
+    const rows = await probe.dom('[data-testid="auto-router-row"]');
+    expect(rows.elements).toHaveLength(0);
     const connect = await probe.api(world.den.admin, "/v1/org/auto-router/connect");
     expect(connect.response.status).toBe(404);
-    evidence.recordAssertionEvidence("desktops get no Auto before it is configured", `connect HTTP ${connect.response.status}`, connect.response.status === 404);
+    evidence.recordAssertionEvidence("no Smart Router tab, no routers, nothing for desktops", `tabs=${tabNames.join("/")}; rows=0; connect HTTP ${connect.response.status}`, connect.response.status === 404);
     await user.screenshot();
   });
 
-  let offered: string[] = [];
-  let defaultLevel = "default";
-  await step("the admin turns it on by choosing the default model at one thinking level", async () => {
-    await user.click({ testId: "auto-router-enable" });
-    await user.see({ testId: "auto-router-editor" }, { timeoutMs: 30_000 });
-    const editor = await probe.dom('[data-testid="auto-router-editor"][data-default="true"]');
-    expect(editor.elements).toHaveLength(1);
-    await user.see({ testId: "auto-router-prompt" }, { text: AUTO_ROUTER_DEFAULT_PROMPT });
-    const prompt = await probe.dom('[data-testid="auto-router-prompt"]');
-    const readOnly = prompt.elements[0]?.tag === "p";
-    expect(readOnly).toBe(true);
-    await user.see({ role: "combobox", label: "Model" }, { value: world.provider.modelName.replace(/ \(.*\)$/, ""), timeoutMs: 30_000 });
-    const levels = await probe.dom('[data-testid^="auto-router-thinking-"]');
-    offered = levels.elements.map((entry) => entry.text);
-    if (offered.includes("High")) {
-      defaultLevel = "high";
-      await user.click({ testId: "auto-router-thinking-high" });
-    }
-    evidence.recordAssertionEvidence("the default model's prompt is fixed and shown read only", `prompt tag=${prompt.elements[0]?.tag ?? "none"}; text="${prompt.elements[0]?.text ?? ""}"; offered=${offered.join("/")}`, readOnly);
+  await step("step 1: the admin names the router and gives a model two tasks", async () => {
+    await user.click({ testId: "auto-router-new" });
+    await user.see({ testId: "auto-router-steps" }, { timeoutMs: 30_000 });
+    await user.type({ testId: "auto-router-name" }, "Engineering");
+    await user.click({ role: "combobox", label: "Model 1" });
+    const option = { role: "option", label: new RegExp(modelLabel.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")) } as const;
+    await user.see(option, { timeoutMs: 30_000 });
+    await user.click(option);
+    const tasks = { role: "combobox", label: `Tasks for ${modelLabel}` } as const;
+    await user.type(tasks, "Debugging");
+    await user.press("Enter");
+    await user.see({ role: "button", label: "Remove Debugging" });
+    // Typed but not added with Enter: saved as a task too.
+    await user.type(tasks, "Code review");
     await user.screenshot();
-    await user.see({ testId: "auto-router-save-route" }, { text: "Turn on" });
-    await user.click({ testId: "auto-router-save-route" });
-    await user.see({ testId: "auto-router-route" }, { timeoutMs: 30_000 });
+    await user.click({ testId: "auto-router-save" });
+    await user.see({ testId: "auto-router-access" }, { timeoutMs: 30_000 });
   });
 
-  await step("after: the admin adds a second route with its own prompt and level", async () => {
-    const secondLevel = defaultLevel === "high" ? "default" : offered.includes("Low") ? "low" : "default";
-    await user.click({ testId: "auto-router-add" });
-    await user.see({ testId: "auto-router-editor" }, { timeoutMs: 30_000 });
-    await user.type({ testId: "auto-router-prompt" }, "Quick questions, small edits and short answers");
-    await user.click({ testId: `auto-router-thinking-${secondLevel}` });
-    await user.click({ testId: "auto-router-save-route" });
-    const rows = await probe.eventually(() => probe.dom('[data-testid="auto-router-route"]'), {
-      within: 30_000, label: "two Auto Router routes", until: (value) => value.elements.length === 2,
-    });
-    const saved = await probe.api(world.den.admin, "/v1/org/auto-router");
-    const routes = isRecord(saved.body) && Array.isArray(saved.body.routes) ? saved.body.routes.filter(isRecord) : [];
-    expect(saved.response.ok).toBe(true);
-    expect(isRecord(saved.body) && saved.body.enabled).toBe(true);
-    expect(routes).toHaveLength(2);
-    expect(routes[0]?.isDefault).toBe(true);
-    expect(routes[0]?.prompt).toBe(AUTO_ROUTER_DEFAULT_PROMPT);
-    expect(routes[0]?.modelId).toBe(ACME_MODEL);
-    expect(routes[0]?.thinkingLevel).toBe(defaultLevel);
-    expect(routes[0]).not.toHaveProperty("thinkingLevels");
-    expect(routes[1]?.isDefault).toBe(false);
-    expect(routes[1]?.prompt).toBe("Quick questions, small edits and short answers");
-    expect(routes[1]?.thinkingLevel).toBe(secondLevel);
-    const firstRow = await probe.dom('[data-testid="auto-router-route"][data-default="true"]');
-    expect(rows.elements[0]?.text).toBe(firstRow.elements[0]?.text);
+  await step("after step 1: the router exists with its tasks but applies to nobody yet", async () => {
+    const saved = await probe.api(world.den.admin, "/v1/org/auto-routers");
+    const router = routersOf(saved.body)[0];
+    const assignment = isRecord(router?.assignment) ? router.assignment : {};
+    const models = Array.isArray(router?.models) ? router.models.filter(isRecord) : [];
+    const tasks = Array.isArray(models[0]?.tasks) ? models[0].tasks : [];
+    routerId = typeof router?.id === "string" ? router.id : "";
+    const connect = await probe.api(world.den.admin, "/v1/org/auto-router/connect");
+    expect(router?.name).toBe("Engineering");
+    expect(tasks).toEqual(["Debugging", "Code review"]);
+    expect(assignment).toEqual({ everyone: false, teamIds: [], memberIds: [] });
+    expect(connect.response.status).toBe(404);
     evidence.recordAssertionEvidence(
-      "route 0 is the default model with the fixed prompt and one thinking level",
-      routes.map((route, index) => `#${index} default=${String(route.isDefault)} model=${String(route.modelId)} level=${String(route.thinkingLevel)} prompt="${String(route.prompt)}"`).join("; "),
-      routes.length === 2 && routes[0]?.isDefault === true && routes[0]?.prompt === AUTO_ROUTER_DEFAULT_PROMPT && routes[0]?.thinkingLevel === defaultLevel,
+      "step 1 creates the router with no one assigned",
+      `name=${String(router?.name)}; tasks=${tasks.join("/")}; everyone=${String(assignment.everyone)}; connect HTTP ${connect.response.status}`,
+      routerId !== "" && assignment.everyone === false && connect.response.status === 404,
     );
     await user.screenshot();
   });
 
-  await step("after: Auto routes a chat request to the configured model through the Gateway", async () => {
+  await step("step 2: the admin makes it apply to everyone, and it is listed first under AI Providers", async () => {
+    await user.click({ testId: "access-everyone" });
+    await user.click({ testId: "auto-router-save-access" });
+    await user.see({ testId: "auto-router-row" }, { timeoutMs: 30_000 });
+    const rows = await probe.dom('[data-testid="gateway-provider-row"], [data-testid="auto-router-row"]');
+    const first = rows.elements[0]?.text ?? "";
+    expect(first).toContain("Smart: Engineering");
+    const saved = await probe.api(world.den.admin, "/v1/org/auto-routers");
+    const router = routersOf(saved.body)[0];
+    const assignment = isRecord(router?.assignment) ? router.assignment : {};
+    expect(assignment.everyone).toBe(true);
+    evidence.recordAssertionEvidence("the Smart Router is the first row, like a provider, and applies to everyone", `first row="${first.replace(/\s+/g, " ")}"; everyone=${String(assignment.everyone)}`, first.includes("Smart: Engineering"));
+    await user.screenshot();
+  });
+
+  await step("after: the Smart model routes a chat request to the router's model through the Gateway", async () => {
     const connect = await probe.api(world.den.admin, "/v1/org/auto-router/connect");
     const body = isRecord(connect.body) ? connect.body : {};
+    const offered = Array.isArray(body.models) ? body.models.filter(isRecord) : [];
     expect(connect.response.ok).toBe(true);
     expect(body.baseURL).toBe(`${world.gatewayUrl}/api/v1`);
+    expect(offered).toEqual([{ id: autoRouterModelId(routerId), name: autoRouterModelName("Engineering") }]);
     const apiKey = typeof body.apiKey === "string" ? body.apiKey : "";
     expect(apiKey.startsWith("ow_gw_")).toBe(true);
     const before = world.upstream.requests.length;
     const response = await fetch(`${world.gatewayUrl}/api/v1/chat/completions`, {
       method: "POST",
-      headers: { authorization: `Bearer ${apiKey}`, "content-type": "application/json", "x-opencode-session-id": "ses_auto_router_proof" },
-      body: JSON.stringify({ model: AUTO_ROUTER_MODEL_ID, stream: true, messages: [{ role: "user", content: "What's the capital of France?" }] }),
+      headers: { authorization: `Bearer ${apiKey}`, "content-type": "application/json", "x-opencode-session-id": "ses_smart_router_proof" },
+      body: JSON.stringify({ model: autoRouterModelId(routerId), stream: true, messages: [{ role: "user", content: "Why does this test crash?" }] }),
     });
     const text = await response.text();
     const routedModel = response.headers.get(AUTO_ROUTER_RESPONSE_MODEL_HEADER);
@@ -111,47 +119,64 @@ test("an admin turns on the Auto Router with a default model and Auto answers th
     expect(routedModel).toBe(ACME_MODEL);
     expect(text).toContain(ACME_REPLY.split(" ")[0]);
     expect(text).toContain("data: [DONE]");
-    expect(text).toContain("\"openwork_route\"");
     const upstreamCalls = world.upstream.requests.slice(before);
     expect(upstreamCalls.map((entry) => entry.model)).toEqual([ACME_MODEL]);
     evidence.recordAssertionEvidence(
-      "Auto was answered by the configured model as if picked by hand",
+      "the Smart model was answered by the router's model as if picked by hand",
       `HTTP ${response.status}; routed=${routedModel}; reason=${reason}; jev configured=${world.jev}; upstream models=${upstreamCalls.map((entry) => entry.model).join(",")}`,
       response.status === 200 && routedModel === ACME_MODEL && upstreamCalls.length === 1,
     );
   });
+
+  await step("after: removing the router from its page removes its Smart model and its now unused tasks", async () => {
+    await user.click({ testId: "auto-router-open" });
+    await user.see({ testId: "auto-router-delete" }, { timeoutMs: 30_000 });
+    await user.click({ testId: "auto-router-delete" });
+    await user.see({ testId: "confirm-dialog" });
+    await user.click({ testId: "confirm-dialog-action" });
+    await user.see({ testId: "gateway-provider-row" }, { timeoutMs: 30_000 });
+    const after = await probe.eventually(() => probe.api(world.den.admin, "/v1/org/auto-routers"), {
+      within: 30_000, label: "the router is gone", until: (value) => routersOf(value.body).length === 0,
+    });
+    const tasks = isRecord(after.body) && Array.isArray(after.body.tasks) ? after.body.tasks : [];
+    const connect = await probe.api(world.den.admin, "/v1/org/auto-router/connect");
+    expect(tasks).toEqual([]);
+    expect(connect.response.status).toBe(404);
+    evidence.recordAssertionEvidence("unused tasks are removed with the router", `tasks=${tasks.length}; connect HTTP ${connect.response.status}`, tasks.length === 0);
+    await user.screenshot();
+  });
 });
 
-desktopTest("a member picks Auto and sees which model answered their question", async ({ world, user, probe, step, evidence }) => {
+desktopTest("a member picks a Smart model and sees which model answered their question", async ({ world, user, probe, step, evidence }) => {
   const surface = `[data-session-surface-id="${world.session.sessionId}"]`;
-  const autoKey = `${AUTO_ROUTER_PROVIDER_ID}:${AUTO_ROUTER_MODEL_ID}`;
-  const autoOption = `model-option-${AUTO_ROUTER_PROVIDER_ID}-${AUTO_ROUTER_MODEL_ID}`;
-  const thinking = AUTO_ROUTER_THINKING_LEVELS.find((level) => level === world.thinking);
-  const expectedLabel = thinking && thinking !== "default" ? `${world.modelName} · ${AUTO_ROUTER_THINKING_LABELS[thinking]}` : world.modelName;
+  const modelId = autoRouterModelId(world.routerId);
+  const smartKey = `${AUTO_ROUTER_PROVIDER_ID}:${modelId}`;
+  const smartOption = `model-option-${AUTO_ROUTER_PROVIDER_ID}-${modelId}`;
+  const smartName = autoRouterModelName(world.routerName);
   await user.resizeViewport({ width: 1440, height: 900, deviceScaleFactor: 1 });
 
-  await step("the model picker offers Auto first, above the organization's models", async () => {
-    await user.click({ text: "Auto chat" });
+  await step("the model picker offers Smart: Engineering first, above the organization's models", async () => {
+    await user.click({ text: "Smart chat" });
     await user.see("composer", { editable: true });
     await user.click("Change model");
     await user.see({ testId: "composer-model-picker" });
-    await user.see({ testId: autoOption }, { timeoutMs: 120_000 });
-    const [rows, auto] = await Promise.all([
+    await user.see({ testId: smartOption }, { timeoutMs: 120_000 });
+    const [rows, smart] = await Promise.all([
       probe.dom('[data-testid="composer-model-picker"] [data-model-key]'),
-      probe.dom(`[data-testid="composer-model-picker"] [data-model-key="${autoKey}"]`),
+      probe.dom(`[data-testid="composer-model-picker"] [data-model-key="${smartKey}"]`),
     ]);
     const first = rows.elements[0];
     // Compare by content: the picker may still be animating between the two reads.
-    const autoFirst = Boolean(first && auto.elements[0] && first.text === auto.elements[0].text);
-    expect(autoFirst).toBe(true);
-    expect(first?.text).toContain("Auto");
-    evidence.recordAssertionEvidence("Auto is the first model the member can pick", `picker rows=${rows.elements.length}; first="${first?.text ?? ""}"`, autoFirst);
+    const smartFirst = Boolean(first && smart.elements[0] && first.text === smart.elements[0].text);
+    expect(smartFirst).toBe(true);
+    expect(first?.text).toContain(smartName);
+    evidence.recordAssertionEvidence("the Smart model is the first model the member can pick", `picker rows=${rows.elements.length}; first="${first?.text ?? ""}"`, smartFirst);
     await user.screenshot();
   });
 
-  await step("the member chooses Auto and asks a question", async () => {
-    await user.click({ testId: autoOption });
-    await user.see({ text: "Managed by Auto" });
+  await step("the member chooses it and asks a question", async () => {
+    await user.click({ testId: smartOption });
+    await user.see({ text: "Managed by Smart Router" });
     await user.press("Escape");
     await user.type("composer", "What's the capital of France?");
     await user.press("Enter");
@@ -162,17 +187,17 @@ desktopTest("a member picks Auto and sees which model answered their question", 
     await user.screenshot();
   });
 
-  await step("after: the reply names the model Auto chose and its thinking level", async () => {
+  await step("after: the reply names the model Smart chose", async () => {
     await user.hover({ text: ACME_REPLY });
     const labels = await probe.eventually(() => probe.dom(`${surface} [data-testid="reply-model"]`), {
-      within: 30_000, label: "the answered-by label on the Auto reply",
-      until: (value) => value.elements.some((element) => element.text.includes(expectedLabel)),
+      within: 30_000, label: "the answered-by label on the Smart reply",
+      until: (value) => value.elements.some((element) => element.text.includes(world.modelName)),
     });
     await user.see({ testId: "reply-model" });
     const text = labels.elements.map((element) => element.text).join(" | ");
-    expect(text).toContain(`Replied with ${expectedLabel}`);
-    expect(text).not.toMatch(/ipr_|gwm_|openwork-auto/);
-    evidence.recordAssertionEvidence("the Auto reply says which model answered it", `label="${text}"; expected "${expectedLabel}"; opaque ids=0`, text.includes(expectedLabel));
+    expect(text).toContain(`Replied with ${world.modelName}`);
+    expect(text).not.toMatch(/ipr_|gwm_|openwork-auto|openwork-smart/);
+    evidence.recordAssertionEvidence("the Smart reply says which model answered it", `label="${text}"; expected "${world.modelName}"; opaque ids=0`, text.includes(world.modelName));
     await user.screenshot();
   });
 
@@ -182,42 +207,42 @@ desktopTest("a member picks Auto and sees which model answered their question", 
     await user.hover({ text: ACME_REPLY });
     const labels = await probe.eventually(() => probe.dom(`${surface} [data-testid="reply-model"]`), {
       within: 30_000, label: "the answered-by label after reload",
-      until: (value) => value.elements.some((element) => element.text.includes(expectedLabel)),
+      until: (value) => value.elements.some((element) => element.text.includes(world.modelName)),
     });
     await user.see({ testId: "reply-model" });
     const text = labels.elements.map((element) => element.text).join(" | ");
-    evidence.recordAssertionEvidence("the routed model is remembered with the conversation", `label after reload="${text}"`, text.includes(expectedLabel));
+    evidence.recordAssertionEvidence("the routed model is remembered with the conversation", `label after reload="${text}"`, text.includes(world.modelName));
     await user.screenshot();
   });
 });
 
-missingKeyTest("without the gateway's routing key, Turn on explains how to add it instead of turning Auto on", async ({ world, user, probe, step, evidence }) => {
-  await step("before: Turn on is muted and says why", async () => {
-    await user.see({ testId: "auto-router-section" }, { timeoutMs: 60_000 });
-    await user.see({ testId: "auto-router-missing-key" }, { timeoutMs: 30_000 });
-    const settings = await probe.api(world.den.admin, "/v1/org/auto-router");
-    expect(isRecord(settings.body) && settings.body.routing).toBe("missing_key");
-    const enable = await probe.dom('[data-testid="auto-router-enable"][data-blocked="missing-key"]');
-    expect(enable.elements).toHaveLength(1);
-    evidence.recordAssertionEvidence("Den knows the gateway has no routing key", `routing=${String(isRecord(settings.body) ? settings.body.routing : null)}; Turn on blocked=${enable.elements.length === 1}`, enable.elements.length === 1);
+missingKeyTest("without the gateway's routing key, Add a Smart Router explains how to add it instead of creating one", async ({ world, user, probe, step, evidence }) => {
+  await step("before: Add a Smart Router is muted and says why", async () => {
+    await user.see({ testId: "ai-gateway-panel-ai-providers" }, { timeoutMs: 60_000 });
+    await user.see({ testId: "auto-router-new" }, { timeoutMs: 60_000 });
+    const list = await probe.api(world.den.admin, "/v1/org/auto-routers");
+    expect(isRecord(list.body) && list.body.routing).toBe("missing_key");
+    const create = await probe.dom('[data-testid="auto-router-new"][data-blocked="missing-key"]');
+    expect(create.elements).toHaveLength(1);
+    evidence.recordAssertionEvidence("Den knows the gateway has no routing key", `routing=${String(isRecord(list.body) ? list.body.routing : null)}; New blocked=${create.elements.length === 1}`, create.elements.length === 1);
     await user.screenshot();
   });
 
-  await step("after: clicking Turn on opens the setup dialog and nothing is enabled", async () => {
-    await user.click({ testId: "auto-router-enable" });
+  await step("after: clicking Add a Smart Router opens the setup dialog and nothing is created", async () => {
+    await user.click({ testId: "auto-router-new" });
     await user.see({ testId: "auto-router-setup-dialog" }, { timeoutMs: 10_000 });
-    await user.see({ text: "Auto Router needs a routing key" });
+    await user.see({ text: "Smart Model Router needs a routing key" });
     await user.see({ text: "TYPESAFE_API_KEY" });
     await user.screenshot();
-    const settings = await probe.api(world.den.admin, "/v1/org/auto-router");
-    const refused = await world.tryEnable();
+    const refused = await world.tryCreate();
+    const list = await probe.api(world.den.admin, "/v1/org/auto-routers");
     const connect = await probe.api(world.den.admin, "/v1/org/auto-router/connect");
-    expect(isRecord(settings.body) && settings.body.enabled).toBe(false);
     expect(refused).toBe(409);
+    expect(routersOf(list.body)).toHaveLength(0);
     expect(connect.response.status).toBe(404);
     evidence.recordAssertionEvidence(
-      "Auto cannot be turned on or reach desktops without the key",
-      `enabled=${String(isRecord(settings.body) ? settings.body.enabled : null)}; enable via API HTTP ${refused}; desktop connect HTTP ${connect.response.status}`,
+      "Smart Routers cannot be created or reach desktops without the key",
+      `create via API HTTP ${refused}; routers=${routersOf(list.body).length}; desktop connect HTTP ${connect.response.status}`,
       refused === 409 && connect.response.status === 404,
     );
     await user.click({ testId: "auto-router-setup-close" });

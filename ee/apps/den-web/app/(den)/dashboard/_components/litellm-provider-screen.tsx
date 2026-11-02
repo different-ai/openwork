@@ -16,7 +16,7 @@ import { DenNotice } from "../../_components/ui/notice";
 import { DenSegmented } from "../../_components/ui/segmented";
 import { DenStickyActionBar } from "../../_components/ui/sticky-action-bar";
 import { DenSwitch } from "../../_components/ui/switch";
-import { getAiGatewayProviderRoute, getAiGatewayProvidersRoute, getNewAiGatewayProviderRoute, orgFeatureEnabled } from "../../_lib/den-org";
+import { getAiGatewayProviderRoute, getAiGatewayProvidersRoute, getNewAiGatewayProviderRoute } from "../../_lib/den-org";
 import { useOrgDashboard } from "../_providers/org-dashboard-provider";
 import { deleteGatewayResource, deleteInferenceProvider, saveGatewayResource, useOrgInferenceProviders } from "./inference-provider-data";
 import { ProviderRemovalUsageLimits, useProviderRemovalUsageLimits } from "./provider-removal-usage-limits";
@@ -214,7 +214,7 @@ export function LiteLlmProviderScreen({ provider, reload, embedded = false }: { 
   const [confirmDelete, setConfirmDelete] = useState(false);
   const cancelDeleteRef = useRef<HTMLButtonElement | null>(null);
   const { inferenceProviders } = useOrgInferenceProviders(orgId);
-  const removalLimits = useProviderRemovalUsageLimits({ orgId, providerId: provider.id, open: confirmDelete, providers: inferenceProviders, featureOn: orgFeatureEnabled(orgContext, "gatewayProviderRemovalLimits") });
+  const removalLimits = useProviderRemovalUsageLimits({ orgId, providerId: provider.id, open: confirmDelete, providers: inferenceProviders });
   const accessGroupId = liteLlmAccessGroupId(provider);
   const set = provider.credentialSets[0] ?? null;
   const grants = provider.accessGrants.filter((grant) => grant.modelGroupId === accessGroupId && grant.credentialSetId === set?.id);

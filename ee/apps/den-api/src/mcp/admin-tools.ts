@@ -7,7 +7,7 @@ import { getDesktopReleaseMetadata } from "../desktop-releases.js"
 import { env } from "../env.js"
 import { adminOrganizationPlanInputSchema, setOrganizationPlanByAdmin } from "../admin-organization-plan.js"
 import { readFeatureRollouts } from "@openwork-ee/den-db/organization-features"
-import { deploymentFeatureEnabled, updateFeatureRollout, updateOrganizationFeatureOverrides } from "../features.js"
+import { updateFeatureRollout, updateOrganizationFeatureOverrides } from "../features.js"
 import { isDenTypeId, normalizeDenTypeId } from "@openwork-ee/utils/typeid"
 import { SANDBOX_MAX_CREDIT_USD, SANDBOX_MAX_DAYS, SANDBOX_MAX_MEMBERS, sandboxCreateInputSchema } from "@openwork/types/den/sandbox-organizations"
 import { closeSandbox, createSandbox, extendSandbox, listSandboxes, sandboxDefaults, setSandboxCredit } from "../sandbox-organizations.js"
@@ -818,7 +818,7 @@ export function registerAdminMcpTools(server: McpServer, admin: AdminToolCaller 
   // Sandbox organizations: the same functions as /v1/admin/sandbox-orgs and the /admin Sandbox page. Platform
   // evidence only, like those routes (creating one makes a new organization).
   const sandboxesOn = async () => {
-    if (!await deploymentFeatureEnabled("sandboxOrgs")) throw new Error("Sandbox organizations are turned off on this deployment. Turn on sandboxOrgs (den_set_feature_rollout) first.")
+    if (env.features.deployment !== "cloud") throw new Error("Sandbox organizations are only available on cloud deployments.")
   }
   const sandboxId = (value: string) => {
     if (!isDenTypeId("sandboxOrganization", value)) throw new Error("Invalid sandbox id (expected sbx_... from den_sandbox_list).")

@@ -1,6 +1,6 @@
 "use client";
 
-import { LayoutDashboard, LockKeyhole, Plug, Route, SlidersHorizontal, Sparkles, Users } from "lucide-react";
+import { LayoutDashboard, LockKeyhole, Plug, SlidersHorizontal, Sparkles, Users } from "lucide-react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import type { ReactNode } from "react";
@@ -10,10 +10,9 @@ import { DenCard } from "../../_components/ui/card";
 import { DashboardPageTemplate } from "../../_components/ui/dashboard-page-template";
 import { DenNotice } from "../../_components/ui/notice";
 import { type TabItem, UnderlineTabs } from "../../_components/ui/tabs";
-import { getInferenceRoute, getAiGatewayRoute, getNewAiGatewayProviderRoute, getOrgAccessFlags, orgFeatureEnabled, type DenOrgAccessFlags } from "../../_lib/den-org";
+import { getInferenceRoute, getAiGatewayRoute, getNewAiGatewayProviderRoute, getOrgAccessFlags, type DenOrgAccessFlags } from "../../_lib/den-org";
 import { canOpenGatewayArea, gatewayAreaLockedMessage, type GatewayDashboardArea } from "../_lib/gateway-dashboard-access";
 import { useOrgDashboard } from "../_providers/org-dashboard-provider";
-import { AutoRouterSection } from "./auto-router-section";
 import { useGatewayDashboardAccess } from "./gateway-dashboard-capability-guard";
 import { GatewaySpendBreakdown } from "./gateway-spend-breakdown";
 import { getProviderIconSlug } from "./llm-provider-data";
@@ -26,12 +25,11 @@ import { GatewayProvidersSection } from "./inference-providers-screen";
 import { LegacyProvidersSection } from "./llm-providers-screen";
 import { InferenceScreen } from "./inference-screen";
 
-export type AiGatewayTab = "overview" | "ai-providers" | "auto-router" | "limits" | "users-and-teams" | "openwork-models";
+export type AiGatewayTab = "overview" | "ai-providers" | "limits" | "users-and-teams" | "openwork-models";
 
 const AI_GATEWAY_TABS: readonly TabItem<AiGatewayTab>[] = [
   { value: "overview", label: "Overview", icon: LayoutDashboard },
   { value: "ai-providers", label: "AI Providers", icon: Plug },
-  { value: "auto-router", label: "Auto Router", icon: Route },
   { value: "limits", label: "Limits", icon: SlidersHorizontal },
   { value: "users-and-teams", label: "Users & Teams", icon: Users },
   { value: "openwork-models", label: "OpenWork Models", icon: Sparkles },
@@ -40,8 +38,6 @@ const AI_GATEWAY_TABS: readonly TabItem<AiGatewayTab>[] = [
 const GATEWAY_TAB_AREAS: Record<Exclude<AiGatewayTab, "openwork-models">, GatewayDashboardArea> = {
   overview: "overview",
   "ai-providers": "providers",
-  // Routes name AI Gateway models, so they share the providers permission.
-  "auto-router": "providers",
   limits: "limits",
   "users-and-teams": "people",
 };
@@ -113,16 +109,16 @@ export function AiGatewayScreen({ providerContent, pageContent, pageTab }: { pro
   );
   const router = useRouter();
   const searchParams = useSearchParams();
-  const autoRouterEnabled = orgFeatureEnabled(orgContext, "autoRouter");
-  // Auto Router sits right after AI Providers, only for organizations with the feature.
-  const tabs = autoRouterEnabled ? AI_GATEWAY_TABS : AI_GATEWAY_TABS.filter((item) => item.value !== "auto-router");
+  const tabs = AI_GATEWAY_TABS;
+  // Smart Routers moved into AI Providers; old links to their tab land there.
+  const requestedTab = searchParams.get("tab") === "auto-router" ? "ai-providers" : searchParams.get("tab");
   const nestedContent = providerContent ?? pageContent;
   const nestedTab = providerContent !== undefined ? "ai-providers" : pageTab;
   // Without an explicit tab, land on the first one this person can open.
   const defaultTab = tabs.find((item) => canOpenAiGatewayTab(memberAccess, item.value))?.value ?? "overview";
   const tab = nestedContent !== undefined && nestedTab
     ? nestedTab
-    : tabs.find((item) => item.value === searchParams.get("tab"))?.value ?? defaultTab;
+    : tabs.find((item) => item.value === requestedTab)?.value ?? defaultTab;
   const gatewayTabArea = tab === "openwork-models" ? "any" : GATEWAY_TAB_AREAS[tab];
   const access = useGatewayDashboardAccess(gatewayTabArea);
 
@@ -157,7 +153,6 @@ export function AiGatewayScreen({ providerContent, pageContent, pageTab }: { pro
                   <>
                     {tab === "overview" ? <AiGatewayOverview key={orgId} orgId={orgId} /> : null}
                     {tab === "ai-providers" ? <GatewayProvidersSection key={orgId} /> : null}
-                    {tab === "auto-router" ? <AutoRouterSection key={`auto-router-${orgId}`} /> : null}
                     {tab === "users-and-teams" ? <GatewayUsersTeamsSection key={orgId} orgId={orgId} orgSlug={orgSlug} orgContext={orgContext} /> : null}
                     {tab === "limits" ? (
                       <>
@@ -168,7 +163,6 @@ export function AiGatewayScreen({ providerContent, pageContent, pageTab }: { pro
                           orgSlug={orgSlug}
                           teams={orgContext.teams}
                           members={orgContext.members}
-                          showRemovedProviders={orgFeatureEnabled(orgContext, "gatewayProviderRemovalLimits")}
                         />
                       </>
                     ) : null}

@@ -143,9 +143,10 @@ clear both token env aliases so `envFrom` cannot accidentally turn them on.
 Shared deployment flags, origins, database keys, and tokens must not be overridden
 through per-app `env` when enabled; Helm rejects conflicting configuration.
 
-Auto Model Routing (feature `autoRouter`) asks Jev, through TypeSafe's API,
-which of the organization's models should answer each Auto request. Give the
-gateway a TypeSafe API key; without one, Auto always uses its fallback model:
+The Smart Model Router (feature `autoRouter`) asks Jev, through TypeSafe's
+API, how well each Smart request fits each task of the member's Smart Router
+and how much thinking it needs. Give the gateway a TypeSafe API key; without
+one, Smart is off and Den refuses to save Smart Routers:
 
 ```yaml
 secret:
@@ -402,7 +403,7 @@ you can also lock a feature for the whole install under `config.features`:
 config:
   features:
     permissions: "true"            # on for everyone on this install
-    automationCalendar: "false"    # off for everyone on this install
+    computerUse: "false" # off for everyone on this install
 ```
 
 - `""` (the default) follows `/admin`, which starts from the default listed

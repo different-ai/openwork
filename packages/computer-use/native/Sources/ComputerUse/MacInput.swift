@@ -56,6 +56,8 @@ final class MacInput {
         var lastMovedAt: TimeInterval = -.infinity
     }
     private var feedback: DispatchFeedback?
+    /// The last menu command pressed, for the on-desktop cursor to replay.
+    private(set) var lastMenu: (titleFrame: CGRect?, path: [String], shortcut: String?)?
 
     func releaseAll(interrupted: Bool = true) {
         if let heldPointer { try? mouse(.leftMouseUp, heldPointer.point, heldPointer.pid, 1, heldPointer.windowID, heldPointer.frame, heldPointer.flags) }
@@ -121,9 +123,30 @@ final class MacInput {
                     result = AXUIElementPerformAction(record.element, kAXPressAction as CFString)
                 }
                 feedback?.didDispatch = true; feedback?.point = CGPoint(x: record.frame.midX, y: record.frame.midY)
-                guard result == .success else { throw UseError("action_failed", "The app did not confirm the accessible action. Observe before retrying.", next: "observe") }
+                // A press that opens a modal (a close button's save sheet) keeps the app busy
+                // past the AX timeout: it was delivered, only its reply is missing.
+                var unanswered = false
+                if case .press = action { unanswered = result == .cannotComplete }
+                guard result == .success || unanswered else { throw UseError("action_failed", "The app did not confirm the accessible action. Observe before retrying.", next: "observe") }
                 report(.dispatched, point: CGPoint(x: record.frame.midX, y: record.frame.midY))
-                path = "accessibility"
+                path = unanswered ? "accessibility_unconfirmed" : "accessibility"
+            case .menu(let names):
+                // Menu commands go to the app's focused window: never to another document.
+                guard access.isFocusedWindow(target, app: app) else {
+                    throw UseError("menu_needs_focus", "This app's menus act on another of its windows. Bring the selected window forward, then try again.", next: "observe")
+                }
+                let menu = try access.menuTarget(names, app: app)
+                try check()
+                let result = AXUIElementPerformAction(menu.item, kAXPressAction as CFString)
+                let aim = menu.titleFrame.map { CGPoint(x: $0.midX, y: $0.midY) }
+                feedback?.didDispatch = true; feedback?.point = aim
+                // A command that opens a modal answers after the AX timeout: it was delivered.
+                guard result == .success || result == .cannotComplete else {
+                    throw UseError("action_failed", "The app did not accept the menu command. Observe before retrying.", next: "observe")
+                }
+                report(.dispatched, point: aim)
+                lastMenu = (menu.titleFrame, names, menu.shortcut)
+                path = result == .success ? "accessibility" : "accessibility_unconfirmed"
             case .wait(let ms):
                 var remaining = ms
                 while remaining > 0 {

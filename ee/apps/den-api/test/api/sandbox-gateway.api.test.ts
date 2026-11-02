@@ -21,7 +21,6 @@ after(async () => { restoreCatalog(); await den.close() })
 const admin = await den.signUp("Platform Admin", `platform-admin+${den.stamp}@example.test`)
 
 test("a new sandbox gets the workshop connectors and a Luna AI Gateway provider every joiner can use", async () => {
-  assert.equal((await den.request(admin.token, "PUT", "/v1/admin/features/sandboxOrgs", { body: { enabled: true } })).status, 200)
   const listed = await den.request(admin.token, "GET", "/v1/admin/sandbox-orgs")
   assert.deepEqual(field(listed.body, "defaults"), { workplaceUrl: "https://workplace.example.test", gatewayModels: ["gpt-6-luna"], gatewayProviderId: "openai", creditUsd: null }, summary(listed), "a shared key has no per-sandbox credit")
 

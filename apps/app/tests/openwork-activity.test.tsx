@@ -3,6 +3,7 @@ import { GlobalRegistrator } from "@happy-dom/global-registrator"
 import { act, createElement } from "react"
 import { createRoot, type Root } from "react-dom/client"
 import type { DynamicToolUIPart, UIMessage } from "ai"
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
 
 import { openWorkNativeFailure, openWorkNativeSentence } from "../src/lib/openwork-native-activity"
 
@@ -10,12 +11,15 @@ GlobalRegistrator.register({ url: "https://web.example/" })
 const previousAct = Reflect.get(globalThis, "IS_REACT_ACT_ENVIRONMENT")
 Reflect.set(globalThis, "IS_REACT_ACT_ENVIRONMENT", true)
 afterAll(() => {
+  queryClient.clear()
   Reflect.set(globalThis, "IS_REACT_ACT_ENVIRONMENT", previousAct)
   GlobalRegistrator.unregister()
 })
 
 const { PlatformProvider, createDefaultPlatform } = await import("../src/react-app/kernel/platform")
 const { MessageListProvider } = await import("../src/components/chat/message-list-provider")
+const { DenAuthProvider } = await import("../src/react-app/domains/cloud/den-auth-provider")
+const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: Infinity } } })
 const { MessageList } = await import("../src/components/chat/message-list")
 
 function native(toolName: string, input: Record<string, unknown>, output?: unknown): DynamicToolUIPart {
@@ -68,7 +72,8 @@ async function render(parts: UIMessage["parts"]) {
   document.body.append(container)
   const root = createRoot(container)
   mounted = { root, container }
-  await act(async () => root.render(createElement(PlatformProvider, {
+  await act(async () => root.render(createElement(QueryClientProvider, { client: queryClient,
+    children: createElement(DenAuthProvider, { children: createElement(PlatformProvider, {
     value: createDefaultPlatform(),
     children: createElement(MessageListProvider, {
       workspaceId: "workspace_fixture", sessionId: "session_fixture",
@@ -79,7 +84,7 @@ async function render(parts: UIMessage["parts"]) {
       onMcpReopenAuthorization: async () => {},
       children: createElement(MessageList, { messages, status: "ready", activityStatus: "idle" }),
     }),
-  })))
+  }) }), })))
   return container
 }
 
@@ -106,7 +111,7 @@ describe("the turn's rail", () => {
     expect(container.querySelector('[data-testid="completed-work-rail"]')).toBeNull()
     const failed = [...container.querySelectorAll("[data-capability-call]")].find((row) => row.textContent?.includes("Couldn't remove"))
     expect(failed?.textContent).toContain("Unknown group Done")
-    expect(failed?.querySelector(".text-destructive")).not.toBeNull()
+    expect(failed?.querySelector(".text-red-11")).not.toBeNull()
     expect(failed?.querySelector('[data-testid="tool-details-toggle"]')).not.toBeNull()
   })
 })

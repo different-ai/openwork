@@ -226,7 +226,7 @@ function ToolResult({ result }: { result: unknown }) {
   );
 }
 
-export function McpToolCallInspector({ outcome, revisedSetup = false }: { outcome: McpToolCallOutcome; revisedSetup?: boolean }) {
+export function McpToolCallInspector({ outcome }: { outcome: McpToolCallOutcome }) {
   const [activeTab, setActiveTab] = useState<"result" | "request" | "response">("result");
   const succeeded = outcome.status === "completed";
   const summary = outcome.failureAttribution?.likelySource
@@ -270,9 +270,7 @@ export function McpToolCallInspector({ outcome, revisedSetup = false }: { outcom
       <div className="p-4">
         {activeTab === "result" ? (
           <div className="space-y-2">
-            {revisedSetup ? <ToolResult result={outcome.result} /> : (
-              <pre className="max-h-80 overflow-auto rounded-xl bg-gray-50 p-3 text-[12px] leading-[18px] text-gray-700">{formatJson(outcome.result)}</pre>
-            )}
+            <ToolResult result={outcome.result} />
             <p className="inline-flex items-center gap-1.5 text-[12px] text-gray-500">
               <LockKeyhole className="h-3 w-3" aria-hidden="true" /> Credential headers redacted. Returned only for this run — never stored in OpenWork logs.
             </p>

@@ -5,9 +5,7 @@ import { openworkOrganizationConnectionsUrl } from "./connection-navigation.js"
 export function connectorCatalogForQuery(
   query: string,
   showAll = false,
-  options: { expandedMcpPresets?: boolean } = {},
 ): ConnectorCatalog | null {
-  const { expandedMcpPresets = false } = options
   const setupUrl = (id: string) => {
     const url = new URL(openworkOrganizationConnectionsUrl())
     url.searchParams.set("quickAdd", id)
@@ -16,7 +14,7 @@ export function connectorCatalogForQuery(
   const entries: ConnectorCatalog["entries"] = [
     { id: "google-workspace", name: "Google Workspace", description: "Gmail, Calendar, and Drive with your work account.", setup: "suite", setupUrl: setupUrl("google-workspace") },
     { id: "microsoft-365", name: "Microsoft 365", description: "Outlook, Calendar, OneDrive, and SharePoint with your work account.", setup: "suite", setupUrl: setupUrl("microsoft-365") },
-    ...externalMcpPresetsForCatalog({ expanded: expandedMcpPresets }).map(preset => ({
+    ...externalMcpPresetsForCatalog().map(preset => ({
       id: preset.presetId,
       name: preset.displayName,
       description: preset.description,

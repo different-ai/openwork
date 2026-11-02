@@ -1,6 +1,5 @@
 import { createServer } from "node:http";
 import type { Seed } from "@openwork/env";
-import { enableOrganizationCapabilities } from "./organization-capabilities.ts";
 
 /** A real upstream HTTP fixture: strict metadata stays held until the proof releases it. */
 export async function customConnectorSetup(seed: Seed) {
@@ -50,15 +49,10 @@ export async function customConnectorSetup(seed: Seed) {
   origin = `http://127.0.0.1:${address.port}`;
   try {
     const den = await seed.den({ env: { DEN_ALLOW_PRIVATE_MCP_URLS: "1" }, org: { name: "Fieldnotes Studio", admin: { name: "Connector Admin" } } });
-    const disabledStream = await seed.api(den.admin, "/v1/mcp-connections/discover/stream", {
-      method: "POST", body: JSON.stringify({ url: `${origin}/mcp/baseline` }),
-    });
     const web = await seed.web({ den, signedInAs: den.admin, startPath: "/dashboard/mcp-connections", headless: true, viewport: { width: 1280, height: 1300 } });
     return {
       den, web,
-      disabledStreamStatus: disabledStream.response.status,
       setupUrl: (name: string) => `${den.ref.webUrl}/dashboard/mcp-connections/new/custom?name=Project+tools&url=${encodeURIComponent(`${origin}/mcp/${name}`)}`,
-      enable: () => enableOrganizationCapabilities(seed, den.admin, { customConnectorSetup: true }),
       heldRequests: () => heldRequests,
       headerRequests: () => headerRequests,
       signInRequests: () => signInRequests,

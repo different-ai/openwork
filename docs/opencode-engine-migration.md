@@ -156,11 +156,10 @@ does not rewrite configuration, skills, or plugin files.
 
 ## Provider catalog ownership
 
-The optional `liveProviderSync` rollout gives the bundled OpenWork plugin
-ownership of the v2 AI Gateway catalog. V1 and the flag-off path retain the
+The bundled OpenWork plugin owns the v2 AI Gateway catalog by default. Live
+provider sync is generally available with no rollout flag. V1 retains its
 existing server materialization flow. See [live provider sync](live-provider-sync.md)
-for stream convergence, account isolation, credential hand-off and kill-switch
-semantics.
+for stream convergence, account isolation and credential hand-off.
 
 ## Upstream contract reviewed
 

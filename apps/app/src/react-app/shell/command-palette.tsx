@@ -110,8 +110,8 @@ export type CommandPaletteProps = {
   onOpenExtensions: (section?: string) => void;
   onToggleSidebar?: () => void;
   onOpenAutomations?: () => void;
-  onOpenCalendar?: () => void;
   onOpenDashboard?: () => void;
+  dashboardLabel?: string;
   onCreateWorkspace?: () => void;
   /** Optional: open the full default-model picker. */
   onOpenModelPicker?: () => void;
@@ -398,23 +398,11 @@ export function CommandPalette(props: CommandPaletteProps) {
           },
         }]
       : []),
-    ...(props.onOpenCalendar
-      ? [{
-          id: "calendar.open",
-          title: "Calendar",
-          keywords: ["week", "meetings", "schedule", "automations", "google calendar", "outlook"],
-          group: ACTIONS_GROUP,
-          action: () => {
-            props.onClose();
-            props.onOpenCalendar?.();
-          },
-        }]
-      : []),
     ...(props.onOpenDashboard
       ? [{
           id: "dashboard.open",
-          title: "Dashboard",
-          keywords: ["home", "overview", "apps"],
+          title: props.dashboardLabel ?? "Dashboard",
+          keywords: ["home", "overview", "apps", "artifacts", "dashboard"],
           group: ACTIONS_GROUP,
           action: () => {
             props.onClose();

@@ -22,6 +22,7 @@ import { z } from "zod"
 import { deleteTeamAgentPermissionPolicy } from "../../agent-permissions.js"
 import { deleteTeamDefaultModel } from "../../default-model.js"
 import { deleteTeamPrompts } from "../../prompts.js"
+import { deleteTeamAutoRouterAccess } from "../../auto-router.js"
 import { db } from "../../db.js"
 import { invalidateTeamInferenceOAuth } from "../../llm/inference-provider-lifecycle.js"
 import { isScimManagedTeam } from "../../scim-groups.js"
@@ -450,6 +451,7 @@ async function deleteTeam(c: ResourceActionContext, payload: ResourceOrganizatio
     await deleteTeamAgentPermissionPolicy(tx, team.id)
     await deleteTeamDefaultModel(tx, team.id)
     await deleteTeamPrompts(tx, team.id)
+    await deleteTeamAutoRouterAccess(tx, team.id)
     await tx.delete(ExternalMcpConnectionAccessGrantTable).where(eq(ExternalMcpConnectionAccessGrantTable.teamId, team.id))
     await tx.delete(LlmProviderAccessTable).where(eq(LlmProviderAccessTable.teamId, team.id))
     // Usage-limit assignments have no removed_at; unassigning deletes them. This

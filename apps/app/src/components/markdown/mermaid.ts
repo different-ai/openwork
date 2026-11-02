@@ -2,7 +2,6 @@ import DOMPurify from "dompurify";
 import { useEffect, useState, useSyncExternalStore, type RefObject } from "react";
 import type { MermaidConfig } from "mermaid";
 import { enhanceNearViewport } from "./near-viewport";
-import { useMermaidZoomEnabled } from "./mermaid-zoom";
 import type { MermaidZoomDiagram } from "./mermaid-zoom-viewport";
 
 import {
@@ -401,8 +400,7 @@ async function enhanceMermaidElement(
 
 /**
  * Renders the Mermaid blocks inside `rootRef` and wires their view toggles.
- * With the `mermaidZoom` feature on it returns the rendered diagrams; render
- * them with `MermaidZoomPortals` so each one can be zoomed and panned.
+ * Returns the rendered diagrams for `MermaidZoomPortals` so each one can be zoomed and panned.
  */
 export function useMermaidEnhancer(
   rootRef: RefObject<HTMLElement | null>,
@@ -411,14 +409,13 @@ export function useMermaidEnhancer(
   enabled = true,
 ): MermaidZoomDiagram[] {
   const theme = useSyncExternalStore(subscribeToTheme, getResolvedThemeMode, getResolvedThemeMode);
-  const interactive = useMermaidZoomEnabled();
   const [diagrams, setDiagrams] = useState<MermaidZoomDiagram[]>([]);
 
   useEffect(() => {
     const root = rootRef.current;
-    // Drop diagrams whose markup was replaced, and all of them when zoom is off.
+    // Drop diagrams whose markup was replaced.
     setDiagrams((current) => {
-      const next = interactive && root ? current.filter((diagram) => root.contains(diagram.slot)) : [];
+      const next = root ? current.filter((diagram) => root.contains(diagram.slot)) : [];
       return next.length === current.length ? current : next;
     });
     if (!root || !enabled) return;
@@ -426,19 +423,17 @@ export function useMermaidEnhancer(
     const controller = new AbortController();
     const diagramElements = Array.from(root.querySelectorAll("[data-openwork-mermaid]"))
       .filter((element): element is HTMLElement => element instanceof HTMLElement);
-    const publish: MermaidPublish | null = interactive
-      ? (element, slot, svg) => {
-        const key = mermaidDiagramKey(element);
-        setDiagrams((current) => {
-          const live = current.filter((diagram) => diagram.slot.isConnected);
-          if (svg === null) return live.filter((diagram) => diagram.key !== key);
-          const next = { key, slot, svg };
-          const index = live.findIndex((diagram) => diagram.key === key);
-          if (index < 0) return [...live, next];
-          return live.map((diagram, position) => (position === index ? next : diagram));
-        });
-      }
-      : null;
+    const publish: MermaidPublish = (element, slot, svg) => {
+      const key = mermaidDiagramKey(element);
+      setDiagrams((current) => {
+        const live = current.filter((diagram) => diagram.slot.isConnected);
+        if (svg === null) return live.filter((diagram) => diagram.key !== key);
+        const next = { key, slot, svg };
+        const index = live.findIndex((diagram) => diagram.key === key);
+        if (index < 0) return [...live, next];
+        return live.map((diagram, position) => (position === index ? next : diagram));
+      });
+    };
 
     const handleClick = (event: MouseEvent) => {
       if (!(event.target instanceof Element)) return;
@@ -479,7 +474,7 @@ export function useMermaidEnhancer(
       stopObserving();
       root.removeEventListener("click", handleClick);
     };
-  }, [content, enabled, interactive, rootRef, theme]);
+  }, [content, enabled, rootRef, theme]);
 
   return diagrams;
 }

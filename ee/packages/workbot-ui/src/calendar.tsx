@@ -702,6 +702,18 @@ export function WorkbotCalendar({ connectionsHref, assistantName, onContextChang
   const meetingSource = connected.length === 2 ? "Google Calendar and Outlook" : connected[0] === "microsoft" ? "Outlook Calendar" : "Google Calendar";
   const label = view === "week" && days.length === 5 ? `${formatDate(days[0]!, "en-US", { month: "short", day: "numeric" })} – ${days[4]!.month === days[0]!.month ? formatDate(days[4]!, "en-US", { day: "numeric" }) : formatDate(days[4]!, "en-US", { month: "short", day: "numeric" })}` : formatRangeLabel(range, anchor, "en-US");
   const nowParts = zonedParts(now, zone);
+  const providerStatuses = PROVIDERS.filter((provider) => {
+    const error = meetingQueries[provider].error;
+    return error && !(error.kind === "not_connected" && connected.length > 0) && error.kind !== "unsupported";
+  });
+  // Both providers can lack a catalog match. Their generic account/settings fallback is shared,
+  // but known accounts must keep their own Connect/Reconnect actions.
+  const unverifiedAccounts = connect.connections.isSuccess ? providerStatuses.filter((provider) => {
+    const error = meetingQueries[provider].error;
+    const nativeProvider = provider === "google" ? "google-workspace" : "microsoft-365";
+    return (error?.kind === "not_connected" || error?.kind === "auth_expired")
+      && !connect.connections.data?.some((connection) => connection.nativeProviderKey === nativeProvider);
+  }) : [];
 
   return (
     <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-y-auto lg:flex-row lg:overflow-hidden" data-calendar-page>
@@ -733,11 +745,10 @@ export function WorkbotCalendar({ connectionsHref, assistantName, onContextChang
           <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
             <Legend testId="automations" checked={layers.automations} onToggle={() => setLayers((current) => ({ ...current, automations: !current.automations }))}>Automations</Legend>
             <Legend testId="meetings" checked={layers.meetings} onToggle={() => setLayers((current) => ({ ...current, meetings: !current.meetings }))} title={`From ${meetingSource}`}>Meetings</Legend>
-            {layers.meetings ? PROVIDERS.map((provider) => {
+            {layers.meetings ? providerStatuses.map((provider) => {
               const error = meetingQueries[provider].error;
               const text = error ? blockedLabel(error) : null;
-              // A provider the organization never set up stays out of the way.
-              if (!error || (error.kind === "not_connected" && connected.length > 0) || error.kind === "unsupported") return null;
+              if (!error || (unverifiedAccounts.includes(provider) && provider !== unverifiedAccounts[0])) return null;
               return (
                 <span key={provider} className="flex items-center gap-1 text-[12px] leading-4 text-[#687076]" data-calendar-provider-status={provider} data-state={error.kind} title={error.message}>
                   <Lock size={11} strokeWidth={2} aria-hidden />

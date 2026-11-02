@@ -73,7 +73,7 @@ test("draft renders unordered, ordered and simply nested lists without literal i
   assert.equal((result.html.match(/<li[ >]/g) ?? []).length, 6)
   assert.ok(result.html.includes("<strong>First</strong>"))
   assert.ok(!result.html.includes("**First**"))
-  assert.equal(result.plain, "First\n  Nested\n    Deep\nSecond\n\nReview\nApprove")
+  assert.equal(result.plain, "- First\n  - Nested\n    1. Deep\n- Second\n\n1. Review\n2. Approve")
 })
 
 test("draft renders authored block quotes, preserving separate lines and nesting", () => {
@@ -81,7 +81,7 @@ test("draft renders authored block quotes, preserving separate lines and nesting
   assert.equal((result.html.match(/<blockquote[ >]/g) ?? []).length, 2)
   assert.ok(result.html.includes("<strong>First</strong>"))
   assert.ok(!result.html.includes("&gt;"))
-  assert.equal(result.plain, "First\nsecond\n\nnested")
+  assert.equal(result.plain, "> First\n> second\n> \n> > nested")
 })
 
 test("draft renders pipe tables with inline borders and aligned plain text", () => {
@@ -102,7 +102,7 @@ test("draft supports star bullets, ordered starts and tab-indented nesting", () 
   const result = parts("* First\n\t* Nested\n\n3. Third\n4. Fourth")
   assert.ok(result.html.includes('<ol start="3"'))
   assert.equal((result.html.match(/<ul[ >]/g) ?? []).length, 2)
-  assert.equal(result.plain, "First\n    Nested\n\nThird\nFourth")
+  assert.equal(result.plain, "* First\n\t* Nested\n\n3. Third\n4. Fourth")
 })
 
 test("draft aligns short table cells without amplifying oversized sparse tables", () => {

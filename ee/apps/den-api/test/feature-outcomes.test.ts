@@ -34,7 +34,7 @@ test("every feature that declares outcomes has exactly one reader, and no reader
   assert.deepEqual([...OUTCOME_FEATURE_KEYS].sort(), [...declared].sort())
   assert.deepEqual(Object.keys(FEATURE_OUTCOME_READERS).sort(), [...declared].sort())
   for (const key of FEATURE_KEYS) assert.equal(featureOutcomeReader(key) !== null, declared.includes(key), key)
-  assert.ok(declared.length >= 4, "calendar triggers, interval schedules, Your agent and slack_send_as_bot report outcomes")
+  assert.ok(declared.length >= 1, "Your agent reports rollout outcomes; the schedule-feature outcomes are retired and GA")
 })
 
 test("a range is whole UTC days ending today", () => {
@@ -119,7 +119,7 @@ test("one plain health state: not used, failing, limited, mostly skipped, health
 })
 
 test("organizations with a feature on follow the deployment state and overrides without reading each one", () => {
-  const key: FeatureKey = "automationCalendarTriggers"
+  const key: FeatureKey = "workbotProactive"
   const count = (rollouts: Parameters<typeof organizationsWithFeatureOn>[0]["rollouts"], overrides = { on: 3, off: 2 }, locks = {}) =>
     organizationsWithFeatureOn({ key, environment: { deployment: "cloud", locks }, rollouts, overrides, organizations: 50 })
   assert.equal(count({}), 3, "off for everyone: the organizations turned on")

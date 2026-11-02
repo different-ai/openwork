@@ -1,83 +1,78 @@
 ---
-title: "Auto Model Routing"
-description: "Let OpenWork pick the right model for every prompt, from the AI Gateway models you choose."
+title: "Smart Model Router"
+description: "Let OpenWork pick the right model and thinking level for every prompt, from the AI Gateway models and tasks you choose."
 ---
 
-Auto Model Routing lets members choose **Auto** instead of a specific model. For every prompt, OpenWork picks one of the models you listed, based on what the prompt asks for. Each model runs at the thinking level you chose for it. Quick questions go to a fast, inexpensive model. Hard coding, planning or debugging goes to your strongest model with more thinking. Anything else goes to your default model.
+The Smart Model Router lets members choose a **Smart** model instead of a specific one. You create Smart Routers, each with a name, the people it applies to, and a few AI Gateway models tagged with the tasks they're good at. For every prompt, OpenWork sends it to the model whose tasks fit it best, and decides how much that model should think.
 
-You set it up once for the organization in OpenWork Cloud under **AI Gateway → Auto Router**. Members don't configure anything: Auto appears at the top of their model picker.
+You set it up in OpenWork Cloud under **AI Gateway → AI Providers**, where Smart Routers are listed above your providers. Members don't configure anything: each Smart Router that applies to them appears at the top of their model picker as **Smart:** followed by the router's name, for example **Smart: Engineering**.
 
 <Note>
-Auto Model Routing is rolling out on OpenWork Cloud. If you don't see the **Auto Router** tab, ask OpenWork to turn it on for your organization.
+The Smart Model Router is rolling out on OpenWork Cloud. If you don't see **Add a Smart Router** under AI Providers, ask OpenWork to turn it on for your organization.
 </Note>
 
 ## Why use it
 
 - **Lower cost without thinking about it.** Members no longer run every small question through the most expensive model.
-- **Better answers on hard work.** Difficult prompts get your strongest model and more thinking, even when a member forgot to switch.
-- **One choice for members.** People who don't know the difference between models pick Auto and get a sensible model each time.
-- **Same rules as any other model.** Auto only uses models already in your AI Gateway. Access, limits, usage counting and costs work exactly as if the member had picked the model themselves.
+- **Better answers on hard work.** Difficult prompts go to the model you tagged for that work, with more thinking, even when a member forgot to switch.
+- **Different setups for different teams.** Engineering can route code review and debugging to one set of models while Support routes summaries and translations to another.
+- **Same rules as any other model.** Smart Routers only use models already in your AI Gateway. Access, limits, usage counting and costs work exactly as if the member had picked the model themselves.
 
 ## Set it up
 
 <Steps>
   <Step title="Add the models to your AI Gateway">
-    Auto can only use models that are already in your AI Gateway, in an active model group. If you haven't yet, [add a provider](/cloud/share-with-your-team/managed-llm-provider) and its models first.
+    A Smart Router can only use models that are already in your AI Gateway, in an active model group. If you haven't yet, [add a provider](/cloud/share-with-your-team/managed-llm-provider) and its models first.
   </Step>
-  <Step title="Turn on the Auto Router and choose a default model">
-    Open **AI Gateway → Auto Router**, the tab right after AI Providers, and select **Turn on**.
+  <Step title="Add a Smart Router with its models and tasks">
+    Open **AI Gateway → AI Providers** and select **Add a Smart Router**, next to **Add a provider**. Give it a name; a router named Engineering appears to members as **Smart: Engineering**.
 
-    <Frame caption="Before it is turned on, the Auto Router tab explains what it does.">
-      <img src="/images/auto-model-routing/auto-router-off.png" alt="The Auto Router tab with its Turn on button" />
-    </Frame>
+    Choose a model, then add the tasks it should handle. Pick tasks your organization already uses from the list, or type a new one and press Enter. A task can be one word ("translation") or several ("debugging failing tests"), and the same task can be added to more than one model. Select **Add model** for each other model you want it to use.
 
-    You start by choosing the **default model**. Auto uses it whenever no other model's description matches the prompt, and whenever it can't decide. Its description is fixed: "Use this model when no other prompts and models match the input".
+    Select **Continue**.
 
-    - **Model**: choose one of your AI Gateway models.
-    - **Thinking**: choose the one thinking level this model always runs at. Only the levels the model supports are shown. **Default** uses the model's own setting.
-
-    Select **Turn on**.
-
-    <Frame caption="The default model has a fixed description; you choose the model and its thinking level.">
-      <img src="/images/auto-model-routing/auto-router-editor.png" alt="The default model editor with the fixed Use when text, Claude Haiku 5.5 selected and High thinking" />
+    <Frame caption="Step one: name the router and give each model its tasks.">
+      <img src="/images/auto-model-routing/smart-router-editor.png" alt="The Add a Smart Router page with the name Engineering, Claude Haiku 5.5 and the tasks Debugging and Code review" />
     </Frame>
   </Step>
-  <Step title="Add more models and describe when to use them">
-    Select **Add model** for each other model you want Auto to use:
+  <Step title="Choose who can use it">
+    Choose who the router applies to: everyone in the organization, teams, or individual people. If some of them can't use one of its models, the model is marked; hover over the mark to see who. Those people's prompts go to the router's other models.
 
-    - **Use when**: describe, in plain words, the prompts this model should get. For example "Everyday questions, small edits and short answers", or "Hard coding tasks, architecture, debugging complex failures".
-    - **Model**: choose one of your AI Gateway models.
-    - **Thinking**: choose the thinking level this model runs at.
+    Select **Save**. Until you do, the router applies to nobody and shows **Give access** in the list.
 
-    Select **Save route**. Two or three routes with clearly different descriptions usually work best: a fast model for everyday work, a strong model for hard work, and optionally a model for a specialty such as reading images or long documents.
-
-    <Frame caption="Each route leads with when to use it; the default model is always first.">
-      <img src="/images/auto-model-routing/auto-router-routes.png" alt="The Auto Router tab listing the default model and a second route for quick questions, each with its model and thinking level" />
+    <Frame caption="Step two: who can use it.">
+      <img src="/images/auto-model-routing/smart-router-access.png" alt="Step two with the Who can use it block and the router's model and tasks" />
     </Frame>
   </Step>
 </Steps>
 
 <Tip>
-Write descriptions that separate the routes from each other. "Simple questions" and "Hard, multi-step coding and planning" route better than two descriptions that both mention coding.
+Give each model a few specific tasks. "Quick questions", "short emails" for a fast model and "debugging", "architecture", "planning" for your strongest model route better than one vague task per model.
 </Tip>
+
+Smart Routers are listed at the top of AI Providers, like providers. Select **Manage** to change one's models, tasks or who can use it.
+
+<Frame caption="Smart Routers are listed first under AI Providers.">
+  <img src="/images/auto-model-routing/smart-router-list.png" alt="AI Providers listing Smart: Engineering above the Acme AI Gateway provider, with Add a Smart Router next to Add a provider" />
+</Frame>
 
 ## What members see
 
-Members whose organization has the Auto Router turned on, and who have access to at least one of its models, see **Auto** as the first option in the desktop model picker. Auto manages thinking itself, so the effort control shows **Managed by Auto**.
+Members see one **Smart:** option (such as **Smart: Engineering**) at the top of the desktop model picker for every Smart Router that applies to them and that has at least one model they can use. Smart manages thinking itself.
 
-<Frame caption="Auto is the first option in the model picker.">
-  <img src="/images/auto-model-routing/auto-router-picker.png" alt="The desktop model picker with Auto, Picks the best model for each task, selected at the top" />
+<Frame caption="Each Smart Router that applies to a member is at the top of their model picker.">
+  <img src="/images/auto-model-routing/smart-router-picker.png" alt="The desktop model picker with Smart: Engineering, Picks the best model for each task, at the top" />
 </Frame>
 
 Each reply shows which model answered it and at which thinking level, next to the reply's time.
 
-<Frame caption="Each Auto reply names the model and thinking level that answered it.">
+<Frame caption="Each Smart reply names the model and thinking level that answered it.">
   <img src="/images/auto-model-routing/auto-router-answered-by.png" alt="A chat reply labelled Claude Haiku 5.5 · High" />
 </Frame>
 
 ## How it works
 
-Auto Model Routing runs inside the AI Gateway. Every Auto request still uses the member's own AI Gateway key, as described in [How requests flow](/ai-gateway/how-requests-flow).
+The Smart Model Router runs inside the AI Gateway. Every Smart request still uses the member's own AI Gateway key, as described in [How requests flow](/ai-gateway/how-requests-flow).
 
 ```mermaid
 sequenceDiagram
@@ -85,38 +80,32 @@ sequenceDiagram
   participant GW as AI Gateway
   participant Jev as Jev (routing model)
   participant P as Chosen model's provider
-  App->>GW: Prompt, model "Auto", member's AI Gateway key
-  GW->>GW: Keep only your routes this member can use
-  GW->>Jev: Latest prompt + each route's model and "Use when"
-  Jev-->>GW: Best route
+  App->>GW: Prompt, model "Smart: Engineering", member's AI Gateway key
+  GW->>GW: Keep only the router's models this member can use
+  GW->>Jev: Latest prompt + every task of those models
+  Jev-->>GW: How well the prompt fits each task, and how much thinking it needs
+  GW->>GW: Add up each model's task scores, pick the highest
   GW->>P: The same request, as if the member picked that model
   P-->>GW: Response
   GW-->>App: Response, plus which model and thinking level answered
 ```
 
-1. **Only your models, only theirs.** The gateway starts from your routes and drops any model the member doesn't have access to.
-2. **One decision per task.** At the start of each task (when the member sends a message), the gateway asks [Jev](https://docs.typesafe.ai/introduction/coding-agents), a fast routing model from TypeSafe, to choose one route. The route runs at the thinking level you set for it. Jev sees the member's latest message and a short excerpt of the conversation, your route descriptions and model names. It never sees your provider ids or keys. The decision usually takes well under a second.
-3. **Consistent within a task.** The steps that follow while the agent works on the task (tool results, follow-up calls) keep the same model and thinking level, so the model's context and prompt cache stay intact.
-4. **Sent like a normal request.** The gateway forwards the request to the chosen provider exactly as if the member had picked that model: the same access checks, [limits](/ai-gateway/limits), [usage counting](/ai-gateway/counting-usage) and [costs](/ai-gateway/token-costs) apply, and the request log records the real model. Auto translates the request for the provider when needed, so Anthropic, OpenAI, Google Gemini, Amazon Bedrock, Azure OpenAI and OpenAI-compatible providers can all be mixed.
-5. **A safe fallback.** If Jev can't answer in time, Auto uses your default model.
+1. **Only your models, only theirs.** The gateway starts from the Smart Router's models and drops any model the member doesn't have access to.
+2. **Every task is scored.** At the start of each task the member gives the agent (when they send a message), the gateway asks [Jev](https://docs.typesafe.ai/primitives/score), a fast routing model from TypeSafe, to score how well the message fits each of the router's tasks, from 0 (unrelated) to 1 (clearly that task). Jev sees the member's latest message, a short excerpt of the conversation and your task names. It never sees model names, provider ids or keys. The decision usually takes well under a second.
+3. **The best total wins.** Each model's tasks are added up, and the model with the highest total answers. A model with two good matches beats a model with one slightly better match. If totals tie, the model listed first answers.
+4. **Thinking to match.** Jev also scores how much reasoning the message needs (none, light, moderate or deep), and the chosen model runs at the closest thinking level it supports.
+5. **Consistent within a task.** The steps that follow while the agent works (tool results, follow-up calls) keep the same model and thinking level, so the model's context and prompt cache stay intact.
+6. **Sent like a normal request.** The gateway forwards the request to the chosen provider exactly as if the member had picked that model: the same access checks, [limits](/ai-gateway/limits), [usage counting](/ai-gateway/counting-usage) and [costs](/ai-gateway/token-costs) apply, and the request log records the real model. Smart translates the request for the provider when needed, so Anthropic, OpenAI, Google Gemini, Amazon Bedrock, Azure OpenAI and OpenAI-compatible providers can all be mixed.
+7. **A safe fallback.** If Jev can't answer in time, the first model in the router answers at its default thinking level.
 
-### Thinking levels
+## Tasks
 
-Each route runs at one thinking level you choose. More thinking gives better answers to hard problems but is slower and uses more tokens, so pair fast, low-thinking routes with everyday work and high-thinking routes with hard work.
+Tasks are shared across your organization, so every Smart Router offers the same list to choose from. Names are matched without regard to capitals: "Code review" and "code review" are the same task. A task is removed from the list once no Smart Router uses it anymore.
 
-| Level | Typical use |
-| --- | --- |
-| Default | The model's own setting |
-| None / Minimal | Trivial replies, as fast as possible |
-| Low | Straightforward tasks |
-| Medium | Typical tasks |
-| High | Complex, multi-step work |
-| Xhigh / Max | The hardest problems |
+## Remove a Smart Router
 
-## Turn it off
-
-Select **Turn off** on the Auto Router tab. Auto disappears from members' model pickers the next time their app syncs with your organization, and requests already set to Auto stop routing. Your routes, including the default model, are kept, so turning it on again brings them back.
+Open a Smart Router with **Manage** and select **Remove**. Its Smart model disappears from members' model pickers the next time their app syncs with your organization, and requests already using it stop routing.
 
 ## Self-hosted
 
-Auto Model Routing is offered on OpenWork Cloud first. Where it is available on a self-hosted install, give the AI Gateway a TypeSafe API key through the Helm chart's `secret.values.typesafeApiKey` (or the `TYPESAFE_API_KEY` key in your existing Secret). Without a key, Auto is off: the Auto Router tab explains how to add the key, and members don't see Auto. See the chart's README for details.
+The Smart Model Router is offered on OpenWork Cloud first. Where it is available on a self-hosted install, give the AI Gateway a TypeSafe API key through the Helm chart's `secret.values.typesafeApiKey` (or the `TYPESAFE_API_KEY` key in your existing Secret). Without a key, Smart is off: **Add a Smart Router** explains how to add the key, and members don't see Smart models. See the chart's README for details.

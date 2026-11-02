@@ -4,6 +4,7 @@ import { setTimeout as delay } from "node:timers/promises"
 import { and, eq } from "@openwork-ee/den-db/drizzle"
 import { AuthSessionTable, GatewayCredentialSetTable, GatewayKeyTable, GatewayModelGroupModelTable, GatewayModelGroupTable, GatewayProviderAccessTable, GatewayProviderCredentialTable, GatewayProviderModelTable, GatewayProviderTable, MemberTable, TeamMemberTable, TeamTable } from "@openwork-ee/den-db/schema"
 import { createDenTypeId, normalizeDenTypeId } from "@openwork-ee/utils/typeid"
+import { sessionTokenDigest } from "../../src/session-token.js"
 import { bootDen, field, list, summary, text } from "./harness.js"
 
 // The harness creates and drops its own database; no existing organization is
@@ -19,14 +20,12 @@ test("inventory fingerprints only effective caller grants, including SSE and exp
   const member = await den.newMember(a.owner, a.orgId, "Inventory Member")
   const other = await den.newMember(a.owner, a.orgId, "Other Inventory Member")
   const b = await den.createOrg(await den.signUp("Other Inventory Owner"), "Other inventory fixture")
-  const feature = await den.setFeature(a.orgId, "liveProviderSync", true)
-  assert.equal(feature.status, 200, summary(feature))
   const [membership] = await db.select().from(MemberTable).where(eq(MemberTable.id, normalizeDenTypeId("member", member.memberId)))
   const [otherMembership] = await db.select().from(MemberTable).where(eq(MemberTable.id, normalizeDenTypeId("member", other.memberId)))
   const [otherOrgMembership] = await db.select().from(MemberTable).where(eq(MemberTable.id, normalizeDenTypeId("member", b.owner.memberId)))
-  const [session] = await db.select().from(AuthSessionTable).where(eq(AuthSessionTable.token, member.token))
+  const [session] = await db.select().from(AuthSessionTable).where(eq(AuthSessionTable.token, sessionTokenDigest(member.token)))
   assert.ok(membership?.userId && otherMembership && otherOrgMembership && session)
-  const principal = { organizationId: membership.organizationId, memberId: membership.id, userId: membership.userId, sessionId: session.id, sessionToken: session.token }
+  const principal = { organizationId: membership.organizationId, memberId: membership.id, userId: membership.userId, sessionId: session.id, sessionToken: member.token }
   const revision = () => readProviderInventoryRevision(principal)
   const apiRevision = async () => {
     const response = await den.as(member, a.orgId)("GET", "/v1/inference-providers/inventory/revision")

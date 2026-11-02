@@ -235,17 +235,15 @@ function PersonLookup({ orgId, orgSlug }: { orgId: string; orgSlug: OrgSlug }) {
 }
 
 /** One spend limit: who it applies to, its provider, amounts, what happens at the limit, and Edit. */
-export function GatewayLimitRow({ policy, orgSlug, teams, members, providers, canEdit = true, showRemovedProvider = false }: {
+export function GatewayLimitRow({ policy, orgSlug, teams, members, providers, canEdit = true }: {
   policy: GatewayUsageLimitPolicy;
   orgSlug: OrgSlug;
   providers: { id: string; name: string }[] | undefined;
   canEdit?: boolean;
-  /** gatewayProviderRemovalLimits: mark a limit whose provider was deleted as not applied. */
-  showRemovedProvider?: boolean;
 } & Directory) {
   const who = policyWho(policy, teams, members);
   // Its provider was deleted: the limit caps nothing until it points at a provider again.
-  const providerRemoved = showRemovedProvider && policy.providerStatus === "removed";
+  const providerRemoved = policy.providerStatus === "removed";
   return (
     <li className="flex items-center gap-3 px-4 py-3" data-testid="gateway-limit-row" data-policy-id={policy.id} data-provider-status={policy.providerStatus ?? undefined}>
       <LimitIcon policy={policy} />
@@ -268,7 +266,7 @@ export function GatewayLimitRow({ policy, orgSlug, teams, members, providers, ca
   );
 }
 
-export function GatewayUsageLimitsSection({ orgId, orgSlug, teams, members, showRemovedProviders = false }: { orgId: string; orgSlug: OrgSlug; showRemovedProviders?: boolean } & Directory) {
+export function GatewayUsageLimitsSection({ orgId, orgSlug, teams, members }: { orgId: string; orgSlug: OrgSlug } & Directory) {
   const policies = useGatewayPolicies(orgId);
   const searchParams = useSearchParams();
   const deletedId = searchParams?.get("deleted") ?? null;
@@ -303,7 +301,7 @@ export function GatewayUsageLimitsSection({ orgId, orgSlug, teams, members, show
           </div>
           <ul className="divide-y divide-gray-100 overflow-hidden rounded-[12px] border border-gray-100 bg-white" aria-label="Spend limits">
             {active.map((policy) => (
-              <GatewayLimitRow key={policy.id} policy={policy} orgSlug={orgSlug} teams={teams} members={members} providers={providers.data} showRemovedProvider={showRemovedProviders} />
+              <GatewayLimitRow key={policy.id} policy={policy} orgSlug={orgSlug} teams={teams} members={members} providers={providers.data} />
             ))}
           </ul>
           <PersonLookup orgId={orgId} orgSlug={orgSlug} />

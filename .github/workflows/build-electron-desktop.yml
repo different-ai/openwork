@@ -80,7 +80,7 @@ jobs:
 
   electron-macos-notarization-smoke:
     name: Electron macOS notarization smoke
-    runs-on: macos-14
+    runs-on: macos-26
     # Apple signing secrets belong to this environment; no deployment is recorded.
     environment:
       name: macos-signing

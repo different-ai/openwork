@@ -47,7 +47,6 @@ const den = await bootDen({ env: { DEN_DEPLOYMENT: "cloud", ...gatewayFixtureEnv
 after(async () => { globalThis.fetch = realFetch; await den.close() })
 
 const admin = await den.signUp("Platform Admin", `platform-admin+${den.stamp}@example.test`)
-assert.equal((await den.request(admin.token, "PUT", "/v1/admin/features/sandboxOrgs", { body: { enabled: true } })).status, 200)
 const create = (body: Record<string, unknown>) => den.request(admin.token, "POST", "/v1/admin/sandbox-orgs", {
   body: { name: "Trial sandbox", connectorBaseUrl: null, days: 14, memberLimit: 10, allowedEmailDomains: [], ...body },
 })

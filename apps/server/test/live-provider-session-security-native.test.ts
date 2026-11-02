@@ -39,7 +39,7 @@ test("native model-approved shells cannot redeem the desktop capability before o
   const project = join(root, "project");
   await mkdir(project);
   const directory = await realpath(project);
-  let phase = "flag-off";
+  let phase = "initial";
   let toolCalls = 0;
   let modelError = "";
   const model = createServer(async (req, res) => {
@@ -79,13 +79,12 @@ test("native model-approved shells cannot redeem the desktop capability before o
     handoffs++;
     return { baseUrl: modelUrl, token: denToken, orgId: "org_security" };
   });
-  let live = false;
   let engine: Awaited<ReturnType<typeof createManagedOpencodeV2Server>> | undefined;
   try {
     engine = await createManagedOpencodeV2Server({ bin: binary, rootDir: join(root, "engine"),
       env: { HOME: home, XDG_CONFIG_HOME: join(home, "config"), XDG_DATA_HOME: join(home, "data"),
         XDG_CACHE_HOME: join(home, "cache"), XDG_STATE_HOME: join(home, "state"), OPENCODE_DISABLE_MODELS_FETCH: "true" },
-      providerSession: { ...bridge, enabled: () => live } });
+      providerSession: { ...bridge } });
     await engine.injectProvider({ id: "private_boundary", name: "Boundary fixture", apiKey: "fixture-model-key", baseUrl: `${modelUrl}/v1`,
       models: [{ id: "boundary", name: "Boundary fixture", config: { limit: { context: 8192, output: 1024 }, tool_call: true } }] });
     await writeFile(join(project, "inspect.mjs"), `
@@ -112,13 +111,12 @@ test("native model-approved shells cannot redeem the desktop capability before o
       console.log('native-boundary-inspected');
     `);
     const initialConfig = await readFile(join(root, "engine/config/opencode.json"), "utf8");
-    assert.ok(initialConfig.includes('"liveProviderSync": false'));
+    assert.ok(initialConfig.includes('"desktopSession"'));
     assert.ok(!initialConfig.includes(bridge.token));
     assert.ok(!initialConfig.includes(denToken));
-    for (const nextPhase of ["flag-off", "live-on"]) {
+    for (const nextPhase of ["initial", "reloaded"]) {
       phase = nextPhase;
-      if (nextPhase === "live-on") {
-        live = true;
+      if (nextPhase === "reloaded") {
         await engine.refreshConfig();
       }
       await until(() => engine!.fetchJson("/api/model", { directory }), value => JSON.stringify(value.json).includes('"id":"boundary"'), "fixture model ready");
@@ -143,8 +141,7 @@ test("native model-approved shells cannot redeem the desktop capability before o
       assert.equal(value.status, 401, "a model-approved shell cannot redeem the Den-session bridge");
       assert.ok(!report.includes(bridge.token));
       assert.ok(!report.includes(denToken));
-      if (!live) assert.equal(handoffs, 0, "flag-off startup consumes the channel without activating the provider plugin");
-      else await until(async () => handoffs, value => value > 0, "late activation reuses the private channel broker");
+      await until(async () => handoffs, value => value > 0, "setup and reload use the private channel broker");
     }
     assert.equal(toolCalls, 2, "both witnesses were emitted by the model and executed by native tools");
   } finally {

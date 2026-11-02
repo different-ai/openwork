@@ -66,10 +66,10 @@ export async function adminOverviewWorld(seed: Seed) {
   await queryDenDatabase(databaseUrl, "INSERT INTO gateway_usage_rollups (id, granularity, bucket_start, dimension_key, organization_id, org_membership_id, route, protocol, upstream_provider_id, upstream_model, request_count, ok_count, total_tokens, total_tokens_count, cost_micro_usd, cost_count) VALUES (?, 'day', DATE_SUB(UTC_DATE(), INTERVAL 40 DAY), 'admin-organization-prior', ?, ?, 'org_provider', 'openai_chat', 'fixture', 'previous-period-model', 3, 3, 300, 3, 750000, 3)", [`iur_${"3".padStart(26, "0")}`, organizationId, memberId]);
   await queryDenDatabase(databaseUrl, "INSERT INTO gateway_usage_rollups (id, granularity, bucket_start, dimension_key, organization_id, org_membership_id, route, protocol, upstream_provider_id, upstream_model, request_count, ok_count, total_tokens, total_tokens_count, cost_micro_usd, cost_count) VALUES (?, 'day', DATE_SUB(UTC_DATE(), INTERVAL 70 DAY), 'admin-organization-outside', ?, ?, 'org_provider', 'openai_chat', 'fixture', 'outside-window-model', 100, 100, 10000, 100, 90000000, 100)", [`iur_${"4".padStart(26, "0")}`, organizationId, memberId]);
   const overrides = await seed.api(den.admin, `/v1/admin/organizations/${organizationId}/capabilities`, {
-    method: "PUT", body: JSON.stringify({ capabilities: { liveProviderSync: false, workbotDocuments: true } }),
+    method: "PUT", body: JSON.stringify({ capabilities: { settledSessions: false, workbotDocuments: true } }),
   });
   if (!overrides.response.ok) throw new Error("Could not set up organization feature overrides.");
-  const killed = await seed.api(den.admin, "/v1/admin/features/automationCalendar", { method: "PUT", body: JSON.stringify({ killed: true }) });
+  const killed = await seed.api(den.admin, "/v1/admin/features/computerUse", { method: "PUT", body: JSON.stringify({ killed: true }) });
   if (!killed.response.ok) throw new Error("Could not set up a globally disabled feature.");
   const viewport = { width: 1280, height: 700 };
   const anonymous = await seed.web({ den, startPath: "/admin/users?search=Routing&page=2", headless: true, viewport });

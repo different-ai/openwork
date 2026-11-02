@@ -11,7 +11,7 @@ process.env.DEN_DB_ENCRYPTION_KEY ??= "synthetic-feature-cache-invalidation-unit
 process.env.OPENWORK_DEV_MODE = "1"
 process.env.DATABASE_REDIS_URL = ""
 process.env.DEN_DEPLOYMENT = "self_hosted"
-process.env.DEN_FEATURE_REMOTE_SESSION_SUBAGENTS = ""
+process.env.DEN_FEATURE_NATIVE_DICTATION = ""
 const { db } = await import("../src/db.js")
 const { cache } = await import("../src/cache.js")
 const { getOrganizationFeatures, organizationFeatureEnabled, updateFeatureRollout, updateMemberFeatureOverrides, updateOrganizationFeatureOverrides } = await import("../src/features.js")
@@ -20,9 +20,9 @@ const organizationId = createDenTypeId("organization")
 const userId = createDenTypeId("user")
 const memberId = createDenTypeId("member")
 const fault = new Error("write outcome uncertain")
-const rolloutBefore = [{ feature_key: "remoteSessionSubagents", enabled: true, killed: false }]
-const rolloutAfter = [{ feature_key: "remoteSessionSubagents", enabled: true, killed: true }]
-const overrideAfter = [{ feature_key: "remoteSessionSubagents", enabled: true }]
+const rolloutBefore = [{ feature_key: "nativeDictation", enabled: true, killed: false }]
+const rolloutAfter = [{ feature_key: "nativeDictation", enabled: true, killed: true }]
+const overrideAfter = [{ feature_key: "nativeDictation", enabled: true }]
 
 type Read = { fields: string[]; limit?: number; lock?: string }
 
@@ -126,10 +126,10 @@ test("rollout writes invalidate once after the write and successful readback, pr
   const { inserted, history } = stubWrites(events)
   stubTransaction(events)
   const invalidation = spyInvalidation(events)
-  const result = await updateFeatureRollout({ key: "remoteSessionSubagents", killed: true, defaultEnabled: false, updatedByUserId: userId })
-  assert.deepEqual(result, { remoteSessionSubagents: { enabled: true, killed: true } })
-  assert.deepEqual(inserted, [{ feature_key: "remoteSessionSubagents", enabled: true, killed: true, updated_by_user_id: userId }])
-  assert.deepEqual(history, [{ feature_key: "remoteSessionSubagents", scope: "everyone", action: "killed", organization_id: null, member_id: null, changed_by_user_id: userId }])
+  const result = await updateFeatureRollout({ key: "nativeDictation", killed: true, defaultEnabled: false, updatedByUserId: userId })
+  assert.deepEqual(result, { nativeDictation: { enabled: true, killed: true } })
+  assert.deepEqual(inserted, [{ feature_key: "nativeDictation", enabled: true, killed: true, updated_by_user_id: userId }])
+  assert.deepEqual(history, [{ feature_key: "nativeDictation", scope: "everyone", action: "killed", organization_id: null, member_id: null, changed_by_user_id: userId }])
   assert.equal(reads.length, 2)
   assert.equal(invalidation.mock.callCount(), 1)
   assert.deepEqual(events, ["begin", "read", "write", "history", "commit", "read", "invalidate"])
@@ -142,7 +142,7 @@ for (const stage of ["write", "readback"]) {
     stubWrites(events, stage === "write" ? fault : undefined)
     stubTransaction(events)
     const invalidation = spyInvalidation(events)
-    await assert.rejects(updateFeatureRollout({ key: "remoteSessionSubagents", killed: true, defaultEnabled: false }), (error: unknown) => error === fault)
+    await assert.rejects(updateFeatureRollout({ key: "nativeDictation", killed: true, defaultEnabled: false }), (error: unknown) => error === fault)
     assert.equal(invalidation.mock.callCount(), 1)
     assert.deepEqual(events, stage === "write"
       ? ["begin", "read", "write-failed", "transaction-failed", "invalidate"]
@@ -156,11 +156,11 @@ test("organization override writes invalidate once after the transaction commits
   const { inserted, updated, history } = stubWrites(events)
   stubTransaction(events)
   const invalidation = spyInvalidation(events)
-  const result = await updateOrganizationFeatureOverrides({ organizationId, changes: { remoteSessionSubagents: true }, source: "platform", setByUserId: userId })
-  assert.deepEqual(result, { remoteSessionSubagents: true })
-  assert.deepEqual(inserted, [{ organization_id: organizationId, feature_key: "remoteSessionSubagents", enabled: true, source: "platform", set_by_user_id: userId }])
-  assert.deepEqual(history, [{ feature_key: "remoteSessionSubagents", scope: "organization", action: "on", organization_id: organizationId, member_id: null, changed_by_user_id: userId }])
-  assert.deepEqual(updated, [{ metadata: { capabilities: { remoteSessionSubagents: true } } }])
+  const result = await updateOrganizationFeatureOverrides({ organizationId, changes: { nativeDictation: true }, source: "platform", setByUserId: userId })
+  assert.deepEqual(result, { nativeDictation: true })
+  assert.deepEqual(inserted, [{ organization_id: organizationId, feature_key: "nativeDictation", enabled: true, source: "platform", set_by_user_id: userId }])
+  assert.deepEqual(history, [{ feature_key: "nativeDictation", scope: "organization", action: "on", organization_id: organizationId, member_id: null, changed_by_user_id: userId }])
+  assert.deepEqual(updated, [{ metadata: { capabilities: { nativeDictation: true } } }])
   assert.equal(reads[0].lock, "update")
   assert.equal(invalidation.mock.callCount(), 1)
   assert.deepEqual(events, ["begin", "read", "read", "write", "history", "read", "metadata-write", "commit", "invalidate"])
@@ -168,13 +168,13 @@ test("organization override writes invalidate once after the transaction commits
 
 test("clearing an organization override invalidates after the deletion commits", async () => {
   const events: string[] = []
-  stubReads([[{ metadata: { capabilities: { remoteSessionSubagents: true } } }], overrideAfter, []], events)
+  stubReads([[{ metadata: { capabilities: { nativeDictation: true } } }], overrideAfter, []], events)
   const { inserted, updated, history } = stubWrites(events)
   stubTransaction(events)
   const invalidation = spyInvalidation(events)
-  assert.deepEqual(await updateOrganizationFeatureOverrides({ organizationId, changes: { remoteSessionSubagents: null }, source: "platform" }), {})
+  assert.deepEqual(await updateOrganizationFeatureOverrides({ organizationId, changes: { nativeDictation: null }, source: "platform" }), {})
   assert.deepEqual(inserted, [])
-  assert.deepEqual(history, [{ feature_key: "remoteSessionSubagents", scope: "organization", action: "reset", organization_id: organizationId, member_id: null, changed_by_user_id: null }])
+  assert.deepEqual(history, [{ feature_key: "nativeDictation", scope: "organization", action: "reset", organization_id: organizationId, member_id: null, changed_by_user_id: null }])
   assert.deepEqual(updated, [{ metadata: {} }])
   assert.equal(invalidation.mock.callCount(), 1)
   assert.deepEqual(events, ["begin", "read", "read", "delete", "history", "read", "metadata-write", "commit", "invalidate"])
@@ -186,7 +186,7 @@ test("setting an override to the value it already has adds nothing to the histor
   const { history } = stubWrites(events)
   stubTransaction(events)
   spyInvalidation(events)
-  await updateOrganizationFeatureOverrides({ organizationId, changes: { remoteSessionSubagents: true }, source: "platform", setByUserId: userId })
+  await updateOrganizationFeatureOverrides({ organizationId, changes: { nativeDictation: true }, source: "platform", setByUserId: userId })
   assert.deepEqual(history, [])
   assert.deepEqual(events, ["begin", "read", "read", "write", "read", "metadata-write", "commit", "invalidate"])
 })
@@ -198,7 +198,7 @@ for (const stage of ["write", "commit"]) {
     stubWrites(events, stage === "write" ? fault : undefined)
     stubTransaction(events, stage === "commit" ? fault : undefined)
     const invalidation = spyInvalidation(events)
-    await assert.rejects(updateOrganizationFeatureOverrides({ organizationId, changes: { remoteSessionSubagents: true }, source: "platform" }), (error: unknown) => error === fault)
+    await assert.rejects(updateOrganizationFeatureOverrides({ organizationId, changes: { nativeDictation: true }, source: "platform" }), (error: unknown) => error === fault)
     assert.equal(invalidation.mock.callCount(), 1)
     assert.deepEqual(events, stage === "write"
       ? ["begin", "read", "read", "write-failed", "transaction-failed", "invalidate"]
@@ -222,8 +222,8 @@ for (const writer of ["rollout", "override"]) {
     })
     let settled = false
     const write = (writer === "rollout"
-      ? updateFeatureRollout({ key: "remoteSessionSubagents", killed: true, defaultEnabled: false })
-      : updateOrganizationFeatureOverrides({ organizationId, changes: { remoteSessionSubagents: true }, source: "platform" }))
+      ? updateFeatureRollout({ key: "nativeDictation", killed: true, defaultEnabled: false })
+      : updateOrganizationFeatureOverrides({ organizationId, changes: { nativeDictation: true }, source: "platform" }))
       .then((result) => { settled = true; return result })
     await started
     await Promise.resolve()
@@ -236,25 +236,52 @@ for (const writer of ["rollout", "override"]) {
 
 test("organization maps resolve cached rollout and organization overrides", async () => {
   const state = mock.method(cache.features, "state", async () => ({
-    rollouts: { remoteSessionSubagents: { enabled: false, killed: false } },
-    overrides: { remoteSessionSubagents: true },
+    rollouts: { nativeDictation: { enabled: false, killed: false } },
+    overrides: { nativeDictation: true },
   }))
   const read = mock.method(db, "select", () => { throw new Error("cached feature resolution read the database") })
   const features = await getOrganizationFeatures(organizationId)
-  assert.equal(features.remoteSessionSubagents, true)
+  assert.equal(features.nativeDictation, true)
   assert.equal(read.mock.callCount(), 0)
   assert.equal(state.mock.callCount(), 1)
   assert.deepEqual(state.mock.calls[0].arguments, [organizationId, undefined])
 })
 
+test("cached retired child settings cannot split the consolidated rollouts", async () => {
+  mock.method(cache.features, "state", async () => ({
+    rollouts: {
+      workbotProactive: { enabled: false, killed: false },
+      browserUse: { enabled: true, killed: true },
+      computerUse: { enabled: false, killed: false },
+      browserLiveView: { enabled: true, killed: false },
+    },
+    overrides: {
+      workbotProactive: true,
+      workbotAgentHealthView: false,
+      workbotAgentLibrary: false,
+      browserUse: true,
+      computerUse: true,
+      computerUseBackground: false,
+    },
+    memberOverrides: { workbotAgentLibrary: false, browserLiveView: true },
+  }))
+  const features = await getOrganizationFeatures(organizationId, { userId })
+  assert.equal(features.workbotProactive, true)
+  assert.equal(features.browserUse, false, "the retained browser kill switch still wins")
+  assert.equal(features.computerUse, true)
+  for (const key of ["workbotAgentHealthView", "workbotAgentLibrary", "browserLiveView", "computerUseBackground"]) {
+    assert.equal(Object.hasOwn(features, key), false, "old cached child settings must not reappear in the feature map")
+  }
+})
+
 test("member overrides come from the feature cache with the organization state, not a database read per request", async () => {
   const state = mock.method(cache.features, "state", async () => ({
-    rollouts: { remoteSessionSubagents: { enabled: false, killed: false } },
+    rollouts: { nativeDictation: { enabled: false, killed: false } },
     overrides: {},
-    memberOverrides: { remoteSessionSubagents: true },
+    memberOverrides: { nativeDictation: true },
   }))
   const read = mock.method(db, "select", () => { throw new Error("cached member feature resolution read the database") })
-  assert.equal((await getOrganizationFeatures(organizationId, { userId })).remoteSessionSubagents, true)
+  assert.equal((await getOrganizationFeatures(organizationId, { userId })).nativeDictation, true)
   assert.equal(read.mock.callCount(), 0)
   assert.deepEqual(state.mock.calls[0].arguments, [organizationId, userId])
 })
@@ -269,8 +296,8 @@ test("members without overrides never read member overrides", async () => {
 
 test("members with overrides read them fresh from their active membership", async () => {
   const listed = [{ organization_id: organizationId, user_id: userId }, { organization_id: organizationId, user_id: userId }]
-  const reads = stubReads([rolloutAfter, [], listed, [{ feature_key: "remoteSessionSubagents", enabled: false }]])
-  assert.deepEqual((await cache.features.state(organizationId, userId)).memberOverrides, { remoteSessionSubagents: false })
+  const reads = stubReads([rolloutAfter, [], listed, [{ feature_key: "nativeDictation", enabled: false }]])
+  assert.deepEqual((await cache.features.state(organizationId, userId)).memberOverrides, { nativeDictation: false })
   assert.deepEqual(reads[3].fields, ["feature_key", "enabled"])
 })
 
@@ -286,9 +313,9 @@ test("member override writes invalidate the feature cache after the write commit
   const { inserted, history } = stubWrites(events)
   stubTransaction(events)
   const invalidation = spyInvalidation(events)
-  assert.equal(await updateMemberFeatureOverrides({ organizationId, memberId, changes: { remoteSessionSubagents: true }, setByUserId: userId }), true)
-  assert.deepEqual(inserted, [{ member_id: memberId, feature_key: "remoteSessionSubagents", enabled: true, set_by_user_id: userId }])
-  assert.deepEqual(history, [{ feature_key: "remoteSessionSubagents", scope: "member", action: "on", organization_id: organizationId, member_id: memberId, changed_by_user_id: userId }])
+  assert.equal(await updateMemberFeatureOverrides({ organizationId, memberId, changes: { nativeDictation: true }, setByUserId: userId }), true)
+  assert.deepEqual(inserted, [{ member_id: memberId, feature_key: "nativeDictation", enabled: true, set_by_user_id: userId }])
+  assert.deepEqual(history, [{ feature_key: "nativeDictation", scope: "member", action: "on", organization_id: organizationId, member_id: memberId, changed_by_user_id: userId }])
   assert.equal(invalidation.mock.callCount(), 1)
   assert.deepEqual(events, ["begin", "read", "read", "write", "history", "commit", "invalidate"])
 })
@@ -299,7 +326,7 @@ test("member override invalidation runs after an uncertain write failure and pre
   stubWrites(events, fault)
   stubTransaction(events)
   const invalidation = spyInvalidation(events)
-  await assert.rejects(updateMemberFeatureOverrides({ organizationId, memberId, changes: { remoteSessionSubagents: true }, setByUserId: userId }), (error: unknown) => error === fault)
+  await assert.rejects(updateMemberFeatureOverrides({ organizationId, memberId, changes: { nativeDictation: true }, setByUserId: userId }), (error: unknown) => error === fault)
   assert.equal(invalidation.mock.callCount(), 1)
   assert.deepEqual(events, ["begin", "read", "read", "write-failed", "transaction-failed", "invalidate"])
 })
@@ -307,13 +334,13 @@ test("member override invalidation runs after an uncertain write failure and pre
 for (const locked of [false, true]) {
   test(`fresh ${locked ? "locked" : "unlocked"} transaction reads bypass cached rollouts and overrides`, async () => {
     const events: string[] = []
-    const reads = stubReads([[{ feature_key: "remoteSessionSubagents", enabled: false, killed: false }], overrideAfter], events)
+    const reads = stubReads([[{ feature_key: "nativeDictation", enabled: false, killed: false }], overrideAfter], events)
     stubTransaction(events)
     mock.method(cache.features, "rollouts", () => { throw new Error("transaction read touched Redis rollouts") })
     mock.method(cache.features, "overrides", () => { throw new Error("transaction read touched Redis overrides") })
     mock.method(cache.features, "state", () => { throw new Error("transaction read touched Redis feature state") })
     const result = await db.transaction(async (tx) => getOrganizationFeatures(organizationId, { database: tx, lock: locked ? "share" : undefined }))
-    assert.equal(result.remoteSessionSubagents, true)
+    assert.equal(result.nativeDictation, true)
     assert.deepEqual(reads.map((read) => read.fields), [["feature_key", "enabled", "killed"], ["feature_key", "enabled"]])
     assert.equal(reads[0].lock, undefined)
     assert.equal(reads[1].lock, locked ? "share" : undefined)
@@ -326,7 +353,7 @@ test("a share lock alone bypasses Redis and organizationFeatureEnabled propagate
   mock.method(cache.features, "rollouts", () => { throw new Error("locked read touched Redis rollouts") })
   mock.method(cache.features, "overrides", () => { throw new Error("locked read touched Redis overrides") })
   mock.method(cache.features, "state", () => { throw new Error("locked read touched Redis feature state") })
-  assert.equal(await organizationFeatureEnabled(organizationId, "remoteSessionSubagents", { lock: "share" }), false)
+  assert.equal(await organizationFeatureEnabled(organizationId, "nativeDictation", { lock: "share" }), false)
   assert.equal(reads.length, 2)
   assert.equal(reads[1].lock, "share")
 })

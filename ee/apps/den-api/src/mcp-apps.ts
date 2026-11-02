@@ -7,6 +7,7 @@ import { createDenTypeId, normalizeDenTypeId, type DenTypeId } from "@openwork-e
 import {
   createMcpAppInputSchema,
   MCP_APP_CONFIG_SCHEMA_VERSION,
+  MCP_APP_INITIAL_RESULTS_META,
   MCP_APP_MAX_STORAGE_BYTES,
   MCP_APP_PAYLOAD_KIND,
   mcpAppCompiledRevisionSchema,
@@ -26,7 +27,6 @@ import {
   type UpdateMcpAppInput,
 } from "@openwork/types/mcp-app"
 import { db } from "./db.js"
-import { organizationFeatureEnabled } from "./features.js"
 import { buildGeneratedMcpApp, type GeneratedArtifactViewBuildResult } from "./generated-artifact-view-builder.js"
 import type { McpMemberIdentity } from "./mcp/external-capabilities.js"
 import { buildMarketplaceCapabilityName, listAccessibleMarketplaceCapabilityReferences, listAccessibleMarketplaceCapabilityReferencesFor, parseMarketplaceCapabilityName } from "./mcp/marketplace-capabilities.js"
@@ -58,7 +58,8 @@ export type McpAppResource = { app: McpAppSummary; html: string; csp: McpAppCsp;
 /** An App a member may use, without its compiled HTML. */
 export type McpAppEntry = { appId: string; pluginId: string; revisionId: string; title: string; description: string | null; serverPath: string }
 /** The App's current revision as its own MCP server serves it. */
-export type McpAppServerDefinition = { app: McpAppSummary; tools: McpAppToolBinding[] }
+/** `loadsWithLaunch`: opening the App also runs its no-click tools that need no input. */
+export type McpAppServerDefinition = { app: McpAppSummary; tools: McpAppToolBinding[]; loadsWithLaunch?: boolean }
 /** Resolves declared tools as the author, before anything is published. */
 export type ResolveMcpAppTools = (tools: McpAppToolDeclaration[]) => Promise<McpAppToolBinding[]>
 
@@ -234,19 +235,13 @@ async function addWorkflows(context: PluginArchActorContext, pluginId: DenTypeId
   for (const configObjectId of workflowIds) await attachConfigObjectToPlugin({ context, configObjectId, pluginId })
 }
 
-async function compile(input: CreateMcpAppInput, pluginId: string, tools: McpAppToolBinding[], context: PluginArchActorContext) {
+async function compile(input: CreateMcpAppInput, pluginId: string, tools: McpAppToolBinding[]) {
   const reactSource = input.reactSource.trim()
   const cssSource = input.cssSource?.trim() ?? ""
   const description = input.description?.trim() || null
-  // Resolved for this editor on every write, never from preparation or
-  // authored input. Turning the feature off refuses new library builds; a
-  // published revision stays readable and usable.
-  const allowLibraries = await organizationFeatureEnabled(context.organizationContext.organization.id, "mcpAppLibraries", {
-    userId: context.organizationContext.currentMember.userId,
-  })
   let result: GeneratedArtifactViewBuildResult
   try {
-    result = await buildGeneratedMcpApp({ reactSource, cssSource, title: input.title, description }, { allowLibraries })
+    result = await buildGeneratedMcpApp({ reactSource, cssSource, title: input.title, description })
   } catch {
     throw compileFailure()
   }
@@ -267,6 +262,9 @@ async function compile(input: CreateMcpAppInput, pluginId: string, tools: McpApp
     compilerName: result.compilerName,
     compilerVersion: result.compilerVersion,
     reactVersion: result.reactVersion,
+    // Only an App written to read them gets initial results, so Apps built
+    // before them never pay for reads they would make again themselves.
+    ...(reactSource.includes(MCP_APP_INITIAL_RESULTS_META) ? { loadsWithLaunch: true } : {}),
   })
   if (!parsed.success) throw new McpAppError(422, "mcp_app_invalid_build", "The compiler did not produce a valid bounded MCP App revision. No revision was published.")
   const payload = parsed.data
@@ -276,7 +274,7 @@ async function compile(input: CreateMcpAppInput, pluginId: string, tools: McpApp
     throw new McpAppError(422, "mcp_app_invalid_build", "The compiled MCP App failed its integrity check. No revision was published.")
   }
   const rawSourceText = JSON.stringify({ reactSource, cssSource })
-  const storageLimit = allowLibraries ? MCP_APP_MAX_STORAGE_BYTES : 1024 * 1024
+  const storageLimit = MCP_APP_MAX_STORAGE_BYTES
   if (Buffer.byteLength(JSON.stringify(payload)) + Buffer.byteLength(rawSourceText) > storageLimit) {
     throw new McpAppError(413, "mcp_app_too_large", `The encoded MCP App revision and source must fit within ${storageLimit / 1024 / 1024} MiB. Reduce its size; no revision was published.`)
   }
@@ -293,7 +291,7 @@ export async function createMcpApp({ context, resolveTools, ...source }: CreateM
   let pluginId = input.pluginId ? await editablePlugin(context, input.pluginId) : null
   const resolved = await resolveTools(input.tools ?? [])
   const workflows = await workflowsToAdd(context, pluginId, workflowTools(resolved))
-  const compiled = await compile(input, pluginId ?? createDenTypeId("plugin"), resolved, context)
+  const compiled = await compile(input, pluginId ?? createDenTypeId("plugin"), resolved)
   let createdPluginId: DenTypeId<"plugin"> | null = null
   if (pluginId) {
     await editablePlugin(context, pluginId)
@@ -360,7 +358,7 @@ export async function updateMcpApp({ context, resolveTools, ...source }: UpdateM
     ...input,
     cssSource: input.cssSource ?? storedSource(current.version, current.payload).cssSource,
     description: input.description ?? current.payload.description ?? undefined,
-  }, pluginId, throughPlugin(resolved, pluginId), context)
+  }, pluginId, throughPlugin(resolved, pluginId))
   // Rechecked after compiling, outside the transaction so a slow check never
   // holds the row lock and a second pool connection at once.
   await requireEditor(context, id)
@@ -491,21 +489,83 @@ export async function isActiveMcpApp(input: { organizationId: string; appId: str
   return await activeApp(normalizeDenTypeId("organization", input.organizationId), appId(id.data)) !== null
 }
 
+/** Which revision a row is, without its encrypted payload. */
+type RevisionHead = Pick<Revision, "id" | "schemaVersion" | "isDeletedVersion">
+const revisionHeadColumns = {
+  id: ConfigObjectVersionTable.id,
+  schemaVersion: ConfigObjectVersionTable.schemaVersion,
+  isDeletedVersion: ConfigObjectVersionTable.isDeletedVersion,
+}
+
+async function latestRevisionHead(organizationId: DenTypeId<"organization">, id: DenTypeId<"configObject">): Promise<RevisionHead | null> {
+  const [row] = await db.select(revisionHeadColumns).from(ConfigObjectVersionTable).where(and(
+    eq(ConfigObjectVersionTable.organizationId, organizationId),
+    eq(ConfigObjectVersionTable.configObjectId, id),
+  )).orderBy(desc(ConfigObjectVersionTable.createdAt), desc(ConfigObjectVersionTable.id)).limit(1)
+  return row ?? null
+}
+
+/**
+ * Compiled revisions by their immutable id. A revision row is written once and
+ * never updated, so its payload (HTML, CSP, digests and the tools it was
+ * published with) is reused instead of read, decrypted and parsed, up to 2 MiB,
+ * on every App request. The payload is one encrypted column, so it cannot be
+ * read without its HTML. Nothing about who may use an App is kept: Plugin
+ * access, the active App and which revision is current are read every request.
+ */
+type RevisionContent = { payload: McpAppCompiledRevision; bytes: number; intact?: boolean }
+const REVISION_CONTENT_MAX_BYTES = 16 * 1024 * 1024
+const REVISION_CONTENT_MAX_ENTRIES = 64
+const revisionContents = new Map<string, RevisionContent>()
+let revisionContentBytes = 0
+
+async function revisionContent(organizationId: DenTypeId<"organization">, id: DenTypeId<"configObject">, head: RevisionHead): Promise<RevisionContent | null> {
+  if (head.isDeletedVersion || head.schemaVersion !== MCP_APP_CONFIG_SCHEMA_VERSION) return null
+  const key = `${organizationId}:${id}:${head.id}`
+  const kept = revisionContents.get(key)
+  if (kept) {
+    revisionContents.delete(key)
+    revisionContents.set(key, kept)
+    return kept
+  }
+  const [row] = await db.select({ normalizedPayloadJson: ConfigObjectVersionTable.normalizedPayloadJson })
+    .from(ConfigObjectVersionTable).where(and(
+      eq(ConfigObjectVersionTable.organizationId, organizationId),
+      eq(ConfigObjectVersionTable.configObjectId, id),
+      eq(ConfigObjectVersionTable.id, head.id),
+    )).limit(1)
+  const parsed = row ? mcpAppCompiledRevisionSchema.safeParse(row.normalizedPayloadJson) : null
+  if (!parsed?.success) return null
+  const raced = revisionContents.get(key)
+  if (raced) return raced
+  const payload = parsed.data
+  const content = { payload, bytes: payload.htmlBytes + Buffer.byteLength(JSON.stringify({ ...payload, html: "" })) }
+  if (content.bytes > REVISION_CONTENT_MAX_BYTES) return content
+  revisionContents.set(key, content)
+  revisionContentBytes += content.bytes
+  for (const [oldest, entry] of revisionContents) {
+    if (revisionContentBytes <= REVISION_CONTENT_MAX_BYTES && revisionContents.size <= REVISION_CONTENT_MAX_ENTRIES) break
+    revisionContents.delete(oldest)
+    revisionContentBytes -= entry.bytes
+  }
+  return content
+}
+
 async function accessibleRevisionUncached(input: McpAppAccessInput & { appId: string }) {
   const id = appId(input.appId)
   const organizationId = normalizeDenTypeId("organization", input.organizationId)
   // Read together: each is a database round trip on every App request. Nothing
   // from the App or its revision is used unless the member can reach its Plugin.
-  const [pluginId, active, current] = await Promise.all([
+  const [pluginId, active, head] = await Promise.all([
     accessibleAppPlugin(input),
     activeApp(organizationId, id),
-    latestRevision(organizationId, id),
+    latestRevisionHead(organizationId, id),
   ])
   if (!pluginId) return notFound()
   if (!active) return notFound()
-  const payload = current && compiledRevision(current)
-  if (!current || !payload) return notFound()
-  return { id, pluginId, organizationId, current, payload }
+  const content = head && await revisionContent(organizationId, id, head)
+  if (!head || !content) return notFound()
+  return { id, pluginId, organizationId, currentRevisionId: head.id, content }
 }
 
 // HTTP callers supply a fresh scope per request. No Plugin access survives that request.
@@ -522,25 +582,36 @@ function accessibleRevision(input: McpAppAccessInput & { appId: string }) {
 
 /** The member's current view of one App's own MCP server. */
 export async function loadMcpAppServerDefinition(input: McpAppAccessInput & { appId: string }): Promise<McpAppServerDefinition> {
-  const { id, pluginId, current, payload } = await accessibleRevision(input)
-  return { app: summarizeMcpAppRevision({ appId: id, revisionId: current.id, pluginId, payload }), tools: payload.tools }
+  const { id, pluginId, currentRevisionId, content: { payload } } = await accessibleRevision(input)
+  return {
+    app: summarizeMcpAppRevision({ appId: id, revisionId: currentRevisionId, pluginId, payload }),
+    tools: payload.tools,
+    ...(payload.loadsWithLaunch ? { loadsWithLaunch: true } : {}),
+  }
 }
 
 export async function loadMcpAppResource(input: McpAppAccessInput & { appId: string; revisionId: string }): Promise<McpAppResource> {
   const versionId = revisionId(input.revisionId)
-  const { id, pluginId, organizationId, current } = await accessibleRevision(input)
-  const version = current.id === versionId ? current : (await db.select().from(ConfigObjectVersionTable).where(and(
-    eq(ConfigObjectVersionTable.organizationId, organizationId),
-    eq(ConfigObjectVersionTable.configObjectId, id),
-    eq(ConfigObjectVersionTable.id, versionId),
-  )).limit(1))[0]
-  const payload = version && compiledRevision(version)
-  if (!version || !payload) return notFound()
-  if (digest(payload.html) !== payload.resourceDigest || Buffer.byteLength(payload.html) !== payload.htmlBytes) {
+  const { id, pluginId, organizationId, currentRevisionId, content: current } = await accessibleRevision(input)
+  let content: RevisionContent | null = current
+  if (currentRevisionId !== versionId) {
+    // An earlier revision must still belong to this App before its kept content is used.
+    const [head] = await db.select(revisionHeadColumns).from(ConfigObjectVersionTable).where(and(
+      eq(ConfigObjectVersionTable.organizationId, organizationId),
+      eq(ConfigObjectVersionTable.configObjectId, id),
+      eq(ConfigObjectVersionTable.id, versionId),
+    )).limit(1)
+    content = head ? await revisionContent(organizationId, id, head) : null
+  }
+  if (!content) return notFound()
+  const { payload } = content
+  // Hashed once per kept revision, not on every read.
+  content.intact ??= digest(payload.html) === payload.resourceDigest && Buffer.byteLength(payload.html) === payload.htmlBytes
+  if (!content.intact) {
     throw new McpAppError(422, "mcp_app_digest_mismatch", "The MCP App revision failed its integrity check.")
   }
   return {
-    app: summarizeMcpAppRevision({ appId: id, revisionId: version.id, pluginId, payload }),
+    app: summarizeMcpAppRevision({ appId: id, revisionId: versionId, pluginId, payload }),
     html: payload.html,
     csp: payload.csp,
     resourceDigest: payload.resourceDigest,

@@ -29,6 +29,16 @@ test("computer tool schemas stay valid after OpenCode v1 moves $defs to definiti
   await expect(plugin.tool.computer_run.execute({ surface: "computer", code: "return input", input: () => 1 }, { sessionID: "s" })).rejects.toThrow();
 });
 
+test("computer_open defaults to control and offers the narrower modes only when the person asks", async () => {
+  const plugin = await server();
+  const open = z.object(plugin.tool.computer_open.args);
+  expect(open.parse({ app_id: "com.apple.TextEdit", purpose: "Write the note" }).mode).toBe("control");
+  expect(open.parse({ app_id: "com.apple.TextEdit", mode: "observe", purpose: "Read the note" }).mode).toBe("observe");
+  const description = plugin.tool.computer_open.description;
+  expect(description).toContain("defaults to control");
+  expect(description).not.toContain("prefer assist");
+});
+
 test("a Windows PC is not offered app scripting", async () => {
   const platform = Object.getOwnPropertyDescriptor(process, "platform")!;
   Object.defineProperty(process, "platform", { value: "win32" });

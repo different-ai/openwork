@@ -3,6 +3,7 @@ import { and, asc, eq, gt, inArray, lte } from "@openwork-ee/den-db/drizzle"
 import { RemoteSessionCommandTable, RemoteSessionRequestTable } from "@openwork-ee/den-db/schema/remote-session-commands"
 import { createDenTypeId, normalizeDenTypeId, type DenTypeId } from "@openwork-ee/utils/typeid"
 import {
+  remoteSessionAnswerInputSchema,
   remoteSessionReadInputSchema,
   remoteSessionRequestResultSchema,
   remoteSessionSendInputSchema,
@@ -106,6 +107,10 @@ function mapInput(row: RequestRow): RemoteSessionRequestInput | null {
   if (row.action === "send") {
     const input = remoteSessionSendInputSchema.safeParse(row.input)
     return input.success ? { action: "send", input: input.data } : null
+  }
+  if (row.action === "answer") {
+    const input = remoteSessionAnswerInputSchema.safeParse(row.input)
+    return input.success ? { action: "answer", input: input.data } : null
   }
   const input = remoteSessionStopInputSchema.safeParse(row.input)
   return input.success ? { action: "stop", input: input.data } : null

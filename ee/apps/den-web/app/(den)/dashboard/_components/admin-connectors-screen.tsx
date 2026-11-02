@@ -2,7 +2,7 @@
 
 import { Plus } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
-import { getAddConnectorRoute, getLibraryConnectorRoute, getMcpConnectionRoute, orgFeatureEnabled } from "../../_lib/den-org";
+import { getAddConnectorRoute, getLibraryConnectorRoute, getMcpConnectionRoute } from "../../_lib/den-org";
 import { useOrgDashboard } from "../_providers/org-dashboard-provider";
 import { managedAccessStatus } from "./access-summary";
 import { usePrefetchConnectorCatalog } from "./connector-catalog-screen";
@@ -49,7 +49,6 @@ function ConnectorsEmpty({ orgSlug }: { orgSlug: string | null }) {
 export function AdminConnectorsScreen() {
   const toast = useDenToast();
   const { orgSlug, orgContext } = useOrgDashboard();
-  const libraryNavigation = orgFeatureEnabled(orgContext, "libraryConnectorNavigation");
   const connections = useMcpConnections("manageable");
   const usable = useMcpConnections("usable");
   const deleteConnection = useDeleteMcpConnection();
@@ -95,7 +94,7 @@ export function AdminConnectorsScreen() {
 
   function rowFor(connection: ExternalMcpConnection) {
     const href = getMcpConnectionRoute(orgSlug, connection.id);
-    const assignedConnection = assignedConnectorForLibrary(libraryNavigation, connection.id, usable.data);
+    const assignedConnection = assignedConnectorForLibrary( connection.id, usable.data);
     const readinessView = { organization: true, checking: firstChecks.has(connection.id) || rechecking.has(connection.id) };
     const readinessState = connectorReadinessState(connection, readinessView);
     const checkLabel = readinessState === "Not checked" ? "Check now" : "Check again";

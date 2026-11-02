@@ -186,11 +186,6 @@ export function AppBuilderStep({
   );
   const built = Boolean(progress.app || progress.builtUnrecorded);
   const title = progress.title ? ` “${progress.title}”` : "";
-  const sentence = built
-    ? `${editing ? "Updated" : "Created"} MCP App${title}`
-    : progress.failed
-      ? `Couldn’t ${editing ? "update" : "create"} MCP App${title}`
-      : `${editing ? "Updating" : "Creating"} MCP App${title}`;
   const state = progress.builtUnrecorded
     ? "Open it from your Library"
     : progress.unavailable
@@ -203,7 +198,6 @@ export function AppBuilderStep({
   // The stages show while the agent works, or after it failed or paused; a
   // ready App folds them into one row.
   const stages = built ? [] : appCreationStages(run, progress, editing, fixedProblems, latestProblem);
-  const done = stages.filter((stage) => stage.state === "done").length;
   const details = detailsOpen ? (
     <div className="mt-2 flex flex-col gap-2">
       {parts.map((part) => (
@@ -212,87 +206,79 @@ export function AppBuilderStep({
     </div>
   ) : null;
 
-  if (stages.length === 0) {
-    return (
-      <section
-        className="group/step min-w-0"
-        data-app-builder-step
-        data-app-creation-stage={progress.stage}
-        aria-label={sentence}
-      >
-        <div className="flex min-h-6 min-w-0 items-center gap-2 text-sm text-muted-foreground">
-          <Blocks className="size-4 shrink-0" aria-hidden="true" />
-          <span className="shrink-0">{sentence}</span>
-          {state ? <span className="min-w-0 truncate text-xs text-muted-foreground">{state}</span> : null}
-          {shownElapsed ? <span className="shrink-0 text-xs tabular-nums text-muted-foreground/70" data-app-builder-elapsed>{shownElapsed}</span> : null}
-          {progress.app && progress.build ? <BuiltAppChatPreview part={progress.build} compact /> : null}
-          <DetailsToggle open={detailsOpen} onToggle={() => setDetailsOpen(!detailsOpen)} label={sentence} />
-        </div>
-        {details}
-      </section>
-    );
-  }
-
+  const artifactSentence = built
+    ? `${editing ? "Updated" : "Created"} artifact${title}`
+    : progress.title ?? (editing ? "Artifact changes" : "Artifact");
+  const currentStage = stages.find((stage) => stage.state === "failed")
+    ?? stages.find((stage) => stage.state === "active");
+  const failedPart = [progress.build, run.preparation, run.script?.part].find(
+    (part) => part && appBuilderResultFailed(part),
+  );
+  const problem = failedPart ? appBuildProblem(failedPart) : null;
+  // A compiled view is not proof that its connected data has been read.
+  // Keep the summary factual; the original checklist remains in details.
+  const stageLabel = currentStage?.key === "write"
+    ? editing ? "Writing the changes" : "Writing the artifact"
+    : currentStage?.key === "build" ? "Building the artifact"
+    : currentStage?.key === "check" ? "Checking the connections"
+    : "Finding the right connections";
+  const subtitle = progress.failed
+    ? `${problem ?? (failedPart?.state === "output-denied" ? "Permission was denied" : `Couldn’t ${editing ? "update" : "create"} the artifact`)}. Review details before retrying.`
+    : progress.unavailable ? "Couldn’t open the preview. Review details."
+    : progress.builtUnrecorded ? "Open it from your Library"
+    : built ? null
+    : state === "Reconnecting" ? "Reconnecting — progress will resume when connected"
+    : state === "Waiting for your response" ? "Waiting for your response — review the request in chat"
+    : state === "Paused" ? "Paused — send a message to continue"
+    : stageLabel;
   return (
     <section
-      className="group/step w-full min-w-0 max-w-lg rounded-xl border border-border px-4 py-3"
+      className="group/step w-full min-w-0"
       data-app-builder-step
+      data-artifact-progress
       data-app-creation-stage={progress.stage}
-      aria-label={sentence}
+      aria-label={artifactSentence}
     >
-      <div className="flex min-w-0 items-center gap-2">
-        <span className="min-w-0 truncate text-sm text-muted-foreground">{sentence}</span>
-        {state ? <span className="shrink-0 text-xs text-muted-foreground">{state}</span> : null}
-        <span className="ml-auto flex shrink-0 items-center gap-1">
+      {/* Both lines and trailing slots stay mounted through tool/thought gaps.
+          Completion also keeps the same geometry instead of collapsing chat. */}
+      <div className="flex min-h-12 min-w-0 items-center gap-2 text-sm">
+        <span className="shrink-0" aria-hidden="true">
+          {built ? <Blocks className="size-4 text-muted-foreground" strokeWidth={1.5} />
+            : <StageMark state={progress.failed || progress.unavailable ? "failed" : "active"} running={progress.running} />}
+        </span>
+        <div className="min-w-0 flex-1">
+          <div className={`truncate ${built ? "text-muted-foreground" : "text-foreground"}`}>{artifactSentence}</div>
+          <div
+            className={`h-4 truncate text-xs ${progress.failed || progress.unavailable ? "text-destructive" : "text-muted-foreground"}`}
+            data-app-builder-activity
+            title={subtitle ?? undefined}
+          >
+            {subtitle}
+          </div>
+        </div>
+        <span className="flex shrink-0 items-center gap-1">
           {shownElapsed ? <span className="text-xs tabular-nums text-muted-foreground/70" data-app-builder-elapsed>{shownElapsed}</span> : null}
-          <DetailsToggle open={detailsOpen} onToggle={() => setDetailsOpen(!detailsOpen)} label={sentence} alwaysVisible={progress.failed} />
+          {progress.app && progress.build ? <BuiltAppChatPreview part={progress.build} compact /> : null}
+          <DetailsToggle open={detailsOpen} onToggle={() => setDetailsOpen(!detailsOpen)} label={artifactSentence} alwaysVisible={!progress.running && !built} />
         </span>
       </div>
-      <div
-        className="sr-only"
-        role="progressbar"
-        aria-label={`${sentence} progress`}
-        aria-valuemin={0}
-        aria-valuemax={stages.length}
-        aria-valuenow={done}
-      />
-      <ol className="mt-2 flex flex-col gap-2 text-sm" aria-label={`Stages of ${sentence}`} data-app-builder-checklist>
-        {stages.map((stage) => (
-          <li key={stage.key} className="flex min-w-0 flex-col" data-checklist-state={stage.state}>
-            <span className="flex min-w-0 items-center gap-2">
-              <StageMark state={stage.state} running={progress.running} />
-              <span
-                className={`min-w-0 truncate ${
-                  stage.state === "pending"
-                    ? "text-muted-foreground/60"
-                    : stage.state === "failed"
-                      ? "text-destructive"
-                      : stage.state === "active"
-                        ? `text-foreground ${progress.running ? "ow-text-shimmer motion-reduce:animate-none" : ""}`
-                        : "text-foreground"
-                }`}
-              >
-                {stage.label}
-              </span>
-            </span>
-            {stage.notes?.map((note) => (
-              <span key={note} className="ml-6 truncate text-muted-foreground">{note}</span>
+      {detailsOpen ? (
+        <div className="mt-2 min-w-0">
+          <ol className="flex flex-col gap-2 text-sm" aria-label={`Stages of ${artifactSentence}`} data-app-builder-checklist>
+            {appCreationStages(run, progress, editing, fixedProblems, latestProblem).map((stage) => (
+              <li key={stage.key} className="flex min-w-0 flex-col" data-checklist-state={stage.state}>
+                <span className="flex min-w-0 items-center gap-2">
+                  <StageMark state={stage.state} running={progress.running} />
+                  <span className={stage.state === "failed" ? "text-destructive" : "text-muted-foreground"}>{stage.label}</span>
+                </span>
+                {stage.notes?.map((note) => <span key={note} className="ml-6 text-muted-foreground">{note}</span>)}
+                {stage.state === "active" ? <span className="ml-6 h-4 truncate text-xs text-muted-foreground">{progress.running ? activity : null}</span> : null}
+              </li>
             ))}
-            {/* Reserve one line throughout the active step, including gaps
-                between thoughts and tool calls, so the checklist stays still. */}
-            {stage.state === "active" ? (
-              <span
-                className="ml-6 h-4 shrink-0 truncate text-xs text-muted-foreground"
-                data-app-builder-activity
-                aria-hidden={!progress.running || !activity}
-              >
-                {progress.running ? activity : null}
-              </span>
-            ) : null}
-          </li>
-        ))}
-      </ol>
-      {details}
+          </ol>
+          {details}
+        </div>
+      ) : null}
     </section>
   );
 }

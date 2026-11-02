@@ -1011,7 +1011,7 @@ export type ExternalCapabilityExecuteResult =
         | "policy_blocked"
         | "insufficient_mcp_scope"
       /** Why a policy_blocked call was refused, when a caller acts on it. */
-      reason?: "provider_not_read_only"
+      reason?: "provider_not_read_only" | "provider_destructive"
       message: string
       requiredScope?: "mcp:read" | "mcp:write"
       referenceId?: string
@@ -1336,7 +1336,7 @@ export async function describeExternalCapability(input: {
   connectionId: string
   toolName: string
   redirectUriBase: string
-}): Promise<{ ok: true; inputSchema: Record<string, unknown>; readOnly: boolean } | ExternalCapabilityFailure> {
+}): Promise<{ ok: true; inputSchema: Record<string, unknown>; readOnly: boolean; destructive: boolean } | ExternalCapabilityFailure> {
   const prepared = await prepareExternalCapability(input)
   if (!prepared.ok) return prepared
   const { connection, member } = prepared
@@ -1356,7 +1356,7 @@ export async function describeExternalCapability(input: {
       message: `No current tool named "${input.toolName}" exists on "${connection.name}".`,
     }
   }
-  return { ok: true, inputSchema: tool.inputSchema, readOnly: providerMarksReadOnly(tool.annotations) }
+  return { ok: true, inputSchema: tool.inputSchema, readOnly: providerMarksReadOnly(tool.annotations), destructive: tool.annotations?.destructiveHint === true }
 }
 
 /**
@@ -1418,6 +1418,8 @@ export async function executeExternalCapability(input: {
    * caller's live tool list. An extra restriction; never replaces write scope.
    */
   requireReadOnly?: boolean
+  /** Refuse the tool when its provider now marks it destructive in this caller's live tool list. */
+  refuseDestructive?: boolean
   /** Fail closed when the live input schema no longer matches schemaDigest. */
   requireSchemaMatch?: boolean
   /** What started this call, recorded with its Library usage event. */
@@ -1472,6 +1474,18 @@ export async function executeExternalCapability(input: {
           reason: "provider_not_read_only",
           capability: buildExternalCapabilityName(connection.id, input.toolName),
           message: `${input.toolName} is no longer marked read-only by its provider, so OpenWork blocked the call.`,
+          sameArgumentsRetryable: false,
+          retry: { action: "search_capabilities", searchRequired: true },
+        }
+      }
+
+      if (input.refuseDestructive && tool.annotations?.destructiveHint === true) {
+        return {
+          ok: false,
+          error: "policy_blocked",
+          reason: "provider_destructive",
+          capability: buildExternalCapabilityName(connection.id, input.toolName),
+          message: `${input.toolName} is now marked destructive by its provider, so OpenWork blocked the call.`,
           sameArgumentsRetryable: false,
           retry: { action: "search_capabilities", searchRequired: true },
         }

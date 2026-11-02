@@ -25,57 +25,20 @@ test("a platform admin sees, per feature across organizations, whether backgroun
 
   await step("the admin opens Features: each background feature shows organizations on, members using, runs, its days and one health label", async () => {
     await admin.see({ role: "heading", label: "Features" }, { timeoutMs: 60_000 });
-    await admin.see({ testId: "admin-feature-usage-toggle-automationCalendarTriggers" });
+    // The schedule-trigger outcome features are retired (GA): no rows. Your agent is the remaining outcome feature.
+    await admin.see({ testId: "admin-feature-usage-toggle-workbotProactive" });
+    // Historical usage is preserved in the store, but cannot resurrect a retired rollout.
+    await admin.notSee({ testId: "admin-feature-usage-toggle-slackSendAsBot" });
     const health = async (key: string) => (await adminProbe.dom(`[data-testid="admin-feature-usage-health-${key}"]`)).elements[0]?.text ?? "";
     const labels = {
-      calendar: await health("automationCalendarTriggers"),
-      slack: await health("slackSendAsBot"),
-      interval: await health("automationIntervalSchedules"),
       agent: await health("workbotProactive"),
-      adoptionOnly: await health("mermaidZoom"),
+      adoptionOnly: await health("settledSessions"),
       unused: await health("computerUse"),
     };
     const bars = await adminProbe.dom('[data-testid="admin-feature-usage-bars"]');
     const failed = await adminProbe.dom('[data-testid="admin-feature-usage-bars"] [data-failed="true"]');
-    const ok = labels.calendar === "Most meetings skipped" && labels.slack === "1 hit the limit" && labels.interval === "Healthy"
-      && labels.agent === "Healthy" && labels.adoptionOnly === "In use" && labels.unused === "Not used" && bars.elements.length >= 4 && failed.elements.length >= 2;
+    const ok = labels.agent === "Healthy" && labels.adoptionOnly === "In use" && labels.unused === "Not used" && bars.elements.length >= 1 && failed.elements.length >= 1;
     evidence.recordAssertionEvidence("Health reads in plain words", `${JSON.stringify(labels)}; day bars=${bars.elements.length}; failed days marked=${failed.elements.length}`, ok);
-    expect(ok).toBe(true);
-    await admin.screenshot();
-  });
-
-  await step("after: opening Before or after meetings shows totals, why meetings were skipped and each organization", async () => {
-    await admin.click({ testId: "admin-feature-usage-toggle-automationCalendarTriggers" });
-    await admin.see({ testId: "admin-feature-usage-reasons-automationCalendarTriggers" });
-    const text = await adminProbe.text();
-    const organizations = await adminProbe.dom('[data-testid^="admin-feature-usage-organization-"]');
-    const names = organizations.elements.map((element) => element.text);
-    const ok = text.includes("Turned off for the organization") && text.includes("Model no longer available") && text.includes("Run failed")
-      && names.join(",") === "Acme Robotics,Northwind Labs" && !text.includes("execution_runtime_unavailable");
-    evidence.recordAssertionEvidence("Skips and failures by reason, then by organization", `reasons: Turned off for the organization, Model no longer available, Run failed; organizations: ${names.join(", ")}`, ok);
-    expect(ok).toBe(true);
-    await admin.screenshot();
-  });
-
-  await step("Slack messages from the bot say the counts cover the last 24 hours and who hit the daily limit", async () => {
-    await admin.click({ testId: "admin-feature-usage-toggle-slackSendAsBot" });
-    await admin.see({ testId: "admin-feature-usage-detail-slackSendAsBot" });
-    const coverage = (await adminProbe.dom('[data-testid="admin-feature-usage-detail-slackSendAsBot"] [data-testid="admin-feature-usage-coverage"]')).elements[0]?.text ?? "";
-    const text = (await adminProbe.dom('[data-testid="admin-feature-usage-detail-slackSendAsBot"]')).elements[0]?.text ?? "";
-    const ok = coverage === "Last 24 hours only" && text.includes("Hit the limit") && text.includes("Slack refused the message");
-    evidence.recordAssertionEvidence("A store that keeps one day says so", `coverage="${coverage}"; reasons include "Slack refused the message"`, ok);
-    expect(ok).toBe(true);
-    await admin.screenshot();
-  });
-
-  await step("30 days include the older meeting run and the earlier use", async () => {
-    await admin.click({ testId: "admin-feature-usage-range-30d" });
-    await admin.see({ text: "Last 30 days" });
-    const runs = await adminProbe.eventually(async () => (await adminProbe.dom('[data-testid="admin-feature-usage-detail-automationCalendarTriggers"] dd')).elements[0]?.text ?? "", {
-      within: 15_000, until: (value) => value === "15", label: "30-day meeting runs",
-    });
-    const ok = runs === "15";
-    evidence.recordAssertionEvidence("The range widens the counts", `meeting runs: 14 in 7 days → ${runs} in 30 days`, ok);
     expect(ok).toBe(true);
     await admin.screenshot();
   });

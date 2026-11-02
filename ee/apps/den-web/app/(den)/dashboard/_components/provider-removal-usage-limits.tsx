@@ -6,7 +6,6 @@ import type {
   GatewayProviderRemovalUsageLimit,
   GatewayUsageLimitPolicy,
 } from "@openwork/types/den/gateway-usage-limits";
-import { markFeatureUsed } from "../../_lib/feature-usage";
 import { describeLimitAmounts, useGatewayPolicies } from "./gateway-usage-limits-data";
 import { ProviderHasUsageLimitsError } from "./inference-provider-data";
 
@@ -29,22 +28,20 @@ function sameChoice(a: GatewayProviderRemovalLimitChoice, b: GatewayProviderRemo
 }
 
 /**
- * What happens to a provider's spend limits when it is removed (gatewayProviderRemovalLimits).
- * With the feature on, the limits are read up front when the person may view them; the server's
- * 409 list is authoritative either way. Off, nothing is read or sent and the delete is unchanged.
+ * What happens to a provider's spend limits when it is removed.
+ * Read limits up front when the person may view them; the server's 409 list is authoritative.
  */
-export function useProviderRemovalUsageLimits({ orgId, providerId, open, providers, featureOn }: {
+export function useProviderRemovalUsageLimits({ orgId, providerId, open, providers }: {
   orgId: string | null;
   providerId: string;
   open: boolean;
   providers: ProviderMoveTarget[];
-  featureOn: boolean;
 }) {
-  const policies = useGatewayPolicies(orgId ?? "", { enabled: featureOn && open && Boolean(orgId) });
+  const policies = useGatewayPolicies(orgId ?? "", { enabled: open && Boolean(orgId) });
   const [fromServer, setFromServer] = useState<GatewayProviderRemovalUsageLimit[] | null>(null);
   const [picked, setPicked] = useState<GatewayProviderRemovalLimitChoice | null>(null);
   const targets = providerMoveTargets(providers, providerId);
-  const usageLimits = fromServer ?? (featureOn && policies.data ? providerUsageLimits(policies.data.policies, providerId) : []);
+  const usageLimits = fromServer ?? (policies.data ? providerUsageLimits(policies.data.policies, providerId) : []);
   const fallback: GatewayProviderRemovalLimitChoice = targets[0] ? { action: "move", providerId: targets[0].id } : { action: "archive" };
   const pickedStillValid = picked && (picked.action === "archive" || targets.some((target) => target.id === picked.providerId));
   const choice = pickedStillValid ? picked : fallback;
@@ -56,7 +53,6 @@ export function useProviderRemovalUsageLimits({ orgId, providerId, open, provide
     /** The choice to send with the delete, only once limits are known to exist. */
     requestChoice(): GatewayProviderRemovalLimitChoice | undefined {
       if (!usageLimits.length) return undefined;
-      markFeatureUsed("gatewayProviderRemovalLimits");
       return choice;
     },
     /** True when the delete stopped because the provider has limits; the dialog then asks. */

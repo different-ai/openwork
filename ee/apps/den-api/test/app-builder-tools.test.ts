@@ -27,17 +27,13 @@ function assertDescriptions(value: unknown, path: string) {
   if (schema.items) assertDescriptions(schema.items, `${path}[]`)
 }
 
-test("App preparation lists built-in libraries only for an editor who has them", () => {
+test("App preparation lists built-in libraries", () => {
   const input = { title: "Procedural scene" }
-  const off = appAuthoringStarter(input, [])
-  const on = appAuthoringStarter(input, [], { libraries: true })
-  assert.deepEqual(on.nextSteps.slice(0, -1), off.nextSteps)
-  assert.doesNotMatch(off.nextSteps.join("\n"), /built-in libraries/i)
+  const on = appAuthoringStarter(input, [])
   for (const specifier of ["lucide-react", "recharts", "motion/react", "three/addons/controls/OrbitControls.js"]) {
     assert.match(on.nextSteps.at(-1) ?? "", new RegExp(`"${specifier}"|${specifier} for`))
   }
   assert.match(on.nextSteps.at(-1) ?? "", /<svg>/)
-  assert.equal(on.starter.reactSource, off.starter.reactSource)
   assert.match(BUILD_AN_APP_SKILL_SOURCE, /When prepare_app's nextSteps lists built-in libraries, import only those/)
 })
 

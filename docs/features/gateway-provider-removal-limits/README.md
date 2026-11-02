@@ -1,6 +1,9 @@
 # AI Gateway: keep spend limits when removing a provider
 
-- **Feature key:** `gatewayProviderRemovalLimits`
+> **GA:** Available without a feature flag. The former rollout key is retired.
+> Off/on screenshots below are historical comparisons, not current deployment options.
+
+- **Retired rollout key:** `gatewayProviderRemovalLimits`
 - **Deployments:** OpenWork Cloud and self-hosted
 - **Author:** [benjaminshafii](https://github.com/benjaminshafii)
 
@@ -8,7 +11,7 @@ A spend limit can be scoped to one AI Gateway provider. Before this feature,
 removing that provider left the limit active but pointing at nothing: it capped
 no requests, and the provider that replaced it had no cap.
 
-With the feature on for an organization:
+By default:
 
 - **Removing a provider** (AI Gateway › AI Providers › a provider › Remove)
   lists the spend limits on it and asks what happens to them: move them to
@@ -17,8 +20,7 @@ With the feature on for an organization:
 
   ![Remove provider dialog with one spend limit](remove-provider-dialog.png)
 
-- **Limits whose provider was already removed** (before the feature, or while
-  it was off) show **Provider removed** and **Not applied** on the Limits page,
+- **Limits whose provider was already removed** (before GA) show **Provider removed** and **Not applied** on the Limits page,
   with **Choose provider** opening the limit editor, which explains it and lets
   the admin pick a live provider.
 
@@ -27,8 +29,7 @@ With the feature on for an organization:
 ## API
 
 `DELETE /v1/inference-providers/{id}` accepts `usageLimits=move` with
-`moveUsageLimitsTo=<provider id>`, or `usageLimits=archive`. With the feature on
-and active limits on the provider, a request without a choice changes nothing
+`moveUsageLimitsTo=<provider id>`, or `usageLimits=archive`. With active limits on the provider, a request without a choice changes nothing
 and returns `409 provider_has_usage_limits` with the limits (name, amounts).
 Moving to a provider of another organization is `404
 usage_limit_provider_not_found`; to the same or a turned-off provider, `400` or
@@ -38,18 +39,16 @@ audit row (`policy_provider_moved` or `policy_archived` with
 `reason: "provider_removed"`). It needs only Manage Gateway providers.
 
 `GET /v1/gateway/usage-limit-policies` returns `providerStatus`
-(`available`, `removed`, or null for default limits) whether or not the feature
-is on.
+(`available`, `removed`, or null for default limits).
 
-## Turning it off
+## Availability
 
-The delete route behaves exactly as before the feature: it ignores `usageLimits`
-and leaves limits on the removed provider as they are. The dialog no longer
-lists limits and the Limits page shows the old provider label. Limits already
-moved or archived stay as they are.
+Generally available. The rollout flag is retired; organization/member overrides,
+operator locks and old kill-switch rows no longer disable this behavior.
+Authorization, provider setup, consent and runtime compatibility still apply.
 
 ## How to try it
 
-Turn the feature on for a test organization, add two providers, create a limit
+Add two providers in a test organization, create a limit
 on one of them and remove that provider. `evals/proofs/provider-removal-limits.proof.test.ts`
 walks through both screens.

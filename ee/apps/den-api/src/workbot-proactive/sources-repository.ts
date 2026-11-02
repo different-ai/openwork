@@ -1,5 +1,8 @@
+import { and, count, eq, isNotNull, isNull } from "@openwork-ee/den-db/drizzle"
+import { ConnectedAccountTable, MemberTable } from "@openwork-ee/den-db/schema"
 import type { AgentSourceConnection } from "@openwork/types/den/workbot-proactive"
 import type { DenTypeId } from "@openwork-ee/utils/typeid"
+import { db } from "../db.js"
 import { listExternalMcpConnections, listUsableExternalMcpConnections } from "../capability-sources/external-mcp-connections.js"
 import { listNativeProviderUsableEntries } from "../capability-sources/native-provider-connections.js"
 import { getOrgOAuthClient } from "../capability-sources/oauth-credentials.js"
@@ -10,7 +13,8 @@ import type { MemberConnection } from "./sources.js"
 
 /**
  * Database reads behind a member's agent's sources: the connections the member can use and whether their own account
- * on each is ready, and the organization's connections for the admin. No provider is called.
+ * on each is ready, the organization's connections for the admin, and how many members connected each. No provider is
+ * called.
  */
 
 /** The member's usable connections (Den's own and MCP), each with whether their account is ready to read. */
@@ -61,4 +65,45 @@ export async function listOrganizationSourceConnections(
     }
   }
   return [...legacy, ...connections]
+}
+
+type CountedConnection = { id: string; kind: string; authType: string; credentialMode: string }
+
+/**
+ * How many active members connected their own account on each of the organization's connections, by connection id:
+ * Den's own providers (including one set up before connections had rows, whose accounts are saved under the provider's
+ * key) and MCP connections where each member signs in. A connection everyone shares one credential for (or that needs
+ * no sign-in) is left out: who uses it isn't known. Picks each core source's automatic default.
+ */
+export async function countConnectedMembers(
+  organizationId: DenTypeId<"organization">,
+  deps: {
+    rows: (organizationId: DenTypeId<"organization">) => Promise<readonly CountedConnection[]>
+    accounts: (organizationId: DenTypeId<"organization">) => Promise<readonly { providerId: string; members: number }[]>
+  } = { rows: listExternalMcpConnections, accounts: countConnectedAccounts },
+): Promise<Map<string, number>> {
+  const [rows, accounts] = await Promise.all([deps.rows(organizationId), deps.accounts(organizationId)])
+  const byProvider = new Map(accounts.map((entry) => [entry.providerId, entry.members]))
+  const counts = new Map<string, number>()
+  for (const provider of Object.values(NATIVE_OAUTH_PROVIDERS)) counts.set(provider.providerId, byProvider.get(provider.providerId) ?? 0)
+  for (const row of rows) {
+    const perMember = row.kind === "native_provider" || (row.credentialMode === "per_member" && (row.authType === "oauth" || row.authType === "apikey"))
+    if (perMember) counts.set(row.id, byProvider.get(row.id) ?? 0)
+  }
+  return counts
+}
+
+/** Active members with a saved access token (or personal API key), per provider id, in one organization. */
+async function countConnectedAccounts(organizationId: DenTypeId<"organization">): Promise<{ providerId: string; members: number }[]> {
+  return db
+    .select({ providerId: ConnectedAccountTable.providerId, members: count() })
+    .from(ConnectedAccountTable)
+    .innerJoin(MemberTable, eq(MemberTable.id, ConnectedAccountTable.orgMembershipId))
+    .where(and(
+      eq(ConnectedAccountTable.organizationId, organizationId),
+      eq(MemberTable.organizationId, organizationId),
+      isNull(MemberTable.removedAt),
+      isNotNull(ConnectedAccountTable.accessToken),
+    ))
+    .groupBy(ConnectedAccountTable.providerId)
 }

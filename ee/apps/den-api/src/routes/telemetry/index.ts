@@ -34,7 +34,6 @@ import { describeRoute } from "hono-openapi"
 import { z } from "zod"
 import { db } from "../../db.js"
 import { checkEntitlement } from "../../entitlements.js"
-import { organizationFeatureEnabled } from "../../features.js"
 import { jsonValidator, orgMemberRoute, orgPermissionRoute, queryValidator } from "../../middleware/index.js"
 import { enterprisePlanRequiredSchema, invalidRequestSchema, jsonResponse, unauthorizedSchema, emptyResponse } from "../../openapi.js"
 import type { AuthContextVariables } from "../../session.js"
@@ -295,7 +294,6 @@ export function registerTelemetryRoutes<T extends { Variables: TelemetryRouteVar
       const thirtyDaysAgo = new Date(now - 30 * DAY_MS)
       const trendStart = new Date(now - ANALYTICS_TREND_WEEKS * 7 * DAY_MS)
       const dayStart = dailyTrendStart(now)
-      const dailyEnabled = await organizationFeatureEnabled(orgId, "analyticsDailyTrends", { userId: orgContext?.currentMember.userId })
 
       const [memberRows, inviteRows, window7d, window30d, weeklyRows, modelDimensionRows, dailyRows] = await Promise.all([
         db
@@ -310,7 +308,7 @@ export function registerTelemetryRoutes<T extends { Variables: TelemetryRouteVar
         queryWindowMetrics(db, orgId, thirtyDaysAgo, dimensionFilter),
         selectWeeklyActivity(db, orgId, trendStart, dimensionFilter),
         selectModelDimensionUsage(db, orgId, thirtyDaysAgo, dimensionFilter),
-        dailyEnabled ? selectDailyActivity(db, orgId, dayStart, dimensionFilter) : null,
+        selectDailyActivity(db, orgId, dayStart, dimensionFilter),
       ])
 
       const weekly = Array.from({ length: ANALYTICS_TREND_WEEKS }, (_, i) => {

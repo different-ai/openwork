@@ -2,7 +2,6 @@ import { createHash, randomBytes } from "node:crypto";
 import { createServer } from "node:http";
 import { connect, debuggerUrlFor, listTargets, type Surface } from "@openwork/cdp";
 import type { Seed } from "@openwork/env";
-import { enableOrganizationCapabilities } from "./organization-capabilities.ts";
 
 export const DEMO_CLIENT = "synthetic-review-client";
 export const DEMO_SECRET = "synthetic-review-secret";
@@ -87,7 +86,6 @@ export async function revisedCustomConnectorFlows(seed: Seed) {
   const address = provider.address(); if (!address || typeof address === "string") throw new Error("No provider port"); origin = `http://127.0.0.1:${address.port}`;
   try {
     const den = await seed.den({ env: { DEN_ALLOW_PRIVATE_MCP_URLS: "1" }, org: { name: "Fieldnotes Studio", admin: { name: "Connector Admin" } } });
-    await enableOrganizationCapabilities(seed, den.admin, { customConnectorSetup: true });
     const web = await seed.web({ den, signedInAs: den.admin, startPath: "/dashboard/mcp-connections", headless: true, viewport: { width: 1280, height: 1300 } });
     const endpoint = web.client.webSocketDebuggerUrl;
     if (!endpoint) throw new Error("No browser CDP endpoint");

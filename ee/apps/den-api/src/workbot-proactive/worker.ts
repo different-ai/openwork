@@ -1,6 +1,5 @@
 import { libraryConnectorLink } from "../agent-links.js"
 import { markFeaturesUsed, type MarkFeaturesUsed } from "../feature-usage.js"
-import { organizationFeatureEnabled } from "../features.js"
 import { appLogger } from "../observability/logger.js"
 import { readMemberGoogleCalendar } from "../routes/org/google-workspace.js"
 import { organizationCloudModel } from "../workbot/model.js"
@@ -22,7 +21,7 @@ import {
   toldAgentItems,
   type AgentInstanceRow,
 } from "./repository.js"
-import { listMemberConnections } from "./sources-repository.js"
+import { countConnectedMembers, listMemberConnections } from "./sources-repository.js"
 import { readAgentTemplate } from "./template.js"
 import { agentMessageId, agentSessionId, defaultAgentTurnDeps, runAgentTurn } from "./turn.js"
 import { wakeAgent, type AgentWakeDeps, type AgentWakeOutcome } from "./wake.js"
@@ -60,9 +59,9 @@ export function defaultAgentWakeDeps(): AgentWakeDeps {
     destinationBlock: (input) => destinationBlock(input),
     deliver: (input) => deliverAgentMessage(input),
     recordChecks: recordAgentChecks,
-    library: (organizationId, userId) => organizationFeatureEnabled(organizationId, "workbotAgentLibrary", { userId }),
     recordCheck: recordMemberCheck,
     connections: listMemberConnections,
+    connectedMembers: countConnectedMembers,
     connectLink: libraryConnectorLink,
   }
 }

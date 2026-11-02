@@ -41,7 +41,6 @@ import { env } from "../../env.js"
 import { recordWorkbotConnection } from "../../workbot/telemetry.js"
 import { connectionRemovalLink, memberSignInLink } from "../../agent-links.js"
 import { appLogger } from "../../observability/logger.js"
-import { organizationFeatureEnabled, requireFeature } from "../../features.js"
 import { automaticOAuthSetupDenial, oauthScopeSelectionChanged } from "../../capability-sources/external-mcp-oauth-setup-guard.js"
 import {
   jsonValidator,
@@ -2018,8 +2017,7 @@ async function createExternalConnectionResponse(
     authorizationServerIssuer: body.authorizationServerIssuer,
     requestedScopes: body.requestedScopes,
   })
-  if (body.authType === "oauth" && !body.manualOAuthEndpoints
-    && await organizationFeatureEnabled(payload.organization.id, "customConnectorSetup", { userId: payload.currentMember.userId })) {
+  if (body.authType === "oauth" && !body.manualOAuthEndpoints) {
     const denial = await automaticOAuthSetupDenial({
       serverUrl: body.url,
       fetch: withExternalMcpRequestHeaders(externalMcpDiscoveryFetch, body.url, requestHeaders.headers),
@@ -2300,8 +2298,7 @@ async function replaceExternalConnectionResponse(
     || (body.authorizationServerIssuer !== undefined && body.authorizationServerIssuer !== (connection.oauthConfiguration?.authorizationServerIssuer ?? null))
     || (body.requestedScopes !== undefined && oauthScopeSelectionChanged(connection.oauthConfiguration?.requestedScopes ?? [], body.requestedScopes))
     || Boolean(connection.oauthConfiguration?.manualOAuthEndpoints && !manualOAuthEndpoints)
-  if (body.authType === "oauth" && !manualOAuthEndpoints && automaticOAuthIdentityChanged
-    && await organizationFeatureEnabled(payload.organization.id, "customConnectorSetup", { userId: payload.currentMember.userId })) {
+  if (body.authType === "oauth" && !manualOAuthEndpoints && automaticOAuthIdentityChanged) {
     const denial = await automaticOAuthSetupDenial({
       serverUrl: body.url,
       fetch: withExternalMcpRequestHeaders(externalMcpDiscoveryFetch, body.url, requestHeaderUpdate.headers),
@@ -2630,7 +2627,7 @@ export function registerMcpConnectionRoutes<T extends { Variables: OrgRouteVaria
     describeRoute({
       tags: ["Authentication"],
       summary: "Stream external MCP connection requirements checks",
-      description: "Side-effect-free discovery with ordered SSE check events (aggregate server, resource and provider phases), followed by a result event containing the same requirements as /discover, or a safe error event. No client registration, credential writes or extra probes. Disconnecting cancels discovery. Requires customConnectorSetup.",
+      description: "Side-effect-free discovery with ordered SSE check events (aggregate server, resource and provider phases), followed by a result event containing the same requirements as /discover, or a safe error event. No client registration, credential writes or extra probes. Disconnecting cancels discovery.",
       ...{ "x-mcp": false },
       responses: {
         200: {
@@ -2639,11 +2636,9 @@ export function registerMcpConnectionRoutes<T extends { Variables: OrgRouteVaria
         },
         400: jsonResponse("Invalid request.", invalidRequestSchema),
         401: jsonResponse("The caller must be signed in.", unauthorizedSchema),
-        404: jsonResponse("Discovery checks are disabled.", z.object({ error: z.literal("feature_disabled"), feature: z.literal("customConnectorSetup") })),
       },
     }),
     orgMemberRoute(),
-    requireFeature("customConnectorSetup"),
     jsonValidator(discoverConnectionBodySchema),
     async (c) => {
       const { url, requestHeaders } = c.req.valid("json")
@@ -2789,14 +2784,10 @@ export function registerMcpConnectionRoutes<T extends { Variables: OrgRouteVaria
     }),
     orgMemberRoute(),
     async (c) => {
-      const org = c.get("organizationContext")
-      const [expanded, registration] = await Promise.all([
-        org ? organizationFeatureEnabled(org.organization.id, "expandedMcpPresets", { userId: org.currentMember.userId }) : false,
-        mcpRegistrationStatusByPreset(),
-      ])
+      const registration = await mcpRegistrationStatusByPreset()
       const oauthCallbackUrl = externalMcpSharedCallbackUrlIfConfigured()
       return c.json({
-        presets: externalMcpPresetsForCatalog({ expanded }).map((preset) => externalMcpPresetForResponse(preset, {
+        presets: externalMcpPresetsForCatalog().map((preset) => externalMcpPresetForResponse(preset, {
           registrationStatus: registration.get(preset.presetId),
           oauthCallbackUrl,
         })),
@@ -2822,9 +2813,7 @@ export function registerMcpConnectionRoutes<T extends { Variables: OrgRouteVaria
     async (c) => {
       const { query } = c.req.valid("json")
 
-      const org = c.get("organizationContext")
-      const expanded = org ? await organizationFeatureEnabled(org.organization.id, "expandedMcpPresets", { userId: org.currentMember.userId }) : false
-      const presets = externalMcpPresetsForCatalog({ expanded })
+      const presets = externalMcpPresetsForCatalog()
 
       const classification = classifyResolveQuery(query)
       if (classification.kind === "invalid") {

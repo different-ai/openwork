@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto"
 import type { McpServer } from "@modelcontextprotocol/server"
 import type { McpAppToolBinding, McpAppToolDeclaration, PrepareMcpAppInput, PrepareMcpAppOutput } from "@openwork/types/mcp-app"
 import { generatedAppLibrariesNextStep } from "../generated-app-libraries.js"
+import { runsWithoutClick } from "./app-tool-access.js"
 
 /**
  * OpenWork's opinionated App starters. prepare_app returns the one that fits
@@ -17,17 +18,17 @@ export const APP_STARTER_RESOURCE_ROOT = "openwork://apps/starters"
 export const appStarterResourceUri = (pattern: AppStarterPattern) => `${APP_STARTER_RESOURCE_ROOT}/${pattern}.json`
 
 /**
- * A preparation never runs a tool or saves an App. `libraries` is the
- * editor's mcpAppLibraries feature; only then does it list what may be imported.
+ * A preparation never runs a tool or saves an App. It lists the built-in
+ * libraries that may be imported in an MCP App.
  */
-export function appAuthoringStarter(input: PrepareMcpAppInput, tools: McpAppToolBinding[], options: { libraries?: boolean } = {}): PrepareMcpAppOutput {
+export function appAuthoringStarter(input: PrepareMcpAppInput, tools: McpAppToolBinding[]): PrepareMcpAppOutput {
   const starter = appStarter(tools)
   return {
     preparationId: randomUUID(),
     title: input.title,
     tools,
     starter: { reactSource: starter.reactSource, cssSource: starter.cssSource },
-    nextSteps: options.libraries ? [...starter.nextSteps, generatedAppLibrariesNextStep()] : starter.nextSteps,
+    nextSteps: [...starter.nextSteps, generatedAppLibrariesNextStep()],
   }
 }
 
@@ -50,7 +51,7 @@ const MAX_OPTIONS = 20
 /** The pattern a set of verified tools calls for. */
 export function appStarterPattern(tools: McpAppToolBinding[]): AppStarterPattern {
   if (tools.length === 0) return "standalone"
-  return tools.some((tool) => !tool.readOnly) ? "action" : "lookup"
+  return tools.some((tool) => !runsWithoutClick(tool)) ? "action" : "lookup"
 }
 
 export function appStarter(tools: McpAppToolBinding[]) {
@@ -67,9 +68,9 @@ export function appStarter(tools: McpAppToolBinding[]) {
       ],
     }
   }
-  const change = pattern === "action" ? tools.find((tool) => !tool.readOnly) : undefined
+  const change = pattern === "action" ? tools.find((tool) => !runsWithoutClick(tool)) : undefined
   const load = change
-    ? tools.find((tool) => tool.readOnly && !starterTool(tool).fields.some((field) => field.required))
+    ? tools.find((tool) => runsWithoutClick(tool) && !starterTool(tool).fields.some((field) => field.required))
     : tools[0]
   const wired = [change, load].flatMap((tool) => tool ? [tool.name] : [])
   const unwired = tools.filter((tool) => !wired.includes(tool.name)).map((tool) => tool.name)
@@ -139,7 +140,7 @@ function schemaFields(schema: Record<string, unknown>, placement?: "path" | "que
 /** "create_invoice" → "Create invoice"; a read with no verb gets "Find" or "Refresh". */
 function actionLabel(tool: McpAppToolBinding): string {
   const label = humanize(tool.name)
-  if (!tool.readOnly) return label
+  if (!runsWithoutClick(tool)) return label
   if (/^(?:find|search|get|list|look|load|show|read|check|fetch|query|lookup)\b/iu.test(label)) {
     return label.replace(/^(?:get|list|load|fetch|query|read|lookup)\b/iu, "Show")
   }
@@ -254,6 +255,28 @@ function dateOf(value) {
   return value && !Number.isNaN(date.getTime()) ? date : null;
 }
 
+// OpenWork's App server runs read-only tools that need no input as the App
+// opens and sends what they returned with the launch, under
+// "openwork/initialResults". One made with exactly these arguments is shown
+// instead of calling again; anything else is called as usual.
+function initialResultFor(result, name, args) {
+  const entries = result?._meta?.["openwork/initialResults"];
+  if (!Array.isArray(entries)) return null;
+  const asked = JSON.stringify(args);
+  return entries.find((entry) => entry?.name === name && JSON.stringify(entry.arguments ?? {}) === asked) ?? null;
+}
+
+// Shows the launch's result for these arguments, or calls the tool for one.
+// A checked matching snapshot seeds the view too. Older launch producers can
+// supply an earlier load time, in which case refresh behind the visible data.
+function loadWith(call, result, name, args) {
+  const loaded = initialResultFor(result, name, args);
+  if (!loaded) return call.call(args);
+  call.seed(args, loaded);
+  const loadedAt = dateOf(loaded.loadedAt);
+  if (loaded.kept && (!loadedAt || Date.now() - loadedAt.getTime() > 60000)) call.call(args);
+}
+
 // One declared tool, with every state the person can see. Only the latest
 // call updates the view, so a slow earlier answer never replaces a newer one.
 // OpenWork keeps read-only results, so peek shows the last one at once
@@ -314,7 +337,15 @@ function useToolCall(app, name) {
     setState({ status: "ready", value: valueOf(response), updatedAt: dateOf(response?._meta?.["openwork/cachedAt"]) ?? new Date() });
     return true;
   }, [app, name, available]);
-  return { ...state, available, call, peek };
+  // A result that came with the launch answers like a call that just
+  // finished, and wins over any earlier peek or call still running.
+  const seed = React.useCallback((args, loaded) => {
+    latestArgs.current = JSON.stringify(args);
+    ++latest.current;
+    ++latestPeek.current;
+    setState({ status: "ready", value: valueOf(loaded.result), updatedAt: dateOf(loaded.loadedAt) ?? new Date() });
+  }, []);
+  return { ...state, available, call, peek, seed };
 }
 
 function humanize(key) {
@@ -527,7 +558,7 @@ export default function App({ app, input, result, hostContext }) {
   React.useEffect(() => {
     const next = initialValues(LOAD.fields, input);
     setValues(next);
-    if (delivered && isReady(LOAD.fields, next)) load.call(argumentsFor(LOAD, next));
+    if (delivered && isReady(LOAD.fields, next)) loadWith(load, result, LOAD.name, argumentsFor(LOAD, next));
   }, [launch, delivered]);
   // A later launch result is the host refreshing the open App, as a dashboard
   // does: load the same inputs again while the data stays on screen.
@@ -535,7 +566,7 @@ export default function App({ app, input, result, hostContext }) {
   React.useEffect(() => {
     const previous = refreshed.current;
     refreshed.current = result;
-    if (previous !== undefined && previous !== result && isReady(LOAD.fields, values)) load.call(argumentsFor(LOAD, values));
+    if (previous !== undefined && previous !== result && isReady(LOAD.fields, values)) loadWith(load, result, LOAD.name, argumentsFor(LOAD, values));
   }, [result]);
   // The last result for these inputs shows at once, from OpenWork's storage.
   const query = JSON.stringify(values);
@@ -588,7 +619,7 @@ export default function App({ app, input, result, hostContext }) {
     if (LOAD) load.peek(argumentsFor(LOAD, {}));
   }, []);
   React.useEffect(() => {
-    if (LOAD && delivered) load.call(argumentsFor(LOAD, {}));
+    if (LOAD && delivered) loadWith(load, result, LOAD.name, argumentsFor(LOAD, {}));
   }, [delivered]);
   // A later launch result is the host refreshing the open App, as a dashboard
   // does: load again while the data stays on screen.
@@ -596,7 +627,7 @@ export default function App({ app, input, result, hostContext }) {
   React.useEffect(() => {
     const previous = refreshed.current;
     refreshed.current = result;
-    if (LOAD && previous !== undefined && previous !== result) load.call(argumentsFor(LOAD, {}));
+    if (LOAD && previous !== undefined && previous !== result) loadWith(load, result, LOAD.name, argumentsFor(LOAD, {}));
   }, [result]);
   const reload = () => {
     if (LOAD) load.call(argumentsFor(LOAD, {}));

@@ -266,9 +266,8 @@ test("slow consumers have a bounded queue and polling is stopped", async () => {
   assert.equal((await reader.read()).done, true)
 })
 
-test("desktop config preserves the effective liveProviderSync boolean and missing stays off-compatible", () => {
-  assert.equal(normalizeDesktopConfig({ liveProviderSync: true }).liveProviderSync, true)
-  assert.equal(normalizeDesktopConfig({ liveProviderSync: false }).liveProviderSync, false)
-  assert.equal(normalizeDesktopConfig({}).liveProviderSync, undefined)
-  assert.equal(normalizeDesktopConfig({ liveProviderSync: "true" }).liveProviderSync, undefined)
+test("desktop config ignores retired provider sync rollout hints", () => {
+  for (const value of [true, false, undefined, "true"]) {
+    assert.equal("liveProviderSync" in normalizeDesktopConfig({ liveProviderSync: value }), false)
+  }
 })

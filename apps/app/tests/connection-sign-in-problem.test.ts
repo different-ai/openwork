@@ -53,7 +53,7 @@ test("only an https Slack app settings page is opened, and its label never comes
 
 test("polling stops at the first failed check recorded for this attempt and carries Den's reason", () => {
   const attempt = { startedAt: started, previousCheckedAt: null };
-  const outcome = connectPollOutcome(blocked, attempt, { previousConnectedAt: null, reconnectPending: true, reportFailure: true });
+  const outcome = connectPollOutcome(blocked, attempt, { previousConnectedAt: null, reconnectPending: true });
   expect(outcome).toEqual({
     kind: "failed",
     problem: { failure: "provider_setup_required", reason: REASON, settings: { url: SETTINGS, label: "Open Slack app settings" } },
@@ -62,33 +62,26 @@ test("polling stops at the first failed check recorded for this attempt and carr
 
 test("an older failure, or one already seen before the attempt, keeps polling", () => {
   const stale = connection({ readiness: { ...blocked.readiness!, checkedAt: "2026-10-28T11:50:00.000Z" } });
-  expect(connectPollOutcome(stale, { startedAt: started, previousCheckedAt: null }, { previousConnectedAt: null, reconnectPending: false, reportFailure: true }))
+  expect(connectPollOutcome(stale, { startedAt: started, previousCheckedAt: null }, { previousConnectedAt: null, reconnectPending: false }))
     .toEqual({ kind: "waiting" });
-  expect(connectPollOutcome(blocked, { startedAt: started, previousCheckedAt: "2026-10-28T12:00:20.000Z" }, { previousConnectedAt: null, reconnectPending: true, reportFailure: true }))
-    .toEqual({ kind: "waiting" });
-});
-
-test("with the flag off, a recorded failure does not end polling (the 90 second timeout still does)", () => {
-  expect(connectPollOutcome(blocked, { startedAt: started, previousCheckedAt: null }, { previousConnectedAt: null, reconnectPending: true, reportFailure: false }))
+  expect(connectPollOutcome(blocked, { startedAt: started, previousCheckedAt: "2026-10-28T12:00:20.000Z" }, { previousConnectedAt: null, reconnectPending: true }))
     .toEqual({ kind: "waiting" });
 });
 
 test("a fresh connection still finishes the attempt", () => {
   const connected = connection({ connectedForMe: true, connectedAt: "2026-10-28T12:00:30.000Z" });
-  expect(connectPollOutcome(connected, { startedAt: started, previousCheckedAt: null }, { previousConnectedAt: null, reconnectPending: false, reportFailure: true }))
+  expect(connectPollOutcome(connected, { startedAt: started, previousCheckedAt: null }, { previousConnectedAt: null, reconnectPending: false }))
     .toEqual({ kind: "connected" });
-  expect(connectPollOutcome(connected, { startedAt: started, previousCheckedAt: null }, { previousConnectedAt: "2026-10-28T12:00:30.000Z", reconnectPending: false, reportFailure: true }))
+  expect(connectPollOutcome(connected, { startedAt: started, previousCheckedAt: null }, { previousConnectedAt: "2026-10-28T12:00:30.000Z", reconnectPending: false }))
     .toEqual({ kind: "waiting" });
 });
 
 test("a blocking provider setting wins over needsReconnect on the Library row", () => {
   expect(providerSetupProblem(blocked)?.reason).toBe(REASON);
-  expect(recordedConnectorState(blocked, { providerSetup: true })).toBe("Change setting");
-  expect(recordedConnectorNote(blocked, { providerSetup: true })).toBe(REASON);
-  // Flag off: as before, needsReconnect asks for a plain sign-in.
-  expect(recordedConnectorState(blocked)).toBe("Sign in");
+  expect(recordedConnectorState(blocked)).toBe("Change setting");
+  expect(recordedConnectorNote(blocked)).toBe(REASON);
   // Other failures keep their existing states.
   const rejected = connection({ needsReconnect: true, readiness: { ...blocked.readiness!, failure: "sign_in_rejected", providerSettingsUrl: undefined } });
   expect(providerSetupProblem(rejected)).toBeNull();
-  expect(recordedConnectorState(rejected, { providerSetup: true })).toBe("Sign in");
+  expect(recordedConnectorState(rejected)).toBe("Sign in");
 });

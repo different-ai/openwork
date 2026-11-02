@@ -113,6 +113,39 @@ final class BackgroundInputTests: XCTestCase {
         XCTAssertTrue(ImagePolicy.include(requested: nil, automatic: false, namedControls: 100), "foreground sessions keep today's default")
         XCTAssertTrue(ImagePolicy.include(requested: true, automatic: true, namedControls: 100))
         XCTAssertFalse(ImagePolicy.include(requested: false, automatic: false, namedControls: 0))
+        XCTAssertTrue(ImagePolicy.include(requested: nil, automatic: true, namedControls: 20, interactiveControls: 60), "a mostly unnamed tree cannot be acted on by name")
+        XCTAssertFalse(ImagePolicy.include(requested: nil, automatic: true, namedControls: 20, interactiveControls: 40))
+    }
+
+    func testReadingModesAndBackgroundDeliveryReadTheTreeFirst() {
+        XCTAssertTrue(ImagePolicy.automatic(delivery: .foreground, mode: .assist, policy: .embedded))
+        XCTAssertTrue(ImagePolicy.automatic(delivery: .foreground, mode: .observe, policy: .embedded))
+        XCTAssertTrue(ImagePolicy.automatic(delivery: .background, mode: .control, policy: .embedded))
+        XCTAssertFalse(ImagePolicy.automatic(delivery: .foreground, mode: .control, policy: .embedded), "foreground control keeps its screenshot for coordinates")
+        XCTAssertFalse(ImagePolicy.automatic(delivery: .foreground, mode: .assist, policy: .desktop), "the standalone helper keeps today's default")
+    }
+
+    func testOnlyControlModeKeepsTheSharperImage() {
+        XCTAssertEqual(ImagePolicy.profile(mode: .control, policy: .embedded), ImagePolicy.precise)
+        XCTAssertEqual(ImagePolicy.profile(mode: .assist, policy: .embedded), ImagePolicy.reading)
+        XCTAssertEqual(ImagePolicy.profile(mode: .observe, policy: .embedded), ImagePolicy.reading)
+        XCTAssertEqual(ImagePolicy.profile(mode: .observe, policy: .desktop), ImagePolicy.precise)
+        XCTAssertLessThan(ImagePolicy.reading.maxLongSide, ImagePolicy.precise.maxLongSide)
+    }
+
+    func testAnUnchangedAutomaticImageIsNotSentAgain() {
+        let digest = Data([1, 2, 3])
+        let last = ImagePolicy.Sent(observationID: "first", generation: 2, window: 7, width: 800, height: 600, digest: digest)
+        func repeated(_ requested: Bool? = nil, generation: Int = 2, window: CGWindowID = 7, width: Int = 800, digest: Data = digest) -> String? {
+            ImagePolicy.alreadySent(requested: requested, last: last, generation: generation, window: window, width: width, height: 600, digest: digest)?.observationID
+        }
+        XCTAssertEqual(repeated(), "first")
+        XCTAssertNil(repeated(true), "an explicit request always sends the image")
+        XCTAssertNil(repeated(digest: Data([9])), "changed pixels are sent")
+        XCTAssertNil(repeated(generation: 3), "a handoff or dialog change sends a fresh image")
+        XCTAssertNil(repeated(window: 8), "another window's image is sent")
+        XCTAssertNil(repeated(width: 801), "a resized window's image is sent")
+        XCTAssertNil(ImagePolicy.alreadySent(requested: nil, last: nil, generation: 2, window: 7, width: 800, height: 600, digest: digest))
     }
 
     func testObservationLeavesTheImageToTheSessionUnlessAsked() throws {

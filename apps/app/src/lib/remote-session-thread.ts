@@ -1,6 +1,9 @@
 import type { DynamicToolUIPart } from "ai"
 
+import type { RemoteSessionPending } from "@openwork/types/automations"
+
 import { parseRecord } from "@/lib/capability-call"
+import { parseRemotePending } from "@/lib/remote-session-answers"
 
 /**
  * A task the agent started on another computer through OpenWork Connect
@@ -99,13 +102,36 @@ export function remoteThreadFromToolPart(part: DynamicToolUIPart): RemoteThreadS
   }
 }
 
-/** A follow-up the agent sent to a remote session (`remote-session:send`), which makes it run again. */
-export function remoteThreadFollowUpSessionId(part: DynamicToolUIPart): string | null {
+/**
+ * A follow-up the agent sent to a task (`remote-session:send`) that its
+ * computer accepted. Den names the task's own commandId for a desktop or
+ * registered task and its sessionId for every task; either finds the task.
+ */
+export type RemoteThreadFollowUp = {
+  toolCallId: string
+  commandId: string | null
+  sessionId: string | null
+  /** When the agent sent it; null when the engine didn't record it. */
+  sentAt: number | null
+}
+
+/** An accepted follow-up, or null for anything else: a failed send, or one the desktop hasn't confirmed yet. */
+export function remoteThreadFollowUpFromToolPart(part: DynamicToolUIPart): RemoteThreadFollowUp | null {
   if (part.state !== "output-available") return null
-  if (capabilityCall(part)?.name !== "remote-session:send") return null
+  const call = capabilityCall(part)
+  if (call?.name !== "remote-session:send") return null
   const result = toolResult(part.output)
-  if (!result || typeof result.error === "string") return null
-  return text(result.sessionId)
+  if (!result || typeof result.error === "string" || result.state === "pending") return null
+  const commandId = text(result.commandId)
+  const sessionId = text(result.sessionId) ?? text(call.body.sessionId)
+  if (!commandId && !sessionId) return null
+  return { toolCallId: part.toolCallId, commandId, sessionId, sentAt: remoteToolCallStartedAt(part) }
+}
+
+/** Whether a follow-up went to this task. */
+export function remoteFollowUpMatches(followUp: RemoteThreadFollowUp, start: RemoteThreadStart, knownSessionId: string | null): boolean {
+  if (followUp.commandId && start.key === remoteThreadKey({ commandId: followUp.commandId })) return true
+  return followUp.sessionId !== null && (start.sessionId === followUp.sessionId || knownSessionId === followUp.sessionId)
 }
 
 /**
@@ -119,12 +145,36 @@ export function isRemoteThreadStatusCheck(part: DynamicToolUIPart): boolean {
   return call?.name === "remote-session:read" && part.state === "output-available" && text(call.body.commandId) !== null
 }
 
+/** One step of a remote message, in the order its computer recorded it. */
+export type RemoteTranscriptPart =
+  | { type: "text"; text: string }
+  | { type: "reasoning"; text: string; durationMs: number | null }
+  | {
+    type: "tool"
+    id: string
+    name: string
+    status: string | null
+    title: string | null
+    /** As sent: JSON text, at most 2000 characters, possibly cut short. */
+    input: string | null
+    output: string | null
+    error: string | null
+    truncated: boolean
+    startedAt: number | null
+    endedAt: number | null
+  }
+
 export type RemoteTranscriptMessage = {
   id: string
   role: "user" | "assistant"
+  /** The message's prose, as older readers see it. */
   text: string
   steps: number
   error: string | null
+  createdAt: number | null
+  completedAt: number | null
+  /** Ordered steps; older computers send only text and tool names, rebuilt here as tools then text. */
+  parts: RemoteTranscriptPart[]
 }
 
 export type RemoteTranscriptPage = {
@@ -132,6 +182,8 @@ export type RemoteTranscriptPage = {
   messages: RemoteTranscriptMessage[]
   /** Desktop pages: pass back to read earlier messages. Cloud reads widen their limit instead. */
   nextCursor: string | null
+  /** What the task waits on, from computers that report it; null otherwise. */
+  pending?: RemoteSessionPending | null
 }
 
 export type RemoteReadOutcome =
@@ -140,18 +192,63 @@ export type RemoteReadOutcome =
   | { kind: "pending"; requestId: string }
   | { kind: "error"; code: string; message: string; retryable: boolean }
 
+function nullableText(value: unknown): string | null {
+  return typeof value === "string" ? value : null
+}
+
+function timestamp(value: unknown): number | null {
+  return typeof value === "number" && Number.isFinite(value) && value >= 0 ? value : null
+}
+
+function toolPart(value: Record<string, unknown>, fallbackId: string): RemoteTranscriptPart {
+  return {
+    type: "tool",
+    id: text(value.id) ?? fallbackId,
+    name: text(value.name) ?? "tool",
+    status: text(value.status),
+    title: text(value.title),
+    input: nullableText(value.input),
+    output: nullableText(value.output),
+    error: nullableText(value.error),
+    truncated: value.truncated === true,
+    startedAt: timestamp(value.startedAt),
+    endedAt: timestamp(value.endedAt),
+  }
+}
+
+function transcriptPart(value: unknown, fallbackId: string): RemoteTranscriptPart | null {
+  if (!isRecord(value)) return null
+  if (value.type === "text" && typeof value.text === "string") return value.text.trim() ? { type: "text", text: value.text } : null
+  if (value.type === "reasoning" && typeof value.text === "string") {
+    return value.text.trim() ? { type: "reasoning", text: value.text, durationMs: timestamp(value.durationMs) } : null
+  }
+  return value.type === "tool" ? toolPart(value, fallbackId) : null
+}
+
 function transcriptMessage(value: unknown): RemoteTranscriptMessage | null {
   if (!isRecord(value)) return null
   const id = text(value.id)
   const role = value.role === "user" || value.role === "assistant" ? value.role : null
   if (!id || !role) return null
   const error = isRecord(value.error) ? text(value.error.message) : null
+  const prose = typeof value.text === "string" ? value.text : ""
+  const toolCalls = Array.isArray(value.toolCalls) ? value.toolCalls : []
+  const parts: RemoteTranscriptPart[] = Array.isArray(value.parts)
+    ? value.parts.flatMap((part, index) => transcriptPart(part, `${id}:${index}`) ?? [])
+    // An older computer sends the prose and its tool calls apart; the work reads before the answer.
+    : [
+      ...toolCalls.flatMap((call, index) => isRecord(call) ? [toolPart(call, `${id}:${index}`)] : []),
+      ...(prose.trim() ? [{ type: "text" as const, text: prose }] : []),
+    ]
   return {
     id,
     role,
-    text: typeof value.text === "string" ? value.text : "",
-    steps: Array.isArray(value.toolCalls) ? value.toolCalls.length : 0,
+    text: prose,
+    steps: parts.filter((part) => part.type === "tool").length || toolCalls.length,
     error,
+    createdAt: timestamp(value.createdAt),
+    completedAt: timestamp(value.completedAt),
+    parts,
   }
 }
 
@@ -187,6 +284,7 @@ export function parseRemoteRead(payload: unknown): RemoteReadOutcome {
       title: text(record?.title),
       messages,
       nextCursor: text(record?.nextCursor),
+      pending: parseRemotePending(record?.pending),
     },
   }
 }

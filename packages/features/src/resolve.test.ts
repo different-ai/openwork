@@ -61,7 +61,7 @@ test("every feature names its author, and docs link to internal docs in the repo
 })
 
 test("precedence: unavailable, kill switch, lock, override, everyone", () => {
-  const key = "liveProviderSync"
+  const key = "connectStandardTools"
   assert.equal(resolveFeature(key, { ...base, rollouts: { [key]: { enabled: true, killed: false } } }).enabled, true)
   const overridden = resolveFeature(key, { ...base, overrides: { [key]: true } })
   assert.equal(overridden.enabled, true)
@@ -74,7 +74,7 @@ test("precedence: unavailable, kill switch, lock, override, everyone", () => {
 })
 
 test("an organization override can turn a feature off while it is on for everyone", () => {
-  const key = "liveProviderSync"
+  const key = "connectStandardTools"
   const resolved = resolveFeature(key, { ...base, rollouts: { [key]: { enabled: true, killed: false } }, overrides: { [key]: false } })
   assert.equal(resolved.everyone, true)
   assert.equal(resolved.enabled, false)
@@ -109,6 +109,42 @@ test("managed deployments stays opt-in and cloud-only after folding GCP and agen
   })
   assert.deepEqual(legacyLocks.locks, {})
   assert.equal(resolveFeature("managedDeployments", { ...base, locks: legacyLocks.locks }).enabled, false)
+})
+
+test("Your agent, browser and computer use each have one opt-in rollout", () => {
+  const retired = ["workbotAgentHealthView", "workbotAgentLibrary", "browserLiveView", "computerUseBackground"]
+  for (const key of retired) {
+    assert.ok(RETIRED_FEATURE_KEYS.some((retiredKey) => retiredKey === key))
+    assert.equal(featureKeySchema.safeParse(key).success, false)
+    assert.equal(Object.hasOwn(resolveFeatures(base), key), false)
+  }
+  const legacyLocks = parseFeatureEnvironment({
+    DEN_FEATURE_WORKBOT_AGENT_HEALTH_VIEW: "true",
+    DEN_FEATURE_WORKBOT_AGENT_LIBRARY: "true",
+    DEN_FEATURE_BROWSER_LIVE_VIEW: "true",
+    DEN_FEATURE_COMPUTER_USE_BACKGROUND: "true",
+  })
+  assert.deepEqual(legacyLocks.locks, {})
+  assert.equal(legacyLocks.problems.length, 4)
+  assert.ok(legacyLocks.problems.every((problem) => !problem.fatal))
+  const parents = ["workbotProactive", "browserUse", "computerUse"] satisfies Array<keyof typeof FEATURES>
+  for (const key of parents) {
+    for (const deployment of ["cloud", "self_hosted"] satisfies Array<FeatureContext["deployment"]>) {
+      const context = { ...base, deployment, locks: legacyLocks.locks }
+      assert.equal(resolveFeature(key, context).enabled, false)
+      assert.equal(resolveFeature(key, { ...context, overrides: { [key]: true } }).enabled, true)
+      assert.equal(resolveFeature(key, {
+        ...context,
+        overrides: { [key]: true },
+        rollouts: { [key]: { enabled: true, killed: true } },
+      }).enabled, false)
+      assert.equal(resolveFeature(key, {
+        ...context,
+        overrides: { [key]: true },
+        memberOverrides: { [key]: false },
+      }).enabled, false)
+    }
+  }
 })
 
 test("retired GA locks cannot disable models, skills, permissions or team membership caching", () => {
@@ -154,6 +190,29 @@ test("completed desktop, Workbot and organization rollouts ignore legacy opt-out
   assert.ok(parsed.problems.every((problem) => !problem.fatal && problem.message.includes("ignored")))
 })
 
+test("remembered sign-in, helper tasks and the removed update window have no rollout keys", () => {
+  const retired = ["lastUsedSignIn", "remoteSessionHelperView", "desktopUpdateDownloadWindow"]
+  for (const deployment of ["cloud", "self_hosted"] satisfies Array<FeatureContext["deployment"]>) {
+    const resolved = resolveFeatures({ ...base, deployment })
+    for (const key of retired) {
+      assert.ok(RETIRED_FEATURE_KEYS.some((retiredKey) => retiredKey === key), key)
+      assert.equal(featureKeySchema.safeParse(key).success, false, key)
+      assert.equal(Object.hasOwn(resolved, key), false, key)
+    }
+    for (const lock of ["true", "false"]) {
+      const parsed = parseFeatureEnvironment({
+        DEN_DEPLOYMENT: deployment,
+        DEN_FEATURE_LAST_USED_SIGN_IN: lock,
+        DEN_FEATURE_REMOTE_SESSION_HELPER_VIEW: lock,
+        DEN_FEATURE_DESKTOP_UPDATE_DOWNLOAD_WINDOW: lock,
+      })
+      assert.deepEqual(parsed.locks, {})
+      assert.equal(parsed.problems.length, retired.length)
+      assert.ok(parsed.problems.every((problem) => !problem.fatal && problem.message.includes("ignored")))
+    }
+  }
+})
+
 test("automatic v2 migration has no feature key and ignores legacy opt-out locks", () => {
   for (const key of ["engineV2Upgrade", "engineV2ForceUpgrade"]) {
     assert.equal(featureKeySchema.safeParse(key).success, false)
@@ -176,11 +235,23 @@ test("service readiness is retired: no key, and an old operator lock is ignored 
   assert.ok(parsed.problems.every((problem) => !problem.fatal && problem.message.includes("ignored")))
 })
 
+test("desktop Calendar is retired and legacy operator locks are ignored", () => {
+  assert.equal(featureKeySchema.safeParse("automationCalendar").success, false)
+  assert.equal(Object.hasOwn(resolveFeatures(base), "automationCalendar"), false)
+  assert.ok(RETIRED_FEATURE_KEYS.includes("automationCalendar"))
+  for (const value of ["true", "false"]) {
+    const parsed = parseFeatureEnvironment({ DEN_FEATURE_AUTOMATION_CALENDAR: value })
+    assert.deepEqual(parsed.locks, {})
+    assert.equal(parsed.problems.length, 1)
+    assert.ok(parsed.problems.every((problem) => !problem.fatal && problem.message.includes("ignored")))
+  }
+})
+
 test("every key maps to a unique DEN_FEATURE_ name", () => {
   const names = FEATURE_KEYS.map(featureLockEnvName)
   for (const name of names) assert.match(name, /^DEN_FEATURE_[A-Z0-9]+(?:_[A-Z0-9]+)*$/)
   assert.equal(new Set(names).size, names.length)
-  assert.equal(featureLockEnvName("liveProviderSync"), "DEN_FEATURE_LIVE_PROVIDER_SYNC")
+  assert.equal(featureLockEnvName("connectStandardTools"), "DEN_FEATURE_CONNECT_STANDARD_TOOLS")
 })
 
 test("environment: self_hosted by default, strict values, unknown keys warn", () => {
@@ -192,18 +263,18 @@ test("environment: self_hosted by default, strict values, unknown keys warn", ()
   const parsed = parseFeatureEnvironment({
     DEN_DEPLOYMENT: "cloud",
     DEN_FEATURE_WORKBOT_DOCUMENTS: "true",
-    DEN_FEATURE_LIVE_PROVIDER_SYNC: "false",
+    DEN_FEATURE_CONNECT_STANDARD_TOOLS: "false",
     DEN_FEATURE_WORKBOT: "false",
     DEN_FEATURE_PERMISSIONS: "false",
     DEN_FEATURE_ORG_MANAGED_DASHBOARDS: "",
     DEN_FEATURE_NOT_A_THING: "true",
   })
   assert.equal(parsed.deployment, "cloud")
-  assert.deepEqual(parsed.locks, { workbotDocuments: true, liveProviderSync: false })
+  assert.deepEqual(parsed.locks, { workbotDocuments: true, connectStandardTools: false })
   assert.deepEqual(parsed.problems.map((problem) => [problem.variable, problem.fatal]), [["DEN_FEATURE_WORKBOT", false], ["DEN_FEATURE_PERMISSIONS", false], ["DEN_FEATURE_NOT_A_THING", false]])
 
-  const fatal = parseFeatureEnvironment({ DEN_DEPLOYMENT: "prod", DEN_FEATURE_LIVE_PROVIDER_SYNC: "yes" })
-  assert.deepEqual(fatal.problems.map((problem) => [problem.variable, problem.fatal]), [["DEN_DEPLOYMENT", true], ["DEN_FEATURE_LIVE_PROVIDER_SYNC", true]])
+  const fatal = parseFeatureEnvironment({ DEN_DEPLOYMENT: "prod", DEN_FEATURE_CONNECT_STANDARD_TOOLS: "yes" })
+  assert.deepEqual(fatal.problems.map((problem) => [problem.variable, problem.fatal]), [["DEN_DEPLOYMENT", true], ["DEN_FEATURE_CONNECT_STANDARD_TOOLS", true]])
 })
 
 test("connection presentation is retired and old operator locks are ignored", () => {
@@ -260,7 +331,7 @@ test("Connect has one opt-in rollout; retired switches cannot override it", () =
 })
 
 test("member overrides inherit by default and take priority over organization and everyone", () => {
-  const key = "liveProviderSync"
+  const key = "connectStandardTools"
   const context: FeatureContext = { ...base, overrides: { [key]: false }, memberOverrides: { [key]: true } }
   assert.equal(resolveFeature(key, context).enabled, true)
   assert.equal(resolveFeature(key, context).source, "member")
@@ -272,12 +343,50 @@ test("member overrides inherit by default and take priority over organization an
 })
 
 test("member overrides cannot bypass deployment restrictions, operator locks or the kill switch", () => {
-  const key = "liveProviderSync"
+  const key = "connectStandardTools"
   const context: FeatureContext = { ...base, memberOverrides: { [key]: true } }
   assert.equal(resolveFeature(key, { ...context, locks: { [key]: false } }).source, "lock")
   assert.equal(resolveFeature(key, { ...context, locks: { [key]: false } }).enabled, false)
   assert.equal(resolveFeature(key, { ...context, rollouts: { [key]: { enabled: true, killed: true } } }).enabled, false)
   assert.equal(resolveFeature("managedDeployments", { ...base, deployment: "self_hosted", memberOverrides: { managedDeployments: true } }).enabled, false)
+})
+
+test("completed GA rollouts have no active keys and legacy operator locks cannot disable them", () => {
+  const retired = [
+    "libraryDetailBreadcrumbs", "nativeAffordanceCodeMode", "libraryConnectorNavigation", "mcpAppLibraries",
+    "gatewayProviderTest", "mermaidZoom", "sandboxOrgs", "slackSendAsBot", "liveProviderSync",
+    "browserFloatingView", "remoteSessionSubagents", "remoteSessionThreadView", "remoteSessionAnswers",
+    "activationChecklist", "gatewayProviderAuthErrors", "providerCredentialStatus", "sessionTokenHashing",
+    "customConnectorSetup", "expandedMcpPresets", "analyticsDailyTrends", "gatewayProviderRemovalLimits",
+    "guidedSlackSetup", "libraryConnectorOrgSetup",
+    "liveReplyModel", "composerSubagentTracker", "textActivityRail", "artifactsListFirst",
+    "automationIntervalSchedules", "automationCalendarTriggers",
+  ]
+  for (const key of retired) {
+    assert.equal(featureKeySchema.safeParse(key).success, false, key)
+    assert.equal(Object.hasOwn(resolveFeatures(base), key), false, key)
+    assert.ok(RETIRED_FEATURE_KEYS.some((retiredKey) => retiredKey === key), key)
+  }
+  const parsed = parseFeatureEnvironment(Object.fromEntries(retired.map((key) => [
+    `DEN_FEATURE_${key.replace(/([a-z0-9])([A-Z])/g, "$1_$2").toUpperCase()}`,
+    "false",
+  ])))
+  assert.deepEqual(parsed.locks, {})
+  assert.equal(parsed.problems.length, retired.length)
+  assert.ok(parsed.problems.every((problem) => !problem.fatal && problem.message.includes("ignored")))
+})
+
+test("Workbot included models and recovery are GA and ignore old operator opt-outs", () => {
+  for (const key of ["workbotIncludedModels", "workbotUsageRecovery"]) {
+    assert.equal(featureKeySchema.safeParse(key).success, false, key)
+    assert.ok(RETIRED_FEATURE_KEYS.some((retiredKey) => retiredKey === key), key)
+  }
+  const parsed = parseFeatureEnvironment({
+    DEN_FEATURE_WORKBOT_INCLUDED_MODELS: "false",
+    DEN_FEATURE_WORKBOT_USAGE_RECOVERY: "false",
+  })
+  assert.deepEqual(parsed.locks, {})
+  assert.equal(parsed.problems.length, 2)
 })
 
 test("billing has no plan flags: Team checkout and self-serve Enterprise keys are retired", () => {

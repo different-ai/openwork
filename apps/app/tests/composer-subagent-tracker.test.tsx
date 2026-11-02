@@ -87,7 +87,7 @@ test("only the current turn's sub-agents are tracked", () => {
 
 test("the header counts what needs the person first and folds finished agents together", () => {
   expect(tracker.subagentTrackerSummary(["working", "attention", "done", "stopped", "error"]).map((entry) => entry.text))
-    .toEqual(["1 need you", "1 working", "1 with an error", "2 done"])
+    .toEqual(["1 need you", "1 working", "1 failed", "2 done"])
 })
 
 test("no sub-agents in the turn: nothing attaches to the composer", async () => {
@@ -108,6 +108,10 @@ test("a sub-agent waiting on permission reads Needs permission with Review, and 
 
   expect(container.querySelector("[data-subagent-tracker]")?.getAttribute("data-subagent-tracker-expanded")).toBe("true")
   expect(rowKinds(container)).toEqual(["working", "attention"])
+  const workingRow = container.querySelector("[data-subagent-tracker-row='t1']")
+  expect(workingRow?.querySelector(".rounded-full")).toBeNull()
+  expect(workingRow?.querySelector("[data-subagent-tracker-stop]")?.textContent).toBe("Stop")
+  expect(workingRow?.querySelector("[data-subagent-tracker-open]")?.textContent).toBe("Open")
   const permissionRow = container.querySelector("[data-subagent-tracker-row='t2']")
   expect(permissionRow?.querySelector("[data-subagent-tracker-status]")?.textContent).toBe("Needs permission")
   expect(permissionRow?.querySelector("[data-subagent-tracker-review]")).not.toBeNull()
@@ -119,6 +123,19 @@ test("a sub-agent waiting on permission reads Needs permission with Review, and 
   expect(stopped).toEqual(["ses_work"])
 })
 
+test("clicking an agent's name or task opens its chat, like Open", async () => {
+  store.getState().setRunStatus(WORKSPACE, "ses_work", { type: "busy" })
+  const opened: string[] = []
+  const container = await render(turn([
+    taskPart("t1", "explore", "Map the billing service", "working", "ses_work"),
+  ]), { onOpen: (id) => opened.push(id), onStop: () => {} })
+
+  const name = container.querySelector<HTMLButtonElement>("[data-subagent-tracker-row='t1'] [data-subagent-tracker-name-open]")
+  expect(name?.textContent).toContain("Map the billing service")
+  await act(async () => { name?.click() })
+  expect(opened).toEqual(["ses_work"])
+})
+
 test("finished, failed and stopped agents keep distinct words; several quiet agents start collapsed", async () => {
   const container = await render(turn([
     taskPart("t1", "general", "Summarize incidents", "done", "ses_done"),
@@ -128,7 +145,7 @@ test("finished, failed and stopped agents keep distinct words; several quiet age
   ]))
   expect(rowKinds(container)).toEqual(["done", "error", "stopped", "done"])
   const words = [...container.querySelectorAll("[data-subagent-tracker-status]")].map((node) => node.textContent)
-  expect(words).toEqual(["Done", "Error", "Stopped", "Done"])
+  expect(words).toEqual(["Done", "Failed", "Stopped", "Done"])
   expect(container.querySelector("[data-subagent-tracker]")?.getAttribute("data-subagent-tracker-expanded")).toBe("false")
   await act(async () => { container.querySelector<HTMLButtonElement>("[data-subagent-tracker] > button")?.click() })
   expect(container.querySelector("[data-subagent-tracker]")?.getAttribute("data-subagent-tracker-expanded")).toBe("true")

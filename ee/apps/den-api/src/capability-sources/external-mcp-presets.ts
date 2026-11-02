@@ -173,17 +173,11 @@ export const EXTERNAL_MCP_PRESETS: ExternalMcpPreset[] = [
 ]
 
 /**
- * Additional reviewed official MCP server presets, gated behind the
- * `expandedMcpPresets` feature flag (default off). Each URL and its OAuth
+ * Additional reviewed official MCP server presets. Each URL and its OAuth
  * protected-resource metadata were verified by probing the public
  * `/.well-known/oauth-protected-resource` endpoint; advertisement is not a
  * successful connection. OAuth presets reuse the existing CIMD/DCR pipeline
  * (`packages/enterprise-mcp-client`); no new auth path is added.
- *
- * With the flag off these never appear in the catalog or preset list; existing
- * connections made while the flag was on keep working because
- * `external-mcp-auth-policy` matches against `ALL_EXTERNAL_MCP_PRESETS`
- * (every known preset), not just the gated catalog list.
  */
 export const EXTERNAL_MCP_PRESETS_EXPANDED: readonly ExternalMcpPreset[] = [
   {
@@ -302,8 +296,7 @@ export const EXTERNAL_MCP_PRESETS_EXPANDED: readonly ExternalMcpPreset[] = [
 
 /**
  * Every known preset (core + expanded), used by `external-mcp-auth-policy`
- * so an existing connection to an expanded-preset server keeps its preset
- * auth behavior even when the `expandedMcpPresets` flag is off.
+ * so every connection to an expanded-preset server keeps its preset auth behavior.
  */
 export const ALL_EXTERNAL_MCP_PRESETS: readonly ExternalMcpPreset[] = [
   ...EXTERNAL_MCP_PRESETS,
@@ -327,9 +320,6 @@ export function externalMcpPresetForResponse(
 }
 
 /** Presets shown in the connector catalog and the add-connection preset list. */
-export function externalMcpPresetsForCatalog(options: { expanded?: boolean } = {}): ExternalMcpPreset[] {
-  const { expanded = false } = options
-  return expanded
-    ? [...EXTERNAL_MCP_PRESETS, ...EXTERNAL_MCP_PRESETS_EXPANDED]
-    : [...EXTERNAL_MCP_PRESETS]
+export function externalMcpPresetsForCatalog(): ExternalMcpPreset[] {
+  return [...ALL_EXTERNAL_MCP_PRESETS]
 }

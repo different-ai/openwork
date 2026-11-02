@@ -10,7 +10,7 @@ import {
 } from "@openwork/types/den/activation";
 
 /**
- * The Desktop "Get set up" card (feature `activationChecklist`): what it shows for a checklist Den computed, and
+ * The Desktop "Get set up" card: what it shows for a checklist Den computed, and
  * when this app reports a step only it can observe. Pure, so the rules are unit-tested.
  */
 
@@ -64,7 +64,7 @@ export function activationCardModel(state: ActivationState | null | undefined): 
 
 /**
  * Report only while Den shows the checklist for this person and the step is still open: nothing is sent when the
- * feature is off (no checklist), before it loaded, or once Den already counts the step.
+ * checklist is unavailable, before it loaded, or once Den already counts the step.
  */
 export function shouldReportActivationEvent(state: ActivationState | null | undefined, step: ActivationClientEvent): boolean {
   if (!state) return false;

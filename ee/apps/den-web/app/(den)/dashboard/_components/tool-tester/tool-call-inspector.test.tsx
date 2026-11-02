@@ -26,7 +26,7 @@ test("the revised result puts the answer first and preserves the entire raw resu
     content: [{ type: "text", text: "Fallback text" }],
     structuredContent: { profile: { name: "Test user" } },
   };
-  const html = renderToStaticMarkup(<McpToolCallInspector outcome={outcome(result)} revisedSetup />);
+  const html = renderToStaticMarkup(<McpToolCallInspector outcome={outcome(result)} />);
   const beforeDetails = html.split("<details")[0] ?? "";
   assert.match(beforeDetails, /Test user/);
   assert.doesNotMatch(beforeDetails, /base64|serverInfo|Fallback text/);
@@ -38,25 +38,15 @@ test("the revised result puts the answer first and preserves the entire raw resu
   assert.match(html, /never stored in OpenWork logs/);
 });
 
-test("flag off and the omitted prop retain the readable raw-first view", () => {
-  const result = { _meta: { serverInfo: { name: "Test server" } }, structuredContent: { answer: 42 } };
-  const current = outcome(result);
-  const defaultHtml = renderToStaticMarkup(<McpToolCallInspector outcome={current} />);
-  const offHtml = renderToStaticMarkup(<McpToolCallInspector outcome={current} revisedSetup={false} />);
-  assert.equal(defaultHtml, offHtml);
-  assert.ok(offHtml.includes(`<pre class="max-h-80 overflow-auto rounded-xl bg-gray-50 p-3 text-[12px] leading-[18px] text-gray-700">${escape(formatJson(result))}</pre>`));
-  assert.doesNotMatch(offHtml, /Technical details|<details/);
-});
-
 test("text is escaped rather than rendered as HTML or used as an image source", () => {
-  const html = renderToStaticMarkup(<McpToolCallInspector outcome={outcome({ content: [{ type: "text", text: '<img src="https://example.test/logo.png" />' }] })} revisedSetup />);
+  const html = renderToStaticMarkup(<McpToolCallInspector outcome={outcome({ content: [{ type: "text", text: '<img src="https://example.test/logo.png" />' }] })} />);
   assert.match(html.split("<details")[0] ?? "", /&lt;img/);
   assert.doesNotMatch(html, /<img|<link[^>]*preload/);
 });
 
 test("empty and image-only outcomes stay inspectable without exposing binary data first", () => {
   for (const result of [null, { content: [] }, { content: [{ type: "image", data: "binary-payload" }] }]) {
-    const html = renderToStaticMarkup(<McpToolCallInspector outcome={outcome(result)} revisedSetup />);
+    const html = renderToStaticMarkup(<McpToolCallInspector outcome={outcome(result)} />);
     assert.match(html, /Technical details/);
     assert.match(html.split("<details")[0] ?? "", /No (readable text|result content) was returned/);
     assert.doesNotMatch(html.split("<details")[0] ?? "", /binary-payload/);
@@ -66,7 +56,7 @@ test("empty and image-only outcomes stay inspectable without exposing binary dat
 
 test("failures retain their status, useful message and full diagnostics", () => {
   const result = { error: "Connection failed", diagnostic: { referenceId: "diagnostic-reference" } };
-  const html = renderToStaticMarkup(<McpToolCallInspector outcome={outcome(result, { status: "failed", errorMessage: "Connection failed" })} revisedSetup />);
+  const html = renderToStaticMarkup(<McpToolCallInspector outcome={outcome(result, { status: "failed", errorMessage: "Connection failed" })} />);
   const beforeDetails = html.split("<details")[0] ?? "";
   assert.match(beforeDetails, /Tool call failed/);
   assert.match(beforeDetails, /Connection failed/);

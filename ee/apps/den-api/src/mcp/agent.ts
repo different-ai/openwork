@@ -389,8 +389,8 @@ export function capabilitySearchToolResult<T extends CapabilityMatch>(matches: T
   }
 }
 
-export function connectorSetupToolResult(options: { expandedMcpPresets?: boolean } = {}) {
-  return capabilitySearchToolResult([], undefined, connectorCatalogForQuery("", true, options))
+export function connectorSetupToolResult() {
+  return capabilitySearchToolResult([], undefined, connectorCatalogForQuery("", true))
 }
 
 function capabilityTimeoutResult(capability: string): ExecuteCapabilityToolResult {
@@ -759,9 +759,9 @@ export function registerAgentMcpRoutes<T extends { Variables: RequestIdVariables
       appServers: appServersEnabled,
       toolView,
       toolShapes,
-      remoteSessionStatus: Boolean(memberIdentity && organizationFeatures.remoteSessionSubagents),
-      slackSendAsBot: slackSendAsBotAvailable(capabilityContext),
-      myAgent: Boolean(memberIdentity && organizationFeatures.workbotProactive && organizationFeatures.workbotAgentLibrary && principal.scopes.has(DEN_MCP_WRITE_SCOPE)),
+      remoteSessionStatus: Boolean(memberIdentity),
+      canSendSlackMessages: slackSendAsBotAvailable(capabilityContext),
+      myAgent: Boolean(memberIdentity && organizationFeatures.workbotProactive && principal.scopes.has(DEN_MCP_WRITE_SCOPE)),
       skillsExtension,
       skills: skillsExtension && advertisesInstructions && !listsSkillsNatively ? await loadRemoteSkills() : undefined,
       engine: engineTools,
@@ -813,7 +813,7 @@ export function registerAgentMcpRoutes<T extends { Variables: RequestIdVariables
             await appActor()
             const tools = await resolveTools((await withCapabilities(request)).tools ?? [])
             await appActor()
-            return appAuthoringStarter(request, tools, { libraries: organizationFeatures.mcpAppLibraries })
+            return appAuthoringStarter(request, tools)
           }),
           create: (request) => appOperation(async () => {
             const context = await appActor()
@@ -926,7 +926,7 @@ export function registerAgentMcpRoutes<T extends { Variables: RequestIdVariables
           outputSchema: toolShapes ? MCP_TOOL_SEARCH_CAPABILITIES_OUTPUT_SCHEMA : SEARCH_CAPABILITIES_OUTPUT_SCHEMA,
         },
         async ({ query, limit, type, intent }) => {
-          if (type === "connectors") return connectorSetupToolResult({ expandedMcpPresets: organizationFeatures.expandedMcpPresets })
+          if (type === "connectors") return connectorSetupToolResult()
           const boundedLimit = limit ?? 5
           const includeApps = !engineTools && appServersEnabled && (type === undefined || type === "all" || type === "mcp" || type === "marketplace")
           // Generic Marketplace search excludes authored Apps in every rollout state.
@@ -935,7 +935,7 @@ export function registerAgentMcpRoutes<T extends { Variables: RequestIdVariables
           const result = await searchCapabilityRegistry(capabilityContext, { query, limit: boundedLimit, type, unlistedOnly })
           const openable = includeApps ? await loadOpenableApps() : []
           const matches = [...result.matches, ...searchMcpApps(openable, query, redirectUriBase)].sort(compareCapabilityMatches).slice(0, boundedLimit)
-          return capabilitySearchToolResult(matches, result.externalCoverageHint, intent === "connect" && (type === undefined || type === "all" || type === "mcp") && !matches.some(match => match.name.startsWith("mcp:")) ? connectorCatalogForQuery(query, false, { expandedMcpPresets: organizationFeatures.expandedMcpPresets }) : null, intent === "connect", toolShapes)
+          return capabilitySearchToolResult(matches, result.externalCoverageHint, intent === "connect" && (type === undefined || type === "all" || type === "mcp") && !matches.some(match => match.name.startsWith("mcp:")) ? connectorCatalogForQuery(query, false) : null, intent === "connect", toolShapes)
         },
       )
 

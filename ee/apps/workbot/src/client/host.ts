@@ -13,7 +13,6 @@ export const meSchema = z.object({
   computer: z.boolean().default(false),
   browser: z.boolean().default(false),
   browserDemonstrations: z.boolean().default(false),
-  browserLiveView: z.boolean().default(false),
   /** Workbot's Calendar tab (on while Workbot is on); older servers omit it. */
   calendar: z.boolean().default(false),
   documents: z.boolean().default(false),
@@ -23,7 +22,7 @@ export const meSchema = z.object({
   guidedNavigation: z.boolean().default(false),
   usageRecovery: z.boolean().default(false),
   /** The Get set up checklist in the header; older servers omit it. */
-  activationChecklist: z.boolean().default(false),
+  activationChecklist: z.boolean().default(true),
   /** The organization runs Automations in the cloud, so the Calendar can create them. */
   canSchedule: z.boolean().default(false),
   /** Side chats are on for this person (while Workbot is on). */
@@ -120,13 +119,12 @@ export function createHost(me: Me, recovery: { authorization?: WorkbotHost["docu
     computer: me.computer,
     browser: me.browser,
     browserDemonstrations: me.browserDemonstrations,
-    browserLiveView: me.browserLiveView,
     documentEditing: me.documents && me.documentEditing,
     nativeDictation: me.nativeDictation,
     workspaceAssistant: me.workspaceAssistant,
     guidedNavigation: me.workspaceAssistant && me.guidedNavigation,
-    usageRecovery: me.usageRecovery && me.denUrl && me.organizationId ? { denUrl: me.denUrl, organizationId: me.organizationId } : undefined,
-    activation: me.activationChecklist && me.denUrl && me.organizationId ? { denUrl: me.denUrl, organizationId: me.organizationId } : undefined,
+    usageRecovery: me.denUrl && me.organizationId ? { denUrl: me.denUrl, organizationId: me.organizationId } : undefined,
+    activation: me.denUrl && me.organizationId ? { denUrl: me.denUrl, organizationId: me.organizationId } : undefined,
     canSchedule: me.canSchedule,
     connectionsHref: me.denUrl ? `${me.denUrl}/dashboard/your-connections` : null,
     get signInHref() { return `/auth/login?return=${encodeURIComponent(window.location.pathname + window.location.search)}` },

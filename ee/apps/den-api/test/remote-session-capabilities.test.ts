@@ -327,3 +327,66 @@ test("MCP discovery describes the harness-neutral offload target", () => {
   assert.match(match.summary, /OpenCode/)
   assert.match(match.summary, /registered/)
 })
+
+test("a Cloud read returns each message's steps in order with tool state and the same caps", async () => {
+  const longOutput = "o".repeat(2_500)
+  const result = await call("read", { sessionId: "synthetic-cloud-session" }, deps({
+    getOpenWorkWebAccess: async () => ({ hasAccess: true }),
+    commandStore: { ...DEFAULT_REMOTE_SESSION_DEPS.commandStore, findDesktopSession: async () => null },
+    resolveRuntime: async () => ({ ok: true, runtime: { workerId: "w", baseUrl: "http://127.0.0.1:1", workspaceId: "ws", clientToken: "c", hostToken: "h" } }),
+    createClient: () => ({
+      createThread: async () => { throw new Error("unused") },
+      sendTurn: async () => { throw new Error("unused") },
+      getThreadSnapshot: async (threadId) => ({
+        threadId, title: "Synthetic task", directory: null, status: { type: "idle" }, todos: [],
+        messages: [
+          { id: "msg_user", role: "user", parentId: null, createdAt: 1_000, error: null, usage: null, parts: [{ id: "p0", type: "text", text: "List files" }] },
+          { id: "msg_reply", role: "assistant", parentId: "msg_user", createdAt: 1_100, completedAt: 9_000, error: null, usage: null, parts: [
+            { id: "p1", type: "reasoning", text: "Plan", startedAt: 1_100, endedAt: 3_100 },
+            { id: "p2", type: "tool", tool: "bash", callId: "c1", toolStatus: "completed", toolTitle: "List files", toolInput: { command: "ls", description: "List files" }, toolOutput: longOutput, startedAt: 3_200, endedAt: 3_400 },
+            { id: "p3", type: "text", text: "Checking one more" },
+            { id: "p4", type: "tool", tool: "read", callId: "c2", toolStatus: "error", toolInput: { filePath: "/missing" }, toolError: "ENOENT: no such file" },
+            { id: "p5", type: "text", text: "Two files.", synthetic: true },
+            { id: "p6", type: "text", text: "Done." },
+          ] },
+        ],
+      }),
+    }),
+  }))
+  assert.equal(result.error, false)
+  const messages = result.payload.messages
+  assert.ok(Array.isArray(messages))
+  const reply = messages[1]
+  assert.ok(reply && typeof reply === "object" && "parts" in reply && Array.isArray(reply.parts))
+  assert.deepEqual(reply.parts.map((part: { type: string }) => part.type), ["reasoning", "tool", "text", "tool", "text"])
+  assert.deepEqual(reply.parts[0], { type: "reasoning", text: "Plan", durationMs: 2_000 })
+  assert.equal(reply.parts[1].input, JSON.stringify({ command: "ls", description: "List files" }))
+  assert.equal(reply.parts[1].output.length, 2_000)
+  assert.equal(reply.parts[1].truncated, true)
+  assert.equal(reply.parts[1].title, "List files")
+  assert.equal(reply.parts[1].startedAt, 3_200)
+  assert.deepEqual([reply.parts[3].status, reply.parts[3].error], ["error", "ENOENT: no such file"])
+  assert.equal("completedAt" in reply && reply.completedAt, 9_000)
+  // Older readers keep their fields.
+  assert.equal("text" in reply && reply.text, "Checking one moreDone.")
+  assert.equal("toolCalls" in reply && Array.isArray(reply.toolCalls) && reply.toolCalls.length, 2)
+  // The steps parse as the shared transcript part contract desktop runners send.
+  const { remoteSessionTranscriptPartSchema } = await import("@openwork/types/automations")
+  for (const part of reply.parts) assert.equal(remoteSessionTranscriptPartSchema.safeParse(part).success, true)
+})
+
+test("a runner's read result keeps its ordered steps through Den; older results without them still parse", async () => {
+  const { remoteSessionRequestCompleteRequestSchema } = await import("@openwork/types/automations")
+  const message = { id: "msg_a", role: "assistant", createdAt: 1, text: "Done", truncated: false, error: null,
+    toolCalls: [{ id: "p", name: "bash", status: "completed", input: null, output: null, error: null, truncated: false }] }
+  const page = (messages: unknown[]) => ({ status: "done", outcome: { action: "read", result: {
+    title: null, status: "idle", waitingFor: null, lastError: null, messageCount: messages.length, from: "end", messages, nextCursor: null } } })
+  const parts = [{ type: "text", text: "Looking" }, { type: "tool", id: "p", name: "bash", status: "error", input: "{}", output: null, error: "exit 1", truncated: false, startedAt: 2, endedAt: 3 }]
+  const kept = remoteSessionRequestCompleteRequestSchema.parse(page([{ ...message, parts, completedAt: 5 }]))
+  assert.ok(kept.status === "done" && kept.outcome.action === "read")
+  assert.deepEqual(kept.outcome.result.messages[0]?.parts, parts)
+  const legacy = remoteSessionRequestCompleteRequestSchema.parse(page([message]))
+  assert.ok(legacy.status === "done" && legacy.outcome.action === "read")
+  assert.equal(legacy.outcome.result.messages[0]?.parts, undefined)
+  assert.equal(remoteSessionRequestCompleteRequestSchema.safeParse(page([{ ...message, parts: Array.from({ length: 201 }, () => parts[0]) }])).success, false)
+})

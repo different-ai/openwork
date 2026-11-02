@@ -10,6 +10,7 @@ import { createAuditOperationContext, type AuditOperationContext } from "@openwo
 import { DenBrandMark } from "../../_components/ui/brand-mark";
 import { DenButton, buttonVariants } from "../../_components/ui/button";
 import { DenCombobox } from "../../_components/ui/combobox";
+import { DenInlineEditableTitle } from "../../_components/ui/inline-editable-title";
 import { DenInput } from "../../_components/ui/input";
 import { DenNotice } from "../../_components/ui/notice";
 import { DenSecretInput } from "../../_components/ui/secret-input";
@@ -17,7 +18,7 @@ import { DenSegmented } from "../../_components/ui/segmented";
 import { DenSkeleton } from "../../_components/ui/skeleton";
 import { DenStickyActionBar } from "../../_components/ui/sticky-action-bar";
 import { DenSwitch } from "../../_components/ui/switch";
-import { getAiGatewayProvidersRoute, getNewAiGatewayProviderRoute, orgFeatureEnabled } from "../../_lib/den-org";
+import { getAiGatewayProvidersRoute, getNewAiGatewayProviderRoute } from "../../_lib/den-org";
 import { gatewayMemberSignInMethod } from "@openwork/types/den/inference";
 import { useOrgDashboard } from "../_providers/org-dashboard-provider";
 import { ConfirmDialog } from "./item-list";
@@ -94,7 +95,7 @@ export function InferenceProviderEditorScreen({ inferenceProviderId, catalogProv
   const [providerTest, setProviderTest] = useState<{ state: "running" } | { state: "done"; result: GatewayProviderTestResult } | null>(null);
   const testedConfig = useRef<string | null>(null);
   const cancelDeleteRef = useRef<HTMLButtonElement | null>(null);
-  const removalLimits = useProviderRemovalUsageLimits({ orgId, providerId: provider?.id ?? "", open: confirmDelete && Boolean(provider), providers: inferenceProviders, featureOn: orgFeatureEnabled(orgContext, "gatewayProviderRemovalLimits") });
+  const removalLimits = useProviderRemovalUsageLimits({ orgId, providerId: provider?.id ?? "", open: confirmDelete && Boolean(provider), providers: inferenceProviders });
   const initializedProviderId = useRef<string | null>(null);
   const initializedNewProviderId = useRef<string | null>(null);
 
@@ -173,8 +174,8 @@ export function InferenceProviderEditorScreen({ inferenceProviderId, catalogProv
   };
   // Newest first, so the latest models are easy to find and the test uses a current one.
   const models = useMemo(() => sortModelsNewestFirst(detail?.models ?? []), [detail]);
-  // A new provider with a shared key is tested before it can be added (feature gatewayProviderTest).
-  const testRequired = !provider && credentialMode === "org" && orgFeatureEnabled(orgContext, "gatewayProviderTest");
+  // A new provider with a shared key is tested before it can be added.
+  const testRequired = !provider && credentialMode === "org";
   // The first model in the list below that can answer a text prompt; with "Only the ones I pick", the first picked one.
   const testModelId = pickTestModel(models, allowAllModels ? null : modelIds);
   const configFingerprint = JSON.stringify(formInput);
@@ -308,7 +309,7 @@ export function InferenceProviderEditorScreen({ inferenceProviderId, catalogProv
         if (!provider) {
           await saveInferenceProvider({ inferenceProviderId: null, body: buildInferenceProviderRequestBody({ ...formInput, name: name.trim() || displayName }), auditContext });
         } else {
-          await saveInferenceProvider({ inferenceProviderId: provider.id, body: { name: name.trim(), modelIds: allowAllModels ? [] : modelIds, status: "active" }, auditContext });
+          await saveInferenceProvider({ inferenceProviderId: provider.id, body: { name: name.trim() || provider.name, modelIds: allowAllModels ? [] : modelIds, status: "active" }, auditContext });
           await syncAccessAndCredential(auditContext);
           await reload();
         }
@@ -365,7 +366,8 @@ export function InferenceProviderEditorScreen({ inferenceProviderId, catalogProv
       </nav>
       <div className="mt-3 flex items-center gap-3">
         <DenBrandMark name={displayName} simpleIconSlug={getProviderIconSlug(providerId)} serviceUrl={detail?.doc ?? (provider ? getProviderDocUrl(provider.providerConfig) : null)} className="h-8 w-8 rounded-[8px]" imageClassName="h-4 w-4" />
-        <Heading className="text-[20px] font-medium tracking-[-0.02em] text-gray-900" data-testid="gateway-provider-title">{provider ? provider.name : `Add ${displayName}`}</Heading>
+        <DenInlineEditableTitle as={Heading} className="text-[20px] font-medium tracking-[-0.02em] text-gray-900" testId="gateway-provider-title"
+          prefix={provider ? null : "Add "} value={name} onChange={setName} placeholder={provider?.name ?? displayName} />
       </div>
       {saveError ? <DenNotice tone="error" message={saveError} className="mt-4" /> : null}
       {provider?.catalogWarning ? <DenNotice tone="warning" message={provider.catalogWarning} className="mt-4" /> : null}

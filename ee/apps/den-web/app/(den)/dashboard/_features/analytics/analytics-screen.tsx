@@ -10,7 +10,7 @@ import { StatCard } from "./stat-card";
 import { TrendChart } from "./trend-chart";
 import { useAnalytics, useProjectOptions } from "./use-analytics";
 import { AnalyticsEmptyState, AnalyticsErrorState, AnalyticsLoading, AnalyticsPageHeader, analyticsPageClass, analyticsSurfaceClass } from "./analytics-layout";
-import { getMembersRoute, orgFeatureEnabled } from "../../../_lib/den-org";
+import { getMembersRoute } from "../../../_lib/den-org";
 import { DenButton } from "../../../_components/ui/button";
 import { DenNotice } from "../../../_components/ui/notice";
 import { DenSegmented } from "../../../_components/ui/segmented";
@@ -87,8 +87,8 @@ export function AnalyticsScreen() {
     && (data?.tasksCompleted30d ?? 0) + (data?.tasksFailed30d ?? 0) === 0
     && (data?.weekly ?? []).every((week) => week.activeMembers === 0 && week.sessions === 0);
   const weekly = data?.weekly ?? [];
-  // Daily trends arrive only when the organization has them on; otherwise stay weekly.
-  const dailyAvailable = orgFeatureEnabled(orgContext, "analyticsDailyTrends") && Array.isArray(data?.daily);
+  // Older servers may not return daily trends; keep their weekly data usable.
+  const dailyAvailable = Array.isArray(data?.daily);
   const activeGranularity: Granularity = dailyAvailable ? granularity : "week";
   const trend = activeGranularity === "day"
     ? (data?.daily ?? []).map((d) => ({ ...d, weekStart: d.day }))

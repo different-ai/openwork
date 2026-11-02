@@ -15,7 +15,7 @@ enum InputDelivery: String {
     /// Bundled toolkits whose surfaces take only hardware-origin input (Qt, wxWidgets, Tk).
     static let foregroundFrameworkPrefixes = ["qtcore", "qtgui", "libwx_", "tk.framework", "tcl.framework", "libtk", "_tkinter"]
 
-    /// Set by the trusted host only while the `computerUseBackground` feature is on.
+    /// Set by the trusted host for parallel computer-use sessions.
     static let hostVariable = "OPENWORK_COMPUTER_USE_DELIVERY"
 
     /// `frameworks` are the names in the app's Contents/Frameworks.
@@ -40,7 +40,7 @@ enum InputDelivery: String {
         case .type: return route == .skyLight && !signedKeys
         case .click(_, _, let flags): return !flags.isEmpty
         case .move, .drag: return true
-        case .press, .setValue, .scroll, .wait: return false
+        case .press, .setValue, .scroll, .wait, .menu: return false
         }
     }
 }
@@ -156,15 +156,57 @@ enum KeyAuthentication {
     }
 }
 
-/// Whether an observation carries a screenshot. Requested wins. Automatic,
-/// used with background delivery, reads the accessibility tree first and adds
-/// the image only when the tree names too few controls to act on.
+/// Whether and how an observation carries a screenshot. Capturing one takes
+/// about a tenth of a second; the model reading it costs far more, so an image
+/// is sent only when it adds something the accessible elements do not.
+/// Requested wins. Automatic reads the accessibility tree first and adds the
+/// image only when the tree names too few controls to act on, or leaves most
+/// of them unnamed, as canvas and many Electron windows do.
 enum ImagePolicy {
     static let enoughControls = 8
 
-    static func include(requested: Bool?, automatic: Bool, namedControls: Int) -> Bool {
+    /// Background delivery reads the tree first. So do the modes that never take
+    /// coordinates, observe and assist, whose images are only for reading.
+    static func automatic(delivery: InputDelivery, mode: AccessMode, policy: RuntimePolicy) -> Bool {
+        delivery == .background || policy == .embedded && mode != .control
+    }
+
+    static func include(requested: Bool?, automatic: Bool, namedControls: Int, interactiveControls: Int = 0) -> Bool {
         if let requested { return requested }
-        return !automatic || namedControls < enoughControls
+        return !automatic || namedControls < enoughControls || namedControls * 2 < interactiveControls
+    }
+
+    /// Encoding for an observation image. Control mode clicks at image
+    /// coordinates, so it keeps the sharper image; observe and assist only read
+    /// it, and computer_zoom shows small text at full resolution.
+    struct Profile: Equatable {
+        let maxLongSide: CGFloat
+        let jpegQuality: CGFloat
+    }
+    static let precise = Profile(maxLongSide: 1280, jpegQuality: 0.8)
+    static let reading = Profile(maxLongSide: 1024, jpegQuality: 0.7)
+
+    static func profile(mode: AccessMode, policy: RuntimePolicy) -> Profile {
+        policy == .embedded && mode != .control ? reading : precise
+    }
+
+    /// The last image the model received from a session's window.
+    struct Sent: Equatable {
+        let observationID: String
+        let generation: Int
+        let window: CGWindowID
+        let width: Int
+        let height: Int
+        let digest: Data
+    }
+
+    /// An automatic image identical to the last one sent from the same window, at
+    /// the same size and without a handoff in between, is not sent again: the
+    /// model already has those pixels, and its coordinates still apply to them.
+    static func alreadySent(requested: Bool?, last: Sent?, generation: Int, window: CGWindowID, width: Int, height: Int, digest: Data) -> Sent? {
+        guard requested == nil, let last, last.generation == generation, last.window == window,
+              last.width == width, last.height == height, last.digest == digest else { return nil }
+        return last
     }
 }
 

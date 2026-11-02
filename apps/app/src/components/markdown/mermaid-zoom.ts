@@ -1,16 +1,3 @@
-import { createContext, use } from "react";
-
-/**
- * Whether rendered Mermaid diagrams get zoom, pan and full-screen controls
- * (the `mermaidZoom` feature). Off by default: the shell provides the
- * resolved feature, and anything rendered outside it keeps the static view.
- */
-export const MermaidZoomContext = createContext(false);
-
-export function useMermaidZoomEnabled() {
-  return use(MermaidZoomContext);
-}
-
 export type DiagramView = {
   /** 1 = the diagram fits its frame. */
   scale: number;

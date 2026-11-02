@@ -7,57 +7,110 @@ const updatedAt = () => timestamp("updated_at", { fsp: 3 })
   .default(sql`CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3)`)
 
 /**
- * An organization's Auto Router (packages/types/src/den/auto-router.ts). At
- * most one row per organization; no row means it was never enabled.
+ * A Smart Router (packages/types/src/den/auto-router.ts). An organization can
+ * have many; each is named and assigned to people through
+ * `auto_router_access`.
  */
 export const AutoRouterTable = mysqlTable(
   "auto_router",
   {
     id: denTypeIdColumn("autoRouter", "id").notNull().primaryKey(),
     organizationId: denTypeIdColumn("organization", "organization_id").notNull(),
-    enabled: boolean("enabled").notNull().default(true),
+    name: varchar("name", { length: 255 }).notNull(),
+    createdByOrgMemberId: denTypeIdColumn("member", "created_by_org_member_id"),
     updatedByOrgMemberId: denTypeIdColumn("member", "updated_by_org_member_id"),
     createdAt: timestamp("created_at", { fsp: 3 }).notNull().defaultNow(),
     updatedAt: updatedAt(),
   },
-  (table) => [uniqueIndex("auto_router_organization").on(table.organizationId)],
+  (table) => [index("auto_router_organization").on(table.organizationId)],
 )
 
 /**
- * One model the Auto Router may send prompts to: when to use it (`prompt`,
- * shown to Jev) and the thinking level it runs at (`thinking_levels`, a JSON
- * array kept from when routes had several; the first valid entry is used and
- * saves write exactly one). `position` orders the routes; position 0 is the
- * default model, with the fixed default prompt, used when no other route
- * matches and whenever Jev cannot answer.
+ * Who a router applies to, following the assignment pattern of other
+ * organization items: everyone (`org_wide`), one member, or one team per row.
  */
-export const AutoRouterRouteTable = mysqlTable(
-  "auto_router_route",
+export const AutoRouterAccessTable = mysqlTable(
+  "auto_router_access",
   {
-    id: denTypeIdColumn("autoRouterRoute", "id").notNull().primaryKey(),
+    id: denTypeIdColumn("autoRouterAccess", "id").notNull().primaryKey(),
+    organizationId: denTypeIdColumn("organization", "organization_id").notNull(),
+    autoRouterId: denTypeIdColumn("autoRouter", "auto_router_id").notNull(),
+    orgWide: boolean("org_wide").notNull().default(false),
+    orgMembershipId: denTypeIdColumn("member", "org_membership_id"),
+    teamId: denTypeIdColumn("team", "team_id"),
+    createdAt: timestamp("created_at", { fsp: 3 }).notNull().defaultNow(),
+  },
+  (table) => [
+    index("auto_router_access_organization").on(table.organizationId),
+    index("auto_router_access_router").on(table.autoRouterId),
+    index("auto_router_access_member").on(table.orgMembershipId),
+    index("auto_router_access_team").on(table.teamId),
+  ],
+)
+
+/**
+ * One AI Gateway model a router may send prompts to. `position` orders the
+ * models; the first wins ties and is used whenever Jev cannot answer.
+ */
+export const AutoRouterModelTable = mysqlTable(
+  "auto_router_model",
+  {
+    id: denTypeIdColumn("autoRouterModel", "id").notNull().primaryKey(),
     autoRouterId: denTypeIdColumn("autoRouter", "auto_router_id").notNull(),
     organizationId: denTypeIdColumn("organization", "organization_id").notNull(),
     /** The `ipr_…` AI Gateway provider. */
     gatewayProviderId: denTypeIdColumn("inferenceProvider", "gateway_provider_id").notNull(),
     /** The catalog model id within the provider (not a member's `gwm_…` alias). */
     modelId: varchar("model_id", { length: 255 }).notNull(),
-    prompt: text("prompt").notNull(),
-    thinkingLevels: compatJsonColumn<string[]>("thinking_levels").notNull(),
     position: int("position", { unsigned: true }).notNull(),
     createdAt: timestamp("created_at", { fsp: 3 }).notNull().defaultNow(),
     updatedAt: updatedAt(),
   },
   (table) => [
-    index("auto_router_route_router").on(table.autoRouterId, table.position),
-    index("auto_router_route_organization").on(table.organizationId),
+    index("auto_router_model_router").on(table.autoRouterId, table.position),
+    index("auto_router_model_organization").on(table.organizationId),
   ],
 )
 
 /**
- * Provider reasoning state an Auto response produced before a tool call, kept
+ * A task models handle ("code review", "translation"), shared by every router
+ * of the organization. One row per name, compared case-insensitively through
+ * `name_key`; removed once no model uses it.
+ */
+export const AutoRouterTaskTable = mysqlTable(
+  "auto_router_task",
+  {
+    id: denTypeIdColumn("autoRouterTask", "id").notNull().primaryKey(),
+    organizationId: denTypeIdColumn("organization", "organization_id").notNull(),
+    name: varchar("name", { length: 255 }).notNull(),
+    /** `autoRouterTaskKey(name)`: trimmed, spaces collapsed, lowercase. */
+    nameKey: varchar("name_key", { length: 255 }).notNull(),
+    createdAt: timestamp("created_at", { fsp: 3 }).notNull().defaultNow(),
+  },
+  (table) => [uniqueIndex("auto_router_task_organization_name").on(table.organizationId, table.nameKey)],
+)
+
+/** Which tasks a router model handles; `position` keeps the admin's order. */
+export const AutoRouterModelTaskTable = mysqlTable(
+  "auto_router_model_task",
+  {
+    autoRouterModelId: denTypeIdColumn("autoRouterModel", "auto_router_model_id").notNull(),
+    taskId: denTypeIdColumn("autoRouterTask", "task_id").notNull(),
+    organizationId: denTypeIdColumn("organization", "organization_id").notNull(),
+    position: int("position", { unsigned: true }).notNull(),
+  },
+  (table) => [
+    primaryKey({ name: "auto_router_model_task_pk", columns: [table.autoRouterModelId, table.taskId] }),
+    index("auto_router_model_task_task").on(table.taskId),
+    index("auto_router_model_task_organization").on(table.organizationId),
+  ],
+)
+
+/**
+ * Provider reasoning state a Smart response produced before a tool call, kept
  * so the next request of the turn can replay it: Claude's signed thinking
- * blocks, Gemini's thought signatures, Bedrock reasoning blocks. Chat
- * Completions clients cannot carry these back, so every gateway instance
+ * blocks, Gemini's thought signatures, Bedrock reasoning blocks; and each
+ * turn's chosen model and thinking level. Chat Completions clients cannot carry these back, so every gateway instance
  * reads them here. Encrypted (it can quote the conversation) and short-lived.
  */
 export const AutoRouterReasoningTable = mysqlTable(

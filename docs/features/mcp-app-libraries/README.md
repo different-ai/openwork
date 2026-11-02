@@ -1,14 +1,16 @@
 # Built-in libraries in Apps
 
-- Feature: `mcpAppLibraries`
+> **GA:** Available without a feature flag. The former rollout key is retired.
+
+- Retired rollout key: `mcpAppLibraries`
 - Deployments: cloud and self-hosted
 - Author: `reachjalil`
-- Default: off
+- Status: generally available (no flag)
 
 ## What changes
 
-Apps built in OpenWork normally get injected React and nothing else. With this
-feature on, the editor's Apps may also use a small set of libraries:
+Apps built in OpenWork get injected React and may also use a small set of
+built-in libraries:
 
 | Need | Import |
 |---|---|
@@ -65,24 +67,16 @@ opens only in an updated OpenWork. Enterprise MCP transport keeps its separate
 ## How to try it
 
 1. Deploy a den-api with this change and use an updated OpenWork desktop.
-2. A platform administrator turns on **Apps: built-in libraries** for a member
-   or organization in /admin.
-3. Ask for an App with a chart or a 3D view. `prepare_app`'s `nextSteps` now
-   lists the libraries and how to use each one. Without the feature, it says
-   nothing new, and an import that names a library fails with "built-in
-   libraries are not on for you".
-4. A failed build names the import to change, such as a package outside the
+2. Ask for an App with a chart or a 3D view. `prepare_app`'s `nextSteps`
+   lists the libraries and how to use each one.
+3. A failed build names the import to change, such as a package outside the
    catalogue or `import * as Icons from "lucide-react"`.
 
-## Turning it off
+## Availability
 
-New builds and updates that import a library are refused. A refused build
-publishes nothing, so the last working revision stays. Revisions already
-published with a library keep opening: this is a publishing rollout, not a
-way to revoke JavaScript that was already served.
-
-The builder reads the feature for the editor on every create and update.
-Preparation output and App source cannot turn it on.
+Generally available. The rollout flag is retired; organization/member overrides,
+operator locks and old kill-switch rows no longer disable this behavior.
+Authorization, provider setup, consent and runtime compatibility still apply.
 
 ## What to watch
 

@@ -1,4 +1,4 @@
-// Test a provider configuration before it is saved (feature `gatewayProviderTest`).
+// Test a provider configuration before it is saved.
 // Den sends the provider, its settings, an organization credential and one model;
 // the gateway sends one short prompt the same way it would forward a member's
 // request, and answers whether the provider replied. Nothing is stored or logged

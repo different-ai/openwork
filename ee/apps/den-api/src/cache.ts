@@ -550,14 +550,11 @@ async function loadOrgMembers(organizationId: OrgId): Promise<CachedOrgMember[]>
 }
 
 /**
- * Once sessionTokenHashing is on, a session still stored as its token is
+ * A session still stored as its token is
  * rewritten as the hash the first time it is used (session-token.ts).
  */
 async function hashLegacySessionToken(sessionId: DenTypeId<"session">, token: string) {
   try {
-    // Lazy import: features.ts reads its rollouts through this module.
-    const { deploymentFeatureEnabled } = await import("./features.js")
-    if (!(await deploymentFeatureEnabled("sessionTokenHashing"))) return
     await db
       .update(AuthSessionTable)
       .set({ token: sessionTokenDigest(token) })
@@ -1128,7 +1125,34 @@ async function bumpInventoryRevisions(organizationIds: string[]) {
   }))
 }
 
+/** How long an App's launch data stays ready for the same member's next open. */
+const MCP_APP_LAUNCH_DATA_TTL_SECONDS = 5 * 60
+const MAX_MCP_APP_LAUNCH_DATA_BYTES = 256 * 1024
+
 export const cache = {
+  // What one member's last open of an App read from OpenWork's own data, never
+  // a provider's, keyed by a digest of the organization's inventory revision,
+  // member, teams, App revision, scopes and time zone. The revision is a
+  // best-effort hint: every saved result needs a fresh checked read before
+  // reuse. Neither a successful lookup nor a failed invalidation grants access.
+  mcpAppLaunchData: {
+    async load(key: string): Promise<unknown> {
+      if (!activeRedisClient || !/^[a-f0-9]{64}$/.test(key)) return null
+      try {
+        const raw = await activeRedisClient.get(`cache:mcp-app-launch-data:v1:${key}`)
+        return raw && raw.length <= MAX_MCP_APP_LAUNCH_DATA_BYTES ? JSON.parse(raw) : null
+      } catch { return null }
+    },
+    async save(key: string, value: unknown[]): Promise<void> {
+      if (!activeRedisClient || !/^[a-f0-9]{64}$/.test(key)) return
+      const redisKey = `cache:mcp-app-launch-data:v1:${key}`
+      try {
+        const raw = JSON.stringify(value)
+        if (value.length === 0 || raw.length > MAX_MCP_APP_LAUNCH_DATA_BYTES) await activeRedisClient.del(redisKey)
+        else await activeRedisClient.set(redisKey, raw, "EX", MCP_APP_LAUNCH_DATA_TTL_SECONDS)
+      } catch { /* Best effort; the next open loads it again. */ }
+    },
+  },
   // Optional shared diagnostics only, never authorization. No extra Redis client,
   // infrastructure requirement or raw errors in this cache path.
   serviceReadiness: {

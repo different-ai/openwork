@@ -34,7 +34,7 @@ function ProviderMark({ model, description, retained = false }: { model: ModelRe
 
 /** Search results, ranked in one unlabeled list. */
 const SEARCH_GROUP = "Search results";
-/** Groups shown without a label: search results, and Auto, which names itself. */
+/** Groups shown without a label: search results, and Smart Routers, which name themselves. */
 const UNLABELED_GROUPS = new Set([SEARCH_GROUP, AUTO_ROUTER_GROUP]);
 /** Groups that list several providers' models together; rows there name their provider. */
 const MIXED_GROUPS = new Set(["Pinned", "Recent", "OpenWork Models", SEARCH_GROUP]);

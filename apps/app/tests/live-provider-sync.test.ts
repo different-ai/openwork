@@ -12,7 +12,7 @@ const v2 = "http://localhost:8787/opencode2";
 describe("live provider sync ownership", () => {
   for (const baseUrl of [v1, v2]) {
     for (const liveProviderSync of [false, true]) {
-      test(`${baseUrl} server rollout ${liveProviderSync}`, () => {
+      test(`${baseUrl} engine provider ownership ${liveProviderSync}`, () => {
         const live = usesLiveProviderSync({ baseUrl,
           status: { enabled: true, chatRouting: true, liveProviderSync } });
         expect(live).toBe(baseUrl === v2 && liveProviderSync);

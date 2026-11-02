@@ -222,7 +222,9 @@ test("Microsoft upload sessions on other hosts are refused before any bytes are 
   assert.equal(response.status, 502)
 })
 
-test("the relay forwards each part to Microsoft without credentials, checks part sizes, and answers only its own member", async () => {
+test("the relay forwards each part to Microsoft without credentials, checks part sizes, and answers only its own member", async (t) => {
+  // Keep the Graph fixture live regardless of the wall clock; exercise its expiry below.
+  t.mock.timers.enable({ apis: ["Date"], now: new Date("2026-10-30T09:00:00Z") })
   const total = FRAGMENT + 10
   let finalStatus = 201
   const setup = harness({
@@ -262,6 +264,13 @@ test("the relay forwards each part to Microsoft without credentials, checks part
 
   finalStatus = 412
   assert.equal((await (await setup.request(relay, { method: "PUT", bytes: new Uint8Array(10), headers: { "content-range": `bytes ${FRAGMENT}-${total - 1}/${total}` } })).json()).error, "drive_conflict")
+
+  t.mock.timers.tick(60 * 60 * 1000 + 1)
+  const beforeExpired = setup.calls.length
+  const expired = await setup.request(relay)
+  assert.equal(expired.status, 404)
+  assert.equal((await expired.json()).error, "upload_session_expired")
+  assert.equal(setup.calls.length, beforeExpired, "expired sessions never reach Microsoft")
 })
 
 test("signed links and sealed tokens fail closed when tampered with, expired, or used for another purpose", () => {

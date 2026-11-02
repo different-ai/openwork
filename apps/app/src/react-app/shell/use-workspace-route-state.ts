@@ -78,6 +78,7 @@ import {
   writeActiveWorkspaceId,
   writeWorkspaceOrderIds,
 } from "./session-memory";
+import { remoteThreadKeyFromRouteId } from "@/lib/remote-session-route";
 import {
   legacySessionRoute,
   mergeWorkspaceRouteSession,
@@ -85,7 +86,6 @@ import {
   removeWorkspaceRouteSession,
   sessionIdForLegacyWorkspaceInference,
   automationsRoute,
-  calendarRoute,
   dashboardRoute,
   workspaceExtensionsRoute,
   workspaceSessionRoute,
@@ -95,7 +95,7 @@ export type UseWorkspaceRouteStateInput = {
   /** A local first-send owner must survive workspace preparation until it has a real session. */
   preservePendingConversationRoute?: boolean;
   developerMode: boolean;
-  workspaceRoute?: "session" | "automations" | "calendar" | "dashboard" | "apps" | "activity";
+  workspaceRoute?: "session" | "automations" | "dashboard" | "apps" | "activity";
   /** Invoked when the openwork-server settings-changed event fires (the route bumps its settings version). */
   onServerSettingsChanged: () => void;
   /** Receives the local openwork-server host info discovered during refresh. */
@@ -161,7 +161,11 @@ export function useWorkspaceRouteState(input: UseWorkspaceRouteStateInput) {
   const denAuth = useDenAuth();
   const params = useParams<{ workspaceId?: string; sessionId?: string }>();
   const routeWorkspaceId = params.workspaceId?.trim() || "";
-  const selectedSessionId = params.sessionId?.trim() || null;
+  // A task on another computer has its own route (`remote:<threadKey>`); it is
+  // not a local session, so nothing below loads or validates it as one.
+  const routeSessionId = params.sessionId?.trim() || null;
+  const remoteThreadKey = remoteThreadKeyFromRouteId(routeSessionId);
+  const selectedSessionId = remoteThreadKey ? null : routeSessionId;
   const extensionsRouteActive = /^\/(?:workspace\/[^/]+\/)?extensions(?:\/|$)/.test(location.pathname);
   const extensionsRoutePath = extensionsRouteActive
     ? location.pathname
@@ -196,11 +200,6 @@ export function useWorkspaceRouteState(input: UseWorkspaceRouteStateInput) {
     if (workspaceRoute === "automations") {
       if (/^\/automations(?:\/|$)/.test(location.pathname)) return;
       navigate(automationsRoute(), options);
-      return;
-    }
-    if (workspaceRoute === "calendar") {
-      if (/^\/calendar(?:\/|$)/.test(location.pathname)) return;
-      navigate(calendarRoute(), options);
       return;
     }
     if (workspaceRoute === "apps") {
@@ -1431,6 +1430,7 @@ export function useWorkspaceRouteState(input: UseWorkspaceRouteStateInput) {
     navigateToWorkspaceSession,
     routeWorkspaceId,
     selectedSessionId,
+    remoteThreadKey,
     loading,
     effectiveLoading,
     connectionPending,
