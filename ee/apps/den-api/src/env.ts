@@ -4,6 +4,7 @@ import path from "node:path"
 import { CLIENT_IP_SECRET_MIN_LENGTH } from "@openwork-ee/utils/client-ip-signature"
 import { denUrls } from "@openwork-ee/utils/den-urls"
 import { parseGatewayDeploymentEnv } from "@openwork-ee/utils/gateway-env"
+import { readReplicaCredentialsFromEnv } from "@openwork-ee/den-db"
 import { DEN_WORKER_POLL_INTERVAL_MS } from "./CONSTS.js"
 import { normalizeConfiguredPublicApiBaseUrl } from "./request-url.js"
 import { resolveDenServiceVersion } from "./service-version.js"
@@ -19,6 +20,8 @@ const EnvSchema = z.object({
   DATABASE_HOST: z.string().min(1).optional(),
   DATABASE_USERNAME: z.string().min(1).optional(),
   DATABASE_PASSWORD: z.string().optional(),
+  DATABASE_READ_USERNAME: z.string().optional(),
+  DATABASE_READ_PASSWORD: z.string().optional(),
   DEN_DB_ENCRYPTION_KEY: z.string().trim().min(32),
   DB_MODE: z.enum(["mysql", "planetscale"]).optional(),
   BETTER_AUTH_SECRET: z.string().min(32),
@@ -695,6 +698,9 @@ const planetscaleCredentials =
       }
     : null
 
+// Optional read-replica credentials; reads stay on the primary without both.
+const readReplicaCredentials = readReplicaCredentialsFromEnv(parsed)
+
 // OpenWork Cloud's sandboxes use OpenWork's public workshop service unless configured otherwise.
 const sandboxWorkplaceUrl = optionalString(parsed.DEN_SANDBOX_WORKPLACE_URL)
   ?? (featureEnvironment.deployment === "cloud" ? "https://open-workplace-workshop.onrender.com" : null)
@@ -712,6 +718,7 @@ export const env = {
   dbEncryptionKey: optionalString(parsed.DEN_DB_ENCRYPTION_KEY),
   dbMode: parsed.DB_MODE ?? (parsed.DATABASE_URL ? "mysql" : "planetscale"),
   planetscale: planetscaleCredentials,
+  readReplica: readReplicaCredentials,
   betterAuthSecret: parsed.BETTER_AUTH_SECRET,
   betterAuthUrl,
   betterAuthCookieDomain,

@@ -2,6 +2,7 @@ import { Client } from "@planetscale/database"
 import { createRetryingPlanetScaleFetch } from "./transient-retry"
 import { drizzle } from "drizzle-orm/mysql2"
 import { drizzle as drizzlePlanetScale } from "drizzle-orm/planetscale-serverless"
+import { withReplicas, type MySQLWithReplicas } from "drizzle-orm/mysql-core"
 import type { FieldPacket, QueryOptions, QueryResult } from "mysql2"
 import mysql from "mysql2/promise"
 import { parseMySqlConnectionConfig } from "./mysql-config"
@@ -9,11 +10,38 @@ import * as schema from "./schema"
 import type { Logger } from "drizzle-orm/logger"
 
 export type DenDbMode = "mysql" | "planetscale"
-type DenDb = ReturnType<typeof drizzlePlanetScale>
+type DenPrimaryDb = ReturnType<typeof drizzlePlanetScale<typeof schema>>
+/**
+ * Reads (`select`, `selectDistinct`, `$count`, `with`, `query`) go to a read
+ * replica when one is configured; writes, `execute` and transactions always go
+ * to the primary. Use `db.$primary` for a read that must see a write made
+ * moments earlier. Without replica credentials both sides are the primary.
+ */
+export type DenDb = MySQLWithReplicas<DenPrimaryDb>
 export type PlanetScaleCredentials = {
   host: string
   username: string
   password: string
+}
+/** Read-only credentials for the same database host, routed to its replicas. */
+export type ReadReplicaCredentials = {
+  username: string
+  password: string
+}
+
+/**
+ * Reads DATABASE_READ_USERNAME / DATABASE_READ_PASSWORD. Both must be set;
+ * otherwise reads keep using the primary credentials (self-hosted and
+ * single-credential deployments need nothing new).
+ */
+export function readReplicaCredentialsFromEnv(source: { DATABASE_READ_USERNAME?: string; DATABASE_READ_PASSWORD?: string }): ReadReplicaCredentials | null {
+  const username = source.DATABASE_READ_USERNAME?.trim()
+  const password = source.DATABASE_READ_PASSWORD?.trim()
+  if (username && password) return { username, password }
+  if (username || password) {
+    console.warn("[db] only one of DATABASE_READ_USERNAME / DATABASE_READ_PASSWORD is set; reads will use the primary")
+  }
+  return null
 }
 
 const TRANSIENT_DB_ERROR_CODES = new Set([
@@ -147,33 +175,9 @@ function resolveDbMode(input: { mode?: DenDbMode; databaseUrl?: string | null })
   return input.databaseUrl ? "mysql" : "planetscale"
 }
 
-export function createDenDb(input: {
-  databaseUrl?: string | null
-  mode?: DenDbMode
-  planetscale?: PlanetScaleCredentials | null
-  logger?: Logger
-}) {
-  const mode = resolveDbMode(input)
-
-  if (mode === "planetscale") {
-    const credentials = input.planetscale ?? (input.databaseUrl ? parsePlanetScaleConfigFromDatabaseUrl(input.databaseUrl) : null)
-    if (!credentials) {
-      throw new Error("PlanetScale mode requires DATABASE_HOST, DATABASE_USERNAME, and DATABASE_PASSWORD")
-    }
-
-    const client = new Client({ ...credentials, fetch: createRetryingPlanetScaleFetch() })
-    return {
-      client,
-      db: drizzlePlanetScale(client, { schema, logger: input.logger }) as unknown as DenDb,
-    }
-  }
-
-  if (!input.databaseUrl) {
-    throw new Error("MySQL mode requires DATABASE_URL")
-  }
-
+function createMySqlPool(config: mysql.PoolOptions) {
   const client = mysql.createPool({
-    ...parseMySqlConnectionConfig(input.databaseUrl),
+    ...config,
     waitForConnections: true,
     connectionLimit: 10,
     maxIdle: 10,
@@ -220,8 +224,48 @@ export function createDenDb(input: {
   const getConnection = client.getConnection.bind(client)
   client.getConnection = async () => rewriteConnectionQueries(await getConnection())
 
-  return {
-    client,
-    db: drizzle(client, { schema, mode: "default", logger: input.logger }) as unknown as DenDb,
+  return client
+}
+
+export function createDenDb(input: {
+  databaseUrl?: string | null
+  mode?: DenDbMode
+  planetscale?: PlanetScaleCredentials | null
+  /** Optional replica credentials for the same host; reads use the primary when absent. */
+  readReplica?: ReadReplicaCredentials | null
+  logger?: Logger
+}) {
+  const mode = resolveDbMode(input)
+  const readReplica = input.readReplica ?? null
+
+  if (mode === "planetscale") {
+    const credentials = input.planetscale ?? (input.databaseUrl ? parsePlanetScaleConfigFromDatabaseUrl(input.databaseUrl) : null)
+    if (!credentials) {
+      throw new Error("PlanetScale mode requires DATABASE_HOST, DATABASE_USERNAME, and DATABASE_PASSWORD")
+    }
+
+    const client = new Client({ ...credentials, fetch: createRetryingPlanetScaleFetch() })
+    const primary: DenPrimaryDb = drizzlePlanetScale(client, { schema, logger: input.logger })
+    const readClient = readReplica
+      ? new Client({ host: credentials.host, ...readReplica, fetch: createRetryingPlanetScaleFetch() })
+      : null
+    const replica: DenPrimaryDb = readClient ? drizzlePlanetScale(readClient, { schema, logger: input.logger }) : primary
+    return { client, readClient, db: withReplicas(primary, [replica]) }
   }
+
+  if (!input.databaseUrl) {
+    throw new Error("MySQL mode requires DATABASE_URL")
+  }
+
+  const connection = parseMySqlConnectionConfig(input.databaseUrl)
+  const client = createMySqlPool(connection)
+  const readClient = readReplica
+    ? createMySqlPool({ ...connection, user: readReplica.username, password: readReplica.password })
+    : null
+  // Both drivers expose the same MySqlDatabase query surface; Den types `db` as the PlanetScale flavour.
+  const primary = drizzle(client, { schema, mode: "default", logger: input.logger }) as unknown as DenPrimaryDb
+  const replica = readClient
+    ? (drizzle(readClient, { schema, mode: "default", logger: input.logger }) as unknown as DenPrimaryDb)
+    : primary
+  return { client, readClient, db: withReplicas(primary, [replica]) }
 }

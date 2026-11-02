@@ -8,6 +8,7 @@ export const { db, client } = createDenDb({
   databaseUrl: env.databaseUrl,
   mode: env.dbMode,
   planetscale: env.planetscale,
+  readReplica: env.readReplica,
   logger: {
     logQuery(query: string, params: unknown[]) {
       dbQueryCounter.logQuery(query, params)

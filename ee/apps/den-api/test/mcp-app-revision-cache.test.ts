@@ -12,7 +12,7 @@ process.env.DEN_DB_ENCRYPTION_KEY ??= "synthetic-mcp-app-revision-cache-unit-tes
 process.env.OPENWORK_DEV_MODE ??= "1"
 const { db } = await import("../src/db.js")
 // Better Auth seeds its resource registry on import; answer it without SQL I/O.
-const bootstrapSelect = mock.method(db, "select", () => ({
+const bootstrapSelect = mock.method(db.$primary, "select", () => ({
   from() { return { async where() { return [{ id: "unit_oauth_resource", identifier: "http://unit.test/mcp/agent", policyVersion: 1 }] } } },
 }))
 const { auth } = await import("../src/auth.js")

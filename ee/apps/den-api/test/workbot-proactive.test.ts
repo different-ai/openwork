@@ -40,7 +40,7 @@ const { resolveMemberSources, groupSourceConnections, checkSourcesChange } = awa
 // The repository's modules load Better Auth, which seeds its resource registry on import: load it first with a
 // synthetic registry row (as test/feature-outcomes.test.ts does), so no database is contacted.
 const { db } = await import("../src/db.js")
-const bootstrapSelect = mock.method(db, "select", () => ({
+const bootstrapSelect = mock.method(db.$primary, "select", () => ({
   from() { return { async where() { return [{ id: "unit_oauth_resource", identifier: "http://unit.test/mcp/agent", policyVersion: 1 }] } } },
 }))
 const { auth } = await import("../src/auth.js")

@@ -803,7 +803,9 @@ export const auth = betterAuth({
   socialProviders:
     Object.keys(socialProviders).length > 0 ? socialProviders : undefined,
   // Session tokens are stored hashed (src/session-token.ts).
-  database: hashSessionTokens(drizzleAdapter(db, {
+  // Primary only: the MySQL adapter inserts then selects the row back, which a
+  // lagging read replica would miss.
+  database: hashSessionTokens(drizzleAdapter(db.$primary, {
     provider: "mysql",
     schema,
   }), {
