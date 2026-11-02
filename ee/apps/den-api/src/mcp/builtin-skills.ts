@@ -244,7 +244,7 @@ Work on a local copy with shell tools; never paste file bytes or base64 into a t
 
 ## In OpenWork (the drive_pull_file, drive_file_status and drive_push_file tools)
 
-1. \`drive_pull_file\` with the Drive file ID or link, or a OneDrive, SharePoint or Teams file link (or an item id with its driveId). Desktop confirms the file's Drive identity and download before transferring bytes. Docs, Sheets and Slides arrive as docx, xlsx and pptx unless you choose a format (csv holds only a Sheet's first tab; md, txt, pdf...). The result is a workspace path plus metadata, never content.
+1. \`drive_pull_file\` with the Drive file ID or link, or a OneDrive, SharePoint or Teams file link (or an item id with its driveId). Leave out \`path\` to save under drive/; Desktop asks the person first for any other folder. Docs, Sheets and Slides arrive as docx, xlsx and pptx unless you choose a format (csv holds only a Sheet's first tab; md, txt, pdf...). The result is a workspace path plus metadata, never content.
 2. Inspect and edit the file with bash (recipes below). Load only the part you need.
 3. \`drive_file_status\` shows what changed locally and in Drive.
 4. Only when the user asked to save it: \`drive_push_file\`, which the person approves. A stored file, including Office files in OneDrive and SharePoint, is replaced in place: same link and sharing, with the previous version in the version history. A Google Docs, Sheets or Slides file (or a PDF converted from an Office file) is saved as a new file next to the original unless the user asked for something else.

@@ -269,7 +269,7 @@ export async function createV2ContextBridge(
       }
       // Pull, status and push run the v1 tools themselves: the same argument
       // checks and the same writes that ask first, answered in the calling chat.
-      // The host's Drive file route still has Desktop confirm every transfer.
+      // The host's Drive file route still has Desktop confirm saves, replaced copies and pulls outside drive/.
       if (isDriveFileAction(call.name)) {
         const { sessionId, caller } = call;
         const tools = createDriveFileTools((action, args) => {
