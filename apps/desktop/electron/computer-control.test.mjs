@@ -1019,6 +1019,16 @@ test("a browser app never takes a password: the site cannot be confirmed there",
   assert.equal(payload(await app).code, "credential_declined");
 });
 
+test("a remote computer never takes a password: a whole-screen session names no app", async (t) => {
+  const f = fixture({ remote: true, authority: async () => true }); t.after(() => f.control.reset(true));
+  await f.control.setFeatureEnabled(true);
+  await f.control.setRemoteEnabled(true);
+  await f.control.choose({ sessionId: "chat", targetId: "vm" });
+  await f.control.execute({ sessionId: "chat", name: "computer_open", args: { app_id: "desktop", mode: "control", purpose: "Sign in" } });
+  assert.equal(payload(await typeInto(f.control, { type: "type", text: "given-password", secret: true })).code, "remote_computer");
+  assert.equal(f.requests.filter((request) => request?.reason === "credential").length, 0);
+});
+
 test("allowing a file panel to be browsed never becomes a standing approval", async (t) => {
   const f = filePanelFixture({ browsing: true }); t.after(() => f.control.reset(true));
   await f.control.setFeatureEnabled(true);

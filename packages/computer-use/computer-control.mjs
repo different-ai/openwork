@@ -1406,6 +1406,8 @@ export function createComputerControl({ adapters, runProgram, runScript, onTimin
         let confirmedApp = null;
         if (secret) {
           const app = typeof grant.lastOpen?.app_id === "string" ? grant.lastOpen.app_id : "";
+          // Only an app on the person's own computer: a remote whole-screen session names no app to confirm.
+          if (targetFor(grant).placement === "remote") return failure("remote_computer", "A password or code goes only to an app on this computer. On a remote computer, ask the person to take over. Nothing was sent.");
           if (isWebBrowser(app)) return failure("browser_app", "Web pages take a password or code only in OpenWork's browser, which confirms the exact site. Use it, or ask the person to take over. Nothing was sent.");
           const answer = app ? await approveCredential(grant, { app }, signal) : "too_many";
           if (!["allow", "always"].includes(answer)) return failure("credential_declined", app
