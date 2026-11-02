@@ -1,208 +1,259 @@
 ---
 title: "Google Workspace SAML SSO"
-description: "Connect Google Workspace to OpenWork Cloud with SAML"
+description: "Connect Google Workspace to OpenWork Cloud or a self-hosted deployment with SAML"
 ---
 
-Use this guide when organization members should sign in to OpenWork through a
-Google Workspace custom SAML app.
-
-OpenWork keeps a new SSO configuration disabled until you verify the domain,
-complete a real authentication test, and explicitly enable SSO.
+Use this guide to let members sign in to OpenWork through a Google Workspace
+custom SAML app.
 
 ## Before you start
 
 You need:
 
-- An OpenWork organization on the Team or Enterprise plan.
-- The OpenWork organization owner.
+- An OpenWork organization with SSO available (Team or Enterprise on OpenWork Cloud).
+- The OpenWork owner, or a member with **Manage single sign-on** permission.
 - A Google Workspace super administrator who can create custom SAML apps.
-- Control of DNS for the email domain you will associate with the connection.
-- The final OpenWork auth origin, for example `https://app.openworklabs.com`.
+- Control of DNS for your users' email domain, for example `example.com`.
+- A recovery plan prepared **before** enabling SSO; see [Recovery](#recovery).
 
-Keep password or existing recovery access available until an OpenWork owner has
-completed the Google SAML test and enabled SSO.
+Google Cloud project access does not establish Google Workspace super-admin
+access or control of your email domain's DNS. Confirm each prerequisite separately.
+A saved OpenWork configuration stays disabled until domain verification, a real
+authentication test, and explicit enablement are complete.
 
 <Note>
-For self-hosted deployments with separate web and API hosts, use the URLs that
-OpenWork shows in **Settings → SSO**. Do not replace them with a separate API
-origin unless your deployment or support guidance explicitly says to.
+For self-hosted deployments, use the URLs shown in **Settings → SSO**. SAML uses
+the OpenWork web/auth origin, for example `https://ow.ai.example.test`, never
+the separate API host. Keep `/api/auth` reachable through that web/auth origin.
 </Note>
 
-## 1. Create the Google custom SAML app
+## Setup order
 
-In the Google Admin console:
+Follow these steps in order. The mapping tables below are **reference**, not a
+second sequence of setup steps.
 
-1. Open **Apps → Web and mobile apps**.
-2. Select **Add app → Add custom SAML app**.
-3. Set **App name** to `OpenWork` or another recognizable workspace name.
-4. Select **Continue**.
+1. **Create the IdP app and pause.** In the Google Admin console, open **Apps →
+   Web and mobile apps → Add app → Add custom SAML app**. Name it `OpenWork`,
+   select **Continue**, and pause on **Google Identity Provider details**.
+2. **Copy the IdP values.** Copy **SSO URL**, **Entity ID**, and **Certificate**
+   using the [Google reference](#what-you-need-from-google-workspace).
+3. **Save in OpenWork.** In another tab, open **Settings → SSO**, choose **SAML**,
+   enter the Google values and your users' email domain, leave **Audience URL**
+   blank unless you need an override, then save. SSO is still disabled.
+4. **Copy OpenWork's generated values back into Google.** In the Google wizard,
+   select **Continue** to reach **Service Provider Details**. Fill **ACS URL**,
+   **Entity ID**, and optional **Start URL** using the [OpenWork reference](#what-openwork-gives-you).
+5. **Configure claims, signing and access.** Follow [Claims and Name ID](#claims-and-name-id),
+   finish the wizard, then [turn on access for the test administrator](#assign-users).
+6. **Verify the domain.** Follow [Set and verify the email domain](#set-and-verify-the-email-domain).
+7. **Test.** Complete [Test SSO](#test-sso) as the existing OpenWork administrator.
+8. **Enable.** Prepare [recovery](#recovery), then follow [Enable SSO](#enable-sso).
+   Do not treat saving or a successful test as enablement.
 
-On **Google Identity Provider details**, keep the page open. You will copy these
-Google values into OpenWork:
+## What OpenWork gives you
 
-- **SSO URL**
-- **Entity ID**
-- **Certificate**
+Reference for **step 4**, after the first OpenWork save: fill Google **Service
+Provider Details** with these generated values. Newer OpenWork versions group
+them under **Give these values to your identity provider**.
 
-Do not paste certificates, metadata, or setup secrets into tickets or shared
-notes.
+| OpenWork value | Google field | What to enter |
+| --- | --- | --- |
+| **ACS URL** | **ACS URL** | The complete generated ACS URL, including its organization-specific path |
+| **Entity ID** | **Entity ID** | The OpenWork web/auth origin, for example `https://ow.ai.example.test`, unless you set **Audience URL**; then use that exact audience |
+| **Sign-in URL** | **Start URL** | The generated organization sign-in URL; this optional field supplies RelayState |
+| **Metadata URL** | No manual field required | Optional service-provider metadata for checking the configuration |
 
-## 2. Copy Google values into OpenWork
-
-In OpenWork, open the organization dashboard, then **Settings → SSO**. Choose
-**SAML** and enter:
-
-| OpenWork field | Google value |
-| --- | --- |
-| IdP Issuer URL | Google **Entity ID**, for example `https://accounts.google.com/o/saml2?idpid=<idpid>` |
-| Domain | The Google Workspace email domain, for example `example.com` |
-| SAML Entry Point | Google **SSO URL** |
-| Audience URL | Leave blank so OpenWork uses the auth origin, unless support gives you a different audience |
-| IdP Certificate | Google **Certificate** |
-
-Save the SSO connection. OpenWork then shows setup values including:
-
-- **Sign-in URL**
-- **Redirect URL**
-- **ACS URL**
-- **Metadata URL**
-
-The saved configuration is still disabled at this point.
-
-## 3. Copy OpenWork values into Google
-
-Return to the Google custom SAML app setup. In **Service Provider Details**, set:
-
-| Google field | OpenWork value |
-| --- | --- |
-| ACS URL | OpenWork **ACS URL** |
-| Entity ID | The `entityID` from OpenWork **Metadata URL**, normally `https://app.openworklabs.com` for OpenWork Cloud |
-| Start URL | OpenWork **Sign-in URL** |
-| Signed response | Leave unchecked unless support asks you to sign the whole SAML response |
-| Name ID format | Email address |
-| Name ID value | Primary email |
-
-OpenWork requires Google to identify the user by a stable work email. Keep the
-Google **Name ID value** aligned with the email OpenWork should use for the
-member.
+Use the **ACS URL** card (labelled **ACS URL (REPLY URL)** in newer versions).
+**Entity ID** is shown as its own value in newer versions. In older versions,
+use the web/auth origin unless **Audience URL** is set; as a fallback, confirm
+`EntityDescriptor entityID` in the **Metadata URL** XML.
 
 <Warning>
-Google exposes two different SAML entity IDs. Use Google's IdP **Entity ID** in
-OpenWork's **IdP Issuer URL** field. Use OpenWork's metadata `entityID` in
-Google's **Service Provider Details → Entity ID** field. If you put the Google
-IdP entity ID into Google's service-provider Entity ID field, Google can reject
-SP-initiated login with `app_not_configured_for_user`.
+Redirect URL is for OIDC only. For SAML, the Reply URL / Single sign-on URL / ACS
+URL in your identity provider must be OpenWork's ACS URL. Older OpenWork versions
+also display a Redirect URL card for SAML; do not copy it into Google.
 </Warning>
 
-To confirm the OpenWork service-provider entity ID, open the OpenWork
-**Metadata URL** and look for:
+## What you need from Google Workspace
 
-```xml
-<EntityDescriptor entityID="https://app.openworklabs.com">
-```
+Reference for **steps 2–3**: on **Google Identity Provider details**, copy the
+two values below and download the certificate. In OpenWork **Settings → SSO**,
+choose **SAML** and enter:
 
-For OpenWork Cloud, that `entityID` is the same for the SSO test and for the
-real enabled login. The test uses the same saved SAML provider and ACS URL; only
-the post-authentication completion URL is test-specific.
-
-Select **Continue**.
-
-## 4. Skip optional mappings for the first SSO test
-
-On the Google mapping step, do not add custom attributes for the first SSO test
-unless your organization needs them. OpenWork's baseline SSO identity comes from
-NameID / primary email.
-
-If Google shows **Group membership (optional)**, leave it blank for the SSO
-test. This mapping does not create OpenWork teams or grant organization roles.
-Google custom SAML apps do not provide a generic outbound SCIM connector; see
-[Google Workspace SCIM support](/cloud/scim-google-workspace).
-
-Select **Finish**.
-
-## 5. Turn on the Google app for a test scope
-
-After the app is created, open **Apps → Web and mobile apps → OpenWork → User
-access** or **Service status**.
-
-Choose the narrowest safe test scope:
-
-- Turn the service on for a test group or organizational unit, when available.
-- Use **ON for everyone** only for a test Google Workspace or an intentional
-  rollout.
-
-Google's service-status page can show:
-
-- **ON for everyone**
-- **OFF for everyone**
-- **Groups**
-- **Organizational Units**
-
-Save the change. Google says most service changes take effect in a few minutes,
-but some can take longer to propagate.
-
-## 6. Verify the OpenWork domain
-
-In OpenWork **Settings → SSO**, select **Request token** under domain
-verification. Create a DNS TXT record for the email domain:
-
-| DNS field | Value |
+| Google value | OpenWork field |
 | --- | --- |
-| Type | `TXT` |
-| Host / name | The **Host / name** value OpenWork displays |
-| Value | The token OpenWork displays |
+| Google **Entity ID**, for example `https://accounts.google.com/o/saml2?idpid=<idpid>` | **IdP Issuer URL** |
+| **SSO URL** | **SAML Entry Point** |
+| **Certificate** | **IdP Certificate** |
 
-Use the host value when your DNS provider appends the domain automatically. Use
-the full DNS name when your provider expects the complete record name.
+Set **Domain** (labelled **Users' email domain** in newer versions) to your
+users' email domain, for example `example.com` for `admin@example.com`.
+Leave **Audience URL** blank to use the OpenWork web/auth origin; newer versions
+place it under **Advanced**. Save, then copy the generated OpenWork values back
+into Google using the table above. Compare the ACS URL character for character.
 
-After the TXT record resolves publicly, select **Verify domain** in OpenWork.
-The token is a one-time proof and expires after seven days. After verification
-succeeds, you may remove the TXT record.
+<Warning>
+Google has two Entity ID fields in this flow. Google's identity-provider
+**Entity ID** goes into OpenWork's **IdP Issuer URL**. OpenWork's service-provider
+**Entity ID** goes into Google **Service Provider Details → Entity ID**. They
+identify opposite sides of the connection and must not be swapped.
+</Warning>
 
-## 7. Test and enable SSO in OpenWork
+## Claims and Name ID
+
+In Google **Service Provider Details**, set:
+
+| Google field | Value |
+| --- | --- |
+| **Name ID format** | **Email address** |
+| **Name ID value** | **Primary email** |
+
+The primary email must match the existing OpenWork account and the configured
+email domain. For the first authentication test, Google must return the **same
+email as the OpenWork administrator who started the test**.
+
+Skip optional custom attributes and **Group membership (optional)** for the
+first test. If you send a separate `email` attribute, keep it aligned with
+NameID. Google group attributes do not create OpenWork teams or grant roles.
+Select **Continue**, then **Finish**.
+
+### Signing
+
+Leave **Signed response** unchecked unless support asks you to sign the whole
+response. Google signs the assertion by default when this is unchecked. Use
+SHA-256 signing and keep the active Google **Certificate** in OpenWork current.
+Save and retest after a certificate change.
+
+## Assign users
+
+Open **Apps → Web and mobile apps → OpenWork → User access** (or **Service
+status**). Turn the app on for the group or organizational unit containing the
+OpenWork administrator who will test it. Use **ON for everyone** only for an
+intentional rollout or test workspace. Save.
+
+Google says changes can take up to 24 hours, though they usually take effect
+sooner. Confirm the test administrator is in the enabled scope before retrying.
+
+## Set and verify the email domain
+
+**Domain / Users' email domain** means the part after `@` in the users' actual
+email addresses. For `admin@example.com`, enter `example.com`, not an identity
+provider's tenant domain such as `<tenant>.onmicrosoft.com`, a Google app ID,
+or the OpenWork server hostname.
+
+1. In OpenWork **Settings → SSO**, select **Request token** under domain
+   verification.
+2. Create a DNS `TXT` record with the exact **Host / name** and token shown.
+   Use the short host if your DNS console appends the zone; otherwise use the
+   full DNS name.
+3. Once the record resolves publicly, select **Verify domain** and confirm
+   **Domain verified: Yes**.
+
+The token expires after seven days. After verification succeeds, you may remove
+the TXT record. Verification does not correct an email or NameID mismatch.
+
+## Test SSO
 
 After Google user access is on and OpenWork domain verification succeeds:
 
-1. In OpenWork **Settings → SSO**, select **Enable Config** or **Enable SSO**.
-2. In the **Test SSO before enabling it** dialog, select **SSO Login**.
-3. Complete Google authentication in the separate window.
-4. Return to OpenWork and confirm **Authentication test successful**.
-5. Select **Enable SSO**.
+1. In **Settings → SSO**, select **Enable Config** or **Enable SSO** to open
+   **Test SSO before enabling it**.
+2. Select **SSO Login** and complete Google authentication in the separate
+   window as the same OpenWork administrator.
+3. Return to OpenWork and confirm **Authentication test successful**. Check
+   that the intended organization and existing administrator account are used.
 
-SSO is not offered to organization members until you explicitly enable it after
-the successful test. If you edit the SSO configuration after a successful test,
-test it again before enabling. Test links expire after five minutes.
+Test links expire after five minutes. The test uses the saved provider and ACS
+URL, not a separate test ACS URL. If you edit the configuration, test it again.
+Do not enable SSO while a test is failing.
 
-## Just-in-time provisioning and password signup
+After a failure, correct the cause and select **Try SSO login again** once.
+If the dialog still shows **Authentication test in progress**, finish the
+existing popup or wait for that test's five-minute expiry. Closing or reloading
+the administrator browser can leave that intent in progress until it expires.
+Do not click repeatedly or resave a configuration that already passed.
 
-After Google SAML SSO is enabled for a verified domain, OpenWork's standard
-sign-in flow routes users with that email domain to the organization SSO flow.
-When a user completes SAML sign-in successfully, OpenWork can create their
-organization membership just in time with the default `Member` role.
+OpenWork allows **IdP-initiated SAML** sign-in. Use OpenWork's built-in test
+above before enabling: Google's **Test SAML login** alone does not record the
+required OpenWork administrator test result.
 
-JIT provisioning happens only after successful SAML authentication. Creating an
-email/password account with the same email domain does not add the user to the
-organization, does not create a SCIM-managed identity, and does not sync Google
-profile or suspension changes. If that user later completes SSO, OpenWork can
-link the matching account and provision the organization membership through SSO.
+## Enable SSO
 
-OpenWork does not convert SAML attributes such as `role`, `groups`, or `admin`
-into elevated organization roles. The owner assigns roles in
-OpenWork; ownership changes require ownership transfer. You can use a manually
-managed OpenWork team for [Team Admin access](/cloud/members-and-rbac#team-admin-access),
-but its membership will not synchronize from Google groups through SAML.
+Prepare [recovery access](#recovery), then select **Enable SSO** after the
+successful test. Saving or testing alone does not enable member sign-in.
+
+<Warning>
+On a single-organization self-hosted deployment, enabling SSO stops
+email/password sign-in for **everyone, including the owner and the initial
+administrator**. The owner's password is not a break-glass bypass. Keep the
+current administrator session open while you verify a new SSO sign-in in a
+separate browser profile.
+</Warning>
+
+In the standard sign-in flow, users with the verified email domain are directed
+to organization SSO. This domain routing is separate from the deployment-wide
+password block in single-organization mode.
+
+## Recovery
+
+Before enabling SSO, prepare both a recent administrator session and, if your
+recovery policy allows it, an organization-scoped API key. The administrator or
+key's member must have **Manage single sign-on** (`sso.manage`) permission;
+being an Admin without that permission is not enough.
+
+- **Recent session:** use **Settings → SSO** to disable SSO from an authorized
+  session signed in within the last **two hours**. Keeping a tab open does not
+  extend that window. After it expires, re-authentication is required, which
+  may be impossible while the identity provider is unavailable.
+- **Pre-created API key:** an authorized organization API key can call
+  `POST /v1/sso/disable` on your Den API, using the `x-api-key` header. API keys
+  skip the recent-sign-in check, not the permission check. Create and securely
+  store the key before rollout; do not put its value in a URL, screenshot, or
+  shared notes.
+
+Disabling SSO keeps its configuration and removes the single-organization SSO
+password block. Existing password accounts can then sign in, subject to the
+normal account and password protections. Fix the configuration, retest, and
+explicitly re-enable it. If neither recovery path is available, escalate to
+your deployment operator; a forgotten password or the bootstrap setup code
+does not bypass enabled SSO.
+
+## Provisioning and roles
+
+Successful SAML sign-in can create organization membership just in time with
+the default `Member` role. Password signup alone does not add a user to the
+organization or create a SCIM identity. A matching existing account can be
+linked through SSO when its identity and email domain match the configuration.
+
+SAML `role`, `groups`, or `admin` attributes do not grant elevated roles. The
+owner assigns roles; ownership changes require ownership transfer. Manually
+managed OpenWork teams can grant
+[Team Admin access](/cloud/members-and-rbac#team-admin-access), but Google groups
+do not synchronize through SAML. Google custom SAML apps do not provide a
+generic outbound SCIM connector; see
+[Google Workspace SCIM support](/cloud/scim-google-workspace).
 
 ## Troubleshooting
 
-| Symptom | Likely cause | Fix |
-| --- | --- | --- |
-| Google returns `403 app_not_configured_for_user` | Google's **Service Provider Details → Entity ID** does not exactly match the SAML request issuer from OpenWork | Open OpenWork **Metadata URL**, copy the `EntityDescriptor entityID` value, and paste that exact case-sensitive value into Google **Entity ID** |
-| Google returns `403 app_not_enabled_for_user` | The Google custom SAML app is not enabled for the test user | Open **User access** or **Service status** and turn the app on for the user's group, organizational unit, or everyone |
-| Google reports an ACS URL mismatch | Google's **ACS URL** differs from OpenWork's generated ACS URL | Copy OpenWork **ACS URL** into Google **Service Provider Details → ACS URL** exactly |
-| OpenWork shows **Verify the SSO domain before testing this configuration** | The DNS TXT proof has not passed yet | Create the TXT record shown by OpenWork, wait for DNS propagation, then select **Verify domain** |
-| The test dialog shows **The SSO authentication window was closed before the test completed** | The popup was closed or redirected away before OpenWork received the test result | Start a new test and keep the authentication window open until it returns or closes itself |
-| OpenWork will not enable SSO after editing settings | The current configuration has not been tested successfully | Run **SSO Login** again, then select **Enable SSO** after the successful test |
-| Google settings look correct but the same user still cannot test | Google service-status changes have not reached the user yet | Wait for propagation, confirm the user is in the enabled group or organizational unit, and retry |
+Match the message or error code, then fix the configuration before retrying.
+Do not repeatedly submit a failing login.
 
-For member roles and access behavior after SSO sign-in, see
-[Members and RBAC](/cloud/members-and-rbac).
+| Message / code | Check and action |
+| --- | --- |
+| `403 app_not_configured_for_user` | First compare Google **Service Provider Details → Entity ID** with OpenWork's Entity ID (web/auth origin unless Audience is set), not Google's IdP Entity ID. If they match, check the selected Google account and app configuration. Metadata XML is a fallback check, not a different Entity ID. |
+| `403 app_not_enabled_for_user` | Turn the app on under **User access / Service status** for the test administrator's group or organizational unit. Allow for propagation. |
+| `ACS URL in request … doesn't match configured ACS URL …` | Set Google **ACS URL** to OpenWork's complete **ACS URL**, not its OIDC Redirect URL or separate API host. Match scheme, host, path, and trailing slash exactly. |
+| `Invalid SAML response` / `saml_error` | Check the active Google **Certificate** matches OpenWork, the assertion is signed with SHA-256, and Entity ID and ACS values match. Save and retest after changes. |
+| `account_not_linked` / `SSO authentication did not complete successfully. Check the provider configuration and try again.` | First check **Domain / Users' email domain**, SAML email / NameID, and the existing OpenWork account email. Use `example.com` for `admin@example.com`. These errors can have other causes; inspect server diagnostics if the values match. |
+| `SSO authenticated a different account. Sign in at the identity provider with the same administrator account and try again.` | Choose the same Google primary email as the administrator who started the test. |
+| `This deployment is configured for one organization. Additional organization changes are disabled.` | A stale session can hold the wrong active organization. Sign out and sign in again through this deployment's organization **Sign-in URL**. Keep any separate recovery session open. |
+| `Verify the SSO domain before testing this configuration.` | Complete the DNS TXT proof shown in OpenWork for the users' email domain. |
+| `The SSO authentication test expired. Start a new test and complete it within five minutes.` | Create a fresh test link and complete it within five minutes. |
+| `The SSO authentication window was closed before the test completed.` | Start a new test; keep the authentication window open until it returns or closes itself. |
+| `For security, confirm it's you before changing workspace settings.` / `fresh_auth_required` | The two-hour privileged-session window ended. Re-authenticate before changing SSO; if SSO is broken, use the pre-created authorized organization API key. |
+| HTTP `429` | Stop retries and honor `Retry-After` when present. Production auth defaults to 20 requests per 60 seconds; email/password sign-in is limited to 5 requests per 5 minutes and can also have failed-password lockouts. Do not confuse the password limit with the SSO test's five-minute expiry. |
+| `This deployment uses organization SSO. Continue with SSO to sign in.` | Password sign-in is blocked in single-organization mode, including for the owner. Use the organization **Sign-in URL**, or an existing recovery path to disable SSO. |
+
+For Google's field definitions and service-access steps, see
+[Set up your own custom SAML app](https://support.google.com/a/answer/6087519?hl=en)
+and [SAML app error messages](https://support.google.com/a/answer/6301076?hl=en).
