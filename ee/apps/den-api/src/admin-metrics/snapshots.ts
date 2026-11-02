@@ -97,9 +97,9 @@ export async function refreshMetric(key: ControlCenterSectionKey, deps: {
   } catch (error) {
     await store.saveFailure(key, definition.ranges, errorMessage(error), Date.now() - started, context.now)
   } finally {
-    // Retry a failure on the next tick; otherwise wait out most of the interval.
-    const wait = outcome === "refreshed" ? Math.floor(deps.intervals[definition.tier] * 0.9) : 0
-    await store.release(key, owner, new Date(Date.now() + wait))
+    // A failure waits out the interval too: the lease is shared, so no instance or
+    // boot retries it sooner and a failing metric costs no more than a healthy one.
+    await store.release(key, owner, new Date(Date.now() + Math.floor(deps.intervals[definition.tier] * 0.9)))
   }
   return outcome
 }
