@@ -32,6 +32,7 @@ import { createNativeDictation, createSpeechDictation } from "./native-dictation
 import { applyBrandAppName } from "./brand-app-name.mjs";
 import { createBrowserPanel } from "./browser-panel.mjs";
 import { createComputerControl } from "@openwork/computer-use/computer-control";
+import { createComputerAgentPermissions } from "./computer-agent-permissions.mjs";
 import { createLocalComputerAdapter } from "./computer-local.mjs";
 import { createComputerScripting } from "./computer-scripting.mjs";
 import { remoteComputerAdapters } from "./computer-targets.mjs";
@@ -297,15 +298,72 @@ function assertComputerSender(event) {
   }
 }
 
+/** Rules come from the local server, which verifies the member's policy with Den. */
+async function readComputerRules() {
+  const server = await runtimeManager.openworkServerInfo();
+  if (!server.baseUrl || !(server.clientToken ?? server.ownerToken)) throw new Error("OpenWork server unavailable");
+  // loopback-fetch: the policy service is the locally managed OpenWork server.
+  const response = await fetch(`${server.baseUrl}/managed-policy/computer-rules`, {
+    headers: { Authorization: `Bearer ${server.clientToken ?? server.ownerToken}` }, signal: AbortSignal.timeout(15_000),
+  });
+  if (!response.ok) throw new Error("Computer rules unavailable");
+  const payload = await response.json();
+  return Array.isArray(payload?.rules) ? payload.rules : [];
+}
+
+const computerAgentPermissions = createComputerAgentPermissions({
+  readRules: readComputerRules,
+  confirm: async (rule) => {
+    if (!mainWindow || mainWindow.isDestroyed()) return false;
+    const answer = await dialog.showMessageBox(mainWindow, {
+      type: "question", buttons: ["Allow in this chat", "Cancel"], defaultId: 1, cancelId: 1,
+      message: "Let the agent use your computer in this chat?",
+      detail: `Your organization's agent permissions ask before agents use apps on this computer (set for ${rule.source}).`,
+    });
+    return answer.response === 0;
+  },
+});
+
+/** @param {string} message */
+function computerPolicyDenied(message) {
+  return { ok: false, error: { code: "organization_policy_denied", message } };
+}
+
+/** @param {string} sessionId */
+async function checkComputerPermission(sessionId) {
+  const decision = await computerAgentPermissions.check({ kind: "computer", sessionId });
+  if (decision.effect === "deny") return computerPolicyDenied(decision.message);
+  if (decision.effect === "ask" && !await computerAgentPermissions.approveComputer(sessionId, decision.rule)) {
+    return computerPolicyDenied("Computer use was not approved in this chat. No action ran.");
+  }
+  return null;
+}
+
 const uiControlServer = createUiControlServer({
   app,
   appName: APP_NAME,
   appIdentifier: APP_IDENTIFIER,
   getWindow: () => createMainWindow(),
   browserTask: (args, options) => browserPanel?.browserTask(args, options) ?? { ok: false, code: "browser_unavailable" },
-  computerTask: (args, options) => computerControl.execute(args, options),
-  computerProgram: (args, options) => computerControl.program(args, options),
-  computerScript: (args, options) => computerControl.script(args, options),
+  computerTask: async (args, options) => {
+    if (!["computer_status", "computer_close"].includes(args?.name)) {
+      const denied = await checkComputerPermission(args?.sessionId);
+      if (denied) return denied;
+    }
+    return computerControl.execute(args, options);
+  },
+  computerProgram: async (args, options) => {
+    if (args?.surface === "computer") {
+      const denied = await checkComputerPermission(args?.sessionId);
+      if (denied) return denied;
+    }
+    return computerControl.program(args, options);
+  },
+  computerScript: async (args, options) => {
+    const decision = await computerAgentPermissions.check({ kind: "script", sessionId: args?.sessionId });
+    if (decision.effect === "deny") return computerPolicyDenied(decision.message);
+    return computerControl.script(args, { ...options, approveEachScript: decision.effect === "ask" });
+  },
   computerEnabled: () => computerControl.featureEnabled(),
   listWebMcpTools: (args, options) => browserPanel?.listWebMcpTools(args, options) ?? {
     ok: false,

@@ -113,7 +113,7 @@ function deadline(ms) {
  * @typedef {{ isError?: boolean, content: Array<{ type: string, text?: string, data?: string, mimeType?: string }> }} ComputerResult
  * @typedef {{ sessionId?: string }} ChatInput
  * @typedef {{ ok?: boolean, error?: { code: string, message: string }, mayHaveActed?: boolean, [key: string]: unknown }} ScriptResult
- * @typedef {{ id: string, reason: "setup" | "script" | "files", computer: string, placement: "local" | "remote", detail?: string, appId?: string, purpose?: string, script?: { app: string, code: string }, files?: { app: string, names: string[] } }} ComputerRequest
+ * @typedef {{ id: string, reason: "setup" | "script" | "files", computer: string, placement: "local" | "remote", detail?: string, appId?: string, purpose?: string, standing?: boolean, script?: { app: string, code: string }, files?: { app: string, names: string[] } }} ComputerRequest
  * @typedef {{ targets?: Record<string, string>, computer?: string }} SavedChoices
  * @typedef {{
  *   callTool: (name: string, args: Record<string, unknown>, options?: { signal?: AbortSignal, timeoutMs?: number }) => Promise<ComputerResult>,
@@ -262,9 +262,10 @@ export function createComputerControl({ adapters, runProgram, runScript, onTimin
    * Don't run. Stop, turning computer use off and the call's own cancellation answer no.
    * @returns {Promise<"allow" | "always" | "dismiss" | "aborted" | "timeout">}
    */
-  function approveScript(grant, app, code, signal) {
+  function approveScript(grant, app, code, signal, approveEachScript = false) {
     const target = targetFor(grant);
-    return approve(grant, { id: randomUUID(), reason: /** @type {const} */ ("script"), computer: target.label, placement: target.placement, script: { app, code } }, signal);
+    return approve(grant, { id: randomUUID(), reason: /** @type {const} */ ("script"), computer: target.label, placement: target.placement,
+      ...(approveEachScript ? { standing: false } : {}), script: { app, code } }, signal);
   }
   /**
    * Shows which files an app or page is about to receive and waits for Send, Always
@@ -1240,7 +1241,12 @@ export function createComputerControl({ adapters, runProgram, runScript, onTimin
       if (!grant.enabled) return false;
       return ["allow", "always"].includes(await approveFiles(grant, { app: String(app ?? "a website"), names: files }, signal));
     },
-    async script(input, { signal = new AbortController().signal } = {}) {
+    /**
+     * @param {ChatInput & { app?: string, code?: string, timeoutMs?: number }} input
+     * @param {{ signal?: AbortSignal, approveEachScript?: boolean }} options
+     * @returns {Promise<ScriptResult>}
+     */
+    async script(input, { signal = new AbortController().signal, approveEachScript = false } = {}) {
       if (!featureEnabled || closed || resetting || !runScript) return { ok: false, error: { code: "computer_unavailable", message: "App scripting is not available in this OpenWork app." } };
       if (!input || !SCRIPT_APPS.includes(input.app) || typeof input.code !== "string" || !input.code.trim() || input.code.length > 32_000
         || input.timeoutMs !== undefined && (!Number.isInteger(input.timeoutMs) || input.timeoutMs < 1000 || input.timeoutMs > 120_000)) {
@@ -1255,10 +1261,10 @@ export function createComputerControl({ adapters, runProgram, runScript, onTimin
       const revision = grant.revision;
       // The person sees the whole script here, in OpenWork, before it runs; an engine-side
       // prompt is not enough because anything holding the bridge token can reach this call.
-      if (!grant.scriptApps?.has(input.app)) {
-        const answer = await approveScript(grant, input.app, input.code, signal);
-        if (answer === "always") (grant.scriptApps ??= new Set()).add(input.app);
-        else if (answer !== "allow") {
+      if (approveEachScript || !grant.scriptApps?.has(input.app)) {
+        const answer = await approveScript(grant, input.app, input.code, signal, approveEachScript);
+        if (answer === "always" && !approveEachScript) (grant.scriptApps ??= new Set()).add(input.app);
+        else if (answer !== "allow" && answer !== "always") {
           return { ok: false, error: { code: "script_declined", message: answer === "dismiss"
             ? "The person chose not to run this script. Nothing ran. Continue another way or ask what they want."
             : "The script was not approved in time, or computer use stopped. Nothing ran." } };
