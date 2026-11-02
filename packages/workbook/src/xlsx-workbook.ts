@@ -246,8 +246,24 @@ function parseNumberFormats(stylesXml: string | null): string[] {
   });
 }
 
+// `[h]`, `[mm]`, `[ss]`: elapsed time, which keeps counting past 24 hours
+// (`[h]:mm` shows 36 hours as 36:00) instead of rolling over into a date.
+const ELAPSED_TIME_TOKEN = /\[(?:h+|m+|s+)\]/i;
+
+export function isElapsedTimeFormat(format: string | undefined): boolean {
+  return !!format && ELAPSED_TIME_TOKEN.test(format.replace(/"[^"]*"/g, ""));
+}
+
+export function excelSerialToElapsedTime(serial: number): string | null {
+  if (!Number.isFinite(serial) || serial < 0) return null;
+  const totalSeconds = Math.round(serial * 86_400);
+  const hours = Math.floor(totalSeconds / 3_600);
+  return `${hours}:${pad(Math.floor((totalSeconds % 3_600) / 60))}:${pad(totalSeconds % 60)}`;
+}
+
 export function isDateNumberFormat(format: string | undefined): boolean {
   if (!format || format === "General" || format === "@") return false;
+  if (isElapsedTimeFormat(format)) return false;
   const stripped = format
     .replace(/"[^"]*"/g, "")
     .replace(/\[[^\]]*\]/g, "")
@@ -296,6 +312,9 @@ function displayedCellValue(type: string, rawValue: string | undefined, body: st
     return Number.isInteger(index) ? sharedStrings[index] : undefined;
   }
   if (type === "b" && rawValue !== undefined) return rawValue === "1" ? "TRUE" : "FALSE";
+  if ((type === "" || type === "n") && rawValue !== undefined && isElapsedTimeFormat(numberFormat)) {
+    return excelSerialToElapsedTime(Number(rawValue)) ?? rawValue;
+  }
   if ((type === "" || type === "n") && rawValue !== undefined && isDateNumberFormat(numberFormat)) {
     return excelSerialToIso(Number(rawValue), date1904) ?? rawValue;
   }
