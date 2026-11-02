@@ -67,13 +67,16 @@ final class BoundaryTests: XCTestCase {
 
     func testSecureTextFieldTakesTypingWithoutExposingItsValue() throws {
         let frame = CGRect(x: 0, y: 0, width: 320, height: 240)
-        let secure = ElementRecord(ref: "e1", element: AXUIElementCreateApplication(getpid()), role: "AXTextField",
-            label: "Password", value: "given-password", frame: frame, actions: [], settable: true,
-            enabled: true, protected: true)
+        // The hash of a title an app could use to mirror what was typed: it stays in the helper.
+        let mirrored = Data("given-password".utf8)
+        let secure = ElementRecord.secureField(ref: "e1", element: AXUIElementCreateApplication(getpid()), role: "AXTextField",
+            labelHash: mirrored, frame: frame, actions: [], settable: true, enabled: true)
         XCTAssertTrue(secure.textField, "A password the person gave can be typed into a secure field")
+        XCTAssertEqual(secure.labelHash, mirrored)
         for compact in [false, true] {
             let payload = try secure.payload(bounds: frame, width: 320, height: 240, compact: compact)
             XCTAssertEqual(payload["secure"] as? Bool, true)
+            XCTAssertEqual(payload["label"] as? String, ElementRecord.secureLabel, "The app's own title never reaches the model")
             XCTAssertNil(payload["value"])
             XCTAssertFalse(String(describing: payload).contains("given-password"))
         }

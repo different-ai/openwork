@@ -180,6 +180,14 @@ struct ElementRecord {
         "AXIncrementor", "AXPopUpButton", "AXDisclosureTriangle", "AXProgressIndicator", "AXLevelIndicator", "AXValueIndicator"]
     /// A protected record is a secure text field: it takes typed input, but its value is never read.
     var textField: Bool { Self.textRoles.contains(role) && enabled }
+    /// An app can mirror what was typed into a secure field's title, so the model gets this
+    /// fixed label; only a hash of the real one stays here, for stale-state checks.
+    static let secureLabel = "Secure field"
+    static func secureField(ref: String, element: AXUIElement, role: String, labelHash: Data, frame: CGRect,
+                            actions: [String], settable: Bool, enabled: Bool) -> ElementRecord {
+        ElementRecord(ref: ref, element: element, role: role, label: secureLabel, value: nil, frame: frame, actions: actions,
+            settable: settable, enabled: enabled, protected: true, labelHash: labelHash, valueHash: nil)
+    }
 
     static let interactiveRoles: Set<String> = ["AXButton", "AXTextField", "AXTextArea", "AXSearchField", "AXCheckBox", "AXRadioButton",
         "AXPopUpButton", "AXMenuButton", "AXComboBox", "AXLink", "AXSlider", "AXIncrementor", "AXMenuItem", "AXMenuBarItem",
@@ -518,11 +526,8 @@ final class MacAccessibility {
                         let label = try checkedString(element, kAXTitleAttribute, budget, displayOnly: true)
                             ?? checkedString(element, kAXDescriptionAttribute, budget, displayOnly: true) ?? ""
                         let enabled = try checkedBool(element, kAXEnabledAttribute, budget, displayOnly: true) != false
-                        records.append(ElementRecord(ref: "e\(records.count + 1)", element: element, role: role,
-                            label: String(label.prefix(180)), value: nil, frame: bounds,
-                            actions: try actionNames(element, budget), settable: try valueSettable(element, budget, displayOnly: true),
-                            enabled: enabled, protected: true,
-                            labelHash: textHash(label), valueHash: nil))
+                        records.append(.secureField(ref: "e\(records.count + 1)", element: element, role: role, labelHash: textHash(label), frame: bounds,
+                            actions: try actionNames(element, budget), settable: try valueSettable(element, budget, displayOnly: true), enabled: enabled))
                     }
                 } else {
                     let rawLabel = try checkedString(element, kAXTitleAttribute, budget, displayOnly: true)
