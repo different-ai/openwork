@@ -232,6 +232,17 @@ export const FEATURES = defineFeatures({
     default: false,
     outcomes: true,
   },
+  agentHarnessPermissions: {
+    label: "Agent permissions: computer use, app scripting and outside folders",
+    description: "Admins choose Allow, Ask first or Block for computer use, Mac app scripting and folders outside the workspace on the Agents tab, and members' desktop apps apply them.",
+    category: "computerUse",
+    added: "2026-11-01",
+    since: "2026-11",
+    author: "benjaminshafii",
+    docs: "docs/features/agent-harness-permissions/README.md",
+    deployments: everywhere,
+    default: false,
+  },
   computerUse: {
     label: "Computer use",
     description: "Let agents use Mac apps or a managed cloud desktop with a live view and Take over and Stop controls. On Mac, supported app windows stay in the background without moving your cursor; agents read controls first and take screenshots only when needed. Canvas apps such as Blender still come to the front. Requested apps open without additional OpenWork approval prompts. GUI access is experimental and is not sandboxed by structured-tool permission rules.",
