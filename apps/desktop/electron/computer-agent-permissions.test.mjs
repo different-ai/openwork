@@ -12,7 +12,7 @@ function fixture({ confirm = async () => true } = {}) {
     readRules: async () => { reads++; if (failed) throw new Error("offline"); return rules; },
     confirm, now: () => clock,
   });
-  return { policy, setRules: value => { rules = value; }, fail: () => { failed = true; }, tick: () => { clock += 30_000; }, reads: () => reads };
+  return { policy, setRules: value => { rules = value; }, fail: () => { failed = true; }, recover: () => { failed = false; }, tick: () => { clock += 30_000; }, reads: () => reads };
 }
 
 for (const kind of ["computer", "script"]) test(`${kind} allows by default and applies allow, ask and deny`, async () => {
@@ -46,10 +46,37 @@ test("a successful refresh expires cached rules and an empty policy restores cur
   assert.equal(f.reads(), 2);
 });
 
-test("without a known policy a read error leaves current behavior unchanged", async () => {
-  const f = fixture(); f.fail();
-  assert.deepEqual(await f.policy.check({ kind: "computer" }), { effect: "allow" });
-});
+for (const kind of ["computer", "script"]) {
+  test(`${kind} denies before the first successful read and retries on the next check`, async () => {
+    const f = fixture(); f.fail();
+    assert.deepEqual(await f.policy.check({ kind }), {
+      effect: "deny",
+      message: "Your organization's agent permissions could not be verified yet. Try again in a moment; nothing ran.",
+    });
+    assert.equal(f.reads(), 1);
+    f.recover();
+    assert.deepEqual(await f.policy.check({ kind }), { effect: "allow" });
+    assert.equal(f.reads(), 2, "retry does not wait for the 30-second cache");
+  });
+
+  test(`${kind} allows after a successful empty read, even if a later read fails`, async () => {
+    const f = fixture();
+    assert.deepEqual(await f.policy.check({ kind }), { effect: "allow" });
+    assert.equal(f.reads(), 1);
+    f.fail(); f.tick();
+    assert.deepEqual(await f.policy.check({ kind }), { effect: "allow" });
+    assert.equal(f.reads(), 2);
+  });
+
+  test(`${kind} retains verified deny rules when a later read fails`, async () => {
+    const f = fixture(); f.setRules([rule(kind, "deny")]);
+    const decision = await f.policy.check({ kind });
+    assert.equal(decision.effect, "deny");
+    f.fail(); f.tick();
+    assert.deepEqual(await f.policy.check({ kind }), decision);
+    assert.equal(f.reads(), 2);
+  });
+}
 
 test("approval belongs to one chat and resets only when the ordered rules change", async () => {
   let asks = 0;

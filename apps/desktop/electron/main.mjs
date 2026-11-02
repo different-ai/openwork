@@ -346,7 +346,7 @@ const uiControlServer = createUiControlServer({
   getWindow: () => createMainWindow(),
   browserTask: (args, options) => browserPanel?.browserTask(args, options) ?? { ok: false, code: "browser_unavailable" },
   computerTask: async (args, options) => {
-    if (!["computer_status", "computer_close", "computer_discover"].includes(args?.name)) {
+    if (!["computer_status", "computer_close"].includes(args?.name)) {
       const denied = await checkComputerPermission(args?.sessionId);
       if (denied) return denied;
     }

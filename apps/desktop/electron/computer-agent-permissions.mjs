@@ -9,7 +9,8 @@ import {
 
 /**
  * The desktop's computer and scripting policy, independent of the app window.
- * Failed reads keep the last verified rules; a computer without rules behaves as before.
+ * Deny until a read succeeds, retrying unverified reads on the next check.
+ * Later failed reads keep the last verified rules; a verified empty policy allows use.
  * @param {{ readRules: () => Promise<unknown>, confirm: (rule: AgentPermissionRule) => Promise<boolean>, now?: () => number }} options
  */
 export function createComputerAgentPermissions({ readRules, confirm, now = Date.now }) {
@@ -18,6 +19,7 @@ export function createComputerAgentPermissions({ readRules, confirm, now = Date.
   let signature = "[]";
   let revision = 0;
   let readAt = -Infinity;
+  let verified = false;
   /** @type {Promise<void> | null} */
   let reading = null;
   /** @type {Set<string>} */
@@ -27,7 +29,7 @@ export function createComputerAgentPermissions({ readRules, confirm, now = Date.
 
   async function refresh() {
     if (reading) return reading;
-    if (now() - readAt < 30_000) return;
+    if (verified && now() - readAt < 30_000) return;
     readAt = now();
     reading = Promise.resolve().then(readRules).then((value) => {
       if (!Array.isArray(value)) throw new Error("Computer rules unavailable");
@@ -44,6 +46,7 @@ export function createComputerAgentPermissions({ readRules, confirm, now = Date.
         pending.clear();
       }
       rules = next;
+      verified = true;
     }).catch(() => { /* Keep the last known policy when the server cannot answer. */ }).finally(() => { reading = null; });
     return reading;
   }
@@ -55,6 +58,7 @@ export function createComputerAgentPermissions({ readRules, confirm, now = Date.
      */
     async check({ kind }) {
       await refresh();
+      if (!verified) return { effect: "deny", message: "Your organization's agent permissions could not be verified yet. Try again in a moment; nothing ran." };
       const decision = decideAgentPermission(rules, kind, ["*"]);
       if (decision.effect === "deny" && decision.rule) return { effect: "deny", message: agentPermissionDenialMessage(decision.rule, decision.resource) };
       if (decision.effect === "ask" && decision.rule) return { effect: "ask", rule: decision.rule };
