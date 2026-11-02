@@ -14,6 +14,7 @@ import { db } from "./db.js"
 import { env } from "./env.js"
 import { isOrganizationSsoReady } from "./sso-readiness.js"
 import { ssoStateVerificationIdentifier } from "./sso-state-identifier.js"
+import { ssoTestDomainMismatchMessage } from "./sso-test-domain.js"
 
 type SsoConnection = typeof SsoConnectionTable.$inferSelect
 type SsoTestUserId = NonNullable<SsoConnection["activeTestUserId"]>
@@ -303,12 +304,28 @@ function clearActiveTestFields() {
   }
 }
 
-export async function failOrganizationSsoTestIntent(intentId: string, reason: SsoTestFailureReason) {
+/**
+ * The identity provider sent the administrator back without a session. When
+ * their own email is outside the connection's domain that is the reason, so
+ * say which domain to use instead of a generic provider error.
+ */
+export async function failOrganizationSsoTestAuthentication(intentId: string) {
+  const [test] = await db
+    .select({ domain: SsoConnectionTable.domain, email: AuthUserTable.email })
+    .from(SsoConnectionTable)
+    .innerJoin(AuthUserTable, eq(AuthUserTable.id, SsoConnectionTable.activeTestUserId))
+    .where(eq(SsoConnectionTable.activeTestIntentId, intentId))
+    .limit(1)
+  const domainMismatch = test ? ssoTestDomainMismatchMessage(test.email, test.domain) : null
+  return failOrganizationSsoTestIntent(intentId, "authentication", domainMismatch)
+}
+
+export async function failOrganizationSsoTestIntent(intentId: string, reason: SsoTestFailureReason, message?: string | null) {
   const result = await db
     .update(SsoConnectionTable)
     .set({
       testStatus: "failed",
-      lastError: SSO_TEST_FAILURE_MESSAGES[reason],
+      lastError: message ?? SSO_TEST_FAILURE_MESSAGES[reason],
       ...clearActiveTestFields(),
     })
     .where(and(
