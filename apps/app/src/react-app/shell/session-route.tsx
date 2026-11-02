@@ -116,6 +116,7 @@ import { automationProviderCatalog } from "@/react-app/domains/automations/autom
 import { CodePage } from "@/react-app/domains/code/code-page";
 import { SectionPlaceholder } from "@/react-app/domains/sidebar-sections/section-placeholder";
 import { ProjectsPage } from "@/react-app/domains/projects/projects-page";
+import { ProgramadasPage } from "@/react-app/domains/scheduled/scheduled-page";
 import { CalendarPage } from "@/react-app/domains/calendar/calendar-page";
 import { useOrgFeatureState } from "@/react-app/domains/cloud/use-org-feature";
 import { useRemoteSessionSubagentsFeature } from "@/react-app/domains/session/remote-threads/use-remote-session-subagents-feature";
@@ -3969,9 +3970,13 @@ export function SessionRoute() {
             workspaceId={selectedWorkspaceId}
             workspaceName={selectedWorkspace ? workspaceLabel(selectedWorkspace) : ""}
           />
+        ) : masterPlanSection === "scheduled" ? (
+          <ProgramadasPage
+            workspaceName={selectedWorkspace ? workspaceLabel(selectedWorkspace) : ""}
+          />
         ) : (
           <SectionPlaceholder
-            title={masterPlanSection === "artifacts" ? "Artefactos" : masterPlanSection === "scheduled" ? "Programadas" : masterPlanSection === "design" ? "Design" : "Personalización"}
+            title={masterPlanSection === "artifacts" ? "Artefactos" : masterPlanSection === "design" ? "Design" : "Personalización"}
             description="Esta sección está en construcción."
           />
         )
