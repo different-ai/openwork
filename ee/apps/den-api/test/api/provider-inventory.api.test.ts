@@ -4,16 +4,34 @@ import { setTimeout as delay } from "node:timers/promises"
 import { and, eq } from "@openwork-ee/den-db/drizzle"
 import { AuthSessionTable, GatewayCredentialSetTable, GatewayKeyTable, GatewayModelGroupModelTable, GatewayModelGroupTable, GatewayProviderAccessTable, GatewayProviderCredentialTable, GatewayProviderModelTable, GatewayProviderTable, MemberTable, TeamMemberTable, TeamTable } from "@openwork-ee/den-db/schema"
 import { createDenTypeId, normalizeDenTypeId } from "@openwork-ee/utils/typeid"
+import { PROVIDER_INVENTORY_POLL_MS } from "../../src/llm/provider-inventory-watch.js"
 import { sessionTokenDigest } from "../../src/session-token.js"
+import { gatewayFixtureEnv } from "./gateway-fixture.js"
 import { bootDen, field, list, summary, text } from "./harness.js"
 
 // The harness creates and drops its own database; no existing organization is
 // read or written. Matrix rows are arranged directly to avoid upstream catalog
 // and credential verification services in this dependency-boundary test.
-const den = await bootDen()
+const den = await bootDen({ env: gatewayFixtureEnv })
 after(() => den.close())
 const { db } = await import("../../src/db.js")
+const { cache, setCacheDependenciesForTest } = await import("../../src/cache.js")
 const { readProviderInventoryRevision } = await import("../../src/llm/provider-inventory.js")
+
+async function seed(owner: typeof MemberTable.$inferSelect, name: string) {
+  const provider = createDenTypeId("inferenceProvider")
+  const model = createDenTypeId("inferenceProviderModel")
+  const group = createDenTypeId("gatewayModelGroup")
+  const set = createDenTypeId("gatewayCredentialSet")
+  const credential = createDenTypeId("inferenceProviderCredential")
+  await db.insert(GatewayProviderTable).values({ id: provider, organization_id: owner.organizationId, created_by_org_membership_id: owner.id, provider_id: "openai", name, provider_config: { npm: "@ai-sdk/openai", env: ["OPENAI_API_KEY"] }, settings: {} })
+  await db.insert(GatewayProviderModelTable).values({ id: model, gateway_provider_id: provider, model_id: "fixture-model", name: "Fixture model", model_config: { limit: { context: 100_000 }, cost: { input: 1 } } })
+  await db.insert(GatewayModelGroupTable).values({ id: group, gateway_provider_id: provider, name: "Granted models" })
+  await db.insert(GatewayModelGroupModelTable).values({ id: createDenTypeId("gatewayModelGroupModel"), model_group_id: group, gateway_provider_model_id: model })
+  await db.insert(GatewayCredentialSetTable).values({ id: set, gateway_provider_id: provider, name: "Shared key", credential_mode: "org" })
+  await db.insert(GatewayProviderCredentialTable).values({ id: credential, organization_id: owner.organizationId, gateway_provider_id: provider, credential_set_id: set, subject: "org", kind: "api_key", secret: "fixture-upstream-key" })
+  return { provider, model, group, set, credential }
+}
 
 test("inventory fingerprints only effective caller grants, including SSE and expired-session fencing", { timeout: 30_000 }, async () => {
   const a = await den.createOrg(await den.signUp("Inventory Owner"), "Inventory fixture")
@@ -31,20 +49,6 @@ test("inventory fingerprints only effective caller grants, including SSE and exp
     const response = await den.as(member, a.orgId)("GET", "/v1/inference-providers/inventory/revision")
     assert.equal(response.status, 200, summary(response))
     return text(field(response.body, "revision"), "inventory revision")
-  }
-  async function seed(owner: typeof membership, name: string) {
-    const provider = createDenTypeId("inferenceProvider")
-    const model = createDenTypeId("inferenceProviderModel")
-    const group = createDenTypeId("gatewayModelGroup")
-    const set = createDenTypeId("gatewayCredentialSet")
-    const credential = createDenTypeId("inferenceProviderCredential")
-    await db.insert(GatewayProviderTable).values({ id: provider, organization_id: owner.organizationId, created_by_org_membership_id: owner.id, provider_id: "openai", name, provider_config: { npm: "@ai-sdk/openai", env: ["OPENAI_API_KEY"] }, settings: {} })
-    await db.insert(GatewayProviderModelTable).values({ id: model, gateway_provider_id: provider, model_id: "fixture-model", name: "Fixture model", model_config: { limit: { context: 100_000 }, cost: { input: 1 } } })
-    await db.insert(GatewayModelGroupTable).values({ id: group, gateway_provider_id: provider, name: "Granted models" })
-    await db.insert(GatewayModelGroupModelTable).values({ id: createDenTypeId("gatewayModelGroupModel"), model_group_id: group, gateway_provider_model_id: model })
-    await db.insert(GatewayCredentialSetTable).values({ id: set, gateway_provider_id: provider, name: "Shared key", credential_mode: "org" })
-    await db.insert(GatewayProviderCredentialTable).values({ id: credential, organization_id: owner.organizationId, gateway_provider_id: provider, credential_set_id: set, subject: "org", kind: "api_key", secret: "fixture-upstream-key" })
-    return { provider, model, group, set, credential }
   }
   const visible = await seed(membership, "Visible provider")
   const hidden = await seed(membership, "Hidden provider")
@@ -160,4 +164,44 @@ test("inventory fingerprints only effective caller grants, including SSE and exp
   assert.equal((await expiredReader.read()).done, true, "existing SSE closes on expired DB session")
   const expired = await den.as(member, a.orgId)("GET", "/v1/inference-providers/inventory/revision")
   assert.notEqual(expired.status, 200, "expired session cannot read a new revision")
+})
+
+test("an open stream reads the database only after a provider write and closes on session revocation", { timeout: 30_000 }, async (t) => {
+  const a = await den.createOrg(await den.signUp("Stream Owner"), "Stream fixture")
+  const member = await den.newMember(a.owner, a.orgId, "Stream Member")
+  const [membership] = await db.select().from(MemberTable).where(eq(MemberTable.id, normalizeDenTypeId("member", member.memberId)))
+  const [session] = await db.select().from(AuthSessionTable).where(eq(AuthSessionTable.token, sessionTokenDigest(member.token)))
+  assert.ok(membership && session)
+  const { provider, group, set } = await seed(membership, "Streamed provider")
+  await db.insert(GatewayProviderAccessTable).values({ id: createDenTypeId("inferenceProviderAccess"), gateway_provider_id: provider, model_group_id: group, credential_set_id: set, audience_key: `member:${membership.id}`, org_membership_id: membership.id })
+
+  const values = new Map<string, string>()
+  t.after(setCacheDependenciesForTest({ redis: {
+    get: async (key) => values.get(key) ?? null,
+    mget: async (...keys) => keys.map((key) => values.get(key) ?? null),
+    set: async (key, value) => values.set(key, value),
+    del: async (...keys) => keys.forEach((key) => values.delete(key)),
+  } }))
+  const transactions = t.mock.method(db, "transaction")
+  const stream = await den.app.request("http://127.0.0.1:8790/v1/inference-providers/inventory/events", { headers: { authorization: `Bearer ${member.token}`, "x-openwork-org-id": a.orgId } })
+  assert.equal(stream.status, 200)
+  const reader = stream.body!.getReader()
+  const decode = (chunk: Uint8Array | undefined) => new TextDecoder().decode(chunk)
+  const opening = decode((await reader.read()).value)
+  assert.match(opening, /^event: inventory\.changed/)
+
+  const opened = transactions.mock.callCount()
+  await delay(PROVIDER_INVENTORY_POLL_MS * 2 + 500)
+  assert.equal(transactions.mock.callCount(), opened, "an idle stream does not read the database")
+
+  const owner = await den.as(a.owner, a.orgId)("PATCH", `/v1/inference-providers/${provider}`, { pinnedModelIds: ["fixture-model"] })
+  assert.equal(owner.status, 200, summary(owner))
+  const change = decode((await reader.read()).value)
+  assert.match(change, /^event: inventory\.changed/)
+  assert.notEqual(change, opening)
+
+  const read = transactions.mock.callCount()
+  await cache.auth.revokeSessionId(normalizeDenTypeId("session", session.id))
+  assert.equal((await reader.read()).done, true, "a revoked session closes the stream")
+  assert.equal(transactions.mock.callCount(), read, "revocation is seen without a database read")
 })

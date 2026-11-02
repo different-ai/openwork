@@ -20,7 +20,7 @@ type UserId = typeof AuthUserTable.$inferSelect.id
 type OAuthConsentId = typeof OAuthConsentTable.$inferSelect.id
 
 type CacheParent = "auth" | "features" | "org"
-type CacheChild = "generation" | "inventory-generation" | "grant" | "grant-revoked" | "member" | "member-overrides" | "member-revoked" | "members" | "member-teams" | "overrides" | "rollouts" | "session" | "session-id" | "session-revoked" | "session-id-revoked"
+type CacheChild = "generation" | "inventory-generation" | "provider-inventory-generation" | "grant" | "grant-revoked" | "member" | "member-overrides" | "member-revoked" | "members" | "member-teams" | "overrides" | "rollouts" | "session" | "session-id" | "session-revoked" | "session-id-revoked"
 
 type CacheKeyInput = {
   parent: CacheParent
@@ -1128,17 +1128,48 @@ async function getInventoryRevision(organizationId: OrgId): Promise<string | nul
   }
 }
 
+function providerInventoryGenerationKey(organizationId: string) {
+  return cacheKey({ parent: "org", child: "provider-inventory-generation", id: organizationId })
+}
+
+/**
+ * What an open provider inventory stream checks between database reads, in one
+ * round trip: the generation bumped after writes to the tables it depends on
+ * (inventory-writes.ts) and the session's revocation tombstones. Null when
+ * Redis is not configured or cannot answer, so the stream reads the database.
+ */
+async function getProviderInventoryState(input: { organizationId: OrgId; sessionId: DenTypeId<"session">; sessionToken: string }) {
+  const redis = activeRedisClient
+  if (!redis) return null
+  try {
+    const keys = [
+      providerInventoryGenerationKey(input.organizationId),
+      cacheKey({ parent: "auth", child: "session-revoked", id: storedSessionTokenDigest(input.sessionToken) }),
+      cacheKey({ parent: "auth", child: "session-id-revoked", id: input.sessionId }),
+    ]
+    const [generation, ...tombstones] = redis.mget ? await redis.mget(...keys) : await Promise.all(keys.map((key) => redis.get(key)))
+    return { generation: generation ?? "0", revoked: tombstones.some(Boolean) }
+  } catch (error) {
+    console.error("openwork_cache_get_failed", { cacheParent: "org", cacheChild: "provider-inventory-generation", id: input.organizationId, error })
+    return null
+  }
+}
+
 /** Call only after the writes have committed (at the end of the request). */
-async function bumpInventoryRevisions(organizationIds: string[]) {
+async function bumpInventoryRevisions(organizationIds: string[], options: { providerInventory?: boolean } = {}) {
   const redis = activeRedisClient
   if (!redis || organizationIds.length === 0) return
-  await Promise.all(organizationIds.map(async (organizationId) => {
+  const bump = async (key: string, cacheChild: CacheChild, organizationId: string) => {
     try {
-      await bumpGeneration(redis, inventoryGenerationKey(organizationId))
+      await bumpGeneration(redis, key)
     } catch (error) {
-      console.error("openwork_cache_delete_failed", { cacheParent: "org", cacheChild: "inventory-generation", id: organizationId, error })
+      console.error("openwork_cache_delete_failed", { cacheParent: "org", cacheChild, id: organizationId, error })
     }
-  }))
+  }
+  await Promise.all(organizationIds.flatMap((organizationId) => [
+    bump(inventoryGenerationKey(organizationId), "inventory-generation", organizationId),
+    ...(options.providerInventory ? [bump(providerInventoryGenerationKey(organizationId), "provider-inventory-generation", organizationId)] : []),
+  ]))
 }
 
 /** How long an App's launch data stays ready for the same member's next open. */
@@ -1227,6 +1258,7 @@ export const cache = {
   inventory: {
     revision: getInventoryRevision,
     bump: bumpInventoryRevisions,
+    providerState: getProviderInventoryState,
   },
 }
 
