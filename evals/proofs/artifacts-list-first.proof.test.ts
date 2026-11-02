@@ -108,4 +108,20 @@ test("a member browses artifacts before opening one and keeps its unsaved review
     evidence.recordAssertionEvidence("A narrow pane switch keeps the original iframe and unsaved review", JSON.stringify({ before: openedFrames, inTools, returned }), JSON.stringify(inTools) === JSON.stringify(openedFrames) && JSON.stringify(returned) === JSON.stringify(openedFrames));
     await user.screenshot();
   });
+
+  await step("opening another artifact keeps the checklist running, and switching back shows its review without opening it again", async () => {
+    await user.click({ role: "button", label: "Open Release notes" });
+    await user.see({ role: "heading", label: "Release notes", mcpApp: { resourceUri: world.notes.resourceUri } }, { timeoutMs: 90_000 });
+    const both = await world.frames();
+    expect(both).toHaveLength(2);
+    expect(both).toEqual(expect.arrayContaining(openedFrames));
+    evidence.recordAssertionEvidence("Opening Release notes adds a second App and leaves the checklist iframe in place", JSON.stringify({ before: openedFrames, both }), both.length === 2);
+    await user.screenshot();
+    await user.click({ role: "button", label: "Open Project checklist" });
+    await user.see({ role: "heading", label: "Reviewed", mcpApp: inside });
+    const returned = await world.frames();
+    expect(returned).toEqual(both);
+    evidence.recordAssertionEvidence("Switching back shows the unsaved review in the same iframe", JSON.stringify({ both, returned, review: "Reviewed" }), JSON.stringify(returned) === JSON.stringify(both));
+    await user.screenshot();
+  });
 });

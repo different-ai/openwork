@@ -21,6 +21,7 @@ import { onCloudCredentialRefreshed, readCloudCredentialRevision } from "@/react
 import { DashboardTileShell, type DashboardTileActions } from "./dashboard-tile-shell";
 import { resolveDashboardMcpApp } from "./dashboard-mcp-app-resolution";
 import { scheduleDashboardLaunch } from "./dashboard-launch-scheduler";
+import { useArtifactSurfaceActive } from "./retained-artifact-surface";
 import { useDashboardTileGeometry } from "./use-dashboard-tile-geometry";
 import {
   DASHBOARD_AUTO_REFRESH_INTERVAL_MS,
@@ -211,6 +212,7 @@ function McpAppTileContent({
 }) {
   const workspace = useWorkspace();
   const { openworkServerClient, workspaceId } = workspace;
+  const surfaceActive = useArtifactSurfaceActive();
   // Provider annotations are not an authorization boundary. A safe-looking
   // tile runs on load only after this user has successfully run this exact
   // element once; approval-gated tools stay run-on-request forever.
@@ -633,7 +635,8 @@ function McpAppTileContent({
   }, [cacheScopeKey, entry, launchArguments, argumentsSignature, manualLaunch, nonce, started, geometry.ref, clearDocument, releaseLaunch, releaseLaunches, updateState, updateRefresh, requestRefresh, wakeLaunchWaiters]);
 
   useEffect(() => {
-    if (manualLaunch) return;
+    // A kept App out of view makes no calls, and catches up when it comes back.
+    if (manualLaunch || !surfaceActive) return;
     const refreshIfStale = () => {
       if (stateRef.current.phase === "idle" || stateRef.current.phase === "closed" || !shouldAutoRefreshDashboardTile({
         visible: !document.hidden,
@@ -642,6 +645,7 @@ function McpAppTileContent({
       })) return;
       requestRefresh(false);
     };
+    refreshIfStale();
     const interval = window.setInterval(refreshIfStale, DASHBOARD_AUTO_REFRESH_INTERVAL_MS);
     window.addEventListener("focus", refreshIfStale);
     document.addEventListener("visibilitychange", refreshIfStale);
@@ -650,7 +654,7 @@ function McpAppTileContent({
       window.removeEventListener("focus", refreshIfStale);
       document.removeEventListener("visibilitychange", refreshIfStale);
     };
-  }, [manualLaunch, requestRefresh]);
+  }, [manualLaunch, surfaceActive, requestRefresh]);
 
   // The relative freshness label must age even when nothing else re-renders.
   const [freshnessNow, setFreshnessNow] = useState(() => Date.now());

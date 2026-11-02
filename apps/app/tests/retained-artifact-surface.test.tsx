@@ -6,7 +6,7 @@ const ownsDom = !GlobalRegistrator.isRegistered;
 if (ownsDom) GlobalRegistrator.register({ url: "http://localhost/" });
 const { act, useEffect, useState } = await import("react");
 const { createRoot } = await import("react-dom/client");
-const { RetainedArtifactSurface } = await import("../src/react-app/domains/dashboard/retained-artifact-surface");
+const { RetainedArtifact, RetainedArtifactSurface, useArtifactSurfaceActive } = await import("../src/react-app/domains/dashboard/retained-artifact-surface");
 Reflect.set(globalThis, "IS_REACT_ACT_ENVIRONMENT", true);
 let host: HTMLDivElement;
 let root: ReturnType<typeof createRoot>;
@@ -60,4 +60,16 @@ test("losing verified access tears down the retained frame", async () => {
   await render(false, "member-org-deployment", false);
   expect(unmounts).toBe(1);
   expect(host.childElementCount).toBe(0);
+});
+
+test("a kept artifact counts as active only while it is selected and the page shows", async () => {
+  const seen: boolean[] = [];
+  function Active() { seen.push(useArtifactSurfaceActive()); return null; }
+  const view = (surface: boolean, selected: boolean) => <RetainedArtifactSurface active={surface}><RetainedArtifact active={selected}><Active /></RetainedArtifact></RetainedArtifactSurface>;
+  await act(async () => root.render(view(true, true)));
+  expect(seen.at(-1)).toBe(true);
+  await act(async () => root.render(view(true, false)));
+  expect(seen.at(-1)).toBe(false);
+  await act(async () => root.render(view(false, true)));
+  expect(seen.at(-1)).toBe(false);
 });

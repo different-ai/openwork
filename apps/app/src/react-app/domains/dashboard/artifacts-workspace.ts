@@ -50,3 +50,30 @@ export function rememberArtifactSelection(scope: string, id: string | null): voi
 export function selectedArtifact(rows: readonly ArtifactRow[], id: string | null): ArtifactRow | null {
   return rows.find((row) => row.id === id) ?? null;
 }
+
+/** Artifacts a member opened stay running so switching back is instant, up to this many. */
+export const MAX_RETAINED_ARTIFACTS = 3;
+
+export type RetainedArtifactSlot = { id: string; lastUsed: number };
+
+/**
+ * The opened artifacts to keep running, in the order they opened: moving an
+ * iframe reloads it, so a kept App never changes place. Past the limit the
+ * least recently used one closes. One that leaves the catalog closes too, and
+ * nothing stays kept without a selection, so no App starts without being opened.
+ */
+export function retainArtifacts(
+  slots: readonly RetainedArtifactSlot[],
+  selectedId: string | null,
+  rows: readonly ArtifactRow[],
+  limit = MAX_RETAINED_ARTIFACTS,
+): readonly RetainedArtifactSlot[] {
+  if (!selectedId) return [];
+  const kept = slots.filter((slot) => rows.some((row) => row.id === slot.id));
+  const newest = Math.max(0, ...kept.map((slot) => slot.lastUsed));
+  const selected = kept.find((slot) => slot.id === selectedId);
+  if (selected?.lastUsed === newest) return kept;
+  if (selected) return kept.map((slot) => slot === selected ? { ...slot, lastUsed: newest + 1 } : slot);
+  const oldest = kept.length >= limit ? kept.reduce((left, right) => right.lastUsed < left.lastUsed ? right : left) : null;
+  return [...kept.filter((slot) => slot !== oldest), { id: selectedId, lastUsed: newest + 1 }];
+}

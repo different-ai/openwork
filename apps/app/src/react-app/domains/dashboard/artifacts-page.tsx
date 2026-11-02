@@ -11,8 +11,8 @@ import { useSavedApps } from "../apps/use-apps";
 import { useBuiltDashboardApps } from "./built-dashboard-apps";
 import { SavedDashboardApp, type CreateDashboardApp } from "./dashboard-apps";
 import { McpAppTile, type DashboardLaunchEndpoint } from "./mcp-app-tile";
-import { useArtifactSurfaceActive } from "./retained-artifact-surface";
-import { artifactRows, groupArtifacts, readArtifactSelection, rememberArtifactSelection, selectedArtifact, type ArtifactRow } from "./artifacts-workspace";
+import { RetainedArtifact, useArtifactSurfaceActive } from "./retained-artifact-surface";
+import { artifactRows, groupArtifacts, readArtifactSelection, rememberArtifactSelection, retainArtifacts, selectedArtifact, type ArtifactRow, type RetainedArtifactSlot } from "./artifacts-workspace";
 
 const CREATE_ARTIFACT_PROMPT = "Create one live artifact. Use my request to build and save one app that fetches fresh data with each viewer’s own connections whenever opened or refreshed. My artifact should ";
 
@@ -49,6 +49,10 @@ export function ArtifactsPage({ onCreateApp, fallbackEndpoints, headerActionsTar
   [built.apps, built.ids, saved.identityVerified, saved.available, saved.query.data]);
   const id = selection.scope === scope ? selection.id : readArtifactSelection(scope);
   const selected = selectedArtifact(rows, id);
+  const retained = useRef<{ scope: string; slots: readonly RetainedArtifactSlot[] }>({ scope, slots: [] });
+  if (retained.current.scope !== scope) retained.current = { scope, slots: [] };
+  retained.current.slots = retainArtifacts(retained.current.slots, selected?.id ?? null, rows);
+  const opened = retained.current.slots.flatMap((slot) => rows.find((row) => row.id === slot.id) ?? []);
   const groups = useMemo(() => groupArtifacts(rows, search), [rows, search]);
   // A removed grant must remove the live frame too. Do not invalidate a
   // remembered selection while either catalog is still being established.
@@ -117,10 +121,12 @@ export function ArtifactsPage({ onCreateApp, fallbackEndpoints, headerActionsTar
             </> : null}
           </div>
         </div>
-        {selected.kind === "built" ? <McpAppTile key={`${scope}:${selected.id}`} cacheScopeKey={built.cacheScopeKey} fallbackEndpoints={fallbackEndpoints}
-          entry={{ ...selected.app, kind: "mcp", id: selected.id, launchArguments: { input: {} }, autoLaunch: true }}
-          renderActions={({ onRefresh, refreshing }) => onRefresh ? <Button variant="ghost" size="icon" className="size-7" aria-label={`Refresh ${selected.title}`} disabled={refreshing} onClick={onRefresh}><RefreshCw className={`size-4 ${refreshing ? "animate-spin" : ""}`} /></Button> : null} />
-          : <SavedDashboardApp key={`${scope}:${selected.id}`} app={selected.app} onCreateApp={onCreateApp} fallbackEndpoints={fallbackEndpoints} removing={placement.isPending} onRemove={() => placement.mutate({ appId: selected.app.view.id, added: false })} />}
+        {opened.map((row) => <RetainedArtifact key={`${scope}:${row.id}`} active={row.id === selected.id}>
+          {row.kind === "built" ? <McpAppTile cacheScopeKey={built.cacheScopeKey} fallbackEndpoints={fallbackEndpoints}
+            entry={{ ...row.app, kind: "mcp", id: row.id, launchArguments: { input: {} }, autoLaunch: true }}
+            renderActions={({ onRefresh, refreshing }) => onRefresh ? <Button variant="ghost" size="icon" className="size-7" aria-label={`Refresh ${row.title}`} disabled={refreshing} onClick={onRefresh}><RefreshCw className={`size-4 ${refreshing ? "animate-spin" : ""}`} /></Button> : null} />
+            : <SavedDashboardApp app={row.app} onCreateApp={onCreateApp} fallbackEndpoints={fallbackEndpoints} removing={placement.isPending} onRemove={() => placement.mutate({ appId: row.app.view.id, added: false })} />}
+        </RetainedArtifact>)}
       </section> : <div className="hidden min-w-0 flex-1 items-center justify-center p-6 md:flex"><p className="text-sm text-muted-foreground">Select an artifact to open it.</p></div>}
     </div>
   </div>;

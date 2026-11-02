@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { artifactRows, groupArtifacts, readArtifactSelection, rememberArtifactSelection, selectedArtifact } from "../src/react-app/domains/dashboard/artifacts-workspace";
+import { artifactRows, groupArtifacts, MAX_RETAINED_ARTIFACTS, readArtifactSelection, rememberArtifactSelection, retainArtifacts, selectedArtifact, type RetainedArtifactSlot } from "../src/react-app/domains/dashboard/artifacts-workspace";
 import type { BuiltMcpAppCatalogEntry } from "../src/app/lib/built-mcp-app-catalog";
 import type { SavedAppSummary } from "@openwork/types/workflows";
 
@@ -57,4 +57,30 @@ test("search filters names without changing selection eligibility", () => {
   const rows = artifactRows(catalog, [], []);
   expect(groupArtifacts(rows, "  REVIEW  ")[2]?.rows.map((row) => row.title)).toEqual(["Review queue"]);
   expect(selectedArtifact(rows, "personal:overview")?.title).toBe("Overview");
+});
+
+const rows = artifactRows(catalog, [], []);
+const open = (...ids: string[]) => ids.reduce<readonly RetainedArtifactSlot[]>((slots, id) => retainArtifacts(slots, id, rows), []);
+const ids = (slots: readonly RetainedArtifactSlot[]) => slots.map((slot) => slot.id);
+
+test("kept artifacts stay in the order they opened, whichever is selected", () => {
+  expect(ids(open("personal:overview", "personal:notes", "personal:overview"))).toEqual(["personal:overview", "personal:notes"]);
+});
+
+test("past the limit the least recently used artifact closes, not the first opened", () => {
+  const slots = open("personal:overview", "personal:notes", "personal:queue", "personal:overview", "personal:archive");
+  expect(MAX_RETAINED_ARTIFACTS).toBe(3);
+  expect(ids(slots)).toEqual(["personal:overview", "personal:queue", "personal:archive"]);
+});
+
+test("recomputing with the same selection changes nothing, so rendering twice is safe", () => {
+  const slots = open("personal:overview", "personal:notes");
+  expect(retainArtifacts(slots, "personal:notes", rows)).toEqual(slots);
+});
+
+test("an artifact that left the catalog closes, and no selection keeps nothing", () => {
+  const slots = open("personal:overview", "personal:notes");
+  const remaining = rows.filter((row) => row.id !== "personal:overview");
+  expect(ids(retainArtifacts(slots, "personal:notes", remaining))).toEqual(["personal:notes"]);
+  expect(retainArtifacts(slots, null, rows)).toEqual([]);
 });

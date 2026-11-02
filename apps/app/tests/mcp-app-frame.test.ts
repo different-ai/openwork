@@ -29,7 +29,8 @@ const { useUiStateStore } = await import("../src/react-app/shell/ui-state-store"
 const { usePanelTabStore } = await import("../src/react-app/domains/session/panel/panel-tab-store")
 const { useSessionActivityStore } = await import("../src/react-app/domains/session/status/session-activity-store")
 const { McpAppTile } = await import("../src/react-app/domains/dashboard/mcp-app-tile")
-const { removeDashboardTileCache, writeDashboardTileCache } = await import("../src/react-app/domains/dashboard/dashboard-tile-cache")
+const { DASHBOARD_AUTO_REFRESH_INTERVAL_MS, removeDashboardTileCache, writeDashboardTileCache } = await import("../src/react-app/domains/dashboard/dashboard-tile-cache")
+const { RetainedArtifact } = await import("../src/react-app/domains/dashboard/retained-artifact-surface")
 const { flushDashboardTileCacheStorage } = await import("../src/app/lib/dashboard-cache-storage")
 const { createMcpAppPresentationCache, mcpAppPresentationScope } = await import("../src/app/lib/mcp-app-presentation-cache")
 const {
@@ -672,6 +673,45 @@ describe("MCP App retry ownership", () => {
       expect(host.failures).toEqual([])
     } finally {
       removeDashboardTileCache(scope, "stale-0")
+      flushDashboardTileCacheStorage()
+      try { await host.dispose() } finally {
+        for (const spy of [resolveSpy, releaseSpy, callSpy]) spy.mockRestore()
+      }
+    }
+  })
+
+  test("a kept App makes no calls out of view and catches up when it comes back", async () => {
+    const host = await startupFixture()
+    const scope = "kept-out-of-view"
+    const launches: string[] = []
+    const resolveSpy = spyOn(host.client, "resolveMcpApp").mockImplementation(async () => {
+      const launchId = `kept-${launches.length + 1}`
+      launches.push(launchId)
+      return { app: fixture({ toolName: "render-0", launchId }) }
+    })
+    const releaseSpy = spyOn(host.client, "releaseMcpApp").mockResolvedValue({ released: true })
+    const callSpy = spyOn(host.client, "callMcpAppTool").mockResolvedValue({ content: [] })
+    const view = (active: boolean) => createElement(WorkspaceProvider, {
+      client: null, openworkServerClient: host.client, workspaceId: "fixture", selectedWorkspaceRoot: "/fixture",
+    }, createElement(RetainedArtifact, { active }, createElement(McpAppTile, {
+      entry: { kind: "mcp", id: "kept-0", title: "Kept 0", serverName: "fixture", toolName: "render-0",
+        projectedToolName: "render-0", resourceUri: fixture().resourceUri, autoLaunch: true },
+      cacheScopeKey: scope,
+    })))
+    try {
+      await host.renderElement(view(true))
+      await act(async () => {})
+      expect(launches).toEqual(["kept-1"])
+      await host.renderElement(view(false))
+      await host.advance(DASHBOARD_AUTO_REFRESH_INTERVAL_MS + 1)
+      await act(async () => { window.dispatchEvent(new Event("focus")) })
+      await act(async () => { await new Promise(resolve => setImmediate(resolve)) })
+      expect(launches).toEqual(["kept-1"])
+      await host.renderElement(view(true))
+      await act(async () => { await new Promise(resolve => setImmediate(resolve)) })
+      expect(launches).toEqual(["kept-1", "kept-2"])
+    } finally {
+      removeDashboardTileCache(scope, "kept-0")
       flushDashboardTileCacheStorage()
       try { await host.dispose() } finally {
         for (const spy of [resolveSpy, releaseSpy, callSpy]) spy.mockRestore()

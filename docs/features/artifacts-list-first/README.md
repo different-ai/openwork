@@ -14,11 +14,16 @@ App/plugin permissions continue to control access and sharing.
 ## What changes
 
 - Listing artifacts does not mount or launch their Apps.
-- Opening a row mounts one live artifact. Pinning, unpinning, or regrouping does
-  not remount it.
-- The selected view stays mounted, hidden and inert, across Calendar, Library,
-  and chat navigation. Returning keeps unsaved interaction state, not just a
-  remembered title. A member, organization, or deployment change discards it.
+- Opening a row mounts that artifact and no other. Pinning, unpinning, or
+  regrouping does not remount it.
+- The last three opened views stay mounted, hidden and inert, across Calendar,
+  Library, and chat navigation and while switching between artifacts. Returning
+  to one keeps unsaved interaction state, not just a remembered title, and does
+  not launch it again. A view out of sight makes no refresh calls until it
+  returns.
+- Opening a fourth view closes the least recently used. Removed access closes
+  a view even when it is out of sight, and a member, organization, or deployment
+  change discards them all.
 - The existing chat preview gains Pin/Unpin. Placement remains this member's
   existing local desktop/browser storage, not a new organization-wide pin.
 - Successful create/update calls invalidate the member's catalog. Updates stay
@@ -51,13 +56,14 @@ and local pins keep their existing meaning.
 
 Check App launch failures, permission/reconnect states and catalog errors. A
 revoked or removed catalog entry must disappear and unmount its live view.
-The selected view must not survive sign-out or a member/org/deployment change.
+Kept views must not survive sign-out or a member/org/deployment change.
 
 ## Evidence
 
 `evals/proofs/artifacts-list-first.proof.test.ts` covers list-first entry,
-ownership groups, one selected live App, unsaved review state across page
-navigation and pinning, without an `artifactsListFirst` override.
+ownership groups, opening one App at a time, unsaved review state across page
+navigation, pinning and switching between Apps, without an `artifactsListFirst`
+override.
 
 Screenshots below are captured from the real headless app with isolated test
 accounts, not the design video.

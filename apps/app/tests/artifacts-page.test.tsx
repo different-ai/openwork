@@ -76,7 +76,7 @@ test("catalog lists unpinned and legacy apps without launching any app", async (
   expect(mounts).toBe(0);
 });
 
-test("selection mounts only one live app and pin/unpin does not remount it", async () => {
+test("selection opens only the chosen app and pin/unpin does not remount it", async () => {
   await render();
   await click("Open Overview");
   expect(launches).toEqual([`${scope}/personal:overview`]);
@@ -86,8 +86,80 @@ test("selection mounts only one live app and pin/unpin does not remount it", asy
   await click("Pin"); await render();
   expect(launches).toHaveLength(1);
   await click("Open Review queue");
-  expect(mounts).toBe(1);
   expect(launches).toEqual([`${scope}/personal:overview`, `${scope}/personal:queue`]);
+});
+
+function shownArtifacts() {
+  return [...host.querySelectorAll("[data-retained-artifact]")].filter((item) => !item.hasAttribute("hidden"))
+    .map((item) => item.querySelector("[data-live-artifact]")?.getAttribute("data-live-artifact") ?? item.querySelector("[data-saved-artifact]")?.getAttribute("data-saved-artifact"));
+}
+
+test("switching back to an opened app shows the running one without launching it again", async () => {
+  await render();
+  await click("Open Overview");
+  const overview = host.querySelector('[data-live-artifact="personal:overview"]');
+  await click("Open Review queue");
+  expect(mounts).toBe(2);
+  expect(shownArtifacts()).toEqual(["personal:queue"]);
+  await click("Open Overview");
+  expect(launches).toHaveLength(2);
+  expect(mounts).toBe(2);
+  expect(shownArtifacts()).toEqual(["personal:overview"]);
+  expect(host.querySelector('[data-live-artifact="personal:overview"]')).toBe(overview);
+});
+
+test("only the selected app can be reached; a kept one is hidden and inert", async () => {
+  await render();
+  await click("Open Overview"); await click("Open Review queue");
+  const kept = host.querySelector('[data-live-artifact="personal:overview"]')?.parentElement;
+  expect(kept?.hasAttribute("hidden")).toBe(true);
+  expect(kept?.hasAttribute("inert")).toBe(true);
+  expect(kept?.getAttribute("aria-hidden")).toBe("true");
+});
+
+test("opening a fourth app closes the least recently used one and moves none of the others", async () => {
+  apps = [...initialApps, app("notes", "Notes", true), app("archive", "Archive", true)];
+  await render();
+  await click("Open Overview"); await click("Open Review queue"); await click("Open Notes");
+  const order = () => [...host.querySelectorAll("[data-live-artifact]")].map((item) => item.getAttribute("data-live-artifact"));
+  expect(order()).toEqual(["personal:overview", "personal:queue", "personal:notes"]);
+  await click("Open Overview");
+  await click("Open Archive");
+  expect(mounts).toBe(3);
+  expect(order()).toEqual(["personal:overview", "personal:notes", "personal:archive"]);
+  expect(shownArtifacts()).toEqual(["personal:archive"]);
+  expect(launches).toHaveLength(4);
+});
+
+test("revoked access also closes an app kept out of view", async () => {
+  await render();
+  await click("Open Overview"); await click("Open Review queue");
+  apps = initialApps.filter((item) => item.connectionId !== "overview"); await render();
+  expect(mounts).toBe(1);
+  expect(host.querySelector('[data-live-artifact="personal:overview"]')).toBeNull();
+  apps = initialApps; await render();
+  expect(mounts).toBe(1);
+  expect(launches).toHaveLength(2);
+});
+
+test("a kept app never starts again by itself after the selection clears", async () => {
+  await render();
+  await click("Open Overview"); await click("Open Review queue");
+  apps = initialApps.filter((item) => item.connectionId !== "queue"); await render();
+  await act(async () => { await new Promise((resolve) => setTimeout(resolve, 0)); });
+  expect(mounts).toBe(0);
+  expect(host.textContent).toContain("Select an artifact to open it.");
+  apps = initialApps; await render();
+  await click("Open Review queue");
+  expect(mounts).toBe(1);
+  expect(shownArtifacts()).toEqual(["personal:queue"]);
+});
+
+test("a legacy saved artifact stays open beside a live app", async () => {
+  await render();
+  await click("Open Saved report"); await click("Open Overview");
+  expect(shownArtifacts()).toEqual(["personal:overview"]);
+  expect(host.querySelector('[data-saved-artifact="saved-view"]')?.parentElement?.hasAttribute("hidden")).toBe(true);
 });
 
 test("returning to the narrow list keeps the selected live view mounted", async () => {
@@ -136,6 +208,16 @@ test("selection survives parent remount but never crosses identity scope", async
   scope = "another-member-org"; await render();
   expect(mounts).toBe(0);
   expect(host.querySelector("[data-live-artifact]")).toBeNull();
+});
+
+test("apps kept out of view never cross identity scope", async () => {
+  await render();
+  await click("Open Overview"); await click("Open Review queue");
+  scope = "another-member-org"; await render();
+  expect(mounts).toBe(0);
+  await click("Open Overview");
+  expect(mounts).toBe(1);
+  expect(launches.at(-1)).toBe("another-member-org/personal:overview");
 });
 
 test("unverified identity cannot keep a legacy or live artifact mounted", async () => {
