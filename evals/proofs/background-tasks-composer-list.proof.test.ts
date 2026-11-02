@@ -59,6 +59,7 @@ test("a member whose agent leaves commands running sees them listed on the compo
     const remaining = await probe.eventually(rows, {
       within: 30_000, intervalMs: 150, label: "only the image command is left", until: (found) => found.length === 1 && found[0] === world.images.command,
     });
+    await user.see({ text: world.stoppedReply }, { timeoutMs: 60_000 });
     expect(remaining).toEqual([world.images.command]);
     evidence.recordAssertionEvidence("Stop removes only its command; the other command stays running", JSON.stringify(remaining), remaining.length === 1 && remaining[0] === world.images.command);
     await user.screenshot();
