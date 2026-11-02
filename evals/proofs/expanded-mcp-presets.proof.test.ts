@@ -8,7 +8,7 @@ const test = spec.world(expandedMcpPresetsWorld, {
 });
 
 const CORE = ["github", "notion", "linear", "stripe", "sentry", "granola", "polar", "slack", "exa", "render", "context7"];
-const EXPANDED = ["airtable", "amplitude", "cal", "canva", "figma", "fireflies", "huggingface", "honeycomb", "klaviyo", "lucid", "monday", "mural", "posthog", "semgrep", "tavily", "vercel"];
+const EXPANDED = ["airtable", "amplitude", "cal", "canva", "figma", "fireflies", "grafana", "huggingface", "honeycomb", "klaviyo", "lucid", "monday", "mural", "posthog", "semgrep", "tavily", "vercel"];
 const rows = '[data-testid="connector-catalog"] [data-testid^="connector-picker-"]';
 
 test("an admin sees every reviewed official MCP server by default", async ({ world, user, probe, step, evidence }) => {
@@ -16,7 +16,7 @@ test("an admin sees every reviewed official MCP server by default", async ({ wor
   const observed = probe.on(world.web);
   const catalogUrl = world.url("/dashboard/mcp-connections/new");
 
-  await step("the catalog includes 16 reviewed servers with real brand marks", async () => {
+  await step("the catalog includes 17 reviewed servers with real brand marks", async () => {
     await admin.navigate(catalogUrl);
     await admin.see({ testId: "connector-picker-airtable" }, { timeoutMs: 60_000 });
     await admin.notSee({ testId: "item-rows-skeleton" });
@@ -25,7 +25,7 @@ test("an admin sees every reviewed official MCP server by default", async ({ wor
     const marks = await Promise.all(EXPANDED.map((id) => observed.dom(`[data-testid="connector-picker-${id}"] img`)));
     const ok = core.every((result) => result.elements.length === 1) && expanded.every((result) => result.elements.length === 1)
       && marks.every((result) => result.elements.length === 1);
-    evidence.recordAssertionEvidence("The default catalog keeps the originals and adds every reviewed server with an image mark", `core present=${core.filter((result) => result.elements.length === 1).length}/11; new present=${expanded.filter((result) => result.elements.length === 1).length}/16; new with image mark=${marks.filter((result) => result.elements.length === 1).length}/16`, ok);
+    evidence.recordAssertionEvidence("The default catalog keeps the originals and adds every reviewed server with an image mark", `core present=${core.filter((result) => result.elements.length === 1).length}/11; new present=${expanded.filter((result) => result.elements.length === 1).length}/17; new with image mark=${marks.filter((result) => result.elements.length === 1).length}/17`, ok);
     expect(ok).toBe(true);
     await admin.screenshot();
   });
