@@ -102,13 +102,36 @@ export function remoteThreadFromToolPart(part: DynamicToolUIPart): RemoteThreadS
   }
 }
 
-/** A follow-up the agent sent to a remote session (`remote-session:send`), which makes it run again. */
-export function remoteThreadFollowUpSessionId(part: DynamicToolUIPart): string | null {
+/**
+ * A follow-up the agent sent to a task (`remote-session:send`) that its
+ * computer accepted. Den names the task's own commandId for a desktop or
+ * registered task and its sessionId for every task; either finds the task.
+ */
+export type RemoteThreadFollowUp = {
+  toolCallId: string
+  commandId: string | null
+  sessionId: string | null
+  /** When the agent sent it; null when the engine didn't record it. */
+  sentAt: number | null
+}
+
+/** An accepted follow-up, or null for anything else: a failed send, or one the desktop hasn't confirmed yet. */
+export function remoteThreadFollowUpFromToolPart(part: DynamicToolUIPart): RemoteThreadFollowUp | null {
   if (part.state !== "output-available") return null
-  if (capabilityCall(part)?.name !== "remote-session:send") return null
+  const call = capabilityCall(part)
+  if (call?.name !== "remote-session:send") return null
   const result = toolResult(part.output)
-  if (!result || typeof result.error === "string") return null
-  return text(result.sessionId)
+  if (!result || typeof result.error === "string" || result.state === "pending") return null
+  const commandId = text(result.commandId)
+  const sessionId = text(result.sessionId) ?? text(call.body.sessionId)
+  if (!commandId && !sessionId) return null
+  return { toolCallId: part.toolCallId, commandId, sessionId, sentAt: remoteToolCallStartedAt(part) }
+}
+
+/** Whether a follow-up went to this task. */
+export function remoteFollowUpMatches(followUp: RemoteThreadFollowUp, start: RemoteThreadStart, knownSessionId: string | null): boolean {
+  if (followUp.commandId && start.key === remoteThreadKey({ commandId: followUp.commandId })) return true
+  return followUp.sessionId !== null && (start.sessionId === followUp.sessionId || knownSessionId === followUp.sessionId)
 }
 
 /**

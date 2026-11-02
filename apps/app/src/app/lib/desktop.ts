@@ -566,8 +566,8 @@ export async function openDesktopPath(target: string): Promise<void> {
  * the path on disk and launches only a real file inside the real workspace; a path that
  * resolves outside (for example through a symlink) is revealed in its folder instead.
  */
-export async function openDesktopWorkspaceFile(workspaceRoot: string, target: string): Promise<"opened" | "revealed"> {
-  const result = await invokeElectronHelper("__openWorkspaceFile", workspaceRoot, target);
+export async function openDesktopWorkspaceFile(workspaceRoot: string, target: string, options?: { reveal?: boolean }): Promise<"opened" | "revealed" | "unavailable"> {
+  const result = await invokeElectronHelper("__openWorkspaceFile", workspaceRoot, target, options);
   if (!result || typeof result !== "object" || !("ok" in result)) {
     throw new Error("Could not open this file.");
   }
@@ -629,6 +629,20 @@ export async function relaunchDesktopApp(): Promise<void> {
 
 export async function getDesktopHomeDir(): Promise<string> {
   return invokeElectronHelper("__homeDir");
+}
+
+let cachedHomeDir: Promise<string | null> | null = null;
+
+/** The home folder for expanding `~/` in chat file links; null outside the desktop app. */
+export function getCachedDesktopHomeDir(): Promise<string | null> {
+  if (typeof window === "undefined" || !window.__OPENWORK_ELECTRON__?.invokeDesktop) return Promise.resolve(null);
+  cachedHomeDir ??= getDesktopHomeDir()
+    .then((home) => (typeof home === "string" && home.trim() ? home : null))
+    .catch(() => {
+      cachedHomeDir = null;
+      return null;
+    });
+  return cachedHomeDir;
 }
 
 export async function joinDesktopPath(...parts: string[]): Promise<string> {

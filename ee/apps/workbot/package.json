@@ -21,7 +21,8 @@
     "test:steps": "tsx --conditions=development --test scripts/steps.test.ts",
     "test:session-cells": "tsx --conditions=development --test scripts/session-cells.test.ts",
     "test:activation": "tsx --conditions=development --test scripts/activation.test.ts",
-    "test:command-palette": "tsx --conditions=development --test scripts/command-palette.test.ts"
+    "test:command-palette": "tsx --conditions=development --test scripts/command-palette.test.ts",
+    "test:calendar-connections": "esbuild scripts/calendar-connections.test.ts --bundle --conditions=development --platform=node --format=cjs --jsx=automatic --external:react --external:react-dom --external:@tanstack/react-query --external:zod --outfile=node_modules/.cache/calendar-connections.test.cjs && node node_modules/.cache/calendar-connections.test.cjs"
   },
   "dependencies": {
     "@hono/node-server": "2.1.5",

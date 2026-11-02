@@ -15,7 +15,7 @@ enum InputDelivery: String {
     /// Bundled toolkits whose surfaces take only hardware-origin input (Qt, wxWidgets, Tk).
     static let foregroundFrameworkPrefixes = ["qtcore", "qtgui", "libwx_", "tk.framework", "tcl.framework", "libtk", "_tkinter"]
 
-    /// Set by the trusted host only while the `computerUseBackground` feature is on.
+    /// Set by the trusted host for parallel computer-use sessions.
     static let hostVariable = "OPENWORK_COMPUTER_USE_DELIVERY"
 
     /// `frameworks` are the names in the app's Contents/Frameworks.
@@ -40,7 +40,7 @@ enum InputDelivery: String {
         case .type: return route == .skyLight && !signedKeys
         case .click(_, _, let flags): return !flags.isEmpty
         case .move, .drag: return true
-        case .press, .setValue, .scroll, .wait: return false
+        case .press, .setValue, .scroll, .wait, .menu: return false
         }
     }
 }

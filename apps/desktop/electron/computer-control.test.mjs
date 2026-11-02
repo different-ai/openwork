@@ -415,6 +415,63 @@ test("without a screenshot choice the computer decides whether the settled view 
   assert.equal(postRead().include_image, false, "programs never receive a post-action image");
 });
 
+test("after an act the model gets only changed elements, while programs and opens get the full list", async (t) => {
+  const seen = [];
+  let display = "0";
+  const button = (ref, label, x) => ({ ref, role: "Button", label, press: true, x, y: 300, w: 48, h: 48 });
+  const view = () => text({ ok: true, observation_id: "observation", window_id: 17, refs: "stable", elements_filter: "interactive", elements: [
+    { ref: "e1", role: "StaticText", value: display, x: 160, y: 90, w: 60, h: 36 },
+    button("e2", "1", 10), button("e3", "2", 64), button("e4", "3", 118), button("e5", "Add", 172),
+  ] });
+  const f = fixture({ seen, toolResult: (name) => name === "computer_observe" ? view()
+    : name === "computer_act" ? (display = "12", text({ ok: true, status: "dispatched", next: "observe" })) : undefined });
+  t.after(() => f.control.reset(true));
+  await f.control.setFeatureEnabled(true);
+  const opened = await f.control.execute({ sessionId: "chat", name: "computer_open", args: { app_id: "calculator", mode: "assist", purpose: "Add", screenshot: false } });
+  const openedView = opened.content.map((part) => part.type === "text" ? JSON.parse(part.text) : {}).find((value) => value.observation_id);
+  assert.equal(openedView.elements.length, 5);
+  assert.equal(seen.find((call) => call.name === "computer_observe")?.args.include_image, false);
+  // Opening an app on this Mac lists its menu-bar commands as quick actions.
+  assert.equal(seen.find((call) => call.name === "computer_observe")?.args.menus, process.platform === "darwin" ? true : undefined);
+  assert.equal(Object.hasOwn(seen.find((call) => call.name === "computer_open_session").args, "screenshot"), false);
+
+  seen.length = 0;
+  const acted = await f.control.execute({ sessionId: "chat", name: "computer_act", args: { observation_id: "observation", actions: [{ type: "press", ref: "e2" }, { type: "press", ref: "e3" }], screenshot: false, pacing: "wait_retry", retry_ms: 800 } });
+  const native = seen.find((call) => call.name === "computer_act").args;
+  assert.equal(native.pacing, "wait_retry");
+  assert.equal(native.retry_ms, 800);
+  assert.equal(seen.find((call) => call.name === "computer_observe")?.args.menus, undefined, "menus are listed on open, not after every act");
+  const changes = acted.content.map((part) => part.type === "text" ? JSON.parse(part.text) : {}).find((value) => value.observation_id);
+  assert.equal(changes.elements_listing, "changes");
+  assert.deepEqual(changes.elements, [{ ref: "e1", role: "StaticText", value: "12", x: 160, y: 90, w: 60, h: 36 }]);
+  assert.equal(changes.elements_unchanged, 4);
+
+  // A program reads every element itself.
+  const program = await f.control.execute({ sessionId: "chat", name: "computer_act", args: { observation_id: "observation", action: { type: "press", ref: "e4" } } }, { includePostImage: false, program: true });
+  const full = program.content.map((part) => part.type === "text" ? JSON.parse(part.text) : {}).find((value) => value.observation_id);
+  assert.equal(full.elements.length, 5);
+  assert.equal(full.elements_listing, undefined);
+});
+
+test("change listing falls back to the full list on another window, filter or a mostly new list", async () => {
+  const { listChanges } = await import("@openwork/computer-use/computer-control");
+  const part = (value) => [{ type: "text", text: JSON.stringify({ observation_id: "o", refs: "stable", window_id: 1, elements_filter: "all", ...value }) }];
+  const first = listChanges(null, part({ elements: [{ ref: "e1", label: "A" }, { ref: "e2", label: "B" }, { ref: "e3", label: "C" }] }));
+  const shown = (result) => JSON.parse(result.content[0].text);
+  assert.equal(shown(first).elements.length, 3);
+  assert.equal(shown(listChanges(first.listing, part({ window_id: 2, elements: [{ ref: "e1", label: "A" }] }))).elements_listing, undefined);
+  assert.equal(shown(listChanges(first.listing, part({ elements_filter: "interactive", elements: [{ ref: "e1", label: "A" }] }))).elements_listing, undefined);
+  assert.equal(shown(listChanges(first.listing, part({ elements: [{ ref: "e4", label: "D" }, { ref: "e5", label: "E" }, { ref: "e3", label: "C" }] }))).elements_listing, undefined);
+  const six = ["A", "B", "C", "D", "E", "F"].map((label, index) => ({ ref: `e${index + 1}`, label }));
+  const before = listChanges(null, part({ elements: six }));
+  const removed = shown(listChanges(before.listing, part({ elements: [...six.filter((element) => element.ref !== "e2"), { ref: "e9", label: "Z" }] })));
+  assert.deepEqual(removed.elements_removed, ["e2"]);
+  assert.deepEqual(removed.elements, [{ ref: "e9", label: "Z" }]);
+  assert.equal(removed.elements_unchanged, 5);
+  const unstable = [{ type: "text", text: JSON.stringify({ observation_id: "o", elements: [{ ref: "e1" }] }) }];
+  assert.equal(listChanges(first.listing, unstable).listing, null);
+});
+
 test("each step records computer time and the model's time since the previous step", async (t) => {
   const steps = [];
   const f = fixture({ onTiming: (_sessionId, step) => steps.push(step) }); t.after(() => f.control.reset(true));
@@ -496,6 +553,31 @@ test("declined scripts never run, always-run skips the question for that app, an
   assert.equal((await running).error.code, "script_failed", "a running script is stopped");
   release();
   assert.deepEqual(ran, ["second", "third", "slow"]);
+});
+
+test("organization ask requires every script, ignores standing grants and never remembers always", async (t) => {
+  const ran = [];
+  const f = fixture({ runScript: async input => { ran.push(input.code); return { ok: true }; } });
+  t.after(() => f.control.reset(true));
+  await f.control.setFeatureEnabled(true);
+  const standing = f.control.script({ sessionId: "chat", app: "jxa", code: "standing" });
+  await f.control.answerRequest({ sessionId: "chat", answer: "always", id: (await scriptRequest(f, "standing")).id });
+  assert.equal((await standing).ok, true);
+  for (const code of ["first", "second"]) {
+    const pending = f.control.script({ sessionId: "chat", app: "jxa", code }, { approveEachScript: true });
+    const request = await scriptRequest(f, code);
+    assert.equal(request.standing, false);
+    await f.control.answerRequest({ sessionId: "chat", answer: "always", id: request.id });
+    assert.equal((await pending).ok, true);
+  }
+  // A new app with no earlier grant must not remember an Always answer either.
+  const once = f.control.script({ sessionId: "chat", app: "applescript", code: "once" }, { approveEachScript: true });
+  await f.control.answerRequest({ sessionId: "chat", answer: "always", id: (await scriptRequest(f, "once")).id });
+  assert.equal((await once).ok, true);
+  const again = f.control.script({ sessionId: "chat", app: "applescript", code: "again" });
+  await f.control.answerRequest({ sessionId: "chat", answer: "dismiss", id: (await scriptRequest(f, "again")).id });
+  assert.equal((await again).error.code, "script_declined");
+  assert.deepEqual(ran, ["standing", "first", "second", "once"]);
 });
 
 /** A fake osascript: records its arguments and stdin, then exits as told. */
@@ -586,7 +668,7 @@ function parallelFixture(options = {}) {
           if (name === "computer_open_session") {
             onUi({ kind: "state", id: `view-${app}`, phase: "working", appID: app, appName: app, windowTitle: app, mode: args.mode, task: args.purpose });
             return text({ ok: true, session_id: `native-${app}`, window_id: args.window_id ?? windows[app], state: "active",
-              ...(options.delivery ? { delivery: options.delivery(app) } : {}) });
+              delivery: options.delivery?.(app) ?? "foreground" });
           }
           if (name === "computer_session_status") return text({ ok: true, state: "active" });
           if (name === "computer_act") return text({ ok: true, status: "dispatched" });
@@ -721,7 +803,6 @@ test("background sessions act at the same time instead of taking turns", async (
     beforeTool: async (name, app) => { if (name === "computer_act" && app === "blender") { started.resolve(); await gate.promise; } } });
   t.after(() => f.control.reset(true));
   await f.control.setFeatureEnabled(true);
-  await f.control.setBackgroundEnabled(true);
   await openApp(f.control, "chat-blender", "blender");
   await openApp(f.control, "chat-photoshop", "photoshop");
   assert.deepEqual(f.started, [{ background: true }, { background: true }], "each helper starts with background delivery");
@@ -738,7 +819,6 @@ test("a session the helper keeps in front still takes turns, without holding up 
     beforeTool: async (name, app) => { if (name === "computer_act" && app === "blender") { started.resolve(); await gate.promise; } } });
   t.after(() => f.control.reset(true));
   await f.control.setFeatureEnabled(true);
-  await f.control.setBackgroundEnabled(true);
   for (const app of ["blender", "photoshop", "notes"]) await openApp(f.control, `chat-${app}`, app);
   const blender = click(f.control, "chat-blender");
   await started.promise;
@@ -751,22 +831,24 @@ test("a session the helper keeps in front still takes turns, without holding up 
   assert.ok(f.events.indexOf("blender:computer_act:end") < f.events.indexOf("notes:computer_act:start"));
 });
 
-test("turning background off hands idle sessions back so the next call starts in front", async (t) => {
+test("older renderers cannot disable background delivery independently of computer use", async (t) => {
   const f = parallelFixture({ delivery: () => "background" }); t.after(() => f.control.reset(true));
   await f.control.setFeatureEnabled(true);
-  await f.control.setBackgroundEnabled(true);
   await openApp(f.control, "chat-notes", "notes");
-  await f.control.setBackgroundEnabled(false);
-  assert.ok(f.events.includes("notes:close"), "the idle background session was handed back");
+  assert.equal(await f.control.setBackgroundEnabled(false), true);
+  assert.ok(!f.events.includes("notes:close"), "the obsolete child flag cannot end an active session");
   assert.equal(payload(await f.control.execute({ sessionId: "chat-notes", name: "computer_observe", args: {} })).ok, true);
-  assert.deepEqual(f.started.at(-1), { background: false });
+  assert.deepEqual(f.started.at(-1), { background: true });
+  await f.control.setFeatureEnabled(false);
+  assert.ok(f.events.includes("notes:close"), "the parent switch still hands the session back");
+  assert.equal(await f.control.setBackgroundEnabled(true), false);
+  assert.equal(payload(await f.control.execute({ sessionId: "chat-notes", name: "computer_observe", args: {} })).code, "computer_unavailable");
 });
 
 test("background stays off on a computer that is not parallel", async (t) => {
   const connected = [];
   const f = fixture({ connected }); t.after(() => f.control.reset(true));
   await f.control.setFeatureEnabled(true);
-  await f.control.setBackgroundEnabled(true);
   assert.equal(payload(await f.control.execute({ sessionId: "chat", name: "computer_open", args: { app_id: "editor", mode: "control", purpose: "Edit" } })).ok, true);
   assert.deepEqual(connected, [{ background: false }]);
 });

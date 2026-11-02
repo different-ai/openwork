@@ -403,7 +403,7 @@ you can also lock a feature for the whole install under `config.features`:
 config:
   features:
     permissions: "true"            # on for everyone on this install
-    automationCalendar: "false"    # off for everyone on this install
+    computerUse: "false" # off for everyone on this install
 ```
 
 - `""` (the default) follows `/admin`, which starts from the default listed

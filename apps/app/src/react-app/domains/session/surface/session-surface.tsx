@@ -123,9 +123,10 @@ import { PermissionApprovalPanel } from "@/react-app/domains/session/chat/permis
 import { ComputerRequestPanel } from "@/react-app/domains/session/computer/computer-request-panel";
 import { useComputerRequest, useComputerStore } from "@/react-app/domains/session/computer/computer-store";
 import { QuestionPanel } from "@/react-app/domains/session/modals/question-modal";
-import { useOrgFeature } from "@/react-app/domains/cloud/use-org-feature";
-import { ComposerSubagentTracker, currentTurnRemoteTasks, currentTurnSubagentParts } from "@/react-app/domains/session/surface/composer/composer-subagent-tracker";
-import { useRemoteThreadHelperViewEnabled } from "@/react-app/domains/session/remote-threads/remote-thread-store";
+import { ComposerSubagentTracker, currentTurnSubagentParts, useComposerRemoteTasks } from "@/react-app/domains/session/surface/composer/composer-subagent-tracker";
+import { ComposerBackgroundTasks } from "@/react-app/domains/session/surface/composer/composer-background-tasks";
+import { sessionBackgroundShells, settleBackgroundShell, useBackgroundShellStore } from "@/react-app/domains/session/status/background-shell-store";
+import { useDesktopFeature } from "@/react-app/domains/session/status/use-desktop-feature";
 import { QueuedMessagesPanel } from "@/react-app/domains/session/modals/queued-messages-panel";
 import { deriveOpenTargets, sameOpenTargets, type OpenTarget } from "@/react-app/domains/session/artifacts/open-target";
 import { usePanelTabStore } from "@/react-app/domains/session/panel/panel-tab-store";
@@ -178,6 +179,7 @@ import {
   type ChatMcpReconnectScope,
 } from "./mcp-chat-reconnect";
 import { OpenTargetProvider, type OpenTargetOptions } from "@/lib/target-provider";
+import { fileOriginForRuntime } from "../artifacts/resolve-open-target";
 import type { ThreadStatus } from "@/lib/messages";
 import {
   EnvironmentVariableProvider,
@@ -418,7 +420,7 @@ function createChatTranscriptEvalMessages(sessionId: string) {
   return { messages };
 }
 
-/** Dev-only: one turn that exercises every text-first activity sentence (flag `textActivityRail`). */
+/** Dev-only: one turn that exercises every text-first activity sentence. */
 function createTextActivityEvalMessages(sessionId: string): UIMessage[] {
   const now = Date.now();
   return [
@@ -732,6 +734,7 @@ export type SessionSurfaceProps = {
   environmentClient?: OpenworkServerClient | null;
   workspaceId: string;
   workspaceRoot: string;
+  sandboxBackend?: string | null;
   sessionId: string;
   draftScope: string | null;
   isControlTarget: boolean;
@@ -807,7 +810,7 @@ export type SessionSurfaceProps = {
   onForkAtMessage?: (messageId: string | null, sessionId: string, isCurrent: () => boolean) => Promise<void>;
   /** Open a sub-agent (child) session in the main chat surface. */
   onOpenSubagentSession?: (sessionId: string) => void;
-  /** Open a task on another computer in the main pane (`remoteSessionHelperView`); absent opens it beside the chat. */
+  /** Open a task on another computer in the main pane; absent opens it beside the chat. */
   onOpenRemoteTask?: (threadKey: string) => void;
   onReturnToParent?: () => void;
   parentSessionTitle?: string;
@@ -2252,22 +2255,27 @@ export function SessionSurface(props: SessionSurfaceProps) {
   }, [admissionOutcome, admissionOutcomeUnresolved, autoSending, evalThreadStatus, liveStatus, queuedDrainState.phase.kind, sending]);
   const composerBusy = chatStreaming || status === "submitted";
   // Sub-agents of the current turn, attached to the composer (OpenCode v2 only).
-  const subagentTrackerFeature = useOrgFeature("composerSubagentTracker");
   const subagentTrackerParentActive = status === "streaming" || status === "retrying" || status === "submitted";
   const subagentTrackerToolCallIds = useMemo<ReadonlySet<string>>(
-    () => new Set(subagentTrackerFeature && snapshotEngine === "v2"
+    () => new Set(snapshotEngine === "v2"
       ? currentTurnSubagentParts(visibleMessages).map((part) => part.toolCallId)
       : []),
-    [subagentTrackerFeature, snapshotEngine, visibleMessages],
+    [snapshotEngine, visibleMessages],
   );
-  // `remoteSessionHelperView`: tasks the turn started on other computers join
-  // the list on either engine; their state comes from Den, not the local engine.
-  const remoteHelperView = useRemoteThreadHelperViewEnabled();
-  const remoteTrackerTasks = useMemo(
-    () => subagentTrackerFeature && remoteHelperView ? currentTurnRemoteTasks(visibleMessages) : [],
-    [subagentTrackerFeature, remoteHelperView, visibleMessages],
+  // Tasks the turn started on other computers join the list on either engine;
+  // their state comes from Den, not the local engine.
+  const remoteTrackerOwner = useMemo(() => ({ workspaceId: props.workspaceId, sessionId: props.sessionId }), [props.workspaceId, props.sessionId]);
+  // An earlier turn's task stays listed while it works or waits, or once this turn follows up on it.
+  const remoteTrackerTasks = useComposerRemoteTasks(
+    visibleMessages,
+    remoteTrackerOwner,
   );
   const subagentTrackerShown = subagentTrackerToolCallIds.size > 0 || remoteTrackerTasks.length > 0;
+  // Commands the agent left running, listed under the Agents list until each exits.
+  const runningShells = useBackgroundShellStore((state) => state.booksByWorkspaceId[props.workspaceId]?.running);
+  const backgroundShells = useMemo(() => sessionBackgroundShells(runningShells, props.sessionId), [runningShells, props.sessionId]);
+  const composerBackgroundTasksEnabled = useDesktopFeature("composerBackgroundTasks");
+  const backgroundTasksShown = composerBackgroundTasksEnabled && backgroundShells.length > 0 && !archived;
 
   useEffect(() => {
     if (!hasFullHistory || admissionOutcome !== "unresolved") {
@@ -2785,6 +2793,16 @@ export function SessionSurface(props: SessionSurfaceProps) {
     dispatchQueuedDrain(props.sessionId, { type: "user_retry" });
     setCloudQueueRetryVersion((version) => version + 1);
   }, [attachments.length, draft, handleSend, props.sessionId, sendQueuedDraftNow, sessionOwner]);
+
+  const handleStopBackgroundTask = useCallback(async (shellID: string) => {
+    if (snapshotEngine !== "v2" || archived) throw new Error("Background tasks cannot be stopped here.");
+    const shell = useBackgroundShellStore.getState().booksByWorkspaceId[props.workspaceId]?.running[shellID];
+    if (!shell || shell.sessionId !== props.sessionId) throw new Error("Background task is no longer available.");
+    const client = createClientV2(props.opencodeBaseUrl, props.workspaceRoot.trim() || undefined, { token: props.openworkToken });
+    unwrap(await client.removeBackgroundShell({ shellID, sessionID: props.sessionId }));
+    // The DELETE response confirms it stopped even if the volatile deletion event was lost.
+    useBackgroundShellStore.getState().update(props.workspaceId, (book) => settleBackgroundShell(book, shellID));
+  }, [snapshotEngine, archived, props.workspaceId, props.sessionId, props.opencodeBaseUrl, props.workspaceRoot, props.openworkToken]);
 
   // Stop one helper without stopping the turn it belongs to. Uses the same
   // directory-scoped client as the turn's own Stop, so the abort reaches the
@@ -3886,7 +3904,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
                   workspaceId={props.workspaceId}
                   workspaceRoot={props.workspaceRoot}
                   sessionId={props.sessionId}
-                  isLocalWorkspace
+                  isLocalWorkspace={fileOriginForRuntime({ desktop: isDesktopRuntime(), serverUrl: props.client.baseUrl, sandboxBackend: props.sandboxBackend }) === "local"}
                   openTargets={verifiedOpenTargets}
                   onOpenTarget={handleOpenTarget}
                 >
@@ -3936,6 +3954,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
                         activityStatus={effectiveActivityStatus}
                         retryStatus={liveStatus.type === "retry" ? liveStatus : null}
                         syncHealth={runSyncHealth}
+                        backgroundTasksInComposer={composerBackgroundTasksEnabled}
                       />
                     </MessageListProvider>
                   </EnvironmentVariableProvider>
@@ -4097,9 +4116,9 @@ export function SessionSurface(props: SessionSurfaceProps) {
         pastedText={pasteParts}
         onExpandPastedText={handleExpandPastedText}
         onRemovePastedText={handleRemovePastedText}
-          compactTopSpacing={Boolean(composerQuestion || (props.todos ?? []).some((todo) => todo.content.trim()) || props.activePermission || computerRequest || queuedItems.length > 0 || subagentTrackerShown)}
+          compactTopSpacing={Boolean(composerQuestion || (props.todos ?? []).some((todo) => todo.content.trim()) || props.activePermission || computerRequest || queuedItems.length > 0 || subagentTrackerShown || backgroundTasksShown)}
           topAccessory={
-            composerQuestion || (props.todos ?? []).some((todo) => todo.content.trim()) || props.activePermission || computerRequest || queuedItems.length > 0 || subagentTrackerShown ? (
+            composerQuestion || (props.todos ?? []).some((todo) => todo.content.trim()) || props.activePermission || computerRequest || queuedItems.length > 0 || subagentTrackerShown || backgroundTasksShown ? (
               <div>
                 {queuedItems.length > 0 ? (
                   <QueuedMessagesPanel
@@ -4123,9 +4142,17 @@ export function SessionSurface(props: SessionSurfaceProps) {
                     includeLocal={subagentTrackerToolCallIds.size > 0}
                     remote={remoteTrackerTasks.length > 0 ? {
                       tasks: remoteTrackerTasks,
-                      owner: { workspaceId: props.workspaceId, sessionId: props.sessionId },
+                      owner: remoteTrackerOwner,
                       onOpen: props.onOpenRemoteTask ? openRemoteTask : undefined,
                     } : undefined}
+                  />
+                ) : null}
+                {backgroundTasksShown ? (
+                  <ComposerBackgroundTasks
+                    shells={backgroundShells}
+                    syncDegraded={runSyncHealth.degraded}
+                    belowAgents={subagentTrackerShown}
+                    onStop={snapshotEngine === "v2" ? handleStopBackgroundTask : undefined}
                   />
                 ) : null}
                 {composerQuestion ? (

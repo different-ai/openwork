@@ -9,6 +9,7 @@ import {
   mkdir,
   readFile,
   readdir,
+  realpath,
   rename,
   rm,
   stat,
@@ -31,6 +32,7 @@ import { createNativeDictation, createSpeechDictation } from "./native-dictation
 import { applyBrandAppName } from "./brand-app-name.mjs";
 import { createBrowserPanel } from "./browser-panel.mjs";
 import { createComputerControl } from "@openwork/computer-use/computer-control";
+import { createComputerAgentPermissions } from "./computer-agent-permissions.mjs";
 import { createLocalComputerAdapter } from "./computer-local.mjs";
 import { createComputerScripting } from "./computer-scripting.mjs";
 import { remoteComputerAdapters } from "./computer-targets.mjs";
@@ -54,7 +56,9 @@ import {
 } from "./connect-link-branding.mjs";
 import { resolveConnectLinkPublicKeys } from "./connect-link-keys.mjs";
 import { openExternalUrl } from "./open-external.mjs";
-import { resolveWorkspaceFileLaunch } from "./workspace-file-access.mjs";
+import { openChatWorkspaceFile, resolveWorkspaceFileLaunch } from "./workspace-file-access.mjs";
+import { createOpenWithApplications, installedApplicationCommand } from "./open-with-applications.mjs";
+const openWithApplications = createOpenWithApplications();
 import { resolveAppIdentifier, resolveUserDataPath } from "./dev-profile.mjs";
 import { fetchAgentContextDiagnosticsResponse } from "./agent-context-diagnostics-fetch.mjs";
 import { fetchFiniteDesktopHttp } from "./finite-http-fetch.mjs";
@@ -294,15 +298,72 @@ function assertComputerSender(event) {
   }
 }
 
+/** Rules come from the local server, which verifies the member's policy with Den. */
+async function readComputerRules() {
+  const server = await runtimeManager.openworkServerInfo();
+  if (!server.baseUrl || !(server.clientToken ?? server.ownerToken)) throw new Error("OpenWork server unavailable");
+  // loopback-fetch: the policy service is the locally managed OpenWork server.
+  const response = await fetch(`${server.baseUrl}/managed-policy/computer-rules`, {
+    headers: { Authorization: `Bearer ${server.clientToken ?? server.ownerToken}` }, signal: AbortSignal.timeout(15_000),
+  });
+  if (!response.ok) throw new Error("Computer rules unavailable");
+  const payload = await response.json();
+  return Array.isArray(payload?.rules) ? payload.rules : [];
+}
+
+const computerAgentPermissions = createComputerAgentPermissions({
+  readRules: readComputerRules,
+  confirm: async (rule) => {
+    if (!mainWindow || mainWindow.isDestroyed()) return false;
+    const answer = await dialog.showMessageBox(mainWindow, {
+      type: "question", buttons: ["Allow in this chat", "Cancel"], defaultId: 1, cancelId: 1,
+      message: "Let the agent use your computer in this chat?",
+      detail: `Your organization's agent permissions ask before agents use apps on this computer (set for ${rule.source}).`,
+    });
+    return answer.response === 0;
+  },
+});
+
+/** @param {string} message */
+function computerPolicyDenied(message) {
+  return { ok: false, error: { code: "organization_policy_denied", message } };
+}
+
+/** @param {string} sessionId */
+async function checkComputerPermission(sessionId) {
+  const decision = await computerAgentPermissions.check({ kind: "computer", sessionId });
+  if (decision.effect === "deny") return computerPolicyDenied(decision.message);
+  if (decision.effect === "ask" && !await computerAgentPermissions.approveComputer(sessionId, decision.rule)) {
+    return computerPolicyDenied("Computer use was not approved in this chat. No action ran.");
+  }
+  return null;
+}
+
 const uiControlServer = createUiControlServer({
   app,
   appName: APP_NAME,
   appIdentifier: APP_IDENTIFIER,
   getWindow: () => createMainWindow(),
   browserTask: (args, options) => browserPanel?.browserTask(args, options) ?? { ok: false, code: "browser_unavailable" },
-  computerTask: (args, options) => computerControl.execute(args, options),
-  computerProgram: (args, options) => computerControl.program(args, options),
-  computerScript: (args, options) => computerControl.script(args, options),
+  computerTask: async (args, options) => {
+    if (!["computer_status", "computer_close"].includes(args?.name)) {
+      const denied = await checkComputerPermission(args?.sessionId);
+      if (denied) return denied;
+    }
+    return computerControl.execute(args, options);
+  },
+  computerProgram: async (args, options) => {
+    if (args?.surface === "computer") {
+      const denied = await checkComputerPermission(args?.sessionId);
+      if (denied) return denied;
+    }
+    return computerControl.program(args, options);
+  },
+  computerScript: async (args, options) => {
+    const decision = await computerAgentPermissions.check({ kind: "script", sessionId: args?.sessionId });
+    if (decision.effect === "deny") return computerPolicyDenied(decision.message);
+    return computerControl.script(args, { ...options, approveEachScript: decision.effect === "ask" });
+  },
   computerEnabled: () => computerControl.featureEnabled(),
   listWebMcpTools: (args, options) => browserPanel?.listWebMcpTools(args, options) ?? {
     ok: false,
@@ -2096,9 +2157,10 @@ const desktopCommandHandlers = {
       assertComputerSender(event);
       return computerControl.setRemoteEnabled(enabled === true);
   },
-  "computerSetBackgroundEnabled": async (event, enabled) => {
+  // Compatibility for older renderers; background delivery now follows computerUse.
+  "computerSetBackgroundEnabled": async (event) => {
       assertComputerSender(event);
-      return computerControl.setBackgroundEnabled(enabled === true);
+      return computerControl.setBackgroundEnabled();
   },
   "computerResetPermission": async (event, permission) => {
       assertComputerSender(event);
@@ -2345,17 +2407,11 @@ const desktopCommandHandlers = {
       // file inside the real workspace launches; anything else is revealed, never run.
       const workspaceRoot = String(args[0] ?? "").trim();
       const target = String(args[1] ?? "").trim();
-      const decision = await resolveWorkspaceFileLaunch(workspaceRoot, target);
-      if (decision.ok === true) {
-        const error = await shell.openPath(decision.path);
-        if (error && error.trim()) return { ok: false, error };
-        return { ok: true, action: "opened" };
-      }
-      if (decision.reason === "outside" && existsSync(target)) {
-        shell.showItemInFolder(target);
-        return { ok: true, action: "revealed" };
-      }
-      return { ok: false, error: decision.error };
+      return openChatWorkspaceFile(workspaceRoot, target, {
+        reveal: args[2]?.reveal === true,
+        openPath: (file) => shell.openPath(file),
+        revealPath: (file) => shell.showItemInFolder(file),
+      });
   },
   "__revealItemInDir": async (event, ...args) => {
       const target = String(args[0] ?? "").trim();
@@ -2402,6 +2458,8 @@ const desktopCommandHandlers = {
   "__getApplicationsForFile": async (event, ...args) => {
       const target = String(args[0] ?? "").trim();
       if (!target) return [];
+      const canonicalTarget = await realpath(target).catch(() => null);
+      if (!canonicalTarget) return [];
       const platform = process.platform;
       const results = [];
 
@@ -2445,8 +2503,9 @@ const desktopCommandHandlers = {
                 const execMatch = content.match(/^Exec=(.+)$/m);
                 if (!nameMatch || !execMatch) continue;
                 const name = nameMatch[1].trim();
-                const appPath = execMatch[1].trim().replace(/%[fFuU]/g, "").trim();
-                if (!appPath) continue;
+                // The installed desktop entry is the identity. Never return its
+                // Exec string as an executable path controlled by the renderer.
+                const appPath = filePath;
                 let icon = null;
                 try {
                   const img = await app.getFileIcon(filePath, { size: "small" });
@@ -2459,6 +2518,7 @@ const desktopCommandHandlers = {
         }
       } catch {}
 
+      openWithApplications.remember(event.sender.id, canonicalTarget, results.map((application) => application.appPath));
       return results;
   },
   "__openWithApp": async (event, ...args) => {
@@ -2469,18 +2529,19 @@ const desktopCommandHandlers = {
       const decision = await resolveWorkspaceFileLaunch(workspaceRoot, requested);
       if (decision.ok === false) return decision.error;
       const target = decision.path;
-      const platform = process.platform;
+      if (!openWithApplications.allows(event.sender.id, target, appPath)) {
+        return "Choose an installed application from the file menu.";
+      }
+      const command = installedApplicationCommand(process.platform, appPath, target);
+      if (!command) return "This installed application cannot open files here.";
       try {
-        if (platform === "darwin") {
-          execFileSync("open", ["-a", appPath, target]);
-        } else if (platform === "linux") {
-          const child = spawn(appPath, [target], { detached: true, stdio: "ignore" });
-          child.unref();
-        } else {
-          return `Open with app is not supported on ${platform}`;
-        }
-      } catch (err) {
-        return String(err?.message ?? err);
+        // Both the command and installed app identifier are main-process
+        // choices. Never spawn a renderer-supplied executable or use a shell.
+        await new Promise((resolve, reject) => {
+          execFile(command.command, command.args, (error) => error ? reject(error) : resolve(undefined));
+        });
+      } catch {
+        return "This application could not open the file.";
       }
   },
   "__fetch": async (event, ...args) => {

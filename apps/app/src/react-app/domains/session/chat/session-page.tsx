@@ -17,7 +17,7 @@ import { useCloudSignIn } from "../../cloud/sign-in-return";
 import { type OpenworkServerClient, type OpenworkServerStatus } from "../../../../app/lib/openwork-server";
 import { getDisplaySessionTitle } from "../../../../app/lib/session-title";
 import type { BootPhase } from "../../../../app/lib/startup-boot";
-import { openDesktopUrl, openDesktopWorkspaceFile, revealDesktopItemInDir, type WorkspaceInfo } from "../../../../app/lib/desktop";
+import { getCachedDesktopHomeDir, openDesktopUrl, openDesktopWithApp, openDesktopWorkspaceFile, type WorkspaceInfo } from "../../../../app/lib/desktop";
 import type {
   ComposerAttachment,
   PendingPermission,
@@ -56,6 +56,7 @@ import { WorkbenchPanelGroup, PRIMARY_PANEL_ID, SECONDARY_PANEL_ID } from "./wor
 import ProviderAuthModal, { type ProviderAuthModalProps } from "../../connections/provider-auth/provider-auth-modal";
 import { RenameSessionModal } from "../modals/rename-session-modal";
 import { AppSidebar } from "../sidebar/app-sidebar";
+import { WorkbenchPaneStatus } from "./workbench-pane-status";
 import { MainSidebarControls } from "../sidebar/sidebar-chrome";
 import { MobileChatActions, MobileChatNavigation } from "./mobile-chat-navigation";
 import { useSessionManagementStore } from "../sidebar/session-management-store";
@@ -87,7 +88,7 @@ import {
 
 import { isElectronRuntime, isMacPlatform } from "../../../../app/utils";
 import { isCollectibleArtifactTarget, isLocalhostBrowserTarget, isOpenableFileTarget, type OpenTarget } from "../artifacts/open-target";
-import { nativeFileAction, resolveCollectibleOpenTarget } from "../artifacts/resolve-open-target";
+import { fileOriginForRuntime, nativeFileAction, planFileOpen, resolveCollectibleOpenTarget, unavailableFileMessage } from "../artifacts/resolve-open-target";
 import type { OpenTargetOptions } from "@/lib/target-provider";
 import { SidePanel } from "../panel/side-panel";
 import { getSidePanelSessionKey } from "../panel/side-panel-session";
@@ -99,6 +100,7 @@ import { DebugRailProvider, DebugRailSlot } from "../panel/debug-rail-slot";
 import { SessionDebugPanel } from "../surface/debug-panel";
 import { FloatingSlotProvider, SessionFloatingLayer } from "../panel/floating-slot";
 import { useDesktopFeature } from "../status/use-desktop-feature";
+import { RetainedArtifactSurface } from "../../dashboard/retained-artifact-surface";
 import { CloudComputerControl } from "../computer/cloud-computer-control";
 import { ComputerControl } from "../computer/computer-control";
 import { useComputerSessionHistoryStore } from "@/components/chat/computer-session-history-store";
@@ -119,6 +121,7 @@ import {
 import { useRouteWorkbench, useWorkbenchStore, type WorkbenchSessionTab } from "./workbench-store";
 import { isSameWorkbenchSession } from "./workbench-store";
 import { ReactSessionRuntime } from "../sync/runtime-sync";
+import type { SessionWaitingKind } from "../status/session-activity-store";
 import { useSessionInteractions } from "../sync/use-session-interactions";
 import { createClient } from "@/app/lib/opencode";
 import { createClientV2, isOpencodeV2BaseUrl } from "@/app/lib/opencode-v2-adapter";
@@ -175,6 +178,7 @@ export type SessionPageSidebarProps = {
   feedEnabled?: boolean;
   sessionAttentionLabelById?: Record<string, string>;
   sessionAttentionSourceById?: Record<string, "child" | "descendant">;
+  sessionAttentionKindById?: Record<string, SessionWaitingKind>;
   connectingWorkspaceId: string | null;
   workspaceConnectionStateById: Record<string, WorkspaceConnectionState>;
   newTaskDisabled: boolean;
@@ -199,9 +203,8 @@ export type SessionPageSidebarProps = {
   automationsActive?: boolean;
   automationsNeedAttention?: boolean;
   onOpenAutomations?: () => void;
-  calendarActive?: boolean;
-  onOpenCalendar?: () => void;
   dashboardActive?: boolean;
+  dashboardLabel?: string;
   onOpenDashboard?: () => void;
   /** Opens the cross-session message search dialog (Cmd/Ctrl+Shift+F). */
   onOpenSessionSearch?: () => void;
@@ -219,6 +222,7 @@ export type SessionPagePaneRuntime = {
   workspaceTitle: string;
   workspaceRoot: string;
   workspaceType?: WorkspaceInfo["workspaceType"];
+  sandboxBackend?: string | null;
   runtimeWorkspaceId: string;
   opencodeBaseUrl: string;
   openworkToken: string;
@@ -246,6 +250,7 @@ export type SessionPageProps = {
     name?: string;
     displayName?: string;
     workspaceType?: WorkspaceInfo["workspaceType"];
+    sandboxBackend?: string | null;
   };
   selectedWorkspaceRoot: string;
   selectedWorkspaceError?: string | null;
@@ -309,6 +314,8 @@ export type SessionPageProps = {
   settingsSlot?: React.ReactNode;
   /** Workspace-scoped first-class surface rendered in place of the conversation. */
   primarySlot?: React.ReactNode;
+  /** Scope-keyed artifacts remain mounted, hidden and inert, while another page is open. */
+  retainedArtifactSlot?: { scope: string; active: boolean; content: React.ReactNode };
   /** The primary slot is itself a conversation (a first send still being created), so it keeps chat chrome. */
   primarySlotIsConversation?: boolean;
   /** Standalone pages use the main canvas instead of the inset conversation pane. */
@@ -316,7 +323,7 @@ export type SessionPageProps = {
   primaryTitle?: string;
   /** Replaces the header's title, e.g. a task on another computer's `Chat / Task` breadcrumb. */
   primaryHeader?: React.ReactNode;
-  /** Open a task on another computer in the main pane (`remoteSessionHelperView`). */
+  /** Open a task on another computer in the main pane. */
   onOpenRemoteTask?: (threadKey: string) => void;
   terminalOpen?: boolean;
   onTerminalOpenChange?: (open: boolean) => void;
@@ -348,6 +355,8 @@ function WorkbenchPaneHeader(props: {
   onFocus: () => void;
   onClose: () => void;
   onExpand?: () => void;
+  status?: string;
+  attentionLabel?: string;
 }) {
   const title = props.session.title?.trim() || t("session.default_title");
   return (
@@ -357,6 +366,7 @@ function WorkbenchPaneHeader(props: {
       data-workbench-pane-workspace-name={props.workspaceTitle}
     >
       <button type="button" className="flex min-w-0 flex-1 items-center gap-2 text-left text-xs" onClick={props.onFocus}>
+        {props.pane === "secondary" ? <WorkbenchPaneStatus status={props.status} attentionLabel={props.attentionLabel} /> : null}
         <span className="truncate" title={title}>{title}</span>
         {props.showWorkspace ? <span className="truncate text-muted-foreground">{props.workspaceTitle}</span> : null}
       </button>
@@ -554,6 +564,8 @@ export function SessionPage(props: SessionPageProps) {
   const pendingSideConversation = splitSession?.pendingConversationId ? pendingConversations[splitSession.pendingConversationId] : undefined;
   const [narrowPane, setNarrowPane] = useState<NarrowSessionPane>("chat");
   const narrowPaneNavigationRef = useRef<HTMLElement>(null);
+  const artifactSurfaceVisible = Boolean(props.retainedArtifactSlot?.active)
+    && !(isMobile && narrowPane === "panel" && sidePanelOpen);
   const activeWorkbenchPane = isMobile
     ? narrowPane === "split" ? "secondary" : "primary"
     : focusedWorkbenchPane;
@@ -740,6 +752,7 @@ export function SessionPage(props: SessionPageProps) {
     runtimeWorkspaceId: string | null;
     workspaceRoot: string;
     workspaceType?: WorkspaceInfo["workspaceType"];
+    sandboxBackend?: string | null;
   }, target: OpenTarget, options?: OpenTargetOptions, sourceSessionId?: string) => {
     if (target.kind === "url" || target.preview === "browser") {
       const url = browserUrlForTarget(target);
@@ -764,44 +777,47 @@ export function SessionPage(props: SessionPageProps) {
       return;
     }
 
-    const reportOpenError = (error: unknown) => {
-      toast.error(error instanceof Error ? error.message : "Could not open this file.");
+    const origin = fileOriginForRuntime({ desktop: isElectronRuntime(), serverUrl: runtime.client?.baseUrl, sandboxBackend: runtime.sandboxBackend });
+    const showUnavailable = (message = unavailableFileMessage(origin)) => {
+      toast.info(message, {
+        action: {
+          label: "Copy path",
+          onClick: () => {
+            void navigator.clipboard.writeText(target.value).catch(() => toast.info("Select the path in the message to copy it."));
+          },
+        },
+      });
     };
-    const canOpenLocally = isElectronRuntime();
-    const openLocalFile = (fileTarget: OpenTarget) => {
-      // Files outside the workspace are revealed, never launched; see nativeFileAction.
-      // The desktop re-checks the resolved file on disk before launching anything.
-      const native = nativeFileAction(runtime.workspaceRoot, fileTarget.value, options);
-      if (!native) {
-        reportOpenError(new Error("This is not a local file path."));
-        return;
-      }
-      if (native.action === "reveal") {
-        void revealDesktopItemInDir(native.path).catch(reportOpenError);
-        return;
-      }
-      void openDesktopWorkspaceFile(runtime.workspaceRoot, native.path)
-        .then((action) => {
-          if (action === "revealed") toast.info("This file points outside the workspace, so it was shown in its folder instead.");
-        })
-        .catch(reportOpenError);
+    // Never leak native ENOENT or transport diagnostics into a file-link toast.
+    const reportOpenError = () => showUnavailable();
+    const canOpenLocally = isElectronRuntime() && origin === "local";
+    const sessionId = sourceSessionId ?? props.selectedSessionId;
+
+    const openNative = (path: string, action: "open" | "reveal") => {
+      if (!canOpenLocally) { showUnavailable(); return Promise.resolve(); }
+      // A named app is an explicit choice, not a shortcut around resolution.
+      if (options?.appPath && action === "open") return openDesktopWithApp(path, options.appPath, runtime.workspaceRoot);
+      // Existence and symlink checks also apply to reveal; don't open the parent
+      // folder of a missing file, or hand remote text to a same-named local file.
+      return openDesktopWorkspaceFile(runtime.workspaceRoot, path, { reveal: action === "reveal" }).then((result) => {
+        if (result === "unavailable") showUnavailable();
+        else if (result === "revealed" && action !== "reveal") toast.info("This file points outside the workspace, so it was shown in its folder instead.");
+      });
     };
 
-    // A person's explicit native open is not a workspace preview request.
-    if (canOpenLocally && options?.external) {
-      openLocalFile(target);
-      return;
-    }
-
-    const openFileTarget = (fileTarget: OpenTarget) => {
-      if (!isCollectibleArtifactTarget(fileTarget)) {
-        if (isOpenableFileTarget(fileTarget)) {
-          if (canOpenLocally) openLocalFile(fileTarget);
+    const openWorkspaceFile = (fileTarget: OpenTarget) => {
+      // A person's explicit native open is not a workspace preview request.
+      if (options?.external || !isCollectibleArtifactTarget(fileTarget)) {
+        if (!canOpenLocally || !isOpenableFileTarget(fileTarget)) { showUnavailable(); return; }
+        const native = nativeFileAction(runtime.workspaceRoot, fileTarget.resolvedPath ?? fileTarget.value, options);
+        if (!native) {
+          showUnavailable();
+          return;
         }
+        void openNative(native.path, native.action).catch(reportOpenError);
         return;
       }
 
-      const sessionId = sourceSessionId ?? props.selectedSessionId;
       if (!sessionId) return;
       openTab(sessionId, {
         id: fileTarget.id,
@@ -813,23 +829,29 @@ export function SessionPage(props: SessionPageProps) {
       setCurrentSidePanel("panel");
     };
 
-    if (target.exists !== true) {
-      if (!runtime.client || !runtime.runtimeWorkspaceId) {
-        if (canOpenLocally) openLocalFile(target);
-        else reportOpenError(new Error("Connect to the workspace to open this file."));
+    // One decision for every chat file reference: see planFileOpen.
+    const { client, runtimeWorkspaceId } = runtime;
+    void (async () => {
+      const plan = await planFileOpen(target, {
+        origin,
+        workspaceRoot: runtime.workspaceRoot,
+        homeDir: canOpenLocally ? await getCachedDesktopHomeDir() : null,
+        canOpenLocally,
+        reveal: options?.reveal,
+        findInWorkspace: client && runtimeWorkspaceId
+          ? (lookup) => resolveCollectibleOpenTarget(client, runtimeWorkspaceId, lookup, sessionId, { search: true })
+          : undefined,
+      });
+      if (plan.kind === "workspace") {
+        openWorkspaceFile(plan.target);
         return;
       }
-      void resolveCollectibleOpenTarget(runtime.client, runtime.runtimeWorkspaceId, target, sourceSessionId ?? props.selectedSessionId)
-        .then((resolvedTarget) => {
-          if (resolvedTarget) openFileTarget(resolvedTarget);
-          else if (canOpenLocally) openLocalFile(target);
-          else reportOpenError(new Error("This file is missing or outside the workspace."));
-        })
-        .catch(reportOpenError);
-      return;
-    }
-
-    openFileTarget(target);
+      if (plan.kind === "unavailable") {
+        showUnavailable(plan.message);
+        return;
+      }
+      await openNative(plan.path, plan.action);
+    })().catch(reportOpenError);
   }, [browserUrlForTarget, createBrowserTab, openOwnerSidePanel, openTab, props.selectedSessionId, setCurrentSidePanel]);
   const openTarget = useCallback((target: OpenTarget, options?: OpenTargetOptions, sourceSessionId?: string) => {
     openTargetForRuntime({
@@ -837,12 +859,14 @@ export function SessionPage(props: SessionPageProps) {
       runtimeWorkspaceId: props.runtimeWorkspaceId,
       workspaceRoot: props.selectedWorkspaceRoot,
       workspaceType: props.selectedWorkspaceDisplay.workspaceType,
+      sandboxBackend: props.selectedWorkspaceDisplay.sandboxBackend,
     }, target, options, sourceSessionId);
   }, [
     openTargetForRuntime,
     props.openworkServerClient,
     props.runtimeWorkspaceId,
     props.selectedWorkspaceDisplay.workspaceType,
+    props.selectedWorkspaceDisplay.sandboxBackend,
     props.selectedWorkspaceRoot,
   ]);
   const closeRightPane = useCallback(() => {
@@ -1413,6 +1437,8 @@ export function SessionPage(props: SessionPageProps) {
       client={props.openworkServerClient}
       workspaceId={props.runtimeWorkspaceId}
       workspaceRoot={props.selectedWorkspaceRoot}
+      onOpenTarget={openTarget}
+      isLocalWorkspace={fileOriginForRuntime({ desktop: isElectronRuntime(), serverUrl: props.openworkServerClient?.baseUrl, sandboxBackend: props.selectedWorkspaceDisplay.sandboxBackend }) === "local"}
       onClose={closeRightPane}
       onOpenExtensions={props.settingsSlot ? () => setCurrentSidePanel("extensions") : undefined}
       browserPresentation={browserPresentation.enabled ? { onPresent: browserPresentation.present } : undefined}
@@ -1450,6 +1476,7 @@ export function SessionPage(props: SessionPageProps) {
           feedEnabled={props.sidebar.feedEnabled}
           sessionAttentionLabelById={props.sidebar.sessionAttentionLabelById}
           sessionAttentionSourceById={props.sidebar.sessionAttentionSourceById}
+          sessionAttentionKindById={props.sidebar.sessionAttentionKindById}
           connectingWorkspaceId={props.sidebar.connectingWorkspaceId}
           workspaceConnectionStateById={props.sidebar.workspaceConnectionStateById}
           newTaskDisabled={props.sidebar.newTaskDisabled}
@@ -1481,9 +1508,8 @@ export function SessionPage(props: SessionPageProps) {
           automationsActive={props.sidebar.automationsActive}
           automationsNeedAttention={props.sidebar.automationsNeedAttention}
           onOpenAutomations={props.sidebar.onOpenAutomations}
-          calendarActive={props.sidebar.calendarActive}
-          onOpenCalendar={props.sidebar.onOpenCalendar}
           dashboardActive={props.sidebar.dashboardActive}
+          dashboardLabel={props.sidebar.dashboardLabel}
           onOpenDashboard={props.sidebar.onOpenDashboard}
           conversationHistory={{
             canGoBack: canGoBackInConversationHistory,
@@ -1763,6 +1789,13 @@ export function SessionPage(props: SessionPageProps) {
               />
             )) : null}
 
+          <div className="flex min-h-0 flex-1 flex-col">
+            {props.retainedArtifactSlot ? (
+              <RetainedArtifactSurface key={props.retainedArtifactSlot.scope} active={artifactSurfaceVisible}>
+                {props.retainedArtifactSlot.content}
+              </RetainedArtifactSurface>
+            ) : null}
+            <div className={artifactSurfaceVisible ? "hidden" : "flex min-h-0 flex-1 flex-col"} hidden={artifactSurfaceVisible} inert={artifactSurfaceVisible}>
           {isMobile && narrowPane === "panel" && sidePanelOpen ? (
             <div
               id="narrow-session-pane-panel"
@@ -1783,7 +1816,7 @@ export function SessionPage(props: SessionPageProps) {
             <ResizablePanel minSize="180px" className="min-h-0">
             <div className="relative h-full min-w-0 overflow-hidden bg-dls-surface mac:bg-dls-surface/85">
               <SessionFloatingLayer />
-              {props.primarySlot ? (
+              {props.primarySlot && !props.retainedArtifactSlot?.active ? (
                 <div className="h-full overflow-y-auto" data-workspace-primary-slot>
                   {props.primarySlot}
                 </div>
@@ -1874,6 +1907,7 @@ export function SessionPage(props: SessionPageProps) {
                             // SessionRoute, not from anything in `surface`.
                             {...props.surface!}
                             client={props.openworkServerClient!}
+                            sandboxBackend={props.selectedWorkspaceDisplay.sandboxBackend}
                             environmentClient={props.environmentClient}
                             workspaceId={props.runtimeWorkspaceId!}
                             sessionId={props.selectedSessionId!}
@@ -1926,6 +1960,8 @@ export function SessionPage(props: SessionPageProps) {
                               onFocus={() => focusWorkbenchPane("secondary")}
                               onClose={closeSecondaryWorkbenchPane}
                               onExpand={splitSession.draftDestination ? undefined : closePrimaryWorkbenchPane}
+                              status={props.sidebar.sessionStatusById[splitSession.sessionId]}
+                              attentionLabel={props.sidebar.sessionAttentionLabelById?.[splitSession.sessionId]}
                             />
                             {pendingSideConversation && pendingSideConversation.scope === props.newTaskComposer?.draftScope ? (
                               <PendingConversationView conversation={pendingSideConversation} composer={props.newTaskComposer ?? null} />
@@ -1958,6 +1994,7 @@ export function SessionPage(props: SessionPageProps) {
                                   environmentClient={splitPaneRuntime.environmentClient}
                                   workspaceId={splitPaneRuntime.runtimeWorkspaceId}
                                   workspaceRoot={splitPaneRuntime.workspaceRoot}
+                                  sandboxBackend={splitPaneRuntime.sandboxBackend}
                                   sessionId={splitSession.sessionId}
                                   archived={archivedInWorkspace(splitSession.workspaceId, splitSession.sessionId)}
                                   onRestoreSession={async () => { await props.onArchiveSession?.(splitSession.sessionId, false); }}
@@ -1970,6 +2007,7 @@ export function SessionPage(props: SessionPageProps) {
                                     runtimeWorkspaceId: splitPaneRuntime.runtimeWorkspaceId,
                                     workspaceRoot: splitPaneRuntime.workspaceRoot,
                                     workspaceType: splitPaneRuntime.workspaceType,
+                                    sandboxBackend: splitPaneRuntime.sandboxBackend,
                                   }, target, options, sourceSessionId)}
                                   sessionTitle={splitSession.title}
                                   onOpenSubagentSession={(sessionId) => {
@@ -2070,6 +2108,8 @@ export function SessionPage(props: SessionPageProps) {
             ) : null}
           </ResizablePanelGroup>
           )}
+            </div>
+          </div>
 
               </main>
             </ResizablePanel>

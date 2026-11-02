@@ -287,3 +287,15 @@ export async function callMcpAppTool(
   }
   return withoutAgentServerMeta(result)
 }
+
+/**
+ * Whether a read's result may be kept for this caller's next open: only a
+ * read of OpenWork's own data. This only controls storage; launchInitialResults
+ * still runs the checked read before using a snapshot. Provider data is never
+ * stored here.
+ */
+export function mcpAppToolKeepable(ctx: CapabilityRegistryContext, binding: McpAppToolBinding): boolean {
+  if (!binding.readOnly || binding.kind !== "api") return false
+  const parsed = parseCapability(binding.capability)
+  return parsed?.kind === "catalog" && isDenRead(ctx, parsed)
+}

@@ -24,6 +24,22 @@ const CONTRACT_SCRIPTS = [
   "scripts/den-contract*.mjs", "scripts/api-lint.mjs", "scripts/features-sync.mjs",
   "scripts/tests/den-contract*.test.mjs", ".spectral.yaml", ".spectral-baseline.json",
 ];
+// app-smoke, the journey the packaged desktop smoke boots, and the evals files
+// it imports by relative path (packages it imports are under evals/packages).
+// build-inputs.test.mjs recomputes this import closure.
+export const APP_SMOKE = [
+  "evals/core/app-smoke.e2e.test.ts", "evals/worlds/chat-continuity.ts", "evals/worlds/chat.ts",
+  "evals/worlds/desktop-policies.ts", "evals/worlds/first-run.ts", "evals/worlds/library.ts",
+  "evals/worlds/openwork-server-cli.ts", "evals/worlds/sessionless-transition.ts", "evals/worlds/signed-in-app-web.ts",
+];
+const APP_SMOKE_HARNESS = [
+  ...APP_SMOKE, "evals/bin/**", "evals/scripts/**", "evals/packages/**",
+  "evals/journeys.ts", "evals/config.ts", "evals/package.json", "evals/pnpm-lock.yaml",
+  "evals/pnpm-workspace.yaml", "evals/vitest*.ts", "evals/tsconfig*.json",
+];
+const PACKAGED_SMOKE_CI = [
+  ".github/workflows/packaged-smoke.yml", ".github/actions/setup-tests/**", ".github/actions/setup-browser/**",
+];
 const snapshots = new Map();
 
 function git(root, args) {
@@ -136,12 +152,8 @@ export function buildInputPatterns(target, options = {}) {
     case "headless-runner": patterns = [...runner(), ...copies("packaging/docker/Dockerfile.headless-runner"), EE_WORKFLOW, EE_SELECTION]; break;
     case "workbot": patterns = [...workbot(), ...copies("packaging/docker/Dockerfile.workbot"), EE_WORKFLOW, EE_SELECTION]; break;
     case "desktop": patterns = desktop(); break;
-    case "desktop-smoke": patterns = [
-      ...desktop(), CI_WORKFLOW, ".github/actions/setup-tests/**", ".github/actions/setup-browser/**",
-      "evals/bin/**", "evals/scripts/**", "evals/packages/**", "evals/core/app-smoke.e2e.test.ts",
-      "evals/journeys.ts", "evals/config.ts", "evals/package.json", "evals/pnpm-lock.yaml",
-      "evals/pnpm-workspace.yaml", "evals/vitest*.ts", "evals/tsconfig*.json",
-    ]; break;
+    // Everything the packaged desktop contains.
+    case "desktop-smoke": patterns = [...desktop(), ...PACKAGED_SMOKE_CI, ...APP_SMOKE_HARNESS]; break;
     case "runtime": patterns = [
       ...closure("@openwork/app", "openwork-server"), "packages/opencode-plugin/**", "packages/documents/**",
       "apps/desktop/package.json", "constants.json", WORKSPACE_BUILD,
@@ -151,6 +163,14 @@ export function buildInputPatterns(target, options = {}) {
       "scripts/prune-daytona-dev-snapshots.mjs", ".github/workflows/dev-daytona-snapshot.yml",
     ]; break;
     case "den-contract": case "sdk": patterns = contract(); break;
+    // The MySQL-backed Den API tests (ee/apps/den-api/test/api) and the files
+    // they read outside the den-api workspace closure.
+    case "den-api-tests": patterns = [
+      ...api(), ...closure("@openwork-ee/headless-runner"), "evals/packages/labs/**",
+      "packaging/helm/openwork-ee/values.schema.json",
+      "packaging/docker/docker-compose.web-local.yml", "packaging/docker/docker-compose.ci-mysql.yml",
+      CI_WORKFLOW, ".github/scripts/classify-ci-changes.mjs", ".github/actions/setup-tests/**",
+    ]; break;
     case "api-docs": patterns = [...api(), ...render, ...CONTRACT_SCRIPTS, ".github/scripts/runtime-scope.mjs", ".github/workflows/refresh-api-docs.yml"]; break;
     case "i18n": patterns = ["apps/app/src/**", "scripts/i18n-audit.mjs", ".github/workflows/ci-i18n.yml"]; break;
     case "docs": patterns = ["packages/docs/**", CI_WORKFLOW, ".github/scripts/classify-ci-changes.mjs"]; break;

@@ -1629,9 +1629,20 @@ export function translateV2Event(
   if (type === "session.step.started") {
     if (isRetiredV2Event(state, value, properties)) return null;
     if (sessionID) trackV2Execution(state, value, properties);
-    return sessionID ? [{ type: "session.execution.progress", properties: {
-      sessionID, sequence: readNumber(value.durable, "seq"),
-    } }] : null;
+    if (!sessionID) return null;
+    // A step names its reply's model only here; later text and tool events carry no model.
+    // Forwarding it lets the Working line show the model while the reply is still being written.
+    const messageID = readMessageID(properties);
+    const modelInfo = mapV2ReplyModel(properties);
+    return [
+      ...(messageID && Object.keys(modelInfo).length ? [{ type: "message.updated", properties: { info: {
+        id: messageID, sessionID, role: "assistant", ...modelInfo,
+        time: { created: readNumber(properties, "started") ?? toolEventTimestamp(value, properties) },
+      } } }] : []),
+      { type: "session.execution.progress", properties: {
+        sessionID, sequence: readNumber(value.durable, "seq"),
+      } },
+    ];
   }
 
   const kind = type.startsWith("session.reasoning.") || type.startsWith("session.next.reasoning.") ? "reasoning" : "text";
@@ -3155,8 +3166,28 @@ export function createClientV2(
     }));
   };
 
+  /** Terminate one command in this session, including its retained output (V2 shell.remove). */
+  const removeBackgroundShell = async (
+    parameters: { shellID: string; sessionID: string },
+    options?: RequestOptions,
+  ): Promise<FieldsResult<void>> => {
+    const query = directory ? `?${new URLSearchParams({ "location[directory]": directory }).toString()}` : "";
+    const path = `/api/shell/${encodeURIComponent(parameters.shellID)}${query}`;
+    // Validate against the engine, not just a stale UI row: never stop another chat's command.
+    const current = await request("GET", path, undefined, options?.signal);
+    if (!current.response.ok) return failedResult(current);
+    const shell = readEngineShell(responseData(current.payload));
+    if (!shell || shell.sessionID !== parameters.sessionID) {
+      throw new Error("The background task does not belong to this conversation.");
+    }
+    const result = await request("DELETE", path, undefined, options?.signal);
+    if (!result.response.ok) return failedResult(result);
+    return successfulResult(result, undefined);
+  };
+
   const client = Object.assign(compatibilityClient, {
     listRunningShells,
+    removeBackgroundShell,
     listSessionsPage: session.list, listMessagesPage: session.messages,
     listSessionQuestions: (parameters: SessionParameters, options?: RequestOptions) => listQuestions(parameters, options),
     replySessionQuestion: (parameters: SessionParameters & { requestID: string; answers: string[][] }, options?: RequestOptions) =>

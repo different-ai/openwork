@@ -1,7 +1,13 @@
 import type { DynamicToolUIPart, UIMessage } from "ai"
 
 import { codeModeToolCalls } from "@/lib/code-mode-tools"
-import { remoteThreadFromToolPart, type RemoteThreadStart } from "@/lib/remote-session-thread"
+import {
+  remoteThreadFollowUpFromToolPart,
+  remoteThreadFromToolPart,
+  remoteToolCallStartedAt,
+  type RemoteThreadFollowUp,
+  type RemoteThreadStart,
+} from "@/lib/remote-session-thread"
 
 /**
  * A script's calls with their results. A one-call script whose call kept no
@@ -25,4 +31,19 @@ export function remoteThreadStartsInParts(parts: UIMessage["parts"]): { start: R
     }
   }
   return [...starts.values()]
+}
+
+/** Accepted follow-ups one step sent, directly or from a script; a script's call without its own time uses the script's. */
+export function remoteThreadFollowUpsInPart(part: DynamicToolUIPart): RemoteThreadFollowUp[] {
+  const scriptStartedAt = remoteToolCallStartedAt(part)
+  return (codeModeCallsWithResults(part) ?? [part]).flatMap((call) => {
+    const followUp = remoteThreadFollowUpFromToolPart(call)
+    if (!followUp) return []
+    return [{ ...followUp, sentAt: followUp.sentAt ?? scriptStartedAt }]
+  })
+}
+
+/** Accepted follow-ups one message's steps sent, directly or from a script. */
+export function remoteThreadFollowUpsInParts(parts: UIMessage["parts"]): RemoteThreadFollowUp[] {
+  return parts.flatMap((part) => part.type === "dynamic-tool" ? remoteThreadFollowUpsInPart(part) : [])
 }

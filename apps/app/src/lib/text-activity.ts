@@ -12,7 +12,7 @@ import { fileName, getToolFamily, type AnyToolPart } from "./tool-aggregate"
 import { formatToolCallDuration } from "./tool-call-duration"
 
 /**
- * Text-first activity (flag `textActivityRail`): every step is one sentence,
+ * Text-first activity: every step is one sentence,
  * "Verb object". The verb carries the step's type (Ran, Read, Edited,
  * Searched), so the rail needs no glyph column. These builders are pure so
  * the wording is tested once and every surface says the same thing.

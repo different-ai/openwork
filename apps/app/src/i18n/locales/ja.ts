@@ -17,6 +17,7 @@ export default {
   "common.hide": "隠す",
   "common.next": "次へ",
   "common.question": "質問",
+  "common.permission": "許可",
   "common.refresh": "更新",
   "common.remove": "削除",
   "common.reset": "リセット",

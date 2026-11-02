@@ -22,7 +22,6 @@ import type {
   UpdateAutomation,
 } from "@openwork/types/automations"
 import { env } from "../env.js"
-import { markFeaturesUsed, type MarkFeaturesUsed } from "../feature-usage.js"
 import { isActiveAutomationOwner, resolveAutomationModelAccess } from "./authority.js"
 import { shouldApplyAutomationModelAccessFailure } from "./model-attention-rollout.js"
 import { automationRepository, runWorkspaceId } from "./repository.js"
@@ -31,7 +30,6 @@ import { validateWorkflowAutomationAction } from "../workflows.js"
 import type { CloudAgentExecution, CloudAgentExecutorInput } from "./cloud-agent-executor.js"
 import { cloudAutomationRuntime, HEADLESS_AGENT_ENGINE_KIND, type CloudAutomationRuntime } from "./headless-runtime.js"
 import { automationTargetAllowed } from "./organization-availability.js"
-import { keepsCurrentSchedule, ownerScheduleFeatureEnabled } from "./schedule-features.js"
 import { CalendarTriggerSource, type CalendarTriggerSourceDeps } from "./calendar-trigger-source.js"
 import { normalizeDenTypeId } from "@openwork-ee/utils/typeid"
 import { appLogger } from "../observability/logger.js"
@@ -66,10 +64,6 @@ type OwnerScope = {
    * as if they did not exist. Absent or null: every kind.
    */
   readableScheduleKinds?: ReadonlySet<AutomationScheduleKind> | null
-  /** `automationIntervalSchedules` for this caller, checked when a request sets an interval schedule. */
-  intervalSchedules?: boolean
-  /** `automationCalendarTriggers` for this caller, checked when a request sets a calendar trigger. */
-  calendarTriggers?: boolean
 }
 
 function readableBy(scope: OwnerScope, schedule: AutomationSchedule) {
@@ -154,21 +148,8 @@ export function configureHeadlessAgentExecutor(execute: (input: CloudAgentExecut
 export type AutomationServiceOptions = {
   getOpenWorkWebAccess?: OpenWorkWebRuntimeAccessResolver
   cloudRuntime?: (organizationId: string) => Promise<CloudAutomationRuntime>
-  /** Whether an Automation's owner may still run interval schedules; the scheduler checks it per due occurrence. */
-  intervalSchedulesEnabled?: (owner: { organizationId: string; ownerMemberId: string }) => Promise<boolean>
-  /** Whether Den reads an owner's calendar for their calendar triggers. */
-  calendarTriggersEnabled?: CalendarTriggerSourceDeps["enabled"]
   /** Reads an owner's primary Google Calendar around now. */
   readCalendar?: CalendarTriggerSourceDeps["read"]
-  /** Records that the owner used a schedule feature, for /admin › Features. */
-  markFeaturesUsed?: MarkFeaturesUsed
-}
-
-/** The feature a schedule kind needs; the clock's daily, weekly and once schedules need none. */
-function scheduleFeature(schedule: AutomationSchedule): "automationIntervalSchedules" | "automationCalendarTriggers" | null {
-  if (schedule.kind === "interval") return "automationIntervalSchedules"
-  if (schedule.kind === "calendar") return "automationCalendarTriggers"
-  return null
 }
 
 async function readOwnerCalendar(input: Parameters<CalendarTriggerSourceDeps["read"]>[0]) {
@@ -186,20 +167,16 @@ export class AutomationService {
   private readonly cloudExecutions = new Map<string, Promise<void>>()
   private readonly getOpenWorkWebAccess: OpenWorkWebRuntimeAccessResolver
   private readonly cloudRuntime: (organizationId: string) => Promise<CloudAutomationRuntime>
-  private readonly intervalSchedulesEnabled: (owner: { organizationId: string; ownerMemberId: string }) => Promise<boolean>
   private readonly calendarTriggers: CalendarTriggerSource
-  private readonly markFeaturesUsed: MarkFeaturesUsed
   private runnerPruneDueAt = 0
 
   constructor(options: AutomationServiceOptions = {}) {
     this.getOpenWorkWebAccess = options.getOpenWorkWebAccess ?? getOpenWorkWebRuntimeAccess
     this.cloudRuntime = options.cloudRuntime ?? cloudAutomationRuntime
-    this.intervalSchedulesEnabled = options.intervalSchedulesEnabled
-      ?? ((owner) => ownerScheduleFeatureEnabled(owner, "automationIntervalSchedules"))
-    this.markFeaturesUsed = options.markFeaturesUsed ?? markFeaturesUsed
     this.calendarTriggers = new CalendarTriggerSource({
       list: (limit) => automationRepository.listActiveCalendarTriggers({ limit }),
-      enabled: options.calendarTriggersEnabled ?? ((owner) => ownerScheduleFeatureEnabled(owner, "automationCalendarTriggers")),
+      // GA: Den reads the owner's calendar for every active calendar-triggered Automation,
+      // gated only by Cloud placement and the Google Calendar connection.
       read: options.readCalendar ?? readOwnerCalendar,
       claim: (item, occurrence) => this.claimAndDispatch(item, occurrence, Date.now()),
       needsConnection: async (item, message) => {
@@ -215,20 +192,16 @@ export class AutomationService {
   }
 
   /**
-   * A new interval or calendar schedule needs its feature; keeping the one an
-   * Automation already has does not. Calendar triggers run only in the cloud.
+   * Calendar triggers run only in the cloud; keeping the schedule an
+   * Automation already has needs no check (the per-kind flags are GA).
    */
   private requireScheduleAllowed(
-    scope: OwnerScope,
+    _scope: OwnerScope,
     schedule: AutomationSchedule | undefined,
     target: AutomationExecutionTarget,
-    current?: AutomationSchedule,
+    _current?: AutomationSchedule,
   ) {
-    if (!schedule) return
-    if (schedule.kind === "calendar" && target !== "cloud") throw new Error("automation_calendar_trigger_cloud_only")
-    if (current && keepsCurrentSchedule(schedule, current)) return
-    if (schedule.kind === "interval" && scope.intervalSchedules !== true) throw new Error("automation_interval_schedule_disabled")
-    if (schedule.kind === "calendar" && scope.calendarTriggers !== true) throw new Error("automation_calendar_trigger_disabled")
+    if (schedule?.kind === "calendar" && target !== "cloud") throw new Error("automation_calendar_trigger_cloud_only")
   }
 
   /** The organization's setting (and, for Cloud, the deployment's headless runner) for this kind of Automation. */
@@ -657,14 +630,6 @@ export class AutomationService {
     if (claim.kind !== "duplicate") await recordAutomationRunStarted(claim.run.id)
     if (claim.kind === "overlap") await recordAutomationRunCompleted({ runId: claim.run.id, terminalAt: now })
     if (claim.kind !== "claimed") return null
-    if (item.revision.schedule.kind === "interval" && !await this.intervalSchedulesEnabled(item.automation)) {
-      // Turned off after the Automation was made: it stays, and each occurrence is recorded as skipped until it is back.
-      await this.skipRun({ runId: claim.run.id, code: "execution_runtime_unavailable", message: "Every-few-hours schedules are turned off for this organization.", now })
-      return null
-    }
-    // No request marks background work: an occurrence of a schedule feature, while it is on, is the owner using it.
-    const feature = scheduleFeature(item.revision.schedule)
-    if (feature) this.markFeaturesUsed({ organizationId: item.automation.organizationId, memberId: item.automation.ownerMemberId, keys: [feature] })
     const target = item.revision.executionTarget ?? "desktop"
     if (!await automationTargetAllowed(item.automation.organizationId, target)) {
       // The organization turned this kind off: the occurrence is recorded as skipped and the schedule advances.

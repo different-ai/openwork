@@ -6,6 +6,11 @@ export const MCP_APP_MAX_STORAGE_BYTES = 2 * 1024 * 1024
 export const MCP_APP_MAX_HTML_BYTES = 1536 * 1024
 /** Every App's own MCP server opens it with this one tool. */
 export const MCP_APP_LAUNCH_TOOL_NAME = "open_app"
+/**
+ * Launch result _meta key holding what the App's read-only tools that need no
+ * input returned as it opened, each with the exact arguments it ran with.
+ */
+export const MCP_APP_INITIAL_RESULTS_META = "openwork/initialResults"
 export const MCP_APP_MAX_TOOLS = 20
 
 export const mcpAppIdSchema = z.string().length(30).regex(/^cob_[0-7][0-9a-hjkmnp-tv-z]{25}$/u)
@@ -121,6 +126,8 @@ export const mcpAppCompiledRevisionSchema = z.object({
   compilerName: z.literal("openwork-react-mcp-app"),
   compilerVersion: z.string().min(1).max(64),
   reactVersion: z.string().min(1).max(64),
+  /** The App reads initial results from its launch, so opening it loads them. */
+  loadsWithLaunch: z.literal(true).optional(),
 }).strict().refine((value) => byteLength(JSON.stringify(value)) <= MCP_APP_MAX_STORAGE_BYTES)
 
 export const mcpAppToolSummarySchema = z.object({

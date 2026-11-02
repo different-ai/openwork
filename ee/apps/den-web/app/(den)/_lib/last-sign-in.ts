@@ -1,7 +1,6 @@
 /**
  * The browser cookie Den API sets after a password, Google or GitHub sign-in
  * and clears after an SSO sign-in (den-api src/last-sign-in-method.ts).
- * Feature: `lastUsedSignIn`.
  */
 export const LAST_SIGN_IN_METHOD_COOKIE = "openwork-last-sign-in";
 

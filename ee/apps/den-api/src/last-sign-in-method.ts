@@ -6,7 +6,6 @@
  *
  * The cookie only names a method. It holds no email and is not an
  * authentication secret, so Den web reads it in the browser (not HttpOnly).
- * Feature: `lastUsedSignIn`.
  */
 
 export const LAST_SIGN_IN_METHOD_COOKIE = "openwork-last-sign-in"

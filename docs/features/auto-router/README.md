@@ -7,27 +7,37 @@
 
 ## What people get
 
-**Organization admins** get a **Smart Model Router** tab on AI Gateway
-(`/dashboard/ai-gateway?tab=auto-router`). It lists the organization's Smart
-Routers; an organization can have up to 50. Each router has, in the editor's
-order:
+**Organization admins** see Smart Routers at the top of AI Gateway › AI
+Providers (`/dashboard/ai-gateway?tab=ai-providers`), laid out like
+providers: "Smart: <name>", models, who it applies to, status (Ready, Give
+access when it applies to nobody, Paused without the TypeSafe key) and
+Manage / Set up. **Add a Smart Router** sits left of **Add a provider**. An
+organization can have up to 50. Adding one takes two steps:
 
-1. **Who it applies to**: the usual Who can use it block (everyone, teams,
-   people), stored in `auto_router_access` like other organization items.
-2. **Name**: members see the router as "Smart: <name>".
-3. **Models**: any AI Gateway model (active provider, in an active model
-   group, a protocol Smart can translate to), each with the **tasks** it
-   handles (at least one). Tasks are picked from a combobox listing every task
-   in the organization, or typed and added with Enter; text left in the box is
-   added on save. A task can sit on several models of the same router. When
-   some of the people the router applies to cannot use a model through their
-   AI Gateway grants, the model is marked and a tooltip names them.
+1. **Models and tasks** (`/dashboard/ai-gateway/smart-routers/new`): the
+   name (members see "Smart: <name>"), then any AI Gateway model (active
+   provider, in an active model group, a protocol Smart can translate to),
+   each with the **tasks** it handles (at least one). Tasks are picked from a
+   combobox listing every task in the organization, or typed and added with
+   Enter; text left in the box is added too. A task can sit on several models
+   of the same router. **Continue** creates the router
+   (`POST /v1/org/auto-routers`), applying to nobody.
+2. **Who can use it** (`…/smart-routers/<id>?step=access`): the usual Who can
+   use it block (everyone, teams, people), saved with
+   `PUT /v1/org/auto-routers/<id>/assignment` and stored in
+   `auto_router_access` like other organization items. Models some of those
+   people can't use through their AI Gateway grants are marked, and a tooltip
+   names them. **Skip for now** leaves it applying to nobody.
 
-![No Smart Routers yet](smart-router-empty.png)
+A router's page (`…/smart-routers/<id>`) edits both together and removes it.
+Applying to everyone needs the Share with everyone permission (unless it
+already did).
 
-![Creating a router: who it applies to, name, a model and its tasks](smart-router-editor.png)
+![Step one: name, a model and its tasks](smart-router-editor.png)
 
-![The list of Smart Routers](smart-router-list.png)
+![Step two: who can use it](smart-router-access.png)
+
+![Smart Routers listed first under AI Providers](smart-router-list.png)
 
 There are no thinking levels and no default model to configure. The first
 model in a router wins ties and answers when Jev cannot.

@@ -14,7 +14,7 @@ import { ORG_SCOPE_HEADER } from "../../_lib/org-scope";
 import { useOrgDashboard } from "../_providers/org-dashboard-provider";
 
 /**
- * My agent (`workbotAgentLibrary`): the member's own agent, read from and changed through `/v1/me/agent`, the same
+ * My agent (`workbotProactive`): the member's own agent, read from and changed through `/v1/me/agent`, the same
  * API chat uses through Connect. A change here is saved as from the page.
  */
 

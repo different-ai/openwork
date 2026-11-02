@@ -41,7 +41,7 @@ import {
 } from "./my-agent-view";
 
 /**
- * My agent in the Library (`workbotAgentLibrary`): the member's own background agent, what it did and why it stayed
+ * My agent in the Library (`workbotProactive`): the member's own background agent, what it did and why it stayed
  * quiet, and what they told it. Chat is the main way to change it; every change shows where it came from with an
  * Undo, here and in chat alike. These components only render; my-agent-screen.tsx loads and saves.
  */

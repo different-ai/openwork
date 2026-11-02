@@ -4,6 +4,7 @@ import { X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import type { McpAppPanelTab } from "../session/panel/panel-tab-store";
 import { BuiltAppShareButton } from "./built-app-share-button";
+import { BuiltAppPinButton } from "./built-app-pin-button";
 import { builtAppSummary } from "./built-mcp-app-model";
 
 export function BuiltMcpAppPanel({
@@ -27,6 +28,7 @@ export function BuiltMcpAppPanel({
           <span role="status" className={`shrink-0 text-xs ${tab.updating ? "text-muted-foreground" : "text-emerald-700 dark:text-emerald-400"}`}>{tab.updating ? "Updating" : "Ready"}</span>
         </div>
         <div className="flex items-center gap-1">
+          <BuiltAppPinButton appId={tab.appId} />
           {!tab.origin.readOnly && summary ? (
             <BuiltAppShareButton
               pluginId={summary.pluginId}

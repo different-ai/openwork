@@ -5,7 +5,7 @@ import { automationScheduleTriggersWorld } from "../worlds/automation-schedule-t
 const test = spec.world(automationScheduleTriggersWorld, { timeout: 600_000, resources: { surfaces: ["appWeb"], services: ["den"] } });
 const WITHIN = 60_000;
 
-test("a member schedules an Automation every few hours, or around their meetings, once their organization has each", async ({ world, user, probe, step, evidence }) => {
+test("a member schedules an Automation every few hours, or around their meetings, with no feature flag to turn on", async ({ world, user, probe, step, evidence }) => {
   /** The choice a schedule menu shows. */
   const fieldText = async (selector: string) => (await probe.dom(`${selector} [data-slot="select-value"]`)).elements.map((element) => element.text.trim()).join(", ");
   async function openNewAutomation() {
@@ -24,41 +24,40 @@ test("a member schedules an Automation every few hours, or around their meetings
     });
   }
   await user.resizeViewport({ width: 1280, height: 900, deviceScaleFactor: 1 });
+  // The schedule-trigger flags are retired (GA): every kind is offered with no /admin step.
+  void world;
 
-  await step("before: the Schedule menu offers Once, Daily and Weekly only", async () => {
-    await openNewAutomation();
-    const choices = await scheduleChoices();
-    evidence.recordAssertionEvidence("Every few hours and Around my meetings are not offered yet", choices.join(", "), choices.join(",") === "Once,Daily,Weekly");
-    expect(choices).toEqual(["Once", "Daily", "Weekly"]);
-    await user.screenshot();
-    await user.press("Escape");
-  });
-
-  await step("after: with the feature on, the member picks Every few hours and sets 3 hours, 09:00 to 18:00", async () => {
-    await world.turnOnIntervalSchedules();
-    await user.reload();
+  await step("the Schedule menu offers Once, Daily, Weekly, Every few hours and Around my meetings", async () => {
     await openNewAutomation();
     const choices = await scheduleChoices("Every few hours");
+    evidence.recordAssertionEvidence("Every few hours and Around my meetings are offered by default", choices.join(", "), choices.includes("Every few hours") && choices.includes("Around my meetings"));
+    expect(choices).toEqual(["Once", "Daily", "Weekly", "Every few hours", "Around my meetings"]);
+    await user.press("Escape");
+    await user.screenshot();
+  });
+
+  await step("the member picks Every few hours and sets 3 hours, 09:00 to 18:00", async () => {
+    await openNewAutomation();
+    await scheduleChoices("Every few hours");
     await user.click({ role: "option", label: "Every few hours" });
     await user.see({ label: "Every" }, { timeoutMs: WITHIN });
     await user.see({ label: "From" });
     await user.see({ label: "Until" });
     const values = [await fieldText("#automation-every-hours"), await fieldText("#automation-window-start"), await fieldText("#automation-window-end")];
-    evidence.recordAssertionEvidence("Every 3 hours from 09:00 until 18:00 is the starting choice", `${choices.join(", ")} → ${values.join(", ")}`, values.join(",") === "3 hours,09:00,18:00");
+    evidence.recordAssertionEvidence("Every 3 hours from 09:00 until 18:00 is the starting choice", values.join(", "), values.join(",") === "3 hours,09:00,18:00");
     expect(values).toEqual(["3 hours", "09:00", "18:00"]);
     await user.screenshot();
   });
 
-  await step("after: with meeting triggers on, the member picks Around my meetings, 5 minutes after each ends", async () => {
-    await world.turnOnCalendarTriggers();
+  await step("the member picks Around my meetings, 5 minutes after each ends", async () => {
     await user.reload();
     await openNewAutomation();
-    const choices = await scheduleChoices("Around my meetings");
+    await scheduleChoices("Around my meetings");
     await user.click({ role: "option", label: "Around my meetings" });
     await user.see({ label: "Runs" }, { timeoutMs: WITHIN });
     await user.see({ label: "Only meetings with people outside my organization" });
     const moment = await fieldText("#automation-meeting-moment");
-    evidence.recordAssertionEvidence("5 minutes after each meeting ends is the starting choice", `${choices.join(", ")} → ${moment}`, moment === "5 min after it ends");
+    evidence.recordAssertionEvidence("5 minutes after each meeting ends is the starting choice", moment, moment === "5 min after it ends");
     expect(moment).toBe("5 min after it ends");
     await user.screenshot();
   });

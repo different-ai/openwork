@@ -7,6 +7,7 @@ import { createDenTypeId, normalizeDenTypeId, type DenTypeId } from "@openwork-e
 import {
   createMcpAppInputSchema,
   MCP_APP_CONFIG_SCHEMA_VERSION,
+  MCP_APP_INITIAL_RESULTS_META,
   MCP_APP_MAX_STORAGE_BYTES,
   MCP_APP_PAYLOAD_KIND,
   mcpAppCompiledRevisionSchema,
@@ -57,7 +58,8 @@ export type McpAppResource = { app: McpAppSummary; html: string; csp: McpAppCsp;
 /** An App a member may use, without its compiled HTML. */
 export type McpAppEntry = { appId: string; pluginId: string; revisionId: string; title: string; description: string | null; serverPath: string }
 /** The App's current revision as its own MCP server serves it. */
-export type McpAppServerDefinition = { app: McpAppSummary; tools: McpAppToolBinding[] }
+/** `loadsWithLaunch`: opening the App also runs its no-click tools that need no input. */
+export type McpAppServerDefinition = { app: McpAppSummary; tools: McpAppToolBinding[]; loadsWithLaunch?: boolean }
 /** Resolves declared tools as the author, before anything is published. */
 export type ResolveMcpAppTools = (tools: McpAppToolDeclaration[]) => Promise<McpAppToolBinding[]>
 
@@ -260,6 +262,9 @@ async function compile(input: CreateMcpAppInput, pluginId: string, tools: McpApp
     compilerName: result.compilerName,
     compilerVersion: result.compilerVersion,
     reactVersion: result.reactVersion,
+    // Only an App written to read them gets initial results, so Apps built
+    // before them never pay for reads they would make again themselves.
+    ...(reactSource.includes(MCP_APP_INITIAL_RESULTS_META) ? { loadsWithLaunch: true } : {}),
   })
   if (!parsed.success) throw new McpAppError(422, "mcp_app_invalid_build", "The compiler did not produce a valid bounded MCP App revision. No revision was published.")
   const payload = parsed.data
@@ -578,7 +583,11 @@ function accessibleRevision(input: McpAppAccessInput & { appId: string }) {
 /** The member's current view of one App's own MCP server. */
 export async function loadMcpAppServerDefinition(input: McpAppAccessInput & { appId: string }): Promise<McpAppServerDefinition> {
   const { id, pluginId, currentRevisionId, content: { payload } } = await accessibleRevision(input)
-  return { app: summarizeMcpAppRevision({ appId: id, revisionId: currentRevisionId, pluginId, payload }), tools: payload.tools }
+  return {
+    app: summarizeMcpAppRevision({ appId: id, revisionId: currentRevisionId, pluginId, payload }),
+    tools: payload.tools,
+    ...(payload.loadsWithLaunch ? { loadsWithLaunch: true } : {}),
+  }
 }
 
 export async function loadMcpAppResource(input: McpAppAccessInput & { appId: string; revisionId: string }): Promise<McpAppResource> {

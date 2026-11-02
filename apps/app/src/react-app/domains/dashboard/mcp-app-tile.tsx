@@ -3,7 +3,7 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, typ
 import { DashboardConnectionCard } from "./dashboard-connection-card";
 import { appToolResultConnectionToolName, connectionCardFromMcpToolResult } from "@/components/tools/error-attribution";
 import type { ConnectionActionPayload } from "@openwork/types/connection-action-app";
-import { mcpAppResourceIdentity } from "@openwork/types/mcp-app";
+import { MCP_APP_LAUNCH_TOOL_NAME, mcpAppIdSchema, mcpAppResourceIdentity } from "@openwork/types/mcp-app";
 import { Play } from "lucide-react";
 
 import {
@@ -148,6 +148,15 @@ function dashboardEntryIdentity(entry: DashboardMcpAppEntry, signature: string) 
 /** The same workspace on the same server keeps its live view when the route rebuilds its client object. */
 function sameLaunchEndpoint(left: DashboardLaunchEndpoint, right: DashboardLaunchEndpoint) {
   return left.workspaceId === right.workspaceId && (left.client === right.client || left.client.baseUrl === right.client.baseUrl);
+}
+
+/**
+ * An App built in OpenWork loads its read-only data as it opens; it needs the
+ * viewer's time zone so that data matches what the App would ask for itself.
+ */
+function launchCallArguments(entry: DashboardMcpAppEntry, toolName: string, args: Record<string, unknown> | undefined) {
+  if (toolName !== MCP_APP_LAUNCH_TOOL_NAME || !mcpAppIdSchema.safeParse(entry.connectionId).success) return args;
+  return { ...args, timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone };
 }
 
 function appMatchesEntry(app: OpenworkMcpAppResource, entry: DashboardMcpAppEntry) {
@@ -443,7 +452,7 @@ function McpAppTileContent({
           try {
             result = await current.endpoint.client.callMcpAppTool(current.endpoint.workspaceId, {
               launchId: live.launchId, sessionId: null, serverName: live.serverName,
-              name: live.toolName, resourceUri: live.resourceUri, arguments: argumentsSnapshot,
+              name: live.toolName, resourceUri: live.resourceUri, arguments: launchCallArguments(entry, live.toolName, argumentsSnapshot),
               expectedResourceDigest: live.refresh.resourceDigest,
             });
             assertActive();
@@ -487,7 +496,7 @@ function McpAppTileContent({
           ownedLaunches.current.set(app.launchId, endpoint);
           const request = {
             launchId: app.launchId, sessionId: null, serverName: app.serverName,
-            name: app.toolName, resourceUri: app.resourceUri, arguments: argumentsSnapshot,
+            name: app.toolName, resourceUri: app.resourceUri, arguments: launchCallArguments(entry, app.toolName, argumentsSnapshot),
             ...(!fallbackEndpoint && launchIsApproved ? { approved: true } : {}),
           };
           try {

@@ -76,3 +76,35 @@ export async function resolveWorkspaceFileLaunch(workspaceRoot, target, deps = {
 
   return { ok: true, path: resolvedTarget };
 }
+
+/**
+ * A missing chat reference is normal (another computer, deleted output), not
+ * an OS error. Check the exact item before opening OR revealing; never open a
+ * parent directory as a substitute for a missing file. Symlink launch guards
+ * still run at the final native boundary.
+ * @param {string} workspaceRoot
+ * @param {string} target
+ * @param {{ reveal?: boolean; openPath: (path: string) => Promise<string>; revealPath: (path: string) => void }} actions
+ * @returns {Promise<import("@openwork/types/desktop-ipc").DesktopWorkspaceFileOpenResult>}
+ */
+export async function openChatWorkspaceFile(workspaceRoot, target, actions) {
+  const decision = await resolveWorkspaceFileLaunch(workspaceRoot, target);
+  if (decision.ok === false) {
+    if (decision.reason === "outside") {
+      try {
+        await stat(target);
+        actions.revealPath(target);
+        return { ok: true, action: "revealed" };
+      } catch {
+        // The reference is stale, or this account cannot access it.
+      }
+    }
+    return { ok: true, action: "unavailable" };
+  }
+  if (actions.reveal) {
+    actions.revealPath(decision.path);
+    return { ok: true, action: "revealed" };
+  }
+  const error = await actions.openPath(decision.path);
+  return error?.trim() ? { ok: false, error } : { ok: true, action: "opened" };
+}

@@ -11,7 +11,7 @@ Each view is its own rollout (both on `cloud` and `self_hosted`, owned by
 
 | Flag | What Workbot gets | Off |
 |---|---|---|
-| `browserUse` (default off) | The **Browser** view and the `desktop` tool's browser operations. Teaching browser tasks (`browserDemonstrations`) and the page stream (`browserLiveView`) need it too. | No Browser view; the model is offered only the native desktop, and the runner refuses browser calls. |
+| `browserUse` (default off) | The **Browser** view and the `desktop` tool's browser operations. It includes the page stream; teaching browser tasks (`browserDemonstrations`) needs it too. | No Browser view; the model is offered only the native desktop, and the runner refuses browser calls. |
 | `computerUse` | The **Computer** view and the `desktop` tool's native-app operations (`computer_*`). | No Computer view; the model is offered only the browser, and the runner refuses native-app calls. |
 
 Workspaces that had Workbot's computer before the split keep the Computer view
@@ -27,10 +27,16 @@ the runner has a computer.
 
 The two views use one conversation computer:
 
-- **Browser** (`/browser`) streams the Chromium window, including its tabs and address bar.
+- **Browser** (`/browser`) streams the page itself with Workbot's tabs and
+  address bar. It is included in `browserUse`, without a separate live-view
+  gate. Computers whose image predates page streaming still fall back to
+  noVNC; remove that transport fallback when those images are unsupported.
+  Den and Workbot keep the `browserLiveView` response field derived from
+  browser access for older clients; remove it when those clients are unsupported.
 - **Computer** (`/computer`) streams the entire Linux desktop.
 - **Take control** interrupts Workbot's current turn, pauses both browser and
-  computer tools, and enables native mouse/keyboard input through noVNC.
+  computer tools, and enables input through the page stream (Browser) or
+  noVNC (Computer and older browser images).
 - **Return to Workbot** ends the manual connection and releases the tools.
 - **Pause** suspends the VM; reopening the tab leaves it paused until **Resume**.
   Memory, browser tabs and unsaved applications survive VM pause/resume.

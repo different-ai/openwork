@@ -192,21 +192,26 @@ export type AutoRouterWriteProblem = {
   model?: number
 }
 
-/** Checks every model against the organization's options and every assignee against its teams and members. */
-export async function checkAutoRouterWrite(organizationId: OrganizationId, input: AutoRouterWrite, options: AutoRouterModelOption[]): Promise<AutoRouterWriteProblem | null> {
+/** Checks every model against the organization's options. */
+export function checkAutoRouterWrite(input: AutoRouterWrite, options: AutoRouterModelOption[]): AutoRouterWriteProblem | null {
   for (const [index, model] of input.models.entries()) {
     if (!options.some((option) => option.providerId === model.providerId && option.modelId === model.modelId)) {
       return { error: "unknown_model", model: index, message: "That model isn't one your AI Gateway offers. Choose one from the list." }
     }
   }
-  const teamIds = [...new Set(input.assignment.teamIds)]
+  return null
+}
+
+/** Checks every assignee against the organization's teams and members. */
+export async function checkAutoRouterAssignment(organizationId: OrganizationId, assignment: AutoRouterAssignment): Promise<AutoRouterWriteProblem | null> {
+  const teamIds = [...new Set(assignment.teamIds)]
   if (teamIds.length > 0) {
     if (!teamIds.every((id) => isDenTypeId("team", id))) return { error: "unknown_team", message: "One of the teams no longer exists." }
     const teams = await db.select({ id: TeamTable.id }).from(TeamTable)
       .where(and(eq(TeamTable.organizationId, organizationId), inArray(TeamTable.id, teamIds.map((id) => normalizeDenTypeId("team", id)))))
     if (teams.length !== teamIds.length) return { error: "unknown_team", message: "One of the teams no longer exists." }
   }
-  const memberIds = [...new Set(input.assignment.memberIds)]
+  const memberIds = [...new Set(assignment.memberIds)]
   if (memberIds.length > 0) {
     if (!memberIds.every((id) => isDenTypeId("member", id))) return { error: "unknown_member", message: "One of the people is no longer in the organization." }
     const members = await db.select({ id: MemberTable.id }).from(MemberTable)
@@ -232,10 +237,14 @@ async function deleteUnusedTasks(tx: Database, organizationId: OrganizationId) {
   if (unused.length > 0) await tx.delete(AutoRouterTaskTable).where(inArray(AutoRouterTaskTable.id, unused))
 }
 
-async function deleteRouterContents(tx: Database, routerId: AutoRouterId) {
+async function deleteRouterModels(tx: Database, routerId: AutoRouterId) {
   const models = await tx.select({ id: AutoRouterModelTable.id }).from(AutoRouterModelTable).where(eq(AutoRouterModelTable.autoRouterId, routerId))
   if (models.length > 0) await tx.delete(AutoRouterModelTaskTable).where(inArray(AutoRouterModelTaskTable.autoRouterModelId, models.map((model) => model.id)))
   await tx.delete(AutoRouterModelTable).where(eq(AutoRouterModelTable.autoRouterId, routerId))
+}
+
+async function deleteRouterContents(tx: Database, routerId: AutoRouterId) {
+  await deleteRouterModels(tx, routerId)
   await tx.delete(AutoRouterAccessTable).where(eq(AutoRouterAccessTable.autoRouterId, routerId))
 }
 
@@ -261,11 +270,11 @@ async function ensureTasks(tx: Database, organizationId: OrganizationId, names: 
 }
 
 /**
- * Creates a router (no id) or replaces one whole, with its assignment, models
- * and their tasks, in one transaction. Tasks are shared across the
- * organization: new names are created, and names no model uses anymore are
- * removed. Returns the router id, or null when `routerId` is not one of the
- * organization's routers.
+ * Creates a router (no id; it applies to nobody yet) or replaces one's name,
+ * models and their tasks, in one transaction. Who it applies to is kept; set
+ * it with saveAutoRouterAssignment. Tasks are shared across the organization:
+ * new names are created, and names no model uses anymore are removed. Returns
+ * the router id, or null when `routerId` is not one of the organization's.
  */
 export async function saveAutoRouter(input: {
   organizationId: OrganizationId
@@ -283,7 +292,7 @@ export async function saveAutoRouter(input: {
       if (!existing) return null
       routerId = existing.id
       await tx.update(AutoRouterTable).set({ name: input.write.name, updatedByOrgMemberId: input.memberId }).where(eq(AutoRouterTable.id, routerId))
-      await deleteRouterContents(tx, routerId)
+      await deleteRouterModels(tx, routerId)
     } else {
       routerId = createDenTypeId("autoRouter")
       await tx.insert(AutoRouterTable).values({
@@ -294,9 +303,6 @@ export async function saveAutoRouter(input: {
         updatedByOrgMemberId: input.memberId,
       })
     }
-
-    const access = assignmentRows(input.organizationId, routerId, input.write.assignment)
-    if (access.length > 0) await tx.insert(AutoRouterAccessTable).values(access)
 
     const taskIds = await ensureTasks(tx, input.organizationId, input.write.models.flatMap((model) => model.tasks))
     const models = input.write.models.map((model, position) => ({
@@ -320,6 +326,39 @@ export async function saveAutoRouter(input: {
     if (links.length > 0) await tx.insert(AutoRouterModelTaskTable).values(links)
     await deleteUnusedTasks(tx, input.organizationId)
     return routerId
+  })
+}
+
+/**
+ * Replaces who a router applies to. Making it apply to everyone needs
+ * `canShareWithEveryone` unless it already does; that is decided against the
+ * assignment read under the router's row lock, so a concurrent change cannot
+ * slip an org-wide grant past the check. Returns `not_found` when `routerId`
+ * is not one of the organization's routers.
+ */
+export async function saveAutoRouterAssignment(input: {
+  organizationId: OrganizationId
+  memberId: MemberId
+  routerId: string
+  assignment: AutoRouterAssignment
+  canShareWithEveryone: boolean
+}): Promise<"saved" | "not_found" | "needs_share_with_everyone"> {
+  if (!isDenTypeId("autoRouter", input.routerId)) return "not_found"
+  return db.transaction(async (tx) => {
+    const [existing] = await tx.select({ id: AutoRouterTable.id }).from(AutoRouterTable)
+      .where(and(eq(AutoRouterTable.id, normalizeDenTypeId("autoRouter", input.routerId)), eq(AutoRouterTable.organizationId, input.organizationId)))
+      .for("update").limit(1)
+    if (!existing) return "not_found"
+    if (input.assignment.everyone && !input.canShareWithEveryone) {
+      const [orgWide] = await tx.select({ id: AutoRouterAccessTable.id }).from(AutoRouterAccessTable)
+        .where(and(eq(AutoRouterAccessTable.autoRouterId, existing.id), eq(AutoRouterAccessTable.orgWide, true))).limit(1)
+      if (!orgWide) return "needs_share_with_everyone"
+    }
+    await tx.delete(AutoRouterAccessTable).where(eq(AutoRouterAccessTable.autoRouterId, existing.id))
+    const rows = assignmentRows(input.organizationId, existing.id, input.assignment)
+    if (rows.length > 0) await tx.insert(AutoRouterAccessTable).values(rows)
+    await tx.update(AutoRouterTable).set({ updatedByOrgMemberId: input.memberId }).where(eq(AutoRouterTable.id, existing.id))
+    return "saved"
   })
 }
 

@@ -21,6 +21,7 @@ export default {
   "common.hide": "隐藏",
   "common.next": "下一步",
   "common.question": "问题",
+  "common.permission": "权限",
   "common.refresh": "刷新",
   "common.remove": "移除",
   "common.reset": "重置",

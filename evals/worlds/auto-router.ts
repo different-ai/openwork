@@ -19,7 +19,7 @@ function jevEnvironment(typesafe: string | undefined): Record<string, string> {
  * Smart Model Router: a real Den (cloud deployment, `autoRouter` on for the
  * seeded organization), a real AI Gateway with one Anthropic-protocol provider
  * whose only upstream is the deterministic Acme mock, and the owner signed in
- * on AI Gateway › Smart Model Router. Jev is real when TYPESAFE_API_KEY is set
+ * on AI Gateway › AI Providers, where Smart Routers are listed. Jev is real when TYPESAFE_API_KEY is set
  * in the test's environment; otherwise Smart takes its fallback model.
  */
 export async function autoRouterWorld(seed: Seed) {
@@ -34,7 +34,7 @@ export async function autoRouterWorld(seed: Seed) {
     await startAcmeGateway(stack, den.database.url, { baseUrl: gateway.baseUrl, env });
     const provider = await seedAcmeGateway(den.admin, upstream);
     const organizationId = await enableOrganizationCapabilities(seed, den.admin, { autoRouter: true });
-    const web = await seed.web({ den, signedInAs: den.admin, startPath: "/dashboard/ai-gateway?tab=auto-router", headless: true, viewport: { width: 1440, height: 1100 } });
+    const web = await seed.web({ den, signedInAs: den.admin, startPath: "/dashboard/ai-gateway?tab=ai-providers", headless: true, viewport: { width: 1440, height: 1100 } });
     return {
       den,
       web,
@@ -67,7 +67,7 @@ export async function autoRouterMissingKeyWorld(seed: Seed) {
     await startAcmeGateway(stack, den.database.url, { baseUrl: gateway.baseUrl, env });
     const provider = await seedAcmeGateway(den.admin, upstream);
     await enableOrganizationCapabilities(seed, den.admin, { autoRouter: true });
-    const web = await seed.web({ den, signedInAs: den.admin, startPath: "/dashboard/ai-gateway?tab=auto-router", headless: true, viewport: { width: 1440, height: 1100 } });
+    const web = await seed.web({ den, signedInAs: den.admin, startPath: "/dashboard/ai-gateway?tab=ai-providers", headless: true, viewport: { width: 1440, height: 1100 } });
     return {
       den,
       web,
@@ -75,7 +75,7 @@ export async function autoRouterMissingKeyWorld(seed: Seed) {
       async tryCreate() {
         const result = await seed.api(den.admin, "/v1/org/auto-routers", {
           method: "POST",
-          body: JSON.stringify({ name: "Everyone", assignment: { everyone: true, teamIds: [], memberIds: [] }, models: [{ providerId: provider.providerId, modelId: ACME_MODEL, tasks: ["Questions"] }] }),
+          body: JSON.stringify({ name: "Everyone", models: [{ providerId: provider.providerId, modelId: ACME_MODEL, tasks: ["Questions"] }] }),
         });
         return result.response.status;
       },
@@ -91,7 +91,7 @@ export async function autoRouterMissingKeyWorld(seed: Seed) {
  * Smart Model Router on the desktop: the same real Den (cloud, `autoRouter`
  * on) and real AI Gateway over the deterministic Acme upstream, with one
  * Smart Router ("Engineering", for everyone, the Acme model with two tasks)
- * saved by the admin through Den's API, and the app in headless Chrome signed
+ * created and assigned by the admin through Den's API, and the app in headless Chrome signed
  * in as that admin on the native v2 engine. The desktop learns the Smart model
  * from Den like any organization model and chats through the gateway.
  */
@@ -115,11 +115,16 @@ export async function autoRouterDesktopWorld(seed: Seed) {
     if (!options.response.ok || typeof option?.providerId !== "string") throw new Error(`Smart Router options are missing the Acme model: HTTP ${options.response.status}`);
     const saved = await seed.api(den.admin, "/v1/org/auto-routers", {
       method: "POST",
-      body: JSON.stringify({ name: "Engineering", assignment: { everyone: true, teamIds: [], memberIds: [] }, models: [{ providerId: option.providerId, modelId: ACME_MODEL, tasks: ["Questions", "Geography"] }] }),
+      body: JSON.stringify({ name: "Engineering", models: [{ providerId: option.providerId, modelId: ACME_MODEL, tasks: ["Questions", "Geography"] }] }),
     });
-    const routers = isRecord(saved.body) && Array.isArray(saved.body.routers) ? saved.body.routers.filter(isRecord) : [];
-    const routerId = typeof routers[0]?.id === "string" ? routers[0].id : null;
+    const routerId = isRecord(saved.body) && typeof saved.body.routerId === "string" ? saved.body.routerId : null;
     if (!saved.response.ok || !routerId) throw new Error(`Saving the Smart Router failed: HTTP ${saved.response.status} ${saved.text.slice(0, 300)}`);
+    // Step two: it applies to everyone.
+    const assigned = await seed.api(den.admin, `/v1/org/auto-routers/${routerId}/assignment`, {
+      method: "PUT",
+      body: JSON.stringify({ assignment: { everyone: true, teamIds: [], memberIds: [] } }),
+    });
+    if (!assigned.response.ok) throw new Error(`Assigning the Smart Router failed: HTTP ${assigned.response.status} ${assigned.text.slice(0, 300)}`);
     // The host token lets the app's server sync the organization's models (Smart among them) from Den.
     const hostToken = randomUUID();
     const { app, workspace } = await signedInAppWeb(seed, {

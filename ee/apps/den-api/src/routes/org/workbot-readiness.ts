@@ -7,7 +7,7 @@ import { describeRoute } from "hono-openapi"
 import { db } from "../../db.js"
 import { orgMemberRoute } from "../../middleware/index.js"
 import { jsonResponse, notFoundSchema, unauthorizedSchema } from "../../openapi.js"
-import { workbotIncludedDefaultModel, workbotIncludedModelsEnabledFor, workbotUsesManagedDefault } from "../../workbot/managed-luna.js"
+import { workbotIncludedDefaultModel, workbotUsesManagedDefault } from "../../workbot/managed-luna.js"
 import type { OrgRouteVariables } from "./shared.js"
 
 const workbotReadinessDocumentSchema = workbotReadinessSchema.meta({ ref: "WorkbotReadiness" })
@@ -30,7 +30,7 @@ export function registerOrgWorkbotReadinessRoutes<T extends { Variables: OrgRout
       tags: ["Organizations"],
       summary: "Check whether Workbot has an AI provider",
       description:
-        "Returns whether Workbot turns need the organization's AI Gateway and, only then, whether an active provider exists. With workbotIncludedModels or workbotUsageRecovery, the managed default uses the member's included OpenWork models and needs no custom Gateway provider while the member is entitled to them. Content-free: no provider names, counts, ids, models or grants. Each turn rechecks the member's access. Available to any organization member. Never exposed to MCP.",
+        "Returns whether Workbot turns need the organization's AI Gateway and, only then, whether an active provider exists. The managed default uses the member's included OpenWork models and needs no custom Gateway provider while the member is entitled to them. Content-free: no provider names, counts, ids, models or grants. Each turn rechecks the member's access. Available to any organization member. Never exposed to MCP.",
       ...{ "x-mcp": false },
       responses: {
         200: jsonResponse("Whether Workbot needs an AI Gateway provider and whether one exists.", workbotReadinessDocumentSchema),
@@ -44,7 +44,7 @@ export function registerOrgWorkbotReadinessRoutes<T extends { Variables: OrgRout
       const { organization, currentMember } = c.get("organizationContext")
       const organizationId = organization.id
       const chosen = readWorkbotModel(organization.metadata)
-      const managedLuna = workbotUsesManagedDefault(chosen) && await workbotIncludedModelsEnabledFor(organizationId, currentMember.userId)
+      const managedLuna = workbotUsesManagedDefault(chosen)
         && await workbotIncludedDefaultModel({ organizationId, userId: currentMember.userId }, chosen) !== null
       const gatewayRequired = !managedLuna
       const hasGatewayProvider = gatewayRequired && await hasActiveGatewayProvider(organizationId)

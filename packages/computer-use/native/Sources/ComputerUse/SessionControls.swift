@@ -158,6 +158,10 @@ final class SessionControls: NSObject {
         }
     }
 
+    func showMenu(titleFrame: CGRect?, path: [String], shortcut: String?) {
+        AgentCursor.shared.showMenu(titleFrame: titleFrame, path: path, shortcut: shortcut)
+    }
+
     private func showMenu() {
         let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
         item.button?.image = NSImage(systemSymbolName: "desktopcomputer", accessibilityDescription: "OpenWork computer use")

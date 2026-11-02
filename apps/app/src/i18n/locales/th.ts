@@ -18,6 +18,7 @@ export default {
   "common.hide": "ซ่อน",
   "common.next": "ถัดไป",
   "common.question": "คำถาม",
+  "common.permission": "สิทธิ์",
   "common.refresh": "รีเฟรช",
   "common.remove": "ลบ",
   "common.reset": "รีเซ็ต",
