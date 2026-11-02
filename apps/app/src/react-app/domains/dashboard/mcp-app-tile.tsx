@@ -420,6 +420,9 @@ function McpAppTileContent({
     };
     discardInvalidDocument();
     let credentialRevision = readCloudCredentialRevision();
+    // Leaving this tile cancels what it is loading, so the next App starts at
+    // once. A launch a person approved keeps running: it may be changing data.
+    const { signal } = attempt.controller;
     const promise = scheduleDashboardLaunch<TileState>(async () => {
       await Promise.resolve();
       assertActive();
@@ -454,7 +457,7 @@ function McpAppTileContent({
               launchId: live.launchId, sessionId: null, serverName: live.serverName,
               name: live.toolName, resourceUri: live.resourceUri, arguments: launchCallArguments(entry, live.toolName, argumentsSnapshot),
               expectedResourceDigest: live.refresh.resourceDigest,
-            });
+            }, { signal });
             assertActive();
             if (!current.lifetime.active || current.lifetime.failed) throw new Error("This artifact view has closed or changed. Run the tile again.");
             target = { endpoint: current.endpoint, app: live };
@@ -473,14 +476,14 @@ function McpAppTileContent({
         }
         if (!target) {
           if (fallbackEndpoint) {
-            const { app } = await fallbackEndpoint.client.resolveMcpApp(fallbackEndpoint.workspaceId, entry.projectedToolName, launch, { sessionId: null, readOnly: false });
+            const { app } = await fallbackEndpoint.client.resolveMcpApp(fallbackEndpoint.workspaceId, entry.projectedToolName, launch, { sessionId: null, readOnly: false }, { signal });
             if (app && endpointIsActive(fallbackEndpoint) && appMatchesEntry(app, entry)) target = { endpoint: fallbackEndpoint, app };
             else if (app?.launchId) void fallbackEndpoint.client.releaseMcpApp(fallbackEndpoint.workspaceId, app.launchId).catch(() => undefined);
           } else {
             target = await resolveDashboardMcpApp({
               endpoints: attempt.candidates, projectedToolName: entry.projectedToolName,
               expected: { serverName: entry.serverName, toolName: entry.toolName, resourceUri: entry.resourceUri },
-              launch, isActive: endpointIsActive,
+              launch, isActive: endpointIsActive, signal,
             });
           }
           if (target && !endpointIsActive(target.endpoint)) {
@@ -500,7 +503,7 @@ function McpAppTileContent({
             ...(!fallbackEndpoint && launchIsApproved ? { approved: true } : {}),
           };
           try {
-            result = await endpoint.client.callMcpAppTool(endpoint.workspaceId, request);
+            result = await endpoint.client.callMcpAppTool(endpoint.workspaceId, request, request.approved ? undefined : { signal });
           } catch (cause) {
             assertActive();
             if (!(cause instanceof OpenworkServerError) || cause.code !== "tool_requires_approval") throw cause;
