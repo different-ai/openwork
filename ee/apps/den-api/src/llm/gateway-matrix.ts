@@ -4,7 +4,7 @@ import { AuthUserTable, GatewayCredentialSetTable, GatewayModelGroupModelTable, 
 import { createDenTypeId, normalizeDenTypeId } from "@openwork-ee/utils/typeid"
 import { createGatewayModelAlias, gatewayAudienceKey } from "@openwork-ee/utils/gateway-routing"
 import { inferenceCredentialEnvNames, isInferenceCredentialKindSupported, pickInferenceApiKeyFromMap } from "@openwork-ee/utils/inference-credentials"
-import { isAwsRegion } from "@openwork-ee/utils/inference-egress"
+import { isAwsRegion, vertexPublisherBase } from "@openwork-ee/utils/inference-egress"
 import { isLiteLlmProviderId } from "@openwork-ee/utils/litellm-catalog"
 import { MICROSOFT_FOUNDRY_PROVIDER_ID, isMicrosoftFoundryResourceName } from "@openwork-ee/utils/microsoft-foundry-catalog"
 import { parseGatewayProviderSecret, type GatewayAccessGrant, type GatewayAccessGrantWrite, type GatewayCredentialSet, type GatewayCredentialSetPatch, type GatewayModelGroup, type GatewayModelGroupPatch, type GatewayProviderDetails, type GatewayProviderSummary, type GatewayUsableModel } from "@openwork/types/den/gateway"
@@ -36,10 +36,8 @@ export function validateGatewaySettings(config: Record<string, unknown>, setting
   if (error) throw new GatewayWriteError(400, "invalid_settings", error)
   const npm = readProviderConfigNpm(config)
   if (npm === "@ai-sdk/google-vertex" || npm === "@ai-sdk/google-vertex/anthropic") {
-    // Keep identical to Gateway's vertexPublisherBase (gateway/src/protocols.ts); no shared validator exists yet.
-    if (typeof settings.project !== "string" || !/^(?:[a-z][a-z0-9-]{4,61}[a-z0-9]|[0-9]{6,20})$/.test(settings.project)
-      || typeof settings.location !== "string" || !/^(?:global|[a-z]+(?:-[a-z]+)*[0-9]+)$/.test(settings.location)) {
-      throw new GatewayWriteError(400, "invalid_settings", "Vertex requires a 6-63 character project ID or 6-20 digit project number, and global or a region ending in digits.")
+    if (!vertexPublisherBase(settings, npm === "@ai-sdk/google-vertex" ? "google" : "anthropic")) {
+      throw new GatewayWriteError(400, "invalid_settings", "Vertex requires a 6-63 character project ID or 6-20 digit project number, and global, eu, us, or a region ending in digits.")
     }
   }
   const bedrockError = isAwsGatewayNpm(npm) ? bedrockSettingsError(settings) : null
