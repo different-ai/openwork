@@ -3,7 +3,7 @@
 import { Button } from "@base-ui/react/button";
 import { Select } from "@base-ui/react/select";
 import { ChevronDown, Pause, Play, Presentation, RotateCw, X } from "lucide-react";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useId, useRef, useState } from "react";
 import { z } from "zod";
 import { browserInputLabel, browserSkillInputs, browserSkillRunPrompt, compileBrowserDemonstration, demonstrationStepLabel, demonstrationReplySchema, type BrowserDemonstration, type BrowserTeachingContext, type DemonstrationCommand, type DemonstrationStep } from "@openwork/types/browser-demonstration";
 import { skillCreatedPayloadSchema, type SkillCreatedPayload } from "@openwork/types/skill-created-app";
@@ -46,6 +46,7 @@ export function WorkbotTeaching({ open, onOpenChange, onTakeControl, onTeachingC
   const [tabPickerOpen, setTabPickerOpen] = useState(false);
   const tabSurface = useRetainedSurface(tabPickerOpen && !suspended && host.browserDemonstrations === true);
   const [collapsed, setCollapsed] = useState(false);
+  const bodyId = useId();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [syncError, setSyncError] = useState<string | null>(null);
@@ -183,13 +184,15 @@ export function WorkbotTeaching({ open, onOpenChange, onTakeControl, onTeachingC
       <span role="status" className="ml-auto inline-flex shrink-0 items-center gap-1.5 text-[12px] text-[var(--wb-muted)]">
         {demo?.phase === "recording" && !saved ? <span aria-hidden className="size-1.5 rounded-full bg-[var(--wb-danger)]" /> : null}{status}
       </span>
-      <Button className={iconButton} aria-label={collapsed ? "Expand teaching" : "Collapse teaching"} title={collapsed ? "Expand" : "Collapse"} aria-expanded={!collapsed} onClick={() => setCollapsed(current => !current)}>
+      <Button className={iconButton} aria-label={collapsed ? "Expand teaching" : "Collapse teaching"} title={collapsed ? "Expand" : "Collapse"} aria-expanded={!collapsed} aria-controls={bodyId} onClick={() => setCollapsed(current => !current)}>
         <ChevronDown size={16} strokeWidth={1.5} aria-hidden className={`transition-transform duration-150 ease-out motion-reduce:transition-none ${collapsed ? "-rotate-90" : ""}`} />
       </Button>
       <Button className={iconButton} aria-label="Hide teaching" title={demo && demo.phase !== "draft" ? "Hide (teaching continues)" : "Hide"} onClick={() => onOpenChange(false)}><X size={16} strokeWidth={1.5} aria-hidden /></Button>
     </div>
-    {collapsed ? demo && !saved ? <p className="truncate px-3 pb-3 text-[12px] text-[var(--wb-muted)]">{selected ? `Step ${selected.id}` : "Latest step"}: {focusedLabel}</p> : null
-    : <div ref={body} className="relative flex min-h-0 flex-col gap-3 overflow-y-auto border-t border-[var(--wb-hairline)] p-3">
+    {collapsed && demo && !saved ? <p className="truncate px-3 pb-3 text-[12px] text-[var(--wb-muted)]">{selected ? `Step ${selected.id}` : "Latest step"}: {focusedLabel}</p> : null}
+    {/* Keep the ARIA target mounted while collapsed, but unmount its contents as before. */}
+    <div id={bodyId} ref={body} hidden={collapsed} className={collapsed ? "hidden" : "relative flex min-h-0 flex-col gap-3 overflow-y-auto border-t border-[var(--wb-hairline)] p-3"}>
+      {!collapsed && <>
       {error && <p role="alert" className="text-[13px]">{error}</p>}
       {syncError && <p role="status" className="text-[13px]">{syncError}</p>}
       {demo?.notice && <p role="status" className="text-[13px]">{demo.notice}</p>}
@@ -252,6 +255,7 @@ export function WorkbotTeaching({ open, onOpenChange, onTakeControl, onTeachingC
         </>}
         <Button className={`${button} self-start text-[var(--wb-muted)]`} disabled={!enabled || busy} onClick={() => void command({ action: "discard" })}>{saved ? "Teach another task" : "Discard demonstration"}</Button>
       </>}
-    </div>}
+      </>}
+    </div>
   </section>;
 }
