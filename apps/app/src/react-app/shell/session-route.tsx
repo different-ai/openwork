@@ -114,7 +114,8 @@ import { encodeConnectSkillToken } from "@/react-app/domains/session/surface/com
 import { AutomationsPage } from "@/react-app/domains/automations/automations-page";
 import { automationProviderCatalog } from "@/react-app/domains/automations/automation-model-options";
 import { CodePage } from "@/react-app/domains/code/code-page";
-import { ProjectsPage } from "@/react-app/domains/projects/projects-page";
+import { ProjectsIndexPage } from "@/react-app/domains/projects/projects-index-page";
+import { ProjectDetailPage } from "@/react-app/domains/projects/project-detail-page";
 import { ArtefactosPage } from "@/react-app/domains/artifacts/artifacts-page";
 import { ProgramadasPage } from "@/react-app/domains/scheduled/scheduled-page";
 import { DesignPage } from "@/react-app/domains/design/design-page";
@@ -3838,6 +3839,38 @@ export function SessionRoute() {
     focusPromptSoon();
   };
 
+  /** New task with a known prompt in a specific workspace: pending conversation,
+   * navigate to that workspace's session route, then create the real session.
+   * Shared by the sidebar and the project detail composer. */
+  const handleCreateTaskWithPrompt = useCallback((workspaceId: string, prompt: string, attachments?: ComposerAttachment[], handoff?: NewTaskComposerHandoff) => {
+    const destination = handoff?.destination ?? { workspaceId };
+    const targetWorkspaceId = destination.workspaceId;
+    const agent = newTaskAgent;
+    const pending = beginPendingConversation({
+      scope: sessionDraftScope, destination,
+      submitted: handoff?.submitted ?? { draft: prompt, attachments: attachments ?? [], mentions: {}, pasteParts: [], revertMessageId: null },
+    });
+    handoff?.consume?.();
+    if (destination.parent) {
+      const workbench = useWorkbenchStore.getState();
+      const tab = { workspaceId: targetWorkspaceId, sessionId: newSessionDraftSlot(destination), title: prompt.trim() || "New session", draftDestination: destination, pendingConversationId: pending.id };
+      workbench.openTab(tab);
+      workbench.setSideChat(destination.parent, tab);
+    } else {
+      const query = new URLSearchParams({ pendingConversation: pending.id });
+      if (destination.groupId) query.set("draftGroup", destination.groupId);
+      navigate(`${workspaceSessionRoute(targetWorkspaceId)}?${query}`);
+    }
+    const workspace = workspaces.find((item) => item.id === targetWorkspaceId);
+    void createPendingConversation(pending.id, async () => {
+      const currentWorkspace = workspacesRef.current.find((item) => item.id === targetWorkspaceId) ?? workspace;
+      if (!currentWorkspace) throw new Error("Workspace is unavailable. Try again.");
+      const workspaceEndpoint = endpointForWorkspace(currentWorkspace);
+      if (!workspaceEndpoint?.token) throw new Error("Workspace is disconnected. Reconnect and try again.");
+      return createRouteSessionOnEngine(workspaceEndpoint, currentWorkspace.path?.trim() || undefined);
+    }, (created) => publishCreatedConversation(pending, created, agent, workspace?.displayNameResolved));
+  }, [endpointForWorkspace, navigate, newTaskAgent, publishCreatedConversation, sessionDraftScope, workspaces, workspacesRef]);
+
   return (
     <WorkspaceProvider
       client={opencodeClient}
@@ -3968,11 +4001,32 @@ export function SessionRoute() {
         <CodePage openworkServerClient={client} />
       ) : masterPlanRouteActive ? (
         masterPlanSection === "projects" ? (
-          <ProjectsPage
-            openworkServerClient={selectedWorkspaceEndpoint?.client ?? null}
-            workspaceId={selectedWorkspaceId}
-            workspaceName={selectedWorkspace ? workspaceLabel(selectedWorkspace) : ""}
-          />
+          (() => {
+            const detailWorkspace = routeWorkspaceId
+              ? workspaces.find((item) => item.id === routeWorkspaceId)
+              : undefined;
+            if (detailWorkspace) {
+              return (
+                <ProjectDetailPage
+                  workspace={detailWorkspace}
+                  openworkServerClient={endpointForWorkspace(detailWorkspace)?.client ?? null}
+                  sessions={sessionsByWorkspaceId[detailWorkspace.id] ?? []}
+                  onSend={(prompt) => handleCreateTaskWithPrompt(detailWorkspace.id, prompt)}
+                  onOpenSession={(sessionId) => navigateToWorkspaceSession(detailWorkspace.id, sessionId)}
+                  onOpenScheduled={() => navigate(scheduledRoute())}
+                />
+              );
+            }
+            return (
+              <ProjectsIndexPage
+                workspaces={workspaces}
+                sessionsByWorkspaceId={sessionsByWorkspaceId}
+                workspacesLoading={loading || effectiveLoading}
+                onOpenProject={(id) => navigate(`/projects/${encodeURIComponent(id)}`)}
+                onOpenCreateWorkspace={handleOpenCreateWorkspace}
+              />
+            );
+          })()
         ) : masterPlanSection === "artifacts" ? (
           <ArtefactosPage
             openworkServerClient={selectedWorkspaceEndpoint?.client ?? null}
@@ -4136,32 +4190,7 @@ export function SessionRoute() {
           attachments,
           handoff?: NewTaskComposerHandoff,
         ) => {
-          const destination = handoff?.destination ?? { workspaceId };
-          workspaceId = destination.workspaceId;
-          const agent = newTaskAgent;
-          const pending = beginPendingConversation({
-            scope: sessionDraftScope, destination,
-            submitted: handoff?.submitted ?? { draft: prompt, attachments: attachments ?? [], mentions: {}, pasteParts: [], revertMessageId: null },
-          });
-          handoff?.consume?.();
-          if (destination.parent) {
-            const workbench = useWorkbenchStore.getState();
-            const tab = { workspaceId, sessionId: newSessionDraftSlot(destination), title: prompt.trim() || "New session", draftDestination: destination, pendingConversationId: pending.id };
-            workbench.openTab(tab);
-            workbench.setSideChat(destination.parent, tab);
-          } else {
-            const query = new URLSearchParams({ pendingConversation: pending.id });
-            if (destination.groupId) query.set("draftGroup", destination.groupId);
-            navigate(`${workspaceSessionRoute(workspaceId)}?${query}`);
-          }
-          const workspace = workspaces.find((item) => item.id === workspaceId);
-          void createPendingConversation(pending.id, async () => {
-            const currentWorkspace = workspacesRef.current.find((item) => item.id === workspaceId) ?? workspace;
-            if (!currentWorkspace) throw new Error("Workspace is unavailable. Try again.");
-            const workspaceEndpoint = endpointForWorkspace(currentWorkspace);
-            if (!workspaceEndpoint?.token) throw new Error("Workspace is disconnected. Reconnect and try again.");
-            return createRouteSessionOnEngine(workspaceEndpoint, currentWorkspace.path?.trim() || undefined);
-          }, (created) => publishCreatedConversation(pending, created, agent, workspace?.displayNameResolved));
+          handleCreateTaskWithPrompt(workspaceId, prompt, attachments, handoff);
         },
         onOpenRenameWorkspace: handleOpenRenameWorkspace,
         onRevealWorkspace: (id) => void handleRevealWorkspace(id),
