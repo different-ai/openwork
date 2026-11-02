@@ -49,11 +49,25 @@ export function workshopTenantId(origin) {
   return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-4${hex.slice(13, 16)}-a${hex.slice(17, 20)}-${hex.slice(20, 32)}`;
 }
 
-function redirectAllowed(value) {
+/**
+ * Apps people may be asked to connect: their callbacks must be on one of these origins, so a code only ever goes back
+ * to a trusted app (which also checks its own state). OpenWork Cloud's Den by default; an operator adds others with
+ * OPEN_WORKPLACE_MICROSOFT_APP_ORIGINS (comma-separated https origins). Loopback callbacks stay allowed for local
+ * worlds: a code sent there never leaves the person's own machine.
+ */
+export const DEFAULT_APP_ORIGINS = ["https://api.openworklabs.com", "https://app.openworklabs.com"];
+export function trustedAppOrigins(raw = process.env.OPEN_WORKPLACE_MICROSOFT_APP_ORIGINS) {
+  const extra = String(raw || "").split(",").map((value) => value.trim()).filter(Boolean).flatMap((value) => {
+    try { const url = new URL(value); return url.protocol === "https:" && url.origin === value.replace(/\/+$/, "") ? [url.origin] : []; } catch { return []; }
+  });
+  return new Set([...DEFAULT_APP_ORIGINS, ...extra]);
+}
+function redirectAllowed(value, trusted) {
   try {
     const target = new URL(value);
-    return typeof value === "string" && value.length <= 2048 && !value.includes("#") && !target.username && !target.password
-      && (target.protocol === "https:" || (target.protocol === "http:" && ["localhost", "127.0.0.1", "[::1]"].includes(target.hostname)));
+    if (typeof value !== "string" || value.length > 2048 || value.includes("#") || target.username || target.password) return false;
+    if (target.protocol === "http:" || target.protocol === "https:") { if (["localhost", "127.0.0.1", "[::1]"].includes(target.hostname)) return true; }
+    return target.protocol === "https:" && trusted.has(target.origin);
   } catch { return false; }
 }
 
@@ -61,7 +75,7 @@ function redirectAllowed(value) {
  * The Microsoft 365 front door for one workshop gateway. `auth` is the workshop's authentication
  * (createWorkshopAuth): it says who the browser is and finds a participant by ID.
  */
-export function createWorkshopMicrosoft({ origin, auth, storage }) {
+export function createWorkshopMicrosoft({ origin, auth, storage, appOrigins = trustedAppOrigins() }) {
   const base = new URL(origin);
   if (base.origin !== origin) throw new Error("Workshop origin must be an HTTP(S) origin");
   const tenantId = workshopTenantId(origin);
@@ -179,11 +193,13 @@ export function createWorkshopMicrosoft({ origin, auth, storage }) {
       let data;
       try { data = JSON.parse(await read(req, 16 * 1024)); } catch (error) { return send(res, error.status || 400, { error: "invalid_client_metadata" }), true; }
       const uris = data?.redirect_uris;
-      if (!Array.isArray(uris) || !uris.length || uris.length > 5 || !uris.every(redirectAllowed)) return send(res, 400, { error: "invalid_redirect_uri", error_description: "Give one to five exact https callback URLs." }), true;
+      if (!Array.isArray(uris) || !uris.length || uris.length > 5 || !uris.every((uri) => redirectAllowed(uri, appOrigins))) return send(res, 400, { error: "invalid_redirect_uri", error_description: "Give one to five exact callback URLs on a trusted app's origin." }), true;
       prune(clients);
       if (clients.size >= LIMIT) return send(res, 503, { error: "temporarily_unavailable" }), true;
       const clientId = `open-workplace-${randomBytes(12).toString("hex")}`, clientSecret = secret();
-      const name = typeof data.client_name === "string" && data.client_name.trim() ? data.client_name.trim().slice(0, 80) : "Workshop app";
+      // The consent page names the app by where it sends people back, never by what the caller says it is.
+      const hosts = [...new Set(uris.map((uri) => new URL(uri).host))];
+      const name = DEFAULT_APP_ORIGINS.some((trusted) => uris.every((uri) => new URL(uri).origin === trusted)) ? "OpenWork" : `App at ${hosts.join(", ")}`;
       clients.set(clientId, { clientId, name, redirectUris: [...new Set(uris)], secretDigest: digest(clientSecret), expires: Date.now() + CLIENT_MS });
       save();
       send(res, 201, {

@@ -8,7 +8,7 @@ import { tmpdir } from "node:os";
 import { startWorkshop } from "./workshop.mjs";
 import { workshopTenantId } from "./workshop-microsoft.mjs";
 
-const CALLBACK = "https://den.example.test/v1/oauth-providers/microsoft-365/connect/callback";
+const CALLBACK = "http://127.0.0.1:8790/v1/oauth-providers/microsoft-365/connect/callback";
 const SCOPES = "openid profile email offline_access User.Read Mail.Read Mail.ReadWrite Calendars.Read Calendars.ReadWrite Files.Read Files.ReadWrite";
 
 async function fixture(t) {
@@ -41,7 +41,8 @@ async function fixture(t) {
     const html = await consent.text();
     assert.match(html, /Allow workplace access/);
     assert.match(html, /not a Microsoft account/);
-    assert.match(consent.headers.get("content-security-policy"), /form-action 'self' https:\/\/den\.example\.test;/, "the browser may follow the approval back to the app");
+    assert.match(html, /Connect App at 127\.0\.0\.1:8790/, "the app is named by its callback, not by what it claimed at registration");
+    assert.match(consent.headers.get("content-security-policy"), /form-action 'self' http:\/\/127\.0\.0\.1:8790;/, "the browser may follow the approval back to the app");
     const request = html.match(/name="request" value="([^"]+)"/)[1];
     const allowed = await fetch(base + `/${tenant}/oauth2/v2.0/authorize`, { method: "POST", redirect: "manual", headers: { cookie, origin: base, "content-type": "application/x-www-form-urlencoded" }, body: new URLSearchParams({ request, decision: "allow" }) });
     assert.equal(allowed.status, 303);
@@ -105,7 +106,10 @@ test("an app's Microsoft 365 connector reaches the same private workspace the br
 
 test("the sign-in refuses unregistered apps, wrong secrets, other browsers and cross-site approvals", { timeout: 60_000 }, async (t) => {
   const w = await fixture(t);
-  assert.equal((await w.register(["http://evil.example/callback"])).status, 400, "Only https (or loopback) callbacks register");
+  assert.equal((await w.register(["http://evil.example/callback"])).status, 400, "Only trusted (or loopback) callbacks register");
+  assert.equal((await w.register(["https://evil.example/v1/oauth-providers/microsoft-365/connect/callback"])).status, 400, "An untrusted https app cannot register a client people could be asked to approve");
+  const cloud = await w.register(["https://api.openworklabs.com/v1/oauth-providers/microsoft-365/connect/callback"]);
+  assert.equal(cloud.status, 201, "OpenWork Cloud's Den may register");
   const { body: client } = await w.register();
   const a = await w.enter(), b = await w.enter();
 

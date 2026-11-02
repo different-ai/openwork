@@ -492,6 +492,12 @@ export function registerMicrosoftDriveFileRoutes<T extends { Variables: OrgRoute
     if (init.total !== undefined && init.total !== session.s) {
       return c.json({ error: "invalid_request", message: "TOTAL must be the size the upload was prepared with." }, 400)
     }
+    if (session.g) {
+      // A sandbox's sample upload continues only while that sample connector may still be used.
+      const granted = await options.access({ organizationId: context.organization.id, orgMembershipId: context.currentMember.id, features: FILE_WRITE, label: "OneDrive write" })
+      if (!granted.ok) return c.json(granted.body, granted.status)
+      if (granted.graphBaseUrl !== session.g) return c.json({ error: "upload_session_expired", message: "This upload is unknown or expired. Check the file before starting another upload." }, 404)
+    }
     let response: Response
     try {
       response = await relayFetch(session.url, {

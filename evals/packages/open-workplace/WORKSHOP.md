@@ -61,9 +61,11 @@ Access tokens last one hour; refresh grants last at most eight hours from initia
 Apps with a native Microsoft 365 connector (OpenWork Den's, used by Workbot) can use the same private workspaces
 through an Entra-compatible front door (`src/workshop-microsoft.mjs`):
 
-- `POST /_workshop/microsoft/clients` with `{"client_name","redirect_uris":["https://…/callback"]}` registers a
-  confidential client and answers its `client_id`, `client_secret` (shown once, stored hashed), `tenant_id` and
-  endpoints. Clients last 120 days.
+- `POST /_workshop/microsoft/clients` with `{"redirect_uris":["https://…/callback"]}` registers a confidential client
+  and answers its `client_id`, `client_secret` (shown once, stored hashed), `tenant_id` and endpoints. Clients last
+  120 days. Callbacks must be on a trusted app's origin (OpenWork Cloud's Den by default; add others with
+  `OPEN_WORKPLACE_MICROSOFT_APP_ORIGINS`) or loopback, so a code only goes back to a trusted app. The consent page
+  names the app by its callback, not by anything the caller says.
 - `/<tenant_id>/oauth2/v2.0/authorize` and `/token`: authorization code with mandatory S256 PKCE, client secret,
   rotating refresh tokens (reuse revokes the family; grants last up to 30 days). The consent page shows the browser's
   own workspace; a browser without one is sent through `/login` first. Deny works.
