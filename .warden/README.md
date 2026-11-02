@@ -27,7 +27,8 @@ hold:
   `.github/workflows/warden-sweep.yml`,
   `.github/scripts/warden-report.mjs`, `.github/scripts/warden-clearance.mjs`,
   `.github/scripts/warden-fast.mjs`, `.github/scripts/warden-sweep.mjs`,
-  `.github/scripts/warden-fixer.mjs`,
+  `.github/scripts/warden-fixer.mjs`, `.github/scripts/warden-generate.mjs`,
+  `.github/scripts/warden-sweep-open.mjs`,
   `warden.toml`, or `.warden/`.
   `warden.yml` runs inside the PR's own review and could forge its result; the
   others would let one PR rewrite the reviewer for every later PR.
@@ -199,26 +200,96 @@ repository variable (via `SLACK_BOT_TOKEN`), only when something needs
 fixing. The job summary has the same table; since the repository is public,
 security findings appear there only as counts.
 
-**Fix PRs.** When Warden is confident of a small fix, the sweep opens a PR
-against dev for it: one per merged PR (branch
-`warden-fix/merged-<pr>-<sha>`), built only from Warden's own
-high-confidence suggested diffs under the `warden-fixer` rules (text only, at
-most 3 files and 40 lines per fix, files that PR changed, never `.github/`,
-`.warden/` or agent config). Security, bug and design findings (both
-`DESIGN.md` and UI Skills) qualify; failing tests have no suggested diff and
-stay in the report for a person. A separate `fix`
-job opens the PRs, so Warden's model never runs next to a write token. It uses
-the automation App so CI and Warden run on the fix PR like any other; without
-the App it falls back to `GITHUB_TOKEN` and CI won't start until someone
-pushes. Security fix PRs name the file, not the issue. Fix PRs go through
-normal review and merge; the sweep never approves, merges or reverts. Turn
-fix PRs off with the repository variable `WARDEN_SWEEP_FIXES=off`.
+**Why the previous sweep never produced patches.** Pinned Warden 0.43.0's
+[`FindingSchema`](https://github.com/getsentry/warden/blob/8759014a14130cd2b82e59d3fb450a7385721221/packages/warden/src/types/index.ts)
+has confidence, location and verification fields but **no `suggestedFix`**.
+Its Zod validation strips unknown fields, so asking the review prompt for
+`suggestedFix.diff` cannot repair a ready-diff-only planner. The regression
+fixture uses the actual CLI finding shape (without that nonexistent field)
+through JSONL parsing, generation, verification and write-job revalidation.
 
-The last reviewed dev commit is saved in the `warden-sweep-state` artifact,
-so each PR is reviewed once; up to 20 PRs per sweep, the rest wait for the
-next one. A review that can't finish is reported and fails the run rather than
-being retried. To re-review a range, run the workflow with `since` set to the
-dev commit before it. Locally, without Slack or saved state:
+**Generate, verify, then propose a fix.** High-confidence, located security,
+bug and design findings (including DESIGN.md and UI Skills) are eligible even
+when the review contains no suggested diff. The sweep uses the direct OpenAI
+Responses API with strict structured output and `WARDEN_OPENAI_API_KEY`. The
+model comes from the trusted sweep policy or the same `WARDEN_MODEL` override;
+only `openai/<model-id>` is supported for generation. An unsupported provider
+is a visible failure, not a silent fallback. No GitHub/Slack credentials,
+execution tools, or environment are sent to the generation/verification model.
+Finding and code strings are explicitly untrusted data.
+
+Per run, at most **5 findings** get generation/verification attempts (at most
+10 model calls, 120 seconds and 6,000 output tokens each; no hidden HTTP
+retries). Up to 3 current tracked regular UTF-8 files from the source merge
+are read (located file first, optional small changed-file context), at most
+32 KB per source file and **96 KB total including DESIGN.md**. Symlinks in any
+path component, path escapes, untracked/binary/oversize files and review/CI
+machinery are refused. Each generated fix must use exact, unique current
+before/after replacements or explicitly decline with `no_fix`. Deterministic
+patches are built in temporary files outside the checkout. Existing suggested
+diffs undergo the same patch validation and independent model verification.
+The verifier must accept current applicability, root-cause correction and
+minimality; git independently checks actual patch paths, size and applicability.
+Design repairs must preserve DESIGN.md, tokens and existing primitives. Model
+acceptance is **not** runtime/test evidence; no tests run in these jobs.
+
+The existing `warden-fixer` caps remain: at most 3 files and 40 added+deleted
+lines per fix, at most 5 fixes per PR, only existing files the source merge
+changed, never review/CI machinery. A separate write-token job revalidates the
+artifact identity, source-merge ancestry, file allowlist, current regular files,
+patch size and applicability before applying it. It executes no model or project
+scripts; Git hooks are disabled. It opens **draft** PRs against dev (one
+`warden-fix/merged-<pr>-<sha>` branch per source merge) using the automation App,
+which is required so normal CI starts. No token fallback creates unchecked PRs.
+Existing deterministic-branch PRs in any state deduplicate retries; an orphan
+pushed branch is reused only if its patch is identical. Different branches
+require human intervention. Manual `warden-fix/*` follow-ups are also discovered
+among the newest 100 open dev PRs: when the body references Warden and the source
+PR number, findings in its modified files are deferred for human review rather
+than generating competing patches. Up to 5 related PRs / 100 files each are read;
+URLs and deferral reasons are reported. This is conservative file-level dedup,
+not a claim that the follow-up fixes every finding, and it cannot discover older
+PRs beyond that bound or non-Warden branches. Such deferrals remain in the bounded
+retry queue. Overlapping verified fixes in one plan are skipped, not blindly
+stacked.
+Security PR bodies name files, not issue details. Normal CI and human review
+are still required; nothing approves, merges or reverts. Set
+`WARDEN_SWEEP_FIXES=off` to disable opening (the report explicitly says so).
+
+Slack and public job summaries distinguish findings, generated patches,
+verified proposals and planned PRs, with fixed skip/failure reasons. The sweep
+never pre-claims a PR was opened. The write job sends actual opened/existing
+URLs and failures to Slack and its summary. Model/request/validation failures
+fail the sweep after recording state and reporting results; model refusal and
+verification rejection remain visible skips. Raw model errors/reasons and
+security descriptions are not added to public retry state or diagnostics.
+Planned patch artifacts necessarily contain proposed source changes, not raw
+finding text; security finding text stays in the private Slack report.
+
+The `warden-sweep-state` artifact stores the last reviewed commit plus a
+bounded retry queue of **source commit SHAs and attempt counts only**, never
+finding text. Up to 20 new merges and 5 queued commits are reviewed each run.
+Incomplete reviews, unresolved findings and plans not yet observed as PRs
+remain pending, so a failed/disabled write job is retried. There are at most
+60 queued commits and 3 review/generation rounds per source commit; queue
+exhaustion/cap retirement is explicitly reported as requiring human action.
+Retries re-review source commits against current dev rather than persisting
+stale security descriptions. Deferred queue entries retain their attempt count.
+To retry after retirement, or recover a previous report-only run, dispatch with
+`since` set to the dev commit before the source merge. This does not
+retroactively recover findings from runs before this implementation.
+
+Offline regression checks (no credentials or live model/PR/Slack calls):
+
+```sh
+node --test .github/scripts/warden-generate.test.mjs .github/scripts/warden-sweep.test.mjs .github/scripts/warden-fixer.test.mjs
+```
+
+These cover a missing-diff finding through generated/verified patch and writer
+revalidation, all three kinds, unsafe paths/symlinks/edits, failures, budget,
+state sanitization and workflow isolation. Quick check runs them without a
+workspace build. Live API/model availability and permissions require a real
+scheduled/manual run. Locally, without Slack or saved state:
 
 ```sh
 SINCE=<dev sha> NO_SLACK=1 PI_CODING_AGENT_DIR=.warden/pi node .github/scripts/warden-sweep.mjs

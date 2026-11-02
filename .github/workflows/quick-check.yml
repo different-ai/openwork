@@ -89,6 +89,7 @@ jobs:
           .github/scripts/warden-report.test.mjs
           .github/scripts/warden-fast.test.mjs
           .github/scripts/warden-sweep.test.mjs
+          .github/scripts/warden-generate.test.mjs
           .warden/tests/ui-skills.test.mjs
           .github/scripts/warden-fixer.test.mjs
           .github/scripts/warden-model-proxy.test.mjs
