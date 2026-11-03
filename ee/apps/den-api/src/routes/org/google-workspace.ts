@@ -12,6 +12,7 @@ import { buildCalendarEventPayload, calendarRecurrenceMatches, createCalendarEve
 import { cloudTransportRoute, jsonValidator, orgMemberRoute, paramValidator, queryValidator } from "../../middleware/index.js"
 import { invalidRequestSchema, jsonResponse, unauthorizedSchema } from "../../openapi.js"
 import { decodeFileContent, decodeTruncatedText, readBoundedBytes } from "../../capability-sources/binary-content.js"
+import { extractPdfText } from "../../capability-sources/pdf-text.js"
 import { buildGmailDraftRaw, gmailDraftUrl, gmailThreadUrl, normalizeGmailHeaderValue, readGmailDraftIds } from "../../capability-sources/gmail.js"
 import type { GmailDraftAttachment, GmailDraftQuote } from "../../capability-sources/gmail.js"
 import { gmailFileInputPreflight, gmailFileInputPreflightSchema } from "../../capability-sources/gmail-file-input.js"
@@ -56,6 +57,9 @@ const DRIVE_FULL_SCOPE = "https://www.googleapis.com/auth/drive"
 const DRIVE_FOLDER_MIME_TYPE = "application/vnd.google-apps.folder"
 const GOOGLE_WORKSPACE_API_TIMEOUT_MS = 30_000
 const MAX_DRIVE_FILE_CONTENT_BYTES = 64 * 1024
+const PDF_MIME_TYPE = "application/pdf"
+// Largest PDF downloaded to extract its text; only the text, never the bytes, reaches the model.
+const DRIVE_PDF_MAX_BYTES = 10 * 1024 * 1024
 const DRIVE_TEXT_CHARACTER_LIMIT = 200_000
 // UTF-8 needs at most four bytes per character.
 const DRIVE_TEXT_BYTE_LIMIT = DRIVE_TEXT_CHARACTER_LIMIT * 4
@@ -299,7 +303,7 @@ const driveFileResponseSchema = z.object({
     contentBase64: z.string().nullable().describe("Standard base64-encoded file bytes for binary files; decode to a workspace file. To upload, use the host's Google Workspace upload action with the workspace file path, if that action is available in the current client. There is no dataBase64 Drive upload capability."),
     encoding: z.enum(["text", "base64", "none"]),
     truncated: z.boolean(),
-    contentUnavailableReason: z.enum(["file_too_large"]).nullable(),
+    contentUnavailableReason: z.enum(["file_too_large", "no_extractable_text"]).nullable().describe("file_too_large: over the inline limit, pull the file into the workspace instead. no_extractable_text: a PDF with no text layer, such as a scan."),
   }),
 }).meta({ ref: "GoogleWorkspaceDriveFileResponse" })
 
@@ -1323,7 +1327,7 @@ export function registerGoogleWorkspaceRoutes<T extends { Variables: OrgRouteVar
     describeRoute({
       tags: ["Capability Sources"],
       summary: "Read a Google Drive file's text or binary content as the calling member",
-      description: "Reads a Drive file. Docs and Slides export as plain text; Sheets exports the first tab as CSV. For every spreadsheet tab or edits use the spreadsheet metadata and values capabilities. Downloaded content is bounded; binary files use standard base64 within the model-safety limit. To analyze or edit a whole file (Office, PDF, large CSV), pull it into the workspace with the drive_pull_file tool instead, or with createGoogleDriveDownloadLink from a shell.",
+      description: "Reads a Drive file. Docs and Slides export as plain text; Sheets exports the first tab as CSV; PDFs up to 10 MB return their extracted text when that is enabled for the organization. For every spreadsheet tab or edits use the spreadsheet metadata and values capabilities. Downloaded content is bounded; binary files use standard base64 within the model-safety limit. To analyze or edit a whole file (Office, PDF, large CSV), pull it into the workspace with the drive_pull_file tool instead, or with createGoogleDriveDownloadLink from a shell.",
       responses: {
         200: jsonResponse("Google Drive file returned.", driveFileResponseSchema),
         400: jsonResponse("The Drive item is not a readable file.", invalidRequestSchema),
@@ -1376,11 +1380,14 @@ export function registerGoogleWorkspaceRoutes<T extends { Variables: OrgRouteVar
       }
 
       const isGoogleAppsFile = file.mimeType.startsWith("application/vnd.google-apps")
+      // A PDF is read as its text, so the binary model-safety limit does not apply to it.
+      const readPdfText = file.mimeType === PDF_MIME_TYPE
+        && await organizationFeatureEnabled(payload.organization.id, "googleDrivePdfText", { userId: payload.currentMember.userId })
       if (
         !isGoogleAppsFile
         && !isDeclaredTextFile(file.mimeType)
         && file.size !== null
-        && Number(file.size) > MAX_DRIVE_FILE_CONTENT_BYTES
+        && Number(file.size) > (readPdfText ? DRIVE_PDF_MAX_BYTES : MAX_DRIVE_FILE_CONTENT_BYTES)
       ) {
         return c.json({
           ok: true,
@@ -1411,6 +1418,49 @@ export function registerGoogleWorkspaceRoutes<T extends { Variables: OrgRouteVar
       if (!contentResponse.ok) {
         const error = await googleDriveApiError("Google Drive file content", contentResponse, { generalRead: true })
         return error.status === 409 ? c.json(error.body, 409) : c.json(error.body, 502)
+      }
+
+      if (readPdfText) {
+        const pdf = await readBoundedBytes(contentResponse, DRIVE_PDF_MAX_BYTES)
+        const extracted = pdf.truncated ? null : await extractPdfText(pdf.bytes, { maxCharacters: DRIVE_TEXT_CHARACTER_LIMIT })
+        if (extracted?.kind === "text") {
+          return c.json({
+            ok: true,
+            file: {
+              ...file,
+              content: extracted.text,
+              contentBase64: null,
+              encoding: "text",
+              truncated: extracted.truncated,
+              contentUnavailableReason: null,
+            },
+          })
+        }
+        // A scanned PDF has no text to return; a small one still comes back as base64 for the client to handle.
+        if (extracted && pdf.bytes.byteLength <= MAX_DRIVE_FILE_CONTENT_BYTES) {
+          return c.json({
+            ok: true,
+            file: {
+              ...file,
+              content: null,
+              contentBase64: Buffer.from(pdf.bytes).toString("base64"),
+              encoding: "base64",
+              truncated: false,
+              contentUnavailableReason: null,
+            },
+          })
+        }
+        return c.json({
+          ok: true,
+          file: {
+            ...file,
+            content: null,
+            contentBase64: null,
+            encoding: "none",
+            truncated: false,
+            contentUnavailableReason: extracted ? "no_extractable_text" : "file_too_large",
+          },
+        })
       }
 
       // Never hold more than the text limit could need: a large text file is cut, not buffered whole.

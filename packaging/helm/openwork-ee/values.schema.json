@@ -71,6 +71,16 @@
               ],
               "description": "Google Calendar recurring meetings: Create and change recurring meeting series through the native Google Calendar capabilities. Renders DEN_FEATURE_GOOGLE_CALENDAR_RECURRENCE."
             },
+            "googleDrivePdfText": {
+              "enum": [
+                "",
+                "true",
+                "false",
+                true,
+                false
+              ],
+              "description": "Google Drive PDF text: Agents read the text of PDFs in Google Drive, up to 10 MB, instead of being told the file is too large. Renders DEN_FEATURE_GOOGLE_DRIVE_PDF_TEXT."
+            },
             "autoRouter": {
               "enum": [
                 "",
