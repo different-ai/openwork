@@ -1,4 +1,5 @@
 import { readFileSync } from "node:fs";
+import { homedir } from "node:os";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -6,6 +7,56 @@ let sentry = null;
 let initialized = false;
 let telemetryActive = false;
 const __dirname = dirname(fileURLToPath(import.meta.url));
+const MAX_PENDING_STARTUP_CAPTURES = 5;
+
+/**
+ * Holds a few reports made before a signed-in session exists, so a failure
+ * early in a launch (the runtime boot) is sent once the member's session is
+ * known instead of being dropped. Oldest entries go first when full.
+ */
+export function createPendingCaptureQueue({ max = MAX_PENDING_STARTUP_CAPTURES } = {}) {
+  let pending = [];
+  return {
+    add(error, context) {
+      pending.push({ error, context });
+      if (pending.length > max) pending = pending.slice(pending.length - max);
+    },
+    drain() {
+      const drained = pending;
+      pending = [];
+      return drained;
+    },
+    size: () => pending.length,
+  };
+}
+
+const pendingStartupCaptures = createPendingCaptureQueue();
+
+function escapeRegExp(value) {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+/** Replaces the member's home folder (which holds their account name) with "~". */
+export function redactHomePath(text, home = homedir()) {
+  const value = String(text ?? "");
+  const root = String(home ?? "").trim().replace(/[\\/]+$/, "");
+  if (!root || root.length < 2) return value;
+  const variants = new Set([root, root.replace(/\\/g, "/"), root.replace(/\//g, "\\")]);
+  let result = value;
+  for (const variant of variants) {
+    result = result.replace(new RegExp(escapeRegExp(variant), "gi"), "~");
+  }
+  return result;
+}
+
+/** A copy of a startup error that is safe to report: home folder paths redacted. */
+export function startupErrorForReport(error, home = homedir()) {
+  const source = error instanceof Error ? error : new Error(String(error));
+  const report = new Error(redactHomePath(source.message, home));
+  report.name = source.name;
+  if (source.stack) report.stack = redactHomePath(source.stack, home);
+  return report;
+}
 
 function envFlagEnabled(name) {
   const value = process.env[name]?.trim().toLowerCase();
@@ -110,11 +161,16 @@ export function setOpenworkSentrySession(input) {
     organization_id: orgId,
     user_id: userId,
   });
+  for (const { error, context } of pendingStartupCaptures.drain()) {
+    captureException(error, context);
+  }
   return true;
 }
 
 export function clearOpenworkSentrySession() {
   telemetryActive = false;
+  // A signed-out member's early failures are not sent for a later session.
+  pendingStartupCaptures.drain();
   if (!initialized || !sentry) return false;
 
   sentry.setUser(null);
@@ -132,4 +188,19 @@ export function captureException(error, context = {}) {
     sentry.captureException(error);
   });
   return true;
+}
+
+/**
+ * Reports a failure that can happen before the renderer has confirmed the
+ * member's session, such as the runtime boot that leaves the "OpenWork
+ * couldn't start" screen. Sent now when a session is active; otherwise held
+ * and sent when one starts. Like every desktop report, nothing is sent for a
+ * member who never signs in.
+ */
+export function captureStartupException(error, context = {}) {
+  if (!initialized || !sentry) return false;
+  const report = startupErrorForReport(error);
+  if (telemetryActive) return captureException(report, context);
+  pendingStartupCaptures.add(report, context);
+  return false;
 }

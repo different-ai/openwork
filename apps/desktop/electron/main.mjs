@@ -89,6 +89,7 @@ import { createDesktopVaultKeyProvider } from "./secure-vault-key.mjs";
 import { desktopFreeBootstrapEligible } from "./desktop-free-eligibility.mjs";
 import { applyDesktopFreeBuildSettings } from "./desktop-free-release.mjs";
 import {
+  captureStartupException,
   clearOpenworkSentrySession,
   initOpenworkSentry,
   setOpenworkSentrySession,
@@ -1724,10 +1725,14 @@ async function bootRuntimeForSelectedWorkspace() {
 }
 
 function startRuntimeBootstrap() {
-  runtimeBootstrapPromise = withStartupPhase("runtime.start", bootRuntimeForSelectedWorkspace).catch((error) => ({
-    ok: false,
-    error: error instanceof Error ? error.message : String(error),
-  }));
+  runtimeBootstrapPromise = withStartupPhase("runtime.start", bootRuntimeForSelectedWorkspace).catch((error) => {
+    // Startup diagnostics only carry "engine_failed"; Sentry gets the real error.
+    captureStartupException(error, { surface: "desktop-boot", route: "runtime.start" });
+    return {
+      ok: false,
+      error: error instanceof Error ? error.message : String(error),
+    };
+  });
   void runtimeBootstrapPromise.then(recordStartupEngineSettled);
   return runtimeBootstrapPromise;
 }
