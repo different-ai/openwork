@@ -104,6 +104,7 @@ import { RetainedArtifactSurface } from "../../dashboard/retained-artifact-surfa
 import { CloudComputerControl } from "../computer/cloud-computer-control";
 import { ComputerControl } from "../computer/computer-control";
 import { useComputerSessionHistoryStore } from "@/components/chat/computer-session-history-store";
+import { useSteadyLiveTurnStore } from "@/components/chat/steady-live-turn-store";
 import { useComputerEndTurn } from "../computer/computer-store";
 import { TerminalDock } from "../terminal/terminal-dock";
 import { useActivePanelTab, usePanelTabStore, useSessionPanelState } from "../panel/panel-tab-store";
@@ -674,6 +675,10 @@ export function SessionPage(props: SessionPageProps) {
   useEffect(() => {
     useComputerSessionHistoryStore.getState().setEnabled(computerHistoryFeature);
   }, [computerHistoryFeature]);
+  const steadyLiveTurnFeature = useDesktopFeature("steadyLiveTurn");
+  useEffect(() => {
+    useSteadyLiveTurnStore.getState().setEnabled(steadyLiveTurnFeature);
+  }, [steadyLiveTurnFeature]);
   const remoteComputersFeature = useDesktopFeature("remoteComputers");
   // The button hides itself when this computer can't run it and no VM is connected.
   const computerUse = computerUseFeature && isElectronRuntime();

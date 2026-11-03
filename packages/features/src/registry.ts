@@ -181,6 +181,17 @@ export const FEATURES = defineFeatures({
     deployments: everywhere,
     default: false,
   },
+  steadyLiveTurn: {
+    label: "Desktop: steady chat while a reply runs",
+    description: "While a reply runs, its steps and messages stay in the order they arrive and the chat keeps its place: nothing jumps and no empty gap opens between steps. The steps fold into “Worked for…” once the reply finishes. Turning this off restores the previous live layout.",
+    category: "experience",
+    added: "2026-11-03",
+    since: "2026-11",
+    author: "benjaminshafii",
+    docs: "docs/features/steady-live-turn/README.md",
+    deployments: everywhere,
+    default: false,
+  },
   administratorRecovery: {
     label: "Deploy-time administrator recovery",
     description: "Run a one-time, operator-selected Admin-team permission repair at deployment; disabling stops future repairs, not existing grants.",
