@@ -14,6 +14,7 @@ const specs = new Set([
   "agent-permissions.e2e.test.ts",
   "opencode-v2-drive-upload.proof.test.ts",
   "opencode-v2-skill-jit.proof.test.ts",
+  "browser-site-tools.proof.test.ts",
 ]);
 
 const v2Only = new Set([

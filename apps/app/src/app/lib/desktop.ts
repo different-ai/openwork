@@ -223,8 +223,6 @@ declare global {
         reorderTabs?: (tabIds: string[]) => Promise<BrowserPanelTab[]>;
         taskControl?: (tabId: string, action: "pause" | "resume") => Promise<void>;
         listTabs?: () => Promise<BrowserPanelTab[]>;
-        listWebMcpTools?: (args?: { tabId?: string }) => Promise<unknown>;
-        executeWebMcpTool?: (args: { toolId: string; input?: unknown }) => Promise<unknown>;
         setProxy?: (proxy?: string | null) => Promise<BrowserProxyState>;
         getProxy?: () => Promise<BrowserProxyState>;
         setControlEnabled?: (enabled: boolean) => Promise<boolean>;

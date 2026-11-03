@@ -370,14 +370,6 @@ const uiControlServer = createUiControlServer({
     return computerControl.script(args, { ...options, approveEachScript: decision.effect === "ask" });
   },
   computerEnabled: () => computerControl.featureEnabled(),
-  listWebMcpTools: (args, options) => browserPanel?.listWebMcpTools(args, options) ?? {
-    ok: false,
-    error: "The built-in browser is not ready.",
-  },
-  executeWebMcpTool: (args, options) => browserPanel?.executeWebMcpTool(args, options) ?? {
-    ok: false,
-    error: "The built-in browser is not ready.",
-  },
 });
 
 const terminalProcesses = new Map();

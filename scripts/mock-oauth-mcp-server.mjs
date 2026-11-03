@@ -561,6 +561,7 @@ function appReadStepArguments(messages, argumentsValue) {
 function browserPageArguments(messages, argumentsValue) {
   let tabId = null, observationId = null;
   const refs = new Map();
+  const siteTools = new Map();
   for (const message of messages) {
     if (message?.role !== "tool") continue;
     let payload;
@@ -570,6 +571,9 @@ function browserPageArguments(messages, argumentsValue) {
     } catch { continue; }
     if (!payload || typeof payload !== "object") continue;
     if (typeof payload.tabId === "string") tabId = payload.tabId;
+    for (const tool of Array.isArray(payload.tools) ? payload.tools : []) {
+      if (typeof tool?.name === "string" && typeof tool.toolId === "string") siteTools.set(tool.name, tool.toolId);
+    }
     for (const observation of [payload, payload.observation]) {
       if (typeof observation?.observationId !== "string") continue;
       observationId = observation.observationId;
@@ -587,6 +591,11 @@ function browserPageArguments(messages, argumentsValue) {
   const value = structuredClone(argumentsValue);
   if (value.tabId === "__TAB__") value.tabId = tabId ?? (() => { throw new Error("the browser returned no tab"); })();
   if (value.observationId === "__OBSERVATION__") value.observationId = observationId ?? (() => { throw new Error("the browser returned no observation"); })();
+  if (typeof value.toolName === "string") {
+    if (!siteTools.has(value.toolName)) throw new Error(`the browser listed no website tool named ${value.toolName}`);
+    value.toolId = siteTools.get(value.toolName);
+    delete value.toolName;
+  }
   if (value.action) value.action = resolve(value.action);
   if (Array.isArray(value.actions)) value.actions = value.actions.map(resolve);
   return value;
