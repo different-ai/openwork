@@ -1,6 +1,20 @@
 import { CodeMode } from "@openwork/codemode"
 import { Effect } from "effect"
+import { runOnOpencodeCodeMode } from "./codemode-run-opencode.js"
+import type { CodemodeLanguage } from "./codemode-script-object.js"
 import type { CodemodeToolTree } from "./codemode-tools.js"
+
+/** Which interpreter runs a script: OpenWork's original Code Mode or OpenCode's. */
+export type CodemodeRuntime = "openwork" | "opencode"
+
+/**
+ * Saved code keeps the Code Mode it was written for: OpenWork's for
+ * `codemode-js`, OpenCode's for `opencode-codemode` while the organization has
+ * `opencodeCodeMode`. Turning the feature off runs everything on OpenWork's again.
+ */
+export function codemodeRuntimeFor(language: CodemodeLanguage, opencodeCodeMode: boolean): CodemodeRuntime {
+  return language === "opencode-codemode" && opencodeCodeMode ? "opencode" : "openwork"
+}
 
 type CodemodeRunCommon = {
   logs: string[]
@@ -38,6 +52,7 @@ export async function runCodemodeScript(input: {
   timeoutMs: number
   maxToolCalls?: number
   maxOutputBytes?: number
+  runtime?: CodemodeRuntime
 }): Promise<CodemodeRunResult> {
   const startedAt = Date.now()
   if (input.scriptInput !== undefined && !isJsonSafe(input.scriptInput)) {
@@ -50,17 +65,20 @@ export async function runCodemodeScript(input: {
     }
   }
   const bindings = input.scriptInput === undefined ? undefined : { input: input.scriptInput }
-  const result = await Effect.runPromise(CodeMode.execute({
-    code: input.code,
-    tools: input.tools,
-    ...(bindings ? { bindings } : {}),
-    readonlyBindings: input.readOnlyInput,
-    limits: {
-      timeoutMs: input.timeoutMs,
-      maxToolCalls: input.maxToolCalls ?? DEFAULT_MAX_TOOL_CALLS,
-      maxOutputBytes: input.maxOutputBytes ?? 65_536,
-    },
-  }))
+  const limits = {
+    timeoutMs: input.timeoutMs,
+    maxToolCalls: input.maxToolCalls ?? DEFAULT_MAX_TOOL_CALLS,
+    maxOutputBytes: input.maxOutputBytes ?? 65_536,
+  }
+  const result = input.runtime === "opencode"
+    ? await runOnOpencodeCodeMode({ code: input.code, tools: input.tools, ...(bindings ? { bindings } : {}), limits })
+    : await Effect.runPromise(CodeMode.execute({
+        code: input.code,
+        tools: input.tools,
+        ...(bindings ? { bindings } : {}),
+        readonlyBindings: input.readOnlyInput,
+        limits,
+      }))
   const common = {
     logs: [...(result.logs ?? [])],
     toolCalls: result.toolCalls.map((call) => ({ name: call.name })),

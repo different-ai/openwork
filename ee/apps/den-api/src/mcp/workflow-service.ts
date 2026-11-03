@@ -1,4 +1,5 @@
 import { workflowConnectionError } from "../workflow-connection-error.js"
+import { organizationFeatureEnabled } from "../features.js"
 import type { createDenDb } from "@openwork-ee/den-db"
 import type { DenTypeId } from "@openwork-ee/utils/typeid"
 import { recordWorkflowRun, recordWorkflowResult } from "../workflow-runs.js"
@@ -13,13 +14,23 @@ import {
   parseCodemodeScriptPayload,
   validateCodemodeScriptInput,
   validateCodemodeScriptOutput,
+  type CodemodeLanguage,
   type CodemodeScriptInputIssue,
 } from "./codemode-script-object.js"
 import { restrictCodemodeToolTree, type BuildCodemodeTools } from "./codemode-tools.js"
-import { runCodemodeScript } from "./codemode-run.js"
+import { codemodeRuntimeFor, runCodemodeScript } from "./codemode-run.js"
 import { normalizeToolBody } from "./invoke.js"
 
 type CodemodeDb = ReturnType<typeof createDenDb>["db"]
+
+/**
+ * The Code Mode that new Workflow code is tested and saved for. It is read per
+ * organization, like every run, so a Workflow always runs on the Code Mode it
+ * was tested on while the feature stays on.
+ */
+export async function newWorkflowLanguage(organizationId: string): Promise<CodemodeLanguage> {
+  return await organizationFeatureEnabled(organizationId, "opencodeCodeMode") ? "opencode-codemode" : "codemode-js"
+}
 
 export type WorkflowExecutionResult =
   | {
@@ -137,6 +148,11 @@ export async function executeWorkflow(input: {
     }
   }
 
+  // Only Workflows written for OpenCode's Code Mode check the feature; a revert runs them on OpenWork's.
+  const runtime = codemodeRuntimeFor(
+    parsed.payload.language,
+    parsed.payload.language === "opencode-codemode" && await organizationFeatureEnabled(input.organizationId, "opencodeCodeMode"),
+  )
   const startedAt = new Date()
   const result = await runCodemodeScript({
     code: input.code,
@@ -146,6 +162,7 @@ export async function executeWorkflow(input: {
     timeoutMs: Math.min(parsed.payload.limits?.timeoutMs ?? 120_000, 170_000),
     maxToolCalls: parsed.payload.limits?.maxToolCalls,
     maxOutputBytes: parsed.payload.limits?.maxOutputBytes,
+    runtime,
   })
   const finishedAt = new Date()
   if (!result.ok) {

@@ -433,6 +433,17 @@ export const FEATURES = defineFeatures({
     deployments: everywhere,
     default: false,
   },
+  opencodeCodeMode: {
+    label: "Workflows on OpenCode's Code Mode",
+    description: "Workflows written from now on, and Workflow tests, run on OpenCode's Code Mode, the same JavaScript the OpenCode engine runs. Workflows saved before keep running as they always have. Turning this off runs every Workflow on OpenWork's original Code Mode again.",
+    category: "automations",
+    added: "2026-11-03",
+    since: "2026-11",
+    author: "reachjalil",
+    docs: "docs/features/opencode-code-mode/README.md",
+    deployments: everywhere,
+    default: false,
+  },
   outlookAttachments: {
     label: "Outlook attachments",
     description: "Agents read the files attached to Outlook messages and create Outlook drafts and replies with workspace files attached, after the member approves each draft. Drafts are never sent.",

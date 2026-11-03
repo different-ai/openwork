@@ -74,6 +74,7 @@ import {
   type ExecuteCapabilityToolResult,
 } from "./capability-registry.js"
 import { executeWorkflowAuthoringTest, workflowAuthoringTestInputSchema, workflowAuthoringTestOutputSchema } from "./workflow-authoring-test.js"
+import { newWorkflowLanguage } from "./workflow-service.js"
 import { parseNativeCapabilityName } from "./native-capabilities.js"
 import { gmailFileInputPreflightSchema } from "../capability-sources/gmail-file-input.js"
 import { recordWorkflowRun } from "../workflow-runs.js"
@@ -1377,9 +1378,11 @@ export function registerAgentMcpRoutes<T extends { Variables: RequestIdVariables
             return { isError: true, content: textContent(JSON.stringify({ error: "membership_required", message: "Workflow tests require an active organization membership." })) }
           }
           try {
+            const language = await newWorkflowLanguage(organizationId)
             return await runMcpServiceAction("workflow_run.record", auditPrincipal, null, () => executeWorkflowAuthoringTest(request, {
               organizationId,
               orgMembershipId: memberIdentity?.orgMembershipId,
+              runtime: language === "opencode-codemode" ? "opencode" : "openwork",
               buildTools: () => buildCapabilityToolTree(capabilityContext),
               recordRun: (receipt) => recordWorkflowRun(db, receipt),
             }), { result: toolResultStatus })
