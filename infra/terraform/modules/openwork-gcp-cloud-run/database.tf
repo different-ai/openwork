@@ -26,7 +26,7 @@ locals {
 resource "random_password" "db" {
   count = var.create_database && !var.write_only_secrets ? 1 : 0
 
-  length  = 32
+  length  = var.managed_legacy ? 48 : 32
   special = false # embedded in DATABASE_URL
 }
 
@@ -34,7 +34,7 @@ resource "google_sql_database_instance" "this" {
   count = var.create_database ? 1 : 0
 
   project             = var.project_id
-  name                = "${var.name}-den"
+  name                = var.managed_legacy ? "${var.name}-mysql" : "${var.name}-den"
   region              = var.region
   database_version    = var.database.database_version
   deletion_protection = var.database.deletion_protection != null ? var.database.deletion_protection : var.deletion_protection
@@ -57,6 +57,14 @@ resource "google_sql_database_instance" "this" {
     backup_configuration {
       enabled            = var.database.backup_enabled
       binary_log_enabled = var.database.backup_enabled
+      start_time         = var.managed_legacy ? "03:00" : null
+      dynamic "backup_retention_settings" {
+        for_each = var.managed_legacy ? [1] : []
+        content {
+          retained_backups = 7
+          retention_unit   = "COUNT"
+        }
+      }
     }
   }
 
@@ -76,7 +84,7 @@ resource "google_sql_user" "openwork" {
   project             = var.project_id
   instance            = google_sql_database_instance.this[0].name
   name                = "openwork"
-  host                = "%"
+  host                = var.managed_legacy ? "" : "%"
   password            = var.write_only_secrets ? null : random_password.db[0].result
   password_wo         = var.write_only_secrets ? lookup(var.preserved_secrets_wo, "DATABASE_PASSWORD", ephemeral.random_password.app["DATABASE_PASSWORD"].result) : null
   password_wo_version = var.write_only_secrets ? var.database_password_wo_version : null

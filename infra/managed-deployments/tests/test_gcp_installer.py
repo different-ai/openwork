@@ -48,6 +48,8 @@ def args():
 def bundle(extra=None, manifest_change=None):
     files = {"infra/managed-deployments/gcp/" + path: b"# fixture\n" for path in
              ["runner/install.py", "runner/runner.py", "health/health_agent.py", "terraform/main.tf", "terraform/.terraform.lock.hcl"]}
+    files.update({"infra/terraform/modules/openwork-gcp-cloud-run/" + name: b"# fixture\n" for name in
+                  ("main.tf", "cloudrun.tf", "database.tf", "lb.tf", "variables.tf", "versions.tf", "outputs.tf")})
     manifest = {"provider": "gcp", "version": "0.18.0", "protocolVersion": 1, "images": dict(PINS),
                 "files": {name: hashlib.sha256(data).hexdigest() for name, data in files.items()}}
     if manifest_change:
@@ -284,18 +286,18 @@ class RunnerTests(unittest.TestCase):
                 patch.object(runner, "orchestration_mutex", side_effect=contextlib.nullcontext), \
                 patch.object(runner, "report") as report, patch.object(runner, "verify_target"), \
                 patch.object(runner, "mirror_images", return_value={}), patch.object(runner, "apply", return_value=outputs), \
-                patch.object(runner, "verify_services"), patch.object(runner, "verify_health"), patch.object(runner, "gcloud") as cloud:
+                patch.object(runner, "verify_services"), patch.object(runner, "verify_health"), patch.object(runner, "verify_health_job") as health_job:
             runner.main()
             self.assertEqual([c.args[1:3] for c in report.call_args_list], [(1, "runner_connected"), (2, "release_verified"),
                 (3, "account_verified"), (4, "infrastructure_applied"), (5, "services_ready"), (6, "health_verified")])
-            self.assertIn("--wait", cloud.call_args.args)
+            health_job.assert_called_once_with(outputs)
 
     def test_first_health_rejection_does_not_mark_ready(self):
         with patch.dict(os.environ, ENV, clear=True), patch.object(runner, "enroll", return_value="run-token"), \
                 patch.object(runner, "orchestration_mutex", side_effect=contextlib.nullcontext), \
                 patch.object(runner, "report") as report, patch.object(runner, "verify_target"), \
                 patch.object(runner, "mirror_images", return_value={}), patch.object(runner, "apply", return_value={"health_agent": "job"}), \
-                patch.object(runner, "verify_services"), patch.object(runner, "verify_health"), patch.object(runner, "gcloud", side_effect=ValueError("rejected")):
+                patch.object(runner, "verify_services"), patch.object(runner, "verify_health"), patch.object(runner, "verify_health_job", side_effect=ValueError("rejected")):
             with self.assertRaises(ValueError):
                 runner.main()
             self.assertEqual(report.call_args.args, ("run-token", 6, "health_verified", "failed", "health_check_failed"))
@@ -324,9 +326,10 @@ class RunnerTests(unittest.TestCase):
                 runner.apply(root, {})
             self.assertIn("-lockfile=readonly", calls[0])
             self.assertIn("-backend-config=impersonate_service_account=" + ENV["RUNNER_SERVICE_ACCOUNT"], calls[0])
-            self.assertEqual([c[1] for c in calls], ["init", "plan", "apply", "jobs", "plan", "apply"])
-            self.assertIn("-target=google_cloud_run_v2_job.migrate", calls[1])
-            self.assertIn("--wait", calls[3])
+            self.assertEqual([c[1] for c in calls], ["init", "plan", "apply"])
+            self.assertFalse(any("-target=" in argument for command in calls for argument in command))
+            # Native module execution token owns migration and waiting; no second CLI execution.
+            self.assertFalse(any(command[0] == "run" for command in calls))
             self.assertTrue(all("-lock-timeout=120s" in c for c in calls if c[1] in ("plan", "apply")))
 
     def test_apply_rejects_data_destruction_before_any_apply(self):
@@ -495,9 +498,10 @@ print(json.dumps({"Descriptor": {"digest": digest, "platform": {"os": "linux", "
             docker.chmod(0o700)
             pins = path / "approved-pins.json"
             pins.write_text(json.dumps({kind: PINS[kind] for kind in ("den_api", "den_web")}))
-            subprocess.run(["node", str(ROOT / "infra/managed-deployments/tools/build-release.mjs"), "gcp", "0.18.0", directory,
+            built = subprocess.run(["node", str(ROOT / "infra/managed-deployments/tools/build-release.mjs"), "gcp", "0.18.0", directory,
                             "--image-pins", str(pins)], env={**os.environ, "PATH": str(bin_path) + os.pathsep + os.environ["PATH"]},
-                           check=True, capture_output=True)
+                           capture_output=True, text=True)
+            self.assertEqual(built.returncode, 0, built.stderr)
             path = Path(directory)
             manifest = json.loads((path / "manifest.json").read_text())
             data = (path / "bundle.tar.gz").read_bytes()
@@ -507,10 +511,20 @@ print(json.dumps({"Descriptor": {"digest": digest, "platform": {"os": "linux", "
             extracted = path / "verified"
             extracted.mkdir()
             install.extract_verified(data, manifest["bundleSha256"], extracted, "0.18.0")
-            self.assertEqual(json.loads((extracted / "release.json").read_text())["images"], PINS)
-            for file in extracted.rglob("*"):
-                self.assertFalse(file.name.endswith((".tfstate", ".tfvars", ".tfplan")))
-                self.assertNotIn(".terraform/", str(file.relative_to(extracted)))
+            release = json.loads((extracted / "release.json").read_text())
+            self.assertEqual(release["images"], PINS)
+            module = "infra/terraform/modules/openwork-gcp-cloud-run/"
+            self.assertEqual({name for name in release["files"] if name.startswith(module)},
+                             {module + source.name for source in (ROOT / module).glob("*.tf")})
+            self.assertFalse(any("/tests/" in name or "/examples/" in name for name in release["files"]))
+            tf_root = extracted / "infra/managed-deployments/gcp/terraform"
+            for command in (["terraform", "init", "-backend=false", "-input=false", "-lockfile=readonly",
+                             "-plugin-dir=" + str(GCP / "terraform/.terraform/providers")], ["terraform", "validate", "-no-color"]):
+                checked = subprocess.run(command, cwd=tf_root, capture_output=True, text=True, timeout=120)
+                self.assertEqual(checked.returncode, 0, checked.stdout + checked.stderr)
+            for file in release["files"]:
+                self.assertFalse(file.endswith((".tfstate", ".tfvars", ".tfplan")))
+                self.assertNotIn(".terraform/", file)
 
 
 if __name__ == "__main__":

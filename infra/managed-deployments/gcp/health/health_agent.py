@@ -1,4 +1,5 @@
 """Read-only GCP health job. Standard library only; reports no names or secrets."""
+import base64
 import datetime
 import hashlib
 import json
@@ -8,6 +9,11 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
+
+
+# The platform job limit is 240s. All HTTP operations share the softer budget
+# while main runs; imports/helpers used independently keep their original limit.
+_report_deadline = None
 
 
 class NoRedirect(urllib.request.HTTPRedirectHandler):
@@ -28,7 +34,10 @@ class SameOriginRedirect(urllib.request.HTTPRedirectHandler):
 def fetch(url, headers=None, data=None, same_origin_redirects=False):
     req = urllib.request.Request(url, headers=headers or {}, data=data)
     redirect = SameOriginRedirect() if same_origin_redirects else NoRedirect()
-    with urllib.request.build_opener(redirect).open(req, timeout=20) as response:
+    remaining = 20 if _report_deadline is None else _report_deadline - time.monotonic()
+    if remaining <= 0:
+        raise TimeoutError("health report deadline exceeded")
+    with urllib.request.build_opener(redirect).open(req, timeout=min(20, remaining)) as response:
         body = response.read(1024 * 1024 + 1)
         if len(body) > 1024 * 1024:
             raise ValueError("response too large")
@@ -188,18 +197,74 @@ def identity_headers(body):
     return {"Content-Type": "application/json", "Authorization": "Bearer " + token}
 
 
-def main():
-    report = collect()
-    # Metadata identity tokens may be cached for an audience. Even an unchanged
-    # health snapshot needs a fresh audience; the API binds it to this exact body
-    # and still enforces strict JWT freshness and monotonic issued-at replay checks.
-    report["nonce"] = secrets.token_hex(16)
-    body = json.dumps(report, separators=(",", ":"), allow_nan=False).encode()
-    url = os.environ["CONTROL_PLANE_ORIGIN"] + "/v1/managed-deployments/" + os.environ["DEPLOYMENT_ID"] + "/heartbeat"
-    response = json.loads(fetch(url, identity_headers(body), body))
-    if response.get("ok") is not True:
-        raise ValueError("health report rejected")
-    print(json.dumps({"reported": True, "checks": {c["id"]: c["status"] for c in json.loads(body)["checks"]}}))
+def proof_issued_at(headers):
+    # This is a timing check, NOT authentication. Only the server verifies the
+    # metadata JWT signature/issuer/audience; never print or persist its payload.
+    try:
+        token = headers["Authorization"].split(" ", 1)[1]
+        parts = token.split(".")
+        if len(parts) != 3:
+            raise ValueError()
+        payload = json.loads(base64.urlsafe_b64decode(parts[1] + "=" * (-len(parts[1]) % 4)))
+        issued = payload["iat"]
+        if type(issued) is not int:
+            raise ValueError()
+        return issued
+    except (KeyError, IndexError, AttributeError, TypeError, ValueError):
+        raise ValueError("invalid metadata proof timestamp") from None
+
+
+def heartbeat_error_code(error):
+    try:
+        raw = error.read(4097)
+        payload = json.loads(raw) if len(raw) <= 4096 else {}
+        code = payload.get("error") if isinstance(payload, dict) else None
+    except (AttributeError, TypeError, ValueError, OSError):
+        code = None
+    return code if code in ("stale_report", "unauthorized", "rate_limited", "invalid_report", "deployment_not_found") else "unclassified"
+
+
+def main(timeout=200):
+    global _report_deadline
+    previous_deadline = _report_deadline
+    _report_deadline = time.monotonic() + timeout
+    previous_iat = None
+    try:
+        for attempt in range(2):
+            if previous_iat is not None:
+                while int(time.time()) <= previous_iat:
+                    remaining = _report_deadline - time.monotonic()
+                    if remaining <= 0:
+                        raise TimeoutError("health report deadline exceeded")
+                    time.sleep(min(0.2, remaining))
+            if time.monotonic() >= _report_deadline:
+                raise TimeoutError("health report deadline exceeded")
+            # Re-measure, not merely re-sign an old snapshot that could overwrite
+            # a newer accepted observation. Every attempt has a new audience.
+            report = collect()
+            if time.monotonic() >= _report_deadline:
+                raise TimeoutError("health report deadline exceeded")
+            report["nonce"] = secrets.token_hex(16)
+            body = json.dumps(report, separators=(",", ":"), allow_nan=False).encode()
+            headers = identity_headers(body)
+            if previous_iat is not None and proof_issued_at(headers) <= previous_iat:
+                raise ValueError("fresh metadata proof did not advance; not resubmitted")
+            url = os.environ["CONTROL_PLANE_ORIGIN"] + "/v1/managed-deployments/" + os.environ["DEPLOYMENT_ID"] + "/heartbeat"
+            try:
+                response = json.loads(fetch(url, headers, body))
+            except urllib.error.HTTPError as error:
+                code = heartbeat_error_code(error)
+                print(json.dumps({"healthReportFailure": {"httpStatus": error.code, "errorCode": code, "attempt": attempt + 1}}))
+                if error.code == 409 and code == "stale_report" and attempt == 0:
+                    previous_iat = proof_issued_at(headers)
+                    continue
+                raise ValueError(f"health report failed: HTTP {error.code} {code}") from None
+            if response.get("ok") is not True:
+                raise ValueError("health report rejected")
+            print(json.dumps({"reported": True, "checks": {c["id"]: c["status"] for c in report["checks"]}}))
+            return
+    finally:
+        _report_deadline = previous_deadline
 
 
 if __name__ == "__main__":
