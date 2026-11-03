@@ -1,5 +1,54 @@
 import Foundation
 import CoreGraphics
+import ImageIO
+
+/// Coordinates come from the observation's image, so pointer input needs that image
+/// to be unchanged only where it lands: a caret, clock or rendering canvas elsewhere
+/// in the window does not move what is under the pointer.
+enum ImageRegions {
+    static let radius = 32
+
+    static func unchanged(_ observed: Data?, _ live: Data, around points: [CGPoint], radius: Int = radius) -> Bool {
+        guard let observed, !points.isEmpty, let before = decode(observed), let after = decode(live),
+              before.width == after.width, before.height == after.height else { return false }
+        let image = CGRect(x: 0, y: 0, width: before.width, height: before.height)
+        for point in points {
+            guard point.x.isFinite, point.y.isFinite else { return false }
+            let box = CGRect(x: Int(point.x) - radius, y: Int(point.y) - radius, width: radius * 2 + 1, height: radius * 2 + 1).intersection(image)
+            guard !box.isEmpty, let left = before.cropping(to: box), let right = after.cropping(to: box),
+                  let pixels = rgba(left), pixels == rgba(right) else { return false }
+        }
+        return true
+    }
+
+    private static func decode(_ data: Data) -> CGImage? {
+        CGImageSourceCreateWithData(data as CFData, nil).flatMap { CGImageSourceCreateImageAtIndex($0, 0, nil) }
+    }
+
+    private static func rgba(_ image: CGImage) -> Data? {
+        let bytesPerRow = image.width * 4
+        var pixels = Data(count: bytesPerRow * image.height)
+        let drawn = pixels.withUnsafeMutableBytes { buffer -> Bool in
+            guard let context = CGContext(data: buffer.baseAddress, width: image.width, height: image.height, bitsPerComponent: 8,
+                bytesPerRow: bytesPerRow, space: CGColorSpace(name: CGColorSpace.sRGB)!, bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else { return false }
+            context.draw(image, in: CGRect(x: 0, y: 0, width: image.width, height: image.height))
+            return true
+        }
+        return drawn ? pixels : nil
+    }
+}
+
+/// Keys go only to the exact field the agent observed or pressed. When focus moved off
+/// it before the step began, put it back once and check again; anything else still stops.
+enum FocusRecovery {
+    @MainActor static func check(validate: () throws -> Void, refocus: () -> Bool) throws {
+        do { try validate() }
+        catch let error as UseError where error.code == "focus_changed" {
+            guard refocus() else { throw error }
+            try validate()
+        }
+    }
+}
 
 struct UseError: LocalizedError {
     let code: String
@@ -581,6 +630,8 @@ struct ObservationLease {
     var stateDigest: Data = Data()
     var imageDigest: Data?
     var validFor: TimeInterval = 15
+    /// The encoded image the model saw, so coordinate input can check where it lands.
+    var image: Data?
 
     static let validitySeconds: TimeInterval = 15
     func validate(id requested: String, generation current: Int, frame currentFrame: CGRect, now: TimeInterval) throws {

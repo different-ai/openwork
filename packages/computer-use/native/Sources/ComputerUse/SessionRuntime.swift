@@ -484,7 +484,7 @@ final class SessionRuntime {
         let elements = try shown.map { try $0.payload(bounds: bounds, width: width, height: height, compact: policy == .embedded) }
         let observation = ObservationLease(id: UUID().uuidString.lowercased(), createdAt: now, generation: current.generation,
             frame: bounds, imageWidth: width, imageHeight: height, stateDigest: try access.captureDigest(state),
-            imageDigest: imageDigest, validFor: policy.observationSeconds)
+            imageDigest: imageDigest, validFor: policy.observationSeconds, image: png)
         try check()
         let observedFocus = state.focusRecord.flatMap { focus in shown.first { CFEqual($0.element, focus.element) } }
         let afterAction = current.baseline.flatMap { baseline in
@@ -625,12 +625,12 @@ final class SessionRuntime {
         let moment = ProcessInfo.processInfo.systemUptime
         var returns = 0
         var disturbed = try await shareDesktop(current, returns: &returns, since: moment, front: front)
-        // The observation showed the window behind other work; coordinates need a fresh look.
-        // The front is handed back before that look, so a background one would land here
-        // again: the look and this app's later steps take the front.
+        // The person had other work in front, and the window was just brought back for this
+        // step. Coordinate steps still check the live window against the observation, where
+        // each one lands, before any input; this app's later steps take the front too, so a
+        // background look cannot leave it behind the person's work again.
         if inBackground, front, disturbed, actions.contains(where: \.usesCoordinates) {
             session?.delivery = .foreground
-            throw UseError("observation_required", "This step needs the app in front, so its next steps bring the window forward. Observe again, then repeat the step; nothing was sent.", next: "observe")
         }
         let bounds: CGRect
         do { bounds = try access.validate(current.target, app: current.app, requireFrontmost: frontCheck) }
@@ -738,16 +738,17 @@ final class SessionRuntime {
                     if action.usesCoordinates {
                         let captured = try await observationImage(current, bounds: bounds, state: live,
                             requireFrontmost: frontCheck, check: check)
-                        guard access.imageDigest(captured.0) == observation.imageDigest else {
-                            throw UseError("stale_observation", "The window image changed. Observe before coordinate input.", next: "observe")
-                        }
-                        let point: CGPoint
+                        let points: [CGPoint]
                         switch action {
-                        case .move(let p), .click(let p, _, _), .scroll(let p, _, _): point = p
-                        case .drag(let points): point = points[0]
+                        case .move(let p), .click(let p, _, _), .scroll(let p, _, _): points = [p]
+                        case .drag(let path): points = path
                         default: throw UseError("invalid_arguments", "This action has no coordinates.")
                         }
-                        pointerTarget = try access.checkHit(observation.screenPoint(point), target: current.target, app: current.app, background: background || !current.parents.isEmpty)
+                        guard access.imageDigest(captured.0) == observation.imageDigest
+                                || ImageRegions.unchanged(observation.image, captured.0, around: points) else {
+                            throw UseError("stale_observation", "The window image changed where this step lands. Observe before coordinate input.", next: "observe")
+                        }
+                        pointerTarget = try access.checkHit(observation.screenPoint(points[0]), target: current.target, app: current.app, background: background || !current.parents.isEmpty)
                     }
                 }
                 if !progress.hasInput, let focus {
