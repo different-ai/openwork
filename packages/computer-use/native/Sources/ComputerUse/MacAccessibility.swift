@@ -2,6 +2,7 @@ import AppKit
 import ApplicationServices
 import ScreenCaptureKit
 import CryptoKit
+import Carbon.HIToolbox
 
 struct AppIdentity {
     let app: NSRunningApplication
@@ -672,6 +673,44 @@ final class MacAccessibility {
         try validateAncestry(focused, target: target, budget: budget)
         if requireField, try checkedBool(focused, "AXEditable", budget) == false {
             throw UseError("protected_input", "The observed field is not editable.", next: "observe")
+        }
+    }
+
+    /// Whether a letter key would be typed: a text field of any kind has the app's
+    /// keyboard, or macOS reports a password box anywhere (Secure Keyboard Entry).
+    func textInputFocused(_ app: AppIdentity) -> Bool {
+        if IsSecureEventInputEnabled() { return true }
+        let budget = AXReadBudget()
+        guard let focused = try? checkedElement(AXUIElementCreateApplication(app.pid), kAXFocusedUIElementAttribute, budget) else { return false }
+        let role = (try? checkedString(focused, kAXRoleAttribute, budget)) ?? ""
+        return ElementRecord.textRoles.contains(role) || (try? checkedBool(focused, "AXEditable", budget)) == true
+            || (try? checkedString(focused, kAXSubroleAttribute, budget)) == "AXSecureTextField"
+    }
+
+    /// The editor that has the keyboard in the selected window when it is not an
+    /// observed text field, such as a design app's text on a canvas. Never a password
+    /// box, and never while macOS reports one anywhere.
+    func focusedEditor(target: WindowTarget, app: AppIdentity, requireFront: Bool = true) throws -> AXUIElement {
+        let unsafe = UseError("protected_input", "A password field may have the keyboard, so nothing was typed. Ask the person to take over.", next: "human_takeover")
+        guard !IsSecureEventInputEnabled() else { throw unsafe }
+        let budget = AXReadBudget()
+        let root = AXUIElementCreateApplication(app.pid)
+        var pid: pid_t = 0
+        guard !requireFront || NSWorkspace.shared.frontmostApplication?.processIdentifier == app.pid,
+              let window = try checkedElement(root, kAXFocusedWindowAttribute, budget), CFEqual(window, target.element),
+              let focused = try checkedElement(root, kAXFocusedUIElementAttribute, budget),
+              AXUIElementGetPid(focused, &pid) == .success, pid == app.pid else {
+            throw UseError("focus_required", "Nothing in the selected window has the keyboard. Click where the text goes, then observe.", next: "observe")
+        }
+        let role = try checkedString(focused, kAXRoleAttribute, budget) ?? ""
+        guard try !isProtected(focused, role: role, budget) else { throw unsafe }
+        try validateAncestry(focused, target: target, budget: budget)
+        return focused
+    }
+    /// The editor `focusedEditor` found still has the keyboard, in the same window.
+    func checkEditor(_ editor: AXUIElement, target: WindowTarget, app: AppIdentity, requireFront: Bool = true) throws {
+        guard try CFEqual(focusedEditor(target: target, app: app, requireFront: requireFront), editor) else {
+            throw UseError("focus_changed", "The keyboard moved away from the text being edited. Observe again.", next: "observe")
         }
     }
 

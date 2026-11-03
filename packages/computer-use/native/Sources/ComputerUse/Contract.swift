@@ -177,6 +177,9 @@ struct BatchPacing: Equatable {
 enum Action {
     case press(String), setValue(String, String), key(String, CGEventFlags), type(String), wait(Int)
     case move(CGPoint), click(CGPoint, Int, CGEventFlags), scroll(CGPoint, Int32, Int32), drag([CGPoint])
+    /// Design apps hide tools and commands behind these: a secondary click, a press held
+    /// for `ms` (a tool's flyout), and a control's own accessible menu.
+    case rightClick(CGPoint), hold(CGPoint, Int), showMenu(String)
     /// A command from the app's menu bar, by its titles: ["Format", "Font", "Bold"].
     case menu([String])
 
@@ -201,6 +204,10 @@ enum Action {
         switch type {
         case "press":
             try a.only(["type", "ref"]); self = .press(try a.string("ref"))
+        case "show_menu" where policy == .embedded:
+            try a.only(["type", "ref"]); self = .showMenu(try a.string("ref"))
+        case "right_click" where policy == .embedded:
+            try a.only(["type", "x", "y"]); self = .rightClick(try Self.point(values))
         case "set_value":
             try a.only(["type", "ref", "text"])
             guard let text = values["text"] as? String, text.utf8.count <= 8_000, !text.contains("\0") else {
@@ -230,9 +237,15 @@ enum Action {
             try a.only(["type", "x", "y"]); self = .move(try Self.point(values))
         case "click", "double_click", "triple_click":
             guard type != "triple_click" || policy == .embedded else { throw UseError("unknown_action", "Unsupported action for this host.") }
-            try a.only(policy == .embedded ? ["type", "x", "y", "modifiers"] : ["type", "x", "y"])
+            try a.only(policy == .embedded ? ["type", "x", "y", "modifiers", "hold_ms"] : ["type", "x", "y"])
             let flags = try NativeKey.modifierFlags(values["modifiers"])
-            guard !flags.contains(.maskControl) else { throw UseError("unsupported_key", "Control-click is unavailable.") }
+            // Control-click opens a context menu, which the session then follows like a dialog.
+            guard !flags.contains(.maskControl) || policy == .embedded else { throw UseError("unsupported_key", "Control-click is unavailable.") }
+            if values["hold_ms"] != nil {
+                guard type == "click", flags.isEmpty else { throw UseError("invalid_arguments", "hold_ms is for a single click without modifiers.") }
+                self = .hold(try Self.point(values), try a.integer("hold_ms", min: 300, max: 2_000))
+                return
+            }
             self = .click(try Self.point(values), type == "click" ? 1 : type == "double_click" ? 2 : 3, flags)
         case "scroll":
             try a.only(["type", "x", "y", "delta_x", "delta_y"])
@@ -270,13 +283,16 @@ enum Action {
         case .scroll: return "scroll"
         case .drag: return "drag"
         case .menu: return "menu"
+        case .rightClick: return "right_click"
+        case .hold: return "press_and_hold"
+        case .showMenu: return "show_menu"
         }
     }
     var requiresControl: Bool {
         switch self { case .press, .setValue, .wait, .menu: return false; default: return true }
     }
     var usesCoordinates: Bool {
-        switch self { case .move, .click, .scroll, .drag: return true; default: return false }
+        switch self { case .move, .click, .scroll, .drag, .rightClick, .hold: return true; default: return false }
     }
     static func isStroke(_ action: Action) -> Bool {
         if case .drag = action { return true }; return false
@@ -338,11 +354,17 @@ enum NativeKey {
             guard flags.isEmpty else { throw UseError("invalid_arguments", "\(key) already includes its modifiers.") }
             key = alias.0; flags = alias.1
         }
+        // A bare letter, or Shift and a letter, picks a tool in design apps; the computer
+        // allows it only in those apps and only while no text field has the keyboard.
+        if policy == .embedded, isToolKey(key, flags) { return (key, flags) }
         guard !isBlocked(key, flags) else { throw UseError("blocked_shortcut", "Clipboard and system/window escape shortcuts are unavailable. Use type, set_value or observed app controls.", next: "observe") }
         guard codes[key] != nil, (flags.isEmpty ? navigation[key] != nil : shortcuts.contains(chord(key, flags))) else {
             throw UseError("unsupported_key", "Use a listed base key and supported shortcut; type handles ordinary text.")
         }
         return (key, flags)
+    }
+    static func isToolKey(_ key: String, _ flags: CGEventFlags) -> Bool {
+        key.count == 1 && key.unicodeScalars.allSatisfy { ("a"..."z").contains($0) } && flags.subtracting(.maskShift).isEmpty
     }
     static func chord(_ key: String, _ flags: CGEventFlags) -> String {
         let held = [("command", CGEventFlags.maskCommand), ("control", .maskControl), ("option", .maskAlternate), ("shift", .maskShift)]

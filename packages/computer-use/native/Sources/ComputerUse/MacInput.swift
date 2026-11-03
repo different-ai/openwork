@@ -91,7 +91,7 @@ final class MacInput {
     }
     func execute(_ action: Action, app: AppIdentity, target: WindowTarget, lease: ObservationLease,
                  access: MacAccessibility, records: [ElementRecord], focus: ElementRecord?, pointerTarget: AXUIElement?,
-                 check: () throws -> Void, checkWindow: () throws -> Void, background: Bool = false,
+                 check: () throws -> Void, checkWindow: () throws -> Void, background: Bool = false, editorTyping: Bool = false,
                  feedback send: @escaping (InputFeedback) -> Void = { _ in }) async throws -> String {
         feedback = DispatchFeedback(action: action.name, frame: lease.frame, send: send)
         gesture = Int64(UInt32.random(in: 1...UInt32.max))
@@ -210,6 +210,18 @@ final class MacInput {
                     try scroll(screen, dx: step.dx, dy: step.dy, pid: app.pid, windowID: target.id, frame: lease.frame)
                 }
                 report(.dispatched, point: screen)
+            case .key(let key, let flags) where NativeKey.isToolKey(key, flags):
+                // A letter picks a tool only where no text field would take it as text.
+                guard InputDelivery.takesToolKeys(info: app.app.bundleURL.flatMap { Bundle(url: $0)?.infoDictionary } ?? [:]) else {
+                    throw UseError("tool_keys_unavailable", "Single letters pick tools only in design, photo, video and music apps. Use the app's controls, or type in a text field.", next: "observe")
+                }
+                guard !access.textInputFocused(app) else {
+                    throw UseError("focus_required", "A text field has the keyboard, so the letter would be typed. Click the canvas first, or use type.", next: "observe")
+                }
+                let code = try keyCode(key, flags: flags)
+                try modifiers(flags, pid: app.pid, check: check)
+                try keyboard(code, flags: flags, text: nil, pid: app.pid, check: check)
+                releaseModifiers()
             case .key(let key, let flags):
                 try FocusRecovery.check(validate: {
                     try access.checkFocus(focus, target: target, app: app, requireField: ["backspace", "delete"].contains(key), requireFront: !background)
@@ -218,6 +230,16 @@ final class MacInput {
                 try modifiers(flags, pid: app.pid, check: check)
                 try keyboard(code, flags: flags, text: nil, pid: app.pid, check: check)
                 releaseModifiers()
+            case .type(let text) where editorTyping && focus == nil:
+                // The person allowed typing into this app's own editor, such as text on a canvas:
+                // whatever has the keyboard in the selected window, checked before every character.
+                let editor = try access.focusedEditor(target: target, app: app, requireFront: !background)
+                try await InputDispatch.type(text, check: check, validate: {
+                    try checkWindow()
+                    try access.checkEditor(editor, target: target, app: app, requireFront: !background)
+                }, send: { character in
+                    try self.keyboard(0, flags: [], text: character, pid: app.pid, check: check)
+                })
             case .type(let text):
                 // Only before the first character: once text is going in, a moved focus stops the step.
                 try FocusRecovery.check(validate: {
@@ -231,6 +253,40 @@ final class MacInput {
                     // submit or move focus mid-text, which only a separate key action may do.
                     try self.keyboard(0, flags: [], text: character, pid: app.pid, check: check)
                 })
+            case .rightClick(let point):
+                let screen = try lease.screenPoint(point)
+                let hit = try access.checkHit(screen, target: target, app: app, expected: pointerTarget, background: background)
+                try await InputDispatch.pointerDown(check: check, validate: {
+                    try checkWindow(); try access.checkHit(screen, target: target, app: app, expected: hit, background: background)
+                }, move: { try self.mouse(.mouseMoved, screen, app.pid, 0, target.id, lease.frame, check: check) },
+                   down: { try self.mouse(.rightMouseDown, screen, app.pid, 1, target.id, lease.frame, check: check) })
+                do { try await Task.sleep(nanoseconds: PointerMotion.pressHold) } catch { try? mouse(.rightMouseUp, screen, app.pid, 1, target.id, lease.frame); throw error }
+                try mouse(.rightMouseUp, screen, app.pid, 1, target.id, lease.frame)
+            case .hold(let point, let ms):
+                let screen = try lease.screenPoint(point)
+                let hit = try access.checkHit(screen, target: target, app: app, expected: pointerTarget, background: background)
+                try await InputDispatch.pointerDown(check: check, validate: {
+                    try checkWindow(); try access.checkHit(screen, target: target, app: app, expected: hit, background: background)
+                }, move: { try self.mouse(.mouseMoved, screen, app.pid, 0, target.id, lease.frame, check: check) },
+                   down: { try self.mouse(.leftMouseDown, screen, app.pid, 1, target.id, lease.frame, check: check) })
+                // Held in short steps, so Stop or the person's own input still ends it at once.
+                do {
+                    for _ in 0..<max(1, ms / 50) { try await Task.sleep(nanoseconds: 50_000_000); try check() }
+                } catch { try? mouse(.leftMouseUp, screen, app.pid, 1, target.id, lease.frame); throw error }
+                try mouse(.leftMouseUp, screen, app.pid, 1, target.id, lease.frame)
+            case .showMenu(let ref):
+                guard let record = records.first(where: { $0.ref == ref }) else { throw UseError("unknown_ref", "Use an element ref from the current observation.", next: "observe") }
+                try access.validateRecord(record, target: target)
+                guard record.actions.contains(kAXShowMenuAction) else {
+                    throw UseError("unsupported_action", "This control has no accessible menu. Try right_click, or click with hold_ms for a tool's flyout.", next: "observe")
+                }
+                try check()
+                guard AXUIElementPerformAction(record.element, kAXShowMenuAction as CFString) == .success else {
+                    throw UseError("action_failed", "The app did not open the control's menu. Observe before retrying.", next: "observe")
+                }
+                feedback?.didDispatch = true
+                report(.dispatched, point: CGPoint(x: record.frame.midX, y: record.frame.midY))
+                path = "accessibility"
             case .drag(let points):
                 let points = try points.map(lease.screenPoint)
                 for point in points {
@@ -301,13 +357,13 @@ final class MacInput {
             event.setIntegerValueField(.mouseEventDeltaY, value: Int64((point.y - last.point.y).rounded()))
         }
         try Self.verifyTargeted(event, point, windowID: windowID, frame: frame)
-        if type != .leftMouseUp { try Task.checkCancellation(); try check() }
+        if type != .leftMouseUp, type != .rightMouseUp { try Task.checkCancellation(); try check() }
         post(event, pid, pointer: true)
         guard !quiet else { return }
         lastPointer = (pid, windowID, point)
         if type == .leftMouseDown || type == .leftMouseDragged { heldPointer = (pid, point, windowID, frame, flags) }
         if type == .leftMouseUp { heldPointer = nil }
-        report(type == .leftMouseDown ? .down : type == .leftMouseUp ? .up : .move, point: point)
+        report(type == .leftMouseDown || type == .rightMouseDown ? .down : type == .leftMouseUp || type == .rightMouseUp ? .up : .move, point: point)
     }
     /// A left-button or move event addressed to `windowID` at the screen `point`.
     static func pointerEvent(_ type: CGEventType, _ point: CGPoint, count: Int, windowID: CGWindowID, frame: CGRect, flags: CGEventFlags = []) throws -> CGEvent {
@@ -320,6 +376,8 @@ final class MacInput {
         case .leftMouseDown: eventType = .leftMouseDown
         case .leftMouseUp: eventType = .leftMouseUp
         case .leftMouseDragged: eventType = .leftMouseDragged
+        case .rightMouseDown: eventType = .rightMouseDown
+        case .rightMouseUp: eventType = .rightMouseUp
         default: throw UseError("input_failed", "Unsupported pointer event.")
         }
         let location = NSPoint(x: point.x - frame.minX, y: frame.maxY - point.y)
@@ -330,7 +388,7 @@ final class MacInput {
         if flags.contains(.maskControl) { modifiers.insert(.control) }
         guard let native = NSEvent.mouseEvent(with: eventType, location: location, modifierFlags: modifiers,
                 timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: Int(windowID), context: nil,
-                eventNumber: 0, clickCount: count, pressure: type == .leftMouseUp || type == .mouseMoved ? 0 : 1),
+                eventNumber: 0, clickCount: count, pressure: type == .leftMouseUp || type == .rightMouseUp || type == .mouseMoved ? 0 : 1),
               let event = native.cgEvent?.copy() else {
             throw UseError("input_failed", "Could not create a window-targeted mouse event.")
         }
