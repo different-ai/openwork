@@ -119,6 +119,8 @@ jobs:
         run: |
           pnpm --filter @openwork/app exec bun test --isolate ./tests/attachment-upload.test.ts
           bun test apps/server/test/inbox-upload.test.ts
+      - name: Test saved App documents
+        run: pnpm --filter @openwork/app exec bun test --isolate ./tests/dashboard-tile-documents.test.ts
       - name: Check desktop links open real Den pages
         run: pnpm --filter @openwork/app test:den-links
       - name: Test Library connector setup and translated placeholders

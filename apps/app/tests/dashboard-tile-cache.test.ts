@@ -7,7 +7,8 @@ const ownsDom = !GlobalRegistrator.isRegistered;
 if (ownsDom) GlobalRegistrator.register({ url: "http://localhost/" });
 afterAll(async () => { if (ownsDom) await GlobalRegistrator.unregister(); });
 
-const { readDashboardTileCache, rememberDashboardTileRead, removeDashboardTileCache, savedLaunchResult, writeDashboardTileCache } = await import("../src/react-app/domains/dashboard/dashboard-tile-cache");
+const { loadDashboardTileDocument, readDashboardTileCache, rememberDashboardTileRead, removeDashboardTileCache, savedLaunchResult, writeDashboardTileCache } = await import("../src/react-app/domains/dashboard/dashboard-tile-cache");
+const { setMcpAppDocumentBackend } = await import("../src/app/lib/mcp-app-document-store");
 const { flushDashboardTileCacheStorage, resetDashboardTileCacheMemory } = await import("../src/app/lib/dashboard-cache-storage");
 
 const scope = "tile-cache-test";
@@ -108,15 +109,24 @@ test("nothing is stored for a tile that was never saved", () => {
   expect(readDashboardTileCache(scope, entry)).toBeNull();
 });
 
-test("stored reads survive a restart, and malformed ones are dropped", () => {
+test("stored reads survive a restart, and malformed ones are dropped", async () => {
+  const documents = new Map<string, string>();
+  setMcpAppDocumentBackend({
+    read: async (key) => documents.get(key) ?? null,
+    save: async (html, size) => { documents.set(size.key, html); },
+    sizes: async () => [], remove: async () => {}, clear: async () => {},
+  });
   save();
   rememberDashboardTileRead(scope, entry, read, kept("stored"), NOW);
+  await new Promise((resolve) => setTimeout(resolve, 0));
   flushDashboardTileCacheStorage();
   resetDashboardTileCacheMemory();
+  await loadDashboardTileDocument(scope, entry);
   expect(stored().map((item) => item.result.content)).toEqual([[{ type: "text", text: "stored" }]]);
   const raw = JSON.parse(localStorage.getItem(scope) ?? "{}");
   raw.$entries[entry].storedReads.push({ name: 7 }, { name: "x", arguments: {}, loadedAt: "now", providerIdentity: "p", result: { content: "text" } });
   localStorage.setItem(scope, JSON.stringify(raw));
   resetDashboardTileCacheMemory();
+  await loadDashboardTileDocument(scope, entry);
   expect(stored()).toHaveLength(1);
 });

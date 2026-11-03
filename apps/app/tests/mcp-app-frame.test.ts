@@ -31,7 +31,8 @@ const { useSessionActivityStore } = await import("../src/react-app/domains/sessi
 const { McpAppTile } = await import("../src/react-app/domains/dashboard/mcp-app-tile")
 const { DASHBOARD_AUTO_REFRESH_INTERVAL_MS, readDashboardTileCache, rememberDashboardTileRead, removeDashboardTileCache, writeDashboardTileCache } = await import("../src/react-app/domains/dashboard/dashboard-tile-cache")
 const { RetainedArtifactSurface } = await import("../src/react-app/domains/dashboard/retained-artifact-surface")
-const { flushDashboardTileCacheStorage } = await import("../src/app/lib/dashboard-cache-storage")
+const { flushDashboardTileCacheStorage, resetDashboardTileCacheMemory } = await import("../src/app/lib/dashboard-cache-storage")
+const { setMcpAppDocumentBackend } = await import("../src/app/lib/mcp-app-document-store")
 const { forgetMcpAppResult, rememberMcpAppResult } = await import("../src/app/lib/mcp-app-result-cache")
 const { createMcpAppPresentationCache, mcpAppPresentationScope } = await import("../src/app/lib/mcp-app-presentation-cache")
 const {
@@ -1079,6 +1080,56 @@ describe("MCP App stored reads on a saved tile", () => {
     } finally {
       await act(async () => { refresh.resolve({ content: [] }) })
       await tile.close()
+    }
+  })
+})
+
+describe("MCP App documents after a restart", () => {
+  test("a saved tile renders from its stored document before any launch, and waits for it rather than opening blank", async () => {
+    const documents = new Map<string, string>()
+    const read = Promise.withResolvers<void>()
+    setMcpAppDocumentBackend({
+      read: async key => { await read.promise; return documents.get(key) ?? null },
+      save: async (html, size) => { documents.set(size.key, html) },
+      sizes: async () => [],
+      remove: async keys => { for (const key of keys) documents.delete(key) },
+      clear: async () => { documents.clear() },
+    })
+    const host = await startupFixture()
+    const discovery = Promise.withResolvers<{ app: OpenworkMcpAppResource }>()
+    const spies = [
+      spyOn(host.client, "resolveMcpApp").mockImplementation(() => discovery.promise),
+      spyOn(host.client, "releaseMcpApp").mockResolvedValue({ released: true }),
+      spyOn(host.client, "callMcpAppTool").mockResolvedValue({ content: [] }),
+    ]
+    const scope = "restored-tile"
+    const app = fixture({ toolName: "render-0", launchId: undefined })
+    const settle = async () => { await act(async () => { await new Promise(resolve => setImmediate(resolve)) }) }
+    writeDashboardTileCache(scope, "restored-0", { argumentsSignature: "{}", cachedAt: Date.now(), workspaceId: "fixture", app, result: { content: [] } })
+    await settle()
+    flushDashboardTileCacheStorage()
+    resetDashboardTileCacheMemory()
+    try {
+      await host.renderElement(createElement(WorkspaceProvider, {
+        client: null, openworkServerClient: host.client, workspaceId: "fixture", selectedWorkspaceRoot: "/fixture",
+      }, createElement(McpAppTile, {
+        entry: { kind: "mcp", id: "restored-0", title: "Restored 0", serverName: "fixture", toolName: "render-0",
+          projectedToolName: "render-0", resourceUri: fixture().resourceUri, autoLaunch: true },
+        cacheScopeKey: scope,
+      })))
+      expect(host.container.querySelector("[data-dashboard-tile]")).toBeNull()
+      expect(spies[0]).not.toHaveBeenCalled()
+      await act(async () => { read.resolve() })
+      await settle()
+      expect(host.container.querySelector("iframe")).not.toBeNull()
+      await host.notify(0, "ui/notifications/sandbox-proxy-ready")
+      expect(host.resourceSpy.mock.calls.at(-1)?.[0].html).toContain("<title>Fixture</title>")
+    } finally {
+      await act(async () => { discovery.resolve({ app: fixture({ toolName: "render-0", launchId: "restored-1" }) }) })
+      await settle()
+      removeDashboardTileCache(scope, "restored-0")
+      flushDashboardTileCacheStorage()
+      try { await host.dispose() } finally { for (const spy of spies) spy.mockRestore() }
     }
   })
 })

@@ -26,8 +26,10 @@ import { useArtifactSurfaceActive } from "./retained-artifact-surface";
 import { useDashboardTileGeometry } from "./use-dashboard-tile-geometry";
 import {
   DASHBOARD_AUTO_REFRESH_INTERVAL_MS,
+  dashboardTileDocumentPending,
   dashboardTileLaunchIsApproved,
   dashboardTileRunsAutomatically,
+  loadDashboardTileDocument,
   readDashboardTileCache,
   rememberDashboardTileRead,
   removeDashboardTileCache,
@@ -190,9 +192,29 @@ function invalidatesTileDocument(cause: unknown) {
   );
 }
 
+/**
+ * After a restart a saved tile's App document is still in IndexedDB. A tile
+ * reads its saved state as it first renders, so that read comes first. If it
+ * finds nothing the tile simply opens the ordinary way.
+ */
+function useDashboardTileDocument(scopeKey: string, entryId: string) {
+  const tile = JSON.stringify([scopeKey, entryId]);
+  const pending = dashboardTileDocumentPending(scopeKey, entryId);
+  const [loaded, setLoaded] = useState<string | null>(null);
+  useEffect(() => {
+    if (!pending) return;
+    let current = true;
+    void loadDashboardTileDocument(scopeKey, entryId).finally(() => { if (current) setLoaded(tile); });
+    return () => { current = false; };
+  }, [scopeKey, entryId, tile, pending]);
+  return !pending || loaded === tile;
+}
+
 export function McpAppTile(props: ComponentProps<typeof McpAppTileContent>) {
   const input = props.entry.launchArguments ?? EMPTY_ARGUMENTS;
   const signature = useMemo(() => launchArgumentsSignature(input), [input]);
+  const documentReady = useDashboardTileDocument(props.cacheScopeKey, props.entry.id);
+  if (!documentReady) return null;
   return <McpAppTileContent key={JSON.stringify([props.cacheScopeKey, dashboardEntryIdentity(props.entry, signature)])} {...props} />;
 }
 
