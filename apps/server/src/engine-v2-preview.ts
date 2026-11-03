@@ -1501,7 +1501,7 @@ export function createEngineV2Preview(options: {
       const source = opencodeV1DatabasePath();
       // Unlike the interactive availability hint, unreadable history is not
       // evidence of an empty profile. Fail closed rather than hide its chats.
-      if (!existsSync(source) || (await readMigrationSessions(source)).length === 0) {
+      if (!existsSync(source) || (await readMigrationSessions(source, autoUpgradeAbort.signal)).length === 0) {
         await waitForEngineIdle({ signal: autoUpgradeAbort.signal, idle: options.autoUpgradeIdle ?? (async () => false) });
         if (chosenV1Manually()) return true;
         enabled = true;
@@ -1511,7 +1511,7 @@ export function createEngineV2Preview(options: {
         autoUpgradeAbort.signal.throwIfAborted();
         if (!autoUpgradeEnabled || chosenV1Manually()) return true;
         await withEngineSwitchFence(config, { from: "v1", to: "v2", operation: async () => {
-          if (!autoUpgradeEnabled || chosenV1Manually() || !await options.autoUpgradeIdle?.() || (existsSync(source) && (await readMigrationSessions(source)).length > 0)) {
+          if (!autoUpgradeEnabled || chosenV1Manually() || !await options.autoUpgradeIdle?.() || (existsSync(source) && (await readMigrationSessions(source, autoUpgradeAbort.signal)).length > 0)) {
             throw new Error("OpenCode v1 gained history or running work while v2 started. Keeping v1 until a later boot.");
           }
           migration = { state: "idle", imported: 0, skipped: 0, total: 0 };
@@ -1522,10 +1522,10 @@ export function createEngineV2Preview(options: {
       await runEngineAutoUpgrade({
         signal: autoUpgradeAbort.signal,
         idle: options.autoUpgradeIdle ?? (async () => false),
-        revision: () => historyRevision(source),
+        revision: () => historyRevision(source, autoUpgradeAbort.signal),
         copy: async () => {
           if (chosenV1Manually()) throw new Error("OpenCode v1 was selected locally. Keeping v1.");
-          const revision = await historyRevision(source);
+          const revision = await historyRevision(source, autoUpgradeAbort.signal);
           if (automaticHistoryCopy && automaticHistoryRevision !== undefined && automaticHistoryRevision !== revision
             && v1HistoryCopyStartedAt === undefined && migration.backupPath) {
             // A previous automatic copy never served v2, but v1 changed while
@@ -1556,7 +1556,7 @@ export function createEngineV2Preview(options: {
           runMigration(v1HistoryCopyStartedAt !== undefined, true);
           await migrationJob;
           if (migration.state !== "completed") throw new Error(migration.error ?? "Automatic history copy did not finish.");
-          if (automaticHistoryRevision !== await historyRevision(source)) {
+          if (automaticHistoryRevision !== await historyRevision(source, autoUpgradeAbort.signal)) {
             throw new Error("OpenCode v1 changed since the saved history snapshot. Keeping v1 until a later boot.");
           }
         },
@@ -1567,7 +1567,7 @@ export function createEngineV2Preview(options: {
           if (!running) throw new Error("OpenCode v2 did not become healthy. Keeping v1.");
           autoUpgradeAbort.signal.throwIfAborted();
           await withEngineSwitchFence(config, { from: "v1", to: "v2", operation: async () => {
-            if (!autoUpgradeEnabled || chosenV1Manually() || !await options.autoUpgradeIdle?.() || automaticHistoryRevision !== await historyRevision(source)) {
+            if (!autoUpgradeEnabled || chosenV1Manually() || !await options.autoUpgradeIdle?.() || automaticHistoryRevision !== await historyRevision(source, autoUpgradeAbort.signal)) {
               throw new Error("OpenCode v1 changed while v2 started. Keeping v1 until a later boot.");
             }
             await setChatRouting(true, "forced");

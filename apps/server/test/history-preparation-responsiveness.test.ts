@@ -7,7 +7,7 @@ import { historyRevision, runEngineAutoUpgrade } from "../src/engine-auto-upgrad
 import { readMigrationSessions } from "../src/opencode-v2-migration.js";
 import { heartbeatDuring, largeHistoryFixture } from "./history-preparation-fixture.js";
 
-test("large v1 freshness preparation keeps the host heartbeat below 250 ms and still switches unchanged history", { timeout: 120_000 }, async () => {
+test("large v1 freshness preparation keeps the host heartbeat below 250 ms and still switches unchanged history", { timeout: 120_000, skip: typeof process.versions.bun === "string" ? "Host responsiveness must run on Node or shipping Electron, not Bun" : false }, async () => {
   const directory = await mkdtemp(join(tmpdir(), "openwork-synthetic-history-"));
   try {
     const database = await largeHistoryFixture(directory);

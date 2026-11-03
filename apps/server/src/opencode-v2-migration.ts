@@ -14,6 +14,8 @@ import {
 } from "./managed-opencode-v2.js";
 import { attachHistory, copyHistoryBatches, externalizeHistory, numberField, openHistoryDatabase, restoreHistoryPayloads } from "./opencode-v2-history-store.js";
 import { acquireHistoryCopyLock } from "./opencode-v2-history-lock.js";
+import { prepareHistory } from "./history-preparation.js";
+import { migrationSessionsFromRows, type MigrationSession } from "./history-preparation-reader.js";
 
 export interface EngineV2MigrationStatus {
   state: "idle" | "running" | "completed" | "error";
@@ -162,22 +164,8 @@ export async function clearStaleConversionMarker(database: string): Promise<bool
   } finally { db.close(); }
 }
 
-type MigrationSession = { id: string; title: string; directory: string; parentId: string | null };
-
-export async function readMigrationSessions(database: string): Promise<MigrationSession[]> {
-  const db = typeof process.versions.bun === "string"
-    ? new (await import("bun:sqlite")).Database(database, { readonly: true })
-    : new (await importNodeSqlite()).DatabaseSync(database, { readOnly: true });
-  try {
-    const rows: unknown[] = db.prepare("SELECT id, title, directory, parent_id FROM session ORDER BY time_created, id").all();
-    return rows.map((row) => {
-      if (!isRecord(row) || typeof row.id !== "string" || typeof row.directory !== "string"
-        || !isAbsolute(row.directory) || (row.parent_id !== null && typeof row.parent_id !== "string")) {
-        throw new Error("OpenCode v1 history contains an invalid session. The original database was not changed.");
-      }
-      return { id: row.id, title: typeof row.title === "string" ? row.title : "", directory: row.directory, parentId: row.parent_id };
-    });
-  } finally { db.close(); }
+export async function readMigrationSessions(database: string, signal?: AbortSignal): Promise<MigrationSession[]> {
+  return migrationSessionsFromRows(await prepareHistory(database, "inventory", signal));
 }
 
 /**
