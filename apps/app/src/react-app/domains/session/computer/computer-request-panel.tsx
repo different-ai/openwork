@@ -212,7 +212,56 @@ export function ComputerRequestPanel({ sessionId, request }: { sessionId: string
   if (request.reason === "script" && request.script) return <ScriptRequest sessionId={sessionId} request={request} script={request.script} />
   if (request.reason === "files" && request.files) return <FilesRequest sessionId={sessionId} request={request} files={request.files} />
   if (request.reason === "credential" && request.credential) return <CredentialRequest sessionId={sessionId} request={request} credential={request.credential} />
+  if (request.reason === "typing" && request.typing) return <TypingRequest sessionId={sessionId} request={request} typing={request.typing} />
   return <SetupRequest sessionId={sessionId} request={request} />
+}
+
+/**
+ * The agent is about to type where no text field it can identify has the keyboard, such
+ * as text on a design app's canvas. Nothing is typed until the person allows the app.
+ */
+function TypingRequest({ sessionId, request, typing }: { sessionId: string; request: ComputerRequest; typing: NonNullable<ComputerRequest["typing"]> }) {
+  const [busy, setBusy] = useState<"allow" | "always" | "dismiss" | null>(null)
+  const [error, setError] = useState("")
+
+  async function answer(next: "allow" | "always" | "dismiss") {
+    if (busy) return
+    setBusy(next)
+    setError("")
+    try {
+      await desktopBridge.computerAnswerRequest({ sessionId, answer: next, id: request.id })
+    } catch (cause) {
+      setError(`That wasn't saved. ${cause instanceof Error ? cause.message : String(cause)}`)
+    } finally {
+      setBusy(null)
+    }
+  }
+
+  // A name can be copied by another app; the id cannot, so it is always shown.
+  const name = typing.app !== typing.appId ? revealHidden(typing.app) : null
+  const id = revealHidden(typing.appId)
+  return (
+    <div className="overflow-hidden border-b border-dls-border bg-transparent" data-testid="session-computer-request" data-reason="typing">
+      <div className="flex flex-col gap-3 px-4 py-3">
+        <div className="flex min-w-0 items-start gap-3">
+          <div className="mt-0.5 flex size-8 shrink-0 items-center justify-center rounded-xl border border-dls-border bg-dls-hover text-dls-secondary">
+            <Monitor size={16} strokeWidth={1.9} />
+          </div>
+          <div className="min-w-0 flex-1">
+            <div className="text-[13px] font-medium leading-5 text-dls-text">Let the agent type in <span dir="ltr" style={{ unicodeBidi: "bidi-override" }} className="break-all font-mono" data-testid="session-computer-typing-app">{name ? <>{name.parts} (</> : null}{id.parts}{name ? ")" : null}</span>?</div>
+            <div className="mt-0.5 text-[12px] leading-5 text-dls-secondary">{`This app is editing text the computer can't identify as a text field, such as text on a canvas. The agent types into whatever has the keyboard in its window on ${request.computer}, and stops if that changes. Passwords never go this way.`}</div>
+            {id.hidden + (name?.hidden ?? 0) ? <div className="mt-2 text-[12px] font-medium leading-5 text-amber-11">This name has hidden characters, shown as &lt;U+…&gt;. Don't allow it unless you expected that.</div> : null}
+            {error ? <div role="alert" className="mt-1 text-[12px] leading-5 text-red-11">{error}</div> : null}
+          </div>
+        </div>
+        <div className="flex flex-wrap items-center justify-end gap-2">
+          <Button type="button" variant="ghost" size="sm" disabled={busy !== null} aria-busy={busy === "dismiss"} data-testid="session-computer-typing-dismiss" onClick={() => void answer("dismiss")}>Don't type</Button>
+          <Button type="button" variant="outline" size="sm" disabled={busy !== null} aria-busy={busy === "always"} data-testid="session-computer-typing-always" onClick={() => void answer("always")}>Always for this app in this chat</Button>
+          <Button type="button" size="sm" disabled={busy !== null} aria-busy={busy === "allow"} data-testid="session-computer-typing-allow" onClick={() => void answer("allow")}>Allow</Button>
+        </div>
+      </div>
+    </div>
+  )
 }
 
 function SetupRequest({ sessionId, request }: { sessionId: string; request: ComputerRequest }) {

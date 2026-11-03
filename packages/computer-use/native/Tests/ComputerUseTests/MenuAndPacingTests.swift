@@ -43,6 +43,36 @@ final class MenuAndPacingTests: XCTestCase {
         XCTAssertEqual(MenuRules.leadingMenus, 2, "the Apple and app menus are never offered")
     }
 
+    func testDesignAppsCanOpenHiddenMenusAndFlyouts() throws {
+        guard case .rightClick(let point) = try Action(["type": "right_click", "x": 4, "y": 5], policy: .embedded) else { return XCTFail() }
+        XCTAssertEqual(point, CGPoint(x: 4, y: 5))
+        guard case .hold(_, let ms) = try Action(["type": "click", "x": 4, "y": 5, "hold_ms": 800], policy: .embedded) else { return XCTFail() }
+        XCTAssertEqual(ms, 800)
+        guard case .showMenu("e3") = try Action(["type": "show_menu", "ref": "e3"], policy: .embedded) else { return XCTFail() }
+        guard case .click(_, 1, let flags) = try Action(["type": "click", "x": 1, "y": 1, "modifiers": ["control"]], policy: .embedded) else { return XCTFail() }
+        XCTAssertTrue(flags.contains(.maskControl), "control-click opens a context menu")
+        XCTAssertThrowsError(try Action(["type": "click", "x": 1, "y": 1, "modifiers": ["control"]]), "the standalone helper still refuses it")
+        XCTAssertThrowsError(try Action(["type": "double_click", "x": 1, "y": 1, "hold_ms": 800], policy: .embedded), "only a single click holds")
+        XCTAssertThrowsError(try Action(["type": "click", "x": 1, "y": 1, "hold_ms": 5_000], policy: .embedded), "held at most two seconds")
+        XCTAssertTrue(Action.rightClick(.zero).usesCoordinates)
+        XCTAssertTrue(InputDelivery.stepNeedsFront(.hold(.zero, 800), route: .appKit), "pointer-following steps take the front")
+        XCTAssertFalse(InputDelivery.stepNeedsFront(.showMenu("e1"), route: .appKit), "an accessible menu needs no front")
+    }
+
+    func testSingleLettersPickToolsOnlyInCreativeApps() throws {
+        guard case .key("u", let flags) = try Action(["type": "key", "key": "u", "modifiers": ["shift"]], policy: .embedded) else { return XCTFail() }
+        XCTAssertEqual(flags, .maskShift)
+        XCTAssertThrowsError(try Action(["type": "key", "key": "u", "modifiers": ["command"]], policy: .embedded), "Command shortcuts keep their own list")
+        XCTAssertThrowsError(try Action(["type": "key", "key": "u"]), "the standalone helper still refuses bare letters")
+        XCTAssertTrue(NativeKey.isToolKey("b", []))
+        XCTAssertFalse(NativeKey.isToolKey("enter", []))
+        XCTAssertFalse(NativeKey.isToolKey("b", .maskAlternate))
+        XCTAssertTrue(InputDelivery.takesToolKeys(info: ["LSApplicationCategoryType": "public.app-category.graphics-design"]))
+        XCTAssertTrue(InputDelivery.takesToolKeys(info: ["LSApplicationCategoryType": "public.app-category.Photography"]))
+        XCTAssertFalse(InputDelivery.takesToolKeys(info: ["LSApplicationCategoryType": "public.app-category.productivity"]), "a letter can act in a mail or notes app")
+        XCTAssertFalse(InputDelivery.takesToolKeys(info: [:]))
+    }
+
     func testAShortcutWithNothingToTypeIntoRunsItsMenuCommand() throws {
         let entries = [MenuEntry(path: ["File", "Save"], shortcut: "command+s"), MenuEntry(path: ["Edit", "Fill…"], shortcut: "shift+f5")]
         let save = try Action(["type": "key", "key": "s", "modifiers": ["command"]], policy: .embedded)
