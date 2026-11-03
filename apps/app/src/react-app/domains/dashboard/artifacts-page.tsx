@@ -12,6 +12,7 @@ import { useBuiltDashboardApps } from "./built-dashboard-apps";
 import { SavedDashboardApp, type CreateDashboardApp } from "./dashboard-apps";
 import { McpAppTile, type DashboardLaunchEndpoint } from "./mcp-app-tile";
 import { useArtifactSurfaceActive } from "./retained-artifact-surface";
+import { pruneDashboardTiles } from "./dashboard-tile-cache";
 import { artifactRows, groupArtifacts, readArtifactSelection, rememberArtifactSelection, selectedArtifact, type ArtifactRow } from "./artifacts-workspace";
 
 const CREATE_ARTIFACT_PROMPT = "Create one live artifact. Use my request to build and save one app that fetches fresh data with each viewer’s own connections whenever opened or refreshed. My artifact should ";
@@ -58,6 +59,10 @@ export function ArtifactsPage({ onCreateApp, fallbackEndpoints, headerActionsTar
       setSelection({ scope, id: null });
     }
   }, [id, selected, scope, built.identityVerified, built.query.isSuccess, saved.query.isSuccess]);
+  // An App the member can no longer open leaves this device with its row.
+  useEffect(() => {
+    if (built.ready) pruneDashboardTiles(built.cacheScopeKey, new Set(rows.map((row) => row.id)));
+  }, [built.ready, built.cacheScopeKey, rows]);
   const create = useMutation({ mutationFn: () => onCreateApp(CREATE_ARTIFACT_PROMPT) });
   const discuss = useMutation({ mutationFn: ({ appId, title }: { appId: string; title: string }) => onCreateApp(
     `Work with the existing artifact “${title}” (App ID: ${appId}). Open this artifact; do not create a copy. If I request a change and have edit access, use read_app and update_app with this same App ID. My request is `,

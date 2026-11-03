@@ -7,11 +7,11 @@ const ownsDom = !GlobalRegistrator.isRegistered;
 if (ownsDom) GlobalRegistrator.register({ url: "http://localhost/" });
 afterAll(async () => { if (ownsDom) await GlobalRegistrator.unregister(); });
 
-const { loadDashboardTileDocument, readDashboardTileCache, rememberDashboardTileRead, removeDashboardTileCache, savedLaunchResult, writeDashboardTileCache } = await import("../src/react-app/domains/dashboard/dashboard-tile-cache");
+const { clearDashboardTileData, loadDashboardTileDocument, pruneDashboardTiles, readDashboardTileCache, rememberDashboardTileRead, removeDashboardTileCache, savedLaunchResult, writeDashboardTileCache } = await import("../src/react-app/domains/dashboard/dashboard-tile-cache");
 const { setMcpAppDocumentBackend } = await import("../src/app/lib/mcp-app-document-store");
 const { flushDashboardTileCacheStorage, resetDashboardTileCacheMemory } = await import("../src/app/lib/dashboard-cache-storage");
 
-const scope = "tile-cache-test";
+const scope = "openwork.react.dashboardTileCache.v1.tile-cache-test";
 const entry = "orders";
 const read = { name: "load_orders", arguments: {} };
 const NOW = Date.parse("2026-11-02T12:00:00.000Z");
@@ -29,7 +29,7 @@ const stored = () => readDashboardTileCache(scope, entry)?.storedReads ?? [];
 const shown = () => {
   const cache = readDashboardTileCache(scope, entry);
   if (!cache) throw new Error("Missing saved tile");
-  return savedLaunchResult(cache)._meta?.[MCP_APP_INITIAL_RESULTS_META] as Array<Record<string, unknown>> | undefined;
+  return savedLaunchResult(cache, true)._meta?.[MCP_APP_INITIAL_RESULTS_META] as Array<Record<string, unknown>> | undefined;
 };
 
 beforeEach(() => { removeDashboardTileCache(scope, entry); });
@@ -44,7 +44,7 @@ test("with nothing stored the saved launch result is returned unchanged", () => 
   save({ meta: { kept: "as-is" } });
   const cache = readDashboardTileCache(scope, entry);
   if (!cache) throw new Error("Missing saved tile");
-  expect(savedLaunchResult(cache)).toBe(cache.result);
+  expect(savedLaunchResult(cache, true)).toBe(cache.result);
 });
 
 test("the newer of launch data and a stored read wins for the same call, and other launch data stays", () => {
@@ -102,6 +102,55 @@ test("the oldest reads go first once together they exceed the budget", () => {
   save();
   for (const name of ["first", "second", "third"]) rememberDashboardTileRead(scope, entry, { name, arguments: {} }, kept("x".repeat(100_000)), NOW);
   expect(stored().map((item) => item.name)).toEqual(["second", "third"]);
+});
+
+test("until access is confirmed the saved launch carries none of the App's reads, stored or launched", () => {
+  save({ meta: { keep: "this", [MCP_APP_INITIAL_RESULTS_META]: [{ name: "load_totals", arguments: {}, result: { content: [] } }] } });
+  rememberDashboardTileRead(scope, entry, read, kept("stored"), NOW);
+  const cache = readDashboardTileCache(scope, entry);
+  if (!cache) throw new Error("Missing saved tile");
+  const withheld = savedLaunchResult(cache, false);
+  expect(withheld._meta).toEqual({ keep: "this" });
+  expect(withheld.content).toEqual(cache.result.content);
+});
+
+test("a saved launch with no reads to withhold is returned unchanged", () => {
+  save({ meta: { keep: "this" } });
+  const cache = readDashboardTileCache(scope, entry);
+  if (!cache) throw new Error("Missing saved tile");
+  expect(savedLaunchResult(cache, false)).toBe(cache.result);
+});
+
+test("a launch through another account drops reads made through the old one", () => {
+  save();
+  rememberDashboardTileRead(scope, entry, read, kept("first", "provider-1"), NOW);
+  save({ meta: { "openwork/providerIdentity": "provider-1" } });
+  expect(stored()).toHaveLength(1);
+  save({ meta: { "openwork/providerIdentity": "provider-2" } });
+  expect(stored()).toEqual([]);
+});
+
+test("pruning removes tiles the member can no longer open and keeps the rest", () => {
+  save();
+  writeDashboardTileCache(scope, "other", { argumentsSignature: "{}", cachedAt: Date.now(), workspaceId: "w", app: app("ui://other/1"), result: { content: [] } });
+  pruneDashboardTiles(scope, new Set([entry]));
+  expect(readDashboardTileCache(scope, "other")).toBeNull();
+  expect(readDashboardTileCache(scope, entry)).not.toBeNull();
+});
+
+test("clearing drops what every tile showed, across accounts, and keeps each App", () => {
+  const otherScope = "openwork.react.dashboardTileCache.v1.other-member";
+  save({ meta: { [MCP_APP_INITIAL_RESULTS_META]: [] } });
+  rememberDashboardTileRead(scope, entry, read, kept("stored"), NOW);
+  writeDashboardTileCache(otherScope, entry, { argumentsSignature: "{}", cachedAt: Date.now(), workspaceId: "w", app: app(), result: { content: [{ type: "text", text: "theirs" }] } });
+  clearDashboardTileData();
+  for (const key of [scope, otherScope]) {
+    const cache = readDashboardTileCache(key, entry);
+    expect(cache?.result).toEqual({ content: [] });
+    expect(cache?.storedReads).toBeUndefined();
+    expect(cache?.app.html).toBe("<html></html>");
+  }
+  removeDashboardTileCache(otherScope, entry);
 });
 
 test("nothing is stored for a tile that was never saved", () => {

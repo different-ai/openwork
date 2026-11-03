@@ -12,6 +12,7 @@ import {
   readCloudInventoryScope,
   storeCloudInventory,
 } from "@/react-app/domains/connections/cloud-inventory-cache";
+import { noteInventoryRevision, reconcileMemberAccess, trackMemberAccessCheck } from "@/react-app/domains/dashboard/mcp-app-member-access";
 import { useDenAuth } from "./den-auth-provider";
 import { createInventoryRevisionGate } from "./inventory-revision";
 import { subscribeCloudProviderSyncTriggers } from "./use-cloud-provider-auto-sync";
@@ -60,7 +61,9 @@ export function useMemberActivitySync(enabled: boolean) {
       if (inflight) return;
       inflight = (async () => {
         const { skip, revision } = await gate.check();
-        if (!isCurrent() || (trigger === "check" && skip)) return;
+        if (!isCurrent()) return;
+        noteInventoryRevision(scope, revision);
+        if (trigger === "check" && skip) return;
         const previousEntry = selectActivityContext(useActivityStore.getState()).entries[0]?.id;
         const loaded: { value: Parameters<typeof storeCloudInventory>[1] | null } = { value: null };
         const result = await refreshMemberActivity({
@@ -69,6 +72,7 @@ export function useMemberActivitySync(enabled: boolean) {
         });
         if (result !== "updated" || !isCurrent()) return;
         gate.synced(revision);
+        if (loaded.value) reconcileMemberAccess(scope, revision, loaded.value);
         const changed = selectActivityContext(useActivityStore.getState()).entries[0]?.id !== previousEntry;
         const cacheScope = readCloudInventoryScope();
         if (loaded.value && cacheScope?.organizationId === organizationId) {
@@ -83,6 +87,7 @@ export function useMemberActivitySync(enabled: boolean) {
       })().finally(() => {
         inflight = null;
       });
+      trackMemberAccessCheck(inflight);
     };
     const refreshNow = () => refresh("now");
     refresh("now");

@@ -2,6 +2,9 @@ import { mcpAppDocuments } from "./mcp-app-document-store";
 
 export const DASHBOARD_TILE_CACHE_STORAGE_PREFIX = "openwork.react.dashboardTileCache.v1";
 
+export const DASHBOARD_TILE_ACCESS_STORAGE_PREFIX = `${DASHBOARD_TILE_CACHE_STORAGE_PREFIX}.access.`;
+export const MCP_APP_RESULTS_STORAGE_KEY = `${DASHBOARD_TILE_CACHE_STORAGE_PREFIX}.appResults`;
+
 const PERSIST_DELAY_MS = 150;
 const CLEAR_STORAGE_KEY = `${DASHBOARD_TILE_CACHE_STORAGE_PREFIX}.clear`;
 const stores = new Set<{
@@ -107,6 +110,23 @@ export function createDashboardTileCacheStore<T>(
       scope.timer = setTimeout(() => persist(key, scope), PERSIST_DELAY_MS);
     },
   };
+}
+
+/** Every stored scope of saved tiles, whichever account or organization wrote it. */
+export function dashboardTileScopeKeys(): string[] {
+  const storage = currentStorage();
+  if (!storage) return [];
+  const keys: string[] = [];
+  try {
+    for (let index = 0; index < storage.length; index += 1) {
+      const key = storage.key(index);
+      if (key?.startsWith(`${DASHBOARD_TILE_CACHE_STORAGE_PREFIX}.`) && key !== CLEAR_STORAGE_KEY
+        && key !== MCP_APP_RESULTS_STORAGE_KEY && !key.startsWith(DASHBOARD_TILE_ACCESS_STORAGE_PREFIX)) keys.push(key);
+    }
+  } catch {
+    return [];
+  }
+  return keys;
 }
 
 export function flushDashboardTileCacheStorage(): void {
