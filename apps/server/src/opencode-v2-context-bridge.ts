@@ -224,8 +224,11 @@ export async function createV2ContextBridge(
         const current = engine?.();
         if (!call.sessionId || !call.caller || !current) throw new Error("OpenWork cannot ask the person from here, so nothing was asked.");
         if (openQuestions >= MAX_OPEN_QUESTIONS) throw new Error("Too many questions are waiting for answers, so nothing was asked. Wait for the person to answer one first.");
-        const asked = await askWithoutWaiting(current, { directory: call.caller.directory, sessionId: call.sessionId, questions: args.questions }, request.signal, questions.signal);
         openQuestions += 1;
+        const asked = await askWithoutWaiting(current, { directory: call.caller.directory, sessionId: call.sessionId, questions: args.questions }, request.signal, questions.signal).catch(error => {
+          openQuestions -= 1;
+          throw error;
+        });
         void asked.settled.finally(() => { openQuestions -= 1; });
         return Response.json({ ok: true, id: asked.id, message: "Asked. Their answer arrives as a message in this chat; keep working on what does not depend on it." });
       }
