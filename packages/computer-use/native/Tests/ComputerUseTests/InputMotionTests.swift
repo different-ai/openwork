@@ -26,7 +26,11 @@ final class InputMotionTests: XCTestCase {
     func testTheAgentsCursorVariesHowItSaysItIsPlanningAndReactsToOutcomes() {
         let labels = (0..<CursorGlide.planning.count).map { CursorGlide.planningLabel(turn: $0, goal: nil) }
         XCTAssertEqual(Set(labels).count, CursorGlide.planning.count, "each turn says it differently")
-        XCTAssertEqual(CursorGlide.planningLabel(turn: CursorGlide.planning.count, goal: "Draw a wave"), "planning · Draw a wave", "then it starts over")
+        XCTAssertEqual(CursorGlide.planningLabel(turn: 0, goal: nil), CursorGlide.planningLabel(turn: CursorGlide.planning.count, goal: nil), "then it starts over")
+        XCTAssertEqual(CursorGlide.planningLabel(turn: 2, goal: "Draw a wave"), "Draw a wave", "a named goal says what it is working toward")
+        XCTAssertEqual(CursorGlide.label("Draw the curling wave silhouette across the canvas"), "Draw the curling wave silhouette ac…")
+        XCTAssertEqual(CursorGlide.label("Draw the curling wave silhouette across the canvas").count, CursorGlide.labelLength, "one short line")
+        XCTAssertEqual(CursorGlide.label("all yours"), "all yours")
         XCTAssertNil(CursorReaction.after(nil), "an observation after no action has nothing to react to")
         XCTAssertEqual(CursorReaction.after(["elements_changed": true]), .worked)
         XCTAssertEqual(CursorReaction.after(["elements_changed": false, "no_visible_change": true]), .unchanged)

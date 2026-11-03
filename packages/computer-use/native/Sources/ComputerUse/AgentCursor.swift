@@ -30,8 +30,6 @@ struct Presence {
 enum CursorGlide {
     static let shortest: TimeInterval = 0.1
     static let longest: TimeInterval = 0.32
-    /// A drag's feedback arrives about 30 times a second; each step spans one of them.
-    static let strokeStep: TimeInterval = 1.0 / 30
     static var easing: CAMediaTimingFunction { CAMediaTimingFunction(controlPoints: 0.25, 0.8, 0.35, 1) }
 
     /// `action` fits the move to the step: a scroll zips over, a hover drifts a little
@@ -53,9 +51,16 @@ enum CursorGlide {
     }
     /// A few ways of saying it is planning, in turn, so the label does not repeat itself.
     static let planning = ["planning", "having a look", "lining up the next step", "thinking it through"]
+    /// What the cursor says while the agent plans: the goal it is working toward when it
+    /// named one, otherwise one of a few phrases in turn. The dots already say it is thinking.
     static func planningLabel(turn: Int, goal: String?) -> String {
-        let phrase = planning[((turn % planning.count) + planning.count) % planning.count]
-        return goal.map { "\(phrase) · \($0)" } ?? phrase
+        goal ?? planning[((turn % planning.count) + planning.count) % planning.count]
+    }
+    /// The cursor's label stays one short line beside it: one thing, never the chat's name and the step.
+    static let labelLength = 36
+    static func label(_ text: String) -> String {
+        let line = text.replacingOccurrences(of: "\n", with: " ").trimmingCharacters(in: .whitespaces)
+        return line.count > labelLength ? String(line.prefix(labelLength - 1)).trimmingCharacters(in: .whitespaces) + "…" : line
     }
     /// The control point of a quadratic curve bowing up to 8% of the distance, at most 36
     /// points, always toward the top of the screen, so repeated moves look like one hand's.
@@ -211,7 +216,7 @@ final class AgentCursor {
         arrow.opacity = value ? 0.5 : 1
         CATransaction.commit()
         stopThinking()
-        say(value ? "\(presence.name) · waiting for you" : presence.name, busy: false, hold: nil)
+        say(value ? "waiting for you" : narration ?? presence.name, busy: false, hold: nil)
         refreshPill()
         if value {
             // A small "over here" bounce, then stillness while the person works.
@@ -228,7 +233,7 @@ final class AgentCursor {
         let cleaned = text?.replacingOccurrences(of: "\n", with: " ").trimmingCharacters(in: .whitespaces)
         narration = cleaned.flatMap { $0.isEmpty ? nil : String($0.prefix(60)) }
         stopThinking()
-        if let narration, !paused { say("\(presence.name) · \(narration)", busy: false, hold: 4) }
+        if let narration, !paused { say(narration, busy: false, hold: 4) }
         refreshPill()
     }
 
@@ -276,7 +281,7 @@ final class AgentCursor {
         scheduleThinking()
         guard phase != .up, phase != .move || action == "move" else { return }
         let typing = action == "type" || action == "set_value"
-        say("\(presence.name) · \(narration ?? Self.verb(action))", busy: typing, hold: 1.6)
+        say(narration ?? Self.verb(action), busy: typing, hold: 1.6)
     }
 
     /// Replays a menu command over the menu bar without opening the app's menu: the cursor
@@ -287,7 +292,7 @@ final class AgentCursor {
     func showMenu(titleFrame: CGRect?, path: [String], shortcut: String?, menuBarShowing: Bool = true) {
         guard let window, let root = window.contentView?.layer, !paused, path.count > 1 else { return }
         guard menuBarShowing, let titleFrame, Geometry.valid(titleFrame) else {
-            say("\(presence.name) · \(path.joined(separator: " › "))", busy: false, hold: 1.6)
+            say(path.joined(separator: " › "), busy: false, hold: 1.6)
             return
         }
         let title = Self.cocoa(titleFrame).offsetBy(dx: -window.frame.minX, dy: -window.frame.minY)
@@ -384,8 +389,8 @@ final class AgentCursor {
         lastReaction = reaction
         switch reaction {
         case .worked: break
-        case .unchanged: say("\(presence.name) · hmm, nothing changed", busy: false, hold: 1.6)
-        case .refused: say("\(presence.name) · trying another way", busy: false, hold: 1.6)
+        case .unchanged: say("hmm, nothing changed", busy: false, hold: 1.6)
+        case .refused: say("trying another way", busy: false, hold: 1.6)
         }
         guard !calm else { return }
         let gesture = CAKeyframeAnimation()
@@ -398,7 +403,8 @@ final class AgentCursor {
             gesture.keyPath = "transform.translation.x"; gesture.values = [0, -5, 5, -3, 3, 0]; gesture.duration = 0.4
         }
         gesture.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
-        cursor.add(gesture, forKey: "react")
+        // A tilt turns the arrow only: the label beside it stays level and readable.
+        (reaction == .unchanged ? arrow : cursor).add(gesture, forKey: "react")
     }
 
     /// `finished` when the agent's turn ended on its own: a small celebration first. A
@@ -412,7 +418,7 @@ final class AgentCursor {
         stopThinking()
         // Wave goodbye: control is back with the person.
         paused = false
-        say("\(presence.name) · all yours", busy: false, hold: nil)
+        say("all yours", busy: false, hold: nil)
         badge?.orderOut(nil); badge = nil; pill = nil
         // Only a session that did something and did not end on a refusal celebrates.
         let celebrate = finished && acted && lastReaction != .refused && !calm && cursorPoint != nil
@@ -569,7 +575,8 @@ final class AgentCursor {
         return luminance > 0.62 ? NSColor(white: 0.1, alpha: 1) : .white
     }
 
-    private func say(_ text: String, busy: Bool, hold: TimeInterval?) {
+    private func say(_ full: String, busy: Bool, hold: TimeInterval?) {
+        let text = CursorGlide.label(full)
         let lead: CGFloat = 10
         let textWidth = ceil((text as NSString).size(withAttributes: [.font: Self.font]).width)
         let width = lead + textWidth + 10 + (busy ? 22 : 0)
@@ -585,7 +592,7 @@ final class AgentCursor {
         guard let hold else { return }
         let work = DispatchWorkItem { [weak self] in
             guard let self, !self.paused, self.window != nil else { return }
-            self.say(self.narration.map { "\(self.presence.name) · \($0)" } ?? self.presence.name, busy: false, hold: nil)
+            self.say(self.narration ?? self.presence.name, busy: false, hold: nil)
         }
         resetTag = work
         DispatchQueue.main.asyncAfter(deadline: .now() + hold, execute: work)
@@ -630,7 +637,7 @@ final class AgentCursor {
                 let tilt = CAKeyframeAnimation(keyPath: "transform.rotation.z")
                 tilt.values = [0, lean, 0]; tilt.keyTimes = [0, 0.35, 1]; tilt.duration = duration
                 tilt.timingFunctions = [CAMediaTimingFunction(name: .easeOut), CAMediaTimingFunction(name: .easeInEaseOut)]
-                cursor.add(tilt, forKey: "lean")
+                arrow.add(tilt, forKey: "lean")
             }
         } else {
             cursor.removeAnimation(forKey: "move")
@@ -642,18 +649,17 @@ final class AgentCursor {
     /// One step of a stroke being drawn: the cursor moves straight to it and the line
     /// follows. Once the next input moved the cursor on, only the line finishes.
     private func stroke(to point: CGPoint, lifting: Bool, moving: Bool) {
+        // The pen tip and the line move in the same frame: an eased step made the cursor
+        // trail the line it was drawing.
+        CATransaction.begin(); CATransaction.setDisableActions(true)
         if moving {
-            let from = cursor.presentation()?.position ?? cursor.position
-            let step = CABasicAnimation(keyPath: "position")
-            step.fromValue = NSValue(point: from); step.toValue = NSValue(point: point); step.duration = CursorGlide.strokeStep
-            CATransaction.begin(); CATransaction.setDisableActions(true)
+            cursor.removeAnimation(forKey: "move")
             cursor.position = point; cursor.opacity = 1
-            CATransaction.commit()
-            cursor.add(step, forKey: "move")
-            cursorPoint = point; arrivesAt = CACurrentMediaTime() + step.duration
+            cursorPoint = point; arrivesAt = CACurrentMediaTime()
         }
         trailPoints.append(point)
         drawTrail(fading: lifting)
+        CATransaction.commit()
     }
 
     /// The session's purpose, short enough for the cursor's label.
@@ -670,7 +676,7 @@ final class AgentCursor {
         let work = DispatchWorkItem { [weak self] in
             guard let self, self.window != nil, !self.paused else { return }
             self.planningTurn += 1
-            self.say("\(self.presence.name) · \(CursorGlide.planningLabel(turn: self.planningTurn - 1, goal: self.goal))", busy: true, hold: nil)
+            self.say(CursorGlide.planningLabel(turn: self.planningTurn - 1, goal: self.goal), busy: true, hold: nil)
             guard !self.calm else { return }
             let breath = CABasicAnimation(keyPath: "transform.scale")
             breath.fromValue = 1; breath.toValue = 0.92; breath.duration = 1.2

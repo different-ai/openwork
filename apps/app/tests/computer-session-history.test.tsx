@@ -37,6 +37,33 @@ test("each captured view shows where its own clicks landed and the paths its dra
   expect(computerActionMarks({ ...batch, toolName: "browser_act" })).toEqual([])
 })
 
+test("refusals that only ask the agent to look again join the card, with each step's thinking, purpose and latest intent", () => {
+  const call = (id: string, name: string, input: Record<string, unknown>, output: string, failure = false): DynamicToolUIPart => ({
+    type: "dynamic-tool", toolName: name, toolCallId: id, state: "output-available", input, output,
+    ...(failure ? { callProviderMetadata: { openwork: { computerFailure: true } } } : {}),
+  })
+  const view = (image: string, id: string) => withToolAttachmentOwner([{ type: "file", mediaType: "image/png", url: image }], id)
+  const opened = call("open", "computer_open", { app_id: "photocraft", purpose: "Draw a neon skyline" }, '{"ok":true}')
+  const refused = call("refused", "computer_act", { observation_id: "o1", intent: "Type the title" },
+    '{"ok":false,"code":"focus_required","next":"observe"}\n{"post_observation":{"ok":true}}', true)
+  const blocked = call("blocked", "computer_act", { observation_id: "o2", intent: "Sign in" }, '{"ok":false,"code":"credential_declined","next":"human_takeover"}', true)
+  const drew = call("drew", "computer_act", { observation_id: "o3", intent: "Draw the towers" }, '{"ok":true}')
+  const messages: UIMessage[] = [{ id: "a", role: "assistant", parts: [
+    opened, { type: "reasoning", text: "The title field needs focus first." }, refused, ...view(images[0]!, "refused"),
+    blocked, { type: "reasoning", text: "Towers next, left to right." }, drew, ...view(images[1]!, "drew"),
+  ] }]
+  const history = collectComputerSessionHistory(messages, { thinking: true })!
+  expect(history.parts.map(part => part.toolCallId)).toEqual(["open", "refused", "drew"])
+  expect(withoutComputerHistory(messages[0]!.parts, history)).toContain(blocked)
+  expect(history.frames.map(frame => [frame.label, frame.thinking])).toEqual([
+    ["Type the title", "The title field needs focus first."],
+    ["Draw the towers", "Towers next, left to right."],
+  ])
+  expect(history.purpose).toBe("Draw a neon skyline")
+  expect(history.latest).toBe("Draw the towers")
+  expect(collectComputerSessionHistory(messages)!.frames.every(frame => frame.thinking === undefined)).toBe(true)
+})
+
 test("one history spans narration and message boundaries, retaining only its own raster attachments", () => {
   const messages = computerHistoryMessages(images)
   const unrelated: UIMessage["parts"][number] = { type: "file", url: images[0]!, mediaType: "image/png" }
