@@ -93,7 +93,8 @@ The native session ID is a local receipt, not a globally trusted routing key.
 
 Use a stable `idempotencyKey` for desktop/registered create retries. Den scopes
 it to the authenticated organization and user and refuses different arguments
-under the same key. Cloud creation does not currently support this argument;
+under the same key while its command can still be admitted (10 minutes). After
+that the key is released, so the same key from a later chat starts new work. Cloud creation does not currently support this argument;
 callers must not infer a guarantee from an ignored key.
 
 The desktop chat shows a session its agent started as a sub-agent row: where

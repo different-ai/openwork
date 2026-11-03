@@ -488,6 +488,21 @@ test("command admission idempotency resolves concurrent inserts and refuses chan
   assert.equal(state.inserts(), 1)
 })
 
+test("a create key reused after its command's admission window starts new work", async (t) => {
+  const state = storeDatabase(t, { commandExists: false })
+  const admission = { ...scope, createdByUserId: command.createdByUserId, title: "Demo take", prompt: "Write the .ics script",
+    ttlMs: 60_000, idempotencyKey: "remote_reused_key", targetComputerId: "computer_unit" }
+  const first = await databaseRemoteSessionCommandStore.enqueue(admission)
+  // Within the window a changed task under the same key is still refused.
+  await assert.rejects(() => databaseRemoteSessionCommandStore.enqueue({ ...admission, prompt: "Changed" }), RemoteSessionIdempotencyConflictError)
+  state.commandRow.expires_at = new Date(Date.now() - 1)
+  const later = await databaseRemoteSessionCommandStore.enqueue({ ...admission, prompt: "Write the .ics script, take 2" })
+  assert.notEqual(later.id, first.id, "a later chat reusing the key gets a new command")
+  assert.equal(later.prompt, "Write the .ics script, take 2")
+  assert.equal(state.inserts(), 2)
+  assert.ok(state.compiled.some((sql) => sql.includes("`idempotency_key` = ?")), "the old command's key is released by id and key")
+})
+
 test("a global admission key never reads another organization or user's command", async (t) => {
   const state = storeDatabase(t, { commandExists: false })
   const admission = { ...scope, createdByUserId: command.createdByUserId, title: "Scoped admission", ttlMs: 60_000, idempotencyKey: "remote_global_collision" }
