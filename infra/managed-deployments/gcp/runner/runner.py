@@ -99,8 +99,24 @@ def wait_for_completion(check, message, timeout=600):
         time.sleep(min(3, remaining))
 
 
+@contextmanager
+def maintenance_command():
+    try:
+        yield
+    except subprocess.TimeoutExpired:
+        # Provider writes may still finish remotely. Never replay them, echo
+        # command output or resume traffic after an uncertain fence/read.
+        print(json.dumps({"maintenanceCommand": {"errorCode": "command_deadline"}}))
+        raise ValueError("maintenance command deadline exceeded; inspect before retry") from None
+
+
+def maintenance_cloud(*args):
+    with maintenance_command():
+        return gcloud(*args, timeout=30)
+
+
 def service_status(service):
-    return gcloud("run", "services", "describe", service, "--region=" + os.environ["REGION"])
+    return maintenance_cloud("run", "services", "describe", service, "--region=" + os.environ["REGION"])
 
 
 def disabled_service(status):
@@ -153,8 +169,8 @@ def drained_instances(observations, since, required_revisions):
 
 def verify_no_running_migration(timeout=600):
     def completed():
-        executions = gcloud("run", "jobs", "executions", "list", "--job=" + name(os.environ["DEPLOYMENT_ID"]) + "-migrate",
-                            "--region=" + os.environ["REGION"])
+        executions = maintenance_cloud("run", "jobs", "executions", "list", "--job=" + name(os.environ["DEPLOYMENT_ID"]) + "-migrate",
+                                       "--region=" + os.environ["REGION"])
         if not isinstance(executions, list):
             raise ValueError("unknown prior migration executions; inspect before retry")
         for execution in executions:
@@ -206,8 +222,8 @@ def maintenance_fence(plan, timeout=900):
     for service in sorted(expected):
         # Tag-only revisions are NOT disabled by scaling zero. Remove their
         # request/restart path first; no rollback or tag is restored on failure.
-        gcloud("run", "services", "update-traffic", service, "--clear-tags", "--region=" + region)
-        gcloud("run", "services", "update", service, "--scaling=0", "--region=" + region)
+        maintenance_cloud("run", "services", "update-traffic", service, "--clear-tags", "--region=" + region)
+        maintenance_cloud("run", "services", "update", service, "--scaling=0", "--region=" + region)
     disabled_at = datetime.now(timezone.utc)
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
@@ -359,9 +375,10 @@ def mirror_images():
 def storage_headers():
     # Mint again for release: certificate/health verification may outlast the
     # access token used to acquire the lock. Never print or persist this token.
-    token = subprocess.run(["gcloud", "auth", "print-access-token",
-        "--impersonate-service-account=" + os.environ["RUNNER_SERVICE_ACCOUNT"]],
-        check=True, capture_output=True, text=True).stdout.strip()
+    with maintenance_command():
+        token = subprocess.run(["gcloud", "auth", "print-access-token",
+            "--impersonate-service-account=" + os.environ["RUNNER_SERVICE_ACCOUNT"]],
+            check=True, capture_output=True, text=True, timeout=30).stdout.strip()
     if not token:
         raise ValueError("storage identity unavailable")
     return {"Authorization": "Bearer " + token, "Content-Type": "application/json"}

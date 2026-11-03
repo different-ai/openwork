@@ -158,8 +158,11 @@ changes require explicit operator approval.
 The managed installer uses the shared Cloud Run module with explicit legacy
 naming and state-backed secrets. Existing and fresh managed installs stay on
 **MySQL 8.0**; the direct module default remains 8.4. No major database upgrade or
-secret rotation is part of adoption. Google provider 6→8 compatibility still
-requires the real isolated update proof.
+secret rotation is part of adoption. The October 21 isolated Den Update passed
+on head `26fdbbf2bf`, including the Google provider 6→8 transition and data,
+secret and sign-in preservation for its frozen image set. This historical run
+used a dev-built legacy baseline, not a published stable installer. It does not
+qualify newer application images.
 
 **Updates require customer re-approval and a maintenance window.** Bootstrap adds
 one deployment-specific custom role containing only `monitoring.timeSeries.list`
@@ -167,11 +170,18 @@ one deployment-specific custom role containing only `monitoring.timeSeries.list`
 clears traffic tags, disables and observes the drain of only the two owned
 services, runs one native migration, prepares API-only revisions while disabled,
 then verifies actual latest-ready traffic before separately restoring autoscaling.
-Missing/stale drain evidence or a failed/unknown migration leaves maintenance in
-place; inspect before retrying. No legacy revision/tag rollback is automatic.
-This path and its metric/readiness observations need a live test and review by
-the managed-deployments owners before merge or publication. Use a genuinely newer
-isolated test installer for Den Update; same-version protection stays unchanged.
+This causes a short outage on every update while services are scaled to zero,
+including during migration. Previously old code kept serving during migration.
+Fence/readiness CLI calls and drain-token minting each have a 30-second timeout.
+Missing/stale drain evidence, a command timeout or failed/unknown migration
+blocks progress without automatically resuming services or replaying the command.
+Inspect partial outcomes before retrying. A pre-resume failure retains maintenance,
+but a later health failure can happen after traffic resumes. Revision tags are
+removed and must be recreated on the new revisions if needed.
+The managed-deployments owners must still accept this behavior before merge or
+publication. Before publishing newer application images, qualify that exact
+image set with a live upgrade. Use a genuinely newer isolated test installer for
+Den Update; same-version protection stays unchanged.
 
 Use a dedicated billing-enabled project, a supported region, and an already
 public authoritative Cloud DNS zone for the chosen address. The form requires

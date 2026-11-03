@@ -120,6 +120,15 @@ Update both pinned image digests, apply the single native job, verify its succes
 
 Write-only secrets are now the default: ephemeral generation feeds provider write-only arguments and values persist in Secret Manager rather than state. The earlier module merged first with legacy state-backed secrets; this contract revision changes that default. If you deployed the earlier mode, explicitly keep `write_only_secrets = false` until you have preserved all exact current values through the ephemeral `preserved_secrets_wo` map; never silently regenerate an auth or encryption key. Read the README's adoption and partial-failure cautions first. The legacy bootstrap output is null in write-only mode; retrieve the setup code directly from Secret Manager without logging it. Digest pinning remains the only image default; the explicit mutable-tag opt-in is not recommended. Existing external database URLs must use the authenticated connector socket or verified `sslaccept=strict` TLS; unverified URLs are rejected.
 
+The [managed installer](https://github.com/different-ai/openwork/tree/dev/infra/managed-deployments/gcp#shared-module-adoption-and-existing-installs)
+uses a separate compatibility profile: MySQL 8.0 and state-backed secrets, not
+this direct module's MySQL 8.4/write-only defaults. On updates it automatically
+stops and drains its two owned services, runs the migration and prepares/verifies
+API-only revisions before restoring scaling. Plan a short outage and Cloud Shell
+approval for the additional `monitoring.timeSeries.list` permission. Revision tags
+are removed and must be recreated if needed. It does not coordinate independent
+deployers or automate the broader manual fencing/data/sign-in checks above.
+
 #### Secrets and later runs
 
 - **Later applies and upgrades do not rotate secrets or sign anyone out.** Values are written once, tracked by a version number. Unchanged version numbers keep the stored values unchanged, even when a later evaluation creates temporary candidate values. The 2026-10-15 live release-to-dev run already passed in this exact write-only mode with unchanged version numbers. The default change and version-input wiring were checked offline, not reapplied live.

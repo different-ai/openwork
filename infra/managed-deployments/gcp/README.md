@@ -179,8 +179,12 @@ secret environment values. Bootstrap, DNS and health monitoring stay managed-onl
 The direct module default remains 8.4. A managed major upgrade requires a separate
 owner-approved plan; this installer never silently upgrades an existing instance.
 The managed lock upgrades Google 6.49.0 to 8.7.0 and random 3.7.2 to 3.9.1, with
-Linux amd64 and macOS amd64/arm64 checksums. Synthetic state tests are not proof of
-a real Google 6→8 state refresh; the isolated live update must verify that.
+Linux amd64 and macOS amd64/arm64 checksums. The isolated October 21 Den Update
+passed on head `26fdbbf2bf`, including the provider transition, all 31 address
+moves, one migration after drain, and preservation of data, SQL 8.0/users, four
+secrets, the original session and fresh sign-in. That frozen image set used a
+dev-built legacy baseline, not a published stable installer. Fresh installation
+passed on earlier head `0510ce753e`, not the final October head.
 
 **Customer re-approval and maintenance are required.** The approving principal
 must be able to create the deployment's custom IAM role (`iam.roles.create`,
@@ -195,24 +199,34 @@ Under the retained deployment mutex, the runner clears traffic tags (tag-only
 revisions are not disabled by scale zero), disables both owned services and
 requires fresh explicit zero active **and idle** instance observations for every
 previously observed/routed revision. Missing, stale or incomplete observations
-are unknown, not zero. A timeout leaves maintenance enabled for inspection.
+are unknown, not zero. Each fence/readiness CLI call and drain access-token
+mint has a 30-second timeout, matching the health-execution command cap. A timeout
+records a safe diagnostic and stops without replaying the command or restoring
+traffic. A remote write may still complete, so inspect the partial outcome before
+retrying. Already-disabled services remain disabled; a timeout before fencing
+finishes does not prove both services stopped.
 Then it applies the migration and API-only revisions **still at manual zero**,
 verifies latest-created/latest-ready and all actual traffic belong to the new
 pinned revision, and only then separately restores autoscaling. Failed checks
 never automatically restore old revisions or tags. Manual jobs, independent
 controllers/deployers and manual rollback are unsupported while this installer
-owns the schema. The fence's real metric emission and disabled-revision readiness
-behavior are explicit live-test gates, not certified by mocks.
+owns the schema. Each update causes a short outage, with both services at zero
+while migration runs. Previously old code kept serving during migration.
+Pre-resume failures retain maintenance. Final health verification happens after
+resume, so a later health failure can leave services serving. The October live
+run covered metric emission and disabled-revision readiness for its frozen images,
+not arbitrary later images.
 
 Updates and retries remove Cloud Run revision tags on the OpenWork services;
 recreate any you need afterwards on the new API-only revisions.
 
-Before merging/rollout, the managed-deployments owners must review the grant and
-maintenance behavior, and an isolated Den must exercise a published legacy
-install → genuinely newer test installer Update → fresh install → destroy.
-Use reviewed `--image-pins` if testing a new installer label with existing
-application digests; never bypass Den's same-version rejection or publish mocked
-registry artifacts.
+Before merging, the managed-deployments owners must review or explicitly waive
+the grant, maintenance behavior and historical baseline/fresh-install boundaries.
+Before publishing newer images, qualify that exact image set through isolated
+Den Update, migration/auth/readiness and preservation checks, fresh install and
+cleanup. The October pass does not certify today's images. Use reviewed
+`--image-pins` if testing a new installer label with existing application digests;
+never bypass Den's same-version rejection or publish mocked registry artifacts.
 
 The runner enrolls using `{"provider":"gcp","idToken":"..."}` with audience
 `API_ORIGIN/v1/managed-deployments/DEPLOYMENT/runs/RUN/enroll#CHALLENGE`.
@@ -246,11 +260,13 @@ authoritative. If your domain or a parent domain has CAA records, allow
 or the managed HTTPS certificate will not be issued. Certificate issuance
 can take 60 minutes; a failed run can be retried after correcting DNS/CAA.
 
-No cloud resources have been provisioned or releases published as part of
-implementation. Local mocked security/protocol tests and Terraform validation
-do not prove a live Cloud Run deployment. Customer-project end-to-end validation
-and a real immutable release are rollout gates. Serverless NEG target health
-is inapplicable and omitted (the actual HTTPS routes are checked instead).
+Isolated experimental cloud resources and installer artifacts were used for the
+October tests, then cleaned up. No production rollout or stable installer
+publication is claimed. Local mocked security/protocol tests and Terraform
+validation do not prove a live Cloud Run deployment. Exact-image qualification
+and an operator-approved immutable release remain publication gates. Serverless
+NEG target health is inapplicable and omitted (the actual HTTPS routes are checked
+instead).
 Disk metrics and backups report `unknown/unavailable` while Google has no
 measurements or successful backup yet, not fabricated successful checks.
 Source image digests are pinned by the operator before publication and protected

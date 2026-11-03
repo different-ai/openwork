@@ -209,6 +209,115 @@ class AdoptionTests(unittest.TestCase):
         self.assertIn('approved_plan("maintained-platform")', apply_source)
 
 
+class CommandTimeoutTests(unittest.TestCase):
+    def test_fence_reads_and_writes_have_explicit_thirty_second_bounds(self):
+        disabled = set()
+        def cloud(*args, **kwargs):
+            self.assertEqual(kwargs.get("timeout"), 30)
+            if args[:4] == ("run", "jobs", "executions", "list"):
+                return []
+            service = args[3]
+            if args[:3] == ("run", "services", "update"):
+                disabled.add(service)
+            return {"metadata": {"name": service, "generation": 1, "annotations": {
+                        "run.googleapis.com/scalingMode": "manual" if service in disabled else "automatic",
+                        "run.googleapis.com/manualInstanceCount": "0"}},
+                    "spec": {"traffic": [{"percent": 100}]},
+                    "status": {"observedGeneration": 1, "traffic": [{"revisionName": service + "-old"}]}}
+        with patch.dict(os.environ, ENV), patch.object(runner, "cloud", side_effect=cloud), \
+                patch.object(runner, "instance_observations", side_effect=lambda service, since: observations(service + "-old")):
+            self.assertTrue(runner.maintenance_fence(FenceTests().plan()))
+        self.assertEqual(len(disabled), 2)
+
+    def test_hanging_read_or_fence_write_is_not_retried_and_records_safe_outcome(self):
+        for operation in (lambda: runner.service_status("owned-api"), runner.verify_no_running_migration,
+                          lambda: runner.maintenance_cloud("run", "services", "update", "owned-api", "--scaling=0"),
+                          runner.storage_headers):
+            with self.subTest(operation=operation), patch.dict(os.environ, ENV), \
+                    patch.object(runner.subprocess, "run", side_effect=subprocess.TimeoutExpired("redacted", 30)) as command, \
+                    patch.object(runner.time, "sleep") as poll, patch("builtins.print") as diagnostic:
+                with self.assertRaisesRegex(ValueError, "deadline exceeded.*inspect before retry"):
+                    operation()
+                command.assert_called_once()
+                self.assertEqual(command.call_args.kwargs.get("timeout"), 30)
+                poll.assert_not_called()
+                self.assertEqual(json.loads(diagnostic.call_args.args[0]), {
+                    "maintenanceCommand": {"errorCode": "command_deadline"}})
+
+    def test_timeout_records_infrastructure_failure_without_reporting_success(self):
+        with patch.dict(os.environ, ENV), patch.object(runner, "enroll", return_value="test-token"), \
+                patch.object(runner, "verify_target"), patch.object(runner, "orchestration_mutex"), \
+                patch.object(runner, "mirror_images", return_value={}), \
+                patch.object(runner, "apply", side_effect=lambda *args: runner.service_status("owned-api")), \
+                patch.object(runner.subprocess, "run", side_effect=subprocess.TimeoutExpired("redacted", 30)), \
+                patch.object(runner, "report") as report, patch("builtins.print"):
+            with self.assertRaisesRegex(ValueError, "deadline exceeded"):
+                runner.main()
+        self.assertEqual(report.call_args.args, ("test-token", 4, "infrastructure_applied", "failed", "infrastructure_failed"))
+        self.assertFalse(any(call.args[1] > 4 for call in report.call_args_list))
+
+    def test_uncertain_tag_removal_or_scale_zero_is_never_replayed(self):
+        for failing in ("update-traffic", "update"):
+            calls = []
+            def cloud(*args, timeout):
+                self.assertEqual(timeout, 30)
+                calls.append(args)
+                if args[2] == "executions":
+                    return []
+                if args[2] == failing:
+                    raise subprocess.TimeoutExpired("redacted", timeout)
+                return {"metadata": {"name": args[3]}, "status": {"traffic": [{"revisionName": args[3] + "-old"}]}}
+            with self.subTest(failing=failing), patch.dict(os.environ, ENV), \
+                    patch.object(runner, "gcloud", side_effect=cloud), \
+                    patch.object(runner, "instance_observations", return_value=observations()), \
+                    patch.object(runner.time, "sleep") as poll, patch("builtins.print"):
+                with self.assertRaisesRegex(ValueError, "inspect before retry"):
+                    runner.maintenance_fence(FenceTests().plan())
+            self.assertEqual(calls[-1][2], failing)
+            self.assertEqual(sum(call[2] == failing for call in calls), 1)
+            self.assertFalse(any("--scaling=auto" in call for call in calls))
+            poll.assert_not_called()
+
+    def test_real_hanging_subprocess_is_killed_without_running_gcloud(self):
+        import sys
+        import time
+        execute = subprocess.run
+        def hanging(command, **kwargs):
+            self.assertEqual(command[0], "gcloud")
+            self.assertEqual(kwargs.get("timeout"), 30)
+            # Replace only the external executable with a local sleeping child.
+            # Shorten the real subprocess deadline so this regression is fast.
+            return execute([sys.executable, "-c", "import time; time.sleep(60)"], **{**kwargs, "timeout": 0.05})
+        started = time.monotonic()
+        with patch.dict(os.environ, ENV), patch.object(runner.subprocess, "run", side_effect=hanging) as command, \
+                patch("builtins.print"):
+            with self.assertRaisesRegex(ValueError, "deadline exceeded"):
+                runner.service_status("owned-api")
+        command.assert_called_once()
+        self.assertLess(time.monotonic() - started, 5)
+
+    def test_readiness_timeout_retains_maintenance_and_never_applies_resume(self):
+        calls = []
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            tf_root = root / "infra/managed-deployments/gcp/terraform"
+            tf_root.mkdir(parents=True)
+            def execute(command, **kwargs):
+                calls.append(command)
+                if command[0] == "gcloud":
+                    self.assertEqual(kwargs.get("timeout"), 30)
+                    raise subprocess.TimeoutExpired("redacted", 30)
+            with patch.dict(os.environ, ENV), patch.object(runner, "terraform_binary", return_value="terraform"), \
+                    patch.object(runner, "maintenance_fence", return_value=True), \
+                    patch.object(runner.subprocess, "run", side_effect=execute), \
+                    patch.object(runner.subprocess, "check_output", return_value=b"{}"), patch("builtins.print"):
+                with self.assertRaisesRegex(ValueError, "deadline exceeded"):
+                    runner.apply(root, {})
+            self.assertTrue(json.loads((tf_root / "managed.auto.tfvars.json").read_text())["managed_maintenance"])
+        self.assertEqual(sum(command[1] == "apply" for command in calls), 1)
+        self.assertEqual(sum(command[0] == "gcloud" for command in calls), 1)
+
+
 class CompletionWaitTests(unittest.TestCase):
     def test_service_readiness_observes_stale_pending_then_completed(self):
         stale = {"metadata": {"generation": 2}, "status": {"observedGeneration": 1, "conditions": [{"type": "Ready", "status": "True"}]}}
@@ -262,7 +371,8 @@ class FenceTests(unittest.TestCase):
         disabled = set()
         order = []
         lagged = False
-        def cloud(*args):
+        def cloud(*args, timeout):
+            self.assertEqual(timeout, 30)
             nonlocal lagged
             if args[:3] == ("run", "jobs", "executions"):
                 return []
