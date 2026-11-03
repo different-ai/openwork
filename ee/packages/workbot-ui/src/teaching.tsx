@@ -92,9 +92,7 @@ export function WorkbotTeaching({ open, onOpenChange, onTakeControl, onTeachingC
     const revision = changes.current;
     void host.requestJson("/v1/workbot/teaching", { method: "POST", body: JSON.stringify({ action: "read" }), signal: controller.signal }, 30_000).then(({ response, payload }) => {
       if (!mounted.current || controller.signal.aborted || revision !== changes.current || !response.ok) return;
-      const reply = accept(payload);
-      // A demonstration already under way opens its window again.
-      if (reply.demonstration) openChange.current(true);
+      accept(payload);
     }).catch(() => { /* Opening an older desktop keeps the explicit Teach control available. */ });
     return () => controller.abort();
   }, [host, accept, suspended]);

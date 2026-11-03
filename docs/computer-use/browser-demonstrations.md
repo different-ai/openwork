@@ -15,8 +15,9 @@ is unavailable until it moves to a current build (see
 ## Teach, review, and run
 
 1. Open Browser and choose the whiteboard, Teach Workbot, in its toolbar. The
-   teaching window floats over the page, which keeps its size; collapse it to
-   its latest step or hide it, and teaching continues (the whiteboard shows a
+   teaching window floats over the page, which keeps its size; collapse it
+   to keep the selected step in view, or choose Use latest step first to show
+   the latest action. Teaching continues when the window is hidden (the whiteboard shows a
    dot while recording). Choose the browser tab, then Start teaching.
    With the browser live view, the tab on screen is chosen unless you pick
    another, and tabs are named as in the tab strip. The taught tab comes to the
