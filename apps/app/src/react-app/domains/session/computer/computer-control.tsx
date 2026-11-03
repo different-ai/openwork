@@ -2,6 +2,8 @@ import { useEffect, useEffectEvent, useRef, useState } from "react"
 import type { ComputerSnapshot } from "@openwork/types/desktop-ipc"
 
 import { desktopBridge } from "@/app/lib/desktop"
+import { useComputerSessionHistoryStore } from "@/components/chat/computer-session-history-store"
+import { showsLiveComputerView } from "@/lib/computer-session-history"
 import { useSessionFloatingSlot } from "../panel/floating-slot"
 import { ComputerPanel } from "./computer-panel"
 import { useComputerRequest } from "./computer-store"
@@ -35,6 +37,15 @@ export function ComputerControl({ sessionId }: { sessionId: string }) {
   useEffect(() => () => { generation.current++ }, [])
   const readLatest = useEffectEvent(refresh)
   const working = Boolean(snapshot?.session || snapshot?.cleanupPending)
+  const historyEnabled = useComputerSessionHistoryStore(state => state.enabled)
+  const watching = useComputerSessionHistoryStore(state => Boolean(state.watching[sessionId]))
+  useEffect(() => {
+    const history = useComputerSessionHistoryStore.getState()
+    history.setWorking(sessionId, working)
+    // The next computer session starts in the card again.
+    if (!working) history.setWatching(sessionId, false)
+  }, [sessionId, working])
+  useEffect(() => () => useComputerSessionHistoryStore.getState().setWorking(sessionId, false), [sessionId])
   useEffect(() => {
     void readLatest()
     const update = () => { if (document.visibilityState === "visible") void readLatest() }
@@ -67,5 +78,6 @@ export function ComputerControl({ sessionId }: { sessionId: string }) {
   }
 
   if (!slot || !snapshot || !working) return null
+  if (!showsLiveComputerView({ historyEnabled, watching, session: snapshot.session })) return null
   return <ComputerPanel sessionId={sessionId} slot={slot} enabled={snapshot.enabled} canStop controlsBusy={stopping} stopping={stopping} cleanupPending={Boolean(snapshot.cleanupPending)} stopError={actionError} onStop={() => void halt()} />
 }

@@ -119,3 +119,15 @@ export function withoutComputerHistory(parts: UIMessage["parts"], history: Compu
   return parts.filter(part => !(part.type === "dynamic-tool" && history.toolCallIds.has(part.toolCallId))
     && !(part.type === "file" && history.files.has(part)))
 }
+
+/**
+ * With the session card on, the card shows the work: the live computer view opens
+ * only from it, or on its own when the person is needed there (a takeover to end).
+ */
+export function showsLiveComputerView({ historyEnabled, watching, session }: {
+  historyEnabled: boolean
+  watching: boolean
+  session: { state: string } | null | undefined
+}): boolean {
+  return !historyEnabled || watching || session?.state === "paused"
+}
