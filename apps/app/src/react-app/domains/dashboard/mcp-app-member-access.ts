@@ -83,9 +83,7 @@ export function setMemberAccessScope(scope: ActivityScope | null): void {
 }
 
 /** A revision this member's access was already compared at means nothing has changed since. */
-export function noteInventoryRevision(scope: ActivityScope, revision: string | null): void {
-  if (revision !== null && readRecordedAccess(scope)?.revision === revision) comparedMember = memberKey(scope);
-}
+export function noteInventoryRevision(_scope: ActivityScope, _revision: string | null): void {}
 
 /** Compares a complete inventory with the last one, clearing stored data if anything was lost. */
 export function reconcileMemberAccess(scope: ActivityScope, revision: string | null, inventory: MemberInventory): void {
