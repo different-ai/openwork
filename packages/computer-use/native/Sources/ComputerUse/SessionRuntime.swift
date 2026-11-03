@@ -490,6 +490,7 @@ final class SessionRuntime {
         let elements = try shown.map { try $0.payload(bounds: bounds, width: width, height: height, compact: policy == .embedded) }
         let observation = ObservationLease(id: UUID().uuidString.lowercased(), createdAt: now, generation: current.generation,
             frame: bounds, imageWidth: width, imageHeight: height, stateDigest: try access.captureDigest(state),
+            contentDigest: try access.captureDigest(state, focus: false),
             imageDigest: imageDigest, validFor: policy.observationSeconds, image: png)
         try check()
         let observedFocus = state.focusRecord.flatMap { focus in shown.first { CFEqual($0.element, focus.element) } }
@@ -749,7 +750,10 @@ final class SessionRuntime {
                 var pointerTarget: AXUIElement?
                 if !followsStrokes, action.usesCoordinates || (policy == .desktop && index == 0) || (disturbed && !progress.hasInput) {
                     let live = try await access.read(current.target, check: check)
-                    guard try access.captureDigest(live) == observation.stateDigest else {
+                    // The helper bringing the window forward moves keyboard focus by itself: after
+                    // its own raise only the content must match. Keys still check focus before they send.
+                    guard try access.captureDigest(live) == observation.stateDigest
+                            || disturbed && (try access.captureDigest(live, focus: false)) == observation.contentDigest else {
                         throw UseError("stale_observation", "The observed window content or focus changed.", next: "observe")
                     }
                     if action.usesCoordinates {
@@ -823,7 +827,9 @@ final class SessionRuntime {
                 case .menu:
                     focus = nil; needsObservation = true
                 case .setValue(let ref, _):
-                    if focus?.ref != ref { focus = nil }
+                    // A filled field gets the keyboard, so Enter can submit it as a person would.
+                    if let field = records.first(where: { $0.ref == ref && $0.textField }), access.refocus(field) { focus = field }
+                    else if focus?.ref != ref { focus = nil }
                 case .move, .scroll, .drag: needsObservation = true
                 case .key: needsObservation = action.endsFocusSequence
                 default: break

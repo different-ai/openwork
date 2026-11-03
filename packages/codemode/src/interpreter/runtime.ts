@@ -2986,7 +2986,8 @@ class Interpreter<R> {
           const raw = yield* self.evaluateExpression(asNode(expressions[index], "expressions"))
           // The preserving checkpoint keeps sandbox values intact, so coerceToString renders
           // them directly (ISO date, /regex/ literal form) instead of a JSON-serialized husk.
-          output += coerceToString(boundedData(raw, "Template interpolation"))
+          // A caught error keeps its name only before it is copied.
+          output += coerceToString(errorBrandName(raw) !== undefined ? raw : boundedData(raw, "Template interpolation"))
         }
       }
 
