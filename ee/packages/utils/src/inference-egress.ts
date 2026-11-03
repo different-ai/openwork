@@ -54,6 +54,13 @@ export function vertexHost(location: string) {
   return location === "global" ? "aiplatform.googleapis.com" : `${location}-aiplatform.googleapis.com`
 }
 
+/** True only for hosts vertexHost can produce: global, regional and eu/us multi-region. */
+export function isVertexHost(hostname: string): boolean {
+  return hostname === "aiplatform.googleapis.com"
+    || /^aiplatform\.(?:eu|us)\.rep\.googleapis\.com$/.test(hostname)
+    || /^[a-z]+(?:-[a-z]+)*[0-9]+-aiplatform\.googleapis\.com$/.test(hostname)
+}
+
 export function vertexPublisherBase(settings: Record<string, unknown>, publisher: "google" | "anthropic") {
   const project = settings.project
   const location = settings.location
@@ -120,10 +127,10 @@ export function createInferenceEgressFetch(options: { allowedOrigins?: ReadonlyS
     const headers = new Headers(request.headers)
     for (const name of ["host", "connection", "transfer-encoding", "content-length"]) headers.delete(name)
     headers.set("accept-encoding", "identity")
-    // A body the caller already holds in full (string, bytes, Blob, form) is sent
-    // with an exact Content-Length; some upstreams (Vertex rawPredict) reject a
-    // chunked request body. Only a caller-supplied stream is sent chunked.
-    const fixedBody = request.body && init?.body != null && !(init.body instanceof ReadableStream)
+    // Vertex rawPredict rejects a chunked request body with HTTP 400, so a body the
+    // caller already holds in full is sent to Vertex with its exact Content-Length.
+    // Every other upstream, and any caller-supplied stream, stays chunked.
+    const fixedBody = isVertexHost(url.hostname) && request.body && init?.body != null && !(init.body instanceof ReadableStream)
       ? new Uint8Array(await request.arrayBuffer()) : null
     if (fixedBody) headers.set("content-length", String(fixedBody.byteLength))
     return new Promise<Response>((resolve, reject) => {
