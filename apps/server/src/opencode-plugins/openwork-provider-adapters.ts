@@ -54,6 +54,8 @@ export const sessionReadArgsSchema = strictArgsSchema({
   count: z.number().int().positive().max(100).optional().describe("Number of transcript messages to return. Defaults to 30, max 100."),
   from: z.enum(["start", "end"]).optional().describe("end (default): the last `count` messages; start: the first `count` messages."),
   summary: z.boolean().optional().describe("When true, return only the first user message and the last assistant message plus session metadata."),
+  detail: z.enum(["text", "full"]).optional().describe("text (default): readable text of user and assistant messages. full: every message the engine stores, including tool calls, reasoning, models, tokens and cost."),
+  messageId: z.string().trim().min(1).optional().describe("Read only this message, in full detail with higher size limits. Use it for a message a full read marked truncated."),
 });
 
 export const sessionModelArgSchema = openworkModelSelectorSchema;
@@ -205,7 +207,7 @@ function sessionContribution(): OpenworkFeatureContribution {
         id: "session.read",
         kind: "query",
         title: "Read a session transcript",
-        description: "Read messages from a session without opening it. Finds the session on either engine. The result also carries `engine` (v1 or v2), `createdAt`, `archived`, `parentId`, `status` (idle, busy, retry, waiting), `working` (check it before session.archive), and `model` ({ providerId, modelId, variant, displayName?, providerName? } the session is bound to, variant being its reasoning effort; null before a model is bound). Pass `summary: true` to get only the first user message and the last assistant message (what was asked, what was concluded) in one call. Both modes include `lastError` ({ code, message } or null) from the latest assistant info.error before text filtering: end reads inspect only the fetched newest `count` messages; start/summary inspect the whole transcript, even outside displayed text. Null means no assistant error observed in that window; a later assistant without an error clears it. Codes are allowlisted error names (otherwise UnknownError); messages are fixed labels under 160 characters, never arbitrary provider details. Snapshot errors only: event-only failures, including pre-assistant model-not-found, are not observable here.",
+        description: "Read messages from a session without opening it. Finds the session on either engine. The result also carries `engine` (v1 or v2), `createdAt`, `archived`, `parentId`, `status` (idle, busy, retry, waiting), `working` (check it before session.archive), and `model` ({ providerId, modelId, variant, displayName?, providerName? } the session is bound to, variant being its reasoning effort; null before a model is bound). Pass `summary: true` to get only the first user message and the last assistant message (what was asked, what was concluded) in one call. Pass `detail: full` to see what the session actually did: tool calls with their input and output, reasoning, models, tokens and cost; `messageId` reads one message with higher limits. Both modes include `lastError` ({ code, message } or null) from the latest assistant info.error before text filtering: end reads inspect only the fetched newest `count` messages; start/summary inspect the whole transcript, even outside displayed text. Null means no assistant error observed in that window; a later assistant without an error clears it. Codes are allowlisted error names (otherwise UnknownError); messages are fixed labels under 160 characters, never arbitrary provider details. Snapshot errors only: event-only failures, including pre-assistant model-not-found, are not observable here.",
         provider,
         arguments: [
           argument("sessionId", "string", true, "Session id returned by session.search."),
@@ -213,6 +215,8 @@ function sessionContribution(): OpenworkFeatureContribution {
           argument("count", "number", false, "Number of messages to return. Defaults to 30, max 100."),
           argument("from", "string", false, "end (default): the last `count` messages; start: the first `count` messages."),
           argument("summary", "boolean", false, "When true, return only the first user and last assistant messages plus metadata."),
+          argument("detail", "string", false, "text (default): readable text of user and assistant messages only. full: every message the engine stores, by `type` (user, assistant, synthetic, system, skill, shell, compaction, idle, agent-switched, model-switched, location-switched). Assistant messages carry agent, model, finish, tokens, cost, error, retry, changedFiles and `content` items: text, reasoning, and tool calls with id, name, status, input, output, files, error, metadata, childSessionId (a sub-agent session you can read) and time. `count` then counts every message type. Long fields end with a `…[+N chars …]` marker and set `truncated` on the message; the result lists `omittedForSize` messages left out to stay under about 200k characters."),
+          argument("messageId", "string", false, "Read only this message in full detail with much higher size limits (implies detail full). Use it for a message a full read marked truncated."),
         ],
         effects: readEffects,
       }),
