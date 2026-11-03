@@ -50,13 +50,34 @@ enum HandoverRules {
         "com.apple.PassbookUIService": "payment",
         "com.apple.PassKit.PaymentAuthorizationUIExtension": "payment",
     ]
+    /// How long an observation waits for the person to answer, well inside one call's time limit.
+    static let personWait: TimeInterval = 60
+    static let personPoll: TimeInterval = 0.5
     static func reason(bundleID: String?) -> String? { bundleID.flatMap { prompts[$0] } }
-    static func message(_ reason: String) -> String {
+    /// `waited`: an observation already waited `personWait` and the prompt is still open.
+    static func message(_ reason: String, waited: Bool = false) -> String {
+        let prompt: String
         switch reason {
-        case "permission": return "macOS is asking the person to allow something. Only they can answer it; ask them to, then observe again. Nothing was sent."
-        case "payment": return "A payment sheet is open. Only the person can confirm a payment; ask them to, then observe again. Nothing was sent."
-        default: return "macOS is asking the person to sign in or confirm it's them. Ask them to finish it, then observe again. Nothing was sent."
+        case "permission": prompt = "macOS is asking the person to allow something"
+        case "payment": prompt = "A payment sheet is open, and only the person can confirm a payment"
+        default: prompt = "macOS is asking the person to sign in or confirm it's them"
         }
+        return waited
+            ? "\(prompt), still unanswered after a minute. Only they can answer it; ask them to, then observe again. Nothing was sent."
+            : "\(prompt). Observe again: it waits up to a minute for them to answer. Nothing was sent."
+    }
+    /// Waits while a prompt only the person may answer is open. Returns nil once it is
+    /// gone, or the prompt still open after `limit`; Take over or Stop ends the wait (`check`).
+    @MainActor static func waitForPerson(prompt: () -> (reason: String, app: String)?, check: () throws -> Void,
+        now: () -> TimeInterval, sleep: (TimeInterval) async throws -> Void, limit: TimeInterval = personWait) async throws -> (reason: String, app: String)? {
+        let started = now()
+        while let open = prompt() {
+            try check()
+            guard now() - started < limit else { return open }
+            try await sleep(personPoll)
+        }
+        try check()
+        return nil
     }
 
     /// Follow a new window only when the agent's own last action opened it and the app focused it.

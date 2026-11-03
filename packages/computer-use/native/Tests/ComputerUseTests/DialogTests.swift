@@ -31,6 +31,42 @@ final class DialogTests: XCTestCase {
         XCTAssertNil(HandoverRules.reason(bundleID: "com.apple.TextEdit"))
         XCTAssertNil(HandoverRules.reason(bundleID: nil))
         XCTAssertTrue(HandoverRules.message("payment").contains("Nothing was sent"))
+        XCTAssertTrue(HandoverRules.message("permission").contains("Observe again"), "an action points to the observation that waits")
+        XCTAssertTrue(HandoverRules.message("permission", waited: true).contains("ask them to"))
+    }
+
+    @MainActor
+    func testAnObservationCarriesOnOnceThePersonAnswers() async throws {
+        var clock: TimeInterval = 0
+        let open = try await HandoverRules.waitForPerson(prompt: { clock < 3 ? ("permission", "macOS") : nil },
+            check: {}, now: { clock }, sleep: { clock += $0 })
+        XCTAssertNil(open)
+        XCTAssertGreaterThanOrEqual(clock, 3)
+        XCTAssertLessThan(clock, 3 + HandoverRules.personPoll * 2)
+    }
+
+    @MainActor
+    func testAPromptLeftOpenIsHandedBackAfterTheWait() async throws {
+        var clock: TimeInterval = 0
+        let open = try await HandoverRules.waitForPerson(prompt: { ("sign_in", "Security Agent") },
+            check: {}, now: { clock }, sleep: { clock += $0 })
+        XCTAssertEqual(open?.reason, "sign_in")
+        XCTAssertGreaterThanOrEqual(clock, HandoverRules.personWait)
+        XCTAssertLessThan(clock, HandoverRules.personWait + HandoverRules.personPoll * 2)
+    }
+
+    @MainActor
+    func testStopEndsTheWaitForThePerson() async throws {
+        var clock: TimeInterval = 0
+        do {
+            _ = try await HandoverRules.waitForPerson(prompt: { ("permission", "macOS") }, check: {
+                if clock > 2 { throw UseError("session_changed", "Access ended", next: "human_takeover") }
+            }, now: { clock }, sleep: { clock += $0 })
+            XCTFail("The wait outlived Stop")
+        } catch let error as UseError {
+            XCTAssertEqual(error.code, "session_changed")
+            XCTAssertLessThan(clock, HandoverRules.personWait)
+        }
     }
 
     func testOnlyWindowsTheLastActionOpenedAreFollowed() {
