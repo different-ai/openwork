@@ -14,6 +14,7 @@ import {
 } from "./managed-opencode-v2.js";
 import { attachHistory, copyHistoryBatches, externalizeHistory, numberField, openHistoryDatabase, restoreHistoryPayloads } from "./opencode-v2-history-store.js";
 import { acquireHistoryCopyLock, historyCopyFenced, rollbackPartialHistoryCopy } from "./opencode-v2-history-lock.js";
+import { estimateHistoryCopyOffMain } from "./history-copy-preflight.js";
 
 export interface EngineV2MigrationStatus {
   state: "idle" | "running" | "completed" | "error";
@@ -345,13 +346,23 @@ async function remainingCopyBytes(request: Pick<MigrationRequest, "source" | "st
  * on disk. The copy lock then checks running engines and other copies, still
  * before the target is fenced.
  */
-export async function preflightHistoryCopy(request: Pick<MigrationRequest, "source" | "storageDir" | "targetDatabase" | "freeBytes">): Promise<void> {
+export async function estimateHistoryCopyBytes(request: Pick<MigrationRequest, "source" | "storageDir" | "targetDatabase">): Promise<number> {
   const saved = await checkpointAt(historyCopyPaths(request.storageDir).checkpoint);
   if (saved && saved.phase !== "completed" && (saved.source !== resolve(request.source) || saved.target !== resolve(request.targetDatabase))) {
     throw new Error("The saved history copy belongs to another profile. Its files were preserved.");
   }
   await mkdir(request.storageDir, { recursive: true, mode: 0o700 });
-  await ensureMigrationDiskSpace({ directory: request.storageDir, neededBytes: await remainingCopyBytes(request, saved), freeBytes: request.freeBytes });
+  return remainingCopyBytes(request, saved);
+}
+
+/** Keep the complete saved-stage read, SQLite open/attach/aggregate/close off
+ * Electron main. The free-space callback stays on the caller and is never
+ * serialized into a worker. Refusal still precedes engine stop and ownership. */
+export async function preflightHistoryCopy(request: Pick<MigrationRequest, "source" | "storageDir" | "targetDatabase" | "freeBytes"> & { signal?: AbortSignal }): Promise<void> {
+  const neededBytes = await estimateHistoryCopyOffMain(request, request.signal);
+  request.signal?.throwIfAborted();
+  await ensureMigrationDiskSpace({ directory: request.storageDir, neededBytes, freeBytes: request.freeBytes });
+  request.signal?.throwIfAborted();
 }
 
 /**

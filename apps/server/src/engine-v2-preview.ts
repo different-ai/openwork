@@ -1528,7 +1528,7 @@ export function createEngineV2Preview(options: {
         const resolved = await resolveBinary(config);
         // Refuse (profile, disk) before v2 stops or a resume marker is saved,
         // so a copy that cannot run never interrupts the history v2 serves.
-        await preflightHistoryCopy({ source, storageDir, targetDatabase, freeBytes: options.historyCopyFreeBytes });
+        await preflightHistoryCopy({ source, storageDir, targetDatabase, freeBytes: options.historyCopyFreeBytes, signal: abort.signal });
         enabled = true;
         allowRunning = true;
         // Initialize/upgrade the target schema with its own pinned engine,
