@@ -120,6 +120,12 @@ export function createInferenceEgressFetch(options: { allowedOrigins?: ReadonlyS
     const headers = new Headers(request.headers)
     for (const name of ["host", "connection", "transfer-encoding", "content-length"]) headers.delete(name)
     headers.set("accept-encoding", "identity")
+    // A body the caller already holds in full (string, bytes, Blob, form) is sent
+    // with an exact Content-Length; some upstreams (Vertex rawPredict) reject a
+    // chunked request body. Only a caller-supplied stream is sent chunked.
+    const fixedBody = request.body && init?.body != null && !(init.body instanceof ReadableStream)
+      ? new Uint8Array(await request.arrayBuffer()) : null
+    if (fixedBody) headers.set("content-length", String(fixedBody.byteLength))
     return new Promise<Response>((resolve, reject) => {
       const outgoing = (url.protocol === "https:" ? httpsRequest : httpRequest)(url, {
         method: request.method,
@@ -159,7 +165,8 @@ export function createInferenceEgressFetch(options: { allowedOrigins?: ReadonlyS
         resolve(new Response(body, { status, headers: responseHeaders }))
       })
       outgoing.on("error", () => reject(new Error("Inference upstream transport failed")))
-      if (!request.body) outgoing.end()
+      if (fixedBody) outgoing.end(fixedBody)
+      else if (!request.body) outgoing.end()
       else {
         const reader = request.body.getReader()
         outgoing.on("close", () => { void reader.cancel().catch(() => {}) })
