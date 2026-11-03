@@ -12,7 +12,7 @@ import {
   readCloudInventoryScope,
   storeCloudInventory,
 } from "@/react-app/domains/connections/cloud-inventory-cache";
-import { noteInventoryRevision, reconcileMemberAccess, trackMemberAccessCheck } from "@/react-app/domains/dashboard/mcp-app-member-access";
+import { noteInventoryRevision, reconcileMemberAccess, setMemberAccessScope, trackMemberAccessCheck } from "@/react-app/domains/dashboard/mcp-app-member-access";
 import { useDenAuth } from "./den-auth-provider";
 import { createInventoryRevisionGate } from "./inventory-revision";
 import { subscribeCloudProviderSyncTriggers } from "./use-cloud-provider-auto-sync";
@@ -32,10 +32,12 @@ export function useMemberActivitySync(enabled: boolean) {
     const feed = useActivityStore.getState();
     if (!enabled || !token || !principalId || organizationId !== verifiedOrgId) {
       feed.setScope(null);
+      setMemberAccessScope(null);
       return;
     }
     const scope: ActivityScope = { baseUrl, organizationId, memberId: principalId };
     feed.setScope(scope);
+    setMemberAccessScope(scope);
     let disposed = false;
     let inflight: Promise<unknown> | null = null;
     const isCurrent = () => {
@@ -53,6 +55,7 @@ export function useMemberActivitySync(enabled: boolean) {
         // Invalidate immediately, before React finishes verifying the next account.
         disposed = true;
         feed.setScope(null);
+        setMemberAccessScope(null);
         useNotificationStore.setState((state) => ({
           notifications: state.notifications.filter((entry) => entry.kind !== "cloud" && entry.kind !== "providers"),
         }));

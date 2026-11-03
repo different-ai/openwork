@@ -14,7 +14,7 @@ const { DASHBOARD_TILE_CACHE_STORAGE_PREFIX, flushDashboardTileCacheStorage, res
 const { cachedMcpAppResult, rememberMcpAppResult } = await import("../src/app/lib/mcp-app-result-cache");
 const { createMcpAppOpenLoads } = await import("../src/app/lib/mcp-app-open-loads");
 const { loadDashboardTileDocument, readDashboardTileCache, rememberDashboardTileRead, writeDashboardTileCache } = await import("../src/react-app/domains/dashboard/dashboard-tile-cache");
-const { memberAccessCheckPending, memberAccessConfirmed, memberAccessKeys, noteInventoryRevision, reconcileMemberAccess, resetMemberAccessSession, trackMemberAccessCheck, waitForMemberAccessCheck } = await import("../src/react-app/domains/dashboard/mcp-app-member-access");
+const { memberAccessCheckPending, memberAccessConfirmed, memberAccessKeys, noteInventoryRevision, reconcileMemberAccess, resetMemberAccessSession, setMemberAccessScope, trackMemberAccessCheck, waitForMemberAccessCheck } = await import("../src/react-app/domains/dashboard/mcp-app-member-access");
 
 const ORG = "org_one";
 const scope = { baseUrl: "https://den.example", organizationId: ORG, memberId: "member_one" };
@@ -58,6 +58,7 @@ beforeEach(() => {
   resetMemberAccessSession();
   localStorage.setItem("openwork.den.activeOrgId", ORG);
   localStorage.setItem("openwork.den.authToken", "token");
+  setMemberAccessScope(scope);
 });
 
 test("access lists only what this member can actually use, with the account behind each connection", () => {
@@ -169,12 +170,52 @@ test("a new session has confirmed nothing until it compares", () => {
   reconcileMemberAccess(scope, "r1", inventory());
   expect(memberAccessConfirmed()).toBe(true);
   resetMemberAccessSession();
+  setMemberAccessScope(scope);
   expect(memberAccessConfirmed()).toBe(false);
+});
+
+test("another member in the same organization inherits nothing", () => {
+  reconcileMemberAccess(scope, "r1", inventory());
+  setMemberAccessScope({ ...scope, memberId: "member_two" });
+  expect(memberAccessConfirmed()).toBe(false);
+});
+
+test("a comparison made for someone else confirms nothing for the member signed in", () => {
+  reconcileMemberAccess({ ...scope, memberId: "member_two" }, "r1", inventory());
+  expect(memberAccessConfirmed()).toBe(false);
+});
+
+test("the same member on another Den inherits nothing", () => {
+  reconcileMemberAccess(scope, "r1", inventory());
+  setMemberAccessScope({ ...scope, baseUrl: "https://other-den.example" });
+  expect(memberAccessConfirmed()).toBe(false);
+});
+
+test("coming back to a member after someone else needs a new comparison", () => {
+  reconcileMemberAccess(scope, "r1", inventory());
+  setMemberAccessScope({ ...scope, memberId: "member_two" });
+  setMemberAccessScope(scope);
+  expect(memberAccessConfirmed()).toBe(false);
+});
+
+test("nobody signed in confirms nothing, and comparing afterwards still needs the member named", () => {
+  reconcileMemberAccess(scope, "r1", inventory());
+  setMemberAccessScope(null);
+  expect(memberAccessConfirmed()).toBe(false);
+  reconcileMemberAccess(scope, "r2", inventory());
+  expect(memberAccessConfirmed()).toBe(false);
+});
+
+test("naming the same member again keeps the comparison", () => {
+  reconcileMemberAccess(scope, "r1", inventory());
+  setMemberAccessScope({ ...scope });
+  expect(memberAccessConfirmed()).toBe(true);
 });
 
 test("a revision unchanged since the last comparison confirms without reloading", () => {
   reconcileMemberAccess(scope, "r1", inventory());
   resetMemberAccessSession();
+  setMemberAccessScope(scope);
   noteInventoryRevision(scope, "r1");
   expect(memberAccessConfirmed()).toBe(true);
 });
@@ -182,6 +223,7 @@ test("a revision unchanged since the last comparison confirms without reloading"
 test.each([["a changed revision", "r2"], ["no revision from Den", null]])("%s does not confirm", (_name, revision) => {
   reconcileMemberAccess(scope, "r1", inventory());
   resetMemberAccessSession();
+  setMemberAccessScope(scope);
   noteInventoryRevision(scope, revision);
   expect(memberAccessConfirmed()).toBe(false);
 });
@@ -189,12 +231,19 @@ test.each([["a changed revision", "r2"], ["no revision from Den", null]])("%s do
 test("a record made without a revision never confirms one that is also missing", () => {
   reconcileMemberAccess(scope, null, inventory());
   resetMemberAccessSession();
+  setMemberAccessScope(scope);
   noteInventoryRevision(scope, null);
   expect(memberAccessConfirmed()).toBe(false);
 });
 
 test("a comparison for another organization confirms nothing here", () => {
   reconcileMemberAccess({ ...scope, organizationId: "org_two" }, "r1", inventory());
+  expect(memberAccessConfirmed()).toBe(false);
+});
+
+test("switching organization in settings stops confirming before the sync catches up", () => {
+  reconcileMemberAccess(scope, "r1", inventory());
+  localStorage.setItem("openwork.den.activeOrgId", "org_two");
   expect(memberAccessConfirmed()).toBe(false);
 });
 

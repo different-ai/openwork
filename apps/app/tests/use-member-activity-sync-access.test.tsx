@@ -15,9 +15,10 @@ let revision: string | null = "r1";
 let outcome: "updated" | "failed" = "updated";
 let inventoryLoads = 0;
 let hold: Promise<void> | null = null;
+let principalId = "member_one";
 
 mock.module("../src/react-app/domains/cloud/den-auth-provider", () => ({
-  useDenAuth: () => ({ verifiedIdentity: { principalId: "member_one", organizationId: ORG } }),
+  useDenAuth: () => ({ verifiedIdentity: { principalId, organizationId: ORG } }),
 }));
 mock.module("../src/react-app/domains/cloud/inventory-revision", () => ({
   createInventoryRevisionGate: () => {
@@ -39,6 +40,7 @@ const { createRoot } = await import("react-dom/client");
 const { useMemberActivitySync } = await import("../src/react-app/domains/cloud/use-member-activity-sync");
 const { DASHBOARD_TILE_CACHE_STORAGE_PREFIX } = await import("../src/app/lib/dashboard-cache-storage");
 const { readDashboardTileCache, rememberDashboardTileRead, writeDashboardTileCache } = await import("../src/react-app/domains/dashboard/dashboard-tile-cache");
+const { denSettingsChangedEvent } = await import("../src/app/lib/den-session-events");
 const { memberAccessCheckPending, memberAccessConfirmed, resetMemberAccessSession } = await import("../src/react-app/domains/dashboard/mcp-app-member-access");
 const { CLOUD_INVENTORY_CHANGED_EVENT } = await import("../src/react-app/domains/connections/cloud-inventory-cache");
 
@@ -47,13 +49,14 @@ const entry = "personal:orders";
 function Sync() { useMemberActivitySync(true); return null; }
 const settle = () => act(async () => { await new Promise((resolve) => setTimeout(resolve, 5)); });
 const storedReads = () => readDashboardTileCache(tiles, entry)?.storedReads?.length ?? 0;
-async function mounted(run: () => Promise<void>) {
+async function mounted(run: (rerender: () => Promise<void>) => Promise<void>) {
   const host = document.body.appendChild(document.createElement("div"));
   const root = createRoot(host);
+  const rerender = async () => { await act(async () => root.render(<Sync key="sync" />)); };
   try {
-    await act(async () => root.render(<Sync />));
+    await rerender();
     await settle();
-    await run();
+    await run(rerender);
   } finally {
     await act(async () => root.unmount());
     host.remove();
@@ -65,7 +68,7 @@ beforeEach(() => {
   localStorage.clear();
   localStorage.setItem("openwork.den.authToken", "token");
   localStorage.setItem("openwork.den.activeOrgId", ORG);
-  connections = [connection("conn_mail")]; revision = "r1"; outcome = "updated"; inventoryLoads = 0; hold = null;
+  connections = [connection("conn_mail")]; revision = "r1"; outcome = "updated"; inventoryLoads = 0; hold = null; principalId = "member_one";
   resetMemberAccessSession();
   writeDashboardTileCache(tiles, entry, { argumentsSignature: "{}", cachedAt: Date.now(), workspaceId: "w", result: { content: [] },
     app: { serverName: "orders", toolName: "open_app", resourceUri: "ui://orders/1", html: "<html></html>", prefersBorder: false, csp: { connectDomains: [], resourceDomains: [], frameDomains: [], baseUriDomains: [] } } });
@@ -110,6 +113,39 @@ test("the next sync with nothing lost keeps stored data", async () => {
     await changed();
     expect(inventoryLoads).toBe(2);
     expect(storedReads()).toBe(1);
+  });
+});
+
+test("another member signing in to the same organization is not confirmed until their own sync finishes", async () => {
+  await mounted(async (rerender) => {
+    expect(memberAccessConfirmed()).toBe(true);
+    const release = Promise.withResolvers<void>();
+    hold = release.promise;
+    revision = "r2";
+    principalId = "member_two";
+    await rerender();
+    expect(memberAccessConfirmed()).toBe(false);
+    release.resolve();
+    await settle();
+    expect(memberAccessConfirmed()).toBe(true);
+  });
+});
+
+test("a new account token stops confirming at once, before React verifies who it belongs to", async () => {
+  await mounted(async () => {
+    expect(memberAccessConfirmed()).toBe(true);
+    localStorage.setItem("openwork.den.authToken", "another-token");
+    await act(async () => { window.dispatchEvent(new CustomEvent(denSettingsChangedEvent)); });
+    expect(memberAccessConfirmed()).toBe(false);
+  });
+});
+
+test("a sync with no verified member clears who is signed in", async () => {
+  await mounted(async (rerender) => {
+    expect(memberAccessConfirmed()).toBe(true);
+    principalId = "";
+    await rerender();
+    expect(memberAccessConfirmed()).toBe(false);
   });
 });
 

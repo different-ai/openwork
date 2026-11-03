@@ -24,12 +24,13 @@ type RecordedAccess = { revision: string | null; access: string[] };
 /** How long a saved tile waits for a check under way before opening without stored reads. */
 const CHECK_WAIT_MS = 250;
 
-/** The organization this session has compared access for. */
-let comparedOrganization: string | null = null;
+/** The signed-in member, and the member this session has compared access for. */
+let currentMember: ActivityScope | null = null;
+let comparedMember: string | null = null;
 let checking: Promise<void> | null = null;
 
-const storageKey = (scope: ActivityScope) =>
-  `${DASHBOARD_TILE_ACCESS_STORAGE_PREFIX}${JSON.stringify([scope.baseUrl, scope.organizationId, scope.memberId])}`;
+const memberKey = (scope: ActivityScope) => JSON.stringify([scope.baseUrl, scope.organizationId, scope.memberId]);
+const storageKey = (scope: ActivityScope) => `${DASHBOARD_TILE_ACCESS_STORAGE_PREFIX}${memberKey(scope)}`;
 
 function readRecordedAccess(scope: ActivityScope): RecordedAccess | null {
   try {
@@ -72,9 +73,18 @@ function clearStoredMcpAppData() {
   forgetMcpAppOpenLoads();
 }
 
+/**
+ * Names who is signed in, or nobody. A comparison only counts for the member it
+ * was made for, so any change starts over rather than inheriting the last one.
+ */
+export function setMemberAccessScope(scope: ActivityScope | null): void {
+  if (!scope || !currentMember || memberKey(scope) !== memberKey(currentMember)) comparedMember = null;
+  currentMember = scope;
+}
+
 /** A revision this member's access was already compared at means nothing has changed since. */
 export function noteInventoryRevision(scope: ActivityScope, revision: string | null): void {
-  if (revision !== null && readRecordedAccess(scope)?.revision === revision) comparedOrganization = scope.organizationId;
+  if (revision !== null && readRecordedAccess(scope)?.revision === revision) comparedMember = memberKey(scope);
 }
 
 /** Compares a complete inventory with the last one, clearing stored data if anything was lost. */
@@ -83,7 +93,7 @@ export function reconcileMemberAccess(scope: ActivityScope, revision: string | n
   const previous = readRecordedAccess(scope);
   if (previous?.access.some((key) => !access.includes(key))) clearStoredMcpAppData();
   recordAccess(scope, { revision, access });
-  comparedOrganization = scope.organizationId;
+  comparedMember = memberKey(scope);
 }
 
 export function trackMemberAccessCheck(check: Promise<unknown>): void {
@@ -95,7 +105,8 @@ export function trackMemberAccessCheck(check: Promise<unknown>): void {
 
 /** Whether this member's access has been compared in this session, so stored reads may show. */
 export function memberAccessConfirmed(): boolean {
-  return comparedOrganization !== null && comparedOrganization === readDenSettings().activeOrgId;
+  return currentMember !== null && comparedMember === memberKey(currentMember)
+    && currentMember.organizationId === readDenSettings().activeOrgId;
 }
 
 export function memberAccessCheckPending(): boolean {
@@ -111,6 +122,7 @@ export async function waitForMemberAccessCheck(): Promise<void> {
 
 /** For tests: a new session has compared nothing yet. */
 export function resetMemberAccessSession(): void {
-  comparedOrganization = null;
+  currentMember = null;
+  comparedMember = null;
   checking = null;
 }

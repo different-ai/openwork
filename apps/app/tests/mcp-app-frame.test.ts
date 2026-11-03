@@ -31,7 +31,7 @@ const { useSessionActivityStore } = await import("../src/react-app/domains/sessi
 const { McpAppTile } = await import("../src/react-app/domains/dashboard/mcp-app-tile")
 const { DASHBOARD_AUTO_REFRESH_INTERVAL_MS, readDashboardTileCache, rememberDashboardTileRead, removeDashboardTileCache, writeDashboardTileCache } = await import("../src/react-app/domains/dashboard/dashboard-tile-cache")
 const { RetainedArtifactSurface } = await import("../src/react-app/domains/dashboard/retained-artifact-surface")
-const { reconcileMemberAccess, resetMemberAccessSession, trackMemberAccessCheck } = await import("../src/react-app/domains/dashboard/mcp-app-member-access")
+const { reconcileMemberAccess, resetMemberAccessSession, setMemberAccessScope, trackMemberAccessCheck } = await import("../src/react-app/domains/dashboard/mcp-app-member-access")
 const { flushDashboardTileCacheStorage, resetDashboardTileCacheMemory } = await import("../src/app/lib/dashboard-cache-storage")
 const { setMcpAppDocumentBackend } = await import("../src/app/lib/mcp-app-document-store")
 const { forgetMcpAppResult, rememberMcpAppResult } = await import("../src/app/lib/mcp-app-result-cache")
@@ -690,6 +690,7 @@ describe("MCP App stored reads on a saved tile", () => {
   const actionContext = { requestId: 1, signal: new AbortController().signal,
     sendNotification: async () => {}, sendRequest: async () => { throw new Error("Unexpected request") } }
   const settle = async () => { await act(async () => { await new Promise(resolve => setImmediate(resolve)) }) }
+  const member = { baseUrl: "den", organizationId: "org_saved_tile", memberId: "member" }
   type ToolCall = Parameters<OpenworkServerClient["callMcpAppTool"]>[1]
 
   /** A tile restored from storage, with a stored result when asked, up to the point its App can ask for that result. */
@@ -724,7 +725,8 @@ describe("MCP App stored reads on a saved tile", () => {
       await rememberMcpAppResult(origin, app, "read_detail", {}, { content: [{ type: "text", text: "stored" }], _meta: checked })
     }
     resetMemberAccessSession()
-    if (options.confirmed !== false) reconcileMemberAccess({ baseUrl: "den", organizationId: "org_saved_tile", memberId: "member" }, null, { capabilities: { plugins: [] }, connections: [] })
+    setMemberAccessScope(member)
+    if (options.confirmed !== false) reconcileMemberAccess(member, null, { capabilities: { plugins: [] }, connections: [] })
     if (options.storedRead) {
       rememberDashboardTileRead(scope, "stored-0", { name: "read_detail", arguments: {} },
         { providerIdentity: "provider-1", result: { content: [{ type: "text", text: "stored" }] } })
@@ -904,7 +906,7 @@ describe("MCP App stored reads on a saved tile", () => {
     try {
       await settle()
       expect(held.host.container.querySelector("[data-dashboard-tile]")).toBeNull()
-      reconcileMemberAccess({ baseUrl: "den", organizationId: "org_saved_tile", memberId: "member" }, null, { capabilities: { plugins: [] }, connections: [] })
+      reconcileMemberAccess(member, null, { capabilities: { plugins: [] }, connections: [] })
       await act(async () => { check.resolve() })
       await settle()
       await held.start()
