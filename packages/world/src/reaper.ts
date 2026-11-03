@@ -173,10 +173,17 @@ const tmpdirReaper: Reaper = async (entry, context) => {
 // holder deletes it while shutting down; this catches one it left behind, so
 // `world down` reports it reaped or already gone instead of "no reaper".
 // Uses the Daytona CLI with the caller's own identity (DAYTONA_API_KEY/URL or login).
+const DAYTONA_RETRY_MS = Number(process.env.OPENWORK_WORLD_DAYTONA_RETRY_MS || 2_000);
 const daytonaReaper: Reaper = async (entry, context) => {
   if (!/^[A-Za-z0-9][A-Za-z0-9._-]{0,200}$/.test(entry.id)) return { status: "skipped", reason: "invalid sandbox id" };
-  const result = await context.exec("daytona", ["delete", entry.id], 120_000);
-  const output = `${result.stdout}\n${result.stderr}`;
+  let result = await context.exec("daytona", ["delete", entry.id], 120_000);
+  let output = `${result.stdout}\n${result.stderr}`;
+  // The holder is usually deleting it at the same moment: wait for that to finish.
+  for (let attempt = 0; attempt < 30 && /state change in progress/i.test(output); attempt++) {
+    await delay(DAYTONA_RETRY_MS);
+    result = await context.exec("daytona", ["delete", entry.id], 120_000);
+    output = `${result.stdout}\n${result.stderr}`;
+  }
   if (/not found/i.test(output)) return { status: "missing" };
   if (result.code === 0) return { status: "reaped" };
   if (result.code === 127) return { status: "skipped", reason: "daytona CLI not installed" };

@@ -15,24 +15,28 @@ it("world down deletes a leftover Daytona sandbox, and treats an already deleted
   const calls: string[][] = [];
   const exec: ExecFn = async (command, args) => {
     calls.push([command, ...args]);
+    if (args[1] === "busy-id") return calls.filter((call) => call[2] === "busy-id").length === 1
+      ? { code: 1, stdout: "", stderr: "level=fatal msg=\"Conflict: Sandbox state change in progress\"" }
+      : { code: 1, stdout: "", stderr: "level=fatal msg=\"Not Found: Sandbox with ID or name busy-id not found\"" };
     if (args[1] === "gone-id") return { code: 1, stdout: "", stderr: "level=fatal msg=\"Not Found: Sandbox with ID or name gone-id not found\"" };
     if (args[1] === "denied-id") return { code: 1, stdout: "", stderr: "level=warning msg=\"Version mismatch\"\nlevel=fatal msg=\"Unauthorized\"" };
     return { code: 0, stdout: "Sandbox deleted", stderr: "" };
   };
   const { dir, path } = await ledger([
     { kind: "daytona", id: "live-id", label: "den", at: "2026-11-03T00:00:00.000Z" },
+    { kind: "daytona", id: "busy-id", label: "holder deleting", at: "2026-11-03T00:00:00.000Z" },
     { kind: "daytona", id: "gone-id", label: "desktop", at: "2026-11-03T00:00:00.000Z" },
     { kind: "daytona", id: "denied-id", label: "other", at: "2026-11-03T00:00:00.000Z" },
     { kind: "daytona", id: "--force", label: "bad", at: "2026-11-03T00:00:00.000Z" },
   ]);
   const report = await reapLedger(path, { cwd: dir, exec, purge: true });
   expect(report.reaped.map((entry) => entry.id)).toEqual(["live-id"]);
-  expect(report.missing.map((entry) => entry.id)).toEqual(["gone-id"]);
+  expect(report.missing.map((entry) => entry.id)).toEqual(["busy-id", "gone-id"]);
   expect(report.skipped.map(({ entry, reason }) => [entry.id, reason])).toEqual([
     ["denied-id", "daytona delete failed: level=fatal msg=\"Unauthorized\""],
     ["--force", "invalid sandbox id"],
   ]);
   // An id that looks like a flag is never passed to the CLI.
-  expect(calls.map((call) => call.slice(0, 3))).toEqual([["daytona", "delete", "live-id"], ["daytona", "delete", "gone-id"], ["daytona", "delete", "denied-id"]]);
+  expect(calls.map((call) => call.slice(0, 3))).toEqual([["daytona", "delete", "live-id"], ["daytona", "delete", "busy-id"], ["daytona", "delete", "busy-id"], ["daytona", "delete", "gone-id"], ["daytona", "delete", "denied-id"]]);
   expect(await readFile(path, "utf8")).toContain("denied-id");
 });
