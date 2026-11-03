@@ -16,7 +16,7 @@ import {
   type ParsedCapability,
   workflowExecutionAudit,
 } from "./capability-registry.js"
-import { bindingAccess, runsWithoutClick, stillRunsWithoutClick, workflowBindingAccess, type CapabilityAccess } from "./app-tool-access.js"
+import { appToolChangeMessage, bindingAccess, MCP_APP_NEEDS_UPDATE, runsWithoutClick, stillRunsWithoutClick, workflowBindingAccess, type CapabilityAccess } from "./app-tool-access.js"
 import { describeExternalCapability } from "./external-capabilities.js"
 import { externalMcpToolSchemaDigest } from "./external-mcp-tool-arguments.js"
 import { executeMarketplaceCapability, listAccessibleWorkflows } from "./marketplace-capabilities.js"
@@ -198,8 +198,13 @@ export async function resolveMcpAppTools(ctx: CapabilityRegistryContext, declara
   return settled.flatMap((result) => result.status === "fulfilled" ? [result.value] : [])
 }
 
-function errorResult(error: string, message: string): ExecuteCapabilityToolResult {
-  return { isError: true, content: [{ type: "text", text: JSON.stringify({ error, message }) }] }
+function errorResult(error: string, message: string, detail: Record<string, string> = {}): ExecuteCapabilityToolResult {
+  return { isError: true, content: [{ type: "text", text: JSON.stringify({ error, message, ...detail }) }] }
+}
+
+/** A refusal only an editor updating the App can fix, naming the App's own tool so a host can offer that. */
+function appNeedsUpdateResult(binding: McpAppToolBinding, message: string): ExecuteCapabilityToolResult {
+  return errorResult("policy_blocked", message, { reason: MCP_APP_NEEDS_UPDATE, tool: binding.name })
 }
 
 /** Why OpenWork refused a call, read from its own JSON error text. */
@@ -277,7 +282,7 @@ export async function callMcpAppTool(
   }
   if (binding.kind === "api") {
     if ((parsed?.kind !== "catalog" && parsed?.kind !== "native") || !isDenRead(ctx, parsed)) {
-      return errorResult("policy_blocked", `${binding.name} no longer only reads data, so OpenWork blocked it. An editor of this App can bind a saved Workflow instead.`)
+      return appNeedsUpdateResult(binding, `${binding.name} no longer only reads data, so OpenWork blocked it. An editor of this App can bind a saved Workflow instead.`)
     }
     return withoutAgentServerMeta(await executeCapability(ctx, { name: binding.capability, path: args.path, query: args.query, body: args.body }))
   }
@@ -291,12 +296,8 @@ export async function callMcpAppTool(
     ...(binding.readOnly ? { requireReadOnly: true } : {}),
     ...(binding.loadOnOpen ? { refuseDestructive: true } : {}),
   })
-  if (binding.loadOnOpen && refusalReason(result) === "provider_destructive") {
-    return errorResult("policy_blocked", `${binding.name} is now marked destructive by its provider, so OpenWork blocked it. An editor of this App needs to update its tools.`)
-  }
-  if (binding.readOnly && refusalReason(result) === "provider_not_read_only") {
-    return errorResult("policy_blocked", `${binding.name} is no longer marked read-only by its provider, so OpenWork blocked it. An editor of this App needs to update its tools.`)
-  }
+  const changed = appToolChangeMessage(binding, refusalReason(result))
+  if (changed) return appNeedsUpdateResult(binding, changed)
   return withoutAgentServerMeta(result)
 }
 

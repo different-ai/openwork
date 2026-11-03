@@ -27,6 +27,7 @@ import {
 import { useOptionalMessageList } from "./message-list-provider"
 import { createMcpAppActions, type McpAppOrigin } from "./mcp-app-origin"
 import { McpAppSignInPrompts, signInPromptFromToolResult, useMcpAppSignIn } from "./mcp-app-sign-in"
+import { changedMcpAppTool, McpAppChangedToolPrompt } from "./mcp-app-tool-change"
 import { cn } from "@/lib/utils"
 import { McpAppLoading } from "./mcp-app-loading"
 import { Button } from "@/components/ui/button"
@@ -382,6 +383,12 @@ export type McpAppSandboxViewProps = {
   onRetry?: () => void
   /** Sees each result of a call the App makes, so a host can swap in its own recovery UI. */
   onAppToolResult?: (result: unknown) => void
+  /**
+   * Offered when a call fails because the tool changed at its provider since
+   * the App was published: starts a conversation to update the App. Given
+   * only to someone who can update it.
+   */
+  onFixChangedTool?: (tool: string) => Promise<void>
   /** Sees each read the App asks to keep, or null when it failed, so a host can store what the App last showed. */
   onKeptRead?: (read: { name: string; arguments: Record<string, unknown> }, result: CallToolResult | null) => void
   /**
@@ -397,7 +404,7 @@ export type McpAppSandboxViewProps = {
  * bridges it to the workspace MCP App host. Chat messages and dashboard tiles
  * share this exact pipeline so rendering and diagnostics stay identical.
  */
-export function McpAppSandboxView({ origin, app, resolveLiveActions, goesLiveInPlace = false, liveReady = false, renewsLease = true, toolName, inputArguments, result, connectionController, updateMode = "replace", onReady, unavailableNotice, onRequestTeardown, initialHeight, onHeightChange, presentation = "inline", onError, onRetry, onAppToolResult, onKeptRead, openKey }: McpAppSandboxViewProps) {
+export function McpAppSandboxView({ origin, app, resolveLiveActions, goesLiveInPlace = false, liveReady = false, renewsLease = true, toolName, inputArguments, result, connectionController, updateMode = "replace", onReady, unavailableNotice, onRequestTeardown, initialHeight, onHeightChange, presentation = "inline", onError, onRetry, onAppToolResult, onFixChangedTool, onKeptRead, openKey }: McpAppSandboxViewProps) {
   const openworkServerClient = origin.client
   const workspaceId = origin.workspaceId
   const readOnly = origin.readOnly
@@ -423,6 +430,7 @@ export function McpAppSandboxView({ origin, app, resolveLiveActions, goesLiveInP
   reportToolResultRef.current = signIn.reportToolResult
   const onAppToolResultRef = useRef(onAppToolResult)
   onAppToolResultRef.current = onAppToolResult
+  const [changedTool, setChangedTool] = useState<string | null>(null)
   const onKeptReadRef = useRef(onKeptRead)
   onKeptReadRef.current = onKeptRead
   const toolDeliveryRef = useRef({ inputArguments, result })
@@ -682,6 +690,9 @@ export function McpAppSandboxView({ origin, app, resolveLiveActions, goesLiveInP
         if (!disposed && !failed) {
           if (signInPromptFromToolResult(toolResult)) reportToolResultRef.current(toolResult)
           else onAppToolResultRef.current?.(toolResult)
+          // A tool that changed at its provider needs the App updated, which no retry does.
+          const changed = changedMcpAppTool(toolResult, name)
+          if (changed) setChangedTool(changed)
         }
         return toolResult
       } catch (cause) {
@@ -967,6 +978,8 @@ export function McpAppSandboxView({ origin, app, resolveLiveActions, goesLiveInP
           signIn.signedIn(connectionId)
           reload()
         }} />
+      {changedTool && onFixChangedTool ? <McpAppChangedToolPrompt tool={changedTool} onFix={onFixChangedTool}
+        className={presentation === "dashboard" ? "mb-3" : "mt-3"} /> : null}
       <div
         className={cn(
           presentation === "dashboard" ? "overflow-hidden" : "mt-3 overflow-hidden rounded-xl bg-background",

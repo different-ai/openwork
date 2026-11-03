@@ -235,6 +235,7 @@ function McpAppTileContent({
   renderActions,
   actionsPlacement,
   chromeTarget,
+  onFixChangedTool,
 }: {
   renderActions?: DashboardTileActions;
   actionsPlacement?: "header";
@@ -254,6 +255,8 @@ function McpAppTileContent({
   onAutoLaunchDisabled?: () => void;
   /** Other workspace runtimes to try when the primary one cannot resolve the app. */
   fallbackEndpoints?: DashboardLaunchEndpoint[];
+  /** Starts a conversation to update the App when one of its tools changed; only for someone who can update it. */
+  onFixChangedTool?: (tool: string) => Promise<void>;
 }) {
   const workspace = useWorkspace();
   const { openworkServerClient, workspaceId } = workspace;
@@ -831,6 +834,7 @@ function McpAppTileContent({
                 unavailableNotice="This artifact view is unavailable."
                 presentation="dashboard"
                 onRetry={run}
+                onFixChangedTool={onFixChangedTool}
                 onAppToolResult={(result) => {
                   // A failed call the App makes itself gets the same connection card as a failed launch.
                   if (!currentDocument(state.lifetime) || !isRecord(result) || result.isError !== true) return;

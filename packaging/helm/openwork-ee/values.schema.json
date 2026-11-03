@@ -101,6 +101,16 @@
               ],
               "description": "Desktop: settle finished sessions: Finished sessions can be settled into a collapsed Settled row at the end of their workspace, by hand or after a few idle days, and come back on new activity. Renders DEN_FEATURE_SETTLED_SESSIONS."
             },
+            "appToolRepair": {
+              "enum": [
+                "",
+                "true",
+                "false",
+                true,
+                false
+              ],
+              "description": "Apps: fix a changed tool with an agent: When a connected tool an App uses changes at its provider, so OpenWork blocks the App's call to it, the App's managers see a Fix with agent button in Artifacts that starts a conversation to update the App. Renders DEN_FEATURE_APP_TOOL_REPAIR."
+            },
             "composerBackgroundTasks": {
               "enum": [
                 "",

@@ -703,6 +703,8 @@ describe("MCP App stored reads on a saved tile", () => {
     confirmed?: boolean
     /** A check of the member's access under way as the tile opens. */
     checking?: Promise<unknown>
+    /** What the host offers when one of the App's tools changed. */
+    fix?: (tool: string) => Promise<void>
     resolve: () => Promise<{ app: OpenworkMcpAppResource }>
     run: (request: ToolCall) => Promise<Awaited<ReturnType<OpenworkServerClient["callMcpAppTool"]>>>
   }) {
@@ -738,6 +740,7 @@ describe("MCP App stored reads on a saved tile", () => {
       entry: { kind: "mcp", id: "stored-0", title: "Stored 0", serverName: "fixture", toolName: "render-0",
         projectedToolName: "render-0", resourceUri: fixture().resourceUri, autoLaunch: true },
       cacheScopeKey: scope,
+      onFixChangedTool: options.fix,
     })))
     await render()
     const start = async () => {
@@ -1064,6 +1067,30 @@ describe("MCP App stored reads on a saved tile", () => {
       next = "errors"
       await tile.ask(again)
       expect(tile.storedReads()).toEqual([])
+    } finally { await tile.close() }
+  })
+
+  test.each([true, false])("a call refused because its tool changed offers Fix with agent only when the host can (%j)", async offered => {
+    const refusal = { isError: true, content: [{ type: "text", text: JSON.stringify({
+      error: "policy_blocked", reason: "app_needs_update", tool: "read_detail", message: "read_detail now takes different inputs." }) }] }
+    const fixes: string[] = []
+    const tile = await savedTile({
+      stored: false,
+      resolve: async () => ({ app: fixture({ toolName: "render-0", launchId: "lease-1" }) }),
+      run: async request => request.name === "render-0" ? { content: [] } : refusal,
+      ...(offered ? { fix: async (tool: string) => { fixes.push(tool) } } : {}),
+    })
+    try {
+      await settle()
+      expect(tile.host.container.querySelector("[data-testid=mcp-app-changed-tool]")).toBeNull()
+      expect(await tile.ask({ name: "read_detail", arguments: {}, _meta: { "openwork/userInteraction": true } })).toEqual(refusal)
+      await settle()
+      const row = tile.host.container.querySelector("[data-testid=mcp-app-changed-tool]")
+      expect(row === null).toBe(!offered)
+      if (offered) {
+        await act(async () => row?.querySelector("button")?.click())
+        expect(fixes).toEqual(["read_detail"])
+      }
     } finally { await tile.close() }
   })
 
