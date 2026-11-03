@@ -169,11 +169,27 @@ const tmpdirReaper: Reaper = async (entry, context) => {
   return { status: "reaped" };
 };
 
+// A world-created Daytona sandbox (trackResource kind "daytona"). Normally the
+// holder deletes it while shutting down; this catches one it left behind, so
+// `world down` reports it reaped or already gone instead of "no reaper".
+// Uses the Daytona CLI with the caller's own identity (DAYTONA_API_KEY/URL or login).
+const daytonaReaper: Reaper = async (entry, context) => {
+  if (!/^[A-Za-z0-9][A-Za-z0-9._-]{0,200}$/.test(entry.id)) return { status: "skipped", reason: "invalid sandbox id" };
+  const result = await context.exec("daytona", ["delete", entry.id], 120_000);
+  const output = `${result.stdout}\n${result.stderr}`;
+  if (/not found/i.test(output)) return { status: "missing" };
+  if (result.code === 0) return { status: "reaped" };
+  if (result.code === 127) return { status: "skipped", reason: "daytona CLI not installed" };
+  const reason = output.split("\n").map((line) => line.trim()).find((line) => line && !/version mismatch/i.test(line)) ?? `exit ${result.code}`;
+  return { status: "skipped", reason: `daytona delete failed: ${reason.slice(0, 200)}` };
+};
+
 export const builtinReapers: Record<string, Reaper> = {
   process: processReaper,
   docker: dockerReaper,
   "docker-volume": dockerVolumeReaper,
   tmpdir: tmpdirReaper,
+  daytona: daytonaReaper,
 };
 
 async function existingRealpath(path: string): Promise<string | undefined> {
