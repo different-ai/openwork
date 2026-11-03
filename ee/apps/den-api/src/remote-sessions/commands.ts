@@ -9,6 +9,7 @@ import {
 } from "@openwork/types/automations"
 import { db } from "../db.js"
 import { automationUpdateChangedRows } from "../automations/update-result.js"
+import { signalRemoteSessionWork } from "./work-signal.js"
 
 export const DEFAULT_TTL_MS = 10 * 60_000
 
@@ -396,6 +397,7 @@ export const databaseRemoteSessionCommandStore: RemoteSessionCommandStore = {
     }
     const command = await commandById(id)
     if (!command) throw new Error("remote_session_command_enqueue_failed")
+    signalRemoteSessionWork(command.organizationId, command.ownerMemberId)
     return command
   },
 

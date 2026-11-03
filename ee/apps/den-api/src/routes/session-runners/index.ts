@@ -41,6 +41,14 @@ import {
 } from "../../automations/runner-notification-poll.js"
 import { appLogger } from "../../observability/logger.js"
 import { readOrganizationEnginePolicy } from "../engine-policy.js"
+import { organizationFeatureEnabled } from "../../features.js"
+import { onRemoteSessionWork } from "../../remote-sessions/work-signal.js"
+import { normalizeDenTypeId } from "@openwork-ee/utils/typeid"
+
+/** Desktops that send this header want queued remote-session tasks announced (feature remoteSessionPush). */
+const REMOTE_SESSION_PUSH_HEADER = "x-openwork-remote-session-push"
+/** Longest a push stream waits before checking for pending commands queued on another Den instance. */
+const REMOTE_SESSION_PUSH_CHECK_MS = 5_000
 
 const idParamsSchema = z.object({ id: z.string().min(1).max(160) })
 
@@ -50,6 +58,8 @@ export function registerSessionRunnerRoutes<T extends { Variables: Partial<Organ
     service?: SessionRunnerService
     automationService?: Pick<AutomationService, "discoverDesktopRunnerWork" | "runnerNotifications">
     commandStore?: RemoteSessionCommandStore
+    /** Whether remoteSessionPush is on for an organization; defaults to the feature registry. */
+    remoteSessionPushEnabled?: (organizationId: string) => Promise<boolean>
     requestStore?: RemoteSessionRequestStore
     readEnginePolicy?: typeof readOrganizationEnginePolicy
   } = {},
@@ -124,8 +134,11 @@ export function registerSessionRunnerRoutes<T extends { Variables: Partial<Organ
     "/v1/automation-runners/events",
     runnerRoute({
       summary: "Stream Automation runner notifications",
-      description: "Server-sent events stream that tells a desktop runner when work or cancellations are available. Send Last-Event-ID to resume from a cursor.",
-      responses: { 200: textResponse("Server-sent event stream (text/event-stream).") },
+      description: "Server-sent events stream that tells a desktop runner when work or cancellations are available. Send Last-Event-ID to resume from a cursor. A desktop runner that sends X-OpenWork-Remote-Session-Push: 1 also hears remote_session_work_available when a remote-session task is queued for it, or gets 404 while the remoteSessionPush feature is off.",
+      responses: {
+        200: textResponse("Server-sent event stream (text/event-stream)."),
+        404: jsonResponse("Remote-session push was requested but is not enabled for this organization.", runnerErrorSchema),
+      },
     }),
     async (c) => {
       const identity = await authenticateRunner(c)
@@ -134,33 +147,80 @@ export function registerSessionRunnerRoutes<T extends { Variables: Partial<Organ
       if (!audited.ok) return audited.response
       const requestedCursor = Number(c.req.header("Last-Event-ID") ?? "0")
       let cursor = Number.isSafeInteger(requestedCursor) && requestedCursor >= 0 ? requestedCursor : 0
+      const pushEnabled = options.remoteSessionPushEnabled ?? ((organizationId: string) => organizationFeatureEnabled(organizationId, "remoteSessionPush"))
+      // Desktops that ask for remote-session pushes learn at once when the feature is off,
+      // so they fall back to polling instead of holding a stream open for nothing.
+      const wantsPush = c.req.header(REMOTE_SESSION_PUSH_HEADER) === "1"
+        && identity.capabilities.includes(REMOTE_SESSION_DESKTOP_RUNNER_CAPABILITY)
+      if (wantsPush && !await pushEnabled(identity.organizationId)) {
+        return c.json({ error: "feature_disabled", message: "Remote-session push is not enabled for this organization." }, 404)
+      }
       return streamSSE(c, async (stream) => {
         let lastKeepaliveAt = 0
         let lastOwnerCheckAt = Date.now()
         let notificationPollDelayMs = RUNNER_NOTIFICATION_POLL_MIN_MS
-        while (!stream.aborted) {
-          if (Date.now() >= identity.expiresAt) break
-          if (Date.now() - lastOwnerCheckAt >= 15_000) {
-            if (!await service.isActiveRunnerOwner(identity)) break
-            lastOwnerCheckAt = Date.now()
+        let lastPushCheckAt = 0
+        const announced = new Set<string>()
+        let woken = false
+        let wake: (() => void) | null = null
+        const unsubscribe = wantsPush
+          ? onRemoteSessionWork(
+            normalizeDenTypeId("organization", identity.organizationId),
+            normalizeDenTypeId("member", identity.ownerMemberId),
+            () => { woken = true; wake?.() },
+          )
+          : () => undefined
+        try {
+          while (!stream.aborted) {
+            if (Date.now() >= identity.expiresAt) break
+            if (Date.now() - lastOwnerCheckAt >= 15_000) {
+              if (!await service.isActiveRunnerOwner(identity)) break
+              // The kill switch ends the stream; the desktop reconnects, gets 404 and polls.
+              if (wantsPush && !await pushEnabled(identity.organizationId)) break
+              lastOwnerCheckAt = Date.now()
+            }
+            const notifications = options.automationService && !identity.capabilities.includes(REMOTE_SESSION_ONLY_RUNNER_CAPABILITY)
+              ? await options.automationService.runnerNotifications(identity, cursor) : []
+            for (const notification of notifications) {
+              cursor = notification.id
+              const payload = automationRunnerNotificationSchema.parse({
+                type: notification.event_type === "work_available" ? "automation_work_available" : "automation_cancellation_available",
+                cursor: String(notification.id),
+              })
+              await stream.writeSSE({ id: payload.cursor, event: payload.type, data: JSON.stringify(payload) })
+            }
+            let pushed = false
+            if (wantsPush && (woken || Date.now() - lastPushCheckAt >= REMOTE_SESSION_PUSH_CHECK_MS)) {
+              woken = false
+              lastPushCheckAt = Date.now()
+              const pending = await commandStore.listPendingForRunner({
+                organizationId: identity.organizationId, ownerMemberId: identity.ownerMemberId,
+                computerIds: automationRunnerComputerIds(identity), now: Date.now(), limit: 5,
+              })
+              const fresh = pending.filter((command) => !announced.has(command.id))
+              for (const command of fresh) announced.add(command.id)
+              if (fresh.length > 0) {
+                // No event id: remote announcements never move the Automation cursor.
+                const payload = automationRunnerNotificationSchema.parse({ type: "remote_session_work_available", cursor: String(cursor || 0) })
+                await stream.writeSSE({ event: payload.type, data: JSON.stringify(payload) })
+                pushed = true
+              }
+            }
+            if (notifications.length === 0 && !pushed && Date.now() - lastKeepaliveAt >= RUNNER_KEEPALIVE_INTERVAL_MS) {
+              // Idle streams deliberately avoid durable presence writes.
+              await stream.writeSSE({ event: "keepalive", data: "{}" })
+              lastKeepaliveAt = Date.now()
+            }
+            notificationPollDelayMs = nextRunnerNotificationPollDelay(notificationPollDelayMs, notifications.length > 0)
+            let delayMs = capRunnerNotificationPollDelayForKeepalive(notificationPollDelayMs, Date.now() - lastKeepaliveAt)
+            if (wantsPush) delayMs = Math.min(delayMs, Math.max(0, REMOTE_SESSION_PUSH_CHECK_MS - (Date.now() - lastPushCheckAt)))
+            if (woken) continue
+            // A command queued on this instance cuts the wait short.
+            await Promise.race([stream.sleep(delayMs), new Promise<void>((resolve) => { wake = resolve })])
+            wake = null
           }
-          const notifications = options.automationService && !identity.capabilities.includes(REMOTE_SESSION_ONLY_RUNNER_CAPABILITY)
-            ? await options.automationService.runnerNotifications(identity, cursor) : []
-          for (const notification of notifications) {
-            cursor = notification.id
-            const payload = automationRunnerNotificationSchema.parse({
-              type: notification.event_type === "work_available" ? "automation_work_available" : "automation_cancellation_available",
-              cursor: String(notification.id),
-            })
-            await stream.writeSSE({ id: payload.cursor, event: payload.type, data: JSON.stringify(payload) })
-          }
-          if (notifications.length === 0 && Date.now() - lastKeepaliveAt >= RUNNER_KEEPALIVE_INTERVAL_MS) {
-            // Idle streams deliberately avoid durable presence writes.
-            await stream.writeSSE({ event: "keepalive", data: "{}" })
-            lastKeepaliveAt = Date.now()
-          }
-          notificationPollDelayMs = nextRunnerNotificationPollDelay(notificationPollDelayMs, notifications.length > 0)
-          await stream.sleep(capRunnerNotificationPollDelayForKeepalive(notificationPollDelayMs, Date.now() - lastKeepaliveAt))
+        } finally {
+          unsubscribe()
         }
       })
     },

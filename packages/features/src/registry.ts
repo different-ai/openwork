@@ -302,6 +302,17 @@ export const FEATURES = defineFeatures({
     deployments: everywhere,
     default: false,
   },
+  remoteSessionPush: {
+    label: "Desktop: start tasks from other computers right away",
+    description: "A task sent to this person's desktop from another computer, Workbot or an agent starts within a second or two instead of up to a minute later. Den tells the desktop the moment the task is queued over the runner's event stream; the desktop still checks every minute as a fallback.",
+    category: "computerUse",
+    added: "2026-11-02",
+    since: "2026-11",
+    author: "benjaminshafii",
+    docs: "docs/features/remote-session-push/README.md",
+    deployments: everywhere,
+    default: false,
+  },
   sandboxGateway: {
     label: "Workbot: computers through the sandbox gateway",
     description: "Workbot's cloud computers for this organization run through the runner's sandbox gateway (Differently), which holds the provider keys and picks the provider, instead of the runner's own Freestyle or Daytona account. Needs a runner with SANDBOX_GATEWAY set; without one, or while it is down, new computers use the runner's own provider.",

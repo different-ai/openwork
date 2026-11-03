@@ -367,6 +367,39 @@ export const REMOTE_SESSION_REQUEST_POLL = Object.freeze({
   activeWindowMs: 30 * 60_000,
 })
 export const REMOTE_SESSION_CONTROL_CAPABILITY = "remote_session_control_v1"
+/** Asks Den's runner event stream to announce queued remote-session tasks (feature remoteSessionPush). */
+export const REMOTE_SESSION_PUSH_HEADER = "X-OpenWork-Remote-Session-Push"
+/** Den answers 404 while remoteSessionPush is off; ask again this much later. */
+const REMOTE_SESSION_PUSH_DISABLED_RETRY_MS = 10 * 60_000
+
+/**
+ * Reads a server-sent event stream and calls onEvent with each event's type.
+ * Returns when the stream ends; a read error (including an aborted fetch) throws.
+ */
+export async function readRunnerEvents(body, isActive, onEvent) {
+  const reader = body.getReader()
+  const decoder = new TextDecoder()
+  let buffer = ""
+  try {
+    while (isActive()) {
+      const { done, value } = await reader.read()
+      if (done) return
+      buffer += decoder.decode(value, { stream: true }).replaceAll("\r\n", "\n")
+      let boundary
+      while ((boundary = buffer.indexOf("\n\n")) >= 0) {
+        const block = buffer.slice(0, boundary)
+        buffer = buffer.slice(boundary + 2)
+        let type = "message"
+        for (const line of block.split("\n")) {
+          if (line.startsWith("event:")) type = line.slice(6).trim()
+        }
+        onEvent(type)
+      }
+    }
+  } finally {
+    reader.cancel().catch(() => undefined)
+  }
+}
 export const REMOTE_SESSION_RECOVERY_CAPABILITY = "remote_session_recovery_v1"
 const TRANSCRIPT_TEXT_LIMIT = 20_000
 const TOOL_SUMMARY_LIMIT = 2_000
@@ -1158,6 +1191,7 @@ export function createDesktopAutomationRunner(options) {
   const lifecycleRequestTimeoutMs = options.lifecycleRequestTimeoutMs ?? 30_000
   const requestPoll = { ...REMOTE_SESSION_REQUEST_POLL, ...options.remoteSessionRequestPoll }
   const remoteRequestTimeoutMs = options.remoteSessionRequestTimeoutMs ?? REMOTE_SESSION_REQUEST_TIMEOUT_MS
+  const remoteSessionPush = options.remoteSessionPush === true
   const legacyBaseUrls = new Set((options.legacyBaseUrls ?? [])
     .map((value) => normalizeRunnerBaseUrl(value))
     .filter(Boolean))
@@ -1852,9 +1886,72 @@ export function createDesktopAutomationRunner(options) {
         pendingConfiguration = null
         activateConfiguration(next)
       }
+      // A task announced while this check ran may have missed its last /work read.
+      if (isCurrent(state) && state.reconcileRequested) {
+        state.reconcileRequested = false
+        requestReconcile(state)
+      }
     })
     state.reconcilePromise = promise
     return promise
+  }
+
+  const requestReconcile = (state) => {
+    if (!isCurrent(state)) return
+    if (state.reconcilePromise) {
+      state.reconcileRequested = true
+      return
+    }
+    reconcile(state).catch((error) => {
+      if (isCurrent(state)) options.log?.(`announced work check failed: ${serializedError(error)}`)
+    })
+  }
+
+  /**
+   * Den announces a remote-session task queued for this desktop the moment it
+   * is queued, so it starts within a second or two instead of at the next 60 s
+   * poll. The poll stays as the fallback; while the feature is off Den answers
+   * 404 and the desktop asks again much later.
+   */
+  const remoteSessionPushLoop = async (state) => {
+    let attempt = 0
+    while (isCurrent(state)) {
+      try {
+        const response = await fetchImpl(`${state.configuration.baseUrl.replace(/\/+$/, "")}/v1/automation-runners/events`, {
+          headers: {
+            Accept: "text/event-stream",
+            Authorization: `Bearer ${state.configuration.token}`,
+            [REMOTE_SESSION_PUSH_HEADER]: "1",
+          },
+          signal: state.controller.signal,
+        })
+        if ([401, 403].includes(response.status)) {
+          rejectCredential(state, response.status)
+          return
+        }
+        if (response.status === 404) {
+          await response.body?.cancel().catch(() => undefined)
+          attempt = 0
+          await waitBeforeReconnect(REMOTE_SESSION_PUSH_DISABLED_RETRY_MS, state.controller.signal)
+          continue
+        }
+        if (!response.ok || !response.body) throw new Error(`event stream returned ${response.status}`)
+        await readRunnerEvents(response.body, () => isCurrent(state), (type) => {
+          attempt = 0
+          if (type === "remote_session_work_available") requestReconcile(state)
+        })
+      } catch (error) {
+        if (!isCurrent(state)) return
+        options.log?.(`remote session push reconnecting: ${serializedError(error)}`)
+      }
+      if (!isCurrent(state)) return
+      const backoff = Math.min(30_000, 1_000 * (2 ** attempt++))
+      try {
+        await waitBeforeReconnect(Math.round(backoff * (0.5 + random())), state.controller.signal)
+      } catch {
+        if (!isCurrent(state)) return
+      }
+    }
   }
 
   const connectLoop = async (state) => {
@@ -1900,6 +1997,7 @@ export function createDesktopAutomationRunner(options) {
       configuration,
       controller: new AbortController(),
       reconcilePromise: null,
+      reconcileRequested: false,
       claimInFlight: false,
       active: null,
       watchers: new Set(),
@@ -1918,6 +2016,7 @@ export function createDesktopAutomationRunner(options) {
     current = state
     void connectLoop(state)
     if (state.controlCapable) void remoteSessionRequestLoop(state)
+    if (remoteSessionPush && state.controlCapable) void remoteSessionPushLoop(state)
   }
 
   const disabledReason = options.disabledReason ?? null
