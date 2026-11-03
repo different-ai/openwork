@@ -396,6 +396,36 @@ test("screenshot false settles the act with elements only and never reaches the 
   assert.equal(payload(await f.control.execute({ sessionId: "chat", name: "computer_act", args: { observation_id: "observation", action: { type: "key", key: "return" }, screenshot: "no" } })).code, "invalid_arguments");
 });
 
+test("a drag longer than the helpers take keeps its shape in 32 of its own points", async (t) => {
+  const seen = [];
+  const f = fixture({ seen, toolResult: (name) => name === "computer_act" ? text({ ok: true, status: "dispatched", next: "observe" }) : undefined });
+  t.after(() => f.control.reset(true));
+  await f.control.setFeatureEnabled(true);
+  await f.control.execute({ sessionId: "chat", name: "computer_open", args: { app_id: "editor", mode: "control", purpose: "Draw the outline" } });
+  // A closed outline: 40 points along three straight sides, back to where it started.
+  const side = (from, to) => Array.from({ length: 13 }, (_, index) => ({ x: from.x + (to.x - from.x) * index / 13, y: from.y + (to.y - from.y) * index / 13 }));
+  const corners = [{ x: 100, y: 600 }, { x: 400, y: 100 }, { x: 700, y: 600 }];
+  const path = [...side(corners[0], corners[1]), ...side(corners[1], corners[2]), ...side(corners[2], corners[0]), corners[0]];
+  const drag = (points) => f.control.execute({ sessionId: "chat", name: "computer_act", args: { observation_id: "observation", actions: [{ type: "drag", path: points }] } });
+
+  seen.length = 0;
+  const acted = await drag(path);
+  const sent = seen.find((call) => call.name === "computer_act").args.actions[0].path;
+  assert.equal(sent.length, 32);
+  assert.ok(sent.every((point) => path.some((own) => own.x === point.x && own.y === point.y)), "only the stroke's own points");
+  for (const corner of [...corners, corners[0]]) assert.ok(sent.some((point) => point.x === corner.x && point.y === corner.y), "the start, end and corners stay");
+  assert.deepEqual(acted.content.map((part) => JSON.parse(part.text)).find((part) => part.drag_paths_fitted)?.drag_paths_fitted, [{ from: 40, to: 32 }]);
+
+  seen.length = 0;
+  await drag(path.slice(0, 32));
+  assert.deepEqual(seen.find((call) => call.name === "computer_act").args.actions[0].path, path.slice(0, 32), "a path the helpers take is untouched");
+
+  seen.length = 0;
+  const huge = Array.from({ length: 257 }, (_, index) => ({ x: index, y: index }));
+  assert.equal(payload(await drag(huge)).code, "invalid_arguments");
+  assert.ok(!seen.some((call) => call.name === "computer_act"), "nothing is sent past the accepted size");
+});
+
 test("without a screenshot choice the computer decides whether the settled view needs an image", async (t) => {
   const seen = [];
   const f = fixture({ seen, toolResult: (name) => name === "computer_act" ? text({ ok: true, status: "dispatched", next: "observe" }) : undefined });
