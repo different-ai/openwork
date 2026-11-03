@@ -13,7 +13,8 @@ import { Runner } from "../../headless-runner/src/runner.js"
 import { Store } from "../../headless-runner/src/store.js"
 import { createSlackRunner, openSlackRunnerEvents, type HeadlessDeps } from "../src/slack-assistant/headless.js"
 import { createLiveFeeds } from "../src/slack-assistant/live.js"
-import { buildSlackEnvelope, SLACK_WORKBOT_INSTRUCTIONS } from "../src/slack-assistant/protocol.js"
+import { buildSlackEnvelope, slackClient, SLACK_WORKBOT_INSTRUCTIONS, type SlackEvent } from "../src/slack-assistant/protocol.js"
+import { loadSlackContext } from "../src/slack-assistant/context.js"
 import { advanceSlackRun, advanceSlackWatch, checkpointSchema } from "../src/slack-assistant/run.js"
 import { fakeSlack } from "./slack-fakes.js"
 
@@ -74,7 +75,20 @@ test("a Slack message runs on the real runner: session instructions, live text, 
     const live = createLiveFeeds({ open: (sessionId, signal) => openSlackRunnerEvents(sessionId, signal, deps), idleMs: 5_000 })
     const { slack, calls, appends, text } = fakeSlack()
     const settings = { instructions: SLACK_WORKBOT_INSTRUCTIONS, reactions: true, tasks: true }
-    const envelope = buildSlackEnvelope({ event: { type: "app_mention", user: "U0ABC", text: "<@B1> make the Q3 deck", channel: "C1", ts: "1.0" }, teamId: "T1", botUserId: "B1", context: {}, privateReply: false })
+    // Exercise the production context loader and HTTP adapter before sending the envelope through the real runner.
+    // Only Slack's external responses and the model are scripted; no live Slack workspace or credentials are used.
+    const event: SlackEvent = { type: "app_mention", user: "U0ABC", text: "<@B1> make the Q3 deck", channel: "C1", ts: "2.0", thread_ts: "1.0" }
+    const memberSlack = slackClient("member-context-token", async (url, init) => {
+      assert.equal(new Headers(init?.headers).get("Authorization"), "Bearer member-context-token")
+      if (String(url).endsWith("users.info")) {
+        const body: { user: string } = JSON.parse(String(init?.body))
+        return Response.json({ ok: true, user: { id: body.user, profile: { display_name: "Example Colleague" } } })
+      }
+      assert.ok(String(url).endsWith("conversations.replies"))
+      return Response.json({ ok: true, messages: [{ ts: "1.0", user: "U2", text: "Use the attached Q3 figures", files: [{ id: "F1", name: "figures.csv", filetype: "csv" }] }] })
+    })
+    const context = await loadSlackContext({ slack: memberSlack, event, channelId: "C1", log: () => assert.fail("context fetch failed") })
+    const envelope = buildSlackEnvelope({ event, teamId: "T1", botUserId: "B1", context, privateReply: false })
     const messageId = `msg_${"a".repeat(64)}`
     const cp = checkpointSchema.parse({ phase: "create", prompt: envelope, channel: "C1", threadTs: "1.0", live: false, workbot: true, reactTo: { channel: "C1", ts: "1.0" }, recipientUserId: "U0ABC", startedAt: Date.now() })
     let done = false
@@ -98,6 +112,13 @@ test("a Slack message runs on the real runner: session instructions, live text, 
     // The instructions reached the model as the session's system prompt; the message itself is only the envelope.
     assert.ok(systems[0]?.includes(SLACK_WORKBOT_INSTRUCTIONS))
     assert.ok(userTexts[0]?.endsWith(envelope) && !userTexts[0].includes("OpenWork assistant in Slack"))
+    const received: { asked_by: string; invocation: { text: string }; untrusted_context: string } = JSON.parse(userTexts[0]?.slice(-envelope.length) ?? "{}")
+    assert.equal(received.asked_by, "U0ABC")
+    assert.equal(received.invocation.text, "make the Q3 deck")
+    assert.deepEqual(JSON.parse(received.untrusted_context), JSON.parse(JSON.stringify(context)))
+    assert.ok(received.untrusted_context.includes("Use the attached Q3 figures"))
+    assert.ok(received.untrusted_context.includes("Example Colleague"))
+    assert.ok(received.untrusted_context.includes("figures.csv"))
     // Text arrived while it was being written: the first sentence came in more than one append.
     const firstSentence = "Sure, give me a sec to put that together."
     const pieces = appends().filter((piece) => firstSentence.includes(piece.trim()) && piece.trim())
