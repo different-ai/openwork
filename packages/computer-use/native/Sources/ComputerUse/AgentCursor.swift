@@ -552,7 +552,7 @@ final class AgentCursor {
     }
 
     /// Between inputs the model is deciding its next step, which takes seconds: the cursor
-    /// breathes slowly and names what the agent is working toward, instead of fidgeting.
+    /// breathes slowly, tilts its head now and then, and names what the agent is working toward.
     private func scheduleThinking() {
         idle?.cancel()
         let work = DispatchWorkItem { [weak self] in
@@ -562,6 +562,11 @@ final class AgentCursor {
             breath.autoreverses = true; breath.repeatCount = .infinity
             breath.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
             self.arrow.add(breath, forKey: "think")
+            // The old wiggle, kept for personality: one small shake, then a rest, not a loop of fidgeting.
+            let wiggle = CAKeyframeAnimation(keyPath: "transform.rotation.z")
+            wiggle.values = [0, 0.09, 0, -0.09, 0, 0]; wiggle.keyTimes = [0, 0.1, 0.2, 0.3, 0.4, 1]; wiggle.duration = 3.5
+            wiggle.repeatCount = .infinity
+            self.arrow.add(wiggle, forKey: "think-wiggle")
             self.say("\(self.presence.name) · " + (self.goal.map { "planning · \($0)" } ?? "planning the next step"), busy: true, hold: nil)
         }
         idle = work
@@ -570,7 +575,7 @@ final class AgentCursor {
 
     private func stopThinking() {
         idle?.cancel(); idle = nil
-        arrow.removeAnimation(forKey: "think")
+        arrow.removeAnimation(forKey: "think"); arrow.removeAnimation(forKey: "think-wiggle")
     }
 
     private func ripple(at point: CGPoint) {

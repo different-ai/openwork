@@ -102,7 +102,7 @@ While a session runs the helper draws presence on the desktop: a frame around
 the selected window, a named cursor that glides to each input with click
 ripples, drag trails, a typing indicator and highlighted controls, narration
 from `intent`, and a planning state between inputs: the cursor breathes slowly
-and names the session's purpose ("planning · Draw a wave"). The cursor travels like
+with a little wiggle now and then, and names the session's purpose ("planning · Draw a wave"). The cursor travels like
 a hand: short hops are quick, long ones take up to about a third of a second,
 it eases in along a slight arc, and a click or a highlight lands when it
 arrives. During a drag the stroke follows the cursor's tip. A drag with
