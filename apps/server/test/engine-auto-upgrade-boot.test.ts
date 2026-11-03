@@ -377,3 +377,16 @@ test("an install that never chose an engine is still moved to v2 in the backgrou
     } finally { await engine.stop(); }
   });
 });
+
+test("closing OpenWork while the background upgrade waits is a pause, not a failure", async () => {
+  await profile(async config => {
+    // The engine never reports idle, so the upgrade is still waiting when stop() runs.
+    const engine = createEngineV2Preview({ config, autoUpgradeIdle: async () => false,
+      autoUpgradeError: () => assert.fail("a shutdown pause is not an upgrade failure") });
+    await new Promise(resolve => setTimeout(resolve, 5));
+    await engine.stop();
+    assert.equal(engine.status().migration.state === "error", false);
+    assert.equal(engine.status().chatRouting, false);
+    assert.equal(readEngineV2PreviewState(config).autoUpgradeRetry, undefined);
+  });
+});
