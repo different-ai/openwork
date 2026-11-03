@@ -34,7 +34,9 @@ test("an agent saves through a website's own tool and confirms it on the page", 
     ]);
     const saved = await probe.eventually(witness, { within: 15_000, label: "the site records the website tool", until: state => state.records.length === 1 });
     expect(saved.records).toEqual([{ method: "webmcp", count: 1, signedIn: false }]);
-    const [, listed, called, observed] = (await world.browserCalls()).map(call => parse(call.output));
+    const calls = await world.browserCalls();
+    expect(calls.map(call => call.tool)).toEqual(["browser_open", "webmcp_list_tools", "webmcp_call_tool", "browser_observe"]);
+    const [, listed, called, observed] = calls.map(call => parse(call.output));
     const tools = listed?.tools as Array<{ name: string }> | undefined;
     expect(tools?.map(tool => tool.name)).toContain("save_draft");
     expect(called).toMatchObject({ ok: true, dispatched: true, name: "save_draft", result: { saved: 1, signedIn: false } });

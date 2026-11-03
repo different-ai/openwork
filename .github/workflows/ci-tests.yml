@@ -154,11 +154,18 @@ jobs:
           bun test apps/server/test/opencode-plugin-deps.test.ts
           node --test apps/desktop/test/engine-diagnosis.test.mjs apps/server/scripts/build-opencode-plugin-deps.test.mjs apps/desktop/scripts/electron-after-sign.test.cjs apps/server/test/inference-node-export.test.mjs
           pnpm --dir evals exec vitest run --config vitest.config.ts --project pr packages/hosts/src/local-surface-log.test.ts
+      - name: Test that a desktop starts announced remote tasks right away
+        run: |
+          pnpm --filter @openwork/remote-sessions build
+          pnpm --filter @openwork/headless-threads build
+          node --test apps/desktop/test/remote-session-push.test.mjs
       - name: Test the OpenCode engine new installs start on
         run: |
           node --test apps/desktop/test/fresh-install-engine.test.mjs
           pnpm --filter openwork-server test:fresh-install-engine
           bun test apps/server/test/engine-auto-upgrade-boot.test.ts apps/server/test/engine-auto-upgrade.test.ts apps/server/test/engine-auto-upgrade-safety.test.ts
+      - name: Test v2 history copy fences, interrupted-copy recovery, the v2-only rollout and downgrades
+        run: bun test apps/server/test/opencode-v2-history-safety.test.ts apps/server/test/engine-v2-history-recovery.test.ts apps/server/test/engine-v2-history-lockout-repro.test.ts apps/server/test/managed-desktop-policy-v2-only.test.ts
       - name: Test providers reaching OpenCode v2 and the organization's provider rule
         run: bun test apps/server/test/engine-v2-provider-mapping.test.ts apps/server/test/opencode-v2-local-auth.test.ts
       - name: Test organization agent permissions for outside folders, computer use and app scripting

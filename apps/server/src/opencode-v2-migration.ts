@@ -13,7 +13,7 @@ import {
   createManagedOpencodeV2Server, type ManagedOpencodeV2Server,
 } from "./managed-opencode-v2.js";
 import { attachHistory, copyHistoryBatches, externalizeHistory, numberField, openHistoryDatabase, restoreHistoryPayloads } from "./opencode-v2-history-store.js";
-import { acquireHistoryCopyLock } from "./opencode-v2-history-lock.js";
+import { acquireHistoryCopyLock, historyCopyFenced, rollbackPartialHistoryCopy } from "./opencode-v2-history-lock.js";
 import { prepareHistory } from "./history-preparation.js";
 import { migrationSessionsFromRows, type MigrationSession } from "./history-preparation-reader.js";
 
@@ -54,6 +54,8 @@ export interface ChatNotCopied {
 const KEPT_V2_BACKUPS = 2;
 /** Room left free after a migration so the computer keeps working. */
 const FREE_SPACE_MARGIN_BYTES = 1024 ** 3;
+/** Free bytes on the volume holding `directory`; undefined skips the check. */
+export type FreeBytes = (directory: string) => Promise<number | undefined>;
 async function fileSize(path: string): Promise<number> {
   try { return (await stat(path)).size; } catch { return 0; }
 }
@@ -75,11 +77,17 @@ function formatGigabytes(bytes: number): string {
  * Refuse before writing anything when the snapshot and backup would not fit.
  * Hosts without statfs skip the check rather than block the migration.
  */
-export async function ensureMigrationDiskSpace(options: { directory: string; neededBytes: number }): Promise<void> {
+export async function ensureMigrationDiskSpace(options: { directory: string; neededBytes: number; freeBytes?: FreeBytes }): Promise<void> {
   let available: number;
   try {
-    const fs = await statfs(options.directory);
-    available = Number(fs.bavail) * Number(fs.bsize);
+    if (options.freeBytes) {
+      const reported = await options.freeBytes(options.directory);
+      if (reported === undefined) return;
+      available = reported;
+    } else {
+      const fs = await statfs(options.directory);
+      available = Number(fs.bavail) * Number(fs.bsize);
+    }
   } catch {
     return;
   }
@@ -226,6 +234,8 @@ export interface MigrationRequest {
   /** The coordinator has stopped the owning engine before this is opened. */
   targetDatabase: string;
   backup?: { database: string; directory: string };
+  /** Test seam for the disk preflight; production reads the volume. */
+  freeBytes?: FreeBytes;
 }
 
 export interface MigrationScratch { directory: string; converterPid?: number }
@@ -265,14 +275,107 @@ async function checkpointAt(path: string): Promise<Checkpoint | undefined> {
     ...(typeof data.backupPath === "string" ? { backupPath: data.backupPath } : {}) };
 }
 
+function historyCopyPaths(storageDir: string) {
+  const directory = join(storageDir, "history-copy");
+  return { directory, checkpoint: join(directory, "checkpoint.json"), original: join(directory, "source.db"),
+    converted: join(directory, "converted", "opencode.db") };
+}
+
+/**
+ * Space the rest of a copy can need, from its saved stage.
+ *
+ * A fresh copy allocates, at peak, on the same volume as the storage directory:
+ *   `original`  — a VACUUM INTO of the v1 source (compacted, ≤ source)         ~1× source
+ *   `converted` — a VACUUM INTO of `original` (the v2 schema, ≤ source)          ~1× source
+ *   `backup`     — a VACUUM INTO of the existing v2 target (only if requested)    ~1× target
+ *   target growth — the v1 rows imported into the v2 target during the copy    ~1× source
+ *   one WAL     — the conversion engine's WAL (while converting) OR the
+ *                 target's WAL (while copying); they do not peak together       ≤1× source
+ *
+ * The conversion finishes and its engine closes (checkpointing its WAL) before
+ * the copy opens the target, so only one WAL is live at a time. SQLite's default
+ * `wal_autocheckpoint` (1000 pages ≈ 4 MB) bounds it to a few megabytes in
+ * practice; 1× source is the conservative worst case where checkpointing is
+ * disabled or delayed. `databaseSize` measures allocated bytes (the file + its
+ * WAL), not logical row bytes, so this does not double-count free pages the
+ * VACUUM reclaims. The source itself is only read, so its current allocation is
+ * never new. The target's existing allocation is already on disk; only its
+ * growth and the backup are new.
+ */
+const SNAPSHOT_COPIES = 2;             // original + converted (both ≤ source after VACUUM)
+const ONE_WAL_MULTIPLIER = 1;           // converted-wal during conversion OR target-wal during copy (not both)
+const TARGET_GROWTH_MULTIPLIER = 1;     // new rows from v1 imported into the target
+export const HISTORY_COPY_BUDGET = { SNAPSHOT_COPIES, ONE_WAL_MULTIPLIER, TARGET_GROWTH_MULTIPLIER };
+async function remainingCopyBytes(request: Pick<MigrationRequest, "source" | "storageDir" | "targetDatabase">, saved: Checkpoint | undefined): Promise<number> {
+  const target = await databaseSize(request.targetDatabase);
+  const paths = historyCopyPaths(request.storageDir);
+  if (!saved || saved.phase === "snapshot" || saved.phase === "completed") {
+    // Fresh copy: two snapshots, one live WAL, target growth, and the backup.
+    const source = await databaseSize(request.source);
+    return source * (SNAPSHOT_COPIES + ONE_WAL_MULTIPLIER + TARGET_GROWTH_MULTIPLIER) + target;
+  }
+  if (saved.phase === "restoring" || saved.phase === "copying") {
+    if (!saved.sourceKey) throw new Error("The saved history source is missing its fingerprint.");
+    // Once the projected schema exists, count only the rows still ahead, not
+    // the staging files' allocated pages. Do this before stopping any engine.
+    return remainingProjectedCopyBytes(paths.original, paths.converted, request.targetDatabase,
+      saved.phase === "restoring", !saved.backupPath, saved.sourceKey);
+  }
+  const converted = await databaseSize(paths.converted);
+  // externalizing / converting: the projected schema may not exist yet.
+  // Both snapshots are on disk; allow conversion/copy WAL, target growth and backup.
+  return converted * (TARGET_GROWTH_MULTIPLIER + ONE_WAL_MULTIPLIER) + target;
+}
+
+/**
+ * Every check that can refuse a copy, before anything is written or any engine
+ * is stopped: the saved copy belongs to this profile and the rest of it fits
+ * on disk. The copy lock then checks running engines and other copies, still
+ * before the target is fenced.
+ */
+export async function preflightHistoryCopy(request: Pick<MigrationRequest, "source" | "storageDir" | "targetDatabase" | "freeBytes">): Promise<void> {
+  const saved = await checkpointAt(historyCopyPaths(request.storageDir).checkpoint);
+  if (saved && saved.phase !== "completed" && (saved.source !== resolve(request.source) || saved.target !== resolve(request.targetDatabase))) {
+    throw new Error("The saved history copy belongs to another profile. Its files were preserved.");
+  }
+  await mkdir(request.storageDir, { recursive: true, mode: 0o700 });
+  await ensureMigrationDiskSpace({ directory: request.storageDir, neededBytes: await remainingCopyBytes(request, saved), freeBytes: request.freeBytes });
+}
+
+/**
+ * Undo an interrupted copy that can no longer finish now (its worker died, or
+ * a resume failed): remove only chats it created and never completed, then
+ * lift its fence so OpenCode v2 serves the history it already had. Fully
+ * copied chats, existing v2 chats, the saved stages and v1 stay as they are,
+ * so a later copy resumes. Refuses, changing nothing, while an engine owned by
+ * a running OpenWork has the history open or another copy is running.
+ */
+export async function releaseInterruptedHistoryCopy(options: { targetDatabase: string }): Promise<{ rolledBack: number }> {
+  const ownership = await acquireHistoryCopyLock(options.targetDatabase, { stopOrphanEngines: true });
+  try {
+    if (!await historyCopyFenced(options.targetDatabase)) return { rolledBack: 0 };
+    let rolledBack = 0;
+    try { await access(options.targetDatabase); } catch { await ownership.complete(); return { rolledBack }; }
+    const db = await openHistoryDatabase(options.targetDatabase);
+    try { rolledBack = rollbackPartialHistoryCopy(db); } finally { db.close(); }
+    await ownership.complete();
+    return { rolledBack };
+  } finally { await ownership.release(); }
+}
+
 /** Estimate only the stages still ahead. Raw archives and projections can be
  * much smaller than a v1 file's allocated pages; do not charge five fresh copies
  * for a resume that has already snapshotted and converted. Values stay in SQL. */
-async function remainingCopyBytes(original: string, converted: string, target: string, restoring: boolean, backup: boolean, sourceKey: string): Promise<number> {
-  const db = await openHistoryDatabase(converted);
+async function remainingProjectedCopyBytes(original: string, converted: string, target: string, restoring: boolean, backup: boolean, sourceKey: string): Promise<number> {
+  // Preflight also runs while the user's engine is serving. Open only a private
+  // in-memory connection and read-only attachments: a refusal must not create
+  // a missing target or write to either staging database.
+  const db = await openHistoryDatabase(":memory:");
   try {
     attachHistory(db, original, "original");
-    attachHistory(db, target, "destination");
+    attachHistory(db, converted, "converted");
+    if (await fileSize(target)) attachHistory(db, target, "destination");
+    else db.exec("ATTACH DATABASE ':memory:' AS destination");
     let archive = 0;
     for (const table of ["message", "part"]) {
       const archived = db.prepare("SELECT 1 FROM destination.sqlite_master WHERE type = 'table' AND name = ?").get(`openwork_v1_${table}`);
@@ -280,10 +383,11 @@ async function remainingCopyBytes(original: string, converted: string, target: s
         ${archived ? `WHERE NOT EXISTS (SELECT 1 FROM destination.openwork_v1_${table} t WHERE t.source_key = ? AND t.id = s.id AND t.data = s.data)` : ""}`)
         .get(...(archived ? [sourceKey] : [])), "n");
     }
-    const projection = numberField(db.prepare(`SELECT coalesce(sum(length(CAST(data AS BLOB))), 0) AS n FROM session_message
-      WHERE session_id IN (SELECT DISTINCT s.session_id FROM session_message s
-        WHERE NOT EXISTS (SELECT 1 FROM destination.session_message t WHERE t.id = s.id))`).get(), "n");
-    const payload = restoring ? numberField(db.prepare("SELECT coalesce(sum(length(CAST(json_quote(value) AS BLOB))), 0) AS n FROM openwork_payload").get(), "n") : 0;
+    const projected = db.prepare("SELECT 1 FROM destination.sqlite_master WHERE type = 'table' AND name = 'session_message'").get();
+    const projection = numberField(db.prepare(`SELECT coalesce(sum(length(CAST(data AS BLOB))), 0) AS n FROM converted.session_message
+      ${projected ? `WHERE session_id IN (SELECT DISTINCT s.session_id FROM converted.session_message s
+        WHERE NOT EXISTS (SELECT 1 FROM destination.session_message t WHERE t.id = s.id))` : ""}`).get(), "n");
+    const payload = restoring ? numberField(db.prepare("SELECT coalesce(sum(length(CAST(json_quote(value) AS BLOB))), 0) AS n FROM converted.openwork_payload").get(), "n") : 0;
     // Payloads can grow both the staging projection and its target copy. Count
     // all of them conservatively; neither archived raw rows nor a saved backup
     // need to be allocated again on a copying-stage resume.
@@ -303,7 +407,13 @@ function historyLog(event: string, attributes: Record<string, string | number | 
 /** The transfer is entirely SQLite-to-SQLite. Large strings never enter a JS
  * chat object; reversible references bound the native converter's payloads.
  * Stage files survive errors and process death, and target batches checkpoint
- * atomically with their writes. The original database is only ever read. */
+ * atomically with their writes. The original database is only ever read.
+ *
+ * Fence lifecycle: preflight (profile, disk), then the copy lock (other copies,
+ * running and orphaned engines) run before any durable state. The pending
+ * fence is published only immediately before the first target write. A copy
+ * that fails after that removes the chats it left unfinished and lifts its own
+ * fence; only a pause (abort) or process death keeps the fence for resume. */
 export async function migrateOpencodeV1History(options: MigrationRequest & {
   progress: (status: EngineV2MigrationStatus) => void;
   scratch?: (scratch: MigrationScratch) => void;
@@ -313,8 +423,6 @@ export async function migrateOpencodeV1History(options: MigrationRequest & {
 }): Promise<void> {
   await mkdir(options.storageDir, { recursive: true, mode: 0o700 });
   const directory = join(options.storageDir, "history-copy");
-  await mkdir(directory, { recursive: true, mode: 0o700 });
-  await chmod(directory, 0o700);
   const path = join(directory, "checkpoint.json");
   const original = join(directory, "source.db");
   const convertedDirectory = join(directory, "converted");
@@ -325,8 +433,12 @@ export async function migrateOpencodeV1History(options: MigrationRequest & {
   let ownership: Awaited<ReturnType<typeof acquireHistoryCopyLock>> | undefined;
   try {
     options.signal?.throwIfAborted();
-    ownership = await acquireHistoryCopyLock(options.targetDatabase);
+    // Nothing durable is written, and no fence is published, until every
+    // check that can refuse this copy has passed.
+    await preflightHistoryCopy(options);
+    ownership = await acquireHistoryCopyLock(options.targetDatabase, { stopOrphanEngines: true });
     await mkdir(directory, { recursive: true, mode: 0o700 });
+    await chmod(directory, 0o700);
     let saved = await checkpointAt(path);
     if (saved && (saved.source !== resolve(options.source) || saved.target !== resolve(options.targetDatabase))) {
       throw new Error("The saved history copy belongs to another profile. Its files were preserved.");
@@ -361,11 +473,6 @@ export async function migrateOpencodeV1History(options: MigrationRequest & {
       await rename(`${path}.tmp`, path);
     };
     if (checkpoint.phase === "snapshot") {
-      await ensureMigrationDiskSpace({ directory: options.storageDir,
-        // Source, reversible conversion workspace, original-row archive and
-        // projected payloads can coexist, plus a backup of existing v2 history.
-        neededBytes: await databaseSize(options.source) * 5 + await databaseSize(options.targetDatabase),
-      });
       await commitStage("snapshot");
       await rm(`${original}.tmp`, { force: true });
       await snapshotV1Database(options.source, `${original}.tmp`);
@@ -378,12 +485,6 @@ export async function migrateOpencodeV1History(options: MigrationRequest & {
       await commitStage("externalizing");
     }
     if (!checkpoint.sourceKey) throw new Error("The saved history source is missing its fingerprint.");
-    if (saved) {
-      await ensureMigrationDiskSpace({ directory: options.storageDir, neededBytes:
-        checkpoint.phase === "restoring" || checkpoint.phase === "copying"
-          ? await remainingCopyBytes(original, converted, options.targetDatabase, checkpoint.phase === "restoring", Boolean(options.backup && !checkpoint.backupPath), checkpoint.sourceKey)
-          : await databaseSize(original) * 4 + await databaseSize(options.targetDatabase) });
-    }
     const sessions = await readMigrationSessions(original);
     if (await sourceDigest(original) !== checkpoint.sourceKey) throw new Error("The saved source changed. Its files and v2 history were preserved.");
     status.total = sessions.length;
@@ -435,8 +536,8 @@ export async function migrateOpencodeV1History(options: MigrationRequest & {
       }); } finally { db.close(); }
       await commitStage("copying");
     }
-    await ensureMigrationDiskSpace({ directory: options.storageDir,
-      neededBytes: await remainingCopyBytes(original, converted, options.targetDatabase, false, Boolean(options.backup && !checkpoint.backupPath), checkpoint.sourceKey) });
+    await ensureMigrationDiskSpace({ directory: options.storageDir, freeBytes: options.freeBytes,
+      neededBytes: await remainingProjectedCopyBytes(original, converted, options.targetDatabase, false, Boolean(options.backup && !checkpoint.backupPath), checkpoint.sourceKey) });
     status.phase = "copying"; stageTotal = sessions.length; report();
     if (!checkpoint.sourceKey) throw new Error("The saved history source is missing its fingerprint.");
     if (options.backup && !checkpoint.backupPath) {
@@ -444,6 +545,9 @@ export async function migrateOpencodeV1History(options: MigrationRequest & {
       await commitStage("copying");
     }
     status.backupPath = checkpoint.backupPath;
+    // The first write to the target follows: from here an interrupted copy
+    // must resume or roll back before an engine opens this history.
+    await ownership.beginTransfer();
     const db = await openHistoryDatabase(options.targetDatabase);
     try {
       attachHistory(db, original, "original"); attachHistory(db, converted, "converted");
@@ -463,6 +567,19 @@ export async function migrateOpencodeV1History(options: MigrationRequest & {
   } catch (error) {
     status.state = "error"; status.phase = undefined;
     status.error = error instanceof Error ? error.message : "History copy stopped. Retry to resume.";
+    // A pause keeps its fence and committed batches for the next start. Any
+    // other failure undoes the chats it left unfinished and lifts the fence
+    // (ours, or one abandoned by a process that died: we hold the mutex), so
+    // OpenCode v2 keeps serving the history it already had.
+    if (ownership && !options.signal?.aborted && await historyCopyFenced(options.targetDatabase).catch(() => false)) {
+      try {
+        const db = await openHistoryDatabase(options.targetDatabase);
+        try { rollbackPartialHistoryCopy(db); } finally { db.close(); }
+        await ownership.complete();
+      } catch (rollbackError) {
+        status.error = `${status.error} Unfinished chats could not be undone yet (${rollbackError instanceof Error ? rollbackError.message : "unknown error"}); OpenWork retries before opening them.`;
+      }
+    }
     historyLog("failed", { imported: status.imported, skipped: status.skipped, restored: status.restored });
     report();
   } finally { try { await converter?.close(); } finally { await ownership?.release(); } }
@@ -478,7 +595,8 @@ export async function runOpencodeV1HistoryMigration(options: MigrationRequest & 
   signal?: AbortSignal;
 }): Promise<void> {
   if (typeof process.versions.electron !== "string") return migrateOpencodeV1History(options);
-  const { progress, signal, ...request } = options;
+  // The worker measures the volume itself; a test seam is not sent over IPC.
+  const { progress, signal, freeBytes: _inProcessOnly, ...request } = options;
   signal?.throwIfAborted();
   let last: EngineV2MigrationStatus = { state: "running", phase: "starting", imported: 0, skipped: 0, total: 0 };
   let converterPid: number | undefined;

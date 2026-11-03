@@ -131,6 +131,26 @@
               ],
               "description": "Connect: an MCP server for each connection: Members can add one connected service, such as Gmail or Linear, to an agent like Claude Code as its own MCP server that lists only that service's tools. Renders DEN_FEATURE_CONNECTION_MCP_SERVERS."
             },
+            "desktopPersonalConnectors": {
+              "enum": [
+                "",
+                "true",
+                "false",
+                true,
+                false
+              ],
+              "description": "Desktop: members add their own connectors: Members can add a custom MCP server from the desktop app's Library and sign in with their own account, the same way they can from My Library on the web. Without it, the desktop only lets owners and admins finish connector setup. Renders DEN_FEATURE_DESKTOP_PERSONAL_CONNECTORS."
+            },
+            "opencodeV2Only": {
+              "enum": [
+                "",
+                "true",
+                "false",
+                true,
+                false
+              ],
+              "description": "OpenCode v2 only: Desktop chats always run on OpenCode v2: switching to OpenCode v1 is turned off and earlier chats are copied to v2 in the background. Renders DEN_FEATURE_OPENCODE_V2_ONLY."
+            },
             "managedDeployments": {
               "enum": [
                 "",
@@ -240,6 +260,16 @@
                 false
               ],
               "description": "Desktop: computer use on remote computers: Use a Linux cloud computer with its browser and desktop in OpenWork Web, or connect a VM from Desktop. Configured and conversation-owned desktops open directly when enabled, including follow-ups and internal session renewal. Take over and Stop stay available. Renders DEN_FEATURE_REMOTE_COMPUTERS."
+            },
+            "remoteSessionPush": {
+              "enum": [
+                "",
+                "true",
+                "false",
+                true,
+                false
+              ],
+              "description": "Desktop: start tasks from other computers right away: A task sent to this person's desktop from another computer, Workbot or an agent starts within a second or two instead of up to a minute later. Den tells the desktop the moment the task is queued over the runner's event stream; the desktop still checks every minute as a fallback. Renders DEN_FEATURE_REMOTE_SESSION_PUSH."
             },
             "sandboxGateway": {
               "enum": [

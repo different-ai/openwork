@@ -871,6 +871,9 @@ export async function startServer(
   });
   const anonymousInference = new AnonymousInferenceService(config, logger);
   anonymousInference.onEngineConfigChanged = () => { if (config.workspaces.length > 0 || enginePoolForConfig(config)) cloudProviderSync.markReloadPending(); };
+  managedDesktopPolicy(config).onV2OnlyChange = (enabled) => {
+    void engineV2Preview.setV2Only(enabled).catch(() => undefined);
+  };
   managedDesktopPolicy(config).onChange = () => {
     void anonymousInference.initialize(config.port).then((changed) => {
       if (changed && config.workspaces.length > 0) cloudProviderSync.markReloadPending();
@@ -3420,6 +3423,8 @@ function createRoutes(
     } finally {
       await clearing;
     }
+    // Signed out, no organization rollout applies. The engine selection stays.
+    await engineV2Preview.setV2Only(false);
     await anonymousInference.initialize(config.port);
     return new Response(null, { status: 204 });
   });

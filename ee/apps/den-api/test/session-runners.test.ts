@@ -64,7 +64,12 @@ const modernCapabilities: AutomationDesktopRunnerCapability[] = [
   REMOTE_SESSION_ONLY_RUNNER_CAPABILITY, REMOTE_SESSION_RECOVERY_RUNNER_CAPABILITY,
 ]
 
-function fixtures(options: { active?: boolean; capabilities?: AutomationDesktopRunnerCapability[] } = {}) {
+function fixtures(options: {
+  active?: boolean
+  capabilities?: AutomationDesktopRunnerCapability[]
+  push?: boolean
+  pending?: () => RemoteSessionCommand[]
+} = {}) {
   const calls: string[] = []
   const service = {
     async registerDesktopRunner() {},
@@ -75,7 +80,10 @@ function fixtures(options: { active?: boolean; capabilities?: AutomationDesktopR
   const commandStore: RemoteSessionCommandStore = {
     async enqueue() { return command }, async get() { return command }, async getMany() { return [command] }, async latestSettled() { return null },
     async findDesktopSession() { return null }, async listDesktopSessions() { return [] }, async markTurnStarted() { calls.push("reset") },
-    async listPendingForRunner() { calls.push("pending-command"); return [{ ...command, id: "command_pending", status: "pending" }] },
+    async listPendingForRunner() {
+      calls.push("pending-command")
+      return options.pending ? options.pending() : [{ ...command, id: "command_pending", status: "pending" }]
+    },
     async listRecoverableForRunner(input) { assert.deepEqual(input.runnerId, scope.runnerId); calls.push("recover-command"); return [command] },
     async claim(input) { assert.equal(input.organizationId, scope.organizationId); assert.equal(input.recoverClaimed, true); return command },
     async complete(input) { assert.equal(input.organizationId, scope.organizationId); assert.equal(input.ownerMemberId, scope.ownerMemberId); return { ...command, status: "delivered", sessionId: "ses_unit", workspaceId: "workspace_unit" } },
@@ -92,6 +100,7 @@ function fixtures(options: { active?: boolean; capabilities?: AutomationDesktopR
   registerSessionRunnerRoutes(app, {
     service, commandStore, requestStore,
     async readEnginePolicy() { return { upgrade: false } },
+    async remoteSessionPushEnabled() { return options.push ?? false },
     automationService: {
       async discoverDesktopRunnerWork() { calls.push("automation-discovery"); return [{ runId: "automation_unit", executionTarget: "desktop" }] },
       async runnerNotifications() { return [] },
@@ -488,6 +497,21 @@ test("command admission idempotency resolves concurrent inserts and refuses chan
   assert.equal(state.inserts(), 1)
 })
 
+test("a create key reused after its command's admission window starts new work", async (t) => {
+  const state = storeDatabase(t, { commandExists: false })
+  const admission = { ...scope, createdByUserId: command.createdByUserId, title: "Demo take", prompt: "Write the .ics script",
+    ttlMs: 60_000, idempotencyKey: "remote_reused_key", targetComputerId: "computer_unit" }
+  const first = await databaseRemoteSessionCommandStore.enqueue(admission)
+  // Within the window a changed task under the same key is still refused.
+  await assert.rejects(() => databaseRemoteSessionCommandStore.enqueue({ ...admission, prompt: "Changed" }), RemoteSessionIdempotencyConflictError)
+  state.commandRow.expires_at = new Date(Date.now() - 1)
+  const later = await databaseRemoteSessionCommandStore.enqueue({ ...admission, prompt: "Write the .ics script, take 2" })
+  assert.notEqual(later.id, first.id, "a later chat reusing the key gets a new command")
+  assert.equal(later.prompt, "Write the .ics script, take 2")
+  assert.equal(state.inserts(), 2)
+  assert.ok(state.compiled.some((sql) => sql.includes("`idempotency_key` = ?")), "the old command's key is released by id and key")
+})
+
 test("a global admission key never reads another organization or user's command", async (t) => {
   const state = storeDatabase(t, { commandExists: false })
   const admission = { ...scope, createdByUserId: command.createdByUserId, title: "Scoped admission", ttlMs: 60_000, idempotencyKey: "remote_global_collision" }
@@ -505,4 +529,62 @@ test("admission does not swallow unrelated database failures or unverified dupli
     t.mock.method(db, "insert", () => ({ async values() { throw fault } }))
     await assert.rejects(() => databaseRemoteSessionCommandStore.enqueue(admission), (error: unknown) => error === fault)
   }
+})
+
+/** Reads SSE event names from a streaming response until `until` matches or the deadline passes. */
+async function readEvents(response: Response, until: (events: string[]) => boolean, withinMs: number): Promise<string[]> {
+  assert.ok(response.body)
+  const reader = response.body.getReader()
+  const decoder = new TextDecoder()
+  const events: string[] = []
+  let buffer = ""
+  const deadline = Date.now() + withinMs
+  try {
+    while (!until(events) && Date.now() < deadline) {
+      const chunk = await Promise.race([reader.read(), new Promise<null>((resolve) => setTimeout(() => resolve(null), Math.max(1, deadline - Date.now())))])
+      if (!chunk || chunk.done) break
+      buffer += decoder.decode(chunk.value, { stream: true })
+      for (const match of buffer.matchAll(/event: ?([^\n]+)/g)) events.push(match[1]?.trim() ?? "")
+      buffer = buffer.slice(buffer.lastIndexOf("\n\n") + 2)
+    }
+  } finally {
+    await reader.cancel().catch(() => undefined)
+  }
+  return events
+}
+
+const PUSH = { "X-OpenWork-Remote-Session-Push": "1" }
+
+test("a desktop asking for remote-session pushes gets 404 while the feature is off; plain streams are unchanged", async () => {
+  const { app, headers } = fixtures({ push: false })
+  const refused = await app.request("/v1/automation-runners/events", { headers: { ...headers, ...PUSH } })
+  assert.equal(refused.status, 404)
+  assert.deepEqual(await refused.json(), { error: "feature_disabled", message: "Remote-session push is not enabled for this organization." })
+  const plain = await app.request("/v1/automation-runners/events", { headers })
+  assert.equal(plain.status, 200)
+  await plain.body?.cancel()
+})
+
+test("with the feature on, a queued remote-session task is announced once on the runner's stream", async () => {
+  const { app, headers } = fixtures({ push: true })
+  const response = await app.request("/v1/automation-runners/events", { headers: { ...headers, ...PUSH } })
+  assert.equal(response.status, 200)
+  const events = await readEvents(response, (seen) => seen.includes("remote_session_work_available"), 3_000)
+  assert.deepEqual(events.filter((event) => event === "remote_session_work_available"), ["remote_session_work_available"])
+})
+
+test("a task queued on this Den instance wakes the stream at once instead of at the next check", async () => {
+  const { signalRemoteSessionWork } = await import("../src/remote-sessions/work-signal.js")
+  let pending: RemoteSessionCommand[] = []
+  const { app, headers } = fixtures({ push: true, pending: () => pending })
+  const response = await app.request("/v1/automation-runners/events", { headers: { ...headers, ...PUSH } })
+  assert.equal(response.status, 200)
+  // Let the first (empty) check run, then queue a task and signal it.
+  await new Promise((resolve) => setTimeout(resolve, 200))
+  pending = [{ ...command, id: "command_woken", status: "pending" }]
+  const signalledAt = Date.now()
+  signalRemoteSessionWork(scope.organizationId, scope.ownerMemberId)
+  const events = await readEvents(response, (seen) => seen.includes("remote_session_work_available"), 4_000)
+  assert.ok(events.includes("remote_session_work_available"))
+  assert.ok(Date.now() - signalledAt < 1_000, `announced ${Date.now() - signalledAt} ms after the signal, before the 5 s check`)
 })

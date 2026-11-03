@@ -31,9 +31,11 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { parseWardenJsonl } from "./contributor-screen.mjs";
-import { qualifyingFixes } from "./warden-fixer.mjs";
+import { changedLines, qualifyingFixes } from "./warden-fixer.mjs";
 import { generateFixes, generationModel, GENERATION_LIMITS, fixOutcomeLine } from "./warden-generate.mjs";
 import { redact, wardenEnvironment } from "./warden-fast.mjs";
+import { planCiRepairs, ciRepairState } from "./warden-ci-plan.mjs";
+import { redactCiText } from "./warden-ci.mjs";
 
 export const SKILLS = ["diff-security-review", "diff-bug-review", "design-spec-review", "ui-skills-review"];
 export const KIND = { "diff-security-review": "security", "diff-bug-review": "bug", "design-spec-review": "design", "ui-skills-review": "design" };
@@ -62,7 +64,7 @@ export function validState(state) {
     ? state.ciPending.filter((entry) => SHA.test(entry?.sha ?? "") && Number.isFinite(Date.parse(entry.since)))
     : [];
   const fixPending = Array.isArray(state.fixPending) ? state.fixPending.filter((entry) => SHA.test(entry?.sha ?? "") && Number.isSafeInteger(entry.attempts) && entry.attempts >= 0 && entry.attempts < GENERATION_LIMITS.commitAttempts).slice(0, GENERATION_LIMITS.queue).map(({ sha, attempts }) => ({ sha, attempts })) : [];
-  return { version: 1, reviewedThrough: state.reviewedThrough, ciPending, fixPending };
+  return { version: 1, reviewedThrough: state.reviewedThrough, ciPending, fixPending, ciRepairs: ciRepairState(state.ciRepairs) };
 }
 
 /**
@@ -134,30 +136,64 @@ export function relatedOpenFixes(pr, openPrs) {
 export function planFix(pr, changedFiles) {
   if (!pr.complete) return null;
   const candidates = pr.findings;
-  const { fixes, skipped } = qualifyingFixes({ findings: candidates }, changedFiles);
+  const { fixes } = qualifyingFixes({ findings: candidates }, changedFiles);
   if (!fixes.length) return null;
   const ref = pr.number ? `#${pr.number}` : `\`${pr.sha.slice(0, 12)}\``;
   const kinds = new Map(candidates.map((finding) => [finding.title, finding.kind]));
-  const lines = [
-    `Warden's post-merge sweep found ${fixes.length} problem(s) in ${ref} and is confident of the fix. Review and merge to accept, or close to reject.`,
-    "",
-    // Security fixes land in a public repository: name the file, not the issue.
-    ...fixes.map((fix) => kinds.get(fix.title) === "security"
-      ? `- **security · ${fix.severity}**${fix.path ? ` in \`${fix.path.slice(0, 200)}\`` : ""}: details are in the team's Slack sweep report.`
-      : `- **${kinds.get(fix.title) ?? "bug"} · ${fix.severity}**: ${mdEscape(fix.title)}${fix.path ? ` (\`${fix.path.slice(0, 200)}\`)` : ""}`),
-  ];
+  const full = new Map(candidates.map((finding) => [finding.title, finding]));
+  // Security and CI details stay in Slack: this repository is public.
+  const privateKind = (fix) => ["security", "ci"].includes(kinds.get(fix.title));
+  const lines = [`Warden's post-merge review of ${ref}${pr.title ? ` (${mdEscape(pr.title)})` : ""} found ${fixes.length === 1 ? "a problem" : `${fixes.length} problems`} it could fix with a small change.`];
+  for (const fix of fixes) {
+    const finding = full.get(fix.title) ?? {};
+    const file = fix.path ? `\`${fix.path.slice(0, 200)}${finding.line ? `:${finding.line}` : ""}\`` : "the changed code";
+    const changed = changedLines(fix.diff);
+    lines.push("");
+    if (privateKind(fix)) {
+      lines.push(`### ${kinds.get(fix.title) === "ci" ? "Failing CI" : "Security"} fix in ${file}`, "",
+        "**What's wrong:** details are in the Warden report in Slack (#bug), not here, because this repository is public.");
+    } else {
+      lines.push(`### ${mdEscape(fix.title)}`, "", `**Where:** ${file}`, "", `**What's wrong:** ${mdEscape(finding.description || fix.title)}`);
+      if (fix.description) lines.push("", `**What this changes:** ${mdEscape(fix.description)}`);
+    }
+    lines.push("", `**Size:** ${changed} changed line${changed === 1 ? "" : "s"}.`);
+  }
+  lines.push("", "### How to review",
+    "- Read the diff; it is the whole change.",
+    "- Warden did not run tests. CI on this PR does.",
+    "- Merge to accept, or close to reject. Warden never merges.");
   const left = candidates.length - fixes.length;
-  if (left || skipped.length) lines.push("", `${left} other finding(s) in ${ref} still need a person; see the sweep report.`);
+  if (left) lines.push("", `<sub>${left} other finding${left === 1 ? "" : "s"} in ${ref} ${left === 1 ? "was" : "were"} not fixed automatically; see the Slack report.</sub>`);
   lines.push("", "Release note: none");
   return {
     branch: fixBranch(pr),
     number: pr.number,
     sha: pr.sha,
-    // The title never says "security": the body names files, Slack has the details.
-    title: `fix: apply Warden's post-merge fixes for ${pr.number ? `#${pr.number}` : pr.sha.slice(0, 12)}`,
+    title: fixTitle(fixes, kinds, ref),
     body: `${lines.join("\n")}\n`,
     patches: fixes.map((fix) => (fix.diff.endsWith("\n") ? fix.diff : `${fix.diff}\n`)),
   };
+}
+
+/** A title that says what the PR fixes. Never names a security issue. */
+export function fixTitle(fixes, kinds, ref) {
+  const first = fixes[0];
+  const base = first.path ? first.path.split("/").pop() : "code";
+  let subject = ["security", "ci"].includes(kinds.get(first.title))
+    ? (kinds.get(first.title) === "ci" ? `fix a CI failure in ${base}` : `harden ${base}`)
+    : first.title.replace(/\s+/g, " ").trim().replace(/[.:;]+$/, "");
+  subject = subject.charAt(0).toLowerCase() + subject.slice(1);
+  const more = fixes.length > 1 ? ` (+${fixes.length - 1} more)` : "";
+  const room = 72 - "fix: ".length - more.length;
+  if (subject.length > room) subject = `${subject.slice(0, room - 1).trimEnd()}…`;
+  return sanitizeTitle(`fix: ${subject}${more}`) ?? `fix: apply Warden's post-merge fixes for ${ref}`;
+}
+
+/** Shared with the writer: one printable line, no mentions or references. */
+export function sanitizeTitle(title) {
+  if (typeof title !== "string") return null;
+  const clean = title.replace(/[\u0000-\u001f\u007f-\u009f\u200b-\u200f\u202a-\u202e\u2066-\u2069]/g, "").replace(/@(?=[A-Za-z0-9])/g, "@\u200b").replace(/#(?=\d)/g, "#\u200b").trim();
+  return /^fix(?:\([a-z-]+\))?: .{3,90}$/u.test(clean) ? clean : null;
 }
 
 // --- CI -----------------------------------------------------------------------------
@@ -180,7 +216,7 @@ export async function ciStatus(runs, previousConclusion) {
     if (run.status !== "completed") pending += 1;
     else if (FAILED.has(run.conclusion)) {
       const before = await previousConclusion(run);
-      failed.push({ name: clean(run.name, 120), url: run.html_url, newlyFailing: before === "success" });
+      failed.push({ name: clean(run.name, 120), url: run.html_url, newlyFailing: before === "success", previousConclusion: before ?? null, id: run.id, runAttempt: run.run_attempt || 1 });
     }
   }
   failed.sort((a, b) => Number(b.newlyFailing) - Number(a.newlyFailing) || a.name.localeCompare(b.name));
@@ -217,6 +253,39 @@ function countLine(total) {
   return parts.length ? parts.join(" · ") : "nothing to fix";
 }
 
+const RANK = { security: { high: 0, medium: 1, low: 5 }, bug: { high: 2, medium: 3, low: 6 }, ci: { high: 2, medium: 3, low: 6 }, design: { high: 4, medium: 4, low: 7 } };
+const rank = (finding) => RANK[finding.kind]?.[finding.severity] ?? 8;
+const short = (value, max) => { const text = String(value).replace(/\s+/g, " ").trim(); return text.length > max ? `${text.slice(0, max - 1).trimEnd()}…` : text; };
+
+/**
+ * The channel message: a few lines a person can read at a glance. Worst PRs
+ * first, one line each; full detail goes in the thread.
+ */
+export function slackDigest({ repo, prs, lateCi, runUrl, fixPlans = 0, deferred = 0, topPrs = 5 }) {
+  const lateFailures = lateCi.filter((entry) => entry.ci.failed.length);
+  const flagged = prs.filter((pr) => pr.findings.length || !pr.complete);
+  const failing = new Map();
+  for (const source of [...prs, ...lateFailures]) for (const run of source.ci.failed) if (!failing.has(run.name)) failing.set(run.name, run.url);
+  if (!flagged.length && !failing.size) return null;
+  const total = counts(prs);
+  const parts = [total.security && `${total.security} security`, total.bug && `${total.bug} bug${total.bug === 1 ? "" : "s"}`, total.design && `${total.design} design`].filter(Boolean);
+  const lines = [`*Warden* reviewed ${prs.length} merged PR${prs.length === 1 ? "" : "s"}: ${parts.length ? parts.join(", ") : "no code findings"}. <${runUrl}|Run>`];
+  const ordered = flagged.map((pr) => ({ pr, worst: [...pr.findings].sort((a, b) => rank(a) - rank(b))[0] }))
+    .sort((a, b) => (a.worst ? rank(a.worst) : 9) - (b.worst ? rank(b.worst) : 9) || b.pr.findings.length - a.pr.findings.length);
+  for (const { pr, worst } of ordered.slice(0, topPrs)) {
+    const link = pr.number ? `<https://github.com/${repo}/pull/${pr.number}|#${pr.number}>` : `\`${pr.sha.slice(0, 10)}\``;
+    const more = pr.findings.length > 1 ? ` (+${pr.findings.length - 1} more)` : "";
+    const icon = worst?.kind === "security" && worst.severity === "high" ? ":red_circle:" : worst && ["high", "medium"].includes(worst.severity) ? ":large_orange_circle:" : ":white_circle:";
+    lines.push(worst ? `${icon} ${link} ${slackEscape(short(worst.title, 90))}${more}` : `:white_circle: ${link} review incomplete`);
+  }
+  if (ordered.length > topPrs) lines.push(`…and ${ordered.length - topPrs} more PR${ordered.length - topPrs === 1 ? "" : "s"} with findings.`);
+  if (failing.size) lines.push(`:x: CI failing: ${[...failing].slice(0, 3).map(([name, url]) => `<${url}|${slackEscape(short(name, 40))}>`).join(", ")}${failing.size > 3 ? ` +${failing.size - 3}` : ""}`);
+  if (fixPlans) lines.push(`:wrench: Drafting ${fixPlans} fix PR${fixPlans === 1 ? "" : "s"}; links follow in the thread.`);
+  if (deferred) lines.push(`${deferred} more merged PR${deferred === 1 ? "" : "s"} next sweep.`);
+  lines.push("_Details in thread._");
+  return { text: lines.join("\n"), unfurl_links: false, unfurl_media: false };
+}
+
 /** Slack message (private channel): full finding text. Null when there is nothing to report. */
 export function slackMessage({ repo, prs, runUrl, deferred, lateCi, fixPlans = 0 }) {
   const flagged = prs.filter(needsAttention);
@@ -232,16 +301,22 @@ export function slackMessage({ repo, prs, runUrl, deferred, lateCi, fixPlans = 0
       lines.push(`• [${finding.kind} · ${finding.severity}] ${slackEscape(finding.title)}${at}`);
       if (finding.description) lines.push(`    ${slackEscape(finding.description.slice(0, 300))}`);
     }
-    for (const run of pr.ci.failed) lines.push(`• [tests] <${run.url}|${slackEscape(run.name)}> failed${run.newlyFailing ? " (first failure on dev)" : " (already failing before)"}`);
+    for (const run of pr.ci.failed) lines.push(`• [tests] <${run.url}|${slackEscape(run.name)}> failed${run.newlyFailing ? " (previous run passed; cause not established)" : run.previousConclusion ? " (previous run did not pass; cause not established)" : " (previous result unknown)"}`);
   }
   for (const entry of lateFailures) {
     lines.push("", `*Late CI results for #${entry.number ?? entry.sha.slice(0, 10)}*`);
-    for (const run of entry.ci.failed) lines.push(`• [tests] <${run.url}|${slackEscape(run.name)}> failed${run.newlyFailing ? " (first failure on dev)" : " (already failing before)"}`);
+    for (const run of entry.ci.failed) lines.push(`• [tests] <${run.url}|${slackEscape(run.name)}> failed${run.newlyFailing ? " (previous run passed; cause not established)" : run.previousConclusion ? " (previous run did not pass; cause not established)" : " (previous result unknown)"}`);
   }
-  if (fixPlans) lines.push("", `Prepared ${fixPlans} fix PR plan(s), not opened yet. The separate write job reports actual draft PR URLs or failures (kill switch may prevent opening).`);
-  for (const pr of prs) if (pr.fixOutcomes) lines.push(`Fix generation for #${pr.number ?? pr.sha.slice(0, 10)}: ${fixOutcomeLine(pr.fixOutcomes)}`);
-  for (const pr of prs) if (pr.fixQueueReason) lines.push(`Fix retry for #${pr.number ?? pr.sha.slice(0, 10)}: ${pr.fixQueueReason}`);
-  for (const pr of prs) if (pr.fixRelated?.length) lines.push(`Related existing follow-up(s), coverage requires human review: ${pr.fixRelated.join(", ")}`);
+  const attempted = prs.filter((pr) => pr.fixOutcomes?.length);
+  if (attempted.length) {
+    const outcomes = attempted.flatMap((pr) => pr.fixOutcomes);
+    const reasons = new Map();
+    for (const outcome of outcomes) if (outcome.status !== "verified") reasons.set(outcome.reason, (reasons.get(outcome.reason) ?? 0) + 1);
+    lines.push("", `*Auto-fix:* ${outcomes.filter((o) => o.status === "verified").length} of ${outcomes.length} findings got a verified fix.${reasons.size ? ` Not fixed: ${[...reasons].map(([reason, n]) => `${n} ${reason}`).join("; ")}.` : ""}`);
+  }
+  const retrying = prs.filter((pr) => pr.fixQueueReason?.startsWith("queued")).length;
+  if (retrying) lines.push(`${retrying} PR${retrying === 1 ? "" : "s"} will get another fix attempt next sweep.`);
+  for (const pr of prs) if (pr.fixRelated?.length) lines.push(`#${pr.number ?? pr.sha.slice(0, 10)} already has a follow-up: ${pr.fixRelated.join(", ")}`);
   if (deferred) lines.push("", `${deferred} more merged PR(s) will be reviewed in the next sweep.`);
   lines.push("", `<${runUrl}|View run>`);
   let text = lines.join("\n");
@@ -264,7 +339,7 @@ export function jobSummary({ repo, prs, deferred, lateCi, base, head, slack, fix
   const details = prs.flatMap((pr) => [
     ...pr.findings.filter((finding) => finding.kind !== "security").map((finding) =>
       `- #${pr.number ?? pr.sha.slice(0, 10)} [${finding.kind} · ${finding.severity}] ${mdEscape(finding.title)}${where(finding) ? ` — \`${where(finding).replace(/`/g, "'")}\`` : ""}`),
-    ...pr.ci.failed.map((run) => `- #${pr.number ?? pr.sha.slice(0, 10)} [tests] [${mdEscape(run.name)}](${run.url}) failed${run.newlyFailing ? " (first failure on dev)" : ""}`),
+    ...pr.ci.failed.map((run) => `- #${pr.number ?? pr.sha.slice(0, 10)} [tests] [${mdEscape(run.name)}](${run.url}) failed${run.newlyFailing ? " (previous run passed; cause not established)" : ""}`),
   ]);
   for (const entry of lateCi) for (const run of entry.ci.failed) details.push(`- #${entry.number ?? entry.sha.slice(0, 10)} [tests, late result] [${mdEscape(run.name)}](${run.url}) failed`);
   if (details.length) lines.push("<details><summary>Bugs, design and failing workflows</summary>", "", ...details, "", "</details>", "");
@@ -275,6 +350,33 @@ export function jobSummary({ repo, prs, deferred, lateCi, base, head, slack, fix
   for (const pr of prs) if (pr.fixQueueReason) lines.push(`- Fix retry for #${pr.number ?? pr.sha.slice(0, 10)}: ${pr.fixQueueReason}`);
   for (const pr of prs) if (pr.fixRelated?.length) lines.push(`- Related existing follow-up(s), coverage requires human review: ${pr.fixRelated.join(", ")}`);
   lines.push(slack);
+  return lines.join("\n");
+}
+
+// Raw CI evidence and hypotheses stay in Slack, never the public summary.
+export function ciRepairSlack(reports) {
+  const safe = (value, max = 1200) => slackEscape(redactCiText(value, "", max));
+  const lines = [];
+  for (const report of reports) {
+    lines.push("", `*CI investigation — <${report.url}|run ${report.id}>*`, safe(report.disposition, 240));
+    for (const suggestion of report.suggestions) {
+      lines.push(`• [${suggestion.classification} · ${suggestion.status}] ${safe(suggestion.title, 160)}`,
+        `Observed: ${safe(suggestion.observedFailure, 600)}`,
+        `Cause hypothesis: ${safe(suggestion.causeHypothesis || "Not established", 600)}`,
+        `Evidence: ${safe(suggestion.evidence || "Unavailable", 800)}`,
+        `Suggested fix / next step: ${safe(suggestion.suggestedFix, 1000)}`);
+    }
+    if (report.generation.length) lines.push(fixOutcomeLine(report.generation));
+    if (report.prUrl) lines.push(`Existing repair: ${report.prUrl}`);
+    if (report.retry) lines.push(report.retry);
+  }
+  return lines.join("\n");
+}
+export function ciRepairSummary(reports, queueOverflow) {
+  const lines = ["## CI investigations", ""];
+  for (const report of reports) lines.push(`- [Run ${report.id}](${report.url}): ${report.suggestions.length} suggestion(s), ${report.planned ? 1 : 0} draft plan(s). ${report.disposition}.${report.retry ? ` ${report.retry}.` : ""}`);
+  if (queueOverflow) lines.push(`${queueOverflow} CI investigation(s) exceeded the bounded retry queue; manual follow-up required.`);
+  if (reports.length) lines.push("", "Diagnosis text and log excerpts are sent to Slack only. CI failures are observed, not locally reproduced; required checks remain unchanged.");
   return lines.join("\n");
 }
 
@@ -348,11 +450,12 @@ function loadPreviousState(repo, workflow, runId) {
 }
 
 function ciFor(repo, sha) {
-  const runs = (api(`repos/${repo}/actions/runs?head_sha=${sha}&branch=dev&event=push&per_page=100`).workflow_runs ?? [])
-    // This sweep's own runs are scheduled, never push; skip anything else odd.
-    .filter((run) => run.head_sha === sha);
+  const runs = (api(`repos/${repo}/actions/runs?head_sha=${sha}&branch=dev&per_page=100`).workflow_runs ?? [])
+    // PR/fork jobs are not trusted evidence for a merged dev commit. Never
+    // recursively repair Warden's own sweeps or review workflows.
+    .filter((run) => run.head_sha === sha && ["push", "schedule", "workflow_dispatch"].includes(run.event) && !/(?:^|\/)warden[^/]*\.yml$/.test(run.path ?? ""));
   return ciStatus(runs, async (run) => {
-    const earlier = api(`repos/${repo}/actions/workflows/${run.workflow_id}/runs?branch=dev&event=push&status=completed&per_page=30`).workflow_runs ?? [];
+    const earlier = api(`repos/${repo}/actions/workflows/${run.workflow_id}/runs?branch=dev&event=${run.event}&status=completed&per_page=30`).workflow_runs ?? [];
     return earlier.find((candidate) => candidate.head_sha !== sha && Date.parse(candidate.created_at) < Date.parse(run.created_at))?.conclusion ?? null;
   });
 }
@@ -366,6 +469,7 @@ async function postSlack(message, { token, channel }) {
   });
   const result = await response.json();
   if (!response.ok || !result.ok) throw new Error(`Slack delivery failed: ${result.error || response.status}`);
+  return result.ts;
 }
 
 // --- Main ---------------------------------------------------------------------------
@@ -443,6 +547,20 @@ async function main() {
   const budget = { remaining: GENERATION_LIMITS.attempts };
   let model;
   try { model = generationModel(readFileSync(configPath, "utf8"), env.WARDEN_MODEL); } catch { /* visible per-finding failures below */ }
+  // Investigate fresh, late and queued CI failures even on a sweep with no
+  // new merges. CI plans share the existing five-patch budget.
+  const ciSources = [...prs, ...lateCi];
+  if (!ciSources.some((source) => source.sha === head)) {
+    try { ciSources.push({ sha: head, number: prNumber(git(cwd, ["show", "-s", "--format=%s", head])), ci: await ciFor(repo, head) }); }
+    catch { console.warn("Current dev CI lookup failed; no healthy-CI claim made."); }
+  }
+  const ciRepair = await planCiRepairs({ cwd, repo, head, sources: ciSources, previous: previous?.ciRepairs,
+    budget, model, apiKey: env.WARDEN_OPENAI_API_KEY, api, makePlan: planFix,
+    loadLog: (job) => execFileSync("gh", ["api", "--allow-escape-sequences", `repos/${repo}/actions/jobs/${job.id}/logs`], {
+      encoding: "utf8", maxBuffer: 4 * 1024 * 1024, stdio: ["ignore", "pipe", "pipe"],
+    }),
+  });
+  plans.push(...ciRepair.plans);
   let openPrs = [];
   try { openPrs = api(`repos/${repo}/pulls?state=open&base=dev&sort=created&direction=desc&per_page=100`); } catch { console.warn("Open follow-up discovery unavailable; deterministic branch dedup remains active."); }
   for (const pr of prs) {
@@ -480,7 +598,7 @@ async function main() {
     const dir = join(fixesDir, String(index + 1).padStart(2, "0"));
     mkdirSync(dir, { recursive: true });
     plan.patches.forEach((patch, n) => writeFileSync(join(dir, `${String(n + 1).padStart(2, "0")}.patch`), patch));
-    writeFileSync(join(dir, "plan.json"), `${JSON.stringify({ branch: plan.branch, title: plan.title, number: plan.number, sha: plan.sha }, null, 2)}\n`);
+    writeFileSync(join(dir, "plan.json"), `${JSON.stringify({ branch: plan.branch, title: plan.title, number: plan.number, sha: plan.sha, ...(plan.ci ? { ci: plan.ci } : {}) }, null, 2)}\n`);
     writeFileSync(join(dir, "body.md"), plan.body);
   });
   if (env.GITHUB_OUTPUT) appendFileSync(env.GITHUB_OUTPUT, `fixes=${plans.length ? "true" : "false"}\nhead=${head}\n`);
@@ -488,28 +606,37 @@ async function main() {
 
   const runUrl = `${env.GITHUB_SERVER_URL || "https://github.com"}/${repo}/actions/runs/${env.GITHUB_RUN_ID || ""}`;
   const queueNote = `${fixPending.length} source commit(s) pending bounded fix retry. ${retiredRetries.length} retry source commit(s) retired because no longer on dev; human action required for those. ${env.WARDEN_SWEEP_FIXES === "off" ? "Fix PR opening disabled by WARDEN_SWEEP_FIXES=off." : "Draft PR creation is delegated to the separate write job."}`;
-  const message = slackMessage({ repo, prs, runUrl, deferred, lateCi, fixPlans: plans.length }) ?? (retiredRetries.length ? { text: `Warden retry retirement: ${retiredRetries.map((entry) => entry.sha.slice(0, 12)).join(", ")}`, unfurl_links: false, unfurl_media: false } : null);
-  if (message) message.text += `\n${queueNote}`;
+  // Channel: a short digest. Thread: the full report.
+  const digest = slackDigest({ repo, prs, lateCi, runUrl, fixPlans: plans.length, deferred })
+    ?? (retiredRetries.length || ciRepair.reports.length || ciRepair.queueOverflow ? { text: `*Warden* follow-up. <${runUrl}|Run>\n_Details in thread._`, unfurl_links: false, unfurl_media: false } : null);
+  const details = slackMessage({ repo, prs, runUrl, deferred, lateCi, fixPlans: plans.length });
+  const ciText = ciRepairSlack(ciRepair.reports);
+  const retired = retiredRetries.length ? `${retiredRetries.length} source commit(s) left dev before a fix landed; check them by hand.` : "";
+  const overflow = ciRepair.queueOverflow ? `${ciRepair.queueOverflow} CI investigations need manual follow-up: retry queue full.` : "";
+  const detailText = [details?.text.slice(0, ciText ? 24000 : 36000), ciText, retired, overflow].filter(Boolean).join("\n").slice(0, 38000);
   let slack = "Nothing to report to Slack.";
-  if (message && local) {
+  if (digest && local) {
     slack = "Local run: Slack skipped.";
-    console.log(message.text);
-  } else if (message && env.SLACK_BOT_TOKEN && env.SLACK_WARDEN_SWEEP_CHANNEL_ID) {
-    await postSlack(message, { token: env.SLACK_BOT_TOKEN, channel: env.SLACK_WARDEN_SWEEP_CHANNEL_ID });
+    console.log(`${digest.text}\n--- thread ---\n${detailText}`);
+  } else if (digest && env.SLACK_BOT_TOKEN && env.SLACK_WARDEN_SWEEP_CHANNEL_ID) {
+    const slackTarget = { token: env.SLACK_BOT_TOKEN, channel: env.SLACK_WARDEN_SWEEP_CHANNEL_ID };
+    const ts = await postSlack(digest, slackTarget);
+    if (detailText) await postSlack({ text: detailText, thread_ts: ts, unfurl_links: false, unfurl_media: false }, slackTarget);
+    if (env.GITHUB_OUTPUT && /^\d+\.\d+$/.test(ts ?? "")) appendFileSync(env.GITHUB_OUTPUT, `slack_ts=${ts}\n`);
     slack = "Posted to Slack.";
-  } else if (message) {
+  } else if (digest) {
     slack = "Slack is not configured (SLACK_BOT_TOKEN and the SLACK_WARDEN_SWEEP_CHANNEL_ID variable); findings are only in this summary.";
     console.warn(slack);
   }
 
-  const summary = `${jobSummary({ repo, prs, deferred, lateCi, base, head: reviewedThrough ?? head, slack, fixPlans: plans.length })}\n\n${queueNote}`;
+  const summary = `${jobSummary({ repo, prs, deferred, lateCi, base, head: reviewedThrough ?? head, slack, fixPlans: plans.length })}\n\n${queueNote}\n\n${ciRepairSummary(ciRepair.reports, ciRepair.queueOverflow)}`;
   if (env.GITHUB_STEP_SUMMARY) appendFileSync(env.GITHUB_STEP_SUMMARY, `${summary}\n`);
   else console.log(summary);
 
-  const state = { version: 1, reviewedThrough: reviewedThrough ?? base, ciPending, fixPending };
+  const state = { version: 1, reviewedThrough: reviewedThrough ?? base, ciPending, fixPending, ciRepairs: ciRepair.state };
   writeFileSync(join(outDir, "state.json"), `${JSON.stringify(state, null, 2)}\n`);
   // Incomplete reviews and generation failures remain queued, but still fail visibly.
-  if (prs.some((pr) => !pr.complete || pr.fixOutcomes?.some((outcome) => outcome.status === "failed"))) process.exitCode = 1;
+  if (prs.some((pr) => !pr.complete || pr.fixOutcomes?.some((outcome) => outcome.status === "failed")) || ciRepair.reports.some((report) => report.disposition.includes("failed") || report.outcomes.some((outcome) => /(?:loading|diagnosis) failed$/.test(outcome.reason)))) process.exitCode = 1;
 }
 
 if (import.meta.url === pathToFileURL(process.argv[1] ?? "").href) {

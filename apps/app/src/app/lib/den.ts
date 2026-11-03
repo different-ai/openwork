@@ -3758,6 +3758,32 @@ export function createDenClient(options: {
       return discovery;
     },
 
+    /**
+     * A connector only the caller can use until they share it, as My Library adds
+     * on the web. Den lets members add one that signs each person in with their
+     * own account, or that needs no sign-in; it refuses anything else from them.
+     */
+    async createPersonalMcpConnection(
+      orgId: string,
+      input: { name: string; url: string; authType: "oauth" | "none" },
+    ): Promise<string> {
+      const payload = await requestJson<unknown>(baseUrls, "/v1/mcp-connections", {
+        method: "POST",
+        token,
+        organizationId: orgId,
+        body: {
+          name: input.name,
+          url: input.url,
+          authType: input.authType,
+          credentialMode: input.authType === "oauth" ? "per_member" : "shared",
+          access: { orgWide: false, memberIds: [], teamIds: [] },
+        },
+      });
+      const id = isRecord(payload) && typeof payload.id === "string" ? payload.id : "";
+      if (!id) throw new DenApiError(500, "invalid_mcp_connection_payload", "MCP connection create response was invalid.");
+      return id;
+    },
+
     async checkMcpConnection(orgId: string, connectionId: string): Promise<void> {
       await requestJson<unknown>(baseUrls, `/v1/mcp-connections/${encodeURIComponent(connectionId)}/check`, {
         method: "POST", token, organizationId: orgId,
@@ -4034,6 +4060,14 @@ export function createDenClient(options: {
         baseUrls,
         `/v1/plugins/${encodeURIComponent(pluginId)}/access/${encodeURIComponent(grantId)}`,
         { method: "DELETE", token, organizationId: orgId },
+      );
+    },
+
+    async deleteBuiltMcpApp(orgId: string, appId: string): Promise<void> {
+      await requestJson<unknown>(
+        baseUrls,
+        `/v1/config-objects/${encodeURIComponent(appId)}/delete`,
+        { method: "POST", token, organizationId: orgId, body: {} },
       );
     },
 

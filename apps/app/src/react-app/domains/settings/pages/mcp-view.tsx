@@ -63,7 +63,8 @@ import {
   revealDesktopItemInDir,
   type OpencodeConfigFile,
 } from "../../../../app/lib/desktop";
-import { readDenSettings, type DenExternalMcpPreset } from "../../../../app/lib/den";
+import { markFeatureUsed, readDenSettings, type DenExternalMcpPreset } from "../../../../app/lib/den";
+import { useOrgFeature } from "@/react-app/domains/cloud/use-org-feature";
 import { providerSetupProblem } from "../../connections/connection-sign-in-problem";
 import type { OrgMcpConnectOptions } from "../../connections/use-org-mcp-connections";
 import { denConnectorSetupUrl } from "../../../../app/lib/den-dashboard-links";
@@ -569,6 +570,7 @@ export function McpView(props: McpViewProps) {
   const canManageCloudConnections = denAuth.isSignedIn
     && identity?.organizationId === activeOrganizationId
     && isConnectAdminRole(organizationRole.data);
+  const personalConnectorsEnabled = useOrgFeature("desktopPersonalConnectors");
   const connectorCues = useMemo(() => libraryConnectorCues(connectorPresets), [connectorPresets]);
   const libraryAddOptions = {
     cloudSignedIn: libraryCloudSignedIn && Boolean(activeOrganizationId) && denAuth.status !== "unavailable",
@@ -684,7 +686,35 @@ export function McpView(props: McpViewProps) {
     return props.createLibraryItem(kind, input);
   };
 
+  const addsPersonalConnection = libraryAddOptions.cloudSignedIn && !canManageCloudConnections && personalConnectorsEnabled;
+
+  /** A member's own connector, as My Library adds it on the web; it opens sign-in straight away. */
+  const createPersonalConnection = async (input: CreateLibraryItemInput) => {
+    const authType = input.connection?.authType === "none" ? "none" : "oauth";
+    const name = input.name.trim();
+    const connectionId = await cloudSession.client.createPersonalMcpConnection(activeOrganizationId, {
+      name,
+      url: input.instructions.trim(),
+      authType,
+    });
+    markFeatureUsed("desktopPersonalConnectors");
+    setScreen({ kind: "list" });
+    setFilter("all");
+    refreshLibrary();
+    toast.success(t("extensions.toast_added_title"), { description: t("extensions.toast_added_detail") });
+    // The connections hook opens sign-in and keeps checking until Den has it, so the row turns Ready.
+    if (authType === "oauth") {
+      if (props.connectOrgMcp) props.connectOrgMcp(connectionId);
+      else startConnectionSignIn(connectionId);
+    }
+    return name;
+  };
+
   const handleCreateLibraryItem = async (kind: LibraryAuthorableKind, input: CreateLibraryItemInput) => {
+    if (kind === "mcp" && addsPersonalConnection) {
+      await createPersonalConnection(input);
+      return;
+    }
     const pluginId = await createLibraryItem(kind, input);
     finishCreate(pluginId, { name: input.name.trim(), description: input.description.trim(), connector: kind === "mcp" });
     if (kind === "mcp" && input.connection?.authType === "oauth") {
@@ -1957,6 +1987,7 @@ export function McpView(props: McpViewProps) {
         busy={props.busy}
         cloud={cloudSession.isSignedIn}
         canConfigureMcpConnections={canManageCloudConnections}
+        addsPersonalConnection={addsPersonalConnection}
         connectorPresets={connectorPresets}
         checkMcpServer={libraryAddOptions.cloudSignedIn
           ? (url) => cloudSession.client.discoverMcpConnectionRequirements(activeOrganizationId, url)

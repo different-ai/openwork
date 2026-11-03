@@ -9,6 +9,7 @@ import {
 } from "@openwork/types/automations"
 import { db } from "../db.js"
 import { automationUpdateChangedRows } from "../automations/update-result.js"
+import { signalRemoteSessionWork } from "./work-signal.js"
 
 export const DEFAULT_TTL_MS = 10 * 60_000
 
@@ -341,6 +342,14 @@ async function commandByIdempotencyScope(input: EnqueueInput): Promise<RemoteSes
   return rows[0] ? mapCommand(rows[0]) : null
 }
 
+async function releaseIdempotencyKey(command: RemoteSessionCommand): Promise<void> {
+  if (!command.idempotencyKey) return
+  await db.update(RemoteSessionCommandTable).set({ idempotency_key: null }).where(and(
+    eq(RemoteSessionCommandTable.id, normalizeDenTypeId("remoteSessionCommand", command.id)),
+    eq(RemoteSessionCommandTable.idempotency_key, command.idempotencyKey),
+  ))
+}
+
 export function remoteSessionCommandAdmissionMatches(command: RemoteSessionCommand, input: EnqueueInput) {
   return command.organizationId === normalizeDenTypeId("organization", input.organizationId)
     && command.createdByUserId === normalizeDenTypeId("user", input.createdByUserId)
@@ -360,9 +369,13 @@ function existingAdmission(command: RemoteSessionCommand, input: EnqueueInput) {
 
 export const databaseRemoteSessionCommandStore: RemoteSessionCommandStore = {
   async enqueue(input) {
-    const existing = await commandByIdempotencyScope(input)
-    if (existing) return existingAdmission(existing, input)
     const now = Date.now()
+    const existing = await commandByIdempotencyScope(input)
+    if (existing && existing.expiresAt > now) return existingAdmission(existing, input)
+    // A key only protects retries of one create while its command can still be admitted. After
+    // that, the same key from a later chat is new work: release it from the old command so the
+    // old receipt stays readable and the new command can take the key.
+    if (existing) await releaseIdempotencyKey(existing)
     const id = createDenTypeId("remoteSessionCommand")
     try {
       await db.insert(RemoteSessionCommandTable).values({
@@ -396,6 +409,7 @@ export const databaseRemoteSessionCommandStore: RemoteSessionCommandStore = {
     }
     const command = await commandById(id)
     if (!command) throw new Error("remote_session_command_enqueue_failed")
+    signalRemoteSessionWork(command.organizationId, command.ownerMemberId)
     return command
   },
 

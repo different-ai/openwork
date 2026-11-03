@@ -124,6 +124,21 @@ test("a member in a default organization follows a task on their other computer 
     await user.screenshot();
   });
 
+  await step("the title-bar Back and Forward arrows move between the chat and the task", async () => {
+    await user.click({ label: "Back in conversation history" });
+    await user.see({ text: CHAT_REPLY }, { timeoutMs: 30_000 });
+    const backRoute = decodeURIComponent(await probe.hash());
+    await user.click({ label: "Forward in conversation history" });
+    await user.see({ label: "Follow up" }, { value: DRAFT, timeoutMs: 30_000 });
+    const forwardRoute = decodeURIComponent(await probe.hash());
+    const ok = backRoute.includes(world.session.sessionId) && !backRoute.includes("remote:")
+      && forwardRoute.includes(`remote:command:${world.commandId}`) && world.followUps().length === 1;
+    evidence.recordAssertionEvidence("Back left the task for the chat that started it; Forward reopened the task with its draft",
+      `after Back: ${backRoute}; after Forward: ${forwardRoute}; follow-ups sent: ${world.followUps().length}`, ok);
+    expect(ok).toBe(true);
+    await user.screenshot();
+  });
+
   await step("after: the round button stops just this task, on its computer", async () => {
     await user.click({ role: "button", label: "Stop" });
     const stops = await probe.eventually(() => world.stops(), {

@@ -8,7 +8,7 @@ const messages = (result: { success: boolean; error?: { issues: Array<{ message:
 test("session.read refuses `limit` and names `count`, the argument that sets how many messages come back", () => {
   const result = sessionReadArgsSchema.safeParse({ sessionId: "ses_1", limit: 100 });
   assert.equal(result.success, false);
-  assert.deepEqual(messages(result), ['Unknown argument "limit". Valid arguments: sessionId, workspaceId, count, from, summary.']);
+  assert.deepEqual(messages(result), ['Unknown argument "limit". Valid arguments: sessionId, workspaceId, count, from, summary, detail, messageId.']);
   assert.equal(sessionReadArgsSchema.safeParse({ sessionId: "ses_1", count: 100, from: "start" }).success, true);
 });
 

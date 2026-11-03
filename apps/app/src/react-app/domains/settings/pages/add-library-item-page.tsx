@@ -50,6 +50,11 @@ export type AddLibraryItemPageProps = {
   cloud?: boolean;
   /** Owners and admins can configure a connector's sign-in inline; Den refuses it from members. */
   canConfigureMcpConnections?: boolean;
+  /**
+   * Members add an MCP server as their own connector: each person signs in with
+   * their own account, or it needs no sign-in. Behind desktopPersonalConnectors.
+   */
+  addsPersonalConnection?: boolean;
   /** Connectors a plugin can include without typing an address. */
   connectorPresets?: DenExternalMcpPreset[];
   /** Looks at an MCP server before it is added; the page shows each check and waits for Continue. */
@@ -300,6 +305,7 @@ export function AddLibraryItemPage(props: AddLibraryItemPageProps) {
   const [mcpCheck, setMcpCheck] = useState<McpCheckState | null>(null);
   const [checksSettled, setChecksSettled] = useState(false);
   const configureConnections = props.cloud === true && props.canConfigureMcpConnections === true;
+  const personalConnection = kind === "mcp" && props.cloud === true && !configureConnections && props.addsPersonalConnection === true;
   const presets = props.connectorPresets ?? [];
 
   useEffect(() => {
@@ -410,7 +416,9 @@ export function AddLibraryItemPage(props: AddLibraryItemPageProps) {
         components: kind === "plugin" ? components : undefined,
         connection: kind === "mcp" && configureConnections
           ? { ...withConnection, apiKey: withConnection.authType === "apikey" ? pendingApiKey.current : "" }
-          : undefined,
+          : personalConnection
+            ? { ...withConnection, credentialMode: withConnection.authType === "oauth" ? "per_member" : "shared", apiKey: "" }
+            : undefined,
       });
       pendingApiKey.current = "";
     } catch (caught) {
@@ -421,6 +429,10 @@ export function AddLibraryItemPage(props: AddLibraryItemPageProps) {
 
   /** Den knows better than the form how the server signs in; a keyless server needs no sign-in step. */
   const continueAfterCheck = () => {
+    if (personalConnection && mcpCheck?.status === "done" && mcpCheck.discovery.authentication.kind === "manual_bearer") {
+      setError(t("extensions.add_mcp_personal_key_admin"));
+      return;
+    }
     if (mcpCheck?.status === "done" && mcpCheck.discovery.authentication.kind === "none" && connection.authType !== "none") {
       const adjusted = withLibraryMcpAuthType(connection, "none");
       setConnection(adjusted);
@@ -436,7 +448,7 @@ export function AddLibraryItemPage(props: AddLibraryItemPageProps) {
     : kind === "skill"
       ? t("extensions.create_skill_submit")
       : kind === "mcp"
-        ? configureConnections && connection.authType === "oauth"
+        ? (configureConnections || personalConnection) && connection.authType === "oauth"
           ? t("extensions.create_mcp_submit_sign_in")
           : t("extensions.create_mcp_submit")
         : t("extensions.add_create");

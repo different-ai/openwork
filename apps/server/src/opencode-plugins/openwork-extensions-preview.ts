@@ -1,6 +1,14 @@
 import { openworkReadTransport, type OpenworkEngine, type OpenworkEngineReader } from "./openwork-read-transport.js";
 import { assertSessionContinuation } from "./opencode-stop-fence-client.js";
-import { createV2ReadAdapter, readV2SessionActivity } from "../opencode-v2-read-adapter.js";
+import { createV2ReadAdapter, readV2NativeMessage, readV2NativeMessages, readV2SessionActivity } from "../opencode-v2-read-adapter.js";
+import {
+  fitSessionReadBudget,
+  richV1Message,
+  richV2Message,
+  SESSION_READ_LIST_LIMITS,
+  SESSION_READ_MESSAGE_LIMITS,
+  type RichMessage,
+} from "./session-read-detail.js";
 import { randomUUID } from "node:crypto";
 import { realpath } from "node:fs/promises";
 import { ApiError } from "../errors.js";
@@ -921,7 +929,7 @@ const assistantErrorMessages = new Map([
   ["APIError", "The provider request failed"],
 ]);
 
-function lastAssistantError(messages: SessionMessage[]): { code: string; message: string } | null {
+function lastAssistantError(messages: ReadonlyArray<{ info: { role: string; error?: unknown } }>): { code: string; message: string } | null {
   const error = [...messages].reverse().find((message) => message.info.role === "assistant")?.info.error;
   if (error === undefined || error === null) return null;
   if (isRecord(error) && typeof error.name === "string") {
@@ -966,6 +974,92 @@ async function readSessionOnEitherEngine(
   return null;
 }
 
+type SessionReadArgs = z.infer<typeof sessionReadArgsSchema>;
+
+/** `detail: "full"` and `messageId` reads: every stored message, mapped by session-read-detail. */
+async function readOpenWorkSessionDetail(
+  workspace: OpenWorkWorkspace,
+  session: SessionInfo,
+  reader: OpenworkEngineReader,
+  args: SessionReadArgs,
+): Promise<object> {
+  const count = args.count ?? 30;
+  const from = args.from ?? "end";
+  const summary = args.summary ?? false;
+  const [activity, catalog] = await Promise.all([
+    readSessionActivity(reader, workspace, session),
+    readWorkspaceModels(reader, workspace).catch(() => []),
+  ]);
+  const model = labelOpenworkSessionModel(sessionModelOf(session), catalog);
+
+  if (args.messageId !== undefined) {
+    let message: RichMessage | null = null;
+    try {
+      message = reader.engine === "v2"
+        ? richV2Message(await readV2NativeMessage((path) => reader.get(path), workspace.id, session.id, args.messageId),
+          SESSION_READ_MESSAGE_LIMITS, { includeMetadata: true })
+        : richV1Message(await reader.get(`/workspace/${encodeURIComponent(workspace.id)}/opencode/session/${encodeURIComponent(session.id)}/message/${encodeURIComponent(args.messageId)}`),
+          SESSION_READ_MESSAGE_LIMITS, { includeMetadata: true });
+    } catch {
+      message = null;
+    }
+    if (!message) return { ok: false, error: `Message ${args.messageId} was not found in session ${session.id}` };
+    return {
+      ok: true,
+      ...sessionMetadata(workspace, session, reader.engine),
+      ...activity,
+      lastError: null,
+      model,
+      detail: "full",
+      message,
+    };
+  }
+
+  // Reading from the start or summarizing needs the whole transcript.
+  const limit = summary || (from === "start" && reader.engine !== "v2") ? undefined : count;
+  let messages: RichMessage[];
+  let lastError: { code: string; message: string } | null;
+  if (reader.engine === "v2") {
+    const rows = await readV2NativeMessages((path) => reader.get(path), workspace.id, session.id, {
+      from: summary ? "start" : from,
+      ...(limit === undefined ? {} : { limit }),
+    });
+    lastError = lastAssistantError(rows.flatMap((row) =>
+      row.type === "user" || row.type === "assistant" ? [{ info: { role: row.type, error: row.error } }] : []));
+    messages = rows.map((row) => richV2Message(row, SESSION_READ_LIST_LIMITS)).filter((row): row is RichMessage => row !== null);
+  } else {
+    const raw = await readSessionMessages(reader, workspace, session.id, limit);
+    lastError = lastAssistantError(raw);
+    messages = raw.map((row) => richV1Message(row, SESSION_READ_LIST_LIMITS)).filter((row): row is RichMessage => row !== null);
+  }
+  const metadata = { ...sessionMetadata(workspace, session, reader.engine), ...activity, lastError };
+
+  if (summary) {
+    return {
+      ok: true,
+      ...metadata,
+      model,
+      detail: "full",
+      totalMessages: messages.length,
+      firstUser: messages.find((message) => message.type === "user") ?? null,
+      lastAssistant: [...messages].reverse().find((message) => message.type === "assistant") ?? null,
+    };
+  }
+  const window = from === "start" ? messages.slice(0, count) : messages.slice(-count);
+  const fitted = fitSessionReadBudget(window, from);
+  return {
+    ok: true,
+    ...metadata,
+    model,
+    detail: "full",
+    from,
+    returned: fitted.messages.length,
+    requested: count,
+    omittedForSize: fitted.omittedForSize,
+    messages: fitted.messages,
+  };
+}
+
 async function readOpenWorkSession(rawArgs: unknown): Promise<object> {
   const parsed = sessionReadArgsSchema.safeParse(rawArgs);
   if (!parsed.success) return sessionArgumentError(parsed.error, rawArgs);
@@ -987,6 +1081,9 @@ async function readOpenWorkSession(rawArgs: unknown): Promise<object> {
         continue;
       }
       const { session, reader } = located;
+      if (args.messageId !== undefined || args.detail === "full") {
+        return await readOpenWorkSessionDetail(workspace, session, reader, args);
+      }
       // Reading from the start or summarizing needs the whole transcript.
       const needsFullTranscript = summary || from === "start";
       const [messages, activity, catalog] = await Promise.all([
