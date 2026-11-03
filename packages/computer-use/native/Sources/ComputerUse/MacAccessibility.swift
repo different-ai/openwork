@@ -178,7 +178,16 @@ struct ElementRecord {
     /// Any other control's value may be hidden, such as a custom masked field.
     static let valueRoles: Set<String> = ["AXStaticText", "AXCheckBox", "AXRadioButton", "AXSwitch", "AXToggle", "AXSlider",
         "AXIncrementor", "AXPopUpButton", "AXDisclosureTriangle", "AXProgressIndicator", "AXLevelIndicator", "AXValueIndicator"]
-    var textField: Bool { Self.textRoles.contains(role) && enabled && !protected }
+    /// A protected record is a secure text field: it takes typed input, but its value is never read.
+    var textField: Bool { Self.textRoles.contains(role) && enabled }
+    /// An app can mirror what was typed into a secure field's title, so the model gets this
+    /// fixed label; only a hash of the real one stays here, for stale-state checks.
+    static let secureLabel = "Secure field"
+    static func secureField(ref: String, element: AXUIElement, role: String, labelHash: Data, frame: CGRect,
+                            actions: [String], settable: Bool, enabled: Bool) -> ElementRecord {
+        ElementRecord(ref: ref, element: element, role: role, label: secureLabel, value: nil, frame: frame, actions: actions,
+            settable: settable, enabled: enabled, protected: true, labelHash: labelHash, valueHash: nil)
+    }
 
     static let interactiveRoles: Set<String> = ["AXButton", "AXTextField", "AXTextArea", "AXSearchField", "AXCheckBox", "AXRadioButton",
         "AXPopUpButton", "AXMenuButton", "AXComboBox", "AXLink", "AXSlider", "AXIncrementor", "AXMenuItem", "AXMenuBarItem",
@@ -261,6 +270,7 @@ struct ElementRecord {
         // Keep raw values inside the helper for stale-state checks. The model
         // reads normal field content from the image, never a hidden AX value.
         if !settable, !protected, Self.valueRoles.contains(role), let value { result["value"] = Self.visibleText(value) }
+        if protected { result["secure"] = true }
         return result
     }
 }
@@ -510,6 +520,15 @@ final class MacAccessibility {
                         throw UseError("missing_secure_mask", "A protected control has no usable mask.", next: "observe")
                     }
                     protectedFrames.append(bounds)
+                    // A password the person gave can be typed here. The field stays masked
+                    // in every image and its value is never read.
+                    if try isSecureTextField(element, role: role, budget) {
+                        let label = try checkedString(element, kAXTitleAttribute, budget, displayOnly: true)
+                            ?? checkedString(element, kAXDescriptionAttribute, budget, displayOnly: true) ?? ""
+                        let enabled = try checkedBool(element, kAXEnabledAttribute, budget, displayOnly: true) != false
+                        records.append(.secureField(ref: "e\(records.count + 1)", element: element, role: role, labelHash: textHash(label), frame: bounds,
+                            actions: try actionNames(element, budget), settable: try valueSettable(element, budget, displayOnly: true), enabled: enabled))
+                    }
                 } else {
                     let rawLabel = try checkedString(element, kAXTitleAttribute, budget, displayOnly: true)
                         ?? checkedString(element, kAXDescriptionAttribute, budget, displayOnly: true) ?? ""
@@ -572,8 +591,11 @@ final class MacAccessibility {
         // listed without a detail macOS failed to report can still be used.
         let label = try checkedString(record.element, kAXTitleAttribute, budget, displayOnly: true)
             ?? checkedString(record.element, kAXDescriptionAttribute, budget, displayOnly: true) ?? ""
-        let value = try checkedString(record.element, kAXValueAttribute, budget, displayOnly: true)
-        guard !record.protected, record.enabled,
+        let value = record.protected ? nil : try checkedString(record.element, kAXValueAttribute, budget, displayOnly: true)
+        // A field must still be what was observed. Secure turned ordinary would show what was
+        // typed; ordinary turned secure would take a password without the app's confirmation.
+        guard !record.protected || record.textField, record.enabled,
+              try isSecureTextField(record.element, role: record.role, budget) == record.protected,
               try checkedFrame(record.element, budget) == record.frame,
               try checkedString(record.element, kAXRoleAttribute, budget) == record.role,
               textHash(label) == (record.labelHash ?? textHash(record.label)),
@@ -625,7 +647,7 @@ final class MacAccessibility {
     }
 
     func checkFocus(_ expected: ElementRecord?, target: WindowTarget, app: AppIdentity, requireField: Bool, requireFront: Bool = true) throws {
-        guard let expected, !expected.protected, expected.enabled, !requireField || expected.textField else {
+        guard let expected, !expected.protected || expected.textField, expected.enabled, !requireField || expected.textField else {
             throw UseError("focus_required", "Observe a focused normal text field or control before using the keyboard.", next: "observe")
         }
         let budget = AXReadBudget()
@@ -634,6 +656,7 @@ final class MacAccessibility {
               let window = try checkedElement(root, kAXFocusedWindowAttribute, budget), CFEqual(window, target.element),
               let focused = try checkedElement(root, kAXFocusedUIElementAttribute, budget), CFEqual(focused, expected.element),
               try checkedString(focused, kAXRoleAttribute, budget) == expected.role,
+              try isSecureTextField(focused, role: expected.role, budget) == expected.protected,
               try checkedFrame(focused, budget) == expected.frame,
               try checkedBool(focused, kAXEnabledAttribute, budget) != false else {
             throw UseError("focus_changed", "The exact observed keyboard target changed. Observe again before typing or pressing keys.", next: "observe")
@@ -656,7 +679,8 @@ final class MacAccessibility {
                 throw UseError("outside_window", "The target belongs to another app.", next: "human_takeover")
             }
             let role = try checkedString(node, kAXRoleAttribute, budget) ?? ""
-            guard try !isProtected(node, role: role, budget) else {
+            // The target itself may be a secure text field; nothing around it may be protected.
+            guard try !isProtected(node, role: role, budget) || CFEqual(node, element) && isSecureTextField(node, role: role, budget) else {
                 throw UseError("protected_input", "This control or an ancestor contains protected content. Take over for this step.", next: "human_takeover")
             }
             if CFEqual(node, target.element) { return }
@@ -773,6 +797,9 @@ final class MacAccessibility {
             throw UseError("accessibility_unavailable", "An accessibility protection or enablement flag has an invalid type.", next: "observe")
         }
         return flag
+    }
+    private func isSecureTextField(_ element: AXUIElement, role: String, _ budget: AXReadBudget) throws -> Bool {
+        try ElementRecord.textRoles.contains(role) && checkedString(element, kAXSubroleAttribute, budget) == "AXSecureTextField"
     }
     private func isProtected(_ element: AXUIElement, role: String, _ budget: AXReadBudget) throws -> Bool {
         let subroleDisplayOnly = !AXChildScan.subroleDecidesMask(role: role)
