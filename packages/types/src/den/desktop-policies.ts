@@ -428,6 +428,8 @@ export const desktopConfigSchema = desktopPolicyValueSchema
     cloudAutomationsEnabled: z.boolean().optional(),
     dashboardEnabled: z.boolean().optional(),
     connectEnabled: z.boolean().optional(),
+    /** The opencodeV2Only rollout: OpenCode v2 serves every chat and switching to v1 is off. Missing means off. */
+    opencodeV2Only: z.boolean().optional(),
     /** Compatibility for older clients: true. Current hosts always mirror personal API keys into OpenCode v2. */
     localProviderMirror: z.boolean().optional(),
     /** Compatibility for older clients: true. Current clients always remove retired OpenCode Zen models. */
@@ -846,6 +848,7 @@ export function normalizeDesktopConfig(value: unknown): DesktopConfig {
     ...(typeof raw?.cloudAutomationsEnabled === "boolean" ? { cloudAutomationsEnabled: raw.cloudAutomationsEnabled } : {}),
     ...(dashboardEnabled !== undefined ? { dashboardEnabled } : {}),
     ...(connectEnabled !== undefined ? { connectEnabled } : {}),
+    ...(typeof raw?.opencodeV2Only === "boolean" ? { opencodeV2Only: raw.opencodeV2Only } : {}),
     ...(typeof raw?.localProviderMirror === "boolean" ? { localProviderMirror: raw.localProviderMirror } : {}),
     ...(typeof raw?.removeOpencodeZen === "boolean" ? { removeOpencodeZen: raw.removeOpencodeZen } : {}),
     ...(onboardingPromptConfig !== undefined ? onboardingPromptConfig : {}),

@@ -118,6 +118,20 @@ test("a failed start is reported by its first line and retried until the engine 
   });
 });
 
+test("a failed start under the v2-only rollout retries without falling back to v1", { timeout: 30_000 }, async () => {
+  await profile(true, async (config, captured) => {
+    const engine = createEngineV2Preview({ config, waits, deferStart: true });
+    try {
+      await engine.setV2Only(true);
+      await waitFor(() => engine.status().running, "the v2-only engine recovers from its failed start");
+      assert.equal(engine.status().v2Only, true);
+      assert.equal(engine.status().chatRouting, true);
+      assert.equal(engine.status().lastError, undefined);
+      assert.deepEqual(captured.map(event => event.route), ["engine.v2.start"]);
+    } finally { await engine.stop(); }
+  });
+});
+
 test("a stopped engine is not started again", { timeout: 30_000 }, async () => {
   await profile(false, async (config) => {
     const engine = createEngineV2Preview({ config, waits });

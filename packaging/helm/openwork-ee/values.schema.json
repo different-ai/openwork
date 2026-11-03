@@ -131,6 +131,16 @@
               ],
               "description": "Connect: an MCP server for each connection: Members can add one connected service, such as Gmail or Linear, to an agent like Claude Code as its own MCP server that lists only that service's tools. Renders DEN_FEATURE_CONNECTION_MCP_SERVERS."
             },
+            "opencodeV2Only": {
+              "enum": [
+                "",
+                "true",
+                "false",
+                true,
+                false
+              ],
+              "description": "OpenCode v2 only: Desktop chats always run on OpenCode v2: switching to OpenCode v1 is turned off and earlier chats are copied to v2 in the background. Renders DEN_FEATURE_OPENCODE_V2_ONLY."
+            },
             "managedDeployments": {
               "enum": [
                 "",

@@ -739,7 +739,7 @@ export function AdvancedEngineV2PreviewSection(props: { client: OpenworkServerCl
   const engine = useOpencodeEngineControls(props.client);
   if (!isDesktopRuntime()) return null;
   const runtimeError = engine.status?.enabled ? engine.status.lastError : undefined;
-  const engineNote = engine.blockedReason ?? (engine.migrating ? "Wait for chat migration to finish." : undefined);
+  const engineNote = engine.blockedReason ?? engine.v1Locked ?? (engine.migrating ? "Wait for chat migration to finish." : undefined);
   return (
     <LayoutSection id="advanced-experimental-engine">
       <LayoutSectionHeader><LayoutSectionTitle>OpenCode engine</LayoutSectionTitle></LayoutSectionHeader>
@@ -749,7 +749,7 @@ export function AdvancedEngineV2PreviewSection(props: { client: OpenworkServerCl
           <LayoutSectionItemHeaderActions>
             <ToggleGroup aria-label="Chat engine" value={[engine.selected]} variant="outline" disabled={engine.disabled}
               onValueChange={(value) => { if (value[0] === "v1" || value[0] === "v2") engine.select(value[0]); }}>
-              <ToggleGroupItem value="v1" data-engine="v1">OpenCode v1</ToggleGroupItem>
+              <ToggleGroupItem value="v1" data-engine="v1" disabled={engine.v2Only}>OpenCode v1</ToggleGroupItem>
               <ToggleGroupItem value="v2" data-engine="v2">OpenCode v2 (preview)</ToggleGroupItem>
             </ToggleGroup>
           </LayoutSectionItemHeaderActions>

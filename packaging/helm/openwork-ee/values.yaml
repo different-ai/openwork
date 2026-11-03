@@ -33,6 +33,7 @@ config:
     administratorRecovery: ""     # default off · Run a one-time, operator-selected Admin-team permission repair at deployment; disabling stops future repairs, not existing grants.
     nativeDictation: ""           # default off · Dictate editable prompts in OpenWork and Workbot using native desktop dictation or live browser speech recognition.
     connectionMcpServers: ""      # default off · Members can add one connected service, such as Gmail or Linear, to an agent like Claude Code as its own MCP server that lists only that service's tools.
+    opencodeV2Only: ""            # default off · Desktop chats always run on OpenCode v2: switching to OpenCode v1 is turned off and earlier chats are copied to v2 in the background.
     managedDeployments: ""        # default off (cloud only) · Organization admins install OpenWork in their own AWS account or Google Cloud project and see its health and updates in OpenWork, and agents connected to OpenWork can create and follow those deployments.
     workbotDocuments: ""          # default off · Members browse recent Google Drive files and folders in Workbot, open documents in tabs, and save supported text and spreadsheet edits to Drive.
     workbotDocumentEditing: ""    # default off · Members choose Edit from a document preview. Full Office editing starts their Cloud workspace only when requested. Requires Workbot Documents.
