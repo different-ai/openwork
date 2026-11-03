@@ -160,7 +160,7 @@ final class SessionRuntime {
             return try await observe(try a.string("session_id"), image: options.image, elements: options.elements, menus: options.menus,
                 filePanelAccess: policy == .embedded ? (values["file_panel_access"] as? NSNumber)?.uint32Value : nil)
         case "computer_act":
-            try a.only(policy == .embedded ? ["session_id", "observation_id", "request_id", "action", "actions", "intent", "file_approval", "file_panel_access", "pacing", "retry_ms", "credential_approval"] : ["session_id", "observation_id", "request_id", "action"])
+            try a.only(policy == .embedded ? ["session_id", "observation_id", "request_id", "action", "actions", "intent", "file_approval", "file_panel_access", "pacing", "retry_ms", "credential_approval", "typing_approval"] : ["session_id", "observation_id", "request_id", "action"])
             let id = try a.string("session_id")
             let observationID = try a.string("observation_id")
             let requestID = try a.string("request_id", max: 100)
@@ -177,9 +177,11 @@ final class SessionRuntime {
             let panelAccess = policy == .embedded ? (values["file_panel_access"] as? NSNumber)?.uint32Value : nil
             // The app the person confirmed may receive a password or code they gave.
             let credentialApproval = policy == .embedded ? values["credential_approval"] as? String : nil
+            // The app the person let the agent type into without an observed text field.
+            let typingApproval = policy == .embedded ? values["typing_approval"] as? String : nil
             do {
                 return try await act(id: id, observationID: observationID, requestID: requestID, actions: actions, raw: raw, intent: intent,
-                    fileApproval: fileApproval, filePanelAccess: panelAccess, pacing: pacing, credentialApproval: credentialApproval)
+                    fileApproval: fileApproval, filePanelAccess: panelAccess, pacing: pacing, credentialApproval: credentialApproval, typingApproval: typingApproval)
             } catch let error as UseError {
                 // Refused before anything was sent: the cursor shakes it off and tries another way.
                 if error.next == "observe" || error.next == "correct_request" { controls.react(.refused) }
@@ -583,7 +585,7 @@ final class SessionRuntime {
     }
 
     private func act(id: String, observationID: String, requestID: String, actions: [Action], raw: Any, intent: String? = nil,
-                     fileApproval: [String]? = nil, filePanelAccess: CGWindowID? = nil, pacing: BatchPacing = .fast, credentialApproval: String? = nil) async throws -> [[String: Any]] {
+                     fileApproval: [String]? = nil, filePanelAccess: CGWindowID? = nil, pacing: BatchPacing = .fast, credentialApproval: String? = nil, typingApproval: String? = nil) async throws -> [[String: Any]] {
         let cached = try current(id, allowPaused: true)
         let fingerprint = try JSONSerialization.data(withJSONObject: ["observation_id": observationID, "action": raw], options: [.sortedKeys])
         if let receipt = cached.receipts[requestID] {
@@ -657,6 +659,14 @@ final class SessionRuntime {
             return text(["ok": false, "code": "credential_approval_required", "app": current.app.app.localizedName ?? current.app.bundleID,
                 "app_id": current.app.bundleID, "dispatched": false, "next": "observe",
                 "message": "This window has a password field. The person confirms this app before anything is typed; nothing was sent."])
+        }
+        // Typing with no observed text field goes to the app's own editor (text on a canvas),
+        // which accessibility cannot name: the person allows that app first. Nothing is sent.
+        let editorTyping = current.focus == nil && actions.first.map { if case .type = $0 { return true }; return false } == true
+        if editorTyping, typingApproval != current.app.bundleID {
+            return text(["ok": false, "code": "typing_approval_required", "app": current.app.app.localizedName ?? current.app.bundleID,
+                "app_id": current.app.bundleID, "dispatched": false, "next": "observe",
+                "message": "No observed text field has the keyboard. The person allows typing into this app's own editor first; nothing was sent."])
         }
         // Confirming a file panel hands the chosen files to the app, which can upload them:
         // the person approves first. Nothing is sent and the observation stays valid.
@@ -757,7 +767,7 @@ final class SessionRuntime {
                             requireFrontmost: frontCheck, check: check)
                         let points: [CGPoint]
                         switch action {
-                        case .move(let p), .click(let p, _, _), .scroll(let p, _, _): points = [p]
+                        case .move(let p), .click(let p, _, _), .scroll(let p, _, _), .rightClick(let p), .hold(let p, _): points = [p]
                         case .drag(let path): points = path
                         default: throw UseError("invalid_arguments", "This action has no coordinates.")
                         }
@@ -799,7 +809,7 @@ final class SessionRuntime {
                 session?.actionCount += 1
                 let path = try await input.execute(action, app: current.app, target: current.target, lease: observation,
                     access: access, records: records, focus: focus, pointerTarget: pointerTarget,
-                    check: checkInput, checkWindow: checkWindow, background: background || !current.parents.isEmpty, feedback: { [weak self] feedback in
+                    check: checkInput, checkWindow: checkWindow, background: background || !current.parents.isEmpty, editorTyping: editorTyping && index == 0, feedback: { [weak self] feedback in
                         guard let self, self.session?.id == id else { return }
                         self.controls.inputFeedback(feedback)
                     })
@@ -824,7 +834,7 @@ final class SessionRuntime {
                     focus = nil; needsObservation = true
                 case .setValue(let ref, _):
                     if focus?.ref != ref { focus = nil }
-                case .move, .scroll, .drag: needsObservation = true
+                case .move, .scroll, .drag, .rightClick, .hold, .showMenu: needsObservation = true
                 case .key: needsObservation = action.endsFocusSequence
                 default: break
                 }

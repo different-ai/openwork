@@ -1116,6 +1116,43 @@ function credentialFixture() {
 }
 const typeInto = (control, action) => control.execute({ sessionId: "chat", name: "computer_act", args: { observation_id: "observation", action } });
 
+test("typing into an app's own editor waits for the person to allow that app", async (t) => {
+  const seen = [];
+  const f = fixture({ seen, toolResult: (name) => {
+    if (name !== "computer_act") return undefined;
+    // Like the Mac helper with no observed text field focused: nothing is typed until the host sends the allowed app.
+    return seen.at(-1).args.typing_approval === "com.example.canvas" ? text({ ok: true, status: "dispatched" })
+      : text({ ok: false, code: "typing_approval_required", app: "Canvas", app_id: "com.example.canvas", dispatched: false, next: "observe" });
+  } });
+  t.after(() => f.control.reset(true));
+  await f.control.setFeatureEnabled(true);
+  await f.control.execute({ sessionId: "chat", name: "computer_open", args: { app_id: "com.example.canvas", mode: "control", purpose: "Add a title" } });
+  const acts = () => seen.filter((call) => call.name === "computer_act").map((call) => call.args);
+  const cards = () => f.requests.filter((request) => request?.reason === "typing");
+  const answer = async (reply) => {
+    const before = cards().length;
+    for (let waited = 0; cards().length === before && waited < 2_000; waited += 5) await new Promise((resolve) => setTimeout(resolve, 5));
+    assert.deepEqual(cards().at(-1).typing, { app: "Canvas", appId: "com.example.canvas" });
+    await f.control.answerRequest({ sessionId: "chat", answer: reply, id: cards().at(-1).id });
+  };
+  const declined = typeInto(f.control, { type: "type", text: "THE GEOMETRY PLAYGROUND" });
+  await answer("dismiss");
+  assert.equal(payload(await declined).code, "typing_declined");
+  assert.equal(acts().length, 1, "nothing is sent again without the person's yes");
+  const allowed = typeInto(f.control, { type: "type", text: "THE GEOMETRY PLAYGROUND" });
+  await answer("always");
+  assert.equal(payload(await allowed).status, "dispatched");
+  assert.equal(acts().at(-1).typing_approval, "com.example.canvas");
+  const asked = cards().length;
+  assert.equal(payload(await typeInto(f.control, { type: "type", text: "again" })).status, "dispatched");
+  assert.equal(cards().length, asked, "always covers the app for the rest of the chat");
+  // A secret first asks about the app as usual; even then it never goes into an unidentified editor.
+  const secret = typeInto(f.control, { type: "type", text: "a code", secret: true });
+  for (let waited = 0; !f.requests.some((request) => request?.reason === "credential") && waited < 2_000; waited += 5) await new Promise((resolve) => setTimeout(resolve, 5));
+  await f.control.answerRequest({ sessionId: "chat", answer: "allow", id: f.requests.find((request) => request?.reason === "credential").id });
+  assert.equal(payload(await secret).code, "protected_input", "a password never goes into an unidentified editor");
+});
+
 test("typing next to a password field waits for the person to confirm the app", async (t) => {
   const f = credentialFixture(); t.after(() => f.control.reset(true));
   await f.control.setFeatureEnabled(true);
