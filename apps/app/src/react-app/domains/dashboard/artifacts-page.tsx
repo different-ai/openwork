@@ -44,6 +44,7 @@ export function ArtifactsPage({ onCreateApp, fallbackEndpoints, headerActionsTar
   const [selection, setSelection] = useState(() => ({ scope, id: readArtifactSelection(scope) }));
   const [showDetail, setShowDetail] = useState(true);
   const [search, setSearch] = useState("");
+  const [chromeSlot, setChromeSlot] = useState<HTMLElement | null>(null);
   const searchInput = useRef<HTMLInputElement>(null);
   const detailPane = useRef<HTMLElement>(null);
   const rows = useMemo(() => artifactRows(built.apps, built.ids,
@@ -104,11 +105,14 @@ export function ArtifactsPage({ onCreateApp, fallbackEndpoints, headerActionsTar
         </section> : null)}
         {!loading && !matching ? <div className="py-12 text-center"><p className="text-sm text-muted-foreground">{rows.length ? "No artifacts match your search." : "No artifacts yet."}</p>{!rows.length ? <Button variant="ghost" size="sm" className="mt-3" disabled={create.isPending} onClick={() => create.mutate()}>Create an artifact</Button> : null}</div> : null}
       </section>
-      {selected ? <section ref={detailPane} tabIndex={-1} aria-label={`${selected.title} detail`} className={`min-w-0 flex-1 overflow-y-auto p-5 focus-visible:outline-2 focus-visible:outline-ring ${showDetail ? "" : "hidden md:block"}`}>
-        <div className="mb-4 flex items-center justify-between gap-2">
+      {selected ? <section ref={detailPane} tabIndex={-1} aria-label={`${selected.title} detail`} className={`min-h-0 min-w-0 flex-1 flex-col focus-visible:outline-2 focus-visible:outline-ring ${showDetail ? "flex" : "hidden md:flex"}`}>
+        {/* The toolbar stays put; only the artifact below it scrolls. */}
+        <div className="flex shrink-0 items-center justify-between gap-2 border-b border-border px-5 py-3">
           <Button variant="ghost" size="sm" className="md:hidden" onClick={() => { setShowDetail(false); requestAnimationFrame(() => searchInput.current?.focus()); }}><ArrowLeft className="size-4" />Artifacts</Button>
           <h2 className="hidden min-w-0 truncate text-sm font-medium md:block">{selected.title}</h2>
           <div className="ml-auto flex shrink-0 items-center gap-1">
+            {/* The artifact's refresh state and action live here, never over its content. */}
+            <span ref={setChromeSlot} className="flex items-center gap-1" data-artifact-host-chrome />
             {selected.kind === "built" || saved.canManage ? <Button variant="ghost" size="sm" aria-pressed={selected.pinned} disabled={selected.kind === "saved" && placement.isPending} onClick={() => {
               if (selected.kind === "built") built.setAdded(selected.app.connectionId, !selected.pinned);
               else placement.mutate({ appId: selected.app.view.id, added: !selected.pinned });
@@ -129,10 +133,13 @@ export function ArtifactsPage({ onCreateApp, fallbackEndpoints, headerActionsTar
             </> : null}
           </div>
         </div>
+        <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain p-5" data-artifact-detail-body>
         {selected.kind === "built" ? <McpAppTile key={`${scope}:${selected.id}`} cacheScopeKey={built.cacheScopeKey} fallbackEndpoints={fallbackEndpoints}
           entry={{ ...selected.app, kind: "mcp", id: selected.id, launchArguments: { input: {} }, autoLaunch: true }}
+          chromeTarget={chromeSlot}
           renderActions={({ onRefresh, refreshing }) => onRefresh ? <Button variant="ghost" size="icon" className="size-7" aria-label={`Refresh ${selected.title}`} disabled={refreshing} onClick={onRefresh}><RefreshCw className={`size-4 ${refreshing ? "animate-spin" : ""}`} /></Button> : null} />
           : <SavedDashboardApp key={`${scope}:${selected.id}`} app={selected.app} onCreateApp={onCreateApp} fallbackEndpoints={fallbackEndpoints} removing={placement.isPending} onRemove={() => placement.mutate({ appId: selected.app.view.id, added: false })} />}
+        </div>
       </section> : <div className="hidden min-w-0 flex-1 items-center justify-center p-6 md:flex"><p className="text-sm text-muted-foreground">Select an artifact to open it.</p></div>}
     </div>
   </div>;

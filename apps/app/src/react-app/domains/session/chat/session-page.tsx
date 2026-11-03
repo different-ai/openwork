@@ -2123,7 +2123,8 @@ export function SessionPage(props: SessionPageProps) {
             </ResizablePanel>
               {sidePanelOpen && !isMobile ? (
               <>
-                <ResizableHandle className="hidden bg-transparent lg:flex" />
+                {/* Discoverable: a grip shows on hover and keyboard focus, so a narrow artifact can be widened. */}
+                <ResizableHandle withHandle aria-label="Resize side panel" className="hidden bg-transparent transition-colors hover:bg-border focus-visible:bg-border lg:flex [&>div]:opacity-0 [&>div]:transition-opacity hover:[&>div]:opacity-100 focus-visible:[&>div]:opacity-100" />
                 <ResizablePanel
                   panelRef={browserPanelRef}
                   defaultSize={`${activeSidePanel === "extensions" ? Math.max(browserPanelDefaultWidth, 480) : browserPanelDefaultWidth}px`}

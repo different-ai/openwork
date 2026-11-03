@@ -1,5 +1,6 @@
 /** @jsxImportSource react */
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ComponentProps } from "react";
+import { createPortal } from "react-dom";
 import { DashboardConnectionCard } from "./dashboard-connection-card";
 import { appToolResultConnectionToolName, connectionCardFromMcpToolResult } from "@/components/tools/error-attribution";
 import type { ConnectionActionPayload } from "@openwork/types/connection-action-app";
@@ -226,9 +227,16 @@ function McpAppTileContent({
   fallbackEndpoints,
   renderActions,
   actionsPlacement,
+  chromeTarget,
 }: {
   renderActions?: DashboardTileActions;
   actionsPlacement?: "header";
+  /**
+   * A host toolbar slot (the Artifacts detail header). When set, the refresh
+   * action and "Updating…" state render there instead of floating over the
+   * App's own content. null waits for the slot to mount.
+   */
+  chromeTarget?: HTMLElement | null;
   entry: DashboardMcpAppEntry;
   /** Per-user and per-organization scope for workspace-bound last-known-good dashboard data. */
   cacheScopeKey: string;
@@ -753,7 +761,7 @@ function McpAppTileContent({
       aria-busy={refreshState === "refreshing" || loadingDocument} style={{ minHeight: loadingDocument ? reservedHeight : undefined }}>
       <DashboardTileShell
         title={entry.title}
-        renderActions={renderActions}
+        renderActions={chromeTarget === undefined ? renderActions : undefined}
         actionsPlacement={actionsPlacement}
         entryId={entry.id}
         subtitle={entry.serverName}
@@ -875,12 +883,20 @@ function McpAppTileContent({
           <Skeleton className="min-h-24 w-full flex-1" />
         </div>
       ) : null}
-      {state.phase === "ready" && !loadingDocument && !state.lifetime.failed && refreshState !== "idle" ? (
+      {chromeTarget === undefined && state.phase === "ready" && !loadingDocument && !state.lifetime.failed && refreshState !== "idle" ? (
         <div className="pointer-events-none absolute right-10 top-1 z-10 rounded bg-background/90 px-2 py-1 text-[11px] text-muted-foreground"
           role="status" aria-live="polite" data-dashboard-cache-state={refreshState}>
           {refreshState === "refreshing" ? "Updating…" : "Refresh failed · showing last good data"}
         </div>
       ) : null}
+      {chromeTarget ? createPortal(<>
+        {state.phase === "ready" && !loadingDocument && !state.lifetime.failed && refreshState !== "idle" ? (
+          <span className="whitespace-nowrap px-1 text-xs text-muted-foreground" role="status" aria-live="polite" data-dashboard-cache-state={refreshState}>
+            {refreshState === "refreshing" ? "Updating…" : "Refresh failed · showing last good data"}
+          </span>
+        ) : null}
+        {renderActions?.({ onRefresh: run, refreshing: refreshState === "refreshing" || loadingDocument })}
+      </>, chromeTarget) : null}
     </div>
   );
 }
