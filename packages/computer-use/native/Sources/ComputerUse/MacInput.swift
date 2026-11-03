@@ -143,6 +143,18 @@ final class MacInput {
                 guard result == .success || unanswered else { throw UseError("action_failed", "The app did not confirm the accessible action. Observe before retrying.", next: "observe") }
                 report(.dispatched, point: CGPoint(x: record.frame.midX, y: record.frame.midY))
                 path = unanswered ? "accessibility_unconfirmed" : valueTook ? "accessibility" : "value_not_applied"
+            case .openFile(let file):
+                // Not input to the window: Launch Services hands the app the file, as Finder's
+                // Open With does. The person approved this exact file for this app.
+                guard let bundle = app.app.bundleURL else { throw UseError("app_unavailable", "The app's location is unknown. Nothing was opened.", next: "observe") }
+                let configuration = NSWorkspace.OpenConfiguration()
+                configuration.activates = !background
+                try check()
+                feedback?.didDispatch = true
+                do { _ = try await NSWorkspace.shared.open([file], withApplicationAt: bundle, configuration: configuration) }
+                catch { throw UseError("open_failed", "The app did not accept the file. Observe before trying another way.", next: "observe") }
+                report(.dispatched)
+                path = "file_handed_over"
             case .menu(let names):
                 // Menu commands go to the app's focused window: never to another document.
                 guard access.isFocusedWindow(target, app: app) else {
@@ -476,5 +488,22 @@ enum ValueReadBack {
     private static func same(_ lhs: CFTypeRef?, _ rhs: CFTypeRef?) -> Bool {
         guard let lhs, let rhs else { return lhs == nil && rhs == nil }
         return CFEqual(lhs, rhs)
+    }
+}
+
+/// Handing a file to the session's app instead of dragging it from Finder.
+enum FileHandoff {
+    /// The real file a path names: absolute, existing and not a folder, with links resolved,
+    /// so the person approves exactly what the app receives.
+    static func file(_ path: String) throws -> URL {
+        guard path.hasPrefix("/"), !path.contains("\0") else {
+            throw UseError("invalid_arguments", "path must be an absolute path to a file on this Mac.")
+        }
+        let url = URL(fileURLWithPath: path).standardizedFileURL.resolvingSymlinksInPath()
+        var folder: ObjCBool = false
+        guard FileManager.default.fileExists(atPath: url.path, isDirectory: &folder), !folder.boolValue else {
+            throw UseError("file_unavailable", "No file exists at that path. Nothing was opened.", next: "correct_request")
+        }
+        return url
     }
 }

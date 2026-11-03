@@ -360,6 +360,15 @@ and app menus, the Window menu, recent-document lists and any command whose
 shortcut is a blocked chord (Quit, Close, Hide, Minimize, clipboard) are never
 listed or pressed. Commands go to the app's focused window only.
 
+`{ type: "open_file", path: "/Users/…/photo.png" }` hands a file to the
+session's app the way Finder's Open With does, instead of a drag between two
+apps that a session cannot make. The person approves the exact file for that
+app first (the same card as handing files over in a file panel), and the step
+is sent on its own. Links are resolved before the approval, so the card names
+the real file. A success from Launch Services is not taken as proof: the step
+path is `file_opened` once a new window appears or the session's window is
+retitled within three seconds, otherwise `file_open_unconfirmed`.
+
 A program defaults to 30 seconds, accepts a timeout up to 60 seconds, and is
 limited to 80 helper calls and 32 KB of returned program data. The desktop
 session persists between programs; variables do not. Supply JSON through

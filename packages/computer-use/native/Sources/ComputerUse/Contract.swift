@@ -179,6 +179,8 @@ enum Action {
     case move(CGPoint), click(CGPoint, Int, CGEventFlags), scroll(CGPoint, Int32, Int32), drag([CGPoint])
     /// A command from the app's menu bar, by its titles: ["Format", "Font", "Bold"].
     case menu([String])
+    /// A file on this Mac handed to the session's app, as Finder's Open With does.
+    case openFile(URL)
 
     static let batchLimit = 8
     static func batch(_ values: [String: Any], policy: RuntimePolicy = .desktop) throws -> [Action] {
@@ -218,6 +220,9 @@ enum Action {
             self = .type(text)
         case "wait" where policy == .embedded:
             try a.only(["type", "ms"]); self = .wait(try a.integer("ms", min: 50, max: 3_000))
+        case "open_file" where policy == .embedded:
+            try a.only(["type", "path"])
+            self = .openFile(try FileHandoff.file(try a.string("path", max: 1024)))
         case "menu" where policy == .embedded:
             try a.only(["type", "path"])
             guard let path = values["path"] as? [String], (2...MenuRules.maxDepth + 1).contains(path.count),
@@ -270,6 +275,7 @@ enum Action {
         case .scroll: return "scroll"
         case .drag: return "drag"
         case .menu: return "menu"
+        case .openFile: return "open_file"
         }
     }
     var requiresControl: Bool {
