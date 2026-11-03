@@ -24,7 +24,8 @@ export async function startCloudComputerBridge(config: ServerConfig): Promise<()
   // These describe the operator-installed runtime, never grant feature access.
   if (process.platform !== "linux" || process.env.DEN_RUNTIME_MANAGED !== "1" || !display || !discovery) return async () => {};
   const computer = await createCloudComputer({ directory: join(dirname(discovery), "computer"), display,
-    enabled: () => managedDesktopPolicy(config).remoteComputersEnabled(), onActivity: touchCloudComputerActivity });
+    enabled: () => managedDesktopPolicy(config).remoteComputersEnabled(),
+    standardCodeMode: () => managedDesktopPolicy(config).standardCodeModeEnabled(), onActivity: touchCloudComputerActivity });
   computers.set(config, computer);
   const token = randomBytes(32).toString("base64url");
   const bridge = await serve({ hostname: "127.0.0.1", port: 0, fetch: async request => {

@@ -1,4 +1,4 @@
-import { CodeMode, Tool, toolError } from "@openwork/codemode"
+import { CodeMode, StandardCodeMode, Tool, toolError } from "@openwork/codemode"
 import { Effect } from "effect"
 import { z } from "zod"
 
@@ -21,6 +21,14 @@ export type ProgramResult = {
   mayHaveActed: boolean; metrics: { durationMs: number; transportCalls: number; observations: number; actions: number }; images: ProgramImage[];
 }
 export type ProgramImage = { type: "image"; data: string; mimeType: string }
+/**
+ * How the host runs programs. It comes from the member's organization (the
+ * `standardCodeMode` feature), never from the program request.
+ */
+export type ProgramOptions = {
+  /** Run as standard JavaScript (ECMAScript) on the shared standard engine instead of OpenWork's original Code Mode. */
+  standardCodeMode?: boolean
+}
 
 const record = z.record(z.string(), z.unknown())
 const image = z.object({ type: z.literal("image"), data: z.string(), mimeType: z.string() })
@@ -100,9 +108,13 @@ function point(element: Node, observation: Observation) {
 }
 
 /** One bounded program, one chat and one surface. Images stay outside the interpreter. */
-export async function runComputerProgram(request: ProgramRequest, host: ProgramHost, parentSignal: AbortSignal): Promise<ProgramResult> {
+export async function runComputerProgram(request: ProgramRequest, host: ProgramHost, parentSignal: AbortSignal, options: ProgramOptions = {}): Promise<ProgramResult> {
   const timeoutMs = Math.min(60_000, Math.max(1_000, request.timeoutMs ?? 30_000))
-  const signal = AbortSignal.any([parentSignal, AbortSignal.timeout(timeoutMs)])
+  // Nothing a program starts outlives it. The standard engine cancels a call
+  // nothing awaited when the program returns, but a helper's promise would run
+  // on and send input that no receipt reports; ending the run stops it.
+  const finished = new AbortController()
+  const signal = AbortSignal.any([parentSignal, AbortSignal.timeout(timeoutMs), finished.signal])
   let tabId = request.tabId
   let latest: Observation | null = null
   let latestQuery: string | null = null
@@ -385,11 +397,17 @@ export async function runComputerProgram(request: ProgramRequest, host: ProgramH
     }),
   } }
   try {
-    const result = await Effect.runPromise(CodeMode.execute({ code: request.code, tools, bindings: { input: z.json().parse(request.input ?? null) }, readonlyBindings: true,
-      limits: { timeoutMs, maxToolCalls: 80, maxOutputBytes: 32_000 },
-    }), { signal })
+    const input = z.json().parse(request.input ?? null)
+    const limits = { timeoutMs, maxToolCalls: 80, maxOutputBytes: 32_000 }
+    // A program runs start to finish on one interpreter. The standard engine
+    // binds input as a JSON copy, so a program can change only its own copy.
+    const result = options.standardCodeMode === true
+      ? await Effect.runPromise(StandardCodeMode.execute({ code: request.code, tools, bindings: { input }, limits }), { signal })
+      : await Effect.runPromise(CodeMode.execute({ code: request.code, tools, bindings: { input }, readonlyBindings: true, limits }), { signal })
     return { ok: result.ok, ...(result.ok ? { value: result.value } : { error: lastFailure ?? result.error }), receipts, mayHaveActed, metrics: metrics(), images }
   } catch (error) {
     return { ok: false, error: { code: signal.aborted ? "program_stopped" : error instanceof ComputerProgramError ? error.code : "program_failed", message: signal.aborted ? "The program stopped. Completed input was not replayed." : error instanceof Error ? error.message : "The program could not finish." }, receipts, mayHaveActed, metrics: metrics(), images: signal.aborted ? [] : images }
+  } finally {
+    finished.abort(new Error("The program finished."))
   }
 }

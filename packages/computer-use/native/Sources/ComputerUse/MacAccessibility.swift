@@ -307,6 +307,9 @@ struct StableRefs<Identity> {
     private(set) var next = 0
     private var known: [(identity: Identity, ref: String)] = []
     private var window: UInt32?
+    private var visited: [UInt32: [(identity: Identity, ref: String)]] = [:]
+    private var order: [UInt32] = []
+    static var windowsRemembered: Int { 4 }
     private let hash: (Identity) -> Int
     private let same: (Identity, Identity) -> Bool
 
@@ -315,7 +318,14 @@ struct StableRefs<Identity> {
     }
 
     mutating func assign(_ identities: [Identity], window id: UInt32) -> [String] {
-        if window != id { known = []; window = id }
+        // Each window keeps its refs, so a control has the same ref after a dialog over the
+        // window closes. Only the last few windows are remembered.
+        if window != id, let window {
+            visited[window] = known
+            order.removeAll { $0 == window }; order.append(window)
+            if order.count > Self.windowsRemembered { visited[order.removeFirst()] = nil }
+        }
+        if window != id { known = visited.removeValue(forKey: id) ?? []; order.removeAll { $0 == id }; window = id }
         var buckets: [Int: [(identity: Identity, ref: String)]] = [:]
         for entry in known { buckets[hash(entry.identity), default: []].append(entry) }
         var used = Set<String>()
@@ -607,7 +617,9 @@ final class MacAccessibility {
         }
     }
 
-    func captureDigest(_ state: WindowState) throws -> Data {
+    /// `focus` false leaves out which element has the keyboard: bringing a window forward
+    /// moves that by itself.
+    func captureDigest(_ state: WindowState, focus: Bool = true) throws -> Data {
         guard state.records.allSatisfy({ Geometry.valid($0.frame) }), state.protectedFrames.allSatisfy({ Geometry.valid($0) }) else {
             throw UseError("invalid_geometry", "The accessible geometry is not safe to capture or act on.", next: "observe")
         }
@@ -620,7 +632,7 @@ final class MacAccessibility {
         }
         let secure = state.protectedFrames.map { [$0.minX, $0.minY, $0.width, $0.height] }
         let data = try JSONSerialization.data(withJSONObject: ["records": records, "secure": secure, "truncated": state.truncated,
-            "privacy_issue": state.privacyIssue as Any? ?? NSNull(), "focus": state.focused.map { CFHash($0) as Any } ?? NSNull()], options: [.sortedKeys])
+            "privacy_issue": state.privacyIssue as Any? ?? NSNull(), "focus": focus ? state.focused.map { CFHash($0) as Any } ?? NSNull() : NSNull()], options: [.sortedKeys])
         return Data(SHA256.hash(data: data))
     }
     func imageDigest(_ data: Data) -> Data { Data(SHA256.hash(data: data)) }

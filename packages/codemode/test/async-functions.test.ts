@@ -290,6 +290,17 @@ describe("async call failures and leftovers", () => {
     ).toBe("boom")
   })
 
+  test("a caught error reads as its name and message, not [object Object]", async () => {
+    expect(
+      await value(`
+        const caught = []
+        try { await tools.host.fail({}) } catch (error) { caught.push(String(error), \`\${error}\`) }
+        try { throw new TypeError("bad target") } catch (error) { caught.push(String(error)) }
+        return caught
+      `),
+    ).toEqual(["Error: Lookup refused", "Error: Lookup refused", "TypeError: bad target"])
+  })
+
   test("a never-awaited failing async call is an unhandled-rejection diagnostic", async () => {
     const diagnostic = await error(`
       const check = async () => { await tools.host.fail({}) }

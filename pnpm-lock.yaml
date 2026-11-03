@@ -590,9 +590,6 @@ importers:
       '@modelcontextprotocol/server':
         specifier: ^2.3.1
         version: 2.3.1
-      '@opencode/codemode':
-        specifier: 2.2.5
-        version: 2.2.5
       '@opentelemetry/api':
         specifier: 1.9.1
         version: 1.9.1
@@ -1564,6 +1561,9 @@ importers:
 
   packages/codemode:
     dependencies:
+      '@opencode/codemode':
+        specifier: 2.2.5
+        version: 2.2.5
       acorn:
         specifier: 8.16.0
         version: 8.16.0

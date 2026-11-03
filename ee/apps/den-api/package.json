@@ -42,7 +42,6 @@
     "@modelcontextprotocol/ext-apps": "^1.7.5",
     "@modelcontextprotocol/sdk": "^1.32.1",
     "@modelcontextprotocol/server": "^2.3.1",
-    "@opencode/codemode": "2.2.5",
     "@opentelemetry/api": "1.9.1",
     "@opentelemetry/api-logs": "0.220.0",
     "@opentelemetry/exporter-logs-otlp-proto": "0.220.0",
