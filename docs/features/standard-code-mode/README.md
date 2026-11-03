@@ -50,7 +50,9 @@ saved in.
 
 ## Intentional departures from JavaScript
 
-The engine does these differently from a JavaScript runtime. We accept them and say so to authors:
+The engine does these differently from a JavaScript runtime. We accept them and say so to authors: with the feature
+on, `execute_capability_script`'s description asks for standard JavaScript, says TypeScript annotations are rejected
+and states the first two below, and the build-an-app skill names the forms that run one item at a time.
 
 - **A call nothing awaits is cancelled when the program returns.** A JavaScript runtime would let it finish. Await
   every call, including writes; OpenWork's dialect waited for them.
@@ -99,8 +101,8 @@ A saved Workflow never switches interpreter silently. With the feature off (or t
 - `codemode-run.ts` (`codemodeRuntimeFor`), `codemode-script-object.ts` (the two languages), `workflow-service.ts`
   (`newWorkflowLanguage`, and choosing or refusing an interpreter for each run), `workflows.ts` and `agent.ts`
   (tests and saves).
+- Agent guidance: `codemode-script-object.ts` (`workflowCodeRules`, the language rules) and `build-an-app-skill.ts`.
 - Tests: `ee/apps/den-api/test/codemode-standard-runtime.test.ts`.
 
-Not covered yet, each its own change: computer-use programs on the standard interpreter; agent guidance (the
-build-an-app skill and Workflow authoring instructions) for standard JavaScript and the departures above; retiring
-`packages/codemode` once no saved Workflow uses `codemode-js`.
+Not covered yet, each its own change: computer-use programs on the standard interpreter; retiring `packages/codemode`
+once no saved Workflow uses `codemode-js`.

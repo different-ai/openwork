@@ -15,6 +15,18 @@ function isCodemodeLanguage(value: unknown): value is CodemodeLanguage {
   return typeof value === "string" && CODEMODE_LANGUAGES.includes(value)
 }
 
+/**
+ * How to write the code execute_capability_script tests, in the language the
+ * organization tests and saves new Workflows in (newWorkflowLanguage). Each rule
+ * is said once, here; the build-an-app skill only names the forms that run one
+ * item at a time.
+ */
+export function workflowCodeRules(language: CodemodeLanguage): string {
+  return language === "ecmascript"
+    ? "Test a confined function body in standard JavaScript (ECMAScript); TypeScript annotations are rejected because they are not JavaScript. End with return of JSON-safe data. No imports, fetch, process or host access; use tools for external work and Promise.all for independent calls. Await every call, including writes: calls nothing awaits are cancelled when the program returns, and rejections nothing awaits appear only as warning: log lines."
+    : "Test a confined JavaScript function body; end with return of JSON-safe data. No imports, fetch, process or host access; use tools for external work and Promise.all for independent calls."
+}
+
 export type CodemodeScriptPayload = {
   language: CodemodeLanguage
   inputSchema?: JsonSchemaObject

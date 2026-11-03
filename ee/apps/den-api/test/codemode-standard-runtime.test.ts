@@ -3,7 +3,7 @@ import { test } from "node:test"
 import { Tool, toolError } from "@openwork/codemode"
 import { Effect } from "effect"
 import { codemodeRuntimeFor, runCodemodeScript, type CodemodeRuntime } from "../src/mcp/codemode-run.js"
-import { parseCodemodeScriptPayload } from "../src/mcp/codemode-script-object.js"
+import { parseCodemodeScriptPayload, workflowCodeRules } from "../src/mcp/codemode-script-object.js"
 import type { CodemodeToolTree } from "../src/mcp/codemode-tools.js"
 
 // Den tools are built with OpenWork's Tool.make and JSON Schemas, as in codemode-tools.ts.
@@ -137,4 +137,18 @@ test("a standard JavaScript program reaches no host network, process, module or 
 test("the timeout bounds a standard JavaScript run", async () => {
   const result = await run(`while (true) {}`, "standard", { timeoutMs: 150 })
   assert.equal(!result.ok && result.error.kind, "TimeoutExceeded")
+})
+
+test("execute_capability_script states the rules of the language its tests run in, each once", () => {
+  assert.equal(workflowCodeRules("codemode-js"), "Test a confined JavaScript function body; end with return of JSON-safe data. No imports, fetch, process or host access; use tools for external work and Promise.all for independent calls.")
+  const standard = workflowCodeRules("ecmascript")
+  for (const rule of [
+    "standard JavaScript (ECMAScript)",
+    "TypeScript annotations are rejected because they are not JavaScript",
+    "Await every call, including writes",
+    "calls nothing awaits are cancelled when the program returns",
+    "rejections nothing awaits appear only as warning: log lines",
+  ]) {
+    assert.equal(standard.split(rule).length - 1, 1, rule)
+  }
 })

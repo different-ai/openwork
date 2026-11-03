@@ -5,11 +5,13 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js"
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js"
 import { createMcpAppInputSchema, prepareMcpAppInputSchema, readMcpAppInputSchema, updateMcpAppInputSchema } from "@openwork/types/mcp-app"
 import { z } from "zod"
-import { BUILD_AN_APP_SKILL_SOURCE } from "../src/mcp/build-an-app-skill.js"
+import { buildAnAppSkillSource } from "../src/mcp/build-an-app-skill.js"
 import { appAuthoringStarter } from "../src/mcp/app-authoring-starter.js"
 
 import { registerAppBuilderTools } from "../src/mcp/app-builder-tools.js"
 import { buildMarketplaceCapabilityName } from "../src/mcp/marketplace-capability-name.js"
+
+const BUILD_AN_APP_SKILL_SOURCE = buildAnAppSkillSource("codemode-js")
 
 const jsonSchema = z.object({
   description: z.string().optional(),
@@ -98,6 +100,14 @@ test("App builder metadata describes all inputs and keeps create_app concise", a
     assert.match(BUILD_AN_APP_SKILL_SOURCE, /Promise\.all\(ids\.map\(\(id\) => tools\.x\.y\(\{ id \}\)\)\)/)
     assert.match(BUILD_AN_APP_SKILL_SOURCE, /Async helpers run side by side/)
     assert.doesNotMatch(BUILD_AN_APP_SKILL_SOURCE, /one at a time even inside Promise\.all|one page of each per round/)
+    assert.match(BUILD_AN_APP_SKILL_SOURCE, /or an async forEach, filter, or reduce callback, runs one item at a time/)
+    // Standard JavaScript never awaits those callbacks. Only that sentence differs;
+    // the language rules are execute_capability_script's alone.
+    const standardSkill = buildAnAppSkillSource("ecmascript")
+    assert.match(standardSkill, /forEach, filter, and reduce never await an async callback, so pass async callbacks only to map/)
+    const oldLines = BUILD_AN_APP_SKILL_SOURCE.split("\n")
+    assert.deepEqual(standardSkill.split("\n").filter((line, index) => line !== oldLines[index]).length, 1)
+    assert.doesNotMatch(standardSkill, /TypeScript|Await every call/)
   } finally {
     await client.close()
     await server.close()
