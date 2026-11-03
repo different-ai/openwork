@@ -77,6 +77,9 @@ the session and releases held input. Only the person's Continue resumes it;
 neither time nor the agent can. Sleep or temporary desktop unavailability
 invalidates observations and releases held input without creating a human
 handoff; fresh target validation is required when the desktop returns.
+A macOS prompt only the person may answer (a permission, sign-in or payment)
+holds an observation for up to a minute until they answer it, and no action
+is sent while one is open.
 
 ## Embedded protocol (`openwork/ui`)
 

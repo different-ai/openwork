@@ -329,10 +329,11 @@ final class SessionRuntime {
         }
         if let deadline, now >= deadline { throw UseError("action_timeout", "The bounded action time expired. Inspect the receipt before doing anything else.", next: "observe") }
     }
-    /// A macOS prompt only the person may answer is open; the agent waits for them.
-    private func personNeeded(_ prompt: (reason: String, app: String)) -> [[String: Any]] {
+    /// A macOS prompt only the person may answer is open. Before an observation has
+    /// waited for them, the next step is that observation.
+    private func personNeeded(_ prompt: (reason: String, app: String), waited: Bool = false) -> [[String: Any]] {
         text(["ok": false, "code": "person_needed", "reason": prompt.reason, "prompt_app": prompt.app, "dispatched": false,
-              "next": "human_takeover", "message": HandoverRules.message(prompt.reason)])
+              "next": waited ? "human_takeover" : "observe", "message": HandoverRules.message(prompt.reason, waited: waited)])
     }
     /// A file panel lists the person's files: nothing of it reaches the agent until they allow it.
     private func filePanelAccessRequired(_ current: Session) -> [[String: Any]] {
@@ -343,7 +344,17 @@ final class SessionRuntime {
         // A paused session never resumes from an observation: only the person's Continue does.
         // Retry only read-only capture races. Never repeat an action or cross takeover.
         try await followDialog(id)
-        if let prompt = access.personPrompt() { return personNeeded(prompt) }
+        if access.personPrompt() != nil {
+            // Only the person can answer it: wait here, so the agent carries on once they
+            // do instead of handing its turn back. Answering may have closed a dialog.
+            let waiting = try current(id)
+            controls.update("Waiting for you to answer macOS. The agent continues once you do.", paused: false)
+            if let open = try await HandoverRules.waitForPerson(prompt: { self.access.personPrompt() }, check: { try self.checkActive(waiting) },
+                now: { self.now }, sleep: { try await Task.sleep(nanoseconds: UInt64($0 * 1_000_000_000)) }) {
+                return personNeeded(open, waited: true)
+            }
+            try await followDialog(id)
+        }
         let current = try current(id)
         if current.dialogKind == .filePanel, current.filePanelAllowed != current.target.id {
             guard filePanelAccess == current.target.id else { return filePanelAccessRequired(current) }
