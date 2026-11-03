@@ -24,8 +24,37 @@ struct Presence {
     }
 }
 
+/// How the agent's cursor travels between inputs: like a hand, not a ruler. Short hops
+/// are quick and long ones take a little longer (Fitts's law), it eases into its target
+/// instead of overshooting, and it bows slightly off the straight line.
+enum CursorGlide {
+    static let shortest: TimeInterval = 0.1
+    static let longest: TimeInterval = 0.32
+    /// A drag's feedback arrives about 30 times a second; each step spans one of them.
+    static let strokeStep: TimeInterval = 1.0 / 30
+    static var easing: CAMediaTimingFunction { CAMediaTimingFunction(controlPoints: 0.25, 0.8, 0.35, 1) }
+
+    static func duration(distance: CGFloat) -> TimeInterval {
+        guard distance >= 1 else { return 0 }
+        return min(longest, shortest + 0.055 * log2(1 + Double(distance) / 20))
+    }
+    /// The control point of a quadratic curve bowing up to 8% of the distance, at most 36
+    /// points, always toward the top of the screen, so repeated moves look like one hand's.
+    static func bend(from: CGPoint, to: CGPoint) -> CGPoint {
+        let dx = to.x - from.x, dy = to.y - from.y
+        let distance = hypot(dx, dy)
+        let middle = CGPoint(x: (from.x + to.x) / 2, y: (from.y + to.y) / 2)
+        guard distance >= 1 else { return middle }
+        var normal = CGPoint(x: -dy / distance, y: dx / distance)
+        // Cocoa's y grows upward; a vertical move bows to the right.
+        if normal.y < 0 || normal.y == 0 && normal.x < 0 { normal = CGPoint(x: -normal.x, y: -normal.y) }
+        let offset = min(distance * 0.08, 36)
+        return CGPoint(x: middle.x + normal.x * offset, y: middle.y + normal.y * offset)
+    }
+}
+
 /// Multiplayer-style presence for the selected window, in the acting agent's
-/// color: a frame around the window, the agent's named cursor that springs to each dispatched input and narrates what it is doing, and a
+/// color: a frame around the window, the agent's named cursor that glides to each dispatched input and narrates what it is doing, and a
 /// pill over the window's close/minimize/zoom buttons with Take over, Continue
 /// and Stop. Inputs are posted to the app, not the system pointer, so without
 /// this the person cannot see the agent act. The frame and cursor never receive
@@ -53,7 +82,16 @@ final class AgentCursor {
     private let tagText = CATextLayer()
     private let dots = CALayer()
     private var trailPoints: [CGPoint] = []
+    /// While a drag's button is down: how far the drawn stroke runs behind the input,
+    /// the time the cursor took to reach the stroke's start.
+    private var strokeLag: TimeInterval?
     private var cursorPoint: CGPoint?
+    /// When the cursor reaches `cursorPoint`, in `CACurrentMediaTime`.
+    private var arrivesAt: CFTimeInterval = 0
+    /// Bumped by each glide: a stroke still being drawn stops steering a cursor that moved on.
+    private var glides = 0
+    /// Seconds until the cursor reaches where it is heading.
+    private var arrival: TimeInterval { max(0, arrivesAt - CACurrentMediaTime()) }
     private var windowFrame: CGRect = .null
     private var windowID: CGWindowID = 0
     /// Background sessions: presence sits just above the selected window, so a
@@ -93,7 +131,7 @@ final class AgentCursor {
         guard enabled else { return }
         generation += 1
         let fresh = window == nil
-        paused = false; canContinue = false; narration = nil; hidden = false
+        paused = false; canContinue = false; narration = nil; hidden = false; strokeLag = nil
         windowID = id; appName = name; self.layered = layered
         if fresh { build() }
         window?.alphaValue = 1; badge?.alphaValue = 1
@@ -119,6 +157,8 @@ final class AgentCursor {
         guard window != nil else { return }
         let changed = paused != value || canContinue != resumable
         paused = value; canContinue = resumable
+        // Input stopped mid-drag lifts the pen: the next drag starts a new stroke.
+        if value { strokeLag = nil }
         guard changed else { return }
         CATransaction.begin(); CATransaction.setAnimationDuration(0.25)
         outline.lineDashPattern = value ? [10, 7] : nil
@@ -148,15 +188,34 @@ final class AgentCursor {
     }
 
     func feedback(action: String, phase: InputFeedback.Phase, screenPoint: CGPoint?, windowFrame frame: CGRect) {
-        guard window != nil, !paused, phase != .uncertain else { return }
+        guard window != nil, !paused else { return }
+        if action != "drag" || phase == .uncertain { strokeLag = nil }
+        guard phase != .uncertain else { return }
         motion += 1
         place(frame)
         stopThinking()
         let target = screenPoint.flatMap(local) ?? cursorPoint
+        // With the button down, the stroke is drawn at the pace it was sent, starting once
+        // the cursor reaches its start, so the line follows the cursor's tip.
+        if action == "drag", let lag = strokeLag, let target, phase == .move || phase == .up {
+            let session = generation, mark = glides
+            DispatchQueue.main.asyncAfter(deadline: .now() + lag) { [weak self] in
+                guard let self, self.generation == session else { return }
+                self.stroke(to: target, lifting: phase == .up, moving: self.glides == mark)
+            }
+            if phase == .up { strokeLag = nil }
+            scheduleThinking()
+            return
+        }
         let travel = target.map { glide(to: $0) } ?? 0
-        if action == "drag", let target {
-            if phase == .down { trailPoints = [target] } else if phase == .move { trailPoints.append(target) }
-            drawTrail(fading: phase == .up)
+        if action == "drag", phase == .down, let target {
+            strokeLag = travel
+            let session = generation
+            DispatchQueue.main.asyncAfter(deadline: .now() + travel) { [weak self] in
+                guard let self, self.generation == session else { return }
+                self.trailPoints = [target]
+                self.drawTrail(fading: false)
+            }
         }
         if phase == .down || (phase == .dispatched && screenPoint != nil && !["scroll", "type", "key", "set_value", "press", "menu"].contains(action)) {
             // Aim, then click: the ripple lands when the cursor arrives.
@@ -176,9 +235,15 @@ final class AgentCursor {
 
     /// Replays a menu command over the menu bar without opening the app's menu: the cursor
     /// visits the menu title, a light copy of the path drops below it and the command is
-    /// picked. Purely visual and never waited on; the command has already run.
-    func showMenu(titleFrame: CGRect?, path: [String], shortcut: String?) {
-        guard let window, let root = window.contentView?.layer, !paused, let titleFrame, Geometry.valid(titleFrame), path.count > 1 else { return }
+    /// picked. Purely visual and never waited on; the command has already run. When the
+    /// app is not in front, the menu bar on screen is another app's: the cursor names
+    /// the command instead.
+    func showMenu(titleFrame: CGRect?, path: [String], shortcut: String?, menuBarShowing: Bool = true) {
+        guard let window, let root = window.contentView?.layer, !paused, path.count > 1 else { return }
+        guard menuBarShowing, let titleFrame, Geometry.valid(titleFrame) else {
+            say("\(presence.name) · \(path.joined(separator: " › "))", busy: false, hold: 1.6)
+            return
+        }
         let title = Self.cocoa(titleFrame).offsetBy(dx: -window.frame.minX, dy: -window.frame.minY)
         let rows = Array(path.dropFirst())
         let rowHeight: CGFloat = 22
@@ -211,10 +276,10 @@ final class AgentCursor {
         let appear = CABasicAnimation(keyPath: "opacity"); appear.fromValue = 0; appear.toValue = 1; appear.duration = 0.12
         panel.add(appear, forKey: "appear")
         root.insertSublayer(panel, below: cursor)
-        highlight(screenRect: titleFrame)
         let mark = motion
         let pickPoint = CGPoint(x: panel.frame.minX + 28, y: panel.frame.minY + 4 + rowHeight / 2)
         let travel = glide(to: CGPoint(x: title.midX, y: title.midY))
+        highlight(screenRect: titleFrame)
         DispatchQueue.main.asyncAfter(deadline: .now() + travel + 0.1) { [weak self] in
             guard let self, self.motion == mark, !self.paused else { return }
             let more = self.glide(to: pickPoint)
@@ -238,9 +303,21 @@ final class AgentCursor {
         return held + (parts.last.map { $0.count == 1 ? $0.uppercased() : $0 } ?? "")
     }
 
-    /// Briefly outline the accessible control that was pressed or filled.
-    func highlight(screenRect rect: CGRect) {
-        guard let window, let root = window.contentView?.layer, Geometry.valid(rect), !paused else { return }
+    /// Briefly outline the accessible control that was pressed or filled, once the cursor
+    /// reaches it. The input has already run: `live` reads where the control is now, and
+    /// nil (a dialog its press closed) draws nothing rather than a box over empty space.
+    func highlight(screenRect rect: CGRect, live: (() -> CGRect?)? = nil) {
+        guard window != nil, Geometry.valid(rect), !paused else { return }
+        let session = generation
+        DispatchQueue.main.asyncAfter(deadline: .now() + arrival) { [weak self] in
+            guard let self, self.generation == session, !self.paused else { return }
+            let current: CGRect?
+            if let live { current = live() } else { current = rect }
+            if let current, Geometry.valid(current) { self.outlineControl(current) }
+        }
+    }
+    private func outlineControl(_ rect: CGRect) {
+        guard let window, let root = window.contentView?.layer else { return }
         let local = Self.cocoa(rect).offsetBy(dx: -window.frame.minX, dy: -window.frame.minY).insetBy(dx: -4, dy: -4)
         let box = CAShapeLayer()
         box.path = CGPath(roundedRect: local, cornerWidth: 7, cornerHeight: 7, transform: nil)
@@ -411,7 +488,7 @@ final class AgentCursor {
         CATransaction.begin(); CATransaction.setDisableActions(true)
         cursor.position = point; cursor.opacity = 1
         CATransaction.commit()
-        cursorPoint = point
+        cursorPoint = point; arrivesAt = CACurrentMediaTime(); glides += 1
         let pop = CASpringAnimation(keyPath: "transform.scale")
         pop.fromValue = 0.3; pop.toValue = 1
         pop.damping = 12; pop.stiffness = 220; pop.duration = pop.settlingDuration
@@ -420,22 +497,48 @@ final class AgentCursor {
         cursor.add(pop, forKey: "pop"); cursor.add(fade, forKey: "fade")
     }
 
-    /// Moves the cursor and returns roughly how long until it arrives.
+    /// Moves the cursor along `CursorGlide` and returns how long until it arrives. The
+    /// same target again returns the time left, so a press lands when the cursor does.
     @discardableResult private func glide(to target: CGPoint) -> TimeInterval {
         guard cursorPoint != nil else { arrive(at: target); return 0 }
-        guard cursorPoint != target else { return 0 }
+        guard cursorPoint != target else { return arrival }
+        glides += 1
         // Start from where the cursor is on screen, so a new input mid-flight stays smooth.
         let from = cursor.presentation()?.position ?? cursor.position
-        let spring = CASpringAnimation(keyPath: "position")
-        spring.fromValue = NSValue(point: from); spring.toValue = NSValue(point: target)
-        spring.mass = 1; spring.stiffness = 320; spring.damping = 32
-        spring.duration = min(spring.settlingDuration, 0.5)
+        let duration = CursorGlide.duration(distance: hypot(target.x - from.x, target.y - from.y))
         CATransaction.begin(); CATransaction.setDisableActions(true)
         cursor.position = target; cursor.opacity = 1
         CATransaction.commit()
-        cursor.add(spring, forKey: "move")
-        cursorPoint = target
-        return min(0.2, spring.duration * 0.4)
+        if duration > 0 {
+            let path = CGMutablePath()
+            path.move(to: from)
+            path.addQuadCurve(to: target, control: CursorGlide.bend(from: from, to: target))
+            let move = CAKeyframeAnimation(keyPath: "position")
+            move.path = path; move.calculationMode = .paced; move.duration = duration
+            move.timingFunction = CursorGlide.easing
+            cursor.add(move, forKey: "move")
+        } else {
+            cursor.removeAnimation(forKey: "move")
+        }
+        cursorPoint = target; arrivesAt = CACurrentMediaTime() + duration
+        return duration
+    }
+
+    /// One step of a stroke being drawn: the cursor moves straight to it and the line
+    /// follows. Once the next input moved the cursor on, only the line finishes.
+    private func stroke(to point: CGPoint, lifting: Bool, moving: Bool) {
+        if moving {
+            let from = cursor.presentation()?.position ?? cursor.position
+            let step = CABasicAnimation(keyPath: "position")
+            step.fromValue = NSValue(point: from); step.toValue = NSValue(point: point); step.duration = CursorGlide.strokeStep
+            CATransaction.begin(); CATransaction.setDisableActions(true)
+            cursor.position = point; cursor.opacity = 1
+            CATransaction.commit()
+            cursor.add(step, forKey: "move")
+            cursorPoint = point; arrivesAt = CACurrentMediaTime() + step.duration
+        }
+        trailPoints.append(point)
+        drawTrail(fading: lifting)
     }
 
     /// Between inputs the model is deciding its next step: say so with a gentle wiggle.

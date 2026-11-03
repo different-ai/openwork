@@ -101,7 +101,12 @@ notifications with method `openwork/ui`:
 While a session runs the helper draws presence on the desktop: a frame around
 the selected window, a named cursor that glides to each input with click
 ripples, drag trails, a typing indicator and highlighted controls, narration
-from `intent`, and a "thinking" state between inputs. A pill over the window's
+from `intent`, and a "thinking" state between inputs. The cursor travels like
+a hand: short hops are quick, long ones take up to about a third of a second,
+it eases in along a slight arc, and a click or a highlight lands when it
+arrives. During a drag the stroke follows the cursor's tip. A highlight is
+drawn only where the control still is, so a button whose press closed its
+dialog gets none. A pill over the window's
 buttons offers Take over, Continue and Stop, shows "Your turn" while the person
 has control, and moves to the top of the screen when the window is hidden.
 When the session ends the cursor says it is "all yours" and fades out. Every
@@ -337,8 +342,10 @@ On a Mac, `computer_open` lists the app's enabled menu-bar commands in
 per item without opening a menu; `computer_observe({ menus: true })` lists
 them again. `{ type: "menu", path: ["Format", "Font", "Bold"] }` runs one
 through accessibility: no menu opens, no keyboard focus is needed and it works
-in assist mode. The agent cursor still visits the menu title and a light copy
-of the path shows the command being picked, without delaying input. The Apple
+in assist mode. When the app is in front, the agent cursor still visits the
+menu title and a light copy of the path shows the command being picked,
+without delaying input. In the background the menu bar on screen belongs to
+another app, so the cursor names the command (`File › New…`) instead. The Apple
 and app menus, the Window menu, recent-document lists and any command whose
 shortcut is a blocked chord (Quit, Close, Hide, Minimize, clipboard) are never
 listed or pressed. Commands go to the app's focused window only.

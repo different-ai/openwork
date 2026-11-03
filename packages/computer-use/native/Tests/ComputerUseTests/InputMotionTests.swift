@@ -2,6 +2,27 @@ import XCTest
 @testable import ComputerUse
 
 final class InputMotionTests: XCTestCase {
+    func testTheAgentsCursorTakesLongerForLongerMovesWithinBounds() {
+        XCTAssertEqual(CursorGlide.duration(distance: 0), 0, "no move, no wait")
+        let distances: [CGFloat] = [4, 40, 200, 800, 4_000]
+        let durations = distances.map(CursorGlide.duration(distance:))
+        XCTAssertEqual(durations, durations.sorted(), "a longer move never arrives sooner")
+        XCTAssertTrue(durations.allSatisfy { $0 >= CursorGlide.shortest && $0 <= CursorGlide.longest })
+        XCTAssertLessThan(durations[0], durations[2], "a short hop is quicker than a sweep")
+        XCTAssertEqual(durations[4], CursorGlide.longest, "a sweep across the screen is capped")
+    }
+
+    func testTheAgentsCursorBowsSlightlyAndAlwaysTheSameWay() {
+        let from = CGPoint(x: 100, y: 100), to = CGPoint(x: 500, y: 100)
+        let bend = CursorGlide.bend(from: from, to: to)
+        XCTAssertEqual(bend.x, 300, accuracy: 0.001, "it bows from the middle of the move")
+        XCTAssertEqual(bend.y - 100, 32, accuracy: 0.001, "8% of the distance, toward the top")
+        XCTAssertEqual(CursorGlide.bend(from: to, to: from).y, bend.y, accuracy: 0.001, "the same side either way")
+        let far = CursorGlide.bend(from: .zero, to: CGPoint(x: 0, y: 2_000))
+        XCTAssertEqual(far.x, 36, accuracy: 0.001, "a long vertical move bows right, at most 36 points")
+        XCTAssertEqual(CursorGlide.bend(from: from, to: from), from, "no move, no bow")
+    }
+
     func testPathEndsOnEveryPointWithShortSteps() {
         let points = [CGPoint(x: 0, y: 0), CGPoint(x: 100, y: 0), CGPoint(x: 100, y: 35)]
         let path = PointerMotion.path(points, maxStep: 10)

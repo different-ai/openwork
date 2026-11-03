@@ -150,16 +150,17 @@ final class SessionControls: NSObject {
         }
     }
     func narrate(_ text: String?) { AgentCursor.shared.narrate(text) }
-    func showAction(_ action: Action, records: [ElementRecord]) {
+    /// `live` reads where a control is now, or nil once it is gone.
+    func showAction(_ action: Action, records: [ElementRecord], live: @escaping (ElementRecord) -> CGRect? = { $0.frame }) {
         switch action {
         case .press(let ref), .setValue(let ref, _):
-            if let record = records.first(where: { $0.ref == ref }) { AgentCursor.shared.highlight(screenRect: record.frame) }
+            if let record = records.first(where: { $0.ref == ref }) { AgentCursor.shared.highlight(screenRect: record.frame, live: { live(record) }) }
         default: break
         }
     }
 
-    func showMenu(titleFrame: CGRect?, path: [String], shortcut: String?) {
-        AgentCursor.shared.showMenu(titleFrame: titleFrame, path: path, shortcut: shortcut)
+    func showMenu(titleFrame: CGRect?, path: [String], shortcut: String?, menuBarShowing: Bool = true) {
+        AgentCursor.shared.showMenu(titleFrame: titleFrame, path: path, shortcut: shortcut, menuBarShowing: menuBarShowing)
     }
 
     private func showMenu() {

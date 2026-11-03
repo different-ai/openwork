@@ -878,7 +878,7 @@ final class MacAccessibility {
         return false
     }
     func elementAttribute(_ element: AXUIElement, _ name: String) -> AXUIElement? { try? checkedElement(element, name, AXReadBudget()) }
-    func frame(_ element: AXUIElement) -> CGRect? { try? checkedFrame(element, AXReadBudget()) }
+    func frame(_ element: AXUIElement, within seconds: TimeInterval = 0.35) -> CGRect? { try? checkedFrame(element, AXReadBudget(seconds: seconds)) }
 }
 
 /// Notes when the target app last reported an accessibility change while input
