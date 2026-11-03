@@ -3,9 +3,12 @@ import { createRetryingPlanetScaleFetch } from "./transient-retry"
 import { drizzle } from "drizzle-orm/mysql2"
 import { drizzle as drizzlePlanetScale } from "drizzle-orm/planetscale-serverless"
 import { withReplicas, type MySQLWithReplicas } from "drizzle-orm/mysql-core"
+import { eq, lt, sql } from "drizzle-orm"
+import { randomUUID } from "node:crypto"
 import type { FieldPacket, QueryOptions, QueryResult } from "mysql2"
 import mysql from "mysql2/promise"
 import { parseMySqlConnectionConfig } from "./mysql-config"
+import { createReplicaHealth, type ReplicaHealth, type ReplicaHeartbeat } from "./replica-health"
 import * as schema from "./schema"
 import type { Logger } from "drizzle-orm/logger"
 
@@ -227,6 +230,32 @@ function createMySqlPool(config: mysql.PoolOptions) {
   return client
 }
 
+/**
+ * This process's heartbeat row. It goes through its own unlogged connections,
+ * so a beat never counts as a request's query or a change to member data.
+ */
+function processHeartbeat(primary: DenPrimaryDb, replica: DenPrimaryDb): ReplicaHeartbeat {
+  const table = schema.DbReplicaHeartbeatTable
+  const id = randomUUID()
+  let pruned = false
+  return {
+    async read(target) {
+      const [row] = await (target === "primary" ? primary : replica)
+        .select({ beatAt: table.beatAt }).from(table).where(eq(table.id, id)).limit(1)
+      return row?.beatAt ?? null
+    },
+    async write() {
+      await primary.insert(table).values({ id, beatAt: sql`CURRENT_TIMESTAMP(3)` })
+        .onDuplicateKeyUpdate({ set: { beatAt: sql`CURRENT_TIMESTAMP(3)` } })
+      // Processes that stopped leave their rows behind; each new one clears those a day old.
+      if (!pruned) {
+        pruned = true
+        await primary.delete(table).where(lt(table.beatAt, sql`CURRENT_TIMESTAMP(3) - INTERVAL 1 DAY`))
+      }
+    },
+  }
+}
+
 export function createDenDb(input: {
   databaseUrl?: string | null
   mode?: DenDbMode
@@ -238,12 +267,16 @@ export function createDenDb(input: {
    * primary instead (e.g. once the current request has written).
    */
   readFromPrimary?: () => boolean
+  /** How often a configured replica is checked; 0 checks only when asked (tests). */
+  replicaCheckIntervalMs?: number
   logger?: Logger
 }) {
   const mode = resolveDbMode(input)
   const readReplica = input.readReplica ?? null
-  const route = (primary: DenPrimaryDb, replica: DenPrimaryDb): DenDb =>
-    withReplicas(primary, [replica], () => (input.readFromPrimary?.() ? primary : replica))
+  const checkReplica = (heartbeat: ReplicaHeartbeat) => createReplicaHealth({ heartbeat, intervalMs: input.replicaCheckIntervalMs })
+  // Reads use the replica only while its health check finds it current.
+  const route = (primary: DenPrimaryDb, replica: DenPrimaryDb, health: ReplicaHealth | null): DenDb =>
+    withReplicas(primary, [replica], () => (input.readFromPrimary?.() || (health !== null && !health.healthy()) ? primary : replica))
 
   if (mode === "planetscale") {
     const credentials = input.planetscale ?? (input.databaseUrl ? parsePlanetScaleConfigFromDatabaseUrl(input.databaseUrl) : null)
@@ -257,7 +290,10 @@ export function createDenDb(input: {
       ? new Client({ host: credentials.host, ...readReplica, fetch: createRetryingPlanetScaleFetch() })
       : null
     const replica: DenPrimaryDb = readClient ? drizzlePlanetScale(readClient, { schema, logger: input.logger }) : primary
-    return { client, readClient, db: route(primary, replica) }
+    const replicaHealth = readClient
+      ? checkReplica(processHeartbeat(drizzlePlanetScale(client, { schema }), drizzlePlanetScale(readClient, { schema })))
+      : null
+    return { client, readClient, db: route(primary, replica, replicaHealth), replicaHealth }
   }
 
   if (!input.databaseUrl) {
@@ -274,5 +310,11 @@ export function createDenDb(input: {
   const replica = readClient
     ? (drizzle(readClient, { schema, mode: "default", logger: input.logger }) as unknown as DenPrimaryDb)
     : primary
-  return { client, readClient, db: route(primary, replica) }
+  const replicaHealth = readClient
+    ? checkReplica(processHeartbeat(
+      drizzle(client, { schema, mode: "default" }) as unknown as DenPrimaryDb,
+      drizzle(readClient, { schema, mode: "default" }) as unknown as DenPrimaryDb,
+    ))
+    : null
+  return { client, readClient, db: route(primary, replica, replicaHealth), replicaHealth }
 }

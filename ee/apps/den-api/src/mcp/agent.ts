@@ -651,10 +651,11 @@ export function registerAgentMcpRoutes<T extends { Variables: RequestIdVariables
     // them in its server index, finds them in search, and builds them.
     const appAccess = { organizationId: principal.organizationId, member: memberIdentity }
     let mcpAppsPromise: Promise<McpAppEntry[]> | null = null
-    const loadMcpApps = () => mcpAppsPromise ??= listAccessibleMcpApps(appAccess).catch((error: unknown) => {
+    const listMcpApps = () => listAccessibleMcpApps(appAccess).catch((error: unknown) => {
       console.error("mcp_app_listing_failed", { organizationId: principal.organizationId, error: error instanceof Error ? error.message : String(error) })
       return []
     })
+    const loadMcpApps = () => mcpAppsPromise ??= listMcpApps()
     // OpenWork opens an App only through the server index, where Apps fill the
     // room connections leave. Every usable connection may be listed, so only
     // Apps that fit beside all of them are offered to open.
@@ -840,23 +841,28 @@ export function registerAgentMcpRoutes<T extends { Variables: RequestIdVariables
     // connection, App, skill and Automation resources load just for resource reads.
     if (method === "resources/list" || method === "resources/read") {
       if (memberIdentity) {
-        // Select before the per-member readiness probes so an ordinary client
-        // pays only for the connections it may actually see.
-        const indexCandidates = selectConnectMcpServerIndexConnections({
-          appHostClient: connectMcpAppHostSupported,
-          connections: await listUsableExternalMcpConnections({
-            organizationId,
-            orgMembershipId: memberIdentity.orgMembershipId,
-            teamIds: memberIdentity.teamIds,
-          }),
-        })
-        registerConnectMcpServerIndex({
-          server,
-          // Only the App host opens Apps; every other reader gets the connection index unchanged.
-          ...(appServersEnabled && connectMcpAppHostSupported ? { apps: await loadMcpApps() } : {}),
-          connections: await readyExternalMcpConnectionsForMember(indexCandidates, memberIdentity.orgMembershipId),
-          publicOrigin: redirectUriBase,
-        })
+        const registerIndex = async () => {
+          // Select before the per-member readiness probes so an ordinary client
+          // pays only for the connections it may actually see.
+          const indexCandidates = selectConnectMcpServerIndexConnections({
+            appHostClient: connectMcpAppHostSupported,
+            connections: await listUsableExternalMcpConnections({
+              organizationId,
+              orgMembershipId: memberIdentity.orgMembershipId,
+              teamIds: memberIdentity.teamIds,
+            }),
+          })
+          registerConnectMcpServerIndex({
+            server,
+            // Only the App host opens Apps; every other reader gets the connection index unchanged.
+            ...(appServersEnabled && connectMcpAppHostSupported ? { apps: await listMcpApps() } : {}),
+            connections: await readyExternalMcpConnectionsForMember(indexCandidates, memberIdentity.orgMembershipId),
+            publicOrigin: redirectUriBase,
+          })
+        }
+        // The App host opens only what this index lists, so it reads the
+        // primary: a lagging replica would hide an App or connection just made.
+        await (connectMcpAppHostSupported ? withPrimaryReads(registerIndex) : registerIndex())
       }
       registerAgentSkillResources({
         server,

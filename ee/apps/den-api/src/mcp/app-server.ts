@@ -42,6 +42,7 @@ import { runsWithoutClick } from "./app-tool-access.js"
 import { launchInitialResults, requiredScope, type McpAppLaunchDataStore } from "./app-launch-data.js"
 import { callMcpAppTool, mcpAppToolKeepable } from "./app-tools.js"
 import { mcpAuditPrincipal } from "../audit/mcp-service-audit.js"
+import { withPrimaryAfterMiss } from "../read-routing.js"
 import { mcpPrincipalCredentialId, type McpPrincipal } from "./auth.js"
 import { createCapabilityRegistryContext, type ExecuteCapabilityToolResult } from "./capability-registry.js"
 import { resolveMcpMemberIdentity } from "./external-capabilities.js"
@@ -106,6 +107,9 @@ function boundTool(binding: McpAppToolBinding): Tool {
 }
 
 type AppRefusal = "not_a_member" | "other_organization" | "apps_off" | "not_found"
+
+/** An App or revision this read did not find, which a lagging replica can cause. */
+const isMcpAppMiss = (error: unknown) => error instanceof McpAppError && error.status === 404
 
 const REFUSAL_MESSAGES: Record<Exclude<AppRefusal, "other_organization">, string> = {
   not_a_member: "The App is not available: this connection is not signed in to an organization you belong to.",
@@ -290,7 +294,7 @@ async function handleMcpAppServerRequestUntimed(input: {
   const access = { organizationId, member, requestScope: {} }
   let definition: McpAppServerDefinition
   try {
-    definition = await loadMcpAppServerDefinition({ ...access, appId: input.appId })
+    definition = await withPrimaryAfterMiss(() => loadMcpAppServerDefinition({ ...access, appId: input.appId }), isMcpAppMiss)
   } catch (error) {
     if (error instanceof McpAppError) return refuse("not_found")
     throw error
@@ -298,7 +302,7 @@ async function handleMcpAppServerRequestUntimed(input: {
   const server = createMcpAppServer({
     definition,
     scopes: principal.scopes,
-    loadResource: (revision) => loadMcpAppResource({ ...access, ...revision }),
+    loadResource: (revision) => withPrimaryAfterMiss(() => loadMcpAppResource({ ...access, ...revision }), isMcpAppMiss),
     callTool: (binding, args) => executeCapabilityWithBudget({
       capability: binding.capability,
       invoke: () => callMcpAppTool(capabilityContext, binding, args),
