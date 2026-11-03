@@ -549,7 +549,7 @@ function relevantPassages(text, question, maxChars) {
 /**
  * Clicks an upload control with the page's file chooser intercepted, then gives
  * the input that asked these files. The system file picker never opens.
- * @returns {Promise<"attached" | "no_file_chooser" | "single_file">}
+ * @returns {Promise<"attached" | "no_file_chooser" | "single_file" | "files_permission_changed">}
  */
 async function attachFiles(contents, point, files, signal, waitMs, beforeShare = null) {
   const cdp = contents.debugger;
@@ -609,7 +609,7 @@ export function createBrowserTaskHost({ getTab, tabsFor, ownerOf, activeFor, isV
   prepare = async (_tab) => {}, inputScale = (_tab) => 1, capture = (_tab, _viewport) => null,
   // A page receives files only after the person approves exactly these, in the chat.
   checkFiles = /** @type {(paths: string[]) => Promise<void>} */ (async () => { throw new Error("files_unavailable"); }),
-  approveFiles = async (_sessionId, _request, _signal) => false,
+  approveFiles = /** @type {(sessionId: string, request: { app: string, url: string, files: string[] }, signal: AbortSignal) => Promise<boolean | { allowed: boolean, code?: string, error?: string, revalidate?: (frameUrl?: string) => Promise<boolean> }>} */ (async (_sessionId, _request, _signal) => false),
   // A password or code is typed only on a site (exact origin) the person confirmed. Without
   // this, as on hosts that cannot ask, sign-in fields stay with the person.
   approveCredential = /** @type {((sessionId: string, request: { site: string }, signal: AbortSignal) => Promise<boolean>) | undefined} */ (undefined),
@@ -983,11 +983,12 @@ export function createBrowserTaskHost({ getTab, tabsFor, ownerOf, activeFor, isV
           // Nothing about the files is read before the person answers, so a page cannot probe
           // paths; afterwards each must be exactly the regular file approved, not a link to another.
           const approval = await approveFiles(sessionId, { app: host, url: observed.url, files: attaching }, requestSignal);
-          if (approval?.allowed === false && approval.code === "organization_policy_denied") fail(approval.code, approval.error);
-          if (approval !== true && !(approval?.allowed === true && typeof approval.revalidate === "function")) {
+          const decision = typeof approval === "object" && approval ? approval : null;
+          if (decision?.allowed === false && decision.code === "organization_policy_denied") fail(decision.code, decision.error);
+          if (approval !== true && !(decision?.allowed === true && typeof decision.revalidate === "function")) {
             fail("files_declined", "The person did not approve giving these files to the page. Nothing was dispatched.");
           }
-          fileAuthorization = approval === true ? null : approval;
+          fileAuthorization = decision;
           requestSignal.throwIfAborted();
           try { await checkFiles(attaching); }
           catch { fail("file_unavailable", "Attach readable regular files by their real absolute paths, not links. Nothing was dispatched."); }
