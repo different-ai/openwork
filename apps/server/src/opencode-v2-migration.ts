@@ -6,6 +6,7 @@ import { homedir } from "node:os";
 import { dirname, isAbsolute, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createInterface } from "node:readline";
+import { estimateHistoryCopyOffMain } from "./history-copy-preflight.js";
 import { resolveServerLogFileSink, redactServerLogFileRecord } from "./server-log-file.js";
 import { isolatedOpencodeV1Database } from "./managed-opencode.js";
 import { importNodeSqlite } from "./runtime-db.js";
@@ -14,7 +15,6 @@ import {
 } from "./managed-opencode-v2.js";
 import { attachHistory, copyHistoryBatches, externalizeHistory, numberField, openHistoryDatabase, restoreHistoryPayloads } from "./opencode-v2-history-store.js";
 import { acquireHistoryCopyLock, historyCopyFenced, rollbackPartialHistoryCopy } from "./opencode-v2-history-lock.js";
-import { estimateHistoryCopyOffMain } from "./history-copy-preflight.js";
 
 export interface EngineV2MigrationStatus {
   state: "idle" | "running" | "completed" | "error";
@@ -340,12 +340,9 @@ async function remainingCopyBytes(request: Pick<MigrationRequest, "source" | "st
   return converted * (TARGET_GROWTH_MULTIPLIER + ONE_WAL_MULTIPLIER) + target;
 }
 
-/**
- * Every check that can refuse a copy, before anything is written or any engine
- * is stopped: the saved copy belongs to this profile and the rest of it fits
- * on disk. The copy lock then checks running engines and other copies, still
- * before the target is fenced.
- */
+/** Saved-stage estimator shared by the isolated reader and separate Bun host.
+ * Profile validation must precede reading staged history or creating storage.
+ * This function does not acquire copy ownership, fence or open a target writer. */
 export async function estimateHistoryCopyBytes(request: Pick<MigrationRequest, "source" | "storageDir" | "targetDatabase">): Promise<number> {
   const saved = await checkpointAt(historyCopyPaths(request.storageDir).checkpoint);
   if (saved && saved.phase !== "completed" && (saved.source !== resolve(request.source) || saved.target !== resolve(request.targetDatabase))) {
