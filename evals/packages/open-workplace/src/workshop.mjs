@@ -28,6 +28,15 @@ export function validateParticipants(value) {
   return value.map(({ id, name, token }) => Object.freeze({ id, name, token }));
 }
 
+// An automatic guest's label ("Workshop guest 12") identifies the browser
+// workspace, not a person. Inside the fictional workplace they are a named
+// teammate, so mail reads "Jordan, …" and authors are people, not labels.
+export const GUEST_PERSONA = "Jordan Reyes";
+export function workplacePerson(participant) {
+  const name = /^guest-[a-f0-9]{24}$/.test(participant.id) ? GUEST_PERSONA : participant.name;
+  return `${name}|${participant.id}|${/^guest-/.test(participant.id) ? "Operations lead" : "Workshop participant"}`;
+}
+
 function send(res, status, body, headers = {}) {
   res.writeHead(status, { "content-type": typeof body === "string" ? "text/html; charset=utf-8" : "application/json", "cache-control": "no-store", "x-content-type-options": "nosniff", "referrer-policy": "same-origin", "content-security-policy": "default-src 'none'; connect-src 'self'; style-src 'unsafe-inline'; form-action 'self'; base-uri 'none'; frame-ancestors 'none'", ...headers });
   res.end(typeof body === "string" ? body : JSON.stringify(body));
@@ -121,7 +130,7 @@ export async function startWorkshop({ participants = [], origin, host = "127.0.0
   async function createStack(participant) {
     const directory = dataDir ? join(dataDir, "participants", participant.id) : undefined;
     if (directory) await mkdir(directory, { recursive: true, mode: 0o700 });
-    const env = { OPEN_WORKPLACE_NOW: await participantClock(participant.id, directory), OPEN_WORKPLACE_PERSON: `${participant.name}|${participant.id}|Workshop participant`, PUBLIC_URL: publicOrigin, UPLOAD_URL: publicOrigin, JIRA_PUBLIC_URL: `${publicOrigin}/jira`, CONFLUENCE_PUBLIC_URL: `${publicOrigin}/confluence`, OPEN_WORKPLACE_GATEWAY: "1" };
+    const env = { OPEN_WORKPLACE_NOW: await participantClock(participant.id, directory), OPEN_WORKPLACE_PERSON: workplacePerson(participant), PUBLIC_URL: publicOrigin, UPLOAD_URL: publicOrigin, JIRA_PUBLIC_URL: `${publicOrigin}/jira`, CONFLUENCE_PUBLIC_URL: `${publicOrigin}/confluence`, OPEN_WORKPLACE_GATEWAY: "1" };
     const service = await worker("./workshop-worker.mjs", { ...env, ...(directory ? { OPEN_WORKPLACE_PARTICIPANT_DATA_DIR: directory } : {}) });
     const stack = { ...Object.fromEntries(["microsoft", "atlassian", "web"].map((name) => [name, { child: service.child, origin: service.origins[name] }])), failed: false, stopped: false };
     service.child.once("exit", () => { if (!stack.stopped) { stack.failed = true; invalidateUploads(participant.id); } });

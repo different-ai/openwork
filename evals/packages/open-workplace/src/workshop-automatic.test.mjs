@@ -77,3 +77,10 @@ test("legacy worker capacity does not restrict independent in-memory participant
   assert.deepEqual((await (await fetch(base + "/v1.0/me/messages/mail-blueharbor-2", { headers: { cookie: cookies[0] } })).json()).categories, ["retain-memory"]);
   for (const cookie of cookies) assert.equal((await fetch(base + "/v1.0/me", { headers: { cookie } })).status, 200);
 });
+
+test("an automatic guest is a named teammate inside the fictional workplace, not its browser label", async () => {
+  const { workplacePerson, GUEST_PERSONA } = await import("./workshop.mjs");
+  assert.equal(workplacePerson({ id: "guest-" + "a".repeat(24), name: "Workshop guest 7" }), `${GUEST_PERSONA}|guest-${"a".repeat(24)}|Operations lead`);
+  // Configured participants keep the name the facilitator gave them.
+  assert.equal(workplacePerson({ id: "alice", name: "Alice Lee" }), "Alice Lee|alice|Workshop participant");
+});

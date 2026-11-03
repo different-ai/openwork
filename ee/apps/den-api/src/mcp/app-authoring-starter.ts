@@ -230,11 +230,17 @@ function textOf(response) {
   return (response?.content ?? []).filter((item) => item?.type === "text").map((item) => item.text).join("\\n").trim();
 }
 
+// A saved Workflow answers with its run receipt ({ kind: "workflow", status,
+// value, ... }); the data the App asked for is its value.
+function unwrapWorkflow(value) {
+  return isRecord(value) && value.kind === "workflow" && "value" in value ? value.value : value;
+}
+
 function valueOf(response) {
-  if (response?.structuredContent !== undefined) return response.structuredContent;
+  if (response?.structuredContent !== undefined) return unwrapWorkflow(response.structuredContent);
   const text = textOf(response);
   try {
-    return JSON.parse(text);
+    return unwrapWorkflow(JSON.parse(text));
   } catch {
     return text;
   }

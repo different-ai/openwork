@@ -2,6 +2,7 @@ import assert from "node:assert/strict"
 import { test } from "node:test"
 import { MCP_APP_INITIAL_RESULTS_META, type McpAppToolBinding } from "@openwork/types/mcp-app"
 import { appStarter } from "../src/mcp/app-authoring-starter.js"
+import { BUILD_AN_APP_SKILL_SOURCE } from "../src/mcp/build-an-app-skill.js"
 import { launchInitialResults, loadInitialResults, type McpAppLaunchDataStore } from "../src/mcp/app-launch-data.js"
 import type { ExecuteCapabilityToolResult } from "../src/mcp/capability-registry.js"
 import { DEN_MCP_READ_SCOPE, DEN_MCP_WRITE_SCOPE } from "../src/mcp/scopes.js"
@@ -207,4 +208,28 @@ test("kept launch data that does not parse, or a store that cannot keep it, load
 
 test("Apps built from the starter read initial results, so new Apps load with their launch", () => {
   assert.ok(appStarter([binding({})]).reactSource.includes(MCP_APP_INITIAL_RESULTS_META))
+})
+
+test("the starter reads a saved Workflow's value, not its run receipt", () => {
+  const source = appStarter([binding({})]).reactSource
+  const pick = (name: string) => {
+    const start = source.indexOf(`function ${name}(`)
+    assert.ok(start >= 0, `starter defines ${name}`)
+    let depth = 0
+    for (let i = source.indexOf("{", start); i < source.length; i++) {
+      if (source[i] === "{") depth++
+      else if (source[i] === "}" && --depth === 0) return source.slice(start, i + 1)
+    }
+    throw new Error(`unterminated ${name}`)
+  }
+  const valueOf = new Function(`${pick("isRecord")}\n${pick("textOf")}\n${pick("unwrapWorkflow")}\n${pick("valueOf")}\nreturn valueOf;`)() as (response: unknown) => unknown
+  const data = { gates: [{ id: "g1" }], blockers: [] }
+  const receipt = { kind: "workflow", status: "executed", name: "Launch room data", value: data, receiptId: "rcp_1" }
+  assert.deepEqual(valueOf({ structuredContent: receipt }), data)
+  assert.deepEqual(valueOf({ content: [{ type: "text", text: JSON.stringify(receipt) }] }), data)
+  // Other tools' results pass through unchanged, including objects that merely have a value field.
+  assert.deepEqual(valueOf({ structuredContent: { value: 3, unit: "USD" } }), { value: 3, unit: "USD" })
+  assert.equal(valueOf({ content: [{ type: "text", text: "plain" }] }), "plain")
+  // Authors who replace the starter are told too.
+  assert.match(BUILD_AN_APP_SKILL_SOURCE, /A saved Workflow answers with its run receipt/)
 })

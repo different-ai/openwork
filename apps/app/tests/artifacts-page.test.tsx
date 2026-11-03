@@ -35,9 +35,9 @@ mock.module("../src/react-app/domains/apps/use-apps", () => ({
   useSavedApps: () => ({ identityVerified: verified, available: true, canManage: true, scope: [scope], query: { isSuccess: true, isError: false, data: { items: [legacy] } } }),
 }));
 mock.module("../src/react-app/domains/dashboard/mcp-app-tile", () => ({
-  McpAppTile: ({ entry, cacheScopeKey }: { entry: { id: string }; cacheScopeKey: string }) => {
+  McpAppTile: ({ entry, cacheScopeKey, chromeTarget, renderActions }: { entry: { id: string }; cacheScopeKey: string; chromeTarget?: HTMLElement | null; renderActions?: (props: { onRefresh?: () => void; refreshing: boolean }) => unknown }) => {
     useEffect(() => { launches.push(`${cacheScopeKey}/${entry.id}`); mounts += 1; return () => { mounts -= 1; }; }, []);
-    return <div data-live-artifact={entry.id}>Live artifact</div>;
+    return <div data-live-artifact={entry.id}>Live artifact{chromeTarget ? createPortal(<><span role="status">Updating…</span>{renderActions?.({ onRefresh: () => {}, refreshing: false }) as never}</>, chromeTarget) : null}</div>;
   },
 }));
 mock.module("../src/react-app/domains/dashboard/dashboard-apps", () => ({ SavedDashboardApp: ({ app }: { app: SavedAppSummary }) => <div data-saved-artifact={app.view.id}>Saved artifact</div> }));
@@ -212,4 +212,17 @@ test("New artifact opens the composer callback directly", async () => {
   expect(createPrompts[0]).toContain("Create one live artifact");
   expect(host.querySelector("[role=dialog]")).toBeNull();
   expect(launches).toEqual([]);
+});
+
+test("the open artifact's refresh state and action sit in the toolbar, which stays put while the artifact scrolls", async () => {
+  await render();
+  await click("Open Overview");
+  const slot = host.querySelector("[data-artifact-host-chrome]");
+  const body = host.querySelector("[data-artifact-detail-body]");
+  expect(slot?.textContent).toContain("Updating…");
+  expect(slot?.innerHTML).toContain("Refresh Overview");
+  // The toolbar is outside the scrolling body, so it never scrolls away.
+  expect(body?.contains(slot ?? null)).toBe(false);
+  expect(body?.className).toContain("overflow-y-auto");
+  expect(body?.querySelector('[data-live-artifact="personal:overview"]')).not.toBeNull();
 });

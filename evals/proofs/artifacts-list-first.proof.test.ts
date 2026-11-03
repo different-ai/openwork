@@ -41,22 +41,23 @@ test("a member browses artifacts before opening one and keeps its unsaved review
     await user.screenshot();
   });
 
-  await step("visiting Calendar leaves the checklist running but out of view", async () => {
-    await user.click({ role: "button", label: "Calendar" });
-    await user.see({ role: "button", label: "Today" }, { timeoutMs: 60_000 });
+  // The desktop Calendar was removed (#6801); Automations is the other full page.
+  await step("visiting Automations leaves the checklist running but out of view", async () => {
+    await user.click({ role: "button", label: "Automations" });
+    await user.see({ role: "button", label: "New Automation" }, { timeoutMs: 60_000 });
     await user.notSee({ role: "button", label: "Open Project checklist" });
     const frames = await world.frames();
     expect(frames).toEqual(openedFrames);
-    evidence.recordAssertionEvidence("Calendar is visible while the same single checklist frame stays mounted", JSON.stringify({ before: openedFrames, inCalendar: frames }), JSON.stringify(frames) === JSON.stringify(openedFrames));
+    evidence.recordAssertionEvidence("Automations is visible while the same single checklist frame stays mounted", JSON.stringify({ before: openedFrames, inAutomations: frames }), JSON.stringify(frames) === JSON.stringify(openedFrames));
     await user.screenshot();
   });
 
-  await step("returning from Calendar restores the reviewed checklist without reopening it", async () => {
+  await step("returning from Automations restores the reviewed checklist without reopening it", async () => {
     await user.click({ role: "button", label: "Artifacts" });
     await user.see({ role: "heading", label: "Reviewed", mcpApp: inside });
     const frames = await world.frames();
     expect(frames).toEqual(openedFrames);
-    evidence.recordAssertionEvidence("The review and original iframe survive the Calendar round trip", JSON.stringify({ before: openedFrames, returned: frames, review: "Reviewed" }), JSON.stringify(frames) === JSON.stringify(openedFrames));
+    evidence.recordAssertionEvidence("The review and original iframe survive the Automations round trip", JSON.stringify({ before: openedFrames, returned: frames, review: "Reviewed" }), JSON.stringify(frames) === JSON.stringify(openedFrames));
     await user.screenshot();
   });
 
