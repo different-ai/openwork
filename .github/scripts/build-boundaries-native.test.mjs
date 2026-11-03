@@ -64,15 +64,32 @@ test("the workflow CLI commands force manual builds but skip a known empty push 
 
 test("both alpha platforms depend on the desktop scope while retaining manual platform selection", () => {
   const workflow = workflows.get("desktop");
-  for (const [name, otherPlatform] of [
-    ["publish-alpha-macos-aarch64", "windows-x64"],
-    ["publish-alpha-windows-x64", "macos-arm64"],
-  ]) {
-    const publish = job(workflow, name);
-    // The packaged Linux smoke must pass before any alpha is published.
-    assert.match(publish, /needs: \[changes, packaged-smoke\]/);
-    assert.ok(publish.includes(`if: needs.changes.outputs.affected == 'true' && (github.event_name == 'push' || inputs.platform != '${otherPlatform}')`));
-    assert.match(publish, /pnpm --filter @openwork\/desktop\.\.\. --filter @openwork\/app\.\.\. --filter openwork-server\.\.\. install --frozen-lockfile --prefer-offline/);
+  const install = /pnpm --filter @openwork\/desktop\.\.\. --filter @openwork\/app\.\.\. --filter openwork-server\.\.\. install --frozen-lockfile --prefer-offline/;
+  // macOS builds alongside the packaged smoke and other builds; only its
+  // unprivileged publication waits for the smoke and takes the channel lock.
+  const macBuild = job(workflow, "build-alpha-macos-aarch64");
+  assert.match(macBuild, /^    needs: changes$/m);
+  assert.ok(macBuild.includes("if: needs.changes.outputs.affected == 'true' && (github.event_name == 'push' || inputs.platform != 'windows-x64')"));
+  assert.match(macBuild, install);
+  assert.match(macBuild, /contents: read/);
+  assert.doesNotMatch(macBuild, /concurrency:|contents: write|gh release/);
+  const macPublish = job(workflow, "publish-alpha-macos-aarch64");
+  // The packaged Linux smoke must pass before any alpha is published.
+  assert.match(macPublish, /needs: \[changes, packaged-smoke, build-alpha-macos-aarch64\]/);
+  assert.ok(macPublish.includes("(inputs.platform != 'windows-x64' && inputs.publish == true)"));
+  assert.match(macPublish, /concurrency:\n      group: alpha-macos-\$\{\{ inputs\.channel_tag \|\| 'alpha-macos-latest' \}\}\n      cancel-in-progress: false/);
+  assert.doesNotMatch(macPublish, /environment:|secrets\.|runs-on: macos/);
+
+  const windows = job(workflow, "publish-alpha-windows-x64");
+  assert.match(windows, /needs: \[changes, packaged-smoke\]/);
+  assert.ok(windows.includes("if: needs.changes.outputs.affected == 'true' && (github.event_name == 'push' || inputs.platform != 'macos-arm64')"));
+  assert.match(windows, install);
+
+  // Versions read only tag names; fetching every branch's history cost minutes.
+  assert.doesNotMatch(workflow, /fetch-depth: 0/);
+  for (const build of [macBuild, windows]) {
+    assert.ok(build.includes("git fetch --no-tags --depth=1 --filter=tree:0 origin '+refs/tags/v*:refs/tags/v*'"));
+    assert.match(build, /PNPM_CONFIG_VERIFY_DEPS_BEFORE_RUN: "false"/);
   }
 });
 

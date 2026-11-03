@@ -51,9 +51,12 @@ app-related push to `dev`. Each platform has its own rolling prerelease:
 Versions use the next stable patch plus `-alpha.<run>+<sha>` (Windows adds
 `.<attempt>` after the run number so reruns never overwrite signed installers),
 stamped only in the build workspace. Uploads put versioned assets first and the
-manifest last; each release retains the newest 100 builds. Windows skips
-publications older than an uploaded build and also protects the currently
-published run from pruning. These prereleases do not replace
+manifest last; each release retains the newest 100 builds. macOS builds run
+in parallel with the packaged smoke and with each other; only the upload to
+`alpha-macos-latest` waits for the smoke and is serialized. Both platforms skip
+publications older than an uploaded build and protect the currently published
+run from pruning. A build-only macOS dispatch keeps its signed output in the
+run's `openwork-alpha-macos-arm64` artifact for one day. These prereleases do not replace
 the stable Latest release. Windows requires the same `windows-signing`
 environment and Azure OIDC/signing configuration as stable, with no unsigned
 fallback.
