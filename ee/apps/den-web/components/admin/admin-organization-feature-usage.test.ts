@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { FEATURES } from "@openwork/features";
-import { filterFeatureUsage, groupFeatureUsage, groupUsageByMember, NO_FEATURE_FILTER, onFor, parseAdminOrganizationFeatureUsage, sortFeatureUsage, turnedOnAt, type AdminFeatureUsage } from "./admin-organization-feature-usage";
+import { filterFeatureUsage, groupFeatureUsage, isNewFeature, NEW_FEATURE_DAYS, splitNewFeatures, groupUsageByMember, NO_FEATURE_FILTER, onFor, parseAdminOrganizationFeatureUsage, sortFeatureUsage, turnedOnAt, type AdminFeatureUsage } from "./admin-organization-feature-usage";
 
 const member = { memberId: "om_a", name: "Member A", email: "a@example.test", enabled: false, firstUsedAt: "2026-10-01T10:00:00.000Z", lastUsedAt: "2026-10-26T10:00:00.000Z", daysUsed: 4 };
 
@@ -85,4 +85,39 @@ test("grouping by member lists each person's features, most recent use first", (
   // A member search keeps all their features; a feature search keeps only matching ones.
   assert.deepEqual(groupUsageByMember(sample, "member a").map((person) => person.uses.length), [2]);
   assert.deepEqual(groupUsageByMember(sample, FEATURES.nativeDictation.label).map((person) => [person.memberId, person.uses.map((use) => use.key)]), [["om_a", ["nativeDictation"]]]);
+});
+
+test("features added in the last two weeks are new and lead the default view, newest first", () => {
+  const addedOn = (key: AdminFeatureUsage["key"]) => Date.parse(`${FEATURES[key].added}T00:00:00.000Z`);
+  const now = addedOn("autoRouter") + 2 * 24 * 60 * 60 * 1000;
+  assert.equal(isNewFeature("autoRouter", now), true);
+  assert.equal(isNewFeature("autoRouter", addedOn("autoRouter") + NEW_FEATURE_DAYS * 24 * 60 * 60 * 1000), false);
+  const { fresh, rest } = splitNewFeatures(sample, now);
+  assert.deepEqual(keys(fresh), keys(sample.filter((feature) => isNewFeature(feature.key, now))).sort((a, b) => FEATURES[b].added.localeCompare(FEATURES[a].added)));
+  assert.ok(keys(fresh).includes("autoRouter"));
+  assert.deepEqual([...keys(fresh), ...keys(rest)].sort(), keys(sample).sort());
+  assert.deepEqual(keys(filterFeatureUsage(sample, { ...NO_FEATURE_FILTER, status: "new" }, 3, now)), keys(sample.filter((feature) => isNewFeature(feature.key, now))));
+});
+
+test("settings group newest first, by author or by category, listing every feature once", async () => {
+  const { groupFeatureKeys } = await import("./admin-organization-feature-controls");
+  const all = Object.keys(FEATURES) as AdminFeatureUsage["key"][];
+  const newest = [...all].sort((a, b) => FEATURES[b].added.localeCompare(FEATURES[a].added))[0]!;
+  const now = Date.parse(`${FEATURES[newest].added}T00:00:00.000Z`) + 24 * 60 * 60 * 1000;
+  for (const grouping of ["recent", "category", "author"] as const) {
+    const groups = groupFeatureKeys(all, grouping, now);
+    assert.deepEqual(groups.flatMap((group) => group.keys).sort(), [...all].sort(), grouping);
+  }
+  const recent = groupFeatureKeys(all, "recent", now);
+  assert.equal(recent[0]?.id, "new");
+  assert.equal(recent[0]?.keys[0], newest);
+  assert.ok(recent[0]?.keys.every((key) => isNewFeature(key, now)));
+  const added = recent.flatMap((group) => group.keys.map((key) => FEATURES[key].added));
+  assert.deepEqual(added, [...added].sort().reverse());
+  const byAuthor = groupFeatureKeys(all, "author", now);
+  assert.deepEqual(byAuthor.map((group) => group.id), [...byAuthor.map((group) => group.id)].sort((a, b) => a.localeCompare(b, undefined, { sensitivity: "base" })));
+  for (const group of byAuthor) {
+    assert.equal(group.label, `@${group.id}`);
+    assert.ok(group.keys.every((key) => FEATURES[key].author === group.id));
+  }
 });

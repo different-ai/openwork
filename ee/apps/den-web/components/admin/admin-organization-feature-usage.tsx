@@ -4,6 +4,7 @@ import { ChevronRight, Search } from "lucide-react";
 import { useEffect, useState } from "react";
 import { FEATURE_CATEGORIES, FEATURE_CATEGORY_KEYS, FEATURES, isFeatureKey, type FeatureCategory, type FeatureKey } from "@openwork/features";
 import { DenButton } from "../../app/(den)/_components/ui/button";
+import { DenChip } from "../../app/(den)/_components/ui/chip";
 import { DenInput } from "../../app/(den)/_components/ui/input";
 import { DenSegmented } from "../../app/(den)/_components/ui/segmented";
 import { DenSelect } from "../../app/(den)/_components/ui/select";
@@ -82,27 +83,40 @@ export const onFor = (enabled: number, total: number) => `${enabled} of ${total}
 const day = (value: string) => new Date(value).toLocaleDateString(undefined, { day: "numeric", month: "short", year: "numeric" });
 
 export type FeatureUsageGrouping = "feature" | "member" | "turnedOn" | "added";
-export type FeatureUsageStatus = "all" | "used" | "unused" | "everyone" | "some" | "off";
+export type FeatureUsageStatus = "all" | "new" | "used" | "unused" | "everyone" | "some" | "off";
 export type FeatureUsageFilter = { search: string; status: FeatureUsageStatus; category: FeatureCategory | "all" };
 export type FeatureUsageGroup = { id: string; label: string; features: AdminFeatureUsage[] };
 export type MemberFeatureUse = Omit<AdminFeatureUsageMember, "memberId" | "name" | "email"> & { key: FeatureKey };
 export type MemberFeatureUsage = { memberId: string; name: string | null; email: string | null; lastUsedAt: string; uses: MemberFeatureUse[] };
+
+/** Features added to the registry this recently lead the default view. */
+export const NEW_FEATURE_DAYS = 14;
+const DAY_MS = 24 * 60 * 60 * 1000;
+const addedAt = (key: FeatureKey) => `${FEATURES[key].added}T00:00:00.000Z`;
+export const isNewFeature = (key: FeatureKey, now = Date.now()) => now - Date.parse(addedAt(key)) < NEW_FEATURE_DAYS * DAY_MS;
+
+/** New features, newest first, then everything else in the order given. */
+export function splitNewFeatures(features: readonly AdminFeatureUsage[], now = Date.now()): { fresh: AdminFeatureUsage[]; rest: AdminFeatureUsage[] } {
+  const fresh = features.filter((feature) => isNewFeature(feature.key, now)).sort((a, b) => FEATURES[b.key].added.localeCompare(FEATURES[a.key].added));
+  return { fresh, rest: features.filter((feature) => !isNewFeature(feature.key, now)) };
+}
 
 const GROUPINGS = [
   { value: "feature", label: "Feature" }, { value: "member", label: "Member" },
   { value: "turnedOn", label: "Turned on" }, { value: "added", label: "Date added" },
 ] as const satisfies readonly { value: FeatureUsageGrouping; label: string }[];
 const STATUSES = [
-  { value: "all", label: "Any status" }, { value: "used", label: "Used in the last 30 days" }, { value: "unused", label: "No recorded use" },
+  { value: "all", label: "Any status" }, { value: "new", label: `Added in the last ${NEW_FEATURE_DAYS} days` }, { value: "used", label: "Used in the last 30 days" }, { value: "unused", label: "No recorded use" },
   { value: "everyone", label: "On for every member" }, { value: "some", label: "On for some members" }, { value: "off", label: "Off for every member" },
 ] as const satisfies readonly { value: FeatureUsageStatus; label: string }[];
 export const NO_FEATURE_FILTER: FeatureUsageFilter = { search: "", status: "all", category: "all" };
 
 const matches = (query: string, ...values: (string | null)[]) => values.some((value) => value?.toLowerCase().includes(query));
 
-function hasStatus(feature: AdminFeatureUsage, status: FeatureUsageStatus, activeMembers: number) {
+function hasStatus(feature: AdminFeatureUsage, status: FeatureUsageStatus, activeMembers: number, now: number) {
   switch (status) {
     case "all": return true;
+    case "new": return isNewFeature(feature.key, now);
     case "used": return feature.usedLast30Days > 0;
     case "unused": return feature.members.length === 0;
     case "everyone": return activeMembers > 0 && feature.enabledMembers >= activeMembers;
@@ -112,9 +126,9 @@ function hasStatus(feature: AdminFeatureUsage, status: FeatureUsageStatus, activ
 }
 
 /** Status and category always apply; search matches a feature's name or key, or a member who used it. */
-export function filterFeatureUsage(features: readonly AdminFeatureUsage[], filter: FeatureUsageFilter, activeMembers: number): AdminFeatureUsage[] {
+export function filterFeatureUsage(features: readonly AdminFeatureUsage[], filter: FeatureUsageFilter, activeMembers: number, now = Date.now()): AdminFeatureUsage[] {
   const query = filter.search.trim().toLowerCase();
-  return features.filter((feature) => hasStatus(feature, filter.status, activeMembers)
+  return features.filter((feature) => hasStatus(feature, filter.status, activeMembers, now)
     && (filter.category === "all" || FEATURES[feature.key].category === filter.category)
     && (!query || matches(query, FEATURES[feature.key].label, feature.key) || feature.members.some((member) => matches(query, member.name, member.email))));
 }
@@ -125,8 +139,7 @@ export function turnedOnAt(feature: AdminFeatureUsage): string | null {
   return change && feature.enabledMembers > 0 && (change.action === "on" || change.action === "restored") ? change.at : null;
 }
 
-const monthLabel = (iso: string) => new Intl.DateTimeFormat(undefined, { month: "long", year: "numeric", timeZone: "UTC" }).format(new Date(iso));
-const addedAt = (key: FeatureKey) => `${FEATURES[key].added}T00:00:00.000Z`;
+export const monthLabel = (iso: string) => new Intl.DateTimeFormat(undefined, { month: "long", year: "numeric", timeZone: "UTC" }).format(new Date(iso));
 
 /** UTC calendar months, newest first; features without a date go last, still on before off. */
 export function groupFeatureUsage(features: readonly AdminFeatureUsage[], grouping: "turnedOn" | "added"): FeatureUsageGroup[] {
@@ -246,9 +259,12 @@ export function AdminOrganizationFeatureUsageView({ organizationId, refreshKey, 
     : grouping === "added" ? { key: "added", header: "Added", width: "130px", render: (feature) => day(addedAt(feature.key)) } : null;
 
   const columns: DenTableColumn<AdminFeatureUsage>[] = [
-    { key: "feature", header: "Feature", render: (feature) => feature.members.length > 0
-      ? <ExpandButton id={`admin-feature-usage-members-${feature.key}`} testId={`admin-feature-usage-toggle-${feature.key}`} open={open.has(feature.key)} onToggle={() => setOpen((current) => toggled(current, feature.key))}>{FEATURES[feature.key].label}</ExpandButton>
-      : <span className="pl-5 text-xs font-medium text-gray-900">{FEATURES[feature.key].label}</span> },
+    { key: "feature", header: "Feature", render: (feature) => <span className="inline-flex min-w-0 flex-wrap items-center gap-2">
+      {feature.members.length > 0
+        ? <ExpandButton id={`admin-feature-usage-members-${feature.key}`} testId={`admin-feature-usage-toggle-${feature.key}`} open={open.has(feature.key)} onToggle={() => setOpen((current) => toggled(current, feature.key))}>{FEATURES[feature.key].label}</ExpandButton>
+        : <span className="pl-5 text-xs font-medium text-gray-900">{FEATURES[feature.key].label}</span>}
+      {isNewFeature(feature.key) ? <DenChip tone="info" title={`Added ${day(addedAt(feature.key))}`} data-testid={`admin-feature-usage-new-${feature.key}`}>New</DenChip> : null}
+    </span> },
     ...(dateColumn ? [dateColumn] : []),
     { key: "enabled", header: "On for", width: "170px", render: (feature) => onFor(feature.enabledMembers, usage?.activeMembers ?? 0) },
     { key: "used", header: "Used", width: "210px", render: (feature) => feature.members.length === 0
@@ -318,7 +334,20 @@ export function AdminOrganizationFeatureUsageView({ organizationId, refreshKey, 
           </p>
         </div>
         <div className="mt-3">
-          {grouping === "feature" ? featureTable(filtered) : null}
+          {grouping === "feature" ? (() => {
+            const { fresh, rest } = splitNewFeatures(filtered);
+            if (fresh.length === 0) return featureTable(filtered);
+            return <>
+              <section className="min-w-0" aria-labelledby="admin-feature-usage-new-heading" data-testid="admin-feature-usage-new">
+                <h3 id="admin-feature-usage-new-heading" className="mb-1 text-xs font-semibold uppercase tracking-wide text-slate-500">New in the last {NEW_FEATURE_DAYS} days · {fresh.length}</h3>
+                {featureTable(fresh)}
+              </section>
+              {rest.length > 0 ? <section className="mt-4 min-w-0" aria-labelledby="admin-feature-usage-rest-heading">
+                <h3 id="admin-feature-usage-rest-heading" className="mb-1 text-xs font-semibold uppercase tracking-wide text-slate-500">All other features · {rest.length}</h3>
+                {featureTable(rest)}
+              </section> : null}
+            </>;
+          })() : null}
           {grouping === "member" ? <DenTable columns={memberColumns} rows={people} getRowKey={(person) => person.memberId} density="compact"
             renderRowDetail={(person) => openMembers.has(person.memberId) ? <MemberFeatures person={person} /> : null}
             emptyLabel={filtering ? "No member used a feature that matches these filters." : "No member has used a feature yet."} /> : null}
