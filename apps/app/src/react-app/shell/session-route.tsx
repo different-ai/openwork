@@ -957,6 +957,7 @@ export function SessionRoute() {
   }, [selectedSessionId, selectedWorkspaceId, workspaceSessionGroups]);
   // Sidebar row, palette, header button and Cmd/Ctrl+Shift+E all run this one toggle.
   const currentSessionSettle = useSessionSettleState(
+    selectedWorkspaceId,
     selectedSidebarSession,
     selectedSessionId ? sidebarSessionStatusById[selectedSessionId] : undefined,
     getDisplaySessionTitle(selectedSidebarSession?.title),

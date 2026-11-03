@@ -68,7 +68,7 @@ function autoSettleLabel(days: number) {
   return days === 0 ? t("settings.auto_settle.never") : t("settings.auto_settle.days", { count: days });
 }
 
-/** Idle sessions move to their workspace's Settled row after this long. */
+/** Idle, ungrouped sessions move to the Feed's Settled shelf after this long. */
 function AutoSettleSettings() {
   return useDesktopFeature("settledSessions") ? <AutoSettleSection /> : null;
 }

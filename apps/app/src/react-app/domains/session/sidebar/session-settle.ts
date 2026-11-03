@@ -132,6 +132,8 @@ export function useSettleNow(): number {
 }
 
 export type SessionSettleState = {
+  /** Settling belongs only to ungrouped sessions in the Feed. */
+  enabled: boolean;
   settled: boolean;
   /** Settle is offered: the session is idle, not archived and not settled yet. */
   canSettle: boolean;
@@ -139,6 +141,7 @@ export type SessionSettleState = {
 };
 
 export function useSessionSettleState(
+  workspaceId: string,
   session: SessionTimes | null | undefined,
   status: string | undefined,
   title: string,
@@ -146,6 +149,8 @@ export function useSessionSettleState(
   enabled: boolean,
 ): SessionSettleState {
   const sessionId = session?.id ?? "";
+  const sidebarView = useSessionManagementStore((state) => state.sidebarView);
+  const groupId = useSessionManagementStore((state) => state.groupsByWorkspace[workspaceId]?.assignments[sessionId]);
   const entry = useSessionManagementStore((state) => state.settledById[sessionId]);
   const pinned = useSessionManagementStore((state) => state.pinnedIds.includes(sessionId));
   const unread = useSessionManagementStore((state) => state.unreadIds.includes(sessionId));
@@ -153,10 +158,11 @@ export function useSessionSettleState(
   const now = useSettleNow();
   return useMemo(() => {
     // Sub-agent sessions never get their own sidebar row, so only root sessions settle.
-    if (!enabled || !session || (session.time?.archived ?? 0) > 0 || session.parentID?.trim()) return NOT_SETTLEABLE;
+    if (!enabled || sidebarView !== "feed" || groupId || !session || (session.time?.archived ?? 0) > 0 || session.parentID?.trim()) return NOT_SETTLEABLE;
     const activityAt = sessionActivityAt(session);
     const settled = isSessionSettled({ activityAt, entry, status, pinned, unread, autoSettleDays, now });
     return {
+      enabled: true,
       settled,
       canSettle: !settled && canSettleSessionStatus(status),
       toggle: () => {
@@ -164,10 +170,10 @@ export function useSessionSettleState(
         else if (canSettleSessionStatus(status)) settleSession(session.id, title, activityAt);
       },
     };
-  }, [autoSettleDays, enabled, entry, now, pinned, session, status, title, unread]);
+  }, [autoSettleDays, enabled, entry, groupId, now, pinned, session, sidebarView, status, title, unread]);
 }
 
-const NOT_SETTLEABLE: SessionSettleState = { settled: false, canSettle: false, toggle: () => undefined };
+const NOT_SETTLEABLE: SessionSettleState = { enabled: false, settled: false, canSettle: false, toggle: () => undefined };
 
 export function settleSession(sessionId: string, title: string, activityAt: number) {
   const snapshot = useSessionManagementStore.getState().settle(sessionId, activityAt);
