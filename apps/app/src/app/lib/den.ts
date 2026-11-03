@@ -4037,6 +4037,14 @@ export function createDenClient(options: {
       );
     },
 
+    async deleteBuiltMcpApp(orgId: string, appId: string): Promise<void> {
+      await requestJson<unknown>(
+        baseUrls,
+        `/v1/config-objects/${encodeURIComponent(appId)}/delete`,
+        { method: "POST", token, organizationId: orgId, body: {} },
+      );
+    },
+
     async archivePlugin(orgId: string, pluginId: string): Promise<void> {
       await requestJson<unknown>(
         baseUrls,

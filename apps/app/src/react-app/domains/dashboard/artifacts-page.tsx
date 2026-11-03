@@ -2,8 +2,9 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { ArrowLeft, Blocks, ChevronRight, MessageSquare, Pin, PinOff, Plus, RefreshCw, Share2 } from "lucide-react";
+import { ArrowLeft, Blocks, ChevronRight, MessageSquare, Pin, PinOff, Plus, RefreshCw, Share2, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
 import { BuiltAppShareDialog } from "../apps/built-app-share-button";
@@ -12,6 +13,7 @@ import { useBuiltDashboardApps } from "./built-dashboard-apps";
 import { SavedDashboardApp, type CreateDashboardApp } from "./dashboard-apps";
 import { McpAppTile, type DashboardLaunchEndpoint } from "./mcp-app-tile";
 import { useArtifactSurfaceActive } from "./retained-artifact-surface";
+import { removeDashboardTileCache } from "./dashboard-tile-cache";
 import { artifactRows, groupArtifacts, readArtifactSelection, rememberArtifactSelection, selectedArtifact, type ArtifactRow } from "./artifacts-workspace";
 
 const CREATE_ARTIFACT_PROMPT = "Create one live artifact. Use my request to build and save one app that fetches fresh data with each viewer’s own connections whenever opened or refreshed. My artifact should ";
@@ -111,6 +113,16 @@ export function ArtifactsPage({ onCreateApp, fallbackEndpoints, headerActionsTar
               if (selected.kind === "built") built.setAdded(selected.app.connectionId, !selected.pinned);
               else placement.mutate({ appId: selected.app.view.id, added: !selected.pinned });
             }}>{selected.pinned ? <PinOff className="size-4" /> : <Pin className="size-4" />}{selected.pinned ? "Unpin" : "Pin"}</Button> : null}
+            {selected.kind === "built" && selected.app.canDelete ? <ArtifactDelete key={`${scope}:delete:${selected.id}`} active={active} title={selected.title}
+              onDelete={async () => {
+                if (!built.client || !built.orgId) throw new Error("Sign in to delete this artifact.");
+                await built.client.deleteBuiltMcpApp(built.orgId, selected.app.connectionId);
+                built.setAdded(selected.app.connectionId, false);
+                removeDashboardTileCache(scope, selected.id);
+                rememberArtifactSelection(scope, null);
+                setSelection({ scope, id: null });
+                await cache.invalidateQueries({ queryKey: ["built-dashboard-apps", ...built.scope] });
+              }} /> : null}
             {selected.kind === "built" ? <>
               <ArtifactShare key={`${scope}:${selected.id}`} active={active} pluginId={selected.app.pluginId} title={selected.title} />
               <Button variant="ghost" size="sm" disabled={discuss.isPending} onClick={() => discuss.mutate({ appId: selected.app.connectionId, title: selected.title })}><MessageSquare className="size-4" />Open in chat</Button>
@@ -124,6 +136,28 @@ export function ArtifactsPage({ onCreateApp, fallbackEndpoints, headerActionsTar
       </section> : <div className="hidden min-w-0 flex-1 items-center justify-center p-6 md:flex"><p className="text-sm text-muted-foreground">Select an artifact to open it.</p></div>}
     </div>
   </div>;
+}
+
+function ArtifactDelete({ title, active, onDelete }: { title: string; active: boolean; onDelete: () => Promise<void> }) {
+  const [open, setOpen] = useState(false);
+  const deletion = useMutation({ mutationFn: onDelete });
+  useEffect(() => { if (!active) setOpen(false); }, [active]);
+  return <>
+    <Button variant="ghost" size="sm" disabled={!active} onClick={() => { deletion.reset(); setOpen(true); }}><Trash2 className="size-4" />Delete</Button>
+    <Dialog open={active && open} onOpenChange={(next) => { if (!deletion.isPending) setOpen(next); }}>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>Delete “{title}”?</DialogTitle>
+          <DialogDescription>This removes the artifact for everyone who can open it.</DialogDescription>
+        </DialogHeader>
+        {deletion.error ? <p role="alert" className="text-sm text-destructive">{deletion.error.message}</p> : null}
+        <DialogFooter>
+          <Button variant="outline" disabled={deletion.isPending} onClick={() => setOpen(false)}>Cancel</Button>
+          <Button variant="destructive" disabled={deletion.isPending} onClick={() => deletion.mutate()}>{deletion.isPending ? "Deleting…" : "Delete artifact"}</Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  </>;
 }
 
 function ArtifactShare({ pluginId, title, active }: { pluginId: string; title: string; active: boolean }) {

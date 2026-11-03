@@ -12,6 +12,7 @@ import { orgMemberRoute, resolveMemberTeamsMiddleware } from "../../middleware/i
 import { forbiddenSchema, jsonResponse, unauthorizedSchema } from "../../openapi.js"
 import type { MemberTeamSummary } from "../../orgs.js"
 import { connectMcpAppHostServerName, projectedMcpToolName } from "./mcp-connections.js"
+import { resolvePluginArchConfigObjectRoles } from "./plugin-system/access.js"
 import type { OrgRouteVariables } from "./shared.js"
 
 const builtMcpAppSchema = z.object({
@@ -28,6 +29,7 @@ const builtMcpAppSchema = z.object({
   requiredInputKeys: z.array(z.string()),
   requiresApproval: z.boolean(),
   isOwner: z.boolean().describe("Whether the calling member created this App. Display provenance only; not permission to edit or share."),
+  canDelete: z.boolean().describe("Whether the calling member manages this App, which the delete route requires. The route still checks for itself."),
 }).meta({ ref: "BuiltMcpApp" })
 
 const builtMcpAppListResponseSchema = z.object({
@@ -79,6 +81,7 @@ export function registerOrgMcpAppCatalogRoutes<T extends { Variables: OrgRouteVa
           inArray(ConfigObjectTable.id, appIds),
         ))
       const ownedIds = new Set(owned.map((entry) => entry.id))
+      const roles = await resolvePluginArchConfigObjectRoles({ organizationContext: payload, memberTeams, session: c.get("session") }, appIds)
       return c.json({
         apps: apps.map((entry) => {
           const serverName = connectMcpAppHostServerName(entry.appId)
@@ -93,6 +96,7 @@ export function registerOrgMcpAppCatalogRoutes<T extends { Variables: OrgRouteVa
             pluginId: entry.pluginId,
             pluginName: pluginNames.get(normalizeDenTypeId("plugin", entry.pluginId)) ?? entry.title,
             isOwner: ownedIds.has(normalizeDenTypeId("configObject", entry.appId)),
+            canDelete: roles.get(normalizeDenTypeId("configObject", entry.appId)) === "manager",
             // open_app takes only optional launch input and runs no other tools.
             requiresInput: false,
             requiredInputKeys: [],
