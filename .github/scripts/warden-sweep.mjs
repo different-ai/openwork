@@ -14,16 +14,15 @@
 // a Slack channel (full text) and the job summary (public: security findings
 // as counts only).
 //
-// When Warden is sure of a small fix, the sweep also plans a fix PR against
-// dev: one per merged PR, built only from Warden's own high-confidence
-// suggested diffs under the warden-fixer rules (small, text only, files that
-// PR changed, never CI or review machinery). The `fix` job in
-// warden-sweep.yml opens it; people review and merge it like any PR. The
-// sweep never approves, merges or reverts anything.
+// High-confidence located findings get a bounded, tool-free generation and
+// independent verification phase. Pinned Warden's schema does not emit
+// suggestedFix: merely asking review for a diff could never make fixes work.
+// Small validated text patches become draft PR plans, one per source merge.
+// The separate write-token job revalidates and opens them; normal CI and human
+// review apply. No approvals, merging or reverts happen here.
 //
-// The last reviewed dev commit is kept in the `warden-sweep-state` artifact of
-// the newest earlier run that saved one, so each PR is reviewed once. See
-// .warden/README.md.
+// State stores the review cursor and bounded retry commit IDs/attempts, never
+// security finding text. See .warden/README.md.
 //
 // Local dry run (no Slack, no saved state; CI lookups use your gh login): SINCE=<sha> NO_SLACK=1 node .github/scripts/warden-sweep.mjs
 import { execFileSync, spawn, spawnSync } from "node:child_process";
@@ -33,6 +32,7 @@ import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { parseWardenJsonl } from "./contributor-screen.mjs";
 import { qualifyingFixes } from "./warden-fixer.mjs";
+import { generateFixes, generationModel, GENERATION_LIMITS, fixOutcomeLine } from "./warden-generate.mjs";
 import { redact, wardenEnvironment } from "./warden-fast.mjs";
 
 export const SKILLS = ["diff-security-review", "diff-bug-review", "design-spec-review", "ui-skills-review"];
@@ -61,7 +61,8 @@ export function validState(state) {
   const ciPending = Array.isArray(state.ciPending)
     ? state.ciPending.filter((entry) => SHA.test(entry?.sha ?? "") && Number.isFinite(Date.parse(entry.since)))
     : [];
-  return { version: 1, reviewedThrough: state.reviewedThrough, ciPending };
+  const fixPending = Array.isArray(state.fixPending) ? state.fixPending.filter((entry) => SHA.test(entry?.sha ?? "") && Number.isSafeInteger(entry.attempts) && entry.attempts >= 0 && entry.attempts < GENERATION_LIMITS.commitAttempts).slice(0, GENERATION_LIMITS.queue).map(({ sha, attempts }) => ({ sha, attempts })) : [];
+  return { version: 1, reviewedThrough: state.reviewedThrough, ciPending, fixPending };
 }
 
 /**
@@ -72,6 +73,14 @@ export function validState(state) {
 export function planWindow(commits, max = MAX_PRS) {
   const batch = commits.slice(0, max);
   return { batch, deferred: commits.length - batch.length, reviewedThrough: batch.at(-1)?.sha ?? null };
+}
+
+export function queueFixRetry(pending, previous, sha) {
+  const attempts = (previous.find((entry) => entry.sha === sha)?.attempts ?? 0) + 1;
+  if (attempts >= GENERATION_LIMITS.commitAttempts) return "retry attempt cap reached; human action or explicit since rerun required";
+  if (pending.length >= GENERATION_LIMITS.queue) return "retry queue full; human action or explicit since rerun required";
+  pending.push({ sha, attempts });
+  return `queued for re-review (${attempts}/${GENERATION_LIMITS.commitAttempts} attempts used)`;
 }
 
 // --- Findings -----------------------------------------------------------------------
@@ -106,6 +115,14 @@ export const FIX_BRANCH_PREFIX = "warden-fix/merged-";
 /** One fix branch per merged PR (or commit): reruns never stack a second PR. */
 export function fixBranch(pr) {
   return `${FIX_BRANCH_PREFIX}${pr.number ?? "commit"}-${pr.sha.slice(0, 12)}`;
+}
+
+/** Conservative manual-follow-up dedup: not a claim that the existing PR fixes every concern. */
+export function relatedOpenFixes(pr, openPrs) {
+  if (!pr.number) return [];
+  return openPrs.filter((candidate) => candidate.number !== pr.number && candidate.head?.ref?.startsWith("warden-fix/") &&
+    /\bwarden\b/i.test(`${candidate.title}\n${candidate.body}`) &&
+    new RegExp(`(?:#|/pull/)${pr.number}\\b`).test(candidate.body ?? ""));
 }
 
 /**
@@ -221,7 +238,10 @@ export function slackMessage({ repo, prs, runUrl, deferred, lateCi, fixPlans = 0
     lines.push("", `*Late CI results for #${entry.number ?? entry.sha.slice(0, 10)}*`);
     for (const run of entry.ci.failed) lines.push(`• [tests] <${run.url}|${slackEscape(run.name)}> failed${run.newlyFailing ? " (first failure on dev)" : " (already failing before)"}`);
   }
-  if (fixPlans) lines.push("", `Opening ${fixPlans} fix PR(s) where Warden is confident of the fix (branches \`warden-fix/merged-*\`).`);
+  if (fixPlans) lines.push("", `Prepared ${fixPlans} fix PR plan(s), not opened yet. The separate write job reports actual draft PR URLs or failures (kill switch may prevent opening).`);
+  for (const pr of prs) if (pr.fixOutcomes) lines.push(`Fix generation for #${pr.number ?? pr.sha.slice(0, 10)}: ${fixOutcomeLine(pr.fixOutcomes)}`);
+  for (const pr of prs) if (pr.fixQueueReason) lines.push(`Fix retry for #${pr.number ?? pr.sha.slice(0, 10)}: ${pr.fixQueueReason}`);
+  for (const pr of prs) if (pr.fixRelated?.length) lines.push(`Related existing follow-up(s), coverage requires human review: ${pr.fixRelated.join(", ")}`);
   if (deferred) lines.push("", `${deferred} more merged PR(s) will be reviewed in the next sweep.`);
   lines.push("", `<${runUrl}|View run>`);
   let text = lines.join("\n");
@@ -250,7 +270,10 @@ export function jobSummary({ repo, prs, deferred, lateCi, base, head, slack, fix
   if (details.length) lines.push("<details><summary>Bugs, design and failing workflows</summary>", "", ...details, "", "</details>", "");
   if (counts(prs).security) lines.push("Security finding text is sent to the team's Slack channel only.", "");
   if (deferred) lines.push(`${deferred} more merged PR(s) wait for the next sweep.`, "");
-  if (fixPlans) lines.push(`Planned ${fixPlans} fix PR(s) from Warden's high-confidence suggested fixes; see the fix job.`, "");
+  if (fixPlans) lines.push(`Prepared ${fixPlans} fix PR plan(s); none claimed opened here. See the write job for actual draft URLs/failures.`, "");
+  for (const pr of prs) if (pr.fixOutcomes) lines.push(`- Fix generation for #${pr.number ?? pr.sha.slice(0, 10)}: ${fixOutcomeLine(pr.fixOutcomes)}`);
+  for (const pr of prs) if (pr.fixQueueReason) lines.push(`- Fix retry for #${pr.number ?? pr.sha.slice(0, 10)}: ${pr.fixQueueReason}`);
+  for (const pr of prs) if (pr.fixRelated?.length) lines.push(`- Related existing follow-up(s), coverage requires human review: ${pr.fixRelated.join(", ")}`);
   lines.push(slack);
   return lines.join("\n");
 }
@@ -381,7 +404,14 @@ async function main() {
   writeFileSync(configPath, readFileSync(env.POLICY_PATH || join(cwd, ".warden/sweep.toml"), "utf8"));
   const wardenEnv = sweepEnvironment(env);
 
-  const prs = await pool(batch, CONCURRENCY, async (commit) => {
+  // Retry source commits, never serialized findings/security text. Re-review against current dev.
+  const retryEntries = (previous?.fixPending ?? []).filter((entry) => !batch.some((commit) => commit.sha === entry.sha));
+  const retiredRetries = retryEntries.slice(0, GENERATION_LIMITS.retryCommits).filter((entry) => !isAncestor(cwd, entry.sha, head));
+  const retries = retryEntries.slice(0, GENERATION_LIMITS.retryCommits).filter((entry) => !retiredRetries.includes(entry)).map((entry) => {
+    const subject = git(cwd, ["show", "-s", "--format=%s", entry.sha]);
+    return { sha: entry.sha, title: subject.replace(/\s*\(#\d+\)\s*$/, ""), number: prNumber(subject) };
+  });
+  const prs = await pool([...retries, ...batch], CONCURRENCY, async (commit) => {
     const parsed = await runWarden({ wardenBin: env.WARDEN_BIN, cwd, configPath, sha: commit.sha, outDir, env: wardenEnv });
     let ci = { failed: [], pending: 0 };
     if (repo) {
@@ -408,8 +438,44 @@ async function main() {
   // Fix PRs, opened by the workflow's `fix` job with its own token.
   const fixesDir = join(outDir, "fixes");
   rmSync(fixesDir, { recursive: true, force: true });
-  const plans = prs.map((pr) => planFix(pr, git(cwd, ["diff-tree", "--no-commit-id", "--name-only", "-r", "--no-renames", pr.sha]).split("\n").filter(Boolean)))
-    .filter(Boolean);
+  const plans = [];
+  const fixPending = retryEntries.slice(GENERATION_LIMITS.retryCommits);
+  const budget = { remaining: GENERATION_LIMITS.attempts };
+  let model;
+  try { model = generationModel(readFileSync(configPath, "utf8"), env.WARDEN_MODEL); } catch { /* visible per-finding failures below */ }
+  let openPrs = [];
+  try { openPrs = api(`repos/${repo}/pulls?state=open&base=dev&sort=created&direction=desc&per_page=100`); } catch { console.warn("Open follow-up discovery unavailable; deterministic branch dedup remains active."); }
+  for (const pr of prs) {
+    let existing = [];
+    try {
+      existing = api(`repos/${repo}/pulls?state=all&head=${encodeURIComponent(`${repo.split("/")[0]}:${fixBranch(pr)}`)}&per_page=1`);
+    } catch { /* writer independently deduplicates; retain retry if unavailable */ }
+    if (existing.length) { pr.fixQueueReason = "existing fix PR (open, merged or closed); no duplicate or retry"; pr.fixRelated = existing.map((item) => item.html_url); continue; }
+    const files = git(cwd, ["diff-tree", "--no-commit-id", "--name-only", "-r", "--no-renames", pr.sha]).split("\n").filter(Boolean);
+    const coveredPaths = new Set();
+    const relatedUrls = [];
+    for (const related of relatedOpenFixes(pr, openPrs).slice(0, 5)) {
+      try {
+        const relatedFiles = api(`repos/${repo}/pulls/${related.number}/files?per_page=100`);
+        for (const file of relatedFiles) if (file.status === "modified") coveredPaths.add(file.filename);
+        relatedUrls.push(related.html_url);
+      } catch { console.warn("Related follow-up file lookup failed; no file coverage assumed."); }
+    }
+    pr.fixRelated = relatedUrls;
+    const generated = pr.complete ? await generateFixes({ cwd, findings: pr.findings, files, budget, model, apiKey: env.WARDEN_OPENAI_API_KEY, coveredPaths }) : { findings: [], outcomes: [{ status: "failed", reason: "review incomplete" }] };
+    pr.fixOutcomes = generated.outcomes;
+    const plan = planFix({ ...pr, findings: generated.findings }, files);
+    if (plan) {
+      const remaining = pr.findings.length - generated.findings.length;
+      if (remaining) plan.body += `\n${remaining} other source-review finding(s) were not included; see the private sweep report for reasons.\n`;
+      plans.push(plan);
+    }
+    // Keep plans pending until a later sweep observes the actual PR. Handles disabled/failed write jobs.
+    const unresolved = !pr.complete || generated.outcomes.some((outcome) => outcome.status !== "verified") || Boolean(plan);
+    if (unresolved && (pr.findings.length || !pr.complete)) {
+      pr.fixQueueReason = queueFixRetry(fixPending, previous?.fixPending ?? [], pr.sha);
+    }
+  }
   plans.forEach((plan, index) => {
     const dir = join(fixesDir, String(index + 1).padStart(2, "0"));
     mkdirSync(dir, { recursive: true });
@@ -421,7 +487,9 @@ async function main() {
   if (plans.length) console.log(`Planned ${plans.length} fix PR(s).`);
 
   const runUrl = `${env.GITHUB_SERVER_URL || "https://github.com"}/${repo}/actions/runs/${env.GITHUB_RUN_ID || ""}`;
-  const message = slackMessage({ repo, prs, runUrl, deferred, lateCi, fixPlans: plans.length });
+  const queueNote = `${fixPending.length} source commit(s) pending bounded fix retry. ${retiredRetries.length} retry source commit(s) retired because no longer on dev; human action required for those. ${env.WARDEN_SWEEP_FIXES === "off" ? "Fix PR opening disabled by WARDEN_SWEEP_FIXES=off." : "Draft PR creation is delegated to the separate write job."}`;
+  const message = slackMessage({ repo, prs, runUrl, deferred, lateCi, fixPlans: plans.length }) ?? (retiredRetries.length ? { text: `Warden retry retirement: ${retiredRetries.map((entry) => entry.sha.slice(0, 12)).join(", ")}`, unfurl_links: false, unfurl_media: false } : null);
+  if (message) message.text += `\n${queueNote}`;
   let slack = "Nothing to report to Slack.";
   if (message && local) {
     slack = "Local run: Slack skipped.";
@@ -434,14 +502,14 @@ async function main() {
     console.warn(slack);
   }
 
-  const summary = jobSummary({ repo, prs, deferred, lateCi, base, head: reviewedThrough ?? head, slack, fixPlans: plans.length });
+  const summary = `${jobSummary({ repo, prs, deferred, lateCi, base, head: reviewedThrough ?? head, slack, fixPlans: plans.length })}\n\n${queueNote}`;
   if (env.GITHUB_STEP_SUMMARY) appendFileSync(env.GITHUB_STEP_SUMMARY, `${summary}\n`);
   else console.log(summary);
 
-  const state = { version: 1, reviewedThrough: reviewedThrough ?? base, ciPending };
+  const state = { version: 1, reviewedThrough: reviewedThrough ?? base, ciPending, fixPending };
   writeFileSync(join(outDir, "state.json"), `${JSON.stringify(state, null, 2)}\n`);
-  // An unfinished review is reported, not retried: fail the run so it is visible.
-  if (prs.some((pr) => !pr.complete)) process.exitCode = 1;
+  // Incomplete reviews and generation failures remain queued, but still fail visibly.
+  if (prs.some((pr) => !pr.complete || pr.fixOutcomes?.some((outcome) => outcome.status === "failed"))) process.exitCode = 1;
 }
 
 if (import.meta.url === pathToFileURL(process.argv[1] ?? "").href) {
