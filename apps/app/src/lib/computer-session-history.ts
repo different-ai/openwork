@@ -25,16 +25,25 @@ function record(value: unknown): value is Record<string, unknown> {
 function result(part: DynamicToolUIPart): unknown {
   if (part.state !== "output-available") return null
   if (typeof part.output !== "string") return part.output
-  try { return JSON.parse(part.output) } catch { return null }
+  // A receipt can be followed by more lines, such as the fresh observation sent with a refusal.
+  for (const text of [part.output, part.output.split("\n", 1)[0]!]) {
+    try { return JSON.parse(text) } catch { /* try the receipt line alone */ }
+  }
+  return null
 }
 
-/** Waiting/denied/failed calls keep their original, actionable chat row. */
+/**
+ * Waiting, denied and failed calls keep their original, actionable chat row. A step the
+ * computer turned down for the agent to look again or correct itself (`next` observe or
+ * correct_request) asks nothing of the person, so it joins the card with its screenshot.
+ */
 export function isGroupedComputerPart(part: UIMessage["parts"][number]): part is DynamicToolUIPart {
   if (part.type !== "dynamic-tool" || !(isComputerToolName(part.toolName) || isBrowserToolName(part.toolName))) return false
-  if (part.callProviderMetadata?.openwork?.computerFailure === true) return false
   if (part.state !== "input-streaming" && part.state !== "input-available" && part.state !== "output-available") return false
   const output = result(part)
-  return !(record(output) && (output.ok === false || output.isError === true))
+  const failed = part.callProviderMetadata?.openwork?.computerFailure === true || record(output) && (output.ok === false || output.isError === true)
+  if (!failed) return true
+  return record(output) && output.ok === false && (output.next === "observe" || output.next === "correct_request")
 }
 
 export function computerActionLabel(part: DynamicToolUIPart): string {
@@ -61,6 +70,8 @@ export type ComputerHistoryFrame = {
   label: string
   /** Where this view's actions landed, in the image pixels of the view they acted on. */
   marks: ComputerActionMark[]
+  /** The agent's reasoning just before the step, when the chat shows thinking. */
+  thinking?: string
 }
 
 export type ComputerActionMark =
@@ -94,6 +105,10 @@ export type ComputerSessionHistory = {
   toolCallIds: ReadonlySet<string>
   files: ReadonlySet<FileUIPart>
   durationMs: number | null
+  /** The finished result the agent named when it opened the app. */
+  purpose: string | null
+  /** What the agent is doing now: the newest step's intent or action. */
+  latest: string
 }
 
 /** Only supported raster captures; no new requests to arbitrary result URLs. */
@@ -103,11 +118,20 @@ function isCapture(file: FileUIPart): boolean {
 }
 
 /** One turn, one session. Provenance prevents swallowing unrelated images. */
-export function collectComputerSessionHistory(messages: readonly UIMessage[]): ComputerSessionHistory | null {
+export function collectComputerSessionHistory(messages: readonly UIMessage[], options: { thinking?: boolean } = {}): ComputerSessionHistory | null {
   const tools = new Map<string, DynamicToolUIPart>()
+  // Reasoning since the previous step belongs to the next one.
+  const thinking = new Map<string, string>()
   for (const message of messages) {
     if (message.role !== "assistant") continue
-    for (const part of message.parts) if (isGroupedComputerPart(part)) tools.set(part.toolCallId, part)
+    let pending = ""
+    for (const part of message.parts) {
+      if (part.type === "reasoning") { if (part.text.trim()) pending = part.text.trim(); continue }
+      if (!isGroupedComputerPart(part)) continue
+      tools.set(part.toolCallId, part)
+      if (options.thinking && pending) thinking.set(part.toolCallId, pending)
+      pending = ""
+    }
   }
   const parts = [...tools.values()]
   const first = parts[0]
@@ -129,7 +153,8 @@ export function collectComputerSessionHistory(messages: readonly UIMessage[]): C
       marked.add(part.toolCallId)
       const previous = frames.at(-1)
       if (previous?.file.url === file.url) { previous.marks.push(...marks); continue }
-      frames.push({ id: `${part.toolCallId}:${frames.length}`, file, toolCallId: part.toolCallId, label: computerActionLabel(part), marks })
+      frames.push({ id: `${part.toolCallId}:${frames.length}`, file, toolCallId: part.toolCallId, label: computerActionLabel(part), marks,
+        ...(thinking.has(part.toolCallId) ? { thinking: thinking.get(part.toolCallId) } : {}) })
     }
   }
   const starts = parts.flatMap(part => {
@@ -142,7 +167,9 @@ export function collectComputerSessionHistory(messages: readonly UIMessage[]): C
   })
   const durationMs = starts.length === parts.length && ends.length === parts.length
     ? Math.max(0, Math.max(...ends) - Math.min(...starts)) : null
-  return { id: first.toolCallId, parts, frames, toolCallIds: new Set(tools.keys()), files, durationMs }
+  const opened = parts.find(part => /(?:^|_)computer_open(?:_session)?$/.test(part.toolName) && record(part.input) && typeof part.input.purpose === "string")
+  const purpose = opened && record(opened.input) && typeof opened.input.purpose === "string" ? opened.input.purpose.trim() || null : null
+  return { id: first.toolCallId, parts, frames, toolCallIds: new Set(tools.keys()), files, durationMs, purpose, latest: computerActionLabel(parts.at(-1)!) }
 }
 
 export function withoutComputerHistory(parts: UIMessage["parts"], history: ComputerSessionHistory | null): UIMessage["parts"] {
