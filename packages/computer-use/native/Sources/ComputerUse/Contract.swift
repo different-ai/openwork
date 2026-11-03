@@ -634,6 +634,8 @@ struct ObservationLease {
     let imageWidth: Int
     let imageHeight: Int
     var stateDigest: Data = Data()
+    /// `stateDigest` without keyboard focus, which moves on its own when the window comes forward.
+    var contentDigest: Data = Data()
     var imageDigest: Data?
     var validFor: TimeInterval = 15
     /// The encoded image the model saw, so coordinate input can check where it lands.
