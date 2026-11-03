@@ -6,6 +6,19 @@ const test = spec.world(browserTeaching, { timeout: 240_000, needs: { placement:
 
 test("a member teaches and corrects a browser task in Workbot chat, then reuses the saved skill", async ({ world, user, probe, step, evidence }) => {
   const person = user.on(world.registry);
+  await step("a first-time member reads how teaching works and turns the guide off", async () => {
+    await user.click({ role: "button", label: "Teach Workbot" });
+    await user.see({ text: "Teach by showing" });
+    await user.notSee({ role: "combobox", label: "Tab to teach" });
+    await user.click({ role: "button", label: "Next" });
+    await user.see({ text: "Explain as you go" });
+    await user.click({ role: "button", label: "Next" });
+    await user.see({ text: "Save a private skill" });
+    await user.screenshot();
+    await user.click({ role: "button", label: "Don't show again" });
+    await user.see({ role: "combobox", label: "Tab to teach" });
+    await user.click({ role: "button", label: "Hide teaching" });
+  });
   await step("credentials echoed after their field is removed stay private across navigation", async () => {
     await user.click({ role: "button", label: "Teach Workbot" });
     await user.see({ role: "combobox", label: "Tab to teach" });

@@ -7,7 +7,7 @@ import { useCallback, useEffect, useRef, useState, type KeyboardEvent as ReactKe
 import { z } from "zod";
 import type { BrowserTeachingContext } from "@openwork/types/browser-demonstration";
 import type { WorkbotViewContext } from "@openwork/types/workbot-context";
-import { TeachButton, WorkbotTeaching } from "./teaching";
+import { TEACHING_WINDOW_PLACEMENT, TeachButton, WorkbotTeaching } from "./teaching";
 import { addressFor, ScreencastViewer, type ScreencastPage } from "./screencast";
 import { computerViews, errorMessage, workbotHost } from "./host";
 import { inChat, useWorkbotChat } from "./data";
@@ -145,7 +145,7 @@ export function WorkbotComputer({ onTeachingChange, onRun, canTeach = true, onVi
         </div>
       </div> : null}
       {/* Floats over the page, which keeps its space; empty while the window is closed. */}
-      {teachable && <div hidden={view !== "browser"} style={{ display: view === "browser" ? undefined : "none" }} className="absolute bottom-3 right-3 z-10 flex max-h-[calc(100%-24px)] w-[min(22rem,calc(100%-24px))] flex-col"><WorkbotTeaching open={teachOpen} onOpenChange={setTeachOpen} suspended={paused} liveTabs={frontId && livePage?.tabs?.length ? { frontId, tabs: livePage.tabs.map(tab => ({ id: tab.id, label: tabTitle(tab) })) } : undefined} onShowTab={stream ? id => stream.tab("activate", id) : undefined} onTeachingChange={teachingChange} onTakeControl={() => setControl(true)} onRun={onRun ? async text => { if (!await action("continue")) throw new Error("Return browser control to Workbot before starting the run. Your inputs are still here."); await onRun(text); } : undefined} /></div>}
+      {teachable && <div hidden={view !== "browser"} style={{ display: view === "browser" ? undefined : "none" }} className={TEACHING_WINDOW_PLACEMENT}><WorkbotTeaching open={teachOpen} onOpenChange={setTeachOpen} suspended={paused} liveTabs={frontId && livePage?.tabs?.length ? { frontId, tabs: livePage.tabs.map(tab => ({ id: tab.id, label: tabTitle(tab) })) } : undefined} onShowTab={stream ? id => stream.tab("activate", id) : undefined} onTeachingChange={teachingChange} onTakeControl={() => setControl(true)} onRun={onRun ? async text => { if (!await action("continue")) throw new Error("Return browser control to Workbot before starting the run. Your inputs are still here."); await onRun(text); } : undefined} /></div>}
     </div>
   </section>;
 }
