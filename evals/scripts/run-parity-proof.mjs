@@ -6,6 +6,7 @@ import { prepareParityBinaries } from "./engine-parity-binaries.mjs";
 
 // Keyed by basename: a journey can live in evals/specs, evals/core or evals/proofs.
 const specs = new Set([
+  "conversation-navigation.proof.test.ts",
   "session-debug.proof.test.ts",
   "v2-chat-recovery.proof.test.ts",
   "live-provider-sync.proof.test.ts",

@@ -29,12 +29,18 @@ export async function conversationNavigation(seed: Seed, { place }: { place: Pla
     if (!prepared.ok) throw new Error("Navigation model witness was not prepared");
     // TODO(primitive): seed one real model turn through an owned engine.
     // The witness produces markdown, never HTML or a navigation implementation.
-    const stored = await seed.evalIn(app, browserScript(async (workspaceId, sessionId, engine, text, providerID, modelID) => {
+    const stored = await seed.evalIn(app, browserScript(async (workspaceId, otherWorkspaceId, sessionId, engine, text, providerID, modelID) => {
       const port = localStorage.getItem("openwork.server.port");
       const token = localStorage.getItem("openwork.server.token");
       const path = engine === "v2" ? "opencode2/api" : "opencode";
       const base = `http://127.0.0.1:${port}/workspace/${workspaceId}/${path}/session/${sessionId}`;
       const headers = { Authorization: `Bearer ${token}`, "Content-Type": "application/json" };
+      for (const [id, displayName] of [[workspaceId, "Navigation One"], [otherWorkspaceId, "Navigation Two"]]) {
+        const renamed = await fetch(`http://127.0.0.1:${port}/workspaces/${id}/display-name`, {
+          method: "PATCH", headers, body: JSON.stringify({ displayName }), signal: AbortSignal.timeout(15_000),
+        });
+        if (!renamed.ok) return renamed.status;
+      }
       if (engine === "v2") {
         const model = await fetch(`${base}/model`, { method: "POST", headers,
           body: JSON.stringify({ model: { providerID, id: modelID } }), signal: AbortSignal.timeout(15_000) });
@@ -46,7 +52,7 @@ export async function conversationNavigation(seed: Seed, { place }: { place: Pla
         signal: AbortSignal.timeout(30_000),
       });
       return response.ok ? 200 : response.status;
-    }, [one.workspaceId, a.sessionId, engine, "navigation-links-fixture", providerId, modelId]), { awaitPromise: true, timeoutMs: 40_000 });
+    }, [one.workspaceId, two.workspaceId, a.sessionId, engine, "navigation-links-fixture", providerId, modelId]), { awaitPromise: true, timeoutMs: 40_000 });
     if (stored !== 200) throw new Error(`Navigation message arrangement failed: HTTP ${stored}`);
     return { app, one, two, a, b, c, d, route, async [Symbol.asyncDispose]() { await mock.stop(); } };
   } catch (error) { await mock.stop(); throw error; }
