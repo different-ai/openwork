@@ -17,4 +17,6 @@ test("a resumed history copy refuses insufficient space without starving Electro
   expect(result.electronMain).toBe(true);
   expect(result.maxLag, "Electron main preflight lag").toBeLessThan(250);
   expect(result.stalls).toBe(0);
+  evidence.recordAssertionEvidence("Shutdown joins the active estimation worker before disk checks or copy can start", result.raw, result.cancelled);
+  expect(result.cancelled).toBe(true);
 });

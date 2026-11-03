@@ -66,7 +66,17 @@ try {
     unchanged: beforeCheckpoint === await digest(checkpoint) && beforeSource === await digest(source),
     targetAbsent: await readFile(targetDatabase).then(() => false, error => error.code === "ENOENT"),
     electronMain: process.type === "browser", electron: process.versions.electron };
-  console.log(`PREFLIGHT_RESULT ${JSON.stringify(result)}`);
+  const abort = new AbortController();
+  let diskChecks = 0;
+  const cancellationStarted = performance.now();
+  const cancelTimer = setTimeout(() => abort.abort(new Error("synthetic shutdown")), 150);
+  let cancelled = false;
+  try { await preflightHistoryCopy({ source, storageDir, targetDatabase, signal: abort.signal,
+    freeBytes: async () => { diskChecks++; return 0; } }); }
+  catch (error) { cancelled = error.message === "synthetic shutdown"; }
+  finally { clearTimeout(cancelTimer); }
+  const cancellationMs = performance.now() - cancellationStarted;
+  console.log(`PREFLIGHT_RESULT ${JSON.stringify({ ...result, cancelled, diskChecks, cancellationMs })}`);
   app.exit(0);
 } catch (error) {
   console.error(error);
