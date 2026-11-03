@@ -4,7 +4,7 @@
 import { createServer, request as httpRequest } from "node:http";
 import { fork } from "node:child_process";
 import { randomBytes, createHash, timingSafeEqual } from "node:crypto";
-import { readFile, mkdir, rm, rename } from "node:fs/promises";
+import { readFile, access, mkdir, rm, rename } from "node:fs/promises";
 import { join, isAbsolute } from "node:path";
 import { createSnapshotStore } from "./workshop-store.mjs";
 import { fileURLToPath } from "node:url";
@@ -102,10 +102,26 @@ export async function startWorkshop({ participants = [], origin, host = "127.0.0
     timer.unref(); idleTimers.set(id, timer);
   }
   function invalidateUploads(id) { for (const [token, entry] of uploads) if (entry.participant.id === id) uploads.delete(token); }
+  /**
+   * The sample clock a participant's workplace runs on. A new workspace starts at the moment it is first created,
+   * so its sample week is the current week. The clock is kept with the workshop's own metadata (not the participant's
+   * data), so restarts, idle eviction and resets bring back exactly the same baseline. Workspaces saved before this
+   * existed keep the workshop clock their data was made with.
+   */
+  async function participantClock(id, directory) {
+    if (!directory || !storage) return sampleClock;
+    const key = `participant-sample-clock:${id}`;
+    const saved = storage.read(key);
+    if (typeof saved === "string" && Number.isFinite(Date.parse(saved))) return saved;
+    const legacy = await access(join(directory, "microsoft.sqlite")).then(() => true, () => false);
+    const clock = legacy ? sampleClock : new Date().toISOString();
+    storage.write(key, clock);
+    return clock;
+  }
   async function createStack(participant) {
-    const env = { OPEN_WORKPLACE_NOW: sampleClock, OPEN_WORKPLACE_PERSON: `${participant.name}|${participant.id}|Workshop participant`, PUBLIC_URL: publicOrigin, UPLOAD_URL: publicOrigin, JIRA_PUBLIC_URL: `${publicOrigin}/jira`, CONFLUENCE_PUBLIC_URL: `${publicOrigin}/confluence`, OPEN_WORKPLACE_GATEWAY: "1" };
     const directory = dataDir ? join(dataDir, "participants", participant.id) : undefined;
     if (directory) await mkdir(directory, { recursive: true, mode: 0o700 });
+    const env = { OPEN_WORKPLACE_NOW: await participantClock(participant.id, directory), OPEN_WORKPLACE_PERSON: `${participant.name}|${participant.id}|Workshop participant`, PUBLIC_URL: publicOrigin, UPLOAD_URL: publicOrigin, JIRA_PUBLIC_URL: `${publicOrigin}/jira`, CONFLUENCE_PUBLIC_URL: `${publicOrigin}/confluence`, OPEN_WORKPLACE_GATEWAY: "1" };
     const service = await worker("./workshop-worker.mjs", { ...env, ...(directory ? { OPEN_WORKPLACE_PARTICIPANT_DATA_DIR: directory } : {}) });
     const stack = { ...Object.fromEntries(["microsoft", "atlassian", "web"].map((name) => [name, { child: service.child, origin: service.origins[name] }])), failed: false, stopped: false };
     service.child.once("exit", () => { if (!stack.stopped) { stack.failed = true; invalidateUploads(participant.id); } });
