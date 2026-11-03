@@ -156,7 +156,8 @@ test("generation diagnostics are visible privately and publicly without raw secu
   const sha = "a".repeat(40);
   const pr = { number: 12, sha, title: "test", complete: true, findings: [{ ...finding, kind: "security", title: "private issue" }], ci: { failed: [], pending: 0 }, fixOutcomes: [{ status: "failed", reason: "generation, patch validation or model request failed" }], fixQueueReason: "queued for re-review" };
   const args = { repo: "o/r", prs: [pr], runUrl: "url", lateCi: [], deferred: 0, base: sha, head: sha, slack: "sent", fixPlans: 1 };
-  assert.match(slackMessage(args).text, /1 failed/);
+  assert.match(slackMessage(args).text, /0 of 1 findings got a verified fix\. Not fixed: 1 generation, patch validation or model request failed/);
+  assert.match(slackMessage(args).text, /1 PR will get another fix attempt/);
   assert.doesNotMatch(slackMessage(args).text, /Opening/);
   assert.match(jobSummary(args), /queued for re-review/);
   assert.doesNotMatch(jobSummary(args), /private issue/);
@@ -209,7 +210,8 @@ test("writer applies a verified generated patch, pushes its branch and reports a
   assert.equal(operations.length, 2);
   assert.ok(operations[1].includes("--draft"));
   assert.ok(operations[1].includes("--base"));
-  assert.match(messages[0], /1 PR\(s\) opened/);
+  assert.match(messages[0], /Warden opened 1 draft fix PR/);
+  assert.match(messages[0], /#123> empty label/);
   assert.match(messages[0], /https:\/\/github.com\/example\/repo\/pull\/123/);
 });
 

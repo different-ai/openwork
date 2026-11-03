@@ -75,7 +75,7 @@ export function generationModel(config, override) {
 export async function responsesRequest({ apiKey, model, stage, data }) {
   if (!apiKey) throw new Error("missing model credential");
   if (!/^[A-Za-z0-9._-]+$/.test(model ?? "")) throw new Error("unsupported generation model");
-  const response = await fetch("https://api.openai.com/v1/responses", { method: "POST", signal: AbortSignal.timeout(120_000), headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" }, body: JSON.stringify({ model, store: false, max_output_tokens: 6000, instructions: SYSTEM, input: JSON.stringify({ task: stage === "generate" ? "Return exact unique before/after replacements or explicit no_fix." : "Independently verify applicability against current source, actual root-cause correction, minimality, and preservation of tests, assertions, coverage and security checks. checksPreserved must be false if the patch hides a failure instead of fixing it. Reject speculative fixes. Do not claim runtime verification.", ...data }), text: { format: { type: "json_schema", name: stage, strict: true, schema: stage === "generate" ? generationSchema : verificationSchema } } }) });
+  const response = await fetch("https://api.openai.com/v1/responses", { method: "POST", signal: AbortSignal.timeout(120_000), headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" }, body: JSON.stringify({ model, store: false, max_output_tokens: 6000, instructions: SYSTEM, input: JSON.stringify({ task: stage === "generate" ? "Return exact unique before/after replacements or explicit no_fix. In reason, say in one plain sentence what the change does and why it fixes the problem, for a reviewer who has not seen the finding." : "Independently verify applicability against current source, actual root-cause correction, minimality, and preservation of tests, assertions, coverage and security checks. checksPreserved must be false if the patch hides a failure instead of fixing it. Reject speculative fixes. Do not claim runtime verification.", ...data }), text: { format: { type: "json_schema", name: stage, strict: true, schema: stage === "generate" ? generationSchema : verificationSchema } } }) });
   if (!response.ok) throw new Error(`model HTTP ${response.status}`);
   const body = await response.json();
   if (body.status !== "completed") throw new Error("model response incomplete");
@@ -112,6 +112,7 @@ export async function generateFixes({ cwd, findings, files, budget, model, apiKe
     budget.remaining--;
     const data = { finding: { kind: finding.kind, title: finding.title, description: finding.description, path: finding.path, line: finding.line, ...(finding.kind === "ci" ? { ciEvidence: finding.ciEvidence } : {}) }, design, files: [...contexts].map(([path, content]) => ({ path, content })) };
     let phase = "patch validation";
+    let generatedReason = "";
     try {
       let patch = finding.suggested_fix?.diff;
       if (!patch) {
@@ -121,6 +122,7 @@ export async function generateFixes({ cwd, findings, files, budget, model, apiKe
         if (generated.disposition === "no_fix" && Array.isArray(generated.edits) && !generated.edits.length) { outcome.reason = "model declined fix"; continue; }
         if (generated.disposition !== "fix") throw new Error("invalid generation");
         patch = editsToPatch(cwd, generated.edits, contexts);
+        generatedReason = generated.reason;
         outcome.generated = true;
       }
       phase = "patch validation";
@@ -133,7 +135,10 @@ export async function generateFixes({ cwd, findings, files, budget, model, apiKe
       phase = "current patch revalidation";
       for (const [path, content] of contexts) if (safeFile(cwd, path) !== content) throw new Error("stale context");
       validatePatch(cwd, patch, [...contexts.keys()]);
-      results.push({ ...finding, suggested_fix: { description: "Model-verified proposal; tests not run.", diff: patch } });
+      // A one-line explanation of the change for the PR body; model text, so
+      // flattened and capped, and never shown for security findings.
+      const summary = typeof generatedReason === "string" ? generatedReason.replace(/\s+/g, " ").trim().slice(0, 300) : "";
+      results.push({ ...finding, suggested_fix: { description: summary || finding.suggested_fix?.description || "", diff: patch } });
       for (const path of diffPaths(patch)) acceptedPaths.add(path);
       outcome.status = "verified";
       outcome.reason = "model verified; tests not run";

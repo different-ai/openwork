@@ -31,7 +31,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { parseWardenJsonl } from "./contributor-screen.mjs";
-import { qualifyingFixes } from "./warden-fixer.mjs";
+import { changedLines, qualifyingFixes } from "./warden-fixer.mjs";
 import { generateFixes, generationModel, GENERATION_LIMITS, fixOutcomeLine } from "./warden-generate.mjs";
 import { redact, wardenEnvironment } from "./warden-fast.mjs";
 import { planCiRepairs, ciRepairState } from "./warden-ci-plan.mjs";
@@ -136,30 +136,64 @@ export function relatedOpenFixes(pr, openPrs) {
 export function planFix(pr, changedFiles) {
   if (!pr.complete) return null;
   const candidates = pr.findings;
-  const { fixes, skipped } = qualifyingFixes({ findings: candidates }, changedFiles);
+  const { fixes } = qualifyingFixes({ findings: candidates }, changedFiles);
   if (!fixes.length) return null;
   const ref = pr.number ? `#${pr.number}` : `\`${pr.sha.slice(0, 12)}\``;
   const kinds = new Map(candidates.map((finding) => [finding.title, finding.kind]));
-  const lines = [
-    `Warden's post-merge sweep found ${fixes.length} problem(s) in ${ref} and is confident of the fix. Review and merge to accept, or close to reject.`,
-    "",
-    // Security fixes land in a public repository: name the file, not the issue.
-    ...fixes.map((fix) => ["security", "ci"].includes(kinds.get(fix.title))
-      ? `- **${kinds.get(fix.title)} · ${fix.severity}**${fix.path ? ` in \`${fix.path.slice(0, 200)}\`` : ""}: details are in the team's Slack sweep report.`
-      : `- **${kinds.get(fix.title) ?? "bug"} · ${fix.severity}**: ${mdEscape(fix.title)}${fix.path ? ` (\`${fix.path.slice(0, 200)}\`)` : ""}`),
-  ];
+  const full = new Map(candidates.map((finding) => [finding.title, finding]));
+  // Security and CI details stay in Slack: this repository is public.
+  const privateKind = (fix) => ["security", "ci"].includes(kinds.get(fix.title));
+  const lines = [`Warden's post-merge review of ${ref}${pr.title ? ` (${mdEscape(pr.title)})` : ""} found ${fixes.length === 1 ? "a problem" : `${fixes.length} problems`} it could fix with a small change.`];
+  for (const fix of fixes) {
+    const finding = full.get(fix.title) ?? {};
+    const file = fix.path ? `\`${fix.path.slice(0, 200)}${finding.line ? `:${finding.line}` : ""}\`` : "the changed code";
+    const changed = changedLines(fix.diff);
+    lines.push("");
+    if (privateKind(fix)) {
+      lines.push(`### ${kinds.get(fix.title) === "ci" ? "Failing CI" : "Security"} fix in ${file}`, "",
+        "**What's wrong:** details are in the Warden report in Slack (#bug), not here, because this repository is public.");
+    } else {
+      lines.push(`### ${mdEscape(fix.title)}`, "", `**Where:** ${file}`, "", `**What's wrong:** ${mdEscape(finding.description || fix.title)}`);
+      if (fix.description) lines.push("", `**What this changes:** ${mdEscape(fix.description)}`);
+    }
+    lines.push("", `**Size:** ${changed} changed line${changed === 1 ? "" : "s"}.`);
+  }
+  lines.push("", "### How to review",
+    "- Read the diff; it is the whole change.",
+    "- Warden did not run tests. CI on this PR does.",
+    "- Merge to accept, or close to reject. Warden never merges.");
   const left = candidates.length - fixes.length;
-  if (left || skipped.length) lines.push("", `${left} other finding(s) in ${ref} still need a person; see the sweep report.`);
+  if (left) lines.push("", `<sub>${left} other finding${left === 1 ? "" : "s"} in ${ref} ${left === 1 ? "was" : "were"} not fixed automatically; see the Slack report.</sub>`);
   lines.push("", "Release note: none");
   return {
     branch: fixBranch(pr),
     number: pr.number,
     sha: pr.sha,
-    // The title never says "security": the body names files, Slack has the details.
-    title: `fix: apply Warden's post-merge fixes for ${pr.number ? `#${pr.number}` : pr.sha.slice(0, 12)}`,
+    title: fixTitle(fixes, kinds, ref),
     body: `${lines.join("\n")}\n`,
     patches: fixes.map((fix) => (fix.diff.endsWith("\n") ? fix.diff : `${fix.diff}\n`)),
   };
+}
+
+/** A title that says what the PR fixes. Never names a security issue. */
+export function fixTitle(fixes, kinds, ref) {
+  const first = fixes[0];
+  const base = first.path ? first.path.split("/").pop() : "code";
+  let subject = ["security", "ci"].includes(kinds.get(first.title))
+    ? (kinds.get(first.title) === "ci" ? `fix a CI failure in ${base}` : `harden ${base}`)
+    : first.title.replace(/\s+/g, " ").trim().replace(/[.:;]+$/, "");
+  subject = subject.charAt(0).toLowerCase() + subject.slice(1);
+  const more = fixes.length > 1 ? ` (+${fixes.length - 1} more)` : "";
+  const room = 72 - "fix: ".length - more.length;
+  if (subject.length > room) subject = `${subject.slice(0, room - 1).trimEnd()}…`;
+  return sanitizeTitle(`fix: ${subject}${more}`) ?? `fix: apply Warden's post-merge fixes for ${ref}`;
+}
+
+/** Shared with the writer: one printable line, no mentions or references. */
+export function sanitizeTitle(title) {
+  if (typeof title !== "string") return null;
+  const clean = title.replace(/[\u0000-\u001f\u007f-\u009f\u200b-\u200f\u202a-\u202e\u2066-\u2069]/g, "").replace(/@(?=[A-Za-z0-9])/g, "@\u200b").replace(/#(?=\d)/g, "#\u200b").trim();
+  return /^fix(?:\([a-z-]+\))?: .{3,90}$/u.test(clean) ? clean : null;
 }
 
 // --- CI -----------------------------------------------------------------------------
@@ -219,6 +253,39 @@ function countLine(total) {
   return parts.length ? parts.join(" · ") : "nothing to fix";
 }
 
+const RANK = { security: { high: 0, medium: 1, low: 5 }, bug: { high: 2, medium: 3, low: 6 }, ci: { high: 2, medium: 3, low: 6 }, design: { high: 4, medium: 4, low: 7 } };
+const rank = (finding) => RANK[finding.kind]?.[finding.severity] ?? 8;
+const short = (value, max) => { const text = String(value).replace(/\s+/g, " ").trim(); return text.length > max ? `${text.slice(0, max - 1).trimEnd()}…` : text; };
+
+/**
+ * The channel message: a few lines a person can read at a glance. Worst PRs
+ * first, one line each; full detail goes in the thread.
+ */
+export function slackDigest({ repo, prs, lateCi, runUrl, fixPlans = 0, deferred = 0, topPrs = 5 }) {
+  const lateFailures = lateCi.filter((entry) => entry.ci.failed.length);
+  const flagged = prs.filter((pr) => pr.findings.length || !pr.complete);
+  const failing = new Map();
+  for (const source of [...prs, ...lateFailures]) for (const run of source.ci.failed) if (!failing.has(run.name)) failing.set(run.name, run.url);
+  if (!flagged.length && !failing.size) return null;
+  const total = counts(prs);
+  const parts = [total.security && `${total.security} security`, total.bug && `${total.bug} bug${total.bug === 1 ? "" : "s"}`, total.design && `${total.design} design`].filter(Boolean);
+  const lines = [`*Warden* reviewed ${prs.length} merged PR${prs.length === 1 ? "" : "s"}: ${parts.length ? parts.join(", ") : "no code findings"}. <${runUrl}|Run>`];
+  const ordered = flagged.map((pr) => ({ pr, worst: [...pr.findings].sort((a, b) => rank(a) - rank(b))[0] }))
+    .sort((a, b) => (a.worst ? rank(a.worst) : 9) - (b.worst ? rank(b.worst) : 9) || b.pr.findings.length - a.pr.findings.length);
+  for (const { pr, worst } of ordered.slice(0, topPrs)) {
+    const link = pr.number ? `<https://github.com/${repo}/pull/${pr.number}|#${pr.number}>` : `\`${pr.sha.slice(0, 10)}\``;
+    const more = pr.findings.length > 1 ? ` (+${pr.findings.length - 1} more)` : "";
+    const icon = worst?.kind === "security" && worst.severity === "high" ? ":red_circle:" : worst && ["high", "medium"].includes(worst.severity) ? ":large_orange_circle:" : ":white_circle:";
+    lines.push(worst ? `${icon} ${link} ${slackEscape(short(worst.title, 90))}${more}` : `:white_circle: ${link} review incomplete`);
+  }
+  if (ordered.length > topPrs) lines.push(`…and ${ordered.length - topPrs} more PR${ordered.length - topPrs === 1 ? "" : "s"} with findings.`);
+  if (failing.size) lines.push(`:x: CI failing: ${[...failing].slice(0, 3).map(([name, url]) => `<${url}|${slackEscape(short(name, 40))}>`).join(", ")}${failing.size > 3 ? ` +${failing.size - 3}` : ""}`);
+  if (fixPlans) lines.push(`:wrench: Drafting ${fixPlans} fix PR${fixPlans === 1 ? "" : "s"}; links follow in the thread.`);
+  if (deferred) lines.push(`${deferred} more merged PR${deferred === 1 ? "" : "s"} next sweep.`);
+  lines.push("_Details in thread._");
+  return { text: lines.join("\n"), unfurl_links: false, unfurl_media: false };
+}
+
 /** Slack message (private channel): full finding text. Null when there is nothing to report. */
 export function slackMessage({ repo, prs, runUrl, deferred, lateCi, fixPlans = 0 }) {
   const flagged = prs.filter(needsAttention);
@@ -240,10 +307,16 @@ export function slackMessage({ repo, prs, runUrl, deferred, lateCi, fixPlans = 0
     lines.push("", `*Late CI results for #${entry.number ?? entry.sha.slice(0, 10)}*`);
     for (const run of entry.ci.failed) lines.push(`• [tests] <${run.url}|${slackEscape(run.name)}> failed${run.newlyFailing ? " (previous run passed; cause not established)" : run.previousConclusion ? " (previous run did not pass; cause not established)" : " (previous result unknown)"}`);
   }
-  if (fixPlans) lines.push("", `Prepared ${fixPlans} fix PR plan(s), not opened yet. The separate write job reports actual draft PR URLs or failures (kill switch may prevent opening).`);
-  for (const pr of prs) if (pr.fixOutcomes) lines.push(`Fix generation for #${pr.number ?? pr.sha.slice(0, 10)}: ${fixOutcomeLine(pr.fixOutcomes)}`);
-  for (const pr of prs) if (pr.fixQueueReason) lines.push(`Fix retry for #${pr.number ?? pr.sha.slice(0, 10)}: ${pr.fixQueueReason}`);
-  for (const pr of prs) if (pr.fixRelated?.length) lines.push(`Related existing follow-up(s), coverage requires human review: ${pr.fixRelated.join(", ")}`);
+  const attempted = prs.filter((pr) => pr.fixOutcomes?.length);
+  if (attempted.length) {
+    const outcomes = attempted.flatMap((pr) => pr.fixOutcomes);
+    const reasons = new Map();
+    for (const outcome of outcomes) if (outcome.status !== "verified") reasons.set(outcome.reason, (reasons.get(outcome.reason) ?? 0) + 1);
+    lines.push("", `*Auto-fix:* ${outcomes.filter((o) => o.status === "verified").length} of ${outcomes.length} findings got a verified fix.${reasons.size ? ` Not fixed: ${[...reasons].map(([reason, n]) => `${n} ${reason}`).join("; ")}.` : ""}`);
+  }
+  const retrying = prs.filter((pr) => pr.fixQueueReason?.startsWith("queued")).length;
+  if (retrying) lines.push(`${retrying} PR${retrying === 1 ? "" : "s"} will get another fix attempt next sweep.`);
+  for (const pr of prs) if (pr.fixRelated?.length) lines.push(`#${pr.number ?? pr.sha.slice(0, 10)} already has a follow-up: ${pr.fixRelated.join(", ")}`);
   if (deferred) lines.push("", `${deferred} more merged PR(s) will be reviewed in the next sweep.`);
   lines.push("", `<${runUrl}|View run>`);
   let text = lines.join("\n");
@@ -396,6 +469,7 @@ async function postSlack(message, { token, channel }) {
   });
   const result = await response.json();
   if (!response.ok || !result.ok) throw new Error(`Slack delivery failed: ${result.error || response.status}`);
+  return result.ts;
 }
 
 // --- Main ---------------------------------------------------------------------------
@@ -532,19 +606,25 @@ async function main() {
 
   const runUrl = `${env.GITHUB_SERVER_URL || "https://github.com"}/${repo}/actions/runs/${env.GITHUB_RUN_ID || ""}`;
   const queueNote = `${fixPending.length} source commit(s) pending bounded fix retry. ${retiredRetries.length} retry source commit(s) retired because no longer on dev; human action required for those. ${env.WARDEN_SWEEP_FIXES === "off" ? "Fix PR opening disabled by WARDEN_SWEEP_FIXES=off." : "Draft PR creation is delegated to the separate write job."}`;
-  const message = slackMessage({ repo, prs, runUrl, deferred, lateCi, fixPlans: plans.length }) ?? (retiredRetries.length || ciRepair.reports.length || ciRepair.queueOverflow ? { text: `Warden follow-up — <${runUrl}|view run>`, unfurl_links: false, unfurl_media: false } : null);
-  if (message) {
-    const ciText = ciRepairSlack(ciRepair.reports);
-    message.text = `${message.text.slice(0, ciText ? 22000 : 36000)}\n${queueNote}\n${ciText}${ciRepair.queueOverflow ? `\n${ciRepair.queueOverflow} CI investigations need manual follow-up: retry queue full.` : ""}`.slice(0, 38000);
-  }
+  // Channel: a short digest. Thread: the full report.
+  const digest = slackDigest({ repo, prs, lateCi, runUrl, fixPlans: plans.length, deferred })
+    ?? (retiredRetries.length || ciRepair.reports.length || ciRepair.queueOverflow ? { text: `*Warden* follow-up. <${runUrl}|Run>\n_Details in thread._`, unfurl_links: false, unfurl_media: false } : null);
+  const details = slackMessage({ repo, prs, runUrl, deferred, lateCi, fixPlans: plans.length });
+  const ciText = ciRepairSlack(ciRepair.reports);
+  const retired = retiredRetries.length ? `${retiredRetries.length} source commit(s) left dev before a fix landed; check them by hand.` : "";
+  const overflow = ciRepair.queueOverflow ? `${ciRepair.queueOverflow} CI investigations need manual follow-up: retry queue full.` : "";
+  const detailText = [details?.text.slice(0, ciText ? 24000 : 36000), ciText, retired, overflow].filter(Boolean).join("\n").slice(0, 38000);
   let slack = "Nothing to report to Slack.";
-  if (message && local) {
+  if (digest && local) {
     slack = "Local run: Slack skipped.";
-    console.log(message.text);
-  } else if (message && env.SLACK_BOT_TOKEN && env.SLACK_WARDEN_SWEEP_CHANNEL_ID) {
-    await postSlack(message, { token: env.SLACK_BOT_TOKEN, channel: env.SLACK_WARDEN_SWEEP_CHANNEL_ID });
+    console.log(`${digest.text}\n--- thread ---\n${detailText}`);
+  } else if (digest && env.SLACK_BOT_TOKEN && env.SLACK_WARDEN_SWEEP_CHANNEL_ID) {
+    const slackTarget = { token: env.SLACK_BOT_TOKEN, channel: env.SLACK_WARDEN_SWEEP_CHANNEL_ID };
+    const ts = await postSlack(digest, slackTarget);
+    if (detailText) await postSlack({ text: detailText, thread_ts: ts, unfurl_links: false, unfurl_media: false }, slackTarget);
+    if (env.GITHUB_OUTPUT && /^\d+\.\d+$/.test(ts ?? "")) appendFileSync(env.GITHUB_OUTPUT, `slack_ts=${ts}\n`);
     slack = "Posted to Slack.";
-  } else if (message) {
+  } else if (digest) {
     slack = "Slack is not configured (SLACK_BOT_TOKEN and the SLACK_WARDEN_SWEEP_CHANNEL_ID variable); findings are only in this summary.";
     console.warn(slack);
   }
