@@ -1,10 +1,10 @@
 #!/usr/bin/env node
-// Warden clearance: approve a same-repository PR as the diff-warden App when
-// the latest complete Warden review of its current head has no high or medium
-// security findings and no confidentiality findings. Anything else withdraws an
-// earlier clearance. Either way, one comment on the PR says what happened and
-// lists the security findings. Runs from the default branch via workflow_run
-// and never executes PR code.
+// Advisory-only Warden reporter (historical clearance name): post the current
+// head's result and security findings in one comment as the diff-warden App.
+// Never approve PRs, dismiss reviews or authorize merges. The advisory check
+// succeeds for a clear review and is neutral for findings or incomplete work;
+// incomplete workflow jobs still fail for observability, not as merge gates.
+// Runs from the default branch via workflow_run and never executes PR code.
 import { readFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import { pathToFileURL } from "node:url";
@@ -18,7 +18,7 @@ const MARKER = "<!-- warden-clearance -->";
 // review and could upload a forged receipt; the rest would let one PR rewrite
 // the reviewer for every later PR. Other CI, AGENTS.md, and skills are reviewed
 // like any code (Warden's runtime does not load AGENTS.md or skills from the PR).
-const GUARDED = /^(\.github\/workflows\/warden(-clearance|-check-backfill|-quick)?\.yml$|\.github\/scripts\/warden-(clearance|report|check|fast)\.mjs$|warden\.toml$|\.warden\/)/;
+const GUARDED = /^(\.github\/workflows\/warden(-clearance|-check-backfill|-quick|-sweep)?\.yml$|\.github\/scripts\/warden-(clearance|report|check|fast|sweep|sweep-open|generate|ci|ci-plan|fixer)\.mjs$|warden\.toml$|\.warden\/)/;
 
 const count = (value) => Number.isSafeInteger(value) && value >= 0;
 
@@ -85,24 +85,24 @@ const plural = (n, word) => `${n} ${word}${n === 1 ? "" : "s"}`;
 function headline(decision, guarded) {
   const c = decision.counts;
   if (guarded.length) {
-    return ["### Warden: needs a human approval",
-      `This PR changes Warden itself, so Warden can't approve it. Changed: ${guarded.slice(0, 10).map(code).join(", ")}${guarded.length > 10 ? `, and ${guarded.length - 10} more` : ""}.`];
+    return ["### Warden: advisory — reviewer changes",
+      `This PR changes Warden itself. Its review is not independent; a person should inspect these changes: ${guarded.slice(0, 10).map(code).join(", ")}${guarded.length > 10 ? `, and ${guarded.length - 10} more` : ""}.`];
   }
   switch (decision.reason) {
     case "no-major-findings":
-      return ["### Warden: approved", "No high or medium security findings and no confidentiality findings."];
+      return ["### Warden: advisory — no major findings", "No high or medium security findings and no confidentiality findings."];
     case "major-security-findings":
-      return ["### Warden: not approved",
-        `Security review found ${[c.high && `${c.high} high`, c.medium && `${c.medium} medium`].filter(Boolean).join(" and ")} severity ${c.high + c.medium === 1 ? "finding" : "findings"}. Fix ${c.high + c.medium === 1 ? "it" : "them"} and push; Warden reviews again automatically. If ${c.high + c.medium === 1 ? "it is a false positive" : "they are false positives"}, a maintainer can approve by hand.`];
+      return ["### Warden: advisory — security findings",
+        `Security review found ${[c.high && `${c.high} high`, c.medium && `${c.medium} medium`].filter(Boolean).join(" and ")} severity ${c.high + c.medium === 1 ? "finding" : "findings"}. Inspect the findings below; Warden reviews again after a push.`];
     case "confidentiality-findings":
-      return ["### Warden: not approved",
+      return ["### Warden: advisory — confidentiality findings",
         `Confidentiality review flagged ${plural(c.confidentiality, "item")} that may identify a customer, prospect, partner, or outside person (see \`AGENTS.md\`). Details stay out of this public comment; check the lines this PR adds.`];
     case "files-over-size-limits":
-      return ["### Warden: not approved",
-        "This PR is too big for Warden to review in full (over 400 files or 60,000 changed lines), so it can't be approved. Re-running won't help: split it into smaller PRs."];
+      return ["### Warden: advisory — incomplete review",
+        "This PR is too big for Warden to review in full (over 400 files or 60,000 changed lines). Splitting it would allow a complete review; this note does not block merging."];
     default:
-      return ["### Warden: not approved",
-        `The review didn't finish (\`${decision.reason}\`), so Warden can't approve. Re-run the Warden job or push again.`];
+      return ["### Warden: advisory — incomplete review",
+        `The review didn't finish (\`${decision.reason}\`). Re-run the Warden job or push again if you want a complete review.`];
   }
 }
 
@@ -139,6 +139,7 @@ export function renderComment(decision, findings, guarded, env) {
   } else if (decision.counts && decision.counts.high + decision.counts.medium + decision.counts.low > 0) {
     lines.push("", `Security finding details are in the [Warden run summary](${env.RUN_URL}).`);
   }
+  lines.push("", "Warden does not block merging or grant or withdraw approvals. Tests and human review remain separate requirements.");
   lines.push("", `<sub>Reviewed ${code(env.HEAD_SHA.slice(0, 12))} · [Warden run](${env.RUN_URL}) · Updates after every Warden run.</sub>`);
   return lines.join("\n");
 }
@@ -169,42 +170,6 @@ async function paginate(env, path) {
 
 const atHead = (pr, env) => pr.state === "open" && !pr.merged && pr.head?.sha === env.HEAD_SHA &&
   pr.head?.repo?.full_name === env.REPO && pr.base?.repo?.full_name === env.REPO;
-
-// Returns false when the head moved, so the caller does not claim an approval.
-async function clear(env, number, decision) {
-  const bot = `${env.APP_SLUG}[bot]`;
-  const reviews = await paginate(env, `/pulls/${number}/reviews`);
-  if (reviews.some((review) => review.user?.login === bot && review.state === "APPROVED" && review.commit_id === env.HEAD_SHA)) {
-    console.log(`PR #${number}: already cleared at ${env.HEAD_SHA}.`);
-    return true;
-  }
-  // Re-check immediately before the write; commit_id pins the approval to the reviewed head.
-  if (!atHead(await github(env, "GET", `/pulls/${number}`), env)) {
-    console.log(`PR #${number}: head moved before approval; skipping.`);
-    return false;
-  }
-  const low = decision.low ? ` ${plural(decision.low, "low-severity note")} listed in the Warden comment.` : "";
-  await github(env, "POST", `/pulls/${number}/reviews`, {
-    event: "APPROVE",
-    commit_id: env.HEAD_SHA,
-    body: `**Warden clearance.** Complete security and confidentiality review of \`${env.HEAD_SHA}\` found no high or medium security findings and no confidentiality findings.${low} Any new push dismisses this approval. [Analysis run](${env.RUN_URL})`,
-  });
-  console.log(`PR #${number}: cleared at ${env.HEAD_SHA}.`);
-  return true;
-}
-
-async function revoke(env, number, reason) {
-  const bot = `${env.APP_SLUG}[bot]`;
-  const reviews = await paginate(env, `/pulls/${number}/reviews`);
-  const active = reviews.filter((review) => review.user?.login === bot && review.user?.type === "Bot" && review.state === "APPROVED");
-  for (const review of active) {
-    await github(env, "PUT", `/pulls/${number}/reviews/${review.id}/dismissals`, {
-      message: `Latest Warden review is not clear (${reason}); see the Warden comment.`,
-      event: "DISMISS",
-    });
-  }
-  console.log(`PR #${number}: not cleared (${reason}); withdrew ${active.length} approval(s).`);
-}
 
 // One comment per PR, edited in place, so authors always see the latest result.
 async function upsertComment(env, number, body) {
@@ -258,11 +223,8 @@ export async function main(env = process.env) {
       console.error(`PR #${number}: could not post the warden-clear check: ${error.message}`);
       process.exitCode = 1;
     }
-    if (decision.verdict === "clear") {
-      if (!(await clear(env, number, decision))) continue;
-    } else {
-      await revoke(env, number, decision.reason);
-    }
+    // Report only. Never approve, request changes, or dismiss an approval:
+    // an advisory reviewer must not control the human-review merge gate.
     await upsertComment(env, number, renderComment(decision, validFindings(findingsFile, expected), guarded, env));
   }
 }

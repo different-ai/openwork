@@ -14,24 +14,8 @@ on:
   push:
     branches:
       - dev
-    paths:
-      - apps/app/**
-      - apps/desktop/**
-      - apps/server/**
-      - packages/docs/**
-      - packages/enterprise-mcp-client/**
-      - packages/computer-use/**
-      - packages/install-config/**
-      - packages/paths/**
-      - packages/types/**
-      - packages/ui/**
-      - patches/**
-      - scripts/release/**
-      - constants.json
-      - package.json
-      - pnpm-lock.yaml
-      - pnpm-workspace.yaml
-      - .github/workflows/alpha-macos-aarch64.yml
+    # Let the dependency-aware changes job select builds. A workflow path list
+    # misses new transitive packages and source reads outside package manifests.
   workflow_dispatch:
     inputs:
       platform:
@@ -62,15 +46,52 @@ on:
 permissions:
   contents: write
 
-concurrency:
-  group: alpha-desktop-${{ github.ref }}-${{ inputs.platform || 'all' }}
-  cancel-in-progress: true
-
+# Acquire publication locks only after input selection, in the platform jobs.
+# An unrelated dev push must not cancel an existing or queued desktop build.
 jobs:
+  changes:
+    name: Detect desktop build inputs
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    outputs:
+      affected: ${{ steps.classify.outputs.affected }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - name: Setup Node
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: 24.22.1
+      - name: Classify desktop build inputs
+        id: classify
+        env:
+          BUILD_BASE: ${{ github.event.before }}
+          BUILD_HEAD: ${{ github.sha }}
+        # A dispatch or unavailable diff selects the build, never skips it.
+        run: node .github/scripts/build-inputs.mjs --target desktop --base "${BUILD_BASE:-0000000000000000000000000000000000000000}" --head "$BUILD_HEAD"
+
+  # The packaged Linux desktop must build and boot before any alpha is
+  # published; both publish jobs wait for it and are skipped if it fails.
+  packaged-smoke:
+    needs: changes
+    if: needs.changes.outputs.affected == 'true'
+    permissions:
+      contents: read
+    uses: ./.github/workflows/packaged-smoke.yml
+
   publish-alpha-macos-aarch64:
-    if: github.event_name == 'push' || inputs.platform != 'windows-x64'
+    needs: [changes, packaged-smoke]
+    if: needs.changes.outputs.affected == 'true' && (github.event_name == 'push' || inputs.platform != 'windows-x64')
     name: Build + Publish alpha (aarch64-apple-darwin)
-    runs-on: macos-14
+    runs-on: macos-26
+    # Apple signing secrets belong to this environment; no deployment is recorded.
+    environment:
+      name: macos-signing
+      deployment: false
     timeout-minutes: 180
     concurrency:
       group: alpha-macos-${{ inputs.channel_tag || 'alpha-macos-latest' }}
@@ -97,7 +118,7 @@ jobs:
       - name: Setup Node
         uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
         with:
-          node-version: 24
+          node-version: 24.22.1
 
       - name: Setup pnpm
         uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
@@ -124,7 +145,7 @@ jobs:
             macos-pnpm-
 
       - name: Install dependencies
-        run: pnpm install --frozen-lockfile --prefer-offline
+        run: pnpm --filter @openwork/desktop... --filter @openwork/app... --filter openwork-server... install --frozen-lockfile --prefer-offline
 
       - name: Resolve alpha version
         id: alpha-version
@@ -267,7 +288,8 @@ jobs:
         run: node scripts/release/prune-alpha-assets.mjs --repo "$GITHUB_REPOSITORY" --tag "$CHANNEL_TAG" --keep 100
 
   publish-alpha-windows-x64:
-    if: github.event_name == 'push' || inputs.platform != 'macos-arm64'
+    needs: [changes, packaged-smoke]
+    if: needs.changes.outputs.affected == 'true' && (github.event_name == 'push' || inputs.platform != 'macos-arm64')
     name: Build + Publish alpha (x86_64-pc-windows-msvc)
     runs-on: blacksmith-8vcpu-windows-2025
     environment: windows-signing
@@ -318,7 +340,7 @@ jobs:
       - name: Setup Node
         uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
         with:
-          node-version: 24
+          node-version: 24.22.1
 
       - name: Setup Bun
         uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
@@ -368,6 +390,24 @@ jobs:
           echo "started_at=$(date -u +'%Y-%m-%dT%H:%M:%SZ')" >> "$GITHUB_OUTPUT"
           pnpm --filter @openwork/desktop build:electron
 
+      - name: Test Windows signing scripts
+        shell: pwsh
+        run: |
+          node --test apps/desktop/test/windows-sign.test.cjs
+          if ($LASTEXITCODE) { throw 'Signing hook tests failed' }
+          ./scripts/release/windows-signatures.test.ps1
+
+      # Signing must be configured BEFORE builder creates the app and NSIS uninstaller.
+      - name: Configure Windows lifecycle signing
+        uses: ./.github/actions/windows-signing
+        with:
+          client-id: ${{ vars.AZURE_CLIENT_ID || secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID || secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID || secrets.AZURE_SUBSCRIPTION_ID }}
+          endpoint: ${{ vars.AZURE_ARTIFACT_SIGNING_ENDPOINT || secrets.AZURE_ARTIFACT_SIGNING_ENDPOINT }}
+          account: ${{ vars.AZURE_ARTIFACT_SIGNING_ACCOUNT || secrets.AZURE_ARTIFACT_SIGNING_ACCOUNT }}
+          certificate-profile: ${{ vars.AZURE_ARTIFACT_SIGNING_CERTIFICATE_PROFILE || secrets.AZURE_ARTIFACT_SIGNING_CERTIFICATE_PROFILE }}
+
       - name: Package Electron alpha (Windows x64)
         run: |
           set -euo pipefail
@@ -376,51 +416,6 @@ jobs:
             --config.detectUpdateChannel=false \
             --win --x64 \
             --publish never
-
-      # Same signing identity and post-sign metadata refresh as stable Windows.
-      # There is no unsigned publishing fallback for this alpha channel.
-      - name: Validate Azure Artifact Signing configuration
-        shell: pwsh
-        env:
-          AZURE_CLIENT_ID: ${{ vars.AZURE_CLIENT_ID || secrets.AZURE_CLIENT_ID }}
-          AZURE_TENANT_ID: ${{ vars.AZURE_TENANT_ID || secrets.AZURE_TENANT_ID }}
-          AZURE_SUBSCRIPTION_ID: ${{ vars.AZURE_SUBSCRIPTION_ID || secrets.AZURE_SUBSCRIPTION_ID }}
-          AZURE_ARTIFACT_SIGNING_ENDPOINT: ${{ vars.AZURE_ARTIFACT_SIGNING_ENDPOINT || secrets.AZURE_ARTIFACT_SIGNING_ENDPOINT }}
-          AZURE_ARTIFACT_SIGNING_ACCOUNT: ${{ vars.AZURE_ARTIFACT_SIGNING_ACCOUNT || secrets.AZURE_ARTIFACT_SIGNING_ACCOUNT }}
-          AZURE_ARTIFACT_SIGNING_CERTIFICATE_PROFILE: ${{ vars.AZURE_ARTIFACT_SIGNING_CERTIFICATE_PROFILE || secrets.AZURE_ARTIFACT_SIGNING_CERTIFICATE_PROFILE }}
-        run: |
-          $required = @(
-            "AZURE_CLIENT_ID",
-            "AZURE_TENANT_ID",
-            "AZURE_SUBSCRIPTION_ID",
-            "AZURE_ARTIFACT_SIGNING_ENDPOINT",
-            "AZURE_ARTIFACT_SIGNING_ACCOUNT",
-            "AZURE_ARTIFACT_SIGNING_CERTIFICATE_PROFILE"
-          )
-          $missing = $required | Where-Object { -not [Environment]::GetEnvironmentVariable($_) }
-          if ($missing.Count -gt 0) {
-            throw "Missing windows-signing environment variables: $($missing -join ', ')"
-          }
-
-      - name: Azure login with GitHub OIDC
-        uses: azure/login@f5d393ae46f8fde4be8b75f32e3fc50e654ad0ca # v3.0.1
-        with:
-          client-id: ${{ vars.AZURE_CLIENT_ID || secrets.AZURE_CLIENT_ID }}
-          tenant-id: ${{ vars.AZURE_TENANT_ID || secrets.AZURE_TENANT_ID }}
-          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID || secrets.AZURE_SUBSCRIPTION_ID }}
-
-      - name: Sign Windows installer
-        uses: azure/artifact-signing-action@c7ab2a863ab5f9a846ddb8265964877ef296ee82 # v2
-        with:
-          endpoint: ${{ vars.AZURE_ARTIFACT_SIGNING_ENDPOINT || secrets.AZURE_ARTIFACT_SIGNING_ENDPOINT }}
-          signing-account-name: ${{ vars.AZURE_ARTIFACT_SIGNING_ACCOUNT || secrets.AZURE_ARTIFACT_SIGNING_ACCOUNT }}
-          certificate-profile-name: ${{ vars.AZURE_ARTIFACT_SIGNING_CERTIFICATE_PROFILE || secrets.AZURE_ARTIFACT_SIGNING_CERTIFICATE_PROFILE }}
-          files-folder: ${{ github.workspace }}\apps\desktop\dist-electron
-          files-folder-filter: exe
-          files-folder-recurse: false
-          file-digest: SHA256
-          timestamp-rfc3161: http://timestamp.acs.microsoft.com
-          timestamp-digest: SHA256
 
       - name: Verify Windows signature and version
         shell: pwsh
@@ -438,6 +433,10 @@ jobs:
             throw "$($installers[0].Name) signature is $($signature.Status)"
           }
 
+      - name: Verify every packaged and installed Windows PE
+        shell: pwsh
+        run: ./scripts/release/windows-signatures.ps1 -Mode VerifyPackage -Path apps/desktop/dist-electron
+
       - name: Refresh signed installer blockmap and manifest
         run: node scripts/release/refresh-signed-windows-artifacts.mjs apps/desktop/dist-electron 1
 
@@ -450,6 +449,7 @@ jobs:
             apps/desktop/dist-electron/openwork-win-x64-*.exe
             apps/desktop/dist-electron/openwork-win-x64-*.exe.blockmap
             apps/desktop/dist-electron/latest.yml
+            apps/desktop/dist-electron/signature-evidence/**
           if-no-files-found: error
           retention-days: 7
 

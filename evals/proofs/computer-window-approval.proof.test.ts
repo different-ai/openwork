@@ -5,11 +5,12 @@ import { computerWindowApproval } from "../worlds/computer-window-approval.ts";
 const test = spec.world(computerWindowApproval, { timeout: 90_000, needs: { placement: "local" }, resources: { surfaces: [], services: [] } });
 
 test("enabled computer access continues without approval and preserves human handoff", async ({ world, user, probe, step, evidence }) => {
-  await step("before: enabled access is ready without a permission prompt", async () => {
-    await user.see({ testId: "session-computer-control" });
+  await step("before: enabled access shows no status or permission prompt in the chat", async () => {
+    await user.see({ text: "Computer use enabled" });
+    await user.notSee({ testId: "session-computer-floating" });
     await user.notSee({ role: "button", label: "Allow this window" });
     expect(world.decisions()).toEqual([]);
-    evidence.recordAssertionEvidence("Enabled access needs no approval", "The full chat control reports enabled access without an approval control.", world.decisions().length === 0);
+    evidence.recordAssertionEvidence("Enabled access needs no approval", "Before work starts the chat shows no computer status or approval control.", world.decisions().length === 0);
     await user.screenshot();
   });
   await step("after: agent work appears without opening a popover or approving access", async () => {

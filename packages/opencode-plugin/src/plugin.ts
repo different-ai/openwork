@@ -38,7 +38,8 @@ import type {
   PluginDefinition,
   RemoteMcpConfig,
 } from "./opencode.ts"
-import { fetchGatewayInventory, toProviderRecord, type GatewayProvider, type ProviderRecord } from "./providers.ts"
+import { fetchSharedGatewayInventory, inventoryRequestTicket } from "./inventory-fetch.ts"
+import { toProviderRecord, type GatewayProvider, type ProviderRecord } from "./providers.ts"
 import type { RemoteRunnerController } from "./remote-runner.ts"
 
 export const PLUGIN_ID = "openwork"
@@ -85,7 +86,6 @@ export interface Inventory {
   readonly connectionKey: string
   readonly apiBaseUrl: string
   readonly fetchedAt: number
-  readonly liveProviderSync?: boolean
   readonly gateway: { readonly providers: readonly GatewayProvider[]; readonly apiKey: string | null } | null
   readonly mcp: { readonly token: McpToken; readonly servers: readonly DirectServer[] } | null
 }
@@ -298,16 +298,9 @@ export function createPlugin(deps: { fetch?: Fetch; now?: () => number; retryMs?
         void publish(EMPTY).catch(() => {})
       }
 
-      const authorizedFeatureState = async (session: DenSession): Promise<boolean | null> => {
-        try {
-          const body = await denRequest(fetcher, session, "/v1/org")
-          return isRecord(body) && isRecord(body.features) ? body.features.liveProviderSync === true : null
-        } catch { return null }
-      }
-      const featureEnabled = async (session: DenSession) => await authorizedFeatureState(session) === true
-      const syncStream = (session: DenSession, enabled: boolean) => {
+      const syncStream = (session: DenSession) => {
         const key = fingerprint(session)
-        if (!enabled || !options.providers) { stopStream(); return }
+        if (!options.providers) { stopStream(); return }
         if (streamKey === key) return
         stopStream()
         streamKey = key
@@ -356,6 +349,7 @@ export function createPlugin(deps: { fetch?: Fetch; now?: () => number; retryMs?
       }
 
       const refreshOnce = async (force: boolean) => {
+        const ticket = inventoryRequestTicket()
         const epoch = generation
         const current = () => !disposed && epoch === generation
         const connection = await ctx.integration.connection.active(INTEGRATION_ID).catch(() => undefined)
@@ -397,22 +391,10 @@ export function createPlugin(deps: { fetch?: Fetch; now?: () => number; retryMs?
           return
         }
         if (identity === revokedIdentity) {
-          // A regrant may coincide with the rollout being killed. Only a real
-          // authenticated organization response can restore legacy polling;
-          // an unavailable/denied lookup never clears the authority fence.
-          const feature = await authorizedFeatureState(session)
-          if (!current()) return
-          if (feature === false) {
-            revokedIdentity = ""
-            stopStream()
-          } else {
-            // An unrelated credential event may have aborted the recovery rail.
-            // Recreate only its subscription; successful SSE still confirms a
-            // live-mode regrant before any inventory can be published.
-            syncStream(session, true)
-            await publish(EMPTY)
-            return
-          }
+          // Only a successful authenticated reconnect restores denied authority.
+          syncStream(session)
+          await publish(EMPTY)
+          return
         }
         if (revokedIdentity !== identity) revokedIdentity = ""
         if (unauthorizedIdentity !== identity) unauthorizedIdentity = ""
@@ -427,18 +409,16 @@ export function createPlugin(deps: { fetch?: Fetch; now?: () => number; retryMs?
         if (!sameAccount) await publish(EMPTY)
         if (!current()) return
         if (!force && sameAccount && now() - sameAccount.fetchedAt < FRESH_MS) {
-          syncStream(session, sameAccount.liveProviderSync === true)
+          syncStream(session)
           await publish(snapshotFrom(sameAccount, options, connection))
           return
         }
 
         try {
-          const liveProviderSync = await featureEnabled(session)
-          if (!current()) return
-          syncStream(session, liveProviderSync)
+          syncStream(session)
           const [gateway, mcp] = await Promise.all([
             options.providers
-              ? fetchGatewayInventory(fetcher, session, refreshController.signal).then((inventory) => ({ providers: inventory.providers, apiKey: inventory.apiKey }))
+              ? fetchSharedGatewayInventory({ fetch: fetcher, session, scope: "den", ticket, signal: refreshController.signal }).then((inventory) => ({ providers: inventory.providers, apiKey: inventory.apiKey }))
               : Promise.resolve(null),
             options.mcp
               ? (async () => {
@@ -456,7 +436,6 @@ export function createPlugin(deps: { fetch?: Fetch; now?: () => number; retryMs?
           if (!current()) return
           const inventory: Inventory = {
             version: 1,
-            liveProviderSync,
             connectionKey: key,
             apiBaseUrl: session.apiBaseUrl,
             fetchedAt: now(),

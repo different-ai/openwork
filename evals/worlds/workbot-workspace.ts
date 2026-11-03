@@ -22,6 +22,9 @@ export async function workbotWorkspace(seed: Seed, { place }: { place: Place }) 
   const documentWrites: string[] = [];
   const contentReads: string[] = [];
   let holdContent = false;
+  let holdMetadata = false;
+  const releaseMetadatas: (() => void)[] = [];
+  const releaseMetadata = () => { holdMetadata = false; for (const release of releaseMetadatas.splice(0)) release(); };
   const releaseContents: (() => void)[] = [];
   const releaseContent = () => { holdContent = false; for (const release of releaseContents.splice(0)) release(); };
   const identityReads: number[] = [];
@@ -120,6 +123,13 @@ export async function workbotWorkspace(seed: Seed, { place }: { place: Place }) 
             if (!isRecord(input)) return json({ error: "invalid_request" }, 400);
             messages.push(input);
             const now = Date.now();
+            // "Open the … for me" is answered with an accepted open_document request, as the runner records it.
+            const targets: Record<string, string> = { "project brief": "file_brief", "trigger phrases": "file_sheet", "restricted document": "file_private" };
+            const requested = typeof input.text === "string" ? targets[/^Open the (.+) for me$/.exec(input.text)?.[1] ?? ""] : undefined;
+            if (requested) {
+              thread(actor).push({ ...input, navigation: [{ id: `open_${String(input.id)}`, fileId: requested }], sentAt: now, finishedAt: now, status: "done", attachments: [], outputs: [], parts: [{ kind: "text", text: "Opening it beside our chat." }], modelSteps: 1, error: null });
+              return json({ ok: true }, 202);
+            }
             // A question about the computer gets a reply that used it; everything else links documents.
             const parts = typeof input.text === "string" && /computer/i.test(input.text)
               ? [{ kind: "steps", steps: [{ label: "Checked the budget site", icon: "computer", status: "done", app: null, startedAt: now, finishedAt: now, updates: [] }] }, { kind: "text", text: "I checked the budget site on my computer." }]
@@ -173,7 +183,7 @@ export async function workbotWorkspace(seed: Seed, { place }: { place: Place }) 
               }
               if (["file_pdf", "file_slides", "file_image"].includes(file.id) && match[2] === "editor") return json({ kind: "preview", fileId: file.id, connectionId: "google-workspace", name: file.name, revision: "v1", canEdit: false, mimeType: file.mimeType });
               if (["file_doc", "file_docx"].includes(file.id) && match[2] === "editor") return json({ kind: "document", source: file.id === "file_docx" ? "docx" : "google", fileId: file.id, connectionId: "google-workspace", name: file.name, revision: "v1", canEdit: true, sections: [{ id: "body", name: "Body", paragraphs: [{ id: "p1", runs: [{ id: "r1", text: "A readable project plan", bold: true }] }] }] });
-              if (match[2] === "metadata") { opened.push(file.id); return json({ id: file.id, name: file.name, mimeType: file.mimeType, modifiedTime: file.modifiedTime, size: file.size === null ? null : Number(file.size), openUrl: file.webViewLink }); }
+              if (match[2] === "metadata") { if (holdMetadata) await new Promise<void>(resolve => releaseMetadatas.push(resolve)); opened.push(file.id); return json({ id: file.id, name: file.name, mimeType: file.mimeType, modifiedTime: file.modifiedTime, size: file.size === null ? null : Number(file.size), openUrl: file.webViewLink }); }
               if (req.method === "POST") return json({ ok: true });
               if (file.id === "file_sheet" || file.id === "file_office") {
                 return json({ kind: "spreadsheet", source: file.id === "file_office" ? "xlsx" : "google", fileId: file.id, connectionId: "google-workspace", name: file.name, revision: "v1", canEdit: true, sheets: [{ id: "0", name: "Phrases", rows: 3, columns: 2 }], activeSheetId: "0", startRow: 1, endRow: 3, cells: [{ row: 1, column: 1, text: "Trigger phrase" }, { row: 2, column: 1, text: "book a demo" }] });
@@ -205,8 +215,10 @@ export async function workbotWorkspace(seed: Seed, { place }: { place: Place }) 
     const releaseIdentity = () => { holdIdentity = false; for (const resolve of releaseIdentities.splice(0)) resolve(); };
     resources.defer(releaseIdentity);
     resources.defer(releaseContent);
+    resources.defer(releaseMetadata);
     return {
       web, url, messages: () => [...messages], opened: () => [...opened], editorReads: () => [...editorReads], editorConnections: () => [...editorConnections], documentWrites: () => [...documentWrites],
+      holdDocumentMetadata: () => { holdMetadata = true; }, releaseDocumentMetadata: releaseMetadata,
       holdPreviewContent: () => { holdContent = true; }, releasePreviewContent: releaseContent, contentReads: () => [...contentReads],
       identityReads: () => [...identityReads], identityScopes: () => [...identityScopes], listingReads: () => [...listingReads], pendingFolders: () => pendingFolders,
       holdIdentity: () => { holdIdentity = true; }, pendingIdentities: () => pendingIdentities, releaseIdentity,

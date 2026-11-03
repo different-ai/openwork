@@ -1,0 +1,206 @@
+name: Dry run on a copy of production data
+
+# Runs one check from ee/apps/den-api/scripts/dry-run against a short-lived
+# PlanetScale copy seeded (Data Branching) from the latest production backup,
+# then deletes the copy. PlanetScale classifies seeded copies as production.
+# See .opencode/skills/dry-run-a-risky-change (level 3).
+#
+# Safety:
+# - Manual only (workflow_dispatch: people with write access). Never runs on
+#   pull requests, pushes or forks.
+# - Every run waits for a required reviewer on the prod-data-dry-run
+#   environment, which holds the only secrets this job sees.
+# - The PlanetScale token reaches only the steps that call pscale. The check
+#   gets a branch connection and nothing else: no email, Stripe, Slack,
+#   connector or model credentials.
+# - Every action is pinned to a full commit SHA, and dependencies are
+#   installed before any database credential exists.
+# - This repository is public, so its logs and step summaries are public.
+#   Checks print aggregates and pass/fail only, never rows, names, ids or
+#   emails. Review the check before approving the run.
+# - The branch (and its password) is deleted when the job ends, also when it
+#   fails or is cancelled. Use cleanup_only to remove leftovers.
+#
+# Needs, on the prod-data-dry-run environment:
+#   secrets PLANETSCALE_DRY_RUN_TOKEN_ID and PLANETSCALE_DRY_RUN_TOKEN: a
+#   service token limited to the Den database with read_database, read_branch,
+#   create_branch, delete_branch, connect_branch, read_backups and
+#   restore_production_branch_backup, connect_production_read_only_branch and
+#   delete_production_branch. No connect_production_branch or write_database.
+#   main must be deletion-protected (verified before each privileged operation).
+#   Data Branching must be enabled on the database.
+#   variables PLANETSCALE_DRY_RUN_ORG and PLANETSCALE_DRY_RUN_DATABASE.
+
+on:
+  workflow_dispatch:
+    inputs:
+      check:
+        description: "Check to run: a file name in ee/apps/den-api/scripts/dry-run (for example smoke.ts)"
+        required: true
+        default: smoke.ts
+      cleanup_only:
+        description: "Only delete leftover dry-run-* branches, run nothing"
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: prod-data-dry-run
+  cancel-in-progress: false
+
+jobs:
+  dry-run:
+    name: Dry run
+    if: github.repository == 'different-ai/openwork'
+    runs-on: blacksmith-4vcpu-ubuntu-2204
+    timeout-minutes: 90
+    environment:
+      name: prod-data-dry-run
+      deployment: false
+    env:
+      PLANETSCALE_ORG: ${{ vars.PLANETSCALE_DRY_RUN_ORG }}
+      DATABASE: ${{ vars.PLANETSCALE_DRY_RUN_DATABASE }}
+      SOURCE_BRANCH: main
+      BRANCH: dry-run-${{ github.run_id }}-${{ github.run_attempt }}
+      CHECK: ${{ inputs.check }}
+    steps:
+      - name: Check inputs and configuration
+        env:
+          TOKEN_ID: ${{ secrets.PLANETSCALE_DRY_RUN_TOKEN_ID }}
+          TOKEN: ${{ secrets.PLANETSCALE_DRY_RUN_TOKEN }}
+        run: |
+          set -euo pipefail
+          missing=""
+          [ -z "$TOKEN_ID" ] && missing="$missing PLANETSCALE_DRY_RUN_TOKEN_ID"
+          [ -z "$TOKEN" ] && missing="$missing PLANETSCALE_DRY_RUN_TOKEN"
+          [ -z "$PLANETSCALE_ORG" ] && missing="$missing PLANETSCALE_DRY_RUN_ORG"
+          [ -z "$DATABASE" ] && missing="$missing PLANETSCALE_DRY_RUN_DATABASE"
+          if [ -n "$missing" ]; then
+            echo "::error::Missing on the prod-data-dry-run environment:$missing"
+            exit 1
+          fi
+          if ! printf '%s' "$CHECK" | grep -Eq '^[A-Za-z0-9][A-Za-z0-9_-]*\.(ts|mjs)$'; then
+            echo "::error::check must be a file name in ee/apps/den-api/scripts/dry-run, such as smoke.ts"
+            exit 1
+          fi
+
+      - name: Checkout
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+
+      # Install before any database credential exists, so dependency lifecycle
+      # scripts never see the branch password or the PlanetScale token.
+      - name: Setup Node
+        if: ${{ !inputs.cleanup_only }}
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: 24.22.1
+
+      - name: Setup pnpm
+        if: ${{ !inputs.cleanup_only }}
+        uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
+        with:
+          version: 11.4.0
+
+      - name: Install dependencies
+        if: ${{ !inputs.cleanup_only }}
+        run: pnpm install --frozen-lockfile --filter "@openwork-ee/den-api..."
+
+      - name: Test branch safety guards
+        run: bash scripts/dry-run-branch-guard.test.sh
+
+      - name: Setup pscale CLI
+        uses: planetscale/setup-pscale-action@b6a50ee45b4b24944e1d8de6e57b3a5f6476a1af # v1
+
+      - name: Delete leftover dry-run branches
+        if: inputs.cleanup_only
+        env:
+          PLANETSCALE_SERVICE_TOKEN_ID: ${{ secrets.PLANETSCALE_DRY_RUN_TOKEN_ID }}
+          PLANETSCALE_SERVICE_TOKEN: ${{ secrets.PLANETSCALE_DRY_RUN_TOKEN }}
+        run: |
+          set -euo pipefail
+          source scripts/dry-run-branch-guard.sh
+          assert_source_protected
+          pscale branch list "$DATABASE" --org "$PLANETSCALE_ORG" --format json \
+            | jq -r '.[] | select(.name | test("^dry-run-[0-9]+-[0-9]+$")) | .name' \
+            | while read -r name; do
+                delete_dry_run_branch "$name"
+              done
+
+      - name: Check the check exists
+        if: ${{ !inputs.cleanup_only }}
+        run: |
+          set -euo pipefail
+          test -f "ee/apps/den-api/scripts/dry-run/$CHECK" || { echo "::error::ee/apps/den-api/scripts/dry-run/$CHECK not found on $GITHUB_REF_NAME"; exit 1; }
+
+      - name: Seed an isolated copy from the latest backup
+        if: ${{ !inputs.cleanup_only }}
+        env:
+          PLANETSCALE_SERVICE_TOKEN_ID: ${{ secrets.PLANETSCALE_DRY_RUN_TOKEN_ID }}
+          PLANETSCALE_SERVICE_TOKEN: ${{ secrets.PLANETSCALE_DRY_RUN_TOKEN }}
+        run: |
+          set -euo pipefail
+          source scripts/dry-run-branch-guard.sh
+          assert_dry_run_name "$BRANCH"
+          assert_source_protected
+          # A production-data copy may itself be classified as production.
+          # It is isolated from main and only gets a reader password.
+          echo "Seeding $BRANCH from the latest backup of $SOURCE_BRANCH"
+          pscale branch create "$DATABASE" "$BRANCH" --org "$PLANETSCALE_ORG" --from "$SOURCE_BRANCH" --seed-data --wait > /dev/null
+          assert_copy_branch "$BRANCH"
+
+      - name: Create a branch password
+        if: ${{ !inputs.cleanup_only }}
+        env:
+          PLANETSCALE_SERVICE_TOKEN_ID: ${{ secrets.PLANETSCALE_DRY_RUN_TOKEN_ID }}
+          PLANETSCALE_SERVICE_TOKEN: ${{ secrets.PLANETSCALE_DRY_RUN_TOKEN }}
+          ROLE: reader
+          PASSWORD_NAME: dry-run-${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          source scripts/dry-run-branch-guard.sh
+          assert_source_protected
+          assert_copy_branch "$BRANCH"
+          json="$(pscale password create "$DATABASE" "$BRANCH" "$PASSWORD_NAME" --org "$PLANETSCALE_ORG" --role "$ROLE" --ttl 2h --format json)"
+          host="$(printf '%s' "$json" | jq -r '.access_host_url // .database_branch.access_host_url')"
+          username="$(printf '%s' "$json" | jq -r '.username')"
+          password="$(printf '%s' "$json" | jq -r '.plain_text')"
+          echo "::add-mask::$username"
+          echo "::add-mask::$password"
+          {
+            echo "DRY_RUN_DATABASE_HOST=$host"
+            echo "DRY_RUN_DATABASE_USERNAME=$username"
+            echo "DRY_RUN_DATABASE_PASSWORD=$password"
+          } >> "$GITHUB_ENV"
+          echo "Password created with role $ROLE"
+
+      - name: Run the check (aggregates only)
+        if: ${{ !inputs.cleanup_only }}
+        env:
+          NODE_ENV: test
+          DRY_RUN: "1"
+          DRY_RUN_WRITABLE: "0"
+        run: |
+          set -euo pipefail
+          pnpm --filter @openwork-ee/den-api exec tsx --conditions=development "scripts/dry-run/$CHECK" | tee -a "$GITHUB_STEP_SUMMARY"
+
+      - name: Delete the branch
+        if: ${{ always() && !inputs.cleanup_only }}
+        env:
+          PLANETSCALE_SERVICE_TOKEN_ID: ${{ secrets.PLANETSCALE_DRY_RUN_TOKEN_ID }}
+          PLANETSCALE_SERVICE_TOKEN: ${{ secrets.PLANETSCALE_DRY_RUN_TOKEN }}
+        run: |
+          set -euo pipefail
+          source scripts/dry-run-branch-guard.sh
+          assert_dry_run_name "$BRANCH"
+          # Listing must succeed: an auth/network failure is not proof that
+          # the copy is absent.
+          branches="$(pscale branch list "$DATABASE" --org "$PLANETSCALE_ORG" --format json)"
+          if printf '%s' "$branches" | jq -e --arg name "$BRANCH" 'any(.[]; .name == $name)' > /dev/null; then
+            delete_dry_run_branch "$BRANCH"
+          else
+            echo "No branch to delete"
+          fi

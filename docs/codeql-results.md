@@ -1,6 +1,43 @@
 # Missing CodeQL results despite successful jobs
 
-OpenWork uses GitHub's CodeQL **default setup**, not a checked-in analysis workflow.
+## Advanced setup and Swift
+
+OpenWork analyzes code with the checked-in `.github/workflows/codeql.yml`
+(advanced setup). It replaced GitHub's default setup, which built Swift with
+autobuild on every PR: about 14 minutes waiting for a macOS runner, then about
+8 minutes of build discovery before a 5-minute compile.
+
+* Every push to `dev`, the weekly schedule and manual runs analyze all four
+  languages: `actions`, `javascript-typescript` and `python` without a build,
+  and `swift` built directly with `swift build` for the `ComputerUse` product
+  on macOS. JavaScript/TypeScript runs on a 16-vCPU runner.
+* PRs do not analyze. Each PR uploads an empty result per category from Linux
+  in seconds. Empty results are only ever uploaded for PRs, never for `dev`.
+* All analyses keep the `/language:<language>` categories default setup used,
+  and load `.github/codeql/codeql-config.yml` directly.
+
+**Activation.** GitHub rejects advanced-setup uploads while default setup is
+enabled, so a repository admin must disable it before this workflow's results
+count: Settings → Code security → CodeQL analysis → ⋯ → Switch to advanced, or
+`gh api -X PATCH repos/different-ai/openwork/code-scanning/default-setup -f state=not-configured`.
+Re-enable default setup the same way (`-f state=configured`) to revert.
+
+The `code_scanning` rule on `dev` waits for every category `dev` has; without a
+result per category, PRs would be blocked with "Code scanning is still
+expecting N results from CodeQL" and need an admin bypass. The empty PR results
+satisfy it.
+
+**What this trades.** Between September 15 and October 31, 2026 the PR scan
+flagged 127 PR commits with new high or critical alerts, 46 of them fixed in the
+next commit. Those alerts now appear on the `dev` push scan of the merged
+commit (Security → Code scanning, and the CodeQL check on that commit) instead
+of blocking the PR. Triage new `dev` alerts as regressions. To bring the PR
+gate back, revert the PR path in `codeql.yml`; to drop the empty uploads
+instead, an admin must remove or relax the `code_scanning` rule in the `dev`
+ruleset.
+
+## Missing results after configuration changes
+
 GitHub can add a language automatically when repository contents change. Existing
 PRs may have successful scans from before that change and still lack the newly
 required result. The code-scanning merge rule checks uploaded analyses, not just
@@ -10,9 +47,18 @@ On September 5, 2026, PR #4517 had Actions and JavaScript/TypeScript results for
 3427828, but Python was added to default setup after that scan. GitHub consequently
 reported one missing result for the PR head or its merge commit e322949.
 
-## Exclude evals and tests from analysis
+## Exclude tooling, fixtures, evals and tests from analysis
 
-`.github/codeql/codeql-config.yml` excludes all `evals/` trees (including their
+`.github/codeql/codeql-config.yml` excludes root `scripts/` tooling (including
+build/release and docs/PDF scripts) and `fixtures/` directories anywhere in the
+repository. These are deliberate analysis exclusions: findings in those files
+will no longer be reported by CodeQL, not merely made non-blocking. Application
+code, package-local scripts, `.github/scripts/` and Actions workflows remain in
+scope unless they independently match a test exclusion. Build/release tooling
+still requires security review; being outside application runtime does not make
+it inherently safe.
+
+The configuration also excludes all `evals/` trees (including their
 shared packages), test-suite/support directories, and extension-independent test
 filenames such as `*.test.*`, `*.spec.*`, `*.e2e.*`, `test_*`, `*_test.*`,
 `test-*`, `*Test.*`, and `*Tests.*`. Compound names such as `*.api.test.ts`,
@@ -23,8 +69,9 @@ directories are scoped to workspace package roots and `src/test/`: a blanket
 their names (for example `latest-assistant-tool-parts.ts` and `model-test.ts`)
 remain scanned.
 
-**Committing the file alone does not activate it.** Keep default setup and enable
-its supported custom-configuration repository property:
+`.github/workflows/codeql.yml` loads this file directly. The steps below applied
+only while default setup was in use; under default setup, committing the file
+alone did not activate it:
 
 1. In the organization settings, create the **Text** custom repository property
    `github-codeql-config-file` if it does not exist. Do not set an organization-wide
@@ -48,6 +95,26 @@ this file.
 See [custom configuration with default setup](https://docs.github.com/en/code-security/how-tos/find-and-fix-code-vulnerabilities/manage-your-configuration/edit-default-setup#customizing-default-setup-with-a-configuration-file)
 and [CodeQL path patterns](https://docs.github.com/en/code-security/reference/code-scanning/workflow-configuration-options#specifying-directories-to-scan).
 
+## Optional Critical-only merge gate (repository setting)
+
+Path exclusions above do not change the live merge rule. A repository admin can
+separately edit Settings → Rules → Rulesets → **Require admin approval on dev**
+→ Code scanning results → CodeQL and set the security-alert threshold to
+**Critical** (`security_alerts_threshold: critical`). Set the non-security alert
+threshold to **None** (`alerts_threshold: none`) if the intended policy is that
+only Critical security findings block. Lower-severity findings in scanned code
+are still reported, but no longer block merges. Keep the other rules unchanged.
+
+GitHub's code-scanning rule has no production-path filter. The analysis exclusions
+define the scanned scope; the rule applies to all remaining results. This is a
+separate, repository-wide policy change, not something merging a config file
+activates. Restoring `high_or_higher` and `errors` restores the current thresholds.
+
+Run `node --test scripts/ci/codeql-config.test.mjs` to check representative tooling,
+fixture and test exclusions plus production paths that must stay in scope. This
+checks the configured glob contract locally, not a live CodeQL extraction; verify
+the next uploaded analysis after merging as described above.
+
 ## Detect
 
 The daily `CodeQL Result Coverage` workflow checks open same-repository PRs targeting the default branch
@@ -65,10 +132,12 @@ node scripts/ci/check-codeql-results.mjs
 
 API failures and missing baselines fail the audit; they are not interpreted as zero required results.
 GitHub has used both `dynamic/github-code-scanning/codeql:upload` and
-`dynamic/github-code-scanning/codeql:analyze` for default setup. The monitor
+`dynamic/github-code-scanning/codeql:analyze` for default setup; the advanced
+workflow uploads as `.github/workflows/codeql.yml:analyze`. The monitor
 recognizes those exact keys, keeps the baseline to one commit and run key, and
-fails on an unsupported latest default-setup key rather than silently using an
-older baseline. Custom-workflow uploads do not stand in for default setup.
+fails on an unsupported latest key rather than silently using an older
+baseline. Uploads from other workflows do not count. Every PR needs a Swift
+upload, real or empty.
 `node --test scripts/ci/check-codeql-results.test.mjs` covers this accounting
 without requesting scans or changing security settings.
 
@@ -77,8 +146,7 @@ Administration permission, which the workflow token does not have. Newly enabled
 languages become expected once their baseline uploads succeed. Results are read
 from the latest 100 baseline analyses; old PR history is paginated in full.
 This verifies coverage, not absence of vulnerabilities. The existing CodeQL rule
-continues to enforce alert thresholds. If switching to advanced setup, update this
-audit to use that workflow's categories; it expects the default-setup analysis key.
+continues to enforce alert thresholds.
 
 ## Recover
 

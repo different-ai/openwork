@@ -6,7 +6,7 @@ import {
   claudeCoworkAlternativeFaq,
   claudeCoworkAlternativeHeading
 } from "../lib/claude-cowork-alternative";
-import { CapabilityMatrix } from "./capability-matrix";
+import { CoworkComparison } from "./cowork-comparison";
 import { CoworkCostCalculator } from "./cowork-cost-calculator";
 import { DownloadLink } from "./download-link";
 import { LandingFaq } from "./landing-faq";
@@ -34,9 +34,7 @@ export function ClaudeCoworkAlternativePage({ stars }: Props) {
           <DownloadLink className="lp-pill-primary">Download OpenWork free</DownloadLink>
         </CompareHero>
 
-        <CompareSection id="comparison-heading" heading="OpenWork vs Claude Cowork">
-          <CapabilityMatrix caption="Claude Enterprise, Claude Desktop on 3P, and OpenWork compared by capability" />
-        </CompareSection>
+        <CoworkComparison />
 
         <div id="cost" className="scroll-mt-28 py-12 md:py-16">
           <CoworkCostCalculator />

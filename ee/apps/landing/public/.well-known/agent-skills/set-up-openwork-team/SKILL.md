@@ -5,7 +5,7 @@ description: Set up OpenWork for a team - sign up for OpenWork Cloud, create the
 
 # Set up OpenWork for a team
 
-OpenWork Cloud is the team control plane: members, shared models (AI Gateway), shared skills and plugins, and the MCP Gateway. The first 5 seats are free; then $10 per seat per month. Pricing: https://openworklabs.com/pricing
+OpenWork Cloud is the team control plane: members, shared models (AI Gateway), shared skills and plugins, and the MCP Gateway. The Free plan covers up to 5 users; the Team plan is $10 per user per month. Pricing: https://openworklabs.com/pricing
 
 The human creates the account. Don't invent passwords or create accounts for the user without asking.
 
@@ -21,7 +21,7 @@ Walkthrough with screenshots: https://openworklabs.com/docs/cloud/team-quickstar
 
 ## Headless: let the agent set it up
 
-When the user wants the agent to do the setup from a terminal, follow https://openworklabs.com/start.md. It installs the `openwork-bootstrap` CLI (needs Node.js 20+; it is not on npm) and creates a provisional workspace with a first skill. The human claims ownership later in the browser, so no password is created by the agent.
+When the user wants the agent to do the setup from a terminal, follow https://openworklabs.com/start.md. It installs the `openwork-bootstrap` CLI (needs stable Node.js 24.x, version 24.22.1 or newer within that major; the installer fetches a private checksum-verified Node.js 24.22.1 when needed; it is not on npm) and creates a provisional workspace with a first skill. The human claims ownership later in the browser, so no password is created by the agent.
 
 ```sh
 curl -fsSLo /tmp/openwork-install.sh https://openworklabs.com/install.sh

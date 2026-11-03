@@ -16,14 +16,17 @@ import {
 } from "./agent-context-diagnostics-transport";
 import { desktopFetch, desktopFetchViaMain, desktopFetchAgentContextDiagnostics } from "./desktop";
 import { isOpenworkGatewayRuntime } from "./gateway-runtime";
+import { parseGatewayUsableModel } from "./gateway-usable-model";
 import { isDesktopRuntime } from "./runtime-env";
 import type { ExecResult, OpencodeConfigFile, WorkspaceInfo, WorkspaceList } from "./desktop";
 import type { DenResourceSnapshot } from "./den-types";
 import type { CloudImportedMarketplace, CloudImportedPlugin, CloudImportedProvider } from "../cloud/import-state";
 import { desktopFreeAccessStatusSchema } from "./inference-access";
+import { claudeImportItemsSchema, claudeImportResultsSchema } from "./claude-import";
 
 const desktopFreePreferencesSchema = z.object({ enabled: z.boolean(), available: z.boolean(), canEnable: z.boolean(), refresh: z.enum(["reloaded", "deferred"]).optional() });
 export type DesktopFreePreferences = z.infer<typeof desktopFreePreferencesSchema>;
+const desktopFreeAnalyticsSchema = z.object({ enabled: z.boolean() });
 
 export type OpenworkServerCapabilities = {
   skills: { read: boolean; write: boolean; source: "openwork" | "opencode" };
@@ -80,8 +83,10 @@ export type OpenworkCloudProviderSyncStatus = {
 
 export interface EngineV2MigrationStatus {
   state: "idle" | "running" | "completed" | "error";
-  /** Only `copying` moves the counts; older servers omit it. */
-  phase?: "starting" | "converting" | "copying";
+  /** Restoring counts messages separately from the chat-copy counts. */
+  phase?: "starting" | "converting" | "restoring" | "copying";
+  restored?: number;
+  restoreTotal?: number;
   imported: number;
   skipped: number;
   total: number;
@@ -113,10 +118,12 @@ function parseEngineV2Migration(value: unknown): EngineV2MigrationStatus | undef
   if (!("imported" in value) || typeof value.imported !== "number"
     || !("skipped" in value) || typeof value.skipped !== "number"
     || !("total" in value) || typeof value.total !== "number") return undefined;
-  const phase = "phase" in value && (value.phase === "starting" || value.phase === "converting" || value.phase === "copying")
+  const phase = "phase" in value && (value.phase === "starting" || value.phase === "converting" || value.phase === "restoring" || value.phase === "copying")
     ? value.phase : undefined;
   return { state: value.state, imported: value.imported, skipped: value.skipped, total: value.total,
     ...(phase ? { phase } : {}),
+    ...("restored" in value && typeof value.restored === "number" ? { restored: value.restored } : {}),
+    ...("restoreTotal" in value && typeof value.restoreTotal === "number" ? { restoreTotal: value.restoreTotal } : {}),
     ...("startedAt" in value && typeof value.startedAt === "string" ? { startedAt: value.startedAt } : {}),
     ...("backupPath" in value && typeof value.backupPath === "string" ? { backupPath: value.backupPath } : {}),
     ...("notCopied" in value ? { notCopied: parseChats(value.notCopied) } : {}),
@@ -174,11 +181,40 @@ export interface EngineV2PreviewStatus {
   migration?: EngineV2MigrationStatus;
   /** Older servers omit it; treat that as unknown and do not prompt. */
   v1HistoryAvailable?: boolean;
+  /** The organization runs every chat on OpenCode v2 (the opencodeV2Only rollout). Older servers omit it: off. */
+  v2Only?: boolean;
   mirroredProviderIds: string[];
   skippedProviderIds: string[];
+  /** Why each skipped provider is not on OpenCode v2. Older servers, and the rollout switched off, omit it. */
+  skippedProviders?: EngineV2SkippedProvider[];
   catalogModelIds: string[];
   lastMirroredAt?: string;
   lastError?: string;
+}
+
+/**
+ * `policy`: the organization allows only its own providers. Every other
+ * reason means the provider is connected on this computer but OpenCode v2
+ * cannot use it yet (`oauth` sign-ins, `unsupported` adapters, `metadata` or
+ * `credentials` it could not read). A reason a newer server adds reads as
+ * `unsupported`, never as ready.
+ */
+export type EngineV2SkippedProviderReason = "policy" | "oauth" | "unsupported" | "metadata" | "credentials";
+
+export interface EngineV2SkippedProvider {
+  id: string;
+  reason: EngineV2SkippedProviderReason;
+}
+
+const ENGINE_V2_SKIP_REASONS: readonly EngineV2SkippedProviderReason[] = ["policy", "oauth", "unsupported", "metadata", "credentials"];
+
+function parseEngineV2SkippedProviders(value: unknown): EngineV2SkippedProvider[] | undefined {
+  if (!Array.isArray(value)) return undefined;
+  return value.flatMap((item): EngineV2SkippedProvider[] => {
+    if (!item || typeof item !== "object" || !("id" in item) || typeof item.id !== "string" || !item.id) return [];
+    const reason = "reason" in item ? ENGINE_V2_SKIP_REASONS.find((known) => known === item.reason) : undefined;
+    return [{ id: item.id, reason: reason ?? "unsupported" }];
+  });
 }
 
 const workspaceDefaultModelRefSchema = z.object({
@@ -213,6 +249,7 @@ function parseEngineV2PreviewStatus(value: unknown): EngineV2PreviewStatus {
   ) {
     throw new Error("Invalid OpenCode v2 engine preview status response.");
   }
+  const skippedProviders = parseEngineV2SkippedProviders("skippedProviders" in value ? value.skippedProviders : undefined);
   return {
     migration: parseEngineV2Migration("migration" in value ? value.migration : undefined),
     ...("v1HistoryAvailable" in value && typeof value.v1HistoryAvailable === "boolean"
@@ -233,6 +270,7 @@ function parseEngineV2PreviewStatus(value: unknown): EngineV2PreviewStatus {
     binSource: "binSource" in value && typeof value.binSource === "string" ? value.binSource : undefined,
     mirroredProviderIds: value.mirroredProviderIds,
     skippedProviderIds: value.skippedProviderIds,
+    ...(skippedProviders ? { skippedProviders } : {}),
     catalogModelIds: value.catalogModelIds,
     lastMirroredAt: "lastMirroredAt" in value && typeof value.lastMirroredAt === "string" ? value.lastMirroredAt : undefined,
     lastError: "lastError" in value && typeof value.lastError === "string" ? value.lastError : undefined,
@@ -272,27 +310,6 @@ function parseCloudImportedProvider(value: unknown): CloudImportedProvider | nul
     ...("modelConfigVersion" in value && typeof value.modelConfigVersion === "number"
       ? { modelConfigVersion: value.modelConfigVersion } : {}),
     importedAt: "importedAt" in value && typeof value.importedAt === "number" ? value.importedAt : null,
-  };
-}
-
-function parsePendingGatewayModel(value: unknown, credentialSetId: unknown): GatewayUsableModel | null {
-  if (!value || typeof value !== "object"
-    || !("id" in value) || typeof value.id !== "string"
-    || !/^gwm_[0-7][0-9a-hjkmnp-tv-z]{25}_[0-7][0-9a-hjkmnp-tv-z]{25}_[0-7][0-9a-hjkmnp-tv-z]{25}$/.test(value.id)
-    || !("name" in value) || typeof value.name !== "string"
-    || !("config" in value) || !value.config || typeof value.config !== "object" || Array.isArray(value.config)
-    || !("id" in value.config) || value.config.id !== value.id
-    || !("upstreamModelId" in value) || typeof value.upstreamModelId !== "string"
-    || !("modelGroupId" in value) || typeof value.modelGroupId !== "string"
-    || !("modelGroupName" in value) || typeof value.modelGroupName !== "string"
-    || !("credentialSetId" in value) || typeof value.credentialSetId !== "string" || value.credentialSetId !== credentialSetId
-    || value.id.split("_")[2] !== value.credentialSetId.slice(4)
-    || value.id.split("_")[1] !== value.modelGroupId.slice(4)
-    || !("credentialSetName" in value) || typeof value.credentialSetName !== "string") return null;
-  return {
-    id: value.id, name: value.name, config: { ...value.config, id: value.id },
-    upstreamModelId: value.upstreamModelId, modelGroupId: value.modelGroupId, modelGroupName: value.modelGroupName,
-    credentialSetId: value.credentialSetId, credentialSetName: value.credentialSetName,
   };
 }
 
@@ -336,7 +353,7 @@ function parseCloudProviderSyncStatus(value: unknown): OpenworkCloudProviderSync
         ...("authUrl" in raw && typeof raw.authUrl === "string" ? { authUrl: raw.authUrl } : {}),
         ...(raw.reason === "member_auth_required" && "credentialSetId" in raw && "models" in raw && Array.isArray(raw.models)
           ? { models: raw.models.flatMap((value: unknown) => {
-            const model = parsePendingGatewayModel(value, raw.credentialSetId);
+            const model = parseGatewayUsableModel(value, raw.credentialSetId);
             return model ? [model] : [];
           }) } : {}),
       });
@@ -1044,6 +1061,9 @@ export type OpenworkResolvedArtifactTarget = {
   size?: number;
   updatedAt?: number;
   contentType?: string;
+  /** Absolute path on the owning server; never implies native/local access. */
+  resolvedPath?: string;
+  fileScope?: "workspace" | "conversation";
 };
 
 export type OpenworkWorkspaceFileStat = {
@@ -1459,6 +1479,9 @@ const resolveFetch = (url?: string) => {
 
 const DEFAULT_OPENWORK_SERVER_TIMEOUT_MS = 10_000;
 const ENGINE_RELOAD_TIMEOUT_MS = 60_000;
+// The upload deadline grows with the file, so a slow connection can finish a
+// large one while a stalled upload still fails.
+const UPLOAD_MIN_BYTES_PER_SECOND = 256 * 1024;
 
 type FetchLike = (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>;
 
@@ -1575,10 +1598,10 @@ async function requestAgentContextDiagnosticsJson(
   return result.payload;
 }
 
-async function requestMultipartRaw(
+async function requestUploadRaw(
   baseUrl: string,
   path: string,
-  options: { method?: string; token?: string; hostToken?: string; body?: FormData; timeoutMs?: number } = {},
+  options: { method?: string; token?: string; hostToken?: string; body?: FormData | File; contentType?: string; timeoutMs?: number } = {},
 ): Promise<{ ok: boolean; status: number; text: string }>{
   const url = `${baseUrl}${path}`;
   const fetchImpl = resolveFetch(url);
@@ -1587,7 +1610,7 @@ async function requestMultipartRaw(
     url,
     {
       method: options.method ?? "POST",
-      headers: buildAuthHeaders(options.token, options.hostToken),
+      headers: buildAuthHeaders(options.token, options.hostToken, options.contentType ? { "Content-Type": options.contentType } : undefined),
       body: options.body,
     },
     options.timeoutMs ?? DEFAULT_OPENWORK_SERVER_TIMEOUT_MS,
@@ -1678,6 +1701,7 @@ export function createOpenworkServerClient(options: { baseUrl: string; token?: s
     cloudComputerInteract: (body: Record<string, unknown>) => requestJson<unknown>(baseUrl, "/cloud-computer/interact", { token, method: "POST", body, timeoutMs: 15_000 }),
     desktopFreePreferences: async () => desktopFreePreferencesSchema.parse(await requestJson<unknown>(baseUrl, "/anonymous-inference/preferences", { hostToken, timeoutMs: timeouts.config })),
     setDesktopFreeEnabled: async (enabled: boolean) => desktopFreePreferencesSchema.parse(await requestJson<unknown>(baseUrl, "/anonymous-inference/preferences", { hostToken, method: "PUT", body: { enabled }, timeoutMs: timeouts.cloudMcpReconcile })),
+    setDesktopFreeAnalytics: async (enabled: boolean) => desktopFreeAnalyticsSchema.parse(await requestJson<unknown>(baseUrl, "/anonymous-inference/analytics", { hostToken, method: "PUT", body: { enabled }, timeoutMs: timeouts.config })),
     desktopFreeStatus: async () => desktopFreeAccessStatusSchema.parse(await requestJson<unknown>(baseUrl, "/anonymous-inference/status", { token, timeoutMs: 15_000 })),
     desktopFreePreflight: async () => desktopFreeAccessStatusSchema.parse(await requestJson<unknown>(baseUrl, "/anonymous-inference/preflight", { token, method: "POST", timeoutMs: 15_000 })),
     token,
@@ -2094,6 +2118,7 @@ export function createOpenworkServerClient(options: { baseUrl: string; token?: s
       projectedToolName: string,
       launch?: OpenworkMcpAppLaunchReference,
       context?: { sessionId: string | null; readOnly: boolean; engine?: "v1" | "v2" },
+      options?: { signal?: AbortSignal },
     ) =>
       requestJson<{ app: OpenworkMcpAppResource | null }>(
         baseUrl,
@@ -2104,6 +2129,7 @@ export function createOpenworkServerClient(options: { baseUrl: string; token?: s
           method: "POST",
           body: { projectedToolName, ...(launch ? { launch } : {}), ...(context ? { context: { sessionId: context.sessionId, readOnly: context.readOnly, engine: context.engine } } : {}) },
           timeoutMs: timeouts.binary,
+          signal: options?.signal,
         },
       ),
     mcpAppSandbox: (app: OpenworkMcpAppResource, hostOrigin: string): OpenworkMcpAppSandbox => {
@@ -2111,6 +2137,10 @@ export function createOpenworkServerClient(options: { baseUrl: string; token?: s
       const url = new URL(`${baseUrl}/mcp-apps/sandbox.html`);
       if (url.origin === hostOrigin && url.hostname === "localhost") url.hostname = "127.0.0.1";
       else if (url.origin === hostOrigin && url.hostname === "127.0.0.1") url.hostname = "localhost";
+      // A server with this exact page lets the browser keep it, so later Apps
+      // start without fetching it again. Any other server ignores the version.
+      const version = String(import.meta.env.VITE_OPENWORK_MCP_APP_SANDBOX_VERSION ?? "").trim();
+      if (version) url.searchParams.set("v", version);
       url.searchParams.set("csp", JSON.stringify(app.csp));
       url.searchParams.set("hostOrigin", messageOrigin);
       // Hosted Web serves the trusted proxy on its own origin. Keep that frame
@@ -2136,6 +2166,7 @@ export function createOpenworkServerClient(options: { baseUrl: string; token?: s
         approved?: boolean;
         checkOnly?: boolean;
       },
+      options?: { signal?: AbortSignal },
     ) => requestJson<OpenworkMcpAppToolResult>(
       baseUrl,
       `/workspace/${encodeURIComponent(workspaceId)}/mcp-apps/call`,
@@ -2145,6 +2176,7 @@ export function createOpenworkServerClient(options: { baseUrl: string; token?: s
         method: "POST",
         body: payload,
         timeoutMs: timeouts.binary,
+        signal: options?.signal,
       },
     ),
     releaseMcpApp: (workspaceId: string, launchId: string) => requestJson<{ released: boolean }>(
@@ -2313,21 +2345,68 @@ export function createOpenworkServerClient(options: { baseUrl: string; token?: s
         hostToken,
         method: "DELETE",
       }),
+    listClaudeCodeSessions: async (workspaceId: string) =>
+      claudeImportItemsSchema.parse(
+        await requestJson<unknown>(baseUrl, `/workspace/${encodeURIComponent(workspaceId)}/claude-import/code`, { token, hostToken, timeoutMs: 60_000 }),
+      ).items,
+    importClaudeCodeSessions: async (workspaceId: string, ids: string[]) =>
+      claudeImportResultsSchema.parse(
+        await requestJson<unknown>(baseUrl, `/workspace/${encodeURIComponent(workspaceId)}/claude-import/code`, {
+          token,
+          hostToken,
+          method: "POST",
+          body: { ids },
+          timeoutMs: 10 * 60_000,
+        }),
+      ).results,
+    readClaudeExport: async (workspaceId: string, file: File, selection?: { importIds: string[] }) => {
+      const form = new FormData();
+      form.append("file", file);
+      form.append("mode", selection ? "import" : "preview");
+      if (selection) form.append("ids", JSON.stringify(selection.importIds));
+      const result = await requestUploadRaw(baseUrl, `/workspace/${encodeURIComponent(workspaceId)}/claude-import/export`, {
+        token,
+        hostToken,
+        method: "POST",
+        body: form,
+        timeoutMs: 10 * 60_000,
+      });
+      let parsed: unknown = null;
+      try { parsed = result.text ? JSON.parse(result.text) : null; } catch { parsed = null; }
+      if (!result.ok) {
+        const error = z.object({ code: z.string().optional(), message: z.string().optional() }).safeParse(parsed);
+        throw new OpenworkServerError(
+          result.status,
+          error.success ? error.data.code ?? "request_failed" : "request_failed",
+          error.success && error.data.message ? error.data.message : "This file could not be read.",
+        );
+      }
+      return parsed;
+    },
     uploadInbox: async (workspaceId: string, file: File, options?: { path?: string }) => {
       const id = workspaceId.trim();
       if (!id) throw new Error("workspaceId is required");
       if (!file) throw new Error("file is required");
       const uploadPath = `/workspace/${encodeURIComponent(id)}/inbox`;
-      const form = new FormData();
-      form.append("file", file);
-      if (options?.path?.trim()) form.append("path", options.path.trim());
-      const result = await requestMultipartRaw(baseUrl, uploadPath, {
+      const targetPath = options?.path?.trim() || file.name;
+      const request = {
         token,
         hostToken,
         method: "POST",
-        body: form,
-        timeoutMs: timeouts.binary,
+        timeoutMs: Math.max(timeouts.binary, (file.size / UPLOAD_MIN_BYTES_PER_SECOND) * 1000),
+      };
+      let result = await requestUploadRaw(baseUrl, `${uploadPath}?path=${encodeURIComponent(targetPath)}`, {
+        ...request,
+        contentType: "application/octet-stream",
+        body: file,
       });
+      // Workers that have not updated yet accept only multipart.
+      if (result.status === 400 && result.text.includes("Expected multipart/form-data")) {
+        const form = new FormData();
+        form.append("file", file);
+        form.append("path", targetPath);
+        result = await requestUploadRaw(baseUrl, uploadPath, { ...request, body: form });
+      }
 
       if (!result.ok) {
         let message = result.text.trim();
@@ -2383,10 +2462,10 @@ export function createOpenworkServerClient(options: { baseUrl: string; token?: s
       ),
 
     /** `sessionId` also finds files the conversation wrote after moving into a worktree. */
-    readWorkspaceFile: (workspaceId: string, path: string, options?: { sessionId?: string }) =>
+    readWorkspaceFile: (workspaceId: string, path: string, options?: { sessionId?: string; fileScope?: "workspace" | "conversation" }) =>
       requestJson<OpenworkWorkspaceFileContent>(
         baseUrl,
-        `/workspace/${encodeURIComponent(workspaceId)}/files/content?path=${encodeURIComponent(path)}${options?.sessionId ? `&session=${encodeURIComponent(options.sessionId)}` : ""}`,
+        `/workspace/${encodeURIComponent(workspaceId)}/files/content?path=${encodeURIComponent(path)}${options?.sessionId ? `&session=${encodeURIComponent(options.sessionId)}` : ""}${options?.fileScope ? `&fileScope=${encodeURIComponent(options.fileScope)}` : ""}`,
         { token, hostToken },
       ),
 
@@ -2421,7 +2500,7 @@ export function createOpenworkServerClient(options: { baseUrl: string; token?: s
 
     writeWorkspaceFile: (
       workspaceId: string,
-      payload: { path: string; content: string; baseUpdatedAt?: number | null; force?: boolean; sessionId?: string },
+      payload: { path: string; content: string; baseUpdatedAt?: number | null; force?: boolean; sessionId?: string; fileScope?: "workspace" | "conversation" },
     ) =>
       requestJson<OpenworkWorkspaceFileWriteResult>(
         baseUrl,
@@ -2478,7 +2557,7 @@ export function createOpenworkServerClient(options: { baseUrl: string; token?: s
 
     writeWorkspaceBinaryFile: (
       workspaceId: string,
-      payload: { path: string; data: ArrayBuffer; baseUpdatedAt?: number | null; force?: boolean; sessionId?: string },
+      payload: { path: string; data: ArrayBuffer; baseUpdatedAt?: number | null; force?: boolean; sessionId?: string; fileScope?: "workspace" | "conversation" },
     ) =>
       requestJson<OpenworkWorkspaceFileWriteResult>(
         baseUrl,
@@ -2493,15 +2572,16 @@ export function createOpenworkServerClient(options: { baseUrl: string; token?: s
             baseUpdatedAt: payload.baseUpdatedAt,
             force: payload.force,
             sessionId: payload.sessionId,
+            fileScope: payload.fileScope,
           },
         },
       ),
 
     /** `sessionId` also finds files the conversation wrote after moving into a worktree. */
-    downloadWorkspaceFile: (workspaceId: string, path: string, options?: { sessionId?: string }) =>
+    downloadWorkspaceFile: (workspaceId: string, path: string, options?: { sessionId?: string; fileScope?: "workspace" | "conversation" }) =>
       requestBinary(
         baseUrl,
-        `/workspace/${encodeURIComponent(workspaceId)}/files/raw?path=${encodeURIComponent(path)}${options?.sessionId ? `&session=${encodeURIComponent(options.sessionId)}` : ""}`,
+        `/workspace/${encodeURIComponent(workspaceId)}/files/raw?path=${encodeURIComponent(path)}${options?.sessionId ? `&session=${encodeURIComponent(options.sessionId)}` : ""}${options?.fileScope ? `&fileScope=${encodeURIComponent(options.fileScope)}` : ""}`,
         { token, hostToken, timeoutMs: timeouts.binary },
       ),
 
@@ -2514,13 +2594,20 @@ export function createOpenworkServerClient(options: { baseUrl: string; token?: s
         preview?: string;
         confidence?: number;
         reason?: string;
+        fileScope?: "workspace" | "conversation";
       }>,
-      options?: { sessionId?: string },
+      /** `search` also finds a file by name anywhere in the workspace when its path misses. */
+      options?: { sessionId?: string; search?: boolean },
     ) =>
       requestJson<{ items: OpenworkResolvedArtifactTarget[] }>(
         baseUrl,
         `/workspace/${encodeURIComponent(workspaceId)}/artifacts/resolve`,
-        { token, hostToken, method: "POST", body: { targets, sessionId: options?.sessionId } },
+        {
+          token,
+          hostToken,
+          method: "POST",
+          body: { targets, sessionId: options?.sessionId, ...(options?.search ? { search: true } : {}) },
+        },
       ),
 
     // User-level env vars (host-auth only — desktop shell is the sole caller).

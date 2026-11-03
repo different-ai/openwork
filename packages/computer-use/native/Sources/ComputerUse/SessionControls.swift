@@ -2,21 +2,90 @@ import AppKit
 import ApplicationServices
 import Darwin
 
-// Held for the session, including while paused. The kernel releases it on exit.
-final class ControlLease {
-    private var fd: Int32 = -1
-    init() throws {
+enum LeaseFiles {
+    static func directory() throws -> URL {
         let directory = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
             .appendingPathComponent("OpenWork/ComputerUse", isDirectory: true)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
-        fd = Darwin.open(directory.appendingPathComponent("control.lock").path, O_CREAT | O_RDWR | O_NOFOLLOW | O_CLOEXEC, 0o600)
-        guard fd >= 0 else { throw UseError("control_unavailable", "Could not reserve computer control.", next: "human_takeover") }
-        guard flock(fd, LOCK_EX | LOCK_NB) == 0 else {
-            Darwin.close(fd); fd = -1
-            throw UseError("computer_busy", "Another Computer Use session has control. Stop it before starting a new one.", next: "human_takeover")
+        return directory
+    }
+    /// An exclusive lock on `path`, or nil when another holder has it. The kernel releases it on exit.
+    static func lock(_ path: String) throws -> Int32? {
+        for _ in 0..<3 {
+            let fd = Darwin.open(path, O_CREAT | O_RDWR | O_NOFOLLOW | O_CLOEXEC, 0o600)
+            guard fd >= 0 else { throw UseError("control_unavailable", "Could not reserve computer control.", next: "human_takeover") }
+            guard flock(fd, LOCK_EX | LOCK_NB) == 0 else { Darwin.close(fd); return nil }
+            // A releasing holder unlinks its file: only a lock on the file still at `path` counts.
+            var held = stat(), named = stat()
+            if fstat(fd, &held) == 0, lstat(path, &named) == 0, held.st_dev == named.st_dev, held.st_ino == named.st_ino { return fd }
+            flock(fd, LOCK_UN); Darwin.close(fd)
+        }
+        return nil
+    }
+}
+
+// One agent per window, held for the session including while paused. Other
+// windows stay free for other chats; FocusLease keeps their input apart.
+final class ControlLease {
+    private var fd: Int32 = -1
+    private let path: String
+    init(pid: pid_t, window: CGWindowID, directory: URL? = nil) throws {
+        path = try (directory ?? LeaseFiles.directory()).appendingPathComponent("window-\(pid)-\(window).lock").path
+        guard let fd = try LeaseFiles.lock(path) else {
+            throw UseError("window_busy", "Another agent is working in this window. Choose another window, or wait for that chat to finish.", next: "open_session")
+        }
+        self.fd = fd
+    }
+    deinit {
+        guard fd >= 0 else { return }
+        unlink(path); flock(fd, LOCK_UN); Darwin.close(fd)
+    }
+}
+
+// The Mac has one keyboard focus and pointer. Held only while a control
+// session brings its window forward, reads it and sends input.
+final class FocusLease {
+    private var fd: Int32
+    /// Removed on release; the shared focus file stays.
+    private let path: String?
+    private init(fd: Int32, path: String? = nil) { self.fd = fd; self.path = path }
+    @MainActor static func acquire(directory: URL? = nil, timeout: TimeInterval = 15, check: () throws -> Void) async throws -> FocusLease {
+        let path = try (directory ?? LeaseFiles.directory()).appendingPathComponent("focus.lock").path
+        return FocusLease(fd: try await wait(path, timeout: timeout, check: check,
+            busy: "Another agent kept the keyboard and pointer too long. Nothing was dispatched. Observe again."))
+    }
+    /// An app sends its keys to its one key window. Held from the moment a control step
+    /// may change which window that is, by bringing its window forward or selecting it in
+    /// the background, until its input is sent, so agents in different windows of one app
+    /// never type into each other's window. Taken after the focus lease, never before.
+    @MainActor static func acquire(app pid: pid_t, directory: URL? = nil, timeout: TimeInterval = 15, check: () throws -> Void) async throws -> FocusLease {
+        let path = try (directory ?? LeaseFiles.directory()).appendingPathComponent("app-\(pid).lock").path
+        return FocusLease(fd: try await wait(path, timeout: timeout, check: check,
+            busy: "Another agent kept this app's keyboard focus too long. Nothing was dispatched. Observe again."), path: path)
+    }
+    @MainActor private static func wait(_ path: String, timeout: TimeInterval, check: () throws -> Void, busy: String) async throws -> Int32 {
+        let started = ProcessInfo.processInfo.systemUptime
+        while true {
+            try Task.checkCancellation(); try check()
+            if let fd = try LeaseFiles.lock(path) { return fd }
+            guard ProcessInfo.processInfo.systemUptime - started < timeout else {
+                throw UseError("focus_busy", busy, next: "observe")
+            }
+            try await Task.sleep(nanoseconds: 10_000_000)
         }
     }
-    deinit { if fd >= 0 { flock(fd, LOCK_UN); Darwin.close(fd) } }
+    /// The lease only when no other agent holds it right now; never waits.
+    static func attempt(directory: URL? = nil) -> FocusLease? {
+        guard let path = try? (directory ?? LeaseFiles.directory()).appendingPathComponent("focus.lock").path,
+              let fd = try? LeaseFiles.lock(path) else { return nil }
+        return FocusLease(fd: fd)
+    }
+    func release() {
+        guard fd >= 0 else { return }
+        if let path { unlink(path) }
+        flock(fd, LOCK_UN); Darwin.close(fd); fd = -1
+    }
+    deinit { release() }
 }
 
 @MainActor
@@ -89,6 +158,10 @@ final class SessionControls: NSObject {
         }
     }
 
+    func showMenu(titleFrame: CGRect?, path: [String], shortcut: String?) {
+        AgentCursor.shared.showMenu(titleFrame: titleFrame, path: path, shortcut: shortcut)
+    }
+
     private func showMenu() {
         let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
         item.button?.image = NSImage(systemSymbolName: "desktopcomputer", accessibilityDescription: "OpenWork computer use")
@@ -107,7 +180,6 @@ final class SessionControls: NSObject {
     private var status: NSTextField?
     private var toggle: NSButton?
     private var expiry: NSTextField?
-    private var monitor: Any?
     private var workspaceObservers: [NSObjectProtocol] = []
     private var stopObserver: NSObjectProtocol?
     private var timer: Timer?
@@ -115,7 +187,6 @@ final class SessionControls: NSObject {
     var isVisible: Bool { panel?.isVisible == true }
     private var desktopAvailable = true
     var onAvailability: ((Bool) -> Void)?
-    var onUserInteraction: (() -> Void)?
     var onPause: ((String) -> Void)?
     var onResume: (() -> Void)?
     var onStop: (() -> Void)?
@@ -123,7 +194,7 @@ final class SessionControls: NSObject {
     var onWatch: ((Bool) -> Void)?
     var isPaused = false
 
-    func show(app: AppIdentity, target: WindowTarget, mode: AccessMode, purpose: String) {
+    func show(app: AppIdentity, target: WindowTarget, mode: AccessMode, purpose: String, background: Bool = false) {
         Self.active = self; hostID = UUID().uuidString; hostState = [:]
         frameSequence = 0; inputSequence = 0; lastFrameAt = -.infinity
         isPaused = false; canContinue = true
@@ -138,7 +209,7 @@ final class SessionControls: NSObject {
             self.onResume?()
         }
         presence.onStop = { [weak self] in self?.onStop?() }
-        presence.begin(windowFrame: target.frame, windowID: target.id, appName: app.name)
+        presence.begin(windowFrame: target.frame, windowID: target.id, appName: app.name, layered: background)
         if Self.embedded {
             showMenu()
             publish(["phase": "working", "appName": app.name, "appID": app.bundleID, "pid": Int(app.pid),
@@ -193,20 +264,8 @@ final class SessionControls: NSObject {
         item.button?.action = #selector(showPanel)
         statusItem = item
         }
-        // Passive pointer motion (including activation-generated motion) is not takeover.
-        // Clicks, typing, scrolling and dragging on the selected app, and app switches,
-        // still stop agent input. Scrolling or dragging over another app (such as reading
-        // the conversation while the agent works) does not; a click there activates that
-        // app, and the switch below pauses control.
-        monitor = NSEvent.addGlobalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown, .otherMouseDown,
-            .keyDown, .scrollWheel, .leftMouseDragged, .rightMouseDragged]) { [weak self] event in
-            guard let self else { return }
-            // Our own postToPid events cannot be mistaken for a person taking over.
-            if event.cgEvent?.getIntegerValueField(.eventSourceUnixProcessID) == Int64(ProcessInfo.processInfo.processIdentifier) { return }
-            let frontmost = NSWorkspace.shared.frontmostApplication?.processIdentifier == app.pid
-            let counts = event.type == .keyDown ? frontmost : mode == .control ? Self.pointerOnApp(app.pid, frontmost: frontmost) : frontmost
-            if counts { self.onUserInteraction?() }
-        }
+        // The person's own clicks, typing and app switches never pause the agent: it brings the
+        // selected window back before it acts. Only Take over or Stop hands control back.
         let center = NSWorkspace.shared.notificationCenter
         for name in [NSWorkspace.willSleepNotification, NSWorkspace.screensDidSleepNotification, NSWorkspace.sessionDidResignActiveNotification] {
             workspaceObservers.append(center.addObserver(forName: name, object: nil, queue: .main) { [weak self] _ in
@@ -218,14 +277,6 @@ final class SessionControls: NSObject {
                 MainActor.assumeIsolated { self?.desktopAvailable = true; self?.onAvailability?(true) }
             })
         }
-        workspaceObservers.append(center.addObserver(forName: NSWorkspace.didActivateApplicationNotification, object: nil, queue: .main) { [weak self] notification in
-            MainActor.assumeIsolated {
-                if self?.desktopAvailable == true, mode == .control, let activated = notification.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication,
-                   activated.processIdentifier != app.pid, NSWorkspace.shared.frontmostApplication?.processIdentifier != app.pid {
-                    self?.onPause?("You switched apps. Continue will return to the selected window.")
-                }
-            }
-        })
         stopObserver = DistributedNotificationCenter.default().addObserver(forName: Notification.Name("com.differentai.openwork.computer-use.stop"), object: nil, queue: .main) { [weak self] _ in
             MainActor.assumeIsolated { self?.onStop?() }
         }
@@ -235,27 +286,6 @@ final class SessionControls: NSObject {
         // Keep expiry and screenshot age current while the menu-bar controls are open.
         if Self.embedded, let timer { RunLoop.main.add(timer, forMode: .common) }
     }
-    /// Whether the pointer is over one of the selected app's windows (or the menu bar
-    /// while it is frontmost). Unknown geometry counts, so a missed read never hides a takeover.
-    private static func pointerOnApp(_ pid: pid_t, frontmost: Bool) -> Bool {
-        let mouse = NSEvent.mouseLocation
-        let point = CGPoint(x: mouse.x, y: (NSScreen.screens.first?.frame.maxY ?? 0) - mouse.y)
-        guard let windows = CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID) as? [[String: Any]] else { return true }
-        let own = ProcessInfo.processInfo.processIdentifier
-        let menuLevel = Int(CGWindowLevelForKey(.mainMenuWindow))
-        // Front to back: the first window under the pointer receives the input.
-        for window in windows {
-            guard let bounds = (window[kCGWindowBounds as String] as? [String: Any]).flatMap({ CGRect(dictionaryRepresentation: $0 as CFDictionary) }),
-                  bounds.contains(point) else { continue }
-            let owner = (window[kCGWindowOwnerPID as String] as? NSNumber)?.int32Value
-            if owner == own { continue }
-            if owner == pid { return true }
-            if (window[kCGWindowLayer as String] as? NSNumber)?.intValue == menuLevel { return frontmost }
-            return false
-        }
-        return false
-    }
-
     func update(_ message: String, paused: Bool, canContinue: Bool = true) {
         publish(["phase": paused ? "paused" : "working", "status": message, "canContinue": canContinue])
         self.canContinue = canContinue
@@ -277,7 +307,6 @@ final class SessionControls: NSObject {
         status = nil; toggle = nil; expiry = nil; isPaused = false
         if let statusItem { NSStatusBar.system.removeStatusItem(statusItem) }; statusItem = nil
         panel?.close(); panel = nil; timer?.invalidate(); timer = nil
-        if let monitor { NSEvent.removeMonitor(monitor) }; monitor = nil
         for observer in workspaceObservers { NSWorkspace.shared.notificationCenter.removeObserver(observer) }
         workspaceObservers.removeAll()
         if let stopObserver { DistributedNotificationCenter.default().removeObserver(stopObserver) }; stopObserver = nil

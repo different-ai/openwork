@@ -23,6 +23,12 @@ export function normalizePath(input: string): string | null {
 }
 
 const pathInput = z.object({ path: z.string() })
+const readInput = z.object({
+  path: z.string(),
+  start: z.number().int().min(1).optional(),
+  lines: z.number().int().min(1).optional(),
+  find: z.string().min(1).optional(),
+})
 const writeInput = z.object({ path: z.string(), content: z.string() })
 const editInput = z.object({ path: z.string(), find: z.string().min(1), replace: z.string() })
 
@@ -34,10 +40,16 @@ export const FILE_TOOLS: ToolSpec[] = [
   },
   {
     name: "read_file",
-    description: "Read a text file from the scratch workspace.",
+    description:
+      "Read a text file from the scratch workspace. For part of a long file, give `start` (first line) and `lines`, or `find` to get the numbered lines that contain some text.",
     inputSchema: {
       type: "object",
-      properties: { path: { type: "string" } },
+      properties: {
+        path: { type: "string" },
+        start: { type: "integer", minimum: 1 },
+        lines: { type: "integer", minimum: 1 },
+        find: { type: "string" },
+      },
       required: ["path"],
       additionalProperties: false,
     },
@@ -77,6 +89,36 @@ export const FILE_TOOLS: ToolSpec[] = [
 export const FILE_TOOL_NAMES: ReadonlySet<string> = new Set(FILE_TOOLS.map((tool) => tool.name))
 
 const fail = (output: string): ToolResult => ({ output, isError: true })
+
+/** Characters one read returns, under the 50,000 a tool result keeps, so a long file is read in parts. */
+const MAX_READ_CHARS = 40_000
+const MAX_FOUND_LINES = 100
+
+/** Part of a file: matching lines, a range of lines, or all of it when it fits. Ranges and matches are numbered. */
+export function readPart(content: string, input: { start?: number; lines?: number; find?: string }) {
+  if (!input.find && !input.start && !input.lines && content.length <= MAX_READ_CHARS) return content
+  const all = content.split("\n")
+  const number = (index: number) => `${index + 1}: ${all[index]}`
+  if (input.find) {
+    const needle = input.find.toLowerCase()
+    const found = all.flatMap((line, index) => (line.toLowerCase().includes(needle) ? [index] : []))
+    if (found.length === 0) return `No line contains "${input.find}" (${all.length} lines).`
+    const shown = found.slice(0, MAX_FOUND_LINES).map(number).join("\n")
+    return found.length > MAX_FOUND_LINES ? `${shown}\n…[${found.length - MAX_FOUND_LINES} more matching lines]` : shown
+  }
+  const first = Math.min((input.start ?? 1) - 1, all.length)
+  const out: string[] = []
+  let size = 0
+  let index = first
+  for (; index < all.length && index < first + (input.lines ?? all.length); index += 1) {
+    size += (all[index]?.length ?? 0) + 10
+    if (size > MAX_READ_CHARS && out.length > 0) break
+    out.push(number(index))
+  }
+  const head = `[lines ${first + 1}-${index} of ${all.length}]`
+  const rest = index < all.length ? `\n[continues at line ${index + 1}]` : ""
+  return `${head}\n${out.join("\n")}${rest}`
+}
 
 function checkedWrite(store: Store, sessionId: string, path: string, content: string): ToolResult {
   const size = Buffer.byteLength(content)
@@ -140,8 +182,10 @@ export async function runFileTool(store: Store, sessionId: string, name: string,
     const path = parsed.success ? normalizePath(parsed.data.path) : null
     if (!path) return fail("Invalid path.")
     if (name === "read_file") {
+      const part = readInput.safeParse(input)
+      if (!part.success) return fail("read_file needs a string `path`; `start` and `lines` are whole numbers from 1.")
       const content = await read(path)
-      return content === null ? fail("File not found.") : { output: content, isError: false }
+      return content === null ? fail("File not found.") : { output: readPart(content, part.data), isError: false }
     }
     if (name === "delete_file") {
       const target = shared(path)

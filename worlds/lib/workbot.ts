@@ -9,7 +9,7 @@ import { promisify } from "node:util";
 import { allocateFreePorts } from "../../evals/packages/cdp/src/index.ts";
 import { denFetch } from "../../evals/packages/behaviors/src/den.ts";
 import { publishCalendarModels } from "./calendar.ts";
-import { server } from "../../evals/packages/env/src/den.ts";
+import { inviteMember, server } from "../../evals/packages/env/src/den.ts";
 import type { Den } from "../../evals/packages/env/src/den.ts";
 import { resolvePlace } from "../../evals/packages/env/src/place.ts";
 import type { Place } from "../../evals/packages/env/src/place.ts";
@@ -20,8 +20,11 @@ import { trackResource } from "../../packages/world/src/ledger.ts";
 import { output, secret } from "../../packages/world/src/outputs.ts";
 import type { WorldOutput } from "../../packages/world/src/outputs.ts";
 import { receiptName, resolveStage } from "../../packages/world/src/stage.ts";
-import { ACME_MODEL, ACME_REPLY, record, startAcmeUpstream } from "./acme-gateway.ts";
+import { ACME_MODEL, ACME_REPLY, gatewayEnvironment, record, seedAcmeGateway, startAcmeGateway, startAcmeUpstream } from "./acme-gateway.ts";
+import { startWorkplaceAgent } from "./workplace-agent.ts";
 import { bootDemoWorkspace, connectDemoWorkspace, DEMO_WORKSPACE_SERVICES, type DemoWorkspace } from "./demo-workspace.ts";
+import type { DenSession } from "../../evals/packages/behaviors/src/den.ts";
+import { connectMicrosoftMember, reserveMicrosoftSignIn, startMicrosoftWorkplace, type MicrosoftWorkplace, type WorkplacePerson } from "./open-workplace.ts";
 
 /**
  * Workbot with everything it runs on: the seeded Acme Den (where people sign in), the headless runner (where the
@@ -53,7 +56,7 @@ export type WorkbotWorldOptions = {
   /** Daytona only: a published Linux microVM desktop snapshot. The key stays in its runner host. */
   computerSnapshot?: string;
   /**
-   * `--calendar`: seed the owner's Automations and runs, turn on the desktop and Workbot Calendars, and read
+   * `--calendar`: seed the owner's Automations and runs, publish model choices for Workbot's Calendar, and read
    * meetings from the calendar mock (worlds/lib/calendar.ts).
    */
   calendar?: boolean;
@@ -67,7 +70,20 @@ export type WorkbotWorldOptions = {
   runnerEnv?: Record<string, string>;
   /** Features turned on for the seeded organization besides Workbot itself, for example `workbotDocuments`. */
   features?: Record<string, boolean>;
+  /**
+   * `--open-workplace`: Open Outlook, Open Calendar and Open Drive are each person's Microsoft 365, through Den's
+   * ordinary Microsoft 365 connector (worlds/lib/open-workplace.ts). Alex (the owner) and Casey (a teammate) each
+   * get their own mailbox, calendar and drive, already connected. The demo Gmail and Google Calendar are left out,
+   * so Workbot has exactly one inbox and one calendar per person. Local only.
+   */
+  openWorkplace?: boolean;
 };
+
+/** The people in `--open-workplace`: the seeded owner and one teammate, each with their own workplace. */
+export const WORKPLACE_PEOPLE = [
+  { key: "alex", handle: "alex", name: "Alex Chen", title: "CEO" },
+  { key: "casey", handle: "casey", name: "Casey Park", title: "Operations lead" },
+] as const satisfies readonly (WorkplacePerson & { key: string })[];
 
 /** `--natural` is accepted for older preview launch commands; all Workbot chats now use natural replies. */
 export function parseWorkbotOptions(argv: string[]): WorkbotWorldOptions {
@@ -77,9 +93,10 @@ export function parseWorkbotOptions(argv: string[]): WorkbotWorldOptions {
     if (arg === "--computer-snapshot") {
       computerSnapshot = argv[++index];
       if (!computerSnapshot || !/^[a-z0-9][a-z0-9.-]{0,62}$/.test(computerSnapshot)) throw new Error("--computer-snapshot needs a published Daytona snapshot name");
-    } else if (!["--live", "--calendar", "--natural"].includes(arg)) throw new Error(`preview-workbot: unknown option ${arg}`);
+    } else if (!["--live", "--calendar", "--natural", "--open-workplace"].includes(arg)) throw new Error(`preview-workbot: unknown option ${arg}`);
   }
-  return { live: argv.includes("--live"), calendar: argv.includes("--calendar"), ...(computerSnapshot ? { computerSnapshot } : {}) };
+  if (argv.includes("--open-workplace") && argv.includes("--calendar")) throw new Error("--open-workplace brings its own calendar; leave out --calendar.");
+  return { live: argv.includes("--live"), calendar: argv.includes("--calendar"), openWorkplace: argv.includes("--open-workplace"), ...(computerSnapshot ? { computerSnapshot } : {}) };
 }
 
 /** A secret from the caller's environment, else the team's dev Infisical; never printed. */
@@ -100,6 +117,7 @@ async function runnerModel(stack: AsyncDisposableStack, live: boolean, fixture?:
     return {
       env: { HEADLESS_MODEL_PROTOCOL: "anthropic", HEADLESS_MODEL_BASE_URL: `${upstream.baseUrl}/v1`, HEADLESS_MODEL: fixture?.model ?? ACME_MODEL, HEADLESS_MODEL_API_KEY: upstream.key, HEADLESS_COMPUTER: "off" },
       upstreamKey: upstream.key, model: fixture?.model ?? ACME_MODEL, computer: false,
+      upstream: { baseUrl: upstream.baseUrl, key: upstream.key, model: fixture?.model ?? ACME_MODEL },
     };
   }
   const key = await secretFromEnvOrInfisical(["HEADLESS_MODEL_API_KEY", "ANTHROPIC_API_KEY"], { name: "ANTHROPIC_API_KEY" });
@@ -120,6 +138,8 @@ async function runnerModel(stack: AsyncDisposableStack, live: boolean, fixture?:
       ...(freestyle ? { HEADLESS_COMPUTER: "freestyle", FREESTYLE_API_KEY: freestyle } : { HEADLESS_COMPUTER: "off" }),
     },
     upstreamKey: "", model, computer: Boolean(freestyle),
+    // A Gateway in front of the real model (--open-workplace) needs its origin; only Anthropic's API is supported there.
+    upstream: { baseUrl: (process.env.HEADLESS_MODEL_BASE_URL?.trim() || "https://api.anthropic.com/v1").replace(/\/v1\/?$/, ""), key, model },
   };
 }
 
@@ -166,6 +186,10 @@ export interface WorkbotWorld {
   computerProvider?: "daytona";
   demo: DemoWorkspace | null;
   app: { title: string; pluginPage: string } | null;
+  /** `--open-workplace`: each person's Open Outlook, Calendar and Drive, connected as their Microsoft 365. */
+  workplace?: MicrosoftWorkplace;
+  /** `--open-workplace`: Casey, the teammate, signed in to Den with their own workplace. */
+  teammate?: DenSession;
 }
 
 const token = () => randomBytes(32).toString("base64url");
@@ -230,7 +254,16 @@ export async function bootWorkbot(stack: AsyncDisposableStack, preview?: { den: 
   const place = resolvePlace();
   if (place.kind !== "local") throw new Error("bootWorkbot runs next to MySQL (--place local, or inside a prepared VM).");
   if (options.live && preview) throw new Error("preview-workbot --live runs locally only.");
-  const runner = await runnerModel(stack, options.live, options.upstream);
+  if (options.openWorkplace && preview) throw new Error("preview-workbot --open-workplace runs locally only.");
+  // Den reads its Microsoft endpoints at startup, so the sign-in's address is chosen first.
+  const signIn = options.openWorkplace ? await reserveMicrosoftSignIn() : null;
+  // --open-workplace: Workbot's turns go through the workspace's real AI Gateway, as in production. Without --live the
+  // model behind it is the scripted workplace agent (worlds/lib/workplace-agent.ts), so asks like "move the meeting"
+  // really call Den's Microsoft 365 tools; with --live it is the real model.
+  const agent = signIn && !options.live && !options.upstream ? await startWorkplaceAgent(stack) : null;
+  const runner = await runnerModel(stack, options.live, options.upstream ?? agent ?? undefined);
+  const upstream = signIn ? runner.upstream : null;
+  const gateway = upstream ? await gatewayEnvironment(new URL(upstream.baseUrl).origin) : null;
   const [runnerPort, workbotPort] = await allocateFreePorts(2);
   const runnerUrl = `http://127.0.0.1:${runnerPort}`;
   const workbotInternal = `http://127.0.0.1:${workbotPort}`;
@@ -246,6 +279,8 @@ export async function bootWorkbot(stack: AsyncDisposableStack, preview?: { den: 
       DEN_AUTH_COOKIE_PREFIX: `openwork-den-${randomBytes(4).toString("hex")}`,
       // Eval Dens leave Apps built in OpenWork off; --live seeds one, as production has them on.
       ...(options.live ? { DEN_APP_MCP_SERVERS_ENABLED: "true" } : {}),
+      ...signIn?.denEnv,
+      ...gateway?.env,
       ...options.denEnv,
       ...(preview ? {
         DEN_WEB_ALLOWED_DEV_ORIGINS: new URL(preview.den).hostname,
@@ -261,7 +296,8 @@ export async function bootWorkbot(stack: AsyncDisposableStack, preview?: { den: 
   // Seeded app reads are local fixtures, not ordinary external MCP reads: Den requires write scope for the latter.
   // Keep the greeting read-only and expose only this world's allowlisted fixture reads alongside Den's tools.
   const demo = await bootDemoWorkspace(stack, den);
-  const runnerMcp = await startWorkbotDemoReads(stack, { denUrl: `${den.ref.apiUrl}/mcp/agent`, demoUrl: demo.baseUrl });
+  // --open-workplace: the runner reaches Den's MCP directly; its mail and calendar are the person's Microsoft 365.
+  const runnerMcp = signIn ? `${den.ref.apiUrl}/mcp/agent` : await startWorkbotDemoReads(stack, { denUrl: `${den.ref.apiUrl}/mcp/agent`, demoUrl: demo.baseUrl });
   await startService(stack, {
     label: "workbot-runner", match: "src/server.ts",
     cwd: join(REPO_ROOT, "ee/apps/headless-runner"),
@@ -292,16 +328,34 @@ export async function bootWorkbot(stack: AsyncDisposableStack, preview?: { den: 
       } : {}),
     },
   });
-  // --calendar also turns on the desktop Calendar; Workbot's Calendar comes with Workbot.
-  const orgId = await enableWorkbot(den, { ...options.features, ...(options.calendar ? { automationCalendar: true } : {}) });
-  // --calendar: a real provider (Anthropic, fixture key) so the Calendar's model pickers show logos and choices.
+  const orgId = await enableWorkbot(den, signIn ? { workbotDocuments: true, ...options.features } : options.features);
+  if (gateway && upstream) {
+    if (!den.database) throw new Error("The AI Gateway needs the world's own Den database.");
+    await startAcmeGateway(stack, den.database.url, gateway);
+    const model = await seedAcmeGateway(den.admin, upstream);
+    const chosen = await denFetch(den.ref, "/v1/org/workbot-settings", {
+      method: "PUT", headers: { authorization: `Bearer ${den.admin.token}`, "x-openwork-org-id": orgId }, body: JSON.stringify({ model: model.modelId }),
+    });
+    if (!chosen.response.ok) throw new Error(`Could not choose Workbot's model: HTTP ${chosen.response.status} ${chosen.text.slice(0, 200)}`);
+  }
+  // --calendar: a real provider (Anthropic, fixture key) so Workbot Calendar's model pickers show logos and choices.
   if (options.calendar) await publishCalendarModels(den.admin, orgId);
-  // The Acme team's apps (in memory), so Workbot has a real-looking calendar, inbox and Slack to read.
-  await connectDemoWorkspace(den, demo);
+  // The Acme team's apps (in memory), so Workbot has a real-looking calendar, inbox and Slack to read. With
+  // --open-workplace the calendar and inbox are each person's Microsoft 365 instead, so the Google ones stay out.
+  await connectDemoWorkspace(den, demo, signIn ? ["slack", "notion", "linear"] : undefined);
+  let workplace: MicrosoftWorkplace | undefined;
+  let teammate: DenSession | undefined;
+  if (signIn) {
+    workplace = await startMicrosoftWorkplace(stack, den, { signIn, people: WORKPLACE_PEOPLE });
+    teammate = await inviteMember(den, "casey", { email: "casey@acme.test", name: "Casey Park" });
+    await connectMicrosoftMember(den.admin, orgId, "alex");
+    await connectMicrosoftMember(teammate, orgId, "casey");
+  }
   const app = options.live ? await seedOrderCalculator(stack, den) : null;
   return {
     den, orgId, workbotUrl, workbotInternal, denWebPublic: preview?.den ?? den.ref.webUrl, runnerUrl, secrets,
-    live: options.live, model: runner.model, computer: runner.computer, demo, app, demoReadsUrl: runnerMcp,
+    live: options.live, model: runner.model, computer: runner.computer, demo, app, ...(signIn ? {} : { demoReadsUrl: runnerMcp }),
+    ...(workplace ? { workplace } : {}), ...(teammate ? { teammate } : {}),
   };
 }
 
@@ -344,7 +398,8 @@ const cookieHeader = (jar: Map<string, string>) => [...jar].map(([key, value]) =
  * owner, then sends one message and waits for the runner's answer. Proves Den sign-in, the runner, its model and
  * Workbot's live conversation together.
  */
-export async function signInWorkbot(world: WorkbotWorld, options: { denInternal?: string } = {}) {
+export async function signInWorkbot(world: WorkbotWorld, options: { denInternal?: string; person?: { email: string; password: string } } = {}) {
+  const person = options.person ?? world.den.admin;
   const denInternal = options.denInternal ?? world.den.ref.webUrl;
   const toInternal = (url: string) => url.replace(world.denWebPublic, denInternal).replace(world.workbotUrl, world.workbotInternal);
   const workbotJar = new Map<string, string>();
@@ -359,7 +414,7 @@ export async function signInWorkbot(world: WorkbotWorld, options: { denInternal?
     headers: { ...DAYTONA_SKIP_WARNING, "content-type": "application/json", origin: world.denWebPublic, cookie: cookieHeader(denJar) },
     body: JSON.stringify(body),
   });
-  const signedIn = await auth("/api/auth/sign-in/email", { email: world.den.admin.email, password: world.den.admin.password });
+  const signedIn = await auth("/api/auth/sign-in/email", { email: person.email, password: person.password });
   withCookies(denJar, signedIn);
   if (!signedIn.ok) throw new Error(`Den sign-in failed: HTTP ${signedIn.status}`);
   // A fresh session has no workspace yet; a person picks one on Den's picker.
@@ -385,7 +440,7 @@ export async function signInWorkbot(world: WorkbotWorld, options: { denInternal?
   });
   const me = await call("/v1/workbot/me");
   const who: unknown = await me.json().catch(() => null);
-  if (!me.ok || !record(who) || who.enabled !== true) throw new Error(`Workbot does not see Alex with Workbot on: HTTP ${me.status}`);
+  if (!me.ok || !record(who) || who.enabled !== true) throw new Error(`Workbot does not see ${person.email} with Workbot on: HTTP ${me.status}`);
   // The probe owns this synthetic sign-in and its sealing secret; keep its access token private, only for proving that
   // fixture reads work with a real read-only run token. Never expose it as a world output.
   const sealed = [...workbotJar].find(([key]) => key.startsWith("workbot_session") || key === "__Host-workbot")?.[1];
@@ -432,8 +487,16 @@ export function workbotOutputs(world: WorkbotWorld, extra: Record<string, WorldO
     ...(world.live ? {} : { reply: output(ACME_REPLY, { group: "Headless runner" }) }),
     computer: output(world.computer ? world.computerProvider === "daytona" ? "on (Daytona microVM desktop)" : "on (Freestyle)" : "off", { group: "Headless runner", note: world.computer ? "Work runs on Workbot's own computer" : "No background tasks; --live with a Freestyle key turns it on" }),
     ...(world.demo ? {
-      demoApps: output(DEMO_WORKSPACE_SERVICES.map((service) => service.name).join(", "), { group: "Demo apps", note: "Acme Robotics demo data (you are Alex Chen); reads and writes stay in memory until the world stops" }),
+      demoApps: output(DEMO_WORKSPACE_SERVICES.filter((service) => !world.workplace || !["gmail", "google-calendar"].includes(service.key)).map((service) => service.name).join(", "), { group: "Demo apps", note: "Acme Robotics demo data (you are Alex Chen); reads and writes stay in memory until the world stops" }),
       ...(world.demo.stateUrl ? { demoState: output(world.demo.stateUrl, { group: "Demo apps", note: "Live demo data; POST /reset restores the seed" }) } : {}),
+    } : {}),
+    ...(world.workplace ? Object.fromEntries(world.workplace.people.flatMap((person) => [
+      [`${person.handle}Outlook`, output(person.urls.outlook, { group: "Open Workplace", note: `${person.name}'s Microsoft 365 (also /calendar and /drive); Workbot reads the same data` })],
+      [`${person.handle}WorkplaceState`, output(`${person.backend.stateUrl ?? ""}`, { group: "Open Workplace", note: "Live data; POST /reset restores the seed" })],
+    ])) : {}),
+    ...(world.teammate ? {
+      caseyEmail: output(world.teammate.email, { group: "Accounts", note: "teammate with their own Open Workplace" }),
+      caseyPassword: secret(world.teammate.password, { group: "Accounts" }),
     } : {}),
     ...(world.app ? { mcpApp: output(world.app.title, { group: "Demo apps", note: `MCP App in the Acme library: ${world.app.pluginPage}` }) } : {}),
     capabilities: output("workbot", { group: "Org", note: "Turned on for Acme Robotics" }),
@@ -597,7 +660,7 @@ export async function bootWorkbotOnDaytona(stack: AsyncDisposableStack, place: P
   });
   stack.defer(() => workbot.stop().catch(() => undefined));
   await verifyWorkbotPreviews(workbotPreview, runnerPreview);
-  const orgId = await enableWorkbot(den, options.computerSnapshot ? { computerUse: true, remoteComputers: true, workbotDocuments: true } : {});
+  const orgId = await enableWorkbot(den, options.computerSnapshot ? { computerUse: true, browserUse: true, remoteComputers: true, workbotDocuments: true } : {});
   const world: WorkbotWorld = {
     den, orgId, workbotUrl: workbotPreview.browserOrigin, workbotInternal: workbotPreview.browserOrigin,
     denWebPublic: den.ref.webUrl, runnerUrl: runnerPreview.browserOrigin, secrets,

@@ -112,8 +112,8 @@ included (the session cell's socket answer is passed back through the owner cell
 the same way. The public import route stays `405`; on the Node host `POST /v1/owner/split` answers
 `{ split: "not_needed" }` and `hs_c_` ids are ordinary ids.
 
-Verified on celld v0.6.2 and wrangler (`owner-cells-e2e.ts`): a cell calling another cell's `fetch` from a request
-and from its alarm (the split), the called cell calling back into the first while it waits (directory sync during
+Verified on celld v0.6.2, v0.6.3 and wrangler (`owner-cells-e2e.ts`): a cell calling another cell's `fetch` from a
+request and from its alarm (the split), the called cell calling back into the first while it waits (directory sync during
 creation; celld lets an awaiting event overlap another), and returning another cell's WebSocket upgrade response from a
 cell (the forwarded socket opens, gets `ready` and live events). celld refuses `PRAGMA table_info` on its own tables
 (`_cf_…`, `_litestream_…`), so the split only describes the runner's tables. A forwarded socket stays open through
@@ -132,7 +132,7 @@ it is storage configuration, not a session-cell rollout switch. Already moved or
 
 ## Deploy (replaces the Node runner)
 
-1. Run celld ≥ 0.6.2 on at least two nodes sharing one bucket, behind one private address (see celld's docs for the
+1. Run celld ≥ 0.6.3 on at least two nodes sharing one bucket, behind one private address (see celld's docs for the
    bucket, TLS and peer network).
 2. `celld deploy` a bundle (`tsx scripts/celld-bundle.ts <out> <vars.json>`), with the same `HEADLESS_*` settings the Node runner has, and
    `HEADLESS_FILES=s3`. Keep `wrangler.jsonc`'s `name` and class name: celld derives every cell's identity from
@@ -160,7 +160,7 @@ disks do not survive, celld cannot prove no acknowledged write was lost and refu
 is correct, but leaves conversations unavailable. On a host that also restarts a process at the same private IP,
 recovery waits until those IPs change. `bucket` mode acknowledges only after the bucket write, so
 any node can always recover. Keep `fleet` only with persistent disks for `CELLD_WATCH` and stable node identities.
-Also consider `CELLD_TTL_MS=30000` so a short storage outage does not fence every node.
+Also set `CELLD_TTL_MS=60000` so a short storage outage does not fence every node (below).
 
 **Conversations only leave cells.** To move off celld, export each one and import it into a Node runner with the same
 token, bucket and computer settings ([Move conversations to Node](./README.md#move-conversations-to-node)); cells answer
@@ -170,10 +170,21 @@ A run in flight at the switch ends as `unknown_session`, so pause traffic while 
 
 ### Recommended production settings
 
-Names and defaults are from [celld's docs](https://celld.dev/docs) (v0.6.2):
+Names and defaults are from [celld's docs](https://celld.dev/docs) (v0.6.3):
 
 - `CELLD_DURABILITY=bucket` on hosts with temporary disks (above).
-- `CELLD_TTL_MS=30000` (default 10000), so a short storage outage does not fence every node.
+- `CELLD_TTL_MS=60000` (default 10000), so a short storage outage does not fence every node. A node fences once its
+  lease goes unrenewed for this long, and every node renews against the same bucket, so they all fence together. On
+  R2, most store outages that fenced the fleet with 30000 lasted 20–50 s. The cost: the cells of a node that dies
+  without a handoff (SIGKILL, host loss) wait this long for another node; a SIGTERM hands them off at once.
+- `CELLD_WATCH` on a fixed path that the start command empties before celld starts, with `CELLD_DURABILITY=bucket`
+  only (every acknowledged write is then in the bucket). celld leaves the files of a process that was killed or
+  fenced, and a host that restarts the process in place (Render) keeps its temporary disk; unset, celld uses a new
+  `/tmp/celld-<pid>` each time.
+- `CELLD_LOCAL_CACHE_MAX_BYTES` well under the temporary disk's limit (default 2 GiB; Render's `/tmp` is 2 GB). It
+  bounds only idle cells' cached copies; resident cells keep one local LTX file per write until they leave memory.
+- No bucket lifecycle rule that selects celld's reserved prefixes (`cells/`, `nodes/`, `log/` and the others in
+  celld's guarantees). A lost `cells/<cell>/own.json` makes celld ≥ 0.6.3 refuse the cell; older nodes start it empty.
 - `CELLD_LTX_RETENTION_SECS` set (for example a few days). Unset, celld never deletes old epochs and each cell's
   bucket data grows on every wake. Needs every node on ≥ 0.6.1 and a bucket with list-after-write consistency (R2
   and S3 have it).
@@ -223,6 +234,23 @@ A snapshot is copied from a running fleet, so it is consistent per object, not a
 
 Rehearse a restore into a throwaway bucket prefix before relying on it.
 
+### A lost ownership record
+
+Each cell's ownership record, `fleet/cells/<cell>/own.json`, must stay in the bucket for the life of the cell; celld
+never deletes it. If it is gone while the cell's LTX remains, celld ≥ 0.6.3 refuses the cell (requests for it fail and
+nodes log `celld ownership record lost`) instead of starting it with an empty database. The daily backup fails with
+"celld ownership record lost" and lists such cells. Find what deleted the record (a lifecycle rule, a script) and stop
+it first. Then restore each cell as celld's guarantees describe ("The ownership record"):
+
+1. Stop every node that served the cell with SIGTERM (restart the service), never `POST /shutdown?handoff=preserve`.
+2. Wait until each stopped process's node log is recovered: its `fleet/nodes/<node>.json` is gone, has no `log`
+   object, or shows `"state": "sealed"`.
+3. Write `{"node": "", "epoch": <N>}` to `fleet/cells/<cell>/own.json`, where `<N>` is the highest `e<N>` under
+   `fleet/cells/<cell>/ltx/`. Within 10 seconds the next request acquires the cell and restores it from the bucket.
+
+A record written before step 2 can lose acknowledged writes, and one written while a node still serves the cell makes a
+second writer.
+
 ## Long conversations on celld
 
 Sealed segments and large bodies (README "Sealed history and large outputs") live under `sessions/<id>/segments/` and
@@ -241,8 +269,8 @@ pages only the hot part: sealed turns reappear once the newer runner is back.
 
 ## Deleting a conversation on celld
 
-Verified against celld v0.6.2 (`crates/celld/storage.rs` `authorize_sql`, `allowed_sql_pragma`; `docs/guarantees.md`
-"Epoch GC"):
+Verified against celld v0.6.2 and v0.6.3 (`crates/celld/storage.rs` `authorize_sql`, `allowed_sql_pragma`;
+`docs/guarantees.md` "Epoch GC"):
 
 - **What the runner does**: overwrites the conversation's content in place with zero bytes (same length, so SQLite
   rewrites the same cells, overflow pages included), deletes its rows, and deletes its segments, large bodies and
@@ -271,15 +299,24 @@ Verified against celld v0.6.2 (`crates/celld/storage.rs` `authorize_sql`, `allow
 `.github/workflows/celld-runner-deploy.yml` runs on every `dev` push that changes the runner or a package bundled
 into it, and on demand (Actions → "Deploy runner to celld" → Run workflow). Each run:
 
-1. **Checks the live runner and the new one can serve each other** (`scripts/compat-check.ts`, below).
-2. Deploys to a throwaway bucket prefix and runs a real turn there.
-3. Deploys to the fleet and waits until every Render instance logs `deployment_adopted` for the new version. The
+1. **Builds the computer snapshot when the desktop changed.** The runner accepts only computers whose desktop matches
+   its own, so when the configured Freestyle snapshot was built for another desktop, the run builds
+   `workbot-desktop-freestyle-<desktop>` with the runner's `FREESTYLE_API_KEY` and bundles the runner with it. A
+   snapshot that already exists is reused. A failed build stops the run before the fleet changes. It then layers the
+   runner's guest onto that snapshot and bundles the runner with `workbot-desktop-freestyle-<desktop>-<guest>`, so new
+   computers skip the install on first open; a failed layer only leaves them installing it, so the run carries on.
+2. **Checks the live runner and the new one can serve each other** (`scripts/compat-check.ts`, below).
+3. **Warns when a sandbox gateway's template is behind the runner's desktop.** The run can't build that template, so
+   it warns in its log and in Slack and carries on. The [Fast Sandbox section](README.md#fast-sandbox-microvms) of the
+   README says what to rebuild.
+4. Deploys to a throwaway bucket prefix and runs a real turn there.
+5. Deploys to the fleet and waits until every Render instance logs `deployment_adopted` for the new version. The
    version is a content hash, so an unchanged bundle is reported as `unchanged` and nothing switches.
-4. Records which commit produced the live version in `s3://openwork-celld/ci/fleet-deployed.json` (outside the
+6. Records which commit produced the live version in `s3://openwork-celld/ci/fleet-deployed.json` (outside the
    fleet prefix; celld never reads it), for the next run's check.
-5. Posts the outcome to Slack, when `CELLD_DEPLOY_SLACK_WEBHOOK_URL` is set: deployed / unchanged / failed, the
+7. Posts the outcome to Slack, when `CELLD_DEPLOY_SLACK_WEBHOOK_URL` is set: deployed / unchanged / failed, the
    version and the one before it, the commit and run, and how many nodes adopted it. Cells switched and cells
-   force-cancelled are not counted yet: celld 0.6.2 logs no line for a forced switch.
+   force-cancelled are not counted yet: celld 0.6.3 logs no line for a forced switch.
 
 **To set up (repository admins, in Settings → Environments → `celld-production`; not in code):**
 
@@ -289,6 +326,9 @@ into it, and on demand (Actions → "Deploy runner to celld" → Run workflow). 
   repository secrets), so nothing reaches them without that approval.
 - **`CELLD_DEPLOY_SLACK_WEBHOOK_URL`** (optional): an environment secret holding a Slack incoming-webhook URL for the
   channel that should hear about deploys. Without it the run posts nothing.
+- **`HEADLESS_COMPUTER_SNAPSHOT`** (optional): a plain environment variable holding a Freestyle desktop snapshot
+  slug. It overrides this field in `CELLD_RUNNER_VARS`; when unset, the JSON value remains in effect. Either way, a
+  slug named by the builder is replaced by the one the run builds, so routine desktop and guest changes need neither.
 
 **Keep the default model authorized.** `CELLD_RUNNER_VARS` carries a provider route, key, model alias and protocol as
 one configuration. Before replacing a retired alias, list `/models` on the intended route with that same key and

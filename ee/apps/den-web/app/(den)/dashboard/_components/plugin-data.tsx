@@ -2,6 +2,7 @@
 
 import { queryOptions, useInfiniteQuery, useMutation, useQuery, useQueryClient, type QueryClient } from "@tanstack/react-query";
 import { mcpAppProjectionSchema } from "@openwork/types/mcp-app";
+import { parseSkillMarkdown } from "@openwork-ee/utils";
 import { getErrorMessage, getRequestError, requestJson } from "../../_lib/den-flow";
 import { useOrgDashboard } from "../_providers/org-dashboard-provider";
 import {
@@ -44,6 +45,7 @@ export type PluginSkill = {
   id: string;
   name: string;
   description: string;
+  body?: string;
 };
 
 export type PluginHookEvent =
@@ -620,6 +622,7 @@ function parseMembershipConfigObject(entry: unknown) {
     description,
     id,
     latestVersionId,
+    rawSourceText: latestVersion ? asString(latestVersion.rawSourceText) : null,
     normalizedPayload,
     objectType,
     title,
@@ -707,7 +710,12 @@ function buildDenPlugin(pluginItem: Record<string, unknown>, contents: unknown):
 
   const skills = membershipItems
     .filter((item) => item.objectType === "skill")
-    .map((item) => ({ id: item.id, name: item.title, description: item.description } satisfies PluginSkill));
+    .map((item) => ({
+      id: item.id,
+      name: item.title,
+      description: item.description,
+      body: item.rawSourceText ? parseSkillMarkdown(item.rawSourceText).body.trim() : "",
+    } satisfies PluginSkill));
   const agents = membershipItems
     .filter((item) => item.objectType === "agent")
     .map((item) => ({ id: item.id, name: item.title, description: item.description } satisfies PluginAgent));

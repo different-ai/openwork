@@ -4,6 +4,7 @@ import { formatAttachmentBytes } from "@/app/lib/v2-prompt-context";
 import { humanizeCapabilityName } from "./composer-plus-menu-model";
 import { composerConnectorLogoUrls } from "./composer-connector-logos";
 import { composerPillTitle, type ComposerPill } from "./composer-pills";
+import { resolveExtensionIconSrc } from "@/react-app/design-system/extension-icon-src";
 
 /**
  * How composer chips look. The composer draws them as raw Lexical DOM and the
@@ -47,6 +48,7 @@ export const CHIP_ICONS = {
   monitor: [["rect", { width: "20", height: "14", x: "2", y: "3", rx: "2" }], ["line", { x1: "8", x2: "16", y1: "21", y2: "21" }], ["line", { x1: "12", x2: "12", y1: "17", y2: "21" }]],
   cloud: [["path", { d: "M17.5 19H9a7 7 0 1 1 6.71-9h1.79a4.5 4.5 0 1 1 0 9Z" }]],
   chevron: [["path", { d: "m9 18 6-6-6-6" }]],
+  "message-square": [["path", { d: "M22 17a2 2 0 0 1-2 2H6.828a2 2 0 0 0-1.414.586l-2.202 2.202A.71.71 0 0 1 2 21.286V5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2z" }]],
 } satisfies Record<string, IconElement[]>;
 
 export type ChipIcon = keyof typeof CHIP_ICONS;
@@ -55,13 +57,14 @@ export type BadgeTone = "violet" | "sky" | "cyan" | "gray";
 
 export type ComposerBadge = {
   /** Stable kind, exposed as `data-composer-badge`. */
-  kind: "skill" | "connect-skill" | "connector" | "computer" | "agent" | "file" | "pasted";
+  kind: "skill" | "connect-skill" | "connector" | "computer" | "session" | "agent" | "file" | "pasted";
   label: string;
   /** Muted detail after the label, e.g. "42 lines". */
   meta?: string;
   title: string;
   tone: BadgeTone;
-  slot: { icon: ChipIcon } | { initial: string } | { logoUrls: string[]; fallback: ChipIcon };
+  /** `invertInDark`: a monochrome logo drawn in black, inverted on dark themes. */
+  slot: { icon: ChipIcon } | { initial: string } | { logoUrls: string[]; fallback: ChipIcon; invertInDark?: boolean };
   /** Shows a chevron: the badge opens a preview. */
   disclosure?: boolean;
 };
@@ -93,7 +96,22 @@ export function composerPillBadge(pill: ComposerPill): ComposerBadge {
       return { kind: "connector", label: pill.name, title, tone: "gray", slot: { logoUrls: composerConnectorLogoUrls({ name: pill.name }), fallback: "plug" } };
     case "computer":
       return { kind: "computer", label: `@${pill.target}`, title, tone: "sky", slot: { icon: pill.target === "cloud" ? "cloud" : "monitor" } };
+    case "session":
+      return sessionReferenceBadge(pill.title);
   }
+}
+
+/** The OpenWork mark, the same one task links in the transcript use. */
+function openworkMarkSlot(): ComposerBadge["slot"] {
+  return { logoUrls: [resolveExtensionIconSrc("/openwork-sidebar-mark.svg")], fallback: "message-square", invertInDark: true };
+}
+
+/** A referenced task. `title` is its current title when known, else the one saved with the reference. */
+export function sessionReferenceBadge(title: string, options?: { unavailable?: boolean }): ComposerBadge {
+  const label = title.trim() || "Untitled task";
+  return options?.unavailable
+    ? { kind: "session", label, meta: "Unavailable", title: `Task unavailable: ${label}`, tone: "gray", slot: openworkMarkSlot() }
+    : { kind: "session", label, title: `Task: ${label}`, tone: "gray", slot: openworkMarkSlot() };
 }
 
 export function agentBadge(name: string): ComposerBadge {
@@ -164,6 +182,10 @@ function span(className: string, text?: string) {
   return element;
 }
 
+export function composerBadgeLogoClass(slot: ComposerBadge["slot"]) {
+  return "invertInDark" in slot && slot.invertInDark ? "size-3.5 object-contain dark:invert" : "size-3.5 object-contain";
+}
+
 /** A logo carries its own color; icons and initials sit on the badge's tone. */
 export function composerBadgeSlotClass(badge: ComposerBadge, showsLogo: boolean) {
   return showsLogo ? COMPOSER_BADGE_SLOT_CLASS : `${COMPOSER_BADGE_SLOT_CLASS} ${COMPOSER_BADGE_TONE_CLASS[badge.tone]}`;
@@ -185,7 +207,7 @@ function createBadgeSlotDom(badge: ComposerBadge) {
   const img = document.createElement("img");
   img.alt = "";
   img.decoding = "async";
-  img.className = "size-3.5 object-contain";
+  img.className = composerBadgeLogoClass(content);
   let attempt = 0;
   img.src = logoUrls[0] ?? "";
   img.addEventListener("error", () => {

@@ -24,7 +24,7 @@ beforeEach(() => {
   Reflect.deleteProperty(window, "__OPENWORK_ELECTRON__");
   queryClient = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: Infinity } } });
   queryClient.setQueryData(["den", "org-features", orgId], {
-    engineV2ForceUpgrade: true, automationCalendar: true,
+    nativeDictation: true, computerUse: true,
   });
   const client = createDenClient({ baseUrl: "https://den.example.test", token: "test-token" });
   spyOn(client, "getOrgFeatures").mockResolvedValue({});
@@ -51,11 +51,11 @@ async function renderFeatures(options: { desktopOnly?: boolean; active?: boolean
   document.body.append(host);
   root = createRoot(host);
   function Features() {
-    const engine = useOrgFeature("engineV2ForceUpgrade", options);
-    const calendar = useOrgFeature("automationCalendar");
+    const dictation = useOrgFeature("nativeDictation", options);
+    const computer = useOrgFeature("computerUse");
     const missing = useOrgFeature("missingFeature");
-    const state = useOrgFeatureState("engineV2ForceUpgrade", options);
-    return <div data-engine={engine} data-calendar={calendar} data-missing={missing} data-state={state.data} />;
+    const state = useOrgFeatureState("nativeDictation", options);
+    return <div data-dictation={dictation} data-computer={computer} data-missing={missing} data-state={state.data} />;
   }
   await act(async () => {
     root?.render(<QueryClientProvider client={queryClient}><Features /></QueryClientProvider>);
@@ -65,18 +65,18 @@ async function renderFeatures(options: { desktopOnly?: boolean; active?: boolean
 
 test("desktop-only features ignore a shared true cache on a non-Electron window, without disabling web features", async () => {
   const node = await renderFeatures({ desktopOnly: true });
-  expect(node?.getAttribute("data-engine")).toBe("false");
+  expect(node?.getAttribute("data-dictation")).toBe("false");
   expect(node?.getAttribute("data-state")).toBe("false");
-  expect(node?.getAttribute("data-calendar")).toBe("true");
+  expect(node?.getAttribute("data-computer")).toBe("true");
   expect(context.client?.getOrgFeatures).not.toHaveBeenCalled();
-  expect(queryClient.getQueryData(["den", "org-features", orgId])).toMatchObject({ engineV2ForceUpgrade: true });
+  expect(queryClient.getQueryData(["den", "org-features", orgId])).toMatchObject({ nativeDictation: true });
 });
 
 test("a desktop-only feature remains available from the same cache in Electron", async () => {
   Reflect.set(window, "__OPENWORK_ELECTRON__", {});
   const node = await renderFeatures({ desktopOnly: true });
-  expect(node?.getAttribute("data-engine")).toBe("true");
-  expect(node?.getAttribute("data-calendar")).toBe("true");
+  expect(node?.getAttribute("data-dictation")).toBe("true");
+  expect(node?.getAttribute("data-computer")).toBe("true");
 });
 
 for (const guard of ["signed-out", "missing-client", "missing-organization"]) {
@@ -85,28 +85,28 @@ for (const guard of ["signed-out", "missing-client", "missing-organization"]) {
     if (guard === "missing-client") context = { ...context, client: null };
     if (guard === "missing-organization") {
       context = { ...context, organizationId: null };
-      queryClient.setQueryData(["den", "org-features", null], { engineV2ForceUpgrade: true, automationCalendar: true });
+      queryClient.setQueryData(["den", "org-features", null], { nativeDictation: true, computerUse: true });
     }
     const node = await renderFeatures();
-    expect(node?.getAttribute("data-engine")).toBe("false");
-    expect(node?.getAttribute("data-calendar")).toBe("false");
+    expect(node?.getAttribute("data-dictation")).toBe("false");
+    expect(node?.getAttribute("data-computer")).toBe("false");
     expect(node?.getAttribute("data-state")).toBe("false");
   });
 }
 
 test("inactive and missing features are false even when another observer enabled the cache", async () => {
   const node = await renderFeatures({ active: false });
-  expect(node?.getAttribute("data-engine")).toBe("false");
-  expect(node?.getAttribute("data-calendar")).toBe("true");
+  expect(node?.getAttribute("data-dictation")).toBe("false");
+  expect(node?.getAttribute("data-computer")).toBe("true");
   expect(node?.getAttribute("data-missing")).toBe("false");
 });
 
 test("cache updates turn off the feature without keeping a previous true selection", async () => {
   const node = await renderFeatures();
-  expect(node?.getAttribute("data-engine")).toBe("true");
+  expect(node?.getAttribute("data-dictation")).toBe("true");
   await act(async () => {
-    queryClient.setQueryData(["den", "org-features", orgId], { engineV2ForceUpgrade: false });
+    queryClient.setQueryData(["den", "org-features", orgId], { nativeDictation: false });
     await new Promise((resolve) => setTimeout(resolve, 0));
   });
-  expect(node?.getAttribute("data-engine")).toBe("false");
+  expect(node?.getAttribute("data-dictation")).toBe("false");
 });

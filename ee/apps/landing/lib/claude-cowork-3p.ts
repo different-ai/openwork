@@ -50,11 +50,11 @@ export const claudeCowork3pFaq: FaqEntry[] = [
   },
   {
     question: "Can we self-host OpenWork?",
-    answer: "Yes, with Helm or Docker Compose. Enterprise costs the same cloud or self-hosted."
+    answer: "Yes, with Helm on Kubernetes, Docker Compose for evaluation, or beta Terraform modules for AWS, Google Cloud, and Azure. Enterprise costs the same cloud or self-hosted."
   },
   {
     question: "Does OpenWork have a mobile app?",
-    answer: "Not yet; it is on the public roadmap. OpenWork runs on macOS, Windows, Linux, and in the browser."
+    answer: "Not yet; it is on the public roadmap. OpenWork runs on macOS, Windows, Linux, and in the browser, and your team can start work from Slack today."
   }
 ];
 

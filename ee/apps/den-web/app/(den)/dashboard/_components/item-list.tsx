@@ -219,7 +219,7 @@ export function ConfirmDialog({ confirm, destructive = false, onConfirm, onClose
           {error ? <DenNotice className="mt-4" tone="error" message={error} /> : null}
           <div className="mt-5 flex justify-end gap-2">
             <AlertDialog.Close ref={cancelRef} disabled={busy} data-testid="confirm-dialog-cancel" className={buttonVariants({ variant: "secondary" })}>Cancel</AlertDialog.Close>
-            <DenButton variant={shown.destructive ? "destructive" : "primary"} loading={busy} onClick={() => void run()}>{shown.confirm?.action}</DenButton>
+            <DenButton variant={shown.destructive ? "destructive" : "primary"} loading={busy} data-testid="confirm-dialog-action" onClick={() => void run()}>{shown.confirm?.action}</DenButton>
           </div>
         </AlertDialog.Popup>
       </AlertDialog.Portal>

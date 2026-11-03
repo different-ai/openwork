@@ -14,6 +14,7 @@ import {
   permissionLockReason,
 } from "../../_lib/den-org";
 import { useOrgDashboard } from "../_providers/org-dashboard-provider";
+import { EnterprisePlanNotice } from "./enterprise-plan-notice";
 
 function formatDateTime(value: string | null) {
   if (!value) {
@@ -345,6 +346,9 @@ export function ScimScreen() {
         </div>
       ) : (
         <>
+          {!orgContext.entitlements.scim ? (
+            <EnterprisePlanNotice feature="SCIM provisioning" />
+          ) : null}
           {!access.canManageScim ? (
             <div className="mb-6 rounded-[24px] border border-[var(--dls-border)] bg-[var(--dls-hover)] px-5 py-4 text-[14px] text-[var(--dls-text-primary)]">
               {`Read only. ${permissionLockReason("scim.manage")}`}

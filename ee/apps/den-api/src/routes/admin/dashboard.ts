@@ -1,6 +1,6 @@
 import { and, eq, gte, isNotNull, lt, sql } from "@openwork-ee/den-db/drizzle"
 import { AuthSessionTable, MemberTable, TelemetryEventTable } from "@openwork-ee/den-db/schema"
-import { adminDashboardSchema } from "@openwork/types/den/admin-organization"
+import { adminActiveUsersSchema, adminDashboardSchema } from "@openwork/types/den/admin-organization"
 import type { Hono } from "hono"
 import { describeRoute } from "hono-openapi"
 import { db } from "../../db.js"
@@ -32,8 +32,8 @@ async function activeUsers(now: Date) {
 
 export function registerAdminDashboardRoute<T extends { Variables: AuthContextVariables }>(app: Hono<T>) {
   app.get("/v1/admin/dashboard", describeRoute({
-    tags: ["Admin"], summary: "Get bounded platform activity and AI usage",
-    description: "Returns 30 UTC calendar days of completed gateway usage across organizations, using the same raw and retained accounting as organization reports. Includes accounting coverage, 30 daily totals, at most eight organizations ranked by requests, and distinct users with sign-in or telemetry activity. Does not hydrate features, billing or members.",
+    tags: ["Admin"], summary: "Get bounded platform AI usage",
+    description: "Returns 30 UTC calendar days of completed gateway usage across organizations, using the same raw and retained accounting as organization reports. Includes accounting coverage, 30 daily totals and at most eight organizations ranked by requests. Platform active users are a separate on-demand read (GET /v1/admin/dashboard/active-users). Does not hydrate features, billing or members.",
     responses: {
       200: jsonResponse("Platform dashboard returned.", adminDashboardSchema),
       401: jsonResponse("Authentication required.", unauthorizedSchema),
@@ -41,8 +41,20 @@ export function registerAdminDashboardRoute<T extends { Variables: AuthContextVa
     },
   }), adminRoute(), async (c) => {
     c.header("Cache-Control", "no-store")
-    const now = new Date()
-    const [usage, users] = await Promise.all([readAdminGatewayDashboard(now), activeUsers(now)])
-    return c.json({ ...usage, activeUsers: users, generatedAt: new Date().toISOString() })
+    const usage = await readAdminGatewayDashboard(new Date())
+    return c.json({ ...usage, generatedAt: new Date().toISOString() })
+  })
+
+  app.get("/v1/admin/dashboard/active-users", describeRoute({
+    tags: ["Admin"], summary: "Count platform active users",
+    description: "Counts distinct users with a sign-in or telemetry event today, in the last 7 and in the last 30 UTC calendar days, across every organization. This scans 30 days of platform activity, so clients request it explicitly rather than on every dashboard load.",
+    responses: {
+      200: jsonResponse("Platform active users returned.", adminActiveUsersSchema),
+      401: jsonResponse("Authentication required.", unauthorizedSchema),
+      403: jsonResponse("Platform admin access required.", forbiddenSchema),
+    },
+  }), adminRoute(), async (c) => {
+    c.header("Cache-Control", "no-store")
+    return c.json({ ...await activeUsers(new Date()), generatedAt: new Date().toISOString() })
   })
 }

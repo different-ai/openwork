@@ -10,11 +10,25 @@ export const CONNECT_MCP_APP_HOST_CAPABILITY = "mcp-app-host-v1"
 export const CONNECT_MCP_SERVER_INDEX_MAX_SERVERS = 100
 const INDEX_DESCRIPTION_MAX_CHARS = 1_024
 
-export function supportsConnectMcpAppHost(value: string | undefined): boolean {
+/**
+ * OpenWork's OpenCode v2 engine lists the member's skills as native skills
+ * from the skill index, so Connect's server instructions need not list them too.
+ */
+export const CONNECT_NATIVE_SKILLS_CAPABILITY = "native-skills-v1"
+
+function hasClientCapability(value: string | undefined, capability: string): boolean {
   return value
     ?.split(",")
-    .map((capability) => capability.trim())
-    .includes(CONNECT_MCP_APP_HOST_CAPABILITY) ?? false
+    .map((entry) => entry.trim())
+    .includes(capability) ?? false
+}
+
+export function supportsConnectMcpAppHost(value: string | undefined): boolean {
+  return hasClientCapability(value, CONNECT_MCP_APP_HOST_CAPABILITY)
+}
+
+export function supportsConnectNativeSkills(value: string | undefined): boolean {
+  return hasClientCapability(value, CONNECT_NATIVE_SKILLS_CAPABILITY)
 }
 
 export type ConnectMcpServerIndexEntry = {

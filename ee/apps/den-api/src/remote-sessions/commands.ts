@@ -1,12 +1,15 @@
 import { and, asc, desc, eq, gt, inArray, isNotNull, isNull, lt, lte, or } from "@openwork-ee/den-db/drizzle"
 import { RemoteSessionCommandTable } from "@openwork-ee/den-db/schema/remote-session-commands"
 import { createDenTypeId, normalizeDenTypeId, type DenTypeId } from "@openwork-ee/utils/typeid"
-import type {
-  RemoteSessionCommandCompleteRequest,
-  RemoteSessionCommandSessionReport,
+import {
+  remoteSessionPendingSchema,
+  type RemoteSessionCommandCompleteRequest,
+  type RemoteSessionCommandSessionReport,
+  type RemoteSessionPending,
 } from "@openwork/types/automations"
 import { db } from "../db.js"
 import { automationUpdateChangedRows } from "../automations/update-result.js"
+import { signalRemoteSessionWork } from "./work-signal.js"
 
 export const DEFAULT_TTL_MS = 10 * 60_000
 
@@ -27,6 +30,10 @@ export type RemoteSessionProgress = {
   finalText: string | null
   lastError: { code: string; message: string } | null
   messageCount: number | null
+  /** The step the session ran last, as a short sentence; null from older runners. */
+  latestStep: string | null
+  /** What the session waits on, from runners that read it; null otherwise. */
+  pending: RemoteSessionPending | null
   observedAt: number
 }
 
@@ -187,6 +194,12 @@ function commandIdOrNull(value: string): DenTypeId<"remoteSessionCommand"> | nul
   }
 }
 
+function mapPending(row: CommandRow): RemoteSessionPending | null {
+  if (row.session_status !== "waiting" || row.session_pending === null) return null
+  const parsed = remoteSessionPendingSchema.safeParse(row.session_pending)
+  return parsed.success ? parsed.data : null
+}
+
 function mapSession(row: CommandRow): RemoteSessionProgress | null {
   if (!row.session_status || !row.session_observed_at) return null
   return {
@@ -205,6 +218,8 @@ function mapSession(row: CommandRow): RemoteSessionProgress | null {
       ? { code: row.session_error_code, message: row.session_error_message }
       : null,
     messageCount: row.session_message_count,
+    latestStep: row.session_latest_step,
+    pending: mapPending(row),
     observedAt: row.session_observed_at.getTime(),
   }
 }
@@ -280,7 +295,8 @@ function targetableBy(computerIds: RunnerComputerIds) {
 }
 
 async function commandById(commandId: string): Promise<RemoteSessionCommand | null> {
-  const rows = await db.select().from(RemoteSessionCommandTable)
+  // primary: reads back the command enqueue just inserted.
+  const rows = await db.$primary.select().from(RemoteSessionCommandTable)
     .where(eq(RemoteSessionCommandTable.id, normalizeDenTypeId("remoteSessionCommand", commandId)))
     .limit(1)
   return rows[0] ? mapCommand(rows[0]) : null
@@ -317,12 +333,21 @@ function duplicateEntry(error: unknown, depth = 0): boolean {
 
 async function commandByIdempotencyScope(input: EnqueueInput): Promise<RemoteSessionCommand | null> {
   if (!input.idempotencyKey) return null
-  const rows = await db.select().from(RemoteSessionCommandTable).where(and(
+  // primary: idempotency must see a retry's (or a concurrent winner's) insert.
+  const rows = await db.$primary.select().from(RemoteSessionCommandTable).where(and(
     eq(RemoteSessionCommandTable.org_id, normalizeDenTypeId("organization", input.organizationId)),
     eq(RemoteSessionCommandTable.created_by_user_id, normalizeDenTypeId("user", input.createdByUserId)),
     eq(RemoteSessionCommandTable.idempotency_key, input.idempotencyKey),
   )).limit(1)
   return rows[0] ? mapCommand(rows[0]) : null
+}
+
+async function releaseIdempotencyKey(command: RemoteSessionCommand): Promise<void> {
+  if (!command.idempotencyKey) return
+  await db.update(RemoteSessionCommandTable).set({ idempotency_key: null }).where(and(
+    eq(RemoteSessionCommandTable.id, normalizeDenTypeId("remoteSessionCommand", command.id)),
+    eq(RemoteSessionCommandTable.idempotency_key, command.idempotencyKey),
+  ))
 }
 
 export function remoteSessionCommandAdmissionMatches(command: RemoteSessionCommand, input: EnqueueInput) {
@@ -344,9 +369,13 @@ function existingAdmission(command: RemoteSessionCommand, input: EnqueueInput) {
 
 export const databaseRemoteSessionCommandStore: RemoteSessionCommandStore = {
   async enqueue(input) {
-    const existing = await commandByIdempotencyScope(input)
-    if (existing) return existingAdmission(existing, input)
     const now = Date.now()
+    const existing = await commandByIdempotencyScope(input)
+    if (existing && existing.expiresAt > now) return existingAdmission(existing, input)
+    // A key only protects retries of one create while its command can still be admitted. After
+    // that, the same key from a later chat is new work: release it from the old command so the
+    // old receipt stays readable and the new command can take the key.
+    if (existing) await releaseIdempotencyKey(existing)
     const id = createDenTypeId("remoteSessionCommand")
     try {
       await db.insert(RemoteSessionCommandTable).values({
@@ -373,13 +402,14 @@ export const databaseRemoteSessionCommandStore: RemoteSessionCommandStore = {
       // command owned by someone else. Only a verified key collision is mapped.
       const winner = await commandByIdempotencyScope(input)
       if (winner) return existingAdmission(winner, input)
-      const collisions = await db.select({ id: RemoteSessionCommandTable.id }).from(RemoteSessionCommandTable)
+      const collisions = await db.$primary.select({ id: RemoteSessionCommandTable.id }).from(RemoteSessionCommandTable)
         .where(eq(RemoteSessionCommandTable.idempotency_key, input.idempotencyKey)).limit(1)
       if (collisions.length > 0) throw new RemoteSessionIdempotencyConflictError()
       throw error
     }
     const command = await commandById(id)
     if (!command) throw new Error("remote_session_command_enqueue_failed")
+    signalRemoteSessionWork(command.organizationId, command.ownerMemberId)
     return command
   },
 
@@ -467,6 +497,8 @@ export const databaseRemoteSessionCommandStore: RemoteSessionCommandStore = {
       session_error_code: input.error?.code ?? null,
       session_error_message: input.error?.message ?? null,
       ...(input.messageCount === undefined ? {} : { session_message_count: input.messageCount }),
+      session_latest_step: input.latestStep ?? null,
+      session_pending: input.status === "waiting" && input.pending ? input.pending : null,
       session_observed_at: new Date(input.observedAt),
       updated_at: new Date(),
     }).where(and(
@@ -476,7 +508,7 @@ export const databaseRemoteSessionCommandStore: RemoteSessionCommandStore = {
       or(isNull(RemoteSessionCommandTable.session_observed_at), lt(RemoteSessionCommandTable.session_observed_at, new Date(input.observedAt))),
     ))
     if (automationUpdateChangedRows(result)) return "reported"
-    const existing = await db.select().from(RemoteSessionCommandTable).where(scope).limit(1)
+    const existing = await db.$primary.select().from(RemoteSessionCommandTable).where(scope).limit(1)
     const row = existing[0]
     if (!row) return "not_found"
     // Equal-timestamp retransmits are acknowledged without changing progress.
@@ -501,7 +533,8 @@ export const databaseRemoteSessionCommandStore: RemoteSessionCommandStore = {
     if (!commandId) return null
     const organizationId = normalizeDenTypeId("organization", input.organizationId)
     const createdByUserId = normalizeDenTypeId("user", input.createdByUserId)
-    const rows = await db.select().from(RemoteSessionCommandTable).where(and(
+    // primary: polled right after enqueue; a lagging replica would report not found.
+    const rows = await db.$primary.select().from(RemoteSessionCommandTable).where(and(
       eq(RemoteSessionCommandTable.id, commandId),
       eq(RemoteSessionCommandTable.org_id, organizationId),
       eq(RemoteSessionCommandTable.created_by_user_id, createdByUserId),
@@ -517,7 +550,7 @@ export const databaseRemoteSessionCommandStore: RemoteSessionCommandStore = {
       inArray(RemoteSessionCommandTable.status, ["pending", "claimed"]),
       lte(RemoteSessionCommandTable.expires_at, new Date()),
     ))
-    const updated = await db.select().from(RemoteSessionCommandTable).where(and(
+    const updated = await db.$primary.select().from(RemoteSessionCommandTable).where(and(
       eq(RemoteSessionCommandTable.id, commandId),
       eq(RemoteSessionCommandTable.org_id, organizationId),
       eq(RemoteSessionCommandTable.created_by_user_id, createdByUserId),
@@ -532,7 +565,8 @@ export const databaseRemoteSessionCommandStore: RemoteSessionCommandStore = {
       organizationId: normalizeDenTypeId("organization", input.organizationId),
       createdByUserId: normalizeDenTypeId("user", input.createdByUserId),
     }
-    const rows = await db.select().from(RemoteSessionCommandTable).where(and(
+    // primary: status polling right after enqueue.
+    const rows = await db.$primary.select().from(RemoteSessionCommandTable).where(and(
       inArray(RemoteSessionCommandTable.id, commandIds),
       eq(RemoteSessionCommandTable.org_id, scope.organizationId),
       eq(RemoteSessionCommandTable.created_by_user_id, scope.createdByUserId),
@@ -547,7 +581,8 @@ export const databaseRemoteSessionCommandStore: RemoteSessionCommandStore = {
   },
 
   async listPendingForRunner(input) {
-    const rows = await db.select().from(RemoteSessionCommandTable).where(and(
+    // primary: the runner asks for work as soon as a command is enqueued.
+    const rows = await db.$primary.select().from(RemoteSessionCommandTable).where(and(
       eq(RemoteSessionCommandTable.org_id, normalizeDenTypeId("organization", input.organizationId)),
       eq(RemoteSessionCommandTable.owner_member_id, normalizeDenTypeId("member", input.ownerMemberId)),
       eq(RemoteSessionCommandTable.status, "pending"),
@@ -558,7 +593,7 @@ export const databaseRemoteSessionCommandStore: RemoteSessionCommandStore = {
   },
 
   async listRecoverableForRunner(input) {
-    const rows = await db.select().from(RemoteSessionCommandTable).where(and(
+    const rows = await db.$primary.select().from(RemoteSessionCommandTable).where(and(
       eq(RemoteSessionCommandTable.org_id, normalizeDenTypeId("organization", input.organizationId)),
       eq(RemoteSessionCommandTable.owner_member_id, normalizeDenTypeId("member", input.ownerMemberId)),
       eq(RemoteSessionCommandTable.claimed_by_runner_id, input.runnerId),
@@ -598,6 +633,7 @@ export const databaseRemoteSessionCommandStore: RemoteSessionCommandStore = {
     await db.update(RemoteSessionCommandTable).set({
       session_status: "running",
       session_waiting_for: null,
+      session_pending: null,
       session_final_text: null,
       session_error_code: null,
       session_error_message: null,

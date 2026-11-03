@@ -12,7 +12,22 @@ Self-hosted versions of the workplace apps a company runs, so agents can be test
 
 Each app has a web UI and an MCP endpoint, so OpenWork connects to them like any other connector. The Jira and Confluence tools match the community [`mcp-atlassian`](https://github.com/sooperset/mcp-atlassian) server (same names and schemas). That server also works against Open Jira and Open Confluence unchanged.
 
-Everything is seeded with the **Acme Robotics** sample organization: people, customers, mail, files, issues and pages. Data lives in memory; restarting restores the seed.
+Everything is seeded with the **Acme Robotics** sample organization: people, customers, mail, files, issues and pages. The raw services default to memory-only state; restarting restores the seed. The authenticated workshop gateway can instead retain each participant's data in private SQLite snapshots on a persistent disk.
+
+## As a real app's Microsoft 365
+
+`src/microsoft-signin.mjs` is a Microsoft Entra-compatible sign-in and Graph front door, so an app's ordinary Microsoft 365 connector (OAuth authorization code with S256 PKCE, refresh tokens, then Microsoft Graph) runs against Open Outlook, Open Calendar and Open Drive with no code changes. Each fictional person has their own `microsoft365.mjs` backend; the consent page asks who is signing in, and that person's token reaches only their backend and only within the Graph permissions they approved (`Mail.*`, `Calendars.*`, `Files.*`, `User.Read`; anything else is refused).
+
+```bash
+OPEN_WORKPLACE_SIGNIN='{"tenantId":"<guid>","clientId":"…","clientSecret":"…","redirectUris":["<exact callback>"],"people":[{"handle":"alex","name":"Alex Chen","email":"alex@acme.test","graph":"http://127.0.0.1:3993"}]}' \
+  node src/microsoft-signin.mjs      # PORT=3994
+```
+
+For OpenWork Den, point `DEN_MICROSOFT_OAUTH_AUTHORIZE_URL` / `DEN_MICROSOFT_OAUTH_TOKEN_URL` at `<origin>/{tenantId}/oauth2/v2.0/authorize|token` and `DEN_MICROSOFT_GRAPH_BASE_URL` at `<origin>/v1.0`. `pnpm world up preview-workbot -- --open-workplace` wires all of it (`worlds/lib/open-workplace.ts`). The ID token is unsigned: it is a fictional identity hint, never a credential. Sandbox only.
+
+## Multi-participant workshops
+
+Use the authenticated [workshop gateway](WORKSHOP.md) for individual exercises. Opening it automatically creates/restores a private browser workspace—no password or account card. It provides private service processes, durable storage and explicit OAuth consent for MCP. Publishing the standalone entry points below does **not** provide participant isolation.
 
 ## Run
 
@@ -22,7 +37,7 @@ node src/atlassian.mjs        # Open Jira, Open Confluence APIs + MCP    (PORT=3
 ATLASSIAN_BASE_URL=http://127.0.0.1:3991 node src/atlassian-web.mjs   # Open Jira / Open Confluence web UI (PORT=3992)
 ```
 
-No install step: each file uses Node built-ins only (Node 22+).
+No install step: the package uses Node built-ins only (stable Node.js 24.x, version 24.22.1 or newer within that major).
 
 | Service | Web | MCP | REST |
 |---|---|---|---|

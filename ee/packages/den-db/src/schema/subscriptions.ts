@@ -3,7 +3,7 @@ import { boolean, index, int, mysqlEnum, mysqlTable, timestamp, uniqueIndex, var
 import { denTypeIdColumn, timestamps } from "../columns"
 import { MemberTable, OrganizationTable } from "./org"
 
-export const OrgSubscriptionType = ["inference", "seat", "web"] as const
+export const OrgSubscriptionType = ["inference", "seat", "web", "enterprise"] as const
 export const OrgSubscriptionStatus = [
   "incomplete",
   "incomplete_expired",
@@ -29,6 +29,8 @@ export const OrgSubscriptionTable = mysqlTable(
     stripe_price_id: varchar("stripe_price_id", { length: 255 }),
     stripe_subscription_item_id: varchar("stripe_subscription_item_id", { length: 255 }),
     quantity: int("quantity").notNull().default(0),
+    /** Committed minimum users (Enterprise): Stripe bills at least this many. 0 means none. */
+    minimum_quantity: int("minimum_quantity").notNull().default(0),
     current_period_start: timestamp("current_period_start", { fsp: 3 }),
     current_period_end: timestamp("current_period_end", { fsp: 3 }),
     cancel_at_period_end: boolean("cancel_at_period_end").notNull().default(false),

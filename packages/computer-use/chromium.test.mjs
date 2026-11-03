@@ -6,15 +6,15 @@ import { join } from "node:path";
 import test from "node:test";
 import { createCloudBrowser, publicDestination } from "./chromium.mjs";
 
-async function fixture({ rejectInterception = false, holdInterception = false, existing = true, missingEgress = false } = {}) {
+async function fixture({ rejectInterception = false, holdInterception = false, existing = true, missingEgress = false, pages = existing ? ["tab"] : [], owned = pages } = {}) {
   const directory = await mkdtemp(join(tmpdir(), "openwork-browser-network-"));
   const commands = [], sockets = [], held = [];
   let origin;
-  const target = (url = "https://8.8.8.8/resource") => ({ type: "page", id: "tab", url, title: "Test page",
-    webSocketDebuggerUrl: origin.replace("http:", "ws:") + "/devtools/page/tab" });
+  const target = (url = "https://8.8.8.8/resource", id = "tab") => ({ type: "page", id, url, title: "Test page",
+    webSocketDebuggerUrl: origin.replace("http:", "ws:") + `/devtools/page/${id}` });
   const server = createServer((request, response) => {
     response.setHeader("content-type", "application/json");
-    response.end(JSON.stringify(request.url.startsWith("/json/new") ? target("about:blank") : existing ? [target()] : []));
+    response.end(JSON.stringify(request.url.startsWith("/json/new") ? target("about:blank") : pages.map(id => target(undefined, id))));
   });
   await new Promise(resolve => server.listen(0, "127.0.0.1", resolve));
   origin = `http://127.0.0.1:${server.address().port}`;
@@ -37,7 +37,7 @@ async function fixture({ rejectInterception = false, holdInterception = false, e
   }
   globalThis.WebSocket = Socket;
   const statePath = join(directory, "owners.json");
-  await writeFile(statePath, JSON.stringify(existing ? [["tab", "chat"]] : []));
+  await writeFile(statePath, JSON.stringify(owned.map(id => [id, "chat"])));
   const browser = createCloudBrowser({ statePath, endpoint: origin, assertActive() {}, enabled: () => true, beforeInput: async () => {},
     verifyEgress: async () => { if (missingEgress) throw Object.assign(new Error("Missing kernel filter"), { code: "egress_unavailable" }); } });
   return { browser, commands, sockets, release() { for (const reply of held.splice(0)) reply(); },
@@ -99,6 +99,26 @@ test("cloud navigation waits for interception and fails closed when it cannot be
   }
 });
 
+test("a conversation works in a tab the person opened once it names that tab", async () => {
+  const f = await fixture({ owned: [] });
+  try {
+    assert.deepEqual((await f.browser.request({ sessionId: "chat", operation: "tabs" })).tabs, []);
+    assert.equal((await f.browser.request({ sessionId: "chat", operation: "pause", args: { tabId: "closed" } })).code, "tab_closed");
+    const named = await f.browser.request({ sessionId: "chat", operation: "pause", args: { tabId: "tab" } });
+    assert.equal(named.tabId, "tab", JSON.stringify(named));
+    assert.deepEqual((await f.browser.request({ sessionId: "chat", operation: "tabs" })).tabs.map(tab => tab.tabId), ["tab"]);
+    // Once a conversation has it, another can't take it by naming it.
+    assert.equal((await f.browser.request({ sessionId: "side", operation: "pause", args: { tabId: "tab" } })).code, "wrong_conversation");
+  } finally { await f.close(); }
+});
+
+test("a conversation's active tab is the one of its tabs most recently in front", async () => {
+  const f = await fixture({ pages: ["second", "first"], owned: ["first", "second"] });
+  try {
+    assert.equal((await f.browser.request({ sessionId: "chat", operation: "pause" })).tabId, "second");
+  } finally { await f.close(); }
+});
+
 test("cloud destination checks reject private IPv4, IPv6 and translated addresses", async () => {
   for (const url of ["http://localhost/", "http://127.0.0.1/", "http://10.0.0.1/", "http://100.100.100.200/",
     "http://169.254.169.254/", "http://[::1]/", "http://[fd00::1]/", "http://[::ffff:7f00:1]/", "http://[::7f00:1]/",
@@ -117,4 +137,37 @@ test("cloud browser refuses to connect without kernel egress enforcement", async
     assert.equal(f.sockets.length, 0);
     assert.equal(f.commands.length, 0);
   } finally { await f.close(); }
+});
+
+test("native kernel readiness requires complete UID-bound IPv4 and IPv6 rejection", async () => {
+  const { nativeBrowserEgress } = await import("./chromium.mjs");
+  const ranges = {
+    ip: [["0.0.0.0", 8], ["10.0.0.0", 8], ["100.64.0.0", 10], ["127.0.0.0", 8], ["169.254.0.0", 16], ["172.16.0.0", 12], ["192.168.0.0", 16]],
+    ip6: [["::", 96], ["::ffff:0.0.0.0", 96], ["64:ff9b::", 96], ["64:ff9b:1::", 48], ["fc00::", 7], ["fe80::", 10]],
+  };
+  const rules = { nftables: [
+    { chain: { family: "inet", table: "openwork_desktop", name: "output", type: "filter", hook: "output" } },
+    ...Object.entries(ranges).map(([protocol, prefixes]) => ({ rule: {
+      family: "inet", table: "openwork_desktop", chain: "output", expr: [
+        { match: { op: "==", left: { meta: { key: "skuid" } }, right: 1001 } },
+        { match: { op: "==", left: { payload: { protocol, field: "daddr" } }, right: { set: prefixes.map(([addr, len]) => ({ prefix: { addr, len } })) } } },
+        { reject: { type: "icmpx", expr: "port-unreachable" } },
+      ],
+    } })),
+  ] };
+  assert.equal(nativeBrowserEgress(rules, 1001), true);
+  assert.equal(nativeBrowserEgress(rules, 1002), false);
+  assert.equal(nativeBrowserEgress(rules, 0), false);
+  for (const change of [
+    value => { value.nftables.shift(); },
+    value => { value.nftables.pop(); },
+    value => { value.nftables[1].rule.expr[1].match.right.set.pop(); },
+    value => { value.nftables[1].rule.expr[0].match.op = "!="; },
+    value => { value.nftables[1].rule.expr.push({ accept: null }); },
+    value => { value.nftables[1].rule.chain = "unattached"; },
+  ]) {
+    const incomplete = structuredClone(rules);
+    change(incomplete);
+    assert.equal(nativeBrowserEgress(incomplete, 1001), false);
+  }
 });

@@ -19,10 +19,15 @@ export function newSessionDraftOwnerKey(scope: string | null | undefined, destin
   return sessionDraftScopeKey(scope, destination.workspaceId, newSessionDraftSlot(destination));
 }
 
-export function draftWorkspaceChangeBlocked(source: string, destination: string, state: ComposerSessionState) {
-  if (source === destination) return false;
+/** Attached or mentioned workspace files tie a draft to its workspace. */
+export function draftHasWorkspaceFiles(state: Pick<ComposerSessionState, "attachments" | "draft" | "mentions">) {
   const hasFileMentions = Object.entries(state.mentions).some(([value, kind]) => kind === "file" && state.draft.includes(`@${encodeComposerMentionValue(value)}`));
   return state.attachments.length > 0 || hasFileMentions || /file:\/\//i.test(state.draft);
+}
+
+export function draftWorkspaceChangeBlocked(source: string, destination: string, state: ComposerSessionState) {
+  if (source === destination) return false;
+  return draftHasWorkspaceFiles(state);
 }
 
 /** One navigation-only command for every New session entry point. */

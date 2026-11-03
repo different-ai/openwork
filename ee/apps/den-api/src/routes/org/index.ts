@@ -4,6 +4,8 @@ import { delegatedRoute } from "../../middleware/index.js"
 import { registerOrgActivityRoutes } from "./activity.js"
 import { registerOrgAgentPermissionRoutes } from "./agent-permissions.js"
 import { registerOrgDefaultModelRoutes } from "./default-model.js"
+import { registerOrgAutoRouterRoutes } from "./auto-router.js"
+import { registerOrgPromptRoutes } from "./prompts.js"
 import { registerOrgApiKeyRoutes } from "./api-keys.js"
 import { registerManagedDeploymentRoutes } from "./managed-deployments.js"
 import { registerOrgAuditRoutes } from "./audit.js"
@@ -21,7 +23,9 @@ import { registerOrgDiagnosticsRoutes } from "./diagnostics.js"
 import { registerOrgDesktopPolicyRoutes } from "./desktop-policies.js"
 import { registerOrgEgressDiagnosticRoutes } from "./egress-diagnostics.js"
 import { registerOrgInventoryRevisionRoutes } from "./inventory-revision.js"
+import { registerOrgFeatureUsageRoutes } from "./feature-usage.js"
 import { registerOrgInvitationRoutes } from "./invitations.js"
+import { registerOrgSandboxJoinRoutes } from "./sandbox-join.js"
 import { registerGoogleWorkspaceRoutes } from "./google-workspace.js"
 import { registerOrgInstallLinkRoutes } from "./install-links.js"
 import { registerOrgInferenceProviderRoutes } from "./inference-providers.js"
@@ -43,6 +47,7 @@ import { registerOrgTeamRoutes } from "./teams.js"
 import { registerOrgWebOriginRoutes } from "./web-origins.js"
 import { registerOrgWorkbotReadinessRoutes } from "./workbot-readiness.js"
 import { registerOrgWorkbotSettingsRoutes } from "./workbot-settings.js"
+import { registerOrgAutomationSettingsRoutes } from "./automation-settings.js"
 
 const LEGACY_ORG_PATH_PREFIX = "/v1/orgs/"
 
@@ -76,6 +81,7 @@ export function registerOrgRoutes<T extends { Variables: OrgRouteVariables & Req
   registerOrgDiagnosticsRoutes(app)
   registerOrgActivityRoutes(app)
   registerOrgInventoryRevisionRoutes(app)
+  registerOrgFeatureUsageRoutes(app)
   registerManagedDeploymentRoutes(app)
   registerDeleteOrganizationRoutes(app)
   registerOrgApiKeyRoutes(app)
@@ -95,6 +101,7 @@ export function registerOrgRoutes<T extends { Variables: OrgRouteVariables & Req
   registerOrgScimRoutes(app)
   registerOrgSsoRoutes(app)
   registerOrgInvitationRoutes(app)
+  registerOrgSandboxJoinRoutes(app)
   registerOrgInstallLinkRoutes(app)
   registerOrgLlmProviderRoutes(app)
   registerOrgInferenceProviderRoutes(app)
@@ -109,8 +116,11 @@ export function registerOrgRoutes<T extends { Variables: OrgRouteVariables & Req
   registerOrgTeamRoutes(app)
   registerOrgWebOriginRoutes(app)
   registerOrgWorkbotSettingsRoutes(app)
+  registerOrgAutomationSettingsRoutes(app)
   registerOrgWorkbotReadinessRoutes(app)
   registerOrgDefaultModelRoutes(app)
+  registerOrgAutoRouterRoutes(app)
+  registerOrgPromptRoutes(app)
 
   app.all("/v1/orgs/:orgId/*", delegatedRoute, async (c) => {
     const url = new URL(c.req.raw.url)

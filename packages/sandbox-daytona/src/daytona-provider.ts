@@ -540,7 +540,10 @@ export function createDaytonaProvider(config: DaytonaProviderConfig, deps: Dayto
   const storage: SandboxStorage = {
     async ensureVolume(name, opts) {
       const volumeName = slug(name).slice(0, 63)
-      await wrap(() => client.volume.get(volumeName, true))
+      const ensured = await wrap(() => client.volume.get(volumeName, true))
+      if (ensured.state === "ready") {
+        return { providerId, id: ensured.id, name: volumeName }
+      }
       const startedAt = now()
       while (now() - startedAt < opts.timeoutMs) {
         const volume = await wrap(() => client.volume.get(volumeName))

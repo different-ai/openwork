@@ -1,6 +1,7 @@
 import {
   agentPermissionEngineMcpDenial,
   agentPermissionEngineV2Decision,
+  agentPermissionEngineV2ToolHidden,
   parseAgentPermissionRules,
 } from "../agent-permission-engine.js";
 import { parseOrganizationMcpServers } from "../organization-mcp-names.js";
@@ -9,10 +10,12 @@ type Registration = { dispose(): Promise<void> };
 type PermissionEvent = {
   readonly action: string;
   readonly resources: readonly string[];
+  readonly source?: { readonly type?: string; readonly id?: string };
   effect: "allow" | "ask" | "deny";
   message?: string;
 };
 type ToolError = { error?: { _tag?: unknown; permission?: unknown; resources?: unknown; reason?: string } };
+type ExecuteBefore = { readonly tool: string; readonly id: string; readonly input: unknown };
 type ExecuteAfter = { readonly status: string; readonly error?: ToolError };
 type McpEditor = {
   list(): Iterable<readonly [string, unknown]>;
@@ -22,8 +25,15 @@ type Context = {
   options: { rules?: unknown; organizationMcp?: unknown };
   mcp: { transform(callback: (editor: McpEditor) => void): Promise<Registration> };
   permission: { hook(name: "evaluate", callback: (event: PermissionEvent) => void): Promise<Registration> };
-  tool: { hook(name: "execute.after", callback: (event: ExecuteAfter) => void): Promise<Registration> };
+  tool: {
+    transform(callback: (editor: { list(): readonly { id: string }[]; remove(id: string): void }) => void): Promise<Registration>;
+    hook(name: "execute.before", callback: (event: ExecuteBefore) => void): Promise<Registration>;
+    hook(name: "execute.after", callback: (event: ExecuteAfter) => void): Promise<Registration>;
+  };
 };
+
+/** How many recent shell calls' command lines are kept for their permission evaluation. */
+const COMMAND_LINES_KEPT = 100;
 
 function strings(value: unknown): string[] {
   return Array.isArray(value) ? value.filter((entry): entry is string => typeof entry === "string") : [];
@@ -39,10 +49,30 @@ export default {
   async setup(context: Context) {
     const rules = parseAgentPermissionRules(context.options.rules);
     const organizationMcp = parseOrganizationMcpServers(context.options.organizationMcp);
+    // Fully denied tools never reach the model or Code Mode discovery. Keep
+    // the permission hooks too: an in-flight snapshot can still hold a tool,
+    // and partial restrictions must be checked against the actual resource.
+    const catalog = await context.tool.transform((editor) => {
+      for (const tool of editor.list()) {
+        if (agentPermissionEngineV2ToolHidden(rules, tool.id)) editor.remove(tool.id);
+      }
+    });
+    // The engine asks about each command of a shell call's line on its own,
+    // without the assignments that may name a program (`x=rm; $x -rf dir`), so
+    // keep the whole line of recent calls by call id for their evaluation.
+    const commandLines = new Map<string, string>();
+    const lines = await context.tool.hook("execute.before", (event) => {
+      const command = typeof event.input === "object" && event.input !== null ? (event.input as { command?: unknown }).command : undefined;
+      if (event.tool !== "shell" || typeof command !== "string") return;
+      commandLines.set(event.id, command);
+      // A failed call never reaches execute.after through OpenWork's wrapped tools, so only the latest are kept.
+      if (commandLines.size > COMMAND_LINES_KEPT) commandLines.delete(commandLines.keys().next().value!);
+    });
     // Called whenever the engine's own rules did not deny, which is every
     // agent permission but a blocked local skill.
     const permission = await context.permission.hook("evaluate", (event) => {
-      const decision = agentPermissionEngineV2Decision(rules, event.action, event.resources, event.effect);
+      const line = event.source?.type === "tool" && event.source.id ? commandLines.get(event.source.id) : undefined;
+      const decision = agentPermissionEngineV2Decision(rules, event.action, event.resources, event.effect, line);
       event.effect = decision.effect;
       if (decision.message) event.message = decision.message;
     });
@@ -68,6 +98,8 @@ export default {
       await servers?.dispose();
       await explain.dispose();
       await permission.dispose();
+      await lines.dispose();
+      await catalog.dispose();
     };
   },
 };

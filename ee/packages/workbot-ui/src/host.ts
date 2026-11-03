@@ -25,8 +25,12 @@ export type WorkbotHost = {
   calendar?: boolean
   /** Documents browsing is enabled for this organization; omitted means off. */
   documents?: boolean
-  /** Shared browser and computer desktop, enabled by the organization flags. */
+  /** The Computer view of Workbot's computer: its native desktop apps (`computerUse`). Omitted means off. */
   computer?: boolean
+  /** The Browser view of Workbot's computer (`browserUse`), rolled out separately from `computer`. Omitted means off. */
+  browser?: boolean
+  /** Teach browser tasks and save private Cloud skills; omitted means off. */
+  browserDemonstrations?: boolean
   /** Explicit document editing is enabled; omitted means preview only. */
   documentEditing?: boolean
   /** Native dictation entry point; omitted means off. Speech stays with the OS. */
@@ -35,6 +39,10 @@ export type WorkbotHost = {
   workspaceAssistant?: boolean
   /** Offers to open documents a reply mentions and keeps the chat open beside them. Needs workspaceAssistant. */
   guidedNavigation?: boolean
+  /** Signed-in model-limit recovery; never offers anonymous access or starts a payment. */
+  usageRecovery?: { denUrl: string; organizationId: string }
+  /** The Get set up checklist in the header, and the Den pages its steps open. Omitted means off. */
+  activation?: { denUrl: string; organizationId: string }
   /** The organization runs Automations in the cloud, so the Calendar can create them. Off when unset. */
   canSchedule?: boolean
   /** Where the person connects their own Google or Microsoft account, for the Calendar's connect links. */
@@ -67,6 +75,11 @@ let current: WorkbotHost | null = null
 /** Set by WorkbotScreen before anything below it renders. */
 export function setWorkbotHost(host: WorkbotHost) {
   current = host
+}
+
+/** The views of Workbot's computer this person has, Browser first; the Computer tab shows while there is one. */
+export function computerViews(host: WorkbotHost): Array<"browser" | "computer"> {
+  return [...(host.browser === true ? ["browser" as const] : []), ...(host.computer === true ? ["computer" as const] : [])];
 }
 
 export function workbotHost(): WorkbotHost {

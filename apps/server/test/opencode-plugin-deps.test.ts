@@ -5,11 +5,44 @@ import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promis
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
-import { seedManagedOpencodePluginDeps } from "../src/selfhost-web.js";
+import { seedManagedOpencodePluginDeps, seedOpencodePluginDeps } from "../src/selfhost-web.js";
 
 const manifest = '{"dependencies":{"fixture-plugin":"1.0.0"}}\n';
 const lockfile = '{"lockfileVersion":3}\n';
 const moduleSource = 'export const fixture = true;\n';
+
+test("single seed awaits extraction, reports duration and skips a completed install", async () => {
+  const f = await fixture();
+  let now = 100;
+  try {
+    const result = await seedOpencodePluginDeps({ archive: f.archive, configDir: f.global, now: () => now++ });
+    assert.deepEqual(result, { seeded: true, durationMs: 1 });
+    await assertSeeded(f.global);
+    // Even a broken archive must not be extracted over existing install state.
+    await writeFile(f.archive, "broken");
+    assert.deepEqual(await seedOpencodePluginDeps({ archive: f.archive, configDir: f.global }), {
+      seeded: false, reason: "already-set-up",
+    });
+    await assertSeeded(f.global);
+  } finally {
+    await rm(f.root, { recursive: true, force: true });
+  }
+});
+
+test("single seed never throws on extraction failure and leaves normal installation possible", async () => {
+  const f = await fixture();
+  try {
+    await writeFile(f.archive, "broken");
+    const result = await seedOpencodePluginDeps({ archive: f.archive, configDir: f.global });
+    assert.equal(result.seeded, false);
+    if (result.seeded) assert.fail("broken archive cannot seed dependencies");
+    assert.equal(result.reason, "failed");
+    assert.match(result.error ?? "", /exited with/);
+    assert.deepEqual(await readdir(f.global), []);
+  } finally {
+    await rm(f.root, { recursive: true, force: true });
+  }
+});
 
 async function fixture() {
   const root = await mkdtemp(join(tmpdir(), "openwork-plugin-deps-test-"));

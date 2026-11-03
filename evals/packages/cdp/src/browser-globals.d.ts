@@ -4,6 +4,7 @@ import type { OpenworkContextSnapshot } from "@openwork/types/openwork-context";
 /** Test-facing browser protocols. State is installed by the corresponding world before use. */
 declare global {
   interface Window {
+    [key: `command-observer-${string}`]: { requests: { method: string; path: string }[]; stop(): void } | undefined;
     __openworkControl: {
       listActions(): { id: string; disabled: boolean; args?: unknown; [key: string]: unknown }[];
       execute(action: string, args?: unknown): Promise<{ ok: boolean; error?: string; result?: unknown; value?: unknown }>;

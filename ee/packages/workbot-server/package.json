@@ -20,7 +20,7 @@
   "dependencies": {
     "@openwork-ee/headless-protocol": "workspace:*",
     "@openwork/types": "workspace:*",
-    "zod": "^4.3.6"
+    "zod": "^4.6.6"
   },
   "devDependencies": {
     "@types/node": "^24.0.0",

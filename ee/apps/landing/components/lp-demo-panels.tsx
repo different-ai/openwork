@@ -145,8 +145,8 @@ export function LpDemoAiGateway() {
   const hasMistral = providers.some((provider) => provider.id === "mistral");
 
   return (
-    <div className="flex h-full min-h-0 w-full flex-col md:flex-row">
-      <div className="flex flex-1 flex-col px-5 py-6 md:px-8 md:py-7">
+    <div className="flex h-full min-h-0 w-full flex-col lg:flex-row">
+      <div className="flex min-w-0 flex-1 flex-col px-5 py-6 md:px-8 md:py-7">
         <div className="flex items-center justify-between">
           <span className="text-[13px] font-medium text-[#111827]">AI Providers</span>
           <button
@@ -169,9 +169,9 @@ export function LpDemoAiGateway() {
           {providers.map((provider) => (
             <li key={provider.id} className="flex h-[52px] items-center gap-3 border-b border-[#F0F1F3]">
               <span className="flex w-[18px] shrink-0">{provider.mark}</span>
-              <span className="w-[130px] shrink-0 text-[13px] font-medium text-[#111827]">{provider.name}</span>
+              <span className="min-w-0 flex-1 text-[13px] font-medium leading-[17px] text-[#111827] sm:w-[130px] sm:flex-none sm:shrink-0 sm:truncate">{provider.name}</span>
               <span className="hidden flex-1 truncate text-xs text-[#4B5563] sm:block">{provider.models}</span>
-              <span className="w-[108px] shrink-0">
+              <span className="w-[92px] shrink-0 sm:w-[108px]">
                 <DemoMenu
                   label={`Who can use ${provider.name}`}
                   title="Who can use it"
@@ -187,10 +187,10 @@ export function LpDemoAiGateway() {
                 aria-pressed={provider.ready}
                 aria-label={`${provider.name}: ${provider.ready ? "Ready" : "Paused"}`}
                 onClick={() => setProviders((current) => current.map((entry) => (entry.id === provider.id ? { ...entry, ready: !entry.ready } : entry)))}
-                className={`flex h-7 w-[68px] shrink-0 items-center justify-end gap-1.5 rounded-md text-xs ${focusRing} ${provider.ready ? "text-[#047857]" : "text-[#6B7280]"}`}
+                className={`flex h-7 w-4 shrink-0 items-center justify-end gap-1.5 rounded-md text-xs sm:w-[68px] ${focusRing} ${provider.ready ? "text-[#047857]" : "text-[#6B7280]"}`}
               >
                 <span className={`h-1.5 w-1.5 rounded-full ${provider.ready ? "bg-[var(--lp-status-dot)]" : "bg-[#9CA3AF]"}`} aria-hidden="true" />
-                {provider.ready ? "Ready" : "Paused"}
+                <span className="hidden sm:inline">{provider.ready ? "Ready" : "Paused"}</span>
               </button>
             </li>
           ))}
@@ -212,7 +212,7 @@ export function LpDemoAiGateway() {
           />
         </div>
       </div>
-      <div className="flex flex-col bg-[#FAFBFC] px-5 py-6 md:w-[380px] md:shrink-0 md:border-l md:border-[#F0F1F3] md:px-8 md:py-7">
+      <div className="flex flex-col border-t border-[#F0F1F3] bg-[#FAFBFC] px-5 py-6 md:px-8 md:py-7 lg:w-[380px] lg:shrink-0 lg:border-l lg:border-t-0">
         <div className="flex items-baseline justify-between">
           <span className="text-[13px] font-medium text-[#111827]">Spend limits</span>
           <span className="text-xs text-[#6B7280]">This month</span>
@@ -414,7 +414,7 @@ function MembersView() {
         <div className="flex flex-col">
           <h3 className="text-xl font-semibold tracking-[-0.02em] text-[#111827]">Members</h3>
           <span className="text-xs text-[#6B7280]">
-            {Math.min(seats, FREE_SEATS)} of {FREE_SEATS} free seats used{over ? ` · ${seats - FREE_SEATS} paid` : ""}
+            {over ? `Team plan · ${seats} users` : `Free plan · ${seats} of ${FREE_SEATS} users`}
           </span>
         </div>
         <button type="button" onClick={invite} className={`flex h-8 items-center rounded-lg bg-[var(--lp-ink)] px-3.5 text-xs text-white hover:opacity-90 ${focusRing}`}>
@@ -456,7 +456,7 @@ function MembersView() {
       </ul>
       {over ? (
         <p className="mt-4 rounded-lg bg-[var(--lp-tonal)] px-3 py-2.5 text-xs text-[#374151]">
-          Your workspace includes {FREE_SEATS} free seats. Seat {FREE_SEATS + 1} and up are $10 a month each.
+          The Free plan covers up to {FREE_SEATS} users. The Team plan is $10 per user a month.
         </p>
       ) : null}
     </div>

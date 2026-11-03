@@ -18,7 +18,7 @@ import { PageTitlebarRegion } from "@/components/page";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { resolveExtensionIconSrc } from "@/react-app/design-system/extension-icon-src";
-import { tryOpenBrowserAuthUrl } from "./open-browser-auth";
+import { openBrowserAuthUrl, type BrowserAuthOpenStatus } from "./open-browser-auth";
 
 function subscribeToBootstrap(onStoreChange: () => void) {
   if (typeof window === "undefined") return () => {};
@@ -28,7 +28,7 @@ function subscribeToBootstrap(onStoreChange: () => void) {
 
 type PendingServerConfirmation =
   | { kind: "browser"; baseUrl: string }
-  | { kind: "manual"; baseUrl: string; grant: string };
+  | { kind: "manual"; baseUrl: string; grant: string; pasted: string };
 
 export function useEnterpriseActivationRequired() {
   const bootstrap = useSyncExternalStore(
@@ -47,6 +47,10 @@ function EnterpriseActivationPage() {
   const [browserBusy, setBrowserBusy] = useState(false);
   const [authBusy, setAuthBusy] = useState(false);
   const [authError, setAuthError] = useState<string | null>(null);
+  // Set once the browser hand-off starts: the sign-in page link the person can
+  // open by hand, and whether the browser confirmed it opened.
+  const [browserHandoff, setBrowserHandoff] = useState<{ url: string; status: BrowserAuthOpenStatus } | null>(null);
+  const [linkCopied, setLinkCopied] = useState(false);
 
   const submitServer = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -57,7 +61,7 @@ function EnterpriseActivationPage() {
     if (pastedLink?.baseUrl && pastedLink.grant) {
       const linkBaseUrl = normalizeOrganizationServerInput(pastedLink.baseUrl);
       if (linkBaseUrl) {
-        setPendingConfirmation({ kind: "manual", baseUrl: linkBaseUrl, grant: pastedLink.grant });
+        setPendingConfirmation({ kind: "manual", baseUrl: linkBaseUrl, grant: pastedLink.grant, pasted: serverInput });
         setServerError(null);
         setAuthError(null);
         setStatusMessage(`Confirm ${linkBaseUrl} before continuing.`);
@@ -119,11 +123,14 @@ function EnterpriseActivationPage() {
     if (!pending || browserBusy || authBusy) return;
 
     setPendingConfirmation(null);
-    setServerInput(pending.baseUrl);
     if (pending.kind === "manual") {
+      // Keep the pasted code in the field: if the exchange fails (for example a
+      // timeout on a busy machine), Continue retries it without pasting again.
+      setServerInput(pending.pasted);
       await exchangeConfirmedGrant(pending.grant, pending.baseUrl);
       return;
     }
+    setServerInput(pending.baseUrl);
 
     setBrowserBusy(true);
     setServerError(null);
@@ -131,13 +138,20 @@ function EnterpriseActivationPage() {
     try {
       await setDenBootstrapConfig({ baseUrl: pending.baseUrl, requireSignin: true });
       markDesktopSignInInitiated();
-      const opened = await tryOpenBrowserAuthUrl(buildDenAuthUrl(pending.baseUrl, "sign-in"));
-      if (!opened) {
+      const signInUrl = buildDenAuthUrl(pending.baseUrl, "sign-in");
+      const status = await openBrowserAuthUrl(signInUrl);
+      setBrowserHandoff({ url: signInUrl, status });
+      setLinkCopied(false);
+      // The field now takes the sign-in code the browser page shows; the address is saved.
+      setServerInput("");
+      if (status === "failed") {
         setStatusMessage(null);
-        setAuthError("We couldn't open your browser automatically. Try again, or paste the sign-in link from your browser into the address field.");
+        setAuthError("We couldn't open your browser. Copy the sign-in link below into your browser, sign in, then paste the sign-in code from that page here.");
         return;
       }
-      setStatusMessage("Finish signing in in your browser, then return to OpenWork.");
+      setStatusMessage(status === "opening"
+        ? "Your browser is taking a while to open. Sign in when the page appears. If OpenWork doesn't open afterwards, copy the sign-in code from that page and paste it here."
+        : "Finish signing in in your browser. If OpenWork doesn't open afterwards, copy the sign-in code from that page and paste it here.");
     } catch (error) {
       setStatusMessage(null);
       setServerError(
@@ -205,7 +219,7 @@ function EnterpriseActivationPage() {
                   className="text-sm font-medium text-foreground"
                   htmlFor="organization-server-input"
                 >
-                  Workspace address
+                  {browserHandoff ? "Sign-in code or workspace address" : "Workspace address"}
                 </label>
                 <div className="flex flex-col gap-2 sm:flex-row">
                   <Input
@@ -213,7 +227,7 @@ function EnterpriseActivationPage() {
                     data-testid="organization-server-input"
                     value={serverInput}
                     onChange={(event) => setServerInput(event.currentTarget.value)}
-                    placeholder="openwork.acme.com"
+                    placeholder={browserHandoff ? "Paste the sign-in code from your browser" : "openwork.acme.com"}
                     autoCapitalize="none"
                     autoCorrect="off"
                     spellCheck={false}
@@ -229,6 +243,25 @@ function EnterpriseActivationPage() {
                     Continue
                   </Button>
                 </div>
+                {browserHandoff ? (
+                  <div className="flex flex-wrap items-center gap-2 pt-1 text-xs leading-5 text-muted-foreground">
+                    <span>Browser didn't open?</span>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      data-testid="organization-copy-sign-in-link"
+                      onClick={() => {
+                        void navigator.clipboard?.writeText(browserHandoff.url).then(
+                          () => setLinkCopied(true),
+                          () => setLinkCopied(false),
+                        );
+                      }}
+                    >
+                      {linkCopied ? "Link copied" : "Copy sign-in link"}
+                    </Button>
+                  </div>
+                ) : null}
               </form>
             )}
 

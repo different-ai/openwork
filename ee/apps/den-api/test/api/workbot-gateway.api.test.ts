@@ -83,6 +83,8 @@ test("Workbot uses current member Gateway grants, exact org defaults and private
   const session = (person: Member) => den.request(text(tokens.get(person.userId), "MCP token"), "GET", "/v1/workbot/session")
   const run = (person: Member, model?: string) => den.request(text(tokens.get(person.userId), "MCP token"), "POST", "/v1/workbot/run-token", { body: model === undefined ? {} : { model } })
 
+  assert.equal(field(safe(await run(a.owner), 403).body, "reason"), "gateway_provider_missing")
+
   async function configuredProvider(call: ReturnType<typeof den.as>, providerId: string, modelIds: string[], secret: string, audience: Member[]) {
     const created = safe(await call("POST", "/v1/inference-providers", { name: `Fixture ${providerId}`, providerId, modelIds }), 201)
     const id = text(field(created.body, "inferenceProvider", "id"), "provider id")
@@ -130,6 +132,7 @@ test("Workbot uses current member Gateway grants, exact org defaults and private
   safe(await den.as(b.owner, a.orgId)("GET", settingsPath), 404)
   for (const model of [otherLuna, "gateway/legacy", "gpt-6-luna", `openai/${luna}`]) safe(await owner("PUT", settingsPath, { model }), 400)
 
+  safe(await owner("PUT", settingsPath, { model: luna }))
   const initial = safe(await session(a.owner))
   assert.equal(field(initial.body, "model"), luna)
   assert.equal(field(initial.body, "gatewayModels"), true)
@@ -138,10 +141,25 @@ test("Workbot uses current member Gateway grants, exact org defaults and private
   // A selected org default never grants access or falls back to the shared runner key.
   for (const person of [member, noGrant, manager]) {
     const denied = safe(await run(person), 403)
-    assert.equal(field(denied.body, "error"), "cloud_model_unavailable")
+    assert.equal(field(denied.body, "error"), "workbot_turn_access_denied")
+    assert.equal(field(denied.body, "reason"), "gateway_member_access_missing")
     assert.equal(field(denied.body, "token"), undefined)
     assert.equal(field(denied.body, "modelAccess"), undefined)
   }
+  const readOnlyToken = ok(await den.request(a.owner.token, "POST", "/v1/mcp/token", { orgId: a.orgId, body: { scopes: ["mcp:read"] } }))
+  const scopeRefused = safe(await den.request(text(field(readOnlyToken.body, "token"), "read-only token"), "POST", "/v1/workbot/run-token", { body: { model: luna } }), 403)
+  assert.equal(field(scopeRefused.body, "reason"), "oauth_scope_missing")
+  // Simulate a default saved before Gateway aliases: refusal diagnoses it without migrating it.
+  const [{ db }, { eq }, { OrganizationTable }, { normalizeDenTypeId }] = await Promise.all([
+    import("../../src/db.js"), import("@openwork-ee/den-db/drizzle"), import("@openwork-ee/den-db/schema"), import("@openwork-ee/utils/typeid"),
+  ])
+  const organizationId = normalizeDenTypeId("organization", a.orgId)
+  const [saved] = await db.select({ metadata: OrganizationTable.metadata }).from(OrganizationTable).where(eq(OrganizationTable.id, organizationId))
+  assert.ok(saved)
+  await db.update(OrganizationTable).set({ metadata: { ...saved.metadata, workbot: { model: "gateway/legacy" } } }).where(eq(OrganizationTable.id, organizationId))
+  assert.equal(field(safe(await run(a.owner), 403).body, "reason"), "gateway_model_unavailable")
+  assert.equal(field(safe(await session(a.owner)).body, "model"), "gateway/legacy", "refusal leaves the invalid saved default intact")
+  await db.update(OrganizationTable).set({ metadata: saved.metadata }).where(eq(OrganizationTable.id, organizationId))
   const ownerRun = ok(await run(a.owner))
   const ownerKey = text(field(ownerRun.body, "modelAccess", "apiKey"), "owner member gateway key")
   const ownerConnect = ok(await owner("GET", `/v1/inference-providers/${openai.id}/connect`))
@@ -154,8 +172,9 @@ test("Workbot uses current member Gateway grants, exact org defaults and private
   assert.equal(field(memberRun.body, "modelAccess", "protocol"), "anthropic")
   assert.equal(field(memberRun.body, "modelAccess", "baseUrl"), `${gatewayBaseUrl}/api/v1/providers/${anthropic.id}`)
   assert.equal(memberKey, field(ok(await den.as(member, a.orgId)("GET", `/v1/inference-providers/${anthropic.id}/connect`)).body, "inferenceProvider", "apiKey"))
-  safe(await run(member, luna), 403)
-  safe(await run(a.owner, otherLuna), 403)
+  assert.equal(field(safe(await run(member, luna), 403).body, "reason"), "gateway_member_access_missing")
+  assert.equal(field(safe(await run(a.owner, otherLuna), 403).body, "reason"), "gateway_model_unavailable")
+  assert.equal(field(safe(await run(a.owner, "gateway/legacy"), 403).body, "reason"), "gateway_model_unavailable")
   const otherRun = ok(await run(b.owner))
   const otherKey = text(field(otherRun.body, "modelAccess", "apiKey"), "other org gateway key")
   assert.notEqual(otherKey, ownerKey)

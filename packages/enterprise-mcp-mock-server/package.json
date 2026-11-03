@@ -22,7 +22,7 @@
     "check": "pnpm run typecheck && pnpm run build"
   },
   "dependencies": {
-    "zod": "^4.3.6"
+    "zod": "^4.6.6"
   },
   "devDependencies": {
     "@types/node": "^20.11.30",
@@ -30,6 +30,6 @@
     "typescript": "^5.6.3"
   },
   "engines": {
-    "node": ">=20"
+    "node": ">=24.22.1 <25"
   }
 }

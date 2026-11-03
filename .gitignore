@@ -84,3 +84,7 @@ evals/results/
 
 # TypeScript incremental build state
 *.tsbuildinfo
+
+# API contracts are generated from source for builds and CI.
+/packages/docs/openapi.json
+/packages/sdk/src/gen/

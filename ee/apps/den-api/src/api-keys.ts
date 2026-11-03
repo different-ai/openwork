@@ -114,7 +114,8 @@ export function apiKeyMetadataMatchesOrganizationMember(input: {
 }
 
 export async function getApiKeySessionById(apiKeyId: string): Promise<DenApiKeySession | null> {
-  const rows = await db
+  // primary: a key created moments ago must authenticate (verifyApiKey already read it there).
+  const rows = await db.$primary
     .select({
       id: AuthApiKeyTable.id,
       configId: AuthApiKeyTable.configId,
@@ -236,7 +237,8 @@ export async function revokeOrganizationApiKeysForMember(input: {
     }
   }
 
-  const apiKeys = await db
+  // primary: a key created moments ago must be revoked too.
+  const apiKeys = await db.$primary
     .select({
       id: AuthApiKeyTable.id,
       metadata: AuthApiKeyTable.metadata,

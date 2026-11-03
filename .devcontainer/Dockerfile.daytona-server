@@ -7,31 +7,65 @@ FROM daytonaio/sandbox:0.6.0
 
 USER root
 
+# Oracle MySQL 8.4 LTS, not Debian's default-mysql-server (MariaDB). Den
+# supports MySQL 8.0.16+ only (packages/docs/self-host/gateway-upgrade.mdx);
+# MariaDB returns JSON aggregates differently and broke AI Gateway usage.
 RUN apt-get update \
   && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
     ca-certificates \
     curl \
-    default-mysql-client \
-    default-mysql-server \
     git \
     procps \
     sudo \
-  && /usr/local/share/nvm/current/bin/npm install -g pnpm@10.27.0 bun@1.3.14 \
+    xz-utils \
+  && { curl -fsSL https://repo.mysql.com/RPM-GPG-KEY-mysql-2023; curl -fsSL https://repo.mysql.com/RPM-GPG-KEY-mysql-2025; } \
+    > /usr/share/keyrings/mysql.asc \
+  && printf 'deb [signed-by=/usr/share/keyrings/mysql.asc] https://repo.mysql.com/apt/debian %s mysql-8.4-lts\n' \
+    "$(. /etc/os-release && echo "$VERSION_CODENAME")" > /etc/apt/sources.list.d/mysql.list \
+  && apt-get update \
+  && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+    mysql-community-client \
+    mysql-community-server \
+  && mysqld --version | grep -q 'MySQL Community Server' \
   && apt-get clean \
   && rm -rf /var/lib/apt/lists/* /root/.cache /root/.npm /tmp/* \
   && printf 'daytona ALL=(ALL) NOPASSWD:ALL\n' >/etc/sudoers.d/daytona-openwork \
   && chmod 0440 /etc/sudoers.d/daytona-openwork \
   && install -d -o daytona -g daytona /workspace
 
-WORKDIR /workspace
+# Replace the inherited Node default, preserving Daytona's NVM current/bin launcher path.
+# Official checksums: https://nodejs.org/dist/v24.22.1/SHASUMS256.txt
+RUN set -eu; \
+    case "$(dpkg --print-architecture)" in \
+      amd64) node_arch=x64; node_sha256=6c172a9ab6718f7b801fb5a7bd486af2ee5e32758086a04b84fcce2aa77095e6 ;; \
+      arm64) node_arch=arm64; node_sha256=dbabf7a1cbf947e6059ffad2c27b80041db97dea1e553b62afdee7f13fca336e ;; \
+      *) echo "Unsupported Node architecture" >&2; exit 1 ;; \
+    esac; \
+    node_tmp=$(mktemp -d); \
+    curl -fsSL -o "$node_tmp/node.tar.xz" "https://nodejs.org/dist/v24.22.1/node-v24.22.1-linux-$node_arch.tar.xz"; \
+    echo "$node_sha256  $node_tmp/node.tar.xz" | sha256sum -c -; \
+    node_prefix=/usr/local/share/nvm/versions/node/v24.22.1; \
+    mkdir -p "$node_prefix" /usr/local/share/nvm/alias; \
+    tar -xJf "$node_tmp/node.tar.xz" -C "$node_prefix" --strip-components=1 --no-same-owner; \
+    rm -rf "$node_tmp" /usr/local/share/nvm/current; \
+    ln -s "$node_prefix" /usr/local/share/nvm/current; \
+    echo v24.22.1 > /usr/local/share/nvm/alias/default; \
+    chown -R daytona:daytona "$node_prefix"; \
+    test "$(/usr/local/share/nvm/current/bin/node --version)" = v24.22.1
 
 ENV PATH="/usr/local/share/nvm/current/bin:$PATH"
+RUN test "$(node --version)" = v24.22.1 \
+  && /usr/local/share/nvm/current/bin/npm install -g pnpm@10.27.0 bun@1.3.14 \
+  && /usr/local/share/nvm/current/bin/npm cache clean --force
+
+WORKDIR /workspace
 
 # Everything under /workspace is created as the daytona user so no later
 # chown layer is needed: a recursive chown in its own layer copy-on-write
 # duplicates the entire baked workspace and pushed the image past the 20 GB
 # snapshot limit.
 USER daytona
+RUN test "$(node --version)" = v24.22.1
 
 RUN git clone --depth 1 --branch dev https://github.com/different-ai/openwork.git . \
   && mkdir -p /workspace/.openwork-daytona \

@@ -33,7 +33,8 @@ struct AppIdentity {
         guard isAllowed(app) else { throw UseError("protected_app", "This app cannot be operated through Computer Use.", next: "use_structured_tool") }
         return AppIdentity(app: app, bundleID: bundleID, executable: executable, launched: launched)
     }
-    @MainActor static func open(_ bundleID: String, pid: pid_t?) async throws -> AppIdentity {
+    /// `activates: false` launches the app behind the person's work, for background control.
+    @MainActor static func open(_ bundleID: String, pid: pid_t?, activates: Bool = true) async throws -> AppIdentity {
         guard isAllowed(bundleID: bundleID) else { throw UseError("protected_app", "This app cannot be operated through Computer Use.", next: "use_structured_tool") }
         // A PID pins a running instance. Never replace it with a newly launched app.
         if pid != nil || NSRunningApplication.runningApplications(withBundleIdentifier: bundleID).count > 0 {
@@ -46,7 +47,7 @@ struct AppIdentity {
             throw UseError("app_unavailable", "This app is not installed. Choose an app from computer_discover.", next: "discover")
         }
         let configuration = NSWorkspace.OpenConfiguration()
-        configuration.activates = true
+        configuration.activates = activates
         let launched = try await NSWorkspace.shared.openApplication(at: url, configuration: configuration)
         // Launch Services can complete before the app enters its UI run loop.
         for _ in 0..<30 {
@@ -88,9 +89,16 @@ struct AppIdentity {
         let protected: Set<String> = ["com.apple.Terminal", "com.googlecode.iterm2", "dev.warp.Warp-Stable",
             "com.mitchellh.ghostty", "com.apple.ScriptEditor2", "com.apple.systempreferences",
             "com.apple.SecurityAgent", "com.apple.loginwindow", "com.apple.keychainaccess",
-            "com.apple.Passwords", "com.1password.1password", "com.agilebits.onepassword7"]
-        // Never the host apps either: an agent must not grant itself access or approve its own requests.
-        return !protected.contains(id) && !id.hasPrefix("com.differentai.openwork") && !id.hasPrefix("com.differentai.opencoworker")
+            "com.apple.Passwords", "com.1password.1password", "com.agilebits.onepassword7",
+            // Other terminals, and editors and automation apps that run shell commands or scripts.
+            "net.kovidgoyal.kitty", "org.alacritty", "com.github.wez.wezterm", "co.zeit.hyper", "org.tabby",
+            "com.microsoft.VSCode", "com.microsoft.VSCodeInsiders", "com.vscodium", "com.visualstudio.code.oss",
+            "com.todesktop.230313mzl4w4u92", "com.exafunction.windsurf", "dev.zed.Zed", "dev.zed.Zed-Preview",
+            "com.panic.Nova", "com.apple.dt.Xcode", "com.apple.Automator", "com.apple.shortcuts"]
+        // Every JetBrains IDE has a terminal. Never the host apps either: an agent must not grant
+        // itself access or approve its own requests.
+        return !protected.contains(id) && !id.hasPrefix("com.jetbrains.") && !id.hasPrefix("com.google.android.studio")
+            && !id.hasPrefix("com.differentai.openwork") && !id.hasPrefix("com.differentai.opencoworker")
             && !id.hasPrefix("com.openwork") && !id.hasPrefix("com.openai")
     }
 }
@@ -112,6 +120,30 @@ enum AXChildScan {
             throw UseError("privacy_incomplete", "Accessible descendants could not be verified. No screenshot can be captured.", next: "observe")
         }
     }
+    /// Where a read result leaves the attribute. Mac apps commonly answer a
+    /// display-only read with a generic failure (an outline's value, a
+    /// splitter's actions). Those reads never decide a mask, so the control is
+    /// listed without that detail. Reads that decide masks stay strict.
+    enum Outcome: Equatable { case value, absent, unverified }
+    static func outcome(_ result: AXError, displayOnly: Bool) -> Outcome {
+        switch result {
+        case .success: return .value
+        case .attributeUnsupported, .noValue: return .absent
+        // An invalid element's pixels can outlive its accessibility object,
+        // and its mask and subtree can no longer be read, so it is unverified.
+        case .invalidUIElement: return .unverified
+        case .failure, .cannotComplete: return displayOnly ? .absent : .unverified
+        default: return .unverified
+        }
+    }
+    /// Only a text input can carry the secure text field subrole. When another
+    /// role fails that read, AXProtectedContent still decides its mask.
+    static func subroleDecidesMask(role: String) -> Bool {
+        ElementRecord.textRoles.contains(role) || !knownRoles.contains(role)
+    }
+    static let knownRoles: Set<String> = leafRoles.union(["AXWindow", "AXGroup", "AXSplitGroup", "AXScrollArea",
+        "AXOutline", "AXTable", "AXList", "AXRow", "AXCell", "AXColumn", "AXButton", "AXToolbar", "AXTabGroup",
+        "AXPopUpButton", "AXMenuButton", "AXDisclosureTriangle", "AXLayoutArea", "AXLayoutItem", "AXBusyIndicator"])
     static func requireStable<T: Equatable>(expectedCount: Int?, currentCount: Int?, expected: [T], current: [T]) throws {
         guard expectedCount == currentCount, expected == current else {
             throw UseError("stale_observation", "The accessible children changed during the bounded read.", next: "observe")
@@ -146,12 +178,66 @@ struct ElementRecord {
     /// Any other control's value may be hidden, such as a custom masked field.
     static let valueRoles: Set<String> = ["AXStaticText", "AXCheckBox", "AXRadioButton", "AXSwitch", "AXToggle", "AXSlider",
         "AXIncrementor", "AXPopUpButton", "AXDisclosureTriangle", "AXProgressIndicator", "AXLevelIndicator", "AXValueIndicator"]
-    var textField: Bool { Self.textRoles.contains(role) && enabled && !protected }
+    /// A protected record is a secure text field: it takes typed input, but its value is never read.
+    var textField: Bool { Self.textRoles.contains(role) && enabled }
+    /// An app can mirror what was typed into a secure field's title, so the model gets this
+    /// fixed label; only a hash of the real one stays here, for stale-state checks.
+    static let secureLabel = "Secure field"
+    static func secureField(ref: String, element: AXUIElement, role: String, labelHash: Data, frame: CGRect,
+                            actions: [String], settable: Bool, enabled: Bool) -> ElementRecord {
+        ElementRecord(ref: ref, element: element, role: role, label: secureLabel, value: nil, frame: frame, actions: actions,
+            settable: settable, enabled: enabled, protected: true, labelHash: labelHash, valueHash: nil)
+    }
 
     static let interactiveRoles: Set<String> = ["AXButton", "AXTextField", "AXTextArea", "AXSearchField", "AXCheckBox", "AXRadioButton",
         "AXPopUpButton", "AXMenuButton", "AXComboBox", "AXLink", "AXSlider", "AXIncrementor", "AXMenuItem", "AXMenuBarItem",
         "AXDisclosureTriangle", "AXColorWell", "AXSwitch", "AXToggle", "AXTab", "AXCell", "AXRow", "AXOutlineRow", "AXDockItem", "AXHandle"]
     var interactive: Bool { !actions.isEmpty || settable || Self.interactiveRoles.contains(role) }
+
+    /// The same control under another ref; hashes still describe the raw AX text.
+    func with(ref: String) -> ElementRecord {
+        var copy = ElementRecord(ref: ref, element: element, role: role, label: label, value: value, frame: frame,
+            actions: actions, settable: settable, enabled: enabled, protected: protected)
+        copy.labelHash = labelHash; copy.valueHash = valueHash
+        return copy
+    }
+
+    /// Apps wrap numbers and names in invisible direction marks ("\u{200E}408"),
+    /// which defeat matching against the text a person sees.
+    static func visibleText(_ text: String) -> String {
+        String(String.UnicodeScalarView(text.unicodeScalars.filter { scalar in
+            !(0x200E...0x200F).contains(scalar.value) && !(0x202A...0x202E).contains(scalar.value) && !(0x2066...0x2069).contains(scalar.value)
+        }))
+    }
+
+    /// The title-bar buttons carry no title or description, only a subrole.
+    static func windowButtonLabel(subrole: String?) -> String? {
+        switch subrole {
+        case "AXCloseButton": return "Close window"
+        case "AXMinimizeButton": return "Minimize window"
+        case "AXZoomButton": return "Zoom window"
+        case "AXFullScreenButton": return "Full screen"
+        default: return nil
+        }
+    }
+
+    /// The exact control, reading back as it was observed.
+    /// `allowMove` accepts the control at a new position, for a batch that waits for layout.
+    static func sameControl(_ live: ElementRecord, _ observed: ElementRecord, allowMove: Bool = false) -> Bool {
+        CFEqual(live.element, observed.element) && live.role == observed.role && (allowMove || live.frame == observed.frame)
+            && live.enabled == observed.enabled && live.actions == observed.actions && live.settable == observed.settable
+            && live.label == observed.label && live.labelHash == observed.labelHash
+            && live.value == observed.value && live.valueHash == observed.valueHash
+    }
+
+    static let wrapperRoles: Set<String> = ["AXGroup", "AXScrollArea", "AXSplitGroup", "AXLayoutArea", "AXUnknown"]
+    /// Elements that add nothing to the listing: slivers too small to see or use, and
+    /// unnamed wrappers exactly covering their parent (Electron nests several per window).
+    /// Their children are still scanned for privacy and listed.
+    static func isClutter(role: String, label: String, value: String?, frame: CGRect, parentFrame: CGRect?) -> Bool {
+        if frame.width < 2 || frame.height < 2 { return true }
+        return label.isEmpty && (value ?? "").isEmpty && wrapperRoles.contains(role) && parentFrame == frame
+    }
 
     func payload(bounds: CGRect, width: Int, height: Int, compact: Bool) throws -> [String: Any] {
         guard Geometry.valid(frame), Geometry.valid(bounds), (1...1_000_000).contains(width), (1...1_000_000).contains(height) else {
@@ -171,19 +257,20 @@ struct ElementRecord {
         if compact {
             result = ["ref": ref, "role": role.hasPrefix("AX") ? String(role.dropFirst(2)) : role,
                 "x": Int(x.rounded()), "y": Int(y.rounded()), "w": Int(w.rounded()), "h": Int(h.rounded())]
-            if !label.isEmpty { result["label"] = label }
+            if !label.isEmpty { result["label"] = Self.visibleText(label) }
             if !actions.isEmpty { result["press"] = true }
             if settable { result["settable"] = true }
             if !enabled { result["disabled"] = true }
         } else {
-            result = ["ref": ref, "role": role, "label": label, "enabled": enabled,
+            result = ["ref": ref, "role": role, "label": Self.visibleText(label), "enabled": enabled,
                 "actions": actions.isEmpty ? [] : ["press"], "settable": settable,
                 "bounds": ["x": x, "y": y, "width": w, "height": h]]
         }
         // Custom password widgets may be ordinary editable controls in AX.
         // Keep raw values inside the helper for stale-state checks. The model
         // reads normal field content from the image, never a hidden AX value.
-        if !settable, !protected, Self.valueRoles.contains(role), let value { result["value"] = value }
+        if !settable, !protected, Self.valueRoles.contains(role), let value { result["value"] = Self.visibleText(value) }
+        if protected { result["secure"] = true }
         return result
     }
 }
@@ -197,11 +284,58 @@ struct WindowState {
     var focused: AXUIElement? = nil
 
     var focusRecord: ElementRecord? { records.first { record in focused.map { CFEqual($0, record.element) } == true } }
+    /// The listing stopped at its size limit while the scan went on: every element was
+    /// still checked for protected fields, so this alone never withholds the image.
+    var listCapped = false
+
+    func with(records: [ElementRecord]) -> WindowState {
+        WindowState(records: records, visited: visited, truncated: truncated, protectedFrames: protectedFrames,
+            privacyIssue: privacyIssue, focused: focused, listCapped: listCapped)
+    }
     func requireCapture() throws {
         guard !truncated, privacyIssue == nil, protectedFrames.allSatisfy({ Geometry.valid($0) }),
               records.allSatisfy({ Geometry.valid($0.frame) }) else {
             throw UseError("privacy_incomplete", "The accessibility privacy scan is incomplete or has invalid masks. No screenshot was captured; use the available text or observe again.", next: "observe")
         }
+    }
+}
+
+/// Refs that survive re-reads of one window: a control keeps its ref while it exists,
+/// and a ref is never reused for another control in the session. Refs the model holds
+/// from an earlier listing stay valid, and a batch can recheck the exact control.
+struct StableRefs<Identity> {
+    private(set) var next = 0
+    private var known: [(identity: Identity, ref: String)] = []
+    private var window: UInt32?
+    private let hash: (Identity) -> Int
+    private let same: (Identity, Identity) -> Bool
+
+    init(hash: @escaping (Identity) -> Int, same: @escaping (Identity, Identity) -> Bool) {
+        self.hash = hash; self.same = same
+    }
+
+    mutating func assign(_ identities: [Identity], window id: UInt32) -> [String] {
+        if window != id { known = []; window = id }
+        var buckets: [Int: [(identity: Identity, ref: String)]] = [:]
+        for entry in known { buckets[hash(entry.identity), default: []].append(entry) }
+        var used = Set<String>()
+        var kept: [(identity: Identity, ref: String)] = []
+        let refs = identities.map { identity -> String in
+            var ref = buckets[hash(identity)]?.first(where: { same($0.identity, identity) })?.ref
+            if ref == nil || used.contains(ref!) { next += 1; ref = "e\(next)" }
+            used.insert(ref!); kept.append((identity, ref!))
+            return ref!
+        }
+        known = kept
+        return refs
+    }
+}
+
+extension StableRefs where Identity == AXUIElement {
+    init() { self.init(hash: { Int(bitPattern: CFHash($0)) }, same: { CFEqual($0, $1) }) }
+    mutating func assign(_ state: WindowState, window id: UInt32) -> WindowState {
+        let refs = assign(state.records.map(\.element), window: id)
+        return state.with(records: zip(state.records, refs).map { $0.with(ref: $1) })
     }
 }
 
@@ -211,13 +345,30 @@ struct AXReadBudget {
     init(seconds: TimeInterval = 0.35, clock: @escaping () -> TimeInterval = { ProcessInfo.processInfo.systemUptime }) {
         self.clock = clock; deadline = clock() + seconds
     }
+    /// Each call may use whatever time the read has left. A fixed per-call cap made
+    /// one slow answer fail as `cannotComplete`, which stops a fail-closed read and
+    /// withholds its screenshot even when the read had time to spare.
     func timeout() throws -> Float {
         try Task.checkCancellation()
         let remaining = deadline - clock()
         guard remaining >= 0.001 else { throw UseError("accessibility_timeout", "The bounded accessibility read did not finish. Observe again or take over.", next: "observe") }
-        return Float(min(0.05, remaining))
+        return Float(remaining)
     }
     func check() throws { _ = try timeout() }
+}
+
+/// Chromium and Electron build their web-content accessibility tree only for an
+/// assistive client that asks. `AXManualAccessibility` is the modern request;
+/// some Electron builds know only the legacy `AXEnhancedUserInterface`, which
+/// native apps never get because it changes how they animate.
+enum ChromiumAccessibility {
+    static func useLegacyRequest(chromium: Bool, manual: AXError) -> Bool {
+        chromium && manual == .attributeUnsupported
+    }
+    static let webArea = "AXWebArea"
+    static let contentWait: TimeInterval = 2
+    static let probeDepth = 10
+    static let probeNodes = 400
 }
 
 @MainActor
@@ -230,14 +381,33 @@ final class MacAccessibility {
         // Electron exposes its accessibility tree on demand. This is its
         // documented assistive-technology handshake, not a macOS permission grant.
         // Native apps can reject the optional attribute and still expose windows.
-        if (attribute(root, "AXManualAccessibility") as? Bool) == false,
+        var manualValue: CFTypeRef?
+        let manual = AXUIElementCopyAttributeValue(root, "AXManualAccessibility" as CFString, &manualValue)
+        let chromium = PointerRoute.isChromium(bundleID: app.bundleID,
+            info: app.app.bundleURL.flatMap { Bundle(url: $0)?.infoDictionary } ?? [:])
+        var requested = false
+        if manual == .success, (manualValue as? Bool) == false,
            AXUIElementSetAttributeValue(root, "AXManualAccessibility" as CFString, kCFBooleanTrue) == .success {
+            requested = true
             // Electron debounces activation for two seconds. Do not keep setting
             // the attribute during retries: that restarts its countdown.
             let deadline = ProcessInfo.processInfo.systemUptime + 3
             while ProcessInfo.processInfo.systemUptime < deadline {
                 try app.validate()
                 if (attribute(root, "AXManualAccessibility") as? Bool) == true { break }
+                try await Task.sleep(nanoseconds: 100_000_000)
+            }
+        } else if ChromiumAccessibility.useLegacyRequest(chromium: chromium, manual: manual),
+                  (attribute(root, "AXEnhancedUserInterface") as? Bool) != true,
+                  AXUIElementSetAttributeValue(root, "AXEnhancedUserInterface" as CFString, kCFBooleanTrue) == .success {
+            requested = true
+        }
+        // The tree is built asynchronously after the request; wait for its web
+        // content so a covered window reads in full the first time.
+        if requested, chromium {
+            let deadline = ProcessInfo.processInfo.systemUptime + ChromiumAccessibility.contentWait
+            while ProcessInfo.processInfo.systemUptime < deadline, !hasWebContent(root) {
+                try app.validate()
                 try await Task.sleep(nanoseconds: 100_000_000)
             }
         }
@@ -266,10 +436,38 @@ final class MacAccessibility {
         return []
     }
 
-    func focusedWindowID(_ app: AppIdentity, windows: [WindowTarget]) -> Int? {
-        guard app.app.isActive,
+    /// An app in the background still has a focused window: the one its keys go to.
+    func focusedWindowID(_ app: AppIdentity, windows: [WindowTarget], requireActive: Bool = true) -> Int? {
+        guard app.app.isActive || !requireActive,
               let focused = elementAttribute(AXUIElementCreateApplication(app.pid), kAXFocusedWindowAttribute) else { return nil }
         return windows.first(where: { CFEqual(focused, $0.element) }).map { Int($0.id) }
+    }
+
+    /// The app's on-screen windows, for spotting what an action opened. Reads
+    /// only window numbers, layers and sizes; never titles or content.
+    func windowChanges(_ app: AppIdentity) -> WindowChanges {
+        var changes = WindowChanges(frontmost: NSWorkspace.shared.frontmostApplication?.processIdentifier == app.pid)
+        let info = CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID) as? [[String: Any]] ?? []
+        for window in info where (window[kCGWindowOwnerPID as String] as? Int32) == app.pid {
+            guard let id = (window[kCGWindowNumber as String] as? NSNumber)?.uint32Value,
+                  let layer = (window[kCGWindowLayer as String] as? NSNumber)?.intValue,
+                  let bounds = window[kCGWindowBounds as String] as? NSDictionary,
+                  let frame = CGRect(dictionaryRepresentation: bounds), frame.width > 20, frame.height > 20 else { continue }
+            if layer == 0 { changes.windows.insert(id) }
+            else if layer < Int(CGWindowLevelForKey(.dockWindow)) { changes.panels.insert(id) }
+        }
+        return changes
+    }
+
+    /// The window its app sends keys to, whether or not the app is in front.
+    func isFocusedWindow(_ target: WindowTarget, app: AppIdentity) -> Bool {
+        guard let focused = try? checkedElement(AXUIElementCreateApplication(app.pid), kAXFocusedWindowAttribute, AXReadBudget()) else { return false }
+        return CFEqual(focused, target.element)
+    }
+    /// Another window of the app has its focus: usually a dialog the last action opened.
+    func focusesAnotherWindow(than target: WindowTarget, app: AppIdentity) -> Bool {
+        guard let focused = try? checkedElement(AXUIElementCreateApplication(app.pid), kAXFocusedWindowAttribute, AXReadBudget()) else { return false }
+        return !CFEqual(focused, target.element)
     }
 
     func validate(_ target: WindowTarget, app: AppIdentity, requireFrontmost: Bool = false) throws -> CGRect {
@@ -299,43 +497,64 @@ final class MacAccessibility {
         var records: [ElementRecord] = []
         var protectedFrames: [CGRect] = []
         var visited: Set<AXUIElement> = []
-        var pending = [(target.element, 0)]
+        var pending: [(AXUIElement, Int, CGRect?)] = [(target.element, 0, nil)]
         var issue: String?
+        var listCapped = false
         var focused: AXUIElement?
         var childSnapshots: [AXChildrenSnapshot] = []
-        while let (element, depth) = pending.popLast() {
+        while let (element, depth, parentFrame) = pending.popLast() {
             try Task.checkCancellation(); try check()
-            guard depth < 24, visited.count < 1500, records.count < 300 else { issue = "tree_limit"; break }
+            // Only the scan limits withhold the image. Past 300 listed elements the
+            // scan continues for protected fields, and the listing is marked truncated.
+            guard depth < 24, visited.count < 1500 else { issue = "tree_limit"; break }
             guard visited.insert(element).inserted else { continue }
             do {
                 try budget.check()
                 guard let role = try checkedString(element, kAXRoleAttribute, budget) else {
                     throw UseError("accessibility_unavailable", "An accessible role could not be verified.", next: "observe")
                 }
-                let secure = try isProtected(element, budget)
+                let secure = try isProtected(element, role: role, budget)
                 let bounds = try checkedFrame(element, budget)
                 if secure {
                     guard let bounds, Geometry.valid(bounds) else {
                         throw UseError("missing_secure_mask", "A protected control has no usable mask.", next: "observe")
                     }
                     protectedFrames.append(bounds)
+                    // A password the person gave can be typed here. The field stays masked
+                    // in every image and its value is never read.
+                    if try isSecureTextField(element, role: role, budget) {
+                        let label = try checkedString(element, kAXTitleAttribute, budget, displayOnly: true)
+                            ?? checkedString(element, kAXDescriptionAttribute, budget, displayOnly: true) ?? ""
+                        let enabled = try checkedBool(element, kAXEnabledAttribute, budget, displayOnly: true) != false
+                        records.append(.secureField(ref: "e\(records.count + 1)", element: element, role: role, labelHash: textHash(label), frame: bounds,
+                            actions: try actionNames(element, budget), settable: try valueSettable(element, budget, displayOnly: true), enabled: enabled))
+                    }
                 } else {
-                    let label = try checkedString(element, kAXTitleAttribute, budget)
-                        ?? checkedString(element, kAXDescriptionAttribute, budget) ?? ""
-                    let value = try checkedString(element, kAXValueAttribute, budget)
+                    let rawLabel = try checkedString(element, kAXTitleAttribute, budget, displayOnly: true)
+                        ?? checkedString(element, kAXDescriptionAttribute, budget, displayOnly: true) ?? ""
+                    var label = rawLabel
+                    if label.isEmpty, role == "AXButton",
+                       let name = ElementRecord.windowButtonLabel(subrole: try checkedString(element, kAXSubroleAttribute, budget, displayOnly: true)) {
+                        label = name
+                    }
+                    let value = try checkedString(element, kAXValueAttribute, budget, displayOnly: true)
                     let actions = try actionNames(element, budget)
-                    let settable = try valueSettable(element, budget)
-                    let enabled = try checkedBool(element, kAXEnabledAttribute, budget) != false
-                    if let bounds, Geometry.valid(bounds), !label.isEmpty || !(value ?? "").isEmpty || !actions.isEmpty || settable || ElementRecord.interactiveRoles.contains(role) {
-                        records.append(ElementRecord(ref: "e\(records.count + 1)", element: element, role: role,
-                            label: String(label.prefix(180)), value: value.map { String($0.prefix(500)) }, frame: bounds,
-                            actions: actions, settable: settable, enabled: enabled, protected: false,
-                            labelHash: textHash(label), valueHash: value.map(textHash)))
+                    let settable = try valueSettable(element, budget, displayOnly: true)
+                    let enabled = try checkedBool(element, kAXEnabledAttribute, budget, displayOnly: true) != false
+                    if let bounds, Geometry.valid(bounds), !label.isEmpty || !(value ?? "").isEmpty || !actions.isEmpty || settable || ElementRecord.interactiveRoles.contains(role),
+                       !ElementRecord.isClutter(role: role, label: label, value: value, frame: bounds, parentFrame: parentFrame) {
+                        if records.count < 300 {
+                            // The hash is of the raw AX text, so validation reads compare like with like.
+                            records.append(ElementRecord(ref: "e\(records.count + 1)", element: element, role: role,
+                                label: String(label.prefix(180)), value: value.map { String($0.prefix(500)) }, frame: bounds,
+                                actions: actions, settable: settable, enabled: enabled, protected: false,
+                                labelHash: textHash(rawLabel), valueHash: value.map(textHash)))
+                        } else { listCapped = true }
                     }
                     let descendants = try children(element, limit: 1500 - visited.count - pending.count, budget: budget, check: check)
                     childSnapshots.append(descendants)
                     if descendants.truncated { issue = "tree_limit" }
-                    pending += descendants.elements.reversed().map { ($0, depth + 1) }
+                    pending += descendants.elements.reversed().map { ($0, depth + 1, bounds) }
                 }
             } catch is CancellationError { throw CancellationError() }
             catch {
@@ -362,23 +581,28 @@ final class MacAccessibility {
         }
         try check()
         return WindowState(records: records, visited: visited.count, truncated: issue != nil,
-            protectedFrames: protectedFrames, privacyIssue: issue, focused: focused)
+            protectedFrames: protectedFrames, privacyIssue: issue, focused: focused, listCapped: listCapped)
     }
 
     func validateRecord(_ record: ElementRecord, target: WindowTarget) throws {
         let budget = AXReadBudget()
         try validateAncestry(record.element, target: target, budget: budget)
-        let label = try checkedString(record.element, kAXTitleAttribute, budget)
-            ?? checkedString(record.element, kAXDescriptionAttribute, budget) ?? ""
-        let value = try checkedString(record.element, kAXValueAttribute, budget)
-        guard !record.protected, record.enabled,
+        // Read display-only attributes as the observation did, so a control
+        // listed without a detail macOS failed to report can still be used.
+        let label = try checkedString(record.element, kAXTitleAttribute, budget, displayOnly: true)
+            ?? checkedString(record.element, kAXDescriptionAttribute, budget, displayOnly: true) ?? ""
+        let value = record.protected ? nil : try checkedString(record.element, kAXValueAttribute, budget, displayOnly: true)
+        // A field must still be what was observed. Secure turned ordinary would show what was
+        // typed; ordinary turned secure would take a password without the app's confirmation.
+        guard !record.protected || record.textField, record.enabled,
+              try isSecureTextField(record.element, role: record.role, budget) == record.protected,
               try checkedFrame(record.element, budget) == record.frame,
               try checkedString(record.element, kAXRoleAttribute, budget) == record.role,
               textHash(label) == (record.labelHash ?? textHash(record.label)),
               value.map(textHash) == (record.valueHash ?? record.value.map(textHash)),
-              try checkedBool(record.element, kAXEnabledAttribute, budget) != false,
+              try checkedBool(record.element, kAXEnabledAttribute, budget, displayOnly: true) != false,
               try actionNames(record.element, budget) == record.actions,
-              try valueSettable(record.element, budget) == record.settable else {
+              try valueSettable(record.element, budget, displayOnly: true) == record.settable else {
             throw UseError("stale_element", "The exact accessible element changed or is unavailable. Observe again.", next: "observe")
         }
     }
@@ -403,9 +627,12 @@ final class MacAccessibility {
     private func textHash(_ text: String) -> Data { Data(SHA256.hash(data: Data(text.utf8))) }
 
     @discardableResult
-    func checkHit(_ point: CGPoint, target: WindowTarget, app: AppIdentity, expected: AXUIElement? = nil) throws -> AXUIElement {
+    /// `background` asks the app, not the screen, what is at the point: another
+    /// app's window may cover the selected one and targeted input still reaches
+    /// it. A window of the same app on top still fails the ancestry check.
+    func checkHit(_ point: CGPoint, target: WindowTarget, app: AppIdentity, expected: AXUIElement? = nil, background: Bool = false) throws -> AXUIElement {
         let budget = AXReadBudget()
-        let root = AXUIElementCreateSystemWide()
+        let root = background ? AXUIElementCreateApplication(app.pid) : AXUIElementCreateSystemWide()
         try prepare(root, budget)
         var hit: AXUIElement?
         guard AXUIElementCopyElementAtPosition(root, Float(point.x), Float(point.y), &hit) == .success,
@@ -419,16 +646,17 @@ final class MacAccessibility {
         return hit
     }
 
-    func checkFocus(_ expected: ElementRecord?, target: WindowTarget, app: AppIdentity, requireField: Bool) throws {
-        guard let expected, !expected.protected, expected.enabled, !requireField || expected.textField else {
+    func checkFocus(_ expected: ElementRecord?, target: WindowTarget, app: AppIdentity, requireField: Bool, requireFront: Bool = true) throws {
+        guard let expected, !expected.protected || expected.textField, expected.enabled, !requireField || expected.textField else {
             throw UseError("focus_required", "Observe a focused normal text field or control before using the keyboard.", next: "observe")
         }
         let budget = AXReadBudget()
         let root = AXUIElementCreateApplication(app.pid)
-        guard NSWorkspace.shared.frontmostApplication?.processIdentifier == app.pid,
+        guard !requireFront || NSWorkspace.shared.frontmostApplication?.processIdentifier == app.pid,
               let window = try checkedElement(root, kAXFocusedWindowAttribute, budget), CFEqual(window, target.element),
               let focused = try checkedElement(root, kAXFocusedUIElementAttribute, budget), CFEqual(focused, expected.element),
               try checkedString(focused, kAXRoleAttribute, budget) == expected.role,
+              try isSecureTextField(focused, role: expected.role, budget) == expected.protected,
               try checkedFrame(focused, budget) == expected.frame,
               try checkedBool(focused, kAXEnabledAttribute, budget) != false else {
             throw UseError("focus_changed", "The exact observed keyboard target changed. Observe again before typing or pressing keys.", next: "observe")
@@ -450,7 +678,9 @@ final class MacAccessibility {
             guard AXUIElementGetPid(node, &pid) == .success, pid == owner else {
                 throw UseError("outside_window", "The target belongs to another app.", next: "human_takeover")
             }
-            guard try !isProtected(node, budget) else {
+            let role = try checkedString(node, kAXRoleAttribute, budget) ?? ""
+            // The target itself may be a secure text field; nothing around it may be protected.
+            guard try !isProtected(node, role: role, budget) || CFEqual(node, element) && isSecureTextField(node, role: role, budget) else {
                 throw UseError("protected_input", "This control or an ancestor contains protected content. Take over for this step.", next: "human_takeover")
             }
             if CFEqual(node, target.element) { return }
@@ -463,7 +693,9 @@ final class MacAccessibility {
     }
 
     /// `region` is window-local points (top-left origin); nil captures the whole window.
+    /// `jpegQuality` encodes JPEG instead of PNG; `maxLongSide` caps the image's longer edge.
     func capture(target: WindowTarget, app: AppIdentity, bounds: CGRect, state: WindowState, region: CGRect? = nil, maxScale: CGFloat = 1,
+                 maxLongSide: CGFloat = 1600, jpegQuality: CGFloat? = nil, requireFrontmost: Bool = false,
                  check: () throws -> Void = {}) async throws -> (Data, Int, Int, Int64) {
         try state.requireCapture()
         guard Geometry.valid(bounds) else { throw UseError("invalid_geometry", "The window has invalid capture bounds.", next: "observe") }
@@ -471,13 +703,16 @@ final class MacAccessibility {
         let content = try await SCShareableContent.excludingDesktopWindows(true, onScreenWindowsOnly: true)
         try check()
         guard let window = content.windows.first(where: { $0.windowID == target.id && $0.owningApplication?.processID == app.pid }),
-              window.frame == bounds else { throw UseError("stale_observation", "The selected window moved before capture.", next: "observe") }
+              window.frame == bounds,
+              try validate(target, app: app, requireFrontmost: requireFrontmost) == bounds else {
+            throw UseError("stale_observation", "The selected window moved before capture.", next: "observe")
+        }
         let config = SCStreamConfiguration()
         let source = region ?? CGRect(origin: .zero, size: bounds.size)
         guard Geometry.valid(source), CGRect(origin: .zero, size: bounds.size).contains(source) else {
             throw UseError("invalid_arguments", "The region must lie inside the window.", next: "observe")
         }
-        let ratio = min(maxScale, 1600 / max(source.width, source.height))
+        let ratio = min(maxScale, maxLongSide / max(source.width, source.height))
         config.width = max(1, Int(source.width * ratio))
         config.height = max(1, Int(source.height * ratio))
         if let region { config.sourceRect = region }
@@ -488,7 +723,8 @@ final class MacAccessibility {
         try Task.checkCancellation(); try check()
         let after = try await read(target, check: check)
         try after.requireCapture()
-        guard try captureDigest(state) == captureDigest(after), try validate(target, app: app) == bounds else {
+        guard try captureDigest(state) == captureDigest(after),
+              try validate(target, app: app, requireFrontmost: requireFrontmost) == bounds else {
             throw UseError("stale_observation", "The window's content, focus or privacy masks changed during capture.", next: "observe")
         }
         try check()
@@ -510,7 +746,8 @@ final class MacAccessibility {
                 y: CGFloat(image.height) - (clipped.maxY - captured.minY) * yScale,
                 width: clipped.width * xScale, height: clipped.height * yScale).insetBy(dx: -2, dy: -2))
         }
-        guard let redacted = context.makeImage(), let data = NSBitmapImageRep(cgImage: redacted).representation(using: .png, properties: [:]) else {
+        guard let redacted = context.makeImage(), let data = jpegQuality.map({ NSBitmapImageRep(cgImage: redacted).representation(using: .jpeg, properties: [.compressionFactor: $0]) })
+                ?? NSBitmapImageRep(cgImage: redacted).representation(using: .png, properties: [:]) else {
             throw UseError("capture_failed", "Could not encode this window.", next: "observe")
         }
         return (data, image.width, image.height, capturedAt)
@@ -526,24 +763,27 @@ final class MacAccessibility {
             throw UseError("accessibility_unavailable", "Could not bound this accessibility operation.", next: "observe")
         }
     }
-    private func accepted(_ result: AXError, _ budget: AXReadBudget) throws -> Bool {
+    private func accepted(_ result: AXError, _ budget: AXReadBudget, displayOnly: Bool = false) throws -> Bool {
         try budget.check()
-        if result == .success { return true }
-        if result == .attributeUnsupported || result == .noValue { return false }
-        throw UseError("accessibility_unavailable", "An accessibility read failed; its content or privacy state is unverified.", next: "observe")
+        switch AXChildScan.outcome(result, displayOnly: displayOnly) {
+        case .value: return true
+        case .absent: return false
+        case .unverified:
+            throw UseError("accessibility_unavailable", "An accessibility read failed; its content or privacy state is unverified.", next: "observe")
+        }
     }
-    private func checkedAttribute(_ element: AXUIElement, _ name: String, _ budget: AXReadBudget) throws -> CFTypeRef? {
+    private func checkedAttribute(_ element: AXUIElement, _ name: String, _ budget: AXReadBudget, displayOnly: Bool = false) throws -> CFTypeRef? {
         try prepare(element, budget)
         var value: CFTypeRef?
-        return try accepted(AXUIElementCopyAttributeValue(element, name as CFString, &value), budget) ? value : nil
+        return try accepted(AXUIElementCopyAttributeValue(element, name as CFString, &value), budget, displayOnly: displayOnly) ? value : nil
     }
     private func checkedElement(_ element: AXUIElement, _ name: String, _ budget: AXReadBudget) throws -> AXUIElement? {
         guard let value = try checkedAttribute(element, name, budget) else { return nil }
         guard CFGetTypeID(value) == AXUIElementGetTypeID() else { throw UseError("accessibility_unavailable", "An accessibility target has an invalid type.", next: "observe") }
         return (value as! AXUIElement)
     }
-    private func checkedString(_ element: AXUIElement, _ name: String, _ budget: AXReadBudget) throws -> String? {
-        guard let value = try checkedAttribute(element, name, budget) else { return nil }
+    private func checkedString(_ element: AXUIElement, _ name: String, _ budget: AXReadBudget, displayOnly: Bool = false) throws -> String? {
+        guard let value = try checkedAttribute(element, name, budget, displayOnly: displayOnly) else { return nil }
         if let string = value as? String { return string }
         if name == kAXValueAttribute {
             if let number = value as? NSNumber { return number.stringValue }
@@ -551,15 +791,19 @@ final class MacAccessibility {
         }
         throw UseError("accessibility_unavailable", "An accessibility identity or protection attribute has an invalid type.", next: "observe")
     }
-    private func checkedBool(_ element: AXUIElement, _ name: String, _ budget: AXReadBudget) throws -> Bool? {
-        guard let value = try checkedAttribute(element, name, budget) else { return nil }
+    private func checkedBool(_ element: AXUIElement, _ name: String, _ budget: AXReadBudget, displayOnly: Bool = false) throws -> Bool? {
+        guard let value = try checkedAttribute(element, name, budget, displayOnly: displayOnly) else { return nil }
         guard CFGetTypeID(value) == CFBooleanGetTypeID(), let flag = value as? Bool else {
             throw UseError("accessibility_unavailable", "An accessibility protection or enablement flag has an invalid type.", next: "observe")
         }
         return flag
     }
-    private func isProtected(_ element: AXUIElement, _ budget: AXReadBudget) throws -> Bool {
-        try checkedString(element, kAXSubroleAttribute, budget) == "AXSecureTextField"
+    private func isSecureTextField(_ element: AXUIElement, role: String, _ budget: AXReadBudget) throws -> Bool {
+        try ElementRecord.textRoles.contains(role) && checkedString(element, kAXSubroleAttribute, budget) == "AXSecureTextField"
+    }
+    private func isProtected(_ element: AXUIElement, role: String, _ budget: AXReadBudget) throws -> Bool {
+        let subroleDisplayOnly = !AXChildScan.subroleDecidesMask(role: role)
+        return try checkedString(element, kAXSubroleAttribute, budget, displayOnly: subroleDisplayOnly) == "AXSecureTextField"
             || checkedBool(element, "AXProtectedContent", budget) == true
     }
     private func actionNames(_ element: AXUIElement, _ budget: AXReadBudget) throws -> [String] {
@@ -567,14 +811,15 @@ final class MacAccessibility {
         var names: CFArray?
         let result = AXUIElementCopyActionNames(element, &names)
         if result == .notImplemented { try budget.check(); return [] }
-        guard try accepted(result, budget) else { return [] }
+        guard try accepted(result, budget, displayOnly: true) else { return [] }
         guard let names = names as? [String] else { throw UseError("accessibility_unavailable", "Accessible actions could not be verified.", next: "observe") }
         return names.filter { $0 == kAXPressAction }
     }
-    func valueSettable(_ element: AXUIElement, _ budget: AXReadBudget = AXReadBudget()) throws -> Bool {
+    func valueSettable(_ element: AXUIElement, _ budget: AXReadBudget = AXReadBudget(), displayOnly: Bool = false) throws -> Bool {
         try prepare(element, budget)
         var settable = DarwinBoolean(false)
-        return try accepted(AXUIElementIsAttributeSettable(element, kAXValueAttribute as CFString, &settable), budget) && settable.boolValue
+        return try accepted(AXUIElementIsAttributeSettable(element, kAXValueAttribute as CFString, &settable), budget, displayOnly: displayOnly)
+            && settable.boolValue
     }
     private func children(_ element: AXUIElement, limit: Int, budget: AXReadBudget, check: () throws -> Void) throws -> AXChildrenSnapshot {
         try check(); try prepare(element, budget)
@@ -615,6 +860,60 @@ final class MacAccessibility {
         return CGRect(origin: point, size: dimensions)
     }
     func attribute(_ element: AXUIElement, _ name: String) -> CFTypeRef? { try? checkedAttribute(element, name, AXReadBudget()) }
+    /// Whether any window of the app already exposes a web area, read breadth-first
+    /// within a small bound so a large tree never stalls opening a session.
+    private func hasWebContent(_ root: AXUIElement) -> Bool {
+        var level = attribute(root, kAXWindowsAttribute) as? [AXUIElement] ?? []
+        var seen = 0
+        for _ in 0..<ChromiumAccessibility.probeDepth where !level.isEmpty && seen < ChromiumAccessibility.probeNodes {
+            var next: [AXUIElement] = []
+            for element in level {
+                seen += 1
+                if (attribute(element, kAXRoleAttribute) as? String) == ChromiumAccessibility.webArea { return true }
+                if seen >= ChromiumAccessibility.probeNodes { return false }
+                next += attribute(element, kAXChildrenAttribute) as? [AXUIElement] ?? []
+            }
+            level = next
+        }
+        return false
+    }
     func elementAttribute(_ element: AXUIElement, _ name: String) -> AXUIElement? { try? checkedElement(element, name, AXReadBudget()) }
     func frame(_ element: AXUIElement) -> CGRect? { try? checkedFrame(element, AXReadBudget()) }
+}
+
+/// Notes when the target app last reported an accessibility change while input
+/// is in flight. It records only the time, never element content.
+@MainActor
+final class AXActivity {
+    private static let notifications = [kAXFocusedUIElementChangedNotification, kAXFocusedWindowChangedNotification,
+        kAXValueChangedNotification, kAXCreatedNotification, kAXUIElementDestroyedNotification, kAXWindowCreatedNotification,
+        kAXTitleChangedNotification, kAXSelectedTextChangedNotification, kAXSelectedChildrenChangedNotification,
+        kAXSelectedRowsChangedNotification, kAXRowCountChangedNotification, kAXMenuOpenedNotification,
+        kAXMenuClosedNotification, kAXLayoutChangedNotification, kAXMovedNotification, kAXResizedNotification]
+    private(set) var last: TimeInterval = 0
+    private let observer: AXObserver
+    private let element: AXUIElement
+    private let clock: () -> TimeInterval
+    private var active = true
+
+    init?(pid: pid_t, clock: @escaping () -> TimeInterval) {
+        var created: AXObserver?
+        guard AXObserverCreate(pid, { _, _, _, refcon in
+            guard let refcon else { return }
+            let activity = Unmanaged<AXActivity>.fromOpaque(refcon).takeUnretainedValue()
+            MainActor.assumeIsolated { activity.last = activity.clock() }
+        }, &created) == .success, let created else { return nil }
+        observer = created
+        self.clock = clock
+        element = AXUIElementCreateApplication(pid)
+        let refcon = Unmanaged.passUnretained(self).toOpaque()
+        for name in Self.notifications { _ = AXObserverAddNotification(observer, element, name as CFString, refcon) }
+        CFRunLoopAddSource(CFRunLoopGetMain(), AXObserverGetRunLoopSource(observer), .commonModes)
+    }
+    func stop() {
+        guard active else { return }
+        active = false
+        CFRunLoopRemoveSource(CFRunLoopGetMain(), AXObserverGetRunLoopSource(observer), .commonModes)
+        for name in Self.notifications { _ = AXObserverRemoveNotification(observer, element, name as CFString) }
+    }
 }

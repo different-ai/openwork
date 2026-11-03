@@ -27,11 +27,12 @@ export async function serveStaticUi(request: Request, config: StaticUiConfig): P
     return jsonError(new ApiError(400, "invalid_path", "Invalid URL path"));
   }
 
+  const token = bootstrapTokenFor(request, config.token);
   try {
-    const fileResponse = await serveFile(root, relativePath, url.pathname, method, config.token);
+    const fileResponse = await serveFile(root, relativePath, url.pathname, method, token);
     if (fileResponse) return fileResponse;
     if (url.pathname.startsWith("/assets/")) return null;
-    return serveFile(root, "index.html", "/index.html", method, config.token);
+    return serveFile(root, "index.html", "/index.html", method, token);
   } catch (error) {
     if (error instanceof ApiError) return jsonError(error);
     throw error;
@@ -124,9 +125,21 @@ function contentType(extension: string): string {
   return "application/octet-stream";
 }
 
-function injectBootstrap(html: string, token: string): string {
-  if (!shouldInjectBootstrapToken()) return html;
+/**
+ * Only the UI's own page loads, or a person opening it in a tab, sign in
+ * automatically. Another site framing or fetching the page gets no token.
+ */
+function bootstrapTokenFor(request: Request, token: string): string {
+  if (!shouldInjectBootstrapToken()) return "";
+  const site = request.headers.get("sec-fetch-site");
+  // Older browsers and non-browser clients send no fetch metadata.
+  if (!site || site === "same-origin" || site === "none") return token;
+  const opensTab = request.headers.get("sec-fetch-mode") === "navigate"
+    && request.headers.get("sec-fetch-dest") === "document";
+  return opensTab ? token : "";
+}
 
+function injectBootstrap(html: string, token: string): string {
   const clientToken = token.trim();
   if (!clientToken) return html;
 

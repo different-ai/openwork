@@ -38,7 +38,7 @@
     }
   },
   "dependencies": {
-    "zod": "^4.3.6",
+    "zod": "^4.6.6",
     "jose": "6.2.8",
     "fast-xml-parser": "5.8.0"
   }

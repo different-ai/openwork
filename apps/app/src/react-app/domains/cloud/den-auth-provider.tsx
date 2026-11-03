@@ -296,21 +296,6 @@ export function DenAuthProvider({ children }: DenAuthProviderProps) {
 
       if (currentRun !== refreshTokenRef.current) return;
 
-      // While a desktop-initiated sign-in is waiting for the user's explicit
-      // organization choice, do not auto-resolve a default — that would
-      // silently commit an org the chooser is still asking about.
-      if (!readOrgSelectionPending().pending) {
-        await resolveDenActiveOrganizationWithRetry(() =>
-          ensureDenActiveOrganization({
-            forceServerSync:
-              !settings.activeOrgId?.trim() || !settings.activeOrgSlug?.trim(),
-            verifiedSession: { userId: nextUser.id, token, baseUrl: settings.baseUrl },
-          })
-        );
-      }
-
-      if (currentRun !== refreshTokenRef.current) return;
-
       const confirmedSettings = readDenSettings();
       const confirmedToken = confirmedSettings.authToken?.trim() ?? "";
       const confirmedOrganizationId = confirmedSettings.activeOrgId?.trim() ?? "";
@@ -329,6 +314,24 @@ export function DenAuthProvider({ children }: DenAuthProviderProps) {
       updateStatus("signed_in");
       markStartupStep("signed_in", { organizationId: confirmedOrganizationId || null });
       syncDesktopSentrySession(nextUser);
+
+      // The session is verified. Organization discovery can take several
+      // request timeouts, so repair it in the background without keeping the
+      // app on "Checking your sign-in". Settings changes refresh the verified
+      // organization scope when discovery succeeds.
+      // An explicit organization chooser still owns its pending choice.
+      if (!readOrgSelectionPending().pending) {
+        await resolveDenActiveOrganizationWithRetry(() => {
+          if (currentRun !== refreshTokenRef.current || readOrgSelectionPending().pending) {
+            return Promise.resolve(null);
+          }
+          return ensureDenActiveOrganization({
+            forceServerSync:
+              !settings.activeOrgId?.trim() || !settings.activeOrgSlug?.trim(),
+            verifiedSession: { userId: nextUser.id, token, baseUrl: settings.baseUrl },
+          });
+        });
+      }
     } catch (nextError) {
       if (currentRun !== refreshTokenRef.current) return;
 

@@ -6,15 +6,15 @@ name: Contributor PR checks
 # commented) or `/test <sha>` (exactly that commit). If the contributor pushed
 # after the comment, or the free screen blocked the commit, it is refused.
 #
-# Once bound, in order:
-#   1. AI screen: Warden's contributor-screen skill, once per commit.
-#   2. If it is clear, or the maintainer comments /test again to proceed
-#      anyway: approve the fork's waiting test runs and run the Warden
-#      security review (if it has not passed on that commit yet).
-# The sandboxed Warden review's verdict becomes the required `warden-clear`
-# check, posted as the diff-warden App (warden-check job below), the same
-# check same-repository PRs get from warden-clearance.yml. The screen and AI
-# screen statuses stay advisory.
+# Once bound and allowed by the deterministic screen, approve the fork's
+# waiting test runs and run the sandboxed Warden review without waiting for
+# Warden's advisory AI screen or its verdict. Maintainer authorization and
+# exact-head binding remain required; AI feedback never substitutes for them.
+# The sandboxed review posts the advisory `warden-clear` check as diff-warden,
+# like same-repository PRs: success if clear, neutral if flagged or incomplete.
+# No Warden check or workflow job is a merge requirement. Incomplete analysis
+# still fails its workflow job for observability. Required tests and human
+# approvals are unchanged.
 #
 # issue_comment always runs this file from dev. Nothing here runs PR code.
 on:
@@ -52,7 +52,7 @@ jobs:
           sparse-checkout: .github/scripts
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
-          node-version: 24
+          node-version: 24.22.1
       - name: Check the commenter and bind the reviewed commit
         id: authorize
         env:
@@ -79,13 +79,11 @@ jobs:
     secrets:
       WARDEN_CONTRIBUTOR_OPENAI_API_KEY: ${{ secrets.WARDEN_CONTRIBUTOR_OPENAI_API_KEY }}
 
-  # Proceed when the AI screen is clear on this run, or when it already ran
-  # on this commit and the maintainer commented /test again.
+  # Proceed from maintainer authorization and the deterministic screen only;
+  # never wait for the advisory AI screen or its verdict.
   start-tests:
-    needs: [authorize, ai-screen]
-    if: >-
-      always() && needs.authorize.outputs.sha != '' &&
-      (needs.authorize.outputs.needs_screen == 'false' || needs.ai-screen.outputs.verdict == 'clean')
+    needs: authorize
+    if: needs.authorize.outputs.sha != ''
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
@@ -102,7 +100,7 @@ jobs:
           sparse-checkout: .github/scripts
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
-          node-version: 24
+          node-version: 24.22.1
       - name: Approve the fork's waiting test runs
         env:
           GH_TOKEN: ${{ github.token }}
@@ -111,10 +109,8 @@ jobs:
         run: node .github/scripts/contributor-pr.mjs approve-runs
 
   review:
-    needs: [authorize, ai-screen]
-    if: >-
-      always() && needs.authorize.outputs.sha != '' && needs.authorize.outputs.needs_review == 'true' &&
-      (needs.authorize.outputs.needs_screen == 'false' || needs.ai-screen.outputs.verdict == 'clean')
+    needs: authorize
+    if: needs.authorize.outputs.sha != '' && needs.authorize.outputs.needs_review == 'true'
     permissions:
       contents: read
       issues: write
@@ -128,7 +124,7 @@ jobs:
     secrets:
       WARDEN_CONTRIBUTOR_OPENAI_API_KEY: ${{ secrets.WARDEN_CONTRIBUTOR_OPENAI_API_KEY }}
 
-  # Posts the required `warden-clear` check from this run's own review result
+  # Posts the advisory `warden-clear` check from this run's own review result
   # (a job output, not a status anyone else could write), as the diff-warden
   # App. Its key is only in the warden-clearance environment.
   warden-check:
@@ -150,7 +146,7 @@ jobs:
           sparse-checkout: .github/scripts
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
-          node-version: 24
+          node-version: 24.22.1
       - name: Mint the check token
         id: app
         uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3

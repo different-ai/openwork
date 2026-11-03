@@ -3,6 +3,8 @@ import { Popover as PopoverPrimitive } from "@base-ui/react/popover"
 
 import { cn } from "@/lib/utils"
 
+import { PortalContainerContext } from "./portal-container"
+
 function Popover({ ...props }: PopoverPrimitive.Root.Props) {
   return <PopoverPrimitive.Root data-slot="popover" {...props} />
 }
@@ -24,20 +26,23 @@ function PopoverContent({
   side = "bottom",
   sideOffset = 4,
   anchor,
+  collisionPadding,
   ...props
 }: PopoverPrimitive.Popup.Props &
   Pick<
     PopoverPrimitive.Positioner.Props,
-    "align" | "alignOffset" | "side" | "sideOffset" | "anchor"
+    "align" | "alignOffset" | "side" | "sideOffset" | "anchor" | "collisionPadding"
   >) {
+  const container = React.useContext(PortalContainerContext)
   return (
-    <PopoverPrimitive.Portal>
+    <PopoverPrimitive.Portal container={container}>
       <PopoverPrimitive.Positioner
         align={align}
         alignOffset={alignOffset}
         side={side}
         sideOffset={sideOffset}
         anchor={anchor}
+        collisionPadding={collisionPadding}
         className="isolate z-50"
       >
         <PopoverPrimitive.Popup

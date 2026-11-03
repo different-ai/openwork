@@ -23,42 +23,29 @@ const bootstrap: OpenWorkBootstrapConfig = {
   rebuildHint: "rebuild the test image",
 }
 
-type EnginePolicy = {
-  engineV2ForceUpgrade: boolean
-}
-
-function assertRollout(script: string, policy: Partial<EnginePolicy>) {
-  // Even OFF must be delivered explicitly, so the server can revert only
-  // profiles marked as force-upgraded and leave voluntary v2 users alone.
+function assertAutomaticMigration(script: string) {
+  // Positive signals keep older server images compatible without a rollout.
   assert.match(script, /OPENWORK_ENGINE_FORCE_POLICY='1'/)
-  if (policy.engineV2ForceUpgrade) {
-    assert.match(script, /OPENWORK_ENGINE_AUTO_UPGRADE='1'/)
-    assert.match(script, /OPENWORK_FRESH_INSTALL_ENGINE='v2'/)
-  } else {
-    assert.match(script, /OPENWORK_ENGINE_AUTO_UPGRADE='0'/)
-    assert.doesNotMatch(script, /OPENWORK_FRESH_INSTALL_ENGINE=/)
-  }
+  assert.match(script, /OPENWORK_ENGINE_AUTO_UPGRADE='1'/)
+  assert.match(script, /OPENWORK_FRESH_INSTALL_ENGINE='v2'/)
+  assert.doesNotMatch(script, /OPENWORK_ENGINE_AUTO_UPGRADE='0'/)
   // The server, not the shell, owns safe transitions and persisted engine state.
   assert.doesNotMatch(script, /OPENWORK_(?:ENGINE|FRESH_INSTALL_ENGINE)='v1'/)
 }
 
-for (const policy of [
-  {},
-  { engineV2ForceUpgrade: false },
-  { engineV2ForceUpgrade: true },
-]) {
-  test(`bootstrap explicitly applies org force-upgrade policy (${JSON.stringify(policy)})`, () => {
-    const script = renderOpenWorkBootstrapScript({ ...bootstrap, ...policy })
-    assertRollout(script, policy)
+test("bootstrap always migrates to v2, ignoring stale rollout configuration", () => {
+  for (const legacy of [{}, { engineV2ForceUpgrade: false }, { engineV2ForceUpgrade: true }]) {
+    const script = renderOpenWorkBootstrapScript({ ...bootstrap, ...legacy })
+    assertAutomaticMigration(script)
     assert.match(script, /OPENWORK_OPENCODE2_BIN='\/usr\/local\/bin\/opencode2'/)
     assert.match(script, /OPENWORK_RUNTIME_SURFACE='web'/)
     assert.ok(script.indexOf("hydrate_checkpoint\nattempt=0") < script.indexOf("OPENWORK_ENGINE_AUTO_UPGRADE="))
-    // Policy delivery never directly removes or rewrites restored engine state.
+    // Bootstrap never directly removes or rewrites restored engine state.
     assert.doesNotMatch(script, /engine-v2-preview\.json|engine\.json/)
-  })
-}
+  }
+})
 
-function runtimeConfig(enginePolicy: (workerId: string) => Promise<EnginePolicy>): CloudRuntimeOrchestratorConfig {
+function runtimeConfig(): CloudRuntimeOrchestratorConfig {
   return {
     instanceNamePrefix: "test",
     sharedVolumeName: "shared",
@@ -84,7 +71,6 @@ function runtimeConfig(enginePolicy: (workerId: string) => Promise<EnginePolicy>
     bootstrap: {
       imageDescription: bootstrap.imageDescription,
       rebuildHint: bootstrap.rebuildHint,
-      enginePolicy,
     },
   }
 }
@@ -97,9 +83,7 @@ const provisionInput = {
   activityToken: bootstrap.activityHeartbeat.token,
 }
 
-test("cached orchestrator re-resolves policy on fresh launch, wake, and restored image replacement", async () => {
-  let policy = { engineV2ForceUpgrade: false }
-  const resolvedWorkers: string[] = []
+test("fresh launches, wakes, and restored image replacements always migrate to v2", async () => {
   const scripts: string[] = []
   const image = { id: "test-image", version: "old-image" }
   const provider = createFakeProvider({
@@ -113,47 +97,38 @@ test("cached orchestrator re-resolves policy on fresh launch, wake, and restored
   const runtime = createCloudRuntimeOrchestrator({
     provider,
     store,
-    config: runtimeConfig(async (workerId) => {
-      resolvedWorkers.push(workerId)
-      return policy
-    }),
+    config: runtimeConfig(),
     logger: { warn() {} },
     fetch: async () => new Response("{}"),
   })
 
   await runtime.provision(provisionInput)
-  assertRollout(scripts.at(-1) ?? "", policy)
+  assertAutomaticMigration(scripts.at(-1) ?? "")
 
-  policy = { engineV2ForceUpgrade: true }
   await runtime.stop(provisionInput.workerId)
   await runtime.wake(provisionInput)
-  assertRollout(scripts.at(-1) ?? "", policy)
+  assertAutomaticMigration(scripts.at(-1) ?? "")
 
-  // A checkpoint restored onto a replacement image uses the current policy,
-  // not the value the old sandbox was created with. Explicit OFF lets the
-  // server safely revert only profiles marked as force-upgraded.
-  policy = { engineV2ForceUpgrade: false }
+  // A checkpoint restored onto a replacement image still migrates automatically,
+  // even if the checkpoint was created before migration became standard.
   await runtime.stop(provisionInput.workerId)
   store.imageVersions.set(provisionInput.workerId, image.version)
   image.version = "new-image"
   provider.fake.writeVolumeFile("shared", `workers/${provisionInput.workerId}/data/checkpoints/ckpt-1.tar`)
   await runtime.wake(provisionInput)
-  assertRollout(scripts.at(-1) ?? "", policy)
+  assertAutomaticMigration(scripts.at(-1) ?? "")
   assert.equal(provider.fake.count("create"), 2)
   assert.equal(provider.fake.count("destroy"), 1)
 
-  policy = { engineV2ForceUpgrade: true }
   await runtime.stop(provisionInput.workerId)
   store.imageVersions.set(provisionInput.workerId, runtime.currentImageVersion())
   await runtime.wake(provisionInput)
-  assertRollout(scripts.at(-1) ?? "", policy)
+  assertAutomaticMigration(scripts.at(-1) ?? "")
 
-  // OFF remains explicit after another restart; it never forces fresh v1.
-  policy = { engineV2ForceUpgrade: false }
+  // Another restart must not restore a legacy opt-out or v1 default.
   await runtime.stop(provisionInput.workerId)
   await runtime.wake(provisionInput)
-  assertRollout(scripts.at(-1) ?? "", policy)
-  assert.deepEqual(resolvedWorkers, Array(5).fill(provisionInput.workerId))
+  assertAutomaticMigration(scripts.at(-1) ?? "")
   assert.equal(scripts.length, 5)
 })
 

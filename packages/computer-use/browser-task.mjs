@@ -20,20 +20,81 @@ export function browserTaskUrl(value) {
 function safeUrl(value) {
   try { const url = new URL(value); return `${url.origin}${url.pathname}`; } catch { return ""; }
 }
+function originOf(value) {
+  try { return new URL(value).origin; } catch { return null; }
+}
+
+// After click, key or scroll: wait for navigation, network idle and a DOM that
+// stops changing structure (text-only tickers and clocks do not count).
+const SETTLE_MS = 3000;
+const QUIET_MS = 250;
+const NAMED_KEYS = { Enter: "Enter", Tab: "Tab", Escape: "Escape", ArrowDown: "Down", ArrowUp: "Up", ArrowLeft: "Left", ArrowRight: "Right",
+  Backspace: "Backspace", Delete: "Delete", Space: "Space", Home: "Home", End: "End", PageUp: "PageUp", PageDown: "PageDown" };
+const KEY_MODIFIERS = { control: "control", command: "meta", shift: "shift", option: "alt" };
+// Clipboard, window, app-switch, screenshot and developer-tool chords stay
+// unavailable. "primary" is control or command.
+const BLOCKED_CHORDS = [
+  ["primary", "c"], ["primary", "x"], ["primary", "v"], ["control", "k"], ["control", "y"],
+  ["primary", "q"], ["primary", "w"], ["primary", "h"], ["primary", "m"], ["primary", "n"], ["primary", "t"],
+  ["primary", "Tab"], ["primary", "Space"], ["primary", "Escape"], ["option", "Tab"], ["option", "Space"], ["option", "Escape"],
+  ["primary", "shift", "3"], ["primary", "shift", "4"], ["primary", "shift", "5"], ["primary", "shift", "6"],
+  ["primary", "shift", "i"], ["primary", "shift", "j"], ["primary", "option", "i"], ["primary", "option", "j"],
+  ["command", "control", "f"], ["command", "option", "d"], ["command", "control", "q"], ["command", "shift", "q"],
+].map((parts) => ({ key: parts.at(-1), modifiers: parts.slice(0, -1) }));
+// Chromium on macOS runs these through the app menu, not page key events.
+const EDIT_COMMANDS = { a: "selectAll", z: "undo", "shift+z": "redo" };
+const ACTION_TYPES = ["click", "fill", "select", "set_checked", "key", "scroll", "reveal", "attach"];
+/** As many files as the approval card lists; the broker refuses more. */
+const MAX_FILES = 20;
+const PREPARE_CODES = ["stale_observation", "stale_element", "use_attach", "unverifiable_focus", "element_disabled", "element_outside_viewport",
+  "element_obscured", "not_editable", "not_selectable", "option_unavailable", "not_checkable", "outside_viewport"];
+
+/** @param {{ key?: unknown, modifiers?: unknown }} action */
+function resolveKey(action) {
+  /** @type {string[]} */
+  const modifiers = action.modifiers === undefined ? [] : Array.isArray(action.modifiers) ? action.modifiers : fail("invalid_key", "Modifiers must be a list.");
+  if (modifiers.length > 3 || new Set(modifiers).size !== modifiers.length || !modifiers.every((name) => Object.hasOwn(KEY_MODIFIERS, name))) {
+    fail("invalid_key", "Modifiers are control, command, shift or option, each at most once.");
+  }
+  const raw = typeof action.key === "string" ? action.key : "";
+  const named = Object.hasOwn(NAMED_KEYS, raw) ? raw : null;
+  const character = /^[a-zA-Z0-9]$/.test(raw) ? raw.toLowerCase() : null;
+  if (!named && !character) fail("invalid_key", "Use Enter, Tab, Escape, arrows, Backspace, Delete, Space, Home, End, PageUp, PageDown, or a letter or digit with control or command.");
+  if (character && !modifiers.some((name) => name === "control" || name === "command")) fail("invalid_key", "Letters and digits need control or command. Use fill for text.");
+  const base = named ?? character;
+  const held = new Set(modifiers);
+  const holds = (name) => name === "primary" ? held.has("control") || held.has("command") : held.has(name);
+  if (BLOCKED_CHORDS.some((chord) => chord.key === base && chord.modifiers.every(holds))) {
+    fail("blocked_shortcut", "Clipboard and browser or system escape shortcuts are unavailable. Use fill, select or observed page controls.");
+  }
+  const primary = held.has("control") || held.has("command");
+  const extra = modifiers.filter((name) => name !== "control" && name !== "command").sort().join("+");
+  const edit = primary && character && !(held.has("control") && held.has("command")) ? EDIT_COMMANDS[extra ? `${extra}+${character}` : character] : undefined;
+  return { keyCode: named ? NAMED_KEYS[named] : character.toUpperCase(), modifiers: modifiers.map((name) => KEY_MODIFIERS[name]),
+    chord: [...modifiers].sort().concat(base).join("+"), ...(edit ? { edit } : {}) };
+}
 
 // Runs in Electron's isolated world. It has DOM access but no page globals,
 // Node, IPC, browser profile or network tools. References never enter page DOM.
-function observePage(id, query = null) {
-  const key = "__openworkBrowserObservation";
-  const nodes = new Map();
+// Refs live in this world for the document's lifetime: the same element keeps
+// the same ref across observations, so one observation can drive many actions.
+function observePage(id, options = {}) {
+  const { mode = "full", query = null } = options;
+  const interactive = mode === "interactive";
+  const limit = Number.isInteger(options.limit) && options.limit > 0 ? Math.min(options.limit, 500) : interactive ? 200 : 500;
+  const includeText = options.includeText ?? !interactive;
+  const registry = globalThis.__openworkBrowserRefs ??= { byElement: new WeakMap(), byRef: new Map(), identities: new WeakMap(), next: 0,
+    observations: new Map(), latest: null, last: null, describe: null, identify: null };
   const elements = [];
-  const optionReferences = new WeakMap();
-  let optionSequence = 0;
+  registry.snapshots ??= new WeakMap();
+  registry.optionRefs ??= new WeakMap();
+  registry.shownOptions ??= new WeakMap();
+  registry.nextOption ??= 0;
   const optionRef = option => {
-    let entry = optionReferences.get(option);
+    let entry = registry.optionRefs.get(option);
     if (!entry || entry.value !== option.value) {
-      entry = { value: option.value, ref: `o${++optionSequence}` };
-      optionReferences.set(option, entry);
+      entry = { value: option.value, ref: `o${++registry.nextOption}` };
+      registry.optionRefs.set(option, entry);
     }
     return entry.ref;
   };
@@ -41,8 +102,12 @@ function observePage(id, query = null) {
   // only whether a field is filled, unless the agent entered that exact value itself. In-page
   // staleness and verification checks read the real value (reveal).
   const entered = globalThis.__openworkAgentEntered ??= new WeakMap();
-  const isSensitive = element => element.matches('input[type="password"]') ||
-    (element.getAttribute("autocomplete") || "").toLowerCase().split(/\s+/).some(token => token === "one-time-code" || token.startsWith("cc-"));
+  const autocomplete = element => (element.getAttribute("autocomplete") || "").toLowerCase().split(/\s+/);
+  const isPayment = element => autocomplete(element).some(token => token.startsWith("cc-"));
+  const isCredential = element => element.matches('input[type="password"]')
+    || autocomplete(element).some(token => ["current-password", "new-password", "one-time-code"].includes(token));
+  // Passwords, one-time codes and card fields are never read back, even after the agent fills them.
+  const isSensitive = element => isCredential(element) || isPayment(element);
   const isTextValue = element => element instanceof HTMLTextAreaElement ||
     element instanceof HTMLInputElement && !["button", "submit", "reset", "checkbox", "radio", "hidden", "file", "range", "color"].includes(element.type) ||
     element.isContentEditable || ["textbox", "combobox"].includes(element.getAttribute("role"));
@@ -75,6 +140,8 @@ function observePage(id, query = null) {
     const safe = privatePattern ? (value || "").replace(privatePattern, "[withheld]") : value || "";
     return safe.trim().slice(0, limit);
   };
+  // browser_extract reads page text, which includes editable content and can echo field values.
+  if (mode === "extract") return { title: text(document.title, 300), text: text(document.body?.innerText, 500_000) };
   const describe = (element, reveal = false) => {
     const referenced = (attribute) => (element.getAttribute(attribute) || "").split(/\s+/)
       .map(id => document.getElementById(id)?.textContent || "").join(" ").trim();
@@ -112,8 +179,8 @@ function observePage(id, query = null) {
       readOnly: element.readOnly === true || element.getAttribute("aria-readonly") === "true",
     };
     if (input) state.type = element.type;
-    if (!sensitive && field) {
-      if (reveal || (!select && entered.get(element) === value)) { state.value = value.slice(0, 8000); state.valueTruncated = value.length > 8000; }
+    if (field) {
+      if (reveal || (!sensitive && !select && entered.get(element) === value)) { state.value = value.slice(0, 8000); state.valueTruncated = value.length > 8000; }
       else { state.filled = value.length > 0; state.valueWithheld = true; }
     }
     if (input && ["checkbox", "radio"].includes(element.type)) state.checked = element.indeterminate ? "mixed" : element.checked;
@@ -139,71 +206,172 @@ function observePage(id, query = null) {
     if (description && !sensitive && !state.valueWithheld && !select) state.description = text(description, 1000);
     return state;
   };
+  // A control keeps its ref while it stays the same kind of control with the
+  // same accessible name. Values, checked state and validity may change.
+  // Editable text controls derive their name from content, so use only labels.
+  const identify = (element, control) => JSON.stringify([control.tag, control.role, control.type ?? null, control.sensitive,
+    element.isContentEditable || ["textbox", "combobox", "searchbox"].includes(control.role) && !(element instanceof HTMLInputElement || element instanceof HTMLTextAreaElement || element instanceof HTMLSelectElement)
+      ? [element.getAttribute("aria-label"), element.getAttribute("aria-labelledby")] : control.name]);
+  const compact = (ref, control, visible) => {
+    /** @type {Record<string, unknown>} */
+    const item = { ref, role: control.role, name: control.name.slice(0, 120) };
+    if (control.type && !["text", "submit", "button"].includes(control.type)) item.type = control.type;
+    if (control.value !== undefined && control.value !== "" && !control.options) item.value = control.value.length > 300 ? `${control.value.slice(0, 300)}…` : control.value;
+    if (control.valueWithheld) { item.filled = control.filled === true; item.valueWithheld = true; }
+    if (control.checked !== undefined) item.checked = control.checked;
+    if (control.selected) item.selected = true;
+    if (control.expanded !== undefined) item.expanded = control.expanded;
+    if (control.disabled) item.disabled = true;
+    if (control.readOnly) item.readOnly = true;
+    if (control.required) item.required = true;
+    if (control.sensitive) item.sensitive = true;
+    if (control.valid === false) item.invalid = control.validationMessage || true;
+    if (control.options) {
+      item.options = control.options.slice(0, 50).map((option) => ({ value: option.value, label: option.label, ...(option.selected ? { selected: true } : {}), ...(option.disabled ? { disabled: true } : {}) }));
+      if (control.multiple) item.multiple = true;
+      if (control.optionsTruncated || control.options.length > 50) item.optionsTruncated = true;
+    }
+    if (control.description) item.description = control.description.slice(0, 200);
+    if (!visible) item.offscreen = true;
+    return item;
+  };
+  const targets = document.querySelectorAll(interactive
+    ? 'a[href],button,input:not([type="hidden"]),textarea,select,summary,[contenteditable]:not([contenteditable="false"]),[tabindex]:not([tabindex="-1"]),[role="button"],[role="link"],[role="checkbox"],[role="radio"],[role="switch"],[role="tab"],[role="menuitem"],[role="menuitemcheckbox"],[role="menuitemradio"],[role="option"],[role="combobox"],[role="textbox"],[role="searchbox"],[role="slider"],[role="spinbutton"],[role="listbox"],[role="treeitem"]'
+    : 'a[href],button,input,textarea,select,[role],h1,h2,h3,h4,p,label,tr,table,main,aside,section,div,[contenteditable]:not([contenteditable="false"])');
   const scrollRegions = [];
+  const items = [];
   let scanned = 0, truncated = false;
-  const snapshots = new Map();
-  for (const element of candidates) {
+  for (const element of targets) {
     if (!(element instanceof HTMLElement)) continue;
     // An associated label already supplies the control's accessible name.
     // Returning it again makes ordinary name-based form targets ambiguous.
     if (element instanceof HTMLLabelElement && element.control) continue;
-    if (++scanned > 6000 || elements.length >= 500) { truncated = true; break; }
+    if (++scanned > 6000 || items.length >= limit) { truncated = true; break; }
     const rect = element.getBoundingClientRect();
     const style = getComputedStyle(element);
     if (!rect.width || !rect.height || style.visibility !== "visible" || style.display === "none") continue;
     const scrollable = element.scrollHeight > element.clientHeight + 4 && /auto|scroll/.test(style.overflowY);
-    if (element.tagName === "DIV" && !element.hasAttribute("role") && !element.isContentEditable && !scrollable) continue;
+    if (!interactive && element.tagName === "DIV" && !element.hasAttribute("role") && !element.isContentEditable && !scrollable) continue;
     if (scrollable) scrollRegions.push([text(element.getAttribute("aria-label") || element.id), element.scrollTop, element.scrollHeight, element.clientHeight]);
-    const ref = `e${elements.length + 1}`;
     const control = describe(element);
     if (query) {
       const match = (actual, expected) => !expected || (query.exact === false ? actual.toLowerCase().includes(expected.toLowerCase()) : actual.toLowerCase() === expected.toLowerCase());
       if (!match(control.role, query.role) || !match(control.name, query.name) || !match(control.name, query.text)) continue;
     }
+    let ref = registry.byElement.get(element);
+    if (!ref) { ref = `e${++registry.next}`; registry.byElement.set(element, ref); }
+    // A control moved out of and back into the document keeps its ref.
+    if (registry.byRef.get(ref)?.deref() !== element) registry.byRef.set(ref, new WeakRef(element));
+    registry.identities.set(element, identify(element, control));
     let left = Math.max(0, rect.left), top = Math.max(0, rect.top), right = Math.min(innerWidth, rect.right), bottom = Math.min(innerHeight, rect.bottom);
     for (let parent = element.parentElement; parent && right > left && bottom > top; parent = parent.parentElement) {
       const parentStyle = getComputedStyle(parent), clip = parent.getBoundingClientRect();
       if (/auto|scroll|hidden|clip/.test(parentStyle.overflowX)) { left = Math.max(left, clip.left); right = Math.min(right, clip.right); }
       if (/auto|scroll|hidden|clip/.test(parentStyle.overflowY)) { top = Math.max(top, clip.top); bottom = Math.min(bottom, clip.bottom); }
     }
-    nodes.set(ref, element);
-    snapshots.set(element, JSON.stringify(describe(element, true)));
-    elements.push({ ref, ...control, visible: right > left && bottom > top, needsReveal: left > rect.left || top > rect.top || right < rect.right || bottom < rect.bottom, bounds: { x: rect.x, y: rect.y, width: rect.width, height: rect.height } });
+    const visible = right > left && bottom > top;
+    const item = compact(ref, control, visible);
+    items.push(item);
+    // Only options the model was shown can be chosen; a truncated list hides the rest.
+    if (Array.isArray(item.options)) registry.shownOptions.set(element, new Set((interactive ? item.options : control.options).map((option) => option.value)));
+    // The real value the agent last observed: actions are refused if the page or person changed it since.
+    registry.snapshots.set(element, JSON.stringify(describe(element, true)));
+    if (!interactive) elements.push({ ref, ...control, visible, needsReveal: left > rect.left || top > rect.top || right < rect.right || bottom < rect.bottom, bounds: { x: rect.x, y: rect.y, width: rect.width, height: rect.height } });
   }
-  const observation = { id, nodes, bounds: new Map(elements.map(({ ref, bounds }) => [ref, bounds])), activeElement: document.activeElement,
-    optionRefs: new Map(elements.map(({ ref, options }) => [ref, new Set((options || []).map(option => option.value))])),
-    used: false, createdAt: performance.now(), describe, optionRef, snapshots, width: innerWidth, height: innerHeight, x: scrollX, y: scrollY };
-  globalThis[key] = observation;
-  return { truncated, scrollRegions, title: text(document.title, 300), text: text(document.body?.innerText, 16000), elements,
-    viewport: { width: innerWidth, height: innerHeight }, scroll: { x: scrollX, y: scrollY }, hasPasswordField: [...candidates].some((element) => {
-      if (!(element instanceof HTMLElement) || !isSensitive(element)) return false;
-      const rect = element.getBoundingClientRect(); return rect.width > 0 && rect.height > 0;
-    }),
-    webmcp: "modelContext" in document ? "available" : "check_site_tools",
-    limitations: ["DOM references cover the top document and open controls; use a fresh image for frames or canvas."] };
+  for (const [ref, weak] of registry.byRef) if (!weak.deref()?.isConnected) registry.byRef.delete(ref);
+  registry.describe = describe;
+  registry.optionRef = optionRef;
+  registry.identify = identify;
+  registry.isCredential = isCredential;
+  registry.observations.set(id, { createdAt: performance.now(), width: innerWidth, height: innerHeight, x: scrollX, y: scrollY });
+  registry.latest = id;
+  for (const old of registry.observations.keys()) { if (registry.observations.size <= 20) break; registry.observations.delete(old); }
+  // Observing the same document again reports what changed since the last
+  // unfiltered observation in this mode, so the model need not reread it.
+  let diff;
+  if (!query) {
+    const current = new Map(items.map((item) => [item.ref, JSON.stringify(item)]));
+    const previous = registry.last?.mode === mode ? registry.last.items : null;
+    if (previous) {
+      const added = [...current.keys()].filter((ref) => !previous.has(ref));
+      const changed = [...current.keys()].filter((ref) => previous.has(ref) && previous.get(ref) !== current.get(ref));
+      diff = { added, removed: [...previous.keys()].filter((ref) => !current.has(ref)), changed, unchanged: current.size - added.length - changed.length };
+    }
+    registry.last = { mode, items: current };
+  }
+  const focused = registry.byElement.get(document.activeElement);
+  // A card field shows its digits in an image. Page script can copy a typed or autofilled
+  // password or code into visible text, then clear, hide or remove the field: no image while
+  // the document has such a field anywhere, or after the agent filled one in it.
+  const onScreen = (element) => { const rect = element.getBoundingClientRect(); return rect.width > 0 && rect.height > 0; };
+  const payment = [...candidates].some((element) => element instanceof HTMLElement && isPayment(element) && onScreen(element));
+  const credential = globalThis.__openworkCredentialEntered === true
+    || [...candidates].some((element) => element instanceof HTMLElement && isCredential(element));
+  const page = { viewport: { width: innerWidth, height: innerHeight }, scroll: { x: scrollX, y: scrollY }, hasPaymentField: payment, hasCredentialField: credential };
+  if (!interactive) {
+    return { truncated, scrollRegions, title: text(document.title, 300), ...(includeText ? { text: text(document.body?.innerText, 16000) } : {}), elements,
+      ...page, ...(diff ? { diff } : {}), ...(focused ? { focused } : {}),
+      limitations: ["DOM references cover the top document and open controls; use a fresh image for frames or canvas."] };
+  }
+  const shown = diff ? items.filter((item) => diff.added.includes(item.ref) || diff.changed.includes(item.ref)) : items;
+  const status = [...document.querySelectorAll('[role="alert"],[role="status"],[aria-live]:not([aria-live="off"]),output')]
+    .filter((element) => element instanceof HTMLElement && element.getClientRects().length > 0)
+    .map((element) => text(element instanceof HTMLElement ? element.innerText : "", 300)).filter(Boolean).slice(0, 5);
+  return { mode, title: text(document.title, 300), elements: shown, ...(diff ? { diff } : {}), ...(focused ? { focused } : {}),
+    ...(status.length ? { status } : {}), ...(truncated ? { truncated } : {}), ...(includeText ? { text: text(document.body?.innerText, 16000) } : {}),
+    ...page };
+}
+// Records when the document last changed structure. Text-only changes (live
+// counters, clocks) are ignored; elements appearing, disappearing, showing,
+// hiding or turning busy are not.
+function readSettle(arm) {
+  let state = globalThis.__openworkBrowserSettle;
+  if (!state) {
+    state = globalThis.__openworkBrowserSettle = { at: performance.now() };
+    new MutationObserver((records) => {
+      if (records.some((record) => record.type === "attributes" || [...record.addedNodes, ...record.removedNodes].some((node) => node.nodeType === Node.ELEMENT_NODE))) state.at = performance.now();
+    }).observe(document, { subtree: true, childList: true, attributes: true, attributeFilter: ["hidden", "disabled", "aria-busy", "aria-hidden", "open"] });
+  }
+  if (arm) state.at = performance.now();
+  return { quietMs: performance.now() - state.at, readyState: document.readyState, busy: !!document.querySelector('[aria-busy="true"]') };
 }
 function prepareAction(id, action) {
-  const state = globalThis.__openworkBrowserObservation;
-  if (!state || state.id !== id || state.used || performance.now() - state.createdAt > 60_000 || state.width !== innerWidth || state.height !== innerHeight || state.x !== scrollX || state.y !== scrollY) throw new Error("stale_observation");
-  const element = action.ref ? state.nodes.get(action.ref) : null;
+  const registry = globalThis.__openworkBrowserRefs;
+  const observation = registry?.observations.get(id);
+  if (!observation) throw new Error("stale_observation");
+  // Image coordinates are only meaningful for the latest, unchanged view.
+  if (action.type === "click" && !action.ref && (registry.latest !== id || performance.now() - observation.createdAt > 60_000
+    || observation.width !== innerWidth || observation.height !== innerHeight || observation.x !== scrollX || observation.y !== scrollY)) throw new Error("stale_observation");
+  const element = action.ref ? registry.byRef.get(action.ref)?.deref() : null;
   if (action.ref && (!element || !element.isConnected)) throw new Error("stale_element");
-  if (element?.matches('input[type="password"],input[autocomplete="one-time-code"]')) throw new Error("sign_in_required");
-  if (element && state.describe(element).disabled) throw new Error("element_disabled");
-  // Revalidate the chosen control rather than invalidating every control when
-  // an unrelated spinner, clock or live region changes elsewhere on the page.
+  const control = element ? registry.describe(element) : null;
+  // The control must still be what the model saw: same kind and name.
+  if (element && registry.identities.get(element) !== registry.identify(element, control)) throw new Error("stale_element");
+  if (control?.disabled) throw new Error("element_disabled");
+  if (action.type === "key") {
+    if (element && document.activeElement !== element) element.focus();
+    if (element && document.activeElement !== element) throw new Error("unverifiable_focus");
+    if (document.activeElement?.matches('input[type="file"]')) throw new Error("use_attach");
+    // Only a directly focused, observed control can receive keys. Frames and
+    // generic containers can conceal a different focused descendant.
+    if (!document.activeElement?.matches('input,textarea,select,button,a,[contenteditable]:not([contenteditable="false"]),[role="textbox"],[role="combobox"],[role="listbox"],[role="option"],[role="checkbox"],[role="radio"],[role="switch"]')
+      || !registry.byElement.has(document.activeElement)) throw new Error("unverifiable_focus");
+  }
+  // Bind the action to what the agent observed: a value changed by the page or
+  // person since then needs a fresh observation.
   const target = element || (action.type === "key" ? document.activeElement : null);
-  if (target && state.snapshots.get(target) !== JSON.stringify(state.describe(target, true))) throw new Error("stale_observation");
-  if (action.type === "key" && state.activeElement !== document.activeElement) throw new Error("stale_observation");
-  if (action.type === "key" && document.activeElement?.matches('input[type="password"],input[type="file"],input[autocomplete="one-time-code"]')) throw new Error("sign_in_required");
-  // Only a directly focused, observed control can receive keys. Frames and
-  // generic containers can conceal a different focused descendant.
-  if (action.type === "key" && !document.activeElement?.matches('input,textarea,select,button,a,[contenteditable]:not([contenteditable="false"]),[role="textbox"],[role="combobox"],[role="listbox"],[role="option"],[role="checkbox"],[role="radio"],[role="switch"]')) throw new Error("unverifiable_focus");
+  if (target && registry.snapshots.get(target) !== JSON.stringify(registry.describe(target, true))) throw new Error("stale_observation");
   let x = action.x, y = action.y;
   if (element) {
-    const rect = element.getBoundingClientRect();
-    const bounds = state.bounds.get(action.ref);
     const style = getComputedStyle(element);
-    if (!bounds || style.visibility !== "visible" || style.display === "none" || !["x", "y", "width", "height"].every((key) => rect[key] === bounds[key])) throw new Error("stale_observation");
+    let rect = element.getBoundingClientRect();
+    if (style.visibility !== "visible" || style.display === "none" || !rect.width || !rect.height) throw new Error("stale_element");
+    // Bring an observed control into view instead of asking for a scroll and
+    // another observation; the hit test below still guards what is clicked.
+    if (action.type === "reveal" || rect.x + rect.width / 2 < 0 || rect.y + rect.height / 2 < 0 || rect.x + rect.width / 2 >= innerWidth || rect.y + rect.height / 2 >= innerHeight) {
+      element.scrollIntoView({ block: "center", inline: "nearest", behavior: "instant" });
+      rect = element.getBoundingClientRect();
+    }
     x = rect.x + rect.width / 2; y = rect.y + rect.height / 2;
     if (action.type !== "reveal" && (x < 0 || y < 0 || x >= innerWidth || y >= innerHeight)) throw new Error("element_outside_viewport");
     const hit = document.elementFromPoint(x, y);
@@ -211,44 +379,56 @@ function prepareAction(id, action) {
   }
   if (action.type === "reveal" && !element) throw new Error("stale_element");
   if (action.type === "fill") {
-    const editable = element instanceof HTMLTextAreaElement || element?.isContentEditable || (element instanceof HTMLInputElement && ["text", "search", "email", "url", "tel", "number", "date", "time", "datetime-local", "month", "week"].includes(element.type));
-    if (!editable || state.describe(element).readOnly) throw new Error("not_editable");
+    const editable = element instanceof HTMLTextAreaElement || element?.isContentEditable || (element instanceof HTMLInputElement && ["text", "search", "email", "url", "tel", "number", "password", "date", "time", "datetime-local", "month", "week"].includes(element.type));
+    if (!editable || control.readOnly) throw new Error("not_editable");
   }
   if (action.type === "select") {
     if (!(element instanceof HTMLSelectElement) || (!element.multiple && action.values.length > 1)) throw new Error("not_selectable");
     for (const value of action.values) {
-      if (!state.optionRefs.get(action.ref)?.has(value)) throw new Error("option_unavailable");
-      const option = [...element.options].find(option => state.optionRef(option) === value);
+      // Option refs are opaque, belong to this control and must have been shown.
+      if (!registry.shownOptions.get(element)?.has(value)) throw new Error("option_unavailable");
+      const option = [...element.options].find(option => registry.optionRefs.get(option)?.ref === value && registry.optionRefs.get(option)?.value === option.value);
       if (!option || option.disabled || (option.parentElement instanceof HTMLOptGroupElement && option.parentElement.disabled)) throw new Error("option_unavailable");
     }
   }
   if (action.type === "set_checked") {
     const native = element instanceof HTMLInputElement && ["checkbox", "radio"].includes(element.type);
-    if ((!native && !["checkbox", "radio", "switch"].includes(element?.getAttribute("role"))) || state.describe(element).readOnly) throw new Error("not_checkable");
+    if ((!native && !["checkbox", "radio", "switch"].includes(element?.getAttribute("role"))) || control.readOnly) throw new Error("not_checkable");
     if ((element.type === "radio" || element.getAttribute("role") === "radio") && !action.checked) throw new Error("not_checkable");
   }
   if ((action.type === "click" || action.type === "scroll") && (!Number.isFinite(x) || !Number.isFinite(y) || x < 0 || y < 0 || x >= innerWidth || y >= innerHeight)) throw new Error("outside_viewport");
   if (!element && action.type === "click") {
     const hit = document.elementFromPoint(x, y);
-    if (hit?.matches('input[type="password"],input[type="file"],input[autocomplete="one-time-code"]')) throw new Error("sign_in_required");
+    if (hit?.matches('input[type="file"]')) throw new Error("use_attach");
   }
-  // Consume before input; a result read failure must never replay this action.
-  state.used = true;
-  return { x, y, unchanged: action.type === "set_checked" && state.describe(element).checked === action.checked };
+  return { x, y, unchanged: action.type === "set_checked" && control.checked === action.checked };
 }
-function applyFormAction(id, action) {
-  const state = globalThis.__openworkBrowserObservation;
-  const element = state?.id === id ? state.nodes.get(action.ref) : null;
+/** Whether this step would click, fill or press a key in a password or one-time-code field. */
+function credentialTarget(id, action) {
+  const registry = globalThis.__openworkBrowserRefs;
+  if (!registry?.observations.get(id)) return false;
+  const point = action.type === "click" && Number.isFinite(action.x) && Number.isFinite(action.y);
+  const element = action.ref ? registry.byRef.get(action.ref)?.deref() : point ? document.elementFromPoint(action.x, action.y) : document.activeElement;
+  // Clicking a label, or anything inside one, focuses its field.
+  const control = element?.closest?.("label")?.control ?? element;
+  return control?.isConnected === true && registry.isCredential(control);
+}
+function applyFormAction(action) {
+  const registry = globalThis.__openworkBrowserRefs;
+  const element = registry?.byRef.get(action.ref)?.deref();
   if (!element?.isConnected) throw new Error("stale_element");
-  if (state.snapshots.get(element) !== JSON.stringify(state.describe(element, true))) throw new Error("stale_observation");
+  if (registry.identities.get(element) !== registry.identify(element, registry.describe(element))) throw new Error("stale_element");
+  if (registry.snapshots.get(element) !== JSON.stringify(registry.describe(element, true))) throw new Error("stale_observation");
+  // Once a password or code was filled in this document, it takes no more images.
+  if (action.type === "fill" && registry.isCredential(element)) globalThis.__openworkCredentialEntered = true;
   // The agent may read back exactly what it entered.
   if (action.type === "fill" || action.type === "select") globalThis.__openworkAgentEntered?.set(element, action.type === "select"
-    ? JSON.stringify([...element.options].filter(option => action.values.includes(state.optionRef(option))).map(option => option.value))
+    ? JSON.stringify([...element.options].filter(option => action.values.includes(registry.optionRefs.get(option)?.ref)).map(option => option.value))
     : element instanceof HTMLTextAreaElement ? action.text.replace(/\r\n?/g, "\n") : action.text);
   element.focus();
   if (document.activeElement !== element || !element.isConnected) throw new Error("stale_element");
   if (action.type === "select") {
-    for (const option of element.options) option.selected = action.values.includes(state.optionRef(option));
+    for (const option of element.options) option.selected = action.values.includes(registry.optionRefs.get(option)?.ref);
     if (!action.values.length) element.selectedIndex = -1;
     element.dispatchEvent(new Event("input", { bubbles: true }));
     element.dispatchEvent(new Event("change", { bubbles: true }));
@@ -267,28 +447,34 @@ function applyFormAction(id, action) {
   }
   return { inserted: false };
 }
-async function verifyFormAction(id, action) {
-  const state = globalThis.__openworkBrowserObservation;
-  const element = state?.id === id ? state.nodes.get(action.ref) : null;
+async function verifyFormAction(action) {
+  const registry = globalThis.__openworkBrowserRefs;
+  const element = registry?.byRef.get(action.ref)?.deref();
   const deadline = performance.now() + 1500;
   let matchingSince = null, control;
   do {
     if (!element?.isConnected) throw new Error("stale_element");
-    control = state.describe(element, true);
+    control = registry.describe(element, true);
     const matches = action.type === "set_checked" ? control.checked === action.checked
       : action.type === "select" ? control.selectedValues.length === new Set(action.values).size && action.values.every(value => control.selectedValues.includes(value))
       : !control.valueTruncated && control.value === (element instanceof HTMLTextAreaElement ? action.text.replace(/\r\n?/g, "\n") : action.text);
     matchingSince = matches ? matchingSince ?? performance.now() : null;
-    if (matchingSince !== null && performance.now() - matchingSince >= 150) return { verified: true, control: state.describe(element) };
+    if (matchingSince !== null && performance.now() - matchingSince >= 150) {
+      // The agent's own verified entry is what it now knows; later actions in a batch bind to it.
+      registry.snapshots.set(element, JSON.stringify(control));
+      return { verified: true, control: registry.describe(element) };
+    }
     await new Promise(resolve => setTimeout(resolve, 50));
   } while (performance.now() < deadline);
   // A rejected or transformed entry can restore a value filled by the page or
   // person. Only the exact requested value remains eligible for readback.
   if (!element.isConnected) throw new Error("stale_element");
-  return { verified: false, control: state.describe(element) };
+  return { verified: false, control: registry.describe(element) };
 }
-async function captureObservation(webContents, viewport) {
+async function captureObservation(webContents, viewport, hostCapture = undefined) {
   if (typeof webContents.captureObservation === "function") return webContents.captureObservation(viewport);
+  const captured = await hostCapture?.(viewport);
+  if (captured) return captured;
   const capture = await webContents.capturePage();
   return capture.resize({ width: viewport.width, height: viewport.height }).toPNG({ scaleFactor: 1 });
 }
@@ -304,9 +490,109 @@ async function isolated(webContents, fn, ...args) {
   return result.value;
 }
 
+const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+const STOP_WORDS = new Set("a an and are as at be by can did do does for from has have how i in is it its me my of on or should that the their there this to was what when where which who why will with you your".split(" "));
+// Word forms such as block, blocker and blocking: a shared stem of five
+// letters, or four when one word is the other's prefix.
+const related = (a, b) => {
+  let shared = 0;
+  while (shared < a.length && a[shared] === b[shared]) shared++;
+  return shared >= 5 || shared >= 4 && (a.length === shared || b.length === shared);
+};
+const terms = (value) => (value.toLowerCase().match(/[\p{L}\p{N}]+/gu) ?? []).filter((term) => (term.length > 1 || /\d/.test(term)) && !STOP_WORDS.has(term));
+/**
+ * Lines of page text that best match the question, in page order, within a
+ * character budget. A label line ("Total:") brings the line that follows (its value).
+ * @param {string} text @param {string} question @param {number} maxChars
+ */
+function relevantPassages(text, question, maxChars) {
+  const lines = text.split(/\n+/).map((line) => line.replace(/\s+/g, " ").trim()).filter(Boolean);
+  const wanted = [...new Set(terms(question))];
+  if (!wanted.length || !lines.length) return [];
+  const lineTerms = lines.map((line) => new Set(terms(line)));
+  const weight = new Map(wanted.map((term) => [term, Math.log(1 + lines.length / (1 + lineTerms.filter((set) => set.has(term)).length))]));
+  const scored = lines.map((_, index) => {
+    let score = 0;
+    for (const term of wanted) {
+      if (lineTerms[index].has(term)) score += weight.get(term) ?? 0;
+      else if (term.length >= 4 && [...lineTerms[index]].some((word) => related(term, word))) score += (weight.get(term) ?? 0) / 2;
+    }
+    return { index, score };
+  }).filter((line) => line.score > 0).sort((a, b) => b.score - a.score || a.index - b.index);
+  const chosen = new Set();
+  let used = 0;
+  for (const { index } of scored) {
+    if (used >= maxChars) break;
+    const label = /:$/.test(lines[index]) || lines[index].length <= 25;
+    for (const at of label && index + 1 < lines.length ? [index, index + 1] : [index]) {
+      if (chosen.has(at)) continue;
+      chosen.add(at); used += Math.min(lines[at].length, 600) + 1;
+    }
+  }
+  const passages = [];
+  let previous = -2;
+  for (const index of [...chosen].sort((a, b) => a - b)) {
+    const line = lines[index].length > 600 ? `${lines[index].slice(0, 600)}…` : lines[index];
+    if (index === previous + 1 && passages.length) passages[passages.length - 1] += `\n${line}`;
+    else passages.push(line);
+    previous = index;
+  }
+  let total = 0;
+  return passages.filter((passage) => (total += passage.length) <= maxChars || total === passage.length);
+}
+
+/**
+ * `prepare` runs before each operation on a tab and may settle its viewport.
+ * A host that draws the page scaled reports that scale in `inputScale`, since
+ * CDP input is in view pixels, and may `capture` the page at full resolution.
+ */
+/**
+ * Clicks an upload control with the page's file chooser intercepted, then gives
+ * the input that asked these files. The system file picker never opens.
+ * @returns {Promise<"attached" | "no_file_chooser" | "single_file">}
+ */
+async function attachFiles(contents, point, files, signal, waitMs) {
+  const cdp = contents.debugger;
+  const attached = !cdp.isAttached();
+  if (attached) cdp.attach("1.3");
+  let listener = null;
+  try {
+    const opened = new Promise((resolve) => {
+      listener = (_event, method, params) => { if (method === "Page.fileChooserOpened") resolve(params); };
+      cdp.on("message", listener);
+      setTimeout(() => resolve(null), waitMs).unref?.();
+    });
+    await cdp.sendCommand("Page.enable");
+    await cdp.sendCommand("Page.setInterceptFileChooserDialog", { enabled: true });
+    signal.throwIfAborted();
+    await cdp.sendCommand("Input.dispatchMouseEvent", { type: "mousePressed", x: point.x, y: point.y, button: "left", clickCount: 1 });
+    await cdp.sendCommand("Input.dispatchMouseEvent", { type: "mouseReleased", x: point.x, y: point.y, button: "left", clickCount: 1 });
+    const chooser = await opened;
+    signal.throwIfAborted();
+    if (!chooser || !Number.isInteger(chooser.backendNodeId)) return "no_file_chooser";
+    if (chooser.mode === "selectSingle" && files.length > 1) return "single_file";
+    await cdp.sendCommand("DOM.setFileInputFiles", { files, backendNodeId: chooser.backendNodeId });
+    return "attached";
+  } finally {
+    if (listener) cdp.removeListener("message", listener);
+    if (cdp.isAttached()) await cdp.sendCommand("Page.setInterceptFileChooserDialog", { enabled: false }).catch(() => {});
+    if (attached && cdp.isAttached()) cdp.detach();
+  }
+}
+
 export function createBrowserTaskHost({ getTab, tabsFor, ownerOf, activeFor, isVisible, openTab, navigate,
-  allowed, enabled, changed, siteTools, runSiteTool, beforeInput = async (_tab) => {} }) {
+  allowed, enabled, changed, siteTools, runSiteTool, beforeInput = async (_tab) => {}, inFlight = (_tab, _since) => 0,
+  prepare = async (_tab) => {}, inputScale = (_tab) => 1, capture = (_tab, _viewport) => null,
+  // A page receives files only after the person approves exactly these, in the chat.
+  checkFiles = /** @type {(paths: string[]) => Promise<void>} */ (async () => { throw new Error("files_unavailable"); }),
+  approveFiles = async (_sessionId, _request, _signal) => false,
+  // A password or code is typed only on a site (exact origin) the person confirmed. Without
+  // this, as on hosts that cannot ask, sign-in fields stay with the person.
+  approveCredential = /** @type {((sessionId: string, request: { site: string }, signal: AbortSignal) => Promise<boolean>) | undefined} */ (undefined),
+  fileChooserMs = 5000 }) {
   const states = new Map();
+  // request_id -> first receipt, per conversation: a retried act never replays input.
+  const receipts = new Map();
   const controls = new Map();
   const pausedSessions = new Set();
   const opening = new Map();
@@ -319,10 +605,7 @@ export function createBrowserTaskHost({ getTab, tabsFor, ownerOf, activeFor, isV
     if (!control || controls.get(sessionId) !== control) return;
     controls.delete(sessionId);
     control.controller.abort(reason);
-    for (const tab of tabsFor(sessionId)) {
-      const state = states.get(tab.tabId);
-      if (state) state.observation = null;
-    }
+    for (const tab of tabsFor(sessionId)) forget(states.get(tab.tabId));
   }
   function checkControl(sessionId, control) {
     control.controller.signal.throwIfAborted();
@@ -350,7 +633,7 @@ export function createBrowserTaskHost({ getTab, tabsFor, ownerOf, activeFor, isV
     checkControl(sessionId, scope.control);
     if (getTab(tab.tabId) !== tab || tab.view.webContents.isDestroyed()) fail("tab_closed", "The browser tab closed while navigation was pending.");
     if (ownerOf(tab.tabId) !== sessionId || navigations.get(tab.tabId) !== scope) fail("wrong_conversation", "The browser navigation owner changed.");
-    if (pausedSessions.has(sessionId)) fail("paused", "The user has browser control. Resume before continuing.");
+    if (pausedSessions.has(sessionId)) fail("paused", "The user has browser control until they resume it or send their next message.");
     if (!enabled()) fail("browser_disabled", "Browser control was disabled while navigation was pending.");
   }
   async function authorizeNavigation(scope, value) {
@@ -379,8 +662,14 @@ export function createBrowserTaskHost({ getTab, tabsFor, ownerOf, activeFor, isV
     if (scope && navigationGuard(parentId)) trackNavigation(scope.sessionId, tab, scope.lifetime.signal);
   }
   function stateFor(tabId) {
-    if (!states.has(tabId)) states.set(tabId, { status: "idle", operation: null, observation: null, controller: null });
+    if (!states.has(tabId)) states.set(tabId, { status: "idle", operation: null, observations: new Map(), latest: null, controller: null });
     return states.get(tabId);
+  }
+  // Observations last for one document; navigation and takeover end them.
+  function forget(state) {
+    if (!state) return;
+    state.observations.clear();
+    state.latest = null;
   }
   function publish(tabId, status, operation = null) {
     const state = stateFor(tabId); state.status = status; state.operation = operation;
@@ -409,10 +698,10 @@ export function createBrowserTaskHost({ getTab, tabsFor, ownerOf, activeFor, isV
       const navigation = navigations.get(item.tabId);
       if (navigation) { navigation.manual = false; navigation.lifetime.abort(); }
       if (!item.view.webContents.isDestroyed()) item.view.webContents.stop();
-      const sibling = states.get(item.tabId); sibling?.controller?.abort(); if (sibling) sibling.observation = null; publish(item.tabId, "paused", reason);
+      const sibling = states.get(item.tabId); sibling?.controller?.abort(); forget(sibling); publish(item.tabId, "paused", reason);
     }
-    const state = stateFor(tabId); state.observation = null;
-    state.controller?.abort(new BrowserTaskError("paused", "Browser control paused. The user must resume it in the browser panel."));
+    const state = stateFor(tabId); forget(state);
+    state.controller?.abort(new BrowserTaskError("paused", "Browser control paused. It comes back when the user resumes it or sends their next message."));
     publish(tabId, "paused", reason);
   }
   function resume(tabId) {
@@ -421,7 +710,7 @@ export function createBrowserTaskHost({ getTab, tabsFor, ownerOf, activeFor, isV
     pausedSessions.delete(owner);
     for (const item of tabsFor(owner)) {
       if (navigations.has(item.tabId)) trackNavigation(owner, item);
-      stateFor(item.tabId).observation = null; publish(item.tabId, "idle");
+      forget(stateFor(item.tabId)); publish(item.tabId, "idle");
     }
   }
   function invalidate(tabId, { closed = false, reason = undefined } = {}) {
@@ -434,40 +723,95 @@ export function createBrowserTaskHost({ getTab, tabsFor, ownerOf, activeFor, isV
       navigations.get(tabId)?.lifetime.abort(); navigations.delete(tabId);
     }
     const state = states.get(tabId); if (!state) return;
-    state.observation = null;
+    forget(state);
     if (closed) { state.controller?.abort(); states.delete(tabId); }
   }
-  async function observe(tab, includeImage, signal, query = null) {
+  /**
+   * @param {{ mode?: string, limit?: number, includeText?: boolean }} [options]
+   */
+  async function observe(tab, includeImage, signal, query = null, options = {}) {
     const state = stateFor(tab.tabId);
-    state.observation = null;
     const revision = tab.webMcpRevision;
     const url = tab.view.webContents.getURL();
     const id = randomUUID();
-    const page = await isolated(tab.view.webContents, observePage, id, query);
+    const mode = options.mode === "interactive" ? "interactive" : "full";
+    const limit = Number.isInteger(options.limit) && options.limit >= 1 && options.limit <= 500 ? options.limit : undefined;
+    const page = await isolated(tab.view.webContents, observePage, id, { mode, query: query ?? null, ...(limit ? { limit } : {}),
+      ...(typeof options.includeText === "boolean" ? { includeText: options.includeText } : {}) });
     let image, digest;
     if (includeImage) {
-      if (page.hasPasswordField) fail("sign_in_required", "This page contains protected sign-in or payment fields. Take over and complete them directly in the browser, then resume.");
-      const png = await captureObservation(tab.view.webContents, page.viewport);
+      if (page.hasPaymentField) fail("payment_required", "This page shows payment card fields. Take over and complete them directly in the browser, then resume.");
+      if (page.hasCredentialField) fail("credential_on_screen", "This page has a password or code field, or one was filled on it, so no image was taken. Work from its controls without an image.");
+      const png = await captureObservation(tab.view.webContents, page.viewport, (viewport) => capture(tab, viewport));
       digest = imageDigest(png);
       image = { mimeType: "image/png", data: png.toString("base64"), width: page.viewport.width, height: page.viewport.height };
     }
     if (!await allowed(url)) fail("website_blocked", "Your organization does not allow this website.");
     if (revision !== tab.webMcpRevision || url !== tab.view.webContents.getURL()) fail("page_changed", "The page changed during observation. Observe again.");
     signal.throwIfAborted();
-    state.observation = { id, revision, url, viewport: page.viewport, elements: page.elements, digest };
-    return { ok: true, tabId: tab.tabId, observationId: id, url: safeUrl(url), trust: TRUST, ...page, ...(image ? { image } : {}) };
+    // Every observation of this document stays usable while its refs resolve.
+    const record = { id, revision, url, viewport: page.viewport, digest, sent: new Set() };
+    if (state.latest && (state.latest.revision !== revision || state.latest.url !== url)) state.observations.clear();
+    state.observations.set(id, record); state.latest = record;
+    for (const old of state.observations.keys()) { if (state.observations.size <= 20) break; state.observations.delete(old); }
+    // This page script is isolated from the site's own tools, so the host's count says whether to look for them.
+    const siteTools = tab.webMcpToolCount > 0 ? { siteTools: tab.webMcpToolCount } : {};
+    if (mode === "interactive") {
+      const { hasPaymentField, hasCredentialField: _credential, viewport: _viewport, scroll: _scroll, ...compact } = page;
+      return { ok: true, tabId: tab.tabId, observationId: id, url: safeUrl(url), trust: TRUST, ...compact, ...siteTools, ...(hasPaymentField ? { payment: "take_over" } : {}), ...(image ? { image } : {}) };
+    }
+    const { hasCredentialField: _credential, ...full } = page;
+    return { ok: true, tabId: tab.tabId, observationId: id, url: safeUrl(url), trust: TRUST, ...full, ...siteTools, ...(image ? { image } : {}) };
+  }
+  /** Bounded wait after input: navigation, in-flight requests and DOM structure. */
+  async function settle(tab, observed, since, signal) {
+    const contents = tab.view.webContents;
+    const deadline = Date.now() + SETTLE_MS;
+    let navigated = false;
+    for (;;) {
+      signal.throwIfAborted();
+      if (contents.isDestroyed()) fail("tab_closed", "The browser tab closed after the action.");
+      navigated ||= tab.webMcpRevision !== observed.revision || contents.getURL() !== observed.url;
+      const loading = typeof contents.isLoading === "function" && contents.isLoading();
+      const requests = inFlight(tab, since);
+      // A document between navigations may not answer; treat that as loading.
+      const page = loading ? null : await Promise.race([isolated(contents, readSettle, false).catch(() => null), delay(500).then(() => null)]);
+      if (page && requests === 0 && page.readyState !== "loading" && !page.busy && page.quietMs >= QUIET_MS) return { outcome: navigated ? "navigated" : "settled", navigated };
+      if (Date.now() >= deadline) return { outcome: "still_loading", navigated };
+      await delay(50);
+    }
+  }
+  async function extract(tab, args, signal) {
+    const question = typeof args.question === "string" ? args.question.trim() : "";
+    if (!question || question.length > 1000) fail("invalid_question", "Ask one question of at most 1000 characters.");
+    const maxChars = Number.isInteger(args.maxChars) ? Math.min(8000, Math.max(200, args.maxChars)) : 2000;
+    const revision = tab.webMcpRevision;
+    const url = tab.view.webContents.getURL();
+    // Withheld field values are redacted exactly as observations redact them.
+    const page = await isolated(tab.view.webContents, observePage, null, { mode: "extract" });
+    if (!await allowed(url)) fail("website_blocked", "Your organization does not allow this website.");
+    if (revision !== tab.webMcpRevision || url !== tab.view.webContents.getURL()) fail("page_changed", "The page changed while reading it. Try again.");
+    signal.throwIfAborted();
+    const passages = relevantPassages(page.text, question, maxChars);
+    return { ok: true, tabId: tab.tabId, url: safeUrl(url), title: page.title, trust: TRUST, question, passages, pageChars: page.text.length,
+      ...(passages.length ? {} : { next: "No passage matched. Try other words, or browser_observe with includeText." }) };
   }
   /**
-   * @param {{ sessionId?: string, operation?: string, args?: { tabId?: string, url?: string, provider?: string, includeImage?: boolean, query?: {role?: string, name?: string, text?: string, exact?: boolean}, observationId?: string, toolId?: string, input?: unknown, action?: { type?: string, ref?: string, text?: string, checked?: boolean, values?: string[], key?: string, x?: number, y?: number, deltaY?: number } } }} request
+   * @typedef {{ type?: string, ref?: string, text?: string, checked?: boolean, values?: string[], key?: string, modifiers?: string[], x?: number, y?: number, deltaY?: number, files?: string[] }} BrowserAction
+   * @param {{ sessionId?: string, operation?: string, args?: { tabId?: string, url?: string, provider?: string, includeImage?: boolean, mode?: string, limit?: number, includeText?: boolean,
+   *   query?: {role?: string, name?: string, text?: string, exact?: boolean}, observationId?: string, toolId?: string, input?: unknown, question?: string, maxChars?: number,
+   *   action?: BrowserAction, actions?: BrowserAction[], request_id?: string } }} request
    * @param {{ signal?: AbortSignal }} options
    */
   async function request({ sessionId, operation, args = {} } = {}, { signal } = {}) {
     let tab, state, dispatched = false, abort, controller, openingController;
+    /** @type {{ id: string, input: string, receipt: Record<string, unknown> } | null} */
+    let entry = null;
     try {
       if (typeof sessionId !== "string" || !sessionId.trim()) fail("missing_session", "Browser control requires a requesting conversation.");
       if (!enabled()) fail("browser_disabled", "Enable OpenWork Browser in Library, or ask your organization to allow browser control.");
-      if (operation === "tabs") return { ok: true, provider: "builtin", externalBrowsers: "unsupported", tabs: tabsFor(sessionId).map((item) => ({ tabId: item.tabId, url: safeUrl(item.view.webContents.getURL()), title: item.view.webContents.getTitle().slice(0, 300), visible: isVisible(item.tabId), ...stateFor(item.tabId), observation: undefined, controller: undefined })) };
-      if (pausedSessions.has(sessionId)) fail("paused", "The user has browser control. Resume in the browser panel before continuing.");
+      if (operation === "tabs") return { ok: true, provider: "builtin", externalBrowsers: "unsupported", tabs: tabsFor(sessionId).map((item) => ({ tabId: item.tabId, url: safeUrl(item.view.webContents.getURL()), title: item.view.webContents.getTitle().slice(0, 300), visible: isVisible(item.tabId), status: stateFor(item.tabId).status, operation: stateFor(item.tabId).operation })) };
+      if (pausedSessions.has(sessionId)) fail("paused", "The user has browser control until they resume it or send their next message. End your turn and wait.");
       const control = controlFor(sessionId);
       controller = new AbortController();
       const requestSignal = AbortSignal.any([controller.signal, control.controller.signal]);
@@ -494,7 +838,7 @@ export function createBrowserTaskHost({ getTab, tabsFor, ownerOf, activeFor, isV
         tab = args.tabId ? await Promise.race([resolve(sessionId, args.tabId), canceled]) : matches[0];
         requestSignal.throwIfAborted();
         checkControl(sessionId, control);
-        if (pausedSessions.has(sessionId)) fail("paused", "The user has browser control. Resume in the browser panel before continuing.");
+        if (pausedSessions.has(sessionId)) fail("paused", "The user has browser control until they resume it or send their next message. End your turn and wait.");
         if (!tab) {
           tab = await Promise.race([
             openTab(url.href, sessionId, requestSignal, async (created) => {
@@ -520,7 +864,7 @@ export function createBrowserTaskHost({ getTab, tabsFor, ownerOf, activeFor, isV
       checkControl(sessionId, control);
       state = stateFor(tab.tabId);
       if (operation === "pause" || operation === "handoff") { pause(tab.tabId, operation === "handoff" ? "Sign in or continue in the browser, then resume" : "Paused"); return { ok: true, status: "paused", tabId: tab.tabId, next: "user_resume" }; }
-      if (pausedSessions.has(sessionId) || state.status === "paused") fail("paused", "The user has browser control. Resume in the browser panel before continuing.");
+      if (pausedSessions.has(sessionId) || state.status === "paused") fail("paused", "The user has browser control until they resume it or send their next message. End your turn and wait.");
       if (state.controller) fail("busy", "A browser operation is already running in this tab. Wait for its result; do not queue another action.");
       state.controller = controller;
       const navigationScope = trackNavigation(sessionId, tab, requestSignal);
@@ -533,11 +877,13 @@ export function createBrowserTaskHost({ getTab, tabsFor, ownerOf, activeFor, isV
           if (url !== tab.view.webContents.getURL()) fail("page_changed", "The page changed while checking access. Observe again.");
         }
         requestSignal.throwIfAborted();
+        await prepare(tab);
+        requestSignal.throwIfAborted();
         publish(tab.tabId, "running", operation);
-        if (operation === "observe") return observe(tab, args.includeImage === true, requestSignal, args.query);
+        if (operation === "observe") return observe(tab, args.includeImage === true, requestSignal, args.query, { mode: args.mode, limit: args.limit, includeText: args.includeText });
         if (operation === "site_tools") return siteTools({ tabId: tab.tabId, sessionId });
         if (operation === "site_tool") {
-          state.observation = null;
+          forget(state);
           dispatched = true;
           const result = await runSiteTool({ ...args, tabId: tab.tabId, sessionId }, { signal: requestSignal });
           dispatched = result.dispatched === true || result.mayHaveChangedState === true;
@@ -547,100 +893,260 @@ export function createBrowserTaskHost({ getTab, tabsFor, ownerOf, activeFor, isV
           const url = browserTaskUrl(args.url);
           const validate = await authorizeNavigation(navigationScope, url.href);
           validate();
-          state.observation = null; dispatched = true;
+          forget(state); dispatched = true;
           const stop = () => { if (!tab.view.webContents.isDestroyed()) tab.view.webContents.stop(); };
           requestSignal.addEventListener("abort", stop, { once: true });
           try { await navigate(tab, url.href); requestSignal.throwIfAborted(); }
           finally { requestSignal.removeEventListener("abort", stop); }
           return { ok: true, tabId: tab.tabId, dispatched: true, outcome: "navigation_finished", url: safeUrl(tab.view.webContents.getURL()), next: "observe" };
         }
+        if (operation === "extract") return extract(tab, args, requestSignal);
         if (operation !== "act") fail("unknown_operation", "Use a supported browser operation.");
-        const observed = state.observation;
-        if (!observed || observed.id !== args.observationId || observed.revision !== tab.webMcpRevision || observed.url !== tab.view.webContents.getURL()) fail("stale_observation", "Observe the current page before acting.");
-        const action = structuredClone(args.action);
-        if (!action || !["click", "fill", "select", "set_checked", "key", "scroll", "reveal"].includes(action.type)) fail("invalid_action", "Use click, fill, select, set_checked, key or scroll.");
-        if (action.type === "click" && !action.ref && !observed.digest) fail("image_required", "Observe with includeImage before clicking image coordinates.");
-        if (action.type === "fill" && (typeof action.text !== "string" || action.text.length > 8000 || !action.ref)) fail("invalid_action", "Fill needs an observed editable reference and text of at most 8000 characters.");
-        if (action.type === "select" && (!action.ref || !Array.isArray(action.values) || action.values.length > 200 || !action.values.every(value => typeof value === "string" && value.length <= 8000))) fail("invalid_action", "Select needs an observed select reference and an array of option values.");
-        if (action.type === "set_checked" && (!action.ref || typeof action.checked !== "boolean")) fail("invalid_action", "Set_checked needs an observed checkbox, radio or switch reference and checked true or false.");
-        const keys = { Enter: "Enter", Tab: "Tab", Escape: "Escape", ArrowDown: "Down", ArrowUp: "Up", ArrowLeft: "Left", ArrowRight: "Right", Backspace: "Backspace", Space: "Space" };
-        if (action.type === "key" && !Object.hasOwn(keys, action.key)) fail("invalid_key", "Use Enter, Tab, Escape, arrows, Backspace or Space. System shortcuts are unavailable.");
-        if (action.type === "scroll" && (!Number.isFinite(action.deltaY) || Math.abs(action.deltaY) > 1200)) fail("invalid_scroll", "Scroll distance must be between -1200 and 1200.");
-        if (!await allowed(observed.url) || state.observation !== observed || observed.revision !== tab.webMcpRevision || observed.url !== tab.view.webContents.getURL()) fail("page_changed", "The page changed or access was blocked while preparing the action. Observe again.");
+        // One action keeps the original receipt; actions (1-8) run in order
+        // against one observation and return one receipt with the new state.
+        const batch = args.actions !== undefined;
+        if (batch === (args.action !== undefined)) fail("invalid_action", "Provide exactly one of action or actions.");
+        const actions = structuredClone(batch ? args.actions : [args.action]);
+        if (!Array.isArray(actions) || actions.length < 1 || actions.length > 8) fail("invalid_action", "Provide one to eight actions.");
+        // At most once: a repeated request_id returns its first receipt.
+        if (args.request_id !== undefined) {
+          if (typeof args.request_id !== "string" || !args.request_id || args.request_id.length > 256) fail("invalid_action", "request_id must be a short string.");
+          const input = JSON.stringify([tab.tabId, args.observationId, actions]);
+          const previous = receipts.get(sessionId)?.get(args.request_id);
+          if (previous) {
+            if (previous.input !== input) fail("request_conflict", "This request_id already belongs to different input. Nothing was dispatched.");
+            return previous.receipt;
+          }
+          entry = { id: args.request_id, input, receipt: { ok: false, code: "dispatch_uncertain", error: "This request was interrupted after it may have sent input. Observe before continuing; it is never replayed.",
+            dispatched: true, mayHaveChangedState: true, retrySafe: false, next: "observe", request_id: args.request_id } };
+        }
+        const observed = state.observations.get(args.observationId);
+        if (!observed || observed.revision !== tab.webMcpRevision || observed.url !== tab.view.webContents.getURL()) fail("stale_observation", "Observe the current page before acting.");
+        const keys = new Map();
+        for (const [index, action] of actions.entries()) {
+          if (!action || typeof action !== "object" || !ACTION_TYPES.includes(action.type)) fail("invalid_action", "Use click, fill, select, set_checked, key, scroll, reveal or attach.");
+          if (action.ref !== undefined && (typeof action.ref !== "string" || !action.ref || action.ref.length > 64)) fail("invalid_action", "Use a ref from an observation of this page.");
+          if (action.type === "click" && !action.ref) {
+            if (index > 0) fail("invalid_action", "An image-coordinate click can only be the first action. Use refs for later steps.");
+            if (!observed.digest || state.latest !== observed) fail("image_required", "Observe with includeImage before clicking image coordinates.");
+          }
+          if (action.type === "fill" && (typeof action.text !== "string" || action.text.length > 8000 || !action.ref)) fail("invalid_action", "Fill needs an observed editable reference and text of at most 8000 characters.");
+          if (action.type === "attach" && (!action.ref || !Array.isArray(action.files) || action.files.length < 1 || action.files.length > 10
+            || !action.files.every((file) => typeof file === "string" && file.startsWith("/") && file.length <= 4096))) {
+            fail("invalid_action", "Attach needs the observed upload control's ref and one to ten absolute file paths.");
+          }
+          if (action.type === "select" && (!action.ref || !Array.isArray(action.values) || action.values.length > 200 || !action.values.every(value => typeof value === "string" && value.length <= 8000))) fail("invalid_action", "Select needs an observed select reference and an array of option values.");
+          if (action.type === "set_checked" && (!action.ref || typeof action.checked !== "boolean")) fail("invalid_action", "Set_checked needs an observed checkbox, radio or switch reference and checked true or false.");
+          if (action.type === "reveal" && !action.ref) fail("invalid_action", "Reveal needs an observed reference.");
+          if (action.type === "key") keys.set(index, resolveKey(action));
+          if (action.type === "scroll" && (!Number.isFinite(action.deltaY) || Math.abs(action.deltaY) > 1200)) fail("invalid_scroll", "Scroll distance must be between -1200 and 1200.");
+        }
+        // A click or key already sent from this observation is not sent again
+        // from it: the page may have acted on the first one.
+        const signature = (action, index) => ["click", "key"].includes(action.type)
+          ? JSON.stringify([action.type, action.ref ?? null, action.x ?? null, action.y ?? null, keys.get(index)?.chord ?? null]) : null;
+        if (actions.some((action, index) => observed.sent.has(signature(action, index)))) {
+          fail("repeat_requires_observe", "That click or key was already sent from this observation. Observe to confirm the page before repeating it; nothing was dispatched.");
+        }
+        // Files leave this computer only with the person's yes to exactly these paths.
+        const attaching = actions.filter((action) => action.type === "attach").flatMap((action) => action.files);
+        // The person sees every file before any is sent, so a batch never carries more than the card lists.
+        if (attaching.length > MAX_FILES) fail("invalid_action", `Attach at most ${MAX_FILES} files in one call. Nothing was dispatched.`);
+        if (attaching.length) {
+          let host = "this page";
+          try { host = new URL(observed.url).host || host; } catch { /* Keep the generic name. */ }
+          // Nothing about the files is read before the person answers, so a page cannot probe
+          // paths; afterwards each must be exactly the regular file approved, not a link to another.
+          if (!await approveFiles(sessionId, { app: host, files: attaching }, requestSignal)) {
+            fail("files_declined", "The person did not approve giving these files to the page. Nothing was dispatched.");
+          }
+          requestSignal.throwIfAborted();
+          try { await checkFiles(attaching); }
+          catch { fail("file_unavailable", "Attach readable regular files by their real absolute paths, not links. Nothing was dispatched."); }
+        }
+        if (!await allowed(observed.url) || state.observations.get(observed.id) !== observed || observed.revision !== tab.webMcpRevision || observed.url !== tab.view.webContents.getURL()) fail("page_changed", "The page changed or access was blocked while preparing the action. Observe again.");
         requestSignal.throwIfAborted();
-        if (action.type === "click" && !action.ref && imageDigest(await captureObservation(tab.view.webContents, observed.viewport)) !== observed.digest) fail("stale_observation", "The image changed. Observe again before choosing coordinates.");
-        if (action.type === "fill" || action.type === "select" || action.type === "reveal") {
+        if (actions[0].type === "click" && !actions[0].ref && imageDigest(await captureObservation(tab.view.webContents, observed.viewport, (viewport) => capture(tab, viewport))) !== observed.digest) fail("stale_observation", "The image changed. Observe again before choosing coordinates.");
+        if (actions.some((action) => ["fill", "select", "reveal"].includes(action.type))) {
           // DOM-backed form edits must release the same native input lease as
           // keyboard and pointer events on the shared cloud desktop.
           await beforeInput(tab);
           requestSignal.throwIfAborted();
         }
-        checkNavigation(navigationScope);
-        let point;
-        try { point = await isolated(tab.view.webContents, prepareAction, observed.id, action); }
-        catch (error) {
-          const code = ["stale_observation", "stale_element", "sign_in_required", "unverifiable_focus", "element_disabled", "element_outside_viewport", "element_obscured", "not_editable", "not_selectable", "option_unavailable", "not_checkable", "outside_viewport"].find((item) => String(error?.message).includes(item));
-          if (code === "unverifiable_focus") fail(code, "Keyboard input requires a directly focused observed page control. Click the control and observe again.");
-          if (code) fail(code, code === "sign_in_required" ? "Take over and sign in directly in the browser, then resume." : "The observed control is no longer ready. Observe again before choosing an action.");
-          throw error;
+        if (entry) {
+          const stored = receipts.get(sessionId) ?? new Map();
+          receipts.set(sessionId, stored);
+          stored.set(entry.id, entry);
+          for (const old of stored.keys()) { if (stored.size <= 64) break; stored.delete(old); }
         }
-        checkNavigation(navigationScope);
-        if (state.observation !== observed || observed.revision !== tab.webMcpRevision || observed.url !== tab.view.webContents.getURL()) fail("stale_observation", "The page or observation changed while preparing the action. Observe again.");
-        state.observation = null; requestSignal.throwIfAborted();
-        publish(tab.tabId, "running", action.type);
         const contents = tab.view.webContents;
-        dispatched = !point.unchanged;
-        if (action.type === "reveal") await isolated(contents, (id, ref) => {
-          const state = globalThis.__openworkBrowserObservation;
-          const element = state?.id === id ? state.nodes.get(ref) : null;
-          if (!element?.isConnected) throw new Error("stale_element");
-          element.scrollIntoView({ block: "center", inline: "nearest", behavior: "instant" });
-        }, observed.id, action.ref);
-        if (action.type === "fill" || action.type === "select") {
-          const prepared = await isolated(contents, applyFormAction, observed.id, action);
-          if (action.type === "fill" && !prepared.inserted) {
-            if (action.text) await contents.insertText(action.text);
-            else {
-              await contents.sendInputEvent({ type: "keyDown", keyCode: "Backspace" });
-              requestSignal.throwIfAborted();
-              await contents.sendInputEvent({ type: "keyUp", keyCode: "Backspace" });
+        const steps = [];
+        let failure = null, page = null, interrupted = null;
+        // A password or code goes only to the exact site the person confirmed, asked at the step
+        // that clicks, fills or presses a key in its field: focusing it can autofill a saved
+        // password, Enter can submit one, and a click earlier in a batch can focus the field.
+        let confirmedSite = null;
+        // Taking focus gives a page a moment to leave: nothing goes out unless it is still on that site.
+        const leftConfirmedSite = () => confirmedSite !== null && originOf(contents.getURL()) !== confirmedSite;
+        const LEFT_SITE = "The page left the site the person confirmed, so nothing was sent to it.";
+        for (const [index, action] of actions.entries()) {
+          checkNavigation(navigationScope);
+          if (!confirmedSite && observed.url === contents.getURL() && ["click", "fill", "key"].includes(action.type)
+            && await isolated(contents, credentialTarget, observed.id, action)) {
+            const site = new URL(observed.url).origin;
+            const refused = !approveCredential ? ["sign_in_required", "Take over and sign in directly in the browser, then resume."]
+              : !await approveCredential(sessionId, { site }, requestSignal) ? ["credential_declined", "The person did not confirm entering a password or code on this site."] : null;
+            requestSignal.throwIfAborted();
+            if (refused) {
+              if (!batch) fail(refused[0], refused[1]);
+              failure = { index, type: action.type, ...(action.ref ? { ref: action.ref } : {}), code: refused[0], error: refused[1] };
+              break;
             }
+            confirmedSite = site;
           }
-        }
-        if (action.type === "click" || action.type === "scroll" || (action.type === "set_checked" && !point.unchanged)) {
-          // sendInputEvent targets the main widget, not an OOPIF's widget.
-          // Chromium's input router hit-tests these observed CSS pixels.
-          const cdp = contents.debugger;
-          const attached = !cdp.isAttached();
-          if (attached) cdp.attach("1.3");
-          try {
-            if (action.type === "scroll") {
-              await cdp.sendCommand("Input.dispatchMouseEvent", { type: "mouseWheel", x: point.x, y: point.y, deltaX: 0, deltaY: action.deltaY });
-            } else {
-              await cdp.sendCommand("Input.dispatchMouseEvent", { type: "mousePressed", x: point.x, y: point.y, button: "left", clickCount: 1 });
-              requestSignal.throwIfAborted();
-              await cdp.sendCommand("Input.dispatchMouseEvent", { type: "mouseReleased", x: point.x, y: point.y, button: "left", clickCount: 1 });
-            }
-          } finally {
-            if (attached && cdp.isAttached()) cdp.detach();
+          // Runs after the person's answer too, so a redirect while they decide stops here.
+          if (state.observations.get(observed.id) !== observed || observed.revision !== tab.webMcpRevision || observed.url !== contents.getURL()) {
+            if (!steps.length) fail("stale_observation", "The page or observation changed while preparing the action. Observe again.");
+            interrupted = "page_changed";
+            break;
           }
-        }
-        if (action.type === "key") { await contents.sendInputEvent({ type: "keyDown", keyCode: keys[action.key] }); requestSignal.throwIfAborted(); await contents.sendInputEvent({ type: "keyUp", keyCode: keys[action.key] }); }
-        if (["fill", "select", "set_checked"].includes(action.type)) {
-          const result = await isolated(contents, verifyFormAction, observed.id, action);
+          let point;
+          // Attach clicks the observed upload control, which opens the page's file chooser.
+          try { point = await isolated(contents, prepareAction, observed.id, action.type === "attach" ? { type: "click", ref: action.ref } : action); }
+          catch (error) {
+            const code = PREPARE_CODES.find((item) => String(error?.message).includes(item));
+            if (!code) throw error;
+            const message = code === "unverifiable_focus" ? "Keyboard input requires a directly focused observed page control. Pass the control's ref or click it first."
+              : code === "use_attach" ? "Upload controls take files through attach with the control's ref."
+              : "The observed control is no longer ready. Observe again before choosing an action.";
+            if (!batch) fail(code, message);
+            failure = { index, type: action.type, ...(action.ref ? { ref: action.ref } : {}), code, error: message };
+            break;
+          }
+          checkNavigation(navigationScope);
           requestSignal.throwIfAborted();
-          return { ok: result.verified, dispatched, mayHaveChangedState: dispatched, outcome: result.verified ? "verified" : "value_mismatch", retrySafe: false,
-            ...(result.verified ? {} : { code: "value_mismatch", error: "The control did not retain the requested value. Observe its current state before deciding how to continue." }),
-            tabId: tab.tabId, control: result.control, next: "observe" };
+          publish(tab.tabId, "running", action.type);
+          if (!point.unchanged) dispatched = true;
+          const sent = signature(action, index);
+          if (sent) observed.sent.add(sent);
+          const since = Date.now();
+          if (["click", "key", "scroll"].includes(action.type)) await isolated(contents, readSettle, true).catch(() => null);
+          if (action.type === "key" && leftConfirmedSite()) {
+            if (!steps.length) fail("page_changed", LEFT_SITE);
+            interrupted = "page_changed";
+            break;
+          }
+          if (action.type === "fill" || action.type === "select") {
+            const prepared = await isolated(contents, applyFormAction, action);
+            if (action.type === "fill" && !prepared.inserted) {
+              if (leftConfirmedSite()) {
+                if (!steps.length) fail("page_changed", LEFT_SITE);
+                interrupted = "page_changed";
+                break;
+              }
+              if (action.text) await contents.insertText(action.text);
+              else {
+                await contents.sendInputEvent({ type: "keyDown", keyCode: "Backspace" });
+                requestSignal.throwIfAborted();
+                await contents.sendInputEvent({ type: "keyUp", keyCode: "Backspace" });
+              }
+            }
+          }
+          if (action.type === "attach") {
+            const scale = inputScale(tab);
+            const outcome = await attachFiles(contents, { x: point.x * scale, y: point.y * scale }, action.files, requestSignal, fileChooserMs);
+            if (outcome !== "attached") {
+              const error = outcome === "single_file" ? "This control takes one file. Attach one." : "No file chooser opened. Use the page's upload button or file input ref.";
+              if (!batch) fail(outcome, error);
+              failure = { index, type: action.type, ref: action.ref, code: outcome, error };
+              break;
+            }
+            if (!batch) return { ok: true, dispatched: true, outcome: "attached", files: action.files.length, retrySafe: false, tabId: tab.tabId, next: "observe" };
+            steps.push({ i: index, type: action.type, ref: action.ref, outcome: "attached" });
+            continue;
+          }
+          if (action.type === "click" || action.type === "scroll" || (action.type === "set_checked" && !point.unchanged)) {
+            // sendInputEvent targets the main widget, not an OOPIF's widget.
+            // Chromium's input router hit-tests these observed CSS pixels,
+            // converted to view pixels when the page is drawn scaled.
+            const cdp = contents.debugger;
+            const attached = !cdp.isAttached();
+            if (attached) cdp.attach("1.3");
+            try {
+              const scale = inputScale(tab);
+              const x = point.x * scale, y = point.y * scale;
+              if (action.type === "scroll") {
+                await cdp.sendCommand("Input.dispatchMouseEvent", { type: "mouseWheel", x, y, deltaX: 0, deltaY: action.deltaY * scale });
+              } else {
+                await cdp.sendCommand("Input.dispatchMouseEvent", { type: "mousePressed", x, y, button: "left", clickCount: 1 });
+                requestSignal.throwIfAborted();
+                await cdp.sendCommand("Input.dispatchMouseEvent", { type: "mouseReleased", x, y, button: "left", clickCount: 1 });
+              }
+            } finally {
+              if (attached && cdp.isAttached()) cdp.detach();
+            }
+          }
+          if (action.type === "key") {
+            const key = keys.get(index);
+            if (key.edit && typeof contents[key.edit] === "function") contents[key.edit]();
+            else {
+              await contents.sendInputEvent({ type: "keyDown", keyCode: key.keyCode, modifiers: key.modifiers });
+              requestSignal.throwIfAborted();
+              await contents.sendInputEvent({ type: "keyUp", keyCode: key.keyCode, modifiers: key.modifiers });
+            }
+          }
+          if (["fill", "select", "set_checked"].includes(action.type)) {
+            const result = await isolated(contents, verifyFormAction, action);
+            requestSignal.throwIfAborted();
+            if (!batch) {
+              return { ok: result.verified, dispatched, mayHaveChangedState: dispatched, outcome: result.verified ? "verified" : "value_mismatch", retrySafe: false,
+                ...(result.verified ? {} : { code: "value_mismatch", error: "The control did not retain the requested value. Observe its current state before deciding how to continue." }),
+                tabId: tab.tabId, control: result.control, next: "observe" };
+            }
+            if (!result.verified) {
+              failure = { index, type: action.type, ref: action.ref, code: "value_mismatch", error: "The control did not retain the requested value.", control: result.control };
+              break;
+            }
+            steps.push({ i: index, type: action.type, ref: action.ref, outcome: point.unchanged ? "unchanged" : "verified" });
+            continue;
+          }
+          if (action.type === "reveal") {
+            if (!batch) return { ok: true, dispatched: true, outcome: "revealed", retrySafe: false, tabId: tab.tabId, next: "observe" };
+            steps.push({ i: index, type: action.type, ref: action.ref, outcome: "revealed" });
+            continue;
+          }
+          page = await settle(tab, observed, since, requestSignal);
+          if (!batch) return { ok: true, dispatched: true, outcome: page.outcome, ...(page.navigated ? { navigated: true } : {}), retrySafe: false, tabId: tab.tabId, next: "observe" };
+          steps.push({ i: index, type: action.type, ...(action.ref ? { ref: action.ref } : {}), outcome: page.outcome });
+          if (page.navigated) { interrupted = "navigated"; break; }
         }
-        return { ok: true, dispatched: true, outcome: "not_yet_verified", retrySafe: false, tabId: tab.tabId, next: "observe", message: "Observe the page and verify the requested outcome before reporting success." };
+        // The receipt carries the resulting page so the model need not observe again.
+        let observation;
+        try {
+          const { ok: _ok, tabId: _tabId, trust: _trust, ...post } = await observe(tab, false, requestSignal, null, { mode: "interactive" });
+          observation = post;
+        } catch (error) {
+          if (requestSignal.aborted) throw error;
+          observation = { ok: false, code: error instanceof BrowserTaskError ? error.code : "observation_unavailable", error: "The resulting page could not be read. Observe before continuing." };
+        }
+        const completed = steps.length, failed = failure ? 1 : 0, skipped = actions.length - completed - failed;
+        const receipt = { ok: !failure, tabId: tab.tabId, trust: TRUST, completed, failed, skipped,
+          ...(failure ? { code: failure.code, error: failure.error, failedStep: failure } : {}),
+          ...(skipped && interrupted ? { skippedBecause: interrupted } : {}),
+          steps, ...(page ? { page: page.outcome } : {}), dispatched, mayHaveChangedState: dispatched, retrySafe: false,
+          ...(entry ? { request_id: entry.id } : {}), observation,
+          next: failure ? "Read observation, then fix or replan the failed step; completed steps are not repeated." : skipped ? "The page changed; plan the skipped steps from observation." : "Verify the result in observation; act on it directly." };
+        if (entry) entry.receipt = receipt;
+        return receipt;
       };
       const result = await Promise.race([run(), canceled]);
       requestSignal.throwIfAborted();
       if (state.status !== "paused") publish(tab.tabId, result.ok ? "idle" : "needs_attention", result.ok ? null : result.code);
       return result;
     } catch (error) {
-      if (state && state.controller === controller) state.observation = null;
+      // Refs stay usable after a refused action; after input, the page may differ.
+      if (state && state.controller === controller && (dispatched || !(error instanceof BrowserTaskError))) forget(state);
+      if (entry && !dispatched && receipts.get(sessionId)?.get(entry.id) === entry) receipts.get(sessionId)?.delete(entry.id);
       if (tab && state?.status !== "paused" && (!state?.controller || state.controller === controller)) publish(tab.tabId, "needs_attention", error?.code || "Check browser");
       return { ok: false, code: error instanceof BrowserTaskError ? error.code : "browser_operation_failed", error: error instanceof BrowserTaskError ? error.message : "Browser operation could not finish. Observe the page or take over to continue.", dispatched, mayHaveChangedState: dispatched, retrySafe: false, next: dispatched ? "observe_before_retry" : "review", trust: TRUST };
     } finally {

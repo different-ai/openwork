@@ -41,8 +41,7 @@ import { revokeMemberGatewayCredentials } from "./llm/inference-provider-lifecyc
 import { freeInferenceDigest } from "@openwork-ee/utils/free-inference-digest"
 import { MEMBER_FREE_STATUS_PATH } from "@openwork/free-auto"
 import { calculateDesktopPolicyForOrgMember } from "./desktop-policies.js"
-import { freeAutoGrantAllowance, grantUsd } from "@openwork-ee/den-db"
-import { getOrganizationBenefits } from "./organization-benefits.js"
+import { sandboxFreeAutoStopped } from "@openwork-ee/den-db"
 
 type OrgId = typeof OrganizationTable.$inferSelect.id
 type MemberId = typeof MemberTable.$inferSelect.id
@@ -63,7 +62,8 @@ type Database = typeof db | Parameters<Parameters<typeof db.transaction>[0]>[0]
 export async function freeAutoBlockedByDesktopPolicy(input: Pick<FreeMemberInput, "organizationId" | "memberId">): Promise<boolean> {
   const policy = await calculateDesktopPolicyForOrgMember({ organizationId: input.organizationId, orgMemberId: input.memberId })
   if (policy.allowZenModel === false) return true
-  return (await getOrganizationBenefits(input.organizationId)).settings.freeAuto === "disabled"
+  // A closed or expired sandbox organization gets no Free Auto until a platform admin extends it.
+  return sandboxFreeAutoStopped(db, input.organizationId)
 }
 
 export async function getMemberInferenceAccess(input: FreeMemberInput): Promise<InferenceAccess> {
@@ -86,12 +86,7 @@ export async function getMemberInferenceAccess(input: FreeMemberInput): Promise<
     const identity = freeHash("member", input.userId)
     const [bucket] = await db.select({ used_amount: InferenceFreeUsageBucketTable.used_amount }).from(InferenceFreeUsageBucketTable).where(and(
       eq(InferenceFreeUsageBucketTable.identity_hash, identity), eq(InferenceFreeUsageBucketTable.window_start_at, freeInferenceWindow(now).start))).limit(1)
-    const access = freeInferenceAccess({ config: env.inferenceFree, now, bucket })
-    if (access.kind === "unavailable") return { ...access, defaultPinned }
-    const allowance = freeAutoGrantAllowance(await getOrganizationBenefits(input.organizationId))
-    if (allowance.unlimited) return { ...access, kind: "free", reason: null, weeklyLimitUsd: null, remainingUsd: null, defaultPinned }
-    const remainingUsd = (access.remainingUsd ?? 0) + grantUsd(allowance.remainingAmount)
-    return { ...access, ...(remainingUsd > 0 ? { kind: "free", reason: null, remainingUsd } : {}), defaultPinned }
+    return { ...freeInferenceAccess({ config: env.inferenceFree, now, bucket }), defaultPinned }
   } catch (error) {
     return unavailable(error instanceof ManagedModelsPolicyError && error.code === "managed_models_disabled_for_dpa" ? "admin_disabled" : "accounting_unavailable")
   }
@@ -114,9 +109,7 @@ export async function getFreeInferenceProviderSummary(organizationId: OrgId): Pr
     reason = "admin_disabled"
   }
   if (!freeInferenceOrganizationAllowed(organization.metadata)) reason = "admin_disabled"
-  const benefits = await getOrganizationBenefits(organizationId)
-  if (benefits.settings.freeAuto === "disabled") reason = "admin_disabled"
-  const grants = freeAutoGrantAllowance(benefits)
+  if (await sandboxFreeAutoStopped(db, organizationId)) reason = "admin_disabled"
   const summary: FreeInferenceProviderSummary = {
     state: reason ? "disabled" : "available", reason,
     defaultPinned: freeInferenceDefaultPinned(organization.metadata),
@@ -142,7 +135,7 @@ export async function getFreeInferenceProviderSummary(organizationId: OrgId): Pr
     return { ...summary, state: "unavailable", reason: "accounting_unavailable" }
   }
   return { ...summary, allowance: { ...summary.allowance,
-    exhaustedMembers: grants.unlimited || grants.remainingAmount > 0 ? 0 : accesses.filter((access) => access.kind === "exhausted").length,
+    exhaustedMembers: accesses.filter((access) => access.kind === "exhausted").length,
     usedUsd: Number(usage.usedAmount) / INFERENCE_USAGE_CONVERSION_FACTOR,
     requestCount: Number(usage.requestCount),
   } }
@@ -485,9 +478,12 @@ async function memberHasOpenWorkInferenceAccess(input: { organizationId: OrgId; 
 export async function repairMemberInferenceAccessIfNeeded(input: {
   organizationId: OrgId
   memberId: MemberId
-}): Promise<boolean> {
+}, options: { primary?: boolean } = {}): Promise<boolean> {
   if (!await organizationAllowsManagedModels(input.organizationId)) return false
-  const organization = await readOrganizationMetadataColumn(input.organizationId)
+  // Primary when the caller just changed the organization's inference metadata.
+  const organization = options.primary
+    ? (await db.$primary.select({ metadata: OrganizationTable.metadata }).from(OrganizationTable).where(eq(OrganizationTable.id, input.organizationId)).limit(1))[0] ?? null
+    : await readOrganizationMetadataColumn(input.organizationId)
 
   const inference = readInferenceMetadata(organization?.metadata ?? null)
   if (!inference) {
@@ -509,7 +505,8 @@ export async function repairMemberInferenceAccessIfNeeded(input: {
 
 export async function syncInferenceForOrganizationMembers(input: { organizationId: OrgId }) {
   if (!await organizationAllowsManagedModels(input.organizationId)) return
-  const [organization] = await db
+  // Primary: runs right after setInferenceEnabled wrote the metadata.
+  const [organization] = await db.$primary
     .select({ metadata: OrganizationTable.metadata })
     .from(OrganizationTable)
     .where(eq(OrganizationTable.id, input.organizationId))
@@ -527,7 +524,7 @@ export async function syncInferenceForOrganizationMembers(input: { organizationI
     await repairMemberInferenceAccessIfNeeded({
       organizationId: input.organizationId,
       memberId: member.id,
-    })
+    }, { primary: true })
   }
 }
 
@@ -541,7 +538,8 @@ export async function syncInferenceAfterMemberChange(input: {
     await revokeMemberGatewayCredentials(input)
     await deleteOpenWorkProviders({ organizationId: input.organizationId, memberId: input.memberId })
   } else {
-    const [member] = await db.select({ userId: MemberTable.userId }).from(MemberTable)
+    // Primary: called right after the member row was added or bound.
+    const [member] = await db.$primary.select({ userId: MemberTable.userId }).from(MemberTable)
       .where(and(eq(MemberTable.id, input.memberId), eq(MemberTable.organizationId, input.organizationId), isNull(MemberTable.removedAt)))
     // Invitations reserve an unbound member row; issuance happens when the user joins.
     if (!member?.userId) return
@@ -722,7 +720,8 @@ async function deleteOpenRouterOrgApiKey(externalKeyHash: string) {
 }
 
 async function revokeOrgUpstreamProviderKeys(organizationId: OrgId) {
-  const rows = await db
+  // Primary: a key created moments ago must be deleted upstream too.
+  const rows = await db.$primary
     .select({
       id: InferenceOrgUpstreamProviderKeyTable.id,
       externalKeyHash: InferenceOrgUpstreamProviderKeyTable.external_key_hash,
@@ -750,7 +749,8 @@ async function revokeOrgUpstreamProviderKeys(organizationId: OrgId) {
 
 async function ensureOrgUpstreamProviderKey(organizationId: OrgId) {
   await assertOrganizationManagedModelsAllowed(organizationId)
-  const [existing] = await db
+  // Primary: a stale read would create a second upstream key, or skip one just revoked.
+  const [existing] = await db.$primary
     .select({ id: InferenceOrgUpstreamProviderKeyTable.id })
     .from(InferenceOrgUpstreamProviderKeyTable)
     .where(and(
@@ -795,8 +795,8 @@ async function ensureOrgUpstreamProviderKey(organizationId: OrgId) {
   })
 }
 
-async function getActiveUsageBuckets(organizationId: OrgId) {
-  const rows = await db
+async function getActiveUsageBuckets(organizationId: OrgId, database: typeof db | typeof db.$primary = db) {
+  const rows = await database
     .select({
       windowType: InferenceOrgLimitPolicyTable.window_type,
       windowStartAt: InferenceOrgUsageBucketTable.window_start_at,
@@ -822,9 +822,10 @@ async function getActiveUsageBuckets(organizationId: OrgId) {
   }))
 }
 
-export async function getInferenceStatus(organizationId: OrgId) {
+export async function getInferenceStatus(organizationId: OrgId, options: { primary?: boolean } = {}) {
+  const reader = options.primary ? db.$primary : db
   const managedModelsAllowed = await organizationAllowsManagedModels(organizationId)
-  const [organization] = await db
+  const [organization] = await reader
     .select({ metadata: OrganizationTable.metadata })
     .from(OrganizationTable)
     .where(eq(OrganizationTable.id, organizationId))
@@ -840,13 +841,13 @@ export async function getInferenceStatus(organizationId: OrgId) {
         await repairMemberInferenceAccessIfNeeded({
           organizationId,
           memberId: member.id,
-        })
+        }, options)
       }
     } catch {
       // Status should still return even if upstream key provisioning fails.
     }
   }
-  const buckets = inference?.enabled === true ? await getActiveUsageBuckets(organizationId) : []
+  const buckets = inference?.enabled === true ? await getActiveUsageBuckets(organizationId, reader) : []
   return {
     enabled: inference?.enabled === true,
     tier: inference?.tier ?? "tier1",
@@ -877,7 +878,7 @@ export async function setInferenceEnabled(input: { organizationId: OrgId; enable
     })
     await revokeOrgUpstreamProviderKeys(input.organizationId)
     await deleteOpenWorkProviders({ organizationId: input.organizationId })
-    return getInferenceStatus(input.organizationId)
+    return getInferenceStatus(input.organizationId, { primary: true })
   }
 
   await assertOrganizationManagedModelsAllowed(input.organizationId)
@@ -890,5 +891,5 @@ export async function setInferenceEnabled(input: { organizationId: OrgId; enable
     return next
   })
   await syncInferenceForOrganizationMembers({ organizationId: input.organizationId })
-  return getInferenceStatus(input.organizationId)
+  return getInferenceStatus(input.organizationId, { primary: true })
 }

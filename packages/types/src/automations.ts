@@ -23,6 +23,59 @@ export type AutomationRunStatus = z.infer<typeof automationRunStatusSchema>
 export const automationRunTriggerSchema = z.enum(["scheduled", "recovery", "manual"]).meta({ ref: "AutomationRunTrigger" })
 export type AutomationRunTrigger = z.infer<typeof automationRunTriggerSchema>
 
+const daysOfWeekSchema = z.array(z.number().int().min(0).max(6)).min(1).max(7)
+  .transform((days) => [...new Set(days)].sort((left, right) => left - right))
+const EVERY_DAY = [0, 1, 2, 3, 4, 5, 6]
+
+/** Shortest gap between two runs of an interval schedule, in hours. */
+export const AUTOMATION_INTERVAL_MIN_HOURS = 1
+export const AUTOMATION_INTERVAL_MAX_HOURS = 24
+
+/**
+ * Every `everyHours` hours on the hour, counted from `startHour` each listed
+ * day and stopping before `endHour`, in the schedule's own zone. A window of
+ * 9 to 18 every 3 hours runs at 9:00, 12:00 and 15:00. Parsing always fills
+ * the days and the window, so stored schedules carry every field.
+ */
+export const automationIntervalScheduleSchema = z.object({
+  kind: z.literal("interval"),
+  timezone: timezoneSchema,
+  everyHours: z.number().int().min(AUTOMATION_INTERVAL_MIN_HOURS).max(AUTOMATION_INTERVAL_MAX_HOURS),
+  daysOfWeek: daysOfWeekSchema.default(EVERY_DAY),
+  /** First hour of the window, 0–23. Defaults to midnight. */
+  startHour: z.number().int().min(0).max(23).default(0),
+  /** Hour the window closes, 1–24, after `startHour`. Defaults to the end of the day. */
+  endHour: z.number().int().min(1).max(24).default(24),
+}).refine((schedule) => schedule.endHour > schedule.startHour, {
+  message: "endHour must be after startHour",
+  path: ["endHour"],
+}).describe("Every everyHours hours on the hour, counted from startHour on each listed day (0 = Sunday) and stopping before endHour, in timezone. Needs the organization's every-few-hours schedules.")
+
+/** Furthest a calendar trigger may run from its meeting's start or end, in minutes either way. */
+export const AUTOMATION_CALENDAR_OFFSET_MAX_MINUTES = 120
+
+/**
+ * Runs around each meeting on the owner's primary Google Calendar instead of
+ * on a clock: `offsetMinutes` from the meeting's `edge` (negative is before).
+ * Only meetings the owner accepted (or organizes), with someone else invited,
+ * that are timed rather than all-day count; `rule` narrows them further. It
+ * has no clock occurrences, so `nextDueAt` stays null; Den reads the calendar
+ * and claims each meeting once. Cloud placement only.
+ */
+export const automationCalendarScheduleSchema = z.object({
+  kind: z.literal("calendar"),
+  /** The zone meeting times are shown in, to the person and in the run. */
+  timezone: timezoneSchema,
+  edge: z.enum(["start", "end"]),
+  offsetMinutes: z.number().int().min(-AUTOMATION_CALENDAR_OFFSET_MAX_MINUTES).max(AUTOMATION_CALENDAR_OFFSET_MAX_MINUTES),
+  rule: z.object({
+    /** Only meetings with someone whose email domain differs from the owner's. */
+    withExternalAttendees: z.boolean().default(false),
+    /** Only meetings whose title contains this text, ignoring case. */
+    titleIncludes: z.string().trim().min(1).max(120).optional(),
+  }).strict().default({ withExternalAttendees: false }),
+}).describe("Runs offsetMinutes (negative is before) from the start or end of each meeting on the owner's primary Google Calendar: timed meetings they accepted or organize, with someone else invited. Cloud Automations only; needs Google Calendar connected and the organization's before-and-after-meeting Automations.")
+
 export const automationScheduleSchema = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("once"), timezone: timezoneSchema, at: timestampSchema }),
   z.object({
@@ -34,13 +87,62 @@ export const automationScheduleSchema = z.discriminatedUnion("kind", [
   z.object({
     kind: z.literal("weekly"),
     timezone: timezoneSchema,
-    daysOfWeek: z.array(z.number().int().min(0).max(6)).min(1).max(7)
-      .transform((days) => [...new Set(days)].sort((left, right) => left - right)),
+    daysOfWeek: daysOfWeekSchema,
     hour: z.number().int().min(0).max(23),
     minute: z.number().int().min(0).max(59),
   }),
+  automationIntervalScheduleSchema,
+  automationCalendarScheduleSchema,
 ])
+/**
+ * Why a run starts: a clock schedule or, for `calendar`, a moment around each
+ * meeting. One field per revision, so a revision always has exactly one.
+ */
 export type AutomationSchedule = z.infer<typeof automationScheduleSchema>
+export type AutomationScheduleKind = AutomationSchedule["kind"]
+export type AutomationIntervalSchedule = Extract<AutomationSchedule, { kind: "interval" }>
+export type AutomationCalendarSchedule = Extract<AutomationSchedule, { kind: "calendar" }>
+
+export const AUTOMATION_SCHEDULE_KINDS = ["once", "daily", "weekly", "interval", "calendar"] as const satisfies readonly AutomationScheduleKind[]
+
+/**
+ * The schedule kinds released desktops can read. They parse `schedule`
+ * strictly (the Calendar throws on any other kind), so Den leaves Automations
+ * with newer kinds out of what it returns to them.
+ */
+export const AUTOMATION_LEGACY_SCHEDULE_KINDS = ["once", "daily", "weekly"] as const satisfies readonly AutomationScheduleKind[]
+
+/**
+ * A desktop names the schedule kinds it can read on every Automation request,
+ * comma separated. First-party desktops have sent the model-attention header
+ * since August 2026; one that sends it without this header is a released
+ * desktop that reads only the legacy kinds.
+ */
+export const AUTOMATION_SCHEDULE_KINDS_HEADER = "x-openwork-automation-schedule-kinds" as const
+
+function isAutomationScheduleKind(value: string): value is AutomationScheduleKind {
+  return AUTOMATION_SCHEDULE_KINDS.some((kind) => kind === value)
+}
+
+/**
+ * The schedule kinds a caller can read, or null when it reads them all.
+ * Only first-party desktops are ever narrowed: everyone else (Den web, agents,
+ * API clients) is told every kind.
+ */
+export function readableAutomationScheduleKinds(input: {
+  scheduleKindsHeader: string | null | undefined
+  firstPartyDesktop: boolean
+}): ReadonlySet<AutomationScheduleKind> | null {
+  if (input.scheduleKindsHeader === undefined || input.scheduleKindsHeader === null) {
+    return input.firstPartyDesktop ? new Set(AUTOMATION_LEGACY_SCHEDULE_KINDS) : null
+  }
+  const kinds = new Set<AutomationScheduleKind>(AUTOMATION_LEGACY_SCHEDULE_KINDS)
+  for (const value of input.scheduleKindsHeader.split(",")) {
+    const kind = value.trim()
+    if (isAutomationScheduleKind(kind)) kinds.add(kind)
+  }
+  return kinds
+}
 
 /**
  * `variant` is the model's reasoning/thinking level, the same value the
@@ -109,6 +211,21 @@ export const AUTOMATION_CLOUD_DEFAULT_MODEL = {
 
 export function isAutomationCloudDefaultModel(model: { providerId: string; modelId: string }): boolean {
   return model.providerId === AUTOMATION_CLOUD_DEFAULT_MODEL.providerId && model.modelId === AUTOMATION_CLOUD_DEFAULT_MODEL.modelId
+}
+
+/**
+ * Providers Den itself authorizes for an Automation: its own provider records
+ * (`lpr_…`), OpenWork Models, the cloud default and the retired OpenCode Zen.
+ * Every other provider (one connected on the desktop, or an AI Gateway `ipr_…`
+ * provider the desktop syncs for its member) exists only in the runtime that
+ * runs the Automation, so only a Desktop Automation can use it and the desktop
+ * runtime checks it before each run.
+ */
+export function isDenAuthorizedAutomationProvider(providerId: string): boolean {
+  return /^lpr_/i.test(providerId)
+    || providerId === "openwork"
+    || providerId === AUTOMATION_FREE_MODEL.providerId
+    || providerId === AUTOMATION_CLOUD_DEFAULT_MODEL.providerId
 }
 
 export const automationNeedsAttentionReasonSchema = z.object({
@@ -229,6 +346,11 @@ export const REMOTE_SESSION_CONTROL_RUNNER_CAPABILITY = "remote_session_control_
 export const REMOTE_SESSION_ONLY_RUNNER_CAPABILITY = "remote_session_only_v1"
 /** Sticky, same-owner recovery backed by a local effects journal. */
 export const REMOTE_SESSION_RECOVERY_RUNNER_CAPABILITY = "remote_session_recovery_v1"
+/**
+ * The runner reports the question or permission a session waits on and takes
+ * the person's answer to it. Den sends answer requests only to these runners.
+ */
+export const REMOTE_SESSION_ANSWER_RUNNER_CAPABILITY = "remote_session_answer_v1"
 export const AUTOMATION_MODEL_ATTENTION_CAPABILITY_HEADER = "x-openwork-automation-model-attention" as const
 export const automationDesktopRunnerCapabilitySchema = z.enum([
   AUTOMATION_MODEL_ATTENTION_CAPABILITY,
@@ -236,6 +358,7 @@ export const automationDesktopRunnerCapabilitySchema = z.enum([
   REMOTE_SESSION_CONTROL_RUNNER_CAPABILITY,
   REMOTE_SESSION_ONLY_RUNNER_CAPABILITY,
   REMOTE_SESSION_RECOVERY_RUNNER_CAPABILITY,
+  REMOTE_SESSION_ANSWER_RUNNER_CAPABILITY,
 ])
 export const AUTOMATION_DESKTOP_RUNNER_CAPABILITY_LIMIT = 5
 export type AutomationDesktopRunnerCapability = z.infer<typeof automationDesktopRunnerCapabilitySchema>
@@ -298,7 +421,7 @@ export const automationExecutionTargetListSchema = z.object({
 export type AutomationExecutionTargetList = z.infer<typeof automationExecutionTargetListSchema>
 
 export const automationRunnerNotificationSchema = z.object({
-  type: z.enum(["automation_work_available", "automation_cancellation_available"]),
+  type: z.enum(["automation_work_available", "automation_cancellation_available", "remote_session_work_available"]),
   cursor: z.string().trim().min(1).max(40),
 }).strict()
 export type AutomationRunnerNotification = z.infer<typeof automationRunnerNotificationSchema>
@@ -436,6 +559,67 @@ export const REMOTE_SESSION_FINAL_TEXT_MAX_LENGTH = 20_000
 export const remoteSessionStatusSchema = z.enum(["running", "waiting", "idle", "error"])
 export const remoteSessionWaitingForSchema = z.enum(["permission", "question"])
 export const remoteSessionEngineSchema = z.enum(["v1", "v2"])
+/**
+ * What a remote session waits on the person for, as plain text from the
+ * other computer. Never render it as live links or run anything from it.
+ */
+export const REMOTE_SESSION_PENDING_QUESTIONS_MAX = 10
+export const REMOTE_SESSION_PENDING_OPTIONS_MAX = 50
+export const remoteSessionPendingQuestionSchema = z.object({
+  header: z.string().max(240),
+  question: z.string().max(2000),
+  options: z.array(z.object({ label: z.string().min(1).max(240), description: z.string().max(1000) })).max(REMOTE_SESSION_PENDING_OPTIONS_MAX),
+  multiple: z.boolean(),
+  custom: z.boolean(),
+})
+export const remoteSessionPendingSchema = z.discriminatedUnion("kind", [
+  z.object({
+    kind: z.literal("question"),
+    requestId: z.string().trim().min(1).max(240),
+    questions: z.array(remoteSessionPendingQuestionSchema).min(1).max(REMOTE_SESSION_PENDING_QUESTIONS_MAX),
+  }),
+  z.object({
+    kind: z.literal("permission"),
+    requestId: z.string().trim().min(1).max(240),
+    title: z.string().min(1).max(240),
+    detail: z.string().max(2000),
+    command: z.string().min(1).max(2000).optional(),
+  }),
+])
+export type RemoteSessionPending = z.infer<typeof remoteSessionPendingSchema>
+/** The person's answer. A remote surface never approves "always". */
+export const remoteSessionAnswerInputSchema = z.discriminatedUnion("kind", [
+  z.object({
+    kind: z.literal("question"),
+    requestId: z.string().trim().min(1).max(240),
+    answers: z.array(z.array(z.string().trim().min(1).max(2000)).max(REMOTE_SESSION_PENDING_OPTIONS_MAX)).min(1).max(REMOTE_SESSION_PENDING_QUESTIONS_MAX),
+  }),
+  z.object({
+    kind: z.literal("permission"),
+    requestId: z.string().trim().min(1).max(240),
+    decision: z.enum(["once", "reject"]),
+  }),
+])
+export type RemoteSessionAnswerInput = z.infer<typeof remoteSessionAnswerInputSchema>
+/** The status line's short form of a pending request: enough to show it and answer a single choice. */
+export const remoteSessionPendingSummarySchema = z.discriminatedUnion("kind", [
+  z.object({
+    kind: z.literal("question"),
+    requestId: z.string().max(240),
+    question: z.string().max(2000),
+    options: z.array(z.string().max(240)).max(REMOTE_SESSION_PENDING_OPTIONS_MAX),
+    multiple: z.boolean(),
+    custom: z.boolean(),
+    /** How many questions the request asks; only a single one can be answered from a row. */
+    questionCount: z.number().int().min(1).max(REMOTE_SESSION_PENDING_QUESTIONS_MAX),
+  }),
+  z.object({
+    kind: z.literal("permission"),
+    requestId: z.string().max(240),
+    title: z.string().max(240),
+  }),
+])
+export type RemoteSessionPendingSummary = z.infer<typeof remoteSessionPendingSummarySchema>
 export const remoteSessionModelSchema = z.object({
   providerId: idSchema,
   modelId: idSchema,
@@ -445,6 +629,7 @@ export const remoteSessionModelSchema = z.object({
  * Progress the claiming desktop runner reports for a delivered remote-session
  * command's local session, so Den callers can follow it to the final answer.
  */
+export const REMOTE_SESSION_LATEST_STEP_MAX_LENGTH = 240
 export const remoteSessionCommandSessionReportSchema = z.object({
   status: remoteSessionStatusSchema,
   waitingFor: remoteSessionWaitingForSchema.nullable().optional(),
@@ -453,6 +638,9 @@ export const remoteSessionCommandSessionReportSchema = z.object({
   finalText: z.string().max(REMOTE_SESSION_FINAL_TEXT_MAX_LENGTH).optional(),
   error: remoteSessionCommandErrorSchema.nullable().optional(),
   messageCount: z.number().int().min(0).optional(),
+  /** The step the session ran last, as a short sentence ("Ran List the release notes"). */
+  latestStep: z.string().max(REMOTE_SESSION_LATEST_STEP_MAX_LENGTH).nullable().optional(),
+  pending: remoteSessionPendingSchema.nullable().optional(),
   observedAt: timestampSchema,
 })
 export type RemoteSessionCommandSessionReport = z.infer<typeof remoteSessionCommandSessionReportSchema>
@@ -502,9 +690,13 @@ export const remoteSessionThreadStatusSchema = z.object({
   messageCount: z.number().int().min(0).nullable(),
   /** The start of the final answer once the thread is idle; read the session for all of it. */
   preview: z.string().max(REMOTE_SESSION_STATUS_PREVIEW_MAX_LENGTH).nullable(),
+  /** The step the thread ran last, as a short sentence; absent from older Den deployments. */
+  latestStep: z.string().max(REMOTE_SESSION_LATEST_STEP_MAX_LENGTH).nullable().optional(),
   error: remoteSessionCommandErrorSchema.nullable(),
   /** When this state was last confirmed. */
   observedAt: timestampSchema.nullable(),
+  /** While waiting: the question or permission, when the computer reports it. Absent from older servers. */
+  pending: remoteSessionPendingSummarySchema.nullable().optional(),
 })
 export type RemoteSessionThreadStatus = z.infer<typeof remoteSessionThreadStatusSchema>
 export const remoteSessionThreadUnchangedSchema = z.object({
@@ -530,7 +722,9 @@ export const REMOTE_SESSION_REQUEST_RESULT_MAX_BYTES = 256 * 1024
 export const REMOTE_SESSION_TRANSCRIPT_TEXT_MAX_LENGTH = 20_000
 export const REMOTE_SESSION_TOOL_SUMMARY_MAX_LENGTH = 2_000
 export const REMOTE_SESSION_TRANSCRIPT_PAGE_MAX = 100
-export const remoteSessionRequestActionSchema = z.enum(["read", "send", "stop"])
+export const REMOTE_SESSION_TRANSCRIPT_PARTS_MAX = 200
+export const REMOTE_SESSION_REASONING_PART_MAX_LENGTH = 4_000
+export const remoteSessionRequestActionSchema = z.enum(["read", "send", "stop", "answer"])
 export type RemoteSessionRequestAction = z.infer<typeof remoteSessionRequestActionSchema>
 const remoteSessionMessageIdSchema = z.string().regex(/^msg_[a-zA-Z0-9]+$/).max(160)
 export const remoteSessionReadInputSchema = z.object({
@@ -550,6 +744,7 @@ export const remoteSessionRequestInputSchema = z.discriminatedUnion("action", [
   z.object({ action: z.literal("read"), input: remoteSessionReadInputSchema }),
   z.object({ action: z.literal("send"), input: remoteSessionSendInputSchema }),
   z.object({ action: z.literal("stop"), input: remoteSessionStopInputSchema }),
+  z.object({ action: z.literal("answer"), input: remoteSessionAnswerInputSchema }),
 ])
 export type RemoteSessionRequestInput = z.infer<typeof remoteSessionRequestInputSchema>
 const remoteSessionRequestAssignmentBase = {
@@ -566,6 +761,7 @@ export const remoteSessionRequestAssignmentSchema = z.discriminatedUnion("action
   z.object({ ...remoteSessionRequestAssignmentBase, action: z.literal("read"), input: remoteSessionReadInputSchema }),
   z.object({ ...remoteSessionRequestAssignmentBase, action: z.literal("send"), input: remoteSessionSendInputSchema }),
   z.object({ ...remoteSessionRequestAssignmentBase, action: z.literal("stop"), input: remoteSessionStopInputSchema }),
+  z.object({ ...remoteSessionRequestAssignmentBase, action: z.literal("answer"), input: remoteSessionAnswerInputSchema }),
 ])
 export type RemoteSessionRequestAssignment = z.infer<typeof remoteSessionRequestAssignmentSchema>
 export const remoteSessionRequestClaimResponseSchema = z.object({
@@ -581,6 +777,29 @@ export const remoteSessionTranscriptToolCallSchema = z.object({
   error: boundedSummarySchema,
   truncated: z.boolean(),
 })
+/** One step of a message, in the order the harness recorded it. */
+export const remoteSessionTranscriptPartSchema = z.discriminatedUnion("type", [
+  z.object({ type: z.literal("text"), text: z.string().max(REMOTE_SESSION_TRANSCRIPT_TEXT_MAX_LENGTH) }),
+  z.object({
+    type: z.literal("reasoning"),
+    text: z.string().max(REMOTE_SESSION_REASONING_PART_MAX_LENGTH),
+    durationMs: timestampSchema.optional(),
+  }),
+  z.object({
+    type: z.literal("tool"),
+    id: z.string().max(240),
+    name: z.string().max(240),
+    status: z.string().max(60).nullable(),
+    title: z.string().max(240).optional(),
+    input: boundedSummarySchema,
+    output: boundedSummarySchema,
+    error: boundedSummarySchema,
+    truncated: z.boolean(),
+    startedAt: timestampSchema.optional(),
+    endedAt: timestampSchema.optional(),
+  }),
+])
+export type RemoteSessionTranscriptPart = z.infer<typeof remoteSessionTranscriptPartSchema>
 export const remoteSessionTranscriptMessageSchema = z.object({
   id: z.string().max(240),
   role: z.enum(["user", "assistant"]),
@@ -589,6 +808,9 @@ export const remoteSessionTranscriptMessageSchema = z.object({
   truncated: z.boolean(),
   toolCalls: z.array(remoteSessionTranscriptToolCallSchema).max(200),
   error: remoteSessionCommandErrorSchema.nullable(),
+  /** Ordered steps; older runners omit them and readers fall back to text + toolCalls. */
+  parts: z.array(remoteSessionTranscriptPartSchema).max(REMOTE_SESSION_TRANSCRIPT_PARTS_MAX).optional(),
+  completedAt: timestampSchema.nullable().optional(),
 })
 export type RemoteSessionTranscriptMessage = z.infer<typeof remoteSessionTranscriptMessageSchema>
 export const remoteSessionReadResultSchema = z.object({
@@ -603,6 +825,8 @@ export const remoteSessionReadResultSchema = z.object({
   messages: z.array(remoteSessionTranscriptMessageSchema).max(REMOTE_SESSION_TRANSCRIPT_PAGE_MAX),
   /** Pass back as cursor (with the same from) for the next page; null when there is none. */
   nextCursor: z.string().max(160).nullable(),
+  /** The question or permission the session waits on, from runners that can answer it. */
+  pending: remoteSessionPendingSchema.nullable().optional(),
 })
 export type RemoteSessionReadResult = z.infer<typeof remoteSessionReadResultSchema>
 export const remoteSessionSendResultSchema = z.object({
@@ -613,10 +837,16 @@ export const remoteSessionStopResultSchema = z.object({
   stopped: z.boolean(),
   reason: z.enum(["different_turn"]).nullable(),
 })
+export const remoteSessionAnswerResultSchema = z.object({
+  requestId: z.string().max(240),
+  /** An earlier attempt of the same answer already reached the session. */
+  alreadyAnswered: z.boolean(),
+})
 export const remoteSessionRequestResultSchema = z.discriminatedUnion("action", [
   z.object({ action: z.literal("read"), result: remoteSessionReadResultSchema }),
   z.object({ action: z.literal("send"), result: remoteSessionSendResultSchema }),
   z.object({ action: z.literal("stop"), result: remoteSessionStopResultSchema }),
+  z.object({ action: z.literal("answer"), result: remoteSessionAnswerResultSchema }),
 ])
 export type RemoteSessionRequestResult = z.infer<typeof remoteSessionRequestResultSchema>
 export const remoteSessionRequestCompleteRequestSchema = z.discriminatedUnion("status", [
@@ -699,6 +929,29 @@ export const automationRunnerTokenResponseSchema = z.object({
 }).meta({ ref: "AutomationRunnerTokenResponse" })
 export type AutomationRunnerTokenResponse = z.infer<typeof automationRunnerTokenResponseSchema>
 
+/**
+ * The meeting a calendar-triggered run is about, captured when Den claimed
+ * it, for the owner to see. The title is written by whoever sent the invite,
+ * so it is never put in the run's prompt.
+ */
+export const automationMeetingContextSchema = z.object({
+  kind: z.literal("calendar_meeting"),
+  eventId: z.string().trim().min(1).max(1_024),
+  title: z.string().max(300).nullable(),
+  start: timestampSchema,
+  end: timestampSchema,
+  /** Email domains of everyone else invited, without rooms; never full addresses. */
+  attendeeDomains: z.array(z.string().max(253)).max(50),
+  externalAttendees: z.number().int().nonnegative(),
+  /** A Google Meet or Calendar link, or null. */
+  link: z.string().max(2_048).nullable(),
+}).meta({ ref: "AutomationMeetingContext" })
+export type AutomationMeetingContext = z.infer<typeof automationMeetingContextSchema>
+
+export const automationRunTriggerContextSchema = z.discriminatedUnion("kind", [automationMeetingContextSchema])
+  .meta({ ref: "AutomationRunTriggerContext" })
+export type AutomationRunTriggerContext = z.infer<typeof automationRunTriggerContextSchema>
+
 export const automationRunSchema = z.object({
   id: idSchema,
   automationId: idSchema,
@@ -722,6 +975,8 @@ export const automationRunSchema = z.object({
   resultSummary: z.string().max(20_000).nullable(),
   codemodeReceiptId: idSchema.nullable().optional(),
   validatedResult: z.unknown().optional(),
+  /** What started a calendar-triggered run; absent for clock and manual runs. */
+  triggerContext: automationRunTriggerContextSchema.nullable().optional(),
   usage: automationUsageSchema,
   createdAt: timestampSchema,
   updatedAt: timestampSchema,

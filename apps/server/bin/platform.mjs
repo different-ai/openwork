@@ -16,13 +16,13 @@ export function serverBinaryName(platform, arch) {
   return `openwork-server-${target.target}${platform === "win32" ? ".exe" : ""}`;
 }
 
-// node:sqlite (the server's runtime database) is available without a flag
-// from Node 22.13 and 23.4.
-export const MIN_NODE_VERSION = "22.13.0";
+// Security baseline: only patched releases on the supported Node 24 line.
+// New majors must be reviewed explicitly, not accepted by a lower-bound check.
+export const MIN_NODE_VERSION = "24.22.1";
 
 export function nodeVersionSupported(version) {
-  const [major, minor] = version.replace(/^v/, "").split(".").map(Number);
-  if (major === 22) return minor >= 13;
-  if (major === 23) return minor >= 4;
-  return major > 23;
+  const match = /^v?(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/.exec(version);
+  if (!match) return false;
+  const [, major, minor, patch] = match.map(Number);
+  return major === 24 && (minor > 22 || (minor === 22 && patch >= 1));
 }

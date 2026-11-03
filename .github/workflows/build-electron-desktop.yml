@@ -48,7 +48,7 @@ jobs:
       - name: Setup Node
         uses: actions/setup-node@v6
         with:
-          node-version: 24
+          node-version: 24.22.1
 
       - name: Setup Bun
         uses: oven-sh/setup-bun@v2
@@ -80,7 +80,11 @@ jobs:
 
   electron-macos-notarization-smoke:
     name: Electron macOS notarization smoke
-    runs-on: macos-14
+    runs-on: macos-26
+    # Apple signing secrets belong to this environment; no deployment is recorded.
+    environment:
+      name: macos-signing
+      deployment: false
 
     steps:
       - name: Checkout
@@ -94,7 +98,7 @@ jobs:
       - name: Setup Node
         uses: actions/setup-node@v6
         with:
-          node-version: 24
+          node-version: 24.22.1
 
       - name: Setup Bun
         uses: oven-sh/setup-bun@v2

@@ -80,7 +80,7 @@ jobs:
 
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
-          node-version: 24
+          node-version: 24.22.1
 
       # Objects only. The head must still be the commit this run was asked to
       # review; a newer push gets its own run.
@@ -165,7 +165,7 @@ jobs:
           STAGE: ${{ inputs.stage }}
           MERGE_BASE: ${{ steps.fetch.outputs.merge_base }}
           OPENAI_API_KEY: ${{ secrets.WARDEN_CONTRIBUTOR_OPENAI_API_KEY }}
-          IMAGE: node:24-bookworm@sha256:3d27e5c11e5786e309ec3e03f93ae536eb36e6e5eb3714d5eb3300a36157add0
+          IMAGE: node:24.22.1-bookworm@sha256:5630d96570d4ca4a8523fda3d169d0114554d0f48293e1ae3db6be7c79b42a17
         run: |
           if [ -z "$OPENAI_API_KEY" ]; then
             echo "::error::WARDEN_CONTRIBUTOR_OPENAI_API_KEY is not set; the Warden part of this check is incomplete."

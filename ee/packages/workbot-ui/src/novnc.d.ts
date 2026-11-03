@@ -5,6 +5,7 @@ declare module "@novnc/novnc" {
     scaleViewport: boolean
     resizeSession: boolean
     background: string
+    compressionLevel: number
     focusOnClick: boolean
     disconnect(): void
     focus(): void

@@ -2,9 +2,10 @@ import { createHash } from "node:crypto";
 import { mkdir, readFile, readdir, rm, stat, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { z } from "zod";
+import { MCP_APP_RESOURCE_MAX_BYTES } from "./mcp-app-limits.js";
 
 const resourceSchema = z.object({
-  html: z.string().max(768 * 1024),
+  html: z.string().max(MCP_APP_RESOURCE_MAX_BYTES).refine(value => Buffer.byteLength(value) <= MCP_APP_RESOURCE_MAX_BYTES),
   csp: z.object({ connectDomains: z.array(z.string()), resourceDomains: z.array(z.string()),
     frameDomains: z.array(z.string()), baseUriDomains: z.array(z.string()) }),
   prefersBorder: z.boolean(),

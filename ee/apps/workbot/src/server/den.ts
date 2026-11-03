@@ -1,6 +1,10 @@
 import { createHash } from "node:crypto"
 import { z } from "zod"
+import { Client } from "@modelcontextprotocol/sdk/client/index.js"
+import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js"
+import { skillCreatedPayloadSchema } from "@openwork/types/skill-created-app"
 import { headlessModelAccessSchema } from "@openwork-ee/headless-protocol"
+import { workbotAccessFailureSchema, type WorkbotAccessReason } from "@openwork/types/den/workbot-settings"
 import type { Tokens } from "./sealed.js"
 
 /**
@@ -28,6 +32,10 @@ export const denSessionSchema = z.object({
   enabled: z.boolean(),
   canSchedule: z.boolean(),
   computer: z.boolean().default(false),
+  browser: z.boolean().default(false),
+  browserDemonstrations: z.boolean().default(false),
+  /** Workbot's computers run through the runner's sandbox gateway. Older Dens omit it: the runner's own provider. */
+  sandboxGateway: z.boolean().default(false),
   /** Workbot's Calendar tab is on (while Workbot is on). Older Dens omit it: off. */
   calendar: z.boolean().optional(),
   documents: z.boolean().default(false),
@@ -35,8 +43,12 @@ export const denSessionSchema = z.object({
   nativeDictation: z.boolean().default(false),
   workspaceAssistant: z.boolean().default(false),
   guidedNavigation: z.boolean().default(false),
+  usageRecovery: z.boolean().default(false),
+  /** The Get set up checklist. A Den from before it doesn't say: off. */
+  activationChecklist: z.boolean().default(true),
   /** Side chats are on for this person. A Den from before side chats doesn't say: off. */
   sideChats: z.boolean().default(false),
+  /** The Cmd+K / Ctrl+K command palette. A Den from before it doesn't say: off. */
   /** The organization's default model for Workbot's turns. Null, or a Den from before it, means the runner's default. */
   model: z.string().nullable().default(null),
   verifyModel: z.boolean().default(false),
@@ -64,6 +76,36 @@ export class DenSignedOutError extends Error {
   constructor() {
     super("signed_out")
     this.name = "DenSignedOutError"
+  }
+}
+
+/** Den's token endpoint asked Workbot to wait this many seconds before asking again. */
+export class DenRateLimitedError extends Error {
+  constructor(readonly retryAfter: number) {
+    super("den_token_rate_limited")
+    this.name = "DenRateLimitedError"
+  }
+}
+
+/** Bounds Den's Retry-After: a missing or unreadable value waits a little, a huge one never strands a sign-in for long. */
+const DEFAULT_TOKEN_RETRY_AFTER_S = 30
+const MAX_TOKEN_RETRY_AFTER_S = 300
+
+export function tokenRetryAfterSeconds(header: string | null) {
+  const value = header?.trim() ?? ""
+  if (!/^\d{1,9}$/.test(value)) return DEFAULT_TOKEN_RETRY_AFTER_S
+  return Math.min(Math.max(Number(value), 1), MAX_TOKEN_RETRY_AFTER_S)
+}
+
+/** Only this allowlisted refusal survives a failed credential mint. Never retain Den's raw payload. */
+export class WorkbotTurnAccessError extends Error {
+  constructor(readonly reason: WorkbotAccessReason, readonly status: 403 | 429 | 503, readonly retryAfter?: number) {
+    super(`workbot_turn_access_denied:${reason}`)
+    this.name = "WorkbotTurnAccessError"
+  }
+  response(): Response {
+    return Response.json({ error: "workbot_turn_access_denied", reason: this.reason, ...(this.retryAfter ? { retryAfter: this.retryAfter } : {}) },
+      { status: this.status, headers: { "Cache-Control": "no-store", ...(this.retryAfter ? { "Retry-After": String(this.retryAfter) } : {}) } })
   }
 }
 
@@ -121,6 +163,7 @@ export function createDen(options: { apiUrl: string; publicUrl: string; serviceT
     })
     const payload: unknown = await response.json().catch(() => null)
     if (response.status === 400 || response.status === 401) throw new DenSignedOutError()
+    if (response.status === 429) throw new DenRateLimitedError(tokenRetryAfterSeconds(response.headers.get("retry-after")))
     const tokens = tokenSchema.safeParse(payload)
     if (!response.ok || !tokens.success) throw new Error(`den_token_${response.status}`)
     return {
@@ -144,6 +187,10 @@ export function createDen(options: { apiUrl: string; publicUrl: string; serviceT
 
   return {
     discover,
+    modelRecovery: (accessToken: string) => authorized("GET", "/v1/workbot/model-recovery", accessToken),
+    /** The member's Get set up checklist; Den computes every step and enforces the feature. */
+    activation: (accessToken: string) => authorized("GET", "/v1/workbot/activation", accessToken),
+    activationEvent: (accessToken: string, body: unknown) => authorized("POST", "/v1/workbot/activation/events", accessToken, body),
     /** Where to send the browser to sign in; Den returns it to /auth/callback with a code. */
     async authorizeUrl(input: { state: string; verifier: string; chooseWorkspace?: boolean }) {
       const { authorizationEndpoint, resource } = await discover()
@@ -191,6 +238,19 @@ export function createDen(options: { apiUrl: string; publicUrl: string; serviceT
         signal: AbortSignal.timeout(TIMEOUT_MS),
       }).catch(() => undefined)
     },
+    /** The normal private Cloud-skill path: Den owns permissions, audit, and persistence. */
+    async saveBrowserSkill(accessToken: string, pluginName: string, skillMarkdown: string) {
+      const client = new Client({ name: "openwork-workbot", version: "1" })
+      const transport = new StreamableHTTPClientTransport(new URL(`${options.apiUrl}/mcp/agent`), {
+        requestInit: { headers: { authorization: `Bearer ${accessToken}` } },
+      })
+      try {
+        await client.connect(transport, { timeout: TIMEOUT_MS })
+        const result = await client.callTool({ name: "create_skill", arguments: { pluginName, skillMarkdown } }, undefined, { timeout: TIMEOUT_MS })
+        if (result.isError) throw new Error("The skill could not be saved. Check your skill-creation permission or choose a different name.")
+        return skillCreatedPayloadSchema.parse(result.structuredContent)
+      } finally { await client.close() }
+    },
     async session(accessToken: string): Promise<DenSession> {
       const { status, payload } = await authorized("GET", "/v1/workbot/session", accessToken)
       const parsed = denSessionSchema.safeParse(payload)
@@ -215,7 +275,15 @@ export function createDen(options: { apiUrl: string; publicUrl: string; serviceT
       const { status, payload } = await authorized("POST", "/v1/workbot/run-token", accessToken, body)
       const parsed = runTokenSchema.safeParse(payload)
       // Never include the response body or validation issues: they may contain model credentials.
-      if (status !== 200 || !parsed.success) throw new Error(`den_run_token_${status}`)
+      if (status !== 200) {
+        const refusal = workbotAccessFailureSchema.safeParse(payload)
+        if (refusal.success) throw new WorkbotTurnAccessError(refusal.data.reason, status === 429 ? 429 : status === 403 ? 403 : 503, refusal.data.retryAfter)
+        // Compatibility with older Dens is deliberately generic, never an upgrade signal.
+        const rateLimited = status === 429
+        const missingScope = status === 403 && typeof payload === "object" && payload !== null && "error" in payload && payload.error === "insufficient_scope"
+        throw new WorkbotTurnAccessError(rateLimited ? "rate_limited" : missingScope ? "oauth_scope_missing" : "model_access_unavailable", status === 429 ? 429 : status === 403 ? 403 : 503)
+      }
+      if (!parsed.success) throw new Error("den_run_token_200")
       return parsed.data
     },
     /** The Gmail, Slack and Microsoft 365 connections the person's admins set up, and whether each is ready for them. */

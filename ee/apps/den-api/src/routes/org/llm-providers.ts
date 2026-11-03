@@ -1201,8 +1201,9 @@ export function registerOrgLlmProviderRoutes<T extends { Variables: OrgRouteVari
       } catch (error) {
         if (!isDuplicateEntry(error)) throw error
         // A concurrent creator can win between lookup and insert. Retry against
-        // its identity instead of creating a second resource.
-        const [winner] = await db.select().from(LlmProviderTable).where(and(
+        // its identity instead of creating a second resource. Primary: the winner
+        // committed moments ago.
+        const [winner] = await db.$primary.select().from(LlmProviderTable).where(and(
         eq(LlmProviderTable.organizationId, payload.organization.id),
         eq(LlmProviderTable.externalKey, externalKey),
       )).limit(1)
@@ -1803,7 +1804,8 @@ export function registerOrgLlmProviderRoutes<T extends { Variables: OrgRouteVari
       const provider = await getLlmProvider({ organizationId: payload.organization.id, llmProviderId })
       if (!provider) return c.json({ error: "llm_provider_not_found" }, 404)
 
-      const rows = await db
+      // Primary: the next version is computed from this row.
+      const rows = await db.$primary
         .select()
         .from(LlmProviderMemberCredentialTable)
         .where(and(

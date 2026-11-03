@@ -18,5 +18,9 @@
     "scripts/check-electron-bridge.mjs",
     "scripts/electron-build.mjs",
     "scripts/electron-dev.mjs"
+  ],
+  // Shipped code only: tests run (and fail) in the unit tests, not here.
+  "exclude": [
+    "electron/**/*.test.mjs"
   ]
 }

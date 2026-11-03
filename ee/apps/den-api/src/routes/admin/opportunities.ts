@@ -1,6 +1,6 @@
 import { and, asc, desc, eq, gt, gte, isNotNull, isNull, lt, lte, or, sql } from "@openwork-ee/den-db/drizzle"
 import { AuthUserTable, ConfigObjectTable, MemberTable, OrganizationTable, TelemetryEventTable } from "@openwork-ee/den-db/schema"
-import { adminOpportunitiesSchema } from "@openwork/types/den/admin-organization"
+import { adminOpportunitiesSchema, adminOpportunityOverviewSchema } from "@openwork/types/den/admin-organization"
 import type { Hono } from "hono"
 import { describeRoute } from "hono-openapi"
 import { z } from "zod"
@@ -9,21 +9,13 @@ import { adminRoute, queryValidator } from "../../middleware/index.js"
 import { denTypeIdSchema, forbiddenSchema, invalidRequestSchema, jsonResponse, unauthorizedSchema } from "../../openapi.js"
 import type { AuthContextVariables } from "../../session.js"
 import { ADMIN_MAX_PAGE_OFFSET, normalizeAdminPageRequest, sanitizeAdminSearchForLike } from "./scale-performance.js"
+import { registerAdminOpportunityAccountRoutes } from "./opportunity-accounts.js"
+import { readAdminOpportunityOverview } from "./opportunity-overview.js"
+import { registerAdminSignupCompaniesRoute } from "./opportunity-companies.js"
+import { DEFAULT_SIGNALS, companyDomainSql, contactedSql, readOrganizationSignals } from "./opportunity-signals.js"
 
-// A transparent heuristic, not an employer directory. A verified address on an
-// unlisted domain is a signal only; never merge organizations by email domain.
-const PERSONAL_EMAIL_DOMAINS = [
-  "gmail.com", "googlemail.com", "yahoo.com", "yahoo.co.uk", "yahoo.fr", "yahoo.de", "yahoo.co.jp", "ymail.com", "rocketmail.com",
-  "outlook.com", "hotmail.com", "hotmail.co.uk", "hotmail.fr", "live.com", "live.co.uk", "live.fr", "msn.com",
-  "icloud.com", "me.com", "mac.com", "aol.com", "aim.com", "proton.me", "protonmail.com", "pm.me",
-  "tuta.com", "tuta.io", "tutanota.com", "tutanota.de", "fastmail.com", "fastmail.fm", "hey.com",
-  "mail.com", "email.com", "gmx.com", "gmx.net", "gmx.de", "web.de", "yandex.com", "yandex.ru", "ya.ru",
-  "mail.ru", "inbox.ru", "bk.ru", "list.ru", "qq.com", "foxmail.com", "163.com", "126.com",
-  "naver.com", "daum.net", "hanmail.net", "zoho.com", "rediffmail.com", "yopmail.com", "mailinator.com",
-]
-
-function opportunityScope(input: { days: string; minMembers: string; companyEmail: string; setup: string; sort: string; search?: string }) {
-  return JSON.stringify([input.days, input.minMembers, input.companyEmail, input.setup, input.sort, input.search?.trim().toLowerCase() ?? ""])
+function opportunityScope(input: { days: string; minMembers: string; companyEmail: string; setup: string; outreach: string; sort: string; search?: string }) {
+  return JSON.stringify([input.days, input.minMembers, input.companyEmail, input.setup, input.outreach, input.sort, input.search?.trim().toLowerCase() ?? ""])
 }
 
 const cursorPayloadSchema = z.object({
@@ -44,6 +36,7 @@ const querySchema = z.object({
   minMembers: z.enum(["1", "2", "5", "10"]).default("2"),
   companyEmail: z.enum(["0", "1"]).default("0"),
   setup: z.enum(["any", "skills", "mcp", "both"]).default("any"),
+  outreach: z.enum(["any", "not_contacted", "contacted"]).default("any").meta({ description: "Whether a platform admin recorded outreach, a reply or a meeting for the organization." }),
   sort: z.enum(["recent", "active", "members"]).default("recent"),
   search: z.string().max(160).optional(),
   limit: z.coerce.number().int().min(1).max(100).default(50).meta({ description: "Maximum organizations per page, from 1 to 100. Defaults to 50." }),
@@ -56,11 +49,7 @@ const querySchema = z.object({
 export async function readAdminOpportunities(input: z.infer<typeof querySchema>, now = new Date()) {
   const request = normalizeAdminPageRequest({ ...input, limit: String(input.limit) })
   const from = new Date(now.getTime() - Number(input.days) * 86_400_000)
-  const domain = sql<string>`lower(trim(substring_index(${AuthUserTable.email}, '@', -1)))`
-  const personalDomains = sql.join(PERSONAL_EMAIL_DOMAINS.map((value) => sql`${value}`), sql`, `)
-  const companyDomain = sql<string | null>`case when ${AuthUserTable.emailVerified} = true
-    and ${AuthUserTable.email} regexp '^[^@[:space:]]+@[^@[:space:]]+[.][^@[:space:]]+$'
-    and ${domain} not in (${personalDomains}) then ${domain} else null end`
+  const companyDomain = companyDomainSql()
   // Look up each current person's activity through telemetry_event_member_ts.
   // Sign-in timestamps and activity in another organization are not app usage
   // here. Missing/disabled telemetry stays unobserved, never guessed from login.
@@ -99,6 +88,7 @@ export async function readAdminOpportunities(input: z.infer<typeof querySchema>,
     input.companyEmail === "1" ? gte(teams.companyEmailMembers, 1) : undefined,
     input.setup === "skills" || input.setup === "both" ? sql`${skills} > 0` : undefined,
     input.setup === "mcp" || input.setup === "both" ? sql`${mcpConnections} > 0` : undefined,
+    input.outreach === "any" ? undefined : input.outreach === "contacted" ? contactedSql(OrganizationTable.id) : sql`not ${contactedSql(OrganizationTable.id)}`,
     request.search ? sql`(lower(${OrganizationTable.name}) like ${pattern} escape '|'
       or lower(${OrganizationTable.slug}) like ${pattern} escape '|' or ${teams.domainSearch} = 1)` : undefined,
   )
@@ -128,10 +118,11 @@ export async function readAdminOpportunities(input: z.infer<typeof querySchema>,
     value: Number(input.sort === "members" ? last.members : input.sort === "active" ? last.activeMembers : last.lastActiveMs),
     at: Number(last.lastActiveMs), id: last.id, scope: opportunityScope(input),
   }), "utf8").toString("base64url") : null
+  const signals = await readOrganizationSignals(visible.map(row => row.id), now)
   return {
     from: from.toISOString(), to: now.toISOString(), generatedAt: now.toISOString(),
     nextCursor,
-    organizations: visible.map(({ lastActiveMs, ...row }) => ({ ...row, members: Number(row.members), activeMembers: Number(row.activeMembers),
+    organizations: visible.map(({ lastActiveMs, ...row }) => ({ ...row, ...(signals.get(row.id) ?? DEFAULT_SIGNALS), members: Number(row.members), activeMembers: Number(row.activeMembers),
       companyEmailMembers: Number(row.companyEmailMembers), companyDomainCount: Number(row.companyDomainCount),
       skills: Number(row.skills), mcpConnections: Number(row.mcpConnections), lastActiveAt: new Date(Number(lastActiveMs)).toISOString(),
     })),
@@ -140,10 +131,21 @@ export async function readAdminOpportunities(input: z.infer<typeof querySchema>,
 }
 
 export function registerAdminOpportunitiesRoute<T extends { Variables: AuthContextVariables }>(app: Hono<T>) {
+  app.get("/v1/admin/opportunities/overview", describeRoute({
+    tags: ["Admin"], summary: "Get this week's actionable platform activity",
+    description: "Platform-admin-only Monday-to-now UTC summary compared with the same elapsed period last week. Counts registered accounts, current joined human memberships and organization-scoped observed telemetry. Returns daily signup and membership counts, at most eight records per signal list, and a prioritized queue built from transparent, dated signals and recorded internal follow-ups. Missing telemetry does not establish inactivity or service health. No emails, content, credentials or external enrichment.",
+    responses: { 200: jsonResponse("Weekly opportunity overview returned.", adminOpportunityOverviewSchema),
+      401: jsonResponse("Authentication required.", unauthorizedSchema), 403: jsonResponse("Platform admin access required.", forbiddenSchema) },
+  }), adminRoute(), async c => {
+    c.header("Cache-Control", "no-store")
+    return c.json(await readAdminOpportunityOverview())
+  })
+  registerAdminOpportunityAccountRoutes(app)
+  registerAdminSignupCompaniesRoute(app)
   // Internal platform-admin reporting, not an organization product entitlement.
   app.get("/v1/admin/opportunities", describeRoute({
     tags: ["Admin"], summary: "Find organizations with observed app adoption",
-    description: "Platform-admin-only, server-paginated organization signals. Defaults to two joined human users and observed organization-scoped telemetry in the last 30 days, most recent first. Company-email signals use verified addresses excluding known personal providers; they do not establish employment. Cloud setup counts active, non-deleted skill and MCP metadata. Missing telemetry does not imply inactivity. No content, credentials, billing lookups or external enrichment.",
+    description: "Platform-admin-only, server-paginated organization signals. Defaults to two joined human users and observed organization-scoped telemetry in the last 30 days, most recent first. Company-email signals use verified addresses excluding known personal providers; they do not establish employment. Cloud setup counts active, non-deleted skill and MCP metadata. Billing is the stored plan tier and recorded subscription status; outreach is what platform admins recorded. Missing telemetry does not imply inactivity. No content, credentials, Stripe calls or external enrichment.",
     responses: { 200: jsonResponse("Organization opportunities returned.", adminOpportunitiesSchema),
       400: jsonResponse("Invalid report filters.", invalidRequestSchema),
       401: jsonResponse("Authentication required.", unauthorizedSchema), 403: jsonResponse("Platform admin access required.", forbiddenSchema) },

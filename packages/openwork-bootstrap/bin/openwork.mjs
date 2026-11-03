@@ -7,6 +7,16 @@ import { dirname, join, resolve } from "node:path"
 import { fileURLToPath } from "node:url"
 
 const VERSION = "0.1.0"
+const MIN_NODE_VERSION = "24.22.1"
+
+// Keep this file dependency-free: install.sh downloads it as a single file.
+// Accept patched Node 24 releases only; future majors need an explicit review.
+function nodeVersionSupported(version) {
+  const match = /^v?(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/.exec(version)
+  if (!match) return false
+  const [, major, minor, patch] = match.map(Number)
+  return major === 24 && (minor > 22 || (minor === 22 && patch >= 1))
+}
 // The installed command name. Keep it explicit so setup guides can distinguish
 // bootstrap actions from other OpenWork commands a user may already have.
 const COMMAND_NAME = "openwork-bootstrap"
@@ -752,7 +762,7 @@ async function runDoctor(args) {
   const json = hasFlag(args.flags, "json")
   const checks = []
 
-  checks.push({ name: "node", ok: Number(process.versions.node.split(".")[0]) >= 20, value: process.versions.node })
+  checks.push({ name: "node", ok: nodeVersionSupported(process.versions.node), value: process.versions.node })
   checks.push({ name: "installDir", ok: existsSync(installDir), value: installDir })
   checks.push({ name: "binDir", ok: existsSync(binDir), value: binDir })
 
@@ -1771,6 +1781,9 @@ async function runCloud(args) {
 }
 
 async function main() {
+  if (!nodeVersionSupported(process.versions.node)) {
+    throw new Error(`openwork-bootstrap needs Node.js 24.x, version ${MIN_NODE_VERSION} or newer within that major (found ${process.versions.node}). Install a supported Node.js 24 release or re-run https://openworklabs.com/install.sh.`)
+  }
   const args = parseArgs(process.argv.slice(2))
   if (hasFlag(args.flags, "help") || args.positionals[0] === "help") {
     printHelp()

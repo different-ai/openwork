@@ -109,6 +109,27 @@ function singleOrgDenReleaseTag() {
   return DESKTOP_RELEASE_TAG_PATTERN.test(releaseTag) ? releaseTag : null
 }
 
+// The same rule applies to updates: a self-hosted Den advertises its own
+// release as the newest supported desktop, so `/v1/app-version` never lets a
+// desktop update past the control plane it talks to. Hosted multi-org and
+// dev/commit builds keep the full published inventory.
+function capToSingleOrgDenRelease(metadata: DesktopReleaseMetadata): DesktopReleaseMetadata {
+  const denReleaseTag = singleOrgDenReleaseTag()
+  if (!denReleaseTag) {
+    return metadata
+  }
+
+  const denVersion = denReleaseTag.slice(1)
+  const publishedDesktopVersions = metadata.publishedDesktopVersions.filter(
+    (version) => compareStableVersions(version, denVersion) <= 0,
+  )
+  return {
+    ...metadata,
+    latestAppVersion: publishedDesktopVersions[0] ?? denVersion,
+    publishedDesktopVersions: publishedDesktopVersions.length ? publishedDesktopVersions : [denVersion],
+  }
+}
+
 export function createDesktopReleaseSource() {
   let lastSuccessfulMetadata: DesktopReleaseMetadata | null = null
   let refreshAfter = 0
@@ -143,6 +164,10 @@ export function createDesktopReleaseSource() {
   }
 
   async function getDesktopReleaseMetadata(): Promise<DesktopReleaseMetadata> {
+    return capToSingleOrgDenRelease(await getPublishedDesktopReleaseMetadata())
+  }
+
+  async function getPublishedDesktopReleaseMetadata(): Promise<DesktopReleaseMetadata> {
     if (env.desktopReleasesMode === "static") {
       return staticReleaseMetadata()
     }

@@ -5,10 +5,11 @@ import { join } from "node:path";
 import { createComputerControl } from "./computer-control.mjs";
 import { createRemoteComputerAdapter } from "./computer-remote.mjs";
 import { createX11Driver } from "./computer-x11-driver.mjs";
-import { BROWSER_EGRESS_CHECK, createCloudBrowser } from "./chromium.mjs";
+import { browserEgressStatus, createCloudBrowser } from "./chromium.mjs";
 
 const execute = promisify(execFile);
 const failure = (code, error) => Object.assign(new Error(error), { code });
+const quote = value => `'${String(value).replaceAll("'", "'\\''")}'`;
 
 /** One member-owned VM, one input lease, and the existing browser and computer contracts. */
 export async function createCloudComputer({ directory, display = ":99", enabled, machine, browserEndpoint, applications, onActivity = () => {}, privateBrowsing = false }) {
@@ -22,6 +23,7 @@ export async function createCloudComputer({ directory, display = ":99", enabled,
   let verified = false;
   let authoritySuspended = false;
   let framePending = null;
+  let runningScript = null;
   const localMachine = machine ?? {
     async run(command, timeout) {
       try {
@@ -49,8 +51,12 @@ export async function createCloudComputer({ directory, display = ":99", enabled,
   const browser = createCloudBrowser({ statePath: join(directory, "browser-tabs.json"), endpoint: browserEndpoint, privateBrowsing,
     enabled: () => !closed && !paused, assertActive,
     verifyEgress: async () => {
-      const result = await localMachine.run(BROWSER_EGRESS_CHECK, 5000);
-      if (result.exitCode !== 0) throw failure("egress_unavailable", "The cloud browser's private-network filter is unavailable. Reconnect the computer.");
+      const result = await browserEgressStatus(async (command, args) => {
+        const result = await localMachine.run([command, ...args].map(quote).join(" "), 5000);
+        if (result.exitCode !== 0) throw new Error("Kernel policy query failed");
+        return result.stdout;
+      });
+      if (!result.ok) throw failure("egress_unavailable", "The cloud browser's private-network filter is unavailable. Reconnect the computer.");
     },
     // Browser input invalidates every native observation. Ending the native
     // lease leaves the browser alive; the next computer call opens a fresh one.
@@ -116,15 +122,21 @@ export async function createCloudComputer({ directory, display = ":99", enabled,
           return result;
         }
         if (path !== "/computer/task") throw failure("not_found", "Unknown computer operation.");
-        if (applications && ["computer_apps", "computer_launch"].includes(body.name)) {
-          // Application launches use the same input rail as browser/native input.
-          // Releasing the native lease invalidates coordinates from before launch.
-          if (body.name === "computer_launch" && owner) await control.endTurn({ sessionId: owner });
+        if (applications && ["computer_apps", "computer_launch", "computer_app_script"].includes(body.name)) {
+          // Application launches and scripts use the same input rail as browser/native input,
+          // so Stop and takeover cancel them. Both invalidate coordinates from before.
+          if (body.name !== "computer_apps" && owner) await control.endTurn({ sessionId: owner });
           browser.invalidate();
           assertActive();
-          const result = body.name === "computer_apps" ? await applications.list() : await applications.launch(body.args, current.signal);
+          const script = body.name === "computer_app_script" ? applications.script(body.args, current.signal) : null;
+          if (script) runningScript = script;
+          let result;
+          try { result = body.name === "computer_apps" ? await applications.list()
+            : body.name === "computer_launch" ? await applications.launch(body.args, current.signal)
+            : await script;
+          } finally { if (runningScript === script) runningScript = null; }
           assertActive();
-          return { content: [{ type: "text", text: JSON.stringify(result) }] };
+          return { ...(result?.ok === false ? { isError: true } : {}), content: [{ type: "text", text: JSON.stringify(result) }] };
         }
         browser.invalidate();
         const result = await control.execute(body, { signal: current.signal });
@@ -154,6 +166,7 @@ export async function createCloudComputer({ directory, display = ":99", enabled,
       if (input.action === "takeover" || input.action === "stop") {
         paused = true;
         await halt();
+        await runningScript?.catch(() => {});
         onActivity();
         return { ok: true, paused };
       }
@@ -186,3 +199,5 @@ export async function createCloudComputer({ directory, display = ":99", enabled,
     async close() { closed = true; clearInterval(authorityTimer); await halt(); browser.close(); await control.reset(true); },
   };
 }
+
+export { browserEgressStatus } from "./chromium.mjs";

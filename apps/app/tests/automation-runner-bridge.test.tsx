@@ -47,7 +47,7 @@ test("a stale session-runner 404 cannot disconnect the replacement Automation ru
     status: "signed_in", user: null, verifiedIdentity: null,
     error: null, isSignedIn: true, refresh: async () => {},
   })
-  const deployment = spyOn(availability, "useAutomationDeploymentEnabled").mockReturnValue(false)
+  const deployment = spyOn(availability, "useDesktopAutomationsEnabled").mockReturnValue(false)
   const settings = den.readDenSettings()
   spyOn(den, "readDenSettings").mockReturnValue({ ...settings, authToken: "test-token", activeOrgId: "org_test" })
   const client = den.createDenClient({ baseUrl: "https://den.example.test", token: "test-token" })

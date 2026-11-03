@@ -82,10 +82,6 @@ export type CloudRuntimeOrchestratorConfig = {
     cloudComputerDisplay?: string
     imageDescription: string
     rebuildHint: string
-    /** Resolve afresh for every process start, including wakes and checkpoint restores. */
-    enginePolicy?: (workerId: string) => Promise<{
-      engineV2ForceUpgrade: boolean
-    }>
   }
 }
 
@@ -199,7 +195,6 @@ export function createCloudRuntimeOrchestrator(deps: CloudRuntimeOrchestratorDep
       imageDescription: config.bootstrap.imageDescription,
       rebuildHint: config.bootstrap.rebuildHint,
       ...(config.documentsEditor ? { documentsEditor: config.documentsEditor } : {}),
-      ...await config.bootstrap.enginePolicy?.(input.workerId),
     }
   }
 

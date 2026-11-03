@@ -1,5 +1,11 @@
 import type { UIMessage } from "ai";
-import { AUTO_MODEL_ID } from "@/react-app/domains/models/model-catalog";
+import {
+  AUTO_ROUTER_PROVIDER_ID,
+  AUTO_ROUTER_THINKING_LABELS,
+  AUTO_ROUTER_THINKING_LEVELS,
+  type AutoRouterReplyRoute,
+} from "@openwork/types/den/auto-router";
+import { AUTO_MODEL_ID, SMART_MODEL_FALLBACK_NAME } from "@/react-app/domains/models/model-catalog";
 
 function field(value: unknown, key: string): unknown {
   return value && typeof value === "object" ? Reflect.get(value, key) : undefined;
@@ -36,8 +42,10 @@ export function mergeReplyMetadata(previous: unknown, next: unknown) {
   } };
 }
 
-/** The requested Auto route keeps OpenWork's mark even after routing upstream. */
-export function replyModelProvider(message: UIMessage) {
+/** The requested OpenWork Free model keeps OpenWork's mark even after routing upstream; Smart replies show the routed model's maker. */
+export function replyModelProvider(message: UIMessage, autoRoutes: readonly AutoRouterReplyRoute[] = []) {
+  const route = autoRouteForReply(message, autoRoutes);
+  if (route) return route.provider && !/^(ipr|gwm)_/.test(route.provider) ? route.provider : undefined;
   const model = field(field(message.metadata, "opencode"), "replyModel");
   const requestedProviderID = text(field(model, "requestedProviderID"));
   const requestedModelID = text(field(model, "requestedModelID"));
@@ -49,6 +57,46 @@ export function replyModelProvider(message: UIMessage) {
 }
 
 export type ReplyModelTitleResolver = (model: { providerID: string; modelID: string }) => string | undefined;
+/** A catalog name for an upstream model id the gateway routed a Smart reply to. */
+export type AutoRouteNameResolver = (modelID: string) => string | undefined;
+
+/**
+ * The engine may stamp a reply as created when the step began or when its
+ * first output arrived, a moment after the gateway's response headers.
+ */
+const AUTO_ROUTE_SLACK_MS = 2_000;
+
+/**
+ * The gateway's routing decision for a Smart reply (feature `autoRouter`).
+ * Each Smart step makes one request, so its decision arrives between the
+ * reply's start and its completion; the latest one in that window wins, which
+ * is the one that answered when a request was retried.
+ */
+export function autoRouteForReply(message: UIMessage, routes: readonly AutoRouterReplyRoute[]) {
+  if (message.role !== "assistant" || routes.length === 0) return undefined;
+  const opencode = field(message.metadata, "opencode");
+  const model = field(opencode, "replyModel");
+  const providerID = text(field(model, "requestedProviderID")) ?? text(field(model, "providerID"));
+  if (providerID !== AUTO_ROUTER_PROVIDER_ID) return undefined;
+  const created = field(opencode, "created");
+  const completed = field(opencode, "completed");
+  if (typeof created !== "number") return undefined;
+  return routes.findLast(route => route.at >= created - AUTO_ROUTE_SLACK_MS
+    && (typeof completed !== "number" || route.at <= completed));
+}
+
+function isThinkingLevel(value: string): value is keyof typeof AUTO_ROUTER_THINKING_LABELS {
+  return AUTO_ROUTER_THINKING_LEVELS.some(level => level === value);
+}
+
+/** "Claude Haiku 5.5 · High": the routed model's name and, unless default, its thinking level. */
+export function autoRouteLabel(route: AutoRouterReplyRoute, resolveName?: AutoRouteNameResolver) {
+  const bareID = route.model.split("/").at(-1) ?? route.model;
+  const name = publicLabel(route.name) ?? publicLabel(resolveName?.(route.model)) ?? publicLabel(bareID);
+  if (!name) return null;
+  const thinking = isThinkingLevel(route.thinking) && route.thinking !== "default" ? AUTO_ROUTER_THINKING_LABELS[route.thinking] : undefined;
+  return thinking ? `${name} · ${thinking}` : name;
+}
 
 function publicLabel(value: unknown) {
   const label = text(value);
@@ -56,18 +104,32 @@ function publicLabel(value: unknown) {
 }
 
 /** Prefer verified routing metadata; older engines only report the requested model. */
-export function replyModelLabel(message: UIMessage, resolveTitle?: ReplyModelTitleResolver) {
+export function replyModelLabel(
+  message: UIMessage,
+  resolveTitle?: ReplyModelTitleResolver,
+  autoRoutes: readonly AutoRouterReplyRoute[] = [],
+  resolveAutoRouteName?: AutoRouteNameResolver,
+) {
+  const route = autoRouteForReply(message, autoRoutes);
+  const routed = route ? autoRouteLabel(route, resolveAutoRouteName) : null;
+  if (routed) return routed;
   const model = field(field(message.metadata, "opencode"), "replyModel");
   const modelID = text(field(model, "modelID"));
   if (!modelID) return null;
+  const requestedModelID = text(field(model, "requestedModelID")) ?? modelID;
+  const providerID = text(field(model, "requestedProviderID")) ?? text(field(model, "providerID"));
+  // A Smart Router's replies are named by `autoRoutes` above; without a
+  // recorded decision they keep the router's own name ("Smart: Engineering"),
+  // never its `openwork-smart-…` id.
+  if (providerID === AUTO_ROUTER_PROVIDER_ID) {
+    return publicLabel(resolveTitle?.({ providerID, modelID: requestedModelID })) ?? SMART_MODEL_FALLBACK_NAME;
+  }
   if (field(model, "resolved") === true) {
     if (modelID === AUTO_MODEL_ID) return "GPT-6 Luna";
     const resolvedLabel = publicLabel(field(model, "name")) ?? publicLabel(modelID);
     if (resolvedLabel) return resolvedLabel;
   }
-  const requestedModelID = text(field(model, "requestedModelID")) ?? modelID;
-  const providerID = text(field(model, "requestedProviderID")) ?? text(field(model, "providerID"));
-  // Auto is a route, not the identity of the model that answered.
+  // OpenWork Free routes upstream itself: its id is not the model that answered.
   if (!providerID || requestedModelID === AUTO_MODEL_ID) return null;
   return publicLabel(resolveTitle?.({ providerID, modelID: requestedModelID })) ?? null;
 }

@@ -15,6 +15,7 @@ import { cloudHostingAvailable } from "../../capability-sources/cloud-hosting.js
 import { db } from "../../db.js"
 import { checkEntitlement, getOrganizationEntitlements, parseOrganizationPlan } from "../../entitlements.js"
 import { env } from "../../env.js"
+import { clientFeatures, clientFeaturesSchema } from "../../feature-response.js"
 import { deploymentCapabilities } from "../../gateway-deployment.js"
 import { cachedOrganizationServiceReadiness } from "../../service-readiness-runtime.js"
 import { canManageDeploymentServices } from "../../middleware/admin.js"
@@ -25,7 +26,7 @@ import { denTypeIdSchema, enterprisePlanRequiredSchema, forbiddenSchema, invalid
 import { validateInvitationAcceptVerification } from "../../organization-join-verification.js"
 import { normalizeOrganizationMetadata } from "../../organization-limits.js"
 import { workbotOrigin } from "../../workbot/config.js"
-import { isOpenWorkWebAvailableWithGrants } from "../../openwork-web-availability.js"
+import { isOpenWorkWebAvailableForOrganization } from "../../openwork-web-availability.js"
 import { getOpenWorkWebAccess } from "../../stripe-billing.js"
 import {
   acceptInvitationForUser,
@@ -186,10 +187,10 @@ const organizationContextResponseSchema = z.object({
    * New clients read this; `capabilities` is frozen for published clients.
    * A key missing here means an older server: treat it as off.
    */
-  features: z.record(z.string(), z.boolean()).meta({ description: "Effective on/off for every OpenWork feature in this organization. Treat a missing key as off." }),
+  features: clientFeaturesSchema.meta({ description: "Effective on/off for every OpenWork feature in this organization, plus fixed deprecated client compatibility values. Treat a missing key as off." }),
   canManageDeploymentServices: z.boolean().meta({ description: "Whether this caller may open installation diagnostics: a self-hosted installation administrator (local allowlist), signed in or using an API key they own. Organization ownership and permissions never grant it. False on hosted deployments and when the lookup fails." }),
   deploymentCapabilities: deploymentCapabilitiesSchema,
-  entitlements: z.object({ sso: z.boolean(), desktopPolicies: z.boolean(), orgControls: z.boolean(), analytics: z.boolean(), auditLogs: z.boolean() }),
+  entitlements: z.object({ sso: z.boolean(), desktopPolicies: z.boolean(), orgControls: z.boolean(), analytics: z.boolean(), auditLogs: z.boolean(), scim: z.boolean() }),
 }).passthrough().meta({ ref: "OrganizationContextResponse" })
 
 const userEmailRequiredSchema = z.object({
@@ -274,7 +275,7 @@ function checkSsoResolveMissRateLimit(key: string) {
   return checkRateLimit(key, SSO_RESOLVE_DOMAIN_MISS_RATE_LIMIT_MAX, SSO_RESOLVE_DOMAIN_RATE_LIMIT_WINDOW_MS, Date.now())
 }
 
-async function setRequestActiveOrganization(
+export async function setRequestActiveOrganization(
   c: {
     get: (key: "session") => { id?: string | null } | null
     req: { raw: Request }
@@ -332,7 +333,8 @@ export function registerOrgCoreRoutes<T extends { Variables: OrgRouteVariables }
 
     await setRequestActiveOrganization(c, organizationId)
 
-    const organization = await db
+    // primary: reads back the organization created above.
+    const organization = await db.$primary
       .select()
       .from(OrganizationTable)
       .where(eq(OrganizationTable.id, organizationId))
@@ -734,7 +736,7 @@ export function registerOrgCoreRoutes<T extends { Variables: OrgRouteVariables }
         },
         plan: parseOrganizationPlan(currentOrganization.metadata),
         entitlements: getOrganizationEntitlements(currentOrganization.metadata),
-        features,
+        features: clientFeatures(features),
         // Frozen for published clients; new clients read `features`.
         capabilities: {
           auditLogs: env.auditVisibilityEnabled,
@@ -756,7 +758,7 @@ export function registerOrgCoreRoutes<T extends { Variables: OrgRouteVariables }
           // Effective offer: the deployment switch enables Web generally,
           // while the platform-admin complimentary grant enables only this
           // organization when the deployment switch is off.
-          openworkWeb: await isOpenWorkWebAvailableWithGrants(payload.organization.id, payload.organization.metadata),
+          openworkWeb: isOpenWorkWebAvailableForOrganization(payload.organization.metadata),
           // Workbot is generally available when its app origin is configured (DEN_WORKBOT_URL).
           workbot: workbotOrigin() !== null,
           ...(cloudEnabled ? { cloud: true } : {}),

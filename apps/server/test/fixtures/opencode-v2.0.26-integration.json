@@ -1,0 +1,306 @@
+{
+  "data": [
+    {
+      "id": "amazon-bedrock",
+      "name": "Amazon Bedrock",
+      "methods": [
+        {
+          "type": "key",
+          "label": "Bedrock API key"
+        },
+        {
+          "type": "env",
+          "names": [
+            "AWS_BEARER_TOKEN_BEDROCK"
+          ]
+        },
+        {
+          "id": "aws-profile",
+          "type": "external",
+          "label": "AWS profile (SSO or named profile)",
+          "form": [
+            {
+              "key": "profile",
+              "title": "AWS profile",
+              "description": "No AWS profiles found in ~/.aws/config and ~/.aws/credentials on the server.",
+              "required": true,
+              "type": "string",
+              "minLength": 1,
+              "pattern": "\\S",
+              "placeholder": "Profile name",
+              "options": [],
+              "custom": true
+            }
+          ]
+        }
+      ],
+      "connections": []
+    },
+    {
+      "id": "azure",
+      "name": "Azure",
+      "methods": [
+        {
+          "type": "key",
+          "label": "API key",
+          "form": [
+            {
+              "key": "resourceName",
+              "title": "Enter Azure Resource Name",
+              "required": true,
+              "type": "string",
+              "placeholder": "e.g. my-models"
+            }
+          ]
+        },
+        {
+          "type": "env",
+          "names": [
+            "AZURE_API_KEY",
+            "AZURE_COGNITIVE_SERVICES_API_KEY"
+          ]
+        }
+      ],
+      "connections": []
+    },
+    {
+      "id": "custom-endpoint",
+      "name": "Custom",
+      "methods": [
+        {
+          "type": "key",
+          "label": "Manually enter API Key"
+        }
+      ],
+      "connections": []
+    },
+    {
+      "id": "github-copilot",
+      "name": "GitHub Copilot",
+      "methods": [
+        {
+          "type": "env",
+          "names": [
+            "GITHUB_TOKEN"
+          ]
+        },
+        {
+          "id": "device",
+          "type": "oauth",
+          "label": "Login with GitHub Copilot",
+          "form": [
+            {
+              "key": "deploymentType",
+              "title": "Select GitHub deployment type",
+              "required": true,
+              "type": "string",
+              "options": [
+                {
+                  "value": "github.com",
+                  "label": "GitHub.com",
+                  "description": "Public"
+                },
+                {
+                  "value": "enterprise",
+                  "label": "GitHub Enterprise",
+                  "description": "Data residency or self-hosted"
+                }
+              ]
+            },
+            {
+              "key": "enterpriseUrl",
+              "title": "Enter your GitHub Enterprise URL or domain",
+              "required": true,
+              "when": [
+                {
+                  "key": "deploymentType",
+                  "op": "eq",
+                  "value": "enterprise"
+                }
+              ],
+              "type": "string",
+              "placeholder": "company.ghe.com or https://company.ghe.com"
+            }
+          ]
+        }
+      ],
+      "connections": []
+    },
+    {
+      "id": "google",
+      "name": "Google",
+      "methods": [
+        {
+          "type": "key"
+        },
+        {
+          "type": "env",
+          "names": [
+            "GOOGLE_API_KEY",
+            "GOOGLE_GENERATIVE_AI_API_KEY",
+            "GEMINI_API_KEY"
+          ]
+        }
+      ],
+      "connections": []
+    },
+    {
+      "id": "groq",
+      "name": "Groq",
+      "methods": [
+        {
+          "type": "key"
+        },
+        {
+          "type": "env",
+          "names": [
+            "GROQ_API_KEY"
+          ]
+        }
+      ],
+      "connections": []
+    },
+    {
+      "id": "lmstudio",
+      "name": "LMStudio",
+      "methods": [
+        {
+          "type": "key"
+        },
+        {
+          "type": "env",
+          "names": [
+            "LMSTUDIO_API_KEY"
+          ]
+        }
+      ],
+      "connections": []
+    },
+    {
+      "id": "nvidia",
+      "name": "Nvidia",
+      "methods": [
+        {
+          "type": "key"
+        },
+        {
+          "type": "env",
+          "names": [
+            "NVIDIA_API_KEY"
+          ]
+        }
+      ],
+      "connections": []
+    },
+    {
+      "id": "openai",
+      "name": "OpenAI",
+      "methods": [
+        {
+          "type": "key"
+        },
+        {
+          "type": "env",
+          "names": [
+            "OPENAI_API_KEY"
+          ]
+        },
+        {
+          "id": "chatgpt-token-sharing",
+          "type": "oauth",
+          "label": "Sign in with ChatGPT"
+        },
+        {
+          "id": "chatgpt-browser",
+          "type": "oauth",
+          "label": "Codex browser (legacy)"
+        },
+        {
+          "id": "chatgpt-headless",
+          "type": "oauth",
+          "label": "Codex device code (legacy)"
+        }
+      ],
+      "connections": []
+    },
+    {
+      "id": "opencode",
+      "name": "OpenCode Console",
+      "methods": [
+        {
+          "type": "key",
+          "label": "API key (service account)"
+        },
+        {
+          "type": "env",
+          "names": [
+            "OPENCODE_API_KEY"
+          ]
+        },
+        {
+          "id": "device",
+          "type": "oauth",
+          "label": "OpenCode Console account",
+          "form": [
+            {
+              "key": "server",
+              "hidden": true,
+              "type": "string",
+              "format": "uri",
+              "default": "https://opencode.ai/console"
+            }
+          ]
+        }
+      ],
+      "connections": []
+    },
+    {
+      "id": "opencode-go",
+      "name": "OpenCode Go",
+      "methods": [
+        {
+          "type": "key"
+        },
+        {
+          "type": "env",
+          "names": [
+            "OPENCODE_API_KEY"
+          ]
+        }
+      ],
+      "connections": []
+    },
+    {
+      "id": "openrouter",
+      "name": "OpenRouter",
+      "methods": [
+        {
+          "type": "key"
+        },
+        {
+          "type": "env",
+          "names": [
+            "OPENROUTER_API_KEY"
+          ]
+        }
+      ],
+      "connections": []
+    },
+    {
+      "id": "zai-coding-plan",
+      "name": "Z.AI Coding Plan",
+      "methods": [
+        {
+          "type": "key"
+        },
+        {
+          "type": "env",
+          "names": [
+            "ZHIPU_API_KEY"
+          ]
+        }
+      ],
+      "connections": []
+    }
+  ]
+}

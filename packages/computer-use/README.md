@@ -5,12 +5,22 @@ A small macOS 14+ helper that lets OpenWork see and use the requested app window
 (bundle id `com.differentai.openwork.computer-use`) and launches from its main
 process. It has no model, API key, network listener or clipboard access.
 
+On start the helper relaunches itself once with macOS responsibility
+disclaimed, so System Settings lists **OpenWork Computer Use** for
+Accessibility and Screen Recording. A grant then only needs this short-lived
+helper to restart, never OpenWork. macOS still charges Screen Recording to the
+outermost app around a disclaimed process, so a packaged desktop runs an exact
+copy of the helper from its app data folder, never from inside OpenWork.app.
+The first process stays as a thin parent
+that checks the desktop's signature, shares stdio, forwards signals and exits
+with the helper's status; the relaunched helper stops if that parent goes away.
+
 ## Commands
 
 | Command | Purpose |
 | --- | --- |
-| `ComputerUse mcp-embedded` | What the same-team signed OpenWork desktop launches. MCP over stdio; requested targets open directly; the desktop hosts Take over, Continue and Stop over the private `openwork/ui` channel. |
-| `ComputerUse mcp` | MCP server with native controls, available only to the authenticated same-team desktop host. |
+| `ComputerUse mcp-embedded` | What the signed OpenWork desktop app (`com.differentai.openwork`, same team as the helper) launches. Other code the team signs, such as the bundled sidecars, is not a host. MCP over stdio; requested targets open directly; the desktop hosts Take over, Continue and Stop over the private `openwork/ui` channel. |
+| `ComputerUse mcp` | MCP server with native controls, available only to that same authenticated desktop host. |
 | `ComputerUse --check` | Prints `{ok, accessibility, screenRecording, supported, protocolVersion: "openwork.computer-use/1"}` and exits. |
 | `ComputerUse permissions accessibility\|screenRecording` | Triggers the macOS prompt and opens the matching System Settings pane. |
 | `ComputerUse permissions-guide accessibility\|screenRecording` | Floating permission guide driven by its parent over line-delimited JSON (below). |
@@ -20,9 +30,15 @@ process. It has no model, API key, network listener or clipboard access.
 A session covers one app, one window and one mode. Technical leases and action
 accounting renew silently; idle cleanup and follow-up requests preserve enabled
 access. Neither renewal nor cleanup clears a human takeover. The modes are
-`observe` (read only), `assist` (accessibility press/set value) and `control`
-(also targeted mouse and keyboard input; the selected window must be in front).
-A kernel-held lock allows one session at a time. Grants, element references,
+`control` (the default: accessibility plus targeted mouse and keyboard input),
+`assist` (accessibility press/set value) and `observe` (read only). The agent is
+told to use control to finish the task and to pick a narrower mode only when the
+person asks for one. On a parallel Mac computer, control works in the window
+where it is, without taking the front unless the app or step needs it
+([docs](../../docs/features/computer-use-background/README.md)). This is
+included in `computerUse`, not a separate rollout.
+A kernel-held lock allows one session per window, so chats in different windows
+work at once. Grants, element references,
 screenshots and receipts live in process memory and are discarded on close.
 
 | Tool | Purpose |
@@ -44,6 +60,17 @@ receipt is not proof the task succeeded: observe again to verify. Terminal,
 permission, credential and host apps (`com.differentai.openwork*`,
 `com.differentai.opencoworker*`) can never be targeted. Failures are MCP
 `isError: true` results with machine-readable `code` and `next` fields.
+
+On this Mac an observation carries a screenshot only when it adds something,
+unless `include_image` (or `computer_act`'s `screenshot`) says otherwise.
+Observe and assist sessions, and background delivery, read the elements first
+and add an image when they name fewer than eight controls or leave most of them
+unnamed. A control session in front always gets one. An automatic image that
+matches the last one sent from the same window is not sent again
+(`image.omitted: "unchanged"`, `same_as_observation`); its coordinates still
+apply. Observe and assist images, used only for reading, are 1024 pixels on
+the long side; control keeps 1280 for coordinate accuracy, and `computer_zoom`
+shows detail at full resolution.
 
 Person input in the selected app or a deliberate app switch pauses
 the session and releases held input. Only the person's Continue resumes it;
@@ -76,7 +103,10 @@ buttons offers Take over, Continue and Stop, shows "Your turn" while the person
 has control, and moves to the top of the screen when the window is hidden.
 When the session ends the cursor says it is "all yours" and fades out. Every
 overlay is excluded from screen capture, the frame and cursor ignore the mouse,
-and the pill never activates the helper.
+and the pill never activates the helper. In a background session the frame and
+cursor sit just above the selected window instead of above every window, so a
+window the person brings in front covers them too; the pill stays on top so
+Take over and Stop are always reachable.
 
 The host may pass `OPENWORK_COMPUTER_USE_PRESENCE` as JSON
 `{"name": "…", "color": "#rrggbb"}`. The name falls back to "OpenWork" and the
@@ -110,9 +140,80 @@ node apps/desktop/scripts/prepare-computer-use-helper.mjs --force --outdir apps/
 
 `prepare-computer-use-helper.mjs` builds the release binary and assembles and
 signs the helper app; desktop dev and packaged builds run it automatically.
-Pointer input relies on an availability-checked lookup of the private
-`CGEventSetWindowLocation` symbol; without it, pointer actions fail explicitly
-while accessible controls keep working.
+
+Unit tests cannot show that input reaches real apps. To check a signed build
+on your Mac, run it with computer use on, stop any chat using the computer,
+and run `pnpm --filter @openwork/computer-use prove:mac-apps`. It drives
+Calculator and TextEdit through the desktop's local bridge, broker and helper,
+as the agent does, with a fixed plan and no model. Each scenario checks a real
+outcome (Calculator's display, a file saved on disk) and reports the time of
+every call. `--only calculator-press,textedit-type` picks scenarios; `--json
+<file>` saves the results. Leave the mouse and keyboard alone while it runs.
+Pointer input relies on availability-checked lookups of the private
+`CGEventSetWindowLocation` and `CGEventGetWindowLocation` symbols; without
+them, pointer actions fail explicitly while accessible controls keep working.
+
+## Windows (This PC)
+
+On Windows the desktop offers **This PC** instead of This Mac. Its helper is
+`windows/ComputerUse.cs`, compiled with the .NET Framework compiler that ships
+with Windows into `openwork-computer-use.exe` and signed with the rest of the
+Windows build. It has no model, API key, network listener or clipboard access.
+`computer-windows-driver.mjs` starts it and speaks its line protocol (one JSON
+object per line on stdin/stdout). The shared runtime in `computer-remote.mjs`
+supplies sessions, receipts, Take over, Continue, Stop and watch frames, as for
+Linux VMs. This PC is a local computer: it does not need `remoteComputers`, and
+a Windows chat starts on it.
+
+| Command | Purpose |
+| --- | --- |
+| `openwork-computer-use --check` | Prints `{protocol: "openwork.computer-use.windows/1", ok, reason, supported, session, integrity}` and exits. |
+| `openwork-computer-use serve --host-pid N` | Prints `{"type":"ready",...}`, then answers `windows`, `focus`, `capture`, `input` and `status` in order; `cancel` is answered at once and stops running input. It exits when stdin closes. |
+
+- Targets are app windows only; there is no whole-screen session. A window is
+  identified by its handle, process id and process start time, so a restarted
+  app never matches an old observation.
+- OpenWork's own windows are hidden. Terminals, code editors, password managers,
+  security settings, apps in another Windows session, apps running with higher
+  privileges than OpenWork (as administrator) and capture-protected windows are
+  listed with the reason they can't be used and are never opened. The helper
+  never elevates itself.
+- Screenshots contain only the selected window. If another app's window
+  overlaps it, the window draws itself (`PrintWindow`) instead.
+- Input is `SendInput`. Before each step and between short chunks of text the
+  helper checks that the window is still in front, has not moved or resized,
+  and that Windows is not locked or showing a secure prompt; otherwise it stops
+  and releases held keys and buttons. A click must land on the selected window
+  or its own popup, never on a window covering it.
+- The PC is shared with the person. The agent takes the front only for the
+  moment it acts: it joins the foreground app's input queue for one
+  `SetForegroundWindow` call, the usual way past Windows' foreground lock. 0.4 s
+  after its last focus or input, it gives the front back to the window that had
+  it and puts the pointer back where the person left it. It does neither if the
+  person has clicked, typed or (for the pointer) moved the mouse since.
+- Low-level mouse and keyboard hooks tell the person's own input from the
+  agent's injected events and keep only when it happened, never which key or
+  where. A click or key press of the person's during the agent's moment stops
+  that step (`person_interrupted`). Moving the mouse never stops or delays the
+  agent; if it moves the pointer between the agent placing it and clicking, the
+  pointer goes back to the exact point first. The agent defers at most half a
+  second to a gap in typing or a released button before taking the front, and
+  between steps puts its window back in front at most twice per request.
+- `command` is sent as Ctrl and `option` as Alt. Clipboard, close/quit and
+  app-switch chords (Ctrl+C/X/V, Alt+F4, Ctrl+W, Alt+Tab and similar) are refused
+  before anything is sent.
+- Coordinates are physical pixels (per-monitor DPI aware v2).
+
+Not yet on Windows: accessible controls through UI Automation (so no `assist`
+mode, `press` or `set_value`; the agent acts on screenshot coordinates), the
+on-desktop presence overlay, and app scripting (`computer_script` is not
+offered). If Windows still refuses to bring the window to the front, the call
+fails with nothing sent and the agent observes again.
+
+Build it on Windows with
+`node apps/desktop/scripts/prepare-computer-use-helper.mjs --force`; desktop dev
+and packaged builds run it automatically. A missing compiler is a warning, and
+This PC then reports the helper missing.
 
 ## Experimental access model
 
@@ -125,7 +226,10 @@ Take over remains paused until Continue and interrupted actions are never replay
 System permissions still come from macOS. Editable controls do not expose their
 raw Accessibility values to the model; ordinary visible content remains in the
 screenshot. Protected controls that identify
-themselves through Accessibility are omitted and masked; a custom control
+themselves through Accessibility are masked. A secure text field is listed
+(`secure: true`) so the agent can type a password the person gave it, after
+the person confirms the app in the chat (`credential_approval_required`); its
+value is never read. Other protected content is omitted. A custom control
 that does not identify its sensitive content cannot be recognized reliably.
 Computer use reads the selected app's visible content and is not a general
 credential-redaction boundary.
@@ -162,7 +266,7 @@ Electron. They live in this package; the desktop imports its explicit exports.
 [Managed Daytona computer](../../docs/computer-use/managed-daytona.md) for its
 image, flags, lifecycle and current viewer limits.
 
-In a dedicated VM with the desktop running, Node 22+ can run
+In a dedicated VM with the desktop running, stable Node.js 24.x (24.22.1 or newer within that major) can run
 `scripts/prove-cloud-desktop.mjs`. Request its loopback `/run` endpoint, pause
 and resume the VM through the provider, then request `/after`. This checks a
 browser fill followed by a desktop keyboard save, shared takeover, screenshot
@@ -202,10 +306,39 @@ visual fallbacks. Targets accept `role`, `name`, `text`, `exact` (default true)
 and `nth`; ambiguous targets fail before dispatch. Fields are replaced by
 default; `fill({..., append: true})` appends. `setChecked` verifies the desired
 state and does not toggle an already-correct checkbox. `findText` handles a
-native Find field's focus transition; browser text is searched directly.
-Menu and select helpers need controls exposed by the app's accessibility tree
-or browser DOM. Unsupported custom controls return a diagnostic; inspect an
-image and use `act` rather than guessing.
+native Find field's focus transition, including unnamed find fields that take
+focus after Command-F; browser text is searched directly. Menu and select
+helpers need controls exposed by the app's accessibility tree or browser DOM.
+Menu-bar menus are outside the selected window, so `menu` fails at once with
+`menu_not_in_window` when its first item is not in the window. Unsupported
+custom controls return a diagnostic; inspect an image and use `act` rather
+than guessing. A caught helper error's message starts with its code (for
+example `scope_denied: ...`), so a program can branch on it.
+
+Native observations keep each control's ref across reads of the same window and
+never reuse a ref for another control. After the model's own `computer_act`, the
+returned observation lists only the elements that changed or appeared
+(`elements_listing: "changes"`, with `elements_unchanged` and
+`elements_removed`); programs always get the full list. In a batch, presses,
+`set_value` and menu commands can follow a press while nothing opens over the
+window and their controls read back unchanged.
+
+`computer_act` takes a `pacing` for batches: `fast` (default) checks briefly
+after each press; `wait` lets the app stop changing after every step (at most
+1.5 s); `wait_retry` also re-checks a control that is briefly disabled, moving
+or gone, until `retry_ms` (100–5000, default 1500), and presses it where it is
+now. Nothing waits past a window, dialog, menu or system prompt that opened.
+
+On a Mac, `computer_open` lists the app's enabled menu-bar commands in
+`menus` (`"Format › Font › Bold (command+b)"`), read in one accessibility call
+per item without opening a menu; `computer_observe({ menus: true })` lists
+them again. `{ type: "menu", path: ["Format", "Font", "Bold"] }` runs one
+through accessibility: no menu opens, no keyboard focus is needed and it works
+in assist mode. The agent cursor still visits the menu title and a light copy
+of the path shows the command being picked, without delaying input. The Apple
+and app menus, the Window menu, recent-document lists and any command whose
+shortcut is a blocked chord (Quit, Close, Hide, Minimize, clipboard) are never
+listed or pressed. Commands go to the app's focused window only.
 
 A program defaults to 30 seconds, accepts a timeout up to 60 seconds, and is
 limited to 80 helper calls and 32 KB of returned program data. The desktop

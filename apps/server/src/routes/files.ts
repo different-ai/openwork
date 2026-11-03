@@ -1,7 +1,9 @@
-import { createReadStream } from "node:fs";
+import { createReadStream, createWriteStream } from "node:fs";
 import { readFile, readdir, rename, rm, stat, writeFile } from "node:fs/promises";
+import { homedir } from "node:os";
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
-import { Readable } from "node:stream";
+import { Readable, Transform } from "node:stream";
+import { pipeline } from "node:stream/promises";
 import { recordAudit } from "../audit.js";
 import { ApiError } from "../errors.js";
 import { FileSessionStore } from "../file-sessions.js";
@@ -29,6 +31,10 @@ const FILE_SESSION_CATALOG_DEFAULT_LIMIT = 2000;
 const FILE_SESSION_CATALOG_MAX_LIMIT = 10000;
 const FILE_BROWSER_EXCLUDED_DIRECTORIES = new Set([".git", "node_modules"]);
 const MAX_PATH_COMPONENT_BYTES = 255;
+// formData() holds the whole body in memory, so multipart uploads stay capped.
+// Raw uploads stream to disk and answer only to the inbox limit.
+const INBOX_MULTIPART_MAX_BYTES = 250_000_000;
+const INBOX_MULTIPART_FRAMING_BYTES = 1_000_000;
 const WINDOWS_RESERVED_PATH_COMPONENT = /^(?:con|prn|aux|nul|clock\$|conin\$|conout\$|com[1-9¹²³]|lpt[1-9¹²³])(?:\..*)?$/i;
 
 type JsonResponse = (data: unknown, status?: number) => Response;
@@ -117,6 +123,37 @@ async function parseMultipartFormData(request: Request): Promise<FormData> {
   } catch {
     throw new ApiError(400, "invalid_payload", "Malformed multipart/form-data");
   }
+}
+
+function inboxFileTooLarge(maxBytes: number, size: number) {
+  return new ApiError(413, "file_too_large", "File exceeds upload limit", { maxBytes, size });
+}
+
+/** Streams an upload to `dest`, so its size never has to fit in memory. */
+async function writeUploadToFile(body: ReadableStream<Uint8Array>, dest: string, maxBytes: number, signal: AbortSignal): Promise<number> {
+  let bytes = 0;
+  const limit = new Transform({
+    transform(chunk: Buffer, _encoding, callback) {
+      bytes += chunk.byteLength;
+      callback(bytes > maxBytes ? inboxFileTooLarge(maxBytes, bytes) : null, chunk);
+    },
+  });
+  try {
+    // Read the body directly: Readable.fromWeb drops bytes from large bodies under
+    // Bun. Bun also never errors the body when a client disconnects, so the signal
+    // is what ends an abandoned upload, and cancelling the body makes Bun answer
+    // with an empty 200, so a refused upload leaves it uncancelled to send its error.
+    const source = async function* () {
+      for await (const chunk of body.values({ preventCancel: true })) yield chunk;
+    };
+    await pipeline(source, limit, createWriteStream(dest), { signal });
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOSPC") {
+      throw new ApiError(507, "insufficient_storage", "Not enough disk space for this file");
+    }
+    throw error;
+  }
+  return bytes;
 }
 
 export function isSupportedWorkspaceTextFilePath(relativePath: string): boolean {
@@ -240,7 +277,35 @@ type ArtifactTargetInput = {
   preview?: unknown;
   confidence?: unknown;
   reason?: unknown;
+  fileScope?: unknown;
 };
+
+type FileScope = "workspace" | "conversation";
+
+function parseFileScope(value: unknown): FileScope | undefined {
+  if (value === undefined || value === null) return undefined;
+  if (value === "workspace" || value === "conversation") return value;
+  throw new ApiError(400, "invalid_file_scope", "fileScope must be workspace or conversation");
+}
+
+/** A supplied scope pins file operations to that root, even when the file is missing. */
+export async function resolveScopedWorkspaceFilePath(
+  workspaceRoot: string,
+  relativePath: string,
+  options: { fileScope?: unknown; conversationDirectory?: () => Promise<string | null> } = {},
+): Promise<string> {
+  const scope = parseFileScope(options.fileScope);
+  if (scope === "conversation") {
+    const directory = await options.conversationDirectory?.();
+    if (!directory) throw new ApiError(404, "file_not_found", "Conversation folder is no longer available");
+    return resolveSafeChildPath(directory, relativePath);
+  }
+  const workspacePath = resolveSafeChildPath(workspaceRoot, relativePath);
+  if (scope === "workspace" || await exists(workspacePath)) return workspacePath;
+  const directory = await options.conversationDirectory?.();
+  const conversationPath = directory ? resolveSafeChildPath(directory, relativePath) : null;
+  return conversationPath && await exists(conversationPath) ? conversationPath : workspacePath;
+}
 
 function artifactPreviewForPath(path: string): string {
   const lowered = path.toLowerCase();
@@ -274,19 +339,89 @@ function pathInside(root: string | null, path: string): string | null {
   return fromRoot;
 }
 
+const ARTIFACT_SEARCH_SKIPPED_DIRECTORIES = new Set([
+  ...FILE_BROWSER_EXCLUDED_DIRECTORIES,
+  ".hg",
+  ".svn",
+  ".next",
+  ".nuxt",
+  ".turbo",
+  ".cache",
+  ".venv",
+  "venv",
+  "__pycache__",
+  "dist",
+  "build",
+  "out",
+  "target",
+  "coverage",
+]);
+const ARTIFACT_SEARCH_MAX_DIRECTORIES = 4000;
+const ARTIFACT_SEARCH_MAX_DEPTH = 12;
+
+/**
+ * Find a file the chat named by a partial path (`report.pdf`,
+ * `electron/main.mjs`) somewhere below `root`. Walks breadth-first so the
+ * shallowest match wins, ties broken by path order; never follows symlinks,
+ * skips build and dependency folders, and gives up after a bounded number of
+ * folders so a huge workspace cannot stall a click.
+ */
+export async function findWorkspaceFileBySuffix(
+  root: string,
+  relativePath: string,
+  options: { maxDirectories?: number; maxDepth?: number } = {},
+): Promise<string | null> {
+  const rootResolved = resolve(root);
+  const wanted = relativePath.split("/").filter(Boolean);
+  const name = wanted.at(-1);
+  if (!name) return null;
+  const maxDirectories = options.maxDirectories ?? ARTIFACT_SEARCH_MAX_DIRECTORIES;
+  const maxDepth = options.maxDepth ?? ARTIFACT_SEARCH_MAX_DEPTH;
+  const matchesSuffix = (candidate: string[]) => candidate.length >= wanted.length
+    && wanted.every((segment, index) => candidate[candidate.length - wanted.length + index] === segment);
+
+  let level: Array<{ path: string; segments: string[] }> = [{ path: rootResolved, segments: [] }];
+  let visited = 0;
+  for (let depth = 0; level.length && depth <= maxDepth; depth++) {
+    const matches: string[] = [];
+    const next: typeof level = [];
+    for (const dir of level) {
+      if (visited++ >= maxDirectories) return null;
+      const entries = await readdir(dir.path, { withFileTypes: true }).catch(() => []);
+      for (const entry of entries) {
+        const segments = [...dir.segments, entry.name];
+        if (entry.isDirectory()) {
+          if (!ARTIFACT_SEARCH_SKIPPED_DIRECTORIES.has(entry.name)) next.push({ path: join(dir.path, entry.name), segments });
+          continue;
+        }
+        if (entry.isFile() && entry.name === name && matchesSuffix(segments)) matches.push(segments.join("/"));
+      }
+    }
+    if (matches.length) return matches.sort()[0] ?? null;
+    next.sort((left, right) => left.path.localeCompare(right.path));
+    level = next;
+  }
+  return null;
+}
+
 /**
  * `conversationDirectory` names the folder the conversation runs in when it moved
  * into a worktree. Files missing from the workspace are also looked up there.
+ *
+ * `search` is for a person clicking a reference: a relative path that does not
+ * exist as written (a bare `report.pdf`, `main.mjs:12` from a reply) is looked up
+ * by name below the conversation folder and the workspace. `~/` paths expand to
+ * this computer's home folder and count only when they land inside either one.
  */
 export async function resolveWorkspaceArtifactTargets(
   workspaceRoot: string,
   input: unknown,
-  options: { conversationDirectory?: () => Promise<string | null> } = {},
+  options: { conversationDirectory?: () => Promise<string | null>; search?: boolean; homeDir?: string } = {},
 ): Promise<Array<Record<string, unknown>>> {
   const targets = Array.isArray(input) ? input.slice(0, 80) : [];
   const results = new Map<string, Record<string, unknown>>();
   const workspaceResolved = resolve(workspaceRoot);
-  // Looked up once, and only when a target is missing from the workspace.
+  // Looked up once for absolute/scoped references, fallback, or suffix search.
   let conversationLookup: Promise<string | null> | null = null;
   const conversationDirectory = () => (conversationLookup ??= options.conversationDirectory?.() ?? Promise.resolve(null));
 
@@ -319,26 +454,53 @@ export async function resolveWorkspaceArtifactTargets(
     }
 
     let relativePath: string;
+    let absPath: string;
+    let fileScope: FileScope = "workspace";
     try {
-      if (isAbsolute(rawValue)) {
-        // An absolute path may also name a file in the folder the conversation runs in.
-        const pathFromRoot = pathInside(workspaceResolved, rawValue)
-          ?? pathInside(await conversationDirectory(), rawValue);
+      const requestedScope = parseFileScope(target.fileScope);
+      const home = options.homeDir ?? homedir();
+      const expanded = /^~[/\\]/.test(rawValue) && home ? join(home, rawValue.slice(2)) : rawValue;
+      if (expanded.startsWith("~")) continue;
+      if (isAbsolute(expanded)) {
+        // Keep an absolute reference at its exact owning root. Prefer the
+        // conversation when its worktree is nested inside the workspace.
+        const directory = requestedScope === "workspace" ? null : await conversationDirectory();
+        const fromConversation = pathInside(directory, expanded);
+        const fromWorkspace = requestedScope === "conversation" ? null : pathInside(workspaceResolved, expanded);
+        const pathFromRoot = fromConversation ?? fromWorkspace;
         if (!pathFromRoot) continue;
+        fileScope = fromConversation ? "conversation" : "workspace";
         relativePath = normalizeWorkspaceRelativePath(pathFromRoot, { allowSubdirs: true });
+        absPath = resolve(expanded);
       } else {
-        relativePath = normalizeWorkspaceRelativePath(rawValue, { allowSubdirs: true });
+        relativePath = normalizeWorkspaceRelativePath(expanded, { allowSubdirs: true });
+        fileScope = requestedScope ?? "workspace";
+        absPath = await resolveScopedWorkspaceFilePath(workspaceRoot, relativePath, {
+          fileScope: requestedScope,
+          conversationDirectory,
+        });
+        if (!requestedScope && absPath !== resolveSafeChildPath(workspaceRoot, relativePath)) fileScope = "conversation";
+        // A verified/scoped target is an identity, not another name search:
+        // deleting it must not select a different file or a different root.
+        if (!requestedScope && options.search === true && !(await exists(absPath))) {
+          const directory = await conversationDirectory();
+          const roots: Array<{ root: string; scope: FileScope }> = [];
+          if (directory) roots.push({ root: directory, scope: "conversation" });
+          roots.push({ root: workspaceRoot, scope: "workspace" });
+          for (const { root, scope } of roots) {
+            const found = await findWorkspaceFileBySuffix(root, relativePath);
+            if (!found) continue;
+            relativePath = normalizeWorkspaceRelativePath(found, { allowSubdirs: true });
+            absPath = resolveSafeChildPath(root, relativePath);
+            fileScope = scope;
+            break;
+          }
+        }
       }
     } catch {
       continue;
     }
-    const key = `file:${relativePath.toLowerCase()}`;
-    let absPath = resolveSafeChildPath(workspaceRoot, relativePath);
-    if (!(await exists(absPath))) {
-      const directory = await conversationDirectory();
-      const conversationPath = directory ? resolveSafeChildPath(directory, relativePath) : null;
-      if (conversationPath && await exists(conversationPath)) absPath = conversationPath;
-    }
+    const key = `file:${fileScope === "conversation" ? "conversation:" : ""}${relativePath.toLowerCase()}`;
     let existsFile = false;
     let size: number | undefined;
     let updatedAt: number | undefined;
@@ -354,6 +516,8 @@ export async function resolveWorkspaceArtifactTargets(
       id: key,
       kind: "file",
       value: relativePath,
+      resolvedPath: absPath,
+      fileScope,
       name: basename(relativePath),
       preview: artifactPreviewForPath(relativePath),
       confidence,
@@ -584,15 +748,13 @@ export function registerFileRoutes(options: RegisterFileRoutesOptions): void {
     return directory && resolve(directory) !== resolve(workspace.path) ? directory : null;
   };
 
-  // The workspace copy wins; a file only the conversation's folder has is read
-  // and saved there, so editing it never leaves a second copy in the workspace.
-  const resolveConversationFilePath = async (workspace: WorkspaceInfo, relativePath: string, sessionId: unknown): Promise<string> => {
-    const workspacePath = resolveSafeChildPath(workspace.path, relativePath);
-    if (await exists(workspacePath)) return workspacePath;
-    const directory = await conversationDirectory(workspace, sessionId);
-    const conversationPath = directory ? resolveSafeChildPath(directory, relativePath) : null;
-    return conversationPath && await exists(conversationPath) ? conversationPath : workspacePath;
-  };
+  // Legacy callers prefer the workspace copy; scoped callers retain the exact
+  // root selected by artifact resolution for reads, downloads and writes.
+  const resolveConversationFilePath = (workspace: WorkspaceInfo, relativePath: string, sessionId: unknown, fileScope: unknown): Promise<string> =>
+    resolveScopedWorkspaceFilePath(workspace.path, relativePath, {
+      fileScope,
+      conversationDirectory: () => conversationDirectory(workspace, sessionId),
+    });
 
   const serializeFileSession = (session: {
     id: string;
@@ -673,27 +835,40 @@ export function registerFileRoutes(options: RegisterFileRoutesOptions): void {
     }
     const workspace = await resolveWorkspace(config, ctx.params.id);
 
+    // Clients send the file as the raw body with its path in the query. Multipart
+    // stays for older clients and scripts.
     const contentType = ctx.request.headers.get("content-type") ?? "";
-    if (!contentType.toLowerCase().includes("multipart/form-data")) {
-      throw new ApiError(400, "invalid_payload", "Expected multipart/form-data");
-    }
-    const form = await parseMultipartFormData(ctx.request);
-    const file = form.get("file");
-    if (!(file instanceof File)) {
-      throw new ApiError(400, "file_required", "Form field 'file' is required");
+    const multipart = contentType.toLowerCase().includes("multipart/form-data");
+    const maxBytes = multipart ? Math.min(resolveInboxMaxBytes(), INBOX_MULTIPART_MAX_BYTES) : resolveInboxMaxBytes();
+    const declaredBytes = Number(ctx.request.headers.get("content-length"));
+    if (declaredBytes > maxBytes + (multipart ? INBOX_MULTIPART_FRAMING_BYTES : 0)) {
+      throw inboxFileTooLarge(maxBytes, declaredBytes);
     }
 
     const queryPath = ctx.url.searchParams.get("path") ?? "";
-    const formPath = typeof form.get("path") === "string" ? String(form.get("path") || "") : "";
-    const requestedPath = queryPath.trim() ? queryPath : formPath.trim() ? formPath : file.name;
+    let requestedPath = queryPath;
+    let body = ctx.request.body;
+    if (multipart) {
+      const form = await parseMultipartFormData(ctx.request);
+      const file = form.get("file");
+      if (!(file instanceof File)) {
+        throw new ApiError(400, "file_required", "Form field 'file' is required");
+      }
+      const formPath = typeof form.get("path") === "string" ? String(form.get("path") || "") : "";
+      requestedPath = queryPath.trim() ? queryPath : formPath.trim() ? formPath : file.name;
+      if (file.size > maxBytes) throw inboxFileTooLarge(maxBytes, file.size);
+      body = file.stream();
+    }
+    if (!body) {
+      throw new ApiError(400, "file_required", "Request body is required");
+    }
+    if (!requestedPath.trim()) {
+      throw new ApiError(400, "path_required", "Query parameter 'path' is required");
+    }
 
     const relativePath = normalizeWorkspaceRelativePath(requestedPath, { allowSubdirs: true });
     const inboxRoot = resolveInboxDir(workspace.path);
     const dest = resolveSafeChildPath(inboxRoot, relativePath);
-    const maxBytes = resolveInboxMaxBytes();
-    if (file.size > maxBytes) {
-      throw new ApiError(413, "file_too_large", "File exceeds upload limit", { maxBytes, size: file.size });
-    }
 
     // Inbox uploads are exempt from host approval: the inbox is the designated
     // client drop area (path-constrained via resolveSafeChildPath, size-capped,
@@ -703,10 +878,15 @@ export function registerFileRoutes(options: RegisterFileRoutesOptions): void {
     // their own writes. All other write routes remain approval-gated.
 
     await ensureDir(dirname(dest));
-    const bytes = Buffer.from(await file.arrayBuffer());
     const tmp = join(dirname(dest), `.upload-${shortId()}.tmp`);
-    await writeFile(tmp, bytes);
-    await rename(tmp, dest);
+    let bytes: number;
+    try {
+      bytes = await writeUploadToFile(body, tmp, maxBytes, ctx.request.signal);
+      await rename(tmp, dest);
+    } catch (error) {
+      await rm(tmp, { force: true }).catch(() => undefined);
+      throw error;
+    }
 
     await recordAudit(workspace.path, {
       id: shortId(),
@@ -718,7 +898,7 @@ export function registerFileRoutes(options: RegisterFileRoutesOptions): void {
       timestamp: Date.now(),
     });
 
-    return jsonResponse({ ok: true, path: relativePath, bytes: file.size });
+    return jsonResponse({ ok: true, path: relativePath, bytes });
   });
 
   addRoute(routes, "GET", "/workspace/:id/artifacts", "client", async (ctx) => {
@@ -760,6 +940,7 @@ export function registerFileRoutes(options: RegisterFileRoutesOptions): void {
     const body = await readJsonBody(ctx.request);
     const items = await resolveWorkspaceArtifactTargets(workspace.path, body.targets, {
       conversationDirectory: () => conversationDirectory(workspace, body.sessionId),
+      search: body.search === true,
     });
     return jsonResponse({ items });
   });
@@ -929,7 +1110,7 @@ export function registerFileRoutes(options: RegisterFileRoutesOptions): void {
       throw new ApiError(400, "invalid_path", "Only supported text artifact files can be read inline");
     }
 
-    const absPath = await resolveConversationFilePath(workspace, relativePath, ctx.url.searchParams.get("session"));
+    const absPath = await resolveConversationFilePath(workspace, relativePath, ctx.url.searchParams.get("session"), ctx.url.searchParams.get("fileScope"));
     if (!(await exists(absPath))) {
       throw new ApiError(404, "file_not_found", "File not found");
     }
@@ -970,7 +1151,7 @@ export function registerFileRoutes(options: RegisterFileRoutesOptions): void {
     const workspace = await resolveWorkspace(config, ctx.params.id);
     const requested = ctx.url.searchParams.get("path") ?? "";
     const relativePath = normalizeWorkspaceRelativePath(requested, { allowSubdirs: true });
-    const absPath = await resolveConversationFilePath(workspace, relativePath, ctx.url.searchParams.get("session"));
+    const absPath = await resolveConversationFilePath(workspace, relativePath, ctx.url.searchParams.get("session"), ctx.url.searchParams.get("fileScope"));
     if (!(await exists(absPath))) {
       throw new ApiError(404, "file_not_found", "File not found");
     }
@@ -1012,7 +1193,7 @@ export function registerFileRoutes(options: RegisterFileRoutesOptions): void {
     const baseUpdatedAt =
       typeof baseUpdatedAtRaw === "number" && Number.isFinite(baseUpdatedAtRaw) ? baseUpdatedAtRaw : null;
     const force = body.force === true;
-    const absPath = await resolveConversationFilePath(workspace, relativePath, body.sessionId);
+    const absPath = await resolveConversationFilePath(workspace, relativePath, body.sessionId, body.fileScope);
     const before = (await exists(absPath)) ? await stat(absPath) : null;
     if (before && !before.isFile()) {
       throw new ApiError(400, "invalid_path", "Path must point to a file");
@@ -1075,7 +1256,7 @@ export function registerFileRoutes(options: RegisterFileRoutesOptions): void {
       typeof baseUpdatedAtRaw === "number" && Number.isFinite(baseUpdatedAtRaw) ? baseUpdatedAtRaw : null;
     const force = body.force === true;
 
-    const absPath = await resolveConversationFilePath(workspace, relativePath, body.sessionId);
+    const absPath = await resolveConversationFilePath(workspace, relativePath, body.sessionId, body.fileScope);
 
     const before = (await exists(absPath)) ? await stat(absPath) : null;
     if (before && !before.isFile()) {

@@ -247,6 +247,19 @@ test("a read-only turn's grant only ever yields read-only tokens", async () => {
   assert.deepEqual(JSON.parse(String(token.scopes)), ["mcp:read"])
 })
 
+test("a background agent's grant keeps its read allowlist: every resumed token reads no more than the first", async () => {
+  const ids = nextTurn()
+  const scopes = ["openwork:agent-read", "openwork:agent-source:chat", "openwork:agent-connection:emc_01k8z5wq0s0000000000000001"]
+  const { grant } = await mintHeadlessResumeGrant({ userId: member.userId, organizationId: orgId, ...ids, readOnly: true, scopes })
+  const fresh = await exchange({ grant, ...ids })
+  assert.equal(fresh.status, 200, summary(fresh))
+  const token = await storedToken(text(field(fresh.body, "mcpToken"), "mcp token"))
+  assert.deepEqual(JSON.parse(String(token.scopes)), ["mcp:read", ...scopes])
+  const writing = nextTurn()
+  const { grant: unscoped } = await mintHeadlessResumeGrant({ userId: member.userId, organizationId: orgId, ...writing, scopes })
+  assert.deepEqual((await sql("SELECT scopes FROM headless_resume_grant WHERE token_hash = ?", [sha256(unscoped)]))[0]?.scopes ?? null, null, "extra scopes only ever narrow a read-only grant")
+})
+
 test("unknown, malformed and expired grants are refused for good", async () => {
   await arrangeLegacyDurableRows(true)
   const ids = nextTurn()

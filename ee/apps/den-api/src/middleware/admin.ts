@@ -121,6 +121,12 @@ export const requireAdminMiddleware: MiddlewareHandler<{ Variables: AuthContextV
     return c.json({ error: "admin_email_required" }, 403) as never
   }
 
+  // The allowlist names emails, so where Den verifies emails only a proven
+  // address counts. Deployments without verification have no proof to ask for.
+  if (env.requireEmailVerification && user.emailVerified !== true) {
+    return c.json({ error: "admin_email_unverified" }, 403) as never
+  }
+
   if (!(await isAdminEmailAllowed(email))) {
     return c.json({ error: "forbidden" }, 403) as never
   }

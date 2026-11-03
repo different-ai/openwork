@@ -699,7 +699,8 @@ export function registerOAuthProviderRoutes<T extends { Variables: OrgRouteVaria
           codeVerifier: pending.pendingCodeVerifier,
         })
         const externalAccountId = await resolveExternalAccountId({
-          provider,
+          // A sandbox's sample token is only ever shown to its own workplace, never Microsoft's userinfo.
+          provider: client.sandboxEndpoints?.status === "ready" ? { ...provider, userinfoUrl: client.sandboxEndpoints.userinfoUrl } : provider,
           accessToken: tokens.access_token,
           idToken: tokens.id_token,
           requestId: c.get("requestId"),

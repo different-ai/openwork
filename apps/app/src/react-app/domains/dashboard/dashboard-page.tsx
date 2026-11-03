@@ -4,18 +4,23 @@ import { Blocks } from "lucide-react";
 
 import { readDenSettings } from "@/app/lib/den";
 import { denSettingsChangedEvent } from "@/app/lib/den-session-events";
+import { McpAppWarmSandbox } from "@/components/chat/mcp-app-warm-sandbox";
 import { Skeleton } from "@/components/ui/skeleton";
 import { CloudSignInBanner, CloudSignInBannerIcon } from "@/react-app/domains/cloud/cloud-sign-in-banner";
 import { t } from "../../../i18n";
 import { useDenAuth } from "@/react-app/domains/cloud/den-auth-provider";
+import { useWorkspace } from "@/react-app/shell/workspace-provider";
 import { dashboardTileCacheScopeKey } from "./dashboard-tile-cache";
 import type { DashboardLaunchEndpoint } from "./mcp-app-tile";
-import { DashboardApps, type CreateDashboardApp } from "./dashboard-apps";
+import type { CreateDashboardApp } from "./dashboard-apps";
 import { useSavedApps } from "../apps/use-apps";
+import { ArtifactsPage } from "./artifacts-page";
 
 /** The member's dashboard. Placement belongs to each member. */
-export function DashboardPage({ fallbackEndpoints, onCreateApp, headerActionsTarget, onSignIn }: {
+export function DashboardPage({ fallbackEndpoints, onCreateApp, headerActionsTarget, onSignIn, active = true }: {
   onCreateApp: CreateDashboardApp;
+  /** Retained pages refresh access when navigation makes them visible again. */
+  active?: boolean;
   /** Opens OpenWork Cloud sign-in, the same action Library offers when signed out. */
   onSignIn?: () => void;
   /** Titlebar slot for the Add control, matching Library. */
@@ -24,6 +29,7 @@ export function DashboardPage({ fallbackEndpoints, onCreateApp, headerActionsTar
   fallbackEndpoints?: DashboardLaunchEndpoint[];
 }) {
   const denAuth = useDenAuth();
+  const { openworkServerClient } = useWorkspace();
   const personal = useSavedApps();
   // The active org lives in den settings, which change outside React; track
   // them through the settings-changed event so an org switch swaps the board
@@ -51,7 +57,7 @@ export function DashboardPage({ fallbackEndpoints, onCreateApp, headerActionsTar
     || (Boolean(personal.client && personal.orgId) && personal.query.isPending && !personal.query.isFetched)) {
     return (
       <div className="mx-auto w-full max-w-5xl px-6 py-8 sm:px-8" data-dashboard-page>
-        <div className="space-y-2 pt-3" role="status" aria-label="Loading dashboard">
+        <div className="space-y-2 pt-3" role="status" aria-label="Loading artifacts">
           <Skeleton className="h-8 w-1/3" />
           <Skeleton className="h-40 w-full" />
         </div>
@@ -60,11 +66,12 @@ export function DashboardPage({ fallbackEndpoints, onCreateApp, headerActionsTar
   }
   return (
     <div
-      className="mx-auto w-full max-w-5xl px-6 py-8 sm:px-8"
+      className="h-full w-full"
       data-dashboard-page
       data-dashboard-cache-scope={cacheScopeKey}
     >
-      <DashboardApps key={cacheScopeKey} onCreateApp={onCreateApp} fallbackEndpoints={fallbackEndpoints} headerActionsTarget={headerActionsTarget} />
+      {openworkServerClient ? <McpAppWarmSandbox client={openworkServerClient} /> : null}
+      <ArtifactsPage key={cacheScopeKey} active={active} onCreateApp={onCreateApp} fallbackEndpoints={fallbackEndpoints} headerActionsTarget={headerActionsTarget} />
     </div>
   );
 }

@@ -17,8 +17,9 @@ function fixture() {
   const write = (path, value) => { const file = join(cwd, path); mkdirSync(dirname(file), { recursive: true }); writeFileSync(file, value); };
   git("init", "-q");
   git("config", "user.name", "Contract test"); git("config", "user.email", "contract@example.test");
-  for (const path of ["ee/apps/den-api/src/route.ts", "ee/packages/den-db/src/schema.ts", "packages/features/src/registry.ts", "packages/docs/openapi.json", "packages/sdk/src/gen/sdk.gen.ts", "notes.md"])
+  for (const path of ["ee/apps/den-api/src/route.ts", "ee/packages/den-db/src/schema.ts", "packages/features/src/registry.ts", "notes.md"])
     write(path, "original\n");
+  write(".gitignore", "/packages/docs/openapi.json\n/packages/sdk/src/gen/\n");
   write(".githooks/pre-commit", "#!/bin/sh\nexit 0\n");
   git("add", "."); git("commit", "-qm", "fixture");
   return { cwd, env, git, write };
@@ -38,16 +39,17 @@ test("a staged feature registry change regenerates the API contract", () => {
   assert.equal(ran, true);
 });
 
-test("regeneration stages only outputs and preserves unrelated unstaged work", () => {
+test("regeneration leaves ignored outputs out of the index and preserves unrelated work", () => {
   const f = fixture(); f.write("ee/apps/den-api/src/route.ts", "new route\n"); f.git("add", "ee/apps/den-api/src/route.ts");
   f.write("notes.md", "private unfinished note\n");
+  const index = f.git("write-tree");
   let runs = 0;
   assert.equal(runContractHook({ cwd: f.cwd, generate: () => {
     runs++; f.write("packages/docs/openapi.json", "new contract\n"); f.write("packages/sdk/src/gen/sdk.gen.ts", "new SDK\n");
   } }), true);
   assert.equal(runs, 1);
-  assert.equal(f.git("show", ":packages/docs/openapi.json"), "new contract\n");
-  assert.equal(f.git("show", ":packages/sdk/src/gen/sdk.gen.ts"), "new SDK\n");
+  assert.equal(f.git("write-tree"), index);
+  assert.equal(f.git("ls-files", "packages/docs/openapi.json", "packages/sdk/src/gen"), "");
   assert.equal(f.git("show", ":notes.md"), "original\n");
   assert.equal(readFileSync(join(f.cwd, "notes.md"), "utf8"), "private unfinished note\n");
 });
@@ -56,7 +58,6 @@ for (const [name, path] of [
   ["partially staged source", "ee/apps/den-api/src/route.ts"],
   ["unstaged dependency", "ee/packages/den-db/src/schema.ts"],
   ["unstaged feature registry", "packages/features/src/registry.ts"],
-  ["unstaged generated output", "packages/docs/openapi.json"],
   ["untracked API input with spaces", "ee/apps/den-api/src/new route.ts"],
 ]) test(`${name} stops before generation or index changes`, () => {
   const f = fixture(); f.write("ee/apps/den-api/src/route.ts", "staged route\n"); f.git("add", "ee/apps/den-api/src/route.ts");
@@ -71,7 +72,7 @@ test("a failed generator does not stage partially written output", () => {
   assert.throws(() => runContractHook({ cwd: f.cwd, generate: () => {
     f.write("packages/docs/openapi.json", "partial output\n"); throw new Error("generation failed");
   } }), /generation failed/);
-  assert.equal(f.git("show", ":packages/docs/openapi.json"), "original\n");
+  assert.equal(f.git("ls-files", "packages/docs/openapi.json"), "");
 });
 
 test("renaming an API input out of its directory still regenerates", () => {

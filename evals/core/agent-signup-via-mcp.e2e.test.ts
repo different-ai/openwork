@@ -77,7 +77,17 @@ test("a brand-new person signs up through their agent, names a workspace inline,
     const found = await world.callTool("search_capabilities", { query: "register MCP server connection", limit: 20 });
     const names = matchNames(found.json);
     expect(names).toContain("postMcpConnections");
-    evidence.recordAssertionEvidence("search_capabilities answers for the new workspace", `matches include ${names.slice(0, 6).join(", ")}`, names.includes("postMcpConnections"));
+    const matches = isRecord(found.json) && Array.isArray(found.json.matches) ? found.json.matches : [];
+    const register = matches.find((match) => isRecord(match) && match.name === "postMcpConnections");
+    expect(isRecord(register) && typeof register.summary === "string").toBe(true);
+    expect(isRecord(register) && register.hasBody).toBe(true);
+    expect(isRecord(register) && isRecord(register.bodySchema)).toBe(true);
+    expect(isRecord(register) && "inputSchema" in register).toBe(false);
+    evidence.recordAssertionEvidence(
+      "search_capabilities keeps the legacy contract for a workspace without rollout overrides",
+      `matches include ${names.slice(0, 6).join(", ")}; postMcpConnections still advertises summary, hasBody and bodySchema without requiring an updated client`,
+      names.includes("postMcpConnections") && isRecord(register) && register.hasBody === true && isRecord(register.bodySchema) && !("inputSchema" in register),
+    );
   });
 
   await step("the agent adds a no-sign-in MCP server and hands the person a browser link for it", async () => {

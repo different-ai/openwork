@@ -115,7 +115,9 @@ export function OpenWorkAutomationProposalTool({ part }: { part: DynamicToolUIPa
       ? "Sign in to OpenWork Cloud to create this Automation."
       : modelLookupFailed
         ? "Model availability could not be checked. Try again before creating this Automation."
-        : null
+        : proposal.schedule.kind === "calendar" && placement !== "cloud"
+          ? "Automations that run around meetings run in OpenWork Cloud, which this desktop does not create. Create it from OpenWork Web or Cloud Chat."
+          : null
 
   const create = async () => {
     if (!automationsEnabled || blocker || !resolved || resolved.resolution === "unavailable") return

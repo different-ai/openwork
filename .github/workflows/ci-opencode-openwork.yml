@@ -1,12 +1,8 @@
 name: opencode-openwork
 
+# Not on PRs (the quick check typechecks the plugin there): dev pushes that
+# change it.
 on:
-  pull_request:
-    paths:
-      - "packages/opencode-plugin/**"
-      - "packages/remote-sessions/**"
-      - ".github/workflows/ci-opencode-openwork.yml"
-      - ".github/workflows/publish-opencode-plugin.yml"
   push:
     branches: [dev]
     paths:
@@ -34,7 +30,7 @@ jobs:
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
-          node-version: 24
+          node-version: 24.22.1
           registry-url: https://registry.npmjs.org
 
       - name: Setup Bun for desktop channel tests

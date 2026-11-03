@@ -20,6 +20,8 @@ export interface BrowserOptions {
    */
   host?: Host;
   startUrl?: string;
+  /** Exact caller-owned Chrome user-data directory on the target host; preserved on disposal. */
+  profileDir?: string;
   headless?: boolean;
   /** Report a hover-capable mouse even where headless Chrome finds no pointer device. See `ChromeSurfaceOptions.mouse`. */
   mouse?: boolean;
@@ -41,6 +43,7 @@ export async function chrome(opts: BrowserOptions = {}): Promise<AttachedSurface
   const name = opts.name ?? "browser";
   const handle: SurfaceHandle = await host.spawnChrome(name, {
     profile: "fresh",
+    profileDir: opts.profileDir,
     startUrl: opts.startUrl,
     headless: opts.headless,
     mouse: opts.mouse,

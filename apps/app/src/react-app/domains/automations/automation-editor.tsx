@@ -237,10 +237,13 @@ export function AutomationEditor(props: AutomationEditorProps) {
     const options = props.modelOptionsByPlacement?.[automationPlacementOf(next)] ?? props.modelOptions
     setInput((current) => withAvailableModel(current, options))
   }
+  // Den reads the calendar for these, so they run only in OpenWork Cloud.
+  const meetingsNeedCloud = input.schedule.kind === "calendar" && placement !== "cloud"
   const canSave = useMemo(
     () => input.name.trim().length > 0
+      && !meetingsNeedCloud
       && (pinnedWorkflow !== undefined || (input.instructions.trim().length > 0 && currentModelAvailable)),
-    [currentModelAvailable, input.instructions, input.name, pinnedWorkflow],
+    [currentModelAvailable, input.instructions, input.name, meetingsNeedCloud, pinnedWorkflow],
   )
   return (
     <form
@@ -368,7 +371,9 @@ export function AutomationEditor(props: AutomationEditorProps) {
       ) : null}
 
       <p className="text-sm text-muted-foreground" data-automation-placement={placement}>
-        {automationCanUseNote(canChoose ? canUse : props.placement === "desktop" ? "computer" : fallbackChoice)}
+        {meetingsNeedCloud
+          ? "Automations that run around your meetings run in OpenWork Cloud. Choose a cloud option above, or a clock schedule to run it on this computer."
+          : automationCanUseNote(canChoose ? canUse : props.placement === "desktop" ? "computer" : fallbackChoice)}
       </p>
 
       <div className="flex justify-end gap-2">

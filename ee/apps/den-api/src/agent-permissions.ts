@@ -6,6 +6,7 @@ import {
   agentPermissionDefinitions,
   normalizeAgentPermissionSetting,
   resolveAgentPermissionRules,
+  type AgentPermissionKey,
   type AgentPermissionRule,
   type AgentPermissionSettings,
 } from "@openwork/types/den/agent-permissions"
@@ -145,18 +146,14 @@ export async function saveAgentPermissionPolicy(input: {
   organizationId: OrganizationId
   teamId: TeamId | null
   settings: AgentPermissionSettings
+  /** Stored settings for these keys survive replacement; incoming settings for them are ignored. */
+  preserveKeys?: readonly AgentPermissionKey[]
   updatedByOrgMemberId: MemberId
   /** Runs inside the save's transaction, after the write, with what was stored before and after (audit). */
   onChange?: AgentPermissionPolicyChange
 }): Promise<{ settings: AgentPermissionSettings; updatedAt: Date | null }> {
   const scopeKey = input.teamId ?? EVERYONE_SCOPE
   const now = new Date()
-  const settings: AgentPermissionSettings = {}
-  const entries = agentPermissionDefinitions.flatMap((definition) => {
-    const setting = normalizeAgentPermissionSetting(definition, input.settings[definition.key])
-    if (setting) settings[definition.key] = setting
-    return setting ? [{ key: definition.key, setting }] : []
-  })
   return db.transaction(async (tx) => {
     const scope = and(
       eq(AgentPermissionPolicyTable.organizationId, input.organizationId),
@@ -167,6 +164,13 @@ export async function saveAgentPermissionPolicy(input: {
       policyId: existing?.id ?? null,
       settings: existing ? (await readSettings(tx, [existing.id])).get(existing.id) ?? {} : {},
     }
+    const settings: AgentPermissionSettings = {}
+    const entries = agentPermissionDefinitions.flatMap((definition) => {
+      const value = input.preserveKeys?.includes(definition.key) ? before.settings[definition.key] : input.settings[definition.key]
+      const setting = normalizeAgentPermissionSetting(definition, value)
+      if (setting) settings[definition.key] = setting
+      return setting ? [{ key: definition.key, setting }] : []
+    })
     if (existing) {
       await tx.delete(AgentPermissionSettingTable).where(eq(AgentPermissionSettingTable.policyId, existing.id))
     }
@@ -229,6 +233,7 @@ export async function deleteOrganizationAgentPermissions(database: Database, org
 export async function readAgentPermissionRulesForMember(input: {
   organizationId: OrganizationId
   orgMemberId: MemberId
+  computerUseEnabled?: boolean
 }): Promise<AgentPermissionRule[]> {
   const teams = await db
     .select({ id: TeamTable.id, name: TeamTable.name })
@@ -249,6 +254,11 @@ export async function readAgentPermissionRulesForMember(input: {
   if (policies.length === 0) return []
   const settings = await readSettings(db, policies.map((policy) => policy.id))
   const everyone = policies.find((policy) => policy.scopeKey === EVERYONE_SCOPE)
+  // Remove before resolving dependencies: a disabled computer policy must not
+  // derive a scripting deny. Stored settings remain available for re-enabling.
+  if (input.computerUseEnabled === false) {
+    for (const policySettings of settings.values()) delete policySettings.computerUse
+  }
   // Every team counts, with or without its own record: a team without one has
   // everyone's settings, so another team's record cannot undo them.
   return resolveAgentPermissionRules({

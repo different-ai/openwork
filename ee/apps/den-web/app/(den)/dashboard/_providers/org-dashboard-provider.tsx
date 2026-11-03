@@ -11,6 +11,7 @@ import {
 import { flushSync } from "react-dom";
 import { useQueryClient } from "@tanstack/react-query";
 import { permissionsQueryKeys } from "../_components/permissions-query-keys";
+import { linkedWorkbotOrganization, workbotSignInRoute } from "../_lib/workbot-team-link";
 import { usePathname, useRouter } from "next/navigation";
 import { useDenFlow } from "../../_providers/den-flow-provider";
 import { getErrorMessage, getOrgLimitError, getOrgPaymentRequiredError, getRequestError, isReauthRequiredError, requestJson, WORKSPACE_REAUTH_SECURITY_MESSAGE } from "../../_lib/den-flow";
@@ -27,6 +28,7 @@ import {
   roleIncludesCanonicalRole,
   permissionLockReason,
 } from "../../_lib/den-org";
+import { bootOrgContextFor, shouldStartOrgBootRequests } from "../../_lib/org-boot-requests";
 import { consumeOrgSelectionRequest, shouldOpenOrgSelection } from "../../_lib/org-selection";
 import { restoreRememberedOrganization, setActiveOrganizationAndRemember } from "../../_lib/org-memory";
 import { ORG_SCOPE_HEADER, OrganizationNotFoundError, getRequestOrgScope, setRequestOrgScope } from "../../_lib/org-scope";
@@ -76,6 +78,23 @@ type PendingReauthMutation = {
   reject: (error: unknown) => void;
 };
 
+type OrgBootRequest = ReturnType<typeof requestJson>;
+type OrgBootRequests = { directory: OrgBootRequest; context: OrgBootRequest };
+
+function requestOrgDirectory(): OrgBootRequest {
+  return requestJson("/v1/me/orgs", { method: "GET", cache: "no-store" }, 12000);
+}
+
+function startOrgBootRequests(): OrgBootRequests {
+  const directory = requestOrgDirectory();
+  // No workspace header: Den answers for the session's active workspace.
+  const context = requestJson("/v1/org", { method: "GET", cache: "no-store" }, 12000);
+  // A load that never consumes them (signed out, unmounted) must not leave rejections unhandled.
+  directory.catch(() => undefined);
+  context.catch(() => undefined);
+  return { directory, context };
+}
+
 const OrgDashboardContext = createContext<OrgDashboardContextValue | null>(null);
 const ORG_SETTINGS_PATH = "/dashboard/org-settings";
 const ORG_SETTINGS_UPDATED_MESSAGE = "Workspace settings updated.";
@@ -99,6 +118,10 @@ export function OrgDashboardProvider({
   const pendingReauthMutationsRef = useRef<PendingReauthMutation[]>([]);
   const pathnameRef = useRef(pathname);
   const [reauthDialogOpen, setReauthDialogOpen] = useState(false);
+  // A full page load starts the workspace list and the active workspace's
+  // details while the session check runs, instead of after it. The first load
+  // consumes them; every later load (switches, refreshes, retries) asks again.
+  const bootRequestsRef = useRef<OrgBootRequests | null>(null);
   const orgLoadRef = useRef<{
     generation: number;
     switching: boolean;
@@ -160,8 +183,8 @@ export function OrgDashboardProvider({
     return target;
   }
 
-  async function loadOrgDirectory() {
-    const { response, payload } = await requestJson("/v1/me/orgs", { method: "GET", cache: "no-store" }, 12000);
+  async function loadOrgDirectory(started: OrgBootRequest | null = null) {
+    const { response, payload } = await (started ?? requestOrgDirectory());
     if (!response.ok) {
       throw new Error(getErrorMessage(payload, `Failed to load organizations (${response.status}).`));
     }
@@ -169,9 +192,10 @@ export function OrgDashboardProvider({
     return parseOrgListPayload(payload);
   }
 
-  async function setActiveOrganization(input: { organizationId?: string | null; organizationSlug?: string | null }) {
+  async function setActiveOrganization(input: { organizationId?: string | null; organizationSlug?: string | null }, workbotLink = false) {
     const { response, payload } = await requestJson(
-      "/api/auth/organization/set-active",
+      // The supported database-session route works for both bearer and cookie-backed Den visits.
+      workbotLink ? "/v1/me/active-organization" : "/api/auth/organization/set-active",
       {
         method: "POST",
         body: JSON.stringify(input),
@@ -184,7 +208,13 @@ export function OrgDashboardProvider({
     }
   }
 
-  async function loadOrgContext(organizationId: string) {
+  async function loadOrgContext(organizationId: string, started: OrgBootRequest | null = null) {
+    if (started) {
+      // The unscoped boot request answers for the session's active workspace.
+      // Use it only when that is the workspace being opened; otherwise ask again.
+      const early = bootOrgContextFor(await started.catch(() => null), organizationId);
+      if (early) return early;
+    }
     const { response, payload } = await requestJson(
       "/v1/org",
       { method: "GET", headers: { [ORG_SCOPE_HEADER]: organizationId }, cache: "no-store" },
@@ -235,6 +265,7 @@ export function OrgDashboardProvider({
     const isCurrent = () => orgLoadRef.current.mounted
       && generation === orgLoadRef.current.generation && orgLoadRef.current.userId === userId;
     if (!user) {
+      bootRequestsRef.current = null;
       orgLoadRef.current.organizationId = null;
       orgLoadRef.current.switching = false;
       setRequestOrgScope(null);
@@ -251,15 +282,22 @@ export function OrgDashboardProvider({
     setMutationBusy((current) => current === "switch-organization" ? null : current);
     setOrgSelectionOpen(false);
     setOrgError(null);
+    const hasWorkbotLink = new URL(window.location.href).searchParams.has("workbotOrganizationId");
+    const boot = bootRequestsRef.current;
+    bootRequestsRef.current = null;
 
     try {
-      let directoryPayload = await loadOrgDirectory();
+      let directoryPayload = await loadOrgDirectory(boot?.directory ?? null);
       if (!isCurrent()) return;
-      const displayedOrgId = setupOrganizationId ?? orgLoadRef.current.organizationId;
+      const linkedOrgId = linkedWorkbotOrganization(window.location.href, directoryPayload.orgs);
+      if (linkedOrgId && setupOrganizationId && linkedOrgId !== setupOrganizationId) {
+        throw new Error("Finish your workspace setup before opening another team's settings.");
+      }
+      const displayedOrgId = linkedOrgId ?? setupOrganizationId ?? orgLoadRef.current.organizationId;
       // Always consume the handshake, including required-picker and setup loads.
       const selectionRequested = consumeOrgSelectionRequest();
       // A direct dashboard visit may restore only when no explicit/session org
-      // or post-auth chooser request owns this load.
+      // or post-auth chooser request owns this load. Never replace a linked org.
       if (!displayedOrgId && !directoryPayload.orgs.some((entry) => entry.isActive)
         && !selectionRequested && !setupPending && !isSingleOrgMode
         && !window.sessionStorage.getItem(PENDING_ORG_INVITATION_STORAGE_KEY)
@@ -288,7 +326,7 @@ export function OrgDashboardProvider({
       }
 
       if (displayedOrg && !displayedOrg.isActive) {
-        await setActiveOrganization({ organizationId: displayedOrg.id });
+        await setActiveOrganization({ organizationId: displayedOrg.id }, linkedOrgId !== null);
         if (!isCurrent()) return;
         directoryPayload = await loadOrgDirectory();
         if (!isCurrent()) return;
@@ -333,7 +371,7 @@ export function OrgDashboardProvider({
       // Single-org deployments never surface the picker; otherwise the
       // org-selection module decides from the directory plus any pending
       // sign-in request.
-      if (!setupOrganizationId && !isSingleOrgMode && shouldOpenOrgSelection(directoryPayload.orgs, selectionRequested)) {
+      if (!linkedOrgId && !setupOrganizationId && !isSingleOrgMode && shouldOpenOrgSelection(directoryPayload.orgs, selectionRequested)) {
         orgLoadRef.current.organizationId = null;
         setRequestOrgScope(null);
         setOrgDirectory(directoryPayload.orgs);
@@ -349,8 +387,14 @@ export function OrgDashboardProvider({
         if (!isCurrent()) return;
       }
 
-      const context = await loadOrgContext(targetOrg.id);
+      const context = await loadOrgContext(targetOrg.id, boot?.context ?? null);
       if (!isCurrent()) return;
+      if (linkedOrgId) {
+        // Consume only after the exact workspace loaded. Later explicit switches stay authoritative.
+        const url = new URL(window.location.href);
+        url.searchParams.delete("workbotOrganizationId");
+        window.history.replaceState(null, "", `${url.pathname}${url.search}${url.hash}`);
+      }
 
       setOrgDirectory(directoryPayload.orgs.map((entry) => ({ ...entry, isActive: entry.id === context.organization.id })));
       setOrgContext(context);
@@ -358,7 +402,7 @@ export function OrgDashboardProvider({
       if (!isCurrent()) return;
       setRequestOrgScope(null);
       setOrgContext(null);
-      if (setupOrganizationId) {
+      if (setupOrganizationId || hasWorkbotLink) {
         setOrgError(error instanceof Error ? error.message : "Could not restore the linked workspace.");
         return;
       }
@@ -973,7 +1017,11 @@ export function OrgDashboardProvider({
 
   useEffect(() => {
     orgLoadRef.current.mounted = true;
+    if (!sessionHydrated && shouldStartOrgBootRequests(window.location.href, getRequestOrgScope())) {
+      bootRequestsRef.current = startOrgBootRequests();
+    }
     return () => {
+      bootRequestsRef.current = null;
       orgLoadRef.current.mounted = false;
       orgLoadRef.current.generation += 1;
       orgLoadRef.current.switching = false;
@@ -994,6 +1042,8 @@ export function OrgDashboardProvider({
     }
 
     if (orgLoadRef.current.userId !== (user?.id ?? null)) {
+      // Boot requests belong to the session this page loaded with.
+      if (orgLoadRef.current.userId !== null) bootRequestsRef.current = null;
       orgLoadRef.current.userId = user?.id ?? null;
       orgLoadRef.current.organizationId = null;
       setRequestOrgScope(null);
@@ -1003,6 +1053,12 @@ export function OrgDashboardProvider({
 
     if (!user) {
       void refreshOrgData();
+      const signInRoute = workbotSignInRoute(window.location.href);
+      if (signInRoute !== "/") {
+        // A fresh auth page reads the preserved intent after the old session is cleared.
+        void signOut().then(() => window.location.replace(signInRoute));
+        return;
+      }
       void signOut();
       router.replace("/");
       return;

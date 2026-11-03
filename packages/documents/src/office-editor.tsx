@@ -10,6 +10,7 @@ import { EditorActions } from "./editor-actions"
 import type { DocumentTabControlsChange } from "./document-tabs"
 import { collaboraWorkspaceUrl, useCollaboraController } from "./collabora-controller"
 import { DocumentToolbar } from "./document-toolbar"
+import { UnsavedChangesDialog } from "./unsaved-dialog"
 
 /** Den reports `office_starting` while the person's own editor is waking. */
 function editorStarting(error: unknown): error is Error & { code: string } {
@@ -59,6 +60,14 @@ export function OfficeEditorTab({ item, editor, enabled, active, scope, toolbarH
     return () => { closeTimer.current = setTimeout(() => { void editor.close(item.id, session.id).catch(() => {}) }, 0) }
   }, [editor, item.id, session])
   useEffect(() => { onDirtyChange?.(item.id, dirty); return () => onDirtyChange?.(item.id, false) }, [dirty, item.id, onDirtyChange])
+  // Leaving the page never unmounts the editor, so release an unedited session here. A
+  // session with unsaved edits stays open, and reopening the file returns to those edits.
+  useEffect(() => {
+    if (!session || dirty) return
+    const leave = (event: PageTransitionEvent) => { if (!event.persisted) void editor.close(item.id, session.id, { keepalive: true }).catch(() => {}) }
+    window.addEventListener("pagehide", leave)
+    return () => window.removeEventListener("pagehide", leave)
+  }, [dirty, editor, item.id, session])
   useEffect(() => {
     if (!dirty) return
     const warn = (event: BeforeUnloadEvent) => { event.preventDefault(); event.returnValue = "" }
@@ -137,7 +146,7 @@ export function OfficeEditorTab({ item, editor, enabled, active, scope, toolbarH
   const status = saving ? "Saving to Drive…" : dirty ? "Unsaved to Drive" : saved ? "Saved to Drive" : !session?.canEdit && session ? "Read-only" : ""
   return <section className={`ow-document-editor ow-office-editor${!ready ? " ow-office-opening" : ""}`} hidden={!active} aria-label={item.name}>
     <EditorActions active={active} host={toolbarHost}><span role="status">{status}</span><button type="button" disabled={dirty || saving} onClick={onPreview}>{ready ? "Preview" : "Cancel editing"}</button>{item.openUrl && <a href={item.openUrl} target="_blank" rel="noopener noreferrer" aria-label="Open original in Drive"><ExternalLink size={16}/></a>}<button type="button" disabled={!enabled || !editingEnabled || !session?.canEdit || !ready || saving || expired || (!dirty && (!session.saveAsCopy || !!saved))} onClick={() => void save()}><Save size={15}/>{session?.saveAsCopy && !saved ? `Save ${formatLabel} copy to Drive` : "Save to Drive"}</button>{!onControlsChange && <button type="button" aria-label={`Close ${item.name}`} disabled={saving} onClick={() => closeAction.current()}><X size={16}/></button>}</EditorActions>
-    {closing && <div className="ow-editor-message" role="status">This file has changes that haven't been saved to Drive.<button type="button" disabled={saving || !enabled || !editingEnabled || !ready || expired || !session?.canEdit} onClick={() => void save(true)}>Save and close</button><button type="button" disabled={saving} onClick={() => setClosing(false)}>Keep editing</button><button type="button" disabled={saving} onClick={onClose}>Close without saving</button></div>}
+    {closing && <UnsavedChangesDialog name={item.name} saveLabel={session?.saveAsCopy && !saved ? `Save ${formatLabel} copy to Drive` : "Save to Drive"} saving={saving} canSave={enabled && editingEnabled && ready && !expired && !!session?.canEdit} error={error} onSave={() => void save(true)} onDiscard={onClose} onCancel={() => setClosing(false)} />}
     {session?.saveAsCopy && <div className="ow-editor-message">{saved ? "Your copy is saved in My Drive. Further saves update that copy." : `You’re editing a ${formatLabel} copy. Save creates a new file in My Drive; the Google original stays unchanged.`}{saved && <a href={`https://drive.google.com/file/d/${encodeURIComponent(saved)}/view`} target="_blank" rel="noopener noreferrer">Open saved copy</a>}</div>}
     {!editingEnabled && <div className="ow-editor-message" role="status">Editing is off for this workspace. Your draft is kept in this tab.</div>}
     {!enabled && <div className="ow-editor-message">Documents is off for this workspace.</div>}

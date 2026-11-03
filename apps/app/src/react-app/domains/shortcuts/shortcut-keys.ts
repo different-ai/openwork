@@ -85,6 +85,7 @@ export function formatChord(chord: string, os: ShortcutOs): string {
 const BUILT_IN_CHORDS: ReadonlyArray<{ chord: string; label: string; os?: ShortcutOs }> = [
   { chord: "Mod+Shift+F", label: "Search sessions" },
   { chord: "Mod+Shift+T", label: "Previous tab" },
+  { chord: "Mod+Shift+E", label: "Settle session" },
   { chord: "Ctrl+Shift+M", label: "Next saved model", os: "macos" },
   { chord: "Mod+Shift+M", label: "Next saved model", os: "other" },
   { chord: "Ctrl+Shift+T", label: "Cycle reasoning backward", os: "macos" },

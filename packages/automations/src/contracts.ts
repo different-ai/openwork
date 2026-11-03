@@ -34,6 +34,11 @@ export function automationRevisionDigest(
 export interface AutomationOccurrenceIdentityInput {
   automationId: string
   scheduledFor: number | null
+  /**
+   * Manual runs: a fresh id per request. Calendar triggers: the occurrence's
+   * stable key, which identifies it on its own (two meetings can share an
+   * instant, and a moved offset must not run the same meeting again).
+   */
   nonce?: string
 }
 
@@ -42,7 +47,9 @@ export function automationOccurrenceIdentity(input: AutomationOccurrenceIdentity
   idempotencyKey: string
 } {
   if (input.scheduledFor === null && !input.nonce) throw new Error("A manual occurrence needs a nonce")
-  const occurrence = input.scheduledFor === null ? `manual:${input.nonce}` : String(input.scheduledFor)
+  const occurrence = input.scheduledFor === null
+    ? `manual:${input.nonce}`
+    : input.nonce ? `event:${input.nonce}` : String(input.scheduledFor)
   const stable = [input.automationId, occurrence]
     .map(encodeURIComponent).join(":")
   return {

@@ -92,7 +92,9 @@ export function trackStream(body: ReadableStream<Uint8Array>, hooks: StreamHooks
   let streamController: ReadableStreamDefaultController<Uint8Array>
   const abort = () => {
     finish(true)
-    streamController.error(new Error("Inference upstream cancelled"))
+    // A caller that went away reads nothing. Erroring its stream would only make the HTTP server log a crash.
+    if (lifetime?.timedOut) streamController.error(new Error("Inference upstream timed out"))
+    else streamController.close()
     void reader.cancel().catch(() => {})
   }
   return new ReadableStream<Uint8Array>({

@@ -3,7 +3,7 @@ import { test } from "node:test"
 import { withBlocks } from "@openwork/sandbox"
 import { createDaytonaProvider, type DaytonaClient, type DaytonaSandboxClient, type DaytonaProviderConfig, type DaytonaCreateParams } from "./index.js"
 import { memorySnapshots } from "./memory-snapshots.js"
-function fixture(hang = false, config: Partial<DaytonaProviderConfig> = {}, imageClass = "linux-vm", pauseState = "paused") {
+function fixture(hang = false, config: Partial<DaytonaProviderConfig> = {}, imageClass = "linux-vm", pauseState = "paused", volumeGet: DaytonaClient["volume"]["get"] = async () => ({ id: "volume", state: "ready" })) {
   const paths: string[] = []
   const creates: DaytonaCreateParams[] = []
   const leases: number[] = []
@@ -28,11 +28,33 @@ function fixture(hang = false, config: Partial<DaytonaProviderConfig> = {}, imag
       getSessionCommandLogs: async () => ({ stdout: "normalized\n", stderr: "normalized\n" }),
     },
   }
-  const client: DaytonaClient = { create: async params => { creates.push(params); return box }, get: async () => box, list: async function* () {}, volume: { get: async () => ({ id: "volume", state: "ready" }) }, snapshot: { get: async () => ({ sandboxClass: imageClass }) } }
+  const client: DaytonaClient = { create: async params => { creates.push(params); return box }, get: async () => box, list: async function* () {}, volume: { get: volumeGet }, snapshot: { get: async () => ({ sandboxClass: imageClass }) } }
   const provider = createDaytonaProvider({ apiKey: "not-used", apiUrl: "https://example.com", snapshot: "test", image: "test", resources: { cpu: 1, memoryGb: 1, diskGb: 4 }, helperCreateTimeoutMs: 1000, pollIntervalMs: 1, platform: { os: "linux", isolation: "container" }, ...config }, { client })
   return { provider, paths, creates, leases, launched: () => launches, activity: () => activity }
 }
 const spec = { workerId: "", idempotencyKey: "test", image: null, env: {}, labels: {}, storage: [], exposePorts: [] }
+
+test("ready volumes use the ensure response without an extra provider request", async () => {
+  const requests: { name: string; create: boolean | undefined }[] = []
+  const f = fixture(false, {}, "linux-vm", "paused", async (name, create) => {
+    requests.push({ name, create })
+    return { id: "volume", state: "ready" }
+  })
+  const volume = await f.provider.storage.ensureVolume("test-volume", { timeoutMs: 1_000 })
+  assert.equal(volume.id, "volume")
+  assert.deepEqual(requests, [{ name: "test-volume", create: true }])
+})
+
+test("volumes that are still creating are polled until ready", async () => {
+  const requests: (boolean | undefined)[] = []
+  const f = fixture(false, {}, "linux-vm", "paused", async (_name, create) => {
+    requests.push(create)
+    return { id: "volume", state: requests.length === 1 ? "creating" : "ready" }
+  })
+  const volume = await f.provider.storage.ensureVolume("test-volume", { timeoutMs: 1_000 })
+  assert.equal(volume.id, "volume")
+  assert.deepEqual(requests, [true, undefined])
+})
 test("run returns exact streams and exit status, not normalized session logs", async () => {
   const f = fixture()
   const h = await f.provider.create(spec, { timeoutMs: 1000 })

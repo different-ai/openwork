@@ -10,7 +10,7 @@ import { fileURLToPath } from "node:url";
 const repo = resolve(dirname(fileURLToPath(import.meta.url)), "../../..");
 const binary = process.env.OPENWORK_TEST_OPENCODE2 ?? "/Applications/OpenWork.app/Contents/Resources/sidecars/opencode2";
 
-test("real managed V2 owner transitions and fail-closed fresh rollout boot", { timeout: 180_000 }, async t => {
+test("real managed V2 ownership, restart, and v1 routing", { timeout: 180_000 }, async t => {
   try { await access(binary); } catch {
     t.skip(`needs: pinned OpenCode 2.0.26 binary (${binary}); set OPENWORK_TEST_OPENCODE2`);
     return;
@@ -24,7 +24,7 @@ test("real managed V2 owner transitions and fail-closed fresh rollout boot", { t
   t.after(() => rm(root, { recursive: true, force: true }));
   const plugins = join(root, "plugins");
   await mkdir(plugins);
-  const entries = ["openwork-gateway-quota-v2", "openwork-provider-filters-v2", "openwork-mcp-results-v2", "openwork-mcp-readiness-v2", "openwork-agent-permissions-v2", "openwork-context-v2"];
+  const entries = ["openwork-gateway-quota-v2", "openwork-provider-filters-v2", "openwork-mcp-results-v2", "openwork-mcp-readiness-v2", "openwork-visible-reasoning-v2", "openwork-agent-permissions-v2", "openwork-context-v2"];
   const buildPlugins = spawnSync("bun", ["build", ...entries.map(name => join(repo, "apps/server/src/opencode-plugins", `${name}.ts`)), "--target=node", "--format=esm", `--outdir=${plugins}`], { cwd: repo, encoding: "utf8", timeout: 30_000 });
   assert.equal(buildPlugins.status, 0, buildPlugins.stderr);
   const buildProvider = spawnSync("bun", ["build", join(repo, "packages/opencode-plugin/server.ts"), "--target=node", "--format=esm", `--outfile=${join(plugins, "openwork-provider-sync-v2.js")}`], { cwd: repo, encoding: "utf8", timeout: 30_000 });
@@ -61,7 +61,7 @@ test("real managed V2 owner transitions and fail-closed fresh rollout boot", { t
     const [code] = await once(child, "exit");
     assert.equal(code, 0, output);
     for (const line of output.split("\n").filter(line => line.startsWith("Passed managed"))) t.diagnostic(line);
-    assert.equal(output.split("\n").filter(line => line.startsWith("Passed managed")).length, 9, output);
+    assert.equal(output.split("\n").filter(line => line.startsWith("Passed managed")).length, 7, output);
   } finally {
     clearTimeout(watchdog);
     if (child.exitCode === null && child.signalCode === null) child.kill("SIGKILL");

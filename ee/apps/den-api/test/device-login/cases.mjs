@@ -69,7 +69,7 @@ export async function runCliCase(fixture, caseName) {
 }
 
 export async function runAbuseIsolationCase(fixture) {
-  const { report, browserA, createBrowser, issueCode, poll, decide, readCode, validateToken,
+  const { report, browserA, createBrowser, issueCode, poll, decide, rawDecide, readCode, validateToken,
     advanceTo, snapshotCounters, sessionRows } = fixture;
   const browserB = await createBrowser("B", "192.0.2.21");
   const before = await sessionRows();
@@ -122,6 +122,18 @@ export async function runAbuseIsolationCase(fixture) {
   expectProtocol(await poll(codeB, "192.0.2.12"), "slow_down", "A new IP must not bypass same-code polling protection.");
   report.separateIpPollStatus = separateIp.status;
   report.pollStateIsolated = true;
+
+  // Better Auth's own approve/deny endpoints skip Den's /device review, so a
+  // signed-in browser cookie must not decide a code through them.
+  const rawApproveA = await rawDecide(codeA, browserA, "approve");
+  assert.equal(rawApproveA.status, 403, "Raw Better Auth device approval must be refused.");
+  const rawDenyA = await rawDecide(codeA, browserA, "deny");
+  assert.equal(rawDenyA.status, 403, "Raw Better Auth device denial must be refused.");
+  const untouchedA = await readCode(codeA);
+  assert.equal(untouchedA.status, "pending", "Refused raw decisions must leave device A pending.");
+  assert.ok(untouchedA.userId === browserA.user.id, "Only Better Auth's verification claim may bind device A, to user A.");
+  assert.equal(untouchedA.organizationId, null, "Refused raw decisions must not stage an organization for device A.");
+  report.rawDecisionStatuses = { approve: rawApproveA.status, deny: rawDenyA.status };
 
   const approveA = await decide(codeA, browserA, "approve");
   assert.equal(approveA.status, 200, "Browser A must approve device A.");

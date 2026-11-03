@@ -1,6 +1,6 @@
 import * as React from "react"
 import type { UIMessage } from "ai"
-import { SquareTerminal } from "lucide-react"
+import { ArrowUpRight } from "lucide-react"
 
 import {
   backgroundShellNoticeLabel,
@@ -8,6 +8,8 @@ import {
   runningBackgroundTasksLabel,
   type BackgroundShellNotice,
 } from "@/app/lib/background-shell-tasks"
+import { readSubagentNotice, subagentNoticeLabel, type SubagentNotice } from "@/app/lib/subagent-notices"
+import { useMessageList } from "@/components/chat/message-list-provider"
 import { formatElapsedSeconds } from "@/lib/tool-call-duration"
 import { Message } from "@/components/ui/message"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
@@ -16,7 +18,8 @@ import type { BackgroundShell } from "@/react-app/domains/session/status/backgro
 
 const COMMAND_PREVIEW_LENGTH = 80
 
-function commandPreview(command: string): string {
+/** One line of a command, cut to fit a row. */
+export function commandPreview(command: string): string {
   const oneLine = command.replace(/\s+/g, " ").trim()
   return oneLine.length > COMMAND_PREVIEW_LENGTH ? `${oneLine.slice(0, COMMAND_PREVIEW_LENGTH - 1)}…` : oneLine
 }
@@ -34,8 +37,8 @@ export function backgroundShellNoticeFromMessage(message: UIMessage): Background
 
 /**
  * Where a background command ended, in the transcript: one quiet row in the
- * step rail's shape (terminal glyph, sentence, command), never the engine's
- * raw `<shell>` hand-off text.
+ * step rail's shape (sentence and command), never the engine's
+ * raw `<shell>` hand-off text. The text-first rail drops the glyph.
  */
 export const BackgroundTaskNotice = React.memo(function BackgroundTaskNotice({ message, notice }: { message: UIMessage; notice: BackgroundShellNotice }) {
   const command = commandPreview(notice.command)
@@ -49,10 +52,61 @@ export const BackgroundTaskNotice = React.memo(function BackgroundTaskNotice({ m
         data-background-task-notice={notice.outcome}
         className="flex w-full min-w-0 items-center gap-2 py-1 text-sm text-muted-foreground"
       >
-        <SquareTerminal aria-hidden="true" className="size-4 shrink-0" />
         <span className="shrink-0">{backgroundShellNoticeLabel(notice)}</span>
-        {command ? <code className="min-w-0 truncate font-mono text-xs opacity-80" title={notice.command}>{command}</code> : null}
+        {command ? <code className="min-w-0 truncate font-mono text-xs text-slate-9" title={notice.command}>{command}</code> : null}
       </div>
+    </Message>
+  )
+})
+
+/** The background sub-agent completion notice a transcript message carries, if it is one. */
+export function subagentNoticeFromMessage(message: UIMessage): SubagentNotice | null {
+  if (message.role !== "system") return null
+  for (const part of message.parts) {
+    if (part.type !== "text") continue
+    const notice = readSubagentNotice(part.providerMetadata?.opencode?.subagentNotice)
+    if (notice) return notice
+  }
+  return null
+}
+
+/**
+ * Where a background sub-agent ended, in the transcript: one quiet row in the
+ * same shape as a background command's, never the engine's raw `<subagent>`
+ * hand-off text. It opens the sub-agent's chat, like its run line does.
+ * The text-first rail reads like every other step, "Sub-agent
+ * finished Diagnose stuck conversion", with no glyph.
+ */
+export const SubagentNoticeRow = React.memo(function SubagentNoticeRow({ message, notice }: { message: UIMessage; notice: SubagentNotice }) {
+  const { onOpenSubagentSession } = useMessageList()
+  const label = subagentNoticeLabel(notice)
+  const content = (
+    <>
+      <span className="shrink-0">{label}</span>
+      {notice.description ? <span className="min-w-0 truncate text-slate-9" title={notice.description}>{notice.description}</span> : null}
+    </>
+  )
+  const rowClassName = "flex w-full min-w-0 items-center gap-2 py-1 text-start text-sm text-muted-foreground"
+  return (
+    <Message
+      className="mx-auto flex w-full max-w-3xl flex-col items-start gap-2 px-2 md:px-10"
+      data-message-id={message.id}
+      data-message-role={message.role}
+    >
+      {onOpenSubagentSession ? (
+        <button
+          type="button"
+          data-subagent-notice={notice.outcome}
+          className={cn(rowClassName, "group cursor-pointer transition-colors hover:text-foreground")}
+          aria-label={`${label}${notice.description ? `: ${notice.description}` : ""}. Open sub-agent chat`}
+          onClick={() => onOpenSubagentSession(notice.childSessionId)}
+        >
+          {content}
+          <ArrowUpRight aria-hidden="true" className="size-3.5 shrink-0 opacity-0 transition-opacity group-hover:opacity-100" />
+        </button>
+      ) : (
+        <div data-subagent-notice={notice.outcome} className={rowClassName}>{content}</div>
+      )}
     </Message>
   )
 })

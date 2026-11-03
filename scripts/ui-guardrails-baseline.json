@@ -26,12 +26,6 @@
       "count": 1
     },
     {
-      "file": "apps/app/src/react-app/domains/automations/automation-schedule-fields.tsx",
-      "rule": "raw-control",
-      "fingerprint": "05c8328b6997c82d",
-      "count": 1
-    },
-    {
       "file": "apps/app/src/react-app/domains/connections/provider-auth/provider-auth-modal.tsx",
       "rule": "tiny-text",
       "fingerprint": "e85d3e9f173807f6",

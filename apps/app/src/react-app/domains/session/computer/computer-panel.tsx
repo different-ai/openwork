@@ -1,12 +1,14 @@
 import { useEffect, useEffectEvent, useId, useLayoutEffect, useRef, useState, type ReactNode } from "react"
 import { createPortal } from "react-dom"
 import { motion, useReducedMotion } from "motion/react"
-import { GripVertical, Maximize2, Minimize2, Minus, Monitor, PictureInPicture2 } from "lucide-react"
+import { ExternalLink, GripVertical, Maximize2, Minimize2, Minus, Monitor, PanelBottomClose, PictureInPicture2 } from "lucide-react"
 import type { ComputerPresentation } from "@openwork/types/desktop-ipc"
 
 import { desktopBridge } from "@/app/lib/desktop"
 import { Button } from "@/components/ui/button"
 import { cn } from "@/lib/utils"
+import { openComputerPopout, type ComputerPopout } from "./computer-popout"
+import { useComputerStore } from "./computer-store"
 
 type Observation = Omit<ComputerPresentation, "phase" | "frame"> & {
   phase: ComputerPresentation["phase"] | "unavailable" | "stopping"
@@ -71,17 +73,18 @@ export function ComputerPanel({ sessionId, slot, enabled, canStop, controlsBusy,
   const [screenSize, setScreenSize] = useState({ width: 0, height: 0 })
   const [position, setPosition] = useState({ x: 12, y: 12 })
   const [dragging, setDragging] = useState(false)
+  const [popout, setPopout] = useState<ComputerPopout | null>(null)
   const reducedMotion = useReducedMotion()
   const card = useRef<HTMLElement>(null)
   const moveButton = useRef<HTMLButtonElement>(null)
-  const drag = useRef<{ id: number; x: number; y: number; origin: { x: number; y: number } } | null>(null)
+  const drag = useRef<{ id: number; x: number; y: number; origin: { x: number; y: number }; grab: { x: number; y: number } } | null>(null)
   const latest = useRef<Pick<ComputerPresentation, "id" | "phase"> | null>(null)
   const activeFrame = useRef<string | null>(null)
   const scope = useRef("")
   const mounted = useRef(false)
   const acting = useRef(false)
   const transport = useRef<Promise<ComputerPresentation | null> | null>(null)
-  const monitor = useRef({ minimized: false, fullscreen: false, revision: 0, freshAfter: 0, capture: 0, working: false, wake: () => {} })
+  const monitor = useRef({ minimized: false, fullscreen: false, popout: null as ComputerPopout | null, revision: 0, freshAfter: 0, capture: 0, working: false, wake: () => {} })
   const id = useId()
 
   function clearScreen() {
@@ -112,6 +115,55 @@ export function ComputerPanel({ sessionId, slot, enabled, canStop, controlsBusy,
     monitor.current.wake()
   }
 
+  /** Moves the view into its own window. A drag past OpenWork's edge keeps it under the pointer. */
+  function popOut(grab?: { x: number; y: number; screenX: number; screenY: number }) {
+    if (monitor.current.popout) return
+    const size = { width: 460, height: Math.max(260, Math.min(520, card.current?.offsetHeight ?? 360)) }
+    const at = grab ? { left: grab.screenX - grab.x, top: grab.screenY - grab.y }
+      : { left: window.screenX + window.outerWidth - size.width - 32, top: window.screenY + 72 }
+    const next = openComputerPopout({ ...at, ...size })
+    if (!next) { setActionError("The computer view could not open in its own window."); return }
+    drag.current = null; setDragging(false)
+    monitor.current.popout = next
+    monitor.current.minimized = false; monitor.current.fullscreen = false
+    setMinimized(false); setFullscreen(false)
+    setPopout(next)
+    next.window.addEventListener("pagehide", () => { if (monitor.current.popout === next) popIn() })
+    if (grab) {
+      // The press began in this window, so its moves keep arriving here until release.
+      const follow = (event: PointerEvent) => { if (!next.window.closed) next.window.moveTo(event.screenX - grab.x, event.screenY - grab.y) }
+      const end = () => { window.removeEventListener("pointermove", follow); window.removeEventListener("pointerup", end); window.removeEventListener("blur", end) }
+      window.addEventListener("pointermove", follow)
+      window.addEventListener("pointerup", end)
+      window.addEventListener("blur", end)
+    }
+    monitor.current.revision += 1
+    clearScreen()
+    monitor.current.wake()
+  }
+
+  /** Back into the chat; closing the window does the same. */
+  function popIn() {
+    const current = monitor.current.popout
+    if (!current) return
+    monitor.current.popout = null
+    setPopout(null)
+    current.dispose()
+    monitor.current.revision += 1
+    clearScreen()
+    monitor.current.wake()
+  }
+
+  useEffect(() => () => { monitor.current.popout?.dispose(); monitor.current.popout = null }, [])
+
+  useEffect(() => {
+    if (!popout) return
+    const target = popout.window.document
+    const changed = () => { monitor.current.revision += 1; clearScreen(); monitor.current.wake() }
+    target.addEventListener("visibilitychange", changed)
+    return () => target.removeEventListener("visibilitychange", changed)
+  }, [popout])
+
   const captureAllowed = useEffectEvent(() => enabled && !stopping && !cleanupPending)
   const stopUnconfirmed = useEffectEvent(() => stopping || cleanupPending || Boolean(stopError && canStop))
   useEffect(() => {
@@ -120,8 +172,10 @@ export function ComputerPanel({ sessionId, slot, enabled, canStop, controlsBusy,
     let reading = false
     let again = false
     let timer = 0
-    const shown = () => monitor.current.fullscreen || (slot.getClientRects().length > 0 && slot.clientWidth > 24 && slot.clientHeight > 24)
-    const visible = () => latest.current !== null && !monitor.current.minimized && document.visibilityState === "visible" && captureAllowed() && shown()
+    const shown = () => monitor.current.fullscreen || monitor.current.popout !== null || (slot.getClientRects().length > 0 && slot.clientWidth > 24 && slot.clientHeight > 24)
+    // A popped-out view keeps watching while OpenWork itself is hidden behind other apps.
+    const viewDocument = () => monitor.current.popout?.window.document ?? document
+    const visible = () => latest.current !== null && !monitor.current.minimized && viewDocument().visibilityState === "visible" && captureAllowed() && shown()
     async function poll() {
       window.clearTimeout(timer)
       if (reading) { again = true; return }
@@ -227,9 +281,11 @@ export function ComputerPanel({ sessionId, slot, enabled, canStop, controlsBusy,
     const resize = new ResizeObserver(measure)
     resize.observe(slot)
     if (card.current) resize.observe(card.current)
-    if (viewport) resize.observe(viewport)
-    return () => resize.disconnect()
-  }, [slot, viewport, Boolean(presentation), fullscreen])
+    // Elements in the popped-out window are observed from that window.
+    const viewResize = popout && viewport ? new (popout.window as Window & typeof globalThis).ResizeObserver(measure) : null
+    if (viewport) (viewResize ?? resize).observe(viewport)
+    return () => { resize.disconnect(); viewResize?.disconnect() }
+  }, [slot, viewport, Boolean(presentation), fullscreen, popout])
 
   async function interact(action: Interaction) {
     const current = latest.current
@@ -242,6 +298,8 @@ export function ComputerPanel({ sessionId, slot, enabled, canStop, controlsBusy,
     if (action === "takeover" || action === "resume") clearScreen()
     try {
       await desktopBridge.computerInteract({ sessionId, id: current.id, action })
+      // A turn that ended while the person had control picks up again (see session-surface).
+      if (action === "resume") useComputerStore.getState().markContinued(sessionId)
     } catch {
       if (mounted.current && scope.current === actionScope) {
         setActionError(`${action === "takeover" ? "Take over" : action === "resume" ? "Continue" : "Window choice"} was not confirmed. Check the updated state before trying again.`)
@@ -258,7 +316,7 @@ export function ComputerPanel({ sessionId, slot, enabled, canStop, controlsBusy,
   const stopPending = stopping || cleanupPending || presentation.phase === "stopping"
   const unavailable = readFailed || presentation.phase === "unavailable"
   const frame = !minimized && !unavailable && !stopPending && !paused && presentation.frame?.key !== failedFrame ? presentation.frame : undefined
-  const live = !minimized && document.visibilityState === "visible" && presentation.phase === "working" && frame && loadedFrame === frame.key && now - frame.capturedAt >= 0 && now - frame.capturedAt < 1_500
+  const live = !minimized && (popout?.window.document ?? document).visibilityState === "visible" && presentation.phase === "working" && frame && loadedFrame === frame.key && now - frame.capturedAt >= 0 && now - frame.capturedAt < 1_500
   const status = unavailable || failedFrame !== null ? "View unavailable" : paused ? "Paused" : live ? "Live" : "Connecting"
   const disabled = controlsBusy || busy !== null || unavailable || cleanupPending || !enabled
   const maxX = Math.max(12, bounds.width - cardSize.width - 12)
@@ -284,8 +342,8 @@ export function ComputerPanel({ sessionId, slot, enabled, canStop, controlsBusy,
   const screen = (
     <div
       ref={setViewport}
-      className={cn("relative flex min-h-0 items-center justify-center overflow-hidden bg-black/90", fullscreen ? "flex-1" : "shrink")}
-      style={fullscreen ? undefined : { aspectRatio: frame ? `${frame.width} / ${frame.height}` : "16 / 10" }}
+      className={cn("relative flex min-h-0 items-center justify-center overflow-hidden bg-black/90", fullscreen || popout ? "flex-1" : "shrink")}
+      style={fullscreen || popout ? undefined : { aspectRatio: frame ? `${frame.width} / ${frame.height}` : "16 / 10" }}
       data-testid="session-computer-screen"
     >
       {frame ? <div className="pointer-events-none relative shrink-0 overflow-hidden" style={{ width: imageWidth, height: imageHeight }}>
@@ -326,7 +384,7 @@ export function ComputerPanel({ sessionId, slot, enabled, canStop, controlsBusy,
   const footer = <>
     <footer className="flex shrink-0 flex-wrap items-center gap-2 border-t border-border px-3 py-2">
       <div className="min-w-0 flex-1 basis-24 text-xs text-muted-foreground">
-        <p className="truncate" title={presentation.windowTitle}>{presentation.windowTitle || presentation.appName || "This Mac"}</p>
+        <p className="truncate" title={presentation.windowTitle}>{presentation.windowTitle || presentation.appName || "This computer"}</p>
         <p className="mt-0.5">{stopPending ? "Stop not yet confirmed" : paused ? presentation.canContinue ? "Ready when you are" : "Waiting for your input to finish" : "Watch only"}</p>
       </div>
       {!stopPending ? <Button
@@ -345,6 +403,25 @@ export function ComputerPanel({ sessionId, slot, enabled, canStop, controlsBusy,
   </>
 
   const liveStatus = <span role="status" className={cn("shrink-0 text-xs", live ? "text-green-11" : "text-muted-foreground")} data-testid="session-computer-live-status">{status}</span>
+
+  if (popout) {
+    return createPortal(
+      <div className="flex h-dvh flex-col bg-popover text-popover-foreground" data-testid="session-computer-popout">
+        <header className="titlebar-drag flex h-10 shrink-0 items-center gap-2 border-b border-border pl-3 pr-1.5">
+          <Monitor size={14} className="shrink-0 text-muted-foreground" />
+          <h2 className="min-w-0 truncate text-xs font-medium">{title}</h2>
+          {liveStatus}
+          <span className="flex-1" />
+          <Button variant="ghost" size="icon-xs" className="titlebar-no-drag" aria-label="Put the computer view back in the chat" title="Back in the chat" data-testid="session-computer-pop-in" onClick={popIn}>
+            <PanelBottomClose />
+          </Button>
+        </header>
+        {screen}
+        {footer}
+      </div>,
+      popout.window.document.body,
+    )
+  }
 
   if (fullscreen) {
     return (
@@ -391,11 +468,17 @@ export function ComputerPanel({ sessionId, slot, enabled, canStop, controlsBusy,
           onPointerDown={(event) => {
             if (event.button !== 0 || !event.isPrimary) return
             event.preventDefault(); event.currentTarget.focus(); event.currentTarget.setPointerCapture(event.pointerId)
-            drag.current = { id: event.pointerId, x: event.clientX, y: event.clientY, origin: shown }; setDragging(true)
+            const rect = card.current?.getBoundingClientRect()
+            drag.current = { id: event.pointerId, x: event.clientX, y: event.clientY, origin: shown, grab: { x: event.clientX - (rect?.left ?? 0), y: event.clientY - (rect?.top ?? 0) } }; setDragging(true)
           }}
           onPointerMove={(event) => {
             const current = drag.current
             if (!current || current.id !== event.pointerId) return
+            // Past OpenWork's own edge, the view leaves the chat as its own window.
+            if (event.clientX < 0 || event.clientY < 0 || event.clientX > window.innerWidth || event.clientY > window.innerHeight) {
+              popOut({ ...current.grab, screenX: event.screenX, screenY: event.screenY })
+              return
+            }
             setPosition({ x: Math.max(12, Math.min(maxX, current.origin.x + event.clientX - current.x)), y: Math.max(12, Math.min(maxY, current.origin.y + event.clientY - current.y)) })
           }}
           onPointerUp={(event) => { drag.current = null; setDragging(false); if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId) }}
@@ -415,13 +498,14 @@ export function ComputerPanel({ sessionId, slot, enabled, canStop, controlsBusy,
           <span className="truncate">{title}</span>
         </button>
         {!minimized ? liveStatus : null}
+        {!minimized ? <Button variant="ghost" size="icon-xs" aria-label="Open computer view in its own window" title="Its own window, over any app" data-testid="session-computer-pop-out" onClick={() => popOut()}><ExternalLink /></Button> : null}
         {!minimized ? <Button variant="ghost" size="icon-xs" aria-label="Expand computer view full screen" data-testid="session-computer-fullscreen-toggle" onClick={() => expand(true)}><Maximize2 /></Button> : null}
         <Button variant="ghost" size="icon-xs" aria-label={minimized ? "Restore computer view" : "Minimize computer view"} title={minimized ? "Show the computer view" : "Hide the view without stopping work"} data-testid="session-computer-minimize" onClick={() => minimize(!minimized)}>
           {minimized ? <PictureInPicture2 /> : <Minus />}
         </Button>
         {minimized ? <Button variant="ghost" size="xs" className="text-red-11 hover:text-red-11" disabled={controlsBusy || !canStop} aria-busy={stopping} onClick={onStop}>{stopping ? "Stopping..." : "Stop"}</Button> : null}
       </header>
-      <p id={`${id}-move`} className="sr-only">Drag anywhere within the chat, or use the arrow keys. Shift moves faster. Home and End move to corners. Escape minimizes the view without stopping work.</p>
+      <p id={`${id}-move`} className="sr-only">Drag anywhere within the chat, or past the edge of OpenWork to give it its own window. Arrow keys also move it. Shift moves faster. Home and End move to corners. Escape minimizes the view without stopping work.</p>
       {minimized && (stopPending || stopError) ? <p role="status" className="px-3 py-2 text-[11px] text-amber-11">Stop not yet confirmed. Restore the view for details.</p> : null}
       {!minimized ? <>{screen}{footer}</> : null}
     </aside>,

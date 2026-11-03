@@ -18,6 +18,7 @@ export default {
   "common.hide": "Amaga",
   "common.next": "Següent",
   "common.question": "Pregunta",
+  "common.permission": "Permís",
   "common.refresh": "Actualitza",
   "common.remove": "Eliminar",
   "common.reset": "Restableix",

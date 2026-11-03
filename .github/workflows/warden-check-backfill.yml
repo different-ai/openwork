@@ -1,9 +1,9 @@
 name: Warden check backfill
 
-# One-off, manual: posts the required `warden-clear` check on open PRs from
-# this repository that diff-warden already approved at their current head, so
-# making the check required doesn't block PRs opened before it existed. Every
-# other PR gets the check on its next Warden run. Run it from dev only.
+# Legacy one-off, manual: posts an advisory `warden-clear` check on open PRs
+# from this repository with an existing diff-warden approval at their head.
+# It grants no approval; warden-clear is not a merge requirement. Every other
+# PR gets advisory reporting on its next Warden run. Run it from dev only.
 on:
   workflow_dispatch:
 
@@ -43,7 +43,7 @@ jobs:
           sparse-checkout: .github/scripts
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
-          node-version: 24
+          node-version: 24.22.1
       - name: Mint the check token
         id: app
         uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3

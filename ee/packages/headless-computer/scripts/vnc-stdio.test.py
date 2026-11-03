@@ -35,9 +35,26 @@ class ViewerTests(unittest.TestCase):
             self.assertIn('-inetd', commands[0])
             self.assertIn('-viewonly', commands[0])
             self.assertNotIn('-rfbport', commands[0])
+            self.assertIn('-wait', commands[0])
+            self.assertEqual(commands[0][commands[0].index('-wait') + 1], '100')
         finally:
             for fd in (incoming, receive, outgoing):
                 if fd is not None: os.close(fd)
+
+    def test_each_view_shows_only_its_own_display(self):
+        for view, display in [('computer', ':99'), ('browser', ':100')]:
+            with self.subTest(view=view):
+                commands = []
+                def server(command, **kwargs):
+                    commands.append(command)
+                    raise SystemExit(0)
+                with patch.object(vnc.os, 'geteuid', return_value=0), patch.object(vnc.signal, 'signal'), \
+                        patch.object(vnc.subprocess, 'Popen', side_effect=server), self.assertRaises(SystemExit):
+                    vnc.serve(view, 'view')
+                command = commands[0]
+                self.assertEqual(command[command.index('-display') + 1], display)
+                self.assertEqual(command[command.index('-auth') + 1], f'/run/openwork-desktop/{display[1:]}/.Xauthority')
+                self.assertNotIn('-id', command)
 
     def test_only_the_privileged_guest_can_start_valid_viewers(self):
         for uid, view, control in [(1000, 'computer', 'view'), (0, 'other', 'view'), (0, 'computer', 'other')]:

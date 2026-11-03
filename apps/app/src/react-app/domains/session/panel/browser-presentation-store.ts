@@ -3,33 +3,31 @@ import { create } from "zustand";
 import type { BrowserPresentationMode } from "@/app/lib/desktop";
 
 export type { BrowserPresentationMode };
-export type BrowserFloatingSnap = "top" | "middle" | "bottom";
 export type BrowserShownMode = "floating" | "side";
 
 /**
  * How one conversation shows its built-in browser. `side` is the docked side
- * panel; `returnMode` is the person's last floating/side choice, used when
- * leaving full screen, reopening from the header and placing a page the agent
- * opened. In memory only: a restart starts hidden.
+ * panel, `floating` its own OS window; `returnMode` is the person's last
+ * floating/side choice, used when leaving full screen. In memory only: a
+ * restart starts hidden.
  */
 export type BrowserPresentation = {
   mode: BrowserPresentationMode;
-  snap: BrowserFloatingSnap;
   returnMode: BrowserShownMode;
 };
 
 type BrowserPresentationStore = {
   sessions: Record<string, BrowserPresentation>;
   setMode: (sessionId: string, mode: BrowserPresentationMode, returnMode?: BrowserShownMode) => void;
-  setSnap: (sessionId: string, snap: BrowserFloatingSnap) => void;
+  /** A new thread became a session: how it shows its browser goes with it. */
+  moveSession: (from: string, to: string) => void;
   /** Full screen never outlives its conversation or its page: fall back to `returnMode`. */
   dropFullscreen: (sessionId: string) => void;
 };
 
 export const DEFAULT_BROWSER_PRESENTATION: BrowserPresentation = {
   mode: "hidden",
-  snap: "middle",
-  returnMode: "floating",
+  returnMode: "side",
 };
 
 function update(
@@ -39,7 +37,7 @@ function update(
 ): Record<string, BrowserPresentation> {
   const current = sessions[sessionId] ?? DEFAULT_BROWSER_PRESENTATION;
   const merged = { ...current, ...next };
-  if (merged.mode === current.mode && merged.snap === current.snap && merged.returnMode === current.returnMode) return sessions;
+  if (merged.mode === current.mode && merged.returnMode === current.returnMode) return sessions;
   return { ...sessions, [sessionId]: merged };
 }
 
@@ -48,7 +46,12 @@ export const useBrowserPresentationStore = create<BrowserPresentationStore>()((s
   setMode: (sessionId, mode, returnMode) => set((state) => ({
     sessions: update(state.sessions, sessionId, returnMode ? { mode, returnMode } : { mode }),
   })),
-  setSnap: (sessionId, snap) => set((state) => ({ sessions: update(state.sessions, sessionId, { snap }) })),
+  moveSession: (from, to) => set((state) => {
+    const moved = state.sessions[from];
+    if (!moved) return state;
+    const { [from]: _moved, ...sessions } = state.sessions;
+    return { sessions: { ...sessions, [to]: moved } };
+  }),
   dropFullscreen: (sessionId) => set((state) => {
     const current = state.sessions[sessionId];
     if (current?.mode !== "fullscreen") return state;

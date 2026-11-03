@@ -9,7 +9,7 @@ export const smokeView = z.object({
 
 // Never echo provider details, arbitrary error strings, or conversation content into deployment logs.
 const safeErrors = new Set([
-  "model_credentials_missing", "mcp_unavailable", "credentials_refresh", "stuck_repeating",
+  "model_credentials_missing", "mcp_unavailable", "credentials_refresh", "stuck_repeating", "output_limit",
   "max_steps_exceeded", "runner_shutdown", "turn_timeout", "runner_error", "superseded",
   "model_unreachable", "model_failed", "model_bad_response", "model_stream_interrupted",
 ])

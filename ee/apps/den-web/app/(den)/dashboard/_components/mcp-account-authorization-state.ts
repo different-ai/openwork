@@ -20,3 +20,25 @@ export function resolveMcpAuthorizationPollOutcome(input: {
   if (input.elapsedMs >= input.timeoutMs) return "timeout";
   return "pending";
 }
+
+/**
+ * One poll of the sign-in tab. The tab's state is read before fetching: the
+ * callback saves the account and then closes the tab, so only a fetch that
+ * started after the tab closed can show the sign-in did not finish.
+ */
+export async function pollMcpAuthorization(input: {
+  authorizationWindow: Pick<Window, "closed">;
+  readConnected: () => Promise<boolean>;
+  startedAt: number;
+  timeoutMs: number;
+  now?: () => number;
+}): Promise<McpAuthorizationPollOutcome> {
+  const authorizationWindowClosed = input.authorizationWindow.closed;
+  const connected = await input.readConnected();
+  return resolveMcpAuthorizationPollOutcome({
+    connected,
+    authorizationWindowClosed,
+    elapsedMs: (input.now ?? Date.now)() - input.startedAt,
+    timeoutMs: input.timeoutMs,
+  });
+}

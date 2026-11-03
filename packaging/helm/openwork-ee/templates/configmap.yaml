@@ -34,6 +34,9 @@ data:
   DEN_AUDIT_CAPTURE_ENABLED: {{ .Values.config.audit.captureEnabled | quote }}
   DEN_AUDIT_VISIBILITY_ENABLED: {{ .Values.config.audit.visibilityEnabled | quote }}
   DEN_PASSWORD_BREACH_SCREENING_ENABLED: {{ .Values.config.auth.passwordBreachScreeningEnabled | quote }}
+  {{- with (.Values.config.email).supportAddress }}
+  EMAIL_SUPPORT_ADDRESS: {{ . | quote }}
+  {{- end }}
   GITHUB_CONNECTOR_APP_ID: {{ .Values.config.githubConnector.appId | quote }}
   GITHUB_CONNECTOR_APP_CLIENT_ID: {{ .Values.config.githubConnector.clientId | quote }}
   DEN_BASE_URL: {{ .Values.config.public.webOrigin | quote }}

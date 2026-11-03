@@ -6,15 +6,18 @@ import {
 import {
   AUTOMATION_MODEL_ATTENTION_CAPABILITY,
   AUTOMATION_MODEL_ATTENTION_CAPABILITY_HEADER,
+  AUTOMATION_SCHEDULE_KINDS,
+  AUTOMATION_SCHEDULE_KINDS_HEADER,
 } from "@openwork/types/automations";
-import type { GatewayProviderSummary } from "@openwork/types/den/gateway";
+import type { GatewayAuthorizationRequest, GatewayProviderSummary } from "@openwork/types/den/gateway";
+import { parseGatewayUsableModel } from "./gateway-usable-model";
 import type { DesktopStartupReport } from "@openwork/types/den/diagnostics";
 import {
   parseModelRemovalInventory,
   type ModelRemovalInventory,
 } from "../../react-app/domains/session/surface/model-removal-inventory";
 export type { ModelRemovalInventory } from "../../react-app/domains/session/surface/model-removal-inventory";
-import { workbotSettingsSchema } from "@openwork/types/den/workbot-settings";
+import { activationStateSchema, type ActivationEventRequest, type ActivationState } from "@openwork/types/den/activation";
 import {
   remoteSessionStatusResultSchema,
   type RemoteSessionStatusRequest,
@@ -28,7 +31,6 @@ import type {
   AutomationExecutionTargetList,
   AutomationList,
   AutomationRun,
-  AutomationRunRange,
   AutomationRunReceipt,
   AutomationRunnerTokenResponse,
   CreateAutomation,
@@ -68,16 +70,6 @@ import { clearDesktopSignInIntent, clearOrgSelectionPending, readOrgSelectionPen
 import { rememberDenOrganization } from "./den-org-memory";
 import { clearDashboardTileCacheStorage } from "./dashboard-cache-storage";
 import { isDesktopRuntime } from "./runtime-env";
-import {
-  calendarRangeSearch,
-  denGoogleCalendarEventsResponseSchema,
-  denMicrosoftCalendarEventsResponseSchema,
-  DEN_GOOGLE_CALENDAR_EVENTS_PATH,
-  DEN_MICROSOFT_CALENDAR_EVENTS_PATH,
-  type DenCalendarRangeQuery,
-  type DenGoogleCalendarEvent,
-  type DenMicrosoftCalendarEvent,
-} from "@openwork/calendar";
 import type { ReloadReason } from "../types";
 import type {
   OpenWorkExtensionContribution,
@@ -338,6 +330,12 @@ export type DenMcpToken = {
 
 export type DenOrgGatewayProvider = Pick<GatewayProviderSummary, "id" | "providerId" | "name" | "source">;
 
+/** A Gateway provider as this member can use it: ready models plus sets still awaiting their sign-in. */
+export type DenOrgUsableGatewayProvider = Pick<
+  GatewayProviderSummary,
+  "id" | "providerId" | "name" | "source" | "credentialStatus" | "updatedAt" | "models" | "authorizationRequests"
+>;
+
 export type DenOrgLlmProviderModel = {
   id: string;
   name: string;
@@ -381,7 +379,17 @@ export type DenOrgLlmProvider = {
 };
 
 export type DenExternalMcpConnection = {
-  readiness?: { status: "ready" | "could_not_verify"; checkedAt: string; lastSuccessfulAt: string | null; reason: string | null } | null;
+  readiness?: {
+    status: "ready" | "could_not_verify";
+    checkedAt: string;
+    lastSuccessfulAt: string | null;
+    reason: string | null;
+    failure?: DenConnectionReadinessFailure | null;
+    /** Support reference for a failed sign-in; newer Den only. */
+    referenceId?: string;
+    /** Den-validated link to the service's settings page, only with provider_setup_required; newer Den only. */
+    providerSettingsUrl?: string;
+  } | null;
   setupRequired?: boolean;
   credentialHealth?: "unknown" | "ready" | "reconnect_required";
   id: string;
@@ -414,6 +422,8 @@ export type DenExternalMcpPreset = {
   authType: "oauth" | "apikey" | "none";
   /** The provider needs its own OAuth app (two codes from its settings) before anyone can sign in. */
   requiresOAuthClient?: boolean;
+  /** OpenWork's own registered app for this provider; when set, people sign in without an organization app. */
+  defaultOAuthClientId?: string;
 };
 
 export type DenMcpConnectionConnectStart = {
@@ -2140,11 +2150,90 @@ function getDenOrgGatewayProviders(payload: unknown): DenOrgGatewayProvider[] {
   });
 }
 
-function parseConnectionReadiness(value: unknown): DenExternalMcpConnection["readiness"] {
+function parseDenOrgUsableGatewayProvider(value: unknown): DenOrgUsableGatewayProvider | null {
+  if (
+    !isRecord(value) ||
+    typeof value.id !== "string" || !/^ipr_/i.test(value.id) ||
+    typeof value.providerId !== "string" || !value.providerId.trim() ||
+    typeof value.name !== "string" || !value.name.trim() ||
+    value.source !== "openwork_gateway" ||
+    (value.credentialStatus !== "ready" && value.credentialStatus !== "member_auth_required" && value.credentialStatus !== "org_credential_missing")
+  ) {
+    return null;
+  }
+  const models = Array.isArray(value.models)
+    ? value.models.flatMap((model) => {
+        const parsed = parseGatewayUsableModel(model);
+        return parsed ? [parsed] : [];
+      })
+    : [];
+  const authorizationRequests: GatewayAuthorizationRequest[] = Array.isArray(value.authorizationRequests)
+    ? value.authorizationRequests.flatMap((request) => {
+        if (
+          !isRecord(request) ||
+          typeof request.credentialSetId !== "string" || !/^gcs_[0-7][0-9a-hjkmnp-tv-z]{25}$/.test(request.credentialSetId) ||
+          typeof request.name !== "string" || !request.name.trim() ||
+          typeof request.authUrl !== "string" || !request.authUrl.trim()
+        ) {
+          return [];
+        }
+        const credentialSetId = request.credentialSetId;
+        return [{
+          credentialSetId,
+          name: request.name,
+          authUrl: request.authUrl,
+          ...(Array.isArray(request.models)
+            ? { models: request.models.flatMap((model) => {
+                const parsed = parseGatewayUsableModel(model, credentialSetId);
+                return parsed ? [parsed] : [];
+              }) }
+            : {}),
+        }];
+      })
+    : [];
+  return {
+    id: value.id,
+    providerId: value.providerId,
+    name: value.name,
+    source: value.source,
+    credentialStatus: value.credentialStatus,
+    updatedAt: typeof value.updatedAt === "string" ? value.updatedAt : "",
+    models,
+    authorizationRequests,
+  };
+}
+
+/** Lenient for display: one malformed row is dropped rather than hiding every provider. */
+function getDenOrgUsableGatewayProviders(payload: unknown): DenOrgUsableGatewayProvider[] {
+  if (!isRecord(payload) || !Array.isArray(payload.inferenceProviders)) {
+    throw new DenApiError(500, "invalid_gateway_providers_payload", "AI Gateway provider response was invalid.");
+  }
+  return payload.inferenceProviders.flatMap((provider: unknown) => {
+    const parsed = parseDenOrgUsableGatewayProvider(provider);
+    return parsed ? [parsed] : [];
+  });
+}
+
+const CONNECTION_READINESS_FAILURES = ["sign_in_required", "sign_in_rejected", "setup_required", "provider_setup_required", "unavailable", "timed_out", "settings_changed", "tools_unreadable"] as const;
+export type DenConnectionReadinessFailure = (typeof CONNECTION_READINESS_FAILURES)[number];
+
+function parseConnectionReadinessFailure(value: unknown): DenConnectionReadinessFailure | null {
+  return CONNECTION_READINESS_FAILURES.find((failure) => failure === value) ?? null;
+}
+
+export function parseConnectionReadiness(value: unknown): DenExternalMcpConnection["readiness"] {
   if (value === undefined) return undefined;
   if (!isRecord(value) || (value.status !== "ready" && value.status !== "could_not_verify")
     || typeof value.checkedAt !== "string" || !Number.isFinite(Date.parse(value.checkedAt))) return null;
-  return { status: value.status, checkedAt: value.checkedAt, lastSuccessfulAt: typeof value.lastSuccessfulAt === "string" ? value.lastSuccessfulAt : null, reason: typeof value.reason === "string" ? value.reason : null };
+  return {
+    status: value.status,
+    checkedAt: value.checkedAt,
+    lastSuccessfulAt: typeof value.lastSuccessfulAt === "string" ? value.lastSuccessfulAt : null,
+    reason: typeof value.reason === "string" ? value.reason : null,
+    failure: parseConnectionReadinessFailure(value.failure),
+    ...(typeof value.referenceId === "string" && value.referenceId.trim() ? { referenceId: value.referenceId } : {}),
+    ...(typeof value.providerSettingsUrl === "string" && value.providerSettingsUrl.trim() ? { providerSettingsUrl: value.providerSettingsUrl } : {}),
+  };
 }
 
 function parseDenExternalMcpConnection(value: unknown): DenExternalMcpConnection | null {
@@ -2216,6 +2305,9 @@ function parseDenExternalMcpPreset(value: unknown): DenExternalMcpPreset | null 
     url: value.url,
     authType: value.authType,
     ...(value.requiresOAuthClient === true ? { requiresOAuthClient: true } : {}),
+    ...(typeof value.defaultOAuthClientId === "string" && value.defaultOAuthClientId.trim()
+      ? { defaultOAuthClientId: value.defaultOAuthClientId }
+      : {}),
   };
 }
 
@@ -2841,6 +2933,37 @@ async function fetchWithTimeout(fetchImpl: FetchLike, url: string, init: Request
   }
 }
 
+const FEATURE_USAGE_FLUSH_MS = 2_000;
+const reportedFeatureUsage = new Set<string>();
+const pendingFeatureUsage = new Set<string>();
+let featureUsageTimer: ReturnType<typeof setTimeout> | null = null;
+
+function flushFeatureUsage() {
+  featureUsageTimer = null;
+  const features = [...pendingFeatureUsage];
+  pendingFeatureUsage.clear();
+  const settings = readDenSettings();
+  const token = settings.authToken?.trim() ?? "";
+  const orgId = settings.activeOrgId?.trim() ?? "";
+  if (features.length === 0) return;
+  if (!token || !orgId) {
+    // Signed out: let the next use after sign-in report it.
+    for (const key of features) reportedFeatureUsage.delete(key);
+    return;
+  }
+  void createDenClient({ ...settings, token }).reportFeatureUsage(orgId, features).catch(() => {
+    // Best effort: a lost report only hides one use from /admin.
+  });
+}
+
+/** Report that the member just used a registry feature, for /admin; call where the feature is exercised, not on render. Batched, once per key per app session. */
+export function markFeatureUsed(key: string): void {
+  if (reportedFeatureUsage.has(key)) return;
+  reportedFeatureUsage.add(key);
+  pendingFeatureUsage.add(key);
+  featureUsageTimer ??= setTimeout(flushFeatureUsage, FEATURE_USAGE_FLUSH_MS);
+}
+
 async function requestJsonRaw<T>(
   input: string | DenBaseUrls,
   path: string,
@@ -2860,6 +2983,8 @@ async function requestJsonRaw<T>(
   }
   if (options.automationModelAttentionCapable) {
     headers[AUTOMATION_MODEL_ATTENTION_CAPABILITY_HEADER] = AUTOMATION_MODEL_ATTENTION_CAPABILITY;
+    // Without it Den treats this desktop as a release that reads only once/daily/weekly schedules.
+    headers[AUTOMATION_SCHEDULE_KINDS_HEADER] = AUTOMATION_SCHEDULE_KINDS.join(",");
   }
   if (options.body !== undefined) {
     headers["Content-Type"] = "application/json";
@@ -3112,6 +3237,31 @@ export function createDenClient(options: {
       };
     },
 
+    /** The Get set up checklist; null when unavailable. */
+    async getActivation(orgId: string): Promise<ActivationState | null> {
+      try {
+        return activationStateSchema.parse(await requestJson<unknown>(baseUrls, "/v1/me/activation", { method: "GET", token, organizationId: orgId }));
+      } catch (error) {
+        if (error instanceof DenApiError && error.status === 404) return null;
+        throw error;
+      }
+    },
+
+    /** Reports a Get set up step only this app can observe; returns the updated checklist (null when off). */
+    async recordActivationEvent(orgId: string, event: ActivationEventRequest): Promise<ActivationState | null> {
+      try {
+        return activationStateSchema.parse(await requestJson<unknown>(baseUrls, "/v1/me/activation/events", { method: "POST", token, organizationId: orgId, body: event }));
+      } catch (error) {
+        if (error instanceof DenApiError && error.status === 404) return null;
+        throw error;
+      }
+    },
+
+    /** Reports registry features the member just used (POST /v1/org/feature-usage); Den keeps only keys that are on for them. */
+    async reportFeatureUsage(orgId: string, features: readonly string[]): Promise<void> {
+      await requestJson<unknown>(baseUrls, "/v1/org/feature-usage", { method: "POST", token, organizationId: orgId, body: { features }, unobserved: true });
+    },
+
     async getGatewayUsageStatus(orgId: string) {
       if (!token || !orgId.trim()) throw new Error("Sign in and select an organization to view usage limits.");
       const status = gatewayUsageStatusSchema.parse(await requestJson<unknown>(baseUrls, "/v1/gateway/usage-limits/me", {
@@ -3307,6 +3457,22 @@ export function createDenClient(options: {
         return getDenOrgGatewayProviders(payload);
       } catch (error) {
         if (!options.requireCompleteInventory && error instanceof DenApiError && [404, 405, 501].includes(error.status)) return [];
+        throw error;
+      }
+    },
+
+    /** The member's usable Gateway providers, with models and pending sign-ins. [] on Den servers without Gateway. */
+    async listOrgUsableGatewayProviders(orgId: string): Promise<DenOrgUsableGatewayProvider[]> {
+      try {
+        const payload = await requestJson<unknown>(baseUrls, "/v1/inference-providers?scope=usable", {
+          method: "GET",
+          token,
+          organizationId: orgId,
+          cache: "no-store",
+        });
+        return getDenOrgUsableGatewayProviders(payload);
+      } catch (error) {
+        if (error instanceof DenApiError && [404, 405, 501].includes(error.status)) return [];
         throw error;
       }
     },
@@ -3508,24 +3674,6 @@ export function createDenClient(options: {
     },
 
     /**
-     * Runs of every Automation the caller owns placed in [from, to) (epoch ms),
-     * one page at a time. A Den that predates the route answers 404.
-     */
-    async listAutomationRunsInRange(
-      orgId: string,
-      options: { from: number; to: number; cursor?: string; limit?: number },
-    ): Promise<AutomationRunRange> {
-      const params = new URLSearchParams({ from: String(options.from), to: String(options.to) });
-      if (options.cursor) params.set("cursor", options.cursor);
-      if (options.limit) params.set("limit", String(options.limit));
-      return requestJson<AutomationRunRange>(
-        baseUrls,
-        `/v1/automation-runs?${params.toString()}`,
-        { method: "GET", token, organizationId: orgId, automationModelAttentionCapable: true },
-      );
-    },
-
-    /**
      * Compact, versioned status of up to ten of the member's remote sessions.
      * With waitMs, Den holds the call until one changes, so the timeout
      * covers the wait.
@@ -3539,22 +3687,16 @@ export function createDenClient(options: {
     },
 
     /** A transcript page or pending receipt of one of the member's remote sessions; the caller parses it. */
-    async remoteSessionAction(orgId: string, action: "read" | "send" | "stop", input: Record<string, unknown>, signal?: AbortSignal): Promise<unknown> {
+    async remoteSessionAction(orgId: string, action: "read" | "send" | "stop" | "answer", input: Record<string, unknown>, signal?: AbortSignal): Promise<unknown> {
       // A desktop has about 20 seconds to answer before Den returns a requestId instead.
       return requestJson<unknown>(baseUrls, `/v1/remote-sessions/${action}`, {
         method: "POST", token, organizationId: orgId, body: input, timeoutMs: 35_000, signal,
       });
     },
 
-    /** The existing organization default-model settings, subject to Den's feature and permission guards. */
-    async getWorkbotSettings(orgId: string) {
-      const payload = await requestJson<unknown>(baseUrls, "/v1/org/workbot-settings", { method: "GET", token, organizationId: orgId });
-      return workbotSettingsSchema.parse(payload);
-    },
-
     /** Deployment switches for people without an organization; missing keys are off. */
-    async getDeploymentFeatures(): Promise<Record<string, boolean>> {
-      const payload = await requestJson<unknown>(baseUrls, "/v1/features", { method: "GET" });
+    async getDeploymentFeatures(options: { cache?: RequestCache } = {}): Promise<Record<string, boolean>> {
+      const payload = await requestJson<unknown>(baseUrls, "/v1/features", { method: "GET", ...(options.cache ? { cache: options.cache } : {}) });
       const features = isRecord(payload) && isRecord(payload.features) ? payload.features : {};
       return Object.fromEntries(Object.entries(features).filter((entry): entry is [string, boolean] => typeof entry[1] === "boolean"));
     },
@@ -3564,30 +3706,6 @@ export function createDenClient(options: {
       const payload = await requestJson<unknown>(baseUrls, "/v1/org", { method: "GET", token, organizationId: orgId });
       const features = isRecord(payload) && isRecord(payload.features) ? payload.features : {};
       return Object.fromEntries(Object.entries(features).filter((entry): entry is [string, boolean] => typeof entry[1] === "boolean"));
-    },
-
-    /** Primary Google Calendar events overlapping [timeMin, timeMax) as the signed-in member. */
-    async listGoogleCalendarEvents(orgId: string, query: DenCalendarRangeQuery): Promise<DenGoogleCalendarEvent[]> {
-      const payload = await requestJson<unknown>(
-        baseUrls,
-        `${DEN_GOOGLE_CALENDAR_EVENTS_PATH}?${calendarRangeSearch(query)}`,
-        { method: "GET", token, organizationId: orgId },
-      );
-      const parsed = denGoogleCalendarEventsResponseSchema.safeParse(payload);
-      if (!parsed.success) throw new DenApiError(502, "invalid_calendar_payload", "Google Calendar returned an unexpected response.");
-      return parsed.data.events;
-    },
-
-    /** Outlook calendar instances (Graph calendarView) overlapping [timeMin, timeMax) as the signed-in member. */
-    async listMicrosoftCalendarEvents(orgId: string, query: DenCalendarRangeQuery): Promise<DenMicrosoftCalendarEvent[]> {
-      const payload = await requestJson<unknown>(
-        baseUrls,
-        `${DEN_MICROSOFT_CALENDAR_EVENTS_PATH}?${calendarRangeSearch(query)}`,
-        { method: "GET", token, organizationId: orgId },
-      );
-      const parsed = denMicrosoftCalendarEventsResponseSchema.safeParse(payload);
-      if (!parsed.success) throw new DenApiError(502, "invalid_calendar_payload", "Outlook returned an unexpected response.");
-      return parsed.data.events;
     },
 
     async getOrgLlmProviderConnection(orgId: string, llmProviderId: string): Promise<DenOrgLlmProviderConnection> {
@@ -3640,6 +3758,32 @@ export function createDenClient(options: {
       return discovery;
     },
 
+    /**
+     * A connector only the caller can use until they share it, as My Library adds
+     * on the web. Den lets members add one that signs each person in with their
+     * own account, or that needs no sign-in; it refuses anything else from them.
+     */
+    async createPersonalMcpConnection(
+      orgId: string,
+      input: { name: string; url: string; authType: "oauth" | "none" },
+    ): Promise<string> {
+      const payload = await requestJson<unknown>(baseUrls, "/v1/mcp-connections", {
+        method: "POST",
+        token,
+        organizationId: orgId,
+        body: {
+          name: input.name,
+          url: input.url,
+          authType: input.authType,
+          credentialMode: input.authType === "oauth" ? "per_member" : "shared",
+          access: { orgWide: false, memberIds: [], teamIds: [] },
+        },
+      });
+      const id = isRecord(payload) && typeof payload.id === "string" ? payload.id : "";
+      if (!id) throw new DenApiError(500, "invalid_mcp_connection_payload", "MCP connection create response was invalid.");
+      return id;
+    },
+
     async checkMcpConnection(orgId: string, connectionId: string): Promise<void> {
       await requestJson<unknown>(baseUrls, `/v1/mcp-connections/${encodeURIComponent(connectionId)}/check`, {
         method: "POST", token, organizationId: orgId,
@@ -3675,12 +3819,16 @@ export function createDenClient(options: {
       );
     },
 
-    /** Private field in chat: a person saves an organization connection's shared key. */
-    async saveMcpConnectionSharedKey(orgId: string, connectionId: string, apiKey: string): Promise<void> {
+    /**
+     * Private field in chat: a person saves an organization connection's shared key.
+     * With expectedUpdatedAt the key replaces each person's own key, only if the
+     * connection is unchanged since then.
+     */
+    async saveMcpConnectionSharedKey(orgId: string, connectionId: string, apiKey: string, options: { expectedUpdatedAt?: string } = {}): Promise<void> {
       await requestJson<unknown>(
         baseUrls,
         `/v1/mcp-connections/${encodeURIComponent(connectionId)}/shared-credential`,
-        { method: "PUT", token, organizationId: orgId, body: { apiKey } },
+        { method: "PUT", token, organizationId: orgId, body: { apiKey, ...(options.expectedUpdatedAt ? { expectedUpdatedAt: options.expectedUpdatedAt } : {}) } },
       );
     },
 
@@ -3912,6 +4060,14 @@ export function createDenClient(options: {
         baseUrls,
         `/v1/plugins/${encodeURIComponent(pluginId)}/access/${encodeURIComponent(grantId)}`,
         { method: "DELETE", token, organizationId: orgId },
+      );
+    },
+
+    async deleteBuiltMcpApp(orgId: string, appId: string): Promise<void> {
+      await requestJson<unknown>(
+        baseUrls,
+        `/v1/config-objects/${encodeURIComponent(appId)}/delete`,
+        { method: "POST", token, organizationId: orgId, body: {} },
       );
     },
 

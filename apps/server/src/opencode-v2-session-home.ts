@@ -1,4 +1,5 @@
 import { realpath } from "node:fs/promises";
+import { opencodeV1DatabasePath, v1ChatDirectory } from "./opencode-v2-migration.js";
 import { openRuntimeSqliteDatabase, runtimeDbPath, type RuntimeSqliteDatabase } from "./runtime-db.js";
 import type { ServerConfig } from "./types.js";
 import { isRecord } from "./workspace-kv-store.js";
@@ -21,6 +22,36 @@ async function database(config: ServerConfig) {
   return pending;
 }
 
+/** Where a chat copied from OpenCode v1 started. v1 chats never change folder,
+ * so v1's own record is the origin even if the chat moved after the copy. */
+export type V2SessionOrigin = (sessionId: string) => Promise<string | null>;
+
+async function v1Origin(sessionId: string): Promise<string | null> {
+  let database: string;
+  try { database = opencodeV1DatabasePath(); } catch { return null; }
+  return v1ChatDirectory(database, sessionId);
+}
+
+/** Reading a whole history is the slow path. A large migrated set must not run
+ * hundreds of them against the engine at once, across all workspace lists. */
+const HISTORY_SCAN_CONCURRENCY = 4;
+let historyScans = 0;
+const historyScanQueue: Array<() => void> = [];
+
+async function withHistoryScanSlot<T>(scan: () => Promise<T>): Promise<T> {
+  if (historyScans >= HISTORY_SCAN_CONCURRENCY) {
+    await new Promise<void>(resolve => historyScanQueue.push(resolve));
+  } else {
+    historyScans++;
+  }
+  try { return await scan(); }
+  finally {
+    const next = historyScanQueue.shift();
+    if (next) next();
+    else historyScans--;
+  }
+}
+
 export function nativeSession(value: unknown): Record<string, unknown> | null {
   const data = isRecord(value) && "data" in value ? value.data : value;
   return isRecord(data) ? isRecord(data.info) ? data.info : data : null;
@@ -33,9 +64,14 @@ export function nativeSessionDirectory(value: unknown): string | null {
 }
 
 /** OpenWork owns the conversation's home; native location remains the execution
- * directory. Only engine history can establish an older session's original home.
+ * directory. Only engine history, or v1's record of a copied chat, can establish
+ * an older session's original home.
  * Never adopt a caller-supplied workspace or a mutable metadata label as proof. */
-export function createV2SessionHomes(config: ServerConfig, read: (path: string) => Promise<unknown>) {
+export function createV2SessionHomes(
+  config: ServerConfig,
+  read: (path: string) => Promise<unknown>,
+  origin: V2SessionOrigin = v1Origin,
+) {
   const directories = new Map<string, Promise<string>>();
   const canonical = (directory: string) => {
     let pending = directories.get(directory);
@@ -79,13 +115,22 @@ export function createV2SessionHomes(config: ServerConfig, read: (path: string) 
       if (!parent) throw new Error("Could not verify the parent conversation");
       return remember(session.id, parent);
     }
+    // Chats copied from v1 (often hundreds after a migration) are answered from
+    // v1's own record without reading their history.
+    const id = session.id;
+    const copied = await origin(id).catch(() => null);
+    if (copied) return remember(id, copied);
     // Backfill sessions created before this index existed, including moves made
     // while OpenWork was closed. Read oldest first; the first move records origin.
+    const recorded = await withHistoryScanSlot(() => historyOrigin(id));
+    return remember(id, recorded ?? directory);
+  };
+  const historyOrigin = async (id: string): Promise<string | null> => {
     let cursor: string | undefined;
     const seen = new Set<string>();
     while (true) {
       const query = new URLSearchParams({ limit: "200", ...(cursor ? { cursor } : { order: "asc" }) });
-      const page = await read(`/api/session/${encodeURIComponent(session.id)}/message?${query}`);
+      const page = await read(`/api/session/${encodeURIComponent(id)}/message?${query}`);
       const items = isRecord(page) ? page.data : null;
       if (!Array.isArray(items)) throw new Error("Could not verify the conversation's original folder");
       for (const item of items) {
@@ -94,7 +139,7 @@ export function createV2SessionHomes(config: ServerConfig, read: (path: string) 
         const previous = isRecord(content.previous) ? content.previous : null;
         const location = previous && isRecord(previous.location) ? previous.location : null;
         if (typeof location?.directory !== "string") throw new Error("Invalid conversation move history");
-        return remember(session.id, location.directory);
+        return location.directory;
       }
       const next = isRecord(page) && isRecord(page.cursor) ? page.cursor.next : undefined;
       if (next === undefined || next === null) break;
@@ -102,7 +147,7 @@ export function createV2SessionHomes(config: ServerConfig, read: (path: string) 
       seen.add(next);
       cursor = next;
     }
-    return remember(session.id, directory);
+    return null;
   };
   const project = async (value: unknown) => {
     const home = await resolve(value);

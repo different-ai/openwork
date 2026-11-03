@@ -78,6 +78,7 @@ export const MCP_CONSUMPTION_EXCLUSIONS: readonly AuditExclusion[] = [
   { method: "ALL", path: "/mcp", reason: "Streamable HTTP MCP transport for desktop agents; tool calls re-enter covered REST routes with origin mcp." },
   { method: "ALL", path: "/mcp/agent", reason: "Agent MCP transport (search_capabilities/execute_capability) for desktop, external OAuth MCP clients and headless runs; direct service mutations are audited at the service layer." },
   { method: "ALL", path: "/mcp/agent/connections/:connectionId", reason: "Per-connection MCP proxy through which agents consume an external MCP server or an authored App's MCP server." },
+  { method: "ALL", path: "/mcp/agent/servers/:connectionId", reason: "One connection as its own MCP server; each tool call runs through execute_capability's executor, audited and counted at the service layer." },
   { method: "ALL", path: "/mcp/admin", reason: "Platform-admin MCP transport consumed by agents; its org-mutating tools are audited at the service layer." },
   { method: "GET", path: "/mcp/.well-known/oauth-protected-resource", reason: "Static OAuth protected-resource metadata MCP clients fetch to consume /mcp." },
   { method: "GET", path: "/mcp/agent/.well-known/oauth-protected-resource", reason: "Static OAuth protected-resource metadata MCP clients fetch to consume /mcp/agent." },

@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useState } from "react";
-import { ArrowLeft, Laptop, Compass, KeyRound, Layers, ShieldCheck, SquareTerminal, Users } from "lucide-react";
+import { ArrowLeft, Laptop, Compass, KeyRound, Layers, ScrollText, ShieldCheck, SquareTerminal, Users } from "lucide-react";
 import { type TabItem, UnderlineTabs } from "../../_components/ui/tabs";
 import { getMembersRoute, getOrgAccessFlags } from "../../_lib/den-org";
 import { desktopPolicyScreenRemoved } from "../_lib/desktop-policy-screen-rollout";
@@ -11,12 +11,13 @@ import { useOrgDashboard } from "../_providers/org-dashboard-provider";
 import { AgentsPanel, agentsTabVisible } from "./agent-permissions-editor";
 import { TeamPluginAccessPanel } from "./team-plugin-access-panel";
 import { ModelsPanel, modelsTabVisible } from "./team-models-panel";
+import { PromptsPanel, promptsTabVisible } from "./prompts-panel";
 import { OrgMemberIdentity } from "./org-member-identity";
 import { SharedTeamRolePanel } from "./shared-team-role-panel";
 import { MemberTeamRoles } from "./member-team-roles";
 import { useCustomRoleTeams } from "./permissions-data";
 
-export type TeamDetailTab = "role" | "overview" | "access" | "agents" | "browser" | "models" | "desktop";
+export type TeamDetailTab = "role" | "overview" | "access" | "agents" | "browser" | "models" | "prompts" | "desktop";
 
 export function TeamDetailScreen({ teamId, initialTab = null }: { teamId: string; initialTab?: TeamDetailTab | null }) {
   const { orgContext, orgId, orgSlug } = useOrgDashboard();
@@ -35,6 +36,7 @@ export function TeamDetailScreen({ teamId, initialTab = null }: { teamId: string
   const showBrowser = showAgents;
   const showDesktop = desktopPolicyScreenRemoved(orgContext);
   const showModels = modelsTabVisible(orgContext);
+  const showPrompts = promptsTabVisible(orgContext);
   const [chosenTab, setChosenTab] = useState<TeamDetailTab | null>(initialTab);
   const defaultTab: TeamDetailTab = "role";
   // The tab is in the address (?tab=agents), so a reload or a shared link opens it again.
@@ -50,6 +52,7 @@ export function TeamDetailScreen({ teamId, initialTab = null }: { teamId: string
       : tab === "browser" ? showBrowser
         : tab === "desktop" ? showDesktop
         : tab === "models" ? showModels
+        : tab === "prompts" ? showPrompts
           : true;
   const activeTab: TeamDetailTab = chosenTab && available(chosenTab) ? chosenTab : defaultTab;
   const team = orgContext?.teams.find((entry) => entry.id === teamId);
@@ -63,6 +66,7 @@ export function TeamDetailScreen({ teamId, initialTab = null }: { teamId: string
     ...(showAgents ? [{ value: "agents" as const, label: "Agents", icon: SquareTerminal }] : []),
     ...(showBrowser ? [{ value: "browser" as const, label: "Browser", icon: Compass }] : []),
     ...(showModels ? [{ value: "models" as const, label: "Models", icon: Layers }] : []),
+    ...(showPrompts ? [{ value: "prompts" as const, label: "Prompts", icon: ScrollText }] : []),
     ...(showDesktop ? [{ value: "desktop" as const, label: "Desktop", icon: Laptop }] : []),
   ];
   const tabs: readonly TabItem<TeamDetailTab>[] = [
@@ -149,6 +153,12 @@ export function TeamDetailScreen({ teamId, initialTab = null }: { teamId: string
         ) : null}
 
         {activeTab === "desktop" && team ? (<div role="tabpanel" aria-label="Desktop"><DesktopSuggestionsPanel team={{ id: team.id, name: team.name }} /></div>) : null}
+
+        {activeTab === "prompts" && team ? (
+          <div role="tabpanel" aria-label="Prompts">
+            <PromptsPanel team={{ id: team.id, name: team.name }} />
+          </div>
+        ) : null}
 
         {activeTab === "models" && team ? (
           <div role="tabpanel" aria-label="Models">

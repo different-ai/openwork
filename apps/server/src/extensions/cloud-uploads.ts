@@ -8,7 +8,8 @@ import { ApiError } from "../errors.js";
 import { externalFetch } from "../server-fetch.js";
 import type { ServerConfig } from "../types.js";
 
-export const OPENWORK_CLOUD_UPLOADS_EXTENSION_ID = "openwork-cloud-uploads";
+import { OPENWORK_CLOUD_UPLOADS_EXTENSION_ID, OUTLOOK_ATTACHMENT_MAX_BYTES, OUTLOOK_DRAFT_PERMISSION } from "./cloud-upload-constants.js";
+export { OPENWORK_CLOUD_UPLOADS_EXTENSION_ID } from "./cloud-upload-constants.js";
 const DIRECT_UPLOAD_MAX_BYTES = 4 * 1024 * 1024;
 const DIRECT_UPLOAD_TIMEOUT_MS = 2 * 60 * 1000;
 
@@ -64,6 +65,34 @@ export const OPENWORK_CLOUD_UPLOAD_ACTIONS = [
         },
       },
       required: ["to", "subject", "body", "paths"],
+      additionalProperties: false,
+    },
+  },
+  {
+    extensionId: OPENWORK_CLOUD_UPLOADS_EXTENSION_ID,
+    action: OUTLOOK_DRAFT_PERMISSION,
+    title: "Create an Outlook draft with workspace attachments",
+    description: "Creates a reviewable Outlook draft, or a reply draft to one message, with workspace files attached through OpenWork Cloud outside model context: up to ten files, each under 3 MB and 4 MiB in all. This does not send email. Pass connectionId to keep the selected Microsoft 365 connection; omitting it uses the member's default.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        to: { type: "array", items: { type: "string" }, minItems: 1, maxItems: 50, description: "Recipient email addresses for a new draft; omit for a reply." },
+        cc: { type: "array", items: { type: "string" }, maxItems: 50, description: "Optional Cc email addresses for a new draft." },
+        bcc: { type: "array", items: { type: "string" }, maxItems: 50, description: "Optional Bcc email addresses for a new draft." },
+        subject: { type: "string", description: "Subject of a new draft; omit for a reply." },
+        body: { type: "string", description: "Draft body, or the reply text when replyToMessageId is set. Plain text unless bodyContentType is html." },
+        bodyContentType: { type: "string", enum: ["text", "html"], description: "text (default) or html. Use html for links, line breaks, tables, or an HTML signature; markup sent as text shows as literal tags." },
+        replyToMessageId: { type: "string", description: "Outlook message id to reply to; the reply keeps that message's recipients and subject." },
+        connectionId: { type: "string", pattern: "^(microsoft-365|emc_[A-Za-z0-9]+)$", description: "Optional selected Microsoft 365 connection." },
+        paths: {
+          type: "array",
+          items: workspacePathProperty,
+          minItems: 1,
+          maxItems: 10,
+          description: "One to ten authorized workspace file paths.",
+        },
+      },
+      required: ["body", "paths"],
       additionalProperties: false,
     },
   },
@@ -207,11 +236,12 @@ async function appendWorkspaceFiles(
   context: Record<string, unknown>,
   requestedPaths: string[],
   signal?: AbortSignal,
+  maxFileBytes = DIRECT_UPLOAD_MAX_BYTES,
 ) {
   let totalBytes = 0;
   for (const requested of requestedPaths) {
     assertGmailUploadActive(signal);
-    const path = await resolveAuthorizedFile(config, context, requested);
+    const path = await resolveAuthorizedFile(config, context, requested, maxFileBytes);
     const bytes = await readFile(path);
     assertGmailUploadActive(signal);
     totalBytes += bytes.byteLength;
@@ -325,6 +355,58 @@ async function createGmailDraftWithAttachments(
   return postDirectUpload(config, "/v1/direct-uploads/google-workspace/gmail-drafts", form, dependencies, dependencies.signal);
 }
 
+function readAddresses(value: unknown, key: string) {
+  if (value === undefined) return undefined;
+  if (!Array.isArray(value) || value.some((item) => typeof item !== "string" || !item.trim())) {
+    throw new ApiError(400, "invalid_payload", `${key} must be a list of email addresses.`);
+  }
+  return value.map((item: string) => item.trim());
+}
+
+async function createOutlookDraftWithAttachments(
+  config: ServerConfig,
+  args: Record<string, unknown>,
+  context: Record<string, unknown>,
+  dependencies: CloudUploadDependencies,
+) {
+  if (args.connectionId !== undefined && (typeof args.connectionId !== "string" || !/^(microsoft-365|emc_[A-Za-z0-9]+)$/.test(args.connectionId))) {
+    throw new ApiError(400, "invalid_payload", "connectionId must identify a Microsoft 365 connection.");
+  }
+  const paths = readPaths(args.paths);
+  if (paths.length < 1 || paths.length > 10) {
+    throw new ApiError(400, "invalid_payload", "paths must contain between one and ten workspace files.");
+  }
+  const body = typeof args.body === "string" ? args.body : "";
+  const replyToMessageId = readString(args, "replyToMessageId");
+  const to = readAddresses(args.to, "to");
+  const cc = readAddresses(args.cc, "cc");
+  const bcc = readAddresses(args.bcc, "bcc");
+  const subject = readString(args, "subject");
+  const bodyContentType = args.bodyContentType;
+  if (bodyContentType !== undefined && bodyContentType !== "text" && bodyContentType !== "html") {
+    throw new ApiError(400, "invalid_payload", "bodyContentType must be text or html.");
+  }
+  if (replyToMessageId && (to || cc || bcc || subject)) {
+    throw new ApiError(400, "invalid_payload", "A reply keeps the original recipients and subject; pass only body and paths with replyToMessageId.");
+  }
+  if (!replyToMessageId && (!to?.length || !subject)) {
+    throw new ApiError(400, "invalid_payload", "A new draft needs to and subject.");
+  }
+  const form = new FormData();
+  await appendWorkspaceFiles(form, config, context, paths, dependencies.signal, OUTLOOK_ATTACHMENT_MAX_BYTES);
+  form.append("payload", JSON.stringify(replyToMessageId
+    ? { replyToMessageId, comment: body, bodyContentType, connectionId: args.connectionId }
+    : { to, cc, bcc, subject, body, bodyContentType, connectionId: args.connectionId }));
+  try {
+    return await postDirectUpload(config, "/v1/direct-uploads/microsoft-365/mail-drafts", form, dependencies, dependencies.signal);
+  } catch (error) {
+    if (error instanceof ApiError && isRecord(error.details) && error.details.upstreamCode === "feature_disabled") {
+      throw new ApiError(409, "outlook_attachments_unavailable", "Outlook attachments are not turned on for this organization, so no draft was created.");
+    }
+    throw error;
+  }
+}
+
 export async function callOpenWorkCloudUploadAction(
   config: ServerConfig,
   action: string,
@@ -336,5 +418,6 @@ export async function callOpenWorkCloudUploadAction(
   if (action === "gmail_create_draft_with_attachments") {
     return createGmailDraftWithAttachments(config, args, context, dependencies);
   }
+  if (action === OUTLOOK_DRAFT_PERMISSION) return createOutlookDraftWithAttachments(config, args, context, dependencies);
   return null;
 }

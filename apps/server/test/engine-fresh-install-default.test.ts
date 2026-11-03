@@ -39,7 +39,7 @@ test("the fresh-install choice is saved once and a later switch back to v1 stick
     assert.equal(seedFreshInstallEngineState(config, env), true);
     const { engineChangedAt, ...state } = readEngineV2PreviewState(config);
     assert.ok(engineChangedAt && Number.isFinite(Date.parse(engineChangedAt)));
-    assert.deepEqual(state, { enabled: true, chatRouting: true, engineOrigin: "fresh" });
+    assert.deepEqual(state, { enabled: true, chatRouting: true, engineOrigin: "fresh", engineForced: true });
 
     writeFileSync(join(dir, "openwork", "engine-v2-preview.json"), JSON.stringify({ enabled: false, chatRouting: false }));
     assert.equal(seedFreshInstallEngineState(config, env), false);
@@ -53,6 +53,14 @@ test("a force-upgraded fresh profile records its selected engine ownership", () 
     const { engineChangedAt, ...state } = readEngineV2PreviewState(config);
     assert.ok(engineChangedAt && Number.isFinite(Date.parse(engineChangedAt)));
     assert.deepEqual(state, { enabled: true, chatRouting: true, engineOrigin: "fresh", engineForced: true });
+  });
+});
+
+test("a managed fresh profile still selects v2 after its local URLs are hydrated", () => {
+  withProfile((config, env) => {
+    assert.equal(seedFreshInstallEngineState({ ...config, externalOpencode: false,
+      opencodeBaseUrl: "http://127.0.0.1:49002" }, env), true);
+    assert.equal(readEngineV2PreviewState(config).chatRouting, true);
   });
 });
 

@@ -12,6 +12,20 @@ import type {
 } from "@openwork/types/openwork-provider";
 import { z } from "zod";
 
+/**
+ * An affordance's argument object. Keys it does not define are refused with
+ * the valid names, so a wrong name (`limit` for `count`) fails loudly instead
+ * of being dropped and silently falling back to a default.
+ */
+export function strictArgsSchema<Shape extends z.ZodRawShape>(shape: Shape) {
+  const valid = Object.keys(shape).join(", ");
+  return z.strictObject(shape, {
+    error: (issue) => issue.code === "unrecognized_keys"
+      ? `Unknown argument${issue.keys.length === 1 ? "" : "s"} ${issue.keys.map((key) => JSON.stringify(key)).join(", ")}. Valid arguments: ${valid}.`
+      : undefined,
+  });
+}
+
 // Epoch milliseconds or an ISO-8601 string; resolve with sessionTimestampMs.
 const sessionTimestampArgSchema = z.union([z.number().int().nonnegative(), z.string().trim().min(1)])
   .refine((value) => typeof value === "number" || Number.isFinite(Date.parse(value)), {
@@ -22,7 +36,7 @@ export function sessionTimestampMs(value: z.infer<typeof sessionTimestampArgSche
   return typeof value === "number" ? value : Date.parse(value);
 }
 
-export const sessionSearchArgsSchema = z.object({
+export const sessionSearchArgsSchema = strictArgsSchema({
   query: z.string().trim().min(1).describe("Text to search for across OpenWork session titles and message transcripts."),
   workspaceId: z.string().trim().optional().describe("Optional OpenWork workspace id/name to limit the search."),
   limit: z.number().int().positive().max(20).optional().describe("Maximum matching sessions to return. Defaults to 10, max 20."),
@@ -34,17 +48,19 @@ export const sessionSearchArgsSchema = z.object({
   archived: z.enum(["include", "exclude", "only"]).optional().describe("Archived sessions: include (default), exclude, or only."),
 });
 
-export const sessionReadArgsSchema = z.object({
+export const sessionReadArgsSchema = strictArgsSchema({
   sessionId: z.string().trim().min(1).describe("OpenWork/OpenCode session ID returned by session.search."),
   workspaceId: z.string().trim().optional().describe("Optional OpenWork workspace id/name. Omit to resolve the session across all workspaces."),
   count: z.number().int().positive().max(100).optional().describe("Number of transcript messages to return. Defaults to 30, max 100."),
   from: z.enum(["start", "end"]).optional().describe("end (default): the last `count` messages; start: the first `count` messages."),
   summary: z.boolean().optional().describe("When true, return only the first user message and the last assistant message plus session metadata."),
+  detail: z.enum(["text", "full"]).optional().describe("text (default): readable text of user and assistant messages. full: every message the engine stores, including tool calls, reasoning, models, tokens and cost."),
+  messageId: z.string().trim().min(1).optional().describe("Read only this message, in full detail with higher size limits. Use it for a message a full read marked truncated."),
 });
 
 export const sessionModelArgSchema = openworkModelSelectorSchema;
 
-export const sessionCreateArgsSchema = z.object({
+export const sessionCreateArgsSchema = strictArgsSchema({
   sessions: z.array(z.object({
     title: z.string().trim().min(1).transform((title) => title.length > 120 ? `${title.slice(0, 119)}…` : title).describe("Short title shown in the OpenWork session list."),
     prompt: z.string().trim().min(1).max(100_000).describe("Self-contained task to start in the new session."),
@@ -54,11 +70,29 @@ export const sessionCreateArgsSchema = z.object({
   model: sessionModelArgSchema.optional().describe("Model and reasoning effort for every created session unless an entry overrides it. Omit to use the engine default."),
 });
 
-export const sessionSendArgsSchema = z.object({
+export const sessionSendArgsSchema = strictArgsSchema({
   sessionId: z.string().trim().min(1).describe("Session ID of the existing session to message, from session.search, session.read, or session.list_sessions."),
   text: z.string().trim().min(1).max(100_000).describe("Prompt text appended to that session as a new user message."),
   workspaceId: z.string().trim().optional().describe("Optional OpenWork workspace id/name. Omit to resolve the session across all workspaces."),
   reveal: z.boolean().optional().describe("true to also open that session in the person's focused pane after sending. Defaults to false: nothing on screen changes."),
+});
+
+/** The engine permission a person answers before the agent answers another session's question for them. */
+export const SESSION_QUESTION_ANSWER_PERMISSION = "openwork_session_question_answer";
+
+const sessionQuestionListArgsShape = {
+  sessionId: z.string().trim().min(1).describe("Session ID from session.search or session.read."),
+  workspaceId: z.string().trim().optional().describe("Optional OpenWork workspace id/name. Omit to resolve the session across all workspaces."),
+};
+
+export const sessionQuestionListArgsSchema = strictArgsSchema(sessionQuestionListArgsShape);
+
+// Built from the shape, not extended: an extended schema keeps the list of valid names it was made with.
+export const sessionQuestionAnswerArgsSchema = strictArgsSchema({
+  ...sessionQuestionListArgsShape,
+  requestId: z.string().trim().min(1).describe("Pending question id from session.question.list."),
+  answers: z.array(z.array(z.string().trim().min(1).max(10_000)).min(1).max(50)).min(1).max(20)
+    .describe("One array per question, in order: the chosen option labels, or the person's own text where the question allows it."),
 });
 
 /** Argument schemas by affordance id; sessionContribution must advertise exactly these keys. */
@@ -68,6 +102,8 @@ export const sessionAffordanceArgsSchemas = {
   "session.read": sessionReadArgsSchema,
   "session.create": sessionCreateArgsSchema,
   "session.send": sessionSendArgsSchema,
+  "session.question.list": sessionQuestionListArgsSchema,
+  "session.question.answer": sessionQuestionAnswerArgsSchema,
 };
 
 export type ConnectSkillDescriptor = {
@@ -171,7 +207,7 @@ function sessionContribution(): OpenworkFeatureContribution {
         id: "session.read",
         kind: "query",
         title: "Read a session transcript",
-        description: "Read messages from a session without opening it. Finds the session on either engine. The result also carries `engine` (v1 or v2), `createdAt`, `archived`, `parentId`, `status` (idle, busy, retry, waiting), `working` (check it before session.archive), and `model` ({ providerId, modelId, variant, displayName?, providerName? } the session is bound to, variant being its reasoning effort; null before a model is bound). Pass `summary: true` to get only the first user message and the last assistant message (what was asked, what was concluded) in one call. Both modes include `lastError` ({ code, message } or null) from the latest assistant info.error before text filtering: end reads inspect only the fetched newest `count` messages; start/summary inspect the whole transcript, even outside displayed text. Null means no assistant error observed in that window; a later assistant without an error clears it. Codes are allowlisted error names (otherwise UnknownError); messages are fixed labels under 160 characters, never arbitrary provider details. Snapshot errors only: event-only failures, including pre-assistant model-not-found, are not observable here.",
+        description: "Read messages from a session without opening it. Finds the session on either engine. The result also carries `engine` (v1 or v2), `createdAt`, `archived`, `parentId`, `status` (idle, busy, retry, waiting), `working` (check it before session.archive), and `model` ({ providerId, modelId, variant, displayName?, providerName? } the session is bound to, variant being its reasoning effort; null before a model is bound). Pass `summary: true` to get only the first user message and the last assistant message (what was asked, what was concluded) in one call. Pass `detail: full` to see what the session actually did: tool calls with their input and output, reasoning, models, tokens and cost; `messageId` reads one message with higher limits. Both modes include `lastError` ({ code, message } or null) from the latest assistant info.error before text filtering: end reads inspect only the fetched newest `count` messages; start/summary inspect the whole transcript, even outside displayed text. Null means no assistant error observed in that window; a later assistant without an error clears it. Codes are allowlisted error names (otherwise UnknownError); messages are fixed labels under 160 characters, never arbitrary provider details. Snapshot errors only: event-only failures, including pre-assistant model-not-found, are not observable here.",
         provider,
         arguments: [
           argument("sessionId", "string", true, "Session id returned by session.search."),
@@ -179,6 +215,8 @@ function sessionContribution(): OpenworkFeatureContribution {
           argument("count", "number", false, "Number of messages to return. Defaults to 30, max 100."),
           argument("from", "string", false, "end (default): the last `count` messages; start: the first `count` messages."),
           argument("summary", "boolean", false, "When true, return only the first user and last assistant messages plus metadata."),
+          argument("detail", "string", false, "text (default): readable text of user and assistant messages only. full: every message the engine stores, by `type` (user, assistant, synthetic, system, skill, shell, compaction, idle, agent-switched, model-switched, location-switched). Assistant messages carry agent, model, finish, tokens, cost, error, retry, changedFiles and `content` items: text, reasoning, and tool calls with id, name, status, input, output, files, error, metadata, childSessionId (a sub-agent session you can read) and time. `count` then counts every message type. Long fields end with a `…[+N chars …]` marker and set `truncated` on the message; the result lists `omittedForSize` messages left out to stay under about 200k characters."),
+          argument("messageId", "string", false, "Read only this message in full detail with much higher size limits (implies detail full). Use it for a message a full read marked truncated."),
         ],
         effects: readEffects,
       }),
@@ -209,6 +247,89 @@ function sessionContribution(): OpenworkFeatureContribution {
         ],
         effects: writeEffects,
       }),
+      affordance({
+        id: "session.question.list",
+        kind: "query",
+        title: "List a session's pending questions",
+        description: "List the questions another session is waiting on the person to answer (session.read status waiting), with each question's options and whether it takes several choices or the person's own text.",
+        provider,
+        arguments: [
+          argument("sessionId", "string", true, "Session id from session.search or session.read."),
+          argument("workspaceId", "string", false, "Optional workspace id or name."),
+        ],
+        effects: readEffects,
+      }),
+      affordance({
+        id: "session.question.answer",
+        kind: "command",
+        title: "Answer a session's pending question",
+        description: "Answer a pending question from session.question.list on the person's behalf, only with answers the person gave or asked you to choose. The waiting session continues with them.",
+        provider,
+        arguments: [
+          argument("sessionId", "string", true, "Session id that asked the question."),
+          argument("requestId", "string", true, "Pending question id from session.question.list."),
+          argument("answers", "array", true, "One array per question, in order: chosen option labels, or the person's own text where allowed."),
+          argument("workspaceId", "string", false, "Optional workspace id or name."),
+        ],
+        effects: writeEffects,
+      }),
+    ],
+    guidance: [],
+  };
+}
+
+function sessionGroupContribution(): OpenworkFeatureContribution {
+  const provider: OpenworkProviderRef = { id: "openwork-server", kind: "builtin" };
+  const workspaceId = argument("workspaceId", "string", false, "Optional workspace id or name. Defaults to the workspace of the session involved.");
+  return {
+    featureId: "session-groups",
+    provider,
+    affordances: [
+      affordance({
+        id: "session.group.list",
+        kind: "query",
+        title: "List sidebar groups",
+        description: "List the sidebar groups (for example Done, In progress) of a workspace with the sessions in each. Sessions not listed are ungrouped. Works without the desktop window open.",
+        provider,
+        arguments: [workspaceId],
+        effects: readEffects,
+      }),
+      affordance({
+        id: "session.group.create",
+        kind: "command",
+        title: "Create a sidebar group",
+        description: "Add a group to a workspace sidebar. An existing group with the same name is reused and returned with created:false.",
+        provider,
+        arguments: [argument("label", "string", true, "Group name, at most 120 characters."), workspaceId],
+        effects: writeEffects,
+      }),
+      affordance({
+        id: "session.group.move",
+        kind: "command",
+        title: "Move a session to a group",
+        description: "Put a session in a sidebar group, or ungroup it when groupId is omitted. The result confirms the saved group.",
+        provider,
+        arguments: [
+          argument("sessionId", "string", true, "Session id from session.search, session.read or session.group.list."),
+          argument("groupId", "string", false, "Group id or exact name from session.group.list. Omit to ungroup."),
+          workspaceId,
+        ],
+        effects: writeEffects,
+      }),
+      affordance({
+        id: "session.group.remove",
+        kind: "command",
+        title: "Remove a sidebar group",
+        description: "Remove a group the person asked to remove. Its sessions are kept: ungrouped, or moved to destinationGroupId.",
+        provider,
+        arguments: [
+          argument("groupId", "string", true, "Group id or exact name to remove."),
+          argument("destinationGroupId", "string", false, "Optional group id or name that receives its sessions."),
+          argument("confirmed", "boolean", true, "Must be true."),
+          workspaceId,
+        ],
+        effects: writeEffects,
+      }),
     ],
     guidance: [],
   };
@@ -229,7 +350,7 @@ function automationContribution(): OpenworkFeatureContribution {
         arguments: [
           argument("name", "string", true, "Short Automation name, at most 120 characters."),
           argument("instructions", "string", true, "Self-contained instructions the Automation runs on its schedule."),
-          argument("schedule", "object", true, "once/daily/weekly schedule with an IANA timezone. Intervals are not supported."),
+          argument("schedule", "object", true, "Schedule with an IANA timezone: once {at}, daily {hour, minute}, weekly {daysOfWeek, hour, minute}, or interval {everyHours 1-24, optional daysOfWeek (0=Sunday), startHour, endHour} for every few hours on the hour, e.g. every 3 hours from 9 to 18, or calendar {edge start|end, offsetMinutes -120..120, rule {withExternalAttendees, titleIncludes}} to run around each meeting on the person's Google Calendar (Cloud only). Interval and calendar need their organization features."),
           argument("model", "object", false, "Optional providerId and modelId. Omit to use the person's default."),
         ],
         effects: noEffects,
@@ -311,10 +432,13 @@ function connectContribution(
         provider,
         arguments: [
           argument("name", "string", false, "Exact capability ref returned by Connect search or remote skill guidance."),
-          argument("schemaDigest", "string", false, "Schema digest returned by Connect search when required."),
-          argument("path", "object", false, "Path parameters for the capability."),
-          argument("query", "object", false, "Query parameters for the capability."),
-          argument("body", "object", false, "Request body for the capability."),
+          argument("arguments", "object", false, "Arguments matching the search match's inputSchema."),
+          argument("schemaDigest", "string", false, "Optional schema digest from the search match."),
+          // Den keeps accepting these older inputs for a while, for callers
+          // and older Den builds from before `arguments`.
+          argument("path", "object", false, "Older form of arguments.path."),
+          argument("query", "object", false, "Older form of arguments.query."),
+          argument("body", "object", false, "Older form of arguments."),
         ],
         effects: { data: "write", ui: "none", external: true },
         tool: "openwork-cloud_execute_capability",
@@ -341,6 +465,7 @@ export function buildOpenworkProviderContributions(
   const connect = connectContribution(skills, cloudMcp);
   return [
     sessionContribution(),
+    sessionGroupContribution(),
     automationContribution(),
     extensionContribution(),
     ...mcps

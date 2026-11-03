@@ -8,7 +8,9 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 const desktopRoot = resolve(__dirname, "..");
 const repoRoot = resolve(desktopRoot, "../..");
 const packagePath = resolve(repoRoot, "packages", "computer-use", "native");
-const iconPath = resolve(desktopRoot, "resources", "icons", "icon.icns");
+// The OpenWork tile with a pointer badge: System Settings lists this helper
+// right next to OpenWork, so the two rows must not look the same.
+const iconPath = resolve(desktopRoot, "resources", "icons", "computer-use.icns");
 const productName = "ComputerUse";
 const helperExecutableName = "ComputerUse";
 const helperAppName = "OpenWork Computer Use.app";
@@ -114,8 +116,45 @@ function infoPlist() {
 `;
 }
 
+/** This PC: the Windows helper, built with the .NET Framework compiler every
+ * Windows 10/11 install carries, so it needs no SDK. electron-builder signs it
+ * with OpenWork's identity like openwork-dictation.exe. A missing compiler is
+ * not fatal: This PC then reports the helper missing. */
+function prepareWindowsHelper() {
+  const source = resolve(repoRoot, "packages", "computer-use", "windows", "ComputerUse.cs");
+  const executable = join(outDir, "openwork-computer-use.exe");
+  const fingerprintPath = join(outDir, "openwork-computer-use.sha256");
+  const sourceHash = createHash("sha256").update(readFileSync(source)).update(readFileSync(fileURLToPath(import.meta.url))).digest("hex");
+  if (!force && existsSync(executable) && existsSync(fingerprintPath) && readFileSync(fingerprintPath, "utf8").trim() === sourceHash) {
+    process.stdout.write(JSON.stringify({ ok: true, skipped: true, executable }, null, 2) + "\n");
+    return;
+  }
+  const systemRoot = process.env.SystemRoot || "C:\\Windows";
+  const framework = ["Framework64", "Framework"].map((dir) => join(systemRoot, "Microsoft.NET", dir, "v4.0.30319"))
+    .find((dir) => existsSync(join(dir, "csc.exe")));
+  const result = framework
+    ? spawnSync(join(framework, "csc.exe"), [
+      "/nologo", "/optimize+", "/target:exe", "/platform:anycpu", `/out:${executable}`,
+      ...["System.Core.dll", "System.Drawing.dll", "System.Web.Extensions.dll"].map((name) => `/reference:${join(framework, name)}`), source,
+    ], { stdio: "inherit" })
+    : { error: { message: "The .NET Framework compiler is missing" } };
+  if (result.error || result.status !== 0) {
+    const message = `Windows computer use helper was not built (${result.error?.message ?? `status ${result.status}`}); This PC will report it missing.`;
+    process.stderr.write(process.env.GITHUB_ACTIONS ? `::warning::${message}\n` : `${message}\n`);
+    return;
+  }
+  writeFileSync(fingerprintPath, sourceHash, "utf8");
+  process.stdout.write(JSON.stringify({ ok: true, executable }, null, 2) + "\n");
+}
+
+if (process.platform === "win32") {
+  mkdirSync(outDir, { recursive: true });
+  prepareWindowsHelper();
+  process.exit(0);
+}
+
 if (process.platform !== "darwin") {
-  process.stdout.write(JSON.stringify({ ok: true, skipped: true, reason: "computer-use-helper-is-macos-only" }, null, 2) + "\n");
+  process.stdout.write(JSON.stringify({ ok: true, skipped: true, reason: "computer-use-helper-is-macos-and-windows-only" }, null, 2) + "\n");
   process.exit(0);
 }
 

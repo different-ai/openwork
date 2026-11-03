@@ -27,11 +27,12 @@ import { revokeUpstreamCredentials, revokeInferenceCredentialsForMembers } from 
 type UserId = typeof AuthUserTable.$inferSelect.id
 
 export async function deleteGlobalAuthUser(userId: UserId) {
-  const memberships = await db
+  // primary: every session and membership must be found, or its cache entry outlives the user.
+  const memberships = await db.$primary
     .select({ organizationId: MemberTable.organizationId })
     .from(MemberTable)
     .where(eq(MemberTable.userId, userId))
-  const sessions = await db
+  const sessions = await db.$primary
     .select({ id: AuthSessionTable.id, token: AuthSessionTable.token })
     .from(AuthSessionTable)
     .where(eq(AuthSessionTable.userId, userId))

@@ -10,7 +10,7 @@ const FloatingSlotContext = React.createContext<FloatingSlotContextValue | null>
 
 /**
  * Shares the chat pane's floating layer with surfaces rendered elsewhere on
- * the session page (the floating browser card, a floating computer view).
+ * the session page (a floating computer view).
  * Consumers portal into `useSessionFloatingSlot()`; the layer itself is
  * `pointer-events-none`, so each floating surface opts back in.
  */

@@ -249,6 +249,20 @@ export const PERMISSIONS = {
     sensitive: true,
   },
 
+  "prompts.view": {
+    area: "desktop",
+    label: "View prompts",
+    description: "See the system prompts that steer members' agents, for everyone and per team.",
+    defaultOn: ADMIN,
+  },
+  "prompts.manage": {
+    area: "desktop",
+    label: "Manage prompts",
+    description: "Write, change and remove the system prompts that steer members' agents, for everyone and per team.",
+    defaultOn: ADMIN,
+    sensitive: true,
+  },
+
   // Deployments
   "deployments.view": {
     area: "deployments",

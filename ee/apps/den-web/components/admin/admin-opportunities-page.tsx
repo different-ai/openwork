@@ -12,6 +12,8 @@ import { AdminAccessScreen } from "./admin-access-screen";
 import { readAdminListLocation } from "./admin-list-location";
 import { requestAdmin, withStoredBearer, type AdminResult } from "./admin-request";
 import { useAdminSessionCookie } from "./admin-shell";
+import { AdminOpportunityNav } from "./admin-opportunity-nav";
+import { BillingCell, OutreachCell } from "./admin-opportunity-labels";
 
 type State = (AdminResult<AdminOpportunities> & { query: string }) | { access: "checking"; query: string };
 type Opportunity = AdminOpportunities["organizations"][number];
@@ -33,8 +35,9 @@ export function AdminOpportunitiesPage() {
   const minMembers = ["1", "2", "5", "10"].find(value => value === params.get("minMembers")) ?? "2";
   const companyEmail = params.get("companyEmail") === "1" ? "1" : "0";
   const setup = ["any", "skills", "mcp", "both"].find(value => value === params.get("setup")) ?? "any";
+  const outreach = ["any", "not_contacted", "contacted"].find(value => value === params.get("outreach")) ?? "any";
   const sort = ["recent", "active", "members"].find(value => value === params.get("sort")) ?? "recent";
-  const query = new URLSearchParams({ days, minMembers, companyEmail, setup, sort, search: search.slice(0, 160), limit: "50", offset: String(offset) }).toString();
+  const query = new URLSearchParams({ days, minMembers, companyEmail, setup, outreach, sort, search: search.slice(0, 160), limit: "50", offset: String(offset) }).toString();
   const [state, setState] = useState<State>(() => ({ access: hasSessionCookie ? "checking" : "signed-out", query, message: "" }));
   const [attempt, setAttempt] = useState(0);
   const [refreshing, setRefreshing] = useState(false);
@@ -73,7 +76,7 @@ export function AdminOpportunitiesPage() {
     const next = new URLSearchParams(window.location.search);
     if (value) next.set(key, value); else next.delete(key);
     if (key !== "page") next.delete("page");
-    const href = `/admin/opportunities${next.size ? `?${next}` : ""}`;
+    const href = `/admin/opportunities/adoption${next.size ? `?${next}` : ""}`;
     if (key === "search") window.history.replaceState(null, "", href);
     else window.history.pushState(null, "", href);
   }
@@ -92,19 +95,23 @@ export function AdminOpportunitiesPage() {
       {row.companyDomain ? <><span>{row.companyDomain}{row.companyDomainCount > 1 ? ` +${row.companyDomainCount - 1}` : ""}</span><p className="mt-1 text-xs text-[var(--dls-text-secondary)]">{count(row.companyEmailMembers)} verified {row.companyEmailMembers === 1 ? "address" : "addresses"}</p></> : <span className="text-[var(--dls-text-secondary)]">No verified company-email signal</span>}
     </div> },
     { key: "setup", header: "Cloud setup", render: row => <div className="whitespace-nowrap tabular-nums">{count(row.skills)} {row.skills === 1 ? "skill" : "skills"}<p className="mt-1 text-xs text-[var(--dls-text-secondary)]">{count(row.mcpConnections)} {row.mcpConnections === 1 ? "MCP" : "MCPs"}</p></div> },
+    { key: "billing", header: "Plan", render: row => <BillingCell billing={row.billing} /> },
+    { key: "outreach", header: "Outreach", render: row => <OutreachCell outreach={row.outreach} /> },
     { key: "activity", header: "Last observed activity", align: "right", render: row => <time className="whitespace-nowrap" dateTime={row.lastActiveAt} title={new Date(row.lastActiveAt).toLocaleString()}>{relativeDate(row.lastActiveAt, data?.generatedAt ?? row.lastActiveAt)}</time> },
   ];
   return <section data-testid="admin-opportunities" className="min-w-0 text-[var(--dls-text-primary)]">
     <header className="flex flex-wrap items-center justify-between gap-3 border-b border-[var(--dls-border)] py-5">
-      <h1 className="text-lg font-semibold">Opportunities</h1>
+      <h1 className="text-lg font-semibold">Adoption opportunities</h1>
       <DenButton size="sm" variant="secondary" disabled={refreshing} onClick={() => setAttempt(value => value + 1)}>Refresh</DenButton>
     </header>
-    <div className="grid gap-4 border-b border-[var(--dls-border)] py-5 sm:grid-cols-2 xl:grid-cols-3" aria-label="Opportunity filters">
+    <AdminOpportunityNav active="adoption" />
+    <div className="grid gap-4 border-b border-[var(--dls-border)] py-5 sm:grid-cols-2 xl:grid-cols-4" aria-label="Opportunity filters">
       <label className="grid gap-2 text-xs text-[var(--dls-text-secondary)]">Search organizations or domains<DenInput aria-label="Search organizations or domains" maxLength={160} value={search} onChange={event => change("search", event.target.value)} placeholder="Organization or company domain" /></label>
       <label className="grid gap-2 text-xs text-[var(--dls-text-secondary)]">Activity window<DenSelect aria-label="Activity window" value={days} onChange={event => change("days", event.target.value)}><option value="7">Last 7 days</option><option value="30">Last 30 days</option><option value="90">Last 90 days</option></DenSelect></label>
       <label className="grid gap-2 text-xs text-[var(--dls-text-secondary)]">Joined users<DenSelect aria-label="Joined users" value={minMembers} onChange={event => change("minMembers", event.target.value)}><option value="1">1 or more</option><option value="2">2 or more</option><option value="5">5 or more</option><option value="10">10 or more</option></DenSelect></label>
       <label className="grid gap-2 text-xs text-[var(--dls-text-secondary)]">Email signal<DenSelect aria-label="Email signal" value={companyEmail} onChange={event => change("companyEmail", event.target.value)}><option value="0">Any email</option><option value="1">Company-email signal</option></DenSelect></label>
       <label className="grid gap-2 text-xs text-[var(--dls-text-secondary)]">Cloud setup<DenSelect aria-label="Cloud setup" value={setup} onChange={event => change("setup", event.target.value)}><option value="any">Any setup</option><option value="skills">Has skills</option><option value="mcp">Has MCPs</option><option value="both">Has skills and MCPs</option></DenSelect></label>
+      <label className="grid gap-2 text-xs text-[var(--dls-text-secondary)]">Outreach<DenSelect aria-label="Outreach" value={outreach} onChange={event => change("outreach", event.target.value)}><option value="any">Any</option><option value="not_contacted">Not contacted</option><option value="contacted">Contacted</option></DenSelect></label>
       <label className="grid gap-2 text-xs text-[var(--dls-text-secondary)]">Sort by<DenSelect aria-label="Sort by" value={sort} onChange={event => change("sort", event.target.value)}><option value="recent">Most recently active</option><option value="active">Most active users</option><option value="members">Most joined users</option></DenSelect></label>
     </div>
     {error && data ? <div role="alert" className="py-4 text-sm text-red-700">Could not refresh opportunities. Showing the snapshot from {new Date(data.generatedAt).toLocaleString()}. {error}</div> : null}
@@ -120,6 +127,7 @@ export function AdminOpportunitiesPage() {
         <li>Activity is recorded app telemetry for this organization during the selected window. Missing telemetry, including opt-outs, does not establish inactivity; sign-in alone is not counted.</li>
         <li>Company-email signals use verified addresses outside known personal email providers. A domain does not establish employment; organizations are never combined by domain.</li>
         <li>Cloud setup counts active, non-deleted skills and MCP entries. Configuration does not prove recent use or a working connection.</li>
+        <li>Plan is the stored plan tier. Paying means a current active subscription; trials are not paying. Contacted means a platform admin recorded outreach, a reply or a meeting in This week.</li>
       </ul>
     </details>
     {data ? <p className="mt-2 text-xs text-[var(--dls-text-secondary)]">Snapshot {new Date(data.generatedAt).toLocaleString()}</p> : null}

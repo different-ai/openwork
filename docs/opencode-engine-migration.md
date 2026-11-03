@@ -5,40 +5,167 @@ and **Migrate chats to OpenCode v2**. Advanced settings uses the same engine
 commands. Both hand off to one app-wide owner (`shell/engine-migration.tsx`)
 for the switch check, the migration consent, and migration progress, so a
 migration stays visible after the surface that started it closes. Switching
-engines never migrates history. V1 remains the default. Desktop packages include
+engines never migrates history. V2 is the default. Desktop packages include
 both pinned native executables; v2's download fallback remains available for
 standalone servers.
 
-## Organization-managed rollout
+## Automatic migration (no rollout flag)
 
-`engineV2ForceUpgrade` ("Upgrade to OpenCode v2") is off by default on cloud
-and self-hosted deployments. When an organization's resolved flag is on, desktop
-and web hosts still on v1 reuse the same backup/copy migration in the
-background, wait for idle, and select v2 without consent. Desktop shows only the
-existing non-blocking progress banner; web shows no engine upgrade UI. Fresh
-profiles select v2 without a history copy. There is no separate upgrade
-invitation: when the flag is off, people can still switch or migrate manually
-from the command palette or Advanced settings. All app feature observers use the shared guarded `useOrgFeature` hook: cached
-organization data cannot bypass a desktop-only guard.
+Desktop versions from October 2026 move every install still on v1 to v2 in the
+background, signed in or not, using the backup/copy migration below. An install
+whose person explicitly switched back to v1 (a manual choice with a recorded
+time) keeps v1; installs that never chose are moved. A pinned engine
+(`OPENWORK_ENGINE_V2_PREVIEW` or `OPENWORK_ENGINE_AUTO_UPGRADE`, used by test
+harnesses and support) keeps today's behavior.
 
-Turning the flag off switches only force-owned instances back to v1, once idle.
-An explicit manual engine choice clears that ownership, so it is not reverted.
+Automatic migration does not depend on Den, sign-in, feature resolution, or a
+Helm value. The `engineV2ForceUpgrade` flag is retired: previous organization,
+member, deployment and kill-switch values are ignored. Older Den responses
+containing `upgrade: false` cannot stop migration or return an upgraded host
+to v1. The renderer only observes local host status; it does not fetch a
+migration feature flag or send engine policy writes.
+
+Desktop and hosted web hosts still on v1 reuse the same backup/copy migration
+in the background, wait for idle, and select v2 without consent. Desktop shows
+only the existing non-blocking progress banner; web shows no engine upgrade
+UI. Fresh profiles select v2 without a history copy. People can still switch
+or migrate manually from the desktop command palette or Advanced settings;
+explicit manual engine choices remain respected.
+
 Neither direction deletes history: v1 originals remain in place and new v2
-chats remain in v2 storage for a later switch back. Policy updates do not abort
-a copy or a running task. Failures keep v1 selected, retain a durable error and
-backup receipt, and retry only on a later boot with a one-minute-to-one-day
-bounded exponential backoff. Source chat changes during copying or v2 startup
-prevent the switch; a later attempt restores the pre-copy v2 baseline under
-the existing migration ownership lock before copying a fresh v1 snapshot.
+chats remain in v2 storage for a later switch back. Automatic failures keep v1
+selected (a profile already on v2 stays on v2), never leave the v2 history
+fenced (see [History copy fence and recovery](#history-copy-fence-and-recovery)),
+retain a durable error and backup receipt, and retry only on a later boot with
+a one-minute-to-one-day bounded exponential backoff. Source chat changes during
+copying or v2 startup prevent the switch; a later attempt restores the pre-copy
+v2 baseline under the existing migration ownership lock before copying a fresh
+v1 snapshot.
 
-Hosted bootstrap sets `OPENWORK_ENGINE_FORCE_POLICY=1` and an explicit
-`OPENWORK_ENGINE_AUTO_UPGRADE=1` or `0`; registered runner inventory and worker
-activity responses refresh the same resolved policy. An absent policy on a
-standalone server does not mean an organization requested a revert. Web
-snapshots bake the pinned, integrity-checked v2 executable and set
-`OPENWORK_OPENCODE2_BIN`, so boot never downloads it. The sandbox's existing
-checkpoint policy retains three snapshots of runtime data and engine state
-as an additional safety net; there is no new restore UI.
+Hosted bootstrap always enables automatic migration. Runner inventory and
+worker activity keep returning `upgrade: true` for compatibility with older
+runtimes, without looking up a rollout flag. Web snapshots bake the pinned,
+integrity-checked v2 executable and set `OPENWORK_OPENCODE2_BIN`, so boot never
+downloads it. The sandbox's existing checkpoint policy retains three snapshots
+of runtime data and engine state as an additional safety net; there is no new
+restore UI.
+
+### Deployment instructions
+
+Upgrade the desktop application and hosted server/chart to a version containing
+this change. There is no migration toggle to enable in `/admin` or
+`config.features` in Helm. Existing `engineV2ForceUpgrade` Helm values remain
+accepted for upgrade compatibility but are ignored and can be removed. An old
+Den does not block a new desktop's automatic migration. Conversely, older
+desktops that still consume Den policy receive `upgrade: true` from a new Den.
+The public and signed-in feature responses also retain a deprecated constant
+`engineV2ForceUpgrade: true` for older desktop renderers; this is not an editable
+feature, and stored off/kill-switch values cannot change it.
+Local support/test environment overrides and explicit manual v1 choices are
+separate from the retired rollout flag and still take precedence. Explicitly
+configured external engines are not local migration sources: automatic migration
+must not replace their routing with a host-local sidecar or copy unrelated local
+history.
+
+### OpenCode v2 only rollout
+
+`opencodeV2Only` (cloud and self-hosted, off) makes v2 the only chat engine for
+a signed-in organization's desktops: v1 is selected away once it is idle,
+switching back answers `409 engine_v2_only`, and v1 chats are copied in the
+background after v2 is selected, never before. Turning it off unlocks the
+switch and changes nothing else. See
+[the feature doc](features/opencode-v2-only/README.md).
+
+### Downgrade compatibility
+
+Every engine state write keeps `enabled`, `chatRouting`, `engineOrigin`
+(and `engineChangedAt`/`engineForced`): published builds read a file without a
+boolean `enabled` as OpenCode v1. A file the reverted v2-only build wrote
+(no `enabled` or `chatRouting`) is read here as v2 with `engineOrigin: "forced"`.
+A leftover automatic-copy marker is ignored once v2 is selected, so it cannot
+keep v2 from starting. `apps/server/test/engine-v2-history-recovery.test.ts`
+checks each saved state against the v0.18.63 selection logic.
+
+## History copy disk budget
+
+The preflight estimates the space a copy needs from the size of the v1 source
+and the existing v2 target, measured as allocated bytes (file + WAL, not logical
+row bytes). A fresh copy allocates, at peak on the storage volume:
+
+| File | Size | Why |
+| --- | --- | --- |
+| `source.db` snapshot | ≤ 1× source | VACUUM INTO of the v1 source (compacted) |
+| `converted/opencode.db` | ≤ 1× source | VACUUM INTO of the snapshot (the v2 schema) |
+| one WAL | ≤ 1× source | the conversion engine's WAL **or** the target's WAL — they do not peak together (conversion finishes and checkpoints before the copy opens the target) |
+| target growth | ~1× source | the v1 rows imported into the v2 target |
+| backup | ~1× target | a VACUUM INTO of the existing v2 target (only if a backup was requested) |
+
+That is **4× source + 1× target** (+ 1 GB margin). The previous code used
+5× source + target, which counted both WALs simultaneously even though
+conversion's WAL is checkpointed before the copy starts. SQLite's default
+`wal_autocheckpoint` (1000 pages ≈ 4 MB) bounds each WAL to a few megabytes in
+practice; 1× source per WAL is the conservative worst case. The source itself
+is read-only and the target's existing allocation is already on disk, so
+neither is counted as new.
+
+**Does a long-time v2 user need a v1 copy at all?** No, when the v1 history has
+already been copied. The copy runs only when v1 has a chat newer than the last
+finished copy's timestamp (`v1HistoryCopiedAt`). A profile on v2 for weeks with
+all v1 chats already copied has nothing new to import, so no copy, no preflight,
+and no disk check run — v2 just serves. The v2-only rollout starts v2 first and
+copies in the background, so even a copy that cannot fit on disk never keeps v2
+from serving the history it already has.
+
+### What the reported "~105 GB needed" likely was
+
+The number was an **unverified estimate** from the preflight's `5 × source +
+target + margin` formula, not a measured requirement. Without the original logs
+(v1 db size, v2 db size, available free space, and the exact error message
+content) the precise split cannot be proven. Two plausible readings:
+
+- If the v1 source was ~21 GB: `5 × 21 = 105 GB` (source terms only, not
+  counting the v2 target backup). A v1 db that large implies heavy v1 usage
+  before the person switched to v2.
+- If the v1 source was ~16.8 GB and the v2 target ~21 GB: `5 × 16.8 + 21 ≈ 105 GB`
+  (source terms plus the v2 backup).
+
+The tighter `4 × source + target` budget reduces the estimate by ~1× source
+(~17–21 GB in these readings). But the disk budget was not the root cause of the
+lockout: the reverted v2-only build blocked v2 from starting while the copy was
+incomplete, so even a correct budget that refused the copy left the person
+unable to open their intact v2 history. This PR fixes that — v2 serves
+regardless of whether the optional v1 copy can run.
+
+## History copy fence and recovery
+
+The copy owns the target through the OS-level SQLite mutex
+(`history-copy-mutex.db`), which a dead process cannot hold. In order, before
+anything durable is written or v2 is stopped:
+
+1. Preflight: the saved stage belongs to this profile and the rest of the copy
+   fits on disk (estimated from the saved stage).
+2. Copy lock: no other copy holds the mutex, and every engine lease is checked.
+   An engine whose OpenWork still runs (including another installed app sharing
+   the history) refuses the copy and is never stopped. A lease whose OpenWork
+   exited is removed; its engine is stopped only when it is positively
+   identified (`ps` start time before the lease and an opencode `serve`
+   command, re-checked before each signal). A pid now used by another process
+   is never signalled; anything unidentifiable refuses the copy.
+
+The `history-copy.pending` fence (JSON with an owner token; older builds wrote
+plain text) is published only immediately before the first target write. A
+copy that fails after that removes the chats it left unfinished (rows owned by
+an incomplete `openwork_history_copy` checkpoint) and lifts its own fence. Only
+a pause (closing OpenWork) or process death keeps the fence and start marker so
+the next start resumes.
+
+An engine start that finds a fence while no copy holds the mutex lifts it when
+the target has no unfinished checkpoint: completed chats are verified and
+consistent. Otherwise it fails with `history_copy_interrupted`, and the host
+resumes that copy once; a resume that cannot finish undoes the unfinished
+chats, lifts the fence and starts v2. Start errors suggest
+`OPENWORK_OPENCODE2_BIN` only for executable failures (spawn, exit, health),
+never for history copy states.
 
 ## Running tasks, switching, and migration progress
 
@@ -78,7 +205,9 @@ on both engines.
 
 ## What migration does
 
-Migration requires the OpenWork host token and explicit confirmation. It takes
+Manually requested migration requires the OpenWork host token and explicit
+confirmation; automatic migration is host-owned and does not ask for consent.
+It takes
 an immutable SQLite snapshot of the active profile's v1 database, including
 committed WAL writes. The original database is never modified.
 
@@ -129,11 +258,10 @@ does not rewrite configuration, skills, or plugin files.
 
 ## Provider catalog ownership
 
-The optional `liveProviderSync` rollout gives the bundled OpenWork plugin
-ownership of the v2 AI Gateway catalog. V1 and the flag-off path retain the
+The bundled OpenWork plugin owns the v2 AI Gateway catalog by default. Live
+provider sync is generally available with no rollout flag. V1 retains its
 existing server materialization flow. See [live provider sync](live-provider-sync.md)
-for stream convergence, account isolation, credential hand-off and kill-switch
-semantics.
+for stream convergence, account isolation and credential hand-off.
 
 ## Upstream contract reviewed
 
@@ -160,6 +288,20 @@ explicitly skips.
 ```sh
 OPENWORK_OPENCODE2_BIN="$(command -v opencode2)" pnpm --filter openwork-server test:history-migration
 ```
+
+Fence, lease, recovery, rollout and downgrade behavior run in CI without a
+native engine, against disposable profiles and a stand-in executable:
+
+```sh
+bun test apps/server/test/opencode-v2-history-safety.test.ts \
+  apps/server/test/engine-v2-history-recovery.test.ts \
+  apps/server/test/engine-v2-history-lockout-repro.test.ts
+```
+
+`engine-v2-history-lockout-repro.test.ts` uses only APIs that predate the fix,
+so it fails on the previous dev and passes here. Set
+`OPENWORK_NATIVE_OPENCODE2_BIN` to also run the native-engine recovery case
+(a real orphaned `opencode2 serve` and a real conversion).
 
 The same integration can be bundled and run on Node with a small V8 heap to
 exercise the desktop database implementation. No production history, provider

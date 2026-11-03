@@ -20,7 +20,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 }
 
 test("an admin adds a key-protected service and an AI Gateway provider by entering keys privately in chat", async ({ world, user, probe, step, evidence }) => {
-  await step("before: the agent sets up the service without its key and a private field appears in the chat", async () => {
+  await step("before: the agent sets up the service by its stable key without the key, and a private field appears in the chat", async () => {
     await world.scriptConnection();
     await user.type("composer", CONNECT_PROMPT, { verify: true });
     await user.click({ role: "button", label: "Run task" });

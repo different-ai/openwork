@@ -69,3 +69,13 @@ If the flag is absent/false, openwork_context is unavailable, or the question to
 ## Connected work
 
 ${OPENWORK_CONNECT_ROUTING_INSTRUCTION}`;
+
+/**
+ * Appends the organization's Prompts (written by its admins in Den, already
+ * ordered: everyone's first, then each of the member's teams by name) to an
+ * OpenWork prompt. Without any, the prompt is returned unchanged.
+ */
+export function appendOrganizationPrompts(prompt: string, organizationPrompts: string | undefined): string {
+  const text = organizationPrompts?.trim();
+  return text ? `${prompt}\n\n## Organization instructions\n\n${text}` : prompt;
+}

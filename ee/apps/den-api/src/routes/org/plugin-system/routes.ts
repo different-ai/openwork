@@ -123,6 +123,7 @@ import { pluginArchHasPermission, requirePluginArchCapability, type PluginArchAc
 import { pluginArchRoutePaths } from "./contracts.js"
 import { orgAccessFailureStatus, permissionFailureHeaders, requirePermission } from "../shared.js"
 import { ensureFreshPrivilegedSession } from "../../../privileged-session.js"
+import { primaryReadsMiddleware } from "../../../read-routing.js"
 import { isAgentOAuthClientConnection, listMemberUsableConnectionFacts } from "../mcp-connections.js"
 import { listWorkflowLibraryItems } from "../../../workflow-library.js"
 import {
@@ -306,7 +307,10 @@ function withPluginArchOrgContext(app: Hono<any>, method: "delete" | "get" | "pa
   const routeHandler = handlers.pop() as unknown
   const routeMiddlewares = handlers as unknown[]
   const routeApp = app as unknown as Record<string, (...args: unknown[]) => unknown>
-  routeApp[method](path, orgMemberRoute(), ...routeMiddlewares, resolveMemberTeamsMiddleware, routeHandler)
+  // A write route reads back what it wrote (often through shared helpers), so
+  // all of its reads go to the primary instead of a lagging replica.
+  const readScope = method === "get" ? [] : [primaryReadsMiddleware]
+  routeApp[method](path, orgMemberRoute(), ...readScope, ...routeMiddlewares, resolveMemberTeamsMiddleware, routeHandler)
 }
 
 export function registerPluginArchRoutes<T extends { Variables: OrgRouteVariables }>(app: Hono<T>) {

@@ -10,10 +10,11 @@ import { env } from "./env.js"
 const options = {
   headers: DEFAULT_CLIENT_IP_HEADERS,
   trustedProxies: env.trustedProxies,
+  signedClientIpSecret: env.webClientIpSecret,
 }
 
 export function resolveRequestClientIp(headers: Headers): ClientIpResolution {
-  return resolveClientIp(headers, options)
+  return resolveClientIp(headers, { ...options, now: Date.now() })
 }
 
 export function requestClientIpKey(headers: Headers) {

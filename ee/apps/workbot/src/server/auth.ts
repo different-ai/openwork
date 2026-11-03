@@ -3,7 +3,7 @@ import type { Context, Hono, MiddlewareHandler } from "hono"
 import { deleteCookie, getCookie, setCookie } from "hono/cookie"
 import { z } from "zod"
 import type { Config } from "./config.js"
-import { DenSignedOutError, type Den, type DenSession } from "./den.js"
+import { DenRateLimitedError, DenSignedOutError, type Den, type DenSession } from "./den.js"
 import { reportError } from "./error-reporting.js"
 import { createSealer, MAX_COOKIE_VALUE, randomToken, sessionSchema, type Tokens } from "./sealed.js"
 
@@ -75,6 +75,8 @@ export function createAuth(input: { config: Pick<Config, "publicUrl" | "secureCo
   /** Keyed by the refresh token being spent: Den rotates refresh tokens, so each one is spent once. */
   const refreshing = new Map<string, Promise<Tokens>>()
   const refreshed = new Map<string, { at: number; tokens: Tokens }>()
+  /** Refresh tokens Den asked Workbot to wait on, and until when: no call reaches Den before then. */
+  const coolingDown = new Map<string, number>()
   const denSessions = new Map<string, { at: number; tokenHash: string; value: DenSession }>()
 
   const readSession = (c: Context) => sealer.open(SESSION_PURPOSE, getCookie(c, sessionCookie), sessionSchema)
@@ -95,8 +97,21 @@ export function createAuth(input: { config: Pick<Config, "publicUrl" | "secureCo
     if (!refreshToken) throw new DenSignedOutError()
     const key = hashToken(refreshToken)
     for (const [entry, value] of refreshed) if (now() - value.at > REFRESHED_REUSE_MS) refreshed.delete(entry)
+    for (const [entry, until] of coolingDown) if (until <= now()) coolingDown.delete(entry)
     const recent = refreshed.get(key)
     if (recent) return { tokens: recent.tokens, changed: true }
+    try {
+      return { tokens: await refreshOnce(key, refreshToken), changed: true }
+    } catch (error) {
+      // While Den asks Workbot to wait, an access token that is still good keeps working.
+      if (error instanceof DenRateLimitedError && session.tokens.expiresAt > now()) return { tokens: session.tokens, changed: false }
+      throw error
+    }
+  }
+
+  const refreshOnce = (key: string, refreshToken: string) => {
+    const until = coolingDown.get(key)
+    if (until !== undefined) return Promise.reject(new DenRateLimitedError(Math.max(1, Math.ceil((until - now()) / 1000))))
     let pending = refreshing.get(key)
     if (!pending) {
       pending = den
@@ -104,11 +119,17 @@ export function createAuth(input: { config: Pick<Config, "publicUrl" | "secureCo
         .then((tokens) => {
           refreshed.set(key, { at: now(), tokens })
           return tokens
+        }, (error: unknown) => {
+          if (error instanceof DenRateLimitedError) {
+            coolingDown.set(key, now() + error.retryAfter * 1000)
+            reportError("token_refresh_failed", error, { response: "den_unavailable", reason: "rate_limited" })
+          }
+          throw error
         })
         .finally(() => refreshing.delete(key))
       refreshing.set(key, pending)
     }
-    return { tokens: await pending, changed: true }
+    return pending
   }
 
   const denSession = async (sessionId: string, accessToken: string) => {
@@ -132,15 +153,21 @@ export function createAuth(input: { config: Pick<Config, "publicUrl" | "secureCo
     }
     // Which call failed, so a refresh failure is reported as one rather than as Den being unavailable.
     let stage: "refresh" | "session" = "refresh"
+    // Den has already rotated the refresh token, so the cookie must stop carrying the old one whatever happens next.
+    let rotated: Session | null = null
     try {
       const { tokens, changed } = await freshTokens(session)
       stage = "session"
       const current = { ...session, tokens }
+      if (changed) rotated = current
       const value = await denSession(session.id, tokens.accessToken)
       if (value.user.id !== session.userId || value.organization.id !== session.organizationId) {
+        // Never write another subject's tokens into this sign-in. If a refresh just spent its refresh token, the
+        // sign-in can't be resumed anyway, so end it rather than leave a token Den has rotated away in the cookie.
+        if (rotated) endSession(c, session.id)
         return c.json({ error: "identity_changed", message: "The signed-in account or workspace changed. Sign in again before restoring work." }, 401)
       }
-      if (changed) writeSession(c, current)
+      if (rotated) writeSession(c, rotated)
       const expectedUser = c.req.header("x-openwork-client-user")
       const expectedOrganization = c.req.header("x-openwork-client-organization")
       if ((expectedUser !== undefined || expectedOrganization !== undefined)
@@ -154,6 +181,18 @@ export function createAuth(input: { config: Pick<Config, "publicUrl" | "secureCo
       if (error instanceof DenSignedOutError) {
         endSession(c, session.id)
         return c.json({ error: "signed_out" }, 401)
+      }
+      // Den couldn't say who this is, but keep what the refresh produced: the next request uses those tokens.
+      if (rotated) {
+        try {
+          writeSession(c, rotated)
+        } catch {
+          // Too large to write; the failure itself is reported below.
+        }
+      }
+      if (error instanceof DenRateLimitedError) {
+        // Reported once, when Den answered; requests during the wait don't reach Den.
+        return c.json({ error: "den_unavailable" }, 503, { "Retry-After": String(error.retryAfter) })
       }
       console.error("[workbot] den unavailable", { error: error instanceof Error ? error.message : "unknown" })
       reportError(stage === "refresh" ? "token_refresh_failed" : "den_unavailable", error, { response: "den_unavailable" })

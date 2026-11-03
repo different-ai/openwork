@@ -27,11 +27,15 @@ import {
 import { createDenTypeId, normalizeDenTypeId, type DenTypeId } from "@openwork-ee/utils/typeid"
 import { codemodeCodeDigest, parseCodemodeToolCalls } from "./workflow-runs.js"
 import { db } from "./db.js"
+
+/** `db` (replica reads) or `db.$primary` when a read must see a write made just before. */
+type WorkflowReader = typeof db.$primary
+import { snapshotReadAccess, workflowSnapshotStateRows } from "./workflow-snapshot-state.js"
 import { keysetAfter, keysetPage, type KeysetCursor } from "./list-pagination.js"
 import { resolveOrganizationMemberAuthority } from "./organization-team-roles.js"
 import { parseCodemodeScriptPayload, validateCodemodeScriptInput } from "./mcp/codemode-script-object.js"
 import { codemodeCallName } from "./mcp/codemode-namespaces.js"
-import type { BuiltCodemodeTools, CodemodeManifestEntry } from "./mcp/codemode-tools.js"
+import type { BuildCodemodeTools, BuiltCodemodeTools, CodemodeManifestEntry } from "./mcp/codemode-tools.js"
 import { executeWorkflow } from "./mcp/workflow-service.js"
 import {
   artifactDigest,
@@ -88,9 +92,10 @@ async function workflowResource(
   context: PluginArchActorContext,
   value: string,
   role: "viewer" | "manager",
+  database: WorkflowReader = db,
 ) {
   const configObjectId = parseConfigObjectId(value)
-  const rows = await db.select({ configObject: ConfigObjectTable, plugin: PluginTable })
+  const rows = await database.select({ configObject: ConfigObjectTable, plugin: PluginTable })
     .from(ConfigObjectTable)
     .innerJoin(PluginConfigObjectTable, and(
       eq(PluginConfigObjectTable.configObjectId, ConfigObjectTable.id),
@@ -218,9 +223,10 @@ async function workflowVersions(
   context: PluginArchActorContext,
   configObjectId: ConfigObjectId,
   includeAuthoringDetails: boolean,
+  database: WorkflowReader = db,
 ): Promise<WorkflowVersion[]> {
   const [rows, automationReferences] = await Promise.all([
-    db.select().from(ConfigObjectVersionTable).where(and(
+    database.select().from(ConfigObjectVersionTable).where(and(
       eq(ConfigObjectVersionTable.organizationId, context.organizationContext.organization.id),
       eq(ConfigObjectVersionTable.configObjectId, configObjectId),
       eq(ConfigObjectVersionTable.isDeletedVersion, false),
@@ -249,20 +255,13 @@ async function workflowVersions(
   })
 }
 
-function snapshotReadAccess(memberId: DenTypeId<"member">) {
-  if (!memberId) throw new Error("workflow_receipt_member_required")
-  return or(
-    eq(WorkflowRunTable.org_membership_id, memberId),
-    eq(WorkflowRunTable.source, sql`concat('plugin:', ${WorkflowRunTable.plugin_id}, ':', ${WorkflowRunTable.config_object_id})`),
-  )
-}
-
 async function snapshotRows(
   organizationId: DenTypeId<"organization">,
   configObjectId: ConfigObjectId,
   memberId: DenTypeId<"member">,
   limit = 100,
   cursor?: KeysetCursor,
+  database: WorkflowReader = db,
 ) {
   if (!memberId) throw new Error("workflow_receipt_member_required")
   const conditions: Array<SQL | undefined> = [
@@ -272,7 +271,7 @@ async function snapshotRows(
     isNotNull(WorkflowRunTable.config_object_version_id),
   ]
   if (cursor) conditions.push(keysetAfter({ at: WorkflowRunTable.finished_at, id: WorkflowRunTable.id }, cursor))
-  return db.select({ receipt: WorkflowRunTable, automationTrigger: AutomationRunTable.trigger })
+  return database.select({ receipt: WorkflowRunTable, automationTrigger: AutomationRunTable.trigger })
     .from(WorkflowRunTable)
     .leftJoin(AutomationRunTable, eq(AutomationRunTable.id, WorkflowRunTable.automation_run_id))
     .where(and(...conditions))
@@ -364,16 +363,19 @@ export async function getWorkflowDetail(input: {
   context: PluginArchActorContext
   configObjectId: string
   maxAgeMs?: number
+  /** Pass `db.$primary` right after writing this Workflow. */
+  database?: WorkflowReader
 }): Promise<WorkflowDetail> {
-  const resource = await workflowResource(input.context, input.configObjectId, "viewer")
+  const database = input.database ?? db
+  const resource = await workflowResource(input.context, input.configObjectId, "viewer", database)
   const role = await resolvePluginArchResourceRole({
     context: input.context,
     resourceId: resource.configObject.id,
     resourceKind: "config_object",
   })
   const [versions, rows] = await Promise.all([
-    workflowVersions(input.context, resource.configObject.id, role === "manager"),
-    snapshotRows(resource.configObject.organizationId, resource.configObject.id, input.context.organizationContext.currentMember.id),
+    workflowVersions(input.context, resource.configObject.id, role === "manager", database),
+    snapshotRows(resource.configObject.organizationId, resource.configObject.id, input.context.organizationContext.currentMember.id, undefined, undefined, database),
   ])
   const currentVersion = versions[0]
   if (!currentVersion) throw new Error("workflow_version_not_found")
@@ -399,31 +401,6 @@ export async function getWorkflowDetail(input: {
     latestSuccessfulSnapshot,
     freshness,
   }
-}
-
-/** The fields of snapshotRows a freshness check reads, without results, source or tool calls. */
-function snapshotStateRows(
-  organizationId: DenTypeId<"organization">,
-  configObjectId: ConfigObjectId,
-  memberId: DenTypeId<"member">,
-) {
-  return db.select({
-    receiptId: WorkflowRunTable.id,
-    pluginId: WorkflowRunTable.plugin_id,
-    status: WorkflowRunTable.status,
-    errorMessage: WorkflowRunTable.error_message,
-    finishedAt: WorkflowRunTable.finished_at,
-    contentDeletedAt: WorkflowRunTable.artifact_content_deleted_at,
-    hasMarkdown: sql<number>`${WorkflowRunTable.result_markdown} is not null`.mapWith(Number),
-  })
-    .from(WorkflowRunTable)
-    .where(and(
-      eq(WorkflowRunTable.organization_id, organizationId),
-      snapshotReadAccess(memberId),
-      eq(WorkflowRunTable.config_object_id, configObjectId),
-      isNotNull(WorkflowRunTable.config_object_version_id),
-    ))
-    .orderBy(desc(WorkflowRunTable.finished_at), desc(WorkflowRunTable.id)).limit(100)
 }
 
 export type WorkflowCardFacts = {
@@ -455,7 +432,7 @@ export async function listWorkflowCardFacts(context: PluginArchActorContext, con
       eq(ConfigObjectVersionTable.isDeletedVersion, false),
     )).orderBy(desc(ConfigObjectVersionTable.createdAt), desc(ConfigObjectVersionTable.id)),
     savedScriptAutomations(context),
-    Promise.all(configObjectIds.map((configObjectId) => snapshotStateRows(organizationId, configObjectId, memberId))),
+    workflowSnapshotStateRows(organizationId, configObjectIds, memberId),
   ])
   const versionsByWorkflow = new Map<string, Array<{ id: string; requiredCapabilities: WorkflowCardFacts["requiredCapabilities"] }>>()
   for (const row of versionRows) {
@@ -465,7 +442,7 @@ export async function listWorkflowCardFacts(context: PluginArchActorContext, con
     versions.push({ id: row.id, requiredCapabilities: parsed.payload.requiredCapabilities })
     versionsByWorkflow.set(row.configObjectId, versions)
   }
-  configObjectIds.forEach((configObjectId, index) => {
+  configObjectIds.forEach((configObjectId) => {
     const versions = versionsByWorkflow.get(configObjectId) ?? []
     const currentVersion = versions[0]
     if (!currentVersion) return
@@ -474,7 +451,7 @@ export async function listWorkflowCardFacts(context: PluginArchActorContext, con
       automation.configObjectId === configObjectId && versionIds.has(automation.reference.configObjectVersionId)
         ? [automation.reference.id]
         : []))
-    const snapshots = (snapshotsByWorkflow[index] ?? []).filter((row) => row.pluginId !== null)
+    const snapshots = (snapshotsByWorkflow.get(configObjectId) ?? []).filter((row) => row.pluginId !== null)
     const { latestSuccessfulSnapshot, freshness } = workflowSnapshotState(
       snapshots,
       (snapshot) => snapshot.hasMarkdown === 1 && snapshot.contentDeletedAt === null,
@@ -571,7 +548,8 @@ export async function getWorkflowSnapshot(input: {
   receiptId: string
 }) {
   const resource = await workflowResource(input.context, input.configObjectId, "viewer")
-  const rows = await db.select({ receipt: WorkflowRunTable, automationTrigger: AutomationRunTable.trigger })
+  // primary: read right after a run writes it or deleteWorkflowSnapshotContent clears it.
+  const rows = await db.$primary.select({ receipt: WorkflowRunTable, automationTrigger: AutomationRunTable.trigger })
     .from(WorkflowRunTable)
     .leftJoin(AutomationRunTable, eq(AutomationRunTable.id, WorkflowRunTable.automation_run_id))
     .where(and(
@@ -588,7 +566,7 @@ export async function testWorkflowDraft(input: {
   context: PluginArchActorContext
   configObjectId: string
   draft: WorkflowDraft
-  buildTools: () => Promise<BuiltCodemodeTools>
+  buildTools: BuildCodemodeTools
 }) {
   const resource = await workflowResource(input.context, input.configObjectId, "manager")
   const payload = normalizedPayload(input.draft)
@@ -637,7 +615,8 @@ export async function createWorkflowVersion(input: {
   const scriptInputDigest = artifactDigest(input.draft.exampleInput ?? null)
   const inputSchemaDigest = optionalArtifactDigest(payload.parsed.inputSchema)
   const outputSchemaDigest = optionalArtifactDigest(payload.parsed.outputSchema)
-  const receipts = await db.select().from(WorkflowRunTable).where(and(
+  // primary: the test run that wrote this receipt usually finished moments ago.
+  const receipts = await db.$primary.select().from(WorkflowRunTable).where(and(
     eq(WorkflowRunTable.id, parseReceiptId(input.receiptId)),
     eq(WorkflowRunTable.organization_id, resource.configObject.organizationId),
     eq(WorkflowRunTable.org_membership_id, input.context.organizationContext.currentMember.id),
@@ -663,7 +642,7 @@ export async function createWorkflowVersion(input: {
     throw new Error("workflow_matching_test_receipt_required")
   }
 
-  const consumed = await db.select({ id: ConfigObjectVersionTable.id }).from(ConfigObjectVersionTable).where(and(
+  const consumed = await db.$primary.select({ id: ConfigObjectVersionTable.id }).from(ConfigObjectVersionTable).where(and(
     eq(ConfigObjectVersionTable.organizationId, resource.configObject.organizationId),
     eq(ConfigObjectVersionTable.configObjectId, resource.configObject.id),
     eq(ConfigObjectVersionTable.sourceRevisionRef, receipt.id),
@@ -710,7 +689,7 @@ export async function createWorkflowVersion(input: {
       updatedAt: now,
     }).where(eq(ConfigObjectTable.id, resource.configObject.id))
   })
-  return getWorkflowDetail({ context: input.context, configObjectId: resource.configObject.id })
+  return getWorkflowDetail({ context: input.context, configObjectId: resource.configObject.id, database: db.$primary })
 }
 
 export async function deleteWorkflowSnapshotContent(input: {
@@ -744,7 +723,8 @@ export async function deleteWorkflowSnapshotContent(input: {
       .where(eq(AutomationRunTable.id, receipt.automation_run_id)).limit(1)
     const automationId = automationRuns[0]?.automationId
     if (automationId) {
-      const retained = await db.select({ receipt: WorkflowRunTable, run: AutomationRunTable })
+      // primary: must not see the content cleared above as still retained.
+      const retained = await db.$primary.select({ receipt: WorkflowRunTable, run: AutomationRunTable })
         .from(WorkflowRunTable)
         .innerJoin(AutomationRunTable, eq(AutomationRunTable.id, WorkflowRunTable.automation_run_id))
         .where(and(
@@ -908,7 +888,8 @@ export async function saveWorkflow(input: {
     throw new Error("workflow_authoring_receipt_required")
   }
   const codeDigest = codemodeCodeDigest(code)
-  const receipts = await db.select().from(WorkflowRunTable).where(and(
+  // primary: the test run that wrote this receipt usually finished moments ago.
+  const receipts = await db.$primary.select().from(WorkflowRunTable).where(and(
     eq(WorkflowRunTable.organization_id, organizationId),
     eq(WorkflowRunTable.org_membership_id, ownerMemberId),
     eq(WorkflowRunTable.code_digest, codeDigest),
@@ -1109,7 +1090,7 @@ export async function executeLiveArtifactWorkflow(input: {
   expectedOutputSchemaDigest: string
   timeZone?: string
   describeUnavailable?: (missing: readonly { capabilityName: string }[]) => ReturnType<typeof liveArtifactConnectionFailure>
-  buildTools: () => Promise<BuiltCodemodeTools>
+  buildTools: BuildCodemodeTools
 }) {
   const resource = await workflowResource(input.context, input.configObjectId, "viewer")
   const rows = await db.select().from(ConfigObjectVersionTable).where(and(

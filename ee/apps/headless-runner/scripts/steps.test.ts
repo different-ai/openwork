@@ -8,12 +8,13 @@ import { test } from "node:test"
 import { z } from "zod"
 import { denResumeClient, RESUME_EXCHANGE_PATH } from "../src/den-resume.js"
 import type { ErrorReport, ErrorReporter } from "../src/error-reporting.js"
+import { readPart } from "../src/files.js"
 import type { McpConnector } from "../src/mcp.js"
 import type { ModelClient, ModelRequest } from "../src/model.js"
 import { nodeSqlite } from "../src/node-sqlite.js"
 import type { SqlDriver } from "../src/sql.js"
 import { grantVault } from "../src/resume-grants.js"
-import { Runner, type RunnerOptions } from "../src/runner.js"
+import { CUT_OFF_INSTRUCTION, Runner, type RunnerOptions } from "../src/runner.js"
 import { SelfResume } from "../src/self-resume.js"
 import { FRESH_REPEAT, type StepState } from "../src/steps.js"
 import { Store } from "../src/store.js"
@@ -170,6 +171,31 @@ test("a step-mode turn ends with the same transcript, usage and files as the sam
   assert.deepEqual(view(stepRequests), view(continuousRequests))
   assert.equal(scheduleRows(stepped.store), 0, "nothing left scheduled")
   assert.equal(stepped.store.stepCheckpoint("hs_same_conversation", "m1"), null)
+})
+
+test("a turn's log line says where its time went, step by step, in either mode", async (t) => {
+  const lines: string[] = []
+  const log = console.log
+  t.mock.method(console, "log", (...args: unknown[]) => {
+    if (typeof args[0] === "string" && args[0].startsWith("[headless-runner] turn ended ")) lines.push(args[0])
+    else log(...args)
+  })
+  for (const execution of [undefined, "steps" as const]) {
+    using directory = tempDir()
+    const { store, runner } = world(directory.directory, { model: notesModel() })
+    store.putSession("hs_timed", { owner: "test" })
+    assert.ok(runner.send({ sessionId: "hs_timed", messageId: "m1", prompt: "Remember milk and eggs", credentials: {}, ...(execution ? { execution } : {}) }).ok)
+    await runner.idle()
+  }
+  assert.equal(lines.length, 2)
+  for (const [index, line] of lines.entries()) {
+    const { timing } = JSON.parse(line.slice("[headless-runner] turn ended ".length)) as { timing: { steps: Array<{ modelMs?: number; firstOutputMs?: number; tools?: Array<{ name: string; ms: number }> }>; modelMs: number; toolMs: number } }
+    assert.deepEqual(timing.steps.map((step) => step.tools?.map((tool) => tool.name) ?? []), [["write_file"], ["read_file"], []])
+    assert.ok(timing.steps.every((step) => typeof step.modelMs === "number"))
+    // Step mode always streams, so each model call also says how soon it started writing.
+    if (index === 1) assert.ok(timing.steps.every((step) => typeof step.firstOutputMs === "number"))
+    assert.ok(timing.modelMs >= 0 && timing.toolMs >= 0)
+  }
 })
 
 test("a step commits all of its messages, its next step and the attempt reset in one transaction, or none of them", () => {
@@ -366,6 +392,44 @@ test("a step that keeps dying is retried at once, then after 30 s and 2 minutes,
   assert.ok(reports.some((report) => report.code === "step_crash_loop" && report.kind === "turn_failed"), JSON.stringify(reports))
 })
 
+test("the alarm isn't kept set for a step still running here: only its next step, once it ends", async () => {
+  using temp = tempDir()
+  let release = () => {}
+  const held = new Promise<void>((resolve) => (release = resolve))
+  let calls = 0
+  const model: ModelClient = {
+    async complete(request) {
+      calls += 1
+      if (calls === 1) {
+        await held
+        return { text: "Noting it.", toolCalls: [{ id: "call_note", name: "write_file", input: { path: "a.md", content: "a" } }], usage }
+      }
+      return { text: `Answer to ${promptOf(request)}`, toolCalls: [], usage }
+    },
+  }
+  const { store, runner } = world(temp.directory, { model, alarm: true })
+  const session = store.createSession({})
+  runner.send({ sessionId: session.id, messageId: "m1", prompt: "Hi", credentials: {}, execution: "steps" })
+  const first = runner.nextStepAt()
+  assert.ok(first !== null && first <= Date.now(), "the first step is due")
+  const alarm = runner.runDueSteps()
+  await until(() => calls === 1, "the first model call")
+  const row = store.stepRow(session.id, "m1")
+  assert.ok(row && row !== "invalid" && row.dueAt <= Date.now(), "due again at once, for a process that dies in the step")
+  // An alarm for it would only find it running and set itself again; celld starts that alarm during a long one.
+  assert.equal(runner.nextStepAt(), null)
+  await runner.runDueSteps()
+  assert.equal(calls, 1, "an alarm during the step doesn't start it again")
+  release()
+  await alarm
+  const next = runner.nextStepAt()
+  assert.ok(next !== null && next <= Date.now(), "its end sets the next step")
+  await drain(runner, store)
+  assert.equal(store.getTurn(session.id, "m1")?.status, "completed")
+  assert.equal(calls, 2)
+  assert.equal(runner.nextStepAt(), null)
+})
+
 test("an exception in one lane's step fails that turn only: other lanes and the alarm keep going", async () => {
   using temp = tempDir()
   const model: ModelClient = {
@@ -447,6 +511,54 @@ test("background tasks and their reports run in step mode like the message that 
     ["m1.t1", "task", "steps", "completed"],
     ["m1.t1.r", "report", "steps", "completed"],
   ])
+})
+
+test("a task works from files it is handed, and its report reads just the part it needs", async () => {
+  using temp = tempDir()
+  const script = Array.from({ length: 3000 }, (_, index) => (index === 2400 ? "bpy.ops.render.render(write_still=True)" : `line_${index} = ${index}`)).join("\n")
+  const requests: ModelRequest[] = []
+  const model: ModelClient = {
+    async complete(request) {
+      requests.push(request)
+      const results = resultsOf(request)
+      if (request.system.includes("Only deliver the background task's result")) {
+        if (!request.messages.some((message) => message.role === "tool" && message.output.startsWith("2401:"))) return { text: "", toolCalls: [{ id: "call_find", name: "read_file", input: { path: "out/scene.py", find: "render(" } }], usage }
+        return { text: "It renders at line 2401.", toolCalls: [], usage }
+      }
+      if (request.system.includes("# Your background task")) {
+        if (results.length === 0) return { text: "", toolCalls: [{ id: "call_write", name: "write_file", input: { path: "out/scene.py", content: script } }], usage }
+        return { text: "Wrote the scene to out/scene.py.", toolCalls: [], usage }
+      }
+      const done = request.messages.filter((message) => message.role === "tool").length
+      if (done === 0) return { text: "", toolCalls: [{ id: "call_notes", name: "write_file", input: { path: "plan.md", content: "two rooms" } }], usage }
+      if (done === 1) return { text: "", toolCalls: [{ id: "call_task", name: "start_task", input: { title: "Scene", brief: "Build the scene from the plan", files: ["plan.md"] } }], usage }
+      return { text: "Started it.", toolCalls: [], usage }
+    },
+  }
+  const { store, runner } = world(temp.directory, { model })
+  const session = store.createSession({ tasks: true })
+  runner.send({ sessionId: session.id, messageId: "m1", prompt: "Build my apartment", credentials: {} })
+  await runner.idle()
+  assert.deepEqual(store.listTurns(session.id).map((turn) => [turn.messageId, turn.status]), [["m1", "completed"], ["m1.t1", "completed"], ["m1.t1.r", "completed"]])
+  assert.match(promptOf(requests.find((request) => request.system.includes("# Your background task"))!), /Files for this task, in your scratch workspace:\n- plan\.md \(9 bytes\)/)
+  const report = requests.find((request) => request.system.includes("Only deliver the background task's result"))!
+  const delivered = report.messages.find((message): message is Extract<Message, { role: "user" }> => message.role === "user" && message.text.includes('Background task "Scene" finished'))?.text ?? ""
+  assert.match(delivered, /Scratch files it wrote[^\n]*\n- out\/scene\.py \(\d+ KB\)/)
+  assert.doesNotMatch(delivered, /plan\.md/, "files it was handed are not results")
+  assert.deepEqual(report.tools.map((tool) => tool.name), ["list_files", "read_file"])
+  assert.equal(store.getTurn(session.id, "m1.t1.r")?.status, "completed")
+  assert.ok(transcript(store, session.id, "m1.t1.r").some((message) => message.role === "tool" && message.output === "2401: bpy.ops.render.render(write_still=True)"))
+})
+
+test("read_file reads a long file in numbered parts", () => {
+  const content = Array.from({ length: 10 }, (_, index) => `row ${index + 1}`).join("\n")
+  assert.equal(readPart(content, {}), content)
+  assert.equal(readPart(content, { start: 4, lines: 2 }), "[lines 4-5 of 10]\n4: row 4\n5: row 5\n[continues at line 6]")
+  assert.equal(readPart(content, { start: 9 }), "[lines 9-10 of 10]\n9: row 9\n10: row 10")
+  assert.equal(readPart(content, { find: "ROW 1" }), "1: row 1\n10: row 10")
+  assert.equal(readPart(content, { find: "nope" }), 'No line contains "nope" (10 lines).')
+  const long = Array.from({ length: 5000 }, () => "x".repeat(20)).join("\n")
+  assert.match(readPart(long, {}), /^\[lines 1-\d+ of 5000\][\s\S]*\[continues at line \d+\]$/)
 })
 
 test("stopping a step-mode turn between steps ends it at once; a follow-up wraps up an answer between steps", async () => {
@@ -531,4 +643,38 @@ test("a Node runner that shuts down mid-step leaves the turn to go on when it st
   await second.runner.idle()
   assert.equal(second.store.getTurn(session.id, "m1")?.status, "completed")
   assert.equal(second.store.getTurn(session.id, "m2")?.status, "completed")
+})
+
+test("a reply cut off at the output cap never ends the turn: it is dropped, the model is asked for less, and repeats fail", async () => {
+  for (const execution of [undefined, "steps" as const]) {
+    using temp = tempDir()
+    const systems: string[] = []
+    // Cut off twice (text only, then nothing), then answers.
+    const model: ModelClient = {
+      async complete(request) {
+        systems.push(request.system)
+        if (systems.length === 1) return { text: "Here is the whole scri", toolCalls: [], usage, cutOff: true }
+        if (systems.length === 2) return { text: "", toolCalls: [], usage, cutOff: true }
+        return { text: "Built it in parts.", toolCalls: [], usage }
+      },
+    }
+    const { store, runner } = world(temp.directory, { model })
+    store.putSession("hs_cut_off", { owner: "test" })
+    runner.send({ sessionId: "hs_cut_off", messageId: "m1", prompt: "Model an apartment", credentials: {}, ...(execution ? { execution } : {}) })
+    await runner.idle()
+    await drain(runner, store)
+    assert.equal(store.getTurn("hs_cut_off", "m1")?.status, "completed", `${execution ?? "one go"}`)
+    assert.deepEqual(transcript(store, "hs_cut_off", "m1").filter((message) => message.role === "assistant").map((message) => message.text), ["Built it in parts."])
+    assert.deepEqual(systems.map((system) => system.includes(CUT_OFF_INSTRUCTION)), [false, true, true])
+
+    const always: ModelClient = { async complete() { return { text: "", toolCalls: [], usage, cutOff: true } } }
+    using other = tempDir()
+    const failing = world(other.directory, { model: always })
+    failing.store.putSession("hs_cut_off", { owner: "test" })
+    failing.runner.send({ sessionId: "hs_cut_off", messageId: "m1", prompt: "Model an apartment", credentials: {}, ...(execution ? { execution } : {}) })
+    await failing.runner.idle()
+    await drain(failing.runner, failing.store)
+    const turn = failing.store.getTurn("hs_cut_off", "m1")
+    assert.deepEqual([turn?.status, turn?.error], ["failed", "output_limit"], `${execution ?? "one go"}`)
+  }
 })

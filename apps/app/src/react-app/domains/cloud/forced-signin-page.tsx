@@ -13,6 +13,7 @@ import {
   resolveDenBaseUrls,
 } from "../../../app/lib/den";
 import { markDesktopSignInInitiated } from "../../../app/lib/den-sign-in-intent";
+import { clearSignInReturnTarget } from "../../../app/lib/den-sign-in-return";
 import { exchangeHandoffAndSignIn } from "../../../app/lib/den-handoff";
 import { parseManualAuthInput } from "../../../app/lib/manual-auth-input";
 import { normalizeOrganizationServerInput } from "../../../app/lib/organization-server-input";
@@ -79,6 +80,7 @@ export function ForcedSigninPage({ developerMode }: ForcedSigninPageProps) {
   const openBrowserAuth = useCallback(
     (mode: "sign-in" | "sign-up") => {
       const url = buildDenAuthUrl(baseUrl, mode);
+      clearSignInReturnTarget();
       markDesktopSignInInitiated();
       setSigninFallbackUrl(url);
       setStatusMessage(
@@ -97,6 +99,7 @@ export function ForcedSigninPage({ developerMode }: ForcedSigninPageProps) {
   );
 
   const exchangeGrant = useCallback(async (grant: string, nextBaseUrl: string) => {
+    clearSignInReturnTarget();
     setAuthBusy(true);
     setAuthError(null);
     setStatusMessage(t("den.signing_in"));

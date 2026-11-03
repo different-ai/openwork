@@ -1,0 +1,114 @@
+---
+title: "Connect Slack to OpenWork"
+sidebarTitle: "Connect Slack"
+description: "Let OpenWork search, read and post in Slack as each person who signs in. An admin sets up your organization's Slack app once in about five minutes; then everyone signs in with their own Slack account."
+keywords: ["slack", "connect slack", "slack connector", "slack mcp", "slack app", "add slack", "guided slack setup", "client id", "client secret", "slack manifest"]
+---
+
+Connect Slack once for your organization, and OpenWork can search, read and post in Slack as each person who signs in. You don't need any bot tokens or code.
+
+<Frame>
+  <iframe
+    width="100%"
+    height="400"
+    src="https://www.youtube.com/embed/cWuxzbZ5wXE"
+    title="How to connect Slack to OpenWork"
+    allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
+    allowFullScreen
+  />
+</Frame>
+
+## Before you start
+
+- You're an **owner or admin** in OpenWork Cloud.
+- You can **create apps in your Slack workspace**. If your workspace blocks app installs, a Slack admin needs to approve the app.
+- Allow about five minutes. You'll switch between OpenWork Cloud and Slack's app settings.
+
+Not an admin? Ask one to follow this page, then skip to [Everyone signs in](#everyone-signs-in).
+
+## 1. Start the setup
+
+Start from either place:
+
+- **In the desktop app:** open **Library › Add to library › Connector**, pick **Slack**, then click **Set up in OpenWork Cloud**.
+- **In OpenWork Cloud:** open **Manage › Connectors › Add a connector**, then pick **Slack**.
+
+![Set up Slack in the desktop app, with the Set up in OpenWork Cloud button](/images/slack-connect/desktop-set-up-slack.png)
+
+Either way, the **Add Slack** checklist opens in OpenWork Cloud.
+
+## 2. Choose what OpenWork can do
+
+Pick one option. Nothing is selected for you.
+
+- **Read and act** (recommended): searches and reads messages, files and canvases, and posts, reacts and creates channels.
+- **Read only**: searches and reads, but can't post or change anything in Slack.
+
+OpenWork always acts as the person who signed in, and only sees what that person can already see.
+
+![The Add Slack checklist in OpenWork Cloud](/images/slack-connect/cloud-choose-access.png)
+
+## 3. Create the Slack app
+
+1. Click **Create app in Slack**. Slack opens **Create from a manifest** with the redirect URL, scopes and MCP setting already filled in.
+2. Under **Workspace**, pick your Slack workspace, then click **Next**.
+3. Review the app and click **Create and Install**.
+4. Click **Allow** to approve the app in your workspace.
+
+![Slack's Review your app step](/images/slack-connect/slack-review-app.png)
+
+Already have a Slack app you want to use? Open **Use an existing Slack app** in the checklist. It has the redirect URL, scopes and manifest to copy into that app.
+
+## 4. Add the client ID and secret
+
+1. In Slack, click **Go to App Settings**. **Basic Information › App Credentials** shows the **Client ID** and **Client Secret**.
+2. In Slack, open **Agents** and check that **Slack Model Context Protocol (MCP) Server** is on. Apps created from the manifest have it on already.
+3. Back in the **Add Slack** checklist, turn on **MCP is on in my Slack app**.
+4. Paste the **Client ID** and **Client secret**, then click **Save changes**.
+
+Keep the client secret out of chats, screenshots and source control.
+
+![The checklist with every step done except Sign in with Slack](/images/slack-connect/cloud-ready-to-sign-in.png)
+
+## 5. Sign in to test
+
+1. Click **Sign in with Slack** and approve with your own Slack account.
+2. When Slack shows **You're connected**, close that tab and go back to OpenWork Cloud.
+3. The page should say **Slack passed all 5 checks**. If a check fails, it explains what to fix and offers **Check again**.
+
+## 6. Choose who can use it and add Slack
+
+1. Under **How people connect**, keep **Each person signs in** so everyone uses their own Slack account.
+2. Under **Who can use it**, turn on **Everyone in the organization**, or add specific people and teams.
+3. Click **Add Slack**.
+
+![Slack passed all 5 checks, with sharing options](/images/slack-connect/cloud-checks-passed.png)
+
+## Everyone signs in
+
+Each person connects their own Slack account once:
+
+- **In the desktop app:** open **Library**. Slack appears under **From OpenWork**. Click **Sign in with Slack** if it asks.
+- **On the web:** open **Your Connections** and connect Slack.
+
+Then try it. Ask something like *"Post a message in #general that says hello from OpenWork"* or *"Summarize what happened in #launch this week."*
+
+![OpenWork posting a message in Slack](/images/slack-connect/desktop-post-in-slack.png)
+
+## Common questions
+
+**The desktop app still says "Not set up for your organization."**
+Go back to the **Library**. Slack shows as ready there once setup finishes in OpenWork Cloud.
+
+**Sign-in fails with "The MCP server refused to start a session (HTTP 400)."**
+In Slack, open the app whose client ID you saved, go to **Agents**, and turn on **MCP**. Then click **Check again**. See [Slack connection troubleshooting](/cloud/share-with-your-team/shared-mcp-connections#troubleshooting-slack).
+
+**I don't see the checklist, only the client ID and secret fields.**
+Your OpenWork may not have guided setup turned on yet (for example, a self-hosted install). Follow the [manual Slack steps](/cloud/share-with-your-team/shared-mcp-connections#slack) instead.
+
+**Which scopes does OpenWork ask for?**
+**Read and act** asks for all 30 user scopes Slack's MCP server offers. **Read only** asks for the same list without any `:write` scope. See [Slack scopes](/cloud/share-with-your-team/shared-mcp-connections#slack-scopes).
+
+## Next
+
+Want people to mention `@openwork` in Slack channels and DMs? See [OpenWork in Slack](/slack/overview) (private alpha). It uses the same Slack app you just created.

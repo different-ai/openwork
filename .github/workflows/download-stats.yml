@@ -23,7 +23,7 @@ jobs:
       - name: Setup Node
         uses: actions/setup-node@v6
         with:
-          node-version: 24
+          node-version: 24.22.1
 
       # Keep the previous snapshot for deltas without writing to the branch.
       # A cache miss starts from the committed historical reports.

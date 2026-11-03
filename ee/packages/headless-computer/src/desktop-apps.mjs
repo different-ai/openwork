@@ -4,16 +4,17 @@ import { execFile, spawn } from "node:child_process";
 import { promisify } from "node:util";
 import { isAbsolute } from "node:path";
 import { pathToFileURL } from "node:url";
+import { createAppScripting, blenderBridgeArgs, OFFICE_ACCEPT, SCRIPT_LANES } from "./desktop-scripting.mjs";
 
 // The image, desktop menu and model discovery use the same application catalog.
 export const DESKTOP_APPS = [
-  { id: "blender", name: "Blender", command: "blender", package: "blender", args: [], purpose: "3D modeling, animation and CPU rendering", formats: ["blend", "obj", "stl", "png"], note: "Software OpenGL; use Cycles CPU for renders. No GPU is promised." },
-  { id: "writer", name: "LibreOffice Writer", command: "libreoffice", package: "libreoffice-writer", args: ["--writer", "--norestore", "--nologo"], purpose: "Write and edit documents", formats: ["odt", "docx", "pdf"] },
-  { id: "calc", name: "LibreOffice Calc", command: "libreoffice", package: "libreoffice-calc", args: ["--calc", "--norestore", "--nologo"], purpose: "Spreadsheets, formulas and charts", formats: ["ods", "xlsx", "csv", "pdf"] },
-  { id: "impress", name: "LibreOffice Impress", command: "libreoffice", package: "libreoffice-impress", args: ["--impress", "--norestore", "--nologo"], purpose: "Create and edit presentations", formats: ["odp", "pptx", "pdf"] },
-  { id: "draw", name: "LibreOffice Draw", command: "libreoffice", package: "libreoffice-draw", args: ["--draw", "--norestore", "--nologo"], purpose: "Diagrams and PDF edits", formats: ["odg", "pdf", "svg"] },
-  { id: "gimp", name: "GIMP", command: "gimp", package: "gimp", args: [], purpose: "Photo editing and raster graphics", formats: ["xcf", "png", "jpg", "webp"] },
-  { id: "inkscape", name: "Inkscape", command: "inkscape", package: "inkscape", args: [], purpose: "Vector illustrations and diagrams", formats: ["svg", "pdf", "png"] },
+  { id: "blender", name: "Blender", command: "blender", package: "blender", args: [], purpose: "3D modeling, animation and CPU rendering", formats: ["blend", "obj", "stl", "png"], note: "Software OpenGL; use Cycles CPU for renders. No GPU is promised.", hint: "Edit the scene with computer_app_script; use this window only to check the result. Home frames everything, numpad . frames the selection, Z switches shading, F12 renders." },
+  { id: "writer", name: "LibreOffice Writer", command: "libreoffice", package: "libreoffice-writer", args: ["--writer", "--norestore", "--nologo"], purpose: "Write and edit documents", formats: ["odt", "docx", "pdf"], hint: "Add text or export a PDF with computer_app_script (insert_text, export_pdf). Ctrl+End jumps to the end, Ctrl+S saves." },
+  { id: "calc", name: "LibreOffice Calc", command: "libreoffice", package: "libreoffice-calc", args: ["--calc", "--norestore", "--nologo"], purpose: "Spreadsheets, formulas and charts", formats: ["ods", "xlsx", "csv", "pdf"], hint: "Read and write cells or export a PDF with computer_app_script (read_range, write_range, export_pdf). Ctrl+Home jumps to A1, Ctrl+S saves." },
+  { id: "impress", name: "LibreOffice Impress", command: "libreoffice", package: "libreoffice-impress", args: ["--impress", "--norestore", "--nologo"], purpose: "Create and edit presentations", formats: ["odp", "pptx", "pdf"], hint: "Export a PDF with computer_app_script (export_pdf). F5 starts the show, Ctrl+S saves." },
+  { id: "draw", name: "LibreOffice Draw", command: "libreoffice", package: "libreoffice-draw", args: ["--draw", "--norestore", "--nologo"], purpose: "Diagrams and PDF edits", formats: ["odg", "pdf", "svg"], hint: "Export a PDF with computer_app_script (export_pdf). Ctrl+S saves." },
+  { id: "gimp", name: "GIMP", command: "gimp", package: "gimp", args: [], purpose: "Photo editing and raster graphics", formats: ["xcf", "png", "jpg", "webp"], hint: "Convert, resize or rotate files with computer_app_script; use this window for hand edits. Ctrl+Shift+E exports." },
+  { id: "inkscape", name: "Inkscape", command: "inkscape", package: "inkscape", args: [], purpose: "Vector illustrations and diagrams", formats: ["svg", "pdf", "png"], hint: "Export, resize or transform drawings with computer_app_script (Inkscape actions in transform); use this window for hand edits. 5 fits the page, Ctrl+Shift+E opens Export." },
   { id: "pdf", name: "PDF Viewer", command: "evince", package: "evince", args: [], purpose: "Read and inspect PDF documents", formats: ["pdf"] },
   { id: "media", name: "VLC", command: "vlc", package: "vlc", args: ["--no-qt-privacy-ask", "--no-metadata-network-access"], purpose: "Play and inspect audio and video", formats: ["mp4", "webm", "mp3", "wav"] },
   { id: "files", name: "Files", command: "thunar", package: "thunar", args: [], defaultPath: "/workspace", purpose: "Browse uploads, outputs and project files", formats: [] },
@@ -32,16 +33,21 @@ export function createDesktopApplications({ display = ":99", directory }) {
     const versions = await execute("dpkg-query", ["-W", "-f=${binary:Package}\t${db:Status-Status}\t${Version}\n", ...new Set(DESKTOP_APPS.map(app => app.package))], { timeout: 3000 }).then(result => result.stdout, error => String(error.stdout ?? ""));
     return new Map(versions.trim().split("\n").map(line => line.split("\t")).filter(([, status]) => status === "installed").map(([pkg, , version]) => [pkg, version]));
   };
+  const ready = async id => { const app = DESKTOP_APPS.find(app => app.id === id); return Boolean(app && (await installed()).has(app.package) && await available(app)); };
+  const scripting = createAppScripting({ display, available: ready });
   return {
+    /** Runs an app's own scripting interface instead of GUI input; see desktop-scripting.mjs. */
+    script: (args, signal) => scripting.run(args, signal),
     async list() {
       const packages = await installed();
+      const scriptable = await scripting.installed();
       return {
         environment: {
           os: "Linux", display, desktop: "Openbox", rendering: "CPU / Mesa software OpenGL",
           uploads: "/workspace/files", outputs: "/workspace/out", home,
           guidance: "Browser and applications share this display. Use computer_launch, then open/observe the desktop before acting. Save deliverables in /workspace/out and return them with the existing file tools. App profiles and files persist across VM pause/resume. Right-click the desktop or press Super+Space for applications. The bash tool also provides Python, FFmpeg, ImageMagick, OCR and document conversion.",
         },
-        apps: await Promise.all(DESKTOP_APPS.map(async ({ id, name, command, package: pkg, purpose, formats, note }) => ({ id, name, command, purpose, formats, ...(note ? { note } : {}), available: packages.has(pkg) && await available({ command }), version: packages.get(pkg) ?? null }))),
+        apps: await Promise.all(DESKTOP_APPS.map(async ({ id, name, command, package: pkg, purpose, formats, note }) => ({ id, name, command, purpose, formats, ...(note ? { note } : {}), available: packages.has(pkg) && await available({ command }), ...(scriptable && SCRIPT_LANES[id] ? { scriptable: true } : {}), version: packages.get(pkg) ?? null }))),
       };
     },
     async launch(args, signal) {
@@ -56,14 +62,16 @@ export function createDesktopApplications({ display = ":99", directory }) {
       try {
         signal?.throwIfAborted();
         const command = `/usr/bin/${app.command}`;
-        const argv = [...app.args, ...(args.path || app.defaultPath ? [args.path ?? app.defaultPath] : [])];
+        const bridge = SCRIPT_LANES[app.id] && await scripting.installed();
+        // Blender loads its script bridge after the file; LibreOffice serves UNO on a named pipe.
+        const argv = [...app.args, ...(bridge && SCRIPT_LANES[app.id] === "office" ? [OFFICE_ACCEPT] : []), ...(args.path || app.defaultPath ? [args.path ?? app.defaultPath] : []), ...(bridge && app.id === "blender" ? blenderBridgeArgs() : [])];
         // Never inherit model, provider or connected-app credentials into GUI processes.
         const env = { PATH: path, HOME: home, USER: "openwork-app", LOGNAME: "openwork-app", LANG: "C.UTF-8", DISPLAY: display, XAUTHORITY: `${home}/.Xauthority`, LIBGL_ALWAYS_SOFTWARE: "1", GALLIUM_DRIVER: "llvmpipe" };
         // Detached applications survive a completed tool call and VM pause/resume.
         const child = spawn(process.getuid?.() === 0 ? "/usr/sbin/runuser" : command, process.getuid?.() === 0 ? ["-u", "openwork-app", "--", command, ...argv] : argv, { env, cwd: "/workspace", detached: true, stdio: ["ignore", log.fd, log.fd] });
         await new Promise((resolve, reject) => { child.once("spawn", resolve); child.once("error", reject); });
         child.unref();
-        return { app: app.id, name: app.name, launched: true, guidance: "Launch requested. Observe the desktop to verify readiness; an existing app may reuse its window. Do not assume a file was opened or saved." };
+        return { app: app.id, name: app.name, launched: true, guidance: "Launch requested. Observe the desktop to verify readiness; an existing app may reuse its window. Do not assume a file was opened or saved.", ...(app.hint && bridge ? { hint: app.hint } : {}) };
       } finally { await log.close(); }
     },
   };

@@ -1,12 +1,13 @@
 import { and, eq } from "@openwork-ee/den-db/drizzle"
 import { GatewayProviderTable } from "@openwork-ee/den-db/schema"
 import { normalizeDenTypeId } from "@openwork-ee/utils/typeid"
-import { workbotReadinessSchema } from "@openwork/types/den/workbot-settings"
+import { workbotReadinessSchema, readWorkbotModel } from "@openwork/types/den/workbot-settings"
 import type { Hono } from "hono"
 import { describeRoute } from "hono-openapi"
 import { db } from "../../db.js"
 import { orgMemberRoute } from "../../middleware/index.js"
 import { jsonResponse, notFoundSchema, unauthorizedSchema } from "../../openapi.js"
+import { workbotIncludedDefaultModel, workbotUsesManagedDefault } from "../../workbot/managed-luna.js"
 import type { OrgRouteVariables } from "./shared.js"
 
 const workbotReadinessDocumentSchema = workbotReadinessSchema.meta({ ref: "WorkbotReadiness" })
@@ -29,7 +30,7 @@ export function registerOrgWorkbotReadinessRoutes<T extends { Variables: OrgRout
       tags: ["Organizations"],
       summary: "Check whether Workbot has an AI provider",
       description:
-        "Returns whether Workbot turns need the organization's AI Gateway (gatewayRequired, always true) and whether the organization has at least one active AI Gateway provider (hasGatewayProvider). Content-free: no provider names, counts, ids, models or grants. A provider existing does not mean the caller has a usable model; each turn still checks the member's own access. Available to any organization member. Never exposed to MCP.",
+        "Returns whether Workbot turns need the organization's AI Gateway and, only then, whether an active provider exists. The managed default uses the member's included OpenWork models and needs no custom Gateway provider while the member is entitled to them. Content-free: no provider names, counts, ids, models or grants. Each turn rechecks the member's access. Available to any organization member. Never exposed to MCP.",
       ...{ "x-mcp": false },
       responses: {
         200: jsonResponse("Whether Workbot needs an AI Gateway provider and whether one exists.", workbotReadinessDocumentSchema),
@@ -40,8 +41,14 @@ export function registerOrgWorkbotReadinessRoutes<T extends { Variables: OrgRout
     orgMemberRoute(),
     async (c) => {
       c.header("Cache-Control", "no-store")
-      const organizationId = c.get("organizationContext").organization.id
-      return c.json({ gatewayRequired: true, hasGatewayProvider: await hasActiveGatewayProvider(organizationId) })
+      const { organization, currentMember } = c.get("organizationContext")
+      const organizationId = organization.id
+      const chosen = readWorkbotModel(organization.metadata)
+      const managedLuna = workbotUsesManagedDefault(chosen)
+        && await workbotIncludedDefaultModel({ organizationId, userId: currentMember.userId }, chosen) !== null
+      const gatewayRequired = !managedLuna
+      const hasGatewayProvider = gatewayRequired && await hasActiveGatewayProvider(organizationId)
+      return c.json({ gatewayRequired, hasGatewayProvider })
     },
   )
 }

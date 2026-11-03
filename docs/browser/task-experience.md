@@ -13,7 +13,8 @@ agent permissions and takeover are the gates.
 
 1. List the conversation's tabs and reuse a matching page, or open the requested
    URL in a new owned tab, using the built-in browser's signed-in account.
-2. Discover site tools. Prefer a relevant structured integration or site tool;
+2. An observation reports `siteTools` when the page offers website tools.
+   Discover them, and prefer a relevant structured integration or site tool;
    otherwise observe the page and use its visible controls. A fresh image
    supports a coordinate click without a useful DOM reference.
 3. WebMCP tools run and return their bounded result to the conversation. A
@@ -32,11 +33,11 @@ refused. A closed tab is an explicit error, never silently replaced.
 
 ## Presentation modes
 
-Behind the `browserFloatingView` desktop feature (off by default), each
-conversation shows its browser in one of four modes, kept in memory by the
+Browser presentation modes are generally available; `browserFloatingView` is
+retired. Each conversation shows its browser in one of four modes, kept in memory by the
 renderer (`panel/browser-presentation-store.ts`):
 
-- **Hidden**: no browser surface; the header Browser button is unpressed.
+- **Hidden**: no browser surface; the side rail's Browser button is unpressed.
 - **Floating**: a small card on the right of the chat pane, above the composer.
   It snaps to top, middle or bottom (drag, Up/Down/Home/End or its menu) and
   shows a preview of the on-screen tab, its site and its state. "Needs you" in
@@ -47,7 +48,7 @@ renderer (`panel/browser-presentation-store.ts`):
   inside the page, and Exit full screen return to the last floating or side
   choice. Full screen never survives a conversation switch or its page closing.
 
-The header Browser button toggles between hidden and the last floating or side
+The side rail's Browser button toggles between hidden and the last floating or side
 choice. A page the agent opens comes up beside the chat (or stays full screen),
 because the agent acts only on a page the person can see; the person can float
 it from there. Reading and navigating keep working while floating. A browser
@@ -59,9 +60,10 @@ a floating or hidden browser beside the chat, where the prompt is.
 The existing Browser extension's installed identity now resolves to the desktop
 browser host. Its tools are `browser_tabs`, `browser_open`, `browser_observe`,
 `browser_act`, `browser_navigate`, and `browser_handoff`. The site tools remain
-`webmcp_list_tools` and `webmcp_call_tool`. The trusted execution context supplies
-the conversation ID; it is not a model argument. The authenticated loopback
-bridge is an internal desktop capability, not an external browser connection.
+`webmcp_list_tools` and `webmcp_call_tool`, on both engines. The trusted
+execution context supplies the conversation ID; it is not a model argument. The
+authenticated loopback bridge is an internal desktop capability, not an external
+browser connection.
 
 The supported tools do not expose arbitrary evaluation, raw CDP, cookies,
 storage, network response bodies, uploads or the system clipboard. This is a
@@ -209,10 +211,10 @@ planner, prompts, permission classifier or runtime implementation.
 
 ## Verification and limits
 
-`webmcp-browser-agent` is the browser-task journey: real engine plugins with a
-deterministic provider and controlled website witnesses for prompt-free use, signed-in
-invocation, DOM/image fallback, popup isolation, exact iframe delegation,
-cancellation, stale observations and observed completion.
+`browser-site-tools` runs a website tool through each engine with a scripted
+model. `browser-without-permission-prompts` and `browser-fast-path` use
+controlled website witnesses for prompt-free use, page controls and observed
+completion.
 `browser-tabs-owned-by-thread` and `browser-panel-viewport-recovery` own
 background visibility and viewport restoration. Managed-policy coverage must
 exercise exact origins, their intersection and upload restrictions through the

@@ -135,6 +135,15 @@ describe("Open Outlook, Open Calendar and Open Drive", () => {
     expect(array((await json(await rest("/me/mailFolders/sentitems/messages"))).value)).toHaveLength(0);
   });
 
+  test("seeds a full working week of meetings around now, with the customer review the next working day", async () => {
+    const events = array((await json(await rest("/me/calendarView?startDateTime=2026-10-12T00:00:00Z&endDateTime=2026-10-16T23:59:59Z"))).value).map(record);
+    const days = new Set(events.map((entry) => String(record(entry.start).dateTime).slice(0, 10)));
+    expect(days).toEqual(new Set(["2026-10-12", "2026-10-13", "2026-10-14", "2026-10-15", "2026-10-16"]));
+    expect(events.map((entry) => entry.subject)).toContain("Weekly leadership sync");
+    const review = array((await json(await rest("/me/events"))).value).map(record).find((entry) => entry.subject === "Northwind / Blue Harbor customer pilot review");
+    expect(String(record(review?.start).dateTime)).toMatch(/^2026-10-19T16:00:00/);
+  });
+
   test("seeds useful real Office ZIP bytes with document, workbook and presentation parts", async () => {
     const files = array((await json(await rest("/me/drive/root/children"))).value).map(record);
     expect(files).toHaveLength(4);
@@ -185,6 +194,26 @@ describe("Open Outlook, Open Calendar and Open Drive", () => {
     expect(record(created.parentReference).id).toBe(folder.id);
     expect(array((await json(await rest(`/me/drive/items/${string(folder.id)}/children`))).value)).toHaveLength(1);
     expect((await rest(`/me/drive/items/${string(folder.id)}/content`)).status).toBe(400);
+  });
+
+  test.each([
+    ["2026-11-20T09:00:00.123-08:00", "2026-11-20T10:00:00.987-08:00", "UTC", "2026-11-20T17:00:00.1230000", "2026-11-20T18:00:00.9870000"],
+    ["2026-11-20T09:00:00.007+05:30", "2026-11-20T10:00:00.040+05:30", "Asia/Kolkata", "2026-11-20T09:00:00.0070000", "2026-11-20T10:00:00.0400000"],
+    ["2026-11-20T09:00:00.456Z", "2026-11-20T10:00:00.789Z", "Pacific Standard Time", "2026-11-20T01:00:00.4560000", "2026-11-20T02:00:00.7890000"],
+  ])("calendar preserves milliseconds when converting %s to %s", async (start, end, timeZone, expectedStart, expectedEnd) => {
+    const created = await toolValue("calendar_create", { subject: "Fractional seconds", start: { dateTime: start, timeZone }, end: { dateTime: end, timeZone } });
+    expect(created.start).toEqual({ dateTime: expectedStart, timeZone });
+    expect(created.end).toEqual({ dateTime: expectedEnd, timeZone });
+    expect(await toolValue("calendar_read", { event_id: string(created.id) })).toEqual(created);
+  });
+
+  test("calendar range queries and updates preserve sub-second event boundaries", async () => {
+    const created = await toolValue("calendar_create", { subject: "Sub-second event", start: "2026-11-21T09:00:00.123-08:00", end: "2026-11-21T09:00:00.987-08:00" });
+    const listed = await toolValue("calendar_list", { start: "2026-11-21T17:00:00.500Z", end: "2026-11-21T17:00:00.800Z" });
+    expect(array(listed.value).map(record).some((entry) => entry.id === created.id)).toBe(true);
+    const updated = await toolValue("calendar_update", { event_id: string(created.id), start: "2026-11-21T09:00:00.222-08:00", end: "2026-11-21T09:00:00.999-08:00" });
+    expect(updated.start).toEqual({ dateTime: "2026-11-21T17:00:00.2220000", timeZone: "UTC" });
+    expect(updated.end).toEqual({ dateTime: "2026-11-21T17:00:00.9990000", timeZone: "UTC" });
   });
 
   test("calendar create/list/get/update/delete are shared and range-aware", async () => {
@@ -331,6 +360,10 @@ describe("Open Outlook, Open Calendar and Open Drive", () => {
     }
     const file = await toolValue("file_write", { path: "broken.docx", content: "not a real zip" }); const p = await json(await fetch(`${base}/preview/${string(file.id)}`)); expect(p.kind).toBe("Download only");
     expect((await fetch(`${base}/reset`, { method: "POST", headers: { origin: "https://hostile.invalid" } })).status).toBe(403);
+    // Hosted behind an HTTPS proxy: the page's own https origin is accepted, another site's is not.
+    const host = new URL(base).host;
+    expect((await fetch(`${base}/reset`, { method: "POST", headers: { origin: `https://${host}`, "x-forwarded-proto": "https" } })).status).toBe(200);
+    expect((await fetch(`${base}/reset`, { method: "POST", headers: { origin: "https://hostile.invalid", "x-forwarded-proto": "https" } })).status).toBe(403);
   });
 
   test("rejects oversized uploads, malformed input and unsafe cross-origin requests without mutation", async () => {
@@ -347,7 +380,7 @@ describe("Open Outlook, Open Calendar and Open Drive", () => {
     await toolValue("file_write", { path: "temporary.txt", content: "ephemeral" });
     await toolValue("mail_create_draft", { subject: "temporary", body: "ephemeral", to: [] });
     await fetch(`${base}/reset`, { method: "POST" }); const restored = await json(await fetch(`${base}/state`));
-    expect(array(restored.files)).toHaveLength(array(original.files).length); expect(array(restored.messages)).toHaveLength(array(original.messages).length); expect(array(restored.events)).toHaveLength(1);
+    expect(array(restored.files)).toHaveLength(array(original.files).length); expect(array(restored.messages)).toHaveLength(array(original.messages).length); expect(array(restored.events)).toHaveLength(array(original.events).length); expect(array(original.events).length).toBeGreaterThan(5);
     expect(restored).toEqual(original); // OPEN_WORKPLACE_NOW also resets generated IDs and seed timestamps.
     expect(array(restored.files).map(record).map((entry) => entry.name)).not.toContain("temporary.txt");
     expect(array(restored.files).map(record).map((entry) => record(record(entry.file).hashes).sha256Hash)).toEqual(array(original.files).map(record).map((entry) => record(record(entry.file).hashes).sha256Hash));

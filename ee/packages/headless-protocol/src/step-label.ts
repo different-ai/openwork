@@ -31,6 +31,8 @@ export function stepLabel(name: string, input: Record<string, unknown> = {}) {
       return typeof input.url === "string" ? `Opening ${hostOf(input.url)}` : "Opening the browser"
     case "browser_observe":
       return "Looking at the page"
+    case "browser_extract":
+      return "Reading the page"
     case "browser_act":
       return "Working in the browser"
     case "browser_handoff":

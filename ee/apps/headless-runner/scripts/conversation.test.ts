@@ -277,3 +277,28 @@ test("reading one turn returns its transcript, its tasks and their reports, and 
   assert.deepEqual(unknown.turns, [])
   assert.deepEqual(unknown.messages, [])
 })
+
+test("opening a document is a request the runner records only for a navigation-enabled person's message, including read-only ones", async () => {
+  for (const execution of [undefined, "steps" as const]) for (const enabled of [false, true]) {
+    let calls = 0
+    const requests: ModelRequest[] = []
+    using world = setup({ async complete(request) {
+      requests.push(request)
+      return ++calls === 1
+        ? { text: "Opening it beside our chat.", toolCalls: [{ id: "open1", name: "open_document", input: { fileId: "file_example" } }], usage }
+        : { text: "It should appear beside our chat.", toolCalls: [], usage }
+    } })
+    const app = createApp({ store: world.store, runner: world.runner, apiToken })
+    const saved = await app.request(`/v1/sessions/${world.session}`, { method: "PUT", headers: { authorization: `Bearer ${apiToken}` }, body: JSON.stringify({ documentNavigation: enabled }) })
+    assert.equal(saved.status, 200)
+    assert.equal(world.store.getSession(world.session)?.documentNavigation, enabled)
+    world.runner.send({ sessionId: world.session, messageId: "open", prompt: "Open the current document for me", credentials: { readOnly: true }, execution })
+    await world.runner.idle()
+    assert.equal(requests[0]?.tools.some(tool => tool.name === "open_document"), enabled)
+    const result = world.store.turnMessages(world.session, "open").find(({ message }) => message.role === "tool" && message.name === "open_document")?.message
+    assert.ok(result?.role === "tool")
+    assert.equal(result.isError, !enabled)
+    // Only a request: whether the document opened is for the person's page to say.
+    if (enabled) assert.deepEqual(JSON.parse(result.output), { fileId: "file_example", status: "requested" })
+  }
+})

@@ -23,7 +23,7 @@ test("renewed authority restores browser work without releasing a human takeover
   await writeFile(join(directory, "browser-tabs.json"), JSON.stringify([["owned", "chat"]]));
   let allowed = true;
   const computer = await createCloudComputer({ directory, enabled: async () => allowed, browserEndpoint: `http://127.0.0.1:${server.address().port}`,
-    machine: { run: async () => ({ exitCode: 0, stdout: "missing:\ndisplay:ok", stderr: "" }), read: async () => new Uint8Array() } });
+    machine: { run: async command => ({ exitCode: command.includes("command -v nft") ? 1 : 0, stdout: "missing:\ndisplay:ok", stderr: "" }), read: async () => new Uint8Array() } });
   t.after(async () => { await computer.close(); await new Promise(resolve => server.close(resolve)); globalThis.WebSocket = original; await rm(directory, { recursive: true, force: true }); });
   const tabs = () => computer.task("/browser/task", { sessionId: "chat", operation: "tabs", args: {} });
   assert.equal((await tabs()).tabs[0].status, "idle");
@@ -36,6 +36,41 @@ test("renewed authority restores browser work without releasing a human takeover
   assert.equal((await computer.snapshot()).paused, true);
   await computer.interact({ action: "resume" });
   assert.equal((await tabs()).tabs[0].status, "idle");
+});
+
+test("cloud browser uses the installed native guard and fails closed when it changes", async t => {
+  const directory = await mkdtemp(join(tmpdir(), "cloud-native-egress-"));
+  const server = createServer((_request, response) => response.end("[]"));
+  await new Promise(resolve => server.listen(0, "127.0.0.1", resolve));
+  const ranges = {
+    ip: ["0.0.0.0/8", "10.0.0.0/8", "100.64.0.0/10", "127.0.0.0/8", "169.254.0.0/16", "172.16.0.0/12", "192.168.0.0/16"],
+    ip6: ["::/96", "::ffff:0.0.0.0/96", "64:ff9b::/96", "64:ff9b:1::/48", "fc00::/7", "fe80::/10"],
+  };
+  const rules = { nftables: [
+    { chain: { family: "inet", table: "openwork_desktop", name: "output", type: "filter", hook: "output" } },
+    ...Object.entries(ranges).map(([protocol, prefixes]) => ({ rule: {
+      family: "inet", table: "openwork_desktop", chain: "output", expr: [
+        { match: { op: "==", left: { meta: { key: "skuid" } }, right: 1001 } },
+        { match: { op: "==", left: { payload: { protocol, field: "daddr" } }, right: { set: prefixes.map(prefix => {
+          const [addr, len] = prefix.split("/"); return { prefix: { addr, len: Number(len) } };
+        }) } } },
+        { reject: { type: "icmpx", expr: 1 } },
+      ],
+    } })),
+  ] };
+  const commands = [];
+  const computer = await createCloudComputer({ directory, enabled: async () => true, browserEndpoint: `http://127.0.0.1:${server.address().port}`,
+    machine: { run: async command => {
+      commands.push(command);
+      return { exitCode: 0, stderr: "", stdout: command.startsWith("'id'") ? "1001\n" : command.startsWith("'nft'") ? JSON.stringify(rules) : "/usr/sbin/nft\n" };
+    }, read: async () => new Uint8Array() } });
+  t.after(async () => { await computer.close(); await new Promise(resolve => server.close(resolve)); await rm(directory, { recursive: true }); });
+  const tabs = () => computer.task("/browser/task", { sessionId: "chat", operation: "tabs", args: {} });
+  assert.deepEqual((await tabs()).tabs, []);
+  assert.ok(commands.some(command => command.startsWith("'nft' '-n' '-j'")));
+  assert.equal(commands.some(command => command.includes("iptables")), false);
+  rules.nftables.pop();
+  await assert.rejects(tabs(), { code: "egress_unavailable" });
 });
 
 test("an unused cloud host loads before SDK build artifacts exist", async () => {
@@ -138,6 +173,34 @@ test("application launches respect rollout revocation and human takeover", async
   await f.computer.interact({ action: "resume" });
   await launch();
   assert.deepEqual(launches, ["blender"]);
+});
+
+test("application script errors retain the tool error flag", async t => {
+  const f = await fixture(t, { script: async () => ({ ok: false, error: "No document is open" }) });
+  const result = await f.computer.task("/computer/task", { sessionId: "a", name: "computer_app_script", args: { app: "writer" } });
+  assert.equal(result.isError, true);
+  assert.equal(JSON.parse(result.content[0].text).ok, false);
+});
+
+test("takeover waits for the application to acknowledge stopping", async t => {
+  let arrived, aborted, finish;
+  const started = new Promise(resolve => { arrived = resolve; });
+  const cancelled = new Promise(resolve => { aborted = resolve; });
+  const done = new Promise(resolve => { finish = resolve; });
+  const f = await fixture(t, { script: async (_args, signal) => {
+    arrived(); signal.addEventListener("abort", aborted, { once: true });
+    await done; signal.throwIfAborted(); return { ok: true };
+  } });
+  const script = f.computer.task("/computer/task", { sessionId: "a", name: "computer_app_script", args: {} });
+  const rejected = assert.rejects(script);
+  await started;
+  let taken = false;
+  const takeover = f.computer.interact({ action: "takeover" }).then(() => { taken = true; });
+  await cancelled; await new Promise(resolve => setImmediate(resolve));
+  assert.equal(taken, false);
+  assert.equal((await f.computer.snapshot()).busy, true);
+  finish(); await takeover; await rejected;
+  assert.equal((await f.computer.snapshot()).busy, false);
 });
 
 test("taking control cancels an app launch waiting on discovery", async t => {

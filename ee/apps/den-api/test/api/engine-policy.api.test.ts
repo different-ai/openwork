@@ -1,9 +1,12 @@
 import assert from "node:assert/strict"
 import { after, test } from "node:test"
 import { createDenTypeId } from "@openwork-ee/utils/typeid"
-import { bootDen, field, summary, text } from "./harness.js"
+import { bootDen, field, isRecord, list, summary, text } from "./harness.js"
 
-const den = await bootDen()
+const den = await bootDen({ env: {
+  DEN_FEATURE_ENGINE_V2_FORCE_UPGRADE: "false",
+  DEN_FEATURE_ENGINE_V2_UPGRADE: "false",
+} })
 after(() => den.close())
 
 const inventory = { computer: { label: "Test desktop", platform: "darwin", appVersion: "0.0.0-test" }, workspaces: [] }
@@ -17,7 +20,7 @@ async function runnerToken(owner: Parameters<typeof den.as>[0], orgId: string) {
   return text(field(minted.body, "token"), "runner token")
 }
 
-test("existing desktop inventory returns only the live upgrade policy for the runner's organization", async () => {
+test("desktop inventory always enables migration despite retired organization overrides", async () => {
   const { owner, orgId } = await den.createOrg(await den.signUp("Policy Owner"), "Policy test organization")
   const other = await den.createOrg(await den.signUp("Isolated Owner"), "Isolated test organization")
   const token = await runnerToken(owner, orgId)
@@ -27,16 +30,17 @@ test("existing desktop inventory returns only the live upgrade policy for the ru
     for (const path of ["/v1/session-runners/inventory", "/v1/automation-runner/inventory"]) {
       const stored = await den.request(token, "PUT", path, { body: inventory })
       assert.equal(stored.status, 200, summary(stored))
-      assert.deepEqual(field(stored.body, "enginePolicy"), { upgrade: enabled })
+      assert.deepEqual(field(stored.body, "enginePolicy"), { upgrade: true })
       assert.equal(stored.headers.get("cache-control"), "no-store")
     }
     const isolated = await den.request(isolatedToken, "PUT", "/v1/session-runners/inventory", { body: inventory })
     assert.equal(isolated.status, 200, summary(isolated))
-    assert.deepEqual(field(isolated.body, "enginePolicy"), { upgrade: false })
+    // Organization isolation remains intact; migration is standard for both.
+    assert.deepEqual(field(isolated.body, "enginePolicy"), { upgrade: true })
   }
 })
 
-test("runner work polling observes policy off/on/off without any inventory upload", async () => {
+test("runner work polling always enables migration without an inventory upload", async () => {
   const { owner, orgId } = await den.createOrg(await den.signUp("Polling Owner"), "Polling test organization")
   const token = await runnerToken(owner, orgId)
   for (const enabled of [false, true, false]) {
@@ -44,14 +48,52 @@ test("runner work polling observes policy off/on/off without any inventory uploa
     for (const path of ["/v1/session-runners/work", "/v1/automation-runner/work"]) {
       const work = await den.request(token, "GET", path)
       assert.equal(work.status, 200, summary(work))
-      assert.deepEqual(field(work.body, "enginePolicy"), { upgrade: enabled })
+      assert.deepEqual(field(work.body, "enginePolicy"), { upgrade: true })
       assert.deepEqual(field(work.body, "items"), [])
       assert.equal(work.headers.get("cache-control"), "no-store")
     }
   }
 })
 
-test("existing worker heartbeat returns the org's live upgrade policy without changing its activity payload", async () => {
+test("published desktops receive fixed true features despite legacy opt-outs, killed rows, and Helm locks", async () => {
+  const { owner, orgId } = await den.createOrg(await den.signUp("Legacy Policy Owner"), "Legacy policy organization")
+  const { client } = await import("../../src/db.js")
+  if (!("getConnection" in client)) throw new Error("API test requires MySQL")
+  // Arrange state left behind by a deployment that previously disabled the rollout.
+  await client.execute("INSERT INTO organization_feature (organization_id, feature_key, enabled, source) VALUES (?, 'engineV2ForceUpgrade', false, 'platform')", [orgId])
+  await client.execute("INSERT INTO member_feature (member_id, feature_key, enabled) VALUES (?, 'engineV2ForceUpgrade', false)", [owner.memberId])
+  await client.execute("INSERT INTO feature_rollout (feature_key, enabled, killed) VALUES ('engineV2ForceUpgrade', false, true)")
+  const token = await runnerToken(owner, orgId)
+  const work = await den.request(token, "GET", "/v1/session-runners/work")
+  assert.equal(work.status, 200, summary(work))
+  assert.deepEqual(field(work.body, "enginePolicy"), { upgrade: true })
+  const organization = await den.as(owner, orgId)("GET", "/v1/org")
+  assert.equal(organization.status, 200, summary(organization))
+  assert.equal(field(organization.body, "features", "engineV2ForceUpgrade"), true,
+    "published signed-in desktops require an explicit true, not a missing key")
+  const signedOut = await den.request(null, "GET", "/v1/features")
+  assert.equal(signedOut.status, 200, summary(signedOut))
+  assert.equal(field(signedOut.body, "features", "engineV2ForceUpgrade"), true,
+    "published signed-out desktops require an explicit true despite legacy killed rows and Helm opt-outs")
+
+  const signedIn = await den.signIn(`platform-admin+${den.stamp}@example.test`)
+  const adminToken = text(field(signedIn.body, "token"), "platform admin session")
+  const featureList = await den.request(adminToken, "GET", "/v1/admin/features")
+  assert.equal(featureList.status, 200, summary(featureList))
+  assert.equal(list(field(featureList.body, "features")).some(entry => entry.key === "engineV2ForceUpgrade"), false,
+    "the compatibility field must not become an editable deployment feature")
+  const featureState = await den.request(adminToken, "GET", `/v1/admin/organizations/${orgId}/capabilities`)
+  assert.equal(featureState.status, 200, summary(featureState))
+  for (const key of ["capabilities", "featureStates"]) {
+    const values = field(featureState.body, key)
+    assert.ok(isRecord(values))
+    assert.equal(Object.hasOwn(values, "engineV2ForceUpgrade"), false)
+  }
+  const edit = await den.request(adminToken, "PUT", "/v1/admin/features/engineV2ForceUpgrade", { body: { enabled: false, killed: true } })
+  assert.equal(edit.status, 400, summary(edit))
+})
+
+test("worker heartbeat always enables migration without changing its activity payload", async () => {
   const { owner, orgId } = await den.createOrg(await den.signUp("Web Policy Owner"), "Web policy test organization")
   const workerId = createDenTypeId("worker")
   const otherWorkerId = createDenTypeId("worker")
@@ -71,7 +113,7 @@ test("existing worker heartbeat returns the org's live upgrade policy without ch
     assert.equal((await den.setFeature(orgId, "engineV2ForceUpgrade", enabled)).status, 200)
     const accepted = await den.request("synthetic-activity-token", "POST", path, { body })
     assert.equal(accepted.status, 200, summary(accepted))
-    assert.deepEqual(field(accepted.body, "enginePolicy"), { upgrade: enabled })
+    assert.deepEqual(field(accepted.body, "enginePolicy"), { upgrade: true })
     assert.equal(field(accepted.body, "isActiveRecently"), true)
     assert.equal(field(accepted.body, "openSessionCount"), 1)
     assert.equal(field(accepted.body, "lastActiveAt"), body.lastActivityAt)

@@ -96,7 +96,7 @@ export const openworkModelSelectorSchema = z.object({
   }
 })
 
-export const openworkModelsListArgsSchema = z.object({ workspaceId: z.string().trim().min(1) })
+export const openworkModelsListArgsSchema = z.strictObject({ workspaceId: z.string().trim().min(1) })
 export const openworkModelsListResultSchema = z.object({
   ok: z.literal(true),
   workspaceId: openworkModelsListArgsSchema.shape.workspaceId,

@@ -15,6 +15,23 @@ const id = z.string().trim().min(1).max(160)
 export const credentialPromptTargetSchema = z.discriminatedUnion("type", [
   /** A shared API key for one organization MCP connection. */
   z.object({ type: z.literal("mcp_connection_key"), connectionId: id }).strict(),
+  /** The signed-in person's own API key for a connection where each person uses their own key. */
+  z.object({ type: z.literal("mcp_connection_member_key"), connectionId: id }).strict(),
+  /**
+   * One shared organization key that replaces each person's own key. Saving
+   * the key is what changes the connection, and only while it is unchanged
+   * since `expectedUpdatedAt`; `audience` is who will share it, for display.
+   */
+  z.object({
+    type: z.literal("mcp_connection_shared_switch"),
+    connectionId: id,
+    expectedUpdatedAt: z.string().datetime(),
+    audience: z.object({
+      orgWide: z.boolean(),
+      memberCount: z.number().int().min(0).max(100_000),
+      teamCount: z.number().int().min(0).max(100_000),
+    }).strict(),
+  }).strict(),
   /** The shared API key of a plugin's declared MCP server, saved through the plugin's own setup. */
   z.object({ type: z.literal("plugin_connection_key"), pluginId: id, configObjectId: id, serverName: z.string().trim().min(1).max(255), connectionId: id }).strict(),
   /** The shared API key of one AI Gateway provider's organization credential set. */

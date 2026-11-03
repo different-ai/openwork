@@ -57,7 +57,7 @@ export async function requestAdmin<T>(path: string, parse: (payload: unknown) =>
 }
 
 /** PUT/POST JSON to an admin endpoint; returns the parsed payload or the server's error message. */
-export async function sendAdmin(path: string, method: "PUT" | "POST", body?: unknown, signal?: AbortSignal): Promise<{ ok: true; payload: unknown } | { ok: false; message: string; status: number; code?: string; retryAfterSeconds?: number }> {
+export async function sendAdmin(path: string, method: "PUT" | "POST" | "PATCH", body?: unknown, signal?: AbortSignal): Promise<{ ok: true; payload: unknown } | { ok: false; message: string; status: number; code?: string; retryAfterSeconds?: number }> {
   const endpoint = denBrowserEndpoint(path);
   const response = await fetch(endpoint, {
     method,

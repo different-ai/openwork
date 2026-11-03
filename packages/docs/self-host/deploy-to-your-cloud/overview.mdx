@@ -143,6 +143,11 @@ or safely append forwarded headers. This setting interprets the forwarded chain;
 it cannot verify the direct sender. Leave it unset when there is no trusted proxy.
 Keep rate limiting enabled in production.
 
+If Den Web runs on Vercel, its outgoing addresses change, so it cannot be listed
+as a trusted proxy. Set the same `DEN_WEB_CLIENT_IP_SECRET` (32+ characters) on
+Den Web and Den API instead. Den Web then signs the address Vercel saw for each
+person, and Den API accepts only a valid signature less than five minutes old.
+
 Sign-up, sign-in, and verification-code limits are counted per email address
 first, with a much larger allowance per client address. People behind one office
 network can sign up together, and a sign-up from a valid invitation link does not

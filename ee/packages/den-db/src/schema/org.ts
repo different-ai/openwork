@@ -132,6 +132,8 @@ export const InvitationTable = mysqlTable(
     index("invitation_team_id").on(table.teamId),
     index("invitation_inviter_id").on(table.inviterId),
     index("invitation_org_member_id").on(table.orgMemberId),
+    // Time window for the admin Control Center's invitation counts.
+    index("invitation_created_at").on(table.createdAt),
     uniqueIndex("invitation_invite_token").on(table.inviteToken),
   ],
 )

@@ -1,8 +1,13 @@
 # UI guardrails
 
-`pnpm check:ui-guardrails` runs in the existing **Feature registry, Helm chart
-and guard rules** CI job. `pnpm test:ui-guardrails` exercises positive and
-negative syntax fixtures and the baseline ratchet.
+`pnpm check:ui-guardrails` runs in the independent **UI guardrails** workflow
+(`.github/workflows/ui-guardrails.yml`), with no Helm or feature-registry
+prerequisites. It runs for changes to the scanned UI roots, scanner, baseline,
+workflow or workspace dependency configuration. `pnpm test:ui-guardrails`
+exercises positive and negative syntax fixtures and the baseline ratchet.
+`node --test scripts/check-ui-guardrails-workflow.test.mjs` protects the split:
+UI checks stay independent, Helm/registry checks remain intact, and workflow
+triggers cover every scanner root and configuration input.
 
 The TypeScript syntax scan covers shipped JS/TS/JSX/TSX in `apps/app/src`,
 `ee/apps/den-web`, and `ee/packages/workbot-ui`, excluding dependencies, build

@@ -4,7 +4,7 @@
 # Xvfb + noVNC so you can see/steer the real Electron app
 # from your browser.
 
-FROM node:20-bookworm
+FROM node:24.22.1-bookworm
 
 # System deps for Electron / Chromium + virtual display + utils
 RUN apt-get update && apt-get install -y --no-install-recommends \

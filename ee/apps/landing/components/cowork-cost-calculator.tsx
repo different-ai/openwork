@@ -896,8 +896,8 @@ export function CoworkCostCalculator({
               seats minimum, all usage at API rates.
             </li>
             <li>
-              OpenWork Team on OpenWork Cloud: first {planPrices.openworkFreeSeats} seats free, then $
-              {planPrices.openworkTeamSeat}/seat. OpenWork Enterprise on OpenWork Cloud: {describeEnterpriseVolumeTiers()},
+              OpenWork on OpenWork Cloud: Free plan for up to {planPrices.openworkFreeSeats} users; Team is $
+              {planPrices.openworkTeamSeat} per user. OpenWork Enterprise on OpenWork Cloud: {describeEnterpriseVolumeTiers()},
               billed annually. Tokens billed by your own provider or gateway.
             </li>
             <li>

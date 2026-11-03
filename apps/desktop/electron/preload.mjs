@@ -167,6 +167,13 @@ contextBridge.exposeInMainWorld("__OPENWORK_ELECTRON__", {
       return () => ipcRenderer.removeListener("openwork:computer:request", handler);
     },
   },
+  dictation: {
+    onEvent(callback) {
+      const handler = (_event, payload) => callback(payload);
+      ipcRenderer.on("openwork:dictation:event", handler);
+      return () => ipcRenderer.removeListener("openwork:dictation:event", handler);
+    },
+  },
   automationRunner: {
     onCredentialRejected(callback) {
       const handler = () => callback();
@@ -260,7 +267,7 @@ contextBridge.exposeInMainWorld("__OPENWORK_ELECTRON__", {
       ipcRenderer.on("openwork:browser:link-open-request", handler);
       return () => ipcRenderer.removeListener("openwork:browser:link-open-request", handler);
     },
-    show(bounds, sessionId) { return sendBrowserGeometry("openwork:browser:show", bounds, sessionId); },
+    show(bounds, sessionId, target) { return sendBrowserGeometry("openwork:browser:show", bounds, sessionId, target); },
     hide(options) {
       lastBrowserGeometry = null;
       return ipcRenderer.invoke("openwork:browser:hide", options);
@@ -268,12 +275,13 @@ contextBridge.exposeInMainWorld("__OPENWORK_ELECTRON__", {
     openUrl(url, provider, options) { return ipcRenderer.invoke("openwork:browser:openUrl", url, provider, options); },
     setVisibleSession(sessionId) { return ipcRenderer.invoke("openwork:browser:setVisibleSession", sessionId); },
     setPresentation(sessionId, mode) { return ipcRenderer.invoke("openwork:browser:presentation", { sessionId, mode }); },
-    thumbnail(tabId) { return ipcRenderer.invoke("openwork:browser:thumbnail", tabId); },
+    focusWindow() { return ipcRenderer.invoke("openwork:browser:focusWindow"); },
+    claimDraftTabs(sessionId) { return ipcRenderer.invoke("openwork:browser:claimDraftTabs", sessionId); },
     navigate(url) { return ipcRenderer.invoke("openwork:browser:navigate", url); },
     back() { return ipcRenderer.invoke("openwork:browser:back"); },
     forward() { return ipcRenderer.invoke("openwork:browser:forward"); },
     reload() { return ipcRenderer.invoke("openwork:browser:reload"); },
-    setBounds(bounds) { return sendBrowserGeometry("openwork:browser:bounds", bounds); },
+    setBounds(bounds, target) { return sendBrowserGeometry("openwork:browser:bounds", bounds, target); },
     getState() { return ipcRenderer.invoke("openwork:browser:state"); },
     createTab(url, sessionId) { return ipcRenderer.invoke("openwork:browser:createTab", url, sessionId); },
     closeTab(tabId) { return ipcRenderer.invoke("openwork:browser:closeTab", tabId); },
@@ -286,6 +294,9 @@ contextBridge.exposeInMainWorld("__OPENWORK_ELECTRON__", {
     taskControl(tabId, action) { return ipcRenderer.invoke("openwork:browser:taskControl", tabId, action); },
     setProxy(proxy) { return ipcRenderer.invoke("openwork:browser:setProxy", proxy); },
     setControlEnabled(enabled) { return ipcRenderer.invoke("openwork:browser:setControlEnabled", enabled); },
+    setAgentViewport(key) { return ipcRenderer.invoke("openwork:browser:setAgentViewport", key); },
+    startAgentTurn(sessionId) { return ipcRenderer.invoke("openwork:browser:startAgentTurn", sessionId); },
+    endAgentTurn(sessionId) { return ipcRenderer.invoke("openwork:browser:endAgentTurn", sessionId); },
     setAgentPermissionRules(rules) { return ipcRenderer.invoke("openwork:browser:setAgentPermissionRules", rules); },
     showTabContextMenu(tabId, point) { return ipcRenderer.invoke("openwork:browser:tabContextMenu", tabId, point); },
     destroy() {

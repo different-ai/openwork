@@ -126,7 +126,7 @@ export function useDesktopRuntimeBoot() {
             return;
           }
           setPhase("starting-engine", "Starting OpenWork server");
-          const serverInfo = await openworkServerRestart().catch((error) => {
+          const serverInfo = await openworkServerRestart({ diagnosticsCause: "startup-recovery" }).catch((error) => {
             console.warn("[desktop-boot] openworkServerRestart failed:", error);
             return null;
           });

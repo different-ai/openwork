@@ -1,11 +1,14 @@
 import { BlockList, isIP } from "node:net"
+import { CLIENT_IP_SIGNATURE_HEADER, SIGNED_CLIENT_IP_HEADER, verifyClientIpSignature } from "@openwork-ee/utils/client-ip-signature"
 
 /**
  * One answer to "which address sent this request", shared by Better Auth and
  * every Den rate limit so they can never disagree about who a caller is.
  *
- * Headers are read the way Better Auth reads them: `x-forwarded-for` with
- * trusted proxies gives the right-most address that is not one of them;
+ * An address Den Web signed with the shared secret wins: Den Web runs on a host
+ * whose outgoing addresses change, so the proxy chain would only name that host.
+ * Otherwise headers are read the way Better Auth reads them: `x-forwarded-for`
+ * with trusted proxies gives the right-most address that is not one of them;
  * without trusted proxies only a single-entry header is used (a multi-entry
  * chain's left-most value is the client's own claim). Any other header is
  * taken as one address.
@@ -17,7 +20,7 @@ export const RESOLVED_CLIENT_IP_HEADER = "x-openwork-resolved-client-ip"
 export const DEFAULT_CLIENT_IP_HEADERS = ["x-forwarded-for", "x-real-ip", "cf-connecting-ip"] as const
 export const CLIENT_IP_IPV6_SUBNET = 64
 
-export type ClientIpSource = "header" | "none"
+export type ClientIpSource = "signed" | "header" | "none"
 
 export type ClientIpResolution = {
   /** Normalized address (IPv6 reduced to its /64), or null when none can be trusted. */
@@ -30,6 +33,9 @@ export type ClientIpResolution = {
 export type ClientIpOptions = {
   headers: readonly string[]
   trustedProxies: readonly string[]
+  /** Secret shared with Den Web; unset means a signed address is never trusted. */
+  signedClientIpSecret?: string | null
+  now?: number
 }
 
 type ParsedProxies = { list: BlockList; count: number }
@@ -106,11 +112,19 @@ function readForwardedFor(value: string, proxies: ParsedProxies) {
   return chain.length === 1 && chain[0] ? normalizeClientIp(chain[0]) : null
 }
 
+function readSignedClientIp(headers: Headers, secret: string, now: number) {
+  const value = headers.get(SIGNED_CLIENT_IP_HEADER)?.trim() ?? ""
+  const signature = headers.get(CLIENT_IP_SIGNATURE_HEADER) ?? ""
+  return value && verifyClientIpSignature(secret, value, signature, now) ? normalizeClientIp(value) : null
+}
+
 export function resolveClientIp(headers: Headers, options: ClientIpOptions): ClientIpResolution {
+  const signed = options.signedClientIpSecret ? readSignedClientIp(headers, options.signedClientIpSecret, options.now ?? Date.now()) : null
+  if (signed) return { ip: signed, source: "signed", header: SIGNED_CLIENT_IP_HEADER }
   const proxies = parseTrustedProxies(options.trustedProxies)
   for (const name of options.headers) {
     const header = name.toLowerCase()
-    if (header === RESOLVED_CLIENT_IP_HEADER) continue
+    if (header === RESOLVED_CLIENT_IP_HEADER || header === SIGNED_CLIENT_IP_HEADER) continue
     const value = headers.get(header)
     if (!value) continue
     const ip = header === "x-forwarded-for" ? readForwardedFor(value, proxies) : normalizeClientIp(value.split(",")[0] ?? "")

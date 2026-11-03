@@ -322,6 +322,7 @@ function send(res, status, body, type = "application/json") {
   res.writeHead(status, { "Content-Type": `${type}; charset=utf-8`, "Cache-Control": "no-store", "X-Content-Type-Options": "nosniff", "Referrer-Policy": "no-referrer", "Content-Security-Policy": "default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; connect-src 'self'; img-src 'none'; base-uri 'none'; form-action 'self'; frame-ancestors 'self'" });
   res.end(type === "application/json" ? JSON.stringify(body) : body);
 }
+export { server };
 const server = createServer(async (req, res) => {
   try {
     const url = new URL(req.url, "http://service.local");
@@ -365,5 +366,9 @@ const server = createServer(async (req, res) => {
     return send(res, 502, { message: "The service is unavailable. Start atlassian.mjs and retry." });
   }
 });
-server.listen(PORT, HOST, () => console.log(`Open Jira and Open Confluence: http://${HOST}:${PORT}/jira`));
+server.listen(PORT, HOST, () => {
+  console.log(`Open Jira and Open Confluence: http://${HOST}:${server.address().port}/jira`);
+  process.send?.({ type: "ready", port: server.address().port });
+});
 for (const signal of ["SIGTERM", "SIGINT"]) process.on(signal, () => { server.close(); server.closeIdleConnections(); });
+if (process.send) process.once("disconnect", () => process.exit(0));

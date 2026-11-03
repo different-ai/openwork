@@ -7,7 +7,8 @@ import { useAdminSessionCookie } from "./admin-shell";
 import { requestAdmin, withStoredBearer, type AdminResult } from "./admin-request";
 
 // The signed-out path never downloads or mounts the dashboard and its controls.
-const DenAdminPanel = lazy(() => import("../den-admin-panel").then((module) => ({ default: module.DenAdminPanel })));
+const loadPanel = () => import("../den-admin-panel");
+const DenAdminPanel = lazy(() => loadPanel().then((module) => ({ default: module.DenAdminPanel })));
 
 type OverviewState = AdminResult<unknown> | { access: "checking" };
 
@@ -28,6 +29,8 @@ export function AdminDataPage({ section }: { section: AdminDataSection }) {
       return;
     }
     setState({ access: "checking" });
+    // Download the panel while the data request runs instead of after it.
+    void loadPanel().catch(() => undefined);
     try {
       const path = adminDataEndpoint(section, new URLSearchParams(window.location.search));
       const result = fixture

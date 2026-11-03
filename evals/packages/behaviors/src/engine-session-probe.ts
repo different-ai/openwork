@@ -149,6 +149,15 @@ function parseMessage(value: unknown, engine: EngineSessionProbeEngine): EngineS
   };
 }
 
+/** Oldest first on both engines: a native v2 page comes newest first, so it is reversed as in the app's v2 adapter. */
+function parseMessages(body: unknown, engine: EngineSessionProbeEngine): EngineSessionProbeMessage[] {
+  const messages = responseItems(body).flatMap((message) => {
+    const item = parseMessage(message, engine);
+    return item ? [item] : [];
+  });
+  return isRecord(body) && "cursor" in body ? messages.toReversed() : messages;
+}
+
 function parseTransportResult(value: unknown): ProbeTransportResult {
   if (!isRecord(value) || typeof value.status !== "number" || !("body" in value)) {
     throw new Error(`Invalid engine session probe response: ${JSON.stringify(value)}`);
@@ -267,11 +276,7 @@ export function engineSessionProbe(options: EngineSessionProbeOptions) {
       options,
       `${mount}${sessionPath}/${encodeURIComponent(sessionId)}/message?limit=${encodeURIComponent(String(limit))}`,
     );
-    const parsed = responseItems(response.body).flatMap((message) => {
-      const item = parseMessage(message, options.engine);
-      return item ? [item] : [];
-    });
-    return result(response, parsed);
+    return result(response, parseMessages(response.body, options.engine));
   };
 
   const snapshot = async (sessionId: string): Promise<EngineSessionProbeResult<EngineSessionProbeSnapshot>> => {
@@ -290,10 +295,7 @@ export function engineSessionProbe(options: EngineSessionProbeOptions) {
     const messagesResponse = responses[1];
     if (!sessionResponse || !messagesResponse) throw new Error("Engine session snapshot responses were incomplete.");
     const session = parseSession(sessionResponse.body);
-    const parsedMessages = responseItems(messagesResponse.body).flatMap((message) => {
-      const item = parseMessage(message, options.engine);
-      return item ? [item] : [];
-    });
+    const parsedMessages = parseMessages(messagesResponse.body, options.engine);
     const failed = responses.find((response) => response.status < 200 || response.status >= 300);
     const snapshotResponse = {
       status: failed?.status ?? sessionResponse.status,

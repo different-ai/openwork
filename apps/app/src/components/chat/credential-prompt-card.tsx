@@ -33,14 +33,30 @@ function targetKey(prompt: CredentialPrompt) {
 
 function denDashboardUrl(baseUrl: string, prompt: CredentialPrompt): string | null {
   try {
-    const path = prompt.target.type === "mcp_connection_key" || prompt.target.type === "plugin_connection_key"
-      ? `/dashboard/mcp-connections/${encodeURIComponent(prompt.target.connectionId)}`
-      : DEN_DASHBOARD_LINKS.gatewayProviders
+    const target = prompt.target
+    const path = target.type === "gateway_provider_key" || target.type === "gateway_provider_credential"
+      ? DEN_DASHBOARD_LINKS.gatewayProviders
+      : target.type === "mcp_connection_member_key"
+        ? `/dashboard/your-connections?connectionId=${encodeURIComponent(target.connectionId)}`
+        : `/dashboard/mcp-connections/${encodeURIComponent(target.connectionId)}`
     const url = new URL(path, baseUrl)
     return url.protocol === "https:" || url.protocol === "http:" ? url.toString() : null
   } catch {
     return null
   }
+}
+
+/** Who will use the key, from fixed text; the audience counts come from Den, never the agent. */
+function audienceLine(prompt: CredentialPrompt): string {
+  const target = prompt.target
+  if (target.type === "mcp_connection_member_key") return "Only for you"
+  if (target.type !== "mcp_connection_shared_switch") return `Shared with people who can use ${prompt.name}`
+  const { orgWide, memberCount, teamCount } = target.audience
+  const who = orgWide ? "everyone in your organization" : [
+    ...(memberCount ? [`${memberCount} ${memberCount === 1 ? "person" : "people"}`] : []),
+    ...(teamCount ? [`${teamCount} ${teamCount === 1 ? "team" : "teams"}`] : []),
+  ].join(" and ") || "no one yet"
+  return `Replaces each person's own key · shared with ${who}`
 }
 
 /** Plain, value-free direction for each failure; the key is never repeated back. */
@@ -96,8 +112,11 @@ export function CredentialPromptCard({ part, continueToolCallId = part.toolCallI
       if (prompt.target.type === "gateway_provider_key" || prompt.target.type === "gateway_provider_credential") {
         return client.gatewayCredentialSetReady(organizationId, prompt.target.inferenceProviderId, prompt.target.credentialSetId)
       }
-      const connectionId = prompt.target.connectionId
-      return (await client.listMcpConnections(organizationId, "usable")).some((connection) => connection.id === connectionId && connection.connected)
+      const target = prompt.target
+      return (await client.listMcpConnections(organizationId, "usable")).some((connection) => connection.id === target.connectionId && (
+        target.type === "mcp_connection_member_key" ? connection.connectedForMe
+          : target.type === "mcp_connection_shared_switch" ? connection.credentialMode === "shared" && connection.connected
+            : connection.connected))
     },
     enabled: signedIn && Boolean(prompt),
     staleTime: 30_000,
@@ -143,6 +162,11 @@ export function CredentialPromptCard({ part, continueToolCallId = part.toolCallI
         await client.saveGatewayProviderCredential(organizationId, prompt.target.inferenceProviderId, prompt.target.credentialSetId, gatewayCredentialBody(prompt.target, values))
       } else if (prompt.target.type === "mcp_connection_key") {
         await client.saveMcpConnectionSharedKey(organizationId, prompt.target.connectionId, value)
+      } else if (prompt.target.type === "mcp_connection_shared_switch") {
+        // Den switches the connection only if this key works and nothing changed since the request.
+        await client.saveMcpConnectionSharedKey(organizationId, prompt.target.connectionId, value, { expectedUpdatedAt: prompt.target.expectedUpdatedAt })
+      } else if (prompt.target.type === "mcp_connection_member_key") {
+        await client.setMyMcpCredential(organizationId, prompt.target.connectionId, value)
       } else if (prompt.target.type === "plugin_connection_key") {
         const { pluginId, configObjectId, serverName } = prompt.target
         await client.savePluginConnectionKey(organizationId, { pluginId, configObjectId, serverName, apiKey: value })
@@ -179,6 +203,8 @@ export function CredentialPromptCard({ part, continueToolCallId = part.toolCallI
     : blocked === "gone" ? `${name} is no longer available`
     : blocked ? `${plural ? "Credentials" : "API key"} for ${name}`
     : replacing ? `Replace the ${what} for ${name}`
+    : prompt.target.type === "mcp_connection_shared_switch" ? `Use one shared key for ${name}`
+    : prompt.target.type === "mcp_connection_member_key" ? `Add your ${what} for ${name}`
     : `Add the ${what} for ${name}`
   const blockedLine = blocked === "read_only" ? "This conversation is read-only."
     : blocked === "signed_out" ? "Sign in to OpenWork Cloud to add this key here."
@@ -186,7 +212,7 @@ export function CredentialPromptCard({ part, continueToolCallId = part.toolCallI
     : blocked === "gone" ? "Ask the agent to set it up again."
     : null
   // One state line: who uses the key and where it goes (P9).
-  const consent = `Shared with people who can use ${name}${prompt.destination ? ` · sent only to ${prompt.destination}` : ""} · never shown to the agent`
+  const consent = `${audienceLine(prompt)}${prompt.destination ? ` · sent only to ${prompt.destination}` : ""} · never shown to the agent`
   const Icon = settled ? Check : blocked ? Lock : KeyRound
 
   return (

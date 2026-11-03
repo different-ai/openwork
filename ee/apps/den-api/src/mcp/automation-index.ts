@@ -1,8 +1,9 @@
 import type { McpServer } from "@modelcontextprotocol/server"
-import type { AutomationList } from "@openwork/types/automations"
+import { formatAutomationSchedule } from "@openwork/types/automation-schedule"
+import { AUTOMATION_LEGACY_SCHEDULE_KINDS, type AutomationList } from "@openwork/types/automations"
 
 export const AGENT_AUTOMATION_INDEX_URI = "automation://index.json"
-export const AGENT_AUTOMATION_INDEX_SCHEMA = "https://schemas.openworklabs.com/automations/discovery/0.2.0/schema.json"
+export const AGENT_AUTOMATION_INDEX_SCHEMA = "https://schemas.openworklabs.com/automations/discovery/0.3.0/schema.json"
 
 /**
  * How many Automations the discovery index carries. The index rides in every
@@ -16,6 +17,8 @@ export type AgentAutomationIndexEntry = {
   name: string
   state: string
   schedule: AutomationList["items"][number]["revision"]["schedule"]
+  /** The schedule in words, e.g. "Every 3 hours · 09:00–18:00 · UTC". */
+  summary: string
   nextDueAt: number | null
   executionTarget: "desktop" | "cloud"
   latestRun: { status: string; trigger: string; finishedAt: number | null } | null
@@ -36,26 +39,36 @@ export function buildAgentAutomationIndex(input: {
 }) {
   const included = input.items.slice(0, AGENT_AUTOMATION_INDEX_LIMIT)
   const total = input.totalKnown ?? input.items.length
+  const entries = included.map((item): AgentAutomationIndexEntry => ({
+    id: item.automation.id,
+    name: item.automation.name,
+    state: item.automation.state,
+    schedule: item.revision.schedule,
+    summary: formatAutomationSchedule(item.revision.schedule, "en-US"),
+    nextDueAt: item.automation.nextDueAt,
+    executionTarget: item.revision.executionTarget ?? "desktop",
+    latestRun: item.latestRun
+      ? {
+        status: item.latestRun.status,
+        trigger: item.latestRun.trigger,
+        finishedAt: item.latestRun.finishedAt,
+      }
+      : null,
+  }))
+  const legacy = new Set<string>(AUTOMATION_LEGACY_SCHEDULE_KINDS)
   return {
     $schema: AGENT_AUTOMATION_INDEX_SCHEMA,
     fetchedAt: input.fetchedAt,
     total,
     omitted: Math.max(0, total - included.length),
-    automations: included.map((item): AgentAutomationIndexEntry => ({
-      id: item.automation.id,
-      name: item.automation.name,
-      state: item.automation.state,
-      schedule: item.revision.schedule,
-      nextDueAt: item.automation.nextDueAt,
-      executionTarget: item.revision.executionTarget ?? "desktop",
-      latestRun: item.latestRun
-        ? {
-          status: item.latestRun.status,
-          trigger: item.latestRun.trigger,
-          finishedAt: item.latestRun.finishedAt,
-        }
-        : null,
-    })),
+    /**
+     * Released desktops parse every entry here with a schedule schema that
+     * knows only once, daily and weekly, and drop the whole index on any other
+     * kind. Entries with newer kinds travel in `moreAutomations`, which they
+     * ignore; readers should list both.
+     */
+    automations: entries.filter((entry) => legacy.has(entry.schedule.kind)),
+    moreAutomations: entries.filter((entry) => !legacy.has(entry.schedule.kind)),
   }
 }
 

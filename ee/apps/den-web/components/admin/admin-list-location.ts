@@ -21,7 +21,7 @@ function organizationsListHref(search: string, page: number) {
   return `/admin/organizations${query.size ? `?${query}` : ""}`;
 }
 
-export function adminOrganizationHref(organizationId: string, search: string, page: number, section?: "features" | "control-panel") {
+export function adminOrganizationHref(organizationId: string, search: string, page: number, section?: "features" | "billing") {
   const returnTo = organizationsListHref(search, page);
   const query = new URLSearchParams();
   if (returnTo !== "/admin/organizations") query.set("returnTo", returnTo);

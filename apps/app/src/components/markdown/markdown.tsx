@@ -9,9 +9,11 @@ import {
 import { cn } from "@/lib/utils";
 import { useOpenTargets } from "@/lib/target-provider";
 import { useSessionReferencesMaybe } from "@/components/chat/session-reference-context";
+import { useUntrustedMarkdown } from "./untrusted-markdown";
 import { useOpenArtifactPath } from "@/lib/artifacts";
 import type { OpenTarget } from "@/react-app/domains/session/artifacts/open-target";
 import { openTargetForHref } from "@/react-app/domains/session/artifacts/resolve-open-target";
+import { parseLocalPathReference, workspaceLookupValue } from "@/react-app/domains/session/artifacts/local-path";
 
 import { applyTextHighlights } from "./text-highlights";
 import {
@@ -25,40 +27,15 @@ import {
   type MarkdownBlockHtml,
 } from "./markdown-primitive";
 import { LinkActionMenu } from "./link-action-menu";
+import { decorateGitHubReferences } from "./github-references";
 import { useMermaidEnhancer } from "./mermaid";
+import { MermaidZoomPortals } from "./mermaid-zoom-viewport";
 import { useSelectionStableValue } from "./selection-stability";
 import { enhanceNearViewport } from "./near-viewport";
 
 export { renderHighlightedMarkdownHtml, renderMarkdownHtml } from "./markdown-primitive";
 
 const CODE_COPY_RESET_DELAY_MS = 2000;
-
-function localPathFromHref(href: string) {
-  const trimmed = href.trim();
-
-  if (!trimmed || trimmed.startsWith("#") || /^(?:https?|mailto):/i.test(trimmed)) {
-    return "";
-  }
-
-  if (/^file:/i.test(trimmed)) {
-    try {
-      const parsed = new URL(trimmed);
-      const host = decodeURIComponent(parsed.hostname);
-      const pathname = decodeURIComponent(parsed.pathname);
-      const localPath = /^\/[A-Za-z]:\//.test(pathname) ? pathname.slice(1) : pathname;
-
-      if (host && host !== "localhost") {
-        return `//${host}${localPath.startsWith("/") ? localPath : `/${localPath}`}`;
-      }
-
-      return localPath;
-    } catch {
-      return "";
-    }
-  }
-
-  return trimmed.split(/[?#]/)[0] ?? trimmed;
-}
 
 type MarkdownBlockInnerProps = {
   className?: string;
@@ -67,6 +44,8 @@ type MarkdownBlockInnerProps = {
   /** Opt in only for conversation prose, never tool output or artifact previews. */
   sessionReferences?: boolean;
   highlightQuery?: string;
+  /** Text-first rail: GitHub pull request and issue links show their mark. */
+  githubReferences?: boolean;
 } & Omit<
   React.ComponentProps<"div">,
   "ref" | "className" | "children" | "dangerouslySetInnerHTML"
@@ -87,6 +66,7 @@ function MarkdownBlockInner({
   streaming,
   sessionReferences = false,
   highlightQuery,
+  githubReferences = false,
   ...props
 }: MarkdownBlockInnerProps) {
   const rootRef = useRef<HTMLDivElement>(null);
@@ -103,8 +83,10 @@ function MarkdownBlockInner({
   useEffect(() => setLinkMenu(null), [client, workspaceId, workspaceRoot]);
   const [imagePreview, setImagePreview] = useState<{ src: string; alt: string } | null>(null);
   const references = useSessionReferencesMaybe();
-  const resolveReference = sessionReferences ? references?.resolve : undefined;
-  const streamingRenderer = useMemo(() => createStreamingMarkdownRenderer("chat", resolveReference), [resolveReference]);
+  const untrusted = useUntrustedMarkdown();
+  const presentation = untrusted ? "remote" : "chat";
+  const resolveReference = sessionReferences && !untrusted ? references?.resolve : undefined;
+  const streamingRenderer = useMemo(() => createStreamingMarkdownRenderer(presentation, resolveReference), [presentation, resolveReference]);
   const streamedBlocks = useMemo(
     () => (streaming ? streamingRenderer.render(text) : null),
     [streaming, streamingRenderer, text],
@@ -113,8 +95,8 @@ function MarkdownBlockInner({
     if (!streaming) streamingRenderer.reset();
   }, [streaming, streamingRenderer]);
   const syncHtml = useMemo(
-    () => (streamedBlocks ? "" : renderMarkdownHtml(text, "chat", resolveReference)),
-    [streamedBlocks, text, resolveReference],
+    () => (streamedBlocks ? "" : renderMarkdownHtml(text, presentation, resolveReference)),
+    [streamedBlocks, text, presentation, resolveReference],
   );
   const [highlightedHtml, setHighlightedHtml] = useState<{ text: string; html: string; resolveReference: typeof resolveReference } | null>(null);
 
@@ -194,7 +176,7 @@ function MarkdownBlockInner({
     if (!root || isEmpty || rendered.kind !== "document") return;
     let cancelled = false;
     const stopObserving = enhanceNearViewport([root], () => {
-      void renderHighlightedMarkdownHtml(text, "chat", resolveReference).then((html) => {
+      void renderHighlightedMarkdownHtml(text, presentation, resolveReference).then((html) => {
         if (!cancelled && html.trim()) setHighlightedHtml({ text, html, resolveReference });
       }).catch(() => {
         if (!cancelled) setHighlightedHtml(null);
@@ -204,9 +186,9 @@ function MarkdownBlockInner({
       cancelled = true;
       stopObserving();
     };
-  }, [isEmpty, rendered.kind, streaming, text, resolveReference]);
+  }, [isEmpty, rendered.kind, streaming, text, presentation, resolveReference]);
 
-  useMermaidEnhancer(rootRef, rendered, !streaming);
+  const mermaidDiagrams = useMermaidEnhancer(rootRef, rendered, !streaming);
 
   useEffect(() => {
     const root = rootRef.current;
@@ -224,6 +206,12 @@ function MarkdownBlockInner({
       syncCodeWrapStates();
     });
   }, [highlightQuery, rendered]);
+
+  useEffect(() => {
+    const root = rootRef.current;
+    if (!root || !githubReferences) return;
+    decorateGitHubReferences(root);
+  }, [githubReferences, rendered]);
 
   useEffect(() => {
     const root = rootRef.current;
@@ -255,17 +243,20 @@ function MarkdownBlockInner({
         if (objectUrl) URL.revokeObjectURL(objectUrl);
       });
       if (/^https?:/i.test(href)) continue;
-      let path = localPathFromHref(href);
-      try { if (!/^file:/i.test(href)) path = decodeURIComponent(path); } catch { /* Keep literal percent signs in filenames. */ }
-      const rootPath = workspaceRoot?.replace(/\\/g, "/").replace(/\/+$/, "");
-      path = path.replace(/\\/g, "/");
-      if (rootPath && path.startsWith(`${rootPath}/`)) path = path.slice(rootPath.length + 1);
-      if (!client || !workspaceId || !path) {
+      // Only the workspace can stream a video; a home or outside path falls back
+      // to its clickable reference, which reveals it on this computer.
+      const target = openTargetForHref(href, openTargets, workspaceRoot);
+      const reference = parseLocalPathReference(href, { decode: true });
+      const path = target?.exists === true
+        ? target.value
+        : reference && reference.anchor !== "home"
+          ? workspaceLookupValue(reference, { workspaceRoot }).replace(/\\/g, "/")
+          : "";
+      if (!client || !workspaceId || !path || /^(?:\/|[A-Za-z]:\/)/.test(path)) {
         showError();
         continue;
       }
-      const target = openTargetForHref(href, openTargets, workspaceRoot);
-      void client.downloadWorkspaceFile(workspaceId, target?.exists === true ? target.value : path, { sessionId }).then((result) => {
+      void client.downloadWorkspaceFile(workspaceId, path, { sessionId, fileScope: target?.fileScope }).then((result) => {
         if (cancelled) return;
         const extension = path.split(".").pop()?.toLowerCase();
         const fallbackType = extension === "webm" ? "video/webm" : extension === "ogv" ? "video/ogg" : extension === "mov" ? "video/quicktime" : "video/mp4";
@@ -473,6 +464,7 @@ function MarkdownBlockInner({
           onClose={() => setLinkMenu(null)}
         />
       ) : null}
+      <MermaidZoomPortals diagrams={mermaidDiagrams} />
       <Dialog
         open={imagePreview !== null}
         onOpenChange={(open) => {

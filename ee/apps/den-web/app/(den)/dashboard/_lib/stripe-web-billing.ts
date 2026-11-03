@@ -1,5 +1,13 @@
 export const OPENWORK_WEB_CHECKOUT_TYPE = "web";
-export const OPENWORK_WEB_QUANTITY_DEFINITION = "joined_non_removed_members";
+/** Joined members only; pending invitations are not billed. */
+export const OPENWORK_WEB_QUANTITY_JOINED_MEMBERS = "joined_non_removed_members";
+/** Members plus pending invitations: the same users every subscription bills. */
+export const OPENWORK_WEB_QUANTITY_BILLING_USERS = "members_and_pending_invitations";
+export type OpenWorkWebQuantityDefinition = typeof OPENWORK_WEB_QUANTITY_JOINED_MEMBERS | typeof OPENWORK_WEB_QUANTITY_BILLING_USERS;
+
+function isOpenWorkWebQuantityDefinition(value: unknown): value is OpenWorkWebQuantityDefinition {
+  return value === OPENWORK_WEB_QUANTITY_JOINED_MEMBERS || value === OPENWORK_WEB_QUANTITY_BILLING_USERS;
+}
 export const OPENWORK_WEB_UNIT_AMOUNT = 5000;
 export const OPENWORK_WEB_CURRENCY = "usd";
 export const OPENWORK_WEB_INTERVAL = "month";
@@ -21,7 +29,7 @@ export type StripeWebBilling = {
   unitAmount: typeof OPENWORK_WEB_UNIT_AMOUNT;
   currency: typeof OPENWORK_WEB_CURRENCY;
   interval: typeof OPENWORK_WEB_INTERVAL;
-  quantityDefinition: typeof OPENWORK_WEB_QUANTITY_DEFINITION;
+  quantityDefinition: OpenWorkWebQuantityDefinition;
   quantity: number;
   expectedMonthlyTotal: number;
   hasEligibleSubscription: boolean;
@@ -67,6 +75,7 @@ export function parseStripeWebBilling(payload: unknown): StripeWebBilling | null
   }
 
   const value = payload.billing.stripe.web;
+  const quantityDefinition = value.quantityDefinition;
   const subscription = parseSubscription(value.subscription);
   const accessSource: OpenWorkWebAccessSource | undefined = value.accessSource === "subscription" || value.accessSource === "complimentary"
     ? value.accessSource
@@ -79,7 +88,7 @@ export function parseStripeWebBilling(payload: unknown): StripeWebBilling | null
     value.unitAmount !== OPENWORK_WEB_UNIT_AMOUNT ||
     value.currency !== OPENWORK_WEB_CURRENCY ||
     value.interval !== OPENWORK_WEB_INTERVAL ||
-    value.quantityDefinition !== OPENWORK_WEB_QUANTITY_DEFINITION ||
+    !isOpenWorkWebQuantityDefinition(quantityDefinition) ||
     typeof value.quantity !== "number" ||
     !Number.isInteger(value.quantity) ||
     value.quantity < 1 ||
@@ -104,7 +113,7 @@ export function parseStripeWebBilling(payload: unknown): StripeWebBilling | null
     unitAmount: value.unitAmount,
     currency: value.currency,
     interval: value.interval,
-    quantityDefinition: value.quantityDefinition,
+    quantityDefinition,
     quantity: value.quantity,
     expectedMonthlyTotal: value.expectedMonthlyTotal,
     hasEligibleSubscription: value.hasEligibleSubscription,
@@ -115,10 +124,21 @@ export function parseStripeWebBilling(payload: unknown): StripeWebBilling | null
   };
 }
 
-export function getOpenWorkWebQuantityDescription(quantity: number): string {
+/** True when OpenWork Web bills pending invitations too. */
+export function openWorkWebCountsPendingInvitations(definition: OpenWorkWebQuantityDefinition | null | undefined): boolean {
+  return definition === OPENWORK_WEB_QUANTITY_BILLING_USERS;
+}
+
+export function getOpenWorkWebQuantityDescription(quantity: number, definition?: OpenWorkWebQuantityDefinition | null): string {
+  if (openWorkWebCountsPendingInvitations(definition)) {
+    return `${quantity} ${quantity === 1 ? "user" : "users"}`;
+  }
   const memberLabel = quantity === 1 ? "member" : "members";
   return `${quantity} ${memberLabel}`;
 }
 
-export const OPENWORK_WEB_QUANTITY_EXPLANATION =
-  "Billed for each joined member of your organization, including the owner. Pending invitations are not billed.";
+export function getOpenWorkWebQuantityExplanation(definition: OpenWorkWebQuantityDefinition | null | undefined): string {
+  return openWorkWebCountsPendingInvitations(definition)
+    ? "Billed for each member of your organization, including the owner, and each pending invitation until it expires."
+    : "Billed for each joined member of your organization, including the owner. Pending invitations are not billed.";
+}

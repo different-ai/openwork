@@ -15,6 +15,8 @@ const paths: { path: string; priority: number }[] = [
   { path: "/dashboard", priority: 0.8 },
   { path: "/download", priority: 0.7 },
   { path: "/enterprise", priority: 0.7 },
+  { path: "/shadow-ai", priority: 0.8 },
+  { path: "/ai-governance", priority: 0.8 },
   { path: "/pricing", priority: 0.7 },
   { path: "/roadmap", priority: 0.7 },
   { path: "/docs/start-here/migrate-from-claude-cowork", priority: 0.7 },

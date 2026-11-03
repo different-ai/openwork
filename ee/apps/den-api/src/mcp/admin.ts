@@ -63,7 +63,7 @@ export function registerAdminMcpRoutes<T extends { Variables: Record<string, unk
       name: "den-admin",
       version: DEN_ADMIN_MCP_VERSION,
     })
-    registerAdminMcpTools(server, { userId: principal.userId, credentialId: mcpPrincipalCredentialId(principal) })
+    registerAdminMcpTools(server, { userId: principal.userId, credentialId: mcpPrincipalCredentialId(principal), scopes: principal.scopes })
 
     const transport = new StreamableHTTPTransport()
     await server.connect(transport)

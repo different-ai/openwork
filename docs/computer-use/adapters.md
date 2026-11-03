@@ -1,8 +1,9 @@
 # Computer use adapters
 
 Computer use gives the agent access to a *computer* when its rollout is enabled. A computer is an
-adapter: this Mac (the native helper) or a remote machine such as a Freestyle
-or Daytona Linux VM. Each chat picks one in the Computer popover and keeps it.
+adapter: this Mac (the native helper), this Windows PC (the Windows helper) or
+a remote machine such as a Freestyle or Daytona Linux VM. The person picks one
+once in Settings › Computer use, and every chat uses it.
 
 ## Layers
 
@@ -12,8 +13,10 @@ or Daytona Linux VM. Each chat picks one in the Computer popover and keeps it.
 | Broker | `apps/desktop/electron/computer-control.mjs` | Rollout-controlled access, one session at a time, handoff, receipts, post-action observations, the in-chat request |
 | Adapter contract | `ComputerAdapter` in the broker | `id`, `label`, `placement` (`local`/`remote`), `readiness()`, optional `setup()`, `connect()` returning a transport for the seven native tools plus `openwork/ui` notifications |
 | This Mac | `computer-local.mjs` + `packages/computer-use` | macOS permissions, the Swift helper |
+| This PC | `computer-windows.mjs` + `computer-windows-driver.mjs` | The Windows helper (`packages/computer-use/windows`), run through the remote runtime as a local computer |
 | Remote runtime | `computer-remote.mjs` | Turns a small driver into the full contract: sessions, target resolution, observation ids, at-most-once receipts, batched actions, zoom, take over/continue, watch frames |
 | Linux driver | `computer-x11-driver.mjs` | xdotool and ImageMagick over two VM primitives: run a command, read a file |
+| Windows driver | `computer-windows-driver.mjs` | Starts the Windows helper and speaks its line protocol; window identity, key names and refused chords |
 | Provider bindings | `computer-targets.mjs` | How to reach a VM through `@openwork/sandbox` (`blocks.run`, `blocks.files`) |
 
 The broker never changes for a new computer. A new kind of machine needs a
@@ -35,8 +38,8 @@ by the same Apple team.
 Both are registry features (`packages/features/src/registry.ts`), off by default
 and read by the desktop from Den like every other feature:
 
-- `computerUse`: the Computer button, the tools and the broker. Turning it off
-  ends any running session.
+- `computerUse`: Settings › Computer use, the tools and the broker. Turning it
+  off ends any running session.
 - `remoteComputers`: VMs in the computer list. Off, VMs are hidden, a chat that
   chose a VM uses this computer, and a VM session ends at once; each chat's
   saved choice returns when the feature is back on. Requires `computerUse`
@@ -73,7 +76,17 @@ Xvfb :99 -screen 0 1280x800x24 -nolisten tcp -auth "$HOME/.Xauthority"
 Run the desktop apps and remote commands as that same account, with access to
 its authority file. Display access control stays enabled and TCP listening is
 disabled. Existing Freestyle worlds use their configured display on `:99`.
-Readiness reports what is missing. The Computer popover lists configured VMs beside this Mac. Enabled computer use opens the requested target directly on personal Macs, configured remote desktops and conversation-owned VMs. The sole or focused window is resolved from current state; an explicit window_id selects a particular target. Only genuine target ambiguity needs clarification. Follow-ups and technical renewal retain access, while Take over requires Continue and Stop cancels current work. On Linux and Windows, an available VM is the default target when no computer was previously chosen.
+Readiness reports what is missing. Settings › Computer use shows it, with the macOS permissions checklist, and lists configured VMs beside this Mac; the chat itself shows no idle status, only the live view while the agent works. Enabled computer use opens the requested target directly on personal Macs, configured remote desktops and conversation-owned VMs. The sole or focused window is resolved from current state; an explicit window_id selects a particular target. Only genuine target ambiguity needs clarification. Follow-ups and technical renewal retain access, while Take over requires Continue and Stop cancels current work. On a Mac or a Windows PC chats start on this computer; on Linux an available VM is the default when no computer was chosen in Settings.
+
+## This PC (Windows)
+
+This PC needs no system permissions and no `remoteComputers` rollout. Readiness
+comes from the helper's `--check`: OpenWork must run in a signed-in, connected
+desktop session, and Windows must not be locked. See the
+[Windows section of the package README](../../packages/computer-use/README.md#windows-this-pc)
+for what it refuses and how input is checked. It differs from this Mac as VMs
+do (screenshot coordinates only, no `assist`, no presence overlay), and also has
+no app scripting. Accessible controls through UI Automation are deferred.
 
 ## Differences from this Mac
 

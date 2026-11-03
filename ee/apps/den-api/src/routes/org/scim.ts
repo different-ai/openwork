@@ -3,12 +3,15 @@ import { describeRoute, resolver } from "hono-openapi"
 import { z } from "zod"
 import { deleteOrganizationScimConnection, getOrganizationScimConnection, getOrganizationScimHealth, getScimBaseUrl, reconcileOrganizationScimDrift, rotateOrganizationScimToken } from "../../scim.js"
 import { setScimGroupMappingMode } from "../../scim-groups.js"
+import { db } from "../../db.js"
 import { hasEnabledOrganizationSsoConnection } from "../../sso.js"
 import { ORGANIZATION_AUDIT_ACTIONS } from "../../audit-events.js"
 import { appendDomainChangesAfterCommit, finishLegacyAuditAction } from "../../audit/domain/legacy.js"
 import { scimReconciledEvent, scimTokenRotatedEvent } from "../../audit/domain/scim.js"
 import { auditChangeCapture } from "../../audit/request-capture.js"
 import { jsonValidator, orgPermissionRoute } from "../../middleware/index.js"
+import { checkEntitlement } from "../../entitlements.js"
+import { enterprisePlanRequiredSchema } from "../../openapi.js"
 import type { OrgRouteVariables } from "./shared.js"
 import { permissionDeniedResponse, permissionFailureHeaders } from "./shared.js"
 import { PermissionRevokedError } from "../../permissions/in-transaction.js"
@@ -215,6 +218,14 @@ export function registerOrgScimRoutes<T extends { Variables: OrgRouteVariables }
             },
           },
         },
+        402: {
+          description: "SCIM provisioning requires an Enterprise plan.",
+          content: {
+            "application/json": {
+              schema: resolver(enterprisePlanRequiredSchema),
+            },
+          },
+        },
         409: {
           description: "An enabled SSO connection is required before creating or rotating a SCIM token.",
           content: {
@@ -236,6 +247,10 @@ export function registerOrgScimRoutes<T extends { Variables: OrgRouteVariables }
     orgPermissionRoute("scim.manage"),
     async (c) => {
       const payload = c.get("organizationContext")
+      const entitlement = checkEntitlement(payload.organization.metadata, "scim")
+      if (!entitlement.ok) {
+        return c.json(entitlement.response, entitlement.status)
+      }
       const ssoReady = await hasEnabledOrganizationSsoConnection(payload.organization.id)
       if (!ssoReady) {
         return c.json({
@@ -320,7 +335,8 @@ export function registerOrgScimRoutes<T extends { Variables: OrgRouteVariables }
       }, auditEventIds)
 
       const [updated, health, ssoReady] = await Promise.all([
-        getOrganizationScimConnection(payload.organization.id),
+        // primary: reads back the mode written above.
+        getOrganizationScimConnection(payload.organization.id, db.$primary),
         getOrganizationScimHealth(payload.organization.id),
         hasEnabledOrganizationSsoConnection(payload.organization.id),
       ])

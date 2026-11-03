@@ -4,9 +4,12 @@ import { spawn } from "node:child_process";
 import { timingSafeEqual } from "node:crypto";
 import { access, readFile } from "node:fs/promises";
 import { WebSocketServer, WebSocket } from "ws";
-import { createCloudComputer } from "@openwork/computer-use/cloud";
+import { createCloudComputer, browserEgressStatus } from "@openwork/computer-use/cloud";
+import { createBrowserDemonstration } from "@openwork/computer-use/browser-demonstration";
 import { createDesktopApplications } from "./desktop-apps.mjs";
 import { ViewerTickets } from "./viewer-tickets.mjs";
+import { streamBrowser } from "./browser-screencast.mjs";
+import { DESKTOP_PROTOCOL } from "./desktop-protocol.mjs";
 
 const directory = process.env.WORKBOT_DESKTOP_STATE;
 if (!directory) throw new Error("WORKBOT_DESKTOP_STATE is required");
@@ -21,6 +24,7 @@ const computer = await createCloudComputer({ directory, display: ":99", enabled:
   privateBrowsing: process.env.WORKBOT_DESKTOP_PRIVATE_BROWSING === "1",
   applications: createDesktopApplications({ directory: `${directory}/apps`, display: ":99" }),
 });
+const teaching = createBrowserDemonstration({ path: `${directory}/browser-demonstration.json` });
 const json = (response, status, payload) => {
   response.writeHead(status, { "content-type": "application/json", "cache-control": "no-store" });
   response.end(JSON.stringify(payload));
@@ -46,7 +50,23 @@ const server = createServer(async (request, response) => {
     if (request.url === "/health") {
       const browser = await fetch("http://127.0.0.1:9222/json/version", { signal: AbortSignal.timeout(1500) }).then(async result => { await result.body?.cancel(); return result.ok; }).catch(() => false);
       const viewer = await Promise.all([access(viewerScript), access(`${directory}/browser-window`)]).then(() => true, () => false);
-      return json(response, browser && viewer ? 200 : 503, { ok: browser && viewer, version: process.env.WORKBOT_DESKTOP_VERSION ?? "unknown" });
+      return json(response, browser && viewer ? 200 : 503, { ok: browser && viewer, version: process.env.WORKBOT_DESKTOP_VERSION ?? "unknown", protocol: DESKTOP_PROTOCOL, ...(body.diagnostics === true ? { egress: await browserEgressStatus() } : {}) });
+    }
+    if (request.url === "/browser/demonstration") {
+      if (typeof body.sessionId !== "string" || !body.sessionId || body.sessionId.length > 256) return json(response, 400, { error: "invalid_session" });
+      if (body.command?.action === "start" || body.command?.action === "resume") {
+        try {
+          const result = await tickets.run(viewerGeneration, async () => {
+            await computer.interact({ action: "takeover" });
+            return teaching.command(body.sessionId, body.command);
+          });
+          return json(response, 200, result);
+        } catch (error) {
+          await teaching.command(body.sessionId, { action: "pause" }).catch(() => {});
+          throw error;
+        }
+      }
+      return json(response, 200, await teaching.command(body.sessionId, body.command));
     }
     if (request.url === "/viewer") {
       if (!["browser", "computer"].includes(body.view) || typeof body.origin !== "string") return json(response, 400, { error: "invalid_view" });
@@ -59,6 +79,7 @@ const server = createServer(async (request, response) => {
       return json(response, 200, result);
     }
     if (request.url === "/continue") {
+      if (teaching.isTeaching()) return json(response, 409, { error: "teaching_active", message: "Finish or discard teaching before returning control to Workbot." });
       const generation = tickets.revoke();
       for (const socket of sockets) { transports.get(socket)?.destroy(); socket.terminate(); }
       await tickets.run(generation, () => computer.interact({ action: "resume" }));
@@ -79,19 +100,28 @@ const server = createServer(async (request, response) => {
 const websocket = new WebSocketServer({ noServer: true, maxPayload: 1024 * 1024, perMessageDeflate: false });
 server.on("upgrade", (request, socket, head) => {
   const path = new URL(request.url ?? "/", "http://127.0.0.1").pathname;
-  const token = /^\/vnc\/([A-Za-z0-9_-]{43})$/.exec(path)?.[1];
+  const [, transport, token] = /^\/(vnc|screencast)\/([A-Za-z0-9_-]{43})$/.exec(path) ?? [];
   const ticket = tickets.consume(token, request.headers.origin);
   if (!ticket || Date.now() >= until || sockets.size >= 4) return socket.destroy();
+  // The screencast shows only the browser; with control it also takes the person's input for the page.
+  if (transport === "screencast" && ticket.view !== "browser") return socket.destroy();
   websocket.handleUpgrade(request, socket, head, ws => {
     if (ticket.generation !== tickets.generation || Date.now() >= until) return ws.terminate();
+    if (transport === "screencast") {
+      const deadline = setTimeout(() => ws.close(1000, "Renew viewer access"), 60_000);
+      const stop = streamBrowser(ws, { control: ticket.control, onClose: () => { clearTimeout(deadline); sockets.delete(ws); transports.delete(ws); ws.close(); } });
+      sockets.add(ws);
+      transports.set(ws, { destroy: stop });
+      return;
+    }
     // Private stdio cannot be pre-bound by the command account. The VNC
     // process itself enforces view-only, independently of noVNC's controls.
     const viewer = spawn("/usr/bin/python3", ["-I", viewerScript, ticket.view, ticket.control ? "control" : "view"], { stdio: ["pipe", "pipe", "ignore"] });
-    const transport = { destroy: () => { viewer.stdin.destroy(); viewer.stdout.destroy(); viewer.kill("SIGTERM"); } };
+    const vnc = { destroy: () => { viewer.stdin.destroy(); viewer.stdout.destroy(); viewer.kill("SIGTERM"); } };
     sockets.add(ws);
-    transports.set(ws, transport);
+    transports.set(ws, vnc);
     const deadline = setTimeout(() => ws.close(1000, "Renew viewer access"), 60_000);
-    const close = () => { clearTimeout(deadline); sockets.delete(ws); transports.delete(ws); transport.destroy(); ws.close(); };
+    const close = () => { clearTimeout(deadline); sockets.delete(ws); transports.delete(ws); vnc.destroy(); ws.close(); };
     viewer.stdout.on("data", data => { if (ws.readyState === WebSocket.OPEN) ws.send(data, { binary: true }); });
     ws.on("message", (data, binary) => {
       if (!binary || Date.now() >= until || ticket.generation !== tickets.generation) return close();

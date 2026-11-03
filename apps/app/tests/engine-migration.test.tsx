@@ -15,6 +15,7 @@ const server = await import("../src/app/lib/openwork-server");
 const { isDesktopRuntime } = await import("../src/app/lib/runtime-env");
 const automations = await import("../src/react-app/domains/automations/use-automations");
 const connection = await import("../src/react-app/shell/openwork-connection");
+const den = await import("../src/app/lib/den");
 const { EngineMigrationOverlay, observeEngineMigration, requestEngineMigration, resetEngineMigrationForTest, useEngineMigrationStore } = await import("../src/react-app/shell/engine-migration");
 const { useOpencodeEngineControls } = await import("../src/react-app/shell/opencode-engine-controls");
 const previousAct = Reflect.get(globalThis, "IS_REACT_ACT_ENVIRONMENT");
@@ -22,6 +23,7 @@ Reflect.set(globalThis, "IS_REACT_ACT_ENVIRONMENT", true);
 let root: Root | null = null;
 let queryClient: QueryClient;
 let previousBridge: unknown;
+let denClient: ReturnType<typeof createDenClient>;
 
 const status: EngineV2PreviewStatus = {
   enabled: false, running: false, chatRouting: false, v1HistoryAvailable: true,
@@ -37,10 +39,15 @@ beforeEach(() => {
   queryClient = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: Infinity } } });
   // This is the same cache entry populated by Calendar and other org-feature consumers.
   queryClient.setQueryData(["den", "org-features", orgId], { engineV2ForceUpgrade: true });
+  denClient = createDenClient({ baseUrl: "https://den.example.test", token: "test-token" });
+  spyOn(denClient, "getOrgFeatures").mockRejectedValue(new Error("Den offline"));
+  spyOn(denClient, "getDeploymentFeatures").mockRejectedValue(new Error("Den offline"));
   spyOn(automations, "useAutomationsDenContext").mockReturnValue({
-    client: createDenClient({ baseUrl: "https://den.example.test", token: "test-token" }),
+    client: denClient,
     organizationId: orgId, ready: true, queryRoot: ["den", "automations", orgId],
   });
+  spyOn(den, "createDenClient").mockReturnValue(denClient);
+  spyOn(globalThis, "fetch").mockRejectedValue(new Error("Network offline"));
   spyOn(connection, "resolveOpenworkConnection").mockResolvedValue({
     normalizedBaseUrl: "http://localhost:8787", resolvedToken: "test-token", resolvedHostToken: "test-host",
     hostInfo: null, source: "stored-settings",
@@ -75,14 +82,27 @@ function engineClient() {
   return client;
 }
 
-async function renderOverlay() {
+async function renderOverlay(discoverRunningMigration?: boolean) {
   const host = document.createElement("div");
   document.body.append(host);
   root = createRoot(host);
   await act(async () => {
-    root?.render(<QueryClientProvider client={queryClient}><EngineMigrationOverlay discoverRunningMigration={false} /></QueryClientProvider>);
+    root?.render(<QueryClientProvider client={queryClient}><EngineMigrationOverlay discoverRunningMigration={discoverRunningMigration} /></QueryClientProvider>);
   });
 }
+
+test("restoring reports message counts rather than a stalled chat counter", async () => {
+  Reflect.set(window, "__OPENWORK_ELECTRON__", {});
+  const client = engineClient();
+  const migration = { state: "running", phase: "restoring", imported: 0, skipped: 0, total: 2471, restored: 44000, restoreTotal: 208014 } satisfies EngineV2PreviewStatus["migration"];
+  spyOn(client, "getEngineV2PreviewStatus").mockResolvedValue({ ...status, migration });
+  useEngineMigrationStore.setState({ progress: {
+    client, migration, selected: "v1", view: "dialog", retrying: false, runningTasks: 0, switchWhenDone: true,
+  } });
+  await renderOverlay();
+  expect(document.querySelector('[data-testid="engine-migration-count"]')?.textContent).toBe("Restoring messages: 44,000 of 208,014");
+  expect(document.querySelector('[role="progressbar"]')?.getAttribute("aria-valuenow")).toBe("21");
+});
 
 test("web never upgrades the engine from another consumer's enabled feature cache", async () => {
   const client = engineClient();
@@ -212,190 +232,174 @@ async function setFeatures(upgrade: boolean) {
   });
 }
 
-test("desktop forwards the off upgrade flag without starting a migration", async () => {
-  Reflect.set(window, "__OPENWORK_ELECTRON__", {});
-  const client = engineClient();
-  await setFeatures(false);
-  await renderOverlay();
-  expect(client.setEngineV2ForcePolicy).toHaveBeenCalledWith({ upgrade: false });
+function expectReadOnlyDiscovery(client: ReturnType<typeof engineClient>) {
+  expect(automations.useAutomationsDenContext).not.toHaveBeenCalled();
+  expect(den.createDenClient).not.toHaveBeenCalled();
+  expect(denClient.getOrgFeatures).not.toHaveBeenCalled();
+  expect(denClient.getDeploymentFeatures).not.toHaveBeenCalled();
+  expect(globalThis.fetch).not.toHaveBeenCalled();
+  expect(client.setEngineV2ForcePolicy).not.toHaveBeenCalled();
   expect(client.migrateOpencodeHistory).not.toHaveBeenCalled();
   expect(client.switchOpencodeEngine).not.toHaveBeenCalled();
-});
+}
+
+const pendingStatus: EngineV2PreviewStatus = {
+  ...status, engineOrigin: "manual", engineForced: false, forceUpgradePending: true,
+  migration: { state: "running", phase: "copying", imported: 1, skipped: 0, total: 2 },
+};
+
+for (const signedOut of [false, true]) {
+  test(`desktop discovers host-owned migration with legacy false cache and offline Den (${signedOut ? "signed out" : "signed in"})`, async () => {
+    Reflect.set(window, "__OPENWORK_ELECTRON__", {});
+    const client = engineClient();
+    spyOn(client, "getEngineV2PreviewStatus").mockResolvedValue(pendingStatus);
+    if (signedOut) spyOn(automations, "useAutomationsDenContext").mockReturnValue({
+      client: null, organizationId: orgId, ready: false, queryRoot: ["den", "automations", orgId],
+    });
+    await setFeatures(false);
+    await renderOverlay();
+    expect(connection.resolveOpenworkConnection).toHaveBeenCalledTimes(1);
+    expect(server.createOpenworkServerClient).toHaveBeenCalledWith({
+      baseUrl: "http://localhost:8787", token: "test-token", hostToken: "test-host",
+    });
+    expect(client.getEngineV2PreviewStatus).toHaveBeenCalledTimes(1);
+    expect(document.querySelector('[data-testid="engine-migration-banner"]')).not.toBeNull();
+    expect(document.querySelector('[data-testid="engine-migration-consent"]')).toBeNull();
+    expect(document.querySelector('[data-testid="engine-migration-progress"]')).toBeNull();
+    expect(useEngineMigrationStore.getState().progress).toMatchObject({
+      serverManaged: true, switchWhenDone: false, view: "banner",
+    });
+    expectReadOnlyDiscovery(client);
+  });
+}
 
 for (const upgrade of [false, true]) {
-  test(`web ignores the cached force flag (upgrade=${upgrade})`, async () => {
+  test(`web never discovers host status or requests Den with legacy cache=${upgrade}`, async () => {
     const client = engineClient();
     await setFeatures(upgrade);
     await renderOverlay();
     expect(connection.resolveOpenworkConnection).not.toHaveBeenCalled();
-    expect(client.setEngineV2ForcePolicy).not.toHaveBeenCalled();
+    expect(client.getEngineV2PreviewStatus).not.toHaveBeenCalled();
+    expectReadOnlyDiscovery(client);
     expect(document.body.textContent).toBe("");
   });
 }
 
-test("pending force upgrade shows only a banner before ownership moves, without renderer migration or switching", async () => {
+test("discovery can be explicitly disabled on desktop", async () => {
   Reflect.set(window, "__OPENWORK_ELECTRON__", {});
   const client = engineClient();
-  const forced: EngineV2PreviewStatus = {
-    ...status, engineOrigin: "manual", engineForced: false, forceUpgradePending: true,
-    migration: { state: "running", phase: "copying", imported: 1, skipped: 0, total: 2 },
-  };
-  spyOn(client, "setEngineV2ForcePolicy").mockResolvedValue(forced);
-  spyOn(client, "getEngineV2PreviewStatus").mockResolvedValue(forced);
-  await setFeatures(true);
-  await renderOverlay();
-  expect(client.setEngineV2ForcePolicy).toHaveBeenCalledWith({ upgrade: true });
-  expect(document.querySelector('[data-testid="engine-migration-banner"]')).not.toBeNull();
-  expect(document.querySelector('[data-testid="engine-migration-consent"]')).toBeNull();
-  expect(document.querySelector('[data-testid="engine-migration-progress"]')).toBeNull();
-  expect(useEngineMigrationStore.getState().progress?.serverManaged).toBe(true);
-  expect(client.migrateOpencodeHistory).not.toHaveBeenCalled();
-  expect(client.switchOpencodeEngine).not.toHaveBeenCalled();
-});
-
-for (const origin of ["forced", "manual"] satisfies Array<"forced" | "manual">) {
-  test(`off policy ${origin === "forced" ? "observes the host's forced-only revert" : "leaves manual engine selection alone"}`, async () => {
-    Reflect.set(window, "__OPENWORK_ELECTRON__", {});
-    const client = engineClient();
-    spyOn(client, "setEngineV2ForcePolicy").mockResolvedValue({
-      ...status, enabled: true, running: true, chatRouting: true,
-      engineOrigin: origin, engineForced: origin === "forced",
-    });
-    spyOn(client, "getEngineV2PreviewStatus").mockResolvedValue({
-      ...status, engineOrigin: "reverted", engineForced: false,
-    });
-    const changed = mock(() => {});
-    window.addEventListener("openwork-engine-changed", changed);
-    try {
-      await setFeatures(false);
-      await renderOverlay();
-      expect(client.setEngineV2ForcePolicy).toHaveBeenCalledWith({ upgrade: false });
-      await act(async () => { await new Promise((resolve) => setTimeout(resolve, 1_100)); });
-      expect(client.getEngineV2PreviewStatus).toHaveBeenCalledTimes(origin === "forced" ? 1 : 0);
-      expect(changed).toHaveBeenCalledTimes(origin === "forced" ? 2 : 0);
-      expect(client.switchOpencodeEngine).not.toHaveBeenCalled();
-      expect(client.migrateOpencodeHistory).not.toHaveBeenCalled();
-      expect(document.body.textContent).toBe("");
-    } finally {
-      window.removeEventListener("openwork-engine-changed", changed);
-    }
-  });
-}
-
-test("upgrade turning off is forwarded for host-owned revert", async () => {
-  Reflect.set(window, "__OPENWORK_ELECTRON__", {});
-  const client = engineClient();
-  await setFeatures(true);
-  await renderOverlay();
-  expect(client.setEngineV2ForcePolicy).toHaveBeenLastCalledWith({ upgrade: true });
-  await setFeatures(false);
-  expect(client.setEngineV2ForcePolicy).toHaveBeenLastCalledWith({ upgrade: false });
-  expect(client.switchOpencodeEngine).not.toHaveBeenCalled();
-  expect(client.migrateOpencodeHistory).not.toHaveBeenCalled();
+  await renderOverlay(false);
+  expect(connection.resolveOpenworkConnection).not.toHaveBeenCalled();
+  expect(client.getEngineV2PreviewStatus).not.toHaveBeenCalled();
+  expectReadOnlyDiscovery(client);
 });
 
 for (const state of ["completed", "error"] satisfies Array<"completed" | "error">) {
-  test(`forced ${state} never opens recovery consent or switches from the renderer`, async () => {
+  test(`discovery polls pending migration to ${state} without renderer recovery or switching`, async () => {
     Reflect.set(window, "__OPENWORK_ELECTRON__", {});
     const client = engineClient();
-    await setFeatures(true);
-    useEngineMigrationStore.setState({ progress: {
-      client, migration: { state: "running", imported: 1, skipped: 0, total: 2 },
-      selected: "v1", view: "dialog", retrying: false, runningTasks: 0, switchWhenDone: true,
-    } });
-    observeEngineMigration(client, {
-      ...status, engineOrigin: "manual", engineForced: false, forceUpgradePending: true,
-      migration: { state, imported: state === "completed" ? 2 : 1, skipped: 0, total: 2 },
-    });
-    expect(useEngineMigrationStore.getState().progress).toMatchObject({
-      serverManaged: true, switchWhenDone: false, view: "banner",
-    });
+    const read = spyOn(client, "getEngineV2PreviewStatus").mockResolvedValue(pendingStatus);
     await renderOverlay();
+    expect(document.querySelector('[data-testid="engine-migration-banner"]')).not.toBeNull();
+    read.mockResolvedValue({
+      ...pendingStatus,
+      enabled: state === "completed", chatRouting: state === "completed",
+      engineOrigin: state === "completed" ? "forced" : "manual",
+      engineForced: state === "completed", forceUpgradePending: false,
+      migration: { state, imported: state === "completed" ? 2 : 1, skipped: 0, total: 2, error: state === "error" ? "Copy failed" : undefined },
+    });
+    await act(async () => { await new Promise((resolve) => setTimeout(resolve, 1_100)); });
+    expect(read.mock.calls.length).toBeGreaterThan(1);
+    expect(useEngineMigrationStore.getState().progress).toBeNull();
+    expect(document.querySelector('[data-testid="engine-migration-banner"]')).toBeNull();
     expect(document.querySelector('[data-testid="engine-migration-progress"]')).toBeNull();
     expect(document.querySelector('[data-testid="engine-migration-consent"]')).toBeNull();
-    expect(client.switchOpencodeEngine).not.toHaveBeenCalled();
-    expect(client.migrateOpencodeHistory).not.toHaveBeenCalled();
-    expect(useEngineMigrationStore.getState().progress).toBeNull();
+    expectReadOnlyDiscovery(client);
   });
 }
 
-test("a fresh forced v2 status refreshes routing without any migration UI or renderer switch", async () => {
+test("observing host ownership replaces a manual progress dialog without taking over migration", async () => {
   Reflect.set(window, "__OPENWORK_ELECTRON__", {});
   const client = engineClient();
-  spyOn(client, "setEngineV2ForcePolicy").mockResolvedValue({
+  useEngineMigrationStore.setState({ progress: {
+    client, migration: { state: "running", imported: 1, skipped: 0, total: 2 },
+    selected: "v1", view: "dialog", retrying: false, runningTasks: 0, switchWhenDone: true,
+  } });
+  observeEngineMigration(client, pendingStatus);
+  expect(useEngineMigrationStore.getState().progress).toMatchObject({
+    serverManaged: true, switchWhenDone: false, view: "banner",
+  });
+  await renderOverlay(false);
+  expect(document.querySelector('[data-testid="engine-migration-banner"]')).not.toBeNull();
+  expect(document.querySelector('[data-testid="engine-migration-progress"]')).toBeNull();
+  expectReadOnlyDiscovery(client);
+});
+
+test("fresh forced v2 status refreshes routing once, then polls without duplicate routing events", async () => {
+  Reflect.set(window, "__OPENWORK_ELECTRON__", {});
+  const client = engineClient();
+  spyOn(client, "getEngineV2PreviewStatus").mockResolvedValue({
     ...status, enabled: true, running: true, chatRouting: true,
     v1HistoryAvailable: false, engineOrigin: "forced", engineForced: true,
   });
   const changed = mock(() => {});
   window.addEventListener("openwork-engine-changed", changed);
   try {
-    await setFeatures(true);
+    await setFeatures(false);
     await renderOverlay();
     expect(changed).toHaveBeenCalledTimes(1);
+    await act(async () => { await new Promise((resolve) => setTimeout(resolve, 1_100)); });
+    expect(client.getEngineV2PreviewStatus).toHaveBeenCalledTimes(2);
+    expect(changed).toHaveBeenCalledTimes(1);
     expect(document.body.textContent).toBe("");
-    expect(client.migrateOpencodeHistory).not.toHaveBeenCalled();
-    expect(client.switchOpencodeEngine).not.toHaveBeenCalled();
+    expectReadOnlyDiscovery(client);
   } finally {
     window.removeEventListener("openwork-engine-changed", changed);
   }
 });
 
-test("signed-out desktop cannot activate cached force flags", async () => {
+test("pending host routing changes dispatch an event, not a renderer engine switch", async () => {
   Reflect.set(window, "__OPENWORK_ELECTRON__", {});
   const client = engineClient();
-  spyOn(automations, "useAutomationsDenContext").mockReturnValue({
-    client: null, organizationId: orgId, ready: false, queryRoot: ["den", "automations", orgId],
+  const read = spyOn(client, "getEngineV2PreviewStatus").mockResolvedValue({
+    ...status, forceUpgradePending: true,
   });
-  await setFeatures(true);
-  await renderOverlay();
-  expect(client.setEngineV2ForcePolicy).not.toHaveBeenCalled();
-  expect(client.migrateOpencodeHistory).not.toHaveBeenCalled();
+  const changed = mock(() => {});
+  window.addEventListener("openwork-engine-changed", changed);
+  try {
+    await renderOverlay();
+    expect(changed).not.toHaveBeenCalled();
+    read.mockResolvedValue({ ...status, enabled: true, chatRouting: true, engineForced: true });
+    await act(async () => { await new Promise((resolve) => setTimeout(resolve, 1_100)); });
+    expect(read).toHaveBeenCalledTimes(2);
+    expect(changed).toHaveBeenCalledTimes(1);
+    expectReadOnlyDiscovery(client);
+  } finally {
+    window.removeEventListener("openwork-engine-changed", changed);
+  }
 });
 
-test("a failed force request never falls back to a renderer migration, switch, or consent", async () => {
+test("a failed discovery read never falls back to renderer migration, policy writes, or consent", async () => {
   Reflect.set(window, "__OPENWORK_ELECTRON__", {});
   const client = engineClient();
-  spyOn(client, "setEngineV2ForcePolicy").mockRejectedValue(new Error("Host unavailable"));
-  await setFeatures(true);
+  spyOn(client, "getEngineV2PreviewStatus").mockRejectedValue(new Error("Host unavailable"));
   await renderOverlay();
-  expect(client.setEngineV2ForcePolicy).toHaveBeenCalledTimes(1);
-  expect(client.migrateOpencodeHistory).not.toHaveBeenCalled();
-  expect(client.switchOpencodeEngine).not.toHaveBeenCalled();
+  expect(client.getEngineV2PreviewStatus).toHaveBeenCalledTimes(1);
+  expectReadOnlyDiscovery(client);
   expect(document.body.textContent).toBe("");
 });
 
-test("a newer off policy waits for an in-flight upgrade policy and discards its stale progress", async () => {
+test("legacy cache changes neither write host policy nor remove manual upgrade consent", async () => {
   Reflect.set(window, "__OPENWORK_ELECTRON__", {});
   const client = engineClient();
-  const pending = Promise.withResolvers<EngineV2PreviewStatus>();
-  const policy = spyOn(client, "setEngineV2ForcePolicy")
-    .mockImplementationOnce(() => pending.promise)
-    .mockResolvedValue(status);
-  await setFeatures(true);
-  await renderOverlay();
-  expect(policy).toHaveBeenCalledTimes(1);
   await setFeatures(false);
-  expect(policy).toHaveBeenCalledTimes(1);
-  await act(async () => pending.resolve({
-    ...status, engineOrigin: "forced", engineForced: true,
-    migration: { state: "running", imported: 1, skipped: 0, total: 2 },
-  }));
-  expect(policy).toHaveBeenLastCalledWith({ upgrade: false });
-  expect(policy).toHaveBeenCalledTimes(2);
-  expect(document.querySelector('[data-testid="engine-migration-banner"]')).toBeNull();
-});
-
-test("enabling the upgrade removes a manual upgrade consent without confirming it", async () => {
-  Reflect.set(window, "__OPENWORK_ELECTRON__", {});
-  const client = engineClient();
-  useEngineMigrationStore.setState({ consent: {
-    client, mode: "upgrade", runningTasks: 0, submitting: false, error: null,
-  } });
-  await setFeatures(true);
   await renderOverlay();
-  expect(useEngineMigrationStore.getState().consent).toBeNull();
-  expect(document.querySelector('[data-testid="engine-migration-consent"]')).toBeNull();
-  expect(client.migrateOpencodeHistory).not.toHaveBeenCalled();
+  await act(async () => requestEngineMigration(client, "upgrade"));
+  await setFeatures(true);
+  await setFeatures(false);
+  expect(useEngineMigrationStore.getState().consent).toMatchObject({ client, mode: "upgrade", submitting: false });
+  expect(document.querySelector('[data-testid="engine-migration-consent"]')).not.toBeNull();
+  expectReadOnlyDiscovery(client);
 });
 
 test("force API sends host authentication and parses ownership fields without inferring missing markers", async () => {

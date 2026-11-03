@@ -186,7 +186,8 @@ export const t = (
   let out = result;
   for (const [k, v] of Object.entries(params)) {
     if (k === "lng") continue;
-    out = out.replace(`{${k}}`, String(v));
+    // A placeholder can appear more than once ("{name} … your {name} app").
+    out = out.split(`{${k}}`).join(String(v));
   }
   return out;
 };

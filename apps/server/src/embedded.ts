@@ -59,6 +59,8 @@ export type EmbeddedServerOptions = CliArgs & {
   anonymousInference?: ServerConfig["anonymousInference"];
   /** Desktop marks a brand-new install so it starts on OpenCode v2. */
   freshInstallEngine?: ServerConfig["freshInstallEngine"];
+  /** Copy v1 chats with a backup and switch when idle by default; false is a local opt-out. */
+  engineAutoUpgrade?: boolean;
 };
 
 export type EmbeddedServerHandle = {
@@ -84,6 +86,9 @@ export async function startEmbeddedServer(options: EmbeddedServerOptions): Promi
   config.driveFileApproval = options.driveFileApproval;
   config.anonymousInference = options.anonymousInference;
   config.freshInstallEngine = options.freshInstallEngine;
+  if (options.engineAutoUpgrade !== undefined) {
+    config.engineAutoUpgrade = options.engineAutoUpgrade;
+  }
   config.resumeInterruptedTasks = options.resumeInterruptedTasks === true && options.manageOpencode === true && !config.opencodeBaseUrl;
   const logger = createServerLogger(config);
 
@@ -243,11 +248,16 @@ export async function startEmbeddedServer(options: EmbeddedServerOptions): Promi
         workspaceDirs: config.workspaces.map((workspace) => workspace.path).filter((path) => path.trim()),
       }));
       for (const { result } of seeded) {
-        if (!result.seeded && result.reason === "failed") {
+        if (result.seeded) {
+          logger.log("info", `Bundled engine dependencies seeded: true (${result.durationMs} ms).`);
+        } else if (result.reason === "failed") {
           logger.log("warn", "Bundled engine dependencies could not be prepared; using the engine installer.");
         }
       }
     }
+    // Where engine v1 keeps a database or global config of its own when a
+    // standalone OpenCode v2 install owns the shared ones.
+    const engineStateDir = join(runtimeStorageDir(config), "opencode-v1", "state");
     // Shared by the first spawn and by any later rollover standby, so a
     // replacement engine is identical apart from its port.
     const engineEnv: Record<string, string | undefined> = {
@@ -263,6 +273,7 @@ export async function startEmbeddedServer(options: EmbeddedServerOptions): Promi
       cwd,
       runtimeConfigPath,
       env: engineEnv,
+      stateDir: engineStateDir,
       reservedPorts: () => {
         const poolPorts = enginePool?.connections()
           .map((connection) => Number(new URL(connection.baseUrl).port) || 0)
@@ -276,6 +287,7 @@ export async function startEmbeddedServer(options: EmbeddedServerOptions): Promi
       cwd,
       excludedPorts: [config.port],
       env: engineEnv,
+      stateDir: engineStateDir,
     }));
 
     config.opencodeBaseUrl = managedOpencode.url;

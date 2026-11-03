@@ -17,9 +17,21 @@ test("a platform admin finds recent workplace adoption and opens the people behi
     await admin.screenshot();
   });
 
-  await step("after: Opportunities puts the most recently active multi-user organization first", async () => {
+  await step("after: Opportunities opens a weekly control center with drilldowns", async () => {
     await admin.click({ role: "link", label: "Opportunities" });
     await admin.see({ role: "heading", label: "Opportunities" });
+    await admin.see({ role: "heading", label: "Work queue" });
+    await admin.see({ role: "heading", label: "Recent signups" });
+    await admin.see({ role: "heading", label: "Teams adding people" });
+    await admin.see({ role: "heading", label: "Activity to check" });
+    await admin.screenshot();
+    await admin.resizeViewport({ width: 390, height: 844, deviceScaleFactor: 1 });
+    const layout = await probe.on(world.admin).dom('[data-testid="admin-opportunity-overview"]');
+    expect(layout.documentWidth).toBeLessThanOrEqual(layout.viewportWidth);
+    await admin.screenshot();
+    await admin.resizeViewport({ width: 1280, height: 900, deviceScaleFactor: 1 });
+    await admin.click({ role: "link", label: "Adoption opportunities" });
+    await admin.see({ role: "heading", label: "Adoption opportunities" });
     await admin.see({ text: "2 matching organizations · page 1" });
     await admin.see({ role: "link", label: "Workplace example" });
     await admin.see({ role: "link", label: "Personal workspace" });

@@ -2,7 +2,7 @@ import { execFileSync, spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { closeSync, openSync } from "node:fs";
 import { chmod, mkdir, readFile, rename, stat, unlink, writeFile } from "node:fs/promises";
-import { homedir } from "node:os";
+import { availableParallelism, freemem, homedir, loadavg, totalmem } from "node:os";
 import { join, resolve } from "node:path";
 import { createServer } from "node:net";
 import { setTimeout as delay } from "node:timers/promises";
@@ -19,6 +19,7 @@ import {
   buildHeadlessRuntimeManifest,
   buildHeadlessServerLaunch,
   buildOpenworkServerArgs,
+  formatHeadlessHealthTimeout,
   mergeHeadlessServerConfig,
   normalizeDenTarget,
   resolveHeadlessRuntimeManifestPath,
@@ -47,6 +48,8 @@ export interface HeadlessWebLaunchOptions {
   rotateTokens?: boolean;
   env?: NodeJS.ProcessEnv;
   browserHostSuffix?: string;
+  /** Run the server on OpenCode v2 alone; no v1 engine process is started. */
+  v2Only?: boolean;
 }
 
 export interface HeadlessWebHandle {
@@ -134,12 +137,47 @@ async function resolvePort(value: string | undefined, host: string): Promise<num
   return getFreePort(host);
 }
 
-async function probeOk(url: string): Promise<boolean> {
+const HEALTH_TIMEOUT_MS = 45_000;
+
+type ProbeResult = { ok: boolean; detail: string };
+
+function probeFailure(error: unknown): string {
+  if (isRecord(error) && error.name === "TimeoutError") return "no answer within 1.5 s";
+  const cause = isRecord(error) ? error.cause : undefined;
+  return isRecord(cause) && typeof cause.code === "string"
+    ? `unreachable (${cause.code})`
+    : `unreachable (${messageText(error)})`;
+}
+
+async function probe(url: string): Promise<ProbeResult> {
   try {
     const response = await fetch(url, { signal: AbortSignal.timeout(1_500) });
-    return response.ok;
-  } catch {
-    return false;
+    return { ok: response.ok, detail: `answered ${response.status}` };
+  } catch (error) {
+    return { ok: false, detail: probeFailure(error) };
+  }
+}
+
+async function probeOk(url: string): Promise<boolean> {
+  return (await probe(url)).ok;
+}
+
+/** A v2-only server answers /health before its engine runs, so also wait for the engine. */
+async function probeServer(manifest: HeadlessRuntimeManifest, v2Only: boolean): Promise<ProbeResult> {
+  const health = await probe(manifest.healthUrl);
+  if (!health.ok || !v2Only) return health;
+  try {
+    const response = await fetch(new URL("/experimental/engine-v2-preview/status", manifest.openworkUrl), {
+      headers: { Authorization: `Bearer ${manifest.token}` },
+      signal: AbortSignal.timeout(1_500),
+    });
+    if (!response.ok) return { ok: false, detail: `${health.detail}; v2 engine status answered ${response.status}` };
+    const status: unknown = await response.json();
+    if (isRecord(status) && status.running === true) return health;
+    const error = isRecord(status) && typeof status.lastError === "string" ? `: ${status.lastError}` : " yet";
+    return { ok: false, detail: `${health.detail}; v2 engine not running${error}` };
+  } catch (error) {
+    return { ok: false, detail: `${health.detail}; v2 engine status ${probeFailure(error)}` };
   }
 }
 
@@ -614,13 +652,40 @@ export function stopHeadlessRuntime(manifest: HeadlessRuntimeManifest): Promise<
   return stopManifest(manifest);
 }
 
-async function waitForHealthy(manifest: HeadlessRuntimeManifest): Promise<void> {
-  const deadline = Date.now() + 45_000;
+function childState(child: ChildProcess): string {
+  if (child.exitCode !== null) return `exited with code ${child.exitCode}`;
+  if (child.signalCode !== null) return `killed by ${child.signalCode}`;
+  return "running";
+}
+
+function hostLoad(): string {
+  const mebibytes = (bytes: number): string => `${Math.round(bytes / 1_048_576)} MiB`;
+  return `load ${loadavg().map((value) => value.toFixed(1)).join("/")} on ${availableParallelism()} CPUs; ${mebibytes(freemem())} of ${mebibytes(totalmem())} memory free`;
+}
+
+async function waitForHealthy(
+  manifest: HeadlessRuntimeManifest,
+  processes: { server: ChildProcess; web: ChildProcess },
+  v2Only: boolean,
+): Promise<void> {
+  const deadline = Date.now() + HEALTH_TIMEOUT_MS;
+  let server: ProbeResult = { ok: false, detail: "not probed" };
+  let web: ProbeResult = { ok: false, detail: "not probed" };
   while (Date.now() < deadline) {
-    if (await probeStack(manifest)) return;
+    [server, web] = await Promise.all([probeServer(manifest, v2Only), probe(manifest.webUrl)]);
+    if (server.ok && web.ok) return;
     await delay(500);
   }
-  throw new Error(`Headless web did not become healthy; inspect ${manifest.webLogPath} and ${manifest.headlessLogPath}.`);
+  const [serverLog, webLog] = await Promise.all(
+    [manifest.headlessLogPath, manifest.webLogPath].map((path) => readFile(path, "utf8").catch(() => null)),
+  );
+  throw new Error(formatHeadlessHealthTimeout({
+    timeoutMs: HEALTH_TIMEOUT_MS,
+    server: { probe: server.detail, process: childState(processes.server), logPath: manifest.headlessLogPath, log: serverLog },
+    web: { probe: web.detail, process: childState(processes.web), logPath: manifest.webLogPath, log: webLog },
+    host: hostLoad(),
+    secrets: [manifest.token, manifest.hostToken],
+  }));
 }
 
 async function waitForOwnedRuntimeExit(manifest: HeadlessRuntimeManifest): Promise<string> {
@@ -824,7 +889,9 @@ export async function launchHeadlessWeb(options: HeadlessWebLaunchOptions): Prom
     OPENWORK_TOKEN: resolvedTokens.token,
     OPENWORK_HOST_TOKEN: resolvedTokens.hostToken,
     OPENWORK_SERVER_CONFIG: serverConfigPath,
-    OPENWORK_MANAGE_OPENCODE: "1",
+    ...(options.v2Only
+      ? { OPENWORK_MANAGE_OPENCODE: "0", OPENWORK_ENGINE_V2_PREVIEW: "1" }
+      : { OPENWORK_MANAGE_OPENCODE: "1" }),
     OPENWORK_OPENCODE_BIN: env.OPENWORK_OPENCODE_BIN ?? "opencode",
   };
   const pnpmExecPath = env.npm_execpath?.trim();
@@ -884,7 +951,7 @@ export async function launchHeadlessWeb(options: HeadlessWebLaunchOptions): Prom
       waitForSpawn(serverProcess, "openwork-server"),
     ]);
     await writeRuntimeManifest(manifest);
-    await waitForHealthy(manifest);
+    await waitForHealthy(manifest, { server: serverProcess, web: webProcess }, options.v2Only === true);
     const supervised = await ensureRuntimeSupervisor(manifest, repoRoot, env);
     manifest = supervised.manifest;
     acquiredManifest = manifest;
@@ -933,6 +1000,8 @@ export async function launchHeadlessWeb(options: HeadlessWebLaunchOptions): Prom
     const cleanupDetail = cleanupErrors.length === 0
       ? ""
       : ` Cleanup could not confirm ownership release: ${cleanupErrors.join("; ")}.`;
-    throw new Error(`${messageText(error)} Headless server: ${openworkUrl}; web: ${webUrl}.${cleanupDetail}`);
+    // Keep the addresses on the first line; a health timeout carries log tails after it.
+    const [summary, ...details] = messageText(error).split("\n");
+    throw new Error([`${summary} Headless server: ${openworkUrl}; web: ${webUrl}.${cleanupDetail}`, ...details].join("\n"));
   }
 }

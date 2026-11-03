@@ -17,6 +17,8 @@ import {
   useOpenWorkModelsPromoEligibility,
 } from "@/react-app/domains/cloud/openwork-models-promo";
 import { usePlatform } from "@/react-app/kernel/platform";
+import { SignInHandoffNotice } from "@/react-app/domains/cloud/sign-in-handoff-notice";
+import { useCloudSignIn } from "@/react-app/domains/cloud/sign-in-return";
 import { persistableComposerDraftText, useComposerStateStore } from "@/react-app/domains/session/surface/composer-state-store";
 import { useNewTaskDraftState } from "@/react-app/domains/session/sync/draft-store";
 import {
@@ -127,6 +129,7 @@ export function SessionEmptyHero(props: SessionEmptyHeroProps) {
   const canAddProviders = !checkDesktopRestriction({ restriction: "allowCustomProviders" });
   const platform = usePlatform();
   const denAuth = useDenAuth();
+  const signIn = useCloudSignIn();
   const openWorkModelsPromoEligible = useOpenWorkModelsPromoEligibility();
   const [modelsPromoHidden, setModelsPromoHidden] = useState(isOpenWorkModelsPromoHidden);
 
@@ -211,6 +214,7 @@ export function SessionEmptyHero(props: SessionEmptyHeroProps) {
       </div>
 
       <div ref={composerDockRef} onFocusCapture={() => setComposing(true)} data-empty-composer-dock className="max-lg:sticky max-lg:bottom-0 max-lg:order-last max-lg:mt-auto max-lg:shrink-0 max-lg:bg-dls-surface">
+      <SignInHandoffNotice workspaceId={props.composer?.workspaceId} sessionId={null} hasDraft={Boolean(persistableComposerDraftText(prompt).trim())} />
       <NewTaskComposer
         draft={prompt}
         onDraftChange={setPrompt}
@@ -229,7 +233,11 @@ export function SessionEmptyHero(props: SessionEmptyHeroProps) {
           <button
             type="button"
             className="flex items-center gap-1 font-medium text-blue-10 transition-colors hover:text-blue-11"
-            onClick={() => platform.openLink(getOpenWorkModelsActionUrl(denAuth.isSignedIn, "sign-up"))}
+            onClick={() => {
+              const url = getOpenWorkModelsActionUrl(denAuth.isSignedIn, "sign-up");
+              if (denAuth.isSignedIn) platform.openLink(url);
+              else signIn({ url, workspaceId: props.composer?.workspaceId, fallback: () => platform.openLink(url) });
+            }}
           >
             Get frontier models with no API keys
             <ArrowRight className="size-3" />

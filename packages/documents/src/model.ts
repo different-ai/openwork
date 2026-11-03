@@ -15,15 +15,18 @@ export const editorDocumentSchema = z.discriminatedUnion("kind", [
 export type EditorDocument = z.infer<typeof editorDocumentSchema>
 export type SpreadsheetDocument = Extract<EditorDocument, { kind: "spreadsheet" }>
 export type TextDocument = Extract<EditorDocument, { kind: "document" }>
+const connectionIdSchema = z.string().regex(/^(google-workspace|microsoft-365|emc_[A-Za-z0-9]+)$/)
 export const documentSaveSchema = z.discriminatedUnion("kind", [
-  z.object({ kind: z.literal("spreadsheet"), connectionId: z.string().regex(/^(google-workspace|emc_[A-Za-z0-9]+)$/), revision: z.string().min(1).max(512), sheetId: z.string().min(1).max(200), changes: z.array(z.object({ row: z.number().int().min(1).max(1_048_576), column: z.number().int().min(1).max(16_384), value: z.string().max(32_767), formula: z.boolean().default(false) }).strict()).min(1).max(500) }).strict(),
-  z.object({ kind: z.literal("document"), connectionId: z.string().regex(/^(google-workspace|emc_[A-Za-z0-9]+)$/), revision: z.string().min(1).max(512), changes: z.array(z.object({ sectionId: z.string().max(200), runId: z.string().max(200), value: z.string().max(32_767) }).strict()).min(1).max(500) }).strict(),
-  z.object({ kind: z.literal("text"), connectionId: z.string().regex(/^(google-workspace|emc_[A-Za-z0-9]+)$/), revision: z.string().min(1).max(512), text: z.string().max(1_000_000) }).strict(),
+  z.object({ kind: z.literal("spreadsheet"), connectionId: connectionIdSchema, revision: z.string().min(1).max(512), sheetId: z.string().min(1).max(200), changes: z.array(z.object({ row: z.number().int().min(1).max(1_048_576), column: z.number().int().min(1).max(16_384), value: z.string().max(32_767), formula: z.boolean().default(false) }).strict()).min(1).max(500) }).strict(),
+  z.object({ kind: z.literal("document"), connectionId: connectionIdSchema, revision: z.string().min(1).max(512), changes: z.array(z.object({ sectionId: z.string().max(200), runId: z.string().max(200), value: z.string().max(32_767) }).strict()).min(1).max(500) }).strict(),
+  z.object({ kind: z.literal("text"), connectionId: connectionIdSchema, revision: z.string().min(1).max(512), text: z.string().max(1_000_000) }).strict(),
 ])
 export type DocumentSave = z.infer<typeof documentSaveSchema>
 export type EditorRequest = { sheetId?: string; startRow?: number; connectionId?: string }
 export type DocumentsEditor = {
   office?: OfficeEditor
+  /** Whether this file's provider has the full Office editor; unset means it follows `office`. */
+  hasOffice?(fileId: string): boolean
   open(fileId: string, input?: EditorRequest, signal?: AbortSignal): Promise<EditorDocument>
   save(fileId: string, changes: DocumentSave): Promise<void>
   contentUrl(fileId: string): string

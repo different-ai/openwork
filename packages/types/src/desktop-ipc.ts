@@ -327,7 +327,7 @@ export type DesktopFetchResult = {
  * resolves elsewhere is shown in its folder instead of being handed to an application.
  */
 export type DesktopWorkspaceFileOpenResult =
-  | { ok: true; action: "opened" | "revealed" }
+  | { ok: true; action: "opened" | "revealed" | "unavailable" }
   | { ok: false; error: string };
 
 export type DesktopBinaryDownloadResult = {
@@ -355,7 +355,8 @@ export type ComputerPermission = "accessibility" | "screenRecording";
 /** The agent needs computer use this chat does not have yet: setup, or the person's allowance. */
 export type ComputerRequest = {
   id: string;
-  reason: "setup";
+  /** setup: macOS permissions or a remote connection; script: an app script waiting for the person's approval; files: files an app or page is about to receive; credential: the browser is about to type a password or code on a site. */
+  reason: "setup" | "script" | "files" | "credential";
   /** The computer the chat uses, e.g. "This Mac" or "Freestyle VM". */
   computer: string;
   placement: "local" | "remote";
@@ -363,6 +364,14 @@ export type ComputerRequest = {
   detail?: string;
   appId?: string;
   purpose?: string;
+  /** False when organization policy requires approval of each individual script. */
+  standing?: boolean;
+  /** The exact script that runs if the person approves it. */
+  script?: { app: "applescript" | "jxa" | "blender"; code: string };
+  /** The files handed over if the person approves: names or full paths, and the app or site receiving them. */
+  files?: { app: string; names: string[] };
+  /** Where the agent would type a password or one-time code: an exact site (origin) in the built-in browser, or a native app by name and id. */
+  credential?: { site?: string; app?: string; appId?: string };
 };
 
 /** One chat's computer use state, as the broker reports it. */
@@ -391,7 +400,12 @@ export type ComputerSnapshot = {
     reason?: string;
   } | null;
   cleanupPending?: boolean;
+  /** This chat's computer steps: time spent on the computer, and waiting for the model between steps. */
+  timing?: { steps: number; computerMs: number; modelMs: number; last?: { name: string; computerMs: number; modelMs?: number } };
 };
+
+/** Settings: the computer every chat uses and whether it is set up. */
+export type ComputerStatus = Pick<ComputerSnapshot, "enabled" | "entry" | "targetId" | "targets" | "placement" | "readiness" | "permissions" | "detail">;
 
 /** The live watch view: recent redacted frames and dispatched input, never actionable. */
 export type ComputerPresentation = {
@@ -414,6 +428,12 @@ export type ComputerPresentation = {
 export type DesktopCommandMap = {
   __startNativeDictation: { args: [requestId: string]; result: { ok: true } | { ok: false; reason: "unavailable" | "not_focused" | "failed" } };
   __cancelNativeDictationStart: { args: [requestId: string]; result: boolean };
+  // Bundled speech helper: "local" is Apple's on-device recognizer, "online"
+  // Windows' online speech recognition. Results arrive on the dictation event channel.
+  __speechDictationMode: { args: []; result: "local" | "online" | null };
+  __startSpeechDictation: { args: [requestId: string, language: string]; result: { ok: true } | { ok: false; reason: "unavailable" | "not_focused" | "failed" } };
+  __stopSpeechDictation: { args: [requestId: string]; result: boolean };
+  __abortSpeechDictation: { args: [requestId: string]; result: boolean };
   // Workspace state
   workspaceBootstrap: { args: []; result: WorkspaceList };
   workspaceSetSelected: { args: [workspaceId: string]; result: WorkspaceList };
@@ -449,6 +469,8 @@ export type DesktopCommandMap = {
     result: { enabled: boolean };
   };
   desktopSentryClearSession: { args: []; result: { enabled: boolean } };
+  /** Keep the computer from sleeping while this window's agents are working. */
+  desktopSetKeepAwake: { args: [active: boolean]; result: { active: boolean } };
   desktopIntegrationStatus: { args: []; result: DesktopIntegrationStatus };
   desktopIntegrationInstall: {
     args: [options?: { useExternalLauncher?: boolean }];
@@ -461,6 +483,7 @@ export type DesktopCommandMap = {
 
   // Computer use (macOS): chat ownership, the watch view and permission setup
   computerSnapshot: { args: [sessionId: string]; result: ComputerSnapshot };
+  computerStatus: { args: []; result: ComputerStatus };
   computerPresentation: { args: [sessionId: string, visible: boolean]; result: ComputerPresentation | null };
   computerInteract: {
     args: [input: { sessionId: string; id: string; action: "takeover" | "resume" }];
@@ -468,11 +491,13 @@ export type DesktopCommandMap = {
   };
   computerSetup: { args: [permission: ComputerPermission]; result: { setupId: string } };
   computerDismissSetup: { args: [setupId?: string]; result: void };
-  computerChoose: { args: [input: { sessionId: string; targetId: string }]; result: ComputerSnapshot };
+  computerChoose: { args: [targetId: string]; result: ComputerStatus };
   computerHalt: { args: [sessionId: string]; result: ComputerSnapshot };
-  computerAnswerRequest: { args: [input: { sessionId: string; answer: "dismiss" }]; result: ComputerSnapshot };
+  computerAnswerRequest: { args: [input: { sessionId: string; answer: "dismiss" | "allow" | "always"; id?: string }]; result: ComputerSnapshot };
   computerSetFeatureEnabled: { args: [enabled: boolean]; result: boolean };
   computerSetRemoteEnabled: { args: [enabled: boolean]; result: boolean };
+  /** Compatibility-only no-op for older renderers; returns the computerUse state. */
+  computerSetBackgroundEnabled: { args: [enabled: boolean]; result: boolean };
   computerResetPermission: { args: [permission: ComputerPermission]; result: { setupId: string } };
   computerEndTurn: { args: [sessionId: string]; result: boolean };
 
@@ -562,7 +587,7 @@ export type DesktopCommandMap = {
   __showContextMenu: { args: [request: NativeContextMenuRequest]; result: string | null };
   __cancelContextMenu: { args: [requestId: string]; result: boolean };
   __openPath: { args: [target: string]; result: unknown };
-  __openWorkspaceFile: { args: [workspaceRoot: string, target: string]; result: DesktopWorkspaceFileOpenResult };
+  __openWorkspaceFile: { args: [workspaceRoot: string, target: string, options?: { reveal?: boolean }]; result: DesktopWorkspaceFileOpenResult };
   __revealItemInDir: { args: [target: string]; result: unknown };
   __applyBrandAppName: { args: [appName: string | null]; result: { ok: true; appName: string } };
   __applyBrandIcon: { args: [url: string | null]; result: BrandIconApplyResult };

@@ -1,3 +1,4 @@
+import type { BillingPlanTier } from "@openwork/types/den/billing-plans";
 import { parseDeploymentCapabilities, type DeploymentCapabilities } from "@openwork/types/den/deployment-capabilities";
 import { mapFeatures, type FeatureMap } from "@openwork/features";
 import { PERMISSION_KEYS, getPermissionDefinition, isPermissionKey, isPermissionOwnerOnlyByDefault, permissionDefaultKeys, type PermissionKey } from "@openwork/types/den/permissions";
@@ -12,6 +13,9 @@ export type DenOrgSummary = {
   orgMemberId: string;
   membershipId: string;
   memberCount: number;
+  /** Null when an older server does not report the plan; never inferred from the member's role. */
+  planTier: BillingPlanTier | null;
+  isSandbox: boolean;
   createdAt: string | null;
   updatedAt: string | null;
   isActive: boolean;
@@ -134,6 +138,10 @@ export type DenOrgAccessFlags = {
   canViewAgentPermissions: boolean;
   /** `agent_permissions.manage`: change what agents can do on members' computers. */
   canManageAgentPermissions: boolean;
+  /** `prompts.view`: see the system prompts that steer members' agents. */
+  canViewPrompts: boolean;
+  /** `prompts.manage`: change the system prompts that steer members' agents. */
+  canManagePrompts: boolean;
   /** `api_keys.view` */
   canViewApiKeys: boolean;
   /** `api_keys.manage` */
@@ -351,6 +359,8 @@ export type DenOrgEntitlements = {
   orgControls: boolean;
   analytics: boolean;
   auditLogs: boolean;
+  /** SCIM provisioning (Enterprise). */
+  scim: boolean;
 };
 
 /** Server-advertised and per-org capabilities; optional fields default to off. */
@@ -595,6 +605,8 @@ export function getOrgAccessFlags(roleValue: string, isOwner: boolean, permissio
     canManagePermissions: can("permissions.manage"),
     canViewAgentPermissions: can("agent_permissions.view"),
     canManageAgentPermissions: can("agent_permissions.manage"),
+    canViewPrompts: can("prompts.view"),
+    canManagePrompts: can("prompts.manage"),
     canViewApiKeys: can("api_keys.view"),
     canManageApiKeys: can("api_keys.manage"),
     canViewScim: can("scim.view"),
@@ -747,6 +759,10 @@ export function getWebRoute(orgSlug?: string | null): string {
   return `${getOrgDashboardRoute(orgSlug)}/web`;
 }
 
+export function getLibraryLlmProviderRoute(orgSlug: string | null | undefined, providerId: string): string {
+  return `${getLibraryRoute(orgSlug)}/model-providers/${encodeURIComponent(providerId)}`;
+}
+
 export function getLlmProvidersRoute(orgSlug?: string | null): string {
   return getCustomLlmProvidersRoute(orgSlug);
 }
@@ -807,6 +823,10 @@ export function getAiGatewayProvidersRoute(orgSlug?: string | null): string {
   return `${getAiGatewayRoute(orgSlug)}?tab=ai-providers`;
 }
 
+export function getAiGatewayAutoRouterRoute(orgSlug?: string | null): string {
+  return `${getAiGatewayRoute(orgSlug)}?tab=auto-router`;
+}
+
 export function getNewAiGatewayProviderRoute(orgSlug?: string | null, providerId?: string): string {
   const base = `${getAiGatewayRoute(orgSlug)}/providers/new`;
   return providerId ? `${base}?provider=${encodeURIComponent(providerId)}` : base;
@@ -814,6 +834,17 @@ export function getNewAiGatewayProviderRoute(orgSlug?: string | null, providerId
 
 export function getAiGatewayProviderRoute(orgSlug: string | null | undefined, inferenceProviderId: string): string {
   return `${getAiGatewayRoute(orgSlug)}/providers/${encodeURIComponent(inferenceProviderId)}`;
+}
+
+/** Step one of a new Smart Router: its name, models and tasks. */
+export function getNewAiGatewaySmartRouterRoute(orgSlug?: string | null): string {
+  return `${getAiGatewayRoute(orgSlug)}/smart-routers/new`;
+}
+
+/** A Smart Router's page; `step: "access"` is step two of creating one: who it applies to. */
+export function getAiGatewaySmartRouterRoute(orgSlug: string | null | undefined, routerId: string, step?: "access"): string {
+  const base = `${getAiGatewayRoute(orgSlug)}/smart-routers/${encodeURIComponent(routerId)}`;
+  return step ? `${base}?step=${step}` : base;
 }
 
 export function getEditAiGatewayProviderRoute(orgSlug: string | null | undefined, inferenceProviderId: string): string {
@@ -957,12 +988,22 @@ export function getLibraryPluginRoute(orgSlug: string | null | undefined, plugin
   return `${getLibraryRoute(orgSlug)}/plugins/${encodeURIComponent(pluginId)}`;
 }
 
+/** A skill inside a plugin, viewed from My Library (no admin area needed). */
+export function getLibraryPluginSkillRoute(orgSlug: string | null | undefined, pluginId: string, skillId: string): string {
+  return `${getLibraryPluginRoute(orgSlug, pluginId)}/skills/${encodeURIComponent(skillId)}`;
+}
+
 export function getLibraryPluginShareRoute(orgSlug: string | null | undefined, pluginId: string): string {
   return `${getLibraryPluginRoute(orgSlug, pluginId)}/share`;
 }
 
 export function getLibraryNewPluginRoute(orgSlug?: string | null, start?: "skill"): string {
   return `${getLibraryRoute(orgSlug)}/plugins/new${start ? `?start=${start}` : ""}`;
+}
+
+/** The member's own agent (My bot), in the sidebar's Work section. */
+export function getLibraryMyAgentRoute(orgSlug?: string | null): string {
+  return `${getOrgDashboardRoute(orgSlug)}/my-bot`;
 }
 
 export function getLibraryModelsRoute(orgSlug?: string | null): string {
@@ -1033,6 +1074,8 @@ export function parseOrgListPayload(payload: unknown): {
         orgMemberId,
         membershipId,
         memberCount: typeof entry.memberCount === "number" ? entry.memberCount : 0,
+        planTier: entry.planTier === "free" || entry.planTier === "team" || entry.planTier === "enterprise" ? entry.planTier : null,
+        isSandbox: asBoolean(entry.isSandbox),
         createdAt: asIsoString(entry.createdAt),
         updatedAt: asIsoString(entry.updatedAt),
         isActive: asBoolean(entry.isActive),
@@ -1269,7 +1312,7 @@ function parseOrgCapabilities(value: unknown): DenOrgCapabilities {
 
 function parseOrgEntitlements(value: unknown): DenOrgEntitlements {
   if (!isRecord(value)) {
-    return { sso: true, desktopPolicies: true, orgControls: true, analytics: true, auditLogs: false };
+    return { sso: true, desktopPolicies: true, orgControls: true, analytics: true, auditLogs: false, scim: true };
   }
 
   return {
@@ -1278,6 +1321,7 @@ function parseOrgEntitlements(value: unknown): DenOrgEntitlements {
     orgControls: value.orgControls !== false,
     analytics: value.analytics !== false,
     auditLogs: value.auditLogs === true,
+    scim: value.scim !== false,
   };
 }
 

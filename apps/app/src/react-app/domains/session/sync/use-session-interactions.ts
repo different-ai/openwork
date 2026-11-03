@@ -11,6 +11,7 @@ import { t } from "@/i18n";
 import { useQueryCacheArrayState, useQueryCacheState } from "@/react-app/infra/query-cache-state";
 import { getReactQueryClient } from "@/react-app/infra/query-client";
 import { describeRouteError } from "@/react-app/shell/route-workspaces";
+import { createSessionChildIdsSelector, useSessionActivityStore } from "../status/session-activity-store";
 import {
   permissionKey,
   questionKey,
@@ -239,10 +240,12 @@ function createInteractionHydration(client: Client, workspaceId: string, session
   const newChild = (): PermissionHydration => ({
     controller: new AbortController(), snapshot: { startedAt: 0 }, legacy, done: false,
   });
-  const refresh = () => {
+  const refreshIds = (ids: Iterable<string>) => {
     if (disposed) return;
     refreshShared();
-    for (const [id, child] of children) {
+    for (const id of ids) {
+      const child = children.get(id);
+      if (!child) continue;
       if (child.done) {
         const next = newChild();
         children.set(id, next);
@@ -251,6 +254,18 @@ function createInteractionHydration(client: Client, workspaceId: string, session
     }
     drain();
   };
+  const refresh = () => refreshIds(children.keys());
+  // A child may ask after the initial shared snapshot, while its live event
+  // is missed. Reconcile only active or blocked sessions, using the same
+  // bounded queue and snapshot fences as initial hydration and reconnect.
+  const interval = window.setInterval(() => {
+    const records = useSessionActivityStore.getState().recordsByWorkspaceId[workspaceId] ?? {};
+    const ids = [...children.keys()].filter(id => {
+      const record = records[id];
+      return record?.runActive || record?.waitingPermissionIds.length || record?.waitingQuestionIds.length;
+    });
+    if (ids.length) refreshIds(ids);
+  }, 5_000);
   const onVisibilityChange = () => { if (document.visibilityState === "visible") refresh(); };
   refreshShared();
   window.addEventListener("online", refresh);
@@ -283,6 +298,7 @@ function createInteractionHydration(client: Client, workspaceId: string, session
     },
     dispose() {
       disposed = true;
+      window.clearInterval(interval);
       legacy?.controller.abort();
       questions?.controller.abort();
       for (const child of children.values()) child.controller.abort();
@@ -312,11 +328,21 @@ export function useSessionInteractions(input: UseSessionInteractionsInput) {
   const questionReplyBusyRef = useRef(false);
 
   const requestedSessionIdsKey = (input.interactionSessionIds ?? []).join("\u0000");
+  const selectChildIds = useMemo(createSessionChildIdsSelector, []);
+  const childrenBySession = useSessionActivityStore(selectChildIds)[workspaceId ?? ""];
   const interactionSessionIds = useMemo(() => {
     if (!sessionId) return [];
     const requested = requestedSessionIdsKey ? requestedSessionIdsKey.split("\u0000") : [];
-    return Array.from(new Set([sessionId, ...requested].map((id) => id.trim()).filter(Boolean)));
-  }, [requestedSessionIdsKey, sessionId]);
+    const inventory = new Set<string>();
+    const queue = [sessionId, ...requested];
+    for (let index = 0; index < queue.length; index += 1) {
+      const id = queue[index]?.trim();
+      if (!id || inventory.has(id)) continue;
+      inventory.add(id);
+      queue.push(...(childrenBySession?.[id] ?? []));
+    }
+    return [...inventory];
+  }, [childrenBySession, requestedSessionIdsKey, sessionId]);
   const permissionQueryKeys = useMemo(
     () => workspaceId ? interactionSessionIds.map((id) => permissionKey(workspaceId, id)) : [],
     [interactionSessionIds, workspaceId],

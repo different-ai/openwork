@@ -93,6 +93,8 @@ type Session = {
   controller: AbortController
   requestOptions: RequestOptions
   lifecycle: EnterpriseMcpLifecycle
+  /** Set once the server was asked to end the session. */
+  releaseAttempted?: boolean
 }
 
 function requestInit(authorization: EnterpriseMcpAuthorization): RequestInit | undefined {
@@ -185,6 +187,27 @@ export function createEnterpriseMcpClient(options: EnterpriseMcpClientOptions): 
     } catch {
       // Diagnostics must never change the connection outcome they observe.
     }
+  }
+
+  /**
+   * Asks the server to end this one-off session (an HTTP DELETE). Closing the
+   * client only stops local requests, so a stateful server would otherwise
+   * keep the session until it expires, and gateways that cap open sessions
+   * then refuse new ones. Bounded, attempted once and best-effort: a server
+   * without DELETE support, a failure or a timeout never changes the result.
+   */
+  async function releaseSession(session: Session): Promise<void> {
+    if (session.releaseAttempted || !session.transport.sessionId) return
+    session.releaseAttempted = true
+    let timer: ReturnType<typeof setTimeout> | undefined
+    const released = session.transport.terminateSession().catch(() => undefined)
+    await Promise.race([released, new Promise<void>((resolve) => { timer = setTimeout(resolve, closeTimeoutMs) })])
+    clearTimeout(timer)
+  }
+
+  async function closeSession(session: Session): Promise<void> {
+    await releaseSession(session)
+    await closeWithinDeadline(() => session.client.close(), closeTimeoutMs)
   }
 
   function failureRequestPhase(observer: EnterpriseMcpRequestObserver) {
@@ -408,6 +431,8 @@ export function createEnterpriseMcpClient(options: EnterpriseMcpClientOptions): 
       })
       throw wrapped
     } finally {
+      // A failure can leave a session the operation never closed.
+      await releaseSession(session)
       session.controller.abort()
     }
   }
@@ -436,7 +461,7 @@ export function createEnterpriseMcpClient(options: EnterpriseMcpClientOptions): 
             throw error
           } finally {
             try {
-              await closeWithinDeadline(() => session.client.close(), closeTimeoutMs)
+              await closeSession(session)
             } catch (error) {
               if (!operationFailed) {
                 throw new EnterpriseMcpClientError({
@@ -508,7 +533,7 @@ export function createEnterpriseMcpClient(options: EnterpriseMcpClientOptions): 
                   throw new Error("The OAuth provider requested authorization without an authorization URL.")
                 }
                 try {
-                  await closeWithinDeadline(() => session.client.close(), closeTimeoutMs)
+                  await closeSession(session)
                 } catch {
                   // The bounded cleanup attempt must not discard a valid authorization URL.
                 }
@@ -516,7 +541,7 @@ export function createEnterpriseMcpClient(options: EnterpriseMcpClientOptions): 
               }
             }
             try {
-              await closeWithinDeadline(() => session.client.close(), closeTimeoutMs)
+              await closeSession(session)
             } catch (error) {
               throw new EnterpriseMcpClientError({
                 operationPhase: "shutdown",
@@ -529,7 +554,7 @@ export function createEnterpriseMcpClient(options: EnterpriseMcpClientOptions): 
             const authorizeUrl = session.oauthProvider?.authorizeUrl ?? null
             if (error instanceof UnauthorizedError && authorizeUrl) {
               try {
-                await closeWithinDeadline(() => session.client.close(), closeTimeoutMs)
+                await closeSession(session)
               } catch {
                 // The bounded cleanup attempt must not discard a valid authorization URL.
               }
@@ -611,7 +636,7 @@ export function createEnterpriseMcpClient(options: EnterpriseMcpClientOptions): 
             })
           } finally {
             try {
-              await closeWithinDeadline(() => session.client.close(), closeTimeoutMs)
+              await closeSession(session)
             } catch (error) {
               if (!operationFailed) {
                 throw new EnterpriseMcpClientError({

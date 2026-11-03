@@ -4,6 +4,9 @@ import Foundation
 
 setbuf(stdout, nil)
 let command = CommandLine.arguments.dropFirst().first ?? ""
+// Opened by macOS itself (Quit & Reopen after a grant): OpenWork starts it when needed.
+if command.isEmpty && getppid() == 1 { exit(0) }
+Responsibility.relaunchDisclaimed(requireTrustedHost: command == "mcp" || command == "mcp-embedded")
 
 @MainActor
 func printJSON(_ payload: [String: Any]) {
@@ -44,7 +47,7 @@ case "mcp", "mcp-embedded":
     // private openwork/ui channel. mcp: standalone, with native controls.
     SessionControls.embedded = command == "mcp-embedded"
     if !HostTrust.embeddedHostIsTrusted() {
-        fputs("Computer control requires the helper and desktop host to be signed by the same Apple team.\n", stderr)
+        fputs("Computer control requires the signed OpenWork desktop app as its host.\n", stderr)
         exit(1)
     }
     if SessionControls.embedded { MCPOutput.shared.enableNonblocking() }

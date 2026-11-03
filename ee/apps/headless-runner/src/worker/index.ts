@@ -1,3 +1,4 @@
+import "./http.js"
 import { createHmac, timingSafeEqual } from "node:crypto"
 import { Hono, type Context } from "hono"
 import { routePath } from "hono/route"

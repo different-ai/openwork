@@ -1,4 +1,5 @@
 import { expect } from "vitest";
+import { z } from "zod";
 import { spec } from "@openwork/testkit";
 import { workbotComputerWorld } from "../worlds/workbot-computer.ts";
 
@@ -10,7 +11,11 @@ test("a member opens Workbot's Computer tab directly when the rollout is enabled
   const reloadWhenComputer = async (enabled: boolean) => {
     await probe.eventually(async () => {
       const me = await world.call("/v1/workbot/me");
-      return me.ok ? (await me.json() as { computer?: boolean }).computer === true : null;
+      if (!me.ok) return null;
+      const access = z.object({ computer: z.boolean(), browser: z.boolean(), browserLiveView: z.boolean() }).parse(await me.json());
+      // The world enables only the parent browser rollout. Older-client wire compatibility follows it on and off.
+      expect(access.browserLiveView).toBe(access.browser);
+      return access.computer;
     }, { within: 65_000, until: value => value === enabled });
     await user.reload();
   };
@@ -27,12 +32,28 @@ test("a member opens Workbot's Computer tab directly when the rollout is enabled
     await user.see({ role: "button", label: "Computer" });
     await user.click({ role: "button", label: "Computer" });
     await user.see({ role: "button", label: "Browser" });
+    // The tab opens on its Browser view, and the address says so.
+    expect(new URL(await probe.url()).pathname).toBe("/browser");
     await user.see({ text: "Your computer is unavailable. Try reconnecting." }, { timeoutMs: 30_000 });
     await user.see({ role: "button", label: "Reconnect" });
     await user.notSee({ text: "Allow for this chat" });
     const visible = (await probe.dom('section[aria-label="Computer"]')).elements.length > 0;
     evidence.recordAssertionEvidence("Direct access and honest availability", "The real Workbot tab opens without consent. This fixture has no desktop provider, so it offers Reconnect instead of a fake stream.", visible);
     await user.screenshot();
+  });
+  await step("after: a computer that won't connect offers Rebuild, which asks before erasing it", async () => {
+    await user.click({ role: "button", label: "Rebuild computer" });
+    await user.see({ text: "Rebuild your computer?" });
+    await user.see({ text: "Workbot replaces this computer with a fresh one. Its open apps, browser tabs and files are erased. Your chat and the files in Files are kept." });
+    await user.screenshot();
+    // This fixture has no desktop provider to rebuild against, so the proof stops at the confirmation.
+    await user.click({ role: "button", label: "Cancel" });
+    // notSee requires absence for the whole interval; first let the close transition finish.
+    await probe.eventually(async () => (await probe.dom('[role="alertdialog"]')).elements.length, {
+      within: 5_000, until: count => count === 0, label: "Rebuild confirmation closes after Cancel",
+    });
+    await user.notSee({ text: "Rebuild your computer?" });
+    await user.see({ role: "button", label: "Reconnect" });
   });
   await step("the workspace navigation also opens the same Computer view", async () => {
     await user.click({ role: "button", label: "Home" });

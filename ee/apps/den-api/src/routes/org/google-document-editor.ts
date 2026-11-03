@@ -8,7 +8,6 @@ import { documentIdSchema, documentSaveSchema, editorDocumentSchema, type Editor
 import { openExcel, openWord, openOfficeTextPreview, patchExcel, patchWord, columnLetters } from "@openwork/documents/office"
 import { cellInputFromText, unsafeFormulaReason } from "@openwork/documents/office"
 import { env } from "../../env.js"
-import { organizationFeatureEnabled } from "../../features.js"
 import { orgMemberRoute, jsonValidator, paramValidator, queryValidator } from "../../middleware/index.js"
 import { jsonResponse } from "../../openapi.js"
 import { readGoogleActionJson, requestGoogleAction, type GoogleWorkspaceActionDependencies } from "./google-workspace-actions.js"
@@ -77,7 +76,7 @@ export function registerGoogleDocumentEditorRoutes<T extends { Variables: OrgRou
   const app = new Hono<{ Variables: OrgRouteVariables }>()
   const guard: MiddlewareHandler<{ Variables: OrgRouteVariables }> = async (c, next) => {
     const context = c.get("organizationContext")
-    if (!context || !(await organizationFeatureEnabled(context.organization.id, "workbotDocuments"))) return c.json({ error: "feature_disabled", message: "Documents is off for this workspace." }, 403)
+    if (!context?.features.workbotDocuments) return c.json({ error: "feature_disabled", message: "Documents is off for this workspace." }, 403)
     await next()
   }
   const description = (operationId: string, summary: string, schema: z.ZodType) => { const options: DescribeRouteOptions & { "x-mcp": false } = { operationId, tags: ["Documents"], "x-mcp": false, summary, description: "Requires organization membership, Workbot and Documents, and the member’s currently authorized Drive connection. Reads recheck provider access. Writes require current grants, explicit edits and a matching revision.", responses: { 200: jsonResponse("Document result.", schema), 400: jsonResponse("Unsupported edit.", errorSchema), 409: jsonResponse("Reconnect or reload the changed file.", errorSchema) } }; return describeRoute(options) }
@@ -104,7 +103,7 @@ export function registerGoogleDocumentEditorRoutes<T extends { Variables: OrgRou
   const itemSchema = z.object({ id: documentIdSchema, name: z.string(), mimeType: z.string(), modifiedTime: z.string().nullable(), size: z.number().nullable(), openUrl: z.string().nullable() })
   app.get(`${base}/metadata`, description("getGoogleDriveDocumentMetadata", "Resolve an authorized Drive document link without downloading content", itemSchema), orgMemberRoute(), guard, paramValidator(params), queryValidator(z.object({}).strict()), async c => {
     const context = c.get("organizationContext")
-    if (!context || !(await organizationFeatureEnabled(context.organization.id, "workbotWorkspaceAssistant"))) return c.json({ error: "feature_disabled", message: "Opening document links is off for this workspace." }, 403)
+    if (!context?.features.workbotWorkspaceAssistant) return c.json({ error: "feature_disabled", message: "Opening document links is off for this workspace." }, 403)
     const { fileId } = c.req.valid("param")
     const auth = await authorize(c); if (!auth.ok) return auth.reply
     const meta = await metadata(c, auth.selected, fileId); if (!meta.ok) return meta.reply
@@ -120,7 +119,7 @@ export function registerGoogleDocumentEditorRoutes<T extends { Variables: OrgRou
     const meta = await metadata(c, auth.selected, fileId); if (!meta.ok) return meta.reply
     const file = meta.file
     const permitted = file.mimeType === SHEET ? sheetWriteScopes : writeScopes
-    const canEdit = await organizationFeatureEnabled(c.get("organizationContext")!.organization.id, "workbotDocumentEditing") && file.capabilities?.canEdit === true && permitted.some(s => auth.token.account.scopes?.includes(s) && auth.token.enabledScopes.includes(s))
+    const canEdit = c.get("organizationContext")!.features.workbotDocumentEditing && file.capabilities?.canEdit === true && permitted.some(s => auth.token.account.scopes?.includes(s) && auth.token.enabledScopes.includes(s))
     const common = { fileId, name: file.name, revision: file.headRevisionId ?? file.version, canEdit, connectionId: auth.connectionId }
     c.header("cache-control", "no-store")
     try {
@@ -163,7 +162,7 @@ export function registerGoogleDocumentEditorRoutes<T extends { Variables: OrgRou
 
   app.post(`${base}/editor`, description("saveGoogleDriveDocumentEdits", "Save explicit inline edits to the same Drive file", z.object({ ok: z.literal(true) })), orgMemberRoute(), guard, bodyLimit({ maxSize: 2 * 1024 * 1024 }), paramValidator(params), jsonValidator(documentSaveSchema), async c => {
     const context = c.get("organizationContext")!
-    if (!await organizationFeatureEnabled(context.organization.id, "workbotDocumentEditing")) return c.json({ error: "feature_disabled", message: "Document editing is off for this workspace." }, 403)
+    if (!context.features.workbotDocumentEditing) return c.json({ error: "feature_disabled", message: "Document editing is off for this workspace." }, 403)
     const { fileId } = c.req.valid("param"); const save = c.req.valid("json")
     const auth = await authorize(c, save.connectionId); if (!auth.ok) return auth.reply
     const meta = await metadata(c, auth.selected, fileId); if (!meta.ok) return meta.reply

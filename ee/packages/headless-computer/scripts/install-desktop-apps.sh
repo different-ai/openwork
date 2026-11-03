@@ -6,7 +6,7 @@ packages=$(node --input-type=module -e 'import { DESKTOP_APPS } from "/usr/local
 apt-get update -qq
 # Word splitting is intentional: the package names come from our static catalog.
 apt-get install -y -qq --no-install-recommends $packages \
-  libreoffice-gtk3 libgl1-mesa-dri libglx-mesa0 mesa-utils tint2 adwaita-icon-theme fonts-noto-cjk fonts-noto-color-emoji acl
+  libreoffice-gtk3 python3-uno libgl1-mesa-dri libglx-mesa0 mesa-utils tint2 adwaita-icon-theme fonts-noto-cjk fonts-noto-color-emoji acl
 
 bash /usr/local/share/openwork-desktop/configure-files.sh
 ln -sfn /workspace/files /home/openwork-app/Uploads

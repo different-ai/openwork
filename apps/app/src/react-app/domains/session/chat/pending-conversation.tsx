@@ -12,6 +12,7 @@ export function PendingConversationView({ conversation, composer }: { conversati
   const failed = conversation.phase === "creation-failed";
   const text = persistableComposerDraftText(resolvePastedTextPlaceholders(conversation.submitted.draft, conversation.submitted.pasteParts));
   const error = failed ? presentOpencodeSessionError(conversation.error, "Couldn’t send your message") : null;
+  const gatewayProviderAuthFailure = error?.kind === "gateway-provider-authentication-failed" || error?.kind === "gateway-provider-permission-denied";
   return <div className="flex h-full min-h-0 flex-col" data-pending-conversation={conversation.id}>
     <div className="relative min-h-0 flex-1">
       <div className="absolute inset-0 overflow-x-hidden overflow-y-auto overscroll-y-contain touch-pan-y px-3 pb-4 pt-4 sm:px-5">
@@ -23,7 +24,8 @@ export function PendingConversationView({ conversation, composer }: { conversati
             </MessageContent>
           </Message>
           {failed ? <TaskRecovery state="failed"
-            title="Couldn’t send your message"
+            title={gatewayProviderAuthFailure ? error?.title ?? "Couldn’t send your message" : "Couldn’t send your message"}
+            description={gatewayProviderAuthFailure ? error?.description : undefined}
             technicalDetails={error?.technicalDetails}
             retryLabel="Retry sending"
             onRetry={() => { void retryPendingConversation(conversation.id); }}

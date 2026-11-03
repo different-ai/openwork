@@ -29,9 +29,13 @@ import type { AnalyticsObserver, beginModelAnalytics } from "./task-analytics.js
 import { respondBeforeUpstream } from "./early-response.js"
 import { completeChatResponse, inferenceError, readResponseJson, relayChatStream, upstreamError } from "./chat-response.js"
 import { gatewayModelEndpoints, gatewayModelsPath, registerGatewayRoutes } from "./gateway.js"
+import { createGcpServiceAccountTokenMinter } from "./credentials/gcp-service-account.js"
+import { loadProviderCatalogFromFile } from "./provider-catalog.js"
+import { gatewayProviderTestPath, registerProviderTestRoute } from "./provider-test.js"
 import type { GatewayDependencies } from "./gateway.js"
 import { isJsonContentType, readBoundedBody, RequestBodyLimitError } from "./relay.js"
 import { createRequestLogRecorder, insertRequestLogIntoDb, REQUEST_LOG_UNAVAILABLE_MESSAGE } from "./request-log.js"
+import { openWorkModelsAllowanceResponse } from "./models-allowance.js"
 import type { InsertRequestLog, RequestLogRecorder, RequestLogRecorderDependencies } from "./request-log.js"
 import { createOpenAiChatSseUsageParser, parseOpenAiChatJsonUsage } from "./usage/openai-chat.js"
 import type { FreeMemberHandler } from "./free/member/handler.js"
@@ -269,10 +273,6 @@ async function logUpstreamError(input: {
     status: input.upstream.status,
     upstreamUrl: safeAccessUrl(input.upstreamUrl.toString()),
   })
-}
-
-function secondsUntil(date: Date) {
-  return Math.max(0, Math.ceil((date.getTime() - Date.now()) / 1000))
 }
 
 function upstreamRequestId(headers: Headers) {
@@ -663,26 +663,7 @@ export function registerProxyRoutes(app: Hono, dependencies: ProxyDependencies =
     }
 
     const limits = await dependencies.ensureUsableBuckets(inferenceKey.organization_id)
-    if (!limits.ok) {
-      c.header("x-openwork-limit-bucket-id", limits.limitedBy)
-      c.header("x-openwork-limit-window-type", limits.windowType)
-      const limitedBucket = "limitedBucket" in limits ? limits.limitedBucket : null
-      if (limitedBucket) {
-        const retryAfter = secondsUntil(limitedBucket.windowEndAt)
-        c.header("retry-after", String(retryAfter))
-        c.header("x-ratelimit-limit-tokens", String(limitedBucket.limitAmount))
-        c.header("x-ratelimit-remaining-tokens", "0")
-        c.header("x-ratelimit-reset-tokens", `${retryAfter}s`)
-      }
-      return reject(c.json({
-        error: {
-          message: `Rate limit reached for organization ${inferenceKey.organization_id}.`,
-          type: "tokens",
-          param: null,
-          code: "rate_limit_exceeded",
-        },
-      }, 429), "rate_limit_exceeded")
-    }
+    if (!limits.ok) return reject(openWorkModelsAllowanceResponse(limits), "rate_limit_exceeded")
 
     const providerKey = await dependencies.getOpenRouterProviderKey(inferenceKey.organization_id)
     if (!providerKey) {
@@ -917,9 +898,16 @@ export function registerProxyRoutes(app: Hono, dependencies: ProxyDependencies =
 
   const authenticateModels = inferenceAuth({ findActiveInferenceKey: dependencies.findActiveInferenceKey })
   const authenticateGateway = gatewayAuth({ findActiveGatewayKey: dependencies.findActiveGatewayKey ?? (async (key) => (await import("./keys.js")).findActiveGatewayKey(key)) })
-  api.use("/api/v1/*", createMiddleware<InferenceAuthEnv>((c, next) => c.req.path.startsWith("/api/v1/providers/") || isSharedGatewayRequest(c.req.raw, c.req.path)
+  api.use("/api/v1/*", createMiddleware<InferenceAuthEnv>((c, next) => c.req.path.startsWith("/api/v1/providers/") || c.req.path === gatewayProviderTestPath || isSharedGatewayRequest(c.req.raw, c.req.path)
     ? authenticateGateway(c, next) : authenticateModels(c, next)))
   api.use("/api/v1/*", orgContext({ loadOrganization: dependencies.loadOrganization ?? loadOrganizationFromDb }))
+  registerProviderTestRoute(api, {
+    fetch: dependencies.fetch,
+    signingSecret: env.dbEncryptionKey,
+    catalog: dependencies.gateway?.catalog ?? loadProviderCatalogFromFile(),
+    mintGcpAccessToken: dependencies.gateway?.mintGcpAccessToken ?? createGcpServiceAccountTokenMinter(),
+    now: dependencies.gateway?.now ?? (() => new Date()),
+  })
   registerGatewayRoutes(api, { fetch: dependencies.fetch, insertRequestLog, updateRequestLog: dependencies.updateRequestLog, reporter, ...dependencies.gateway })
   for (const path of ["/api/v1", "/api/v1/*"]) {
     api.all(path, handleApiRequest)

@@ -29,7 +29,7 @@ const nodeBundle = fromPackage("./dist/openwork-server.mjs");
 if (existsSync(nodeBundle)) {
   if (!nodeVersionSupported(process.versions.node)) {
     console.error(
-      `openwork-server needs Node.js ${MIN_NODE_VERSION} or newer (found ${process.versions.node}). Install a current Node.js LTS and try again.`,
+      `openwork-server needs Node.js 24.x, version ${MIN_NODE_VERSION} or newer within that major (found ${process.versions.node}). Install a supported Node.js 24 release and try again.`,
     );
     process.exit(1);
   }

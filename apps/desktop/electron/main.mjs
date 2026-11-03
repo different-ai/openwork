@@ -9,6 +9,7 @@ import {
   mkdir,
   readFile,
   readdir,
+  realpath,
   rename,
   rm,
   stat,
@@ -27,12 +28,16 @@ import { registerUpdaterIpc, resolveAppVersion } from "./updater.mjs";
 import { createUiControlServer } from "./ui-control-server.mjs";
 import { createApplicationMenu } from "./app-menu.mjs";
 import { createNativeContextMenus } from "./context-menu.mjs";
-import { createNativeDictation } from "./native-dictation.mjs";
+import { createNativeDictation, createSpeechDictation } from "./native-dictation.mjs";
 import { applyBrandAppName } from "./brand-app-name.mjs";
 import { createBrowserPanel } from "./browser-panel.mjs";
 import { createComputerControl } from "@openwork/computer-use/computer-control";
+import { createComputerAgentPermissions } from "./computer-agent-permissions.mjs";
+import { installComputerHelper } from "./computer-helper-install.mjs";
 import { createLocalComputerAdapter } from "./computer-local.mjs";
+import { createComputerScripting } from "./computer-scripting.mjs";
 import { remoteComputerAdapters } from "./computer-targets.mjs";
+import { createWindowsComputerAdapter } from "./computer-windows.mjs";
 import { resetPermissionEntry, resolvePermissionEntry } from "./computer-permission-entry.mjs";
 import { createWorkspaceStore } from "./workspace-store.mjs";
 import {
@@ -52,7 +57,9 @@ import {
 } from "./connect-link-branding.mjs";
 import { resolveConnectLinkPublicKeys } from "./connect-link-keys.mjs";
 import { openExternalUrl } from "./open-external.mjs";
-import { resolveWorkspaceFileLaunch } from "./workspace-file-access.mjs";
+import { openChatWorkspaceFile, resolveWorkspaceFileLaunch } from "./workspace-file-access.mjs";
+import { createOpenWithApplications, installedApplicationCommand } from "./open-with-applications.mjs";
+const openWithApplications = createOpenWithApplications();
 import { resolveAppIdentifier, resolveUserDataPath } from "./dev-profile.mjs";
 import { fetchAgentContextDiagnosticsResponse } from "./agent-context-diagnostics-fetch.mjs";
 import { fetchFiniteDesktopHttp } from "./finite-http-fetch.mjs";
@@ -74,14 +81,15 @@ import {
   windowsBrandShortcutFileName,
   windowsInstalledShortcutFileName,
   windowsInstalledExecutablePath,
-  writeWindowsBrandShortcut,
   windowsIconFromNativeImage,
 } from "./brand-icon-windows.mjs";
+import { createWindowsShortcutScheduler, readWindowsShortcutMarker } from "./windows-shortcut.mjs";
 import { resetMacDockIcon } from "./brand-icon-darwin.mjs";
 import { createDesktopVaultKeyProvider } from "./secure-vault-key.mjs";
 import { desktopFreeBootstrapEligible } from "./desktop-free-eligibility.mjs";
 import { applyDesktopFreeBuildSettings } from "./desktop-free-release.mjs";
 import {
+  captureStartupException,
   clearOpenworkSentrySession,
   initOpenworkSentry,
   setOpenworkSentrySession,
@@ -93,6 +101,10 @@ import {
   runDetachedTask,
 } from "./process-resilience.mjs";
 import { createQuitSequencer } from "./quit-sequence.mjs";
+import { createKeepAwake } from "./keep-awake.mjs";
+import { attachFloatingViewWindow, floatingViewWindowOptions } from "./floating-view-window.mjs";
+import { createStartupLog, startupPhase, withStartupPhase } from "./startup-log.mjs";
+import { createWindowStateStore } from "./window-state.mjs";
 
 // Startup milestones (epoch ms) for the renderer's one-per-launch startup
 // report to Den. The OS process creation time includes module loading; the
@@ -131,12 +143,22 @@ const {
   nativeTheme,
   net: electronNet,
   powerMonitor,
+  powerSaveBlocker,
   Notification: ElectronNotification,
+  screen,
   session,
   shell,
 } = require("electron");
 const startNativeDictation = createNativeDictation({
   platform: process.platform, menu: Menu, processId: process.pid, systemRoot: process.env.SystemRoot,
+});
+const speechDictation = createSpeechDictation({
+  platform: process.platform,
+  helperPath: path.join(app.isPackaged ? path.join(process.resourcesPath, "helpers") : path.resolve(__dirname, "..", "resources", "helpers"),
+    process.platform === "win32" ? "openwork-dictation.exe" : "openwork-dictation"),
+  infoPlist: path.resolve(path.dirname(process.execPath), "..", "Info.plist"),
+  exists: existsSync,
+  readText: (file) => readFileSync(file, "utf8"),
 });
 const pty = require(["node", "pty"].join("-"));
 const NATIVE_DEEP_LINK_EVENT = "openwork:deep-link-native";
@@ -195,15 +217,28 @@ const applicationMenu = createApplicationMenu({
 });
 
 let browserPanel = null;
+// Must match COMPUTER_POPOUT_PREFIX in the app's computer-popout.ts.
+const COMPUTER_POPOUT_NAME = /^openwork-computer-view-\d+$/;
 
 // Keep each chat's chosen computer in app data outside the workspace.
 const computerTargetsPath = () => path.join(app.getPath("userData"), "computer-use-targets.json");
-// The System Settings entry macOS lists for computer use: OpenWork when
-// packaged, or the terminal/editor that started a development build.
+// The System Settings entry macOS lists for computer use: the helper's own
+// bundle, which takes responsibility for itself so grants never restart OpenWork.
 let computerPermissionEntry = null;
-const readComputerPermissionEntry = () => (computerPermissionEntry ??= resolvePermissionEntry({ fallbackName: APP_NAME })
+const computerHelperBundle = () => [process.resourcesPath, path.resolve(__dirname, "..", "resources")]
+  .map((root) => root && path.join(root, "helpers", "OpenWork Computer Use.app"))
+  .find((candidate) => candidate && existsSync(candidate)) ?? null;
+const readComputerPermissionEntry = () => (computerPermissionEntry ??= resolvePermissionEntry({ helperBundle: computerHelperBundle(), fallbackName: APP_NAME })
   .catch(() => ({ name: APP_NAME, bundleId: null, ours: false })));
 const computerControl = createComputerControl({
+  // App scripting drives Mac apps; Windows does not offer computer_script.
+  // Blender reads the bridge from disk, so packaged builds unpack it beside app.asar.
+  ...(process.platform !== "win32" ? { runScript: createComputerScripting({
+    stateDir: path.join(app.getPath("userData"), "computer-scripting"),
+    bridgeScript: path.join(__dirname, "computer-scripting", "openwork_blender.py").replace(`app.asar${path.sep}`, `app.asar.unpacked${path.sep}`),
+  }) } : {}),
+  // Where computer steps spend their time: on this computer, or waiting for the model.
+  onTiming: (_sessionId, step) => console.info(`[computer] ${step.name} computer ${Math.round(step.computerMs)} ms${step.modelMs === undefined ? "" : ` · model ${Math.round(step.modelMs)} ms`}`),
   runProgram: async (request, host, signal) => (await import("@openwork/computer-use/runtime")).runComputerProgram(request, host, signal),
   browserTask: (request, options) => browserPanel?.browserTask(request, options) ?? Promise.resolve({ ok: false, code: "browser_unavailable" }),
   readRemoteFeatureEnabled: async () => {
@@ -217,9 +252,16 @@ const computerControl = createComputerControl({
     return (await response.json())?.enabled === true;
   },
   // This computer first, then any configured VM (see computer-targets.mjs).
-  adapters: [createLocalComputerAdapter({
+  adapters: [process.platform === "win32" ? createWindowsComputerAdapter({
     resourcesPath: process.resourcesPath,
     appRoot: path.resolve(__dirname, ".."),
+  }) : createLocalComputerAdapter({
+    resourcesPath: process.resourcesPath,
+    appRoot: path.resolve(__dirname, ".."),
+    installHelper: async (binary) => !app.isPackaged ? binary : installComputerHelper(binary, {
+      helpersRoot: path.join(process.resourcesPath, "helpers"),
+      directory: path.join(app.getPath("userData"), "computer-use"),
+    }),
     permissionEntry: async () => (await readComputerPermissionEntry()).name,
     onSetupReturn: async () => {
       const window = await createMainWindow();
@@ -235,6 +277,7 @@ const computerControl = createComputerControl({
         const saved = JSON.parse(await readFile(computerTargetsPath(), "utf8"));
         return {
           targets: saved?.targets && typeof saved.targets === "object" ? saved.targets : {},
+          ...(typeof saved?.computer === "string" ? { computer: saved.computer } : {}),
         };
       } catch { return { targets: {} }; }
     },
@@ -261,22 +304,73 @@ function assertComputerSender(event) {
   }
 }
 
+/** Rules come from the local server, which verifies the member's policy with Den. */
+async function readComputerRules() {
+  const server = await runtimeManager.openworkServerInfo();
+  if (!server.baseUrl || !(server.clientToken ?? server.ownerToken)) throw new Error("OpenWork server unavailable");
+  // loopback-fetch: the policy service is the locally managed OpenWork server.
+  const response = await fetch(`${server.baseUrl}/managed-policy/computer-rules`, {
+    headers: { Authorization: `Bearer ${server.clientToken ?? server.ownerToken}` }, signal: AbortSignal.timeout(15_000),
+  });
+  if (!response.ok) throw new Error("Computer rules unavailable");
+  const payload = await response.json();
+  return Array.isArray(payload?.rules) ? payload.rules : [];
+}
+
+const computerAgentPermissions = createComputerAgentPermissions({
+  readRules: readComputerRules,
+  confirm: async (rule) => {
+    if (!mainWindow || mainWindow.isDestroyed()) return false;
+    const answer = await dialog.showMessageBox(mainWindow, {
+      type: "question", buttons: ["Allow in this chat", "Cancel"], defaultId: 1, cancelId: 1,
+      message: "Let the agent use your computer in this chat?",
+      detail: `Your organization's agent permissions ask before agents use apps on this computer (set for ${rule.source}).`,
+    });
+    return answer.response === 0;
+  },
+});
+
+/** @param {string} message */
+function computerPolicyDenied(message) {
+  return { ok: false, error: { code: "organization_policy_denied", message } };
+}
+
+/** @param {string} sessionId */
+async function checkComputerPermission(sessionId) {
+  const decision = await computerAgentPermissions.check({ kind: "computer", sessionId });
+  if (decision.effect === "deny") return computerPolicyDenied(decision.message);
+  if (decision.effect === "ask" && !await computerAgentPermissions.approveComputer(sessionId, decision.rule)) {
+    return computerPolicyDenied("Computer use was not approved in this chat. No action ran.");
+  }
+  return null;
+}
+
 const uiControlServer = createUiControlServer({
   app,
   appName: APP_NAME,
   appIdentifier: APP_IDENTIFIER,
   getWindow: () => createMainWindow(),
   browserTask: (args, options) => browserPanel?.browserTask(args, options) ?? { ok: false, code: "browser_unavailable" },
-  computerTask: (args, options) => computerControl.execute(args, options),
-  computerProgram: (args, options) => computerControl.program(args, options),
-  listWebMcpTools: (args, options) => browserPanel?.listWebMcpTools(args, options) ?? {
-    ok: false,
-    error: "The built-in browser is not ready.",
+  computerTask: async (args, options) => {
+    if (!["computer_status", "computer_close"].includes(args?.name)) {
+      const denied = await checkComputerPermission(args?.sessionId);
+      if (denied) return denied;
+    }
+    return computerControl.execute(args, options);
   },
-  executeWebMcpTool: (args, options) => browserPanel?.executeWebMcpTool(args, options) ?? {
-    ok: false,
-    error: "The built-in browser is not ready.",
+  computerProgram: async (args, options) => {
+    if (args?.surface === "computer") {
+      const denied = await checkComputerPermission(args?.sessionId);
+      if (denied) return denied;
+    }
+    return computerControl.program(args, options);
   },
+  computerScript: async (args, options) => {
+    const decision = await computerAgentPermissions.check({ kind: "script", sessionId: args?.sessionId });
+    if (decision.effect === "deny") return computerPolicyDenied(decision.message);
+    return computerControl.script(args, { ...options, approveEachScript: decision.effect === "ask" });
+  },
+  computerEnabled: () => computerControl.featureEnabled(),
 });
 
 const terminalProcesses = new Map();
@@ -338,6 +432,9 @@ const userDataPath = BLANK_SLATE_LAUNCH.userDataPath ?? resolveUserDataPath({
   userDataOverride: process.env.OPENWORK_ELECTRON_USERDATA,
 });
 app.setPath("userData", userDataPath);
+const desktopStartupLog = createStartupLog({ directory: path.join(userDataPath, "logs") });
+const endAppReady = startupPhase("app.ready");
+app.once("quit", () => desktopStartupLog.close());
 const linuxDesktopIntegration = createLinuxDesktopIntegration({
   app,
   dialog,
@@ -612,56 +709,31 @@ function windowsExecutablePath() {
 }
 
 async function readWindowsBrandShortcutMarker() {
-  return (await readFile(windowsBrandShortcutMarkerPath(), "utf8").catch(() => "")).trim();
+  return (await readWindowsShortcutMarker(windowsBrandShortcutMarkerPath())).shortcutPath;
 }
 
-function repairWindowsShortcutTarget(shortcutPath, details) {
-  const payload = Buffer.from(JSON.stringify({ shortcutPath, ...details }), "utf8").toString("base64");
-  const script = [
-    `$value = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('${payload}')) | ConvertFrom-Json`,
-    "$shell = New-Object -ComObject WScript.Shell",
-    "$link = $shell.CreateShortcut($value.shortcutPath)",
-    "$link.TargetPath = $value.target",
-    "$link.WorkingDirectory = $value.cwd",
-    "$link.Description = $value.description",
-    "$link.IconLocation = \"$($value.icon),$($value.iconIndex)\"",
-    "$link.Save()",
-  ].join("\n");
-  execFileSync("powershell.exe", ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command", script], {
-    windowsHide: true,
-  });
-}
+let resolveShortcutWindowReady;
+let resolveShortcutRuntimeReady;
+const shortcutWindowReady = new Promise((resolve) => { resolveShortcutWindowReady = resolve; });
+const shortcutRuntimeReady = new Promise((resolve) => { resolveShortcutRuntimeReady = resolve; });
+const scheduleWindowsShortcut = createWindowsShortcutScheduler({
+  ready: () => Promise.all([shortcutWindowReady, shortcutRuntimeReady]),
+});
 
-async function registerWindowsBrandShortcut(appId, appIconPath) {
-  if (process.platform !== "win32") return null;
-  const shortcutPath = windowsBrandShortcutPath();
-  const shortcutTempPath = `${shortcutPath}.${process.pid}.tmp.lnk`;
-  await mkdir(path.dirname(shortcutPath), { recursive: true });
-  // Recreate instead of replacing in place. Explorer can retain the old
-  // target and search metadata when a prior installer owned this path.
-  await rm(shortcutPath, { force: true });
-  await rm(shortcutTempPath, { force: true });
-  const details = windowsBrandShortcutDetails({
-    target: windowsExecutablePath(),
-    appId,
-    appIconPath,
-    appName: currentDisplayAppName,
+function registerWindowsBrandShortcut(appId, appIconPath) {
+  if (process.platform !== "win32") return;
+  scheduleWindowsShortcut({
+    shell,
+    shortcutPath: windowsBrandShortcutPath(),
+    installedShortcutPath: windowsInstalledShortcutPath(),
+    markerPath: windowsBrandShortcutMarkerPath(),
+    details: windowsBrandShortcutDetails({
+      target: windowsExecutablePath(),
+      appId,
+      appIconPath,
+      appName: currentDisplayAppName,
+    }),
   });
-  const written = writeWindowsBrandShortcut(shell, shortcutTempPath, details, false);
-  if (!written) throw new Error(`Windows rejected the organization shortcut: ${shortcutPath}`);
-  await rename(shortcutTempPath, shortcutPath);
-  if (shell.readShortcutLink(shortcutPath).target !== details.target) {
-    repairWindowsShortcutTarget(shortcutPath, details);
-  }
-  const previousShortcutPath = await readWindowsBrandShortcutMarker();
-  if (previousShortcutPath && previousShortcutPath !== shortcutPath) {
-    await rm(previousShortcutPath, { force: true });
-  }
-  if (windowsInstalledShortcutPath() !== shortcutPath) {
-    await rm(windowsInstalledShortcutPath(), { force: true });
-  }
-  await writeFile(windowsBrandShortcutMarkerPath(), shortcutPath, "utf8");
-  return shortcutPath;
 }
 
 async function removeWindowsBrandShortcut() {
@@ -751,7 +823,8 @@ async function applyDefaultAppIconImage(expectedSequence = null) {
   }
   if (process.platform === "win32") {
     try {
-      await removeWindowsBrandShortcut();
+      // The queued stock registration replaces/removes the old brand shortcut.
+      // Do not erase its marker on every config reconciliation.
       app.setAppUserModelId(APP_IDENTIFIER);
     } catch (error) {
       return brandIconFailure("shortcut-remove-failed", error);
@@ -780,7 +853,7 @@ async function applyDefaultAppIconImage(expectedSequence = null) {
   }
   if (process.platform === "win32" && taskbarIconPath) {
     try {
-      await registerWindowsBrandShortcut(APP_IDENTIFIER, taskbarIconPath);
+      registerWindowsBrandShortcut(APP_IDENTIFIER, taskbarIconPath);
     } catch (error) {
       return brandIconFailure("shortcut-write-failed", error);
     }
@@ -970,20 +1043,27 @@ async function ensureWindowsBrandIcon(image) {
   return windowsPath;
 }
 
-async function registerWindowsDisplayShortcut() {
+function registerWindowsDisplayShortcut() {
   if (process.platform !== "win32") return;
+  runDetachedTask("prepare Windows shortcut icon", async () => {
+    await Promise.all([shortcutWindowReady, shortcutRuntimeReady]);
+    await prepareWindowsDisplayShortcut();
+  });
+}
+
+async function prepareWindowsDisplayShortcut() {
   const sidecar = await readBrandIconSidecar();
   const sourceUrl = typeof sidecar?.sourceUrl === "string" ? sidecar.sourceUrl : null;
   const brandedImage = sourceUrl ? resolveBrandIconImage() : null;
   if (brandedImage && sourceUrl) {
     const iconPath = await ensureWindowsBrandIcon(brandedImage);
-    await registerWindowsBrandShortcut(windowsBrandAppUserModelId(APP_IDENTIFIER, sourceUrl), iconPath);
+    registerWindowsBrandShortcut(windowsBrandAppUserModelId(APP_IDENTIFIER, sourceUrl), iconPath);
     return;
   }
   const stockImage = APP_ICON_IMAGE ?? await app.getFileIcon(windowsExecutablePath(), { size: "large" });
   const iconPath = defaultAppWindowsIconPath();
   await writeWindowsIconFile(stockImage, iconPath);
-  await registerWindowsBrandShortcut(APP_IDENTIFIER, iconPath);
+  registerWindowsBrandShortcut(APP_IDENTIFIER, iconPath);
 }
 
 async function applyCachedBrandIcon(image, sourceUrl, expectedSequence = null) {
@@ -993,7 +1073,7 @@ async function applyCachedBrandIcon(image, sourceUrl, expectedSequence = null) {
     taskbarIconPath = await ensureWindowsBrandIcon(image);
     if (process.platform === "win32") {
       taskbarAppId = windowsBrandAppUserModelId(APP_IDENTIFIER, sourceUrl);
-      await registerWindowsBrandShortcut(taskbarAppId, taskbarIconPath);
+      registerWindowsBrandShortcut(taskbarAppId, taskbarIconPath);
       app.setAppUserModelId(taskbarAppId);
     }
   } catch (error) {
@@ -1195,6 +1275,10 @@ const pendingDeepLinks = [];
 const nativeContextMenus = createNativeContextMenus({ Menu, clipboard, getWindow: () => mainWindow });
 
 browserPanel = createBrowserPanel({
+  // A page gets files only after the person approves them in the chat, like a native file panel.
+  approveFiles: (sessionId, request, signal) => computerControl.approveFiles({ sessionId, app: request.app, files: request.files }, { signal }),
+  // A password or code is typed only on a site the person confirmed in the chat.
+  approveCredential: (sessionId, request, signal) => computerControl.approveCredential({ sessionId, site: request.site }, { signal }),
   showNativeContextMenu: nativeContextMenus.show,
   closeNativeContextMenu: nativeContextMenus.close,
   remoteDebugPort,
@@ -1294,6 +1378,10 @@ async function acceptConnectLink(rawUrl) {
 }
 
 async function persistConnectLinkClaims(claims) {
+  return withStartupPhase("org.activation", () => persistConnectLinkClaimsInner(claims));
+}
+
+async function persistConnectLinkClaimsInner(claims) {
   const previous = workspaceStore.readDesktopBootstrapConfigSync();
   const config = await persistConnectLinkBranding(claims, {
     persistBootstrap: (config) => workspaceStore.setDesktopBootstrapConfig(config),
@@ -1394,17 +1482,19 @@ const runtimeManager = createRuntimeManager({
   listLocalWorkspacePaths: () => workspaceStore.listLocalWorkspacePaths(),
   // This callback stays in Electron's main process. Engine tools and shell
   // commands cannot approve a Drive write by replaying a token or HTTP reply.
-  driveFileApproval: async ({ action, path: filePath, name, fileId, webViewLink, mode }) => {
+  driveFileApproval: async ({ provider, action, path: filePath, name, fileId, webViewLink, mode }) => {
     const win = await createMainWindow();
     const saving = action === "push";
-    const label = saving ? (mode === "copy" ? "Save a copy" : "Save to Drive") : action === "pull" ? "Download from Drive" : "Discard local edits";
-    const identity = `Google Drive: ${name}\nFile ID: ${fileId}${webViewLink ? `\n${webViewLink}` : ""}`;
+    const microsoft = provider === "microsoft-365";
+    const service = microsoft ? "OneDrive or SharePoint" : "Google Drive";
+    const label = saving ? (mode === "copy" ? "Save a copy" : microsoft ? "Save to Microsoft 365" : "Save to Drive") : action === "pull" ? (microsoft ? "Download from Microsoft 365" : "Download from Drive") : "Discard local edits";
+    const identity = `${service}: ${name}\nFile ID: ${fileId}${webViewLink ? `\n${webViewLink}` : ""}`;
     const { response } = await dialog.showMessageBox(win, {
       type: "question",
       message: action === "overwrite" ? `Replace the local copy of ${name}?` : `${label}: ${name}`,
       detail: saving
-        ? `${identity}\n\n${filePath}\n\n${mode === "copy" ? "Creates a new file next to the original in Google Drive." : "Replaces the file in Google Drive. People with access to it will see your changes."}`
-        : `${identity}\n\n${filePath}\n\n${action === "pull" ? "Downloads this file from your connected account into the workspace." : "Discards the local edits and downloads the current Google Drive file."}`,
+        ? `${identity}\n\n${filePath}\n\n${mode === "copy" ? `Creates a new file next to the original in ${service}.` : `Replaces the file in ${service}. People with access to it will see your changes.`}`
+        : `${identity}\n\n${filePath}\n\n${action === "pull" ? "Downloads this file from your connected account into the workspace." : `Discards the local edits and downloads the current ${service} file.`}`,
       buttons: ["Cancel", label], defaultId: 0, cancelId: 0, noLink: true,
     });
     return response === 1;
@@ -1444,6 +1534,8 @@ const desktopAutomationRunner = createDesktopAutomationRunner({
   // rollout only for endpoints trusted before the renderer starts issuing IPC.
   legacyBaseUrls: legacyRunnerBaseUrls,
   getJournalRoot: () => path.join(app.getPath("userData"), "session-runner"),
+  // Start remote-session tasks as soon as Den announces them (Den's remoteSessionPush feature).
+  remoteSessionPush: true,
   getLocalRuntime: async () => {
     const server = await runtimeManager.openworkServerInfo();
     return { baseUrl: server.baseUrl, token: server.clientToken ?? server.ownerToken };
@@ -1537,8 +1629,13 @@ async function disposeRuntimeBeforeQuit() {
   }
 }
 
+const keepAwake = createKeepAwake({ powerSaveBlocker });
+/** Windows already watched so their keep-awake request ends when they close. */
+const keepAwakeSenders = new Set();
+
 const quitSequencer = createQuitSequencer({
   stop: async () => {
+    keepAwake.releaseAll();
     showShutdownScreen();
     desktopAutomationRunner.stop();
     await Promise.all([
@@ -1630,16 +1727,27 @@ async function bootRuntimeForSelectedWorkspace() {
 }
 
 function startRuntimeBootstrap() {
-  runtimeBootstrapPromise = bootRuntimeForSelectedWorkspace().catch((error) => ({
-    ok: false,
-    error: error instanceof Error ? error.message : String(error),
-  }));
+  runtimeBootstrapPromise = withStartupPhase("runtime.start", bootRuntimeForSelectedWorkspace).catch(async (error) => {
+    // Startup diagnostics only carry "engine_failed"; Sentry gets the real
+    // error, with the member's workspace folders redacted.
+    const list = await workspaceStore.readWorkspaceState().catch(() => null);
+    const workspacePaths = (list?.workspaces ?? [])
+      .map((entry) => String(entry?.path ?? "").trim())
+      .filter(Boolean);
+    captureStartupException(error, { surface: "desktop-boot", route: "runtime.start" }, { workspacePaths });
+    return {
+      ok: false,
+      error: error instanceof Error ? error.message : String(error),
+    };
+  });
   void runtimeBootstrapPromise.then(recordStartupEngineSettled);
   return runtimeBootstrapPromise;
 }
 
 // Only the launch's first boot counts; a Reload after a failure is a retry.
 function recordStartupEngineSettled(result) {
+  // Cosmetic Shell work never precedes the initial runtime readiness attempt.
+  if (result?.ok !== false) resolveShortcutRuntimeReady();
   if (startupTimings.engineSettledAt !== null) return;
   startupTimings.engineSettledAt = Date.now();
   startupTimings.engine = result?.ok === false ? "failed" : result?.skipped ? "skipped" : "ready";
@@ -1894,6 +2002,10 @@ function applyNativeTheme(mode) {
 const desktopCommandHandlers = {
   "__startNativeDictation": async (event, requestId) => startNativeDictation.start(event, mainWindow, requestId),
   "__cancelNativeDictationStart": async (event, requestId) => startNativeDictation.cancel(event, requestId),
+  "__speechDictationMode": async (event) => speechDictation.mode(),
+  "__startSpeechDictation": async (event, requestId, language) => speechDictation.start(event, mainWindow, requestId, language),
+  "__stopSpeechDictation": async (event, requestId) => speechDictation.stop(event, requestId),
+  "__abortSpeechDictation": async (event, requestId) => speechDictation.abort(event, requestId),
   "workspaceBootstrap": async (event, ...args) => {
       return workspaceStore.readWorkspaceState();
   },
@@ -1927,7 +2039,7 @@ const desktopCommandHandlers = {
       return ensureRuntimeBootstrap();
   },
   "runtimeStatus": async (event, ...args) => {
-      return runtimeManager.runtimeStatus();
+      return { ...await runtimeManager.runtimeStatus(), desktopStartupLog: desktopStartupLog.read() };
   },
   "engineStop": async (event, ...args) => {
       return runtimeManager.engineStop();
@@ -1964,6 +2076,17 @@ const desktopCommandHandlers = {
   "desktopSentryClearSession": async (event, ...args) => {
       return { enabled: clearOpenworkSentrySession() };
   },
+  "desktopSetKeepAwake": async (event, ...args) => {
+      const sender = event.sender;
+      if (args[0] === true && !keepAwakeSenders.has(sender.id)) {
+        keepAwakeSenders.add(sender.id);
+        sender.once("destroyed", () => {
+          keepAwakeSenders.delete(sender.id);
+          keepAwake.forget(sender.id);
+        });
+      }
+      return keepAwake.set(sender.id, args[0] === true);
+  },
   "desktopIntegrationStatus": async (event, ...args) => {
       return linuxDesktopIntegration.getStatus();
   },
@@ -1998,6 +2121,10 @@ const desktopCommandHandlers = {
       assertComputerSender(event);
       return computerControl.snapshot({ sessionId: String(sessionId ?? "") });
   },
+  "computerStatus": async (event) => {
+      assertComputerSender(event);
+      return computerControl.status();
+  },
   "computerPresentation": async (event, sessionId, visible) => {
       assertComputerSender(event);
       return computerControl.presentation({ sessionId: String(sessionId ?? ""), visible: visible === true });
@@ -2019,9 +2146,9 @@ const desktopCommandHandlers = {
       assertComputerSender(event);
       await computerControl.dismissSetup({ setupId });
   },
-  "computerChoose": async (event, input) => {
+  "computerChoose": async (event, targetId) => {
       assertComputerSender(event);
-      return computerControl.choose({ sessionId: String(input?.sessionId ?? ""), targetId: String(input?.targetId ?? "") });
+      return computerControl.chooseComputer({ targetId: String(targetId ?? "") });
   },
   "computerHalt": async (event, sessionId) => {
       assertComputerSender(event);
@@ -2029,7 +2156,7 @@ const desktopCommandHandlers = {
   },
   "computerAnswerRequest": async (event, input) => {
       assertComputerSender(event);
-      return computerControl.answerRequest({ sessionId: String(input?.sessionId ?? ""), answer: input?.answer });
+      return computerControl.answerRequest({ sessionId: String(input?.sessionId ?? ""), answer: input?.answer, ...(typeof input?.id === "string" ? { id: input.id } : {}) });
   },
   "computerSetFeatureEnabled": async (event, enabled) => {
       assertComputerSender(event);
@@ -2038,6 +2165,11 @@ const desktopCommandHandlers = {
   "computerSetRemoteEnabled": async (event, enabled) => {
       assertComputerSender(event);
       return computerControl.setRemoteEnabled(enabled === true);
+  },
+  // Compatibility for older renderers; background delivery now follows computerUse.
+  "computerSetBackgroundEnabled": async (event) => {
+      assertComputerSender(event);
+      return computerControl.setBackgroundEnabled();
   },
   "computerResetPermission": async (event, permission) => {
       assertComputerSender(event);
@@ -2284,17 +2416,11 @@ const desktopCommandHandlers = {
       // file inside the real workspace launches; anything else is revealed, never run.
       const workspaceRoot = String(args[0] ?? "").trim();
       const target = String(args[1] ?? "").trim();
-      const decision = await resolveWorkspaceFileLaunch(workspaceRoot, target);
-      if (decision.ok === true) {
-        const error = await shell.openPath(decision.path);
-        if (error && error.trim()) return { ok: false, error };
-        return { ok: true, action: "opened" };
-      }
-      if (decision.reason === "outside" && existsSync(target)) {
-        shell.showItemInFolder(target);
-        return { ok: true, action: "revealed" };
-      }
-      return { ok: false, error: decision.error };
+      return openChatWorkspaceFile(workspaceRoot, target, {
+        reveal: args[2]?.reveal === true,
+        openPath: (file) => shell.openPath(file),
+        revealPath: (file) => shell.showItemInFolder(file),
+      });
   },
   "__revealItemInDir": async (event, ...args) => {
       const target = String(args[0] ?? "").trim();
@@ -2326,7 +2452,7 @@ const desktopCommandHandlers = {
       },
     );
     if (process.platform === "win32" && !BLANK_SLATE_LAUNCH.enabled) {
-      await registerWindowsDisplayShortcut();
+      registerWindowsDisplayShortcut();
     }
     return { ok: true, appName: currentDisplayAppName };
   },
@@ -2341,6 +2467,8 @@ const desktopCommandHandlers = {
   "__getApplicationsForFile": async (event, ...args) => {
       const target = String(args[0] ?? "").trim();
       if (!target) return [];
+      const canonicalTarget = await realpath(target).catch(() => null);
+      if (!canonicalTarget) return [];
       const platform = process.platform;
       const results = [];
 
@@ -2384,8 +2512,9 @@ const desktopCommandHandlers = {
                 const execMatch = content.match(/^Exec=(.+)$/m);
                 if (!nameMatch || !execMatch) continue;
                 const name = nameMatch[1].trim();
-                const appPath = execMatch[1].trim().replace(/%[fFuU]/g, "").trim();
-                if (!appPath) continue;
+                // The installed desktop entry is the identity. Never return its
+                // Exec string as an executable path controlled by the renderer.
+                const appPath = filePath;
                 let icon = null;
                 try {
                   const img = await app.getFileIcon(filePath, { size: "small" });
@@ -2398,6 +2527,7 @@ const desktopCommandHandlers = {
         }
       } catch {}
 
+      openWithApplications.remember(event.sender.id, canonicalTarget, results.map((application) => application.appPath));
       return results;
   },
   "__openWithApp": async (event, ...args) => {
@@ -2408,18 +2538,19 @@ const desktopCommandHandlers = {
       const decision = await resolveWorkspaceFileLaunch(workspaceRoot, requested);
       if (decision.ok === false) return decision.error;
       const target = decision.path;
-      const platform = process.platform;
+      if (!openWithApplications.allows(event.sender.id, target, appPath)) {
+        return "Choose an installed application from the file menu.";
+      }
+      const command = installedApplicationCommand(process.platform, appPath, target);
+      if (!command) return "This installed application cannot open files here.";
       try {
-        if (platform === "darwin") {
-          execFileSync("open", ["-a", appPath, target]);
-        } else if (platform === "linux") {
-          const child = spawn(appPath, [target], { detached: true, stdio: "ignore" });
-          child.unref();
-        } else {
-          return `Open with app is not supported on ${platform}`;
-        }
-      } catch (err) {
-        return String(err?.message ?? err);
+        // Both the command and installed app identifier are main-process
+        // choices. Never spawn a renderer-supplied executable or use a shell.
+        await new Promise((resolve, reject) => {
+          execFile(command.command, command.args, (error) => error ? reject(error) : resolve(undefined));
+        });
+      } catch {
+        return "This application could not open the file.";
       }
   },
   "__fetch": async (event, ...args) => {
@@ -2592,6 +2723,10 @@ async function handleDesktopInvoke(event, command, ...args) {
 
 
 async function createMainWindow() {
+  return withStartupPhase("window.create", createMainWindowInner);
+}
+
+async function createMainWindowInner() {
   if (mainWindow) return mainWindow;
 
   const preloadPath = path.join(__dirname, "preload.mjs");
@@ -2619,7 +2754,7 @@ async function createMainWindow() {
     try {
       const taskbarIconPath = await ensureWindowsBrandIcon(cachedBrandImage);
       const taskbarAppId = windowsBrandAppUserModelId(APP_IDENTIFIER, bootSourceUrl);
-      await registerWindowsBrandShortcut(taskbarAppId, taskbarIconPath);
+      registerWindowsBrandShortcut(taskbarAppId, taskbarIconPath);
       app.setAppUserModelId(taskbarAppId);
     } catch (error) {
       console.warn("[brand-icon] failed to register cached Windows shortcut before window creation", error);
@@ -2629,9 +2764,15 @@ async function createMainWindow() {
     app.dock.setIcon(windowIconImage);
   }
 
+  const windowState = createWindowStateStore({
+    directory: app.getPath("userData"),
+    screen,
+    log: (message, error) => console.warn(message, error),
+  });
+  const restoredWindow = windowState.initialOptions({ width: 1180, height: 820 });
+
   mainWindow = new BrowserWindow({
-    width: 1180,
-    height: 820,
+    ...restoredWindow.options,
     title: currentDisplayAppName,
     show: false,
     ...(process.platform === "win32" ? { skipTaskbar: true } : {}),
@@ -2653,6 +2794,7 @@ async function createMainWindow() {
   if (cachedBrandImage && bootSourceUrl) {
     await applyCachedBrandIcon(cachedBrandImage, bootSourceUrl);
   }
+  windowState.track(mainWindow);
   applicationMenu.applyVisibility(mainWindow);
   browserPanel.registerWindowShortcuts(mainWindow);
 
@@ -2677,13 +2819,20 @@ async function createMainWindow() {
   });
   mainWindow.setTitle(currentDisplayAppName);
 
+  const endWindowShow = startupPhase("window.show");
   mainWindow.once("ready-to-show", () => {
     if (startupTimings.windowShownAt === null) startupTimings.windowShownAt = Date.now();
     mainWindow?.setTitle(currentDisplayAppName);
     if (process.platform === "win32") mainWindow?.setSkipTaskbar(false);
+    if (restoredWindow.maximized) mainWindow?.maximize();
     mainWindow?.show();
+    endWindowShow();
+    resolveShortcutWindowReady();
     flushPendingDeepLinks();
   });
+
+  // Windows only: never start a staged update while the session is ending.
+  mainWindow.on("session-end", () => holdInstallForSessionEnd());
 
   mainWindow.on("closed", () => {
     browserPanel.destroy();
@@ -2707,7 +2856,28 @@ async function createMainWindow() {
     recoverRendererCrash(details);
   });
 
-  mainWindow.webContents.setWindowOpenHandler(({ url }) => {
+  mainWindow.webContents.setWindowOpenHandler(({ url, frameName }) => {
+    // The computer use watch view, popped out of the chat (see computer-popout.ts).
+    // The chat renders into it, so it never loads anything else.
+    if (url === "about:blank" && COMPUTER_POPOUT_NAME.test(frameName)) {
+      return {
+        action: "allow",
+        overrideBrowserWindowOptions: {
+          title: "Computer",
+          frame: false,
+          alwaysOnTop: true,
+          fullscreenable: false,
+          maximizable: false,
+          minimizable: false,
+          skipTaskbar: true,
+          minWidth: 280,
+          minHeight: 200,
+        },
+      };
+    }
+    const floatingView = floatingViewWindowOptions({ url, frameName, dark: nativeTheme.shouldUseDarkColors });
+    if (floatingView) return { action: "allow", overrideBrowserWindowOptions: floatingView };
+
     if (url.startsWith("file://")) {
       try {
         runDetachedTask("open local file", () => shell.openPath(fileURLToPath(url)));
@@ -2727,6 +2897,27 @@ async function createMainWindow() {
       runDetachedTask("open external URL", () => openExternalUrl(url));
     }
     return { action: "deny" };
+  });
+
+  mainWindow.webContents.on("did-create-window", (child, { frameName }) => {
+    if (!floatingViewWindowOptions({ url: "about:blank", frameName })) return;
+    attachFloatingViewWindow(child);
+    applicationMenu.applyVisibility(child);
+    browserPanel.adoptPopOutWindow(child);
+    const closeWithMain = () => { if (!child.isDestroyed()) child.close(); };
+    mainWindow?.once("closed", closeWithMain);
+    child.once("closed", () => mainWindow?.off("closed", closeWithMain));
+  });
+
+  mainWindow.webContents.on("did-create-window", (child, { frameName }) => {
+    if (!COMPUTER_POPOUT_NAME.test(frameName)) return;
+    // Above other apps' windows, so the agent's work stays visible while OpenWork is behind them.
+    child.setAlwaysOnTop(true, "floating");
+    child.webContents.on("will-navigate", (event) => event.preventDefault());
+    child.webContents.setWindowOpenHandler(() => ({ action: "deny" }));
+    const closeWithMain = () => { if (!child.isDestroyed()) child.close(); };
+    mainWindow?.once("closed", closeWithMain);
+    child.once("closed", () => mainWindow?.off("closed", closeWithMain));
   });
 
   // A link clicked in the inline PDF viewer reaches both handlers below for
@@ -2868,7 +3059,7 @@ if (isDevMode && !app.isPackaged) {
   });
 }
 registerMigrationIpc({ app, ipcMain });
-const { ensureAutoUpdater } = registerUpdaterIpc({
+const { ensureAutoUpdater, holdInstallForSessionEnd } = registerUpdaterIpc({
   app,
   ipcMain,
   getMainWindow: () => mainWindow,
@@ -2923,7 +3114,8 @@ or use: pnpm dev:worktree`);
     });
   });
 
-  app.whenReady().then(async () => {
+  app.whenReady().then(() => withStartupPhase("bootstrap.apply", async () => {
+    endAppReady();
     holdSpellcheckerUntilActivation(workspaceStore.readDesktopBootstrapConfigSync());
     const systemCaCertificates = await runtimeManager.systemCaCertificates();
     session.defaultSession.setCertificateVerifyProc(createSystemCaCertificateVerifyProc(systemCaCertificates));
@@ -2951,7 +3143,7 @@ or use: pnpm dev:worktree`);
       },
     );
     if (process.platform === "win32" && !BLANK_SLATE_LAUNCH.enabled) {
-      await registerWindowsDisplayShortcut();
+      registerWindowsDisplayShortcut();
     }
     if (process.platform !== "linux" && !BLANK_SLATE_LAUNCH.enabled) {
       await applyDesktopBootstrapBrandIcon(bootstrapConfig, applyBrandIconUrl);
@@ -3013,7 +3205,7 @@ or use: pnpm dev:worktree`);
     // a working app first. Renderer-owned checks pass the selected release
     // channel explicitly, avoiding stale stable-feed results for alpha users.
     runDetachedTask("initialize updater", ensureAutoUpdater);
-  }).catch((error) => {
+  })).catch((error) => {
     console.error("[desktop] startup failed", error);
     // A quit that arrives mid-startup aborts the pending window load and
     // rejects this chain. showErrorBox is a synchronous modal: raised here it

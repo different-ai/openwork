@@ -6,6 +6,9 @@ import { describeRoute } from "hono-openapi"
 import { z } from "zod"
 import type { DenTypeId } from "@openwork-ee/utils/typeid"
 import { env } from "../../env.js"
+import { organizationFeatureEnabled } from "../../features.js"
+import { markFeaturesUsed } from "../../feature-usage.js"
+import { buildCalendarEventPayload, calendarRecurrenceMatches, createCalendarEventBodySchema } from "../../capability-sources/google-calendar-events.js"
 import { cloudTransportRoute, jsonValidator, orgMemberRoute, paramValidator, queryValidator } from "../../middleware/index.js"
 import { invalidRequestSchema, jsonResponse, unauthorizedSchema } from "../../openapi.js"
 import { decodeFileContent, decodeTruncatedText, readBoundedBytes } from "../../capability-sources/binary-content.js"
@@ -39,6 +42,7 @@ import { isGoogleAuthorizationFailure, parseGoogleError } from "./google-workspa
 import { registerGmailManagementRoutes } from "./gmail-management.js"
 import { registerGoogleProductivityManagementRoutes } from "./google-productivity-management.js"
 import { registerGoogleDocumentRoutes } from "./google-documents.js"
+import { registerGoogleChatRoutes } from "./google-chat.js"
 import { listTeamsForMember } from "../../orgs.js"
 import { readInternalCapabilityConnectorId } from "../../session.js"
 import type { OrgRouteVariables } from "./shared.js"
@@ -70,7 +74,11 @@ const draftMetadataSchema = z.object({
   cc: draftHeaderSchema.min(3).max(1_000).optional().describe("Optional comma-separated Cc email addresses."),
   bcc: draftHeaderSchema.min(3).max(1_000).optional().describe("Optional comma-separated Bcc email addresses."),
   subject: draftHeaderSchema.min(1).max(500).describe("Draft subject line. For replies or forwards, include threadId; subjects starting with Re: or Fwd: are rejected without threadId so the draft stays on the existing conversation."),
-  body: z.string().min(1).max(50_000).describe("Plain-text draft body. Write plain prose with no markdown syntax, separate paragraphs with blank lines, and do not hard-wrap prose. For threaded drafts, the server appends the quoted conversation automatically; do not include quoted history."),
+  body: z.string().min(1).max(50_000).describe("Draft body: plain prose or a safe Markdown subset (headings, **bold**, *italic* or _italic_, `code`, [text](url), bare URLs, lists (-, *, 1.) with simple indented nesting, > block quotes, pipe tables, and fenced code). Links must use http, https, or mailto. Raw HTML is displayed as text, never executed. Separate paragraphs with blank lines; single line breaks, indentation, and repeated spaces are preserved. Do not hard-wrap prose. Put the closing (e.g. Thanks,) and sender name on separate lines with a real newline, never joined on one line. For threaded drafts, the server appends the quoted conversation automatically; do not include quoted history."),
+  timeZone: z.string().trim().min(1).max(100).refine((value) => {
+    if (/^[+-]/.test(value)) return false
+    try { new Intl.DateTimeFormat("en-US", { timeZone: value }); return true } catch { return false }
+  }, "Use a valid IANA time zone.").optional().describe("User's IANA time zone (for example America/New_York). Pass the user's zone to format reply attribution like Gmail Web, including daylight saving time. When omitted, attribution keeps the original message Date header's offset, not the server's time zone."),
   threadId: z.string().trim().min(1).max(512).optional().describe("Gmail thread id to reply on. Required for replies and forwards; get it from the gmail-messages capability. When set, the draft is attached to that thread as a reply — keep the thread's subject (e.g. 'Re: …')."),
 }).strict()
 
@@ -192,23 +200,14 @@ const calendarEventSchema = z.object({
   htmlLink: z.string(),
   attendees: z.array(z.string()),
   meetLink: z.string().nullable(),
+  recurringEventId: z.string().nullable().describe("Series master ID for a recurring occurrence; null for a one-time event or the master itself. Use the occurrence id to edit one meeting, this ID to edit the whole series."),
+  recurrence: z.array(z.string()).nullable().describe("Recurrence rules on a series master; null on an expanded occurrence or a one-time event."),
 }).meta({ ref: "GoogleWorkspaceCalendarEvent" })
 
 const calendarEventsResponseSchema = z.object({
   ok: z.literal(true),
   events: z.array(calendarEventSchema),
 }).meta({ ref: "GoogleWorkspaceCalendarEventsResponse" })
-
-const createCalendarEventBodySchema = z.object({
-  summary: z.string().trim().min(1).max(1_000).describe("Event title."),
-  description: z.string().max(20_000).optional().describe("Optional event description."),
-  location: z.string().max(1_000).optional().describe("Optional event location."),
-  start: z.string().datetime({ offset: true }).describe("Event start date-time. RFC 3339 date-time with a UTC offset or Z, e.g. 2026-09-03T17:00:00+02:00 or 2026-09-03T15:00:00Z."),
-  end: z.string().datetime({ offset: true }).describe("Event end date-time. RFC 3339 date-time with a UTC offset or Z, e.g. 2026-09-03T17:30:00+02:00 or 2026-09-03T15:30:00Z."),
-  timeZone: z.string().trim().min(1).max(128).optional().describe("Optional IANA time zone for start and end."),
-  attendees: z.array(z.string().email()).max(100).optional().describe("Optional attendee email addresses."),
-  createMeetLink: z.boolean().optional().describe("Set true to create a Google Meet conferencing link for this event; the response returns meetLink when Google creates it."),
-}).meta({ ref: "GoogleWorkspaceCreateCalendarEventBody" })
 
 const createCalendarEventResponseSchema = z.object({
   ok: z.literal(true),
@@ -218,6 +217,7 @@ const createCalendarEventResponseSchema = z.object({
   start: z.string(),
   end: z.string(),
   meetLink: z.string().nullable(),
+  recurrence: z.array(z.string()).nullable().describe("Google-confirmed recurrence rules for the created series; null for a one-time event. eventId is the series master ID."),
 }).meta({ ref: "GoogleWorkspaceCreateCalendarEventResponse" })
 
 const updateCalendarEventBodySchema = z.object({
@@ -322,16 +322,6 @@ type CalendarConferenceData = {
     requestId: string
     conferenceSolutionKey: { type: "hangoutsMeet" }
   }
-}
-
-type CalendarEventCreatePayload = {
-  summary: string
-  description?: string
-  location?: string
-  start: { dateTime: string; timeZone?: string }
-  end: { dateTime: string; timeZone?: string }
-  attendees?: { email: string }[]
-  conferenceData?: CalendarConferenceData
 }
 
 function gmailApiBase(): string {
@@ -443,6 +433,38 @@ async function googleWorkspaceToken(input: {
   const enabledFeatures = client ? clientSelectedFeatures(provider, client.extra) : []
   const enabledScopes = client ? resolveProviderScopes(provider, enabledFeatures) : []
   return { kind: "ok", accessToken: token.accessToken, account: token.account, enabledScopes, enabledFeatures, connectionId: credentialProviderId }
+}
+
+export type MemberCalendarRead =
+  | { kind: "ok"; json: unknown }
+  | { kind: "needs_connection" | "policy_blocked" | "missing_scope" | "google_api_error" }
+
+/**
+ * Reads a member's primary Google Calendar for their agent's event source (calendar changes that wake it early),
+ * outside any request: one read-only `GET`, expanded recurring events and cancelled ones (`showDeleted`), so a
+ * cancellation can be told from a move. With `connectionId` (members' agents) it reads through exactly that Google
+ * Workspace connection, never one of the member's other Google accounts; without it, the member's default connection.
+ */
+export async function readMemberGoogleCalendar(input: {
+  organizationId: DenTypeId<"organization">
+  orgMembershipId: DenTypeId<"member">
+  connectionId?: string | null
+  timeMin: string
+  timeMax: string
+}): Promise<MemberCalendarRead> {
+  const token = await googleWorkspaceToken({ organizationId: input.organizationId, orgMembershipId: input.orgMembershipId, connectionId: input.connectionId ?? null })
+  if (token.kind !== "ok") return { kind: token.kind }
+  if (missingScope(token.account, [CALENDAR_READ_SCOPE, CALENDAR_EVENTS_SCOPE])) return { kind: "missing_scope" }
+  const url = new URL(`${calendarApiBase()}/calendar/v3/calendars/primary/events`)
+  url.searchParams.set("timeMin", input.timeMin)
+  url.searchParams.set("timeMax", input.timeMax)
+  url.searchParams.set("singleEvents", "true")
+  url.searchParams.set("showDeleted", "true")
+  url.searchParams.set("orderBy", "startTime")
+  url.searchParams.set("maxResults", "250")
+  const response = await googleWorkspaceApiFetch(url, { headers: { authorization: `Bearer ${token.accessToken}` } })
+  if (!response.ok) return { kind: "google_api_error" }
+  return { kind: "ok", json: await readJson(response) }
 }
 
 async function googleApiError(operation: string, response: Response) {
@@ -573,23 +595,6 @@ async function readJson(response: Response): Promise<unknown> {
   return body
 }
 
-function buildCalendarEventPayload(input: z.infer<typeof createCalendarEventBodySchema>): CalendarEventCreatePayload {
-  const start: CalendarEventCreatePayload["start"] = { dateTime: input.start }
-  const end: CalendarEventCreatePayload["end"] = { dateTime: input.end }
-  if (input.timeZone) {
-    start.timeZone = input.timeZone
-    end.timeZone = input.timeZone
-  }
-
-  const payload: CalendarEventCreatePayload = { summary: input.summary, start, end }
-  if (input.description) payload.description = input.description
-  if (input.location) payload.location = input.location
-  if (input.attendees?.length) {
-    payload.attendees = input.attendees.map((email) => ({ email }))
-  }
-  return payload
-}
-
 function buildCalendarConferenceData(): CalendarConferenceData {
   return {
     createRequest: {
@@ -686,7 +691,7 @@ async function executeGmailDraft(
     } else {
       const quote = extractGmailThreadQuoteInput(thread)
       if (quote) {
-        draftQuote = buildGmailQuote(quote)
+        draftQuote = buildGmailQuote({ ...quote, timeZone: input.timeZone })
         quotedHistoryIncluded = true
       }
     }
@@ -755,6 +760,7 @@ export function registerGoogleWorkspaceRoutes<T extends { Variables: OrgRouteVar
   registerGmailManagementRoutes(app, actionDependencies)
   registerGoogleProductivityManagementRoutes(app, actionDependencies)
   registerGoogleDocumentRoutes(app, actionDependencies)
+  registerGoogleChatRoutes(app, actionDependencies)
 
   app.post(
     "/v1/direct-uploads/google-workspace/drive-files",
@@ -1058,7 +1064,7 @@ export function registerGoogleWorkspaceRoutes<T extends { Variables: OrgRouteVar
     describeRoute({
       tags: ["Capability Sources"],
       summary: "List Google Calendar events in a time range as the calling member",
-      description: "Lists primary-calendar events for the calling member in a requested ISO time range, using their connected Google Workspace account.",
+      description: "Lists primary-calendar events for the calling member in a requested ISO time range. Recurring meetings are expanded into occurrences; recurringEventId identifies the series master. Use an occurrence id to edit one meeting, or the master ID to edit the whole recurrence series.",
       responses: {
         200: jsonResponse("Google Calendar events returned.", calendarEventsResponseSchema),
         401: jsonResponse("The caller must be signed in.", unauthorizedSchema),
@@ -1107,10 +1113,11 @@ export function registerGoogleWorkspaceRoutes<T extends { Variables: OrgRouteVar
     "/v1/capabilities/google-workspace/calendar-events",
     describeRoute({
       tags: ["Capability Sources"],
-      summary: "Create a Google Calendar event as the calling member",
-      description: "Creates an event on the calling member's primary Google Calendar, using their connected Google Workspace account. Set createMeetLink to true to request a Google Meet conferencing link and return meetLink.",
+      summary: "Create a Google Calendar event (one-time or recurring series) as the calling member",
+      description: "Create a recurring meeting, repeat weekly, or create a one-time event on the member's primary calendar. Recurrence writes require the googleCalendarRecurrence feature; pass structured recurrence or advanced rrule (not both), a finite count/until, and an explicit IANA timeZone. eventId identifies the new series master. Set createMeetLink to request a Google Meet link.",
       responses: {
         200: jsonResponse("Google Calendar event created.", createCalendarEventResponseSchema),
+        400: jsonResponse("Invalid recurrence, missing IANA timeZone, or recurring meetings disabled.", invalidRequestSchema),
         401: jsonResponse("The caller must be signed in.", unauthorizedSchema),
         409: jsonResponse("The calling member has not connected their Google account or is missing permission.", needsConnectionSchema),
         502: jsonResponse("Google rejected the request.", upstreamErrorSchema),
@@ -1120,6 +1127,11 @@ export function registerGoogleWorkspaceRoutes<T extends { Variables: OrgRouteVar
     jsonValidator(createCalendarEventBodySchema),
     async (c) => {
       const payload = c.get("organizationContext")
+      const input = c.req.valid("json")
+      if ((input.recurrence !== undefined || input.rrule !== undefined)
+        && !await organizationFeatureEnabled(payload.organization.id, "googleCalendarRecurrence", { userId: payload.currentMember.userId })) {
+        return c.json({ error: "invalid_request", message: "Recurring meetings are disabled (googleCalendarRecurrence); omit recurrence/rrule to create a one-time event." }, 400)
+      }
       const token = await googleWorkspaceToken({
         organizationId: payload.organization.id,
         orgMembershipId: payload.currentMember.id,
@@ -1134,9 +1146,9 @@ export function registerGoogleWorkspaceRoutes<T extends { Variables: OrgRouteVar
         return c.json({ error: "needs_connection", message: missingPermissionMessage("Google Calendar write") }, 409)
       }
 
-      const input = c.req.valid("json")
       const url = new URL(`${calendarApiBase()}/calendar/v3/calendars/primary/events`)
       const eventPayload = buildCalendarEventPayload(input)
+      if (eventPayload.recurrence) markFeaturesUsed({ organizationId: payload.organization.id, memberId: payload.currentMember.id, keys: ["googleCalendarRecurrence"] })
       if (input.createMeetLink) {
         url.searchParams.set("conferenceDataVersion", "1")
         eventPayload.conferenceData = buildCalendarConferenceData()
@@ -1159,6 +1171,10 @@ export function registerGoogleWorkspaceRoutes<T extends { Variables: OrgRouteVar
         return c.json({ error: "google_api_error", message: "Google Calendar returned no event id." }, 502)
       }
 
+      if (eventPayload.recurrence && (event.status === "cancelled" || event.recurringEventId
+        || !calendarRecurrenceMatches(eventPayload.recurrence, event.recurrence))) {
+        return c.json({ error: "google_api_error", message: "Google did not confirm the requested recurrence. The event may have been created; check the calendar before retrying." }, 502)
+      }
       return c.json({
         ok: true,
         eventId: event.id,
@@ -1167,6 +1183,7 @@ export function registerGoogleWorkspaceRoutes<T extends { Variables: OrgRouteVar
         start: event.start,
         end: event.end,
         meetLink: event.meetLink,
+        recurrence: event.recurrence,
       })
     },
   )

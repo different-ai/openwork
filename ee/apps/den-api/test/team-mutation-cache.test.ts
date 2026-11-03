@@ -10,7 +10,7 @@ process.env.DEN_DB_ENCRYPTION_KEY ??= "synthetic-team-mutation-unit-test-key"
 process.env.OPENWORK_DEV_MODE ??= "1"
 process.env.DATABASE_REDIS_URL = ""
 const { db } = await import("../src/db.js")
-const bootstrap = mock.method(db, "select", () => ({
+const bootstrap = mock.method(db.$primary, "select", () => ({
   from() { return { async where() { return [{ id: "unit_oauth_resource", identifier: "http://api.unit.test/mcp/agent", policyVersion: 1 }] } } },
 }))
 const { withOrganizationTeamMutation } = await import("../src/organization-team-roles.js")

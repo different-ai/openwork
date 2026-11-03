@@ -2,9 +2,14 @@
   "name": "@openwork-ee/landing",
   "private": true,
   "version": "0.0.0",
+  "engines": {
+    "node": ">=24.22.1 <25"
+  },
   "scripts": {
     "dev": "OPENWORK_DEV_MODE=1 next dev --hostname 0.0.0.0",
     "check:agent-links": "node scripts/check-agent-links.mjs",
+    "check:shadow-ai": "node scripts/check-shadow-ai.mjs",
+    "check:governance-browser": "node scripts/check-governance-browser.mjs",
     "eval:agents": "node scripts/agent-discovery-eval.mjs",
     "prices:update": "node scripts/update-model-prices.mjs",
     "plain:setup-fields": "node scripts/setup-plain-feedback-fields.mjs",
@@ -21,7 +26,7 @@
     "framer-motion": "^12.35.1",
     "graphql": "^16.13.2",
     "lucide-react": "^0.577.0",
-    "next": "15.5.27",
+    "next": "15.5.28",
     "react": "catalog:react18",
     "react-dom": "catalog:react18"
   },
@@ -30,6 +35,8 @@
     "@types/react": "18.2.79",
     "@types/react-dom": "19.2.3",
     "autoprefixer": "10.4.19",
+    "eslint": "8.57.1",
+    "eslint-config-next": "15.5.28",
     "postcss": "8.5.23",
     "tailwindcss": "3.4.7",
     "typescript": "5.4.5"

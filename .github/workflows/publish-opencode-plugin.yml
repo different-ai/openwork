@@ -12,11 +12,9 @@ name: Publish OpenCode plugin
 # push a tag `opencode-plugin-v<version>` (or run this workflow by hand), then
 # approve the staged version.
 
+# Not on PRs: "OpenCode plugin" (ci-opencode-openwork.yml) tests, typechecks
+# and dry-run publishes the plugin on every dev push that changes it.
 on:
-  pull_request:
-    paths:
-      - "packages/opencode-plugin/**"
-      - ".github/workflows/publish-opencode-plugin.yml"
   push:
     tags:
       - "opencode-plugin-v*"
@@ -50,7 +48,7 @@ jobs:
 
       - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
         with:
-          node-version: 24
+          node-version: 24.22.1
           registry-url: https://registry.npmjs.org
 
       - name: Setup Bun for desktop channel tests

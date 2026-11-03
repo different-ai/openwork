@@ -22,12 +22,16 @@ function packageRoot(name, fromPackageJson, resolveTarget = name) {
   try {
     current = dirname(requireFromPackage.resolve(resolveTarget));
   } catch (error) {
-    const linkedPackageRoot = resolve(dirname(dirname(fromPackageJson)), name);
-    try {
-      const linkedPackageJson = JSON.parse(readFileSync(join(linkedPackageRoot, "package.json"), "utf8"));
-      if (linkedPackageJson.name === name) return { root: linkedPackageRoot, packageJson: linkedPackageJson };
-    } catch {
-      // Preserve the original module-resolution error below.
+    // A dependency may export only subpaths. Find its manifest through Node's
+    // normal search directories without requiring a nonexistent root export.
+    for (const searchDirectory of requireFromPackage.resolve.paths(name) ?? []) {
+      const linkedPackageRoot = resolve(searchDirectory, name);
+      try {
+        const linkedPackageJson = JSON.parse(readFileSync(join(linkedPackageRoot, "package.json"), "utf8"));
+        if (linkedPackageJson.name === name) return { root: linkedPackageRoot, packageJson: linkedPackageJson };
+      } catch {
+        // Preserve the original module-resolution error if no package matches.
+      }
     }
     throw error;
   }

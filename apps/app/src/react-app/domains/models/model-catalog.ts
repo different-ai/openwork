@@ -1,3 +1,4 @@
+import { AUTO_ROUTER_PROVIDER_ID, autoRouterIdFromModel } from "@openwork/types/den/auto-router";
 import type { ModelOption, ModelRef } from "@/app/types";
 import type { CloudImportedProvider } from "@/app/cloud/import-state";
 import { modelRefKey, nextFavoriteModel } from "../session/models/model-collections-store";
@@ -23,11 +24,33 @@ export function retainedModelCopy(reason: RetainedModelSelection["reason"]) {
   }
 }
 export function nonDefaultModelSummary(model: ModelRef, value: string | null, label: string) {
-  return !isAutoModel(model) && value !== null ? label : null;
+  return !managesOwnBehavior(model) && value !== null ? label : null;
 }
 
+// "OpenWork Free": the free model every desktop gets. Its ids (and the `Auto`
+// names of these helpers) predate the organization's Smart Routers and stay so
+// saved selections keep working; people only ever read "OpenWork Free".
 export const AUTO_MODEL_ID = "openai/gpt-6-luna";
 export const AUTO_PROVIDER_ID = "openwork-free";
+export const FREE_MODEL_NAME = "OpenWork Free";
+/** The picker group that holds only Smart Router models, above everything else, without a label. */
+export const AUTO_ROUTER_GROUP = "Smart";
+/** What a Smart Router model is called when the engine reports no name for it. */
+export const SMART_MODEL_FALLBACK_NAME = "Smart";
+
+/**
+ * One of the organization's Smart Routers (feature `autoRouter`): the Gateway
+ * picks the real model for every prompt. Every router is a model of the one
+ * `openwork-auto` provider, named "Smart: <router name>". Not OpenWork Free.
+ */
+export function isAutoRouterModel(model: ModelRef | null | undefined) {
+  return model?.providerID === AUTO_ROUTER_PROVIDER_ID;
+}
+
+/** Models that choose their own settings, so they offer no effort, fast mode or inherited behavior. */
+export function managesOwnBehavior(model: ModelRef | null | undefined) {
+  return isAutoModel(model) || isAutoRouterModel(model);
+}
 export const EXPLICIT_MODEL_CHOICE_KEY = "openwork.modelChoice.explicit";
 export function shouldSelectInitialAuto(input: { available: readonly ModelRef[]; current: ModelRef | null; empty: boolean; explicit: boolean }) {
   return input.empty && !input.explicit && Boolean(starterModel(input.available))
@@ -66,12 +89,30 @@ export function openWorkModelsLunaReplacement<T extends ModelRef & { disabled?: 
   return isAutoModel(current) ? openWorkModelsLuna(available) : undefined;
 }
 
+/**
+ * OpenWork Free (provider `openwork-free`), never a Smart Router: use
+ * `isAutoRouterModel` for the models people see as "Smart: <name>".
+ */
 export function isAutoModel(model: ModelRef | null | undefined) {
   return isFreeAutoModel(model);
 }
 
+/**
+ * The display name of OpenWork Free whatever the engine calls it, or a Smart
+ * Router's own name ("Smart: Engineering") when it is known; undefined
+ * otherwise.
+ */
+export function fixedModelTitle(model: ModelRef & { title?: string }): string | undefined {
+  if (isAutoModel(model)) return FREE_MODEL_NAME;
+  if (isAutoRouterModel(model)) {
+    const title = model.title?.trim();
+    return title && title !== model.modelID && autoRouterIdFromModel(title) === null ? title : undefined;
+  }
+  return undefined;
+}
+
 export function modelSource(model: ModelRef & { source?: ModelOption["source"] }): ModelSource {
-  if (isAutoModel(model) || model.providerID === "openwork" || model.source === "gateway" || model.providerID.startsWith("ipr_")) return "gateway";
+  if (isAutoModel(model) || isAutoRouterModel(model) || model.providerID === "openwork" || model.source === "gateway" || model.providerID.startsWith("ipr_")) return "gateway";
   if (model.source === "cloud" || model.providerID.startsWith("lpr_")) return "organization";
   return "local";
 }
@@ -83,7 +124,10 @@ function isOpaqueModelId(value: string) {
 
 /** A model's display name: its title, never an opaque gateway id (then "<Provider> model"). */
 export function modelTitle(model: ModelRef & { title?: string; description?: string }) {
-  if (isAutoModel(model)) return "Auto";
+  const fixed = fixedModelTitle(model);
+  if (fixed) return fixed;
+  // A Smart model's id (`openwork-smart-…`) is never a name a person reads.
+  if (isAutoRouterModel(model)) return SMART_MODEL_FALLBACK_NAME;
   const name = model.title?.trim() || model.modelID;
   if (!isOpaqueModelId(name)) return name;
   const provider = model.description?.trim();
@@ -92,7 +136,9 @@ export function modelTitle(model: ModelRef & { title?: string; description?: str
 
 /** A name safe to show as a value: the public title, never an opaque provider/model id. */
 export function publicModelTitle(model: ModelRef & { title?: string }): string | undefined {
-  if (isAutoModel(model)) return "Auto";
+  const fixed = fixedModelTitle(model);
+  if (fixed) return fixed;
+  if (isAutoRouterModel(model)) return SMART_MODEL_FALLBACK_NAME;
   const title = model.title?.trim();
   if (!title || title === model.modelID || isOpaqueModelId(title)) return undefined;
   return title;
@@ -100,7 +146,7 @@ export function publicModelTitle(model: ModelRef & { title?: string }): string |
 
 /** The OpenWork Models row's meta line, the same in Settings and the Connect a provider sheet. */
 export function autoProviderSubtitle() {
-  return "Auto";
+  return FREE_MODEL_NAME;
 }
 
 const MODEL_MAKERS: readonly [RegExp, string][] = [
@@ -126,7 +172,8 @@ export function modelStateLabel(model: ModelOption): string | null {
 }
 
 export function modelSubtitle(model: ModelOption, exhausted = false) {
-  if (isAutoModel(model)) return exhausted ? "Limit used up" : "OpenWork picks the model";
+  if (isAutoModel(model)) return exhausted ? "Limit used up" : "Free with a usage limit";
+  if (isAutoRouterModel(model)) return "Picks the best model for each task";
   // Gateway models assigned to the member that wait on their own provider sign-in.
   if (model.gatewayAuthorization) return [model.description?.trim(), "Sign-in required"].filter(Boolean).join(" · ");
   return [model.description?.trim(), model.organizationPinOrder !== undefined ? "pinned by your org" : null].filter(Boolean).join(" · ");
@@ -200,6 +247,9 @@ export function modelGroups(options: readonly ModelOption[], personal: readonly 
     });
     if (items.length) groups.push({ value, items });
   };
+  // Smart Routers stand alone at the top, by name, wherever else they would be listed.
+  add(AUTO_ROUTER_GROUP, available.filter(isAutoRouterModel)
+    .sort((a, b) => modelTitle(a).localeCompare(modelTitle(b)) || a.modelID.localeCompare(b.modelID)));
   add("Pinned", orderedModelPins(available, personal));
   add("Recent", recent.flatMap((model) => available.filter((option) => modelRefKey(option) === modelRefKey(model))), false);
   add("OpenWork Models", available.filter((option) => option.providerID === "openwork" || option.providerID === AUTO_PROVIDER_ID));

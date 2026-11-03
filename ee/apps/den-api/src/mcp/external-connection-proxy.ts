@@ -32,6 +32,7 @@ import {
 import { externalMcpDiagnosticForResponse } from "../capability-sources/external-mcp-diagnostics.js"
 import { evaluateToolPolicy } from "../capability-sources/external-mcp-tool-policy.js"
 import { env } from "../env.js"
+import { organizationFeatureEnabled } from "../features.js"
 import { tokenRoute } from "../middleware/index.js"
 import { resolvePublicOrigin } from "../capability-sources/generic-oauth.js"
 import { handleMcpAppServerRequest, isMcpAppServerId } from "./app-server.js"
@@ -97,12 +98,14 @@ const boundedGatewayTools: ExternalMcpProxyTool[] = [
   {
     name: EXECUTE_CAPABILITY_TOOL_NAME,
     title: "Execute capability",
-    description: "Execute an exact tool returned by search_capabilities on this connected MCP server.",
+    description: "Execute an exact tool returned by search_capabilities on this connected MCP server, with arguments matching its inputSchema.",
     inputSchema: {
       type: "object",
       properties: {
         name: { type: "string", minLength: 1 },
-        body: { type: "object" },
+        arguments: { type: "object" },
+        // Older input, accepted for a while; capabilityCallInput explains why.
+        body: { type: "object", description: "Older form of arguments." },
       },
       required: ["name"],
       additionalProperties: false,
@@ -111,10 +114,23 @@ const boundedGatewayTools: ExternalMcpProxyTool[] = [
   },
 ]
 
-const appGatewayTools: ExternalMcpProxyTool[] = boundedGatewayTools.map((tool) => ({
-  ...tool,
-  _meta: { ui: { visibility: ["app"] } },
-}))
+const legacyBoundedGatewayTools: ExternalMcpProxyTool[] = boundedGatewayTools.map((tool) => (
+  tool.name === EXECUTE_CAPABILITY_TOOL_NAME
+    ? {
+      ...tool,
+      description: "Execute an exact tool returned by search_capabilities on this connected MCP server.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          name: { type: "string", minLength: 1 },
+          body: { type: "object" },
+        },
+        required: ["name"],
+        additionalProperties: false,
+      },
+    }
+    : tool
+))
 
 /**
  * A provider tool the model may see on a directly exposed connection. Tools
@@ -161,6 +177,8 @@ export function createExternalConnectionProxyServer(input: {
   scopes: ReadonlySet<string>
   runtime?: ExternalMcpProxyRuntime
   appHostClient?: boolean
+  /** Opt in to the modern search results and execute arguments schema; defaults to legacy. */
+  toolShapes?: boolean
   /**
    * Whether the organization currently allows member-facing MCP connections.
    * Direct exposure is fail-closed: the provider catalog is served only when
@@ -170,6 +188,11 @@ export function createExternalConnectionProxyServer(input: {
 }) {
   const { connection } = input.operation
   const runtime = input.runtime ?? externalMcpProxyRuntime
+  const gatewayTools = input.toolShapes === true ? boundedGatewayTools : legacyBoundedGatewayTools
+  const appGatewayTools = gatewayTools.map((tool) => ({
+    ...tool,
+    _meta: { ui: { visibility: ["app"] } },
+  }))
   const callTool = (tool: ExternalMcpProxyTool, args: Record<string, unknown>) => {
     const requiredScope = DEN_MCP_WRITE_SCOPE
     if (!input.scopes.has(requiredScope)) {
@@ -245,7 +268,7 @@ export function createExternalConnectionProxyServer(input: {
         ? [...appGatewayTools, ...await listAppTools()]
         : directClient
           ? await listDirectTools()
-          : boundedGatewayTools,
+          : gatewayTools,
     }))
     server.server.setRequestHandler(CallToolRequestSchema, async (request) => {
       const args = toolArguments(request.params.arguments)
@@ -268,20 +291,33 @@ export function createExternalConnectionProxyServer(input: {
           if (score <= 0) return []
           const resourceUri = input.appHostClient ? externalMcpAppResourceUri(tool) : null
           return [{
-            name: tool.name,
-            method: "MCP",
-            path: connection.name,
             score,
-            summary,
-            pathParams: [],
-            queryParams: [],
-            hasBody: true,
-            argumentsSchema: tool.inputSchema,
-            schemaDigest: externalMcpToolSchemaDigest(tool.inputSchema),
-            invocation: { argumentsField: "body" },
-            ...(resourceUri ? { kind: "mcp_app", mcpApp: { resourceUri } } : {}),
+            match: input.toolShapes === true
+              ? {
+                name: tool.name,
+                description: summary,
+                inputSchema: tool.inputSchema,
+                schemaDigest: externalMcpToolSchemaDigest(tool.inputSchema),
+                ...(tool.annotations ? { annotations: tool.annotations } : {}),
+                ...(resourceUri ? { kind: "mcp_app", mcpApp: { resourceUri } } : {}),
+              }
+              : {
+                name: tool.name,
+                method: "MCP",
+                path: connection.name,
+                score,
+                summary,
+                pathParams: [],
+                queryParams: [],
+                hasBody: true,
+                argumentsSchema: tool.inputSchema,
+                schemaDigest: externalMcpToolSchemaDigest(tool.inputSchema),
+                invocation: { argumentsField: "body" },
+                ...(resourceUri ? { kind: "mcp_app", mcpApp: { resourceUri } } : {}),
+              },
           }]
-        }).sort((left, right) => (right.score - left.score) || left.name.localeCompare(right.name)).slice(0, limit)
+        }).sort((left, right) => (right.score - left.score) || left.match.name.localeCompare(right.match.name)).slice(0, limit)
+          .map(({ match }) => match)
         return {
           content: [{ type: "text" as const, text: JSON.stringify({ matches }) }],
           structuredContent: { matches },
@@ -291,7 +327,9 @@ export function createExternalConnectionProxyServer(input: {
         const toolName = typeof args.name === "string" ? args.name.trim() : ""
         const tool = (await listProviderTools()).find((candidate) => candidate.name === toolName)
         if (!tool) throw new McpError(ErrorCode.InvalidRequest, "The capability is unavailable. Call search_capabilities again.")
-        return callTool(tool, toolArguments(args.body))
+        // Accept both forms even after a rollout is killed: clients may still
+        // execute a cached modern search result against the legacy view.
+        return callTool(tool, toolArguments(args.arguments ?? args.body))
       }
       if (!input.appHostClient) {
         throw new McpError(
@@ -399,6 +437,8 @@ export async function handleExternalConnectionProxyRequest(input: {
   operation: ExternalMcpProxyOperation
   scopes: ReadonlySet<string>
   appHostClient?: boolean
+  /** Opt in to the modern search results and execute arguments schema; defaults to legacy. */
+  toolShapes?: boolean
   directExposureEnabled?: boolean
   runtime?: ExternalMcpProxyRuntime
   dependencies?: Partial<ExternalMcpProxyRequestDependencies>
@@ -416,6 +456,7 @@ export async function handleExternalConnectionProxyRequest(input: {
       runtime: input.runtime,
       appHostClient: input.appHostClient === true,
       directExposureEnabled: input.directExposureEnabled === true,
+      toolShapes: input.toolShapes === true,
     })
     const response = await dependencies.serve(server, input.context)
     return response ?? new Response(null, { status: 204 })
@@ -491,6 +532,9 @@ export function registerExternalConnectionProxyRoutes<T extends { Variables: Req
     }
 
     const directExposureEnabled = connection.exposeDirectly
+    const toolShapes = await organizationFeatureEnabled(organizationId, "connectStandardTools", {
+      userId: principal.userId,
+    })
 
     const redirectUriBase = resolvePublicOrigin(c.req.raw, env.apiPublicUrl)
     const redirectUri = `${redirectUriBase}/v1/mcp-connections/${encodeURIComponent(connection.id)}/connect/callback`
@@ -507,6 +551,7 @@ export function registerExternalConnectionProxyRoutes<T extends { Variables: Req
       scopes: principal.scopes,
       appHostClient: principal.scopes.has(DEN_MCP_APP_HOST_SCOPE),
       directExposureEnabled,
+      toolShapes,
     })
   })
 }

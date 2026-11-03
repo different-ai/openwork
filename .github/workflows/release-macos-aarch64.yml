@@ -152,7 +152,7 @@ jobs:
       - name: Setup Node
         uses: actions/setup-node@v6
         with:
-          node-version: 24
+          node-version: 24.22.1
 
       # The built-in GitHub Actions app cannot be a ruleset bypass actor
       # (GitHub rejects it), so fresh cuts push their tag as the org-owned
@@ -474,7 +474,7 @@ jobs:
       - name: Setup Node
         uses: actions/setup-node@v6
         with:
-          node-version: 24
+          node-version: 24.22.1
 
       - name: Verify release tag
         if: needs.resolve-release.outputs.benchmark_only != 'true'
@@ -492,6 +492,10 @@ jobs:
       needs.verify-release.result == 'success' &&
       needs.resolve-release.outputs.build_electron == 'true'
     runs-on: ${{ matrix.platform }}
+    # Apple signing secrets belong to this environment; no deployment is recorded.
+    environment:
+      name: macos-signing
+      deployment: false
     timeout-minutes: 120
     env:
       RELEASE_TAG: ${{ needs.resolve-release.outputs.release_tag }}
@@ -634,7 +638,7 @@ jobs:
       - name: Setup Node
         uses: actions/setup-node@v6
         with:
-          node-version: 24
+          node-version: 24.22.1
 
       - name: Setup Bun
         uses: oven-sh/setup-bun@v2
@@ -746,6 +750,25 @@ jobs:
             ${{ matrix.electron_args }} \
             --publish never
 
+      - name: Test Windows signing scripts
+        if: matrix.os_type == 'windows' && env.SIGN_WINDOWS == 'true'
+        shell: pwsh
+        run: |
+          node --test apps/desktop/test/windows-sign.test.cjs
+          if ($LASTEXITCODE) { throw 'Signing hook tests failed' }
+          ./scripts/release/windows-signatures.test.ps1
+
+      - name: Configure Windows lifecycle signing
+        if: matrix.os_type == 'windows' && env.SIGN_WINDOWS == 'true'
+        uses: ./.github/actions/windows-signing
+        with:
+          client-id: ${{ vars.AZURE_CLIENT_ID || secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID || secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID || secrets.AZURE_SUBSCRIPTION_ID }}
+          endpoint: ${{ vars.AZURE_ARTIFACT_SIGNING_ENDPOINT || secrets.AZURE_ARTIFACT_SIGNING_ENDPOINT }}
+          account: ${{ vars.AZURE_ARTIFACT_SIGNING_ACCOUNT || secrets.AZURE_ARTIFACT_SIGNING_ACCOUNT }}
+          certificate-profile: ${{ vars.AZURE_ARTIFACT_SIGNING_CERTIFICATE_PROFILE || secrets.AZURE_ARTIFACT_SIGNING_CERTIFICATE_PROFILE }}
+
       - name: Package Electron (Windows)
         if: matrix.os_type == 'windows'
         shell: bash
@@ -806,58 +829,6 @@ jobs:
           fi
           printf '%s\n' "${manifests[@]}"
 
-      - name: Validate Azure Artifact Signing configuration
-        if: matrix.os_type == 'windows' && env.SIGN_WINDOWS == 'true'
-        shell: pwsh
-        env:
-          AZURE_CLIENT_ID: ${{ vars.AZURE_CLIENT_ID || secrets.AZURE_CLIENT_ID }}
-          AZURE_TENANT_ID: ${{ vars.AZURE_TENANT_ID || secrets.AZURE_TENANT_ID }}
-          AZURE_SUBSCRIPTION_ID: ${{ vars.AZURE_SUBSCRIPTION_ID || secrets.AZURE_SUBSCRIPTION_ID }}
-          AZURE_ARTIFACT_SIGNING_ENDPOINT: ${{ vars.AZURE_ARTIFACT_SIGNING_ENDPOINT || secrets.AZURE_ARTIFACT_SIGNING_ENDPOINT }}
-          AZURE_ARTIFACT_SIGNING_ACCOUNT: ${{ vars.AZURE_ARTIFACT_SIGNING_ACCOUNT || secrets.AZURE_ARTIFACT_SIGNING_ACCOUNT }}
-          AZURE_ARTIFACT_SIGNING_CERTIFICATE_PROFILE: ${{ vars.AZURE_ARTIFACT_SIGNING_CERTIFICATE_PROFILE || secrets.AZURE_ARTIFACT_SIGNING_CERTIFICATE_PROFILE }}
-        run: |
-          $required = @(
-            "AZURE_CLIENT_ID",
-            "AZURE_TENANT_ID",
-            "AZURE_SUBSCRIPTION_ID",
-            "AZURE_ARTIFACT_SIGNING_ENDPOINT",
-            "AZURE_ARTIFACT_SIGNING_ACCOUNT",
-            "AZURE_ARTIFACT_SIGNING_CERTIFICATE_PROFILE"
-          )
-          $missing = $required | Where-Object { -not [Environment]::GetEnvironmentVariable($_) }
-          if ($missing.Count -gt 0) {
-            throw "Missing windows-signing environment variables: $($missing -join ', ')"
-          }
-
-          $dist = Join-Path $env:GITHUB_WORKSPACE "apps\desktop\dist-electron"
-          $installers = Get-ChildItem $dist -Filter "*.exe"
-          if ($installers.Count -ne 1) {
-            throw "Expected one unsigned Windows installer, found $($installers.Count)"
-          }
-
-      - name: Azure login with GitHub OIDC
-        if: matrix.os_type == 'windows' && env.SIGN_WINDOWS == 'true'
-        uses: azure/login@f5d393ae46f8fde4be8b75f32e3fc50e654ad0ca # v3.0.1
-        with:
-          client-id: ${{ vars.AZURE_CLIENT_ID || secrets.AZURE_CLIENT_ID }}
-          tenant-id: ${{ vars.AZURE_TENANT_ID || secrets.AZURE_TENANT_ID }}
-          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID || secrets.AZURE_SUBSCRIPTION_ID }}
-
-      - name: Sign Windows installer
-        if: matrix.os_type == 'windows' && env.SIGN_WINDOWS == 'true'
-        uses: azure/artifact-signing-action@c7ab2a863ab5f9a846ddb8265964877ef296ee82 # v2
-        with:
-          endpoint: ${{ vars.AZURE_ARTIFACT_SIGNING_ENDPOINT || secrets.AZURE_ARTIFACT_SIGNING_ENDPOINT }}
-          signing-account-name: ${{ vars.AZURE_ARTIFACT_SIGNING_ACCOUNT || secrets.AZURE_ARTIFACT_SIGNING_ACCOUNT }}
-          certificate-profile-name: ${{ vars.AZURE_ARTIFACT_SIGNING_CERTIFICATE_PROFILE || secrets.AZURE_ARTIFACT_SIGNING_CERTIFICATE_PROFILE }}
-          files-folder: ${{ github.workspace }}\apps\desktop\dist-electron
-          files-folder-filter: exe
-          files-folder-recurse: false
-          file-digest: SHA256
-          timestamp-rfc3161: http://timestamp.acs.microsoft.com
-          timestamp-digest: SHA256
-
       - name: Verify Windows signature
         if: matrix.os_type == 'windows' && env.SIGN_WINDOWS == 'true'
         shell: pwsh
@@ -873,6 +844,19 @@ jobs:
           if ($signature.Status -ne "Valid") {
             throw "$($installers[0].Name) signature is $($signature.Status)"
           }
+
+      - name: Verify every packaged and installed Windows PE
+        if: matrix.os_type == 'windows' && env.SIGN_WINDOWS == 'true'
+        shell: pwsh
+        run: ./scripts/release/windows-signatures.ps1 -Mode VerifyPackage -Path apps/desktop/dist-electron
+
+      - name: Retain Windows signature evidence
+        if: matrix.os_type == 'windows' && env.SIGN_WINDOWS == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: signatures-${{ matrix.artifact }}
+          path: apps/desktop/dist-electron/signature-evidence
+          if-no-files-found: error
 
       - name: Refresh signed installer blockmap and manifest
         if: matrix.os_type == 'windows' && env.SIGN_WINDOWS == 'true'
@@ -1034,7 +1018,7 @@ jobs:
         if: needs.resolve-release.outputs.build_electron == 'true'
         uses: actions/setup-node@v6
         with:
-          node-version: 24
+          node-version: 24.22.1
 
       - name: Download Electron updater manifest artifacts
         if: needs.resolve-release.outputs.build_electron == 'true'
@@ -1127,7 +1111,7 @@ jobs:
       - name: Setup Node
         uses: actions/setup-node@v6
         with:
-          node-version: 24
+          node-version: 24.22.1
 
       - name: Setup pnpm
         uses: pnpm/action-setup@v4
@@ -1217,19 +1201,19 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          # 22.13.0 is the package's engines floor (node:sqlite without a flag).
+          # Verify every host at the package's Node 24.22.1 engines floor.
           - os: ubuntu-24.04
             target: linux-x64
-            node: "22.13.0"
+            node: "24.22.1"
           - os: macos-15-intel
             target: darwin-x64
-            node: "24"
+            node: "24.22.1"
           - os: macos-15
             target: darwin-arm64
-            node: "24"
+            node: "24.22.1"
           - os: windows-2022
             target: windows-x64
-            node: "24"
+            node: "24.22.1"
     runs-on: ${{ matrix.os }}
     steps:
       - name: Checkout smoke script
@@ -1285,7 +1269,7 @@ jobs:
       - name: Setup Node
         uses: actions/setup-node@v6
         with:
-          node-version: 24
+          node-version: 24.22.1
 
       - name: Download npm package
         uses: actions/download-artifact@v4
@@ -1374,6 +1358,10 @@ jobs:
     # must not mark an otherwise-published release run as failed.
     continue-on-error: true
     runs-on: blacksmith-4vcpu-ubuntu-2404
+    # The AUR key belongs to this environment; no deployment is recorded.
+    environment:
+      name: aur
+      deployment: false
     permissions:
       contents: read
     env:

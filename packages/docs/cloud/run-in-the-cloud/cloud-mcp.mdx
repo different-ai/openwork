@@ -131,6 +131,8 @@ Ask the agent for an app, dashboard, or interactive view and it follows the buil
 
 `prepare_app` picks one of three starters from the tools: **lookup** when every tool only reads (loads its data when the App opens), **action** when a tool changes data (one call per click, then shows the outcome), and **standalone** when there are no tools (calculators and planners). Each one applies the host's theme and handles loading, empty, failure, approval, and blocked states. Any MCP client can read them as resources at `openwork://apps/starters/lookup.json`, `action.json`, and `standalone.json`, and the skill as `skill://build-an-app/SKILL.md`.
 
+When a platform administrator turns on **Apps: built-in libraries** for you, `prepare_app` also lists the libraries an App may import: `lucide-react` for icons, `recharts` for charts, `motion/react` for animation, and `three` with `three/addons/controls/OrbitControls.js` for 3D. Apps may then draw inline SVG too. OpenWork bundles its own pinned copy of each into the App, so you never install packages or load a CDN, and the App still has no network access. Anything else outside the list fails to build with the import to change. Apps with charts or 3D are larger than 768 KiB, so they open only in an updated OpenWork; older desktops stop at 768 KiB.
+
 Each App is saved in a Plugin and served as its own standard MCP server at `/mcp/agent/connections/<appId>` on your OpenWork API. That server exposes only:
 
 - `open_app`, bound to the App's current immutable `ui://` revision;

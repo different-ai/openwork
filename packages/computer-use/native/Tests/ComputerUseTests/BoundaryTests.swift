@@ -10,6 +10,12 @@ final class BoundaryTests: XCTestCase {
         XCTAssertFalse(HostTrust.embeddedHostIsTrusted())
     }
 
+    func testHostIdentityCannotWidenTheSigningRequirement() {
+        // The test runner's Apple-signed parent would satisfy "anchor apple".
+        XCTAssertFalse(HostTrust.process(getppid(), isSignedAs: "x\" or anchor apple or identifier \"y", team: "F5DJWB4CCV"))
+        XCTAssertFalse(HostTrust.process(getppid(), isSignedAs: HostTrust.desktopIdentifier, team: "F5DJWB4CCV"))
+    }
+
     func testOffWindowAndPartiallyClippedAccessibilityTextCannotBeExposed() throws {
         let window = CGRect(x: 100, y: 100, width: 320, height: 240)
         let frames = [CGRect(x: 0, y: 0, width: 80, height: 40),
@@ -57,6 +63,37 @@ final class BoundaryTests: XCTestCase {
                 XCTAssertNil(try hidden.payload(bounds: frame, width: 320, height: 240, compact: compact)["value"], role)
             }
         }
+    }
+
+    func testSecureTextFieldTakesTypingWithoutExposingItsValue() throws {
+        let frame = CGRect(x: 0, y: 0, width: 320, height: 240)
+        // The hash of a title an app could use to mirror what was typed: it stays in the helper.
+        let mirrored = Data("given-password".utf8)
+        let secure = ElementRecord.secureField(ref: "e1", element: AXUIElementCreateApplication(getpid()), role: "AXTextField",
+            labelHash: mirrored, frame: frame, actions: [], settable: true, enabled: true)
+        XCTAssertTrue(secure.textField, "A password the person gave can be typed into a secure field")
+        XCTAssertEqual(secure.labelHash, mirrored)
+        for compact in [false, true] {
+            let payload = try secure.payload(bounds: frame, width: 320, height: 240, compact: compact)
+            XCTAssertEqual(payload["secure"] as? Bool, true)
+            XCTAssertEqual(payload["label"] as? String, ElementRecord.secureLabel, "The app's own title never reaches the model")
+            XCTAssertNil(payload["value"])
+            XCTAssertFalse(String(describing: payload).contains("given-password"))
+        }
+        let masked = ElementRecord(ref: "e2", element: AXUIElementCreateApplication(getpid()), role: "AXGroup",
+            label: "Protected", value: nil, frame: frame, actions: [], settable: false, enabled: true, protected: true)
+        XCTAssertFalse(masked.textField, "Other protected content still never takes input")
+        // Only text entry waits for the person to confirm the app while a secure field is on screen.
+        XCTAssertTrue(try Action(["type": "type", "text": "given-password"]).entersText)
+        XCTAssertTrue(try Action(["type": "set_value", "ref": "e1", "text": "given-password"]).entersText)
+        XCTAssertFalse(try Action(["type": "click", "x": 1, "y": 1]).entersText)
+        XCTAssertFalse(try Action(["type": "key", "key": "enter"]).entersText)
+        XCTAssertTrue(try Action(["type": "key", "key": "space"]).entersText, "A space is a character too")
+        // An app approval cannot name the website, so browsers never take a password here.
+        XCTAssertTrue(WebBrowser.contains(bundleID: "com.apple.Safari", info: [:]))
+        XCTAssertTrue(WebBrowser.contains(bundleID: "com.google.Chrome.canary", info: [:]))
+        XCTAssertTrue(WebBrowser.contains(bundleID: "com.example.newbrowser", info: ["CFBundleURLTypes": [["CFBundleURLSchemes": ["HTTPS"]]]]))
+        XCTAssertFalse(WebBrowser.contains(bundleID: "com.apple.TextEdit", info: ["CFBundleURLTypes": [["CFBundleURLSchemes": ["textedit"]]]]))
     }
 
     func testMalformedInputNeverBecomesAnAction() throws {
@@ -160,6 +197,7 @@ final class BoundaryTests: XCTestCase {
         let text = String(repeating: "café 日本語 e\u{301} ", count: 10)
         XCTAssertEqual(try InputDispatch.chunks(text).joined(), text)
         XCTAssertTrue(try InputDispatch.chunks(text).allSatisfy { $0.utf16.count <= 16 })
+        let firstChunk = try InputDispatch.chunks(text)[0].map(String.init)
         for changedFocus in [false, true] {
             var changed = false
             var posted: [String] = []
@@ -175,7 +213,8 @@ final class BoundaryTests: XCTestCase {
             } catch let error as UseError {
                 XCTAssertEqual(error.code, changedFocus ? "focus_changed" : "session_paused")
             }
-            XCTAssertEqual(posted.count, 1)
+            // One character per event; a focus change stops typing at the next chunk.
+            XCTAssertEqual(posted, changedFocus ? firstChunk : ["c"])
             XCTAssertEqual(validations, changedFocus ? 2 : 1)
         }
         var cancelledPosts = 0
@@ -273,16 +312,22 @@ final class BoundaryTests: XCTestCase {
         }
         XCTAssertThrowsError(try access.captureDigest(state([record("bad", frame: CGRect(x: 0, y: 0, width: Double.nan, height: 10))])))
         var time: TimeInterval = 100
-        let budget = AXReadBudget(seconds: 0.1, clock: { time })
-        XCTAssertEqual(try budget.timeout(), 0.05, accuracy: 0.0001)
-        time = 100.08
-        XCTAssertEqual(try budget.timeout(), 0.02, accuracy: 0.0001)
-        time = 100.1
-        XCTAssertThrowsError(try budget.timeout())
+        // One accessibility call may use the read's whole remaining time, never more.
+        let budget = AXReadBudget(seconds: 2, clock: { time })
+        XCTAssertEqual(try budget.timeout(), 2, accuracy: 0.0001)
+        time = 101.5
+        XCTAssertEqual(try budget.timeout(), 0.5, accuracy: 0.0001)
+        time = 101.9995
+        XCTAssertThrowsError(try budget.timeout()) { error in
+            XCTAssertEqual((error as? UseError)?.code, "accessibility_timeout")
+        }
+        time = 102
+        XCTAssertThrowsError(try budget.check())
     }
 
     func testHostAppsAndPermissionSurfacesCannotBeControlled() {
-        for id in ["com.differentai.opencoworker", "com.differentai.openwork", "com.apple.systempreferences", "com.apple.Terminal", "com.1password.1password"] {
+        for id in ["com.differentai.opencoworker", "com.differentai.openwork", "com.apple.systempreferences", "com.apple.Terminal", "com.1password.1password",
+                   "com.microsoft.VSCode", "com.todesktop.230313mzl4w4u92", "com.jetbrains.intellij", "dev.zed.Zed", "com.apple.Automator"] {
             XCTAssertFalse(AppIdentity.isAllowed(bundleID: id), id)
         }
         XCTAssertTrue(AppIdentity.isAllowed(bundleID: "com.apple.TextEdit"))
@@ -297,6 +342,35 @@ final class BoundaryTests: XCTestCase {
         }
         let incomplete = WindowState(records: [], visited: 1, truncated: true, protectedFrames: [], privacyIssue: "privacy_incomplete")
         XCTAssertThrowsError(try incomplete.requireCapture())
+    }
+
+    func testDisplayOnlyReadFailuresDoNotWithholdTheScreenshot() {
+        // TextEdit and Freeform answer an outline's value or a group's actions
+        // with a generic failure. Those reads list a control; they never mask one.
+        for result in [AXError.failure, .cannotComplete] {
+            XCTAssertEqual(AXChildScan.outcome(result, displayOnly: true), .absent)
+            XCTAssertEqual(AXChildScan.outcome(result, displayOnly: false), .unverified)
+        }
+        XCTAssertEqual(AXChildScan.outcome(.apiDisabled, displayOnly: true), .unverified)
+        XCTAssertEqual(AXChildScan.outcome(.noValue, displayOnly: false), .absent)
+        XCTAssertEqual(AXChildScan.outcome(.success, displayOnly: false), .value)
+    }
+
+    func testInvalidElementsNeverDropTheirMaskFromTheScan() {
+        // A destroyed element can still be drawn, and its protection and children
+        // can no longer be read, so the scan withholds the screenshot.
+        for displayOnly in [false, true] {
+            XCTAssertEqual(AXChildScan.outcome(.invalidUIElement, displayOnly: displayOnly), .unverified)
+        }
+    }
+
+    func testSecureSubroleStaysStrictForTextInputsAndUnknownRoles() {
+        for role in ElementRecord.textRoles.union(["AXUnknown", "", "AXCustomSecureWidget"]) {
+            XCTAssertTrue(AXChildScan.subroleDecidesMask(role: role), role)
+        }
+        for role in ["AXGroup", "AXSplitter", "AXOutline", "AXButton", "AXWindow"] {
+            XCTAssertFalse(AXChildScan.subroleDecidesMask(role: role), role)
+        }
     }
 
     func testAXChildScanRejectsCountAndIdentityChangesIncludingEqualSizeShifts() {

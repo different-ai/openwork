@@ -8,6 +8,7 @@ import { MICROSOFT_FOUNDRY_PROVIDER_ID, microsoftFoundryBaseUrl } from "@openwor
 import { inferenceCredentialEnvNames } from "@openwork-ee/utils/inference-credentials"
 import { isLiteLlmProviderId } from "@openwork-ee/utils/litellm-catalog"
 import { env } from "./env.js"
+import { openworkOrganizationConnectionsUrl, openworkYourConnectionsUrl } from "./mcp/connection-navigation.js"
 
 function text(record: unknown, ...path: string[]): string | null {
   let value = record
@@ -52,6 +53,40 @@ export function mcpConnectionKeyPrompt(connection: { id: string; name: string; u
     target: { type: "mcp_connection_key", connectionId: connection.id },
     name: connection.name,
     destination: credentialPromptDestination(connection.url),
+  })
+}
+
+/** The signed-in person's own key for a connection where each person uses their own. */
+export function mcpConnectionMemberKeyPrompt(connection: { id: string; name: string; url: string }): CredentialPrompt {
+  return credentialPromptSchema.parse({
+    schemaVersion: "1",
+    kind: "credential_prompt",
+    target: { type: "mcp_connection_member_key", connectionId: connection.id },
+    name: connection.name,
+    destination: credentialPromptDestination(connection.url),
+  })
+}
+
+/**
+ * One shared key that replaces each person's own. The prompt changes nothing:
+ * the connection switches only when a person saves a key that works, and only
+ * while it is still as it was at `updatedAt`.
+ */
+export function mcpConnectionSharedSwitchPrompt(input: {
+  connection: { id: string; name: string; url: string; updatedAt: Date }
+  audience: { orgWide: boolean; memberCount: number; teamCount: number }
+}): CredentialPrompt {
+  return credentialPromptSchema.parse({
+    schemaVersion: "1",
+    kind: "credential_prompt",
+    target: {
+      type: "mcp_connection_shared_switch",
+      connectionId: input.connection.id,
+      expectedUpdatedAt: input.connection.updatedAt.toISOString(),
+      audience: input.audience,
+    },
+    name: input.connection.name,
+    destination: credentialPromptDestination(input.connection.url),
   })
 }
 
@@ -110,11 +145,12 @@ export function gatewayProviderKeyPrompt(input: { inferenceProviderId: string; c
 
 /** The dashboard page where a person can add the same key outside OpenWork chat. */
 export function credentialPromptManageUrl(prompt: CredentialPrompt): string | null {
-  const path = prompt.target.type === "mcp_connection_key" || prompt.target.type === "plugin_connection_key"
-    ? `/dashboard/mcp-connections/${encodeURIComponent(prompt.target.connectionId)}`
-    : "/dashboard/ai-gateway?tab=ai-providers"
   try {
-    return new URL(path, env.betterAuthUrl).toString()
+    if (prompt.target.type === "mcp_connection_member_key") return openworkYourConnectionsUrl(prompt.target.connectionId)
+    if (prompt.target.type === "gateway_provider_key" || prompt.target.type === "gateway_provider_credential") {
+      return new URL("/dashboard/ai-gateway?tab=ai-providers", env.betterAuthUrl).toString()
+    }
+    return openworkOrganizationConnectionsUrl(prompt.target.connectionId)
   } catch {
     return null
   }

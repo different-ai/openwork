@@ -5,6 +5,11 @@ description: Design notes on a PR, "Design review (advisory)" in the evidence ch
 
 # Skill: Fix design notes
 
+PR CI no longer runs the design review (the `judge-vision` job was removed).
+Get the notes locally: record the spec, then
+`pnpm --dir evals design:review -- --test-run latest`. Older PRs may still
+show notes in their Evidence preview check.
+
 Every PR that records evidence screenshots gets an advisory design review. Its
 notes ride in the **Evidence preview** check, next to the evidence they are
 about: one summary line, and the notes as the check's text. They never change

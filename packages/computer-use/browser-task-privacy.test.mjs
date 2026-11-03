@@ -24,7 +24,7 @@ test("withheld field values cannot escape through accessible labels", async () =
   const submit = new Input("Continue", {}); submit.type = "submit";
   const checkbox = new Input("on", { "aria-label": "Consent" }); checkbox.type = "checkbox";
   const fields = [...privateFields, submit, checkbox];
-  const document = { title: `Profile ${account.value}`, body: { innerText: privateFields.map(field => field.value).join(" ") }, activeElement: email,
+  const document = { title: `Profile ${account.value}`, body: { innerText: `Signed in as ${email.value}\nAccount ${account.value}\nPassword ${password.value}\nVault ${long.value}` }, activeElement: email,
     getElementById: id => id === "account-caption" ? { textContent: `Account ${account.value}` } : null,
     querySelectorAll: query => query.startsWith('input[type="password"]') ? fields.filter(field => field.type === "password" || field.attributes.autocomplete === "one-time-code") : fields };
   const context = vm.createContext({ document, HTMLElement: Input, HTMLInputElement: Input,
@@ -40,6 +40,10 @@ test("withheld field values cannot escape through accessible labels", async () =
   assert.equal(seen.ok, true, JSON.stringify(seen));
   assert.deepEqual(Array.from(seen.elements, element => element.name), ["Email [withheld]", "Account [withheld]", "Password [withheld]", "Vault [withheld]", "Continue", "Consent"]);
   for (const field of privateFields) assert.ok(!JSON.stringify(seen).includes(field.value), "The observation exposed a withheld value");
+  const extracted = await host.request({ sessionId: "chat", operation: "extract", args: { tabId: "tab", question: "Which account, password and vault is signed in?" } });
+  assert.equal(extracted.ok, true, JSON.stringify(extracted));
+  assert.ok(extracted.passages.length > 0 && JSON.stringify(extracted).includes("[withheld]"), JSON.stringify(extracted));
+  for (const field of privateFields) assert.ok(!JSON.stringify(extracted).includes(field.value), "Extraction exposed a withheld value");
   checkbox.value = "changed-private-reference";
   const staleCheckbox = await host.request({ sessionId: "chat", operation: "act", args: { tabId: "tab", observationId: seen.observationId,
     action: { type: "set_checked", ref: seen.elements[5].ref, checked: true } } });
@@ -54,7 +58,128 @@ test("withheld field values cannot escape through accessible labels", async () =
   password.type = "text";
   account.attributes.autocomplete = "section-checkout cc-number";
   const protectedImage = await host.request({ sessionId: "chat", operation: "observe", args: { tabId: "tab", includeImage: true } });
-  assert.equal(protectedImage.code, "sign_in_required", "Payment fields must block capture even without a password field");
+  assert.equal(protectedImage.code, "payment_required", "Payment fields must block capture even without a password field");
+});
+
+test("a given password is filled only on the site the person confirms, and never read back", async () => {
+  class Input {
+    tagName = "INPUT"; parentElement = null; labels = []; isConnected = true; type = "password"; value = "";
+    attributes = { "aria-label": "Password" };
+    getAttribute(name) { return this.attributes[name] ?? null; }
+    hasAttribute() { return false; }
+    matches(selector) { return this.type === "password" && selector.includes('input[type="password"]'); }
+    closest() { return null; }
+    contains(element) { return element === this; }
+    getBoundingClientRect() { return { x: 10, y: 10, left: 10, top: 10, right: 210, bottom: 50, width: 200, height: 40 }; }
+    focus() { document.activeElement = this; }
+    select() {}
+  }
+  const field = new Input();
+  let fields = [field];
+  const document = { title: "Sign in", body: { innerText: "Password" }, activeElement: null,
+    getElementById: () => null, elementFromPoint: () => field, querySelectorAll: () => fields };
+  const context = vm.createContext({ document, HTMLElement: Input, HTMLInputElement: Input,
+    HTMLSelectElement: class {}, HTMLTextAreaElement: class {}, HTMLLabelElement: class {},
+    getComputedStyle: () => ({ visibility: "visible", display: "block", overflowX: "visible", overflowY: "visible" }),
+    innerWidth: 800, innerHeight: 600, scrollX: 0, scrollY: 0, performance, setTimeout });
+  let url = "https://example.com/login";
+  const keysSent = [];
+  const tab = { tabId: "tab", webMcpRevision: 0, view: { webContents: { isDestroyed: () => false,
+    getURL: () => url, insertText: async text => { field.value = text; },
+    sendInputEvent: async event => { keysSent.push(event); },
+    captureObservation: async () => Buffer.from("png"),
+    executeJavaScriptInIsolatedWorld: async (_world, scripts) => vm.runInContext(scripts[0].code, context) } } };
+  const asked = [];
+  let confirm = true;
+  const hostWith = approveCredential => createBrowserTaskHost({ getTab: () => tab, tabsFor: () => [tab], ownerOf: () => "chat", activeFor: () => "tab",
+    enabled: () => true, allowed: async () => true, changed: () => {}, isVisible: () => true, approveCredential });
+  const host = hostWith(async (sessionId, request) => { asked.push([sessionId, request.site]); return confirm; });
+  const observe = (target = host, args = {}) => target.request({ sessionId: "chat", operation: "observe", args: { tabId: "tab", ...args } });
+  const fill = async (target, text) => {
+    const seen = await observe(target);
+    return target.request({ sessionId: "chat", operation: "act", args: { tabId: "tab", observationId: seen.observationId,
+      action: { type: "fill", ref: seen.elements[0].ref, text } } });
+  };
+  // Page script can copy a typed or autofilled password into visible text, even after
+  // clearing the field, so no image is taken while a credential field is on screen.
+  assert.equal((await observe(host, { includeImage: true })).code, "credential_on_screen");
+  const pictured = await observe(host);
+  assert.equal(pictured.ok, true, "A sign-in page can still be read and used without an image");
+  const given = "given-password-123";
+  confirm = false;
+  const declined = await fill(host, given);
+  assert.equal(declined.code, "credential_declined");
+  assert.equal(field.value, "", "Nothing is typed without the person's yes");
+  assert.equal((await fill(hostWith(undefined), given)).code, "sign_in_required", "A host that cannot ask leaves sign-in to the person");
+  assert.equal(field.value, "");
+  // Enter in the field can submit what the browser autofilled, so keys wait for the same yes.
+  const press = async (target) => {
+    const seen = await observe(target);
+    return target.request({ sessionId: "chat", operation: "act", args: { tabId: "tab", observationId: seen.observationId,
+      action: { type: "key", key: "Enter", ref: seen.elements[0].ref } } });
+  };
+  assert.equal((await press(host)).code, "credential_declined");
+  assert.equal((await press(hostWith(undefined))).code, "sign_in_required");
+  assert.deepEqual(keysSent, []);
+  // So do clicks in it, or on its label, since focusing the field can autofill a saved password.
+  const click = async (target, control = field) => {
+    const seen = await observe(target);
+    const { ref } = seen.elements.find(element => element.name === control.attributes["aria-label"]);
+    return target.request({ sessionId: "chat", operation: "act", args: { tabId: "tab", observationId: seen.observationId, action: { type: "click", ref } } });
+  };
+  assert.equal((await click(host)).code, "credential_declined");
+  assert.equal((await click(hostWith(undefined))).code, "sign_in_required");
+  const inLabel = selector => selector === "label" ? label : null;
+  const label = new Input(); label.type = "text"; label.attributes = { "aria-label": "Your password" }; label.control = field; label.closest = inLabel;
+  const inside = new Input(); inside.type = "text"; inside.attributes = { "aria-label": "Password hint" }; inside.closest = inLabel;
+  fields = [field, label, inside];
+  assert.equal((await click(host, label)).code, "credential_declined");
+  assert.equal((await click(host, inside)).code, "credential_declined", "Anything inside the label focuses the field too");
+  fields = [field];
+  assert.equal(document.activeElement, null, "Nothing touched the field");
+  // A page that leaves while the field takes focus gets nothing, even after the person's yes.
+  confirm = true;
+  field.focus = () => { document.activeElement = field; url = "https://elsewhere.example/"; };
+  assert.equal((await fill(host, given)).code, "page_changed");
+  assert.equal(field.value, "");
+  // Enter on the page it landed on would submit what the browser autofilled there.
+  url = "https://example.com/login"; document.activeElement = null;
+  field.matches = selector => selector.includes('input[type="password"]') || selector.startsWith("input,textarea");
+  assert.equal((await press(host)).code, "page_changed");
+  assert.deepEqual(keysSent, []);
+  delete field.matches; delete field.focus; url = "https://example.com/login";
+  const filled = await fill(host, given);
+  assert.equal(filled.ok, true, JSON.stringify(filled));
+  assert.deepEqual(asked, Array(8).fill(["chat", "https://example.com"]), "The person confirms the exact origin");
+  assert.equal(field.value, given);
+  assert.equal(filled.control.filled, true);
+  assert.equal(filled.control.value, undefined);
+  assert.ok(!JSON.stringify(filled).includes(given));
+  const after = await observe();
+  assert.equal(after.elements[0].filled, true);
+  assert.ok(!JSON.stringify(after).includes(given));
+  assert.equal((await observe(host, { includeImage: true })).code, "credential_on_screen");
+  // A page can copy the value into visible text and then hide or remove the field.
+  field.getBoundingClientRect = () => ({ x: 0, y: 0, left: 0, top: 0, right: 0, bottom: 0, width: 0, height: 0 });
+  assert.equal((await observe(host, { includeImage: true })).code, "credential_on_screen", "A hidden credential field still blocks images");
+  fields = [];
+  assert.equal((await observe(host, { includeImage: true })).code, "credential_on_screen", "After a fill, the document takes no more images");
+  fields = [field]; delete field.getBoundingClientRect;
+  // A text field the page marks as a password is a credential field too.
+  field.type = "text"; field.value = ""; field.attributes.autocomplete = "current-password";
+  confirm = false;
+  assert.equal((await fill(host, given)).code, "credential_declined");
+  assert.equal(field.value, "");
+  // A one-time code field blocks images too, filled or not; an ordinary field does not.
+  field.attributes.autocomplete = "one-time-code";
+  field.value = "123456";
+  const code = await observe(host, { includeImage: true });
+  assert.equal(code.code, "credential_on_screen");
+  assert.ok(!JSON.stringify(code).includes("123456"));
+  // An ordinary field in a new document (no credential filled yet) can be pictured.
+  delete field.attributes.autocomplete; field.value = "";
+  vm.runInContext("globalThis.__openworkCredentialEntered = false", context);
+  assert.equal((await observe(host, { includeImage: true })).ok, true);
 });
 
 test("select options keep backing identities private and revalidate before choosing", async () => {
@@ -119,7 +244,9 @@ test("select options keep backing identities private and revalidate before choos
   }, new AbortController().signal);
   assert.equal(program.ok, true, JSON.stringify(program));
   assert.equal(select.value, "different-private-identity");
-  assert.equal(inputChecks, 2);
+  // Refs survive a layout change: the control is located again and the
+  // select goes through on the first input check, without a re-observation.
+  assert.equal(inputChecks, 1);
   assert.ok(!JSON.stringify(program).includes("private-identity"));
   options[0].value = "1"; options[0].label = "Plan 1";
   const publicLabel = await observe();

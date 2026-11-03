@@ -2,7 +2,12 @@
 set -eu
 state="$1/cloud-desktop"
 display="$2"
-case "$display" in :[0-9]|:[0-9][0-9]|:[0-9][0-9][0-9]) ;; *) echo "Invalid cloud display" >&2; exit 1 ;; esac
+# An optional display of the browser's own keeps it off the desktop where native
+# apps run, so watching or driving the computer never shows the agent's browser.
+browser_display="${3:-$display}"
+for value in "$display" "$browser_display"; do
+  case "$value" in :[0-9]|:[0-9][0-9]|:[0-9][0-9][0-9]) ;; *) echo "Invalid cloud display" >&2; exit 1 ;; esac
+done
 command -v chromium >/dev/null
 command -v Xvfb >/dev/null
 # OCI-to-VM conversion does not preserve default ACLs. Reapply the desktop
@@ -11,9 +16,10 @@ if [ -f /usr/local/share/openwork-desktop/configure-files.sh ]; then
   bash /usr/local/share/openwork-desktop/configure-files.sh
 fi
 runtime="/run/openwork-desktop/${display#:}"
+browser_runtime="/run/openwork-desktop/${browser_display#:}"
 # Root's authority and logs never live in the browser-writable profile state.
 # Hold directory inodes while setting ownership; never recurse through that state.
-python3 - "$1" "$runtime" <<'PY'
+python3 - "$1" "$runtime" "$browser_runtime" <<'PY'
 import os
 import pwd
 import stat
@@ -67,15 +73,21 @@ def prepare_state(base, runtime, uid, gid):
     finally: os.close(folder)
 
 browser = pwd.getpwnam('openwork-browser')
-prepare_state(sys.argv[1], sys.argv[2], browser.pw_uid, browser.pw_gid)
+for runtime in dict.fromkeys(sys.argv[2:]):
+    prepare_state(sys.argv[1], runtime, browser.pw_uid, browser.pw_gid)
 PY
 export DISPLAY="$display" XAUTHORITY="$runtime/.Xauthority"
-as_browser() {
+# Native apps get a copy of the desktop's authority below, never the browser display's.
+browser_authority="$browser_runtime/.Xauthority"
+as_browser_on() {
+  on_display="$1" on_authority="$2"
+  shift 2
   # The desktop must not inherit the worker's host, model or activity tokens.
   env -i PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin HOME=/home/openwork-browser \
     USER=openwork-browser LOGNAME=openwork-browser LANG=C.UTF-8 \
-    DISPLAY="$display" XAUTHORITY="$XAUTHORITY" LIBGL_ALWAYS_SOFTWARE=1 GALLIUM_DRIVER=llvmpipe runuser -u openwork-browser -- "$@"
+    DISPLAY="$on_display" XAUTHORITY="$on_authority" LIBGL_ALWAYS_SOFTWARE=1 GALLIUM_DRIVER=llvmpipe runuser -u openwork-browser -- "$@"
 }
+as_browser() { as_browser_on "$display" "$XAUTHORITY" "$@"; }
 as_app() {
   env -i PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin HOME=/home/openwork-app \
     USER=openwork-app LOGNAME=openwork-app LANG=C.UTF-8 \
@@ -83,7 +95,43 @@ as_app() {
 }
 # Agent-driven pages cannot reach private networks. Native apps cannot open
 # network connections at all; the browser's CDP and VNC replies still work.
+# Native nftables UID matches also work on microVM kernels that omit xt_owner.
+# Use one atomic transaction and reserve control ports for trusted transports.
+guard_desktop_nft() {
+  browser_uid=$(id -u openwork-browser)
+  command_uid=""
+  app_uid=""
+  if id openwork-command >/dev/null 2>&1; then command_uid=$(id -u openwork-command); fi
+  if id openwork-app >/dev/null 2>&1; then app_uid=$(id -u openwork-app); fi
+  {
+    if nft list table inet openwork_desktop >/dev/null 2>&1; then
+      printf '%s\n' 'delete table inet openwork_desktop'
+    fi
+    printf '%s\n' 'add table inet openwork_desktop'
+    printf '%s\n' 'add chain inet openwork_desktop output { type filter hook output priority 0; policy accept; }'
+    if [ -n "$command_uid" ]; then
+      printf 'add rule inet openwork_desktop output meta skuid %s tcp dport { 5900-5903, 6080, 9222 } reject\n' "$command_uid"
+    fi
+    if [ -n "$app_uid" ]; then
+      printf 'add rule inet openwork_desktop output meta skuid %s reject\n' "$app_uid"
+    fi
+    printf 'add rule inet openwork_desktop output meta skuid %s ct state established,related accept\n' "$browser_uid"
+    for nameserver in $(awk '/^nameserver/ { print $2 }' /etc/resolv.conf); do
+      nameserver=${nameserver%%%*}
+      family=ip
+      case "$nameserver" in *:*) family=ip6 ;; esac
+      printf 'add rule inet openwork_desktop output meta skuid %s %s daddr %s meta l4proto { tcp, udp } th dport 53 accept\n' "$browser_uid" "$family" "$nameserver"
+    done
+    printf 'add rule inet openwork_desktop output meta skuid %s ip daddr { 0.0.0.0/8, 10.0.0.0/8, 100.64.0.0/10, 127.0.0.0/8, 169.254.0.0/16, 172.16.0.0/12, 192.168.0.0/16 } reject\n' "$browser_uid"
+    printf 'add rule inet openwork_desktop output meta skuid %s ip6 daddr { ::/96, ::ffff:0:0/96, 64:ff9b::/96, 64:ff9b:1::/48, fc00::/7, fe80::/10 } reject\n' "$browser_uid"
+  } | nft -f -
+}
+
 guard_desktop_egress() {
+  if command -v nft >/dev/null 2>&1; then
+    guard_desktop_nft
+    return
+  fi
   uid=$(id -u openwork-browser)
   tools=iptables
   if command -v ip6tables >/dev/null && ip6tables -w -S OUTPUT >/dev/null 2>&1; then tools="iptables ip6tables"; fi
@@ -127,20 +175,28 @@ guard_desktop_egress() {
 command -v iptables >/dev/null || { echo "The desktop network guard needs iptables" >&2; exit 1; }
 guard_desktop_egress
 umask 077
-if [ ! -s "$XAUTHORITY" ]; then
-  xauth -f "$XAUTHORITY" add "$display" . "$(python3 -c 'import secrets; print(secrets.token_hex(16))')"
+start_display() {
+  # display, its own authority file, runtime folder
+  if [ ! -s "$2" ]; then
+    xauth -f "$2" add "$1" . "$(python3 -c 'import secrets; print(secrets.token_hex(16))')"
+  fi
+  chown root:openwork-browser "$2"
+  chmod 0640 "$2"
+  if ! DISPLAY="$1" XAUTHORITY="$2" xdotool getdisplaygeometry >/dev/null 2>&1; then
+    as_browser_on "$1" "$2" setsid -f Xvfb "$1" -screen 0 1280x800x24 -nolisten tcp -auth "$2" >"$3/display.log" 2>&1 < /dev/null
+  fi
+  attempt=0
+  until DISPLAY="$1" XAUTHORITY="$2" xdotool getdisplaygeometry >/dev/null 2>&1; do
+    attempt=$((attempt + 1))
+    [ "$attempt" -lt 50 ] || { echo "Cloud display did not start" >&2; exit 1; }
+    sleep 0.1
+  done
+}
+start_display "$display" "$XAUTHORITY" "$runtime"
+if [ "$browser_display" != "$display" ]; then
+  # No window manager here: Chromium fills this display and draws its own frame.
+  start_display "$browser_display" "$browser_authority" "$browser_runtime"
 fi
-chown root:openwork-browser "$XAUTHORITY"
-chmod 0640 "$XAUTHORITY"
-if ! xdotool getdisplaygeometry >/dev/null 2>&1; then
-  as_browser setsid -f Xvfb "$display" -screen 0 1280x800x24 -nolisten tcp -auth "$XAUTHORITY" >"$runtime/display.log" 2>&1 < /dev/null
-fi
-attempt=0
-until xdotool getdisplaygeometry >/dev/null 2>&1; do
-  attempt=$((attempt + 1))
-  [ "$attempt" -lt 50 ] || { echo "Cloud display did not start" >&2; exit 1; }
-  sleep 0.1
-done
 if id openwork-app >/dev/null 2>&1; then
   # Share display access, never the Chromium profile or browser home. The
   # window manager launches menu/taskbar apps under the same isolated account.
@@ -165,9 +221,9 @@ if command -v tint2 >/dev/null; then
 fi
 if ! curl --fail --silent --max-time 2 http://127.0.0.1:9222/json/version >/dev/null; then
   # The browser runs as an unprivileged user with Chromium's sandbox enabled.
-  as_browser setsid -f chromium --remote-debugging-address=127.0.0.1 --remote-debugging-port=9222 \
-    --user-data-dir="$state/profile" --window-size=1280,800 --force-device-scale-factor=1 --no-first-run \
-    --no-default-browser-check about:blank >"$runtime/browser.log" 2>&1 < /dev/null
+  as_browser_on "$browser_display" "$browser_authority" setsid -f chromium --remote-debugging-address=127.0.0.1 --remote-debugging-port=9222 \
+    --user-data-dir="$state/profile" --window-position=0,0 --window-size=1280,800 --force-device-scale-factor=1 --no-first-run \
+    --no-default-browser-check about:blank >"$browser_runtime/browser.log" 2>&1 < /dev/null
 fi
 attempt=0
 until curl --fail --silent --max-time 2 http://127.0.0.1:9222/json/version >/dev/null; do
@@ -177,8 +233,17 @@ until curl --fail --silent --max-time 2 http://127.0.0.1:9222/json/version >/dev
 done
 if [ "${WORKBOT_DESKTOP_VNC:-0}" = 1 ]; then
   command -v x11vnc >/dev/null
-  window=$(xdotool search --onlyvisible --class chromium | head -n 1)
-  [ -n "$window" ] || { echo "The browser window is unavailable" >&2; exit 1; }
+  # Chromium opens and closes windows while it starts, and a search that walks the
+  # window tree then fails with BadWindow. Retry briefly instead of failing a cold boot.
+  window=
+  attempt=0
+  until [ -n "$window" ]; do
+    window=$(DISPLAY="$browser_display" XAUTHORITY="$browser_authority" xdotool search --onlyvisible --class chromium 2>/dev/null | head -n 1) || window=
+    [ -n "$window" ] && break
+    attempt=$((attempt + 1))
+    [ "$attempt" -lt 25 ] || { echo "The browser window is unavailable" >&2; exit 1; }
+    sleep 0.2
+  done
   # Root's guest starts one inetd-mode viewer over private stdio. A process
   # binding a local VNC port can never substitute itself for that transport.
   printf '%s\n' "$window" > "$1/browser-window"

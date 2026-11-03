@@ -1,6 +1,6 @@
 import { and, eq, gt, isNotNull, isNull } from "@openwork-ee/den-db/drizzle"
 import { readOrganizationMetadata } from "@openwork/types/den/managed-models-policy"
-import { ensureMemberGatewayKey } from "../../gateway-keys.js"
+import { runPostOrganizationMemberChangeHooks } from "../../organization-member-hooks.js"
 import {
   ConfigObjectAccessGrantTable,
   ConfigObjectTable,
@@ -242,7 +242,8 @@ function skillMetadata(skillText: string) {
 }
 
 async function checkBootstrapRateLimit(key: string, now: number) {
-  const [row] = await db
+  // primary: the counter is read back right after earlier requests wrote it.
+  const [row] = await db.$primary
     .select({ id: RateLimitTable.id, count: RateLimitTable.count, lastRequest: RateLimitTable.lastRequest })
     .from(RateLimitTable)
     .where(eq(RateLimitTable.key, key))
@@ -716,7 +717,9 @@ export function registerBootstrapRoutes<T extends { Variables: AuthContextVariab
       if (session?.id) {
         await setSessionActiveOrganization(normalizeDenTypeId("session", session.id), result.organization.id)
       }
-      await ensureMemberGatewayKey({ organizationId: result.organization.id, memberId: result.memberId })
+      // Same as any other join: billing follows the new user count and the
+      // member gets a gateway key.
+      await runPostOrganizationMemberChangeHooks({ organizationId: result.organization.id, memberId: result.memberId, change: "added" })
       // A claim link also ends the agent's pre-claim credentials.
       await revokePreclaimCredentials(result.bootstrapId)
       await retirePreclaimAgent(result.bootstrapId)
@@ -891,7 +894,9 @@ export function registerBootstrapRoutes<T extends { Variables: AuthContextVariab
       if (session?.id) {
         await setSessionActiveOrganization(normalizeDenTypeId("session", session.id), result.organization.id)
       }
-      await ensureMemberGatewayKey({ organizationId: result.organization.id, memberId: result.memberId })
+      // Same as any other join: billing follows the new user count and the
+      // member gets a gateway key.
+      await runPostOrganizationMemberChangeHooks({ organizationId: result.organization.id, memberId: result.memberId, change: "added" })
       return c.json({ ok: true, organization: result.organization, ...(await teammateInvitesFor(lookup.bootstrapId, result.organization.role)) })
     },
   )

@@ -1,8 +1,8 @@
 # Design review
 
-Every evidence screenshot gets an advisory design review, so a layout problem
-does not depend on the spec author noticing it. It never changes a test's
-verdict.
+An advisory design review of evidence screenshots, so a layout problem does
+not depend on the spec author noticing it. It never changes a test's verdict.
+It runs locally (see Run it); PR CI does not run it.
 
 Two passes, because each catches what the other misses:
 
@@ -42,18 +42,6 @@ check, reproduce, fix, re-run, push.
 
 ## In CI
 
-The trusted `judge-vision` job in `pr-proof.yml` runs
-`evals/scripts/design-review-journeys.mjs` after judging screenshot claims.
-Notes go to the job summary and into the proof record. The trusted publisher
-adds them to the Evidence preview check; the review report shows them on each screenshot (count in the gallery,
-outlined regions, notes and code hooks in the viewer). The step is
-`continue-on-error`: a finding or a provider error never fails the job.
-`run-advisory-design-review.mjs` gives the entire advisory pass a **120-second
-wall-clock budget**, then kills its process group (including stuck model work
-and subprocesses). A three-minute step timeout is a runner-level backstop.
-Completed notes and measured findings are checkpointed atomically between
-screenshots and before model calls; completed run summaries are appended as
-runs finish. On timeout, these partial notes are uploaded with the judged
-records and a warning says remaining screenshots were not reviewed. Screenshot
-assertion judgments run first, outside this budget; their records and verdicts
-are never changed by the advisory fallback. Local design review has no cap.
+PR CI no longer runs the design review or judges screenshot claims (the
+`judge-vision` job was removed to cut time to green). Run
+`pnpm --dir evals design:review -- --test-run latest` locally with a model key.

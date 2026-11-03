@@ -68,6 +68,14 @@ export interface ServerOptions {
   seedAutomations?: boolean;
   /** Daytona idle shutdown in minutes. Preview worlds pass 0 so their lifetime owns teardown. */
   daytonaAutoStopMinutes?: number;
+  /** Explicit resource/privacy bounds for an owned workshop backend, never a pooled Den. */
+  daytonaPrivate?: boolean;
+  /** Start without the known demo users; org/admin/members below are provisioned through real APIs. */
+  daytonaSeedDemo?: boolean;
+  daytonaCpu?: number;
+  daytonaMemoryGiB?: number;
+  daytonaTtlMinutes?: number;
+  daytonaPreviewExpirySeconds?: number;
   /**
    * Extra origins Den should trust, on top of its own API and web hosts. A
    * loopback identity provider needs this: Den refuses to register an SSO
@@ -392,9 +400,11 @@ async function createOrSignInAccount(
   if (signUp.response.ok && databaseUrl) await markVerified(databaseUrl, person.email);
   try {
     return await signIn(ref, { email: person.email, password: person.password });
-  } catch (error) {
+  } catch {
     throw new Error(
-      `Could not provision ${person.email}: sign-up HTTP ${signUp.response.status} ${signUp.text.slice(0, 300)}; ${messageText(error)}`,
+      // Auth responses can contain a freshly issued token even before a
+      // session is returned to the caller and registered for redaction.
+      `Could not provision ${person.email}: sign-up HTTP ${signUp.response.status}; sign-in failed (authentication response withheld).`,
     );
   }
 }
@@ -698,7 +708,7 @@ export async function server(options: ServerOptions): Promise<Den> {
     const denEnv = Object.fromEntries(
       Object.entries(options.env ?? {}).flatMap(([key, value]) => (value === undefined ? [] : [[key, value]])),
     );
-    const needsOwnDen = Object.keys(denEnv).length > 0;
+    const needsOwnDen = Object.keys(denEnv).length > 0 || options.daytonaSeedDemo !== undefined || options.daytonaPrivate !== undefined || options.daytonaCpu !== undefined || options.daytonaMemoryGiB !== undefined || options.daytonaTtlMinutes !== undefined || options.daytonaPreviewExpirySeconds !== undefined;
     // A prewarmed Den is already running with its own env, so a test that
     // needs Den env gets a dedicated sandbox rather than a silently wrong Den.
     const preparedSandbox = needsOwnDen ? undefined : process.env.OPENWORK_EVAL_DAYTONA_DEN_SANDBOX?.trim();
@@ -724,6 +734,12 @@ export async function server(options: ServerOptions): Promise<Den> {
         bootstrapAdminEmail: bootstrapAdmin.email,
         env: denEnv,
         ...(options.daytonaAutoStopMinutes === undefined ? {} : { autoStopMinutes: options.daytonaAutoStopMinutes }),
+        ...(options.daytonaPrivate === undefined ? {} : { private: options.daytonaPrivate }),
+        ...(options.daytonaSeedDemo === undefined ? {} : { seedDemo: options.daytonaSeedDemo }),
+        ...(options.daytonaCpu === undefined ? {} : { cpu: options.daytonaCpu }),
+        ...(options.daytonaMemoryGiB === undefined ? {} : { memoryGiB: options.daytonaMemoryGiB }),
+        ...(options.daytonaTtlMinutes === undefined ? {} : { ttlMinutes: options.daytonaTtlMinutes }),
+        ...(options.daytonaPreviewExpirySeconds === undefined ? {} : { previewExpirySeconds: options.daytonaPreviewExpirySeconds }),
         log: (line) => {
           console.error(`[openwork/testkit] ${line}`);
           // Surface the provisioner's own phase markers ("==> sandbox gate...") live.

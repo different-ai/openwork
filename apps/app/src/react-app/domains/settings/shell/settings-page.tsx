@@ -9,7 +9,9 @@ import {
   Cog,
   FolderLock,
   Gauge,
+  HardDriveDownload,
   Keyboard,
+  Monitor,
   Paintbrush,
   Puzzle,
   RefreshCcw,
@@ -45,6 +47,7 @@ import { t } from "../../../../i18n";
 import { isSettingsTabAllowed } from "../../../../app/cloud/desktop-app-restrictions";
 import type { PlatformCapabilities } from "../../../../app/lib/platform-capabilities";
 import type { SettingsTab } from "../../../../app/types";
+import { isElectronRuntime } from "../../../../app/utils";
 import { cn } from "@/lib/utils";
 import { usePlatform } from "../../../kernel/platform";
 import { useCheckDesktopRestriction } from "../../cloud/desktop-config-provider";
@@ -61,6 +64,7 @@ import {
   SettingsPanelToolbarStatus,
 } from "./panel";
 import { SidebarDestination } from "../../session/sidebar/sidebar-destination";
+import { useDesktopFeature } from "../../session/status/use-desktop-feature";
 
 export function getSettingsTabIcon(tab: SettingsTab) {
   switch (tab) {
@@ -88,10 +92,14 @@ export function getSettingsTabIcon(tab: SettingsTab) {
       return Terminal;
     case "advanced":
       return Wrench;
+    case "import":
+      return HardDriveDownload;
     case "appearance":
       return Paintbrush;
     case "shortcuts":
       return Keyboard;
+    case "computer":
+      return Monitor;
     case "updates":
       return RefreshCcw;
     case "recovery":
@@ -131,10 +139,14 @@ export function getSettingsTabLabel(tab: SettingsTab) {
       return t("settings.tab_environment");
     case "advanced":
       return t("settings.tab_advanced");
+    case "import":
+      return t("settings.tab_import");
     case "appearance":
       return t("settings.tab_appearance");
     case "shortcuts":
       return "Keyboard shortcuts";
+    case "computer":
+      return "Computer use";
     case "updates":
       return t("settings.tab_updates");
     case "recovery":
@@ -176,10 +188,14 @@ export function getSettingsTabDescription(tab: SettingsTab) {
       return t("settings.tab_description_environment");
     case "advanced":
       return t("settings.tab_description_advanced");
+    case "import":
+      return t("settings.tab_description_import");
     case "appearance":
       return t("settings.tab_description_appearance");
     case "shortcuts":
       return "Keys that switch to the models you use most";
+    case "computer":
+      return "Let the agent use apps on this computer";
     case "updates":
       return t("settings.tab_description_updates");
     case "recovery":
@@ -194,14 +210,16 @@ export function getSettingsTabDescription(tab: SettingsTab) {
 }
 
 export function getWorkspaceSettingsTabs(): SettingsTab[] {
-  return ["preferences", "permissions", "extensions", "advanced"];
+  return ["preferences", "permissions", "extensions", "import", "advanced"];
 }
 
 export function getGlobalSettingsTabs(
   developerMode: boolean,
   capabilities: Pick<PlatformCapabilities, "autoUpdate">,
+  options: { computerUse?: boolean } = {},
 ): SettingsTab[] {
   const tabs: SettingsTab[] = ["ai", "ollama", "appearance", "shortcuts", "environment"];
+  if (options.computerUse) tabs.push("computer");
   if (capabilities.autoUpdate) tabs.push("updates");
   if (developerMode) tabs.push("debug");
   return tabs;
@@ -258,12 +276,14 @@ export type SettingsNavGroups = {
 export function useSettingsNavGroups(developerMode: boolean): SettingsNavGroups {
   const platform = usePlatform();
   const checkRestriction = useCheckDesktopRestriction();
+  // Computer use runs in the desktop app; the web app has no local computer.
+  const computerUse = useDesktopFeature("computerUse") && isElectronRuntime();
   const allowed = (tabs: SettingsTab[]) =>
     tabs.filter((tab) => isSettingsTabAllowed({ tab, checkRestriction }));
   return {
     hub: allowed(["general"]),
     workspace: allowed(getWorkspaceSettingsTabs()),
-    global: allowed(getGlobalSettingsTabs(developerMode, platform.capabilities)),
+    global: allowed(getGlobalSettingsTabs(developerMode, platform.capabilities, { computerUse })),
     cloud: allowed(CLOUD_SETTINGS_TABS),
   };
 }

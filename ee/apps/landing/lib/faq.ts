@@ -12,7 +12,7 @@ export const homeFaq: FaqEntry[] = [
   {
     question: "Is OpenWork free?",
     answer:
-      "Yes. The desktop app is free and open source — you bring your own LLM provider keys. On OpenWork Cloud, the Team plan includes your first 5 seats free, then $10 per seat per month, and adds SSO, API access, and the Extension Marketplace. Enterprise adds SCIM, desktop policies, and bring-your-own inference."
+      "Yes. The desktop app is free and open source — you bring your own LLM provider keys. On OpenWork Cloud, the Free plan covers up to 5 users. The Team plan is $10 per user per month and adds SSO, API access, and the Extension Marketplace. Enterprise adds SCIM, desktop policies, and bring-your-own inference."
   },
   {
     question: "How is OpenWork different from Claude Cowork?",

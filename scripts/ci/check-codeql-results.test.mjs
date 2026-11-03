@@ -65,3 +65,14 @@ test("wrong commits, failed results, other tools and custom uploads do not satis
   ];
   assert.deepEqual(missingLanguages(["python"], uploads, [head, merge]), ["python"]);
 });
+
+test("recognizes the advanced-setup workflow baseline", () => {
+  const key = ".github/workflows/codeql.yml:analyze";
+  const result = defaultSetupBaseline([analysis("swift", { key }), analysis("python", { key }), analysis("python", { sha: older })]);
+  assert.deepEqual(result, { commitSha: head, analysisKey: key, languages: ["swift", "python"] });
+});
+
+test("PRs that skip the Swift build still need a Swift upload", () => {
+  assert.deepEqual(missingLanguages(["python", "swift"], [analysis("python")], [head]), ["swift"]);
+  assert.deepEqual(missingLanguages(["python", "swift"], [analysis("python"), analysis("swift", { key: ".github/workflows/codeql.yml:analyze" })], [head]), []);
+});

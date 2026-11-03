@@ -76,7 +76,7 @@ pnpm --filter @openwork/computer-use build
 pnpm --filter openwork-server build
 wait "$DESKTOP_BUILD"
 ` : "pnpm --filter @openwork/types build\npnpm --filter @openwork/enterprise-mcp-client build"}
-pnpm --filter @openwork/sdk build${world === "desktop" ? "\npnpm --filter @openwork/desktop rebuild:electron-native" : ""}
+${world === "desktop" ? "pnpm --filter @openwork/desktop rebuild:electron-native" : ""}
 ${ARCHIVE_COMPILED}`;
 }
 

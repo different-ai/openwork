@@ -106,6 +106,21 @@ export async function adminFreeAutoConversionsWorld(seed: Seed, { place }: { pla
       const response = await fetch(`${gatewayUrl}/api/anonymous/status`, { headers: { authorization: "Bearer public", "x-openwork-free-journey": journey } });
       return { status: response.status, body: record(await response.json()) };
     },
+    async exhaustedCheckWhileAnalyticsLocked(journey: string) {
+      const ip = createHmac("sha256", identityKey).update("ip:127.0.0.1").digest("hex");
+      const rateId = digest("free-auto-observation-rate", `${ip}:${Math.floor(Date.now() / 86_400_000)}`);
+      const rows = await sql("SELECT COUNT(*) AS total FROM anonymous_inference_rate_buckets WHERE id = ?", [rateId]);
+      if (Number(record(rows[0]).total) !== 1) throw new Error("Expected this network's guest observation bucket");
+      // Arrangement only: hold the analytics row lock for eight seconds, as a slow or contended analytics write would.
+      const lock = sql("SELECT SLEEP(8) AS held FROM anonymous_inference_rate_buckets WHERE id = ? FOR UPDATE", [rateId]);
+      await new Promise((resolve) => setTimeout(resolve, 750));
+      const started = Date.now();
+      const response = await fetch(`${gatewayUrl}/api/anonymous/status`, { headers: { authorization: "Bearer public", "x-openwork-free-journey": journey } });
+      const body = record(await response.json());
+      const elapsedMs = Date.now() - started;
+      await lock;
+      return { status: response.status, state: body.state, elapsedMs };
+    },
     async createAccountAndReturn(journey: string) {
       const email = `conversion-new-${Date.now()}@example.test`;
       const response = await fetch(`${den.ref.apiUrl}/api/auth/sign-up/email`, { method: "POST", headers: { "content-type": "application/json", origin: den.ref.webUrl },

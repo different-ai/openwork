@@ -1,8 +1,9 @@
 import { and, eq, gt, inArray, isNull, or } from "@openwork-ee/den-db/drizzle"
 import { AuthSessionTable, GatewayCredentialSetTable, GatewayKeyTable, GatewayModelGroupModelTable, GatewayModelGroupTable, GatewayProviderAccessTable, GatewayProviderCredentialTable, GatewayProviderModelTable, GatewayProviderTable, MemberTable, OrganizationTable } from "@openwork-ee/den-db/schema"
+import { cache } from "../cache.js"
 import { db } from "../db.js"
 import { env } from "../env.js"
-import { organizationFeatureEnabled } from "../features.js"
+import { sessionTokenMatches } from "../session-token.js"
 import { effectiveGatewayGrants, memberGatewayTeams } from "./inference-provider-lifecycle.js"
 import { buildGatewayModelConfig, buildGatewayProviderConfig, gatewayConfigurationError, gatewayModelConfigurationError } from "./inference-provider-config.js"
 import { providerInventoryReadiness, providerInventoryRevision } from "./provider-inventory-revision.js"
@@ -14,6 +15,18 @@ export type ProviderInventoryPrincipal = {
   userId: NonNullable<typeof MemberTable.$inferSelect.userId>
   sessionId: typeof AuthSessionTable.$inferSelect.id
   sessionToken: string
+}
+
+/**
+ * What an open stream polls instead of the database: an opaque marker that
+ * changes after a write to a table the fingerprint below depends on, so an idle
+ * stream costs no queries. Throws once the session is revoked. Null when Redis
+ * cannot answer, so the stream falls back to reading the database.
+ */
+export async function readProviderInventoryMarker(principal: ProviderInventoryPrincipal): Promise<string | null> {
+  const state = await cache.inventory.providerState(principal)
+  if (state?.revoked) throw new Error("Provider inventory is no longer authorized.")
+  return state?.generation ?? null
 }
 
 /**
@@ -31,13 +44,12 @@ export async function readProviderInventoryRevision(principal: ProviderInventory
   return db.transaction(async (tx) => {
     const now = new Date()
     const [session] = await tx.select({ id: AuthSessionTable.id }).from(AuthSessionTable)
-      .where(and(eq(AuthSessionTable.id, principal.sessionId), eq(AuthSessionTable.token, principal.sessionToken), eq(AuthSessionTable.userId, principal.userId), gt(AuthSessionTable.expiresAt, now)))
+      .where(and(eq(AuthSessionTable.id, principal.sessionId), sessionTokenMatches(principal.sessionToken), eq(AuthSessionTable.userId, principal.userId), gt(AuthSessionTable.expiresAt, now)))
     const [member] = await tx.select({ id: MemberTable.id }).from(MemberTable)
       .innerJoin(OrganizationTable, eq(OrganizationTable.id, MemberTable.organizationId))
       .where(and(eq(MemberTable.id, principal.memberId), eq(MemberTable.userId, principal.userId), eq(MemberTable.organizationId, principal.organizationId), isNull(MemberTable.removedAt)))
-    // Passing the transaction deliberately bypasses the feature cache. A kill
-    // switch or org revocation closes an already-open stream on its next check.
-    if (!session || !member || !await organizationFeatureEnabled(principal.organizationId, "liveProviderSync", { database: tx })) {
+    // Revalidate the session and membership on every read of an open stream.
+    if (!session || !member) {
       throw new Error("Provider inventory is no longer authorized.")
     }
     const providers = await tx.select().from(GatewayProviderTable).where(and(eq(GatewayProviderTable.organization_id, principal.organizationId), eq(GatewayProviderTable.status, "active")))

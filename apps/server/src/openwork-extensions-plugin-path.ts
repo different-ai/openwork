@@ -55,4 +55,6 @@ export const openworkContextV2PluginPath = () => openworkPluginPath("openwork-co
 export const openworkProviderFiltersV2PluginPath = () => openworkPluginPath("openwork-provider-filters-v2");
 export const openworkMcpResultsV2PluginPath = () => openworkPluginPath("openwork-mcp-results-v2");
 export const openworkMcpReadinessV2PluginPath = () => openworkPluginPath("openwork-mcp-readiness-v2");
+export const openworkVisibleReasoningV2PluginPath = () => openworkPluginPath("openwork-visible-reasoning-v2");
+export const openworkAutoRouteV2PluginPath = () => openworkPluginPath("openwork-auto-route-v2");
 export const openworkAgentPermissionsV2PluginPath = () => openworkPluginPath("openwork-agent-permissions-v2");

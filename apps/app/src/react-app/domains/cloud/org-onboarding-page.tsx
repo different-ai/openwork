@@ -40,12 +40,14 @@ import {
 import { denSettingsChangedEvent } from "@/app/lib/den-session-events";
 import { parseManualAuthInput } from "@/app/lib/manual-auth-input";
 import { clearOrgSelectionPending, readOrgSelectionPending } from "@/app/lib/den-sign-in-intent";
+import { completeSignInReturn } from "./sign-in-return";
 import { usePlatform } from "../../kernel/platform";
 import { useBootState } from "../../shell/boot-state";
 import { resolveModelDisplayName, resolveProviderDisplayName } from "@/app/utils";
 import { ProviderIcon } from "../../design-system/provider-icon";
 import { writeStoredDefaultModel } from "../../kernel/model-config";
 import { orgOnboardingVisibilityEvent } from "../../shell/reload-coordinator";
+import { setOrgOnboardingOnScreen } from "../../shell/org-onboarding-visibility";
 import {
   Page,
   PageBackground,
@@ -381,6 +383,8 @@ function markProvidersSeen(providers: ReadonlyArray<{ id: string }>) {
 export function OrgOnboardingPage() {
   const navigate = useNavigate();
   const { authToken, denClient, orgId, settings } = useDenClient();
+  // The organization this visit started in; finishing in another one is a switch.
+  const [startingOrgId] = useState(orgId);
   const { markRouteReady } = useBootState();
   const prepared = usePreparedBootstrap();
   const initialSelectionState = initialOrgOnboardingSelectionState();
@@ -403,8 +407,10 @@ export function OrgOnboardingPage() {
     : undefined;
 
   useEffect(() => {
+    setOrgOnboardingOnScreen(true);
     window.dispatchEvent(new CustomEvent(orgOnboardingVisibilityEvent, { detail: { visible: true } }));
     return () => {
+      setOrgOnboardingOnScreen(false);
       window.dispatchEvent(new CustomEvent(orgOnboardingVisibilityEvent, { detail: { visible: false } }));
     };
   }, []);
@@ -436,6 +442,9 @@ export function OrgOnboardingPage() {
     queryKey: ["den-org-onboarding", settings.baseUrl, "orgs"],
     enabled: Boolean(authToken),
     refetchOnMount: "always",
+    // A request that timed out while the app was busy starting recovers by
+    // itself; Retry stays on screen meanwhile.
+    refetchInterval: (query) => (query.state.status === "error" ? 10_000 : false),
     queryFn: () => denClient.listOrgs(),
   });
   const orgs = data?.orgs ?? [];
@@ -573,11 +582,15 @@ export function OrgOnboardingPage() {
   return (
     <ResourceSelectionPage
       autoContinue={postListStep.autoContinue}
+      previousOrgId={startingOrgId}
     />
   );
 }
 
-export function ResourceSelectionPage({ autoContinue = false }: { autoContinue?: boolean }) {
+export function ResourceSelectionPage({ autoContinue = false, previousOrgId = "" }: {
+  autoContinue?: boolean;
+  previousOrgId?: string;
+}) {
   const navigate = useNavigate();
   const platform = usePlatform();
   const { markRouteReady } = useBootState();
@@ -652,8 +665,12 @@ export function ResourceSelectionPage({ autoContinue = false }: { autoContinue?:
         window.localStorage.setItem(RELOAD_AFTER_ONBOARDING_KEY, "1");
       } catch {}
     }
-    navigate("/session", { replace: true });
-  }, [gatewayProviders, navigate, providers, selectedDefault]);
+    // A sign-in started from a conversation returns there.
+    if (!completeSignInReturn(navigate)) navigate("/session", { replace: true });
+    // Stores and caches across the app still hold the previous organization's
+    // providers, skills and connections. Start over at the route above.
+    if (previousOrgId && previousOrgId !== orgId) window.location.reload();
+  }, [gatewayProviders, navigate, orgId, previousOrgId, providers, selectedDefault]);
 
   const handleContinue = useCallback(async (optionsArg?: { requestReload?: boolean }) => {
     if (!window.__OPENWORK_ELECTRON__?.shell?.relaunch) {

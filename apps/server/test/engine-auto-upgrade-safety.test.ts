@@ -65,7 +65,7 @@ test("v2 backups retain the newest two WAL-complete snapshots without writing th
   });
 });
 
-test("forced revert changes routing without changing v1, v2, or retained backups", async () => {
+test("legacy off policy preserves migrated routing, v1, v2, and retained backups", async () => {
   await profile(async (directory, config) => {
     const target = join(directory, "opencode-v2", "state", "opencode.db");
     const backup = join(directory, "opencode-v2", "backups", "baseline.db");
@@ -80,15 +80,16 @@ test("forced revert changes routing without changing v1, v2, or retained backups
     const before = await Promise.all(files.map(file => readFile(file)));
     await writeFile(join(directory, "engine-v2-preview.json"), JSON.stringify({ enabled: true, chatRouting: true,
       engineOrigin: "forced", engineForced: true }));
-    const engine = createEngineV2Preview({ config, autoRevertIdle: async () => true });
+    const engine = createEngineV2Preview({ config, deferStart: true });
     try {
-      for (let check = 0; check < 100 && engine.status().chatRouting; check++) await new Promise(resolve => setTimeout(resolve, 5));
-      assert.equal(engine.status().chatRouting, false);
-      assert.equal(engine.status().engineOrigin, "reverted");
-      assert.equal(engine.status().engineForced, false);
+      engine.setForcePolicy({ upgrade: false });
+      await new Promise(resolve => setTimeout(resolve, 20));
+      assert.equal(engine.status().chatRouting, true);
+      assert.equal(engine.status().engineOrigin, "forced");
+      assert.equal(engine.status().engineForced, true);
     } finally { await engine.stop(); }
     assert.deepEqual(await Promise.all(files.map(file => readFile(file))), before);
-    assert.equal(readEngineV2PreviewState(config).engineOrigin, "reverted");
+    assert.equal(readEngineV2PreviewState(config).engineOrigin, "forced");
   });
 });
 

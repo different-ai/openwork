@@ -1,0 +1,69 @@
+name: Render build filters
+
+# This is a one-time operator apply after merging, and again after changing scopes.
+# Dispatch inputs are visible: enter the workspace ID here, never an API key.
+on:
+  workflow_dispatch:
+    inputs:
+      owner_id:
+        description: Render workspace/owner ID from workspace settings (not an API key)
+        required: true
+        type: string
+      service:
+        description: Exact source service to reconcile
+        required: true
+        default: all
+        type: choice
+        options:
+          - all
+          - api-private
+          - inference-private
+          - workbot
+          - client-web
+      apply:
+        description: Apply only buildFilter changes (false previews; never redeploys)
+        required: true
+        default: false
+        type: boolean
+
+permissions:
+  contents: read
+
+# Do not interrupt a PATCH or let separate service selections race with an all apply.
+concurrency:
+  group: render-build-filters
+  cancel-in-progress: false
+
+jobs:
+  filters:
+    name: Preview or apply Render build filters
+    # Preview also runs only on trusted dev, never branch-provided code next to the key.
+    if: github.repository == 'different-ai/openwork' && github.ref == 'refs/heads/dev'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment:
+      name: den-production
+      deployment: false
+    steps:
+      - name: Checkout dispatched dev commit
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+
+      - name: Set up Node
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: 24.22.1
+
+      # Built-in Node tests, no dependency install, services, Docker, or deployment prerequisites.
+      - name: Test filter reconciliation offline
+        run: node --test .github/scripts/render-build-filters.test.mjs
+
+      - name: Preview or apply filters without deploying
+        env:
+          RENDER_API_KEY: ${{ secrets.RENDER_API_KEY }}
+          RENDER_OWNER_ID: ${{ inputs.owner_id }}
+          RENDER_SERVICE: ${{ inputs.service }}
+          RENDER_APPLY: ${{ inputs.apply }}
+        run: node .github/scripts/render-build-filters.mjs

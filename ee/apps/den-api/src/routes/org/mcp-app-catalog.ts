@@ -1,5 +1,5 @@
 import { and, eq, inArray } from "@openwork-ee/den-db/drizzle"
-import { PluginTable } from "@openwork-ee/den-db/schema"
+import { ConfigObjectTable, PluginTable } from "@openwork-ee/den-db/schema"
 import { normalizeDenTypeId } from "@openwork-ee/utils/typeid"
 import { MCP_APP_LAUNCH_TOOL_NAME, mcpAppResourceUri } from "@openwork/types/mcp-app"
 import type { Hono } from "hono"
@@ -12,6 +12,7 @@ import { orgMemberRoute, resolveMemberTeamsMiddleware } from "../../middleware/i
 import { forbiddenSchema, jsonResponse, unauthorizedSchema } from "../../openapi.js"
 import type { MemberTeamSummary } from "../../orgs.js"
 import { connectMcpAppHostServerName, projectedMcpToolName } from "./mcp-connections.js"
+import { resolvePluginArchConfigObjectRoles } from "./plugin-system/access.js"
 import type { OrgRouteVariables } from "./shared.js"
 
 const builtMcpAppSchema = z.object({
@@ -27,6 +28,8 @@ const builtMcpAppSchema = z.object({
   requiresInput: z.boolean(),
   requiredInputKeys: z.array(z.string()),
   requiresApproval: z.boolean(),
+  isOwner: z.boolean().describe("Whether the calling member created this App. Display provenance only; not permission to edit or share."),
+  canDelete: z.boolean().describe("Whether the calling member manages this App, which the delete route requires. The route still checks for itself."),
 }).meta({ ref: "BuiltMcpApp" })
 
 const builtMcpAppListResponseSchema = z.object({
@@ -67,6 +70,18 @@ export function registerOrgMcpAppCatalogRoutes<T extends { Variables: OrgRouteVa
         .from(PluginTable)
         .where(and(eq(PluginTable.organizationId, payload.organization.id), inArray(PluginTable.id, pluginIds)))
       const pluginNames = new Map(plugins.map((plugin) => [plugin.id, plugin.name]))
+      // Only already-accessible objects enter this query. Return a boolean, not
+      // another member's identity, and keep access decisions in the App host.
+      const appIds = apps.map((entry) => normalizeDenTypeId("configObject", entry.appId))
+      const owned = appIds.length === 0 ? [] : await db.select({ id: ConfigObjectTable.id })
+        .from(ConfigObjectTable)
+        .where(and(
+          eq(ConfigObjectTable.organizationId, payload.organization.id),
+          eq(ConfigObjectTable.createdByOrgMembershipId, payload.currentMember.id),
+          inArray(ConfigObjectTable.id, appIds),
+        ))
+      const ownedIds = new Set(owned.map((entry) => entry.id))
+      const roles = await resolvePluginArchConfigObjectRoles({ organizationContext: payload, memberTeams, session: c.get("session") }, appIds)
       return c.json({
         apps: apps.map((entry) => {
           const serverName = connectMcpAppHostServerName(entry.appId)
@@ -80,6 +95,8 @@ export function registerOrgMcpAppCatalogRoutes<T extends { Variables: OrgRouteVa
             description: entry.description,
             pluginId: entry.pluginId,
             pluginName: pluginNames.get(normalizeDenTypeId("plugin", entry.pluginId)) ?? entry.title,
+            isOwner: ownedIds.has(normalizeDenTypeId("configObject", entry.appId)),
+            canDelete: roles.get(normalizeDenTypeId("configObject", entry.appId)) === "manager",
             // open_app takes only optional launch input and runs no other tools.
             requiresInput: false,
             requiredInputKeys: [],

@@ -12,10 +12,11 @@ keywords: ["slack", "@openwork", "connect slack", "reconnect slack", "link slack
 ## Connect once
 
 1. Open **Your Connections** in OpenWork and connect your own Slack account.
-2. If you connected before the assistant was installed, disconnect **your personal Slack connection**, then connect it again once. This temporarily interrupts that connection; it does not require signing everyone out or reinstalling the bot.
-3. Authorize using the Slack workspace and account you will use to message `@openwork`.
+2. Authorize using the Slack workspace and account you will use to message `@openwork`.
 
-This links your Slack identity to your OpenWork membership. Before linking, the assistant asks you to connect. `/openwork` returns a connection link; following the link alone does not complete authorization.
+This links your Slack identity to your OpenWork membership. Before linking, the assistant asks you to connect.
+
+Connected Slack before the assistant was installed? You don't need to reconnect. The first time you message `@openwork`, OpenWork links the Slack account you already connected. If that account is in a different Slack workspace or its sign-in was revoked, the assistant asks you to connect again. `/openwork` returns a connection link; following the link alone does not complete authorization.
 
 ## Verify it works
 

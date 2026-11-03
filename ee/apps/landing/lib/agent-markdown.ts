@@ -1,3 +1,5 @@
+import { aiGovernanceMarkdown } from "./ai-governance"
+import { shadowAiMarkdown } from "./shadow-ai"
 import { claudeCowork3pMarkdown } from "./claude-cowork-3p"
 import { claudeCoworkAlternativeMarkdown } from "./claude-cowork-alternative"
 import { GUIDES_PATH, guideMarkdown, guidePath, guides, guidesIndexMarkdown } from "./guides"
@@ -19,7 +21,7 @@ const home = `# OpenWork
 
 - **Download for free** — [Desktop](https://openworklabs.com/download)
 - **Open in your browser** — [OpenWork Web](https://app.openworklabs.com)
-- **Team plans** — [Pricing](https://openworklabs.com/pricing) (first 5 Cloud seats free, then \\$10 per seat/mo; self-hosting free up to 5 users)
+- **Team plans** — [Pricing](https://openworklabs.com/pricing) (Free plan up to 5 users; Team \\$10 per user/mo; self-hosting free up to 5 users)
 - **Sign in to the hosted workspace** — [Cloud](https://app.openworklabs.com)
 - **SCIM / audit / procurement** — [Enterprise](https://openworklabs.com/enterprise)
 - **Docs** — [openworklabs.com/docs](https://openworklabs.com/docs)
@@ -39,7 +41,7 @@ const home = `# OpenWork
 A free, open-source desktop app (macOS, Windows, Linux) for doing work with AI agents on your own files. Built on OpenCode; an open-source alternative to Claude Cowork and Codex.
 
 ### Is OpenWork free?
-Yes — the desktop app is free and open source with bring-your-own keys. On OpenWork Cloud, Team includes your first 5 seats free, then \\$10 per seat/mo; self-hosting is free for organizations up to 5 users; Enterprise is custom.
+Yes — the desktop app is free and open source with bring-your-own keys. On OpenWork Cloud, the Free plan covers up to 5 users and Team is \\$10 per user/mo; self-hosting is free for organizations up to 5 users; Enterprise is custom.
 
 ### Which models does it support?
 Any model OpenCode supports: OpenAI, Anthropic, Google, local models — 50+ providers.
@@ -61,7 +63,7 @@ Backed by Y Combinator.
 
 const pricing = `# OpenWork pricing — free, team, and enterprise
 
-> OpenWork has three tiers: free open-source desktop, Team with the first 5 OpenWork Cloud seats free then \\$10 per seat/mo, and custom Enterprise. Self-hosting is free for organizations up to 5 users.
+> OpenWork has three tiers: free open-source desktop, a Free OpenWork Cloud plan for up to 5 users, Team at \\$10 per user/mo, and custom Enterprise. Self-hosting is free for organizations up to 5 users.
 
 ## Free
 
@@ -71,9 +73,9 @@ const pricing = `# OpenWork pricing — free, team, and enterprise
 - Free forever
 - CTA: [Get Started for free](https://app.openworklabs.com?mode=sign-up)
 
-## Team — \\$10 / seat / month
+## Team — \\$10 / user / month
 
-- First 5 seats free on OpenWork Cloud
+- Unlimited users (the Free plan is limited to 5)
 - API access
 - SSO / SAML
 - Extension Marketplace
@@ -95,9 +97,22 @@ const pricing = `# OpenWork pricing — free, team, and enterprise
 Prices exclude taxes.
 `
 
-const enterprise = `# A privacy-first alternative to Claude Cowork for your organization
+const enterprise = `# OpenWork Enterprise — AI governance, gateway and SSO
 
-> The open-source Claude Cowork alternative — self-hosted, permissioned, and compliance-ready. SSO, audit, custom deployment, and procurement support.
+> AI your team wants. Control IT needs. An approved path for employee AI with company sign-in, model permissions, provider choice including AWS Bedrock, and visibility into routed usage.
+
+## Governance and shadow AI
+
+OpenWork helps manage shadow AI by giving employees a sanctioned path. It governs traffic configured to use its gateway; it does not automatically detect or block tools and personal accounts outside that path. Pair it with an AI usage policy and endpoint or network controls where needed.
+
+OpenWork and OpenCode with the opencode-openwork plugin can use company AI gateway models. Claude Code, Codex, and Cursor can use shared skills and connections through the MCP gateway; AI gateway model integration for those clients is in progress. Adding MCP alone does not route model traffic.
+
+In local desktop mode, files and workspace processing stay on the employee's PC. SSO configuration and model traffic leave the device; prompts, responses, and file context can include company data. Analytics, diagnostics, updates, optional cloud workers, and connected services have separate data flows.
+
+A proposed 30-day evaluation starts with per-user installation and a small pilot, tests identity, permissions, provider routing, and data flows, then informs phased expansion to a few hundred seats if appropriate. Agree scope, support, timeline, and commercial terms with the team.
+
+- [Manage shadow AI](https://openworklabs.com/shadow-ai)
+- [AI governance and policy guide](https://openworklabs.com/ai-governance)
 
 ## What Enterprise includes
 
@@ -178,7 +193,7 @@ Each \`/download/<platform>\` URL redirects to the installer in the latest stabl
 
 ## Joining a team?
 
-- New team: sign up at https://app.openworklabs.com?mode=sign-up (first 5 seats free), then follow the [team quickstart](https://openworklabs.com/docs/cloud/team-quickstart).
+- New team: sign up at https://app.openworklabs.com?mode=sign-up (Free plan up to 5 users), then follow the [team quickstart](https://openworklabs.com/docs/cloud/team-quickstart).
 - Existing team: click \`Joining a team? Sign in\` in the desktop app.
 
 ## For agents
@@ -194,7 +209,7 @@ const connect = `# OpenWork Connect
 
 - Org-level authentication, roles, allowlists, and audit apply to every call
 - Works in OpenWork and any MCP-compatible client
-- First 5 seats are free
+- Free plan for up to 5 users
 - [Get started free](https://app.openworklabs.com?mode=sign-up)
 - [Read the docs](https://openworklabs.com/docs)
 
@@ -228,6 +243,8 @@ export const agentMarkdown: Record<string, string> = {
   "/cloud": cloud,
   "/pricing": pricing,
   "/enterprise": enterprise,
+  "/shadow-ai": shadowAiMarkdown,
+  "/ai-governance": aiGovernanceMarkdown,
   "/download": download,
   "/glm-5.2": glm52,
   "/alternatives/claude-cowork": claudeCoworkAlternativeMarkdown,

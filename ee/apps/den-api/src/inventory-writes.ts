@@ -21,9 +21,21 @@ import { AsyncLocalStorage } from "node:async_hooks"
  *
  * Kept free of database and environment imports so it can be unit tested.
  */
-type InventoryWrites = { wrote: boolean; organizationIds: Set<string> }
+type InventoryWrites = { wrote: boolean; providerInventory: boolean; organizationIds: Set<string> }
 
 const inventoryWrites = new AsyncLocalStorage<InventoryWrites>()
+
+/**
+ * The tables an open provider inventory stream depends on: those read by
+ * readProviderInventoryRevision, plus member so a removal ends the stream at
+ * once. Unlike the rule above, this list can miss a table, so streams also
+ * reread the database at a fixed maximum age.
+ */
+export const PROVIDER_INVENTORY_TABLES: ReadonlySet<string> = new Set([
+  "gateway_providers", "gateway_provider_models", "gateway_provider_access", "gateway_provider_credentials",
+  "gateway_model_groups", "gateway_model_group_models", "gateway_credential_sets", "gateway_keys",
+  "team", "team_member", "member",
+])
 
 export const INVENTORY_IRRELEVANT_TABLES: ReadonlySet<string> = new Set([
   // Sign-in and token bookkeeping.
@@ -60,7 +72,7 @@ export function trackInventoryWrites<T>(writes: InventoryWrites, run: () => Prom
 }
 
 export function emptyInventoryWrites(): InventoryWrites {
-  return { wrote: false, organizationIds: new Set() }
+  return { wrote: false, providerInventory: false, organizationIds: new Set() }
 }
 
 /** Drizzle logger hook. Statements arrive before they run; the bump waits for the request to finish. */
@@ -70,6 +82,7 @@ export function noteInventoryWrite(query: string, params: unknown[]) {
   const table = WRITTEN_TABLE.exec(query)?.[1]
   if (!table || INVENTORY_IRRELEVANT_TABLES.has(table)) return
   writes.wrote = true
+  if (PROVIDER_INVENTORY_TABLES.has(table)) writes.providerInventory = true
   for (const param of params) {
     if (typeof param === "string" && ORGANIZATION_ID.test(param)) writes.organizationIds.add(param)
   }
@@ -81,4 +94,29 @@ export function inventoryRevisionsToBump(writes: InventoryWrites, requestOrganiz
   const organizationIds = new Set(writes.organizationIds)
   if (requestOrganizationId && ORGANIZATION_ID.test(requestOrganizationId)) organizationIds.add(requestOrganizationId)
   return [...organizationIds]
+}
+
+type InventoryChangeListener = (organizationIds: readonly string[]) => void
+
+const inventoryChangeListeners = new Set<InventoryChangeListener>()
+
+/**
+ * Hears, in this process, the organizations a finished request bumped. Open
+ * Connect streams use it to tell clients their tool list changed; other
+ * replicas' streams learn only from their own requests.
+ */
+export function onInventoryChanged(listener: InventoryChangeListener): () => void {
+  inventoryChangeListeners.add(listener)
+  return () => inventoryChangeListeners.delete(listener)
+}
+
+export function notifyInventoryChanged(organizationIds: readonly string[]) {
+  if (organizationIds.length === 0) return
+  for (const listener of inventoryChangeListeners) {
+    try {
+      listener(organizationIds)
+    } catch (error) {
+      console.error("inventory_change_listener_failed", { error })
+    }
+  }
 }

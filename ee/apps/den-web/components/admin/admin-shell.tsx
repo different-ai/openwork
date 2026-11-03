@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { createContext, useContext, useEffect, useState, type ReactNode } from "react";
-import { ArrowLeft, Building2, ChartNoAxesCombined, Flag, LayoutDashboard, ScanSearch, Server, Users } from "lucide-react";
+import { Activity, ArrowLeft, Building2, ChartNoAxesCombined, Flag, FlaskConical, LayoutDashboard, ScanSearch, Server, ShieldAlert, Users } from "lucide-react";
 import { AdminBreadcrumbs } from "./admin-breadcrumbs";
 import { AdminAccessScreen } from "./admin-access-screen";
 import { requestAdmin, withStoredBearer, type AdminResult } from "./admin-request";
@@ -16,16 +16,21 @@ const SECTIONS = [
   { label: "Users", href: "/admin/users", icon: Users },
   { label: "Organizations", href: "/admin/organizations", icon: Building2 },
   { label: "Opportunities", href: "/admin/opportunities", icon: ScanSearch },
+  { label: "Sandboxes", href: "/admin/sandbox-orgs", icon: FlaskConical },
+  { label: "Features", href: "/admin/feature-usage", icon: Activity },
   { label: "Feature rollouts", href: "/admin/features", icon: Flag },
   { label: "Free Auto usage", href: "/admin/free-auto", icon: ChartNoAxesCombined },
+  { label: "Security", href: "/admin/security", icon: ShieldAlert },
   { label: "Services", href: "/admin/services", icon: Server },
 ];
 
 export function AdminShell({ hasSessionCookie, children }: { hasSessionCookie: boolean; children: ReactNode }) {
-  const pathname = usePathname();
+  // Check access once per admin visit. Keying the gate by pathname re-ran the
+  // check and remounted every page on each click; each data endpoint still
+  // authorizes itself and pages show the access screen when it fails.
   return (
     <SessionCookieContext.Provider value={hasSessionCookie}>
-      <AdminAccessGate key={pathname} hasSessionCookie={hasSessionCookie}>
+      <AdminAccessGate hasSessionCookie={hasSessionCookie}>
         <AdminShellContent>{children}</AdminShellContent>
       </AdminAccessGate>
     </SessionCookieContext.Provider>

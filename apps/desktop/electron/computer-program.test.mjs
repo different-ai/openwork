@@ -129,6 +129,72 @@ test("native partial receipts survive a failed program without replay", async ()
   assert.deepEqual(result.receipts,[{index:0,status:"partial",completed:0,failed:0,skipped:0}]);
 });
 
+function nativeFixture() {
+  const text = (value) => ({ type: "text", text: JSON.stringify(value) });
+  const actions = [];
+  let id = 0;
+  let findOpen = false;
+  const view = () => ({ ok: true, observation_id: `o${++id}`, image: { width: 600, height: 500 },
+    focused_ref: findOpen ? "e3" : "e1",
+    elements: [
+      { ref: "e1", role: "TextArea", x: 0, y: findOpen ? 130 : 100, w: 586, h: findOpen ? 350 : 380, settable: true },
+      { ref: "e2", role: "StaticText", value: "\u200E408", x: 160, y: 60, w: 60, h: 30 },
+      ...(findOpen ? [{ ref: "e3", role: "TextField", x: 10, y: 104, w: 300, h: 22, settable: true }, { ref: "e4", role: "Button", label: "Done", press: true, x: 500, y: 104, w: 60, h: 22 }] : []),
+    ] });
+  const host = {
+    browser: async () => { throw new Error("Wrong surface"); },
+    computer: async (name, args) => {
+      if (name === "computer_observe") return { content: [text(view())] };
+      if (name !== "computer_act") throw new Error(`Unexpected ${name}`);
+      actions.push(args.action);
+      if (args.action.type === "key" && args.action.key === "f") findOpen = true;
+      return { content: [text({ ok: true, status: "dispatched", completed: 1 }), text(view())] };
+    },
+  };
+  return { host, actions };
+}
+
+test("findText fills the unnamed field that takes focus after Command-F", async () => {
+  const f = nativeFixture();
+  const result = await runComputerProgram({ surface: "computer", code: 'return await tools.ui.findText({text:"lazy"});' }, f.host, new AbortController().signal);
+  assert.equal(result.ok, true, JSON.stringify(result.error));
+  assert.deepEqual(result.value, { searched: true });
+  assert.deepEqual(f.actions, [
+    { type: "key", key: "f", modifiers: ["command"] },
+    { type: "set_value", ref: "e3", text: "lazy" },
+    { type: "key", key: "enter" },
+  ]);
+});
+
+test("a menu-bar path runs as one native menu command without waiting", async () => {
+  const f = nativeFixture();
+  const started = Date.now();
+  const result = await runComputerProgram({ surface: "computer", code: 'return await tools.ui.menu({path:["Format","Font","Bold"]});' }, f.host, new AbortController().signal);
+  assert.equal(result.ok, true, JSON.stringify(result.error));
+  assert.deepEqual(result.value, { activated: "Bold" });
+  assert.deepEqual(f.actions, [{ type: "menu", path: ["Format", "Font", "Bold"] }]);
+  assert.ok(Date.now() - started < 1000, "the menu bar is not waited out");
+});
+
+test("a single title outside the window fails at once with a code the program can read", async () => {
+  const f = nativeFixture();
+  const result = await runComputerProgram({ surface: "computer", code: `
+    try { await tools.ui.menu({path:["Format"]}); return "ran"; }
+    catch (error) { return error.message; }
+  ` }, f.host, new AbortController().signal);
+  assert.equal(result.ok, true);
+  assert.ok(typeof result.value === "string");
+  assert.match(result.value, /^menu_not_in_window: "Format" is not a control in the selected window/);
+  assert.deepEqual(f.actions, []);
+});
+
+test("invisible direction marks are dropped from names and values", async () => {
+  const f = nativeFixture();
+  const result = await runComputerProgram({ surface: "computer", code: 'const view = await tools.ui.observe({}); return view.elements.find((e) => e.role === "text").value;' }, f.host, new AbortController().signal);
+  assert.equal(result.ok, true);
+  assert.equal(result.value, "408");
+});
+
 test("code has no ambient filesystem, process or network access", async () => {
   for (const code of ['return process.env;', 'return require("node:fs");', 'return await fetch("https://example.com");']) {
     const f = browserFixture();

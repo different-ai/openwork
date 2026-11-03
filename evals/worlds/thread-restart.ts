@@ -1,4 +1,5 @@
 import { execFile } from "node:child_process";
+import { writeFile } from "node:fs/promises";
 import { connect } from "node:net";
 import { promisify } from "node:util";
 import { evalIn, quitDesktop, readComposerState } from "@openwork/behaviors";
@@ -117,7 +118,21 @@ export async function restartedThreadWorld(seed: Seed, ctx: { place: Place }) {
   ];
   // Booted directly so the witness outlives the desktop it serves.
   const mock: MockHandle = (await mcpMock({ agentWorkloads: workloads }).boot(ctx.place)).handle;
-  let app: Surface & { stop(): Promise<void> } = await seed.desktop({ name: "thread-restart", profileDir: seed.tmpPath("thread-restart-profile") });
+  // This signed-out continuity world has no Den. Keep deployment-policy reads
+  // on the fixture-owned origin too: hosted Den can otherwise force v2 while
+  // this world is explicitly exercising v1. Unavailable local features apply no
+  // force policy. Reuse these origins after relaunch as well.
+  // Native desktop bootstrap overrides Vite's defaults, so pin both to the
+  // same local origin instead of only changing the renderer build settings.
+  const bootstrapPath = seed.tmpPath("thread-restart-bootstrap.json");
+  await writeFile(bootstrapPath, JSON.stringify({ baseUrl: mock.url, apiBaseUrl: mock.url, requireSignin: false }));
+  const localOnlyEnv = {
+    OPENWORK_DESKTOP_BOOTSTRAP_PATH: bootstrapPath,
+    VITE_DEN_BASE_URL: mock.url, VITE_DEN_API_BASE_URL: mock.url,
+  };
+  let app: Surface & { stop(): Promise<void> } = await seed.desktop({
+    name: "thread-restart", profileDir: seed.tmpPath("thread-restart-profile"), env: localOnlyEnv,
+  });
   const profileDir = app.handle.profileDir;
   if (!profileDir) throw new Error("The desktop surface did not expose its profile directory.");
   const vitePort = app.handle.meta?.vitePort;
@@ -186,7 +201,7 @@ export async function restartedThreadWorld(seed: Seed, ctx: { place: Place }) {
       restarted = await launchDesktop({
         name: "thread-restart-relaunch",
         profileDir,
-        env: { PORT: vitePort, OPENWORK_ELECTRON_START_URL: rendererOrigin },
+        env: { ...localOnlyEnv, PORT: vitePort, OPENWORK_ELECTRON_START_URL: rendererOrigin },
         prepareSharedResources: false,
       });
       const origin = String(await evalIn(restarted, () => window.location.origin));

@@ -12,7 +12,7 @@ import { useCheckDesktopRestriction } from "../../cloud/desktop-config-provider"
 import { useDenAuth } from "../../cloud/den-auth-provider";
 import type { ModelOption, ModelRef } from "@/app/types";
 import { openAutoProviderSettings } from "../../cloud/auto-access-ui";
-import { isAutoModel, type ModelCatalogOption, type ModelPickerCatalogState, type RetainedModelSelection } from "@/react-app/domains/models/model-catalog";
+import { isAutoModel, managesOwnBehavior, type ModelCatalogOption, type ModelPickerCatalogState, type RetainedModelSelection } from "@/react-app/domains/models/model-catalog";
 
 export const MODEL_PICKER_DEFAULT_SUBTITLE = "Select a model for this session.";
 export const MODEL_PICKER_UNAVAILABLE_SUBTITLE = "The model you were using is no longer available, please select a different model for this session.";
@@ -92,7 +92,7 @@ export function ModelPickerModal(props: ModelPickerModalProps) {
       <ModelPickerPanel searchInputRef={searchInputRef} options={options} current={props.current} behaviorValue={behaviorValue}
         onSelect={(option, behavior) => choice.choose(option, () => {
           props.onSelect({ providerID: option.providerID, modelID: option.modelID });
-          if (behavior && !isAutoModel(option)) props.onBehaviorChange({ providerID: option.providerID, modelID: option.modelID }, behavior.variant);
+          if (behavior && !managesOwnBehavior(option)) props.onBehaviorChange({ providerID: option.providerID, modelID: option.modelID }, behavior.variant);
         })}
         onBehaviorChange={(value) => props.onBehaviorChange(props.current, value)}
         catalogState={catalogState} retainedSelection={retained}

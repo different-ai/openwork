@@ -72,6 +72,8 @@ export const stepStateSchema = z.object({
    */
   mcp: z.boolean().nullable(),
   readOnly: z.boolean().nullable(),
+  /** Replies in a row that stopped at the output-token cap; the next step asks for less (CUT_OFF_INSTRUCTION). */
+  cutOffs: z.number().optional(),
   pending: pendingStepSchema.optional(),
 })
 export type StepState = z.infer<typeof stepStateSchema>

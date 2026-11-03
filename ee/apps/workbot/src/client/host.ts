@@ -11,6 +11,8 @@ export const meSchema = z.object({
   organizationName: z.string(),
   enabled: z.boolean(),
   computer: z.boolean().default(false),
+  browser: z.boolean().default(false),
+  browserDemonstrations: z.boolean().default(false),
   /** Workbot's Calendar tab (on while Workbot is on); older servers omit it. */
   calendar: z.boolean().default(false),
   documents: z.boolean().default(false),
@@ -18,10 +20,14 @@ export const meSchema = z.object({
   nativeDictation: z.boolean().default(false),
   workspaceAssistant: z.boolean().default(false),
   guidedNavigation: z.boolean().default(false),
+  usageRecovery: z.boolean().default(false),
+  /** The Get set up checklist in the header; older servers omit it. */
+  activationChecklist: z.boolean().default(true),
   /** The organization runs Automations in the cloud, so the Calendar can create them. */
   canSchedule: z.boolean().default(false),
   /** Side chats are on for this person (while Workbot is on). */
   sideChats: z.boolean().default(false),
+  /** The Cmd+K / Ctrl+K command palette; older servers omit it. */
   denUrl: z.string().nullable(),
 })
 export type Me = z.infer<typeof meSchema>
@@ -32,12 +38,39 @@ export function signIn() {
   window.location.assign(`/auth/login?return=${encodeURIComponent(back)}`)
 }
 
+/** The conversation read index.html started for the person its early /me answer named. */
+type EarlyThread = { path: string; userId: string; organizationId: string; response: Promise<Response> }
+
+declare global {
+  interface Window { __workbotMe?: Promise<Response | null>; __workbotThread?: Promise<EarlyThread | null> }
+}
+
+/** The answer index.html started fetching before this script loaded; given out once, so later reads are fresh. */
+function takeEarlyMe() {
+  const early = window.__workbotMe
+  window.__workbotMe = undefined
+  return early
+}
+
 /** The signed-in person, or null when nobody is (the caller sends them to sign in). */
 export async function fetchMe(): Promise<Me | null> {
-  const response = await fetch("/v1/workbot/me", { credentials: "same-origin", headers: { accept: "application/json" } })
+  const response = (await takeEarlyMe()) ?? await fetch("/v1/workbot/me", { credentials: "same-origin", headers: { accept: "application/json" } })
   if (response.status === 401) return null
   if (!response.ok) throw new Error("Workbot couldn't reach OpenWork. Try again in a minute.")
   return meSchema.parse(await response.json())
+}
+
+/**
+ * index.html's conversation read, given out once to the page's first conversation read, and only when it asked for
+ * the same chat for the same person. Any other first read leaves it unused and asks the server itself.
+ */
+async function takeEarlyThread(path: string, me: Me) {
+  const pending = window.__workbotThread
+  if (!pending || !path.startsWith("/v1/workbot?")) return null
+  window.__workbotThread = undefined
+  const early = await pending
+  if (!early || early.path !== path || early.userId !== me.userId || early.organizationId !== me.organizationId) return null
+  return early.response.catch(() => null)
 }
 
 const noApps: Array<{ id: string; name: string }> = []
@@ -62,7 +95,8 @@ export function createHost(me: Me, recovery: { authorization?: WorkbotHost["docu
       const headers = scopedHeaders(init.headers)
       headers.set("Accept", "application/json")
       if (init.body && !(init.body instanceof FormData) && !headers.has("Content-Type")) headers.set("Content-Type", "application/json")
-      const response = await fetch(path, { ...init, headers, credentials: "same-origin", signal: init.signal ?? AbortSignal.timeout(timeoutMs) })
+      const early = (init.method ?? "GET") === "GET" ? await takeEarlyThread(path, me) : null
+      const response = early ?? await fetch(path, { ...init, headers, credentials: "same-origin", signal: init.signal ?? AbortSignal.timeout(timeoutMs) })
       // The parent owns auth recovery, including when Documents is retained
       // behind another workspace page. Never navigate that owner away on 401.
       if (response.status === 401) {
@@ -83,10 +117,14 @@ export function createHost(me: Me, recovery: { authorization?: WorkbotHost["docu
     calendar: me.calendar,
     documents: me.documents,
     computer: me.computer,
+    browser: me.browser,
+    browserDemonstrations: me.browserDemonstrations,
     documentEditing: me.documents && me.documentEditing,
     nativeDictation: me.nativeDictation,
     workspaceAssistant: me.workspaceAssistant,
     guidedNavigation: me.workspaceAssistant && me.guidedNavigation,
+    usageRecovery: me.denUrl && me.organizationId ? { denUrl: me.denUrl, organizationId: me.organizationId } : undefined,
+    activation: me.denUrl && me.organizationId ? { denUrl: me.denUrl, organizationId: me.organizationId } : undefined,
     canSchedule: me.canSchedule,
     connectionsHref: me.denUrl ? `${me.denUrl}/dashboard/your-connections` : null,
     get signInHref() { return `/auth/login?return=${encodeURIComponent(window.location.pathname + window.location.search)}` },

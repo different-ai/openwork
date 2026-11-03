@@ -89,7 +89,8 @@ export async function linkDesktopCommandToSlack(input: {
   if (!tokenId) return false
   const userId = normalizeDenTypeId("user", input.userId)
   const now = new Date()
-  const [link] = await db
+  // primary: the run token was minted at the start of the turn, often moments ago.
+  const [link] = await db.$primary
     .select({ eventId: RunToken.eventId, connectionId: RunToken.connectionId })
     .from(RunToken)
     .innerJoin(OAuthAccessTokenTable, eq(OAuthAccessTokenTable.id, RunToken.tokenId))
@@ -257,7 +258,7 @@ async function processHandoff(handoff: HandoffRow, deps: HandoffSweepDeps) {
     await deps.slack(installation.botToken)("chat.postMessage", {
       channel: handoff.channelId,
       thread_ts: handoff.threadTs,
-      text: desktopHandoffMessage(handoff.recipientUserId, step.notice),
+      ...desktopHandoffMessage(handoff.recipientUserId, step.notice),
       unfurl_links: false,
       unfurl_media: false,
     })

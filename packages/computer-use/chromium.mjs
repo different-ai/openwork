@@ -45,10 +45,51 @@ if [ -e /proc/net/if_inet6 ]; then
   ip6tables -w -C OUTPUT -m owner --uid-owner "$uid" -j OPENWORK_DESKTOP_EGRESS
   ${IPV6_PRIVATE.map(([network, prefix]) => `ip6tables -w -C OPENWORK_DESKTOP_EGRESS -d ${network}/${prefix} -j REJECT`).join("\n  ")}
 fi`;
-const verifyLocalEgress = () => new Promise((resolve, reject) => {
-  execFile("/bin/sh", ["-c", BROWSER_EGRESS_CHECK], { timeout: 5000 }, error => error
-    ? reject(Object.assign(new Error("The cloud browser's private-network filter is unavailable. Reconnect the computer."), { code: "egress_unavailable" })) : resolve());
+/** The native guard must attach complete, UID-scoped reject rules to OUTPUT. */
+export function nativeBrowserEgress(payload, uid) {
+  if (!Number.isInteger(uid) || uid <= 0 || !Array.isArray(payload?.nftables)) return false;
+  const entries = payload.nftables.filter(entry => entry && typeof entry === "object");
+  if (!entries.some(({ chain }) => chain?.family === "inet" && chain.table === "openwork_desktop"
+    && chain.name === "output" && chain.type === "filter" && chain.hook === "output")) return false;
+  const address = (value, family) => {
+    if (typeof value !== "string" || isIP(value) !== (family === "ip" ? 4 : 6)) return null;
+    return family === "ip" ? value : new URL(`http://[${value}]`).hostname;
+  };
+  return [["ip", IPV4_PRIVATE], ["ip6", IPV6_PRIVATE]].every(([family, required]) => entries.some(({ rule }) => {
+    if (rule?.family !== "inet" || rule.table !== "openwork_desktop" || rule.chain !== "output" || rule.expr?.length !== 3) return false;
+    const [owner, destination, verdict] = rule.expr;
+    if (owner?.match?.op !== "==" || owner.match.left?.meta?.key !== "skuid" || owner.match.right !== uid || !verdict?.reject) return false;
+    const match = destination?.match;
+    if (match?.op !== "==" || match.left?.payload?.protocol !== family || match.left.payload.field !== "daddr" || !Array.isArray(match.right?.set)) return false;
+    return required.every(([network, prefix]) => match.right.set.some(item => item?.prefix?.len === prefix
+      && address(item.prefix.addr, family) === address(network, family)));
+  }));
+}
+const egressCommand = (command, args) => new Promise((resolve, reject) => {
+  execFile(command, args, { timeout: 5000, maxBuffer: 1024 * 1024 }, (error, stdout) => error ? reject(error) : resolve(stdout));
 });
+/** Authenticated helper diagnostics contain kernel policy metadata, never page contents. */
+export async function browserEgressStatus(execute = egressCommand) {
+  let backend = "unknown", stage = "detect";
+  try {
+    const native = await execute("/bin/sh", ["-c", "command -v nft"]).then(() => true, () => false);
+    backend = native ? "nft" : "iptables";
+    if (!native) { stage = "legacy"; await execute("/bin/sh", ["-c", BROWSER_EGRESS_CHECK]); return { ok: true, backend }; }
+    stage = "uid";
+    const uid = Number((await execute("id", ["-u", "openwork-browser"])).trim());
+    stage = "query";
+    const rules = JSON.parse(await execute("nft", ["-n", "-j", "list", "table", "inet", "openwork_desktop"]));
+    stage = "validate";
+    const entries = Array.isArray(rules?.nftables) ? rules.nftables.filter(entry => entry && typeof entry === "object") : [];
+    return { ok: nativeBrowserEgress(rules, uid), backend, uid, stage,
+      chains: entries.flatMap(entry => entry.chain ? [entry.chain] : []),
+      rejects: entries.flatMap(entry => entry.rule?.expr?.some(expr => Object.hasOwn(expr, "reject")) ? [entry.rule] : []),
+    };
+  } catch { return { ok: false, backend, stage }; }
+}
+const verifyLocalEgress = async () => {
+  if (!(await browserEgressStatus()).ok) throw Object.assign(new Error("The cloud browser's private-network filter is unavailable. Reconnect the computer."), { code: "egress_unavailable" });
+};
 
 export function createCloudBrowser({ statePath, assertActive, enabled, beforeInput, endpoint = "http://127.0.0.1:9222", privateBrowsing = false, verifyEgress = verifyLocalEgress }) {
   // privateBrowsing is only for operator diagnostics on a dedicated VM.
@@ -86,9 +127,10 @@ export function createCloudBrowser({ statePath, assertActive, enabled, beforeInp
       let message;
       try { message = JSON.parse(String(event.data)); } catch { return; }
       if (!message.id) {
-        if (message.method === "Page.frameNavigated") tabChanged();
+        if (["Page.frameNavigated", "Runtime.executionContextsCleared", "Runtime.executionContextDestroyed"].includes(message.method)) tabChanged();
         // Every network resource and redirect hop is checked before it loads.
         if (message.method === "Fetch.requestPaused") void admitRequest(message.params);
+        else pageEvent(message.method, message.params ?? {});
         return;
       }
       const item = pending.get(message.id);
@@ -110,12 +152,14 @@ export function createCloudBrowser({ statePath, assertActive, enabled, beforeInp
       if (allowed) reply("Fetch.continueRequest", { requestId });
       else reply("Fetch.failRequest", { requestId, errorReason: "BlockedByClient" });
     }
+    let pageEvent = (_method, _params) => {};
     socket.addEventListener("close", () => {
       for (const item of pending.values()) { clearTimeout(item.timer); item.reject(new Error("Browser disconnected; inspect before retrying input.")); }
       pending.clear();
     });
     return {
       changed(callback) { tabChanged = callback; },
+      events(callback) { pageEvent = callback; },
       async send(method, params = {}, check = true) {
         await ready;
         if (check) assertActive();
@@ -136,7 +180,9 @@ export function createCloudBrowser({ statePath, assertActive, enabled, beforeInp
     let title = target.title;
     let destroyed = false;
     let context = null;
-    const tab = { tabId: target.id, webMcpRevision: 0, view: { webContents: {
+    // Request id -> start time: browser tasks wait for requests an action started.
+    const inFlight = new Map();
+    const tab = { tabId: target.id, webMcpRevision: 0, inFlight, view: { webContents: {
       isDestroyed: () => destroyed,
       getURL: () => currentUrl,
       getTitle: () => title,
@@ -173,7 +219,13 @@ export function createCloudBrowser({ statePath, assertActive, enabled, beforeInp
       async sendInputEvent(event) {
         await beforeInput();
         await wire.send("Page.bringToFront");
-        return wire.send("Input.dispatchKeyEvent", { type: event.type === "keyDown" ? "keyDown" : "keyUp", key: { Up: "ArrowUp", Down: "ArrowDown", Left: "ArrowLeft", Right: "ArrowRight", Space: " " }[event.keyCode] ?? event.keyCode, windowsVirtualKeyCode: { Enter: 13, Tab: 9, Escape: 27, Backspace: 8, Space: 32, Up: 38, Down: 40, Left: 37, Right: 39 }[event.keyCode] });
+        const held = new Set(event.modifiers ?? []);
+        const character = /^[A-Z0-9]$/.test(event.keyCode) ? event.keyCode : null;
+        return wire.send("Input.dispatchKeyEvent", { type: event.type === "keyDown" ? "keyDown" : "keyUp",
+          modifiers: (held.has("alt") ? 1 : 0) | (held.has("control") ? 2 : 0) | (held.has("meta") ? 4 : 0) | (held.has("shift") ? 8 : 0),
+          key: character ? (held.has("shift") ? character : character.toLowerCase()) : { Up: "ArrowUp", Down: "ArrowDown", Left: "ArrowLeft", Right: "ArrowRight", Space: " " }[event.keyCode] ?? event.keyCode,
+          ...(character ? { code: /\d/.test(character) ? `Digit${character}` : `Key${character}` } : {}),
+          windowsVirtualKeyCode: character ? character.charCodeAt(0) : { Enter: 13, Tab: 9, Escape: 27, Backspace: 8, Delete: 46, Space: 32, Home: 36, End: 35, PageUp: 33, PageDown: 34, Up: 38, Down: 40, Left: 37, Right: 39 }[event.keyCode] });
       },
       debugger: { isAttached: () => true, sendCommand: async (method, params) => { await beforeInput(); await wire.send("Page.bringToFront"); return wire.send(method, params); } },
     } },
@@ -198,16 +250,25 @@ export function createCloudBrowser({ statePath, assertActive, enabled, beforeInp
       close() { destroyed = true; wire.close(); },
     };
     wire.changed(() => { context = null; tab.webMcpRevision++; host.invalidate(tab.tabId); });
+    // In-flight requests feed the settle wait after an action.
+    wire.events((method, params) => {
+      if (method === "Network.requestWillBeSent" && !["WebSocket", "EventSource"].includes(params.type) && !String(params.request?.url).startsWith("data:")) inFlight.set(params.requestId, Date.now());
+      else if (method === "Network.loadingFinished" || method === "Network.loadingFailed") inFlight.delete(params.requestId);
+    });
     // Omitting resourceType covers images, scripts, fetches and other resources,
     // not just documents. Navigation and observation must wait for enforcement.
     const guarded = Promise.all([
       wire.send("Page.enable", {}, false),
+      wire.send("Runtime.enable", {}, false),
       wire.send("Fetch.enable", { patterns: [{ urlPattern: "*", requestStage: "Request" }] }, false),
     ]);
     void guarded.catch(() => {});
+    void wire.send("Network.enable", {}, false).catch(() => {});
     return tab;
   }
-  async function refresh() {
+  // Page targets in the order Chromium lists them: the tab most recently in front first.
+  let order = [];
+  async function refresh(claim) {
     if (!loaded) {
       try {
         const saved = JSON.parse(await readFile(statePath, "utf8"));
@@ -216,6 +277,13 @@ export function createCloudBrowser({ statePath, assertActive, enabled, beforeInp
       loaded = true;
     }
     const targets = await json("/json/list");
+    // A tab the person opened belongs to no conversation until one names it, as Workbot does with the tab in front of
+    // its Browser view when they send a message from there.
+    if (claim && !owners.has(claim.tabId) && targets.some(target => target.type === "page" && target.id === claim.tabId)) {
+      owners.set(claim.tabId, claim.sessionId);
+      await persist();
+    }
+    order = targets.flatMap(target => target.type === "page" ? [target.id] : []);
     const live = new Set();
     for (const target of targets) if (target.type === "page" && owners.has(target.id)) {
       live.add(target.id);
@@ -226,7 +294,8 @@ export function createCloudBrowser({ statePath, assertActive, enabled, beforeInp
   }
   const host = createBrowserTaskHost({
     getTab: id => tabs.get(id), tabsFor: sessionId => [...tabs.values()].filter(tab => owners.get(tab.tabId) === sessionId),
-    ownerOf: id => owners.get(id), activeFor: sessionId => [...owners].find(([id, owner]) => owner === sessionId && tabs.has(id))?.[0],
+    // A conversation's active tab is the one of its tabs most recently in front, which is the one the person sees.
+    ownerOf: id => owners.get(id), activeFor: sessionId => order.find(id => owners.get(id) === sessionId && tabs.has(id)),
     // Prompt-injected pages must not steer the agent to this VM's worker, other
     // private hosts or cloud metadata. The VM firewall backs this up for pages
     // the person opens themselves and for redirects.
@@ -244,10 +313,16 @@ export function createCloudBrowser({ statePath, assertActive, enabled, beforeInp
       return tab;
     },
     navigate: (tab, url) => tab.navigate(url),
+    inFlight: (tab, since) => [...tab.inFlight.values()].filter((started) => started >= since).length,
     siteTools: async () => ({ ok: true, tools: [] }), runSiteTool: async () => ({ ok: false, dispatched: false, code: "unsupported" }),
   });
   return {
-    async request(input, options) { await verifyEgress(); await refresh(); return host.request(input, options); },
+    async request(input, options) {
+      await verifyEgress();
+      const tabId = input?.args?.tabId, sessionId = input?.sessionId;
+      await refresh(typeof tabId === "string" && typeof sessionId === "string" && sessionId.trim() ? { tabId, sessionId } : null);
+      return host.request(input, options);
+    },
     invalidate() { for (const id of tabs.keys()) host.invalidate(id); },
     pause() { for (const id of tabs.keys()) host.pause(id); },
     resume() { for (const id of tabs.keys()) host.resume(id); },

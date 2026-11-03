@@ -16,7 +16,8 @@ export type AutomationModelOption = {
   modelName: string
   /** The catalog provider family (e.g. "anthropic") for the logo; the record id is often opaque. */
   logoProviderId?: string
-  accessKind: "free" | "openwork_managed" | "authorized_custom" | "cloud_default"
+  /** `desktop_runtime`: connected only in the desktop runtime that runs the Automation (Desktop placement only). */
+  accessKind: "free" | "openwork_managed" | "authorized_custom" | "cloud_default" | "desktop_runtime"
 }
 
 /** The fields of a Den usable provider this needs. */
@@ -34,7 +35,13 @@ const freeStarterModel: AutomationModelOption = { ...AUTOMATION_FREE_MODEL, logo
 
 export const cloudDefaultModelOption: AutomationModelOption = { ...AUTOMATION_CLOUD_DEFAULT_MODEL, logoProviderId: "openwork", accessKind: "cloud_default" }
 
-const KIND_ORDER: ReadonlyArray<AutomationModelOption["accessKind"]> = ["cloud_default", "free", "openwork_managed", "authorized_custom"]
+const KIND_ORDER: ReadonlyArray<AutomationModelOption["accessKind"]> = ["cloud_default", "free", "openwork_managed", "authorized_custom", "desktop_runtime"]
+
+export function compareAutomationModelOptions(left: AutomationModelOption, right: AutomationModelOption) {
+  return KIND_ORDER.indexOf(left.accessKind) - KIND_ORDER.indexOf(right.accessKind)
+    || left.providerName.localeCompare(right.providerName)
+    || left.modelName.localeCompare(right.modelName)
+}
 
 export function automationModelOptions(
   providers: readonly AutomationModelProvider[],
@@ -67,9 +74,7 @@ export function automationModelOptions(
     ...(options.includeCloudDefault ? [cloudDefaultModelOption] : []),
     ...(options.includeFreeStarter === false ? [] : [freeStarterModel]),
     ...fromProviders,
-  ].sort((left, right) => KIND_ORDER.indexOf(left.accessKind) - KIND_ORDER.indexOf(right.accessKind)
-    || left.providerName.localeCompare(right.providerName)
-    || left.modelName.localeCompare(right.modelName))
+  ].sort(compareAutomationModelOptions)
 }
 
 export function findAutomationModelOption(

@@ -15,7 +15,7 @@ import {
   validateCodemodeScriptOutput,
   type CodemodeScriptInputIssue,
 } from "./codemode-script-object.js"
-import { restrictCodemodeToolTree, type BuiltCodemodeTools } from "./codemode-tools.js"
+import { restrictCodemodeToolTree, type BuildCodemodeTools } from "./codemode-tools.js"
 import { runCodemodeScript } from "./codemode-run.js"
 import { normalizeToolBody } from "./invoke.js"
 
@@ -71,7 +71,7 @@ export async function executeWorkflow(input: {
   scriptInput?: unknown
   readOnly?: boolean
   validateOutput?: boolean
-  buildTools: () => Promise<BuiltCodemodeTools>
+  buildTools: BuildCodemodeTools
 }): Promise<WorkflowExecutionResult> {
   const parsed = parseCodemodeScriptPayload(input.normalizedPayloadJson)
   if (!parsed.ok) return { ok: false, error: "unsupported", message: parsed.message }
@@ -121,7 +121,7 @@ export async function executeWorkflow(input: {
   // can currently use (Den actions and connection tools, reads and writes),
   // whether it runs on demand, live in an App, or from an Automation. Each call
   // is still authorized as the runner at dispatch time.
-  const built = await input.buildTools().catch(() => ({ tools: {}, manifest: [] }))
+  const built = await input.buildTools(parsed.payload.requiredCapabilities).catch(() => ({ tools: {}, manifest: [] }))
   const restricted = restrictCodemodeToolTree({ built, requiredCapabilities: parsed.payload.requiredCapabilities })
   const firstMissing = restricted.missing[0]
   if (firstMissing) {

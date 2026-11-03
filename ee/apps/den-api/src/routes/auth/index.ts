@@ -32,8 +32,13 @@ import {
 import { getInvalidMcpOAuthRedirectUris, isAllowedMcpOAuthRedirectUri, MCP_OAUTH_REDIRECT_URI_ERROR_DESCRIPTION } from "../../mcp/oauth-client-policy.js"
 import { normalizeMcpOAuthClientScope } from "../../mcp/scopes.js"
 import { publicRoute, queryValidator, tokenRoute } from "../../middleware/index.js"
-import { checkOAuthTokenRateLimit, recordOAuthTokenFailure } from "../../oauth-token-rate-limit.js"
-import { getOAuthTokenRateLimitLogFields, readBasicAuthClientId } from "../../oauth-token-rate-limit-observability.js"
+import { checkOAuthTokenRateLimit, recordOAuthTokenFailure, type OAuthTokenFailureBudgets } from "../../oauth-token-rate-limit.js"
+import {
+  getOAuthTokenFailureLogFields,
+  getOAuthTokenRateLimitLogFields,
+  readBasicAuthClientId,
+  type OAuthTokenLimitAttribution,
+} from "../../oauth-token-rate-limit-observability.js"
 import { emptyObjectSchema, emptyResponse, jsonResponse } from "../../openapi.js"
 import { getSingletonSsoStatus } from "../../orgs.js"
 import { cache } from "../../cache.js"
@@ -109,7 +114,8 @@ function readStoredOAuthClientScopes(scopes: string | null) {
 }
 
 async function registeredClientHasMcpScope(clientId: string) {
-  const [client] = await db
+  // primary: MCP clients authorize right after registering, and this gates the redirect and resource checks.
+  const [client] = await db.$primary
     .select({ scopes: OAuthClientTable.scopes })
     .from(OAuthClientTable)
     .where(eq(OAuthClientTable.clientId, clientId))
@@ -381,6 +387,19 @@ function oauthRegistrationError(status: number, error: string, errorDescription:
   })
 }
 
+function hasLoopbackRedirectUri(redirectUris: unknown): boolean {
+  if (!Array.isArray(redirectUris)) return false
+  return redirectUris.some((uri) => {
+    if (typeof uri !== "string") return false
+    try {
+      const { hostname } = new URL(uri)
+      return hostname === "localhost" || hostname === "127.0.0.1" || hostname === "[::1]"
+    } catch {
+      return false
+    }
+  })
+}
+
 async function rewriteMcpClientRegistrationRequest(request: Request, path: string) {
   const url = new URL(request.url)
   url.pathname = path
@@ -418,6 +437,13 @@ async function rewriteMcpClientRegistrationRequest(request: Request, path: strin
   const normalizedScope = normalizeMcpOAuthClientScope(body.scope)
   if (normalizedScope) {
     body.scope = normalizedScope
+  }
+
+  // Local MCP clients (Claude Code, Cursor, the MCP SDKs) register loopback
+  // redirects without sending application_type. Better Auth defaults that to
+  // "web", which refuses loopback, so declare them native (RFC 8252 §7.3).
+  if (body.application_type === undefined && hasLoopbackRedirectUri(body.redirect_uris)) {
+    body.application_type = "native"
   }
 
   headers.set("content-type", "application/json")
@@ -669,6 +695,30 @@ function logAuthRateLimited(request: Request, bucket: string, retryAfter: number
   })
 }
 
+/** Says which limiter refused a token request: Den's admission buckets, or one inside auth.handler. */
+async function logOAuthTokenRateLimited(request: Request, response: Response, attribution: Omit<OAuthTokenLimitAttribution, "clientIpSource">) {
+  const fields = await getOAuthTokenRateLimitLogFields(request, response, {
+    ...attribution,
+    clientIpSource: resolveRequestClientIp(request.headers).source,
+  })
+  if (fields) {
+    logger.warn("oauth token request rate limited", fields)
+  }
+}
+
+/** Charges a failed token request and logs each failure budget it filled, so a cooldown is logged when it starts, not on every failure. */
+async function recordOAuthTokenFailureWithLog(failure: OAuthTokenFailureBudgets, request: Request, response: Response) {
+  const filled = await recordOAuthTokenFailure(failure, response)
+  if (!filled.length) return
+  const clientIpSource = resolveRequestClientIp(request.headers).source
+  for (const exhausted of filled) {
+    const fields = await getOAuthTokenFailureLogFields(request, response, exhausted, clientIpSource)
+    if (fields) {
+      logger.warn("oauth token failure budget exhausted", fields)
+    }
+  }
+}
+
 /** Den's per-email / per-invitation / per-address limits for the email auth endpoints (auth-rate-limits.ts). */
 async function checkEmailAuthRateLimit(request: Request, invitationSignupAllowed: boolean) {
   if (env.devMode || request.method !== "POST") {
@@ -703,31 +753,31 @@ async function handleAuthRequest(c: Context) {
     ? request.clone()
     : null
   const oauthTokenRateLimit = observabilityRequest
-    ? await checkOAuthTokenRateLimit(request, checkRateLimit)
+    ? await checkOAuthTokenRateLimit(request)
     : null
   if (observabilityRequest && oauthTokenRateLimit?.response) {
-    const rateLimitFields = await getOAuthTokenRateLimitLogFields(observabilityRequest, oauthTokenRateLimit.response)
-    if (rateLimitFields) {
-      logger.warn("oauth token request rate limited", rateLimitFields)
-    }
+    await logOAuthTokenRateLimited(observabilityRequest, oauthTokenRateLimit.response, {
+      layer: "den_admission",
+      blocked: oauthTokenRateLimit.blocked,
+    })
     return oauthTokenRateLimit.response
   }
   if (observabilityRequest) {
     const jwtBearerResponse = await handleJwtBearerGrant(observabilityRequest.clone())
     if (jwtBearerResponse) {
       if (oauthTokenRateLimit && !jwtBearerResponse.ok) {
-        await recordOAuthTokenFailure(oauthTokenRateLimit.failureKey, jwtBearerResponse, checkRateLimit)
+        await recordOAuthTokenFailureWithLog(oauthTokenRateLimit.failure, observabilityRequest, jwtBearerResponse)
       }
       return jwtBearerResponse
     }
   }
   const authRequest = await normalizeMcpOAuthRequest(request)
   if (authRequest instanceof Response) {
-    if (oauthTokenRateLimit) {
+    if (observabilityRequest && oauthTokenRateLimit) {
       // Malformed token requests rejected before auth.handler must still
       // consume the failure budget, or repeated invalid-resource submissions
       // would only ever pay the looser attempt buckets.
-      await recordOAuthTokenFailure(oauthTokenRateLimit.failureKey, authRequest, checkRateLimit)
+      await recordOAuthTokenFailureWithLog(oauthTokenRateLimit.failure, observabilityRequest, authRequest)
     }
     return authRequest
   }
@@ -835,17 +885,15 @@ async function handleAuthRequest(c: Context) {
   if (emailSignInAttempt) {
     await recordEmailSignInResult(emailSignInAttempt, response)
   }
-  if (oauthTokenRateLimit) {
-    await recordOAuthTokenFailure(oauthTokenRateLimit.failureKey, response, checkRateLimit)
+  if (observabilityRequest && oauthTokenRateLimit) {
+    await recordOAuthTokenFailureWithLog(oauthTokenRateLimit.failure, observabilityRequest, response)
   }
   if (response.status === 429 && !observabilityRequest) {
     logAuthRateLimited(authRequest, "better_auth_ip", response.headers.get("x-retry-after"))
   }
   if (observabilityRequest) {
-    const rateLimitFields = await getOAuthTokenRateLimitLogFields(observabilityRequest, response)
-    if (rateLimitFields) {
-      logger.warn("oauth token request rate limited", rateLimitFields)
-    }
+    // Den's own limits answered above, so a 429 here came from inside auth.handler.
+    await logOAuthTokenRateLimited(observabilityRequest, response, { layer: "auth_handler" })
   }
   return response
 }

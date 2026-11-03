@@ -367,10 +367,45 @@ export const REMOTE_SESSION_REQUEST_POLL = Object.freeze({
   activeWindowMs: 30 * 60_000,
 })
 export const REMOTE_SESSION_CONTROL_CAPABILITY = "remote_session_control_v1"
+/** Asks Den's runner event stream to announce queued remote-session tasks (feature remoteSessionPush). */
+export const REMOTE_SESSION_PUSH_HEADER = "X-OpenWork-Remote-Session-Push"
+/** Den answers 404 while remoteSessionPush is off; ask again this much later. */
+const REMOTE_SESSION_PUSH_DISABLED_RETRY_MS = 10 * 60_000
+
+/**
+ * Reads a server-sent event stream and calls onEvent with each event's type.
+ * Returns when the stream ends; a read error (including an aborted fetch) throws.
+ */
+export async function readRunnerEvents(body, isActive, onEvent) {
+  const reader = body.getReader()
+  const decoder = new TextDecoder()
+  let buffer = ""
+  try {
+    while (isActive()) {
+      const { done, value } = await reader.read()
+      if (done) return
+      buffer += decoder.decode(value, { stream: true }).replaceAll("\r\n", "\n")
+      let boundary
+      while ((boundary = buffer.indexOf("\n\n")) >= 0) {
+        const block = buffer.slice(0, boundary)
+        buffer = buffer.slice(boundary + 2)
+        let type = "message"
+        for (const line of block.split("\n")) {
+          if (line.startsWith("event:")) type = line.slice(6).trim()
+        }
+        onEvent(type)
+      }
+    }
+  } finally {
+    reader.cancel().catch(() => undefined)
+  }
+}
 export const REMOTE_SESSION_RECOVERY_CAPABILITY = "remote_session_recovery_v1"
 const TRANSCRIPT_TEXT_LIMIT = 20_000
 const TOOL_SUMMARY_LIMIT = 2_000
 const TOOL_CALLS_PER_MESSAGE_LIMIT = 200
+const TRANSCRIPT_PARTS_LIMIT = 200
+const REASONING_PART_LIMIT = 4_000
 /** Summaries past this per-message budget are dropped so one message always fits a page. */
 const TOOL_SUMMARY_BUDGET_BYTES = 64 * 1024
 /** Den accepts 256 KB; the rest is headroom for the result envelope. */
@@ -420,20 +455,83 @@ function transcriptToolCalls(message) {
   })
 }
 
+function timestamp(value) {
+  return Number.isSafeInteger(value) && value >= 0 ? value : null
+}
+
+/**
+ * The message's text, reasoning and tool steps in the order the engine
+ * recorded them. Tool summaries share the same per-message budget as
+ * `toolCalls`; past it a step keeps its name and status only.
+ */
+function transcriptParts(message) {
+  const parts = (Array.isArray(message?.parts) ? message.parts : [])
+    .filter((part) => !part?.synthetic && !part?.ignored)
+    .filter((part) => part?.type === "tool" || ((part?.type === "text" || part?.type === "reasoning") && typeof part.text === "string" && part.text.trim()))
+    .slice(0, TRANSCRIPT_PARTS_LIMIT)
+  let budget = TOOL_SUMMARY_BUDGET_BYTES
+  // Text and reasoning share one character budget, so a message's steps never
+  // outgrow the page however many text parts it has.
+  let chars = TRANSCRIPT_TEXT_LIMIT
+  const prose = (text, cap) => {
+    const kept = text.slice(0, Math.min(cap, chars))
+    chars -= kept.length
+    return kept
+  }
+  return parts.map((part) => {
+    if (part.type === "text") return { type: "text", text: prose(part.text, TRANSCRIPT_TEXT_LIMIT) }
+    const startedAt = timestamp(part.startedAt)
+    const endedAt = timestamp(part.endedAt)
+    if (part.type === "reasoning") {
+      return {
+        type: "reasoning",
+        text: prose(part.text, REASONING_PART_LIMIT),
+        ...(startedAt !== null && endedAt !== null && endedAt >= startedAt ? { durationMs: endedAt - startedAt } : {}),
+      }
+    }
+    const input = boundedSummary(part.toolInput)
+    const output = boundedSummary(part.toolOutput)
+    const error = boundedSummary(part.toolError)
+    const step = {
+      type: "tool",
+      id: String(part.id ?? "").slice(0, 240),
+      name: String(part.tool ?? "").slice(0, 240),
+      status: typeof part.toolStatus === "string" ? part.toolStatus.slice(0, 60) : null,
+      ...(typeof part.toolTitle === "string" && part.toolTitle ? { title: part.toolTitle.slice(0, 240) } : {}),
+      input: input.text,
+      output: output.text,
+      error: error.text,
+      truncated: input.truncated || output.truncated || error.truncated,
+      ...(startedAt === null ? {} : { startedAt }),
+      ...(endedAt === null ? {} : { endedAt }),
+    }
+    const size = jsonBytes(step)
+    if (size > budget) {
+      budget = 0
+      return { ...step, input: null, output: null, error: null, truncated: step.truncated || step.input !== null || step.output !== null || step.error !== null }
+    }
+    budget -= size
+    return step
+  })
+}
+
 function transcriptMessage(message) {
   const text = messageText(message)
   const failure = message?.error ? classifyRemoteSessionError(message.error) : null
   const toolCount = (Array.isArray(message?.parts) ? message.parts : []).filter((part) => part?.type === "tool").length
+  const completedAt = timestamp(message?.completedAt)
   return {
     id: String(message.id ?? "").slice(0, 240),
     role: message.role,
-    createdAt: Number.isSafeInteger(message?.createdAt) && message.createdAt >= 0 ? message.createdAt : null,
+    createdAt: timestamp(message?.createdAt),
     text: text.slice(0, TRANSCRIPT_TEXT_LIMIT),
     truncated: text.length > TRANSCRIPT_TEXT_LIMIT || toolCount > TOOL_CALLS_PER_MESSAGE_LIMIT,
     toolCalls: transcriptToolCalls(message),
     error: failure
       ? { code: failure.code.slice(0, 60), message: (failure.message || "The turn failed").slice(0, REMOTE_SESSION_MESSAGE_LIMIT) }
       : null,
+    parts: transcriptParts(message),
+    ...(completedAt === null ? {} : { completedAt }),
   }
 }
 
@@ -1093,6 +1191,7 @@ export function createDesktopAutomationRunner(options) {
   const lifecycleRequestTimeoutMs = options.lifecycleRequestTimeoutMs ?? 30_000
   const requestPoll = { ...REMOTE_SESSION_REQUEST_POLL, ...options.remoteSessionRequestPoll }
   const remoteRequestTimeoutMs = options.remoteSessionRequestTimeoutMs ?? REMOTE_SESSION_REQUEST_TIMEOUT_MS
+  const remoteSessionPush = options.remoteSessionPush === true
   const legacyBaseUrls = new Set((options.legacyBaseUrls ?? [])
     .map((value) => normalizeRunnerBaseUrl(value))
     .filter(Boolean))
@@ -1208,13 +1307,33 @@ export function createDesktopAutomationRunner(options) {
       state.credentialValidated = true
       if (isCurrent(state)) {
         const policy = desktopEngineForcePolicy(payload)
-        if (policy) await options.onEnginePolicy?.(policy)
+        if (policy) applyEnginePolicyInBackground(policy)
       }
       return payload
     } catch (error) {
       if ([401, 403].includes(error?.status)) rejectCredential(state, error.status)
       throw error
     }
+  }
+
+  // The engine policy rides on work responses but must never fail them: while
+  // the local server starts (or if it rejects the write) the runner still has
+  // to find Automations. Every poll re-sends it, because a restarted local
+  // server forgets the last instruction; one write runs at a time, and each
+  // distinct failure is logged once.
+  let enginePolicyInFlight = false
+  let lastEnginePolicyError = null
+  const applyEnginePolicyInBackground = (policy) => {
+    if (enginePolicyInFlight || typeof options.onEnginePolicy !== "function") return
+    enginePolicyInFlight = true
+    Promise.resolve()
+      .then(() => options.onEnginePolicy(policy))
+      .then(() => { lastEnginePolicyError = null }, (error) => {
+        const message = error instanceof Error ? error.message : String(error)
+        if (message !== lastEnginePolicyError) console.warn(`[automation-runner] engine policy not applied yet: ${message}`)
+        lastEnginePolicyError = message
+      })
+      .finally(() => { enginePolicyInFlight = false })
   }
 
   const getSessionRunner = (state) => {
@@ -1767,9 +1886,72 @@ export function createDesktopAutomationRunner(options) {
         pendingConfiguration = null
         activateConfiguration(next)
       }
+      // A task announced while this check ran may have missed its last /work read.
+      if (isCurrent(state) && state.reconcileRequested) {
+        state.reconcileRequested = false
+        requestReconcile(state)
+      }
     })
     state.reconcilePromise = promise
     return promise
+  }
+
+  const requestReconcile = (state) => {
+    if (!isCurrent(state)) return
+    if (state.reconcilePromise) {
+      state.reconcileRequested = true
+      return
+    }
+    reconcile(state).catch((error) => {
+      if (isCurrent(state)) options.log?.(`announced work check failed: ${serializedError(error)}`)
+    })
+  }
+
+  /**
+   * Den announces a remote-session task queued for this desktop the moment it
+   * is queued, so it starts within a second or two instead of at the next 60 s
+   * poll. The poll stays as the fallback; while the feature is off Den answers
+   * 404 and the desktop asks again much later.
+   */
+  const remoteSessionPushLoop = async (state) => {
+    let attempt = 0
+    while (isCurrent(state)) {
+      try {
+        const response = await fetchImpl(`${state.configuration.baseUrl.replace(/\/+$/, "")}/v1/automation-runners/events`, {
+          headers: {
+            Accept: "text/event-stream",
+            Authorization: `Bearer ${state.configuration.token}`,
+            [REMOTE_SESSION_PUSH_HEADER]: "1",
+          },
+          signal: state.controller.signal,
+        })
+        if ([401, 403].includes(response.status)) {
+          rejectCredential(state, response.status)
+          return
+        }
+        if (response.status === 404) {
+          await response.body?.cancel().catch(() => undefined)
+          attempt = 0
+          await waitBeforeReconnect(REMOTE_SESSION_PUSH_DISABLED_RETRY_MS, state.controller.signal)
+          continue
+        }
+        if (!response.ok || !response.body) throw new Error(`event stream returned ${response.status}`)
+        await readRunnerEvents(response.body, () => isCurrent(state), (type) => {
+          attempt = 0
+          if (type === "remote_session_work_available") requestReconcile(state)
+        })
+      } catch (error) {
+        if (!isCurrent(state)) return
+        options.log?.(`remote session push reconnecting: ${serializedError(error)}`)
+      }
+      if (!isCurrent(state)) return
+      const backoff = Math.min(30_000, 1_000 * (2 ** attempt++))
+      try {
+        await waitBeforeReconnect(Math.round(backoff * (0.5 + random())), state.controller.signal)
+      } catch {
+        if (!isCurrent(state)) return
+      }
+    }
   }
 
   const connectLoop = async (state) => {
@@ -1815,6 +1997,7 @@ export function createDesktopAutomationRunner(options) {
       configuration,
       controller: new AbortController(),
       reconcilePromise: null,
+      reconcileRequested: false,
       claimInFlight: false,
       active: null,
       watchers: new Set(),
@@ -1833,6 +2016,7 @@ export function createDesktopAutomationRunner(options) {
     current = state
     void connectLoop(state)
     if (state.controlCapable) void remoteSessionRequestLoop(state)
+    if (remoteSessionPush && state.controlCapable) void remoteSessionPushLoop(state)
   }
 
   const disabledReason = options.disabledReason ?? null

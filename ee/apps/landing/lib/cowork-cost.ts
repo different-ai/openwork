@@ -245,8 +245,9 @@ export function cumulativeCosts(inputs: CumulativeInputs): CumulativeCosts {
     );
   }
 
+  // Team is free for up to openworkFreeSeats users; past that, every seat is billed.
   const openworkSeats =
-    inputs.tier === "team" ? Math.max(0, users - planPrices.openworkFreeSeats) : users;
+    inputs.tier === "team" ? (users > planPrices.openworkFreeSeats ? users : 0) : users;
   const openworkSeatsMonthly =
     inputs.tier === "team"
       ? openworkSeats * planPrices.openworkTeamSeat

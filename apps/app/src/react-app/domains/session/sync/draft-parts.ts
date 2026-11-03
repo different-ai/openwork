@@ -158,7 +158,7 @@ export async function draftToParts(
         parts.push({ type: "agent", name: part.name });
         continue;
       }
-      if (part.type === "skill" || part.type === "connect-skill" || part.type === "connector" || part.type === "computer") {
+      if (part.type === "skill" || part.type === "connect-skill" || part.type === "connector" || part.type === "computer" || part.type === "session") {
         parts.push(...composerPillPromptParts(composerPillFromPart(part)));
         continue;
       }

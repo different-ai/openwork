@@ -1,5 +1,7 @@
 import type { WorkbotCorrectionReference, WorkbotViewContext } from "@openwork/types/workbot-context";
 import type { WorkbotAttachment, WorkbotFile } from "./data";
+import { WorkbotSendError } from "./data";
+import type { WorkbotAccessReason } from "@openwork/types/den/workbot-settings";
 
 export type Upload = {
   key: string;
@@ -15,6 +17,8 @@ export type Pending = {
   id: string;
   text: string;
   context?: WorkbotViewContext;
+  teachingId?: string;
+  teachingStepId?: number;
   sentAt: number;
   uploads: Upload[];
   attachments: WorkbotAttachment[];
@@ -22,6 +26,7 @@ export type Pending = {
   correctionOf?: string;
   correctionReference?: WorkbotCorrectionReference;
   failed: string | null;
+  accessIssue?: WorkbotAccessReason;
 };
 
 type Snapshot = { text: string; uploads: Upload[]; pending: Pending[] };
@@ -80,17 +85,24 @@ export function createComposerState(uploadFile: Uploader) {
       if (upload) release(upload);
       publish({ ...state, uploads: state.uploads.filter(upload => upload.key !== key) });
     },
-    enqueue: (input: { id: string; text: string; context?: WorkbotViewContext; correctionOf?: string; correctionReference?: WorkbotCorrectionReference; attachments?: WorkbotAttachment[] }) => {
+    /** `keepDraft`: a message that isn't the draft (a correction, a tap on Show me) leaves the draft and its uploads alone. */
+    enqueue: ({ keepDraft = false, ...input }: { id: string; text: string; context?: WorkbotViewContext; teachingId?: string; teachingStepId?: number; correctionOf?: string; correctionReference?: WorkbotCorrectionReference; attachments?: WorkbotAttachment[]; keepDraft?: boolean }) => {
+      const separate = keepDraft || input.correctionOf !== undefined;
       const entry: Pending = { ...input, attachments: input.attachments ?? [], sentAt: Date.now(),
-        uploads: input.correctionOf ? [] : state.uploads, failed: null };
-      publish({ ...state, ...(input.correctionOf ? {} : { text: "", uploads: [] }), pending: [...state.pending, entry] });
+        uploads: separate ? [] : state.uploads, failed: null };
+      publish({ ...state, ...(separate ? {} : { text: "", uploads: [] }), pending: [...state.pending, entry] });
       return entry.id;
     },
     send: async (id: string, sender: Sender, retry = false) => {
       const entry = state.pending.find(entry => entry.id === id);
       if (!entry || sending.has(id)) return;
       sending.add(id);
-      publish({ ...state, pending: state.pending.map(entry => entry.id === id ? { ...entry, failed: null } : entry) });
+      publish({ ...state, pending: state.pending.map(entry => {
+        if (entry.id !== id) return entry;
+        const next = { ...entry, failed: null };
+        delete next.accessIssue;
+        return next;
+      }) });
       try {
         if (retry) for (const upload of entry.uploads) {
           // Only explicitly failed uploads retry. Successful ones keep their saved ids, even after send failure.
@@ -103,7 +115,7 @@ export function createComposerState(uploadFile: Uploader) {
         if (saved.some(file => !file)) throw new Error("A file didn't upload. Send again to retry it.");
         await sender(entry, [...entry.attachments.map(file => file.id), ...saved.flatMap(file => file ? [file.id] : [])]);
       } catch (error: unknown) {
-        publish({ ...state, pending: state.pending.map(entry => entry.id === id ? { ...entry, failed: error instanceof Error ? error.message : "That didn't send." } : entry) });
+        publish({ ...state, pending: state.pending.map(entry => entry.id === id ? { ...entry, failed: error instanceof Error ? error.message : "That didn't send.", ...(error instanceof WorkbotSendError && error.accessReason ? { accessIssue: error.accessReason } : {}) } : entry) });
       } finally { sending.delete(id); }
     },
     acknowledge: (ids: ReadonlySet<string>) => {

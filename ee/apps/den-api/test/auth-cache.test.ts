@@ -13,7 +13,7 @@ process.env.OPENWORK_DEV_MODE ??= "1"
 const { db } = await import("../src/db.js")
 // Better Auth seeds its resource registry on import. Return an already-present
 // synthetic registry row while the modules initialize, without SQL I/O.
-const bootstrapSelect = mock.method(db, "select", () => ({
+const bootstrapSelect = mock.method(db.$primary, "select", () => ({
   from() { return { async where() { return [{ id: "unit_oauth_resource", identifier: "http://api.unit.test/mcp/agent", policyVersion: 1 }] } } },
 }))
 const { getRequestSession } = await import("../src/session.js")
@@ -21,6 +21,8 @@ const { auth } = await import("../src/auth.js")
 await auth.$context
 bootstrapSelect.mock.restore()
 const { cache, setCacheDependenciesForTest } = await import("../src/cache.js")
+const { readProviderInventoryMarker } = await import("../src/llm/provider-inventory.js")
+const { sealSessionTokenDigest, sessionTokenDigest } = await import("../src/session-token.js")
 
 /** In-memory Redis with the Lua tombstone check; `refuseWrites` mimics a full Redis that still accepts deletes. */
 function fakeRedis() {
@@ -103,13 +105,51 @@ test("revoking a session clears its cache entry even when Redis refuses the tomb
   const restore = setCacheDependenciesForTest({ redis, authSessionLoader: async () => sessionRow(token) })
   try {
     assert.ok(await cache.auth.session(token))
-    assert.ok(redis.values.has(`cache:auth:session:${token}`))
+    assert.ok(redis.values.has(`cache:auth:session:${sessionTokenDigest(token)}`))
 
     redis.refuseWrites = true
     await cache.auth.revokeSession(token)
-    assert.equal(redis.values.has(`cache:auth:session:${token}`), false)
+    assert.equal(redis.values.has(`cache:auth:session:${sessionTokenDigest(token)}`), false)
   } finally {
     restore()
+  }
+})
+
+test("the session cache is keyed by the token's hash and never holds the token", async () => {
+  const token = "CacheKeyT0kenCacheKeyT0kenCacheK"
+  const redis = fakeRedis()
+  let loads = 0
+  const restore = setCacheDependenciesForTest({ redis, authSessionLoader: async (presented) => {
+    loads += 1
+    return presented === token ? sessionRow(token) : null
+  } })
+  try {
+    assert.equal((await cache.auth.session(token))?.session.token, token)
+    assert.deepEqual([...redis.values.keys()], [`cache:auth:session:${sessionTokenDigest(token)}`])
+    assert.equal([...redis.values.values()].some((value) => value.includes(token)), false)
+
+    // A hit comes back with the caller's token; the hash is just another unknown token.
+    assert.equal((await cache.auth.session(token))?.session.token, token)
+    assert.equal(loads, 1)
+    assert.equal(await cache.auth.session(sessionTokenDigest(token)), null)
+  } finally {
+    restore()
+  }
+})
+
+test("revoking by the stored hash or a sealed reference clears the caller's cache entry", async () => {
+  const token = "StoredF0rmT0kenStoredF0rmT0kenSt"
+  for (const form of [sessionTokenDigest(token), sealSessionTokenDigest("unit-secret", sessionTokenDigest(token))]) {
+    const redis = fakeRedis()
+    const restore = setCacheDependenciesForTest({ redis, authSessionLoader: async () => sessionRow(token) })
+    try {
+      assert.ok(await cache.auth.session(token))
+      await cache.auth.revokeSession(form)
+      assert.equal(redis.values.has(`cache:auth:session:${sessionTokenDigest(token)}`), false)
+      assert.equal(await cache.auth.session(token), null)
+    } finally {
+      restore()
+    }
   }
 })
 
@@ -125,6 +165,58 @@ test("revoking a session id clears its cache entry even when Redis refuses the t
     assert.equal(redis.values.has(`cache:auth:session-id:${sessionId}`), false)
   } finally {
     restore()
+  }
+})
+
+test("the provider inventory marker moves only on provider writes and fails once the session is revoked", async () => {
+  const organizationId = createDenTypeId("organization")
+  const principal = {
+    organizationId, memberId: createDenTypeId("member"), userId: createDenTypeId("user"),
+    sessionId: createDenTypeId("session"), sessionToken: "Pr0viderInvent0ryT0kenPr0viderIn",
+  }
+  const redis = fakeRedis()
+  const restore = setCacheDependenciesForTest({ redis })
+  try {
+    const before = await readProviderInventoryMarker(principal)
+    assert.equal(before, "0")
+    await cache.inventory.bump([organizationId])
+    assert.equal(await readProviderInventoryMarker(principal), before)
+    await cache.inventory.bump([organizationId], { providerInventory: true })
+    assert.notEqual(await readProviderInventoryMarker(principal), before)
+    assert.equal(redis.calls.some((call) => call.includes(principal.sessionToken)), false)
+
+    await cache.auth.revokeSession(principal.sessionToken)
+    await assert.rejects(readProviderInventoryMarker(principal), /no longer authorized/)
+  } finally {
+    restore()
+  }
+
+  const byId = setCacheDependenciesForTest({ redis: fakeRedis() })
+  try {
+    await cache.auth.revokeSessionId(principal.sessionId)
+    await assert.rejects(readProviderInventoryMarker(principal), /no longer authorized/)
+  } finally {
+    byId()
+  }
+})
+
+test("the provider inventory marker has no answer without a working Redis", async (t) => {
+  t.mock.method(console, "error", () => {})
+  const principal = {
+    organizationId: createDenTypeId("organization"), memberId: createDenTypeId("member"), userId: createDenTypeId("user"),
+    sessionId: createDenTypeId("session"), sessionToken: "N0RedisT0kenN0RedisT0kenN0RedisT",
+  }
+  const absent = setCacheDependenciesForTest({ redis: null })
+  try {
+    assert.equal(await readProviderInventoryMarker(principal), null)
+  } finally {
+    absent()
+  }
+  const failing = setCacheDependenciesForTest({ redis: { ...fakeRedis(), async get() { throw new Error("connection lost") } } })
+  try {
+    assert.equal(await readProviderInventoryMarker(principal), null)
+  } finally {
+    failing()
   }
 })
 

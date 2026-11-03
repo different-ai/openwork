@@ -34,6 +34,10 @@ jobs:
     name: Set env var and deploy
     if: github.repository == 'different-ai/openwork'
     runs-on: blacksmith-4vcpu-ubuntu-2204
+    # Render deploy secrets belong to this environment; no deployment is recorded.
+    environment:
+      name: den-production
+      deployment: false
 
     env:
       RENDER_API_KEY: ${{ secrets.RENDER_API_KEY }}

@@ -9,7 +9,7 @@
     "./review": "./src/review.ts"
   },
   "engines": {
-    "node": ">=24"
+    "node": ">=24.22.1 <25"
   },
   "scripts": {
     "typecheck": "tsc -p tsconfig.json --noEmit --pretty false",

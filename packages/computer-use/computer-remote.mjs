@@ -1,7 +1,7 @@
-// A remote computer (a Linux VM, a cloud desktop) as a computer use adapter.
-// It speaks the same seven-tool contract as the macOS helper, so the broker,
-// ownership, handoff and the floating Computer view work unchanged. Providers
-// supply only a small driver: windows, screenshots and input.
+// A computer driven by a small driver (a Linux VM, a cloud desktop, this
+// Windows PC) as a computer use adapter. It speaks the same seven-tool contract
+// as the macOS helper, so the broker, ownership, handoff and the floating
+// Computer view work unchanged. Drivers supply only windows, screenshots and input.
 import { isDeepStrictEqual } from "node:util";
 import { randomUUID } from "node:crypto";
 import { COMPUTER_PROTOCOL } from "./computer-control.mjs";
@@ -14,21 +14,24 @@ const WATCH_MS = 1_500;
 
 /**
  * @typedef {{ x: number, y: number, width: number, height: number }} Region
- * @typedef {{ id: number, title: string, app: string, region: Region, focused?: boolean }} RemoteWindow
+ * @typedef {{ id: number, title: string, app: string, name?: string, region: Region, focused?: boolean, restricted?: string }} RemoteWindow
  * @typedef {{
  *   type: string, x?: number, y?: number, text?: string, key?: string, ms?: number,
  *   delta_x?: number, delta_y?: number, modifiers?: string[], path?: Array<{ x: number, y: number }>, ref?: string,
  * }} RemoteAction
  * @typedef {{
- *   platform: "linux",
- *   describe: () => Promise<{ readiness: "ready" | "setup-required" | "unavailable", detail: string }>,
+ *   platform: "linux" | "windows",
+ *   describe: () => Promise<{ readiness: "ready" | "setup-required" | "unsupported" | "unavailable", detail: string }>,
+ *   wholeScreen?: boolean,
+ *   notes?: { keyboard: string, observe: string },
+ *   close?: () => Promise<void>,
  *   windows: () => Promise<RemoteWindow[]>,
  *   screen: () => Promise<Region>,
  *   focus: (windowId: number) => Promise<void>,
  *   screenshot: (region: Region, options?: { maxWidth?: number, windowId?: number }) => Promise<{ png: Uint8Array, width: number, height: number }>,
  *   interruptibleInput?: boolean,
  *   accessibility?: (region: Region, options: { observationId: string, windowId?: number }) => Promise<{ elements: Array<Record<string, unknown>>, capability: string, truncated?: boolean }>,
- *   input: (steps: RemoteAction[], options?: { windowId?: number, observationId?: string, signal?: AbortSignal }) => Promise<{ completed: number, error?: string }>,
+ *   input: (steps: RemoteAction[], options?: { windowId?: number, observationId?: string, signal?: AbortSignal }) => Promise<{ completed: number, attempted?: boolean, error?: string }>,
  * }} ComputerDriver
  */
 
@@ -37,13 +40,15 @@ const failure = (code, message, extra = {}) => text({ ok: false, code, message, 
 const base64 = (bytes) => Buffer.from(bytes).toString("base64");
 
 /**
- * @param {{ id: string, label: string, driver: ComputerDriver, now?: () => number }} options
+ * `restricted` windows are listed with the reason they can't be used and are
+ * never opened. A driver with `wholeScreen: false` offers no desktop target.
+ * @param {{ id: string, label: string, driver: ComputerDriver, placement?: "local" | "remote", now?: () => number }} options
  */
-export function createRemoteComputerAdapter({ id, label, driver, now = Date.now }) {
+export function createRemoteComputerAdapter({ id, label, driver, placement = "remote", now = Date.now }) {
   return {
     id,
     label,
-    placement: /** @type {"remote"} */ ("remote"),
+    placement,
     protocol: COMPUTER_PROTOCOL,
     async readiness() {
       return driver.describe();
@@ -87,6 +92,7 @@ export function createRemoteComputerAdapter({ id, label, driver, now = Date.now 
         const windows = await driver.windows();
         const match = windows.find((window) => window.id === session.window.id);
         if (!match) throw new Error("The selected window closed.");
+        if (match.restricted) throw new Error(match.restricted);
         session.window = match;
         return match;
       }
@@ -147,23 +153,24 @@ export function createRemoteComputerAdapter({ id, label, driver, now = Date.now 
       const tools = {
         async computer_discover() {
           const windows = await serial(() => driver.windows());
-          const apps = new Map([["desktop", { app_id: "desktop", name: "Whole screen", windows: 1, targets: [] }]]);
+          const apps = new Map(driver.wholeScreen === false ? [] : [["desktop", { app_id: "desktop", name: "Whole screen", windows: 1, targets: [] }]]);
           for (const window of windows) {
-            const entry = apps.get(window.app) ?? { app_id: window.app, name: window.app, windows: 0, targets: [] };
+            const entry = apps.get(window.app) ?? { app_id: window.app, name: window.name ?? window.app, windows: 0, targets: [] };
             entry.windows++;
-            entry.targets.push({ window_id: window.id, title: window.title, focused: window.focused === true });
+            entry.targets.push({ window_id: window.id, title: window.title, focused: window.focused === true, ...(window.restricted ? { unavailable: window.restricted } : {}) });
             apps.set(window.app, entry);
           }
           return text({ ok: true, protocol: COMPUTER_PROTOCOL, computer: label, platform: driver.platform, apps: [...apps.values()],
             modes: ["observe", "control"], permissions: { accessibility: true, screenRecording: true },
-            keyboard: { modifiers: ["control", "shift", "option", "command"], note: "Linux: use control for shortcuts; command is sent as control, option as alt." },
+            keyboard: { modifiers: ["control", "shift", "option", "command"], note: driver.notes?.keyboard ?? "Linux: use control for shortcuts; command is sent as control, option as alt." },
             limits: { lease_seconds: SESSION_SECONDS, actions_per_lease: MAX_ACTIONS, batch: 8, observation_seconds: OBSERVATION_MS / 1000 },
-            note: "Observations include semantic controls when AT-SPI is available. Otherwise use coordinates from the observation image." });
+            note: driver.notes?.observe ?? "Observations include semantic controls when AT-SPI is available. Otherwise use coordinates from the observation image." });
         },
         async computer_open_session(args, options) {
           if (live()) return failure("session_open", "A session is already open. Keep using it, or close it first. Nothing was dispatched.");
           if (!["observe", "control", "assist"].includes(args.mode) || typeof args.app_id !== "string" || !args.app_id || typeof args.purpose !== "string" || !args.purpose || args.purpose.length > 500) return failure("invalid_arguments", "Provide an app, mode and task purpose.");
           if (args.mode === "assist") return failure("mode_unsupported", "This computer has no accessibility controls. Use control (mouse and keyboard) or observe. Nothing was dispatched.");
+          if (args.app_id === "desktop" && driver.wholeScreen === false) return failure("app_not_found", "Whole-screen control is not available on this computer. Open an app window from computer_discover. Nothing was dispatched.");
           const windows = args.app_id === "desktop"
             ? [{ id: 1, title: "Whole screen", app: "desktop", region: await serial(() => driver.screen()), whole: true, focused: false }]
             : (await serial(() => driver.windows())).filter((window) => window.app === args.app_id).map(window => ({ ...window, whole: false }));
@@ -174,7 +181,8 @@ export function createRemoteComputerAdapter({ id, label, driver, now = Date.now 
           const candidates = args.window_id !== undefined ? windows.filter(window => window.id === args.window_id)
             : windows.length === 1 ? windows : windows.filter(window => window.focused === true);
           if (candidates.length !== 1) return failure("window_ambiguous", "Resolve the intended window from the request and these current targets. Ask for clarification only if the target is genuinely ambiguous.", { windows: windows.map(({ id, title }) => ({ window_id: id, title })), next: "resolve_target" });
-          session = { id: randomUUID(), uiId: randomUUID(), appId: args.app_id, appName: args.app_id === "desktop" ? "Whole screen" : args.app_id, mode: args.mode,
+          if (candidates[0].restricted) return failure("target_unsupported", `${candidates[0].restricted} Nothing was dispatched.`);
+          session = { id: randomUUID(), uiId: randomUUID(), appId: args.app_id, appName: args.app_id === "desktop" ? "Whole screen" : candidates[0].name ?? args.app_id, mode: args.mode,
             purpose: args.purpose, generation: 0, window: candidates[0], paused: false, closed: false, expiresAt: now() + SESSION_SECONDS * 1000, actions: 0,
             observations: new Map(), receipts: new Map() };
           const current = session;
@@ -276,7 +284,8 @@ export function createRemoteComputerAdapter({ id, label, driver, now = Date.now 
               progress.attempted = true;
               try {
                 const result = await driver.input(steps, { ...(current.window.whole ? {} : { windowId: current.window.id }), observationId: args.observation_id, signal: AbortSignal.any([options.signal, inputController.signal]) });
-                return { completed: result.completed, attempted: true, ...(result.error ? { error: result.error } : {}) };
+                // A driver that refused the whole batch before sending reports attempted: false.
+                return { completed: result.completed, attempted: result.attempted !== false, ...(result.error ? { error: result.error } : {}) };
               } finally { inputController = null; }
             }
             for (const action of steps) {
@@ -347,7 +356,8 @@ export function createRemoteComputerAdapter({ id, label, driver, now = Date.now 
           closed = true;
           clearTimeout(frameTimer);
           await queue;
-          onClose();
+          // A local helper process ends with its session.
+          try { await driver.close?.(); } finally { onClose(); }
         },
       };
     },

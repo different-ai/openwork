@@ -510,7 +510,7 @@ export function ToolTesterScreen() {
                           </div>
                           {selectedTool.description ? <p className="mt-2 text-[12.5px] leading-5 text-gray-500">{selectedTool.description}</p> : null}
                         </div>
-                        <p className="max-w-full break-all text-right font-mono text-[11px] text-gray-400">{selectedTool.name}</p>
+                        <p className="max-w-full break-all text-right font-mono text-[11px] text-gray-500">{selectedTool.name}</p>
                       </div>
 
                       {currentRun?.status === "policy_blocked" ? <div className="mt-5"><DenNotice message={currentRun.message} /></div> : null}

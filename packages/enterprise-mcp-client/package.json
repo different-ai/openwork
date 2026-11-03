@@ -12,6 +12,14 @@
       },
       "development": "./src/index.ts",
       "default": "./dist/index.js"
+    },
+    "./manual-oauth": {
+      "types": {
+        "openwork-build": "./dist/types/src/manual-oauth.d.ts",
+        "default": "./src/manual-oauth.ts"
+      },
+      "development": "./src/manual-oauth.ts",
+      "default": "./src/manual-oauth.ts"
     }
   },
   "files": [
@@ -25,7 +33,7 @@
   "dependencies": {
     "@modelcontextprotocol/client": "^2.3.1",
     "@modelcontextprotocol/core": "^2.3.1",
-    "zod": "^4.3.6"
+    "zod": "^4.6.6"
   },
   "devDependencies": {
     "@types/node": "^20.11.30",

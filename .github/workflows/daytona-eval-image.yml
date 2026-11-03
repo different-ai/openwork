@@ -66,8 +66,8 @@ jobs:
               echo "file=ee/packages/headless-computer/Dockerfile.desktop" >> "$GITHUB_OUTPUT"
               echo "platforms=linux/amd64" >> "$GITHUB_OUTPUT"
               echo "tags=$image:computer-desktop-${GITHUB_SHA}" >> "$GITHUB_OUTPUT"
-              # Official Node 24 Bookworm AMD64 manifest; pin the build input.
-              echo "build_args=OPENWORK_COMPUTER_BASE_IMAGE=node:24-bookworm-slim@sha256:ec857ea6bb60cb3d0fa4d97495590c5fe7d51be8572c307b55957eeb06569cf7" >> "$GITHUB_OUTPUT"
+              # Official Node 24.22.1 Bookworm slim AMD64 manifest; pin the build input.
+              echo "build_args=OPENWORK_COMPUTER_BASE_IMAGE=node:24.22.1-bookworm-slim@sha256:2dd9a4f758e173b65fee15388f7706af6fb01ef50cf7a2c0538711d67a6981ae" >> "$GITHUB_OUTPUT"
               ;;
             eval-vnc)
               echo "context=.devcontainer" >> "$GITHUB_OUTPUT"

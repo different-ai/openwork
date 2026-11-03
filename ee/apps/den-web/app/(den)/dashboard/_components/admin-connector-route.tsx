@@ -8,13 +8,14 @@ import { LinkButton } from "./item-list";
 import { useMcpConnections } from "./mcp-connections-data";
 
 /** A configured connector's Manage page, Google Workspace and Microsoft 365 included. */
-export function AdminConnectorRoute({ connectorId }: { connectorId: string }) {
+export function AdminConnectorRoute({ connectorId, confirmRemove = false }: { connectorId: string; confirmRemove?: boolean }) {
   const { orgSlug } = useOrgDashboard();
-  const connections = useMcpConnections("manageable");
-  const usable = useMcpConnections("usable");
+  // Always re-read on open: whether Remove is allowed comes with the connection.
+  const connections = useMcpConnections("manageable", { refetchOnMount: "always" });
+  const usable = useMcpConnections("usable", { refetchOnMount: "always" });
   const connection = connections.data?.find((entry) => entry.id === connectorId)
     ?? usable.data?.find((entry) => entry.id === connectorId);
-  if (connection) return <AdminConnectorPageScreen connection={connection} />;
+  if (connection) return <AdminConnectorPageScreen connection={connection} confirmRemove={confirmRemove} />;
   const back = { href: getMcpConnectionsRoute(orgSlug), label: "Connectors" };
   if (connections.isLoading || usable.isLoading) return <ItemPage><ItemHeader back={back} title="Loading..." /></ItemPage>;
   return (

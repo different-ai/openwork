@@ -4,7 +4,7 @@ import { readFile } from "node:fs/promises";
 import { ensureDir, exists } from "./utils.js";
 import { ApiError } from "./errors.js";
 import { opencodeConfigPath } from "./workspace-files.js";
-import { readJsoncFile } from "./jsonc.js";
+import { readJsoncFile, updateJsoncTopLevel } from "./jsonc.js";
 import type { ReloadReason, WorkspaceInfo } from "./types.js";
 
 type WorkspaceOpenworkConfig = {
@@ -58,12 +58,25 @@ export function defaultWorkspaceOpenworkConfig(workspaceRoot: string, preset: st
   };
 }
 
+// Older OpenWork versions added this exact npm browser plugin entry to
+// workspace configs. The built-in browser tools replaced it; left in place, it
+// loads a second set of browser tools that clash by name and skip the member's
+// website rules. A version-pinned entry was added by someone else and stays.
+const LEGACY_BROWSER_PLUGIN = "opencode-chrome-devtools";
+
+export function isLegacyBrowserPlugin(value: unknown): boolean {
+  return value === LEGACY_BROWSER_PLUGIN;
+}
+
 async function ensureOpencodeConfig(workspaceRoot: string): Promise<boolean> {
   const path = opencodeConfigPath(workspaceRoot);
-  if (await exists(path)) {
-    await readJsoncFile<Record<string, unknown>>(path, {}, { allowInvalid: true });
-  }
-  return false;
+  if (!(await exists(path))) return false;
+  const { data } = await readJsoncFile<Record<string, unknown>>(path, {}, { allowInvalid: true });
+  if (!Array.isArray(data.plugin) || !data.plugin.some(isLegacyBrowserPlugin)) return false;
+  // Remove only that entry, keeping the rest of the file and its comments.
+  const plugin = data.plugin.filter((item) => !isLegacyBrowserPlugin(item));
+  await updateJsoncTopLevel(path, { plugin: plugin.length ? plugin : undefined });
+  return true;
 }
 
 export async function ensureWorkspaceFiles(workspaceRoot: string, presetInput: string): Promise<EnsureWorkspaceFilesResult> {

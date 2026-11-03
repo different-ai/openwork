@@ -44,9 +44,9 @@ const pricingSummary = {
       id: "team",
       name: "Team",
       price: "$10",
-      cadence: "per seat / month",
+      cadence: "per user / month",
       highlights: [
-        "First 5 seats free on OpenWork Cloud",
+        "Unlimited users (the Free plan is limited to 5)",
         "API access",
         "SSO / SAML",
         "Extension Marketplace",

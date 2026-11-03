@@ -1,0 +1,53 @@
+name: Configure Windows lifecycle signing
+description: Authenticate and prepare the signing hook before electron-builder packages Windows binaries.
+inputs:
+  client-id:
+    required: true
+    description: Azure application ID
+  tenant-id:
+    required: true
+    description: Azure tenant ID
+  subscription-id:
+    required: true
+    description: Azure subscription ID
+  endpoint:
+    required: true
+    description: Artifact Signing endpoint
+  account:
+    required: true
+    description: Artifact Signing account
+  certificate-profile:
+    required: true
+    description: Artifact Signing certificate profile
+runs:
+  using: composite
+  steps:
+    - name: Validate and export signing configuration
+      shell: pwsh
+      env:
+        AZURE_CLIENT_ID: ${{ inputs.client-id }}
+        AZURE_TENANT_ID: ${{ inputs.tenant-id }}
+        AZURE_SUBSCRIPTION_ID: ${{ inputs.subscription-id }}
+        AZURE_ARTIFACT_SIGNING_ENDPOINT: ${{ inputs.endpoint }}
+        AZURE_ARTIFACT_SIGNING_ACCOUNT: ${{ inputs.account }}
+        AZURE_ARTIFACT_SIGNING_CERTIFICATE_PROFILE: ${{ inputs.certificate-profile }}
+      run: |
+        $ErrorActionPreference = 'Stop'
+        $required = @('AZURE_CLIENT_ID', 'AZURE_TENANT_ID', 'AZURE_SUBSCRIPTION_ID',
+          'AZURE_ARTIFACT_SIGNING_ENDPOINT', 'AZURE_ARTIFACT_SIGNING_ACCOUNT', 'AZURE_ARTIFACT_SIGNING_CERTIFICATE_PROFILE')
+        foreach ($name in $required) {
+          $value = [Environment]::GetEnvironmentVariable($name)
+          if (-not $value) { throw "Missing windows-signing configuration: $name" }
+          "$name=$value" | Out-File -FilePath $env:GITHUB_ENV -Append
+        }
+        'SIGN_WINDOWS=true' | Out-File -FilePath $env:GITHUB_ENV -Append
+        "WINDOWS_PRESERVED_SIGNATURES=$env:RUNNER_TEMP\windows-preserved-signatures.jsonl" | Out-File -FilePath $env:GITHUB_ENV -Append
+        # Same module version used by azure/artifact-signing-action v2.
+        Install-Module -Name ArtifactSigning -RequiredVersion 0.1.8 -Force -Repository PSGallery
+
+    - name: Azure login with GitHub OIDC
+      uses: azure/login@f5d393ae46f8fde4be8b75f32e3fc50e654ad0ca # v3.0.1
+      with:
+        client-id: ${{ inputs.client-id }}
+        tenant-id: ${{ inputs.tenant-id }}
+        subscription-id: ${{ inputs.subscription-id }}

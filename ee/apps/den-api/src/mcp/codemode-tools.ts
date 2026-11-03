@@ -21,6 +21,7 @@ import {
   buildExternalCapabilityName,
   executeExternalCapability,
   EXTERNAL_MCP_SEARCH_CONCURRENCY,
+  parseExternalCapabilityName,
   providerMarksReadOnly,
   type McpMemberIdentity,
 } from "./external-capabilities.js"
@@ -53,6 +54,16 @@ export type BuiltCodemodeTools = {
   manifest: CodemodeManifestEntry[]
 }
 
+export type RequiredCapability = Pick<CodemodeManifestEntry, "capabilityName">
+
+/**
+ * Builds the tools a script can call. A saved Workflow passes the capabilities
+ * it declared, so a run waits only on the connections it uses. With none
+ * passed, every connection is listed, which saving a Workflow needs to resolve
+ * the tools it calls.
+ */
+export type BuildCodemodeTools = (required?: readonly RequiredCapability[]) => Promise<BuiltCodemodeTools>
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value)
 }
@@ -75,7 +86,7 @@ function isCodemodeJsonSchema(value: unknown): value is Tool.JsonSchema {
   return isRecord(value)
 }
 
-function denInputJsonSchema(operation: McpToolOperation): Tool.JsonSchema {
+export function denInputJsonSchema(operation: McpToolOperation): Tool.JsonSchema {
   const serialized = JSON.stringify(z.toJSONSchema(operation.inputSchema), (key, value: unknown) => key === "~standard" ? undefined : value)
   const schema: unknown = JSON.parse(serialized)
   return isCodemodeJsonSchema(schema) ? schema : {}
@@ -260,7 +271,7 @@ export async function buildNativeProviderToolTree(input: {
   }
 }
 
-async function mapConcurrent<T, R>(items: readonly T[], limit: number, visit: (item: T) => Promise<R>): Promise<Array<R | undefined>> {
+export async function mapConcurrent<T, R>(items: readonly T[], limit: number, visit: (item: T) => Promise<R>): Promise<Array<R | undefined>> {
   const results: Array<R | undefined> = Array.from({ length: items.length })
   let nextIndex = 0
   const worker = async () => {
@@ -289,12 +300,20 @@ function isListedExternalConnection(value: ListedExternalConnection | undefined)
   return value !== undefined
 }
 
+/** The connections to list: all of them, or only those the required capabilities name. */
+export function connectionsRequiredBy<Connection extends { id: string }>(connections: Connection[], required: readonly RequiredCapability[] | undefined): Connection[] {
+  if (!required) return connections
+  const ids = new Set(required.flatMap(({ capabilityName }) => parseExternalCapabilityName(capabilityName)?.connectionId ?? []))
+  return connections.filter((connection) => ids.has(connection.id))
+}
+
 export async function buildExternalMcpToolTree(input: {
   organizationId: string
   member: McpMemberIdentity | null
   scopes: ReadonlySet<string>
   redirectUriBase: string
   namespaceContext?: CodemodeConnectionNamespaceContext
+  required?: readonly RequiredCapability[]
   /** What starts these calls, recorded with each Library usage event. */
   usageSource: CapabilityUsageSource
 }): Promise<BuiltCodemodeTools> {
@@ -304,7 +323,8 @@ export async function buildExternalMcpToolTree(input: {
     organizationId: input.organizationId,
     member: memberIdentity,
   })
-  const connections = namespaceContext.codemodeExternalMcpConnections
+  // Namespaces stay computed from every connection, so script paths do not change.
+  const connections = connectionsRequiredBy(namespaceContext.codemodeExternalMcpConnections, input.required)
   const deadline = createExternalMcpLifecycleDeadline(EXTERNAL_MCP_TOOL_LIFECYCLE_TIMEOUT_MS)
   const listed = (await mapConcurrent(connections, EXTERNAL_MCP_SEARCH_CONCURRENCY, async (connection) => {
     try {

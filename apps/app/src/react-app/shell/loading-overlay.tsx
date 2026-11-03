@@ -8,6 +8,7 @@ import { bootOverlayCanHide, useBootState, useBootOverlayVisible } from "./boot-
 import { useCloudWorkspaceStatus } from "./cloud-workspace-overlay";
 import { shouldSuppressBootOverlayForGateway } from "./cloud-workspace-status";
 import { OwDotTicker } from "./dot-ticker";
+import { useOrgOnboardingOnScreen } from "./org-onboarding-visibility";
 
 async function loadRecoveryPolicy(
   refreshDesktopConfig: () => Promise<DenDesktopConfig>,
@@ -30,6 +31,7 @@ export function LoadingOverlay() {
   const visible = useBootOverlayVisible();
   const { phase, routeReady, message, error } = useBootState();
   const cloudWorkspace = useCloudWorkspaceStatus();
+  const orgOnboardingOnScreen = useOrgOnboardingOnScreen();
   const suppressForGateway = shouldSuppressBootOverlayForGateway({
     gatewayMode: cloudWorkspace.gatewayMode,
     signedIn: cloudWorkspace.visible,
@@ -94,7 +96,7 @@ export function LoadingOverlay() {
 
   const useRelease = window.__OPENWORK_ELECTRON__?.recovery?.use;
 
-  if (!visible || (suppressForGateway && !error)) return null;
+  if (!visible || ((suppressForGateway || orgOnboardingOnScreen) && !error)) return null;
 
   const fading = bootOverlayCanHide(phase, routeReady);
 

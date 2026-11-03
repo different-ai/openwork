@@ -12,10 +12,12 @@ import type { AutomationExecutionTarget, AutomationExecutionTargetList } from "@
 export function automationPlacementChoices(input: {
   targets: AutomationExecutionTargetList | null | undefined
   desktopRuntime: boolean
+  /** False when the organization turned Desktop Automations off. */
+  desktopAllowed?: boolean
 }): AutomationExecutionTarget[] {
   if (!input.targets) return []
   const choices: AutomationExecutionTarget[] = []
-  if (input.desktopRuntime || input.targets.items.some((item) => item.kind === "desktop")) choices.push("desktop")
+  if (input.desktopAllowed !== false && (input.desktopRuntime || input.targets.items.some((item) => item.kind === "desktop"))) choices.push("desktop")
   if (input.targets.items.some((item) => item.kind === "cloud" && item.available)) choices.push("cloud")
   return choices
 }

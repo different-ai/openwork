@@ -7,7 +7,7 @@ import { allowFreeInferenceOffer, getInferenceStatus, setInferenceEnabled, getMe
 import { INFERENCE_ACCESS_REASONS, freeInferenceProviderSummarySchema, withFreeInferenceDefaultPinned, freeInferenceDefaultPinned } from "@openwork/types/den/inference"
 import { normalizeDenTypeId } from "@openwork-ee/utils/typeid"
 import { env } from "../../env.js"
-import { organizationHasActiveInferenceSubscription } from "../../stripe-billing.js"
+import { isBillingProductConfigured, organizationHasActiveInferenceSubscription } from "../../stripe-billing.js"
 import { jsonValidator, orgMemberRoute, orgPermissionRoute } from "../../middleware/index.js"
 import { forbiddenSchema, invalidRequestSchema, jsonResponse, unauthorizedSchema } from "../../openapi.js"
 import type { OrgRouteVariables } from "./shared.js"
@@ -32,6 +32,7 @@ const inferenceStatusSchema = z.object({
   proxyBaseUrl: z.string(),
   upstreamProviderConfigured: z.boolean(),
   subscribed: z.boolean().optional(),
+  billingConfigured: z.boolean().optional().describe("Whether this deployment sells OpenWork Models (Stripe key and price configured). False: there is no checkout; teams add their own providers instead."),
   buckets: z.array(inferenceUsageBucketSchema),
 }).meta({ ref: "InferenceStatus" })
 
@@ -145,6 +146,7 @@ export function registerOrgInferenceRoutes<T extends { Variables: OrgRouteVariab
         inference: {
           ...await getInferenceStatus(payload.organization.id),
           subscribed: await organizationHasActiveInferenceSubscription(payload.organization.id),
+          billingConfigured: isBillingProductConfigured("inference"),
         },
       })
     },
@@ -180,6 +182,7 @@ export function registerOrgInferenceRoutes<T extends { Variables: OrgRouteVariab
               inference: {
                 ...await getInferenceStatus(payload.organization.id),
                 subscribed: false,
+                billingConfigured: isBillingProductConfigured("inference"),
               },
             })
           }
@@ -191,7 +194,7 @@ export function registerOrgInferenceRoutes<T extends { Variables: OrgRouteVariab
           tier: input.tier,
           source: "admin",
         })
-        return c.json({ inference: { ...inference, subscribed: await organizationHasActiveInferenceSubscription(payload.organization.id) } })
+        return c.json({ inference: { ...inference, subscribed: await organizationHasActiveInferenceSubscription(payload.organization.id), billingConfigured: isBillingProductConfigured("inference") } })
       } catch (error) {
         if (error instanceof ManagedModelsPolicyError) {
           return c.json({ error: error.code, message: error.message }, error.status)

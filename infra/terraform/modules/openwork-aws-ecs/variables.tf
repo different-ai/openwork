@@ -246,9 +246,9 @@ variable "require_email_verification" {
 }
 
 variable "automations_enabled" {
-  description = "Enable Automations."
+  description = "Automations for the whole install (on by default; organization admins can turn Desktop or Cloud Automations off in Settings)."
   type        = bool
-  default     = false
+  default     = true
 }
 
 variable "dashboards_enabled" {

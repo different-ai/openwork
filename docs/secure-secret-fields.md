@@ -24,13 +24,19 @@ private field is used for every key typed in OpenWork and OpenWork Cloud.
 | Target | Saved through (people only) |
 | --- | --- |
 | Shared API key of an org MCP connection | `PUT /v1/mcp-connections/:id/shared-credential` (hidden) |
+| A person's own API key for a connection where each person uses their own | `PUT /v1/mcp-connections/:id/my-credential` (hidden) |
+| One shared key replacing each person's own (admins) | `PUT /v1/mcp-connections/:id/shared-credential` with `expectedUpdatedAt` (hidden); switches only if the key works and the connection is unchanged |
 | Key of a plugin's declared MCP server | `POST /v1/plugins/:id/mcp-connections` (the plugin's own setup) |
 | AI Gateway provider: single API key | `PATCH /v1/inference-providers/:id/credential-sets/:setId` |
 | AI Gateway provider: AWS keys (Bedrock), Google service-account key (Vertex), or several named keys | same route, structured body |
 
-The app shows a prompt only for results of Den's own operations
-(`postMcpConnections`, `postPluginsMcpConnections`, `postInferenceProviders`),
-so another MCP server can't make it draw a key field. A key the server refuses
+The app shows a prompt only for results of Den's own operations, and each
+operation only for its own kind of key: `postMcpConnections` and
+`putMcpConnectionsByKeyByExternalKey` (new connections, including a stable-key
+connection still waiting for its key), `postMcpConnectionsCredentialPrompt`
+(any existing API-key connection; it changes nothing by itself),
+`postPluginsMcpConnections` and `postInferenceProviders`. Another MCP server
+can't make it draw a key field. A key the server refuses
 is not kept, and provider error text is never echoed or logged, because it
 can repeat the key.
 

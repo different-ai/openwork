@@ -31,8 +31,10 @@ import { Button } from "@/components/ui/button";
 import { ProviderIcon } from "../../../design-system/provider-icon";
 import { OrganizationMark, ProviderSectionLabel, ProviderStatus, ProviderTile } from "../../settings/pages/provider-rows";
 import { autoProviderSubtitle } from "../../models/model-catalog";
+import { showsRetiredOpencodeZen } from "@/app/cloud/desktop-app-restrictions";
 import type { SecretFieldHandle } from "@/components/secret-field";
 import { SecretTextInput } from "../../../design-system/secret-text-input";
+import { reportActivationEvent } from "../../cloud/activation/use-activation";
 import { TextInput } from "../../../design-system/text-input";
 import type {
   ProviderAuthMethod,
@@ -565,6 +567,7 @@ export default function ProviderAuthModal(props: ProviderAuthModalProps) {
     setLocalError(null);
     try {
       await props.onSubmitApiKey(selectedEntry.id, trimmed);
+      void reportActivationEvent("own_provider");
       toast.success(`${selectedEntry.name} connected`, {
         description: "API key saved locally by OpenCode.",
       });
@@ -680,6 +683,7 @@ export default function ProviderAuthModal(props: ProviderAuthModalProps) {
   const searchText = searchQuery.trim().toLowerCase();
   const showIncludedAuto = Boolean(props.openWorkModelsState || props.connectedProviderIds.includes("openwork-free"))
     && (!searchText || "openwork models auto free".includes(searchText));
+  const showRetiredZen = showsRetiredOpencodeZen({ providerIds: entries.map((entry) => entry.id), query: searchText });
 
   const entrySubtitle = (entry: ProviderAuthEntry) => {
     if (entry.connected) return entry.methods.some((method) => method.type === "oauth") ? "Signed in on this device" : "API key on this device";
@@ -800,7 +804,18 @@ export default function ProviderAuthModal(props: ProviderAuthModalProps) {
                     </div>
                   ) : null}
 
-                  {!filteredEntries.length && !showIncludedAuto ? (
+                  {showRetiredZen ? (
+                    <div className="flex items-center gap-3 rounded-xl px-2 py-2" data-testid="retired-opencode-zen">
+                      <ProviderTile providerId="opencode" name="OpenCode Zen" size="sm" />
+                      <div className="min-w-0 flex-1">
+                        <div className="truncate text-sm font-medium text-dls-text">OpenCode Zen</div>
+                        <div className="line-clamp-2 text-xs text-muted-foreground">Use OpenCode Go with your OpenCode key</div>
+                      </div>
+                      <ProviderStatus tone="locked">No longer offered</ProviderStatus>
+                    </div>
+                  ) : null}
+
+                  {!filteredEntries.length && !showIncludedAuto && !showRetiredZen ? (
                     <div className="px-2 py-6 text-center text-sm text-muted-foreground">
                       {entries.length ? "No providers match your search." : "No providers available."}
                     </div>

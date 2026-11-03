@@ -114,12 +114,12 @@ function awsCloudShellUrl(region: string) {
   return `https://${region}.console.aws.amazon.com/cloudshell/home?region=${region}`
 }
 
-async function deploymentViews(rows: DeploymentRow[], now = new Date()): Promise<ManagedDeployment[]> {
+async function deploymentViews(rows: DeploymentRow[], now = new Date(), database: typeof db | typeof db.$primary = db): Promise<ManagedDeployment[]> {
   if (!rows.length) return []
   const runIds = rows.flatMap((row) => row.active_run_id ? [row.active_run_id] : [])
-  const runs = runIds.length ? await db.select().from(ManagedDeploymentRunTable).where(inArray(ManagedDeploymentRunTable.id, runIds)) : []
-  const events = runIds.length ? await db.select().from(ManagedDeploymentEventTable).where(inArray(ManagedDeploymentEventTable.run_id, runIds)).orderBy(asc(ManagedDeploymentEventTable.sequence)) : []
-  const health = await db.select().from(ManagedDeploymentHealthTable).where(inArray(ManagedDeploymentHealthTable.deployment_id, rows.map((row) => row.id)))
+  const runs = runIds.length ? await database.select().from(ManagedDeploymentRunTable).where(inArray(ManagedDeploymentRunTable.id, runIds)) : []
+  const events = runIds.length ? await database.select().from(ManagedDeploymentEventTable).where(inArray(ManagedDeploymentEventTable.run_id, runIds)).orderBy(asc(ManagedDeploymentEventTable.sequence)) : []
+  const health = await database.select().from(ManagedDeploymentHealthTable).where(inArray(ManagedDeploymentHealthTable.deployment_id, rows.map((row) => row.id)))
   return rows.map((row) => {
     const run = runs.find((entry) => entry.id === row.active_run_id) ?? null
     const report = health.find((entry) => entry.deployment_id === row.id) ?? null
@@ -146,8 +146,9 @@ async function deploymentViews(rows: DeploymentRow[], now = new Date()): Promise
   })
 }
 
-async function oneView(row: DeploymentRow) {
-  const [view] = await deploymentViews([row])
+/** `primary` when the caller just wrote the deployment's run. */
+async function oneView(row: DeploymentRow, options: { primary?: boolean } = {}) {
+  const [view] = await deploymentViews([row], new Date(), options.primary ? db.$primary : db)
   if (!view) throw new Error("deployment view missing")
   return view
 }
@@ -192,7 +193,8 @@ export function registerManagedDeploymentRoutes<T extends { Variables: OrgRouteV
         id, org_id: org.organization.id, provider: body.provider, name: body.name, target: body.target,
         domain_name: body.domainName, owner_email: body.ownerEmail, size: body.size,
       })
-      const [row] = await db.select().from(ManagedDeploymentTable).where(eq(ManagedDeploymentTable.id, id)).limit(1)
+      // Primary: reads back the row inserted above.
+      const [row] = await db.$primary.select().from(ManagedDeploymentTable).where(eq(ManagedDeploymentTable.id, id)).limit(1)
       if (!row) return c.json({ error: "deployment_not_found" }, 404)
       return c.json(await oneView(row))
     })
@@ -228,7 +230,7 @@ export function registerManagedDeploymentRoutes<T extends { Variables: OrgRouteV
       const result = await db.transaction(async (tx) => {
         const [row] = await tx.select().from(ManagedDeploymentTable).where(and(eq(ManagedDeploymentTable.id, id), eq(ManagedDeploymentTable.org_id, org.organization.id))).limit(1).for("update")
         if (!row) return { error: "deployment_not_found", status: 404 } as const
-        if (!await organizationFeatureEnabled(org.organization.id, "managedDeployments", { database: tx, lock: "share" })) return { error: "feature_disabled", status: 404 } as const
+        if (!await organizationFeatureEnabled(org.organization.id, "managedDeployments", { database: tx, lock: "share", userId: org.currentMember.userId })) return { error: "feature_disabled", status: 404 } as const
         const release = releaseFor(row)
         if (!release) return { error: "release_not_configured", status: 503 } as const
         const [active] = row.active_run_id ? await tx.select().from(ManagedDeploymentRunTable).where(eq(ManagedDeploymentRunTable.id, row.active_run_id)).limit(1) : []
@@ -259,7 +261,7 @@ export function registerManagedDeploymentRoutes<T extends { Variables: OrgRouteV
       })
       if ("error" in result) return c.json({ error: result.error }, result.status)
       return c.json(managedDeploymentLaunchSchema.parse({
-        deployment: await oneView(result.row), kind: result.run.kind,
+        deployment: await oneView(result.row, { primary: true }), kind: result.run.kind,
         ...launchDetails(result.row, result.run),
         expiresAt: result.run.expires_at.toISOString(),
       }))
@@ -315,9 +317,10 @@ export function registerManagedDeploymentRoutes<T extends { Variables: OrgRouteV
       const { deploymentId, runId } = c.req.valid("param")
       const token = bearerToken(c.req.header("authorization"))
       if (!token) return c.json({ error: "unauthorized" }, 401)
-      const [row] = await db.select().from(ManagedDeploymentTable).where(eq(ManagedDeploymentTable.id, deploymentId)).limit(1)
+      // Primary: the installer reports its first milestone right after enrolling set the token.
+      const [row] = await db.$primary.select().from(ManagedDeploymentTable).where(eq(ManagedDeploymentTable.id, deploymentId)).limit(1)
       if (!row || row.active_run_id !== runId) return c.json({ error: "deployment_not_found" }, 404)
-      const [credential] = await db.select().from(ManagedDeploymentRunTable).where(and(eq(ManagedDeploymentRunTable.id, runId), eq(ManagedDeploymentRunTable.deployment_id, deploymentId))).limit(1)
+      const [credential] = await db.$primary.select().from(ManagedDeploymentRunTable).where(and(eq(ManagedDeploymentRunTable.id, runId), eq(ManagedDeploymentRunTable.deployment_id, deploymentId))).limit(1)
       if (!credential || !tokenMatches(credential.token_hash, token) || credential.expires_at < new Date()) return c.json({ error: "unauthorized" }, 401)
       const audited = await attributeAuditRequest(c, { organizationId: row.org_id, ...auditServiceAttribution("managed-deployment", deploymentId) })
       if (!audited.ok) return audited.response

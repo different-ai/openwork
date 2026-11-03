@@ -14,8 +14,11 @@ export type SessionEvent =
   | { type: "changed"; messageId: string; status?: string }
   /** `reset` drops the text streamed so far for this step: the model call was retried. */
   | { type: "text"; messageId: string; step: number; delta: string; reset?: boolean }
-  /** The model started writing a call to `tool` in model call `step`; the stored call follows when it finishes. */
-  | { type: "tool"; messageId: string; step: number; tool: string }
+  /**
+   * The model started writing a call to `tool` in model call `step`; the stored call follows when it finishes. Sent
+   * again with the call's `description` (what it is doing, for the person) as soon as that much of the input is written.
+   */
+  | { type: "tool"; messageId: string; step: number; tool: string; description?: string }
 
 type Listener = (event: SessionEvent) => void
 

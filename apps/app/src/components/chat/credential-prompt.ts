@@ -28,18 +28,26 @@ function records(value: unknown): Record<string, unknown>[] {
   }
 }
 
-/**
- * Den's own operations that answer with a credential prompt. Results of an
- * organization's MCP servers, plugins or Workflows also pass through
- * execute_capability, but under prefixed names (mcp:..., plugin:...), so they
- * can never match and cannot forge a key field.
- */
-const DEN_PROMPT_OPERATIONS = new Set(["postMcpConnections", "postInferenceProviders", "postPluginsMcpConnections"])
+type PromptTargetType = CredentialPrompt["target"]["type"]
 
-function isDenPromptCall(part: DynamicToolUIPart): boolean {
-  if (!isOpenworkCloudCapabilityTool(part.toolName) || !/(?:^|_)execute_capability$/.test(part.toolName)) return false
+/**
+ * Den's own operations that answer with a credential prompt, and the kinds of
+ * key each may ask for. Results of an organization's MCP servers, plugins or
+ * Workflows also pass through execute_capability, but under prefixed names
+ * (mcp:..., plugin:...), so they can never match and cannot forge a key field.
+ */
+const DEN_PROMPT_OPERATIONS = new Map<string, ReadonlySet<PromptTargetType>>([
+  ["postMcpConnections", new Set(["mcp_connection_key"])],
+  ["putMcpConnectionsByKeyByExternalKey", new Set(["mcp_connection_key"])],
+  ["postMcpConnectionsCredentialPrompt", new Set(["mcp_connection_key", "mcp_connection_member_key", "mcp_connection_shared_switch"])],
+  ["postPluginsMcpConnections", new Set(["plugin_connection_key"])],
+  ["postInferenceProviders", new Set(["gateway_provider_key", "gateway_provider_credential"])],
+])
+
+function denPromptTargets(part: DynamicToolUIPart): ReadonlySet<PromptTargetType> | null {
+  if (!isOpenworkCloudCapabilityTool(part.toolName) || !/(?:^|_)execute_capability$/.test(part.toolName)) return null
   const name = isRecord(part.input) ? part.input.name : undefined
-  return typeof name === "string" && DEN_PROMPT_OPERATIONS.has(name)
+  return typeof name === "string" ? DEN_PROMPT_OPERATIONS.get(name) ?? null : null
 }
 
 /**
@@ -48,7 +56,8 @@ function isDenPromptCall(part: DynamicToolUIPart): boolean {
  * schema is accepted, so another MCP server or a model cannot draw a key field.
  */
 export function credentialPromptFromToolPart(part: DynamicToolUIPart): CredentialPrompt | null {
-  if (part.state !== "output-available" || !isDenPromptCall(part)) return null
+  const targets = part.state === "output-available" ? denPromptTargets(part) : null
+  if (!targets) return null
   const metadata = isRecord(part.callProviderMetadata) && isRecord(part.callProviderMetadata.openwork)
     ? part.callProviderMetadata.openwork.mcpResult
     : undefined
@@ -57,7 +66,7 @@ export function credentialPromptFromToolPart(part: DynamicToolUIPart): Credentia
     for (const candidate of [record.credentialPrompt, record.kind === "credential_prompt" ? record : undefined]) {
       if (candidate === undefined) continue
       const parsed = credentialPromptSchema.safeParse(candidate)
-      if (parsed.success) found.set(JSON.stringify(parsed.data.target), parsed.data)
+      if (parsed.success && targets.has(parsed.data.target.type)) found.set(JSON.stringify(parsed.data.target), parsed.data)
     }
   }
   return found.size === 1 ? found.values().next().value ?? null : null

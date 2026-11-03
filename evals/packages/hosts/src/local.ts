@@ -998,10 +998,14 @@ async function ensureDisplay(repoRoot: string, env: NodeJS.ProcessEnv, log: (mes
     },
 
     async spawnChrome(name: string, opts: ChromeSurfaceOptions = {}): Promise<SurfaceHandle> {
-      await pruneStaleSurfaceProfiles(rootDir, { live: liveProfileRoots, log });
-      const profileRoot = resolve(rootDir, `${sanitizeSlug(name)}-${timestamp()}-${process.pid}`);
-      registerLiveProfileRoot(profileRoot);
-      const profileDir = join(profileRoot, "chrome-profile");
+      if (opts.profileDir !== undefined && !opts.profileDir.trim()) {
+        throw new Error("Chrome profileDir must not be empty.");
+      }
+      const callerOwnedProfile = opts.profileDir !== undefined;
+      if (!callerOwnedProfile) await pruneStaleSurfaceProfiles(rootDir, { live: liveProfileRoots, log });
+      const profileRoot = opts.profileDir ?? resolve(rootDir, `${sanitizeSlug(name)}-${timestamp()}-${process.pid}`);
+      if (!callerOwnedProfile) registerLiveProfileRoot(profileRoot);
+      const profileDir = opts.profileDir ?? join(profileRoot, "chrome-profile");
       await mkdir(profileDir, { recursive: true });
       const cdpPort = await allocateFreePort();
       const binary = resolveChromeBinary(process.env, process.platform);
@@ -1041,7 +1045,7 @@ async function ensureDisplay(repoRoot: string, env: NodeJS.ProcessEnv, log: (mes
         cdpUrl,
         pid: spawned.pid,
         profileDir,
-        meta: { cdpPort: String(cdpPort), log: logPath, profileRoot },
+        meta: { cdpPort: String(cdpPort), log: logPath, profileRoot, profileOwner: callerOwnedProfile ? "caller" : "host" },
       };
       spawnedSurfaces.add(handle);
       return handle;

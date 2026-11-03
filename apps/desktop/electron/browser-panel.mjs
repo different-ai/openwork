@@ -1,14 +1,22 @@
 // Embedded browser panel: tab state, BrowserView lifecycle, native context menus,
 // proxy configuration, and browser IPC registrations. Extracted from
 // main.mjs as a factory so the main process only owns window creation.
+import { constants as fsConstants } from "node:fs";
+import { access, lstat, realpath } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { app, BrowserWindow, WebContentsView, clipboard, dialog, session, shell } from "electron";
+import { app, BrowserWindow, WebContentsView, clipboard, dialog, nativeImage, session, shell } from "electron";
 import {
+  AGENT_VIEWPORTS,
   BACKGROUND_TAB_VIEWPORT,
+  DEFAULT_AGENT_VIEWPORT,
+  DRAFT_OWNER_KEY,
+  agentViewportEmulationCommands,
   backgroundTabEmulationCommands,
   createBrowserTabRegistry,
+  fitAgentViewport,
+  lockedAgentViewport,
   foregroundTabEmulationCommands,
 } from "@openwork/browser-tabs";
 import { runDetachedTask } from "./process-resilience.mjs";
@@ -43,7 +51,8 @@ const BROWSER_SECURITY_PREFERENCES = Object.freeze({
   webviewTag: false,
 });
 
-export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink, checkPolicy, readWebsiteRules, websiteRulesWereInForce = false, onWebsiteRulesInForce, showNativeContextMenu, closeNativeContextMenu }) {
+export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink, checkPolicy, readWebsiteRules, websiteRulesWereInForce = false, onWebsiteRulesInForce, showNativeContextMenu, closeNativeContextMenu,
+  approveFiles = async () => false, approveCredential = undefined }) {
   // The member's agent permission rules for websites, from their desktop
   // config. They apply to every page, frame and request the built-in browser
   // makes, whoever opens it, as the engines apply them to the agent's web fetches.
@@ -102,7 +111,7 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink, che
     const pending = websiteApprovals.get(site.origin);
     if (pending) return pending;
     const rules = websiteRules;
-    const parent = window();
+    const parent = viewHost();
     const approval = (parent && !parent.isDestroyed()
       ? dialog.showMessageBox(parent, {
         type: "question",
@@ -276,6 +285,8 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink, che
       const guard = details.resourceType === "mainFrame" ? taskHost.navigationGuard(tab?.tabId) : null;
       const request = { url: details.url, method: details.method, hasUpload: Boolean(details.uploadData?.length) };
       if (tab && details.resourceType !== "mainFrame") rememberRequest(tab, details.url);
+      // Browser tasks wait for requests an action started before reporting settled.
+      if (tab && details.resourceType !== "webSocket") tab.inFlight.set(details.id, Date.now());
       Promise.resolve().then(async () => {
         // Every request follows the website rules; only a page may ask first.
         const page = details.resourceType === "mainFrame";
@@ -325,6 +336,9 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink, che
           callback({ cancel: true });
         });
     });
+    const finished = (details) => { [...browserTabs.values()].find((item) => item.view.webContents.id === details.webContentsId)?.inFlight.delete(details.id); };
+    browserSession.webRequest.onCompleted({ urls: ["<all_urls>"] }, finished);
+    browserSession.webRequest.onErrorOccurred({ urls: ["<all_urls>"] }, finished);
   }
   // tabId -> { tabId, view, favicon, background }. Order, ownership, the active
   // tab per conversation, and which conversation is on screen live in the
@@ -358,6 +372,11 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink, che
   // screen. It never survives a conversation switch.
   let browserPresentation = null;
   let backgroundWindow = null;
+  // The browser's own OS window while the person has it popped out, and whether
+  // the on-screen page is in it rather than in the app window. Each bounds call
+  // says which window it measured, so the page moves once its new place exists.
+  let popOutWindow = null;
+  let pageInPopOut = false;
   // Last accepted geometry in window DIPs. Reattaching must not scale an old
   // CSS rectangle with a newer zoom while the renderer is still catching up.
   let lastBrowserBounds = null;
@@ -366,6 +385,9 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink, che
   // Active proxy for the built-in browser session: { rules, username, password }.
   let browserProxy = null;
   let browserControlEnabled = true;
+  // The size tabs lock to while the agent controls them (AGENT_VIEWPORTS key).
+  /** @type {string} */
+  let agentViewportKey = DEFAULT_AGENT_VIEWPORT;
   let menuRequest = null;
   let menuShowSerial = 0;
   let linkChoiceRequest = null;
@@ -374,6 +396,11 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink, che
 
   function window() {
     return getWindow?.() ?? null;
+  }
+
+  /** The window the on-screen page is in: the popped-out browser, or the app. */
+  function viewHost() {
+    return pageInPopOut && popOutWindow && !popOutWindow.isDestroyed() ? popOutWindow : window();
   }
 
   /** Send an IPC message to the main renderer, guarding against disposed frames. */
@@ -471,6 +498,10 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink, che
       applySurfacing();
       await tab.emulation;
       signal?.throwIfAborted();
+      await lockAgentViewport(tab);
+      signal?.throwIfAborted();
+      // Sites pick their phone pages from the first request's user agent.
+      if (tab.agentViewportSize?.mobile) { await tab.view.webContents.loadURL(tab.view.webContents.getURL()); signal?.throwIfAborted(); }
       return tab;
     }
     catch (error) {
@@ -533,6 +564,9 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink, che
       ownerSessionId: registry.ownerOf(tabId),
       loadError: tab.loadError,
       browserTask: tab.browserTask,
+      agentViewport: tab.agentViewport
+        ? { key: tab.agentViewport, width: tab.agentViewportSize.width, height: tab.agentViewportSize.height, scale: tab.viewportScale }
+        : null,
       siteToolCount: Number.isInteger(tab.webMcpToolCount) ? tab.webMcpToolCount : 0,
       siteTools: Array.isArray(tab.webMcpTools) ? tab.webMcpTools : [],
       siteToolActivity: Array.isArray(tab.webMcpActivity) ? tab.webMcpActivity : [],
@@ -571,6 +605,8 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink, che
         attached: index !== -1,
         // BrowserWindow's primary renderer is below the entire contentView.
         aboveApp: index !== -1,
+        poppedOut: Boolean(popOutWindow && !popOutWindow.isDestroyed() && popOutWindow.contentView.children.includes(view)),
+        focused: !view.webContents.isDestroyed() && view.webContents.isFocused(),
         visible: view.getVisible(),
         bounds: view.getBounds(),
       };
@@ -692,7 +728,7 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink, che
     // Chromium supplies view-relative coordinates, already in window DIPs.
     // Convert to app CSS pixels for the shared helper, not through page zoom.
     const bounds = tab.view.getBounds();
-    const appZoom = window().webContents.getZoomFactor();
+    const appZoom = viewHost().webContents.getZoomFactor();
     await showContextMenu({
       source: "page", tabId: tab.tabId, ownerSessionId: registry.ownerOf(tab.tabId),
       url: params.linkURL, items, actions,
@@ -703,11 +739,13 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink, che
   async function showContextMenu(request) {
     hideContextMenu();
     const showSerial = ++menuShowSerial;
-    const mainWindow = window();
-    if (!mainWindow || mainWindow.isDestroyed() || mainWindow.webContents.isDestroyed()) return;
+    // A page's menu opens over the page, wherever the page is.
+    const menuWindow = () => (request.source === "page" ? viewHost() : window());
+    const host = menuWindow();
+    if (!host || host.isDestroyed() || host.webContents.isDestroyed()) return;
     const tab = request.tabId ? getBrowserTab(request.tabId) : null;
-    const isCurrent = () => showSerial === menuShowSerial && window() === mainWindow
-      && !mainWindow.isDestroyed() && !mainWindow.webContents.isDestroyed()
+    const isCurrent = () => showSerial === menuShowSerial && menuWindow() === host
+      && !host.isDestroyed() && !host.webContents.isDestroyed()
       && (!tab || (getBrowserTab(tab.tabId) === tab && !tab.view.webContents.isDestroyed() && registry.ownerOf(tab.tabId) === request.ownerSessionId))
       && (request.source !== "page" || browserTabVisible(request.tabId));
     const dismiss = () => { if (menuRequest === request) hideContextMenu(); };
@@ -718,9 +756,9 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink, che
     };
     const navigated = (_event, _url, _isInPlace, isMainFrame) => { if (isMainFrame || request.source === "page") invalidate(); };
     menuRequest = request;
-    mainWindow.on("blur", dismiss);
-    mainWindow.webContents.on("did-start-navigation", navigated);
-    mainWindow.webContents.on("destroyed", invalidate);
+    host.on("blur", dismiss);
+    host.webContents.on("did-start-navigation", navigated);
+    host.webContents.on("destroyed", invalidate);
     tab?.view.webContents.on("did-start-navigation", navigated);
     try {
       if (request.source === "link") {
@@ -732,7 +770,7 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink, che
         ];
       }
       // The native helper owns zoom conversion and resolves only an ID or null.
-      const itemId = await showNativeContextMenu({ items: request.items, point: request.point });
+      const itemId = await showNativeContextMenu({ items: request.items, point: request.point }, host);
       if (!isCurrent()) return;
       menuRequest = null;
       if (!request.items.some((item) => item.type === "item" && item.id === itemId && item.enabled !== false)) return;
@@ -741,9 +779,9 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink, che
       await handleMenuChoice(request, itemId, isCurrent);
     } finally {
       dismiss();
-      mainWindow.removeListener("blur", dismiss);
-      mainWindow.webContents.removeListener("did-start-navigation", navigated);
-      mainWindow.webContents.removeListener("destroyed", invalidate);
+      host.removeListener("blur", dismiss);
+      host.webContents.removeListener("did-start-navigation", navigated);
+      host.webContents.removeListener("destroyed", invalidate);
       tab?.view.webContents.removeListener("did-start-navigation", navigated);
     }
   }
@@ -760,7 +798,8 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink, che
           createBrowserTab(request.url, { ownerSessionId: request.ownerSessionId, initializeBlank: false });
         } else {
           const result = await openExternalUrl(request.url);
-          if (!result.ok) throw new Error(result.error);
+          // A slow browser is still opening the link; only a real failure needs a dialog.
+          if (!result.ok && !result.pending) throw new Error(result.error);
         }
       } catch (error) {
         if (isCurrent()) {
@@ -839,7 +878,7 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink, che
   function browserTabVisible(tabId) {
     const tab = getBrowserTab(tabId);
     return !!tab && browserViewVisible && registry.onScreenTabId() === tabId
-      && window()?.contentView.children.includes(tab.view) === true && tab.view.getVisible();
+      && viewHost()?.contentView.children.includes(tab.view) === true && tab.view.getVisible();
   }
   const webMcpBroker = createWebMcpBroker({
     getTab: (tabId) => getBrowserTab(tabId),
@@ -882,9 +921,32 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink, che
     allowed: browserTaskAllowed,
     openTab: openBrowserTab,
     navigate: (tab, url) => tab.view.webContents.loadURL(url),
-    changed: (tabId, activity) => { const tab = getBrowserTab(tabId); if (tab) { tab.thumbnailRevision = (tab.thumbnailRevision ?? 0) + 1; tab.browserTask = activity; sendBrowserState(); } },
+    // Pages get files through the intercepted chooser, never the system picker. Run only
+    // after the person approved these exact paths: each must be its own real path (no link
+    // anywhere in it) to a readable regular file, so what is attached is what they saw.
+    checkFiles: async (paths) => {
+      for (const file of paths) {
+        if (await realpath(file) !== file) throw new Error("not_the_real_path");
+        if (!(await lstat(file)).isFile()) throw new Error("not_a_file");
+        await access(file, fsConstants.R_OK);
+      }
+    },
+    approveFiles,
+    approveCredential,
+    changed: (tabId, activity) => {
+      const tab = getBrowserTab(tabId);
+      if (!tab) return;
+      tab.browserTask = activity;
+      // A takeover hands the page back at the panel's own width.
+      if (activity.status === "paused") releaseAgentViewport(tab);
+      sendBrowserState();
+    },
     siteTools: (args) => webMcpBroker.listTools(args),
     runSiteTool: (args, options) => webMcpBroker.executeTool(args, options),
+    inFlight: (tab, since) => [...tab.inFlight.values()].filter((started) => started >= since).length,
+    prepare: (tab) => lockAgentViewport(tab),
+    inputScale: (tab) => tab.agentViewport && !tab.background ? tab.viewportScale : 1,
+    capture: (tab, viewport) => captureAgentViewport(tab, viewport),
   });
 
   function scheduleWebMcpToolCountRefresh(tabId) {
@@ -925,7 +987,7 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink, che
     callback(browserProxy.username, browserProxy.password);
   });
 
-  function createBrowserTab(url = "about:blank", { select = true, initializeBlank = true, deferBackground = false, ownerSessionId = null, restoreTabId = null, automationProtected = false, contentsOptions = /** @type {import("electron").WebContentsViewConstructorOptions} */ ({}) } = {}) {
+  function createBrowserTab(url = "about:blank", { select = true, initializeBlank = true, deferBackground = false, ownerSessionId = null, restoreTabId = null, automationProtected = false, forPerson = false, contentsOptions = /** @type {import("electron").WebContentsViewConstructorOptions} */ ({}) } = {}) {
     // Check synchronously before creating a WebContentsView, including pending
     // opens, popups, transcript links and the tab-strip button.
     if (browserTabs.size >= MAX_BROWSER_TABS) {
@@ -940,6 +1002,9 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink, che
       webPreferences: {
         ...contentsOptions.webPreferences,
         backgroundThrottling: false,
+        // The agent and policy checks load pages too: a load must never take the
+        // keyboard from what the person is typing. Their own navigations focus the page.
+        focusOnNavigation: false,
         ...BROWSER_SECURITY_PREFERENCES,
         preload: path.join(__dirname, "browser-content-preload.cjs"),
         partition: BROWSER_SESSION_PARTITION,
@@ -950,9 +1015,18 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink, che
       deferBackground,
       operation: false, suspending: false, mediaPlaying: false, downloads: new Set(),
       domReady: false, emulation: Promise.resolve(),
+      // AGENT_VIEWPORTS key while the agent controls the tab, the size it was
+      // locked at, and the scale its emulation currently draws at inside the
+      // panel (1 when not scaled).
+      /** @type {string | null} */
+      agentViewport: null,
+      /** @type {Readonly<import("@openwork/browser-tabs").AgentViewport> | null} */
+      agentViewportSize: null,
+      agentViewportAwaitsPanel: false,
+      viewportScale: 1,
+      agentViewportQueued: false,
       /** @type {((error: Error | null) => void) | null} */
       finishSuspension: null,
-      thumbnailRevision: 0,
       webMcpRevision: 0,
       documentGeneration: 0,
       /** @type {import("@openwork/browser-tabs").BrowserPanelTab["loadError"]} */
@@ -960,6 +1034,8 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink, che
       /** What the page requested since it opened (origin and path), for checking it against new website rules. */
       requests: new Set(),
       requestsOverflowed: false,
+      /** @type {Map<number, number>} Request id -> start time, until it completes or fails. */
+      inFlight: new Map(),
       // Set while a page reloads, or is replaced by a blank one, because new website rules restrict it.
       websiteRecheck: false,
       closingRestrictedPage: false,
@@ -975,6 +1051,7 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink, che
     view.webContents.once("dom-ready", () => {
       tab.domReady = true;
       if (tab.background) emulateBackgroundTab(tab);
+      else if (tab.agentViewport) emulateAgentViewport(tab);
     });
     view.webContents.on("media-started-playing", () => { tab.mediaPlaying = true; });
     view.webContents.on("media-paused", () => { tab.mediaPlaying = false; });
@@ -1012,7 +1089,6 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink, che
       } };
     });
     view.webContents.on("did-start-navigation", (_event, targetUrl, isInPlace, isMainFrame) => {
-      if (isMainFrame) tab.thumbnailRevision = (tab.thumbnailRevision ?? 0) + 1;
       if (isMainFrame || !isInPlace) {
         invalidateWebMcpTab(tab);
         sendBrowserState();
@@ -1167,14 +1243,31 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink, che
     }
     const finalUrl = normalizeBrowserUrl(url, "about:blank");
     if (finalUrl !== "about:blank") {
-      runDetachedTask("navigate new browser tab", () => view.webContents.loadURL(finalUrl));
+      runDetachedTask("navigate new browser tab", () => (forPerson ? loadForPerson(view, finalUrl) : view.webContents.loadURL(finalUrl)));
     }
     return tab;
   }
 
+  /**
+   * A page the person asked for takes the keyboard, as in any browser. A page
+   * that changes process commits unfocused, so it takes it again then, but only
+   * if they have not moved on: focus() also raises the window over other apps.
+   */
+  function loadForPerson(view, url) {
+    const contents = view.webContents;
+    const focusIfUntouched = () => {
+      const host = viewHost();
+      if (!contents.isDestroyed() && host?.isFocused() && !host.webContents.isFocused()) contents.focus();
+    };
+    contents.once("did-navigate", focusIfUntouched);
+    const loading = contents.loadURL(url).finally(() => contents.removeListener("did-navigate", focusIfUntouched));
+    contents.focus();
+    return loading;
+  }
+
   function detachBrowserView(view) {
     if (!view) return;
-    for (const host of [window(), backgroundWindow]) {
+    for (const host of [window(), popOutWindow, backgroundWindow]) {
       try {
         if (host && !host.isDestroyed() && host.contentView.children.includes(view)) {
           host.contentView.removeChildView(view);
@@ -1221,7 +1314,8 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink, che
     if (webContents.isDestroyed()) return;
     tab.background = true;
     detachBrowserView(tab.view);
-    tab.view.setBounds({ x: 0, y: 0, ...BACKGROUND_TAB_VIEWPORT });
+    const viewport = tab.agentViewport ? tab.agentViewportSize : BACKGROUND_TAB_VIEWPORT;
+    tab.view.setBounds({ x: 0, y: 0, width: viewport.width, height: viewport.height });
     backgroundBrowserWindow().contentView.addChildView(tab.view);
     if (tab.domReady) emulateBackgroundTab(tab);
   }
@@ -1239,10 +1333,15 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink, che
     queueBrowserTabEmulation(tab, "emulate background browser tab", async (isCurrent) => {
       if (!tab.background) return;
       if (!cdp.isAttached()) cdp.attach("1.3");
-      for (const { method, params } of backgroundTabEmulationCommands()) {
+      // Off screen the view is already the agent's size, so it draws unscaled.
+      const commands = tab.agentViewport
+        ? [...agentViewportEmulationCommands(tab.agentViewportSize, 1, process.versions.chrome), { method: "Emulation.setFocusEmulationEnabled", params: { enabled: true } }]
+        : backgroundTabEmulationCommands();
+      for (const { method, params } of commands) {
         if (!isCurrent() || !tab.background) return;
         await cdp.sendCommand(method, params);
       }
+      tab.viewportScale = 1;
     });
   }
 
@@ -1261,9 +1360,128 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink, che
           await cdp.sendCommand(method, params);
         }
       } finally {
-        if (isCurrent() && !tab.background && cdp.isAttached()) cdp.detach();
+        if (isCurrent() && !tab.background && !tab.agentViewport && cdp.isAttached()) cdp.detach();
       }
     });
+    if (tab.agentViewport) emulateAgentViewport(tab);
+  }
+
+  // While the agent controls a tab it lays out at one fixed size, drawn scaled
+  // to fit the panel like Chrome's device mode. Resizing the panel then only
+  // rescales the page, so what the agent observed stays valid. The person's own
+  // browsing, and a takeover, fit the panel as before.
+  function agentViewportPlacement(tab) {
+    if (!tab.agentViewport || !lastBrowserBounds) return null;
+    return fitAgentViewport(tab.agentViewportSize, lastBrowserBounds);
+  }
+
+  function emulateAgentViewport(tab) {
+    // Panel resizes arrive every frame; one queued update reads the latest bounds.
+    if (tab.view.webContents.isDestroyed() || tab.agentViewportQueued) return;
+    tab.agentViewportQueued = true;
+    const cdp = tab.view.webContents.debugger;
+    queueBrowserTabEmulation(tab, "emulate agent browser viewport", async (isCurrent) => {
+      tab.agentViewportQueued = false;
+      if (tab.background || !tab.agentViewport || !tab.domReady) return;
+      if (!cdp.isAttached()) cdp.attach("1.3");
+      const scale = agentViewportPlacement(tab)?.scale ?? 1;
+      for (const { method, params } of agentViewportEmulationCommands(tab.agentViewportSize, scale, process.versions.chrome)) {
+        if (!isCurrent() || tab.background || !tab.agentViewport) return;
+        await cdp.sendCommand(method, params);
+        // Agent input converts with the scale Chromium now draws at.
+        if (method === "Emulation.setDeviceMetricsOverride") tab.viewportScale = scale;
+      }
+      sendBrowserState();
+    });
+  }
+
+  /**
+   * Lock a tab the agent is about to use to the chosen size; resolves once it
+   * is applied. A failed emulation leaves the page at the panel's size rather
+   * than failing the agent's operation.
+   */
+  function lockAgentViewport(tab) {
+    if (tab.agentViewport !== agentViewportKey) {
+      tab.agentViewport = agentViewportKey;
+      // `panel` keeps the page's current size, so taking the tab rescales
+      // nothing. A page off screen takes the panel's size when it is shown.
+      const bounds = tab.background ? null : lastBrowserBounds;
+      tab.agentViewportSize = lockedAgentViewport(agentViewportKey, bounds);
+      tab.agentViewportAwaitsPanel = Boolean(tab.agentViewportSize.fitsPanel && !bounds);
+      if (tab.background) enterBackgroundSize(tab);
+      else {
+        placeOnScreenView(tab);
+        emulateAgentViewport(tab);
+      }
+      sendBrowserState();
+    }
+    return tab.emulation.catch(() => {});
+  }
+
+  function releaseAgentViewport(tab) {
+    if (!tab.agentViewport) return;
+    tab.agentViewport = null;
+    tab.agentViewportSize = null;
+    tab.agentViewportAwaitsPanel = false;
+    tab.viewportScale = 1;
+    if (tab.background) enterBackgroundSize(tab);
+    else if (!tab.view.webContents.isDestroyed()) {
+      placeOnScreenView(tab);
+      const cdp = tab.view.webContents.debugger;
+      queueBrowserTabEmulation(tab, "release agent browser viewport", async (isCurrent) => {
+        if (tab.background || tab.agentViewport || !cdp.isAttached()) return;
+        try {
+          for (const { method, params } of [
+            { method: "Emulation.setTouchEmulationEnabled", params: { enabled: false } },
+            { method: "Emulation.setUserAgentOverride", params: { userAgent: "" } },
+            ...foregroundTabEmulationCommands(),
+          ]) {
+            if (!isCurrent() || tab.background || tab.agentViewport) return;
+            await cdp.sendCommand(method, params);
+          }
+        } finally {
+          if (isCurrent() && !tab.background && !tab.agentViewport && cdp.isAttached()) cdp.detach();
+        }
+      });
+    }
+    sendBrowserState();
+  }
+
+  /** A background tab's view and emulation follow its current viewport. */
+  function enterBackgroundSize(tab) {
+    const viewport = tab.agentViewport ? tab.agentViewportSize : BACKGROUND_TAB_VIEWPORT;
+    tab.view.setBounds({ x: 0, y: 0, width: viewport.width, height: viewport.height });
+    if (tab.domReady) {
+      if (!tab.agentViewport) {
+        const cdp = tab.view.webContents.debugger;
+        queueBrowserTabEmulation(tab, "clear agent device emulation", async () => {
+          if (!tab.background || !cdp.isAttached()) return;
+          await cdp.sendCommand("Emulation.setTouchEmulationEnabled", { enabled: false });
+          await cdp.sendCommand("Emulation.setUserAgentOverride", { userAgent: "" });
+        });
+      }
+      emulateBackgroundTab(tab);
+    }
+  }
+
+  /** Size the on-screen tab's native view: the whole panel, or its fitted agent viewport. */
+  function placeOnScreenView(tab) {
+    const host = viewHost();
+    if (!lastBrowserBounds || !host || !host.contentView.children.includes(tab.view)) return;
+    tab.view.setBounds(agentViewportPlacement(tab)?.bounds ?? lastBrowserBounds);
+  }
+
+  /** The agent's screenshot at the full emulated resolution, not the scaled pixels on screen. */
+  async function captureAgentViewport(tab, viewport) {
+    const cdp = tab.view.webContents.debugger;
+    if (!tab.agentViewport || !cdp.isAttached()) return null;
+    try {
+      await tab.emulation;
+      const { data } = await cdp.sendCommand("Page.captureScreenshot", { format: "png" });
+      return nativeImage.createFromBuffer(Buffer.from(data, "base64")).resize({ width: viewport.width, height: viewport.height }).toPNG({ scaleFactor: 1 });
+    } catch {
+      return null;
+    }
   }
 
   /** Re-evaluate every tab after the on-screen conversation changed. */
@@ -1297,55 +1515,7 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink, che
     if (!["hidden", "floating", "side", "fullscreen"].includes(mode)) return false;
     const sessionId = normalizeSessionId(input.sessionId);
     browserPresentation = sessionId === registry.visibleSessionId() ? { sessionId, mode } : null;
-    if (mode !== "floating" && !browserViewVisible) {
-      const tab = getBrowserTab();
-      if (tab && backgroundWindow?.contentView.children.includes(tab.view) && !tab.background) detachBrowserView(tab.view);
-      releaseEmptyBackgroundWindow();
-    }
     return browserPresentation !== null;
-  }
-
-  // A small preview of the visible conversation's on-screen tab for the
-  // floating browser card. Never for a background conversation, a page the
-  // person controls (it may hold sign-in details) or a hidden error page.
-  async function captureBrowserThumbnail(tabId) {
-    const id = typeof tabId === "string" ? tabId : null;
-    const tab = id ? getBrowserTab(id) : null;
-    if (!tab || tab.view.webContents.isDestroyed()) return null;
-    const owner = id ? registry.ownerOf(id) : null;
-    const revision = tab.thumbnailRevision;
-    const url = tab.view.webContents.getURL();
-    const usable = () => {
-      const mainWindow = window();
-      return getBrowserTab(id) === tab && !tab.view.webContents.isDestroyed() && tab.thumbnailRevision === revision
-        && tab.view.webContents.getURL() === url && !tab.view.webContents.isLoadingMainFrame() && !tab.suspending && !tab.background
-        && registry.ownerOf(id) === owner && owner === registry.visibleSessionId() && registry.onScreenTabId() === id
-        && tab.browserTask?.status !== "paused" && !showsErrorPage(tab)
-        && !!mainWindow && !mainWindow.isDestroyed() && mainWindow.isVisible() && !mainWindow.isMinimized();
-    };
-    if (!usable()) return null;
-    // A detached WebContentsView has no compositor surface. Keep the selected
-    // floating page painting in the existing never-shown host, at its last
-    // viewport, without placing a native page over the conversation.
-    if (!browserViewVisible && browserPresentation?.mode === "floating") {
-      const host = backgroundBrowserWindow();
-      if (!host.contentView.children.includes(tab.view)) {
-        const bounds = tab.view.getBounds();
-        detachBrowserView(tab.view);
-        host.contentView.addChildView(tab.view);
-        tab.view.setBounds({ x: 0, y: 0, width: bounds.width || 800, height: bounds.height || 600 });
-      }
-    }
-    const image = await tab.view.webContents.capturePage(undefined, { stayHidden: true });
-    if (!usable() || image.isEmpty()) return null;
-    const size = image.getSize();
-    if (size.width <= 0 || size.height <= 0) return null;
-    const scale = Math.min(1, 480 / size.width, 300 / size.height);
-    const width = Math.max(1, Math.floor(size.width * scale));
-    const height = Math.max(1, Math.floor(size.height * scale));
-    const jpeg = image.resize({ width, height, quality: "good" }).toJPEG(60);
-    if (jpeg.byteLength > 512 * 1024) return null;
-    return { tabId: id, url, dataUrl: `data:image/jpeg;base64,${jpeg.toString("base64")}`, width, height, capturedAt: Date.now() };
   }
 
   function setVisibleSession(sessionId) {
@@ -1360,9 +1530,9 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink, che
     return next;
   }
 
-  function mainWindowZoomFactor() {
+  function viewHostZoomFactor() {
     try {
-      const factor = window()?.webContents.getZoomFactor();
+      const factor = viewHost()?.webContents.getZoomFactor();
       return Number.isFinite(factor) && factor > 0 ? factor : 1;
     } catch {
       return 1;
@@ -1377,12 +1547,12 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink, che
   }
 
   function clampBrowserBounds(bounds) {
-    const mainWindow = window();
-    if (!mainWindow || mainWindow.isDestroyed()) return null;
+    const host = viewHost();
+    if (!host || host.isDestroyed()) return null;
     const right = bounds.x + bounds.width;
     const bottom = bounds.y + bounds.height;
     if (![bounds.x, bounds.y, right, bottom].every(Number.isFinite)) return null;
-    const [width, height] = mainWindow.getContentSize();
+    const [width, height] = host.getContentSize();
     const x = Math.max(0, bounds.x);
     const y = Math.max(0, bounds.y);
     const clippedRight = Math.min(width, right);
@@ -1391,12 +1561,17 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink, che
     return { x, y, width: clippedRight - x, height: clippedBottom - y };
   }
 
-  function acceptBrowserBounds(bounds) {
+  /** `target` names the window that measured these bounds: "window" for the popped-out browser. */
+  function acceptBrowserBounds(bounds, target) {
     if (!bounds || ![bounds.x, bounds.y, bounds.width, bounds.height].every(Number.isFinite)
       || bounds.width <= 0 || bounds.height <= 0) return invalidateBrowserBounds();
-    const currentZoom = mainWindowZoomFactor();
-    // Unstamped callers retain the existing CSS-pixel IPC contract.
-    const zoom = bounds.zoomFactor === undefined ? currentZoom : bounds.zoomFactor;
+    const popOut = target === "window";
+    if (popOut && (!popOutWindow || popOutWindow.isDestroyed())) return invalidateBrowserBounds();
+    pageInPopOut = popOut;
+    const currentZoom = viewHostZoomFactor();
+    // Unstamped callers retain the existing CSS-pixel IPC contract. The stamp
+    // is the app window's zoom; the popped-out window has its own.
+    const zoom = popOut || bounds.zoomFactor === undefined ? currentZoom : bounds.zoomFactor;
     if (!Number.isFinite(zoom) || zoom <= 0 || Math.abs(zoom - currentZoom) > 1e-6) return invalidateBrowserBounds();
     // Round edges (not width/height) so the far edge has no sub-pixel seam.
     const x = Math.round(bounds.x * zoom);
@@ -1454,9 +1629,9 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink, che
   }
 
   function attachActiveBrowserView() {
-    const mainWindow = window();
-    if (!mainWindow || !browserViewVisible) return;
-    if (!lastBrowserBounds || lastBrowserZoomFactor !== mainWindowZoomFactor()) {
+    const host = viewHost();
+    if (!host || !browserViewVisible) return;
+    if (!lastBrowserBounds || lastBrowserZoomFactor !== viewHostZoomFactor()) {
       invalidateBrowserBounds();
       sendToRenderer("openwork:browser:bounds-invalidated");
       return;
@@ -1478,11 +1653,21 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink, che
     exitBackgroundMode(tab);
     tab.view.setVisible(!showsErrorPage(tab));
     detachIdleBrowserViews(tab.view);
-    // Size before attaching so a restored view never flashes at stale bounds.
-    tab.view.setBounds(lastBrowserBounds);
-    if (!mainWindow.contentView.children.includes(tab.view)) {
-      mainWindow.contentView.addChildView(tab.view);
+    // A `panel` page the agent took while it was off screen lays out at the
+    // panel's size once, rather than being drawn scaled for the whole turn.
+    const adopted = tab.agentViewportAwaitsPanel;
+    if (adopted) {
+      tab.agentViewportSize = lockedAgentViewport(tab.agentViewport, lastBrowserBounds);
+      tab.agentViewportAwaitsPanel = false;
     }
+    // Size before attaching so a restored view never flashes at stale bounds.
+    tab.view.setBounds(agentViewportPlacement(tab)?.bounds ?? lastBrowserBounds);
+    if (!host.contentView.children.includes(tab.view)) {
+      // The same view moves between windows, so the page keeps its document.
+      detachBrowserView(tab.view);
+      host.contentView.addChildView(tab.view);
+    }
+    if (tab.agentViewport && (adopted || agentViewportPlacement(tab)?.scale !== tab.viewportScale)) emulateAgentViewport(tab);
   }
 
   function selectBrowserTab(tabId) {
@@ -1541,7 +1726,7 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink, che
   function isFocusedBrowserTab(tab) {
     return browserViewVisible && registry.onScreenTabId() === tab.tabId
       && !tab.view.webContents.isDestroyed() && tab.view.webContents.isFocused()
-      && tab.view.getVisible() && window()?.contentView.children.includes(tab.view);
+      && tab.view.getVisible() && viewHost()?.contentView.children.includes(tab.view);
   }
 
   function hasBrowserShortcutFocus() {
@@ -1612,11 +1797,13 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink, che
 
   function focusBrowserShortcutTarget() {
     const tab = getBrowserTab();
-    if (tab && shortcutFocus?.tabId === tab.tabId && browserViewVisible && tab.view.getVisible() && window()?.contentView.children.includes(tab.view)) tab.view.webContents.focus();
+    if (tab && shortcutFocus?.tabId === tab.tabId && browserViewVisible && tab.view.getVisible() && viewHost()?.contentView.children.includes(tab.view)) tab.view.webContents.focus();
     else window()?.webContents.focus();
   }
 
   function closeFocusedBrowserTab(host = window()) {
+    // In the popped-out browser Close means the tab, wherever focus is, as in any browser.
+    if (host && host === popOutWindow) return closeUserBrowserTab() !== null;
     if (host !== window() || !hasBrowserShortcutFocus()) return false;
     if (shortcutFocus.tabId) closeUserBrowserTab(shortcutFocus.tabId);
     focusBrowserShortcutTarget();
@@ -1647,10 +1834,10 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink, che
     host.webContents.on("did-navigate", () => {
       // Only a committed main-frame document replaces the container. A started
       // navigation may be canceled and rerouted to the browser by the host.
-      if (host === window()) hideBrowserView();
+      if (host === window()) closePresentedBrowser();
     });
     host.webContents.on("render-process-gone", () => {
-      if (host === window()) hideBrowserView();
+      if (host === window()) closePresentedBrowser();
     });
   }
 
@@ -1796,13 +1983,14 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink, che
   }
 
   /**
-   * Attach the browser view to the main window.
+   * Attach the browser view to the window that shows it.
    * @param {object} bounds — { x, y, width, height }
    * @param {object} [opts]
    * @param {string | null} [opts.sessionId] - the conversation whose panel is showing
+   * @param {string} [opts.target] - "window" when the popped-out browser measured `bounds`
    */
-  function attachBrowserView(bounds, { sessionId } = {}) {
-    if (!window() || !acceptBrowserBounds(bounds)) return false;
+  function attachBrowserView(bounds, { sessionId, target } = {}) {
+    if (!window() || !acceptBrowserBounds(bounds, target)) return false;
     browserViewVisible = true;
     if (sessionId !== undefined) {
       const previous = registry.visibleSessionId();
@@ -1827,9 +2015,52 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink, che
     invalidateBrowserBounds();
   }
 
+  // A new thread's first message makes it a conversation. Its pages go with it
+  // and stay on screen, so nothing leaves the window or reloads on the way.
+  function claimDraftTabs(sessionId) {
+    const onScreen = registry.visibleSessionId() === DRAFT_OWNER_KEY;
+    registry.reassignOwner(DRAFT_OWNER_KEY, sessionId);
+    if (onScreen) registry.setVisibleSession(sessionId);
+    closedTabs = closedTabs.map((entry) => (entry.ownerSessionId === DRAFT_OWNER_KEY ? { ...entry, ownerSessionId: sessionId } : entry));
+    if (shortcutFocus?.ownerSessionId === DRAFT_OWNER_KEY) shortcutFocus = null;
+    sendBrowserState();
+    return true;
+  }
+
+  /** The app's renderer draws the popped-out window, so it cannot outlive that document. */
+  function closePresentedBrowser() {
+    hideBrowserView();
+    if (popOutWindow && !popOutWindow.isDestroyed()) popOutWindow.close();
+  }
+
+  /** The renderer just opened the browser's own window; the page moves in once it reports bounds. */
+  function adoptPopOutWindow(child) {
+    popOutWindow = child;
+    // Follow the window's edge during a drag; the renderer's measurement catches up.
+    child.on("resize", () => {
+      const tab = getBrowserTab();
+      if (!pageInPopOut || popOutWindow !== child || !lastBrowserBounds || !tab) return;
+      const [width, height] = child.getContentSize();
+      lastBrowserBounds = { ...lastBrowserBounds, width: width - lastBrowserBounds.x, height: height - lastBrowserBounds.y };
+      placeOnScreenView(tab);
+    });
+    child.once("close", () => {
+      if (popOutWindow !== child) return;
+      // Closing a window would take its views with it; every page lives on.
+      for (const { view } of browserTabs.values()) {
+        if (child.contentView.children.includes(view)) child.contentView.removeChildView(view);
+      }
+      popOutWindow = null;
+      if (!pageInPopOut) return;
+      pageInPopOut = false;
+      hideBrowserView(true);
+    });
+    sendToRenderer("openwork:browser:bounds-invalidated");
+  }
+
   function destroyBrowserView() {
     linkChoiceRequest?.finish(null);
-    hideBrowserView();
+    closePresentedBrowser();
     browserPresentation = null;
     menuShowSerial += 1;
     closeAllBrowserTabs();
@@ -1863,9 +2094,9 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink, che
       const contents = window()?.webContents;
       return !!contents && event.sender === contents && event.senderFrame === contents.mainFrame;
     }
-    ipcMain.handle("openwork:browser:show", (event, bounds, sessionId) => {
+    ipcMain.handle("openwork:browser:show", (event, bounds, sessionId, target) => {
       if (!isMainRenderer(event)) return false;
-      return attachBrowserView(bounds, sessionId === undefined ? {} : { sessionId: normalizeSessionId(sessionId) });
+      return attachBrowserView(bounds, { target, ...(sessionId === undefined ? {} : { sessionId: normalizeSessionId(sessionId) }) });
     });
     ipcMain.handle("openwork:browser:hide", (event, options) => {
       if (!isMainRenderer(event)) return false;
@@ -1875,13 +2106,20 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink, che
       if (!isMainRenderer(event)) return false;
       return setVisibleSession(normalizeSessionId(sessionId));
     });
+    ipcMain.handle("openwork:browser:claimDraftTabs", (event, sessionId) => {
+      const owner = normalizeSessionId(sessionId);
+      if (!isMainRenderer(event) || !owner) return false;
+      return claimDraftTabs(owner);
+    });
     ipcMain.handle("openwork:browser:presentation", (event, input) => {
       if (!isMainRenderer(event)) return false;
       return setBrowserPresentation(input);
     });
-    ipcMain.handle("openwork:browser:thumbnail", (event, tabId) => {
-      if (!isMainRenderer(event)) return null;
-      return captureBrowserThumbnail(tabId);
+    ipcMain.handle("openwork:browser:focusWindow", (event) => {
+      if (!isMainRenderer(event) || !popOutWindow || popOutWindow.isDestroyed()) return false;
+      popOutWindow.show();
+      popOutWindow.focus();
+      return true;
     });
     ipcMain.handle("openwork:browser:openUrl", (_event, url, provider, options) => (
       openBrowserUrlForAutomation(url, provider, {
@@ -1893,7 +2131,7 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink, che
       getActiveWebContents(); // Reject navigation while suspension is pending.
       const view = getActiveBrowserView()
         ?? createBrowserTab("about:blank", { select: true, ownerSessionId: registry.visibleSessionId() }).view;
-      runDetachedTask("navigate browser tab", () => view.webContents.loadURL(normalizeBrowserUrl(url)));
+      runDetachedTask("navigate browser tab", () => loadForPerson(view, normalizeBrowserUrl(url)));
     });
     ipcMain.handle("openwork:browser:back", (event) => {
       authorizeManualNavigation(event);
@@ -1915,8 +2153,8 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink, che
         webContents?.reload();
       }
     });
-    ipcMain.handle("openwork:browser:bounds", (event, bounds) => {
-      if (!isMainRenderer(event) || !acceptBrowserBounds(bounds)) return false;
+    ipcMain.handle("openwork:browser:bounds", (event, bounds, target) => {
+      if (!isMainRenderer(event) || !acceptBrowserBounds(bounds, target)) return false;
       attachActiveBrowserView();
       return true;
     });
@@ -1926,12 +2164,13 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink, che
       tabLimit: MAX_BROWSER_TABS,
       backgroundWindowCount: Number(Boolean(backgroundWindow && !backgroundWindow.isDestroyed())),
       backgroundWindowVisible: Boolean(backgroundWindow && !backgroundWindow.isDestroyed() && backgroundWindow.isVisible()),
+      popOutAboveOthers: Boolean(popOutWindow && !popOutWindow.isDestroyed() && popOutWindow.isAlwaysOnTop()),
       visibleWindowCount: BrowserWindow.getAllWindows().filter((host) => host.isVisible()).length,
     }));
     ipcMain.handle("openwork:browser:createTab", (_event, url, sessionId) => {
       const target = typeof url === "string" && url.trim() ? url : BROWSER_NEW_TAB_URL;
       const ownerSessionId = sessionId === undefined ? registry.visibleSessionId() : normalizeSessionId(sessionId);
-      const tab = createBrowserTab(target, { select: true, ownerSessionId });
+      const tab = createBrowserTab(target, { select: true, ownerSessionId, forPerson: true });
       return { tabId: tab.tabId };
     });
     ipcMain.handle("openwork:browser:closeTab", (_event, tabId) => closeUserBrowserTab(tabId == null ? undefined : String(tabId)));
@@ -2001,6 +2240,33 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink, che
       browserControlEnabled = enabled === true;
       if (!browserControlEnabled) for (const tab of browserTabs.values()) taskHost.pause(tab.tabId, "Browser control disabled");
       return browserControlEnabled;
+    });
+    ipcMain.handle("openwork:browser:setAgentViewport", (event, key) => {
+      if (!isMainRenderer(event) || typeof key !== "string" || !Object.hasOwn(AGENT_VIEWPORTS, key)) return agentViewportKey;
+      agentViewportKey = key;
+      // Tabs the agent is using switch now; the agent observes the new layout.
+      for (const tab of browserTabs.values()) if (tab.agentViewport && tab.agentViewport !== key) lockAgentViewport(tab);
+      sendBrowserState();
+      return agentViewportKey;
+    });
+    // The person took over, then wrote to the agent again: that message
+    // hands the conversation's tabs back, so the new turn can use them.
+    ipcMain.handle("openwork:browser:startAgentTurn", (event, sessionId) => {
+      const owner = normalizeSessionId(sessionId);
+      if (!isMainRenderer(event) || !owner || !browserControlEnabled) return false;
+      const paused = registry.tabsFor(owner).find((item) => taskHost.stateFor(item.tabId).status === "paused");
+      if (!paused) return false;
+      taskHost.resume(paused.tabId);
+      return true;
+    });
+    ipcMain.handle("openwork:browser:endAgentTurn", (event, sessionId) => {
+      const owner = normalizeSessionId(sessionId);
+      if (!isMainRenderer(event) || !owner) return false;
+      for (const item of registry.tabsFor(owner)) {
+        const tab = browserTabs.get(item.tabId);
+        if (tab) releaseAgentViewport(tab);
+      }
+      return true;
     });
     ipcMain.handle("openwork:browser:tabContextMenu", (_event, tabId, point) => showBrowserTabContextMenu(tabId, point));
     ipcMain.handle("openwork:browser:chooseLinkDestination", (event, id, destination) => {
@@ -2084,13 +2350,12 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink, che
   }
 
   return {
+    adoptPopOutWindow,
     closeFocusedBrowserTab,
     registerWindowShortcuts,
     destroy: destroyBrowserView,
     isMainWindowAllowedNavigation,
     browserTask: (args, options) => taskHost.request(args, options),
-    listWebMcpTools: (args, options) => taskHost.request({ sessionId: args?.sessionId, operation: "site_tools", args }, options),
-    executeWebMcpTool: (args, options) => taskHost.request({ sessionId: args?.sessionId, operation: "site_tool", args }, options),
     registerIpc,
     routeBlockedMainWindowNavigation,
   };

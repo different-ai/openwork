@@ -351,7 +351,8 @@ async function applyUpdate(claims: HeadlessIndexClaims, version: number, fields:
   }
   // Another update for this session landed first: apply ours if it is still the newer one.
   if ((await update()) > 0) return "ok"
-  const [existing] = await db
+  // primary: the row that just won the duplicate-key race.
+  const [existing] = await db.$primary
     .select({ sessionId: HeadlessSessionIndexTable.sessionId })
     .from(HeadlessSessionIndexTable)
     .where(and(eq(HeadlessSessionIndexTable.sessionId, claims.sessionId), sameOwner(claims)))

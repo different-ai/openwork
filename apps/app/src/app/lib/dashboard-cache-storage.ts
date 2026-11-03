@@ -1,3 +1,5 @@
+import { mcpAppDocuments } from "./mcp-app-document-store";
+
 export const DASHBOARD_TILE_CACHE_STORAGE_PREFIX = "openwork.react.dashboardTileCache.v1";
 
 const PERSIST_DELAY_MS = 150;
@@ -114,6 +116,7 @@ export function flushDashboardTileCacheStorage(): void {
 
 export function clearDashboardTileCacheStorage(storage: Storage): void {
   resetDashboardTileCacheMemory();
+  void mcpAppDocuments.clear();
   const keys: string[] = [];
   let failed = false;
   try {

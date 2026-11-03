@@ -48,6 +48,23 @@ test("manual endpoint selection skips all discovery and pins resource and S256",
   assert.deepEqual(calls, [resource])
 })
 
+test("Google sign-in requests offline access and keeps parameters the sign-in address sets", async () => {
+  const authorizeUrl = async (authorizationEndpoint: string) => {
+    const client = createEnterpriseMcpClient({ fetch: async () => new Response(null, { status: 401 }) })
+    const result = await client.connect({ connection: { id: "exp-mcpmanual-google", serverUrl: resource, authorization: { type: "oauth", persistence: persistence(), configuration: { applicationType: "web", manualOAuthEndpoints: { authorizationEndpoint, tokenEndpoint: "https://oauth2.googleapis.com/token" } } } }, redirectUri: "https://client.example/callback", authorizationId: "exp-mcpmanual-state" })
+    if (result.status !== "needs_auth") throw new Error("Expected sign-in")
+    return new URL(result.authorizeUrl).searchParams
+  }
+  const google = await authorizeUrl("https://accounts.google.com/o/oauth2/v2/auth")
+  assert.equal(google.get("access_type"), "offline")
+  assert.equal(google.get("prompt"), "consent")
+  assert.equal(google.get("code_challenge_method"), "S256")
+  assert.equal((await authorizeUrl("https://accounts.google.com/o/oauth2/v2/auth?prompt=select_account")).get("prompt"), "select_account")
+  const other = await authorizeUrl(endpoints.authorizationEndpoint)
+  assert.equal(other.has("access_type"), false)
+  assert.equal(other.has("prompt"), false)
+})
+
 test("issuer mismatch prefill is extracted read-only, never accepted as a trusted server", async () => {
   const requests: string[] = []
   const result = await discoverConnectionRequirements({ serverUrl: resource, fetch: async (url) => {

@@ -87,14 +87,22 @@ export async function mcpPost(fetcher: McpFetch, url: string, headers: Record<st
 
 export type McpResourceReader = {
   /** Resource text, or null when the read failed or returned no matching text. */
-  read(uri: string): Promise<string | null>;
+  read(uri: string, meta?: Record<string, unknown>): Promise<string | null>;
+  /**
+   * One `resources/read` whose result may list several resources: each URI's
+   * text, plus the result's `_meta`. Null when the request itself failed.
+   */
+  readContents(uri: string, meta?: Record<string, unknown>): Promise<{ texts: Map<string, string>; meta: Record<string, unknown> } | null>;
+  /** Set once a request failed at the transport or session level; open a new reader. */
+  readonly broken: boolean;
 };
 
 /**
  * Opens one initialized Streamable HTTP session against an openwork-cloud
  * config. Returns null when the config is unusable (invalid URL, disabled, auth
  * rejected, transport or protocol error). The reader issues sequential
- * `resources/read` requests on that session.
+ * `resources/read` requests on that session, so one session can serve a whole
+ * refresh instead of paying initialize and notifications/initialized per read.
  */
 export async function openMcpResourceReader(input: {
   config: Record<string, unknown>;
@@ -128,19 +136,35 @@ export async function openMcpResourceReader(input: {
   const notification = await mcpPost(input.fetcher, url, sessionHeaders, { jsonrpc: "2.0", method: "notifications/initialized", params: {} });
   if (notification.response.status !== 202 || notification.payload !== null) return null;
   let nextId = 2;
+  let broken = false;
+  const readContents: McpResourceReader["readContents"] = async (uri, meta) => {
+    const resource = await mcpPost(input.fetcher, url, sessionHeaders, {
+      id: nextId++,
+      jsonrpc: "2.0",
+      method: "resources/read",
+      params: { uri, ...(meta ? { _meta: meta } : {}) },
+    }).catch(() => null);
+    // An expired session (404) or a transport failure ends this reader; a
+    // JSON-RPC error for one resource does not.
+    if (!resource?.response.ok || resource.payload === null) {
+      broken = true;
+      return null;
+    }
+    const result = jsonRpcResult(resource.payload);
+    if (!result || !Array.isArray(result.contents)) return null;
+    const texts = new Map<string, string>();
+    for (const item of result.contents) {
+      if (isRecord(item) && typeof item.uri === "string" && typeof item.text === "string" && !texts.has(item.uri)) texts.set(item.uri, item.text);
+    }
+    return { texts, meta: isRecord(result._meta) ? result._meta : {} };
+  };
   return {
-    async read(uri) {
-      const resource = await mcpPost(input.fetcher, url, sessionHeaders, {
-        id: nextId++,
-        jsonrpc: "2.0",
-        method: "resources/read",
-        params: { uri },
-      });
-      if (!resource.response.ok) return null;
-      const contents = jsonRpcResult(resource.payload)?.contents;
-      if (!Array.isArray(contents)) return null;
-      const text = contents.find((item) => isRecord(item) && item.uri === uri && typeof item.text === "string")?.text;
-      return typeof text === "string" ? text : null;
+    readContents,
+    async read(uri, meta) {
+      return (await readContents(uri, meta))?.texts.get(uri) ?? null;
+    },
+    get broken() {
+      return broken;
     },
   };
 }

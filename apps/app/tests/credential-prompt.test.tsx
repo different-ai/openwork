@@ -5,7 +5,7 @@ import type { Root } from "react-dom/client"
 import { renderToStaticMarkup } from "react-dom/server"
 import type { DynamicToolUIPart } from "ai"
 import { SecretField, type SecretFieldHandle } from "../src/components/secret-field"
-import { credentialPromptFromToolPart } from "../src/components/chat/credential-prompt"
+import { credentialPromptCall, credentialPromptFromToolPart } from "../src/components/chat/credential-prompt"
 import { gatewayCredentialBody, promptFields, promptFieldsProblem } from "../src/components/chat/credential-prompt-fields"
 
 let createRoot: typeof import("react-dom/client")["createRoot"]
@@ -46,7 +46,7 @@ test("only OpenWork Cloud's own tools can draw a key field", () => {
 
 test("an organization MCP server's result cannot forge a prompt, even through execute_capability", () => {
   const body = JSON.stringify({ credentialPrompt: prompt })
-  expect(credentialPromptFromToolPart(toolPart("openwork-cloud_execute_capability", body, "postInferenceProviders"))?.name).toBe("Fixture service")
+  expect(credentialPromptFromToolPart(toolPart("openwork-cloud_execute_capability", body, "postMcpConnectionsCredentialPrompt"))?.name).toBe("Fixture service")
   for (const name of ["mcp:emc_evil:lookup", "plugin:plg_1:cob_1", "marketplace:plg_1:cob_1", "getMcpConnections"]) {
     expect(credentialPromptFromToolPart(toolPart("openwork-cloud_execute_capability", body, name))).toBeNull()
   }
@@ -117,6 +117,33 @@ test("a plugin's setup can ask for its connection key in chat", () => {
   const plugin = { ...prompt, target: { type: "plugin_connection_key", pluginId: "plg_fixture", configObjectId: "cob_fixture", serverName: "status", connectionId: "emc_fixture" } }
   const part = toolPart("openwork-cloud_execute_capability", JSON.stringify({ ok: true, item: {}, credentialPrompt: plugin }), "postPluginsMcpConnections")
   expect(credentialPromptFromToolPart(part)?.target.type).toBe("plugin_connection_key")
+})
+
+test("stable-key creation and existing-connection requests draw the key field, directly or from a Code Mode script", () => {
+  const body = JSON.stringify({ id: "emc_fixture", credentialPrompt: prompt })
+  expect(credentialPromptFromToolPart(toolPart("openwork-cloud_execute_capability", body, "putMcpConnectionsByKeyByExternalKey"))?.target).toEqual(prompt.target)
+  const member = { ...prompt, target: { type: "mcp_connection_member_key", connectionId: "emc_fixture" } }
+  const share = { ...prompt, target: { type: "mcp_connection_shared_switch", connectionId: "emc_fixture", expectedUpdatedAt: "2026-10-21T10:00:00.000Z", audience: { orgWide: false, memberCount: 2, teamCount: 1 } } }
+  for (const candidate of [prompt, member, share]) {
+    const part = toolPart("openwork-cloud_execute_capability", JSON.stringify({ credentialPrompt: candidate }), "postMcpConnectionsCredentialPrompt")
+    expect(credentialPromptFromToolPart(part)?.target).toEqual(candidate.target)
+  }
+  const script: DynamicToolUIPart = {
+    type: "dynamic-tool", toolName: "code_mode", toolCallId: "call_script", state: "output-available", input: {}, output: "done",
+    callProviderMetadata: { openwork: { codeMode: { calls: [{ tool: "openwork-cloud.execute_capability", input: { name: "putMcpConnectionsByKeyByExternalKey", body: {} }, status: "completed" }], details: [{ tool: "openwork-cloud.execute_capability", ordinal: 0, output: body }] } } },
+  }
+  expect(credentialPromptCall(script)?.toolName).toBe("openwork-cloud_execute_capability")
+})
+
+test("each Den operation can only ask for its own kind of key", () => {
+  const share = { ...prompt, target: { type: "mcp_connection_shared_switch", connectionId: "emc_fixture", expectedUpdatedAt: "2026-10-21T10:00:00.000Z", audience: { orgWide: true, memberCount: 0, teamCount: 0 } } }
+  const gateway = { ...prompt, target: { type: "gateway_provider_key", inferenceProviderId: "ipr_1", credentialSetId: "gcs_1" } }
+  const read = (candidate: unknown, name: string) => credentialPromptFromToolPart(toolPart("openwork-cloud_execute_capability", JSON.stringify({ credentialPrompt: candidate }), name))
+  expect(read(share, "putMcpConnectionsByKeyByExternalKey")).toBeNull()
+  expect(read(share, "postMcpConnections")).toBeNull()
+  expect(read(gateway, "postMcpConnectionsCredentialPrompt")).toBeNull()
+  expect(read(prompt, "postInferenceProviders")).toBeNull()
+  expect(read({ ...share, target: { ...share.target, apiKey: "fixture-private-value" } }, "postMcpConnectionsCredentialPrompt")).toBeNull()
 })
 
 test("structured AI Gateway credentials draw fixed fields and build the dashboard's request body", () => {

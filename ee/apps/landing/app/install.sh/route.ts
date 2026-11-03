@@ -20,8 +20,8 @@ export const dynamic = "force-static";
 const installScript = `#!/usr/bin/env sh
 # OpenWork bootstrap installer.
 # Installs the \`openwork-bootstrap\` command (org setup CLI for agents) into a
-# user-writable bin dir. No admin privileges, no npm, no npx. Uses Node.js 20+
-# when present; otherwise downloads the official Node.js build into the install
+# user-writable bin dir. No admin privileges, no npm, no npx. Uses Node.js 24.x
+# (24.22.1 or newer) when present; otherwise downloads the official build into the install
 # dir (checksum-verified, user-local).
 #
 # This does NOT install the OpenWork desktop app. To install the app:
@@ -50,30 +50,35 @@ fi
 
 mkdir -p "$BIN_DIR" "$INSTALL_DIR"
 
-# Use the system Node when it is 20+. Otherwise fetch the official Node.js
-# release for this OS into $INSTALL_DIR/node (user-local, no admin rights),
-# verified against nodejs.org's published SHA-256 checksums.
+# Only patched stable releases on Node 24 are supported. Do not silently accept
+# a future major. Keep this check aligned with the bootstrap CLI runtime gate.
+node_supported() {
+  "$1" -e 'const m = /^v?(0|[1-9]\\d*)\\.(0|[1-9]\\d*)\\.(0|[1-9]\\d*)$/.exec(process.versions.node); if (!m) process.exit(1); const [, major, minor, patch] = m.map(Number); process.exit(major === 24 && (minor > 22 || (minor === 22 && patch >= 1)) ? 0 : 1)' 2>/dev/null
+}
+
+# Otherwise fetch the official pinned Node.js release for this OS into
+# $INSTALL_DIR/node (user-local, no admin rights), verified against
+# nodejs.org's published SHA-256 checksums.
 NODE_BIN="node"
-NODE_MAJOR="$(node -e 'process.stdout.write(String(process.versions.node.split(".")[0]))' 2>/dev/null || echo 0)"
-if [ "\${NODE_MAJOR:-0}" -lt 20 ]; then
+if ! node_supported "$NODE_BIN"; then
   case "$(uname -s)" in
     Darwin) NODE_OS=darwin ;;
     Linux) NODE_OS=linux ;;
-    *) echo "Node.js 20+ is required. Install it from https://nodejs.org/ and re-run this script." >&2; exit 1 ;;
+    *) echo "Node.js 24.x (24.22.1 or newer) is required. Install it from https://nodejs.org/ and re-run this script." >&2; exit 1 ;;
   esac
   case "$(uname -m)" in
     arm64|aarch64) NODE_ARCH=arm64 ;;
     x86_64|amd64) NODE_ARCH=x64 ;;
-    *) echo "Node.js 20+ is required. Install it from https://nodejs.org/ and re-run this script." >&2; exit 1 ;;
+    *) echo "Node.js 24.x (24.22.1 or newer) is required. Install it from https://nodejs.org/ and re-run this script." >&2; exit 1 ;;
   esac
-  NODE_DIST="\${OPENWORK_NODE_DIST_URL:-https://nodejs.org/dist/latest-v24.x}"
-  echo "Node.js 20+ not found; downloading a private copy from $NODE_DIST into $INSTALL_DIR/node ..."
+  NODE_DIST="\${OPENWORK_NODE_DIST_URL:-https://nodejs.org/dist/v24.22.1}"
+  echo "Node.js 24.x (24.22.1 or newer) not found; downloading a private copy from $NODE_DIST into $INSTALL_DIR/node ..."
   # shellcheck disable=SC2086
   NODE_SUMS="$($DOWNLOAD "$NODE_DIST/SHASUMS256.txt")"
-  NODE_TARBALL="$(printf '%s\\n' "$NODE_SUMS" | awk '{print $2}' | grep -E "^node-v[0-9.]+-$NODE_OS-$NODE_ARCH\\.tar\\.gz$" | head -n 1)"
+  NODE_TARBALL="node-v24.22.1-$NODE_OS-$NODE_ARCH.tar.gz"
   NODE_SHA="$(printf '%s\\n' "$NODE_SUMS" | awk -v f="$NODE_TARBALL" '$2 == f {print $1}')"
   if [ -z "$NODE_TARBALL" ] || [ -z "$NODE_SHA" ]; then
-    echo "Could not find a Node.js build for $NODE_OS-$NODE_ARCH. Install Node.js 20+ from https://nodejs.org/ and re-run." >&2
+    echo "Could not find a Node.js build for $NODE_OS-$NODE_ARCH. Install Node.js 24.x (24.22.1 or newer) from https://nodejs.org/ and re-run." >&2
     exit 1
   fi
   NODE_TMP="$(mktemp -d "\${TMPDIR:-/tmp}/openwork-node.XXXXXX")"
@@ -94,6 +99,10 @@ if [ "\${NODE_MAJOR:-0}" -lt 20 ]; then
   tar -xzf "$NODE_TMP/$NODE_TARBALL" -C "$INSTALL_DIR/node" --strip-components 1
   rm -rf "$NODE_TMP"
   NODE_BIN="$INSTALL_DIR/node/bin/node"
+  if ! node_supported "$NODE_BIN"; then
+    echo "Downloaded runtime is not a supported Node.js 24.x release (24.22.1 or newer); aborting." >&2
+    exit 1
+  fi
   echo "Using private Node.js $("$NODE_BIN" --version) at $NODE_BIN"
 fi
 

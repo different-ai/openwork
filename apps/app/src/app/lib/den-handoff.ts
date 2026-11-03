@@ -20,6 +20,7 @@ import {
   markOrgSelectionPending,
   resolveHandoffOrgPlan,
 } from "./den-sign-in-intent";
+import { noteSignInReturnHandoff } from "./den-sign-in-return";
 
 export const DEN_HANDOFF_AUTO_CONTINUE_KEY = "openwork.den.handoffAutoContinueAt";
 
@@ -357,6 +358,9 @@ export async function exchangeHandoffAndSignIn(
     }
 
     // Phase 5: publish success only after the durable commit and activation.
+    // A desktop-initiated sign-in completes the recorded return target (if
+    // any); a remotely initiated one drops it so it is never reused.
+    noteSignInReturnHandoff({ desktopInitiated });
     if (typeof window !== "undefined") {
       try {
         window.sessionStorage.setItem(DEN_HANDOFF_AUTO_CONTINUE_KEY, String(Date.now()));
