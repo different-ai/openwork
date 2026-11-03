@@ -111,12 +111,25 @@ final class MacInput {
                 guard let record = records.first(where: { $0.ref == ref }) else { throw UseError("unknown_ref", "Use an element ref from the current observation.", next: "observe") }
                 try access.validateRecord(record, target: target)
                 let result: AXError
+                var valueTook = true
                 if case .setValue(_, let text) = action {
                     guard record.settable, try access.valueSettable(record.element) else {
                         throw UseError("unsupported_action", "This control does not support setting a value.", next: "observe")
                     }
                     try check()
+                    // Read back, never reported: some fields ignore a set value, or keep it
+                    // only once committed. Secure fields are never read.
+                    let before = record.protected ? nil : access.attribute(record.element, kAXValueAttribute)
                     result = AXUIElementSetAttributeValue(record.element, kAXValueAttribute as CFString, text as CFString)
+                    if result == .success, !record.protected {
+                        valueTook = ValueReadBack.took(text, before: before, after: access.attribute(record.element, kAXValueAttribute))
+                        if !valueTook, record.actions.contains(kAXConfirmAction) {
+                            // Commit it the way Enter would in that field, then look again.
+                            try check()
+                            _ = AXUIElementPerformAction(record.element, kAXConfirmAction as CFString)
+                            valueTook = ValueReadBack.took(text, before: before, after: access.attribute(record.element, kAXValueAttribute))
+                        }
+                    }
                 } else {
                     guard record.actions.contains(kAXPressAction) else { throw UseError("unsupported_action", "This control has no accessible press action.", next: "observe") }
                     try check()
@@ -129,7 +142,7 @@ final class MacInput {
                 if case .press = action { unanswered = result == .cannotComplete }
                 guard result == .success || unanswered else { throw UseError("action_failed", "The app did not confirm the accessible action. Observe before retrying.", next: "observe") }
                 report(.dispatched, point: CGPoint(x: record.frame.midX, y: record.frame.midY))
-                path = unanswered ? "accessibility_unconfirmed" : "accessibility"
+                path = unanswered ? "accessibility_unconfirmed" : valueTook ? "accessibility" : "value_not_applied"
             case .menu(let names):
                 // Menu commands go to the app's focused window: never to another document.
                 guard access.isFocusedWindow(target, app: app) else {
@@ -444,5 +457,24 @@ final class MacInput {
             self.post(up, pid)
             self.report(text == nil ? .up : .dispatched)
         })
+    }
+}
+
+/// Whether a set value took, from the control's value before and after. A field that
+/// reformats what it was given ("72" becomes "72 pt") still changed, so it took.
+enum ValueReadBack {
+    static func took(_ text: String, before: CFTypeRef?, after: CFTypeRef?) -> Bool {
+        guard let after else { return true }
+        if let number = after as? NSNumber, let wanted = Double(text.trimmingCharacters(in: .whitespaces)) {
+            return number.doubleValue == wanted || !same(before, after)
+        }
+        if let string = after as? String, string == text { return true }
+        // Unreadable before, or a value of another type: nothing to compare, so no claim.
+        guard let before else { return true }
+        return !same(before, after)
+    }
+    private static func same(_ lhs: CFTypeRef?, _ rhs: CFTypeRef?) -> Bool {
+        guard let lhs, let rhs else { return lhs == nil && rhs == nil }
+        return CFEqual(lhs, rhs)
     }
 }

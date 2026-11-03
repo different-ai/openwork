@@ -721,13 +721,23 @@ final class SessionRuntime {
         var uncertain = false
         for (index, action) in actions.enumerated() {
             do {
+                // A shortcut with no observed field or control to type into, such as Command-S on a
+                // canvas, runs as the app's own menu command for it when there is one.
+                let shortcutMenu = focus == nil ? InputDelivery.menuForShortcut(action, in: access.menuCatalog(current.app).entries) : nil
+                let action = shortcutMenu.map { Action.menu($0) } ?? action
+                // Drawing: drags in a row are strokes on the same canvas, sent in one call while no
+                // window opens or closes. Each still lands only in the selected window.
+                let followsStrokes = Action.isStroke(action) && index > 0 && actions[..<index].allSatisfy(Action.isStroke)
                 try checkInput()
                 if needsObservation, lastPressed,
                    case .ready(let live) = try await readyAfterPress(action, records: records, current: current, windowsBefore: windowsBefore, pacing: pacing, check: check) {
                     needsObservation = false
                     if let live, let at = records.firstIndex(where: { $0.ref == live.ref }) { records[at] = live }
                 }
-                guard !needsObservation, !action.usesCoordinates || !progress.hasInput else {
+                if followsStrokes, access.windowChanges(current.app).opened(since: windowsBefore) {
+                    throw UseError("observation_required", "A window opened or closed after the last stroke. Observe before drawing more.", next: "observe")
+                }
+                guard !needsObservation || followsStrokes, !action.usesCoordinates || !progress.hasInput || followsStrokes else {
                     throw UseError("observation_required", "The preceding step may have changed the view or focus. Observe before executing the remaining steps.", next: "observe")
                 }
                 // Between steps, bring the window back if something else came to the front.
@@ -737,7 +747,7 @@ final class SessionRuntime {
                 try checkWindow()
                 try observation.validate(id: observationID, generation: current.generation, frame: bounds, now: now)
                 var pointerTarget: AXUIElement?
-                if action.usesCoordinates || (policy == .desktop && index == 0) || (disturbed && !progress.hasInput) {
+                if !followsStrokes, action.usesCoordinates || (policy == .desktop && index == 0) || (disturbed && !progress.hasInput) {
                     let live = try await access.read(current.target, check: check)
                     guard try access.captureDigest(live) == observation.stateDigest else {
                         throw UseError("stale_observation", "The observed window content or focus changed.", next: "observe")
@@ -795,7 +805,7 @@ final class SessionRuntime {
                     })
                 uncertain = path != "waited"
                 try check()
-                progress.dispatched(path: path); uncertain = false
+                progress.dispatched(path: shortcutMenu == nil ? path : "menu_for_shortcut"); uncertain = false
                 let dispatchedAt = now
                 // The press already ran: outline the control only where it still is.
                 controls.showAction(action, records: records, live: { [access] record in access.frame(record.element, within: 0.05) })
