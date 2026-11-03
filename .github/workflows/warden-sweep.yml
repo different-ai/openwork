@@ -127,6 +127,7 @@ jobs:
     # AUTOMATION_APP_* live here (dev and v* tags only), as in update-models.yml.
     environment: warden-clearance
     permissions:
+      actions: read
       contents: write
       pull-requests: write
     env:

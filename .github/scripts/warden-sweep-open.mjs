@@ -6,6 +6,7 @@ import { pathToFileURL } from "node:url";
 import { validatePatch, safeFile, GENERATION_LIMITS } from "./warden-generate.mjs";
 import { LIMITS } from "./warden-fixer.mjs";
 import { machineryFiles } from "./contributor-policy.mjs";
+import { ciFixBranch } from "./warden-ci-plan.mjs";
 const SHA = /^[a-f0-9]{40}$/;
 const git = (cwd, args) => execFileSync("git", args, { cwd, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"], maxBuffer: 500_000 }).trim();
 const gh = (args, token) => execFileSync("gh", args, { encoding: "utf8", env: { ...process.env, GH_TOKEN: token }, stdio: ["ignore", "pipe", "pipe"] }).trim();
@@ -14,18 +15,30 @@ function artifactText(path, max) {
   if (!stat.isFile() || stat.isSymbolicLink() || stat.size > max) throw new Error("invalid artifact file");
   return readFileSync(path, "utf8");
 }
-export function readPlan(cwd, dir) {
+export function readPlan(cwd, dir, { loadCiRun } = {}) {
   if (!lstatSync(dir).isDirectory() || lstatSync(dir).isSymbolicLink()) throw new Error("invalid plan directory");
   const plan = JSON.parse(artifactText(join(dir, "plan.json"), 10_000));
-  if (!SHA.test(plan.sha ?? "") || !(plan.number === null || Number.isSafeInteger(plan.number) && plan.number > 0) || plan.branch !== `warden-fix/merged-${plan.number ?? "commit"}-${plan.sha.slice(0, 12)}`) throw new Error("invalid plan identity");
+  if (!SHA.test(plan.sha ?? "") || !(plan.number === null || Number.isSafeInteger(plan.number) && plan.number > 0)) throw new Error("invalid plan identity");
   git(cwd, ["merge-base", "--is-ancestor", plan.sha, "HEAD"]);
-  const files = git(cwd, ["diff-tree", "--no-commit-id", "--name-only", "-r", "--no-renames", plan.sha]).split("\n").filter(Boolean);
+  let files;
+  if (plan.ci) {
+    const ci = plan.ci;
+    if (!Number.isSafeInteger(ci.runAttempt) || ci.runAttempt < 1 || plan.branch !== ciFixBranch(ci.id, plan.sha) || !Array.isArray(ci.files) || !ci.files.length || ci.files.length > LIMITS.filesPerFix || new Set(ci.files).size !== ci.files.length || !loadCiRun) throw new Error("invalid CI plan identity");
+    const run = loadCiRun(ci.id);
+    if (run.id !== ci.id || run.run_attempt !== ci.runAttempt || run.head_sha !== plan.sha || run.head_branch !== "dev" || run.status !== "completed" || !["push", "schedule", "workflow_dispatch"].includes(run.event) || !["failure", "timed_out", "startup_failure"].includes(run.conclusion)) throw new Error("CI evidence changed or does not match plan");
+    if (machineryFiles(ci.files.map((filename) => ({ filename }))).length) throw new Error("CI machinery requires manual review");
+    for (const path of ci.files) safeFile(cwd, path);
+    files = ci.files;
+  } else {
+    if (plan.branch !== `warden-fix/merged-${plan.number ?? "commit"}-${plan.sha.slice(0, 12)}`) throw new Error("invalid plan branch");
+    files = git(cwd, ["diff-tree", "--no-commit-id", "--name-only", "-r", "--no-renames", plan.sha]).split("\n").filter(Boolean);
+  }
   const names = readdirSync(dir).filter((name) => /^\d{2}\.patch$/.test(name)).sort();
   if (!names.length || names.length > LIMITS.fixes) throw new Error("invalid patch count");
   const patches = names.map((name) => artifactText(join(dir, name), LIMITS.diffBytes));
   for (const patch of patches) validatePatch(cwd, patch, files);
   // Do not trust the artifact's title. The body is bounded, and never executed.
-  const title = `fix: apply Warden's post-merge fixes for ${plan.number ? `#${plan.number}` : plan.sha.slice(0, 12)}`;
+  const title = plan.ci ? `fix(ci): address failed workflow run ${plan.ci.id}` : `fix: apply Warden's post-merge fixes for ${plan.number ? `#${plan.number}` : plan.sha.slice(0, 12)}`;
   const body = artifactText(join(dir, "body.md"), 20_000);
   return { ...plan, title, body, patches, files };
 }
@@ -46,7 +59,9 @@ export async function main(env = process.env) {
       let phase = "plan and source validation";
       try {
         git(cwd, ["reset", "--hard", env.BASE]);
-        const plan = readPlan(cwd, join(env.FIXES_DIR, name));
+        const plan = readPlan(cwd, join(env.FIXES_DIR, name), {
+          loadCiRun: (id) => JSON.parse(gh(["api", `repos/${env.GITHUB_REPOSITORY}/actions/runs/${id}`], env.GH_TOKEN)),
+        });
         branch = plan.branch;
         phase = "existing PR lookup";
         const existing = JSON.parse(gh(["pr", "list", "--repo", env.GITHUB_REPOSITORY, "--head", branch, "--state", "all", "--json", "url"], env.PR_TOKEN));

@@ -26,7 +26,7 @@ function fixture(t) {
 }
 const finding = { kind: "bug", title: "Empty label", description: "Concrete label regression", path: "src/a.tsx", line: 1, confidence: "high", severity: "medium", suggested_fix: null };
 const proposed = { disposition: "fix", reason: "restore label", edits: [{ path: finding.path, before: '"bad"', after: '"Good"' }] };
-const verified = { applicable: true, rootCause: true, minimal: true, reason: "small and applicable" };
+const verified = { applicable: true, rootCause: true, minimal: true, checksPreserved: true, reason: "small and applicable" };
 const options = (cwd, request, findings = [finding]) => ({ cwd, request, findings, files: [finding.path], budget: { remaining: 5 }, model: "model", apiKey: "test" });
 
 test("high-confidence missing diff becomes a verified, applicable draft PR plan including design", async (t) => {
@@ -83,6 +83,7 @@ test("model failures, refusal, rejection and budgets are explicit with no succes
     [async () => { throw new Error("secret error text"); }, /model generation request failed/],
     [async () => ({ disposition: "no_fix", edits: [] }), /model declined/],
     [async ({ stage }) => stage === "generate" ? proposed : { ...verified, rootCause: false }, /verification rejected/],
+    [async ({ stage }) => stage === "generate" ? proposed : { ...verified, checksPreserved: false }, /verification rejected/],
     [async () => ({ ...proposed, edits: [{ ...proposed.edits[0], path: "../oops" }] }), /generated edit validation/],
   ]) {
     const result = await generateFixes(options(cwd, request));
@@ -210,4 +211,18 @@ test("writer applies a verified generated patch, pushes its branch and reports a
   assert.ok(operations[1].includes("--base"));
   assert.match(messages[0], /1 PR\(s\) opened/);
   assert.match(messages[0], /https:\/\/github.com\/example\/repo\/pull\/123/);
+});
+
+test("CI source candidates carry log evidence through independent patch verification", async (t) => {
+  const cwd = fixture(t);
+  const ciEvidence = { runId: 123, evidence: "Expected nonempty accessible name", observedFailure: "Accessible name assertion failed", causeHypothesis: "The source sets an empty label" };
+  const opts = options(cwd, async ({ stage, data }) => {
+    assert.equal(data.finding.kind, "ci");
+    assert.deepEqual(data.finding.ciEvidence, ciEvidence);
+    return stage === "generate" ? proposed : verified;
+  }, [{ ...finding, kind: "ci", ciEvidence }]);
+  const result = await generateFixes(opts);
+  assert.equal(result.findings.length, 1);
+  assert.equal(opts.budget.remaining, 4);
+  assert.equal(result.findings[0].kind, "ci");
 });
