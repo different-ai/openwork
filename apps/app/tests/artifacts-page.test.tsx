@@ -20,6 +20,7 @@ let apps = initialApps;
 let ids: string[] = ["overview"];
 let scope = "artifacts-test-member-org";
 let verified = true;
+let catalogReady = true;
 let deletions: string[] = [];
 let deleteFails = false;
 let pageActive = true;
@@ -29,7 +30,7 @@ let createPrompts: string[] = [];
 const legacy: SavedAppSummary = { view: { id: "saved-view", configObjectId: "config", title: "Saved report", description: null, status: "active", activeRevisionId: null, revisions: [], createdAt: "2026-01-01T00:00:00Z", updatedAt: "2026-01-01T00:00:00Z" }, workflowTitle: "Saved report", canManage: true, onDashboard: false };
 
 mock.module("../src/react-app/domains/dashboard/built-dashboard-apps", () => ({
-  useBuiltDashboardApps: () => ({ orgId: "org", client: { deleteBuiltMcpApp: async (orgId: string, appId: string) => { deletions.push(appId); if (deleteFails) throw new Error("Only a manager can delete this artifact."); apps = apps.filter((item) => item.connectionId !== appId); } }, setAdded: (id: string, added: boolean) => { ids = added ? [...ids, id] : ids.filter((item) => item !== id); }, apps: verified ? apps : [], ids, identityVerified: verified, cacheScopeKey: scope, scope: [scope], query: { isPending: false, isSuccess: true, isError: false }, setAdded: (id: string, added: boolean) => { ids = added ? [...ids, id] : ids.filter((item) => item !== id); } }),
+  useBuiltDashboardApps: () => ({ ready: catalogReady, orgId: "org", client: { deleteBuiltMcpApp: async (orgId: string, appId: string) => { deletions.push(appId); if (deleteFails) throw new Error("Only a manager can delete this artifact."); apps = apps.filter((item) => item.connectionId !== appId); } }, setAdded: (id: string, added: boolean) => { ids = added ? [...ids, id] : ids.filter((item) => item !== id); }, apps: verified ? apps : [], ids, identityVerified: verified, cacheScopeKey: scope, scope: [scope], query: { isPending: false, isSuccess: true, isError: false }, setAdded: (id: string, added: boolean) => { ids = added ? [...ids, id] : ids.filter((item) => item !== id); } }),
 }));
 mock.module("../src/react-app/domains/apps/use-apps", () => ({
   useSavedApps: () => ({ identityVerified: verified, available: true, canManage: true, scope: [scope], query: { isSuccess: true, isError: false, data: { items: [legacy] } } }),
@@ -45,7 +46,7 @@ mock.module("../src/react-app/domains/apps/built-app-share-button", () => ({ Bui
 mock.module("../src/app/lib/den", () => ({ markFeatureUsed: () => {} }));
 const { ArtifactsPage } = await import("../src/react-app/domains/dashboard/artifacts-page");
 const { rememberArtifactSelection } = await import("../src/react-app/domains/dashboard/artifacts-workspace");
-const { readDashboardTileCache, writeDashboardTileCache } = await import("../src/react-app/domains/dashboard/dashboard-tile-cache");
+const { readDashboardTileCache, removeDashboardTileCache, writeDashboardTileCache } = await import("../src/react-app/domains/dashboard/dashboard-tile-cache");
 let root: ReturnType<typeof createRoot> | null = null;
 let host: HTMLDivElement;
 
@@ -62,7 +63,7 @@ async function click(label: string) {
 }
 beforeEach(() => {
   deletions = []; deleteFails = false;
-  apps = initialApps; ids = ["overview"]; verified = true; pageActive = true; scope = "artifacts-test-member-org"; launches = []; mounts = 0; createPrompts = [];
+  apps = initialApps; ids = ["overview"]; verified = true; catalogReady = true; pageActive = true; scope = "artifacts-test-member-org"; launches = []; mounts = 0; createPrompts = [];
   rememberArtifactSelection(scope, null);
   rememberArtifactSelection("another-member-org", null);
   client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
@@ -130,6 +131,29 @@ test("revoked access unmounts the live app rather than selecting another", async
   expect(mounts).toBe(0);
   expect(launches).toHaveLength(1);
   expect(host.querySelector("[data-live-artifact]")).toBeNull();
+});
+
+function saveTile(id: string) {
+  writeDashboardTileCache(scope, id, { argumentsSignature: "{}", cachedAt: Date.now(), workspaceId: "w", result: { content: [] },
+    app: { serverName: "artifacts", toolName: "open_app", resourceUri: `ui://${id}`, html: "<html></html>", prefersBorder: false, csp: { connectDomains: [], resourceDomains: [], frameDomains: [], baseUriDomains: [] } } });
+}
+
+test("an App the member lost leaves this device, and the rest stay", async () => {
+  saveTile("personal:overview"); saveTile("personal:queue");
+  await render();
+  expect(readDashboardTileCache(scope, "personal:queue")).not.toBeNull();
+  apps = initialApps.filter((item) => item.connectionId !== "queue"); await render();
+  expect(readDashboardTileCache(scope, "personal:queue")).toBeNull();
+  expect(readDashboardTileCache(scope, "personal:overview")).not.toBeNull();
+  removeDashboardTileCache(scope, "personal:overview");
+});
+
+test("a catalog that has not loaded removes nothing", async () => {
+  saveTile("personal:queue");
+  catalogReady = false; apps = [];
+  await render();
+  expect(readDashboardTileCache(scope, "personal:queue")).not.toBeNull();
+  removeDashboardTileCache(scope, "personal:queue");
 });
 
 const deletable = () => { apps = [{ ...initialApps[0]!, canDelete: true }, initialApps[1]!]; };

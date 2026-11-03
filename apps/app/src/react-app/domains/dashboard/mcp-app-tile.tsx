@@ -23,6 +23,7 @@ import { onCloudCredentialRefreshed, readCloudCredentialRevision } from "@/react
 import { DashboardTileShell, type DashboardTileActions } from "./dashboard-tile-shell";
 import { resolveDashboardMcpApp } from "./dashboard-mcp-app-resolution";
 import { scheduleDashboardLaunch } from "./dashboard-launch-scheduler";
+import { memberAccessCheckPending, memberAccessConfirmed, waitForMemberAccessCheck } from "./mcp-app-member-access";
 import { useArtifactSurfaceActive } from "./retained-artifact-surface";
 import { useDashboardTileGeometry } from "./use-dashboard-tile-geometry";
 import {
@@ -194,28 +195,34 @@ function invalidatesTileDocument(cause: unknown) {
 }
 
 /**
- * After a restart a saved tile's App document is still in IndexedDB. A tile
- * reads its saved state as it first renders, so that read comes first. If it
- * finds nothing the tile simply opens the ordinary way.
+ * A tile reads its saved state as it first renders, so what that state depends
+ * on comes first: after a restart its App document is still in IndexedDB, and a
+ * check of the member's access may be under way. If either finds nothing in
+ * time the tile simply opens without it. Once open a tile stays open, whatever
+ * later checks do.
  */
-function useDashboardTileDocument(scopeKey: string, entryId: string) {
+function useSavedTileReady(scopeKey: string, entryId: string) {
   const tile = JSON.stringify([scopeKey, entryId]);
-  const pending = dashboardTileDocumentPending(scopeKey, entryId);
+  const pending = dashboardTileDocumentPending(scopeKey, entryId)
+    || (memberAccessCheckPending() && readDashboardTileCache(scopeKey, entryId) !== null);
   const [loaded, setLoaded] = useState<string | null>(null);
+  const ready = useRef<string | null>(null);
   useEffect(() => {
-    if (!pending) return;
+    if (!pending || ready.current === tile) return;
     let current = true;
-    void loadDashboardTileDocument(scopeKey, entryId).finally(() => { if (current) setLoaded(tile); });
+    void Promise.all([loadDashboardTileDocument(scopeKey, entryId), waitForMemberAccessCheck()])
+      .finally(() => { if (current) setLoaded(tile); });
     return () => { current = false; };
   }, [scopeKey, entryId, tile, pending]);
-  return !pending || loaded === tile;
+  if (!pending || loaded === tile) ready.current = tile;
+  return ready.current === tile;
 }
 
 export function McpAppTile(props: ComponentProps<typeof McpAppTileContent>) {
   const input = props.entry.launchArguments ?? EMPTY_ARGUMENTS;
   const signature = useMemo(() => launchArgumentsSignature(input), [input]);
-  const documentReady = useDashboardTileDocument(props.cacheScopeKey, props.entry.id);
-  if (!documentReady) return null;
+  const ready = useSavedTileReady(props.cacheScopeKey, props.entry.id);
+  if (!ready) return null;
   return <McpAppTileContent key={JSON.stringify([props.cacheScopeKey, dashboardEntryIdentity(props.entry, signature)])} {...props} />;
 }
 
@@ -290,7 +297,7 @@ function McpAppTileContent({
   const lastHeight = useRef<number | undefined>(undefined);
   const [state, setState] = useState<TileState>(() => cached && cachedEndpoint
     ? {
-        phase: "ready", app: cached.app, result: savedLaunchResult(cached), endpoint: cachedEndpoint, cachedAt: cached.cachedAt,
+        phase: "ready", app: cached.app, result: savedLaunchResult(cached, memberAccessConfirmed()), endpoint: cachedEndpoint, cachedAt: cached.cachedAt,
         origin: { ...cachedEndpoint, sessionId: null, readOnly: true }, argumentsSignature,
         lifetime: { id: ++documentSequence.current, active: true, failed: false },
       }

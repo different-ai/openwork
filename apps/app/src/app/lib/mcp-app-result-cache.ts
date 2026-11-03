@@ -1,7 +1,7 @@
 import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 import type { McpAppOrigin } from "../../components/chat/mcp-app-origin";
 import type { OpenworkMcpAppResource } from "./openwork-server";
-import { createDashboardTileCacheStore, DASHBOARD_TILE_CACHE_STORAGE_PREFIX } from "./dashboard-cache-storage";
+import { createDashboardTileCacheStore, MCP_APP_RESULTS_STORAGE_KEY } from "./dashboard-cache-storage";
 import { mcpAppPresentationScope } from "./mcp-app-presentation-cache";
 
 /**
@@ -17,7 +17,7 @@ export const MCP_APP_CACHED_AT_META = "openwork/cachedAt";
 const READ_ONLY_RESULT_META = "openwork/readOnly";
 const PROVIDER_IDENTITY_META = "openwork/providerIdentity";
 
-const STORAGE_KEY = `${DASHBOARD_TILE_CACHE_STORAGE_PREFIX}.appResults`;
+const STORAGE_KEY = MCP_APP_RESULTS_STORAGE_KEY;
 const TTL_MS = 24 * 60 * 60_000;
 const MAX_BYTES = 1_000_000;
 const MAX_ENTRY_BYTES = 200_000;
@@ -143,6 +143,18 @@ export async function rememberMcpAppResult(
     store.schedule(STORAGE_KEY);
   } catch {
     // Storage is a convenience; the call's result is unaffected.
+  }
+}
+
+/** Drops every kept result, for when this person may no longer see them. */
+export function clearMcpAppResults(): void {
+  try {
+    const entries = store.read(STORAGE_KEY);
+    if (!entries) return;
+    entries.clear();
+    store.schedule(STORAGE_KEY);
+  } catch {
+    // Storage is a convenience.
   }
 }
 

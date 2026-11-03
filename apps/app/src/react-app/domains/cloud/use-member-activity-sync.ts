@@ -12,6 +12,7 @@ import {
   readCloudInventoryScope,
   storeCloudInventory,
 } from "@/react-app/domains/connections/cloud-inventory-cache";
+import { noteInventoryRevision, reconcileMemberAccess, setMemberAccessScope, trackMemberAccessCheck } from "@/react-app/domains/dashboard/mcp-app-member-access";
 import { useDenAuth } from "./den-auth-provider";
 import { createInventoryRevisionGate } from "./inventory-revision";
 import { subscribeCloudProviderSyncTriggers } from "./use-cloud-provider-auto-sync";
@@ -31,10 +32,12 @@ export function useMemberActivitySync(enabled: boolean) {
     const feed = useActivityStore.getState();
     if (!enabled || !token || !principalId || organizationId !== verifiedOrgId) {
       feed.setScope(null);
+      setMemberAccessScope(null);
       return;
     }
     const scope: ActivityScope = { baseUrl, organizationId, memberId: principalId };
     feed.setScope(scope);
+    setMemberAccessScope(scope);
     let disposed = false;
     let inflight: Promise<unknown> | null = null;
     const isCurrent = () => {
@@ -52,6 +55,7 @@ export function useMemberActivitySync(enabled: boolean) {
         // Invalidate immediately, before React finishes verifying the next account.
         disposed = true;
         feed.setScope(null);
+        setMemberAccessScope(null);
         useNotificationStore.setState((state) => ({
           notifications: state.notifications.filter((entry) => entry.kind !== "cloud" && entry.kind !== "providers"),
         }));
@@ -60,7 +64,9 @@ export function useMemberActivitySync(enabled: boolean) {
       if (inflight) return;
       inflight = (async () => {
         const { skip, revision } = await gate.check();
-        if (!isCurrent() || (trigger === "check" && skip)) return;
+        if (!isCurrent()) return;
+        noteInventoryRevision(scope, revision);
+        if (trigger === "check" && skip) return;
         const previousEntry = selectActivityContext(useActivityStore.getState()).entries[0]?.id;
         const loaded: { value: Parameters<typeof storeCloudInventory>[1] | null } = { value: null };
         const result = await refreshMemberActivity({
@@ -69,6 +75,7 @@ export function useMemberActivitySync(enabled: boolean) {
         });
         if (result !== "updated" || !isCurrent()) return;
         gate.synced(revision);
+        if (loaded.value) reconcileMemberAccess(scope, revision, loaded.value);
         const changed = selectActivityContext(useActivityStore.getState()).entries[0]?.id !== previousEntry;
         const cacheScope = readCloudInventoryScope();
         if (loaded.value && cacheScope?.organizationId === organizationId) {
@@ -83,6 +90,7 @@ export function useMemberActivitySync(enabled: boolean) {
       })().finally(() => {
         inflight = null;
       });
+      trackMemberAccessCheck(inflight);
     };
     const refreshNow = () => refresh("now");
     refresh("now");

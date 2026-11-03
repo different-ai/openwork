@@ -123,6 +123,10 @@ jobs:
           bun test apps/server/test/inbox-upload.test.ts
       - name: Test saved App documents
         run: pnpm --filter @openwork/app exec bun test --isolate ./tests/dashboard-tile-documents.test.ts
+      - name: Test stored App data clears when access is lost
+        run: |
+          pnpm --filter @openwork/app exec bun test --isolate ./tests/mcp-app-member-access.test.ts
+          pnpm --filter @openwork/app exec bun test --isolate ./tests/use-member-activity-sync-access.test.tsx
       - name: Check desktop links open real Den pages
         run: pnpm --filter @openwork/app test:den-links
       - name: Test Library connector setup and translated placeholders

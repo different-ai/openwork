@@ -50,7 +50,10 @@ and local pins keep their existing meaning.
 ## Watch
 
 Check App launch failures, permission/reconnect states and catalog errors. A
-revoked or removed catalog entry must disappear and unmount its live view.
+revoked or removed catalog entry must disappear and unmount its live view, and
+leave this device. Stored App data clears when a member loses a connection,
+account, scope or plugin; until a session has compared that, stored reads are
+withheld.
 The selected view must not survive sign-out or a member/org/deployment change.
 
 ## Evidence

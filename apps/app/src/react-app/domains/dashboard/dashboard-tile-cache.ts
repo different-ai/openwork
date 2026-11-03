@@ -1,6 +1,6 @@
 import { MCP_APP_INITIAL_RESULTS_META } from "@openwork/types/mcp-app";
 import type { OpenworkMcpAppResource } from "@/app/lib/openwork-server";
-import { createDashboardTileCacheStore, DASHBOARD_TILE_CACHE_STORAGE_PREFIX } from "@/app/lib/dashboard-cache-storage";
+import { createDashboardTileCacheStore, dashboardTileScopeKeys, DASHBOARD_TILE_CACHE_STORAGE_PREFIX, flushDashboardTileCacheStorage } from "@/app/lib/dashboard-cache-storage";
 import { mcpAppDocuments } from "@/app/lib/mcp-app-document-store";
 import type { PreservedMcpAppResult } from "@/components/chat/mcp-app-frame";
 
@@ -9,6 +9,8 @@ const MAX_SCOPE_CACHE_BYTES = 3_000_000;
 export const DASHBOARD_AUTO_REFRESH_INTERVAL_MS = 5 * 60 * 1_000;
 const MAX_STORED_READ_BYTES = 200_000;
 const MAX_STORED_READS_BYTES = 256 * 1024;
+// Set by the OpenWork server on every result, never by the App or provider.
+const PROVIDER_IDENTITY_META = "openwork/providerIdentity";
 
 /** A read an App made, kept in the shape of launch data so the App can show it as it next starts. */
 export type DashboardTileStoredRead = {
@@ -196,8 +198,12 @@ export function createPresentationCacheStore(maxBytes: number) {
       const scope = store.read(scopeKey);
       if (!scope) return;
       const previous = scope.get(entryId);
-      // What the App loaded outlives a refresh of its launch, not a change of App.
-      if (!next.storedReads && previous?.storedReads && previous.app.resourceUri === next.app.resourceUri) next.storedReads = previous.storedReads;
+      // What the App loaded outlives a refresh of its launch, not a change of App or of the account behind it.
+      if (!next.storedReads && previous?.storedReads && previous.app.resourceUri === next.app.resourceUri) {
+        const server = next.result._meta?.[PROVIDER_IDENTITY_META];
+        const reads = previous.storedReads.filter((read) => typeof server !== "string" || read.providerIdentity === server);
+        if (reads.length) next.storedReads = reads;
+      }
       scope.set(entryId, next);
       store.schedule(scopeKey);
       if (previous?.app.html !== next.app.html) void mcpAppDocuments.save(scopeKey, entryId, next.app.html);
@@ -215,6 +221,19 @@ export function createPresentationCacheStore(maxBytes: number) {
       scope.delete(entryId);
       store.schedule(scopeKey);
       void mcpAppDocuments.remove(scopeKey, entryId);
+    },
+    /** Drops everything an entry last showed, keeping the App document, which holds no member data. */
+    clearData(scopeKey: string): void {
+      const scope = store.read(scopeKey);
+      if (!scope) return;
+      for (const [entryId, cache] of scope) {
+        const { storedReads: _reads, ...saved } = cache;
+        scope.set(entryId, { ...saved, result: { content: [] } });
+      }
+      store.schedule(scopeKey);
+    },
+    entryIds(scopeKey: string): string[] {
+      return [...(store.read(scopeKey)?.keys() ?? [])];
     },
   };
 }
@@ -305,10 +324,19 @@ export function rememberDashboardTileRead(
   cacheStore.replace(scopeKey, entryId, storedReads.length ? { ...rest, storedReads } : rest);
 }
 
-/** The saved launch result with what the App last loaded, newest first, so it shows that data as it starts. */
-export function savedLaunchResult(cache: Pick<DashboardTileCache, "result" | "storedReads">): PreservedMcpAppResult {
-  if (!cache.storedReads?.length) return cache.result;
+/**
+ * The saved launch result. Once access is confirmed it carries what the App
+ * last loaded, newest first, so the App shows that data as it starts. Until
+ * then it carries none of the App's reads, stored or from its last launch.
+ */
+export function savedLaunchResult(cache: Pick<DashboardTileCache, "result" | "storedReads">, accessConfirmed: boolean): PreservedMcpAppResult {
   const launched = cache.result._meta?.[MCP_APP_INITIAL_RESULTS_META];
+  if (!accessConfirmed) {
+    if (launched === undefined) return cache.result;
+    const { [MCP_APP_INITIAL_RESULTS_META]: _withheld, ...meta } = cache.result._meta ?? {};
+    return { ...cache.result, _meta: meta };
+  }
+  if (!cache.storedReads?.length) return cache.result;
   const launchData = (Array.isArray(launched) ? launched : []).filter((item): item is { name: string; arguments?: unknown; loadedAt?: unknown } =>
     isRecord(item) && typeof item.name === "string");
   const reads = cache.storedReads.filter((read) => {
@@ -318,6 +346,19 @@ export function savedLaunchResult(cache: Pick<DashboardTileCache, "result" | "st
   const shown = reads.map(({ providerIdentity: _server, ...read }) => read);
   return { ...cache.result, _meta: { ...cache.result._meta,
     [MCP_APP_INITIAL_RESULTS_META]: [...shown, ...launchData.filter((item) => !reads.some((read) => sameRead(item, read)))] } };
+}
+
+/** Removes saved tiles the member can no longer open, along with their App documents. */
+export function pruneDashboardTiles(scopeKey: string, available: ReadonlySet<string>): void {
+  for (const entryId of cacheStore.entryIds(scopeKey)) {
+    if (!available.has(entryId)) cacheStore.remove(scopeKey, entryId);
+  }
+}
+
+/** Drops what every saved tile on this device last showed. */
+export function clearDashboardTileData(): void {
+  flushDashboardTileCacheStorage();
+  for (const scopeKey of dashboardTileScopeKeys()) cacheStore.clearData(scopeKey);
 }
 
 export function dashboardTileDocumentPending(scopeKey: string, entryId: string): boolean {
