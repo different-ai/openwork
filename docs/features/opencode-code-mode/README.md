@@ -58,15 +58,16 @@ again. Nothing stored changes, so turning it back on restores them.
 
 ## Code
 
-- `ee/apps/den-api/src/mcp/codemode-run-opencode.ts`: runs a script on `@opencode/codemode`. That package uses its own
-  copy of Effect (4.0.6, `effect-opencode-codemode` in `package.json`), so each Den tool runs on Den's Effect and only
-  its result crosses, as data. Tools without an output schema get a permissive one, since OpenCode's Code Mode hands
-  back nothing for a tool that declares no output.
+- `ee/apps/den-api/src/mcp/codemode-run-opencode.ts`: runs a script on `@opencode/codemode` with Den's tools as they
+  are. Den, `packages/codemode` and `packages/computer-use` use Effect 4.0.6, the version `@opencode/codemode`
+  pins, so both Code Modes share one Effect. Tools without an output schema get a permissive one, since OpenCode's
+  Code Mode hands back nothing for a tool that declares no output. Only a tool's deliberate refusal (`toolError`)
+  shows its message to the program; any other failure reads "Tool execution failed", as on OpenWork's Code Mode,
+  because OpenCode's would show the host error's message.
 - `codemode-run.ts` (`codemodeRuntimeFor`), `codemode-script-object.ts` (the two languages),
   `workflow-service.ts` (`newWorkflowLanguage`, and choosing the Code Mode for each run), `workflows.ts` and `agent.ts`
   (tests and saves).
 - Tests: `ee/apps/den-api/test/codemode-opencode-runtime.test.ts`.
 
-Not covered yet: computer-use programs (`packages/computer-use`) still run on OpenWork's interpreter. Once Den's
-own Effect reaches the version `@opencode/codemode` uses, the alias and the result bridge can go, and so can
-`packages/codemode` once no saved Workflow needs it.
+Not covered yet: computer-use programs (`packages/computer-use`) still run on OpenWork's interpreter.
+`packages/codemode` can go once no saved Workflow uses `codemode-js`.

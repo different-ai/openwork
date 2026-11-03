@@ -1,42 +1,27 @@
 import { CodeMode as OpencodeCodeMode, Tool as OpencodeTool, toolError as opencodeToolError } from "@opencode/codemode"
 import { ToolError, type CodeMode, type Tool } from "@openwork/codemode"
-import { Cause, Effect, Exit, Schema } from "effect"
-import { Effect as OpencodeEffect } from "effect-opencode-codemode"
+import { Cause, Effect } from "effect"
 import type { CodemodeToolTree } from "./codemode-tools.js"
 
 export type OpencodeRunResult =
   | { ok: true; value: CodeMode.DataValue; logs: string[]; toolCalls: Array<{ name: string }> }
   | { ok: false; error: CodeMode.Diagnostic; logs: string[]; toolCalls: Array<{ name: string }> }
 
-type ToolOutcome = { ok: true; value: unknown } | { ok: false; message: string }
-
-// OpenCode's Code Mode runs on its own copy of Effect, so a Den tool runs on Den's
-// Effect and only its outcome crosses, as data. The abort signal carries
-// interruption (the execution timeout) into the Den call.
-async function runDenTool(definition: Tool.Definition, input: unknown, signal: AbortSignal): Promise<ToolOutcome> {
-  const decoded = Schema.isSchema(definition.input) ? Schema.decodeUnknownEffect(definition.input)(input) : Effect.succeed(input)
-  const run = Effect.flatMap(decoded, (value) => definition.run(value))
-  const output = definition.output
-  const exit = await Effect.runPromiseExit(
-    output !== undefined && Schema.isSchema(output) ? Effect.flatMap(run, Schema.decodeUnknownEffect(output)) : run,
-    { signal },
-  )
-  if (Exit.isSuccess(exit)) return { ok: true, value: exit.value }
-  const error = Cause.squash(exit.cause)
-  return { ok: false, message: error instanceof ToolError ? error.message : "Tool execution failed" }
-}
-
+// Den builds its tools with OpenWork's Tool.make. OpenCode's Code Mode shows a
+// program every failure's message and cause, so only a Den refusal's message
+// crosses, as on OpenWork's Code Mode; anything unexpected stays generic.
 function opencodeTool(definition: Tool.Definition): OpencodeTool.Tool {
   return OpencodeTool.make({
     description: definition.description,
-    input: Schema.isSchema(definition.input) ? {} : definition.input,
+    input: definition.input,
     // OpenCode's Code Mode hands a tool without an output schema back as void, so
-    // every Den tool declares one: its own JSON Schema, or any value.
-    output: definition.output === undefined || Schema.isSchema(definition.output) ? {} : definition.output,
-    execute: (input) => OpencodeEffect.flatMap(
-      OpencodeEffect.promise((signal) => runDenTool(definition, input, signal)),
-      (outcome) => outcome.ok ? OpencodeEffect.succeed(outcome.value) : OpencodeEffect.fail(opencodeToolError(outcome.message)),
-    ),
+    // every Den tool declares one: its own, or any value.
+    output: definition.output ?? {},
+    execute: (input) => Effect.catchCause(definition.run(input), (cause) => {
+      if (Cause.hasInterruptsOnly(cause)) return Effect.interrupt
+      const error = Cause.squash(cause)
+      return Effect.fail(opencodeToolError(error instanceof ToolError ? error.message : "Tool execution failed"))
+    }),
   })
 }
 
@@ -68,7 +53,7 @@ export async function runOnOpencodeCodeMode(input: {
   bindings?: Record<string, CodeMode.DataValue>
   limits: { timeoutMs: number; maxToolCalls: number; maxOutputBytes: number }
 }): Promise<OpencodeRunResult> {
-  const result = await OpencodeEffect.runPromise(OpencodeCodeMode.execute({
+  const result = await Effect.runPromise(OpencodeCodeMode.execute({
     code: input.code,
     tools: opencodeTools(input.tools),
     ...(input.bindings ? { bindings: input.bindings } : {}),

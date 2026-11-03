@@ -31,6 +31,12 @@ const tools: CodemodeToolTree = {
       input: { type: "object" },
       run: () => Effect.fail(toolError("Lookup refused")),
     }),
+    // A host call that rejects unexpectedly, as a failed database query would.
+    crash: Tool.make({
+      description: "Fail with an internal error",
+      input: { type: "object" },
+      run: () => Effect.promise(() => Promise.reject(new Error("internal detail: db host 10.0.0.7"))),
+    }),
   },
 }
 
@@ -89,6 +95,16 @@ test("a Den tool refusal is a catchable ToolFailure with its own message", async
   const failed = await run(`return await tools.host.refuse({})`, "opencode")
   assert.equal(!failed.ok && failed.error.kind, "ToolFailure")
   assert.match(!failed.ok ? failed.error.message : "", /Lookup refused/)
+})
+
+test("an unexpected tool failure shows no internal detail on either Code Mode", async () => {
+  for (const runtime of ["opencode", "openwork"] satisfies CodemodeRuntime[]) {
+    const caught = await run(`try { await tools.host.crash({}) } catch (error) { return error.message }`, runtime)
+    assert.equal(caught.ok && caught.value, "Tool execution failed", runtime)
+    const failed = await run(`return await tools.host.crash({})`, runtime)
+    assert.equal(!failed.ok && failed.error.kind, "ToolFailure", runtime)
+    assert.doesNotMatch(!failed.ok ? failed.error.message : "", /internal detail/, runtime)
+  }
 })
 
 test("warnings from OpenCode's Code Mode reach the run's logs", async () => {
