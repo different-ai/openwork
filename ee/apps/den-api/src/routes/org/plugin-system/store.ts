@@ -76,6 +76,7 @@ import {
 } from "./default-marketplaces.js"
 import { cache, type CachedOrgMember } from "../../../cache.js"
 import { db } from "../../../db.js"
+import { withPrimaryReads } from "../../../read-routing.js"
 import { requestReadFor } from "../../../request-reads.js"
 import { latestConfigObjectVersions } from "../../../config-object-versions.js"
 import { keysetAfter, keysetPage, type KeysetCursor } from "../../../list-pagination.js"
@@ -1402,7 +1403,8 @@ async function upsertGrant(input: ResourceTarget & {
   const organizationId = input.context.organizationContext.organization.id
 
   if (input.resourceKind === "config_object") {
-    const existing = await db
+    // primary: insert-vs-update must see a grant written moments ago.
+    const existing = await db.$primary
       .select()
       .from(ConfigObjectAccessGrantTable)
       .where(and(
@@ -1446,7 +1448,8 @@ async function upsertGrant(input: ResourceTarget & {
   }
 
   if (input.resourceKind === "marketplace") {
-    const existing = await db
+    // primary: insert-vs-update must see a grant written moments ago.
+    const existing = await db.$primary
       .select()
       .from(MarketplaceAccessGrantTable)
       .where(and(
@@ -1490,7 +1493,8 @@ async function upsertGrant(input: ResourceTarget & {
   }
 
   if (input.resourceKind === "plugin") {
-    const existing = await db
+    // primary: insert-vs-update must see a grant written moments ago.
+    const existing = await db.$primary
       .select()
       .from(PluginAccessGrantTable)
       .where(and(
@@ -1533,7 +1537,8 @@ async function upsertGrant(input: ResourceTarget & {
     return serializeAccessGrant({ ...row, removedAt: null })
   }
 
-  const existing = await db
+  // primary: insert-vs-update must see a grant written moments ago.
+  const existing = await db.$primary
     .select()
     .from(ConnectorInstanceAccessGrantTable)
     .where(and(
@@ -3131,8 +3136,12 @@ export async function removePluginMembership(input: { configObjectId: ConfigObje
 }
 
 export async function listMarketplaces(input: { context: PluginArchActorContext; cursor?: string; limit?: number; q?: string; status?: MarketplaceRow["status"] }) {
-  await ensureDefaultOpenWorkMarketplace(input.context)
+  // A first visit seeds the default marketplace; list it from the primary then.
+  if (await ensureDefaultOpenWorkMarketplace(input.context)) return withPrimaryReads(() => listSeededMarketplaces(input))
+  return listSeededMarketplaces(input)
+}
 
+async function listSeededMarketplaces(input: Parameters<typeof listMarketplaces>[0]) {
   const rows = await db
     .select()
     .from(MarketplaceTable)
@@ -3172,7 +3181,7 @@ export async function listMarketplaces(input: { context: PluginArchActorContext;
 async function ensureDefaultOpenWorkMarketplace(context: PluginArchActorContext) {
   const organizationId = context.organizationContext.organization.id
   if (await defaultOpenWorkMarketplaceSeedComplete(organizationId)) {
-    return
+    return false
   }
 
   await db.transaction(async (tx) => {
@@ -3204,6 +3213,7 @@ async function ensureDefaultOpenWorkMarketplace(context: PluginArchActorContext)
       marketplaceId: marketplace.id,
     })
   })
+  return true
 }
 
 async function defaultOpenWorkMarketplaceSeedComplete(organizationId: OrganizationId) {
@@ -6817,7 +6827,12 @@ async function maybeAutoImportGithubConnectorInstance(input: {
   }
 }
 
-export async function executeGithubConnectorSyncEvent(input: { connectorSyncEventId: ConnectorSyncEventId }) {
+/** Runs on the primary: the worker just claimed the event, and the import reads back what it creates. */
+export function executeGithubConnectorSyncEvent(input: { connectorSyncEventId: ConnectorSyncEventId }) {
+  return withPrimaryReads(() => executeGithubConnectorSyncEventOnPrimary(input))
+}
+
+async function executeGithubConnectorSyncEventOnPrimary(input: { connectorSyncEventId: ConnectorSyncEventId }) {
   const eventRows = await db
     .select()
     .from(ConnectorSyncEventTable)
@@ -8399,7 +8414,8 @@ export async function enqueueGithubWebhookSync(input: {
       continue
     }
 
-    const existing = await db
+    // primary: dedupes webhook redeliveries that can arrive back to back.
+    const existing = await db.$primary
       .select({ id: ConnectorSyncEventTable.id })
       .from(ConnectorSyncEventTable)
       .where(and(

@@ -33,6 +33,7 @@ import { applyBrandAppName } from "./brand-app-name.mjs";
 import { createBrowserPanel } from "./browser-panel.mjs";
 import { createComputerControl } from "@openwork/computer-use/computer-control";
 import { createComputerAgentPermissions } from "./computer-agent-permissions.mjs";
+import { installComputerHelper } from "./computer-helper-install.mjs";
 import { createLocalComputerAdapter } from "./computer-local.mjs";
 import { createComputerScripting } from "./computer-scripting.mjs";
 import { remoteComputerAdapters } from "./computer-targets.mjs";
@@ -256,6 +257,10 @@ const computerControl = createComputerControl({
   }) : createLocalComputerAdapter({
     resourcesPath: process.resourcesPath,
     appRoot: path.resolve(__dirname, ".."),
+    installHelper: async (binary) => !app.isPackaged ? binary : installComputerHelper(binary, {
+      helpersRoot: path.join(process.resourcesPath, "helpers"),
+      directory: path.join(app.getPath("userData"), "computer-use"),
+    }),
     permissionEntry: async () => (await readComputerPermissionEntry()).name,
     onSetupReturn: async () => {
       const window = await createMainWindow();
@@ -365,14 +370,6 @@ const uiControlServer = createUiControlServer({
     return computerControl.script(args, { ...options, approveEachScript: decision.effect === "ask" });
   },
   computerEnabled: () => computerControl.featureEnabled(),
-  listWebMcpTools: (args, options) => browserPanel?.listWebMcpTools(args, options) ?? {
-    ok: false,
-    error: "The built-in browser is not ready.",
-  },
-  executeWebMcpTool: (args, options) => browserPanel?.executeWebMcpTool(args, options) ?? {
-    ok: false,
-    error: "The built-in browser is not ready.",
-  },
 });
 
 const terminalProcesses = new Map();
@@ -2866,7 +2863,7 @@ async function createMainWindowInner() {
         },
       };
     }
-    const floatingView = floatingViewWindowOptions({ url, frameName });
+    const floatingView = floatingViewWindowOptions({ url, frameName, dark: nativeTheme.shouldUseDarkColors });
     if (floatingView) return { action: "allow", overrideBrowserWindowOptions: floatingView };
 
     if (url.startsWith("file://")) {
@@ -2893,6 +2890,8 @@ async function createMainWindowInner() {
   mainWindow.webContents.on("did-create-window", (child, { frameName }) => {
     if (!floatingViewWindowOptions({ url: "about:blank", frameName })) return;
     attachFloatingViewWindow(child);
+    applicationMenu.applyVisibility(child);
+    browserPanel.adoptPopOutWindow(child);
     const closeWithMain = () => { if (!child.isDestroyed()) child.close(); };
     mainWindow?.once("closed", closeWithMain);
     child.once("closed", () => mainWindow?.off("closed", closeWithMain));

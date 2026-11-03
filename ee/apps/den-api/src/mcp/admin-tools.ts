@@ -397,7 +397,8 @@ export function registerAdminMcpTools(server: McpServer, admin: AdminToolCaller 
             status: row.status,
             count: n(row.count),
           })),
-          note: "active = sign-in session day or any telemetry event; realActive = ran at least one task in a session from the app (task.* events with a session id), excluding setup agents and removed members, as in the admin Control Center",
+          // SPEAK TO OMAR BEFORE REENABLING THIS DATA POINT, NO EXCEPTIONS (see readTaskUserWindows).
+          note: "active = sign-in session day or any telemetry event; realActiveUsers is disabled and always 0 for now (the query was too expensive)",
         }
       }),
   )
@@ -866,7 +867,7 @@ export function registerAdminMcpTools(server: McpServer, admin: AdminToolCaller 
         if (!input.success) throw new Error(input.error.issues[0]?.message ?? "Invalid sandbox.")
         const admin = requireAdmin()
         const sandbox = await runPlatformAdminPlatformAction("sandbox_organization.create", admin, { type: "sandbox_organization", id: null }, () =>
-          createSandbox(normalizeDenTypeId("user", admin.userId), input.data))
+          createSandbox(normalizeDenTypeId("user", admin.userId), input.data, { callbackBaseUrl: env.apiPublicUrl ?? null }))
         return { ok: true, sandbox }
       }),
   )

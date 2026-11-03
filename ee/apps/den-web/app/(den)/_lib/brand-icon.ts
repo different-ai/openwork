@@ -49,6 +49,7 @@ const SIMPLE_ICON_SLUG_BY_APEX: Record<string, string> = {
   // monday.com, Semgrep, Tavily) use their own apex favicon below.
   "airtable.com": "airtable",
   "figma.com": "figma",
+  "grafana.com": "grafana",
   "huggingface.co": "huggingface",
   "lucid.app": "lucid",
   "mural.co": "mural",

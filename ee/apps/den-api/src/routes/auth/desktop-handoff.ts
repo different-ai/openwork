@@ -571,7 +571,8 @@ export function registerDesktopAuthRoutes<T extends { Variables: AuthContextVari
       }
 
       const input = c.req.valid("json")
-      const [grant] = await db
+      // primary: polled right after the grant is created and consumed; a lagging "unknown" reads as invalid.
+      const [grant] = await db.$primary
         .select({ consumedAt: DesktopHandoffGrantTable.consumed_at, expiresAt: DesktopHandoffGrantTable.expires_at })
         .from(DesktopHandoffGrantTable)
         .where(eq(DesktopHandoffGrantTable.id, input.grant))
@@ -707,6 +708,8 @@ export function registerDesktopAuthRoutes<T extends { Variables: AuthContextVari
         resolved = await resolveUserOrganizations({
           userId,
           activeOrganizationId: organizationId,
+          // primary: the organization was just created.
+          reader: db.$primary,
         })
       }
       const activeOrg = resolved.orgs.find((org) => org.id === resolved.activeOrgId) ?? null

@@ -27,8 +27,9 @@ import { CLAIMABLE_STATUSES, THREAD_ACTIVE_STATUSES } from "./statuses.js"
 export type InstallationRow = typeof Installation.$inferSelect
 export type EventRow = typeof Event.$inferSelect
 export type ThreadRow = typeof Thread.$inferSelect
-export async function getInstallation(connectionId: DenTypeId<"externalMcpConnection">) {
-  return (await db.select().from(Installation).where(eq(Installation.connectionId, connectionId)).limit(1))[0] ?? null
+/** Pass `db.$primary` when the installation may have been written moments ago. */
+export async function getInstallation(connectionId: DenTypeId<"externalMcpConnection">, database: typeof db.$primary = db) {
+  return (await database.select().from(Installation).where(eq(Installation.connectionId, connectionId)).limit(1))[0] ?? null
 }
 export function isSlackConnection(connection: ExternalMcpConnectionRow) {
   return (
@@ -159,7 +160,8 @@ export async function resolveSlackActor(installation: InstallationRow, slackUser
     connectionId: installation.connectionId,
   })
   if (!connection || !isSlackConnection(connection)) return null
-  const identities = await db
+  // primary: events re-queued by bindSlackOAuthMember run right away, and a revoked identity must stop at once.
+  const identities = await db.$primary
     .select()
     .from(Identity)
     .where(
@@ -355,7 +357,8 @@ export async function cancelSlackThread(installation: InstallationRow, event: Sl
   if (!event.user || !event.channel || !event.thread_ts) return
   // Private replies may run in a DM while the source mention was in a channel.
   // Search only this signed actor's active events, then match source or output.
-  const candidates = await db
+  // primary: Stop must see the event that started running moments ago.
+  const candidates = await db.$primary
     .select()
     .from(Event)
     .where(
@@ -429,7 +432,8 @@ export async function removeSlackIdentities(connectionId: DenTypeId<"externalMcp
 export async function findSlackThread(event: EventRow, actor: SlackActor) {
   return (
     (
-      await db
+      // primary: lockSlackThread/saveSlackSession wrote this row moments ago.
+      await db.$primary
         .select()
         .from(Thread)
         .where(
@@ -500,7 +504,8 @@ export async function pruneSlackEvents() {
     )
 }
 export async function latestSlackContext(event: EventRow) {
-  const rows = await db
+  // primary: the context event is enqueued just before the invocation that reads it.
+  const rows = await db.$primary
     .select({ payload: Event.payload })
     .from(Event)
     .where(

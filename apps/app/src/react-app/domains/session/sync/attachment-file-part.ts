@@ -300,15 +300,14 @@ function uploadErrorMessage(filename: string, error: unknown) {
 function attachmentPathNotePart(uploaded: UploadedChatAttachment[]): TextPartInput {
   // Synthetic: model/tools still see workspace paths, but the chat UI renders
   // file parts as compact badges instead of this wall of path text.
+  const binaryFiles = uploaded.filter((item) => modelFacingAttachmentMime(item.mime) === null);
   return {
     type: "text",
     synthetic: true,
     metadata: {
-      openworkAttachments: uploaded
-        .filter((item) => modelFacingAttachmentMime(item.mime) === null)
-        .map((item) => ({ filename: item.filename, mime: item.mime, url: item.url, bytes: item.bytes })),
+      openworkAttachments: binaryFiles.map((item) => ({ filename: item.filename, mime: item.mime, url: item.url, bytes: item.bytes })),
     },
-    text: attachmentNoteText(uploaded),
+    text: attachmentNoteText(uploaded, { hasBinaryFiles: binaryFiles.length > 0 }),
   };
 }
 

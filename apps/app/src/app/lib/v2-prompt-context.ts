@@ -23,7 +23,8 @@ const PASTED_CLOSE = "</pasted-text>";
 
 const NOTE_HEADER = "Attached files were copied into this worker workspace for tool access:";
 const NOTE_FOOTER = "Use these paths with Read/Bash/MCP/Docling when a tool needs the file bytes.";
-const NOTE_RE = /Attached files were copied into this worker workspace for tool access:\n((?:- [^\n]*\n)*)Use these paths with Read\/Bash\/MCP\/Docling when a tool needs the file bytes\./;
+const NOTE_MEDIA_HINT = "You cannot view video, audio or other binary files directly; inspect or edit them through Bash with command-line tools such as ffmpeg.";
+const NOTE_RE = /Attached files were copied into this worker workspace for tool access:\n((?:- [^\n]*\n)*)Use these paths with Read\/Bash\/MCP\/Docling when a tool needs the file bytes\.(?:\nYou cannot view video, audio or other binary files directly; inspect or edit them through Bash with command-line tools such as ffmpeg\.)?/;
 const NOTE_LINE_RE = /^- ([^:\n]+?)(?: \((\d+(?:\.\d+)? (?:B|KB|MB|GB))\))?: .+ \((file:\/\/[^\n]*)\)$/;
 const CONTEXT_RE = /(?:^|\n\n)<openwork-context>\n([\s\S]*)\n<\/openwork-context>$/;
 const INLINE_RE = /<pasted-text>\n([\s\S]*?)\n<\/pasted-text>|<attachment>([^<>\n]+)<\/attachment>/g;
@@ -49,11 +50,15 @@ function parseAttachmentBytes(value: string | undefined): number | undefined {
 }
 
 /** The model-facing list of copied attachment paths. */
-export function attachmentNoteText(items: ReadonlyArray<{ filename: string; workspacePath: string; url: string; bytes?: number }>): string {
+export function attachmentNoteText(
+  items: ReadonlyArray<{ filename: string; workspacePath: string; url: string; bytes?: number }>,
+  options: { hasBinaryFiles?: boolean } = {},
+): string {
   return [
     NOTE_HEADER,
     ...items.map((item) => `- ${item.filename}${item.bytes === undefined ? "" : ` (${formatAttachmentBytes(item.bytes)})`}: ${item.workspacePath} (${item.url})`),
     NOTE_FOOTER,
+    ...(options.hasBinaryFiles ? [NOTE_MEDIA_HINT] : []),
   ].join("\n");
 }
 

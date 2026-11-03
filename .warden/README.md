@@ -1,53 +1,45 @@
 # Warden security review
 
-Warden runs two skills: new security regressions and public-repository
+Warden runs two skills on PRs: new security regressions and public-repository
 confidentiality. It does not review design, provenance, or Desktop/Den parity
-automatically. Those skill files remain available for optional local use.
+on PRs; the post-merge sweep (below) checks security, bugs, design and failing
+tests on what merged. Those skill files remain available for optional local use.
 Rendered UI is reviewed from evidence screenshots instead, where the pixels
 and layout exist: see `evals/design-review/README.md`.
 
-Findings appear in the run summary; incomplete analysis fails the job so it
-cannot look like a clean review. Warden never leaves review threads or
-request-changes reviews.
+Warden is advisory-only: its findings, missing reviews and incomplete analysis
+never block PRs or authorize merges. Findings appear in the run summary;
+incomplete analysis still fails the workflow job for observability so it cannot
+look like a clean review. Warden workflow jobs are not merge requirements.
+Warden never leaves review threads, approvals, dismissals or request-changes
+reviews.
 
-## Clearance (automatic approval)
+## Advisory PR reporting
 
-`.github/workflows/warden-clearance.yml` runs after each Warden run, from the
-default branch, and approves the PR as the `diff-warden` App when all of these
-hold:
+`.github/workflows/warden-clearance.yml` retains its historical name but runs
+only as a reporter after each Warden run, from the default branch. It validates
+the receipt against the run, attempt, PR and current head, then posts the
+`warden-clear` check as the `diff-warden` App: success for a complete, clear
+review, neutral for findings or incomplete analysis. This check is not a merge
+requirement, and the reporter neither approves PRs nor dismisses earlier
+reviews.
 
-- The PR is from this repository (forks are never reviewed or approved) and is
-  still open at the analyzed head commit.
-- Both skills completed, and the receipt matches the run, attempt, PR, and head.
-- No high or medium security findings. Low findings are noted, not blocking.
-- No confidentiality findings at any severity.
-- The PR does not change Warden itself: `.github/workflows/warden.yml`,
-  `.github/workflows/warden-clearance.yml`, `.github/workflows/warden-quick.yml`,
-  `.github/scripts/warden-report.mjs`, `.github/scripts/warden-clearance.mjs`,
-  `.github/scripts/warden-fast.mjs`, `warden.toml`, or `.warden/`.
-  `warden.yml` runs inside the PR's own review and could forge its result; the
-  others would let one PR rewrite the reviewer for every later PR.
+The live `dev` ruleset no longer requires `warden-clear`. Required tests,
+CodeQL and human approvals remain in force; Warden does not replace or weaken
+them. Keep all Warden checks and workflow jobs out of merge requirements.
 
-Other CI workflows, `AGENTS.md`, and agent skills are approvable. The security
-skill reviews workflow changes for concrete CI attack paths, and Warden's
-runtime never loads `AGENTS.md` or skills from the PR as instructions.
+`diff-warden` keeps one comment on the PR, edited after every run: the advisory
+result and why, then each security finding (severity, title, `file:line`,
+description). Confidentiality findings appear only as a count; their text could
+name the outside identity the rule protects. Model-written text is escaped and
+its @mentions are broken, so a finding cannot ping anyone. The repository is
+public, so security findings are visible to anyone, as the run summary already
+was.
 
-Otherwise it dismisses any earlier `diff-warden` approval. A new push dismisses
-the approval through the branch rule, and the next Warden run decides again.
-
-Either way, `diff-warden` keeps one comment on the PR, edited after every run:
-approved or not and why, then each security finding (severity, title,
-`file:line`, description). Confidentiality findings appear only as a count;
-their text could name the outside identity the rule protects. Model-written
-text is escaped and its @mentions are broken, so a finding cannot ping anyone.
-The repository is public, so security findings are visible to anyone, as the
-run summary already was.
-
-The approval only unblocks merges if the `dev` ruleset accepts it. With a
-required `openwork-reviewers` team review, an App approval cannot count, so
-that team requirement must be removed for clearance to merge PRs. Then any
-approval from someone with write access counts too. The model can be steered by
-text in the diff it reviews, so clearance is a judgment call, not a guarantee.
+The security skill still reviews workflow changes for concrete CI attack paths,
+and Warden's runtime never loads `AGENTS.md` or skills from the PR as
+instructions. Receipt validation and trusted policy remain important for useful
+feedback, not merge authorization: text in the diff can steer a model.
 
 ## Size limits
 
@@ -55,9 +47,9 @@ text in the diff it reviews, so clearance is a judgment call, not a guarantee.
 60,000 changed lines per PR (`[defaults.scan]`); the Warden jobs allow 60
 minutes. Warden lists files beyond those limits as skipped but doesn't fail
 the review for them, so the reporter does: a PR with any file skipped over a
-limit is incomplete, never clear, and its `warden-clear` check and comment say
-to split it. Findings from the part that was reviewed are still posted,
-marked as incomplete, so authors can act on them.
+limit is incomplete, and its neutral `warden-clear` check and advisory comment
+say to split it; neither blocks merging. Findings from the part that was reviewed
+are still posted, marked as incomplete, so authors can act on them.
 
 ## Review cost and generated files
 
@@ -120,7 +112,7 @@ credentials, partial analysis, and model errors are incomplete reviews.
 
 A full review of a large PR takes about 20 minutes, and every push restarts
 it. Two tools give feedback in a few minutes instead. Neither approves
-anything: clearance still comes only from the full review of the exact head.
+anything; the full review of the exact head also provides advisory feedback only.
 
 Both fingerprint each file's own change: the lines it adds and removes, plus
 mode and binary markers, without line numbers or surrounding context. Merging
@@ -159,7 +151,8 @@ git config --local openwork.wardenPrePush true
 ```
 
 The hook runs the reviewer script from `origin/dev`, not from the branch being
-pushed. It blocks a push only on findings CI's Warden would block on; skip it
+pushed. This opt-in local hook blocks a push on high/medium security findings
+or any confidentiality finding; CI Warden never blocks PRs. Skip the hook
 once with `git push --no-verify`. If the review can't finish, the push goes
 ahead. It only reviews when you push `HEAD`, and never commits or pushes.
 Like any `core.hooksPath` hook, the hook file itself comes from your checkout,
@@ -167,7 +160,74 @@ so enable it only in checkouts whose branches you trust.
 
 Fast reviews see less of the PR at once than the full review, so an
 interaction between a moved file and an unchanged one can be missed until the
-full review runs. That is why they never clear a PR.
+full review runs. No Warden review grants merge clearance.
+
+## Post-merge sweep: what to fix in what already merged
+
+`.github/workflows/warden-sweep.yml` runs every 3 hours (and on demand) on
+`dev`. It reviews each PR merged since the last sweep, one squash-merge
+commit at a time so every finding names the PR that caused it, with
+`.warden/sweep.toml`:
+
+- `diff-security-review`: the same security skill PRs get.
+- `diff-bug-review`: concrete bugs (a trigger and a wrong result), sweep only.
+- `design-spec-review`: `DESIGN.md` rule drift in UI code.
+- `ui-skills-review`: UI code against pinned rule sets from the
+  [UI Skills](https://www.ui-skills.com/mcp/docs) catalog: `baseline-ui`,
+  `fixing-accessibility` and `fixing-motion-performance` (ibelick) and
+  Vercel's Web Interface Guidelines. `DESIGN.md` wins where they disagree
+  (sentence case, skeletons, tracking, shadows), as listed in
+  `.warden/ui-skills/header.md`.
+- Failing tests: workflows that failed on dev at the merge commit, marked
+  "first failure on dev" when the same workflow passed on the run before.
+  Commits whose CI is still running are re-checked by the next sweeps for
+  up to 24 hours.
+
+Results go to the Slack channel in the `SLACK_WARDEN_SWEEP_CHANNEL_ID`
+repository variable (via `SLACK_BOT_TOKEN`), only when something needs
+fixing. The job summary has the same table; since the repository is public,
+security findings appear there only as counts.
+
+**Fix PRs.** When Warden is confident of a small fix, the sweep opens a PR
+against dev for it: one per merged PR (branch
+`warden-fix/merged-<pr>-<sha>`), built only from Warden's own
+high-confidence suggested diffs under the `warden-fixer` rules (text only, at
+most 3 files and 40 lines per fix, files that PR changed, never `.github/`,
+`.warden/` or agent config). Security, bug and design findings (both
+`DESIGN.md` and UI Skills) qualify; failing tests have no suggested diff and
+stay in the report for a person. A separate `fix`
+job opens the PRs, so Warden's model never runs next to a write token. It uses
+the automation App so CI and Warden run on the fix PR like any other; without
+the App it falls back to `GITHUB_TOKEN` and CI won't start until someone
+pushes. Security fix PRs name the file, not the issue. Fix PRs go through
+normal review and merge; the sweep never approves, merges or reverts. Turn
+fix PRs off with the repository variable `WARDEN_SWEEP_FIXES=off`.
+
+The last reviewed dev commit is saved in the `warden-sweep-state` artifact,
+so each PR is reviewed once; up to 20 PRs per sweep, the rest wait for the
+next one. A review that can't finish is reported and fails the run rather than
+being retried. To re-review a range, run the workflow with `since` set to the
+dev commit before it. Locally, without Slack or saved state:
+
+```sh
+SINCE=<dev sha> NO_SLACK=1 PI_CODING_AGENT_DIR=.warden/pi node .github/scripts/warden-sweep.mjs
+```
+
+### Updating the UI Skills rules
+
+The rule sets are copied into `.warden/ui-skills/rules/` with their source,
+sha256 and MIT licenses (`sources.json`, `LICENSES.md`). Warden never fetches
+them at review time, because third-party text would become reviewer
+instructions without review. To pick up upstream changes, or to add a rule set
+to `SOURCES` in the script:
+
+```sh
+node .warden/scripts/sync-ui-skills.mjs             # fetch from the UI Skills MCP, re-pin, regenerate
+node .warden/scripts/sync-ui-skills.mjs --generate  # after editing header.md, offline
+node .warden/scripts/sync-ui-skills.mjs --check     # CI: SKILL.md matches the pins
+```
+
+Review the rules diff in the PR like any other policy change.
 
 ## Rollout
 
@@ -179,11 +239,15 @@ Fork PRs are reviewed by `.github/workflows/contributor-warden.yml` instead,
 which runs the pinned Warden CLI from dev against the fork's commits written
 to disk as data (symlinks, LFS and filters off; this repository's `.warden/`
 and `warden.toml` replace the PR's copies). It only runs after a maintainer
-comments `/test`, so opening PRs cannot spend model budget. It first runs the
-`contributor-screen` skill (`.warden/contributor.toml`): hidden behavior,
-obfuscation and supply-chain risk. When that is clear, or the maintainer
-comments `/test` again, it runs the two standard skills. Neither result
-approves the PR; they feed the `contributor-pr-required` status.
+comments `/test`, so opening PRs cannot spend model budget. Maintainer
+authorization remains bound to the reviewed commit and the deterministic
+contributor screen still holds suspicious input for a person. Once authorized,
+tests and the standard Warden review do not wait for the AI screen or its
+verdict. The `contributor-screen` skill (`.warden/contributor.toml`) still
+reports hidden behavior, obfuscation and supply-chain risk as advisory feedback.
+Neither AI result approves the PR or blocks tests or merging; the Warden review
+posts the same advisory `warden-clear` check as same-repository PRs. Required
+tests and human review remain separate.
 
 Text in a fork's diff can steer the model, and the agent's `Read` tool
 accepts any path, including `/proc/self/environ`. So for forks, Warden runs

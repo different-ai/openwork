@@ -333,7 +333,8 @@ export function registerOrgCoreRoutes<T extends { Variables: OrgRouteVariables }
 
     await setRequestActiveOrganization(c, organizationId)
 
-    const organization = await db
+    // primary: reads back the organization created above.
+    const organization = await db.$primary
       .select()
       .from(OrganizationTable)
       .where(eq(OrganizationTable.id, organizationId))

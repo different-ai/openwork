@@ -66,7 +66,8 @@ export async function revokeHeadlessResumeGrantsForMember(input: { organizationI
   }
   let revoked = 0
   try {
-    const live = await db
+    // primary: sweep grants minted moments ago too.
+    const live = await db.$primary
       .select({ id: HeadlessResumeGrantTable.id })
       .from(HeadlessResumeGrantTable)
       .where(and(

@@ -55,7 +55,7 @@ export function liteLlmErrorResponse(error: LiteLlmError): GatewayWriteError {
   return new GatewayWriteError(status, `litellm_${error.code}`, error.message)
 }
 
-export async function activeSet(database: GatewayTx | typeof db, provider: GatewayProvider, settings: LiteLlmSettings): Promise<GatewaySet> {
+export async function activeSet(database: GatewayTx | typeof db | typeof db.$primary, provider: GatewayProvider, settings: LiteLlmSettings): Promise<GatewaySet> {
   const [set] = await database.select().from(GatewayCredentialSetTable)
     .where(and(eq(GatewayCredentialSetTable.id, normalizeDenTypeId("gatewayCredentialSet", settings.credentialSetId)), eq(GatewayCredentialSetTable.gateway_provider_id, provider.id)))
   if (!set || set.credential_mode !== settings.mode) throw new GatewayWriteError(409, "litellm_credential_set_changed", "The LiteLLM credential set changed. Recreate the provider to switch modes.")
@@ -67,7 +67,7 @@ function apiKeyOf(credential: Credential | undefined): string | null {
 }
 
 /** The key used to sync: the organization key, or the admin key in per-user mode. */
-export async function syncKey(database: GatewayTx | typeof db, set: GatewaySet, mode: LiteLlmMode) {
+export async function syncKey(database: GatewayTx | typeof db | typeof db.$primary, set: GatewaySet, mode: LiteLlmMode) {
   const subject = mode === "org" ? "org" : LITELLM_ADMIN_CREDENTIAL_SUBJECT
   const [row] = await database.select().from(GatewayProviderCredentialTable)
     .where(and(eq(GatewayProviderCredentialTable.credential_set_id, set.id), eq(GatewayProviderCredentialTable.subject, subject), isNull(GatewayProviderCredentialTable.org_membership_id)))
@@ -151,8 +151,9 @@ export async function planLiteLlmCatalog(client: LiteLlmClient, mode: LiteLlmMod
 /** Network half of a sync. Holds no locks; applyLiteLlmSync rechecks every input. */
 export async function planLiteLlmSync(provider: GatewayProvider, client: LiteLlmClient = createLiteLlmClient(liteLlmEndpoints(provider))): Promise<LiteLlmSyncPlan> {
   const settings = requireSettings(provider)
-  const set = await activeSet(db, provider, settings)
-  const { credential, key } = await syncKey(db, set, settings.mode)
+  // Primary: syncs run right after the provider or its key was written.
+  const set = await activeSet(db.$primary, provider, settings)
+  const { credential, key } = await syncKey(db.$primary, set, settings.mode)
   const catalog = await planLiteLlmCatalog(client, settings.mode, key)
   // Issued keys are reconciled per person by litellm-issued.ts, not matched here.
   const members = settings.mode === "member" && settings.keySource === "personal" ? await planMemberMatches(set, client, key) : []
@@ -210,7 +211,7 @@ export function groupName(modelIds: string[], alias: string | null) {
  * group, such as one team's models, never makes a member eligible: otherwise
  * their key could pull them into a broader group through an automatic grant.
  */
-export async function memberEligible(tx: GatewayTx | typeof db, provider: GatewayProvider, set: GatewaySet, memberId: GatewayMemberId, settings: LiteLlmSettings) {
+export async function memberEligible(tx: GatewayTx | typeof db | typeof db.$primary, provider: GatewayProvider, set: GatewaySet, memberId: GatewayMemberId, settings: LiteLlmSettings) {
   const accessGroupId = settings.groups[SIGN_IN_GROUP_KEY]
   if (!accessGroupId || !isDenTypeId("gatewayModelGroup", accessGroupId)) return false
   const [member] = await tx.select({ id: MemberTable.id }).from(MemberTable)

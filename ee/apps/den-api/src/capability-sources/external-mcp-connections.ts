@@ -372,8 +372,8 @@ export async function listExternalMcpConnections(organizationId: OrganizationId)
 export async function getExternalMcpConnection(input: {
   organizationId: OrganizationId
   connectionId: ExternalMcpConnectionId
-}): Promise<ExternalMcpConnectionRow | null> {
-  const rows = await db
+}, database: typeof db.$primary = db): Promise<ExternalMcpConnectionRow | null> {
+  const rows = await database
     .select()
     .from(ExternalMcpConnectionTable)
     .where(and(
@@ -541,7 +541,7 @@ export async function createExternalMcpConnection(input: {
     // Save both records together so a failed grant never leaves a connection.
     if (grants.length > 0) await tx.insert(ExternalMcpConnectionAccessGrantTable).values(grants)
   }))
-  const created = await getExternalMcpConnection({ organizationId: input.organizationId, connectionId: id })
+  const created = await getExternalMcpConnection({ organizationId: input.organizationId, connectionId: id }, db.$primary)
   if (!created) throw new Error("Failed to create external MCP connection.")
   return created
 }
@@ -807,8 +807,8 @@ export async function listExternalMcpConnectionAccess(input: {
 export async function listDirectExternalMcpConnectionAccess(input: {
   organizationId: OrganizationId
   connectionId: ExternalMcpConnectionId
-}): Promise<ExternalMcpConnectionAccessGrantRow[]> {
-  return db
+}, database: typeof db.$primary = db): Promise<ExternalMcpConnectionAccessGrantRow[]> {
+  return database
     .select()
     .from(ExternalMcpConnectionAccessGrantTable)
     .where(and(
@@ -826,10 +826,10 @@ export async function listDirectExternalMcpConnectionAccess(input: {
 export async function listDirectExternalMcpConnectionAccessByConnection(input: {
   organizationId: OrganizationId
   connectionIds: ExternalMcpConnectionId[]
-}): Promise<Map<ExternalMcpConnectionId, ExternalMcpConnectionAccessGrantRow[]>> {
+}, database: typeof db.$primary = db): Promise<Map<ExternalMcpConnectionId, ExternalMcpConnectionAccessGrantRow[]>> {
   const grants = new Map<ExternalMcpConnectionId, ExternalMcpConnectionAccessGrantRow[]>()
   if (input.connectionIds.length === 0) return grants
-  const rows = await db
+  const rows = await database
     .select()
     .from(ExternalMcpConnectionAccessGrantTable)
     .where(and(
@@ -1714,10 +1714,12 @@ function sameExternalMcpIdentity(
     && current.apiKeyAuthScheme === expected.apiKeyAuthScheme
 }
 
+// Identity reads below hand out credentials, PKCE verifiers and refresh tokens
+// written moments earlier (an OAuth callback can return instantly): primary.
 async function readExternalMcpConnectionForIdentity(
   connection: ExternalMcpConnectionRow,
 ): Promise<ExternalMcpConnectionRow | null> {
-  const rows = await db
+  const rows = await db.$primary
     .select()
     .from(ExternalMcpConnectionTable)
     .where(and(
@@ -1750,7 +1752,7 @@ export async function readOrgOAuthClientForExternalMcpIdentity(
 ): Promise<ExternalMcpIdentityRead<typeof OrgOAuthClientTable.$inferSelect>> {
   const beforeClientRead = await readExternalMcpConnectionForIdentity(connection)
   if (!beforeClientRead || !sameExternalMcpIdentity(beforeClientRead, connection)) return { current: false }
-  const rows = await db
+  const rows = await db.$primary
     .select()
     .from(OrgOAuthClientTable)
     .where(and(
@@ -1851,7 +1853,7 @@ export async function readConnectedAccountForExternalMcpIdentity(input: {
 }): Promise<ExternalMcpIdentityRead<typeof ConnectedAccountTable.$inferSelect>> {
   const beforeAccountRead = await readExternalMcpConnectionForIdentity(input.connection)
   if (!beforeAccountRead || !sameExternalMcpIdentity(beforeAccountRead, input.connection)) return { current: false }
-  const rows = await db
+  const rows = await db.$primary
     .select()
     .from(ConnectedAccountTable)
     .where(and(

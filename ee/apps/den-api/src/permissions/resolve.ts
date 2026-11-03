@@ -193,7 +193,8 @@ async function databaseGrants(subject: PermissionSubject, isAdmin: boolean, read
     try {
       const result = await reconcileDefaultPermissionSets(db, { organizationId: subject.organizationId })
       logger.info("permission default sets reconciled on read", { organization_id: subject.organizationId, rows_inserted: result.rowsInserted })
-      states = await readPermissionSetStates(db, setIds)
+      // In a transaction so it reads the primary: a replica can lag the rows just reconciled.
+      states = await db.transaction((tx) => readPermissionSetStates(tx, setIds))
     } catch (error) {
       logger.error("reconciling default permission sets on read failed; using the stored state", {
         organization_id: subject.organizationId,

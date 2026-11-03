@@ -14,7 +14,10 @@ is unavailable until it moves to a current build (see
 
 ## Teach, review, and run
 
-1. Open Browser → Teach Workbot. Choose the browser tab, then Start teaching.
+1. Open Browser and choose the whiteboard, Teach Workbot, in its toolbar. The
+   teaching window floats over the page, which keeps its size; collapse it to
+   its latest step or hide it, and teaching continues (the whiteboard shows a
+   dot while recording). Choose the browser tab, then Start teaching.
    With the browser live view, the tab on screen is chosen unless you pick
    another, and tabs are named as in the tab strip. The taught tab comes to the
    front. The person owns browser input while teaching.
@@ -25,7 +28,7 @@ is unavailable until it moves to a current build (see
    review, and which step the explanation applies to.
 3. Choose Select information, then click a field in the browser. That click
    selects an extraction target instead of activating the page control.
-4. Open Recorded steps and select an earlier action to explain or correct it
+4. Select an earlier action under Recorded steps to explain or correct it
    in chat. Use latest step returns chat to the current action. Input and output
    names accept ordinary words such as “Person name.” Each recorded field edit
    starts as a parameter; the entered value is omitted. Pause recording for

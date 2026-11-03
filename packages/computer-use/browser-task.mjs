@@ -311,7 +311,6 @@ function observePage(id, options = {}) {
   if (!interactive) {
     return { truncated, scrollRegions, title: text(document.title, 300), ...(includeText ? { text: text(document.body?.innerText, 16000) } : {}), elements,
       ...page, ...(diff ? { diff } : {}), ...(focused ? { focused } : {}),
-      webmcp: "modelContext" in document ? "available" : "check_site_tools",
       limitations: ["DOM references cover the top document and open controls; use a fresh image for frames or canvas."] };
   }
   const shown = diff ? items.filter((item) => diff.added.includes(item.ref) || diff.changed.includes(item.ref)) : items;
@@ -320,7 +319,7 @@ function observePage(id, options = {}) {
     .map((element) => text(element instanceof HTMLElement ? element.innerText : "", 300)).filter(Boolean).slice(0, 5);
   return { mode, title: text(document.title, 300), elements: shown, ...(diff ? { diff } : {}), ...(focused ? { focused } : {}),
     ...(status.length ? { status } : {}), ...(truncated ? { truncated } : {}), ...(includeText ? { text: text(document.body?.innerText, 16000) } : {}),
-    ...page, ...("modelContext" in document ? { webmcp: "available" } : {}) };
+    ...page };
 }
 // Records when the document last changed structure. Text-only changes (live
 // counters, clocks) are ignored; elements appearing, disappearing, showing,
@@ -755,12 +754,14 @@ export function createBrowserTaskHost({ getTab, tabsFor, ownerOf, activeFor, isV
     if (state.latest && (state.latest.revision !== revision || state.latest.url !== url)) state.observations.clear();
     state.observations.set(id, record); state.latest = record;
     for (const old of state.observations.keys()) { if (state.observations.size <= 20) break; state.observations.delete(old); }
+    // This page script is isolated from the site's own tools, so the host's count says whether to look for them.
+    const siteTools = tab.webMcpToolCount > 0 ? { siteTools: tab.webMcpToolCount } : {};
     if (mode === "interactive") {
       const { hasPaymentField, hasCredentialField: _credential, viewport: _viewport, scroll: _scroll, ...compact } = page;
-      return { ok: true, tabId: tab.tabId, observationId: id, url: safeUrl(url), trust: TRUST, ...compact, ...(hasPaymentField ? { payment: "take_over" } : {}), ...(image ? { image } : {}) };
+      return { ok: true, tabId: tab.tabId, observationId: id, url: safeUrl(url), trust: TRUST, ...compact, ...siteTools, ...(hasPaymentField ? { payment: "take_over" } : {}), ...(image ? { image } : {}) };
     }
     const { hasCredentialField: _credential, ...full } = page;
-    return { ok: true, tabId: tab.tabId, observationId: id, url: safeUrl(url), trust: TRUST, ...full, ...(image ? { image } : {}) };
+    return { ok: true, tabId: tab.tabId, observationId: id, url: safeUrl(url), trust: TRUST, ...full, ...siteTools, ...(image ? { image } : {}) };
   }
   /** Bounded wait after input: navigation, in-flight requests and DOM structure. */
   async function settle(tab, observed, since, signal) {

@@ -1117,8 +1117,8 @@ export async function attachmentUpload(seed: Seed) {
           window.fetch = async (input, init) => {
             const url = input instanceof Request ? input.url : String(input);
             const method = init?.method ?? (input instanceof Request ? input.method : "GET");
-            // The client posts multipart to /workspace/<id>/inbox with the target
-            // path as a form field, not a query parameter.
+            // The client posts the file to /workspace/<id>/inbox with the target
+            // path as a query parameter; a multipart retry carries it as a form field.
             const formPath = init?.body instanceof FormData ? String(init.body.get("path") ?? "") : "";
             if (method === "POST" && /\/inbox(\?|$)/.test(url) && `${url} ${formPath}`.includes("chat-attachments")) {
               fault.attempts++;

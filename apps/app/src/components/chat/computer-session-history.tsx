@@ -1,6 +1,6 @@
 import { useEffect, useState, type ReactNode } from "react"
 import type { DynamicToolUIPart } from "ai"
-import { ChevronRight, CodeXml, Monitor, Pause, Play } from "lucide-react"
+import { ChevronRight, CodeXml, Globe, Monitor, Pause, Play } from "lucide-react"
 
 import { markFeatureUsed } from "@/app/lib/den"
 import { Button } from "@/components/ui/button"
@@ -9,7 +9,7 @@ import { Image } from "@/components/ui/image"
 import { isToolPartInFlight } from "@/lib/tool-activity"
 import { formatToolCallDuration } from "@/lib/tool-call-duration"
 import { cn } from "@/lib/utils"
-import type { ComputerSessionHistory as History } from "@/lib/computer-session-history"
+import { isBrowserToolName, type ComputerSessionHistory as History } from "@/lib/computer-session-history"
 
 export function ComputerSessionHistory({ history, active, renderAction }: {
   history: History
@@ -29,7 +29,11 @@ export function ComputerSessionHistory({ history, active, renderAction }: {
   const currentFrameId = frame?.id
   const nextFrameId = frames[index + 1]?.id
   const unfinished = parts.some(isToolPartInFlight)
-  const title = unfinished ? active ? "Using computer" : "Computer status unavailable" : "Used computer"
+  const browserOnly = parts.every(part => isBrowserToolName(part.toolName))
+  const surface = browserOnly ? "browser" : "computer"
+  const surfaceTitle = browserOnly ? "Browser" : "Computer"
+  const Icon = browserOnly ? Globe : Monitor
+  const title = unfinished ? active ? `Using ${surface}` : `${surfaceTitle} status unavailable` : `Used ${surface}`
 
   useEffect(() => {
     if (!open || !playing) return
@@ -57,7 +61,7 @@ export function ComputerSessionHistory({ history, active, renderAction }: {
     <Collapsible
       data-computer-session-history=""
       role="group"
-      aria-label="Computer session history"
+      aria-label={`${surfaceTitle} session history`}
       className="w-full min-w-0 overflow-hidden rounded-xl border border-border bg-background"
       open={open}
       onOpenChange={value => {
@@ -66,8 +70,8 @@ export function ComputerSessionHistory({ history, active, renderAction }: {
         else markFeatureUsed("computerSessionHistory")
       }}
     >
-      <CollapsibleTrigger render={<Button variant="ghost" className="h-auto w-full justify-start gap-3 rounded-none p-3 text-left" />} aria-label="View computer session history">
-        <Monitor aria-hidden="true" className="size-4 shrink-0 text-muted-foreground" />
+      <CollapsibleTrigger render={<Button variant="ghost" className="h-auto w-full justify-start gap-3 rounded-none p-3 text-left" />} aria-label={`View ${surface} session history`}>
+        <Icon aria-hidden="true" className="size-4 shrink-0 text-muted-foreground" />
         <span className="min-w-0 flex-1">
           <span className={cn("block text-sm font-medium", unfinished && active && "animate-text-shimmer motion-reduce:animate-none")}>{title}</span>
           <span className="mt-0.5 flex flex-wrap gap-x-3 text-xs font-normal text-muted-foreground">
@@ -99,11 +103,11 @@ export function ComputerSessionHistory({ history, active, renderAction }: {
                 {/* Native range: the shared UI has no slider primitive. Its end follows new captures. */}
                 <input type="range" min={0} max={frames.length - 1} step={1} value={index} disabled={frames.length < 2} aria-label="Browse captured views" aria-valuetext={`${index + 1} of ${frames.length}: ${frame.label}`} className="min-w-0 flex-1 accent-foreground" onInput={event => select(Number(event.currentTarget.value))} />
                 <span className="shrink-0 text-xs tabular-nums text-muted-foreground" data-computer-view-count="">{index + 1} / {frames.length}</span>
-                <CollapsibleTrigger render={<Button variant="ghost" size="icon-xs" className="text-muted-foreground opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 pointer-coarse:opacity-100" />} aria-label="View computer actions"><CodeXml aria-hidden="true" /></CollapsibleTrigger>
+                <CollapsibleTrigger render={<Button variant="ghost" size="icon-xs" className="text-muted-foreground opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 pointer-coarse:opacity-100" />} aria-label={`View ${surface} actions`}><CodeXml aria-hidden="true" /></CollapsibleTrigger>
               </div>
             </> : <div className="flex flex-wrap items-center justify-between gap-2">
               <p className="text-xs text-muted-foreground">No captured views in this session.</p>
-              <CollapsibleTrigger render={<Button variant="ghost" size="sm" />} aria-label="View computer actions">View actions</CollapsibleTrigger>
+              <CollapsibleTrigger render={<Button variant="ghost" size="sm" />} aria-label={`View ${surface} actions`}>View actions</CollapsibleTrigger>
             </div>}
             <CollapsibleContent><div className="space-y-2 pt-3">{parts.map(part => <div key={part.toolCallId}>{renderAction(part)}</div>)}</div></CollapsibleContent>
           </Collapsible>

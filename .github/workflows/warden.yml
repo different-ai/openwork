@@ -1,7 +1,8 @@
 name: Warden
 
-# Keep these actions aligned with warden.toml. Warden Clearance
-# (warden-clearance.yml) reads this run's warden-summary receipt to approve.
+# Keep these actions aligned with warden.toml. The advisory reporter
+# (warden-clearance.yml) reads this run's warden-summary receipt, never approves.
+# Incomplete analysis fails the job for observability, not as a merge requirement.
 on:
   pull_request:
     types: [opened, synchronize, reopened, ready_for_review]

@@ -215,7 +215,9 @@ export async function ensureDefaultPermissionSets(
 
   // A locking read sees sets committed by a concurrent caller even when
   // `database` is a transaction whose snapshot predates them.
-  const created = await getDefaultPermissionSets(database, organizationId, { lock: "share" })
+  // In a transaction (a savepoint when `database` already is one), so it reads the primary:
+  // on the root database a replica can lag the sets just inserted.
+  const created = await inTransaction(database, (tx) => getDefaultPermissionSets(tx, organizationId, { lock: "share" }))
   if (!created.member || !created.admin) throw new DefaultPermissionSetsMissingError(organizationId)
   return { member: created.member, admin: created.admin }
 }

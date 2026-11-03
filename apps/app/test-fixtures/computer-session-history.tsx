@@ -1,12 +1,14 @@
 import { useState } from "react"
 import { createRoot } from "react-dom/client"
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
 import { MessageList } from "../src/components/chat/message-list"
 import { MessageListProvider } from "../src/components/chat/message-list-provider"
 import { useComputerSessionHistoryStore } from "../src/components/chat/computer-session-history-store"
 import { Button } from "../src/components/ui/button"
 import { TooltipProvider } from "../src/components/ui/tooltip"
+import { DenAuthProvider } from "../src/react-app/domains/cloud/den-auth-provider"
 import { PlatformProvider, createDefaultPlatform } from "../src/react-app/kernel/platform"
-import { computerHistoryMessages } from "./computer-session-history-data"
+import { browserHistoryMessages, computerHistoryMessages } from "./computer-session-history-data"
 import "../src/app/index.css"
 
 // Deterministic raster captures: no desktop, external service, or recording.
@@ -29,11 +31,14 @@ function capture(stage: number): string {
   return canvas.toDataURL("image/png")
 }
 
-const messages = computerHistoryMessages([capture(0), capture(1), capture(2)])
+const captures = [capture(0), capture(1), capture(2)]
+const messages = new URLSearchParams(location.search).has("browser") ? browserHistoryMessages(captures) : computerHistoryMessages(captures)
+
+const queryClient = new QueryClient()
 
 function Fixture() {
   const [enabled, setEnabled] = useState(false)
-  return <PlatformProvider value={createDefaultPlatform()}><TooltipProvider>
+  return <QueryClientProvider client={queryClient}><DenAuthProvider><PlatformProvider value={createDefaultPlatform()}><TooltipProvider>
     <main className="mx-auto max-w-3xl space-y-6 p-4 text-foreground">
       <div className="flex flex-wrap items-center justify-between gap-2 border-b border-border pb-3">
         <span className="text-sm font-medium">Computer session history preview</span>
@@ -48,7 +53,7 @@ function Fixture() {
         onMcpReconnect={async () => { throw new Error("This fixture has no connections") }} onMcpReopenAuthorization={async () => {}}
       ><MessageList messages={messages} status="ready" activityStatus="idle" /></MessageListProvider>
     </main>
-  </TooltipProvider></PlatformProvider>
+  </TooltipProvider></PlatformProvider></DenAuthProvider></QueryClientProvider>
 }
 
 const root = document.getElementById("root")

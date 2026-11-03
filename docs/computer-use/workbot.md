@@ -168,6 +168,11 @@ person's Files are copied in again on next use. Computers from before this
 existed carry only `/workspace`. An idle replacement happens only when both
 carry over. **Rebuild computer** still starts clean, carrying nothing.
 
+A sandbox gateway's template is rebuilt by hand, so a replacement can come up on
+the same older image. The computer then stays where it is and the runner tries
+again a day later, or 10 minutes later if the computer can't serve this runner
+at all.
+
 ### Freestyle instead of Daytona
 
 Freestyle runs the same desktop from a snapshot captured while the desktop is
@@ -191,15 +196,22 @@ HEADLESS_COMPUTER_DOMAIN=computers.example.com
 ```
 
 The production deploy (`celld-runner-deploy.yml`) builds the snapshot itself
-when the configured slug was built for a different image. A guest-only change
-builds nothing: the runner installs its guest into the computers it starts. It
-uses the runner's `FREESTYLE_API_KEY`, names the snapshot after the new image,
-and bundles the runner with that slug. A later run with the same image finds the
-snapshot already built. If the build fails, the deploy stops before the fleet
-changes. Building a snapshot also gives the earlier `workbot-desktop-freestyle-…`
-snapshots a 14-day deletion window: Freestyle deletes one once no computer has
-been created from it for 14 days, so a recent one stays available to roll back
-to.
+when the configured slug was built for a different image. It uses the runner's
+`FREESTYLE_API_KEY`, names the snapshot after the new image, and bundles the
+runner with that slug. A later run with the same image finds the snapshot already
+built. If the build fails, the deploy stops before the fleet changes. Building a
+snapshot also gives the earlier `workbot-desktop-freestyle-…` snapshots a 14-day
+deletion window: Freestyle deletes one once no computer has been created from it
+for 14 days, so a recent one stays available to roll back to.
+
+A guest-only change needs no new image. The deploy layers the runner's guest onto
+the image's snapshot (`snapshot:build:freestyle-guest`), which takes seconds, and
+bundles the runner with `workbot-desktop-freestyle-<image>-<guest>`, so a new
+computer skips installing the guest on first open. Each new layer gives the
+earlier layers the same 14-day window, and the image's snapshot stays. If the
+layer fails, the deploy carries on with the image's snapshot and the runner
+installs its guest, as it does into every computer that already exists.
+
 The plain `HEADLESS_COMPUTER_SNAPSHOT` variable in the `celld-production`
 GitHub environment overrides the same field in `CELLD_RUNNER_VARS`; set it to a
 slug not named by the builder to choose a snapshot by hand, which the deploy

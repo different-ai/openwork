@@ -193,12 +193,13 @@ export function checkDefaultModelChoice(choice: DefaultModelChoice, options: Def
 
 /** The organization default and every team's override, teams by name, with each team's size and conflicts. */
 export async function listDefaultModelSettings(organizationId: OrganizationId): Promise<Omit<DefaultModelSettings, "canEdit">> {
+  // Primary: every save answers with this view of the row it just wrote. Admin-only and rare.
   const [rows, teams] = await Promise.all([
-    db.select().from(OrgDefaultModelTable).where(eq(OrgDefaultModelTable.organizationId, organizationId)),
-    db.select({ id: TeamTable.id, name: TeamTable.name }).from(TeamTable).where(eq(TeamTable.organizationId, organizationId)).orderBy(asc(TeamTable.name)),
+    db.$primary.select().from(OrgDefaultModelTable).where(eq(OrgDefaultModelTable.organizationId, organizationId)),
+    db.$primary.select({ id: TeamTable.id, name: TeamTable.name }).from(TeamTable).where(eq(TeamTable.organizationId, organizationId)).orderBy(asc(TeamTable.name)),
   ])
   const membershipRows = teams.length > 0
-    ? await db
+    ? await db.$primary
       .select({ teamId: TeamMemberTable.teamId, memberId: TeamMemberTable.orgMembershipId })
       .from(TeamMemberTable)
       .where(inArray(TeamMemberTable.teamId, teams.map((team) => team.id)))

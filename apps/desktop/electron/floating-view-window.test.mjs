@@ -4,13 +4,16 @@ import assert from "node:assert/strict";
 import { FLOATING_VIEW_PREFIX, attachFloatingViewWindow, floatingViewWindowOptions } from "./floating-view-window.mjs";
 
 describe("floating view windows", () => {
-  it("opens only empty pages under the reserved name as borderless windows", () => {
+  it("opens only empty pages under the reserved name, as real resizable windows", () => {
     const options = floatingViewWindowOptions({ url: "about:blank", frameName: `${FLOATING_VIEW_PREFIX}browser` });
-    assert.equal(options?.frame, false);
-    assert.equal(options?.transparent, true);
     assert.equal(options?.show, false);
     assert.equal(options?.webPreferences.preload, undefined);
     assert.equal(options?.webPreferences.sandbox, true);
+    // Nothing turns off what the system gives a window: no frameless card, and
+    // it resizes, minimizes and full-screens.
+    for (const key of /** @type {const} */ (["frame", "transparent", "skipTaskbar", "resizable", "minimizable", "maximizable", "fullscreenable"])) {
+      assert.equal(options?.[key], undefined, key);
+    }
     assert.equal(floatingViewWindowOptions({ url: "https://example.com", frameName: `${FLOATING_VIEW_PREFIX}browser` }), null);
     assert.equal(floatingViewWindowOptions({ url: "about:blank", frameName: "" }), null);
     assert.equal(floatingViewWindowOptions({ url: "about:blank", frameName: "anything-else" }), null);
@@ -18,7 +21,14 @@ describe("floating view windows", () => {
     assert.equal(floatingViewWindowOptions({ url: "about:blank", frameName: "openwork-computer-view-1" }), null);
   });
 
-  it("shows the window above other apps without taking focus, and never navigates it", () => {
+  it("keeps each platform's window controls beside the tab strip", () => {
+    const frameName = `${FLOATING_VIEW_PREFIX}browser`;
+    assert.equal(floatingViewWindowOptions({ url: "about:blank", frameName, platform: "darwin" })?.titleBarStyle, "hiddenInset");
+    assert.deepEqual(floatingViewWindowOptions({ url: "about:blank", frameName, platform: "win32" })?.titleBarOverlay, { height: 40 });
+    assert.deepEqual(floatingViewWindowOptions({ url: "about:blank", frameName, platform: "linux" })?.titleBarOverlay, { height: 40 });
+  });
+
+  it("keeps the window above other windows without taking focus or the Dock icon, and never navigates it", () => {
     /** @type {unknown[][]} */
     const calls = [];
     /** @type {(event: { preventDefault: () => void }) => void} */
@@ -37,7 +47,7 @@ describe("floating view windows", () => {
     attachFloatingViewWindow(child);
     assert.deepEqual(calls, [
       ["setAlwaysOnTop", true, "floating"],
-      ["setVisibleOnAllWorkspaces", true, { visibleOnFullScreen: true }],
+      ["setVisibleOnAllWorkspaces", true, { visibleOnFullScreen: true, skipTransformProcessType: true }],
       ["showInactive"],
     ]);
     assert.deepEqual(openHandler(), { action: "deny" });

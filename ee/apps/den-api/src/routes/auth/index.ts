@@ -114,7 +114,8 @@ function readStoredOAuthClientScopes(scopes: string | null) {
 }
 
 async function registeredClientHasMcpScope(clientId: string) {
-  const [client] = await db
+  // primary: MCP clients authorize right after registering, and this gates the redirect and resource checks.
+  const [client] = await db.$primary
     .select({ scopes: OAuthClientTable.scopes })
     .from(OAuthClientTable)
     .where(eq(OAuthClientTable.clientId, clientId))

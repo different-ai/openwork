@@ -84,24 +84,29 @@ function workEmail(column: string) {
 const notSetupAgentUser = sql.raw(`NOT EXISTS (SELECT 1 FROM member sa WHERE sa.user_id = u.id AND sa.is_setup_agent = 1)`)
 
 /** Distinct people who ran a task in the last 1, 7 and 30 days. Shared with den_overview. */
-export async function readTaskUserWindows(rows: Rows, now: Date) {
-  const [row] = await rows(sql`${SELECT}
-      COUNT(DISTINCT CASE WHEN t.event_timestamp >= ${ago(now, 1)} THEN m.user_id END) AS daily,
-      COUNT(DISTINCT CASE WHEN t.event_timestamp >= ${ago(now, 7)} THEN m.user_id END) AS weekly,
-      COUNT(DISTINCT m.user_id) AS monthly,
-      COUNT(DISTINCT CASE WHEN t.event_timestamp >= ${ago(now, 14)} AND t.event_timestamp < ${ago(now, 7)} THEN m.user_id END) AS previous_weekly,
-      SUM(t.event_type = 'task.started' AND t.event_timestamp >= ${ago(now, 7)}) AS started,
-      SUM(t.event_type = 'task.completed' AND t.event_timestamp >= ${ago(now, 7)}) AS completed,
-      SUM(t.event_type = 'task.failed' AND t.event_timestamp >= ${ago(now, 7)}) AS failed,
-      SUM(t.event_type = 'task.started' AND t.event_timestamp >= ${ago(now, 14)} AND t.event_timestamp < ${ago(now, 7)}) AS previous_started,
-      SUM(t.event_type = 'task.failed' AND t.event_timestamp >= ${ago(now, 14)} AND t.event_timestamp < ${ago(now, 7)}) AS previous_failed
-    FROM telemetry_event t JOIN member m ON m.id = t.member_id
-    WHERE t.event_timestamp >= ${ago(now, 30)} AND t.event_timestamp <= ${now} AND ${TASK_EVENT} AND ${HUMAN_MEMBER}`)
-  return {
-    daily: num(row?.daily), weekly: num(row?.weekly), monthly: num(row?.monthly), previousWeekly: num(row?.previous_weekly),
-    started: num(row?.started), completed: num(row?.completed), failed: num(row?.failed),
-    previousStarted: num(row?.previous_started), previousFailed: num(row?.previous_failed),
-  }
+// SPEAK TO OMAR BEFORE REENABLING THIS DATA POINT, NO EXCEPTIONS
+// Disabled: this query scanned 30 days of telemetry_event across every organization
+// with four COUNT(DISTINCT) aggregates every refresh and slowed the database down a lot.
+// Until it comes back, every value below is 0.
+export async function readTaskUserWindows(_rows: Rows, _now: Date) {
+  // const [row] = await rows(sql`${SELECT}
+  //     COUNT(DISTINCT CASE WHEN t.event_timestamp >= ${ago(now, 1)} THEN m.user_id END) AS daily,
+  //     COUNT(DISTINCT CASE WHEN t.event_timestamp >= ${ago(now, 7)} THEN m.user_id END) AS weekly,
+  //     COUNT(DISTINCT m.user_id) AS monthly,
+  //     COUNT(DISTINCT CASE WHEN t.event_timestamp >= ${ago(now, 14)} AND t.event_timestamp < ${ago(now, 7)} THEN m.user_id END) AS previous_weekly,
+  //     SUM(t.event_type = 'task.started' AND t.event_timestamp >= ${ago(now, 7)}) AS started,
+  //     SUM(t.event_type = 'task.completed' AND t.event_timestamp >= ${ago(now, 7)}) AS completed,
+  //     SUM(t.event_type = 'task.failed' AND t.event_timestamp >= ${ago(now, 7)}) AS failed,
+  //     SUM(t.event_type = 'task.started' AND t.event_timestamp >= ${ago(now, 14)} AND t.event_timestamp < ${ago(now, 7)}) AS previous_started,
+  //     SUM(t.event_type = 'task.failed' AND t.event_timestamp >= ${ago(now, 14)} AND t.event_timestamp < ${ago(now, 7)}) AS previous_failed
+  //   FROM telemetry_event t JOIN member m ON m.id = t.member_id
+  //   WHERE t.event_timestamp >= ${ago(now, 30)} AND t.event_timestamp <= ${now} AND ${TASK_EVENT} AND ${HUMAN_MEMBER}`)
+  // return {
+  //   daily: num(row?.daily), weekly: num(row?.weekly), monthly: num(row?.monthly), previousWeekly: num(row?.previous_weekly),
+  //   started: num(row?.started), completed: num(row?.completed), failed: num(row?.failed),
+  //   previousStarted: num(row?.previous_started), previousFailed: num(row?.previous_failed),
+  // }
+  return { daily: 0, weekly: 0, monthly: 0, previousWeekly: 0, started: 0, completed: 0, failed: 0, previousStarted: 0, previousFailed: 0 }
 }
 
 /** Organizations with at least two people in them. */
@@ -172,11 +177,16 @@ export async function computePulse({ now, rows }: MetricContext): Promise<Metric
 // --- B–D. Growth, lifecycle, activation, retention and reactivation ---
 
 async function readUserActivity(rows: Rows, now: Date, from: string) {
-  const [activity, signups] = await Promise.all([
-    rows(sql`${SELECT} m.user_id AS uid, DATE(t.event_timestamp) AS day, MIN(u.created_at) AS signup
-      FROM telemetry_event t JOIN member m ON m.id = t.member_id JOIN user u ON u.id = m.user_id
-      WHERE t.event_timestamp >= ${new Date(dayTime(from))} AND t.event_timestamp <= ${now} AND ${TASK_EVENT} AND ${HUMAN_MEMBER}
-      GROUP BY m.user_id, day`),
+  // SPEAK TO OMAR BEFORE REENABLING THIS DATA POINT, NO EXCEPTIONS.
+  // The per-user daily task activity query is disabled: it scanned every task event
+  // platform-wide for up to 126 days and was too slow. Activity-based lifecycle numbers
+  // (weekly states, activation, retention, reactivation) read as empty until it returns.
+  // rows(sql`${SELECT} m.user_id AS uid, DATE(t.event_timestamp) AS day, MIN(u.created_at) AS signup
+  //   FROM telemetry_event t JOIN member m ON m.id = t.member_id JOIN user u ON u.id = m.user_id
+  //   WHERE t.event_timestamp >= ${new Date(dayTime(from))} AND t.event_timestamp <= ${now} AND ${TASK_EVENT} AND ${HUMAN_MEMBER}
+  //   GROUP BY m.user_id, day`),
+  const activity: Awaited<ReturnType<Rows>> = []
+  const [signups] = await Promise.all([
     rows(sql`${SELECT} u.id AS uid, u.created_at AS signup FROM user u
       WHERE u.created_at >= ${new Date(dayTime(from))} AND u.created_at <= ${now} AND ${notSetupAgentUser}`),
   ])
@@ -338,7 +348,7 @@ export async function computeSharing({ now, rows }: MetricContext): Promise<Metr
   const from = later(CONTROL_CENTER_CAPABILITY_TRACKING_STARTED, addDays(today, -89))
   const fromTime = new Date(dayTime(from))
   const builtInMarketplaces = inList(BUILT_IN_MARKETPLACES)
-  const [teams, builtInPlugins, builtInSkills, uses, skills, plugins, marketplaces] = await Promise.all([
+  const [teams, builtInPlugins, builtInSkills, uses, skills, marketplaces] = await Promise.all([
     readTeamOrganizations(rows),
     rows(sql`${SELECT} DISTINCT mp.plugin_id AS id FROM marketplace_plugin mp JOIN marketplace mk ON mk.id = mp.marketplace_id WHERE mk.name IN (${builtInMarketplaces})`),
     rows(sql`${SELECT} DISTINCT pco.config_object_id AS id FROM plugin_config_object pco
@@ -362,7 +372,8 @@ export async function computeSharing({ now, rows }: MetricContext): Promise<Metr
         g.org_wide AS org_wide, g.team_id AS team, g.org_membership_id AS grantee
       FROM config_object co LEFT JOIN config_object_access_grant g ON g.config_object_id = co.id AND g.removed_at IS NULL
       WHERE co.object_type = 'skill' AND co.status = 'active' AND co.deleted_at IS NULL`),
-    rows(sql`${SELECT} p.id AS id, p.created_at AS created FROM plugin p WHERE p.status = 'active' AND p.created_at >= ${ago(now, 90)}`),
+    // The plugin-created count query is disabled: it returned 100k+ rows and failed every run.
+    // Talk to Omar before bringing it back.
     rows(sql`${SELECT} mk.created_at AS created FROM marketplace mk WHERE mk.status = 'active' AND mk.created_at >= ${ago(now, 90)} AND mk.name NOT IN (${builtInMarketplaces})`),
   ])
   const builtInPluginIds = new Set(builtInPlugins.map((row) => String(row.id)))
@@ -446,7 +457,8 @@ export async function computeSharing({ now, rows }: MetricContext): Promise<Metr
         .sort((a, b) => b.people - a.people || b.calls - a.calls)
         .slice(0, 10),
       catalog: {
-        plugins: plugins.filter((row) => !builtInPluginIds.has(String(row.id)) && createdInRange(row.created)).length,
+        // Disabled; see the note on the queries above. The UI shows a notice instead of this number.
+        plugins: 0,
         marketplaces: marketplaces.filter((row) => createdInRange(row.created)).length,
       },
     }

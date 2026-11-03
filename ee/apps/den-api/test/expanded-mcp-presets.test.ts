@@ -48,6 +48,12 @@ test("the connector catalog offers expanded entries", () => {
   assert.ok(onIds.includes("canva"))
 })
 
+test("the connector catalog offers Grafana Cloud with OAuth sign-in", () => {
+  const entry = connectorCatalogForQuery("grafana", false)?.entries.find((candidate) => candidate.id === "grafana")
+  assert.equal(entry?.setup, "oauth")
+  assert.equal(matchExternalMcpPresetForUrl("https://mcp.grafana.com/mcp")?.presetId, "grafana")
+})
+
 test("every expanded-preset connection retains its auth match", () => {
   // Existing connections and new catalog entries use the same preset auth policy.
   for (const expanded of EXTERNAL_MCP_PRESETS_EXPANDED) {

@@ -241,8 +241,8 @@ function serializeConnection(input: {
   }
 }
 
-async function buildConnectionPayload(connection: NonNullable<Awaited<ReturnType<typeof getOrganizationSsoConnection>>>, origin: string) {
-  const provider = await getSsoProviderForConnection(connection)
+async function buildConnectionPayload(connection: NonNullable<Awaited<ReturnType<typeof getOrganizationSsoConnection>>>, origin: string, reader: Parameters<typeof getSsoProviderForConnection>[1] = db) {
+  const provider = await getSsoProviderForConnection(connection, reader)
   const oidcConfig = parseConfig(provider?.oidcConfig ?? null)
   const samlConfig = parseConfig(provider?.samlConfig ?? null)
   const signInUrl = new URL(connection.signInPath || getOrganizationSsoSignInPath(""), getWebOrigin()).toString()
@@ -348,7 +348,8 @@ export function registerOrgSsoRoutes<T extends { Variables: OrgRouteVariables }>
       // Registration runs through better-auth's adapter and several short
       // transactions: the after-snapshot is appended in a fresh transaction.
       const auditEventIds = await appendDomainChangesAfterCommit(capture, "sso_connection.registered", async () => {
-        const current = await getOrganizationSsoAuditState(payload.organization.id)
+        // primary: the registration above just wrote it.
+        const current = await getOrganizationSsoAuditState(payload.organization.id, db.$primary)
         return current ? [ssoConnectionRegisteredEvent(payload.organization.id, previous, current)] : []
       })
       const domainVerificationToken = await requestDomainVerificationToken(connection.providerId, c.req.raw.headers).catch(() => null)
@@ -366,7 +367,7 @@ export function registerOrgSsoRoutes<T extends { Variables: OrgRouteVariables }>
         },
       }, auditEventIds)
 
-      return c.json({ connection: await buildConnectionPayload(connection, c.req.url), domainVerificationToken }, 201)
+      return c.json({ connection: await buildConnectionPayload(connection, c.req.url, db.$primary), domainVerificationToken }, 201)
     },
   )
 
@@ -414,7 +415,8 @@ export function registerOrgSsoRoutes<T extends { Variables: OrgRouteVariables }>
       // Registration runs through better-auth's adapter and several short
       // transactions: the after-snapshot is appended in a fresh transaction.
       const auditEventIds = await appendDomainChangesAfterCommit(capture, "sso_connection.registered", async () => {
-        const current = await getOrganizationSsoAuditState(payload.organization.id)
+        // primary: the registration above just wrote it.
+        const current = await getOrganizationSsoAuditState(payload.organization.id, db.$primary)
         return current ? [ssoConnectionRegisteredEvent(payload.organization.id, previous, current)] : []
       })
       const domainVerificationToken = await requestDomainVerificationToken(connection.providerId, c.req.raw.headers).catch(() => null)
@@ -432,7 +434,7 @@ export function registerOrgSsoRoutes<T extends { Variables: OrgRouteVariables }>
         },
       }, auditEventIds)
 
-      return c.json({ connection: await buildConnectionPayload(connection, c.req.url), domainVerificationToken }, 201)
+      return c.json({ connection: await buildConnectionPayload(connection, c.req.url, db.$primary), domainVerificationToken }, 201)
     },
   )
 

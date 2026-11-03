@@ -1,6 +1,8 @@
 import assert from "node:assert/strict"
 import { test } from "node:test"
-import { emptyInventoryWrites, inventoryRevisionsToBump, noteInventoryWrite, trackInventoryWrites } from "../src/inventory-writes.ts"
+import { getTableName } from "@openwork-ee/den-db/drizzle"
+import { GatewayCredentialSetTable, GatewayKeyTable, GatewayModelGroupModelTable, GatewayModelGroupTable, GatewayProviderAccessTable, GatewayProviderCredentialTable, GatewayProviderModelTable, GatewayProviderTable, MemberTable, TeamMemberTable, TeamTable } from "@openwork-ee/den-db/schema"
+import { emptyInventoryWrites, inventoryRevisionsToBump, noteInventoryWrite, PROVIDER_INVENTORY_TABLES, trackInventoryWrites } from "../src/inventory-writes.ts"
 
 const ORG = "org_01m4xbdvxxeh585vrbxydzqq58"
 const OTHER_ORG = "org_01m4xbdvwaejpvw05s0dd97wzt"
@@ -37,6 +39,29 @@ test("a write in a request without an organization bumps the organizations in it
     [OTHER_ORG],
   )
   assert.deepEqual(await bumpsFor([["update `connected_account` set `access_token` = ? where `id` = ?", ["secret", "ca_1"]]], null), [])
+})
+
+test("only writes to a provider inventory table mark the provider inventory", async () => {
+  const marked = async (query: string) => {
+    const writes = emptyInventoryWrites()
+    await trackInventoryWrites(writes, async () => noteInventoryWrite(query, []))
+    return writes.providerInventory
+  }
+  assert.equal(await marked("update `gateway_provider_credentials` set `status` = ? where `id` = ?"), true)
+  assert.equal(await marked("insert into `gateway_keys` (`id`) values (?)"), true)
+  assert.equal(await marked("delete from `team_member` where `id` = ?"), true)
+  assert.equal(await marked("update `member` set `removed_at` = ? where `id` = ?"), true)
+  assert.equal(await marked("update `connected_account` set `access_token` = ? where `id` = ?"), false)
+  assert.equal(await marked("update `external_mcp_connection` set `name` = ? where `id` = ?"), false)
+  assert.equal(await marked("select `id` from `gateway_keys`"), false)
+})
+
+test("the provider inventory tables are the ones its fingerprint reads", () => {
+  const tables = [
+    GatewayCredentialSetTable, GatewayKeyTable, GatewayModelGroupModelTable, GatewayModelGroupTable, GatewayProviderAccessTable,
+    GatewayProviderCredentialTable, GatewayProviderModelTable, GatewayProviderTable, MemberTable, TeamMemberTable, TeamTable,
+  ]
+  assert.deepEqual([...PROVIDER_INVENTORY_TABLES].sort(), tables.map((table) => getTableName(table)).sort())
 })
 
 test("writes outside a tracked request are ignored", () => {

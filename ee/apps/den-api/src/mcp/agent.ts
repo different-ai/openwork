@@ -77,6 +77,7 @@ import { executeWorkflowAuthoringTest, workflowAuthoringTestInputSchema, workflo
 import { parseNativeCapabilityName } from "./native-capabilities.js"
 import { gmailFileInputPreflightSchema } from "../capability-sources/gmail-file-input.js"
 import { recordWorkflowRun } from "../workflow-runs.js"
+import { withPrimaryReads } from "../read-routing.js"
 import {
   activateArtifactViewRevision,
   getGeneratedArtifactViewRevision,
@@ -1027,20 +1028,24 @@ export function registerAgentMcpRoutes<T extends { Variables: RequestIdVariables
           }
         }
         try {
-          const plugin = await runMcpServiceAction("plugin.bundle.create", auditPrincipal, null, async () => {
-            await requirePluginArchCapability(skillContext, "plugin.create")
-            await requirePluginArchCapability(skillContext, "config_object.create")
-            return createPluginBundle({
-              context: skillContext,
-              name: pluginName,
-              components: [{ type: "skill", value: { rawSourceText: skillMarkdown } }],
+          // Primary reads: each step reads back the Plugin and skill just written.
+          const { plugin, memberships } = await withPrimaryReads(async () => {
+            const plugin = await runMcpServiceAction("plugin.bundle.create", auditPrincipal, null, async () => {
+              await requirePluginArchCapability(skillContext, "plugin.create")
+              await requirePluginArchCapability(skillContext, "config_object.create")
+              return createPluginBundle({
+                context: skillContext,
+                name: pluginName,
+                components: [{ type: "skill", value: { rawSourceText: skillMarkdown } }],
+              })
             })
-          })
-          const memberships = await listPluginMemberships({
-            context: skillContext,
-            pluginId: plugin.id,
-            includeConfigObjects: true,
-            onlyActive: true,
+            const memberships = await listPluginMemberships({
+              context: skillContext,
+              pluginId: plugin.id,
+              includeConfigObjects: true,
+              onlyActive: true,
+            })
+            return { plugin, memberships }
           })
           const skill = memberships.items
             .map((membership) => membership.configObject)
@@ -1092,7 +1097,7 @@ export function registerAgentMcpRoutes<T extends { Variables: RequestIdVariables
         }
         try {
           const configObjectId = normalizeDenTypeId("configObject", skillId)
-          const versioned = await runMcpServiceAction("skill.version.create", auditPrincipal, serviceAuditResourceId(configObjectId), async () => {
+          const versioned = await withPrimaryReads(() => runMcpServiceAction("skill.version.create", auditPrincipal, serviceAuditResourceId(configObjectId), async () => {
             const existing = await getConfigObjectDetail(skillContext, configObjectId)
             if (existing.objectType !== "skill") return { created: false as const, objectType: existing.objectType }
             return {
@@ -1104,7 +1109,7 @@ export function registerAgentMcpRoutes<T extends { Variables: RequestIdVariables
                 value: { rawSourceText: skillMarkdown },
               }),
             }
-          }, { result: (value) => value.created ? null : 400 })
+          }, { result: (value) => value.created ? null : 400 }))
           if (!versioned.created) {
             return {
               ok: false,
@@ -1185,7 +1190,7 @@ export function registerAgentMcpRoutes<T extends { Variables: RequestIdVariables
           }
           const execution = await runMcpServiceAction("workflow.execute", auditPrincipal, serviceAuditResourceId(configObjectId), () => executeLiveArtifactWorkflow({
             context: artifactContext, configObjectId, expectedOutputSchemaDigest, timeZone,
-            buildTools: () => buildCapabilityToolTree(withUsageSource(capabilityContext, "artifact")),
+            buildTools: (required) => buildCapabilityToolTree(withUsageSource(capabilityContext, "artifact"), required),
             describeUnavailable: (missing) => liveArtifactConnectionFailure(capabilityContext, missing),
           }), { result: workflowExecutionAuditStatus, error: serviceErrorStatus })
           if (!execution.ok) return execution

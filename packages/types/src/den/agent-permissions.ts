@@ -4,8 +4,9 @@ import { z } from "zod";
  * Agent permissions: what agents may do on members' computers. An
  * organization's admins set them for everyone and override them per team in
  * Den; each member's desktop app applies engine permissions on OpenCode v2,
- * website permissions in its built-in browser, and computer use and app
- * scripting permissions at the desktop host on both engines.
+ * refuses legacy v1 execution under restrictive external-folder rules,
+ * applies website permissions in its built-in browser, and enforces computer
+ * use and app scripting permissions at the desktop host on both engines.
  *
  * A permission is one family of agent actions (commands, file edits, folders
  * outside the workspace, computer use, app scripting, websites, web search,

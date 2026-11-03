@@ -102,7 +102,8 @@ export async function settleAgent(row: AgentInstanceRow, changes: AgentSettle, n
 
 /** True while this instance still holds the agent's lease: checked right before anything is sent. */
 export async function holdsAgentLease(row: AgentInstanceRow, now = new Date()) {
-  const [current] = await db
+  // primary: the lease was claimed moments ago.
+  const [current] = await db.$primary
     .select({ leaseOwner: Instance.leaseOwner, leaseUntil: Instance.leaseUntil })
     .from(Instance)
     .where(eq(Instance.memberId, row.memberId))
@@ -154,7 +155,8 @@ export async function finishAgentDelivery(id: string, outcome: DeliveryOutcome) 
 
 /** Messages actually sent to the member since `since` (the start of their local day): the daily limit. */
 export async function agentSentSince(memberId: DenTypeId<"member">, since: Date) {
-  const [row] = await db
+  // primary: the daily limit must count the message sent moments ago.
+  const [row] = await db.$primary
     .select({ sent: count() })
     .from(Delivery)
     .where(and(eq(Delivery.memberId, memberId), eq(Delivery.outcome, "sent"), gte(Delivery.createdAt, since)))

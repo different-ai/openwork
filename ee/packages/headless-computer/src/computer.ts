@@ -28,6 +28,14 @@ export type ComputerOptions = {
 const DESKTOP_VIEWER_PORT = 6080
 /** What the model and the person are told while a computer waits to move to a new version. */
 const UPDATING = "This computer is updating to a new version, which starts once its other commands and background jobs finish. Try again in a moment."
+/**
+ * How long a computer whose replacement came up on an older image stays put before another try. A gateway's template
+ * keeps its name when it is rebuilt, so what a new computer comes up on is the only sign that it moved on. Each try costs
+ * a pause and the running computer's memory, so an idle one waits a day; one that can't serve this runner has someone
+ * waiting, and little to lose.
+ */
+const IDLE_REPLACEMENT_RETRY_MS = 24 * 60 * 60_000
+const NEEDED_REPLACEMENT_RETRY_MS = 10 * 60_000
 
 const WORKSPACE = "/workspace"
 const FILES_DIR = `${WORKSPACE}/files`
@@ -42,6 +50,11 @@ const GUEST_PATH = "/home/ubuntu/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/
 const MAX_COMMAND_SECONDS = 300
 /** A microVM pause writes a full checkpoint of disk and memory: about three minutes for a desktop on Fast Sandbox. */
 export const PAUSE_TIMEOUT_MS = 5 * 60_000
+/**
+ * Resuming on a node that no longer holds the computer's checkpoint fetches it first: over two minutes on Fast Sandbox.
+ * Stays inside the three minutes Workbot gives a desktop request.
+ */
+const START_TIMEOUT_MS = 170_000
 const DEFAULT_COMMAND_SECONDS = 120
 /** Each of stdout and stderr is cut to its last this-many characters: errors and results are at the end. */
 const OUTPUT_TAIL_CHARS = 30_000
@@ -62,6 +75,8 @@ export class Computers {
   private readonly vms = new Map<string, Promise<SandboxHandle>>()
   private readonly pauseTimers = new Map<string, ReturnType<typeof setTimeout>>()
   private readonly pausing = new Map<string, Promise<void>>()
+  /** Sessions in a pause that starting the computer calls off, so `vm()` doesn't wait for it. */
+  private readonly checkpointing = new Set<string>()
   /** Saved file ids already copied into each session's VM by this process. */
   private readonly copied = new Map<string, Set<string>>()
   /** The desktop request being timed for each VM, by its slug. */
@@ -258,7 +273,9 @@ export class Computers {
     this.cancelPause(sessionId)
     // In use: should this process stop before releasing it, it still pauses once the longest command would be done.
     this.options.pauses?.set(sessionId, Date.now() + this.options.idlePauseMs + MAX_COMMAND_SECONDS * 1000)
-    await this.pausing.get(sessionId)
+    // Calling a checkpoint off takes a moment and waiting it out takes minutes. What runs before it, like an idle
+    // replacement, is still waited for.
+    if (!this.checkpointing.delete(sessionId)) await this.pausing.get(sessionId)
     const prior = this.vms.get(sessionId)
     // Reserve the transition before awaiting provider state. Concurrent viewer
     // and tool requests must not both issue a start against the same paused VM.
@@ -290,7 +307,7 @@ export class Computers {
   }
 
   private resolve(sessionId: string): Promise<SandboxHandle> {
-    return ensureRunning(this.provider, this.spec(sessionId), { timeoutMs: 120_000 })
+    return ensureRunning(this.provider, this.spec(sessionId), { timeoutMs: START_TIMEOUT_MS })
   }
 
   private execute(box: SandboxHandle, spec: RunSpec) {
@@ -350,14 +367,20 @@ export class Computers {
     if (!pending) return this.options.pauses?.clear(sessionId)
     try {
       let vm = await pending
-      if (await this.runningJobs(vm) > 0) return this.release(sessionId)
+      // A command already running would carry on past the checkpoint, and its work would be lost.
+      if (this.working.has(sessionId) || await this.runningJobs(vm) > 0) return this.release(sessionId)
       // Nobody is using it: the moment to move a computer built from an older image onto the current one.
       if (!this.working.has(sessionId) && await this.staleImage(sessionId, vm)) vm = await this.replace(sessionId, vm, { required: false }) ?? vm
       // A provider that can neither pause nor stop keeps the computer running until its own expiry.
       if (!this.provider.describe().stopResume) return this.options.pauses?.clear(sessionId)
+      const callsOff = this.provider.describe().callsOffPause === true
+      if (callsOff) this.checkpointing.add(sessionId)
       await (this.provider.blocks?.pause ? this.provider.blocks.pause(vm, { timeoutMs: PAUSE_TIMEOUT_MS }) : this.provider.stop(vm, { timeoutMs: PAUSE_TIMEOUT_MS }))
+      // Called off: the computer is in use again, and `vm()` set when it is next due.
+      if (callsOff && !this.checkpointing.delete(sessionId)) return
       this.options.pauses?.clear(sessionId)
     } catch {
+      this.checkpointing.delete(sessionId)
       // Not fatal: tried again after another idle period, and Freestyle's own idle timeout pauses it later.
       this.options.pauses?.set(sessionId, Date.now() + this.options.idlePauseMs)
     }
@@ -393,6 +416,7 @@ export class Computers {
     } catch (error) {
       if (!(error instanceof DesktopError) || error.desktopCode !== "desktop_outdated") throw error
       if ((this.working.get(sessionId) ?? 0) > self || await this.runningJobs(box).catch(() => 1) > 0) throw new DesktopError("desktop_updating", UPDATING)
+      if (await desktop.replacedInVain(box, NEEDED_REPLACEMENT_RETRY_MS)) throw error
       const fresh = await this.replace(sessionId, box, { required: true })
       if (!fresh) throw error
       this.desktops.set(sessionId, await desktop.start(fresh))
@@ -400,15 +424,21 @@ export class Computers {
     }
   }
 
-  /** Whether the session's computer was built from an older image: known from its last start here, else asked. */
+  /**
+   * Whether the session's computer was built from an older image (known from its last start here, else asked) and
+   * moving it could help: a replacement that just came up on an older image shows new computers aren't there yet.
+   */
   private async staleImage(sessionId: string, box: SandboxHandle) {
     if (!this.desktop) return false
     const known = this.desktops.get(sessionId)
-    if (known) return known === "stale"
-    // A helper from before in-place updates can't carry anything over, so such a computer is only replaced once its
-    // desktop is needed, never while idle.
-    const versions = await this.desktop.versions(box).catch(() => null)
-    return versions !== null && versions.image !== this.desktop.image
+    if (known === "current") return false
+    if (!known) {
+      // A helper from before in-place updates can't carry anything over, so such a computer is only replaced once its
+      // desktop is needed, never while idle.
+      const versions = await this.desktop.versions(box).catch(() => null)
+      if (versions === null || versions.image === this.desktop.image) return false
+    }
+    return !await this.desktop.replacedInVain(box, IDLE_REPLACEMENT_RETRY_MS)
   }
 
   /**
@@ -448,6 +478,7 @@ export class Computers {
         console.error("[headless-computer] carrying state over failed", { sessionId, name, error: error instanceof Error ? error.message : "unknown" })
       }
     }
+    await this.desktop?.noteReplacement(fresh).catch(() => undefined)
     console.log("[headless-computer] computer replaced", { sessionId, required: options.required, carried: kept, ms: Date.now() - started, image: this.snapshot })
     return fresh
   }

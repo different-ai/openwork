@@ -16,7 +16,7 @@ import {
   type ParsedCapability,
   workflowExecutionAudit,
 } from "./capability-registry.js"
-import { bindingAccess, type CapabilityAccess } from "./app-tool-access.js"
+import { bindingAccess, runsWithoutClick, stillRunsWithoutClick, workflowBindingAccess, type CapabilityAccess } from "./app-tool-access.js"
 import { describeExternalCapability } from "./external-capabilities.js"
 import { externalMcpToolSchemaDigest } from "./external-mcp-tool-arguments.js"
 import { executeMarketplaceCapability, listAccessibleWorkflows } from "./marketplace-capabilities.js"
@@ -80,7 +80,8 @@ async function capabilityAccess(ctx: CapabilityRegistryContext, capabilityName: 
     toolName: parsed.toolName,
     redirectUriBase: ctx.redirectUriBase,
   })
-  if (!described.ok || described.destructive) return "writes"
+  if (!described.ok) return "unknown"
+  if (described.destructive) return "destructive"
   return described.readOnly ? "read" : "unlabeled"
 }
 
@@ -95,7 +96,8 @@ function workflowAccesses(ctx: CapabilityRegistryContext, required: Array<{ capa
  * read-only: OpenWork reads, connection tools their provider marks read-only,
  * and live Workflows that only call those are, which every call checks again.
  * Other connection tools and Workflows are not, so a host asks before each
- * call, unless the author declared loadOnOpen and nothing they reach writes.
+ * call, unless the author declared loadOnOpen and nothing they reach is known to
+ * write. Inside a Workflow, a destructive label does not count as known to write.
  */
 export async function resolveMcpAppTools(ctx: CapabilityRegistryContext, declarations: McpAppToolDeclaration[]): Promise<McpAppToolBinding[]> {
   const parsedDeclarations = declarations.map((tool) => ({ tool, parsed: parseCapability(tool.capability) }))
@@ -127,10 +129,11 @@ export async function resolveMcpAppTools(ctx: CapabilityRegistryContext, declara
       if (!workflow) throw unavailable(tool, `${tool.capability} is not a saved Workflow you can use. Apps can bind Workflows, connection tools, and OpenWork actions that read.`)
       const inputSchema = mode === "live" ? LIVE_WORKFLOW_TOOL_INPUT_SCHEMA : objectJsonSchema(workflow.inputSchema ?? { type: "object" })
       if (!inputSchema) throw unavailable(tool, "the Workflow input schema must describe an object. Use mode live for Workflows that read input.runtime.")
-      // Workflows may call any capability, so a live one loads without asking
-      // only when every capability it calls reads, or its author chose to load
-      // it on open and none of them writes. Input Workflows always ask.
-      const access = bindingAccess(mode === "live" ? await workflowAccesses(ctx, workflow.requiredCapabilities) : ["writes"], tool.loadOnOpen)
+      // Workflows may call any capability, so one loads without asking only
+      // when it is live and every capability it calls reads, or its author
+      // chose to load it on open and none of them is known to write.
+      const accesses = mode === "live" || tool.loadOnOpen ? await workflowAccesses(ctx, workflow.requiredCapabilities) : []
+      const access = workflowBindingAccess(mode, accesses, tool.loadOnOpen)
       if ("refused" in access) throw unavailable(tool, access.refused)
       binding = {
         name: tool.name,
@@ -167,7 +170,7 @@ export async function resolveMcpAppTools(ctx: CapabilityRegistryContext, declara
       if (!described.ok) throw unavailable(tool, described.message)
       // The provider's labels as the author sees them now; callMcpAppTool checks
       // them again, in the caller's own tool list, on every call.
-      const access = bindingAccess([described.destructive ? "writes" : described.readOnly ? "read" : "unlabeled"], tool.loadOnOpen)
+      const access = bindingAccess([described.destructive ? "destructive" : described.readOnly ? "read" : "unlabeled"], tool.loadOnOpen)
       if ("refused" in access) throw unavailable(tool, access.refused)
       binding = {
         name: tool.name,
@@ -222,6 +225,26 @@ function withoutAgentServerMeta(result: ExecuteCapabilityToolResult): ExecuteCap
   return kept.length > 0 ? { ...rest, _meta: Object.fromEntries(kept) } : rest
 }
 
+/**
+ * Why a Workflow that loads without a click may not run now: it must still only
+ * reach what it did when it was bound. A connection this caller cannot use
+ * stops it here with the same connection card a run would give them, since
+ * nothing has shown that its tools are still safe to run.
+ */
+async function workflowRefusal(ctx: CapabilityRegistryContext, binding: McpAppToolBinding, configObjectId: string): Promise<ExecuteCapabilityToolResult | null> {
+  if (!runsWithoutClick(binding) || !ctx.member) return null
+  const [workflow] = await listAccessibleWorkflows({ member: ctx.member, organizationId: ctx.organizationId, configObjectIds: new Set([configObjectId]) })
+  if (!workflow) return null
+  const accesses = await workflowAccesses(ctx, workflow.requiredCapabilities)
+  if (accesses.includes("unknown")) {
+    const connection = await liveArtifactConnectionFailure(ctx, workflow.requiredCapabilities).catch(() => null)
+    const message = `OpenWork could not check a connection ${binding.name} uses, so it did not run. Try again in a moment.`
+    return { isError: true, content: [{ type: "text", text: JSON.stringify({ error: "capability_unavailable", message, ...connection }) }] }
+  }
+  if (stillRunsWithoutClick(binding, accesses)) return null
+  return errorResult("policy_blocked", `${binding.name} now reaches tools that are not marked read-only, so OpenWork blocked it. An editor of this App needs to update its tools.`)
+}
+
 /** Runs one App tool as the caller, with the caller's own authorization and connections. */
 export async function callMcpAppTool(
   ctx: CapabilityRegistryContext,
@@ -229,21 +252,14 @@ export async function callMcpAppTool(
   args: Record<string, unknown>,
 ): Promise<ExecuteCapabilityToolResult> {
   const parsed = parseCapability(binding.capability)
-  if (binding.kind === "workflow" && binding.mode === "live") {
+  if (binding.kind === "workflow") {
     if (parsed?.kind !== "marketplace") return errorResult("unknown_capability", "This App tool is no longer available.")
-    // A Workflow that loads without a click must still only reach what it did when it was bound.
-    const [workflow] = (binding.readOnly || binding.loadOnOpen) && ctx.member
-      ? await listAccessibleWorkflows({ member: ctx.member, organizationId: ctx.organizationId, configObjectIds: new Set([parsed.configObjectId]) })
-      : []
-    if (workflow) {
-      const access = bindingAccess(await workflowAccesses(ctx, workflow.requiredCapabilities), binding.loadOnOpen)
-      if ("refused" in access || (binding.readOnly && !access.readOnly)) {
-        return errorResult("policy_blocked", `${binding.name} now reaches tools that are not marked read-only, so OpenWork blocked it. An editor of this App needs to update its tools.`)
-      }
-    }
+    const refusal = await workflowRefusal(ctx, binding, parsed.configObjectId)
+    if (refusal) return refusal
+    if (binding.mode !== "live") return withoutAgentServerMeta(await executeCapability(ctx, { name: binding.capability, body: args }))
     const timeZone = typeof args.timeZone === "string" ? args.timeZone : undefined
     const result = await executeMarketplaceCapability({
-      buildTools: () => buildCapabilityToolTree(ctx),
+      buildTools: (required) => buildCapabilityToolTree(ctx, required),
       organizationId: ctx.organizationId,
       member: ctx.member,
       pluginId: parsed.pluginId,
@@ -258,10 +274,6 @@ export async function callMcpAppTool(
       return { isError: true, content: [{ type: "text", text: JSON.stringify(payload) }] }
     }
     return { content: [{ type: "text", text: JSON.stringify(result.result, null, 2) }], structuredContent: result.result }
-  }
-  if (binding.kind === "workflow") {
-    if (parsed?.kind !== "marketplace") return errorResult("unknown_capability", "This App tool is no longer available.")
-    return withoutAgentServerMeta(await executeCapability(ctx, { name: binding.capability, body: args }))
   }
   if (binding.kind === "api") {
     if ((parsed?.kind !== "catalog" && parsed?.kind !== "native") || !isDenRead(ctx, parsed)) {

@@ -92,7 +92,7 @@ import { SSO_DOMAIN_VERIFICATION_TOKEN_PREFIX } from "./sso-domain-verification.
 import {
   authorizeOrganizationSsoSignIn,
   completeOrganizationSsoTestIntent,
-  failOrganizationSsoTestIntent,
+  failOrganizationSsoTestAuthentication,
   getSsoTestIntentIdFromCallbackUrl,
 } from "./sso-test-lifecycle.js";
 import {
@@ -106,7 +106,7 @@ import {
 } from "./enterprise-auth-requirement.js";
 import { normalizeLoginEmail } from "./auth-login-options.js";
 import { getAuthBodyEmail, getSingleOrgEmailSignupPolicyViolation } from "./single-org-signup-policy.js";
-import { readInitialAdminBootstrapGrantFromBody } from "./initial-admin-bootstrap.js";
+import { authorizeInitialAdminBootstrapSignup, readInitialAdminBootstrapGrantFromBody } from "./initial-admin-bootstrap.js";
 import { createDenTypeId, normalizeDenTypeId } from "@openwork-ee/utils/typeid";
 import * as schema from "@openwork-ee/den-db/schema";
 import { apiKey } from "@better-auth/api-key";
@@ -803,7 +803,9 @@ export const auth = betterAuth({
   socialProviders:
     Object.keys(socialProviders).length > 0 ? socialProviders : undefined,
   // Session tokens are stored hashed (src/session-token.ts).
-  database: hashSessionTokens(drizzleAdapter(db, {
+  // Primary only: the MySQL adapter inserts then selects the row back, which a
+  // lagging read replica would miss.
+  database: hashSessionTokens(drizzleAdapter(db.$primary, {
     provider: "mysql",
     schema,
   }), {
@@ -830,11 +832,17 @@ export const auth = betterAuth({
           }
           const verifiedByInvitation = context?.path === "/sign-up/email"
             && await invitationLinkVerifiesEmail({ inviteToken: readSignUpInvite(context), email });
+          // The /setup administrator's email is one the operator configured,
+          // and the one-time setup code proves the person signing up is that
+          // operator. Like an invitation link, that vouches for the address,
+          // so linking SSO later keeps their password and session.
+          const verifiedByBootstrap = !verifiedByInvitation && context?.path === "/sign-up/email"
+            && Boolean(await authorizeInitialAdminBootstrapSignup({ body: context.body, email }));
           return {
             data: {
               ...user,
               email,
-              ...(verifiedByInvitation ? { emailVerified: true } : {}),
+              ...(verifiedByInvitation || verifiedByBootstrap ? { emailVerified: true } : {}),
             },
           };
         },
@@ -1300,7 +1308,7 @@ export const auth = betterAuth({
 
         const newSession = ctx.context.newSession;
         if (!newSession) {
-          await failOrganizationSsoTestIntent(intentId, "authentication");
+          await failOrganizationSsoTestAuthentication(intentId);
           return;
         }
 
@@ -1566,7 +1574,8 @@ export const auth = betterAuth({
           }
 
           if (hasRole(role, ORGANIZATION_OWNER_ROLE)) {
-            const existingMembers = await db
+            // primary: a lagging replica could miss members added moments ago and allow a second owner.
+            const existingMembers = await db.$primary
               .select({ id: schema.MemberTable.id })
               .from(schema.MemberTable)
               .where(eq(schema.MemberTable.organizationId, normalizeDenTypeId("organization", member.organizationId)))

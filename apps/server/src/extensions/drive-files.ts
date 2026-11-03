@@ -294,13 +294,21 @@ function displayPath(config: ServerConfig, context: Record<string, unknown>, pat
   return path;
 }
 
+function outsideWorkspace(base: string) {
+  return new ApiError(403, "path_outside_workspace", `Files can only be saved inside an authorized workspace, such as ${base}. Leave out path to save under drive/.`);
+}
+
+/** Pull targets have real parents, so a drive folder that links elsewhere does not count. */
+async function inDriveFolder(config: ServerConfig, context: Record<string, unknown>, target: string) {
+  const base = await realpath(workspaceBase(config, context)).catch(() => null);
+  return !!base && isWithinRoot(target, join(base, "drive"));
+}
+
 /** Creates missing folders only below an existing directory that resolves inside an authorized root. */
 async function resolvePullTarget(config: ServerConfig, context: Record<string, unknown>, requested: string | null, defaultName: string) {
   const base = workspaceBase(config, context);
   const candidate = requested ? (isAbsolute(requested) ? resolve(requested) : resolve(base, requested)) : resolve(base, "drive", defaultName);
-  if (!allowedRoots(config).some((root) => isWithinRoot(candidate, root))) {
-    throw new ApiError(403, "path_outside_workspace", "Files can only be saved inside an authorized workspace.");
-  }
+  if (!allowedRoots(config).some((root) => isWithinRoot(candidate, root))) throw outsideWorkspace(base);
   const roots = await realRoots(config);
   let existing = dirname(candidate);
   const missing: string[] = [];
@@ -314,9 +322,7 @@ async function resolvePullTarget(config: ServerConfig, context: Record<string, u
       existing = dirname(existing);
     }
   }
-  if (!roots.some((root) => isWithinRoot(existing, root))) {
-    throw new ApiError(403, "path_outside_workspace", "Files can only be saved inside an authorized workspace.");
-  }
+  if (!roots.some((root) => isWithinRoot(existing, root))) throw outsideWorkspace(base);
   const parent = join(existing, ...missing);
   await mkdir(parent, { recursive: true });
   const target = join(parent, basename(candidate));
@@ -591,7 +597,12 @@ async function pullDriveFile(config: ServerConfig, args: Record<string, unknown>
   }
 
   let saved: Awaited<ReturnType<typeof download>> | null = null;
-  await confirmDriveTransfer(config, { provider, action: before && overwrite ? "overwrite" : "pull", path: target, fileId: info.file.id, name: info.file.name, webViewLink: info.file.webViewLink }, dependencies.signal);
+  // Under drive/, a pull adds a file or refreshes an unedited copy, and nothing loads from there.
+  // Elsewhere it could add a plugin or agent the engine runs, and engine rules never see this write.
+  const replacing = !!before && overwrite;
+  if (replacing || !(await inDriveFolder(config, context, target))) {
+    await confirmDriveTransfer(config, { provider, action: replacing ? "overwrite" : "pull", path: target, fileId: info.file.id, name: info.file.name, webViewLink: info.file.webViewLink }, dependencies.signal);
+  }
   for (let attempt = 1; attempt <= 2 && !saved; attempt += 1) {
     const temporary = await privateDriveFile(config);
     try {

@@ -236,7 +236,7 @@ export function registerSlackAssistantRoutes<T extends { Variables: OrgRouteVari
           },
           403,
         )
-      const previous = await getInstallation(connectionId)
+      const previous = await getInstallation(connectionId, db.$primary)
       const signingSecret = body.signingSecret ?? previous?.signingSecret
       if (!signingSecret) return c.json({ error: "signing_secret_required" }, 400)
       const saved = await db.transaction(async (tx) => {
@@ -285,7 +285,8 @@ export function registerSlackAssistantRoutes<T extends { Variables: OrgRouteVari
       const connection = await getExternalMcpConnection({ organizationId: org.organization.id, connectionId })
       if (!connection || !isSlackConnection(connection)) return c.json({ error: "individual_accounts_required" }, 400)
       const client = await getOrgOAuthClient(org.organization.id, connectionId)
-      if (!client?.clientSecret || !(await getInstallation(connectionId)))
+      // primary: the settings (and signing secret) are usually saved just before.
+      if (!client?.clientSecret || !(await getInstallation(connectionId, db.$primary)))
         return c.json(
           {
             error: "setup_required",
@@ -392,7 +393,7 @@ export function registerSlackAssistantRoutes<T extends { Variables: OrgRouteVari
       if (installation.teamId && installation.teamId !== token.team.id)
         return c.text("This connector is already linked to another Slack workspace.", 409)
       const collision = (
-        await db
+        await db.$primary
           .select({ id: Installation.connectionId })
           .from(Installation)
           .where(eq(Installation.teamId, token.team.id))

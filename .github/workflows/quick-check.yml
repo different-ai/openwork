@@ -86,8 +86,11 @@ jobs:
           .github/scripts/contributor-pr.test.mjs
           .github/scripts/contributor-screen.test.mjs
           .github/scripts/warden-check.test.mjs
+          .github/scripts/warden-advisory.test.mjs
           .github/scripts/warden-report.test.mjs
           .github/scripts/warden-fast.test.mjs
+          .github/scripts/warden-sweep.test.mjs
+          .warden/tests/ui-skills.test.mjs
           .github/scripts/warden-fixer.test.mjs
           .github/scripts/warden-model-proxy.test.mjs
           .github/scripts/evidence-presentation.test.mjs

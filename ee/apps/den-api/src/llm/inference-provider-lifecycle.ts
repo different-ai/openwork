@@ -68,7 +68,7 @@ export async function revokeMemberGatewayCredentials(input: { organizationId: Pr
   await revokeUpstreamCredentials(credentials)
 }
 
-export async function memberGatewayTeams(database: Tx | typeof db, organizationId: Provider["organization_id"], memberId: MemberId) {
+export async function memberGatewayTeams(database: Tx | typeof db | typeof db.$primary, organizationId: Provider["organization_id"], memberId: MemberId) {
   return database.select({ id: TeamMemberTable.teamId }).from(TeamMemberTable)
     .innerJoin(TeamTable, eq(TeamTable.id, TeamMemberTable.teamId))
     .where(and(eq(TeamMemberTable.orgMembershipId, memberId), eq(TeamTable.organizationId, organizationId)))

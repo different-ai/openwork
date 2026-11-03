@@ -326,11 +326,14 @@ async function verifyOpaqueMcpToken(token: string) {
   }
 
   const storedToken = hashOpaqueMcpSecret(token.slice(DEN_MCP_OPAQUE_ACCESS_TOKEN_PREFIX.length))
-  const [accessToken] = await db
+  const lookup = (database: typeof db.$primary) => database
     .select()
     .from(OAuthAccessTokenTable)
     .where(eq(OAuthAccessTokenTable.token, storedToken))
     .limit(1)
+  // A run token is used the moment it is minted; on a replica miss, ask the primary.
+  const fromReplica = await lookup(db)
+  const [accessToken] = fromReplica[0] ? fromReplica : await lookup(db.$primary)
 
   if (!accessToken || accessToken.expiresAt <= new Date()) {
     return null

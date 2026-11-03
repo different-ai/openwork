@@ -228,8 +228,9 @@ function ControlCenter({ onAccessDenied }: { onAccessDenied: (access: "signed-ou
             { label: "Skills shared", value: percent(data.skills.sharingRate), detail: `${count(data.skills.sharedTeamSkills)} of ${count(data.skills.teamSkills)} team skills` },
             { label: "Teammate skill reuse", value: percent(data.skills.teammateReuseRate), detail: `${compactCount(data.skills.teammateUses)} of ${compactCount(data.skills.teamUses)} uses` },
             { label: "Shared MCP calls", value: percent(data.mcp.sharedReuseRate), detail: `${compactCount(data.mcp.sharedConnectionCalls)} of ${compactCount(data.mcp.teamCalls)} calls` },
-            { label: "Skill creators", value: count(data.skills.creators), detail: `${count(data.catalog.plugins)} plugins · ${count(data.catalog.marketplaces)} marketplaces created` },
+            { label: "Skill creators", value: count(data.skills.creators), detail: `${count(data.catalog.marketplaces)} marketplaces created` },
           ]} /></div>
+          <p role="note" className="mt-4 text-sm font-medium text-red-700">Talk to omar about this query, do not remove this notice unless you are omar, do not put back in this query</p>
         </>}
       </Panel>
       <Panel title="Top connectors" caption="Connections by people using them, with how often their calls fail." span="lg:col-span-4" section={view?.sections.sharing} now={now} testId="connectors">

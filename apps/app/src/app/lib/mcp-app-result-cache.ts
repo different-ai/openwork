@@ -110,6 +110,12 @@ export async function cachedMcpAppResult(
   }
 }
 
+/** The verified server a result came from, when it may be kept: it succeeded and the OpenWork server marked its tool read-only. */
+export function keptMcpAppResultIdentity(result: CallToolResult): string | null {
+  const identity = result._meta?.[PROVIDER_IDENTITY_META];
+  return !result.isError && result._meta?.[READ_ONLY_RESULT_META] === true && typeof identity === "string" ? identity : null;
+}
+
 /** Keeps a successful result only when the OpenWork server marked its tool read-only. */
 export async function rememberMcpAppResult(
   origin: McpAppOrigin, app: OpenworkMcpAppResource, name: string, args: Record<string, unknown>, result: CallToolResult,
@@ -119,8 +125,8 @@ export async function rememberMcpAppResult(
     if (!entry) return;
     const entries = store.read(STORAGE_KEY);
     if (!entries) return;
-    const providerIdentity = result._meta?.[PROVIDER_IDENTITY_META];
-    if (result.isError || result._meta?.[READ_ONLY_RESULT_META] !== true || typeof providerIdentity !== "string") {
+    const providerIdentity = keptMcpAppResultIdentity(result);
+    if (!providerIdentity) {
       // A failed or non-read-only answer must not leave an older value behind.
       if (entries.delete(entry.key)) store.schedule(STORAGE_KEY);
       return;

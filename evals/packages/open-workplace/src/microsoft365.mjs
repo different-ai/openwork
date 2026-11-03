@@ -195,6 +195,15 @@ function eventTime(value) {
   }
   throw bad("Local dateTime does not exist in this timezone; supply an explicit offset.");
 }
+// Graph stores an event's times as wall times in their timeZone and never returns an offset or Z, e.g.
+// 2026-11-04T18:00:00.0000000 with timeZone UTC. Times sent with an offset are converted, as Graph does.
+function graphWallTime(value) {
+  const instant = eventTime(value);
+  if (!/(?:Z|[+-]\d\d:\d\d)$/.test(value.dateTime)) return { dateTime: value.dateTime, timeZone: value.timeZone };
+  const parts = Object.fromEntries(new Intl.DateTimeFormat("en-CA", { timeZone: ZONE_ALIASES[value.timeZone] || value.timeZone, year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", second: "2-digit", hourCycle: "h23" }).formatToParts(new Date(instant)).map((part) => [part.type, part.value]));
+  const milliseconds = String(new Date(instant).getUTCMilliseconds()).padStart(3, "0");
+  return { dateTime: `${parts.year}-${parts.month}-${parts.day}T${parts.hour}:${parts.minute}:${parts.second}.${milliseconds}0000`, timeZone: value.timeZone };
+}
 function event(input, existing) {
   object(input); const subject = text(input.subject, "Subject", 1000);
   if (eventTime(input.end) <= eventTime(input.start)) throw bad("Event end must be after start.");
@@ -204,7 +213,7 @@ function event(input, existing) {
     if (entry.type !== undefined && !["required", "optional", "resource"].includes(entry.type)) throw bad("Unsupported attendee type.");
     return { ...addresses([entry])[0], type: entry.type || "required", status: { response: "none", time: now() } };
   });
-  return { id, subject, body, bodyPreview: strip(body.content).slice(0, 255), start: { dateTime: input.start.dateTime, timeZone: input.start.timeZone }, end: { dateTime: input.end.dateTime, timeZone: input.end.timeZone }, attendees, organizer: ALEX, location: { displayName: input.location ? text(object(input.location).displayName, "Location", 500) : "" }, isAllDay: input.isAllDay === true, isCancelled: false, showAs: "busy", createdDateTime: existing?.createdDateTime || now(), lastModifiedDateTime: now(), webLink: `${PUBLIC_ORIGIN}/outlook?event=${id}`, onlineMeeting: null };
+  return { id, subject, body, bodyPreview: strip(body.content).slice(0, 255), start: graphWallTime(input.start), end: graphWallTime(input.end), attendees, organizer: ALEX, location: { displayName: input.location ? text(object(input.location).displayName, "Location", 500) : "" }, isAllDay: input.isAllDay === true, isCancelled: false, showAs: "busy", createdDateTime: existing?.createdDateTime || now(), lastModifiedDateTime: now(), webLink: `${PUBLIC_ORIGIN}/outlook?event=${id}`, onlineMeeting: null };
 }
 function reset() {
   sequence = 0;
@@ -335,6 +344,9 @@ async function graph(method, path, url, input, bytes, headers = {}) {
   }
   if (path === "/me/drive" && method === "GET") return [200, { id: "acme-shared", name: "Acme Robotics shared documents", driveType: "business", owner: { user: { displayName: "Acme Robotics" } } }];
   if (path === "/me/drive/root" && method === "GET") return [200, { id: "root", name: "Acme Robotics", folder: { childCount: state.files.filter((entry) => entry.parentId === "root").length } }];
+  // Recent files, newest first (OneDrive's Recent); nothing is shared into a one-person workplace.
+  if (path === "/me/drive/recent" && method === "GET") return [200, collection(state.files.filter((entry) => !entry.folder).sort((a, b) => b.lastModifiedDateTime.localeCompare(a.lastModifiedDateTime)).map(fileJson), url)];
+  if (path === "/me/drive/sharedWithMe" && method === "GET") return [200, collection([], url)];
   const search = path.match(/^\/me\/drive\/root\/search\(q='(.*)'\)$/);
   if (search && method === "GET") { const query = search[1].replace(/''/g, "'").toLowerCase(); return [200, collection(state.files.filter((entry) => entry.name.toLowerCase().includes(query)).map(fileJson), url)]; }
   const children = path.match(/^\/me\/drive\/(root|items\/([^/]+))\/children$/);

@@ -3,6 +3,7 @@ import { describeRoute, resolver } from "hono-openapi"
 import { z } from "zod"
 import { deleteOrganizationScimConnection, getOrganizationScimConnection, getOrganizationScimHealth, getScimBaseUrl, reconcileOrganizationScimDrift, rotateOrganizationScimToken } from "../../scim.js"
 import { setScimGroupMappingMode } from "../../scim-groups.js"
+import { db } from "../../db.js"
 import { hasEnabledOrganizationSsoConnection } from "../../sso.js"
 import { ORGANIZATION_AUDIT_ACTIONS } from "../../audit-events.js"
 import { appendDomainChangesAfterCommit, finishLegacyAuditAction } from "../../audit/domain/legacy.js"
@@ -334,7 +335,8 @@ export function registerOrgScimRoutes<T extends { Variables: OrgRouteVariables }
       }, auditEventIds)
 
       const [updated, health, ssoReady] = await Promise.all([
-        getOrganizationScimConnection(payload.organization.id),
+        // primary: reads back the mode written above.
+        getOrganizationScimConnection(payload.organization.id, db.$primary),
         getOrganizationScimHealth(payload.organization.id),
         hasEnabledOrganizationSsoConnection(payload.organization.id),
       ])

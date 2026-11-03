@@ -27,6 +27,7 @@ import {
   type UpdateMcpAppInput,
 } from "@openwork/types/mcp-app"
 import { db } from "./db.js"
+import { withPrimaryReads } from "./read-routing.js"
 import { buildGeneratedMcpApp, type GeneratedArtifactViewBuildResult } from "./generated-artifact-view-builder.js"
 import type { McpMemberIdentity } from "./mcp/external-capabilities.js"
 import { buildMarketplaceCapabilityName, listAccessibleMarketplaceCapabilityReferences, listAccessibleMarketplaceCapabilityReferencesFor, parseMarketplaceCapabilityName } from "./mcp/marketplace-capabilities.js"
@@ -281,10 +282,19 @@ async function compile(input: CreateMcpAppInput, pluginId: string, tools: McpApp
   return { payload, rawSourceText }
 }
 
-export async function createMcpApp({ context, resolveTools, ...source }: CreateMcpAppInput & {
-  context: PluginArchActorContext
-  resolveTools: ResolveMcpAppTools
-}): Promise<McpAppSummary> {
+type McpAppWriteInput<TInput> = TInput & { context: PluginArchActorContext; resolveTools: ResolveMcpAppTools }
+
+// Creating or updating an App writes a Plugin, memberships and a revision and
+// reads each back through shared helpers, so every read uses the primary.
+export function createMcpApp(input: McpAppWriteInput<CreateMcpAppInput>): Promise<McpAppSummary> {
+  return withPrimaryReads(() => createMcpAppOnPrimary(input))
+}
+
+export function updateMcpApp(input: McpAppWriteInput<UpdateMcpAppInput>): Promise<McpAppSummary> {
+  return withPrimaryReads(() => updateMcpAppOnPrimary(input))
+}
+
+async function createMcpAppOnPrimary({ context, resolveTools, ...source }: McpAppWriteInput<CreateMcpAppInput>): Promise<McpAppSummary> {
   const parsed = createMcpAppInputSchema.safeParse(source)
   if (!parsed.success) throw new McpAppError(400, "invalid_mcp_app_input", "Provide a title, complete React/CSS source, a non-empty text fallback, and uniquely named tools within the App limits.")
   const input = parsed.data
@@ -338,10 +348,7 @@ export async function createMcpApp({ context, resolveTools, ...source }: CreateM
   return summarizeMcpAppRevision({ appId: saved.id, revisionId: saved.latestVersion.id, payload })
 }
 
-export async function updateMcpApp({ context, resolveTools, ...source }: UpdateMcpAppInput & {
-  context: PluginArchActorContext
-  resolveTools: ResolveMcpAppTools
-}): Promise<McpAppSummary> {
+async function updateMcpAppOnPrimary({ context, resolveTools, ...source }: McpAppWriteInput<UpdateMcpAppInput>): Promise<McpAppSummary> {
   const parsed = updateMcpAppInputSchema.safeParse(source)
   if (!parsed.success) throw new McpAppError(400, "invalid_mcp_app_input", "Provide appId, expectedRevisionId, and complete replacement App source, title, text fallback, and uniquely named tools.")
   const input = parsed.data

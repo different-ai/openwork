@@ -29,6 +29,7 @@ import {
   buildNativeProviderToolTree,
   isCredentialBoundNativeOperation,
   type BuiltCodemodeTools,
+  type RequiredCapability,
 } from "./codemode-tools.js"
 import {
   codemodeScriptPath,
@@ -291,7 +292,7 @@ export type CapabilitySource = {
   kind: CapabilitySourceKind
   parseName: (name: string) => ParsedCapability | null
   search: (ctx: CapabilitySearchContext, query: string, limit: number) => Promise<CapabilityMatch[]>
-  enumerate: (ctx: CapabilityRegistryContext) => Promise<CapabilityLeaf[]> | CapabilitySourceExclusion
+  enumerate: (ctx: CapabilityRegistryContext, required?: readonly RequiredCapability[]) => Promise<CapabilityLeaf[]> | CapabilitySourceExclusion
   execute: (ctx: CapabilityRegistryContext, parsed: ParsedCapability, input: CapabilityExecuteInput) => Promise<ExecuteCapabilityToolResult>
 }
 
@@ -491,7 +492,7 @@ async function executeMarketplaceSource(
 ): Promise<MarketplaceCapabilityExecuteResult> {
   return executeMarketplaceCapability({
     // Only a Workflow builds tools: what its script calls is Workflow use.
-    buildTools: () => buildCapabilityToolTree(workflowUsageContext(ctx)),
+    buildTools: (required) => buildCapabilityToolTree(workflowUsageContext(ctx), required),
     organizationId: ctx.organizationId,
     member: ctx.member,
     pluginId: parsed.pluginId,
@@ -613,13 +614,14 @@ const externalMcpSource: CapabilitySource = {
       scopes: ctx.principal.scopes,
     })
   },
-  enumerate: async (ctx) => {
+  enumerate: async (ctx, required) => {
     return leavesFromBuilt(await buildExternalMcpToolTree({
       organizationId: ctx.organizationId,
       member: ctx.member,
       scopes: ctx.principal.scopes,
       redirectUriBase: ctx.redirectUriBase,
       namespaceContext: await ctx.resolveNamespaceContext(),
+      required,
       usageSource: ctx.usageSource,
     }))
   },
@@ -936,9 +938,9 @@ export function createCapabilityRegistry(sources: Record<CapabilitySourceKind, C
       }
       return unknownCapabilityResult(input.name)
     },
-    buildToolTree: async (ctx: CapabilityRegistryContext): Promise<BuiltCodemodeTools> => {
+    buildToolTree: async (ctx: CapabilityRegistryContext, required?: readonly RequiredCapability[]): Promise<BuiltCodemodeTools> => {
       const enumerated = await Promise.all(SCRIPT_SOURCE_KINDS.map(async (kind) => {
-        const result = await sources[kind].enumerate(ctx)
+        const result = await sources[kind].enumerate(ctx, required)
         return "excluded" in result ? [] : result
       }))
       const leaves = enumerated.flat()

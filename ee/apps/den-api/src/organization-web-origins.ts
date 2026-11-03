@@ -35,7 +35,8 @@ let approvalCacheGeneration = 0
 
 async function lookupWebOriginApprovalInDatabase(input: { origin: string; organizationId?: OrganizationId }) {
   const originMatch = eq(OrganizationWebOriginTable.origin, input.origin)
-  const rows = await db
+  // primary: runs right after an approval or removal clears the cache, and the result is cached.
+  const rows = await db.$primary
     .select({ id: OrganizationWebOriginTable.id })
     .from(OrganizationWebOriginTable)
     .where(input.organizationId ? and(eq(OrganizationWebOriginTable.organizationId, input.organizationId), originMatch) : originMatch)
@@ -55,7 +56,8 @@ export function setWebOriginApprovalLookupForTest(lookup: WebOriginApprovalLooku
 type MemberWebOriginLookup = (input: { userId: UserId; origin: string }) => Promise<OrganizationId[]>
 
 async function lookupMemberOrganizationsApprovingInDatabase(input: { userId: UserId; origin: string }) {
-  const rows = await db
+  // primary: an uncached handoff check, so a removal takes effect immediately.
+  const rows = await db.$primary
     .select({ organizationId: OrganizationWebOriginTable.organizationId })
     .from(OrganizationWebOriginTable)
     .innerJoin(MemberTable, and(

@@ -8,7 +8,10 @@ process. It has no model, API key, network listener or clipboard access.
 On start the helper relaunches itself once with macOS responsibility
 disclaimed, so System Settings lists **OpenWork Computer Use** for
 Accessibility and Screen Recording. A grant then only needs this short-lived
-helper to restart, never OpenWork. The first process stays as a thin parent
+helper to restart, never OpenWork. macOS still charges Screen Recording to the
+outermost app around a disclaimed process, so a packaged desktop runs an exact
+copy of the helper from its app data folder, never from inside OpenWork.app.
+The first process stays as a thin parent
 that checks the desktop's signature, shares stdio, forwards signals and exits
 with the helper's status; the relaunched helper stops if that parent goes away.
 

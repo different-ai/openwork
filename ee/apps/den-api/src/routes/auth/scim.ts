@@ -4,6 +4,7 @@ import { resolver } from "hono-openapi"
 import { normalizeDenTypeId } from "@openwork-ee/utils/typeid"
 import { z } from "zod"
 import { auth } from "../../auth.js"
+import { db } from "../../db.js"
 import { betterAuthRequest } from "../../request-client-ip.js"
 import { rawRefusalAttribution } from "../../audit/better-auth.js"
 import { attributeAuditRequest, auditServiceAttribution } from "../../audit/request-capture.js"
@@ -577,7 +578,7 @@ export function registerScimAuthRoutes<T extends { Variables: AuthContextVariabl
     const result = await createScimGroup({ provider, value: parsed.data })
     if (!result.ok) return scimError(result.detail, result.status)
     const baseUrl = c.req.url.replace(/\/Groups$/, "")
-    return scimJson(await serializeScimGroup(result.group, baseUrl), 201)
+    return scimJson(await serializeScimGroup(result.group, baseUrl, db.$primary), 201)
     },
   )
 
@@ -623,7 +624,7 @@ export function registerScimAuthRoutes<T extends { Variables: AuthContextVariabl
     const result = await updateScimGroup({ provider, groupId: c.req.param("groupId"), value: parsed.data })
     if (!result.ok) return scimError(result.detail, result.status)
     const baseUrl = c.req.url.replace(/\/Groups\/[^/]+$/, "")
-    return scimJson(await serializeScimGroup(result.group, baseUrl))
+    return scimJson(await serializeScimGroup(result.group, baseUrl, db.$primary))
     },
   )
 
@@ -651,7 +652,7 @@ export function registerScimAuthRoutes<T extends { Variables: AuthContextVariabl
     const baseUrl = c.req.url.replace(/\/Groups\/[^/]+$/, "")
     const result = await updateScimGroup({ provider, groupId: c.req.param("groupId"), operations: parsed.data.Operations })
     if (!result.ok) return scimError(result.detail, result.status)
-    return scimJson(await serializeScimGroup(result.group, baseUrl))
+    return scimJson(await serializeScimGroup(result.group, baseUrl, db.$primary))
     },
   )
 

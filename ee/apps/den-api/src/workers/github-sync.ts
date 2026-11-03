@@ -134,7 +134,9 @@ export async function processDueGithubSyncEvents(now = new Date()) {
 
   // A page of due events whose target is not already syncing. Blocked events
   // stay in the database instead of being read and skipped on every poll.
-  const events = await db
+  // Primary: a lagging replica would miss another replica's fresh claim and run
+  // a second sync of the same target.
+  const events = await db.$primary
     .select({
       attemptCount: ConnectorSyncEventTable.attemptCount,
       connectorTargetId: ConnectorSyncEventTable.connectorTargetId,
@@ -180,7 +182,8 @@ export async function processDueGithubSyncEvents(now = new Date()) {
       const message = error instanceof Error ? error.message : String(error)
       const attemptCount = event.attemptCount + 1
       const shouldRetry = isTransientGithubSyncError(error) && attemptCount < env.githubSync.maxAttempts
-      const [current] = await db
+      // Primary: keeps the summary the failed sync may have just written.
+      const [current] = await db.$primary
         .select({ summaryJson: ConnectorSyncEventTable.summaryJson })
         .from(ConnectorSyncEventTable)
         .where(eq(ConnectorSyncEventTable.id, event.id))
@@ -281,7 +284,8 @@ function countField(summary: Record<string, unknown> | null, key: string): numbe
 async function recordConnectorSyncCompleted(connectorSyncEventId: (typeof ConnectorSyncEventTable.$inferSelect)["id"]) {
   if (!env.auditCaptureEnabled) return
   try {
-    const [event] = await db.select().from(ConnectorSyncEventTable).where(eq(ConnectorSyncEventTable.id, connectorSyncEventId)).limit(1)
+    // Primary: called right after the event was marked terminal.
+    const [event] = await db.$primary.select().from(ConnectorSyncEventTable).where(eq(ConnectorSyncEventTable.id, connectorSyncEventId)).limit(1)
     if (!event || !TERMINAL_SYNC_STATUSES.has(event.status) || !event.completedAt) return
     const summary = isRecord(event.summaryJson) ? event.summaryJson : null
     const after = {

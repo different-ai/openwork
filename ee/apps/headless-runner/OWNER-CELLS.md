@@ -302,14 +302,19 @@ into it, and on demand (Actions → "Deploy runner to celld" → Run workflow). 
 1. **Builds the computer snapshot when the desktop changed.** The runner accepts only computers whose desktop matches
    its own, so when the configured Freestyle snapshot was built for another desktop, the run builds
    `workbot-desktop-freestyle-<desktop>` with the runner's `FREESTYLE_API_KEY` and bundles the runner with it. A
-   snapshot that already exists is reused. A failed build stops the run before the fleet changes.
+   snapshot that already exists is reused. A failed build stops the run before the fleet changes. It then layers the
+   runner's guest onto that snapshot and bundles the runner with `workbot-desktop-freestyle-<desktop>-<guest>`, so new
+   computers skip the install on first open; a failed layer only leaves them installing it, so the run carries on.
 2. **Checks the live runner and the new one can serve each other** (`scripts/compat-check.ts`, below).
-3. Deploys to a throwaway bucket prefix and runs a real turn there.
-4. Deploys to the fleet and waits until every Render instance logs `deployment_adopted` for the new version. The
+3. **Warns when a sandbox gateway's template is behind the runner's desktop.** The run can't build that template, so
+   it warns in its log and in Slack and carries on. The [Fast Sandbox section](README.md#fast-sandbox-microvms) of the
+   README says what to rebuild.
+4. Deploys to a throwaway bucket prefix and runs a real turn there.
+5. Deploys to the fleet and waits until every Render instance logs `deployment_adopted` for the new version. The
    version is a content hash, so an unchanged bundle is reported as `unchanged` and nothing switches.
-5. Records which commit produced the live version in `s3://openwork-celld/ci/fleet-deployed.json` (outside the
+6. Records which commit produced the live version in `s3://openwork-celld/ci/fleet-deployed.json` (outside the
    fleet prefix; celld never reads it), for the next run's check.
-6. Posts the outcome to Slack, when `CELLD_DEPLOY_SLACK_WEBHOOK_URL` is set: deployed / unchanged / failed, the
+7. Posts the outcome to Slack, when `CELLD_DEPLOY_SLACK_WEBHOOK_URL` is set: deployed / unchanged / failed, the
    version and the one before it, the commit and run, and how many nodes adopted it. Cells switched and cells
    force-cancelled are not counted yet: celld 0.6.3 logs no line for a forced switch.
 
@@ -323,8 +328,7 @@ into it, and on demand (Actions → "Deploy runner to celld" → Run workflow). 
   channel that should hear about deploys. Without it the run posts nothing.
 - **`HEADLESS_COMPUTER_SNAPSHOT`** (optional): a plain environment variable holding a Freestyle desktop snapshot
   slug. It overrides this field in `CELLD_RUNNER_VARS`; when unset, the JSON value remains in effect. Either way, a
-  slug named by the builder for another desktop is replaced by the one the run builds, so routine desktop changes
-  need neither.
+  slug named by the builder is replaced by the one the run builds, so routine desktop and guest changes need neither.
 
 **Keep the default model authorized.** `CELLD_RUNNER_VARS` carries a provider route, key, model alias and protocol as
 one configuration. Before replacing a retired alias, list `/models` on the intended route with that same key and

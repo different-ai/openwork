@@ -7,6 +7,7 @@ import {
 import { createDenTypeId, type DenTypeId } from "@openwork-ee/utils/typeid"
 import { db } from "../db.js"
 import { requestRead, requestReadMany } from "../request-reads.js"
+import { isSandboxMicrosoftClient, resolveSandboxMicrosoftEndpoints, type SandboxMicrosoftEndpoints } from "./sandbox-microsoft-endpoints.js"
 
 /**
  * Generic, provider-agnostic reads/writes for the two credential tables.
@@ -15,7 +16,13 @@ import { requestRead, requestReadMany } from "../request-reads.js"
  * goes through this same, single implementation.
  */
 
-export type OrgOAuthClientRow = typeof OrgOAuthClientTable.$inferSelect
+export type OrgOAuthClientRow = typeof OrgOAuthClientTable.$inferSelect & {
+  /**
+   * Only on a sandbox's sample Microsoft 365 client: where it signs in and reads Graph instead of Microsoft, or why it
+   * cannot be used now. Worked out on every read, never stored. See sandbox-microsoft-endpoints.ts.
+   */
+  sandboxEndpoints?: SandboxMicrosoftEndpoints
+}
 export type ConnectedAccountRow = typeof ConnectedAccountTable.$inferSelect
 
 type OrganizationId = DenTypeId<"organization">
@@ -50,8 +57,10 @@ export function parseGrantedOAuthScopes(scope: string | undefined): string[] | n
   return scope === undefined ? null : scope.split(" ").filter(Boolean)
 }
 
-function normalizeOrgOAuthClientRow(row: OrgOAuthClientRow): OrgOAuthClientRow {
-  return { ...row, extra: normalizeOAuthClientExtra(row.extra) }
+async function normalizeOrgOAuthClientRow(row: OrgOAuthClientRow): Promise<OrgOAuthClientRow> {
+  const normalized = { ...row, extra: normalizeOAuthClientExtra(row.extra) }
+  if (!isSandboxMicrosoftClient(normalized.extra)) return normalized
+  return { ...normalized, sandboxEndpoints: await resolveSandboxMicrosoftEndpoints(normalized.organizationId) }
 }
 
 function normalizeConnectedAccountRow(row: ConnectedAccountRow): ConnectedAccountRow {
@@ -99,17 +108,22 @@ export function getOrgOAuthClients(organizationId: OrganizationId, providerIds: 
       .select()
       .from(OrgOAuthClientTable)
       .where(and(eq(OrgOAuthClientTable.organizationId, organizationId), inArray(OrgOAuthClientTable.providerId, missing)))
-    return new Map(rows.map((row) => [row.providerId, normalizeOrgOAuthClientRow(row)]))
+    return new Map(await Promise.all(rows.map(async (row) => [row.providerId, await normalizeOrgOAuthClientRow(row)] as const)))
   }, null)
 }
 
-async function readOrgOAuthClient(organizationId: OrganizationId, providerId: string): Promise<OrgOAuthClientRow | null> {
-  const rows = await db
+/** One provider's client read from the primary, for a writer reading back its own change. */
+export function getOrgOAuthClientFromPrimary(organizationId: OrganizationId, providerId: string): Promise<OrgOAuthClientRow | null> {
+  return readOrgOAuthClient(organizationId, providerId, db.$primary)
+}
+
+async function readOrgOAuthClient(organizationId: OrganizationId, providerId: string, database: typeof db.$primary = db): Promise<OrgOAuthClientRow | null> {
+  const rows = await database
     .select()
     .from(OrgOAuthClientTable)
     .where(and(eq(OrgOAuthClientTable.organizationId, organizationId), eq(OrgOAuthClientTable.providerId, providerId)))
     .limit(1)
-  return rows[0] ? normalizeOrgOAuthClientRow(rows[0]) : null
+  return rows[0] ? await normalizeOrgOAuthClientRow(rows[0]) : null
 }
 
 export async function deleteOrgOAuthClient(organizationId: OrganizationId, providerId: string): Promise<void> {
@@ -127,7 +141,8 @@ export async function upsertOrgOAuthClient(input: {
   extra?: Record<string, unknown> | null
   createdByOrgMembershipId: OrgMembershipId
 }): Promise<OrgOAuthClientRow> {
-  const existing = await getOrgOAuthClient(input.organizationId, input.providerId)
+  // primary: decides update vs insert and reads back the row written here.
+  const existing = await readOrgOAuthClient(input.organizationId, input.providerId, db.$primary)
   if (existing) {
     await db
       .update(OrgOAuthClientTable)
@@ -137,7 +152,7 @@ export async function upsertOrgOAuthClient(input: {
         ...(input.extra !== undefined ? { extra: input.extra } : {}),
       })
       .where(eq(OrgOAuthClientTable.id, existing.id))
-    return (await getOrgOAuthClient(input.organizationId, input.providerId))!
+    return (await readOrgOAuthClient(input.organizationId, input.providerId, db.$primary))!
   }
 
   const id = createDenTypeId("orgOAuthClient")
@@ -150,7 +165,7 @@ export async function upsertOrgOAuthClient(input: {
     extra: input.extra ?? null,
     createdByOrgMembershipId: input.createdByOrgMembershipId,
   })
-  return (await readOrgOAuthClient(input.organizationId, input.providerId))!
+  return (await readOrgOAuthClient(input.organizationId, input.providerId, db.$primary))!
 }
 
 /**
@@ -159,7 +174,7 @@ export async function upsertOrgOAuthClient(input: {
  * always reads fresh: a refresh that lost a race re-reads without writing.
  */
 export function getConnectedAccountForListing(input: Parameters<typeof getConnectedAccount>[0]): Promise<ConnectedAccountRow | null> {
-  return requestRead(connectedAccountReadKey(input), () => getConnectedAccount(input))
+  return requestRead(connectedAccountReadKey(input), () => readConnectedAccount(input, db))
 }
 
 /** getConnectedAccountForListing for one member's accounts with many providers, in one query. */
@@ -185,12 +200,21 @@ function connectedAccountReadKey(input: { organizationId: OrganizationId; orgMem
   return `connected-account:${input.organizationId}:${input.orgMembershipId}:${input.providerId}`
 }
 
+/** Reads the primary: token refresh and upserts must see the latest write. */
 export async function getConnectedAccount(input: {
   organizationId: OrganizationId
   orgMembershipId: OrgMembershipId
   providerId: string
 }): Promise<ConnectedAccountRow | null> {
-  const rows = await db
+  return readConnectedAccount(input, db.$primary)
+}
+
+async function readConnectedAccount(input: {
+  organizationId: OrganizationId
+  orgMembershipId: OrgMembershipId
+  providerId: string
+}, database: typeof db.$primary): Promise<ConnectedAccountRow | null> {
+  const rows = await database
     .select()
     .from(ConnectedAccountTable)
     .where(and(

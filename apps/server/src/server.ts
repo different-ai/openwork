@@ -1954,6 +1954,10 @@ async function validateEngineRequestBody(request: Request): Promise<void> {
 }
 
 export async function proxyOpencodeRequest(input: Parameters<typeof forwardOpencodeRequest>[0]) {
+  // All v1 mounts (including background/recovery sends) converge here. Check
+  // before forwarding or acquiring a mutation lease; local engine config cannot
+  // weaken the verified organization policy. v2 keeps its native/plugin checks.
+  await managedDesktopPolicy(input.config).assertLegacyExecutionRequest(input.request, input.proxyPath ?? input.url.pathname);
   if (["GET", "HEAD"].includes(input.request.method.toUpperCase())) return forwardOpencodeRequest(input);
   const release = await enterEngineMutation(input.config, "v1", input.request.signal);
   try { return await forwardOpencodeRequest(input); }
@@ -2591,10 +2595,9 @@ function resolveInboxMaxBytes(): number {
   if (Number.isFinite(parsed) && parsed > 0) {
     return Math.trunc(parsed);
   }
-  // Generous default: the composer no longer caps attachment sizes, so large
-  // uploads should be bounded here (memory: formData buffers the body) and by
-  // downstream provider/tool limits rather than an arbitrary small cap.
-  return 250_000_000;
+  // The composer does not cap attachment sizes and uploads stream to disk, so
+  // this only keeps one file from filling a worker's disk.
+  return 10_000_000_000;
 }
 
 // Dev-only log sink target. When OPENWORK_DEV_LOG_FILE is set to a path, the
@@ -4139,6 +4142,8 @@ function createRoutes(
             workspaceRoot: workspace.path,
             projectedToolName,
           });
+      // The App closed while this resolved, so nothing will use or release this lease.
+      if (ctx.request.signal.aborted && app?.launchId) releaseMcpAppLaunch(config, workspace.id, app.launchId);
       return jsonResponse({ app });
     } catch (error) {
       rethrowMcpAppHostError(error);

@@ -339,6 +339,7 @@ Nothing on celld changes, so pointing the URLs back is the rollback.
 | `SANDBOX_GATEWAY_URL`, `SANDBOX_GATEWAY_API_KEY` | | For the gateway: its HTTPS API and a project-scoped key. The gateway holds the provider credentials |
 | `SANDBOX_GATEWAY_TEMPLATE` | | For the gateway: its template for the computer image, which it maps to each provider's own image |
 | `HEADLESS_COMPUTER_PAUSE_SECONDS` | `300` | Pause a computer this long after its last turn, unless a `background` job runs |
+| `SANDBOX_GATEWAY_PAUSE_SECONDS` | `HEADLESS_COMPUTER_PAUSE_SECONDS` | The same for gateway computers. Worth raising on private pools: a Fast Sandbox pause writes a full checkpoint for minutes, and the gateway reclaims idle computers itself when its pool fills |
 | `HEADLESS_COMPUTER_KEEP_DAYS` | `14` | Freestyle deletes a computer unused this long |
 | `HEADLESS_SENTRY_DSN` | unset | Optional Sentry error reports (both hosts, posted over `fetch`): failed turns by error code, startup recovery errors and 500s. Codes, ids and counts only, never content or credentials. Unset sends nothing |
 | `HEADLESS_SENTRY_ENVIRONMENT`, `HEADLESS_SENTRY_RELEASE` | unset, `headless-runner@<HEADLESS_RUNNER_VERSION>` | Tags on those reports |
@@ -500,6 +501,22 @@ OpenSandbox pools guide lists the options). Measured on Azure
 template is on the node; pause, which writes a full checkpoint of disk and
 memory, takes about three minutes and resume about a second, with processes and
 open windows kept.
+
+Keep the template on the runner's desktop image. When
+`dist/desktop-image.version` changes, rebuild it and update both of the
+Differently template's entries: this pool's template id and the Freestyle
+snapshot the runner deploy built. Until then the template's computers stay on
+the older image, and the deploy warns, in its log and in Slack. A node's template
+cache holds one desktop-sized template by default, and Fast Sandbox doesn't fetch
+an evicted one again (Differently's Azure guide): boot a computer from the new
+template to put it on the node, switch Differently to it right away, then delete
+the old one.
+
+A new guest on the same image needs no rebuild. The runner installs its guest
+into the computers it starts, which adds about 4 s to a new computer's first
+open. Guests change most days, and a template takes about five minutes to build
+and a Differently configuration change to adopt, so the template follows the
+image and not the guest.
 
 Opt-in verification, creating and cleaning one real computer:
 

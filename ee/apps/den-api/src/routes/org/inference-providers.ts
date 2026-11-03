@@ -209,10 +209,11 @@ const testConnectionAccess: MiddlewareHandler<{ Variables: OrgRouteVariables }> 
 async function pendingKeyPrompt(provider: GatewayProvider, setId: string | null) {
   const shape = gatewayCredentialShape(provider.provider_id, readProviderEnvNames(provider.provider_config))
   if (!setId || !shape) return null
-  const [set] = await db.select({ mode: GatewayCredentialSetTable.credential_mode }).from(GatewayCredentialSetTable)
+  // Primary: called right after the create transaction wrote this set.
+  const [set] = await db.$primary.select({ mode: GatewayCredentialSetTable.credential_mode }).from(GatewayCredentialSetTable)
     .where(and(eq(GatewayCredentialSetTable.id, normalizeDenTypeId("gatewayCredentialSet", setId)), eq(GatewayCredentialSetTable.gateway_provider_id, provider.id)))
   if (set?.mode !== "org") return null
-  const [credential] = await db.select({ status: GatewayProviderCredentialTable.status }).from(GatewayProviderCredentialTable)
+  const [credential] = await db.$primary.select({ status: GatewayProviderCredentialTable.status }).from(GatewayProviderCredentialTable)
     .where(and(eq(GatewayProviderCredentialTable.credential_set_id, normalizeDenTypeId("gatewayCredentialSet", setId)), eq(GatewayProviderCredentialTable.subject, "org")))
   if (credential?.status === "active") return null
   return credentialPromptResponseFields(gatewayProviderCredentialPrompt({
@@ -255,13 +256,13 @@ async function holdsLiveManage(tx: GatewayTx, actor: Actor) {
 // Re-reads the caller's member row so a removal that landed after the route
 // check still fails here. Write transactions behind managementWrite then call
 // requireLiveManage with the same transaction.
-async function liveMember(database: GatewayTx | typeof db, actor: Actor, lock: boolean) {
+async function liveMember(database: GatewayTx | typeof db | typeof db.$primary, actor: Actor, lock: boolean) {
   const query = database.select().from(MemberTable).where(and(eq(MemberTable.id, actor.currentMember.id), eq(MemberTable.organizationId, actor.organization.id), isNull(MemberTable.removedAt)))
   const [member] = await (lock ? query.for("update") : query)
   if (!member?.userId) throw new GatewayWriteError(403, "forbidden")
   return member
 }
-async function getProvider(database: GatewayTx | typeof db, actor: Actor, id: string, lock = false) {
+async function getProvider(database: GatewayTx | typeof db | typeof db.$primary, actor: Actor, id: string, lock = false) {
   await liveMember(database, actor, lock)
   const query = database.select().from(GatewayProviderTable).where(and(eq(GatewayProviderTable.id, normalizeDenTypeId("inferenceProvider", id)), eq(GatewayProviderTable.organization_id, actor.organization.id)))
   const [provider] = await (lock ? query.for("update") : query)
@@ -378,7 +379,8 @@ async function loadBrowserSignInAttempt(c: Context, handle: string, method: Gate
   const cookieToken = await readSignedSessionCookieToken(c)
   const [session] = cookieToken ? await db.select().from(AuthSessionTable).where(and(sessionTokenMatches(cookieToken), gt(AuthSessionTable.expiresAt, new Date()))).limit(1) : []
   if (!session) return { response: c.json({ error: "browser_signin_required", message: "Sign in to OpenWork in this browser, then continue here." }, 401) }
-  const [entry] = await db.select().from(GatewayProviderOauthStateTable).where(eq(GatewayProviderOauthStateTable.state, handle)).limit(1)
+  // Primary: entry handles are written moments before the browser presents them.
+  const [entry] = await db.$primary.select().from(GatewayProviderOauthStateTable).where(eq(GatewayProviderOauthStateTable.state, handle)).limit(1)
   const attempt = entry ? readGoogleOAuthAttempt(entry.code_verifier) : null
   if (!entry || !attempt || entry.used_at || entry.expires_at.getTime() <= Date.now()) throw new GatewayWriteError(400, "oauth_entry_expired", "This connection attempt expired or was already used. Start Connect again.")
   if (attempt.userId !== session.userId) throw new GatewayWriteError(403, "browser_account_mismatch", "Use the same OpenWork account that started Connect. Sign out in this browser and sign in with that account.")
@@ -600,7 +602,7 @@ export function registerOrgInferenceProviderRoutes<T extends { Variables: OrgRou
         })
       })
       const prompt = await pendingKeyPrompt(provider, defaultSetId)
-      return c.json({ inferenceProvider: await gatewaySummary(provider, actor.currentMember.id, publicBase(c.req.raw), true, { managerDetails: await hasPermission(c, MANAGE) }), ...prompt }, 201)
+      return c.json({ inferenceProvider: await gatewaySummary(provider, actor.currentMember.id, publicBase(c.req.raw), true, { managerDetails: await hasPermission(c, MANAGE), primary: true }), ...prompt }, 201)
     } catch (error) { return respond(c, error) }
   })
 
@@ -626,7 +628,7 @@ export function registerOrgInferenceProviderRoutes<T extends { Variables: OrgRou
           await tx.update(GatewayProviderTable).set({ pinned_model_ids: pinnedModelIds, updated_at }).where(eq(GatewayProviderTable.id, existing.id))
           return { ...existing, pinned_model_ids: pinnedModelIds, updated_at }
         })
-        return c.json({ inferenceProvider: await gatewaySummary(provider, actor.currentMember.id, publicBase(c.req.raw), true, { managerDetails: await hasPermission(c, MANAGE) }) })
+        return c.json({ inferenceProvider: await gatewaySummary(provider, actor.currentMember.id, publicBase(c.req.raw), true, { managerDetails: await hasPermission(c, MANAGE), primary: true }) })
       }
       const before = await getProvider(db, actor, c.req.valid("param").inferenceProviderId)
       const trusted = await trustedProviderCatalog(before)
@@ -649,7 +651,7 @@ export function registerOrgInferenceProviderRoutes<T extends { Variables: OrgRou
         await tx.update(GatewayProviderTable).set({ name: provider.name, model_ids: modelIds, status: provider.status, updated_at: provider.updated_at }).where(eq(GatewayProviderTable.id, provider.id))
         return provider
       })
-      return c.json({ inferenceProvider: await gatewaySummary(provider, actor.currentMember.id, publicBase(c.req.raw), true, { managerDetails: await hasPermission(c, MANAGE) }) })
+      return c.json({ inferenceProvider: await gatewaySummary(provider, actor.currentMember.id, publicBase(c.req.raw), true, { managerDetails: await hasPermission(c, MANAGE), primary: true }) })
     } catch (error) { return respond(c, error) }
   })
 
@@ -691,7 +693,7 @@ export function registerOrgInferenceProviderRoutes<T extends { Variables: OrgRou
         await touch(tx, provider)
         return { provider, id }
       })
-      const details = await gatewaySummary(result.provider, actor.currentMember.id, publicBase(c.req.raw), true, { managerDetails: await hasPermission(c, MANAGE) })
+      const details = await gatewaySummary(result.provider, actor.currentMember.id, publicBase(c.req.raw), true, { managerDetails: await hasPermission(c, MANAGE), primary: true })
       const modelGroup = details.modelGroups.find((group) => group.id === result.id)
       if (!modelGroup) throw new GatewayWriteError(404, "model_group_not_found")
       return c.json({ modelGroup }, 201)
@@ -707,7 +709,7 @@ export function registerOrgInferenceProviderRoutes<T extends { Variables: OrgRou
         await touch(tx, provider)
         return { provider, id }
       })
-      const details = await gatewaySummary(result.provider, actor.currentMember.id, publicBase(c.req.raw), true, { managerDetails: await hasPermission(c, MANAGE) })
+      const details = await gatewaySummary(result.provider, actor.currentMember.id, publicBase(c.req.raw), true, { managerDetails: await hasPermission(c, MANAGE), primary: true })
       const modelGroup = details.modelGroups.find((group) => group.id === result.id)
       if (!modelGroup) throw new GatewayWriteError(404, "model_group_not_found")
       return c.json({ modelGroup })
@@ -749,7 +751,7 @@ export function registerOrgInferenceProviderRoutes<T extends { Variables: OrgRou
         await touch(tx, provider)
         return { provider, ...set }
       })
-      const details = await gatewaySummary(result.provider, actor.currentMember.id, publicBase(c.req.raw), true, { managerDetails: await hasPermission(c, MANAGE) })
+      const details = await gatewaySummary(result.provider, actor.currentMember.id, publicBase(c.req.raw), true, { managerDetails: await hasPermission(c, MANAGE), primary: true })
       const credentialSet = details.credentialSets.find((set) => set.id === result.id)
       if (!credentialSet) throw new GatewayWriteError(404, "credential_set_not_found")
       return c.json({ credentialSet }, 201)
@@ -768,7 +770,7 @@ export function registerOrgInferenceProviderRoutes<T extends { Variables: OrgRou
         return { provider, ...set }
       })
       await revokeUpstreamCredentials(result.revoked)
-      const details = await gatewaySummary(result.provider, actor.currentMember.id, publicBase(c.req.raw), true, { managerDetails: await hasPermission(c, MANAGE) })
+      const details = await gatewaySummary(result.provider, actor.currentMember.id, publicBase(c.req.raw), true, { managerDetails: await hasPermission(c, MANAGE), primary: true })
       const credentialSet = details.credentialSets.find((set) => set.id === result.id)
       if (!credentialSet) throw new GatewayWriteError(404, "credential_set_not_found")
       return c.json({ credentialSet })
@@ -931,7 +933,8 @@ export function registerOrgInferenceProviderRoutes<T extends { Variables: OrgRou
     await next()
   }, queryValidator(z.object({ attempt: z.string().regex(/^entry\.[A-Za-z0-9_-]{43}$/) }).strict()), async (c) => {
     try {
-      const [entry] = await db.select().from(GatewayProviderOauthStateTable).where(eq(GatewayProviderOauthStateTable.state, c.req.valid("query").attempt)).limit(1)
+      // Primary: oauth/start wrote this handle moments before the browser presents it.
+      const [entry] = await db.$primary.select().from(GatewayProviderOauthStateTable).where(eq(GatewayProviderOauthStateTable.state, c.req.valid("query").attempt)).limit(1)
       const attempt = entry ? readGoogleOAuthAttempt(entry.code_verifier) : null
       if (!entry || !attempt || entry.used_at || entry.expires_at.getTime() <= Date.now()) throw new GatewayWriteError(400, "oauth_entry_expired", "This connection attempt expired or was already used. Start Connect again.")
       const cookieToken = await readSignedSessionCookieToken(c)
@@ -969,7 +972,8 @@ export function registerOrgInferenceProviderRoutes<T extends { Variables: OrgRou
       const cookieToken = await readSignedSessionCookieToken(c)
       const [session] = cookieToken ? await db.select().from(AuthSessionTable).where(and(sessionTokenMatches(cookieToken), gt(AuthSessionTable.expiresAt, new Date()))).limit(1) : []
       if (!session) return c.json({ error: "browser_signin_required", message: "Sign in to OpenWork in this browser, then continue here." }, 401)
-      const [entry] = await db.select().from(GatewayProviderOauthStateTable).where(eq(GatewayProviderOauthStateTable.state, c.req.valid("query").attempt)).limit(1)
+      // Primary: oauth/start wrote this handle moments before the browser presents it.
+      const [entry] = await db.$primary.select().from(GatewayProviderOauthStateTable).where(eq(GatewayProviderOauthStateTable.state, c.req.valid("query").attempt)).limit(1)
       const attempt = entry ? readGoogleOAuthAttempt(entry.code_verifier) : null
       if (!entry || !attempt || entry.used_at || entry.expires_at.getTime() <= Date.now()) throw new GatewayWriteError(400, "oauth_entry_expired", "This connection attempt expired or was already used. Start Connect again.")
       if (attempt.userId !== session.userId) throw new GatewayWriteError(403, "browser_account_mismatch", "Use the same OpenWork account that started Connect. Sign out in this browser and sign in with that account.")
@@ -1216,7 +1220,7 @@ export function registerOrgInferenceProviderRoutes<T extends { Variables: OrgRou
       })
       // Everyone allowed gets keys straight away; nobody has to connect anything.
       const issued = issue.keySource === "issued" ? await liteLlmCall(() => reconcileLiteLlmIssuedKeys(provider, client)) : undefined
-      return c.json({ inferenceProvider: await gatewaySummary(provider, actor.currentMember.id, publicBase(c.req.raw), true, { managerDetails: await hasPermission(c, MANAGE) }), sync: { ...sync, ...(issued ? { issued } : {}) } }, 201)
+      return c.json({ inferenceProvider: await gatewaySummary(provider, actor.currentMember.id, publicBase(c.req.raw), true, { managerDetails: await hasPermission(c, MANAGE), primary: true }), sync: { ...sync, ...(issued ? { issued } : {}) } }, 201)
     } catch (error) { return respond(c, error) }
   })
 
@@ -1234,7 +1238,7 @@ export function registerOrgInferenceProviderRoutes<T extends { Variables: OrgRou
       })
       const result = await providerTransaction(c, async (tx, provider) => ({ provider, sync: await applyLiteLlmSync(tx, provider, plan) }))
       const issued = readLiteLlmSettings(result.provider.settings)?.keySource === "issued" ? await liteLlmCall(() => reconcileLiteLlmIssuedKeys(result.provider)) : undefined
-      return c.json({ inferenceProvider: await gatewaySummary(result.provider, actor.currentMember.id, publicBase(c.req.raw), true, { managerDetails: await hasPermission(c, MANAGE) }), sync: { ...result.sync, ...(issued ? { issued } : {}) } })
+      return c.json({ inferenceProvider: await gatewaySummary(result.provider, actor.currentMember.id, publicBase(c.req.raw), true, { managerDetails: await hasPermission(c, MANAGE), primary: true }), sync: { ...result.sync, ...(issued ? { issued } : {}) } })
     } catch (error) { return respond(c, error) }
   })
 
@@ -1254,11 +1258,12 @@ export function registerOrgInferenceProviderRoutes<T extends { Variables: OrgRou
         if (apiKey !== undefined) await replaceLiteLlmSyncKey(tx, provider, apiKey)
         if (input.issueStrategy !== undefined || input.mirrorFallback !== undefined) await updateLiteLlmIssueSettings(tx, provider, { issueStrategy: input.issueStrategy, mirrorFallback: input.mirrorFallback })
       })
-      const refreshed = await getProvider(db, actor, before.id)
+      // Primary: reads the key the transaction above just stored.
+      const refreshed = await getProvider(db.$primary, actor, before.id)
       const plan = await liteLlmCall(() => planLiteLlmSync(refreshed, client))
       const result = await providerTransaction(c, async (tx, provider) => ({ provider, sync: await applyLiteLlmSync(tx, provider, plan) }))
       const issued = issuedMode ? await liteLlmCall(() => reconcileLiteLlmIssuedKeys(result.provider, client)) : undefined
-      return c.json({ inferenceProvider: await gatewaySummary(result.provider, actor.currentMember.id, publicBase(c.req.raw), true, { managerDetails: await hasPermission(c, MANAGE) }), sync: { ...result.sync, ...(issued ? { issued } : {}) } })
+      return c.json({ inferenceProvider: await gatewaySummary(result.provider, actor.currentMember.id, publicBase(c.req.raw), true, { managerDetails: await hasPermission(c, MANAGE), primary: true }), sync: { ...result.sync, ...(issued ? { issued } : {}) } })
     } catch (error) { return respond(c, error) }
   })
 
@@ -1293,7 +1298,8 @@ export function registerOrgInferenceProviderRoutes<T extends { Variables: OrgRou
       const cookieToken = await readSignedSessionCookieToken(c)
       const [session] = cookieToken ? await db.select().from(AuthSessionTable).where(and(sessionTokenMatches(cookieToken), gt(AuthSessionTable.expiresAt, new Date()))).limit(1) : []
       if (!session) return c.json({ error: "browser_signin_required", message: "Sign in to OpenWork in this browser, then continue here." }, 401)
-      const [entry] = await db.select().from(GatewayProviderOauthStateTable).where(eq(GatewayProviderOauthStateTable.state, input.attempt)).limit(1)
+      // Primary: oauth/start wrote this handle moments before the browser presents it.
+      const [entry] = await db.$primary.select().from(GatewayProviderOauthStateTable).where(eq(GatewayProviderOauthStateTable.state, input.attempt)).limit(1)
       const attempt = entry ? readGoogleOAuthAttempt(entry.code_verifier) : null
       if (!entry || !attempt || entry.used_at || entry.expires_at.getTime() <= Date.now()) throw new GatewayWriteError(400, "oauth_entry_expired", "This connection attempt expired or was already used. Start Connect again.")
       if (attempt.userId !== session.userId) throw new GatewayWriteError(403, "browser_account_mismatch", "Use the same OpenWork account that started Connect. Sign out in this browser and sign in with that account.")
@@ -1331,7 +1337,8 @@ export function registerOrgInferenceProviderRoutes<T extends { Variables: OrgRou
       const cookieToken = await readSignedSessionCookieToken(c)
       const [session] = cookieToken ? await db.select().from(AuthSessionTable).where(and(sessionTokenMatches(cookieToken), gt(AuthSessionTable.expiresAt, new Date()))).limit(1) : []
       if (!session) return c.json({ error: "browser_signin_required", message: "Sign in to OpenWork in this browser, then continue here." }, 401)
-      const [entry] = await db.select().from(GatewayProviderOauthStateTable).where(eq(GatewayProviderOauthStateTable.state, input.attempt)).limit(1)
+      // Primary: oauth/start wrote this handle moments before the browser presents it.
+      const [entry] = await db.$primary.select().from(GatewayProviderOauthStateTable).where(eq(GatewayProviderOauthStateTable.state, input.attempt)).limit(1)
       const attempt = entry ? readGoogleOAuthAttempt(entry.code_verifier) : null
       if (!entry || !attempt || entry.used_at || entry.expires_at.getTime() <= Date.now()) throw new GatewayWriteError(400, "oauth_entry_expired", "This connection attempt expired or was already used. Start Connect again.")
       if (attempt.userId !== session.userId) throw new GatewayWriteError(403, "browser_account_mismatch", "Use the same OpenWork account that started Connect. Sign out in this browser and sign in with that account.")
@@ -1397,7 +1404,7 @@ export function registerOrgInferenceProviderRoutes<T extends { Variables: OrgRou
         await tx.delete(LlmProviderTable).where(eq(LlmProviderTable.id, source.id))
         return provider
       })
-      return c.json({ inferenceProvider: await gatewaySummary(provider, actor.currentMember.id, publicBase(c.req.raw), true, { managerDetails: await hasPermission(c, MANAGE) }) }, 201)
+      return c.json({ inferenceProvider: await gatewaySummary(provider, actor.currentMember.id, publicBase(c.req.raw), true, { managerDetails: await hasPermission(c, MANAGE), primary: true }) }, 201)
     } catch (error) { return respond(c, error) }
   })
 }
