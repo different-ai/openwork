@@ -83,37 +83,48 @@ jobs:
       contents: read
     uses: ./.github/workflows/packaged-smoke.yml
 
-  publish-alpha-macos-aarch64:
-    needs: [changes, packaged-smoke]
+  # Builds run in parallel with the packaged smoke and with each other, so a
+  # merge never waits for an earlier build. Only publication takes the lock.
+  build-alpha-macos-aarch64:
+    needs: changes
     if: needs.changes.outputs.affected == 'true' && (github.event_name == 'push' || inputs.platform != 'windows-x64')
-    name: Build + Publish alpha (aarch64-apple-darwin)
+    name: Build alpha (aarch64-apple-darwin)
     runs-on: macos-26
     # Apple signing secrets belong to this environment; no deployment is recorded.
     environment:
       name: macos-signing
       deployment: false
     timeout-minutes: 180
-    concurrency:
-      group: alpha-macos-${{ inputs.channel_tag || 'alpha-macos-latest' }}
-      cancel-in-progress: false
+    permissions:
+      contents: read
+    outputs:
+      artifact_version: ${{ steps.alpha-version.outputs.artifact_version }}
+      commit: ${{ steps.alpha-build.outputs.commit }}
+      started_at: ${{ steps.alpha-build.outputs.started_at }}
 
     env:
-      ALPHA_RELEASE_NAME: OpenWork Alpha (macOS arm64)
       # Apple signing + notarization are required so alpha bundles install
       # and launch without Gatekeeper friction. Alpha builds are served
       # from GitHub Releases like stable, just from a different tag.
       MACOS_NOTARIZE: ${{ vars.MACOS_NOTARIZE || 'true' }}
       OPENWORK_DESKTOP_SENTRY_DSN: ${{ secrets.OPENWORK_DESKTOP_SENTRY_DSN || vars.OPENWORK_DESKTOP_SENTRY_DSN }}
       OPENWORK_DESKTOP_SENTRY_TRACES_SAMPLE_RATE: ${{ vars.OPENWORK_DESKTOP_SENTRY_TRACES_SAMPLE_RATE || '0.01' }}
+      # The filtered install step is complete for this build (as on Windows);
+      # without this, the first pnpm run reinstalls every workspace package.
+      PNPM_CONFIG_VERIFY_DEPS_BEFORE_RUN: "false"
 
     steps:
       - name: Checkout
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
           ref: ${{ github.sha }}
-          # Alpha versions are computed from the latest stable v* tag
-          # (package.json holds a permanent 0.0.0-dev placeholder).
-          fetch-depth: 0
+
+      # Alpha versions are computed from the latest stable v* tag (package.json
+      # holds a permanent 0.0.0-dev placeholder). Tag names are all the build
+      # reads, so fetch them without history or trees instead of every branch.
+      - name: Fetch release tags
+        shell: bash
+        run: git fetch --no-tags --depth=1 --filter=tree:0 origin '+refs/tags/v*:refs/tags/v*'
 
       - name: Setup Node
         uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
@@ -164,8 +175,12 @@ jobs:
           base="$(node scripts/release/versions.mjs next --bump patch)"
           run="${GITHUB_RUN_NUMBER:-0}"
           sha="$(printf '%.7s' "${GITHUB_SHA:-local}")"
-          echo "alpha_version=${base}-alpha.${run}+${sha}" >> "$GITHUB_OUTPUT"
-          echo "base_version=${base}" >> "$GITHUB_OUTPUT"
+          {
+            echo "alpha_version=${base}-alpha.${run}+${sha}"
+            # Electron Builder omits semver build metadata in artifact filenames.
+            echo "artifact_version=${base}-alpha.${run}"
+            echo "base_version=${base}"
+          } >> "$GITHUB_OUTPUT"
 
       - name: Write alpha Electron package version
         shell: bash
@@ -224,14 +239,63 @@ jobs:
             --arm64 \
             --publish never
 
+      - name: Retain signed macOS alpha build
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: openwork-alpha-macos-arm64
+          path: |
+            apps/desktop/dist-electron/*.dmg
+            apps/desktop/dist-electron/*.zip
+            apps/desktop/dist-electron/*.blockmap
+            apps/desktop/dist-electron/latest-mac.yml
+          if-no-files-found: error
+          # DMG and ZIP are already compressed.
+          compression-level: 0
+          retention-days: 1
+
+  publish-alpha-macos-aarch64:
+    # The packaged Linux smoke must pass before any alpha is published.
+    needs: [changes, packaged-smoke, build-alpha-macos-aarch64]
+    if: needs.changes.outputs.affected == 'true' && (github.event_name == 'push' || (inputs.platform != 'windows-x64' && inputs.publish == true))
+    name: Publish alpha (aarch64-apple-darwin)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: write
+    concurrency:
+      group: alpha-macos-${{ inputs.channel_tag || 'alpha-macos-latest' }}
+      cancel-in-progress: false
+    env:
+      ALPHA_RELEASE_NAME: OpenWork Alpha (macOS arm64)
+      CHANNEL_TAG: ${{ inputs.channel_tag || 'alpha-macos-latest' }}
+
+    steps:
+      - name: Checkout release scripts
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+          sparse-checkout: scripts/release
+
+      - name: Setup Node
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: 24.22.1
+
+      - name: Download signed macOS alpha build
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: openwork-alpha-macos-arm64
+          path: apps/desktop/dist-electron
+
       - name: Publish alpha build to rolling release
-        if: env.MACOS_NOTARIZE == 'true' && (github.event_name == 'push' || inputs.publish == true)
+        id: publish-macos
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
-          CHANNEL_TAG: ${{ inputs.channel_tag || 'alpha-macos-latest' }}
-          ALPHA_COMMIT: ${{ steps.alpha-build.outputs.commit }}
-          ALPHA_BUILD_STARTED_AT: ${{ steps.alpha-build.outputs.started_at }}
+          ALPHA_COMMIT: ${{ needs.build-alpha-macos-aarch64.outputs.commit }}
+          ALPHA_BUILD_STARTED_AT: ${{ needs.build-alpha-macos-aarch64.outputs.started_at }}
+          ALPHA_VERSION: ${{ needs.build-alpha-macos-aarch64.outputs.artifact_version }}
         run: |
           set -euo pipefail
           # Alpha assets may only ever land on alpha channel releases. This
@@ -245,7 +309,26 @@ jobs:
               ;;
           esac
 
-          if ! gh release view "$CHANNEL_TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+          shopt -s nullglob
+          assets=(
+            apps/desktop/dist-electron/*.dmg
+            apps/desktop/dist-electron/*.zip
+            apps/desktop/dist-electron/*.blockmap
+          )
+          if [ ${#assets[@]} -eq 0 ] || [ ! -s apps/desktop/dist-electron/latest-mac.yml ]; then
+            echo "No Electron alpha assets found in apps/desktop/dist-electron" >&2
+            exit 1
+          fi
+
+          published_assets="$(mktemp)"
+          trap 'rm -f "$published_assets"' EXIT
+          if gh release view "$CHANNEL_TAG" --repo "$GITHUB_REPOSITORY" --json assets --jq '.assets[].name' > "$published_assets"; then
+            # Builds finish out of order; never move the feed behind a newer build.
+            if [ "$(node scripts/release/check-alpha-version.mjs mac "$ALPHA_VERSION" "$published_assets")" != publish ]; then
+              echo "Skipping alpha $ALPHA_VERSION: a newer build is already uploaded."
+              exit 0
+            fi
+          else
             gh release create "$CHANNEL_TAG" \
               --repo "$GITHUB_REPOSITORY" \
               --title "$ALPHA_RELEASE_NAME" \
@@ -254,16 +337,6 @@ jobs:
               --prerelease
           fi
 
-          shopt -s nullglob
-          assets=(
-            apps/desktop/dist-electron/*.dmg
-            apps/desktop/dist-electron/*.zip
-            apps/desktop/dist-electron/*.blockmap
-          )
-          if [ ${#assets[@]} -eq 0 ]; then
-            echo "No Electron alpha assets found in apps/desktop/dist-electron" >&2
-            exit 1
-          fi
           # Human-readable asset labels also supply per-build metadata to the
           # docs in the existing release API response (no per-build requests).
           labeled_assets=()
@@ -278,14 +351,14 @@ jobs:
           gh release upload "$CHANNEL_TAG" apps/desktop/dist-electron/latest-mac.yml \
             --repo "$GITHUB_REPOSITORY" \
             --clobber
+          echo "published=true" >> "$GITHUB_OUTPUT"
 
       - name: Prune alpha assets beyond retention window
-        if: env.MACOS_NOTARIZE == 'true' && (github.event_name == 'push' || inputs.publish == true)
+        if: steps.publish-macos.outputs.published == 'true'
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
-          CHANNEL_TAG: ${{ inputs.channel_tag || 'alpha-macos-latest' }}
-        run: node scripts/release/prune-alpha-assets.mjs --repo "$GITHUB_REPOSITORY" --tag "$CHANNEL_TAG" --keep 100
+        run: node scripts/release/prune-alpha-assets.mjs --repo "$GITHUB_REPOSITORY" --tag "$CHANNEL_TAG" --keep 100 --protect-run "$GITHUB_RUN_NUMBER"
 
   publish-alpha-windows-x64:
     needs: [changes, packaged-smoke]
@@ -330,7 +403,9 @@ jobs:
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
           ref: ${{ github.sha }}
-          fetch-depth: 0
+
+      - name: Fetch release tags
+        run: git fetch --no-tags --depth=1 --filter=tree:0 origin '+refs/tags/v*:refs/tags/v*'
 
       - name: Setup pnpm
         uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
@@ -472,7 +547,7 @@ jobs:
           trap 'rm -f "$published_assets"' EXIT
           if gh release view "$CHANNEL_TAG" --repo "$GITHUB_REPOSITORY" --json assets --jq '.assets[].name' > "$published_assets"; then
             # Under the channel lock, do not move the feed behind any uploaded build.
-            if [ "$(node scripts/release/check-windows-alpha-version.mjs "$ALPHA_VERSION" "$published_assets")" != publish ]; then
+            if [ "$(node scripts/release/check-alpha-version.mjs windows "$ALPHA_VERSION" "$published_assets")" != publish ]; then
               echo "Skipping alpha $ALPHA_VERSION: an equal or newer build is already uploaded."
               exit 0
             fi
