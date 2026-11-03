@@ -921,6 +921,73 @@ test("always allowing files in a chat stops asking there", async (t) => {
   assert.equal(await other, false);
 });
 
+async function browserFileCard(f, pending, answer = "dismiss") {
+  for (let waited = 0; !f.requests.at(-1) && waited < 2_000; waited += 5) await new Promise((resolve) => setTimeout(resolve, 5));
+  const card = f.requests.at(-1);
+  assert.equal(card.reason, "files");
+  await f.control.answerRequest({ sessionId: "chat", answer, id: card.id });
+  return { card, answer: await pending };
+}
+
+test("browser files ask with computer use off and remember only the exact pending browser request", async (t) => {
+  const f = fixture({ remote: true, authority: async () => true }); t.after(() => f.control.reset(true));
+  await f.control.setRemoteEnabled(true);
+  await f.control.choose({ sessionId: "chat", targetId: "vm" });
+  const pending = f.control.requestBrowserFiles({ sessionId: "chat", site: "https://example.com", files: ["/local/report.pdf"], canRemember: true, accountScope: "a".repeat(64) });
+  for (let waited = 0; !f.requests.at(-1) && waited < 2_000; waited += 5) await new Promise((resolve) => setTimeout(resolve, 5));
+  const card = f.requests.at(-1);
+  assert.equal(card.computer, "This computer");
+  assert.equal(card.placement, "local");
+  assert.deepEqual(card.files, { app: "https://example.com", site: "https://example.com", names: ["/local/report.pdf"], canRemember: true });
+  await assert.rejects(f.control.answerRequest({ sessionId: "chat", answer: "remember", id: "stale" }), /changed/);
+  await f.control.answerRequest({ sessionId: "chat", answer: "remember", id: card.id });
+  assert.equal(await pending, "remember");
+  // Remember is not broker persistence; only the trusted service may save a folder grant.
+  const again = f.control.requestBrowserFiles({ sessionId: "chat", site: "https://example.com", files: ["/local/report.pdf"], canRemember: true, accountScope: "a".repeat(64) });
+  assert.equal((await browserFileCard(f, again)).answer, "dismiss");
+});
+
+test("browser always is chat-only, disjoint from native approval and ignored by managed Ask", async (t) => {
+  const f = fixture(); t.after(() => f.control.reset(true));
+  const input = { sessionId: "chat", site: "https://example.com", files: ["/local/report.pdf"], canRemember: true, accountScope: "a".repeat(64) };
+  assert.equal((await browserFileCard(f, f.control.requestBrowserFiles(input), "always")).answer, "always");
+  assert.equal(await f.control.requestBrowserFiles(input), "always");
+  const pending = f.control.requestBrowserFiles({ ...input, canRemember: false });
+  for (let waited = 0; !f.requests.at(-1) && waited < 2_000; waited += 5) await new Promise((resolve) => setTimeout(resolve, 5));
+  const card = f.requests.at(-1);
+  assert.equal(card.standing, false);
+  for (const answer of ["always", "remember"]) await assert.rejects(f.control.answerRequest({ sessionId: "chat", answer, id: card.id }));
+  await f.control.answerRequest({ sessionId: "chat", answer: "allow", id: card.id });
+  assert.equal(await pending, "allow");
+  await f.control.setFeatureEnabled(true);
+  const native = f.control.approveFiles({ sessionId: "chat", app: input.site, files: input.files });
+  for (let waited = 0; !f.requests.at(-1) && waited < 2_000; waited += 5) await new Promise((resolve) => setTimeout(resolve, 5));
+  const nativeCard = f.requests.at(-1);
+  assert.equal(nativeCard.files.site, undefined);
+  await assert.rejects(f.control.answerRequest({ sessionId: "chat", answer: "remember", id: nativeCard.id }), /only available/);
+  await f.control.answerRequest({ sessionId: "chat", answer: "always", id: nativeCard.id });
+  assert.equal(await native, true);
+  assert.equal(await f.control.approveFiles({ sessionId: "chat", app: input.site, files: input.files }), true);
+});
+
+test("browser file requests reject invalid origins, stay isolated from native always, and abort", async (t) => {
+  const f = fixture(); t.after(() => f.control.reset(true));
+  const input = { sessionId: "chat", files: ["/local/report.pdf"], canRemember: true };
+  for (const site of ["file:///report.pdf", "https://example.com/path", "https://example.com/", "HTTPS://EXAMPLE.COM", "https://user:pass@example.com", "null"]) {
+    assert.equal(await f.control.requestBrowserFiles({ ...input, site }), "dismiss");
+  }
+  assert.equal(f.requests.length, 0);
+  await f.control.setFeatureEnabled(true);
+  await browserFileCard(f, f.control.approveFiles({ ...input, app: "https://example.com" }), "always");
+  const controller = new AbortController();
+  const pending = f.control.requestBrowserFiles({ ...input, site: "https://example.com" }, { signal: controller.signal });
+  for (let waited = 0; !f.requests.at(-1) && waited < 2_000; waited += 5) await new Promise((resolve) => setTimeout(resolve, 5));
+  assert.equal(f.requests.at(-1).files.site, "https://example.com");
+  controller.abort();
+  assert.equal(await pending, "aborted");
+  await assert.rejects(f.control.answerRequest({ sessionId: "chat", answer: "remember", id: "old" }));
+});
+
 test("the browser types a password only on a site the person confirmed, with computer use off", async (t) => {
   const f = fixture(); t.after(() => f.control.reset(true));
   const credentialCards = () => f.requests.filter((request) => request?.reason === "credential");

@@ -33,6 +33,7 @@ import { applyBrandAppName } from "./brand-app-name.mjs";
 import { createBrowserPanel } from "./browser-panel.mjs";
 import { createComputerControl } from "@openwork/computer-use/computer-control";
 import { createComputerAgentPermissions } from "./computer-agent-permissions.mjs";
+import { createBrowserUploadGrantStore, createBrowserUploadPermissions } from "./browser-upload-permissions.mjs";
 import { installComputerHelper } from "./computer-helper-install.mjs";
 import { createLocalComputerAdapter } from "./computer-local.mjs";
 import { createComputerScripting } from "./computer-scripting.mjs";
@@ -1274,9 +1275,34 @@ let mainWindow = null;
 const pendingDeepLinks = [];
 const nativeContextMenus = createNativeContextMenus({ Menu, clipboard, getWindow: () => mainWindow });
 
+const browserUploadPermissions = createBrowserUploadPermissions({
+  store: createBrowserUploadGrantStore({ directory: path.join(app.getPath("userData"), "browser-file-grants") }),
+  readPolicy: async () => {
+    const server = await runtimeManager.openworkServerInfo();
+    if (!server.baseUrl || !(server.clientToken ?? server.ownerToken)) throw new Error("OpenWork server unavailable");
+    // Trusted local service verifies the current Den organization, member and rollout.
+    const response = await fetch(`${server.baseUrl}/managed-policy/browser-upload-permissions`, {
+      headers: { Authorization: `Bearer ${server.clientToken ?? server.ownerToken}` }, signal: AbortSignal.timeout(15_000),
+    });
+    if (!response.ok) throw new Error("Your organization's file-sharing permissions could not be verified. Reconnect and try again.");
+    return response.json();
+  },
+  requestFiles: (request, options) => computerControl.requestBrowserFiles(request, options),
+  legacyApprove: (sessionId, request, signal) => computerControl.approveFiles({ sessionId, app: request.app, files: request.files }, { signal }),
+  chooseFolder: async (origin) => {
+    const result = await dialog.showOpenDialog(mainWindow, {
+      title: `Allow uploads from this folder to ${origin}`,
+      message: `Agents may share readable files in this folder and its subfolders with ${origin}, across your chats and Slack-started tasks on this computer. You can remove this permission in Settings.`,
+      buttonLabel: "Remember folder",
+      properties: ["openDirectory"],
+    });
+    return result.canceled ? null : result.filePaths[0] ?? null;
+  },
+});
+
 browserPanel = createBrowserPanel({
-  // A page gets files only after the person approves them in the chat, like a native file panel.
-  approveFiles: (sessionId, request, signal) => computerControl.approveFiles({ sessionId, app: request.app, files: request.files }, { signal }),
+  // Organization policy is checked before any remembered or in-chat consent.
+  approveFiles: (sessionId, request, signal) => browserUploadPermissions.approve(sessionId, request, signal),
   // A password or code is typed only on a site the person confirmed in the chat.
   approveCredential: (sessionId, request, signal) => computerControl.approveCredential({ sessionId, site: request.site }, { signal }),
   showNativeContextMenu: nativeContextMenus.show,
@@ -2157,6 +2183,15 @@ const desktopCommandHandlers = {
   "computerAnswerRequest": async (event, input) => {
       assertComputerSender(event);
       return computerControl.answerRequest({ sessionId: String(input?.sessionId ?? ""), answer: input?.answer, ...(typeof input?.id === "string" ? { id: input.id } : {}) });
+  },
+  "computerListFileGrants": async (event) => {
+      assertComputerSender(event);
+      return browserUploadPermissions.list();
+  },
+  "computerRemoveFileGrant": async (event, id) => {
+      assertComputerSender(event);
+      if (typeof id !== "string" || !id) throw new Error("Choose a remembered file sharing permission to remove.");
+      return browserUploadPermissions.remove(id);
   },
   "computerSetFeatureEnabled": async (event, enabled) => {
       assertComputerSender(event);
