@@ -36,25 +36,46 @@ function escapeRegExp(value) {
   return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
-/** Replaces the member's home folder (which holds their account name) with "~". */
-export function redactHomePath(text, home = homedir()) {
-  const value = String(text ?? "");
-  const root = String(home ?? "").trim().replace(/[\\/]+$/, "");
-  if (!root || root.length < 2) return value;
-  const variants = new Set([root, root.replace(/\\/g, "/"), root.replace(/\//g, "\\")]);
-  let result = value;
-  for (const variant of variants) {
-    result = result.replace(new RegExp(escapeRegExp(variant), "gi"), "~");
+/**
+ * Replaces each given folder with its label, in either slash style and any
+ * letter case. Longer folders are replaced first, so a workspace inside the
+ * home folder reads "<workspace>" rather than "~/…".
+ */
+export function redactPaths(text, replacements) {
+  const entries = [];
+  for (const { path, label } of replacements) {
+    const root = String(path ?? "").trim().replace(/[\\/]+$/, "");
+    if (root.length < 2) continue;
+    for (const variant of new Set([root, root.replace(/\\/g, "/"), root.replace(/\//g, "\\")])) {
+      entries.push({ variant, label });
+    }
+  }
+  entries.sort((left, right) => right.variant.length - left.variant.length);
+  let result = String(text ?? "");
+  for (const { variant, label } of entries) {
+    result = result.replace(new RegExp(escapeRegExp(variant), "gi"), label);
   }
   return result;
 }
 
-/** A copy of a startup error that is safe to report: home folder paths redacted. */
-export function startupErrorForReport(error, home = homedir()) {
+/** Replaces the member's home folder (which holds their account name) with "~". */
+export function redactHomePath(text, home = homedir()) {
+  return redactPaths(text, [{ path: home, label: "~" }]);
+}
+
+/**
+ * A copy of a startup error that is safe to report: the member's workspace
+ * folders become "<workspace>" and their home folder "~".
+ */
+export function startupErrorForReport(error, { home = homedir(), workspacePaths = [] } = {}) {
+  const replacements = [
+    ...workspacePaths.map((path) => ({ path, label: "<workspace>" })),
+    { path: home, label: "~" },
+  ];
   const source = error instanceof Error ? error : new Error(String(error));
-  const report = new Error(redactHomePath(source.message, home));
+  const report = new Error(redactPaths(source.message, replacements));
   report.name = source.name;
-  if (source.stack) report.stack = redactHomePath(source.stack, home);
+  if (source.stack) report.stack = redactPaths(source.stack, replacements);
   return report;
 }
 
@@ -195,11 +216,12 @@ export function captureException(error, context = {}) {
  * member's session, such as the runtime boot that leaves the "OpenWork
  * couldn't start" screen. Sent now when a session is active; otherwise held
  * and sent when one starts. Like every desktop report, nothing is sent for a
- * member who never signs in.
+ * member who never signs in. Pass the member's workspace folders so they are
+ * redacted along with the home folder.
  */
-export function captureStartupException(error, context = {}) {
+export function captureStartupException(error, context = {}, { workspacePaths = [] } = {}) {
   if (!initialized || !sentry) return false;
-  const report = startupErrorForReport(error);
+  const report = startupErrorForReport(error, { workspacePaths });
   if (telemetryActive) return captureException(report, context);
   pendingStartupCaptures.add(report, context);
   return false;

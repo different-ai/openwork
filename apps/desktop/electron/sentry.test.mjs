@@ -23,11 +23,11 @@ test("pending startup captures keep the newest few and drain once", () => {
 
 test("home folder paths are redacted on Windows and POSIX", () => {
   assert.equal(
-    redactHomePath("spawn C:\\Users\\Flavio\\AppData\\Local\\opencode.exe ENOENT", "C:\\Users\\Flavio"),
+    redactHomePath("spawn C:\\Users\\Alex\\AppData\\Local\\opencode.exe ENOENT", "C:\\Users\\Alex"),
     "spawn ~\\AppData\\Local\\opencode.exe ENOENT",
   );
   assert.equal(
-    redactHomePath("open c:/users/flavio/.local/share/opencode/db failed", "C:\\Users\\Flavio\\"),
+    redactHomePath("open c:/users/alex/.local/share/opencode/db failed", "C:\\Users\\Alex\\"),
     "open ~/.local/share/opencode/db failed",
   );
   assert.equal(redactHomePath("/Users/ana/work and /Users/ana", "/Users/ana"), "~/work and ~");
@@ -38,13 +38,26 @@ test("startup errors are reported as redacted copies", () => {
   const original = new TypeError("EACCES: permission denied, open '/home/sam/.config/openwork/x.json'");
   original.stack = `TypeError: ${original.message}\n    at boot (/home/sam/app/main.mjs:1:1)`;
 
-  const report = startupErrorForReport(original, "/home/sam");
+  const report = startupErrorForReport(original, { home: "/home/sam" });
   assert.equal(report.name, "TypeError");
   assert.equal(report.message, "EACCES: permission denied, open '~/.config/openwork/x.json'");
   assert.ok(!report.stack.includes("/home/sam"));
   assert.equal(original.message.includes("/home/sam"), true);
 
-  assert.equal(startupErrorForReport("plain string", "/home/sam").message, "plain string");
+  assert.equal(startupErrorForReport("plain string", { home: "/home/sam" }).message, "plain string");
+});
+
+test("workspace folders are redacted, including ones outside the home folder", () => {
+  const error = new Error(
+    "engine failed for D:\\Clients\\Acme Project\\notes and C:\\Users\\Alex\\Work\\site (home C:\\Users\\Alex)",
+  );
+  const report = startupErrorForReport(error, {
+    home: "C:\\Users\\Alex",
+    workspacePaths: ["D:\\Clients\\Acme Project", "C:\\Users\\Alex\\Work\\site"],
+  });
+  assert.equal(report.message, "engine failed for <workspace>\\notes and <workspace> (home ~)");
+  assert.ok(!report.stack.includes("Acme"));
+  assert.ok(!report.stack.includes("Alex"));
 });
 
 test("startup captures are a no-op while Sentry is not initialized", () => {
