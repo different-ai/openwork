@@ -702,7 +702,11 @@ export function McpView(props: McpViewProps) {
     setFilter("all");
     refreshLibrary();
     toast.success(t("extensions.toast_added_title"), { description: t("extensions.toast_added_detail") });
-    if (authType === "oauth") startConnectionSignIn(connectionId);
+    // The connections hook opens sign-in and keeps checking until Den has it, so the row turns Ready.
+    if (authType === "oauth") {
+      if (props.connectOrgMcp) props.connectOrgMcp(connectionId);
+      else startConnectionSignIn(connectionId);
+    }
     return name;
   };
 
