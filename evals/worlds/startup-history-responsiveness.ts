@@ -1,5 +1,6 @@
 import { execFile } from "node:child_process";
-import { mkdir, readFile } from "node:fs/promises";
+import { randomUUID } from "node:crypto";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
@@ -17,12 +18,35 @@ export async function startupHistoryResponsiveness(seed: Seed) {
   await mkdir(workspace, { recursive: true });
   const { stdout } = await exec("bun", [fileURLToPath(new URL("./fixtures/startup-history.ts", import.meta.url)), profile, workspace], { cwd: repo, timeout: 120_000 });
   if (!stdout.includes('"sessions":320')) throw new Error("Synthetic large history was not prepared");
-  const app = await seed.desktop({ name: "startup-history", env: {
-    ...binaries, OPENWORK_RUNTIME_DB: join(profile, "runtime.sqlite"), OPENCODE_DB: join(profile, "synthetic-v1.db"),
-    OPENWORK_ENGINE_V2_PREVIEW: "", OPENCODE_DISABLE_MODELS_FETCH: "1",
-  } });
+  const token = randomUUID();
+  const hostToken = randomUUID();
+  const tokenStore = join(profile, "synthetic-tokens.json");
+  await writeFile(tokenStore, JSON.stringify({ version: 2, credentials: { clientToken: token, hostToken, ownerToken: null, updatedAt: 1 } }), { mode: 0o600 });
+  const desktopProfile = join(profile, "desktop");
+  const env = { ...binaries, OPENWORK_SERVER_TOKEN_STORE_PATH: tokenStore,
+    OPENWORK_RUNTIME_DB: join(profile, "runtime.sqlite"), OPENCODE_DISABLE_MODELS_FETCH: "1" };
+  // Arrange an existing desktop selection, not the server-only workspace registry.
+  // This makes main and renderer join the same bootRuntimeForSelectedWorkspace.
+  const workspaceState = join(profile, "workspace-state.json");
+  await writeFile(workspaceState, JSON.stringify({ selectedId: "synthetic-history", activeId: "synthetic-history",
+    workspaces: [{ id: "synthetic-history", name: "Synthetic history", path: workspace, kind: "local" }] }));
+  const app = await seed.desktop({ name: "startup-history", profileDir: desktopProfile,
+    env: { ...env, OPENWORK_DESKTOP_WORKSPACE_STATE_PATH: workspaceState,
+      OPENCODE_DB: join(profile, "synthetic-v1.db"), OPENWORK_ENGINE_AUTO_UPGRADE: "1", OPENWORK_ENGINE_V2_PREVIEW: "" } });
   const logPath = app.handle.meta?.log;
   if (typeof logPath !== "string") throw new Error("The isolated Electron log is required for heartbeat evidence");
+  // Testkit can attach while the bootstrap/recovery surface is interactive.
+  // Wait for the actual runtime connection, not merely an actionable screen.
+  let readyPort = 0;
+  const deadline = Date.now() + 60_000;
+  while (!readyPort && Date.now() < deadline) {
+    readyPort = Number(await seed.evalIn(app, browserScript(() => localStorage.getItem("openwork.server.port"), [])));
+    if (!readyPort) await new Promise(resolve => setTimeout(resolve, 250));
+  }
+  if (!readyPort) {
+    const text = await seed.evalIn(app, browserScript(() => document.body.textContent, []));
+    throw new Error(`Desktop bootstrap did not publish its runtime port in 60 seconds: ${text}`);
+  }
   return {
     app,
     fixture: { sessions: 320, messages: 320, largePayloads: 4, largePayloadMiB: 64 },
@@ -46,21 +70,21 @@ export async function startupHistoryResponsiveness(seed: Seed) {
       return records;
     },
     async status() {
-      // The isolated renderer owns its loopback token. Read only allowlisted
-      // status and latency fields; never return the token or storage to the test.
-      return seed.evalIn(app, browserScript(async () => {
-        const port = localStorage.getItem("openwork.server.port");
-        const token = localStorage.getItem("openwork.server.token");
-        if (!port || !token) throw new Error("Isolated host is not ready");
-        const start = performance.now();
-        const response = await fetch(`http://127.0.0.1:${port}/experimental/engine-v2-preview/status`, { headers: { Authorization: `Bearer ${token}` } });
-        const data: unknown = await response.json();
-        if (typeof data !== "object" || data === null || !("migration" in data)) throw new Error("Invalid migration status");
-        const migration = data.migration;
-        if (typeof migration !== "object" || migration === null) throw new Error("Invalid copy status");
-        return { http: response.status, apiMs: performance.now() - start, chatRouting: Reflect.get(data, "chatRouting") === true,
-          state: String(Reflect.get(migration, "state")), imported: Number(Reflect.get(migration, "imported")), total: Number(Reflect.get(migration, "total")) };
-      }, []), { awaitPromise: true });
+      // Read only the fixture's loopback port. The token remains in this closure.
+      // Use an independent HTTP client: renderer EventSources can exhaust the
+      // browser's per-origin connection pool, which is not main-loop latency.
+      const port = Number(await seed.evalIn(app, browserScript(() => localStorage.getItem("openwork.server.port"), [])));
+      if (!Number.isSafeInteger(port) || port < 1) throw new Error(`Isolated host port is not ready: type=${typeof port}, value=${JSON.stringify(port)}`);
+      const start = performance.now();
+      const response = await fetch(`http://127.0.0.1:${port}/experimental/engine-v2-preview/status`, {
+        headers: { Authorization: `Bearer ${token}` }, signal: AbortSignal.timeout(30_000),
+      });
+      const data: unknown = await response.json();
+      if (typeof data !== "object" || data === null || !("migration" in data)) throw new Error("Invalid migration status");
+      const migration = data.migration;
+      if (typeof migration !== "object" || migration === null) throw new Error("Invalid copy status");
+      return { http: response.status, apiMs: performance.now() - start, chatRouting: Reflect.get(data, "chatRouting") === true,
+        state: String(Reflect.get(migration, "state")), imported: Number(Reflect.get(migration, "imported")), total: Number(Reflect.get(migration, "total")) };
     },
   };
 }

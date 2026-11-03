@@ -8,6 +8,9 @@ if (!root || !workspace) throw new Error("Synthetic profile and workspace are re
 await mkdir(root, { recursive: true });
 const db = await openHistoryDatabase(join(root, "synthetic-v1.db"));
 try {
+  // Match an existing engine-owned v1 database. A rollback-journal fixture
+  // holds readers against the engine's startup WAL/schema setup instead.
+  db.exec("PRAGMA journal_mode=WAL");
   db.exec(await readFile(new URL("./opencode-v1-history/schema.sql", import.meta.url), "utf8"));
   db.exec("INSERT INTO project (id, worktree, time_created, time_updated, sandboxes) VALUES ('global', '/', 1, 1, '[]'); BEGIN");
   const session = db.prepare(`INSERT INTO session (id, project_id, slug, directory, title, version, time_created, time_updated)

@@ -23,7 +23,7 @@ test("a member can keep using the desktop while large v1 history is checked and 
     expect(status.apiMs).toBeLessThan(250);
   });
   await step("after every exact freshness check the unchanged history switches only after its copy completes", async () => {
-    const status = await probe.eventually(() => world.status(), { within: 360_000, label: "history copied and v2 selected", until: value => value.state === "completed" && value.chatRouting });
+    const status = await probe.eventually(() => world.status(), { within: 360_000, label: "history copied and v2 selected", until: value => (value.state === "completed" && value.chatRouting) || value.state === "error" });
     const records = (await world.timings()).filter(record => record.phase === "completed");
     const revisions = records.filter(record => record.operation === "revision");
     const maxLag = Math.max(...records.map(record => record.hostMaxLagMs));
