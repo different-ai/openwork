@@ -12,6 +12,13 @@ new recording or screenshot capture is introduced.
 The card reads "Used browser" when the turn only used the built-in browser, and
 "Used computer" when it used computer tools, alone or with the browser.
 
+While the feature is on, the floating live computer view no longer opens by
+itself: the card shows the work. While the chat's computer is working, the
+newest card offers **Watch live**, which opens the usual floating view (it can
+still pop out into its own window), and **Hide live view** closes it again. The
+view still opens on its own when the person is needed, such as after a
+takeover. The next computer session starts in the card again.
+
 ![Computer session history open in the chat](computer-session-history.webp)
 
 Enable the feature for a test organization or member in platform admin, then

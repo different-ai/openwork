@@ -3,7 +3,7 @@ import { GlobalRegistrator } from "@happy-dom/global-registrator"
 import { act, createElement } from "react"
 import { createRoot, type Root } from "react-dom/client"
 import type { DynamicToolUIPart, UIMessage } from "ai"
-import { collectComputerSessionHistory, withoutComputerHistory } from "../src/lib/computer-session-history"
+import { collectComputerSessionHistory, showsLiveComputerView, withoutComputerHistory } from "../src/lib/computer-session-history"
 import { parseDynamicToolUIPart, withToolAttachmentOwner } from "../src/react-app/domains/session/sync/parse-tool-parts"
 import { browserHistoryMessages, computerHistoryMessages } from "../test-fixtures/computer-session-history-data"
 
@@ -11,6 +11,7 @@ GlobalRegistrator.register({ url: "https://web.example/" })
 Reflect.set(globalThis, "IS_REACT_ACT_ENVIRONMENT", true)
 const { ComputerSessionHistory } = await import("../src/components/chat/computer-session-history")
 const { TooltipProvider } = await import("../src/components/ui/tooltip")
+const { useComputerSessionHistoryStore } = await import("../src/components/chat/computer-session-history-store")
 const images = ["first", "second", "third"].map(value => `data:image/png;base64,${btoa(value)}`)
 let mounted: { root: Root; container: HTMLElement } | null = null
 afterEach(async () => {
@@ -142,4 +143,47 @@ test("streaming transcript updates do not keep restarting playback", async () =>
   }
   await act(async () => { await new Promise(resolve => setTimeout(resolve, 500)) })
   expect(container.querySelector('[data-computer-view-count]')?.textContent).toBe("2 / 3")
+})
+
+test("with the card on, the live computer view opens from the card or when the person is needed", () => {
+  const working = { state: "active" }
+  expect(showsLiveComputerView({ historyEnabled: false, watching: false, session: working })).toBe(true)
+  expect(showsLiveComputerView({ historyEnabled: true, watching: false, session: working })).toBe(false)
+  expect(showsLiveComputerView({ historyEnabled: true, watching: true, session: working })).toBe(true)
+  expect(showsLiveComputerView({ historyEnabled: true, watching: false, session: { state: "paused" } })).toBe(true)
+})
+
+test("the card offers the live view only for a working computer, and toggles it", async () => {
+  const history = collectComputerSessionHistory(computerHistoryMessages(images))!
+  const container = document.createElement("div"); document.body.append(container)
+  const root = createRoot(container); mounted = { root, container }
+  const chosen: boolean[] = []
+  const render = async (next = history, live?: { watching: boolean; onWatch: (watching: boolean) => void }) => {
+    await act(async () => root.render(createElement(TooltipProvider, { children: createElement(ComputerSessionHistory, { history: next, active: true, renderAction: part => createElement("p", {}, part.toolCallId), live }) })))
+  }
+  const button = () => Array.from(container.querySelectorAll("button")).find(item => /live/i.test(item.textContent ?? ""))
+  await render()
+  expect(button()).toBeUndefined()
+  await render(history, { watching: false, onWatch: watching => chosen.push(watching) })
+  expect(button()?.textContent).toBe("Watch live")
+  await act(async () => button()!.click())
+  expect(chosen).toEqual([true])
+  expect(container.querySelector('[data-computer-view-count]')).toBeNull()
+  await render(history, { watching: true, onWatch: watching => chosen.push(watching) })
+  expect(button()?.textContent).toBe("Hide live view")
+  await render(collectComputerSessionHistory(browserHistoryMessages(images))!, { watching: false, onWatch: () => {} })
+  expect(button()).toBeUndefined()
+})
+
+test("the live view choice is per chat and clears without touching other chats", () => {
+  const store = useComputerSessionHistoryStore.getState()
+  store.setWatching("chat", true); store.setWatching("other", true)
+  const before = useComputerSessionHistoryStore.getState().watching
+  store.setWatching("chat", true)
+  expect(useComputerSessionHistoryStore.getState().watching).toBe(before)
+  store.setWatching("chat", false)
+  expect(useComputerSessionHistoryStore.getState().watching).toEqual({ other: true })
+  store.setWorking("chat", true)
+  expect(useComputerSessionHistoryStore.getState().working).toEqual({ chat: true })
+  store.setWorking("chat", false); store.setWatching("other", false)
 })

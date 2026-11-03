@@ -1,6 +1,6 @@
 import { useEffect, useState, type ReactNode } from "react"
 import type { DynamicToolUIPart } from "ai"
-import { ChevronRight, CodeXml, Globe, Monitor, Pause, Play } from "lucide-react"
+import { ChevronRight, CodeXml, Globe, Monitor, Pause, PictureInPicture2, Play } from "lucide-react"
 
 import { markFeatureUsed } from "@/app/lib/den"
 import { Button } from "@/components/ui/button"
@@ -11,10 +11,15 @@ import { formatToolCallDuration } from "@/lib/tool-call-duration"
 import { cn } from "@/lib/utils"
 import { isBrowserToolName, type ComputerSessionHistory as History } from "@/lib/computer-session-history"
 
-export function ComputerSessionHistory({ history, active, renderAction }: {
+/**
+ * `live` is the chat's working computer: the card shows its work, and its live
+ * view opens only from here.
+ */
+export function ComputerSessionHistory({ history, active, renderAction, live }: {
   history: History
   active: boolean
   renderAction: (part: DynamicToolUIPart) => ReactNode
+  live?: { watching: boolean; onWatch: (watching: boolean) => void }
 }) {
   const [open, setOpen] = useState(false)
   const [playing, setPlaying] = useState(false)
@@ -70,18 +75,23 @@ export function ComputerSessionHistory({ history, active, renderAction }: {
         else markFeatureUsed("computerSessionHistory")
       }}
     >
-      <CollapsibleTrigger render={<Button variant="ghost" className="h-auto w-full justify-start gap-3 rounded-none p-3 text-left" />} aria-label={`View ${surface} session history`}>
-        <Icon aria-hidden="true" className="size-4 shrink-0 text-muted-foreground" />
-        <span className="min-w-0 flex-1">
-          <span className={cn("block text-sm font-medium", unfinished && active && "animate-text-shimmer motion-reduce:animate-none")}>{title}</span>
-          <span className="mt-0.5 flex flex-wrap gap-x-3 text-xs font-normal text-muted-foreground">
-            <span>{parts.length} {parts.length === 1 ? "action" : "actions"}</span>
-            {history.durationMs !== null ? <span>{formatToolCallDuration(history.durationMs)}</span> : null}
+      <div className="flex min-w-0 items-center">
+        <CollapsibleTrigger render={<Button variant="ghost" className="h-auto min-w-0 flex-1 justify-start gap-3 rounded-none p-3 text-left" />} aria-label={`View ${surface} session history`}>
+          <Icon aria-hidden="true" className="size-4 shrink-0 text-muted-foreground" />
+          <span className="min-w-0 flex-1">
+            <span className={cn("block text-sm font-medium", unfinished && active && "animate-text-shimmer motion-reduce:animate-none")}>{title}</span>
+            <span className="mt-0.5 flex flex-wrap gap-x-3 text-xs font-normal text-muted-foreground">
+              <span>{parts.length} {parts.length === 1 ? "action" : "actions"}</span>
+              {history.durationMs !== null ? <span>{formatToolCallDuration(history.durationMs)}</span> : null}
+            </span>
           </span>
-        </span>
-        {latest ? <img src={latest.file.url} alt="" className="h-10 w-16 shrink-0 rounded object-contain" loading="lazy" decoding="async" /> : null}
-        <ChevronRight aria-hidden="true" className={cn("size-4 shrink-0 text-muted-foreground transition-transform duration-150 ease-out motion-reduce:transition-none", open && "rotate-90")} />
-      </CollapsibleTrigger>
+          {latest ? <img src={latest.file.url} alt="" className="h-10 w-16 shrink-0 rounded object-contain" loading="lazy" decoding="async" /> : null}
+          <ChevronRight aria-hidden="true" className={cn("size-4 shrink-0 text-muted-foreground transition-transform duration-150 ease-out motion-reduce:transition-none", open && "rotate-90")} />
+        </CollapsibleTrigger>
+        {live && !browserOnly ? <Button variant="ghost" size="sm" className="mr-2 shrink-0" aria-pressed={live.watching} onClick={() => live.onWatch(!live.watching)}>
+          <PictureInPicture2 aria-hidden="true" />{live.watching ? "Hide live view" : "Watch live"}
+        </Button> : null}
+      </div>
       <CollapsibleContent>
         <div className="space-y-3 border-t border-border p-3">
           <Collapsible>
