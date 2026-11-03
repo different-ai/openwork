@@ -380,6 +380,8 @@ export type McpAppSandboxViewProps = {
   onRetry?: () => void
   /** Sees each result of a call the App makes, so a host can swap in its own recovery UI. */
   onAppToolResult?: (result: unknown) => void
+  /** Sees each read the App asks to keep, or null when it failed, so a host can store what the App last showed. */
+  onKeptRead?: (read: { name: string; arguments: Record<string, unknown> }, result: CallToolResult | null) => void
   /**
    * Names the open this view belongs to when it can mount again without being
    * reopened, such as a chat card scrolled back into view. Its loads then run
@@ -393,7 +395,7 @@ export type McpAppSandboxViewProps = {
  * bridges it to the workspace MCP App host. Chat messages and dashboard tiles
  * share this exact pipeline so rendering and diagnostics stay identical.
  */
-export function McpAppSandboxView({ origin, app, resolveLiveActions, goesLiveInPlace = false, liveReady = false, renewsLease = true, toolName, inputArguments, result, connectionController, updateMode = "replace", onReady, unavailableNotice, onRequestTeardown, initialHeight, onHeightChange, presentation = "inline", onError, onRetry, onAppToolResult, openKey }: McpAppSandboxViewProps) {
+export function McpAppSandboxView({ origin, app, resolveLiveActions, goesLiveInPlace = false, liveReady = false, renewsLease = true, toolName, inputArguments, result, connectionController, updateMode = "replace", onReady, unavailableNotice, onRequestTeardown, initialHeight, onHeightChange, presentation = "inline", onError, onRetry, onAppToolResult, onKeptRead, openKey }: McpAppSandboxViewProps) {
   const openworkServerClient = origin.client
   const workspaceId = origin.workspaceId
   const readOnly = origin.readOnly
@@ -419,6 +421,8 @@ export function McpAppSandboxView({ origin, app, resolveLiveActions, goesLiveInP
   reportToolResultRef.current = signIn.reportToolResult
   const onAppToolResultRef = useRef(onAppToolResult)
   onAppToolResultRef.current = onAppToolResult
+  const onKeptReadRef = useRef(onKeptRead)
+  onKeptReadRef.current = onKeptRead
   const toolDeliveryRef = useRef({ inputArguments, result })
   const deliverToolDataRef = useRef<(() => Promise<void>) | null>(null)
   const replacementInput = updateMode === "replace" ? inputArguments : null
@@ -659,7 +663,10 @@ export function McpAppSandboxView({ origin, app, resolveLiveActions, goesLiveInP
         // A failed answer also clears the kept one: it may mean the provider
         // no longer allows this person to read it. The open App keeps showing
         // what it already has, marked stale, but a later open starts empty.
-        if (cacheRequest === "store" && !reused) void rememberMcpAppResult(origin, app, name, args ?? {}, toolResult)
+        if (cacheRequest === "store" && !reused) {
+          void rememberMcpAppResult(origin, app, name, args ?? {}, toolResult)
+          if (!disposed && !failed) onKeptReadRef.current?.({ name, arguments: args ?? {} }, toolResult)
+        }
         // A sign-in the viewer can finish gets the row above the App; any
         // other connection failure goes to the host's connection card.
         if (!disposed && !failed) {
@@ -668,7 +675,10 @@ export function McpAppSandboxView({ origin, app, resolveLiveActions, goesLiveInP
         }
         return toolResult
       } catch (cause) {
-        if (cacheRequest === "store") void forgetMcpAppResult(origin, app, name, args ?? {})
+        if (cacheRequest === "store") {
+          void forgetMcpAppResult(origin, app, name, args ?? {})
+          onKeptReadRef.current?.({ name, arguments: args ?? {} }, null)
+        }
         if (cacheRequest !== "read") loads.failed(call)
         // A Dashboard view that goes live in place outlives each lease: a call
         // caught by a refresh fails alone, the next uses the newer lease, and
