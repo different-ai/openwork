@@ -105,6 +105,7 @@
     "three": "0.186.1",
     "typescript": "^5.5.4",
     "undici": "7.30.1",
+    "unpdf": "1.9.1",
     "zod": "^4.6.6",
     "@openwork/documents": "workspace:*"
   },

@@ -4,7 +4,7 @@ import vm from "node:vm";
 import { createBrowserTaskHost } from "./browser-task.mjs";
 
 /** A page with one upload button; the fake DevTools session opens a file chooser when it is clicked. */
-function page({ chooser = { backendNodeId: 7, mode: "selectMultiple" }, approve = async () => true, checkFiles = async () => {} } = {}) {
+function page({ chooser = { backendNodeId: 7, mode: "selectMultiple", frameId: "main" }, approve = async () => true, checkFiles = async () => {}, frameUrl = "https://studio.example.com/upload" } = {}) {
   class Button {
     tagName = "BUTTON"; parentElement = null; isConnected = true; innerText = "Select files";
     getAttribute(name) { return name === "aria-label" ? "Select files" : null; }
@@ -30,14 +30,16 @@ function page({ chooser = { backendNodeId: 7, mode: "selectMultiple" }, approve 
     on(_event, listener) { listeners.add(listener); }, removeListener(_event, listener) { listeners.delete(listener); },
     sendCommand: async (method, params) => {
       sent.push({ method, params });
+      if (method === "Page.getFrameTree") return { frameTree: { frame: { id: "main", url: frameUrl } } };
       if (method === "Page.setInterceptFileChooserDialog") intercepting = params.enabled;
       if (method === "Input.dispatchMouseEvent" && params.type === "mouseReleased" && intercepting && chooser) {
         for (const listener of listeners) listener({}, "Page.fileChooserOpened", chooser);
       }
       return {};
     } };
+  let currentUrl = "https://studio.example.com/upload";
   const tab = { tabId: "tab", webMcpRevision: 0, view: { webContents: { isDestroyed: () => false, debugger: cdp,
-    getURL: () => "https://studio.example.com/upload", executeJavaScriptInIsolatedWorld: async (_world, scripts) => vm.runInContext(scripts[0].code, context) } } };
+    getURL: () => currentUrl, executeJavaScriptInIsolatedWorld: async (_world, scripts) => vm.runInContext(scripts[0].code, context) } } };
   const asked = [];
   const host = createBrowserTaskHost({ getTab: () => tab, tabsFor: () => [tab], ownerOf: () => "chat", activeFor: () => "tab",
     enabled: () => true, allowed: async () => true, changed: () => {}, isVisible: () => true, fileChooserMs: 50,
@@ -53,7 +55,9 @@ function page({ chooser = { backendNodeId: 7, mode: "selectMultiple" }, approve 
     return host.request({ sessionId: "chat", operation: "act", args: { tabId: "tab", observationId: seen.observationId,
       actions: groups.map((files) => ({ type: "attach", ref: seen.elements[0].ref, files })) } });
   }
-  return { attach, attachBatch, sent, asked, intercepting: () => intercepting };
+  return { attach, attachBatch, sent, asked, intercepting: () => intercepting, setUrl: (url) => { currentUrl = url; },
+    navigateFrame: (url) => { frameUrl = url; for (const listener of listeners) listener({}, "Page.navigatedWithinDocument", { frameId: "main", url }); },
+  };
 }
 
 test("attach gives the page's file chooser the approved files without the system picker", async () => {
@@ -61,7 +65,7 @@ test("attach gives the page's file chooser the approved files without the system
   const result = await p.attach(["/Users/me/Movies/launch.mp4"]);
   assert.equal(result.ok, true, JSON.stringify(result));
   assert.equal(result.outcome, "attached");
-  assert.deepEqual(p.asked, [{ sessionId: "chat", app: "studio.example.com", files: ["/Users/me/Movies/launch.mp4"] }]);
+  assert.deepEqual(p.asked, [{ sessionId: "chat", app: "studio.example.com", url: "https://studio.example.com/upload", files: ["/Users/me/Movies/launch.mp4"] }]);
   const set = p.sent.find((command) => command.method === "DOM.setFileInputFiles");
   assert.deepEqual(set.params, { files: ["/Users/me/Movies/launch.mp4"], backendNodeId: 7 });
   assert.equal(p.intercepting(), false, "the chooser is no longer intercepted afterwards");
@@ -100,4 +104,48 @@ test("a batch never attaches more files than the approval card lists", async () 
   const result = await p.attachBatch([files(0, 10), files(10, 10), files(20, 1)]);
   assert.equal(result.code, "invalid_action");
   assert.deepEqual(p.asked, []);
+});
+
+
+test("managed consent is revalidated at the chooser before any file is shared", async () => {
+  let revalidated = 0;
+  const p = page({ approve: async () => ({ allowed: true, revalidate: async () => { revalidated++; return false; } }) });
+  const result = await p.attach(["/Users/me/Movies/launch.mp4"]);
+  assert.equal(result.code, "files_permission_changed");
+  assert.equal(revalidated, 1);
+  assert.ok(!p.sent.some((command) => command.method === "DOM.setFileInputFiles"));
+});
+
+test("a remembered top-level website grant never shares files with a cross-origin chooser frame", async () => {
+  const p = page({ frameUrl: "https://other.example.com/upload", approve: async () => ({ allowed: true, revalidate: async () => true }) });
+  const result = await p.attach(["/Users/me/Movies/launch.mp4"]);
+  assert.equal(result.code, "files_permission_changed");
+  assert.ok(!p.sent.some((command) => command.method === "DOM.setFileInputFiles"));
+});
+
+test("navigation during a new approval stops the handoff", async () => {
+  const p = page({ approve: async () => { p.setUrl("https://other.example.com"); return { allowed: true, revalidate: async () => true }; } });
+  const result = await p.attach(["/Users/me/Movies/launch.mp4"]);
+  assert.equal(result.code, "page_changed");
+  assert.ok(!p.sent.some((command) => command.method === "DOM.setFileInputFiles"));
+});
+
+test("a managed approval still checks exact real file paths again immediately before attachment", async () => {
+  let checked = 0;
+  const p = page({ approve: async () => ({ allowed: true, revalidate: async () => true }), checkFiles: async () => { checked++; } });
+  const result = await p.attach(["/Users/me/Movies/launch.mp4"]);
+  assert.equal(result.outcome, "attached");
+  assert.equal(checked, 2);
+  assert.equal(p.sent.filter((command) => command.method === "DOM.setFileInputFiles").length, 1);
+});
+
+
+test("receiving-frame same-document navigation during async policy checking never receives the files", async () => {
+  const p = page({ approve: async () => ({ allowed: true, revalidate: async () => {
+    p.navigateFrame("https://studio.example.com/blocked/frame");
+    return true; // The old policy answer cannot authorize the new frame URL.
+  } }) });
+  const result = await p.attach(["/Users/me/Movies/launch.mp4"]);
+  assert.equal(result.code, "files_permission_changed");
+  assert.ok(!p.sent.some((command) => command.method === "DOM.setFileInputFiles"));
 });

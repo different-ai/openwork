@@ -27,16 +27,16 @@ import { z } from "zod";
  * rule deciding, exactly as OpenCode does. Blocked patterns come last, so a
  * block always wins.
  *
- * To add a permission: add a definition below, give it an engine action in
- * apps/server/src/agent-permission-engine.ts, and enforce it wherever that
- * action can happen.
+ * To add a permission: add a definition below and enforce it wherever that
+ * action can happen. Only engine actions belong in agent-permission-engine.ts;
+ * browser_upload is browser-only and must never enter the engine grammar.
  */
 
 export const AGENT_PERMISSION_DECISIONS = ["allow", "ask", "deny"] as const;
 export type AgentPermissionDecision = (typeof AGENT_PERMISSION_DECISIONS)[number];
 
 /** OpenCode permission actions, plus local MCP, computer use and app scripting enforced by OpenWork. */
-export const AGENT_PERMISSION_ACTIONS = ["shell", "edit", "webfetch", "websearch", "skill", "mcp", "external_directory", "computer", "script"] as const;
+export const AGENT_PERMISSION_ACTIONS = ["shell", "edit", "webfetch", "websearch", "skill", "mcp", "external_directory", "computer", "script", "browser_upload"] as const;
 
 export const AGENT_HARNESS_PERMISSION_KEYS = ["externalFolders", "computerUse", "appScripting"] as const;
 export const AGENT_HARNESS_PERMISSION_ACTIONS = ["external_directory", "computer", "script"] as const;
@@ -132,6 +132,16 @@ export const agentPermissionDefinitions = [
     patternNoun: "website",
   },
   {
+    key: "browserUploads",
+    section: "web",
+    label: "Upload files to websites",
+    description: "Files the agent uploads through the built-in browser. Member decides asks unless the member remembered approval. Ask first requires approval for every upload, even when the member previously allowed that website.",
+    action: "browser_upload",
+    control: "choice",
+    patterns: "website",
+    patternNoun: "website",
+  },
+  {
     key: "webSearch",
     section: "web",
     label: "Search the web",
@@ -185,8 +195,13 @@ export function agentPermissionDecisionsFor(definition: Pick<AgentPermissionDefi
   return definition.control === "toggle" ? ["allow", "deny"] : AGENT_PERMISSION_DECISIONS;
 }
 
-/** With nothing set, every permission allows: the member's own settings apply. */
+/** Existing permissions allow by default: the member's own settings apply. */
 export const AGENT_PERMISSION_DEFAULT_DECISION: AgentPermissionDecision = "allow";
+
+/** Browser uploads ask by default, without asserting an administrator's authority. */
+export function agentPermissionDefaultDecision(key: AgentPermissionKey): AgentPermissionDecision {
+  return key === "browserUploads" ? "ask" : AGENT_PERMISSION_DEFAULT_DECISION;
+}
 
 export const AGENT_PERMISSION_LIST_MAX = 100;
 const PATTERN_MAX_LENGTH: Record<AgentPermissionPatternKind, number> = { command: 300, website: 300 };
@@ -411,7 +426,7 @@ const settingsShape = Object.fromEntries(
   agentPermissionKeys.map((key) => [key, agentPermissionSettingSchema.optional()]),
 ) as { [key in AgentPermissionKey]: z.ZodOptional<typeof agentPermissionSettingSchema> };
 
-/** One policy's settings: a permission left out inherits (for a team) or allows (for everyone). */
+/** Unset settings inherit for a team, otherwise use the permission's default. */
 export const agentPermissionSettingsSchema = z
   .object(settingsShape)
   .strict()
@@ -444,6 +459,13 @@ export type AgentPermissionSettings = Partial<Record<AgentPermissionKey, AgentPe
 export function withoutAgentHarnessPermissions(settings: AgentPermissionSettings): AgentPermissionSettings {
   const visible = { ...settings };
   for (const key of AGENT_HARNESS_PERMISSION_KEYS) delete visible[key];
+  return visible;
+}
+
+/** Hide only browser upload settings while their independent rollout is off. */
+export function withoutBrowserUploadPermissions(settings: AgentPermissionSettings): AgentPermissionSettings {
+  const visible = { ...settings };
+  delete visible.browserUploads;
   return visible;
 }
 
@@ -519,6 +541,11 @@ export function withoutAgentHarnessRules(rules: readonly AgentPermissionRule[]):
   return rules.filter((rule) => !AGENT_HARNESS_PERMISSION_ACTIONS.some((action) => action === rule.action));
 }
 
+/** Browser-only upload rules must not reach clients while the rollout is off. */
+export function withoutBrowserUploadRules(rules: readonly AgentPermissionRule[]): AgentPermissionRule[] {
+  return rules.filter((rule) => rule.action !== "browser_upload");
+}
+
 export const AGENT_PERMISSION_EVERYONE = "Everyone";
 
 export type AgentPermissionPolicySettings = {
@@ -536,7 +563,7 @@ export function stricterAgentPermissionDecision(left: AgentPermissionDecision, r
 export type ResolvedAgentPermission = {
   definition: AgentPermissionDefinition;
   decision: AgentPermissionDecision;
-  /** Who set the decision, or null when nobody did and the permission allows. */
+  /** Who set the decision, or null when only the permission's default applies. */
   decisionSource: string | null;
   allow: { pattern: string; source: string }[];
   block: { pattern: string; source: string }[];
@@ -562,14 +589,15 @@ export function resolveAgentPermissions(input: {
       const teamDecision = team?.settings[definition.key]?.decision;
       const everyoneDecision = input.everyone?.settings[definition.key]?.decision;
       return {
-        decision: teamDecision ?? everyoneDecision ?? AGENT_PERMISSION_DEFAULT_DECISION,
+        decision: teamDecision ?? everyoneDecision ?? agentPermissionDefaultDecision(definition.key),
         decisionSource: teamDecision ? team!.source : everyoneDecision ? input.everyone!.source : null,
         allow: [...listed(input.everyone, "allow"), ...listed(team, "allow")],
       };
     });
     let strictest = scopes[0]!;
     for (const scope of scopes) {
-      if (stricterAgentPermissionDecision(strictest.decision, scope.decision) !== strictest.decision) strictest = scope;
+      if (stricterAgentPermissionDecision(strictest.decision, scope.decision) !== strictest.decision
+        || (scope.decision === strictest.decision && strictest.decisionSource === null && scope.decisionSource !== null)) strictest = scope;
     }
     const restricting = scopes.filter((scope) => scope.decision !== "allow");
     const seen = new Set<string>();
@@ -592,15 +620,20 @@ export function resolveAgentPermissions(input: {
  * OpenCode permission rules for resolved permissions, in order. A decision
  * other than Allow becomes a `*` rule, its allowed patterns follow as
  * exceptions, and blocked patterns come last so they always win. A
- * permission that allows adds no rules: the member's own settings apply.
+ * permission that allows adds no rules: the member's own settings apply,
+ * except explicit browser upload Allow, which authorizes skipping its prompt.
+ * Unset browser upload Ask emits no base rule or administrator source.
  */
 export function agentPermissionRules(resolved: readonly ResolvedAgentPermission[]): AgentPermissionRule[] {
   const rules = resolved.flatMap(({ definition, decision, decisionSource, allow, block }) => {
     const action = definition.action;
     const restricted = decision !== "allow" && decisionSource !== null;
+    // Unlike engine permissions, explicit browser upload Allow is authority to
+    // skip the member's prompt. An unset Ask has no admin source or base rule.
+    const explicit = decisionSource !== null && (restricted || action === "browser_upload");
     return [
-      ...(restricted ? [{ action, resource: "*", effect: decision, source: decisionSource }] : []),
-      ...(restricted ? allow.map(({ pattern, source }) => ({ action, resource: pattern, effect: "allow" as const, source })) : []),
+      ...(explicit ? [{ action, resource: "*", effect: decision, source: decisionSource }] : []),
+      ...(restricted || action === "browser_upload" ? allow.map(({ pattern, source }) => ({ action, resource: pattern, effect: "allow" as const, source })) : []),
       ...block.map(({ pattern, source }) => ({ action, resource: pattern, effect: "deny" as const, source })),
     ];
   });
@@ -636,7 +669,7 @@ export function resolveAgentPermissionRules(input: {
 }
 
 function ruleMatches(rule: AgentPermissionRule, resource: string): boolean {
-  return rule.action === "webfetch" ? websitePatternMatches(resource, rule.resource) : wildcardMatch(resource, rule.resource);
+  return rule.action === "webfetch" || rule.action === "browser_upload" ? websitePatternMatches(resource, rule.resource) : wildcardMatch(resource, rule.resource);
 }
 
 /** The last rule for this action that matches the resource, as OpenCode evaluates permission rules. */
@@ -654,7 +687,7 @@ export function matchingAgentPermissionRule(
 
 export type AgentPermissionDecisionResult = {
   effect: AgentPermissionDecision;
-  /** The rule that decided, or null when no rule matched and the action is allowed. */
+  /** The rule that decided, or null when only the action's default applies. */
   rule: AgentPermissionRule | null;
   resource: string;
 };
@@ -665,15 +698,16 @@ export function decideAgentPermission(
   action: AgentPermissionAction,
   resources: readonly string[],
 ): AgentPermissionDecisionResult {
+  const defaultEffect = action === "browser_upload" ? "ask" : "allow";
   let result: AgentPermissionDecisionResult | null = null;
   for (const resource of resources.length > 0 ? resources : ["*"]) {
     const rule = matchingAgentPermissionRule(rules, action, resource);
-    const effect = rule?.effect ?? "allow";
+    const effect = rule?.effect ?? defaultEffect;
     if (!result || STRICTNESS[effect] > STRICTNESS[result.effect] || (effect === result.effect && !result.rule && rule)) {
       result = { effect, rule, resource };
     }
   }
-  return result ?? { effect: "allow", rule: null, resource: "*" };
+  return result ?? { effect: defaultEffect, rule: null, resource: "*" };
 }
 
 const BLOCKED_SUBJECT: Record<AgentPermissionAction, (resource: string) => string> = {
@@ -683,6 +717,7 @@ const BLOCKED_SUBJECT: Record<AgentPermissionAction, (resource: string) => strin
   computer: () => "using apps on this computer",
   script: () => "running app scripts",
   webfetch: (resource) => resource === "*" ? "opening websites" : `opening ${resource}`,
+  browser_upload: (resource) => resource === "*" ? "uploading files to websites" : `uploading files to ${resource}`,
   websearch: () => "searching the web",
   skill: (resource) => resource === "*" ? "local skills" : `the local skill "${resource}"`,
   mcp: (resource) => resource === "*" ? "local MCP servers" : `the local MCP server "${resource}"`,

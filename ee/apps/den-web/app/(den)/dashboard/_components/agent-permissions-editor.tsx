@@ -2,7 +2,7 @@
 
 import { AlertDialog } from "@base-ui/react/alert-dialog";
 import {
-  AGENT_PERMISSION_DEFAULT_DECISION,
+  agentPermissionDefaultDecision,
   AGENT_PERMISSION_EVERYONE,
   agentPermissionDecisionLabels,
   agentPermissionDecisionsFor,
@@ -52,6 +52,9 @@ import {
 } from "./agent-permissions-data";
 import {
   agentPermissionBlockedBy,
+  agentPermissionChoiceOptions,
+  agentPermissionChoiceValue,
+  storedAgentPermissionDecision,
   effectiveAgentPermissionSettings,
   visibleAgentPermissionGroups,
   visibleAgentPermissionTryKinds,
@@ -381,6 +384,7 @@ const ROW_COPY: Record<string, string> = {
   computerUse: "See and control apps on the member's computer",
   appScripting: "Run AppleScript and other scripts in Mac apps",
   websites: "Pages the agent fetches and the built-in browser opens",
+  browserUploads: "Member decides asks unless remembered. Ask first asks every time.",
   webSearch: "Look things up with a web search",
   localSkills: "Skills installed on the member's computer",
   localMcpServers: "MCP servers the member added themselves",
@@ -402,13 +406,14 @@ export function AgentPermissionsEditor({ scopeId, team, settings, everyone, team
 }) {
   const { orgContext } = useOrgDashboard();
   const harnessEnabled = orgFeatureEnabled(orgContext, "agentHarnessPermissions");
+  const browserUploadsEnabled = orgFeatureEnabled(orgContext, "browserUploadPermissions");
   const computerUseEnabled = orgFeatureEnabled(orgContext, "computerUse");
   const effectiveSettings = effectiveAgentPermissionSettings(settings, computerUseEnabled);
   const effectiveEveryone = effectiveAgentPermissionSettings(everyone, computerUseEnabled);
   return (
     <div className="min-w-0" data-testid="agent-permissions-editor" data-scope={scopeId}>
       <div className="divide-y divide-gray-100 rounded-2xl border border-gray-100 bg-white">
-        {visibleAgentPermissionGroups(area, harnessEnabled, computerUseEnabled).map((group) => (
+        {visibleAgentPermissionGroups(area, harnessEnabled, computerUseEnabled, browserUploadsEnabled).map((group) => (
           <div key={group.label} className="pb-1">
             <h3 className="px-5 pb-1 pt-3 text-[12px] font-medium text-gray-500">{group.label}</h3>
             {group.definitions.map((definition) => {
@@ -430,12 +435,12 @@ export function AgentPermissionsEditor({ scopeId, team, settings, everyone, team
           </div>
         ))}
       </div>
-      <TryRequest area={area} harnessEnabled={harnessEnabled} computerUseEnabled={computerUseEnabled} everyone={team === null ? effectiveSettings : effectiveEveryone} team={team === null ? null : { name: team, settings: effectiveSettings }} />
+      <TryRequest area={area} harnessEnabled={harnessEnabled} browserUploadsEnabled={browserUploadsEnabled} computerUseEnabled={computerUseEnabled} everyone={team === null ? effectiveSettings : effectiveEveryone} team={team === null ? null : { name: team, settings: effectiveSettings }} />
     </div>
   );
 }
 
-function PermissionRow({ definition, team, setting, everyoneSetting, everyoneStatus, editable, blockedBy, onChange }: {
+export function PermissionRow({ definition, team, setting, everyoneSetting, everyoneStatus, editable, blockedBy, onChange }: {
   definition: AgentPermissionDefinition;
   team: string | null;
   setting: AgentPermissionSetting | undefined;
@@ -447,15 +452,16 @@ function PermissionRow({ definition, team, setting, everyoneSetting, everyoneSta
   onChange: (setting: AgentPermissionSetting | null) => void;
 }) {
   const labelId = useId();
-  const inheritedDecision = everyoneSetting?.decision ?? AGENT_PERMISSION_DEFAULT_DECISION;
+  const defaultDecision = agentPermissionDefaultDecision(definition.key);
+  const inheritedDecision = everyoneSetting?.decision ?? defaultDecision;
   const ownDecision = setting?.decision;
-  const effective = team ? ownDecision ?? inheritedDecision : ownDecision ?? AGENT_PERMISSION_DEFAULT_DECISION;
+  const effective = team ? ownDecision ?? inheritedDecision : ownDecision ?? defaultDecision;
   // A team's row is changed while it has anything of its own; otherwise it follows Everyone.
   const changed = team !== null && normalizeAgentPermissionSetting(definition, setting) !== null;
-  // Everyone's default already allows, so choosing Allow there stores nothing;
-  // a team's Allow is kept because it overrides everyone's decision.
+  // Existing Everyone Allow controls store nothing; upload Ask and Allow stay
+  // explicit because their administrative authority differs from the default.
   const setDecision = (decision: AgentPermissionDecision | undefined) =>
-    onChange({ ...setting, decision: team === null && decision === AGENT_PERMISSION_DEFAULT_DECISION ? undefined : decision });
+    onChange({ ...setting, decision: storedAgentPermissionDecision(definition, team, decision) });
   const inheritedAllow = team ? everyoneSetting?.allow ?? [] : [];
   const inheritedBlock = team ? everyoneSetting?.block ?? [] : [];
 
@@ -490,7 +496,7 @@ function PermissionRow({ definition, team, setting, everyoneSetting, everyoneSta
             <span className="text-gray-500">From Everyone</span>
           )}
         </div>
-        <div className="flex w-[140px] shrink-0 justify-end">
+        <div className={`flex shrink-0 justify-end ${definition.key === "browserUploads" ? "w-[190px]" : "w-[140px]"}`}>
           {definition.control === "toggle" ? (
             <DenSwitch
               size="sm"
@@ -504,11 +510,11 @@ function PermissionRow({ definition, team, setting, everyoneSetting, everyoneSta
               <DenSelect
                 aria-labelledby={labelId}
                 disabled={!editable}
-                value={effective}
+                value={agentPermissionChoiceValue(definition, ownDecision, effective)}
                 onChange={(event) => setDecision(agentPermissionDecisionsFor(definition).find((decision) => decision === event.target.value))}
               >
-                {agentPermissionDecisionsFor(definition).map((decision) => (
-                  <option key={decision} value={decision}>{agentPermissionDecisionLabels[decision]}</option>
+                {agentPermissionChoiceOptions(definition, team).map((option) => (
+                  <option key={option.value} value={option.value}>{option.label}</option>
                 ))}
               </DenSelect>
             </div>
@@ -695,14 +701,14 @@ function PatternLine({ list, label, noun, testId, kind, patterns, inherited, edi
 // Try a request
 // ---------------------------------------------------------------------------
 
-function TryRequest({ area, harnessEnabled, computerUseEnabled, everyone, team }: { area: AgentPermissionsArea; harnessEnabled: boolean; computerUseEnabled: boolean; everyone: AgentPermissionSettings; team: { name: string; settings: AgentPermissionSettings } | null }) {
-  const kinds = visibleAgentPermissionTryKinds(area, harnessEnabled, computerUseEnabled);
+function TryRequest({ area, harnessEnabled, computerUseEnabled, browserUploadsEnabled, everyone, team }: { area: AgentPermissionsArea; harnessEnabled: boolean; computerUseEnabled: boolean; browserUploadsEnabled: boolean; everyone: AgentPermissionSettings; team: { name: string; settings: AgentPermissionSettings } | null }) {
+  const kinds = visibleAgentPermissionTryKinds(area, harnessEnabled, computerUseEnabled, browserUploadsEnabled);
   const [selectedAction, setAction] = useState<AgentPermissionAction>(kinds[0]?.action ?? "shell");
   // A rollout refresh can hide the selected kind without remounting this draft.
   const action = kinds.find((entry) => entry.action === selectedAction)?.action ?? kinds[0]?.action ?? "shell";
   const [value, setValue] = useState("");
   const kind = kinds.find((entry) => entry.action === action);
-  const resource = action === "webfetch" && value.trim() && !/^[a-z][a-z0-9+.-]*:\/\//i.test(value.trim()) ? `https://${value.trim()}` : value.trim();
+  const resource = (action === "webfetch" || action === "browser_upload") && value.trim() && !/^[a-z][a-z0-9+.-]*:\/\//i.test(value.trim()) ? `https://${value.trim()}` : value.trim();
   const result = resource
     ? decideAgentPermission(resolveAgentPermissionRules({
         everyone: { source: AGENT_PERMISSION_EVERYONE, settings: everyone },

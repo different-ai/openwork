@@ -4,6 +4,7 @@ import { useLocation, useNavigate } from "react-router"
 import type { ComputerRequest } from "@openwork/types/desktop-ipc"
 
 import { desktopBridge } from "@/app/lib/desktop"
+import { markFeatureUsed } from "@/app/lib/den"
 import { Button } from "@/components/ui/button"
 import { settingsNavigationFromPathname } from "@/react-app/shell/workspace-routes"
 
@@ -97,11 +98,12 @@ function ScriptRequest({ sessionId, request, script }: { sessionId: string; requ
  * handed over until the person approves this list; the broker checks the answer.
  */
 function FilesRequest({ sessionId, request, files }: { sessionId: string; request: ComputerRequest; files: NonNullable<ComputerRequest["files"]> }) {
-  const [busy, setBusy] = useState<"allow" | "always" | "dismiss" | null>(null)
+  const [busy, setBusy] = useState<"allow" | "always" | "dismiss" | "remember" | null>(null)
   const [error, setError] = useState("")
 
-  async function answer(next: "allow" | "always" | "dismiss") {
+  async function answer(next: "allow" | "always" | "dismiss" | "remember") {
     if (busy) return
+    if (next === "remember") markFeatureUsed("browserUploadPermissions")
     setBusy(next)
     setError("")
     try {
@@ -129,6 +131,7 @@ function FilesRequest({ sessionId, request, files }: { sessionId: string; reques
             <div className="mt-0.5 text-[12px] leading-5 text-dls-secondary">{count
               ? `The agent chose ${count === 1 ? "it" : "them"} on ${request.computer}. ${files.app} can upload what it receives.`
               : `${files.app} opened a file panel on ${request.computer}. The agent sees the file names it shows, and asks again before handing any file over.`}</div>
+            {files.canRemember && files.site ? <div className="mt-1 text-[12px] leading-5 text-dls-secondary" data-testid="session-computer-files-remember-scope">Choosing a folder remembers file sharing with {files.site} from that folder across chats and Slack tasks on this computer. A system folder picker opens next. Remove permission in Settings → Computer use.</div> : null}
             {hidden ? <div className="mt-2 text-[12px] font-medium leading-5 text-amber-11" data-testid="session-computer-files-hidden">These names have {hidden === 1 ? "1 hidden character" : `${hidden} hidden characters`}, shown as &lt;U+…&gt;. Don't give them unless you expected that.</div> : null}
             {count ? <ul dir="ltr" style={{ unicodeBidi: "bidi-override" }} className="mt-2 max-h-32 overflow-auto rounded-lg border border-dls-border bg-dls-hover p-2 font-mono text-[12px] leading-5 text-dls-text" data-testid="session-computer-files">
               {shown.map((name, index) => <li key={index} className="break-all">{name.parts}</li>)}
@@ -138,7 +141,8 @@ function FilesRequest({ sessionId, request, files }: { sessionId: string; reques
         </div>
         <div className="flex flex-wrap items-center justify-end gap-2">
           <Button type="button" variant="ghost" size="sm" disabled={busy !== null} aria-busy={busy === "dismiss"} data-testid="session-computer-files-dismiss" onClick={() => void answer("dismiss")}>{count ? "Don't give" : "Don't allow"}</Button>
-          {count ? <Button type="button" variant="outline" size="sm" disabled={busy !== null} aria-busy={busy === "always"} data-testid="session-computer-files-always" onClick={() => void answer("always")}>Always give files to {files.app} in this chat</Button> : null}
+          {count && request.standing !== false ? <Button type="button" variant="outline" size="sm" disabled={busy !== null} aria-busy={busy === "always"} data-testid="session-computer-files-always" onClick={() => void answer("always")}>Always give files to {files.app} in this chat</Button> : null}
+          {files.canRemember ? <Button type="button" variant="outline" size="sm" disabled={busy !== null} aria-busy={busy === "remember"} data-testid="session-computer-files-remember" onClick={() => void answer("remember")}>Choose folder and remember</Button> : null}
           <Button type="button" size="sm" disabled={busy !== null} aria-busy={busy === "allow"} data-testid="session-computer-files-allow" onClick={() => void answer("allow")}>{count ? `Give ${count === 1 ? "file" : "files"}` : "Allow"}</Button>
         </div>
       </div>

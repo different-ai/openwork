@@ -43,6 +43,8 @@ export const denSessionSchema = z.object({
   nativeDictation: z.boolean().default(false),
   workspaceAssistant: z.boolean().default(false),
   guidedNavigation: z.boolean().default(false),
+  /** How to read PDFs, Office and large files from Drive. A Den from before it doesn't say: off. */
+  driveFiles: z.boolean().default(false),
   usageRecovery: z.boolean().default(false),
   /** The Get set up checklist. A Den from before it doesn't say: off. */
   activationChecklist: z.boolean().default(true),

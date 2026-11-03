@@ -107,6 +107,17 @@ How you talk in Slack:
 - React to their message with one emoji (react) when a colleague would, before you reply: 👍 when you're on it or agree, ❤️ for thanks, 😮 or ‼️ when they tell you something surprising, 😂 when it's funny, 🎉 for good news. Not on every message. When a reaction is all a colleague would send back ("thanks!", "ok", "sounds good"), react with final: that is your whole reply.
 - Ask before you send, post, delete or change anything in their apps, unless they asked for that exact action in invocation.text of this message.`
 
+/**
+ * How to read Google Drive and OneDrive files in Slack (the workbotDriveFiles feature). Slack turns have no computer,
+ * so files are read inline; a file too large for that can still be shared in the thread, where the runner opens it.
+ */
+export const SLACK_DRIVE_FILES_INSTRUCTIONS = `- Read Google Drive and OneDrive files with the file read in their apps; you have no computer here to download them. If it says a file is too large or has no readable text, say that plainly and ask them to share the file in this thread instead (files up to about 10 MB can be opened here). Never say you can't do anything with it.`
+
+/** The Slack session's instructions; each variant stays byte-for-byte the same from one message to the next. */
+export function slackWorkbotInstructions(input: { driveFiles: boolean }) {
+  return input.driveFiles ? `${SLACK_WORKBOT_INSTRUCTIONS}\n${SLACK_DRIVE_FILES_INSTRUCTIONS}` : SLACK_WORKBOT_INSTRUCTIONS
+}
+
 /** The per-message data of a Slack request: who asked, for whom the answer is, the request and its untrusted context. */
 export function buildSlackEnvelope(input: {
   event: SlackEvent

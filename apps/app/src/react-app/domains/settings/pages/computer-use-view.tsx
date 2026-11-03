@@ -1,6 +1,7 @@
 /** @jsxImportSource react */
 import { useEffect, useEffectEvent, useRef, useState } from "react";
-import type { ComputerPermission, ComputerStatus } from "@openwork/types/desktop-ipc";
+import type { ComputerPermission, ComputerStatus, DesktopCommandResult } from "@openwork/types/desktop-ipc";
+import { denSessionUpdatedEvent, denSettingsChangedEvent } from "@/app/lib/den-session-events";
 
 import { desktopBridge } from "@/app/lib/desktop";
 import { isElectronRuntime, isMacPlatform } from "@/app/utils";
@@ -136,6 +137,7 @@ export function ComputerUseView() {
             <LayoutSectionDescription>Computer use isn't turned on in this app.</LayoutSectionDescription>
           </LayoutSectionHeader>
         </LayoutSection>
+        <RememberedFileSharing />
       </LayoutStack>
     );
   }
@@ -259,6 +261,89 @@ export function ComputerUseView() {
           </LayoutSectionItem>
         </LayoutSection>
       ) : null}
+      <RememberedFileSharing />
     </LayoutStack>
+  );
+}
+
+/** Main owns identity, feature checks and grants. The renderer only lists and revokes. */
+export function RememberedFileSharing() {
+  const [state, setState] = useState<DesktopCommandResult<"computerListFileGrants"> | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState("");
+  const [removing, setRemoving] = useState<string | null>(null);
+  const generation = useRef(0);
+
+  async function refresh(clearIdentity = false) {
+    const current = ++generation.current;
+    // Never retain one account's folders as a fallback for another account or a failed read.
+    setState((previous) => clearIdentity ? null : previous ? { enabled: previous.enabled, grants: [] } : null);
+    setLoading(true);
+    setError("");
+    try {
+      const next = await desktopBridge.computerListFileGrants();
+      if (current === generation.current) setState(next);
+    } catch (cause) {
+      if (current === generation.current) setError(`Couldn't check remembered file sharing. Try again. ${message(cause)}`);
+    } finally {
+      if (current === generation.current) setLoading(false);
+    }
+  }
+  const readLatest = useEffectEvent(refresh);
+  useEffect(() => {
+    if (!isElectronRuntime()) return;
+    void readLatest(true);
+    const focus = () => { if (document.visibilityState === "visible") void readLatest(); };
+    const identity = () => { void readLatest(true); };
+    window.addEventListener("focus", focus);
+    document.addEventListener("visibilitychange", focus);
+    window.addEventListener(denSessionUpdatedEvent, identity);
+    window.addEventListener(denSettingsChangedEvent, identity);
+    return () => {
+      generation.current++;
+      window.removeEventListener("focus", focus);
+      document.removeEventListener("visibilitychange", focus);
+      window.removeEventListener(denSessionUpdatedEvent, identity);
+      window.removeEventListener(denSettingsChangedEvent, identity);
+    };
+  }, []);
+
+  async function remove(id: string) {
+    if (removing) return;
+    const current = generation.current;
+    setRemoving(id);
+    setError("");
+    try {
+      const result = await desktopBridge.computerRemoveFileGrant(id);
+      if (!result.ok) throw new Error("Permission wasn't removed.");
+      if (current === generation.current) await refresh();
+    } catch (cause) {
+      if (current === generation.current) setError(`Couldn't remove permission. Try again. ${message(cause)}`);
+    } finally {
+      setRemoving(null);
+    }
+  }
+
+  if (!state?.enabled && !error) return null;
+  return (
+    <LayoutSection id="remembered-file-sharing">
+      <LayoutSectionHeader>
+        <LayoutSectionTitle>Remembered file sharing</LayoutSectionTitle>
+      </LayoutSectionHeader>
+      {loading ? <LayoutSectionItem><div aria-label="Checking remembered file sharing" className="h-10 animate-pulse rounded bg-muted motion-reduce:animate-none" /></LayoutSectionItem>
+        : (state?.grants ?? []).map((grant) => (
+          <LayoutSectionItem key={grant.id} className="border-b border-border pb-2">
+            <LayoutSectionItemHeader className="min-h-10 items-center">
+              <LayoutSectionItemTitle className="flex-wrap break-all"><span dir="ltr" className="font-mono">{grant.origin}</span>{grant.blocked ? <span role="status" className="text-xs font-normal text-muted-foreground">Blocked by your organization</span> : null}</LayoutSectionItemTitle>
+              <LayoutSectionItemDescription className="break-all font-mono"><span dir="ltr">{grant.folder}</span></LayoutSectionItemDescription>
+              <LayoutSectionItemHeaderActions>
+                <Button size="sm" variant="outline" disabled={removing !== null} aria-busy={removing === grant.id} aria-label={`Remove file sharing with ${grant.origin} from ${grant.folder}`} onClick={() => void remove(grant.id)}>Remove</Button>
+              </LayoutSectionItemHeaderActions>
+            </LayoutSectionItemHeader>
+          </LayoutSectionItem>
+        ))}
+      {!loading && !error && state?.enabled && !state.grants.length ? <LayoutSectionItem><LayoutSectionItemFootnote>No folders shared automatically. Choose a folder when approving a browser upload to remember it.</LayoutSectionItemFootnote></LayoutSectionItem> : null}
+      {error ? <LayoutSectionItem><div role="alert" className="text-sm text-red-11">{error}</div><div><Button size="sm" variant="ghost" onClick={() => void refresh()}>Try again</Button></div></LayoutSectionItem> : null}
+    </LayoutSection>
   );
 }

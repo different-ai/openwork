@@ -65,6 +65,8 @@ export type WorkbotDeps = {
   workspaceAssistant?: (organizationId: string) => Promise<boolean>
   /** With the workspace assistant: Workbot may open a document beside the chat when the person explicitly asks. */
   guidedNavigation?: (organizationId: string) => Promise<boolean>
+  /** Den's `workbotDriveFiles` feature: how to read PDFs, Office and large files from Drive. Unset: off. */
+  driveFiles?: (organizationId: string) => Promise<boolean>
   /** Den's `sandboxGateway` flag: the chats' computers run through the runner's sandbox gateway. Unset: unchanged. */
   sandboxGateway?: boolean
   /**
@@ -285,6 +287,10 @@ export function workbotInstructions(input: {
   side?: boolean
   /** Workbot's computer has a browser the person can watch. */
   browser?: boolean
+  /** The conversation is set up with Workbot's computer (bash). Read-only turns still run without it. */
+  computer?: boolean
+  /** How to read PDFs, Office and large files from Google Drive or OneDrive (the workbotDriveFiles feature). */
+  driveFiles?: boolean
 }) {
   const person = input.firstName ?? "this person"
   return [
@@ -310,6 +316,7 @@ export function workbotInstructions(input: {
       "- For anything live on the web (listings, prices, availability, opening hours, a site without a connected app), check it in your browser rather than from memory, and open pages in their own tabs only when they want to go through them with you. In your answer, link each page worth a look by its real address with a short name, one per line, so they can open it.",
       `- A message may start with [OpenWork visible context v1] of kind browser: the tabId of the tab ${person} had in front in your Browser view when they sent it. When they say this page, this tab, here or it, they mean that tab: pass its tabId to your browser operations, look at it there and work in it rather than opening the page again. A newer message's tab replaces the old one; when a message has none, don't assume which tab they're on.`,
     ] : []),
+    ...(input.driveFiles ? [driveFilesInstruction(person, input.computer === true)] : []),
     "- Answer in the chat. Keep replies short; use a short list or a quoted draft when it helps.",
     `- Like a colleague, take bigger jobs away and come back with them: hand anything more than a quick look to start_task and tell them in a few words that you're on it.${input.browser ? " A task works out of their sight, so keep work they want to watch or shape in this conversation; start_task is for jobs they hand off." : ""} When a task reports back, give them what matters in a line or two and the obvious next step.`,
     "- Say a background job has started only after start_task succeeds. If it cannot start, say so; never promise a result from work that isn't running.",
@@ -320,6 +327,21 @@ export function workbotInstructions(input: {
       ? `- For anything recurring or later ("every Monday at 8", "remind me at 3"), create an Automation: find createCloudAutomation with search_capabilities, then call it with execute_capability. Use their time zone (${input.timeZone}), a short plain name, instructions that make sense on their own later, and model {"providerId":"${AUTOMATION_CLOUD_DEFAULT_MODEL.providerId}","modelId":"${AUTOMATION_CLOUD_DEFAULT_MODEL.modelId}"}. Then confirm in one line.`
       : "- You cannot schedule recurring work here yet. If they ask, say so in one line and offer to do it now instead.",
     `- Their time zone is ${input.timeZone}; each of their messages shows when they sent it, in that time zone. Say "today" and "tomorrow" from their point of view.`,
+  ].join("\n")
+}
+
+/**
+ * Reading a PDF, an Office file or anything large from Drive or OneDrive. The inline file read returns small text
+ * only, so with the computer the file is pulled into the workspace and read with shell tools. The computer is set per
+ * conversation but read-only turns (an open document's context, task reports) run without it, so the instruction
+ * names what to do in both cases rather than assuming it is there.
+ */
+function driveFilesInstruction(person: string, computer: boolean) {
+  const inline = (elsewhere: string) => `use the file read in their apps; if it says the file is too large or has no readable text, tell ${person} that plainly and ask them to send it to you in this chat${elsewhere}. Never say you can't do anything with it.`
+  if (!computer) return `- For a PDF, an Office file or anything large in Google Drive or OneDrive, ${inline("")}`
+  return [
+    "- For a PDF, an Office file (Word, Excel, PowerPoint) or anything large in Google Drive or OneDrive, don't use the inline file read, which only returns small text. When you have your computer in this turn (bash), pull the file onto it: execute createGoogleDriveDownloadLink with the file id (createMicrosoft365DriveDownloadLink with driveId and itemId for OneDrive or SharePoint), save it into /workspace with curl -fsSL -o, then read only what you need with shell tools (pdftotext -layout, pdfinfo, pandas, python-docx). The link works for five minutes; never show or share it.",
+    `- Some turns are read-only and have no computer. Then ${inline(", or to ask again in a normal message, where you can open it on your computer")}`,
   ].join("\n")
 }
 
@@ -340,6 +362,9 @@ export class WorkbotUnavailableError extends Error {
   }
 }
 
+/** Every Workbot conversation is set up with its computer; the runner still leaves it out of read-only turns. */
+const WORKBOT_COMPUTER = true
+
 function clientOf(deps: WorkbotDeps) {
   if (!deps.client) throw new WorkbotUnavailableError("workbot_runner_unavailable")
   return deps.client
@@ -355,6 +380,7 @@ async function ensureSession(actor: WorkbotActor, timeZone: string, deps: Workbo
   const canSchedule = await deps.canSchedule(actor.organizationId).catch(() => false)
   const workspaceAssistant = await deps.workspaceAssistant?.(actor.organizationId).catch(() => false) ?? false
   const guidedNavigation = workspaceAssistant && (await deps.guidedNavigation?.(actor.organizationId).catch(() => false) ?? false)
+  const driveFiles = await deps.driveFiles?.(actor.organizationId).catch(() => false) ?? false
   const main = await sessionOf(actor, null, deps, { create: true })
   const mainInCell = WORKBOT_CELL_SESSION_ID.test(main)
   const desktopViews = deps.desktopViews ?? []
@@ -362,7 +388,7 @@ async function ensureSession(actor: WorkbotActor, timeZone: string, deps: Workbo
     // Workbot keeps the person's files, works on its own computer, reacts to messages with an emoji and hands longer
     // work to background tasks; the runner offers each only on request.
     files: true,
-    computer: true,
+    computer: WORKBOT_COMPUTER,
     desktop: desktopViews.length > 0,
     ...(desktopViews.length ? { desktopViews } : {}),
     reactions: true,
@@ -374,7 +400,7 @@ async function ensureSession(actor: WorkbotActor, timeZone: string, deps: Workbo
   }
   const savedMain = await client.putSession(main, {
     title: `${name} · ${actor.firstName ?? "member"}`,
-    instructions: workbotInstructions({ name, organizationName: actor.organizationName, firstName: actor.firstName, timeZone, canSchedule, workspaceAssistant, guidedNavigation, browser: desktopViews.includes("browser") }),
+    instructions: workbotInstructions({ name, organizationName: actor.organizationName, firstName: actor.firstName, timeZone, canSchedule, workspaceAssistant, guidedNavigation, browser: desktopViews.includes("browser"), computer: WORKBOT_COMPUTER, driveFiles }),
     ...common,
     ref: MAIN_CHAT_REF,
     // A chat in its own cell keeps memory with the owner, and is never kept without these settings.
@@ -386,7 +412,7 @@ async function ensureSession(actor: WorkbotActor, timeZone: string, deps: Workbo
   // found again through its owner and ref, so it is never kept without them (the main chat's id is derived).
   const sessionId = await sessionOf(actor, chat, deps, { create: true })
   const saved = await client.putSession(sessionId, {
-    instructions: workbotInstructions({ name, organizationName: actor.organizationName, firstName: actor.firstName, timeZone, canSchedule, workspaceAssistant, guidedNavigation, browser: desktopViews.includes("browser"), side: true }),
+    instructions: workbotInstructions({ name, organizationName: actor.organizationName, firstName: actor.firstName, timeZone, canSchedule, workspaceAssistant, guidedNavigation, browser: desktopViews.includes("browser"), computer: WORKBOT_COMPUTER, driveFiles, side: true }),
     ...common,
     ref: chat,
     autoTitle: true,

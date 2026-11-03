@@ -549,16 +549,25 @@ function relevantPassages(text, question, maxChars) {
 /**
  * Clicks an upload control with the page's file chooser intercepted, then gives
  * the input that asked these files. The system file picker never opens.
- * @returns {Promise<"attached" | "no_file_chooser" | "single_file">}
+ * @returns {Promise<"attached" | "no_file_chooser" | "single_file" | "files_permission_changed">}
  */
-async function attachFiles(contents, point, files, signal, waitMs) {
+async function attachFiles(contents, point, files, signal, waitMs, beforeShare = null) {
   const cdp = contents.debugger;
   const attached = !cdp.isAttached();
   if (attached) cdp.attach("1.3");
   let listener = null;
+  let receivingFrame = null;
+  let receiverChanged = false;
   try {
     const opened = new Promise((resolve) => {
-      listener = (_event, method, params) => { if (method === "Page.fileChooserOpened") resolve(params); };
+      listener = (_event, method, params) => {
+        if (method === "Page.fileChooserOpened") { receivingFrame = params.frameId ?? null; resolve(params); }
+        // history.pushState/replaceState keeps the input's backend node alive.
+        // Reject even same-document changes while policy/files are checked.
+        if (receivingFrame && ((method === "Page.navigatedWithinDocument" && params.frameId === receivingFrame)
+          || (method === "Page.frameNavigated" && params.frame?.id === receivingFrame)
+          || (method === "Page.frameDetached" && params.frameId === receivingFrame))) receiverChanged = true;
+      };
       cdp.on("message", listener);
       setTimeout(() => resolve(null), waitMs).unref?.();
     });
@@ -571,6 +580,21 @@ async function attachFiles(contents, point, files, signal, waitMs) {
     signal.throwIfAborted();
     if (!chooser || !Number.isInteger(chooser.backendNodeId)) return "no_file_chooser";
     if (chooser.mode === "selectSingle" && files.length > 1) return "single_file";
+    // A chooser can belong to a cross-origin frame, or opening it can navigate.
+    // A managed/remembered grant is only for the exact top-level origin shown.
+    if (beforeShare) {
+      const tree = await cdp.sendCommand("Page.getFrameTree");
+      const findFrame = (node) => node?.frame?.id === chooser.frameId ? node.frame
+        : (node?.childFrames ?? []).map(findFrame).find(Boolean);
+      const frame = typeof chooser.frameId === "string" ? findFrame(tree?.frameTree) : null;
+      if (!frame || receiverChanged || !await beforeShare(frame.url) || receiverChanged) return "files_permission_changed";
+      // Re-read after asynchronous authorization, not just before it. The
+      // listener remains active through DOM.setFileInputFiles.
+      const finalTree = await cdp.sendCommand("Page.getFrameTree");
+      const finalFrame = findFrame(finalTree?.frameTree);
+      if (!finalFrame || receiverChanged || finalFrame.url !== frame.url) return "files_permission_changed";
+    }
+    signal.throwIfAborted();
     await cdp.sendCommand("DOM.setFileInputFiles", { files, backendNodeId: chooser.backendNodeId });
     return "attached";
   } finally {
@@ -585,7 +609,7 @@ export function createBrowserTaskHost({ getTab, tabsFor, ownerOf, activeFor, isV
   prepare = async (_tab) => {}, inputScale = (_tab) => 1, capture = (_tab, _viewport) => null,
   // A page receives files only after the person approves exactly these, in the chat.
   checkFiles = /** @type {(paths: string[]) => Promise<void>} */ (async () => { throw new Error("files_unavailable"); }),
-  approveFiles = async (_sessionId, _request, _signal) => false,
+  approveFiles = /** @type {(sessionId: string, request: { app: string, url: string, files: string[] }, signal: AbortSignal) => Promise<boolean | { allowed: boolean, code?: string, error?: string, revalidate?: (frameUrl?: string) => Promise<boolean> }>} */ (async (_sessionId, _request, _signal) => false),
   // A password or code is typed only on a site (exact origin) the person confirmed. Without
   // this, as on hosts that cannot ask, sign-in fields stay with the person.
   approveCredential = /** @type {((sessionId: string, request: { site: string }, signal: AbortSignal) => Promise<boolean>) | undefined} */ (undefined),
@@ -952,14 +976,19 @@ export function createBrowserTaskHost({ getTab, tabsFor, ownerOf, activeFor, isV
         const attaching = actions.filter((action) => action.type === "attach").flatMap((action) => action.files);
         // The person sees every file before any is sent, so a batch never carries more than the card lists.
         if (attaching.length > MAX_FILES) fail("invalid_action", `Attach at most ${MAX_FILES} files in one call. Nothing was dispatched.`);
+        let fileAuthorization = null;
         if (attaching.length) {
           let host = "this page";
           try { host = new URL(observed.url).host || host; } catch { /* Keep the generic name. */ }
           // Nothing about the files is read before the person answers, so a page cannot probe
           // paths; afterwards each must be exactly the regular file approved, not a link to another.
-          if (!await approveFiles(sessionId, { app: host, files: attaching }, requestSignal)) {
+          const approval = await approveFiles(sessionId, { app: host, url: observed.url, files: attaching }, requestSignal);
+          const decision = typeof approval === "object" && approval ? approval : null;
+          if (decision?.allowed === false && decision.code === "organization_policy_denied") fail(decision.code, decision.error);
+          if (approval !== true && !(decision?.allowed === true && typeof decision.revalidate === "function")) {
             fail("files_declined", "The person did not approve giving these files to the page. Nothing was dispatched.");
           }
+          fileAuthorization = decision;
           requestSignal.throwIfAborted();
           try { await checkFiles(attaching); }
           catch { fail("file_unavailable", "Attach readable regular files by their real absolute paths, not links. Nothing was dispatched."); }
@@ -1054,9 +1083,17 @@ export function createBrowserTaskHost({ getTab, tabsFor, ownerOf, activeFor, isV
           }
           if (action.type === "attach") {
             const scale = inputScale(tab);
-            const outcome = await attachFiles(contents, { x: point.x * scale, y: point.y * scale }, action.files, requestSignal, fileChooserMs);
+            const outcome = await attachFiles(contents, { x: point.x * scale, y: point.y * scale }, action.files, requestSignal, fileChooserMs,
+              fileAuthorization ? async (frameUrl) => {
+                if (originOf(frameUrl) !== originOf(observed.url) || contents.getURL() !== observed.url || !await allowed(observed.url)) return false;
+                if (!await fileAuthorization.revalidate(frameUrl)) return false;
+                // Recheck actual paths immediately before CDP receives them.
+                await checkFiles(action.files);
+                return contents.getURL() === observed.url && originOf(frameUrl) === originOf(contents.getURL());
+              } : null);
             if (outcome !== "attached") {
-              const error = outcome === "single_file" ? "This control takes one file. Attach one." : "No file chooser opened. Use the page's upload button or file input ref.";
+              const error = outcome === "files_permission_changed" ? "The website, receiving frame or file-sharing permission changed. No files were shared. Observe and review permission again."
+                : outcome === "single_file" ? "This control takes one file. Attach one." : "No file chooser opened. Use the page's upload button or file input ref.";
               if (!batch) fail(outcome, error);
               failure = { index, type: action.type, ref: action.ref, code: outcome, error };
               break;

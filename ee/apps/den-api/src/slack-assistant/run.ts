@@ -35,6 +35,8 @@ export const checkpointSchema = z.object({
   sessionResets: z.number().default(0),
   /** New messages always answer like Workbot. False only preserves older in-flight checkpoints. */
   workbot: z.boolean().default(false),
+  /** Told how to read Drive files (`workbotDriveFiles`). Chosen once per message, like `workbot`. */
+  driveFiles: z.boolean().default(false),
   /** The person's message, to react to; unset when a reaction would show in a channel the reply avoids. */
   reactTo: z.object({ channel: z.string(), ts: z.string() }).optional(),
   reacted: z.boolean().default(false),
