@@ -15,6 +15,9 @@ import { isBrowserToolName, type ComputerActionMark, type ComputerSessionHistory
  * `live` is the chat's working computer: the card shows its work, and its live
  * view opens only from here.
  */
+/** Replay speeds, in turn: a capture every 1.5 s at 1×. */
+const SPEEDS = [1, 2, 4, 0.5] as const
+
 export function ComputerSessionHistory({ history, active, renderAction, live }: {
   history: History
   active: boolean
@@ -23,6 +26,7 @@ export function ComputerSessionHistory({ history, active, renderAction, live }: 
 }) {
   const [open, setOpen] = useState(false)
   const [playing, setPlaying] = useState(false)
+  const [speed, setSpeed] = useState<(typeof SPEEDS)[number]>(1)
   // Null follows the newest capture. Browsing pins a stable frame as work continues.
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const [unavailable, setUnavailable] = useState<string | null>(null)
@@ -47,9 +51,9 @@ export function ComputerSessionHistory({ history, active, renderAction, live }: 
     const timer = setTimeout(() => {
       if (nextFrameId) setSelectedId(nextFrameId)
       else setPlaying(false)
-    }, 1500)
+    }, 1500 / speed)
     return () => clearTimeout(timer)
-  }, [currentFrameId, nextFrameId, open, playing])
+  }, [currentFrameId, nextFrameId, open, playing, speed])
 
   useEffect(() => {
     const pause = () => { if (document.hidden) setPlaying(false) }
@@ -82,6 +86,9 @@ export function ComputerSessionHistory({ history, active, renderAction, live }: 
           <Icon aria-hidden="true" className="size-4 shrink-0 text-muted-foreground" />
           <span className="min-w-0 flex-1">
             <span className={cn("block text-sm font-medium", unfinished && active && "animate-text-shimmer motion-reduce:animate-none")}>{title}</span>
+            {/* While it works, what it is doing now; afterwards, what it was for. */}
+            {(unfinished && active ? history.latest : history.purpose ?? history.latest)
+              ? <span data-computer-session-description="" className="mt-0.5 block truncate text-xs font-normal text-muted-foreground">{unfinished && active ? history.latest : history.purpose ?? history.latest}</span> : null}
             <span className="mt-0.5 flex flex-wrap gap-x-3 text-xs font-normal text-muted-foreground">
               <span>{parts.length} {parts.length === 1 ? "action" : "actions"}</span>
               {history.durationMs !== null ? <span>{formatToolCallDuration(history.durationMs)}</span> : null}
@@ -112,6 +119,10 @@ export function ComputerSessionHistory({ history, active, renderAction, live }: 
                 {size?.url === frame.file.url && size.width > 0 && size.height > 0 && frame.marks.length > 0
                   ? <ActionMarks marks={frame.marks} width={size.width} height={size.height} /> : null}
               </div>}
+              <div data-computer-view-step="" className="pt-2 text-xs">
+                <p className="font-medium text-foreground">{frame.label}</p>
+                {frame.thinking ? <p className="mt-0.5 line-clamp-3 whitespace-pre-line text-muted-foreground">{frame.thinking}</p> : null}
+              </div>
               <div className="group flex min-w-0 items-center gap-3 pt-2">
                 <Button variant="ghost" size="icon-sm" aria-label={playing ? "Pause captured views" : "Play captured views"} disabled={frames.length < 2} onClick={() => {
                   if (playing) setPlaying(false)
@@ -120,6 +131,8 @@ export function ComputerSessionHistory({ history, active, renderAction, live }: 
                 {/* Native range: the shared UI has no slider primitive. Its end follows new captures. */}
                 <input type="range" min={0} max={frames.length - 1} step={1} value={index} disabled={frames.length < 2} aria-label="Browse captured views" aria-valuetext={`${index + 1} of ${frames.length}: ${frame.label}`} className="min-w-0 flex-1 accent-foreground" onInput={event => select(Number(event.currentTarget.value))} />
                 <span className="shrink-0 text-xs tabular-nums text-muted-foreground" data-computer-view-count="">{index + 1} / {frames.length}</span>
+                <Button variant="ghost" size="xs" className="shrink-0 tabular-nums text-muted-foreground" aria-label={`Playback speed ${speed}×`} disabled={frames.length < 2}
+                  onClick={() => setSpeed(SPEEDS[(SPEEDS.indexOf(speed) + 1) % SPEEDS.length]!)}>{speed}×</Button>
                 <CollapsibleTrigger render={<Button variant="ghost" size="icon-xs" className="text-muted-foreground opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 pointer-coarse:opacity-100" />} aria-label={`View ${surface} actions`}><CodeXml aria-hidden="true" /></CollapsibleTrigger>
               </div>
             </> : <div className="flex flex-wrap items-center justify-between gap-2">
