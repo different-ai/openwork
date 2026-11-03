@@ -43,11 +43,12 @@ const tools: CodemodeToolTree = {
 const run = (code: string, runtime?: CodemodeRuntime, extra: { scriptInput?: unknown; timeoutMs?: number } = {}) =>
   runCodemodeScript({ code, tools, timeoutMs: extra.timeoutMs ?? 5_000, scriptInput: extra.scriptInput, ...(runtime ? { runtime } : {}) })
 
-test("saved Workflows keep the Code Mode they were written for, and the feature's revert wins", () => {
+test("a saved Workflow runs only on the interpreter it was written for, never switching silently", () => {
   assert.equal(codemodeRuntimeFor("codemode-js", true), "openwork")
   assert.equal(codemodeRuntimeFor("codemode-js", false), "openwork")
   assert.equal(codemodeRuntimeFor("ecmascript", true), "standard")
-  assert.equal(codemodeRuntimeFor("ecmascript", false), "openwork")
+  // With the feature off a standard JavaScript Workflow does not run at all.
+  assert.equal(codemodeRuntimeFor("ecmascript", false), undefined)
 })
 
 test("a Workflow payload names either Code Mode and nothing else", () => {

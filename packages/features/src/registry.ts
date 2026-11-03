@@ -435,7 +435,7 @@ export const FEATURES = defineFeatures({
   },
   standardCodeMode: {
     label: "Workflows as standard JavaScript",
-    description: "Workflows written from now on, and Workflow tests, run as standard JavaScript (ECMAScript, checked against test262), calling tools described the MCP way with JSON Schema. The engine is @opencode/codemode. Workflows saved before keep running as they always have. Turning this off runs every Workflow on OpenWork's original Code Mode again.",
+    description: "Workflows written from now on, and Workflow tests, run as standard JavaScript (ECMAScript, checked against test262), calling tools described the MCP way with JSON Schema. The engine is @opencode/codemode. Workflows saved before keep running as they always have. Turning this off returns new Workflows to OpenWork's original Code Mode; ones saved as standard JavaScript stop with a message rather than switching interpreter, and run again when it is back on.",
     category: "automations",
     added: "2026-11-03",
     since: "2026-11",

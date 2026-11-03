@@ -11,12 +11,14 @@ import type { CodemodeToolTree } from "./codemode-tools.js"
 export type CodemodeRuntime = "openwork" | "standard"
 
 /**
- * Saved code keeps the interpreter it was written for: OpenWork's for
+ * Saved code runs only on the interpreter it was written for: OpenWork's for
  * `codemode-js`, the standard one for `ecmascript` while the organization has
- * `standardCodeMode`. Turning the feature off runs everything on OpenWork's again.
+ * `standardCodeMode`. With the feature off an `ecmascript` Workflow has none
+ * (undefined) and does not run, rather than switching interpreter silently.
  */
-export function codemodeRuntimeFor(language: CodemodeLanguage, standardCodeMode: boolean): CodemodeRuntime {
-  return language === "ecmascript" && standardCodeMode ? "standard" : "openwork"
+export function codemodeRuntimeFor(language: CodemodeLanguage, standardCodeMode: boolean): CodemodeRuntime | undefined {
+  if (language === "codemode-js") return "openwork"
+  return standardCodeMode ? "standard" : undefined
 }
 
 type CodemodeRunCommon = {
