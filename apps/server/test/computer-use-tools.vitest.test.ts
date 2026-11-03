@@ -37,6 +37,8 @@ test("computer_open defaults to control and offers the narrower modes only when 
   const description = plugin.tool.computer_open.description;
   expect(description).toContain("defaults to control");
   expect(description).not.toContain("prefer assist");
+  // The person answers in the chat; the turn does not end on a request to reply.
+  expect(description).toContain("ask them in this chat with the question tool");
 });
 
 test("a Windows PC is not offered app scripting", async () => {

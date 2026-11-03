@@ -1,6 +1,7 @@
 import assert from "node:assert/strict"
 import { test } from "node:test"
 import type { ControlCenterRevenue } from "@openwork/types/den/admin-control-center"
+import { sql, type SQL } from "@openwork-ee/den-db/drizzle"
 
 process.env.DATABASE_URL ??= "mysql://test:test@127.0.0.1:3306/admin_metrics_unit_test"
 process.env.BETTER_AUTH_URL ??= "http://unit.test"
@@ -12,6 +13,8 @@ const {
   activationFunnel, addDays, buildRetentionCohorts, classifyWeeks, dayTime, isReactivated, isSharedSkill, reuseRate, taskOutcomes, weekStart,
 } = await import("../src/admin-metrics/definitions.js")
 const { METRICS, readControlCenter, refreshMetric } = await import("../src/admin-metrics/snapshots.js")
+const { dbRows } = await import("../src/admin-metrics/sql.js")
+const { db } = await import("../src/db.js")
 type Store = import("../src/admin-metrics/snapshots.js").SnapshotStore
 type Row = import("../src/admin-metrics/snapshots.js").SnapshotRow
 
@@ -205,6 +208,113 @@ test("an expired lease from a crashed instance can be taken over", async () => {
   const now = new Date()
   leases.set("revenue", { owner: "crashed", until: new Date(now.getTime() - 1) })
   assert.equal(await refreshMetric("revenue", { store, context: context(now), owner: "instance-b", intervals, metrics: withRevenue(async () => revenue(1)) }), "refreshed")
+})
+
+test("a failed refresh waits out the interval on every instance and on every boot", async () => {
+  const { store, leases } = memoryStore()
+  let attempts = 0
+  const failing = withRevenue(async () => {
+    attempts += 1
+    throw new Error("Row count exceeded 100000")
+  })
+  const refresh = (owner: string, now: Date) => refreshMetric("revenue", { store, context: context(now), owner, intervals, metrics: failing })
+  const failedAt = Date.now()
+  assert.equal(await refresh("instance-a", new Date(failedAt)), "failed")
+  assert.equal(leases.get("revenue")?.owner, null)
+  assert.equal(await refresh("instance-b", new Date()), "skipped")
+  assert.equal(await refresh("booted-15s-later", new Date(failedAt + 15_000)), "skipped")
+  assert.equal(await refresh("instance-a", new Date(failedAt + intervals.heavy / 2)), "skipped")
+  assert.equal(attempts, 1)
+  assert.equal(await refresh("instance-b", new Date(Date.now() + intervals.heavy)), "failed", "due again after the interval")
+  assert.equal(attempts, 2)
+})
+
+test("an admin can still retry a failed metric right away", async () => {
+  const { store } = memoryStore()
+  const now = new Date()
+  const failing = withRevenue(async () => { throw new Error("Query exceeded the time limit") })
+  assert.equal(await refreshMetric("revenue", { store, context: context(now), owner: "a", intervals, metrics: failing }), "failed")
+  assert.equal(await refreshMetric("revenue", { store, context: context(new Date()), owner: "b", intervals, force: true, metrics: withRevenue(async () => revenue(2)) }), "refreshed")
+})
+
+test("a metric runs its queries one at a time and a failed query stops the rest", async () => {
+  const now = new Date("2026-10-28T12:00:00.000Z")
+  for (const key of ["pulse", "lifecycle", "invitations", "sharing", "accounts"] as const) {
+    let started = 0
+    let running = 0
+    let mostRunning = 0
+    const rowsFailingOn = (failing: number) => async () => {
+      started += 1
+      const statement = started
+      running += 1
+      mostRunning = Math.max(mostRunning, running)
+      await new Promise((resolve) => setImmediate(resolve))
+      running -= 1
+      if (statement === failing) throw new Error("Row count exceeded 100000")
+      return []
+    }
+    await METRICS[key].compute({ now, rows: rowsFailingOn(0) })
+    assert.equal(mostRunning, 1, `${key} ran queries side by side`)
+    assert.ok(started >= 3, `${key} ran ${started} queries`)
+    started = 0
+    await assert.rejects(METRICS[key].compute({ now, rows: rowsFailingOn(2) }), /Row count exceeded/)
+    assert.equal(started, 2, `${key} kept querying after a failure`)
+    assert.equal(running, 0)
+  }
+})
+
+test("sharing leaves built-in skills out in SQL and fits the snapshot schema", async () => {
+  const { store, snapshots } = memoryStore()
+  const now = new Date("2026-11-02T12:00:00.000Z")
+  const statements: string[] = []
+  // Driver-shaped values: sums and flags can arrive as strings.
+  const results = {
+    teams: [{ org: "org_team", people: "3" }],
+    uses: [
+      { day: "2026-11-02", org: "org_team", member: "m2", kind: "skill", built_in: 0, skill_creator: "m1", connection: null, connection_name: null, connection_creator: null, uses: "4", errors: null },
+      { day: "2026-11-02", org: "org_team", member: "m2", kind: "skill", built_in: "1", skill_creator: "m1", connection: null, connection_name: null, connection_creator: null, uses: "90", errors: null },
+      { day: "2026-11-01", org: "org_team", member: "m2", kind: "connector_tool", built_in: 0, skill_creator: null, connection: "emc_1", connection_name: "Linear", connection_creator: "m1", uses: "5", errors: "1" },
+    ],
+    skills: [
+      { id: "co_1", org: "org_team", creator: "m1", created: "2026-11-01 09:00:00.000", org_wide: "1", team: null, grantee: null },
+      { id: "co_2", org: "org_team", creator: "m1", created: "2026-11-01 09:00:00.000", org_wide: null, team: null, grantee: null },
+    ],
+    marketplaces: [{ created: "2026-11-01 09:00:00.000" }],
+  }
+  const rows = async (query: SQL) => {
+    const statement = query.toQuery({ escapeName: (name) => name, escapeParam: () => "?", escapeString: (text) => text }).sql
+    statements.push(statement)
+    if (statement.includes("FROM member m")) return results.teams
+    if (statement.includes("FROM capability_usage_rollups r")) return results.uses
+    if (statement.includes("FROM config_object co")) return results.skills
+    if (statement.includes("FROM marketplace mk")) return results.marketplaces
+    // Listing the built-in ids is over the database's 100k row limit.
+    throw new Error(`Row count exceeded 100000: ${statement}`)
+  }
+  assert.equal(await refreshMetric("sharing", { store, context: { now, rows }, owner: "a", intervals }), "refreshed", snapshots.get("sharing:7d")?.error ?? undefined)
+  assert.equal(statements.length, 4)
+  assert.match(statements.find((statement) => statement.includes("FROM config_object co")) ?? "", /NOT EXISTS \(SELECT 1 FROM plugin_config_object/)
+  const payload = snapshots.get("sharing:7d")?.payload as { skills: Record<string, number>; mcp: Record<string, number>; connectors: { name: string; errors: number }[]; weekly: { skillUses: number }[] }
+  assert.deepEqual(
+    { teamSkills: payload.skills.teamSkills, shared: payload.skills.sharedTeamSkills, teamUses: payload.skills.teamUses, teammateUses: payload.skills.teammateUses },
+    { teamSkills: 2, shared: 1, teamUses: 4, teammateUses: 4 },
+    "a built-in skill's 90 uses stay out of team reuse",
+  )
+  assert.equal(payload.weekly.at(-1)?.skillUses, 94, "weekly totals still count built-in skills")
+  assert.deepEqual(payload.mcp, { teamCalls: 5, sharedConnectionCalls: 5, sharedReuseRate: 1 })
+  assert.equal(payload.connectors[0]?.errors, 1)
+})
+
+test("the refresh reads from the replica", async () => {
+  const replica = db.$replicas[0]
+  let reads = 0
+  db.$replicas[0] = { execute: async () => { reads += 1; return { rows: [{ one: 1 }] } } }
+  try {
+    assert.deepEqual(await dbRows(sql`SELECT 1 AS one`), [{ one: 1 }])
+    assert.equal(reads, 1)
+  } finally {
+    db.$replicas[0] = replica
+  }
 })
 
 test("range-independent sections read their single snapshot for every range", async () => {

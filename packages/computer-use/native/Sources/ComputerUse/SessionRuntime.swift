@@ -27,7 +27,7 @@ final class SessionRuntime {
         var app: AppIdentity
         var target: WindowTarget
         let mode: AccessMode
-        /// Background until the app shows it needs the front for keys.
+        /// Background until the app shows it needs the front for keys or pointer steps.
         var delivery: InputDelivery
         /// The windows under the dialogs being worked in, the session's own first.
         var parents: [(app: AppIdentity, target: WindowTarget, kind: DialogTarget.Kind?)] = []
@@ -177,8 +177,14 @@ final class SessionRuntime {
             let panelAccess = policy == .embedded ? (values["file_panel_access"] as? NSNumber)?.uint32Value : nil
             // The app the person confirmed may receive a password or code they gave.
             let credentialApproval = policy == .embedded ? values["credential_approval"] as? String : nil
-            return try await act(id: id, observationID: observationID, requestID: requestID, actions: actions, raw: raw, intent: intent,
-                fileApproval: fileApproval, filePanelAccess: panelAccess, pacing: pacing, credentialApproval: credentialApproval)
+            do {
+                return try await act(id: id, observationID: observationID, requestID: requestID, actions: actions, raw: raw, intent: intent,
+                    fileApproval: fileApproval, filePanelAccess: panelAccess, pacing: pacing, credentialApproval: credentialApproval)
+            } catch let error as UseError {
+                // Refused before anything was sent: the cursor shakes it off and tries another way.
+                if error.next == "observe" || error.next == "correct_request" { controls.react(.refused) }
+                throw error
+            }
         case "computer_zoom" where policy == .embedded:
             try a.only(["session_id", "observation_id", "x", "y", "width", "height"])
             return try await zoom(try a.string("session_id"), observationID: try a.string("observation_id"),
@@ -329,10 +335,11 @@ final class SessionRuntime {
         }
         if let deadline, now >= deadline { throw UseError("action_timeout", "The bounded action time expired. Inspect the receipt before doing anything else.", next: "observe") }
     }
-    /// A macOS prompt only the person may answer is open; the agent waits for them.
-    private func personNeeded(_ prompt: (reason: String, app: String)) -> [[String: Any]] {
+    /// A macOS prompt only the person may answer is open. Before an observation has
+    /// waited for them, the next step is that observation.
+    private func personNeeded(_ prompt: (reason: String, app: String), waited: Bool = false) -> [[String: Any]] {
         text(["ok": false, "code": "person_needed", "reason": prompt.reason, "prompt_app": prompt.app, "dispatched": false,
-              "next": "human_takeover", "message": HandoverRules.message(prompt.reason)])
+              "next": waited ? "human_takeover" : "observe", "message": HandoverRules.message(prompt.reason, waited: waited)])
     }
     /// A file panel lists the person's files: nothing of it reaches the agent until they allow it.
     private func filePanelAccessRequired(_ current: Session) -> [[String: Any]] {
@@ -343,7 +350,17 @@ final class SessionRuntime {
         // A paused session never resumes from an observation: only the person's Continue does.
         // Retry only read-only capture races. Never repeat an action or cross takeover.
         try await followDialog(id)
-        if let prompt = access.personPrompt() { return personNeeded(prompt) }
+        if access.personPrompt() != nil {
+            // Only the person can answer it: wait here, so the agent carries on once they
+            // do instead of handing its turn back. Answering may have closed a dialog.
+            let waiting = try current(id)
+            controls.update("Waiting for you to answer macOS. The agent continues once you do.", paused: false)
+            if let open = try await HandoverRules.waitForPerson(prompt: { self.access.personPrompt() }, check: { try self.checkActive(waiting) },
+                now: { self.now }, sleep: { try await Task.sleep(nanoseconds: UInt64($0 * 1_000_000_000)) }) {
+                return personNeeded(open, waited: true)
+            }
+            try await followDialog(id)
+        }
         let current = try current(id)
         if current.dialogKind == .filePanel, current.filePanelAllowed != current.target.id {
             guard filePanelAccess == current.target.id else { return filePanelAccessRequired(current) }
@@ -473,7 +490,7 @@ final class SessionRuntime {
         let elements = try shown.map { try $0.payload(bounds: bounds, width: width, height: height, compact: policy == .embedded) }
         let observation = ObservationLease(id: UUID().uuidString.lowercased(), createdAt: now, generation: current.generation,
             frame: bounds, imageWidth: width, imageHeight: height, stateDigest: try access.captureDigest(state),
-            imageDigest: imageDigest, validFor: policy.observationSeconds)
+            imageDigest: imageDigest, validFor: policy.observationSeconds, image: png)
         try check()
         let observedFocus = state.focusRecord.flatMap { focus in shown.first { CFEqual($0.element, focus.element) } }
         let afterAction = current.baseline.flatMap { baseline in
@@ -499,6 +516,7 @@ final class SessionRuntime {
             "truncated": state.truncated || state.listCapped, "protected_fields": state.protectedFrames.count,
             "content_trust": "untrusted_app_content", "next": "act_once_then_observe"]
         if let afterAction { payload["after_action"] = afterAction }
+        if let reaction = CursorReaction.after(afterAction) { controls.react(reaction) }
         if otherWindowFocused { payload["other_window_focused"] = true }
         if let kind = current.dialogKind {
             // Elements and coordinates are the dialog's; it is worked in until it closes.
@@ -614,9 +632,12 @@ final class SessionRuntime {
         let moment = ProcessInfo.processInfo.systemUptime
         var returns = 0
         var disturbed = try await shareDesktop(current, returns: &returns, since: moment, front: front)
-        // The observation showed the window behind other work; coordinates need a fresh look.
+        // The person had other work in front, and the window was just brought back for this
+        // step. Coordinate steps still check the live window against the observation, where
+        // each one lands, before any input; this app's later steps take the front too, so a
+        // background look cannot leave it behind the person's work again.
         if inBackground, front, disturbed, actions.contains(where: \.usesCoordinates) {
-            throw UseError("observation_required", "This step needs the app in front, so its window was brought forward. Observe again, then repeat the step; nothing was sent.", next: "observe")
+            session?.delivery = .foreground
         }
         let bounds: CGRect
         do { bounds = try access.validate(current.target, app: current.app, requireFrontmost: frontCheck) }
@@ -724,16 +745,17 @@ final class SessionRuntime {
                     if action.usesCoordinates {
                         let captured = try await observationImage(current, bounds: bounds, state: live,
                             requireFrontmost: frontCheck, check: check)
-                        guard access.imageDigest(captured.0) == observation.imageDigest else {
-                            throw UseError("stale_observation", "The window image changed. Observe before coordinate input.", next: "observe")
-                        }
-                        let point: CGPoint
+                        let points: [CGPoint]
                         switch action {
-                        case .move(let p), .click(let p, _, _), .scroll(let p, _, _): point = p
-                        case .drag(let points): point = points[0]
+                        case .move(let p), .click(let p, _, _), .scroll(let p, _, _): points = [p]
+                        case .drag(let path): points = path
                         default: throw UseError("invalid_arguments", "This action has no coordinates.")
                         }
-                        pointerTarget = try access.checkHit(observation.screenPoint(point), target: current.target, app: current.app, background: background || !current.parents.isEmpty)
+                        guard access.imageDigest(captured.0) == observation.imageDigest
+                                || ImageRegions.unchanged(observation.image, captured.0, around: points) else {
+                            throw UseError("stale_observation", "The window image changed where this step lands. Observe before coordinate input.", next: "observe")
+                        }
+                        pointerTarget = try access.checkHit(observation.screenPoint(points[0]), target: current.target, app: current.app, background: background || !current.parents.isEmpty)
                     }
                 }
                 if !progress.hasInput, let focus {
@@ -775,8 +797,12 @@ final class SessionRuntime {
                 try check()
                 progress.dispatched(path: path); uncertain = false
                 let dispatchedAt = now
-                controls.showAction(action, records: records)
-                if case .menu = action, let menu = input.lastMenu { controls.showMenu(titleFrame: menu.titleFrame, path: menu.path, shortcut: menu.shortcut) }
+                // The press already ran: outline the control only where it still is.
+                controls.showAction(action, records: records, live: { [access] record in access.frame(record.element, within: 0.05) })
+                if case .menu = action, let menu = input.lastMenu {
+                    controls.showMenu(titleFrame: menu.titleFrame, path: menu.path, shortcut: menu.shortcut,
+                        menuBarShowing: NSWorkspace.shared.frontmostApplication?.processIdentifier == current.app.pid)
+                }
                 switch action {
                 case .click:
                     focus = current.records.first { record in record.textField && pointerTarget.map { CFEqual($0, record.element) } == true }

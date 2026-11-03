@@ -24,7 +24,8 @@ Some apps and steps still need the front, and get it the way they did before
 - single steps in any app: menu shortcuts (⌘ keys), clicks with modifier
   keys, hover, drags, and typing in Chromium, Electron and Catalyst apps.
   When such a step needs the window brought forward and uses coordinates,
-  nothing is sent and the agent is asked to look again.
+  nothing is sent and the agent is asked to look again. That look and the
+  session's later steps take the front, so the repeated step goes through.
 
 ## How it works
 

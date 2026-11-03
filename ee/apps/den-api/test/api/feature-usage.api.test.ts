@@ -108,6 +108,9 @@ test("the admin view shows who has each feature on and who used it", async () =>
   assert.equal(used?.email, member.email)
   assert.equal(used?.enabled, true)
   assert.equal(used?.daysUsed, 1)
+  // The organization override set above is the change that turned it on.
+  assert.equal(field(mermaid?.lastChange, "scope"), "organization")
+  assert.equal(field(mermaid?.lastChange, "action"), "on")
 
   const dictation = featureEntry(result, "nativeDictation")
   assert.equal(dictation?.enabledMembers, 0)
@@ -118,9 +121,13 @@ test("the admin view shows who has each feature on and who used it", async () =>
   const off = featureEntry(await den.request(adminToken, "GET", usagePath()), "settledSessions")
   assert.equal(off?.enabledMembers, 0)
   assert.equal(list(off?.members)[0]?.enabled, false)
+  assert.equal(field(off?.lastChange, "action"), "off")
 
   // Another organization's usage never shows up.
   const foreign = await den.request(adminToken, "GET", usagePath(other.orgId))
   assert.equal(foreign.status, 200, summary(foreign))
-  for (const entry of list(field(foreign.body, "features"))) assert.deepEqual(entry.members, [])
+  for (const entry of list(field(foreign.body, "features"))) {
+    assert.deepEqual(entry.members, [])
+    assert.notEqual(field(entry.lastChange, "scope"), "organization")
+  }
 })

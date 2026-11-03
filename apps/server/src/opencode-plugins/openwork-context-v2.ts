@@ -3,6 +3,7 @@ import { approvalLoopbackFetch } from "./approval-loopback-fetch.js";
 import { registerCloudSkillDiscovery, type CloudSkillContext } from "./openwork-cloud-skills-v2.js";
 import { server as browserTools } from "./openwork-chrome-devtools.js";
 import { server as computerTools } from "./openwork-computer-use.js";
+import { ASK_WITHOUT_WAITING, askArgs, askDescription } from "./openwork-agent-questions.js";
 import { DRIVE_FILE_TOOLS } from "./drive-file-tools.js";
 import { addProviderSafeTool } from "./provider-safe-tool-schema.js";
 
@@ -75,6 +76,21 @@ export default {
       }
     };
     let computerOn = await computerOffered(true);
+    // A question that does not stop the agent follows the desktop's
+    // `agentQuestions` feature the same way, but stays off when unknown.
+    const questionsOffered = async (current: boolean) => {
+      if (!browser || !gated) return false;
+      try {
+        const response = await fetch(new URL("/agent-questions", browser.url), {
+          redirect: "error", signal: AbortSignal.timeout(5_000), headers: { Authorization: `Bearer ${browser.token}` },
+        });
+        const body: unknown = response.ok ? await response.json() : undefined;
+        return body && typeof body === "object" && "offered" in body && typeof body.offered === "boolean" ? body.offered : current;
+      } catch {
+        return current;
+      }
+    };
+    let questionsOn = await questionsOffered(false);
     const registration = await context.tool.transform(editor => {
       for (const name of ["openwork_context", "openwork_query", "openwork_execute"]) {
         addProviderSafeTool(editor, {
@@ -146,6 +162,11 @@ export default {
           execute: (input, call) => driveCall(name, input, call, `${name} failed`),
         });
       }
+      if (questionsOn) addProviderSafeTool(editor, {
+        name: ASK_WITHOUT_WAITING, description: askDescription, input: z.toJSONSchema(askArgs),
+        options: { codemode: false },
+        execute: (input, call) => driveCall(ASK_WITHOUT_WAITING, input, call, "Asking failed"),
+      });
       const bridged = { ...browserDefinitions, ...(computerOn ? computerDefinitions : undefined) };
       if (browser) for (const [name, definition] of Object.entries(bridged)) {
         addProviderSafeTool(editor, {
@@ -165,9 +186,10 @@ export default {
       }
     });
     const promptHook = browser && gated && context.session ? await context.session.hook("prompt", async () => {
-      const next = await computerOffered(computerOn);
-      if (next === computerOn) return;
-      computerOn = next;
+      const [computer, questions] = await Promise.all([computerOffered(computerOn), questionsOffered(questionsOn)]);
+      if (computer === computerOn && questions === questionsOn) return;
+      computerOn = computer;
+      questionsOn = questions;
       await context.tool.reload?.();
     }) : undefined;
     const stopSkills = await registerCloudSkillDiscovery(context);

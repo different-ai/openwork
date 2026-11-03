@@ -59,6 +59,32 @@ export type ComputerHistoryFrame = {
   file: FileUIPart
   toolCallId: string
   label: string
+  /** Where this view's actions landed, in the image pixels of the view they acted on. */
+  marks: ComputerActionMark[]
+}
+
+export type ComputerActionMark =
+  | { kind: "point"; x: number; y: number }
+  | { kind: "path"; points: { x: number; y: number }[] }
+
+function coordinate(value: unknown): { x: number; y: number } | null {
+  if (!record(value) || typeof value.x !== "number" || typeof value.y !== "number") return null
+  return Number.isFinite(value.x) && Number.isFinite(value.y) ? { x: value.x, y: value.y } : null
+}
+
+/** Clicks, hovers and scrolls as points and drags as paths; semantic steps have no place on screen. */
+export function computerActionMarks(part: DynamicToolUIPart): ComputerActionMark[] {
+  if (!/(?:^|_)computer_act$/.test(part.toolName) || !record(part.input)) return []
+  const actions = [part.input.action, ...(Array.isArray(part.input.actions) ? part.input.actions : [])]
+  return actions.flatMap((action): ComputerActionMark[] => {
+    if (!record(action)) return []
+    if (action.type === "drag" && Array.isArray(action.path)) {
+      const points = action.path.flatMap(point => coordinate(point) ?? [])
+      return points.length > 1 ? [{ kind: "path", points }] : []
+    }
+    const point = ["click", "double_click", "triple_click", "move", "scroll"].includes(String(action.type)) ? coordinate(action) : null
+    return point ? [{ kind: "point", ...point }] : []
+  })
 }
 
 export type ComputerSessionHistory = {
@@ -88,6 +114,7 @@ export function collectComputerSessionHistory(messages: readonly UIMessage[]): C
   if (!first) return null
   const files = new Set<FileUIPart>()
   const frames: ComputerHistoryFrame[] = []
+  const marked = new Set<string>()
   for (const message of messages) {
     if (message.role !== "assistant") continue
     for (const file of message.parts) {
@@ -96,9 +123,13 @@ export function collectComputerSessionHistory(messages: readonly UIMessage[]): C
       const part = typeof owner === "string" ? tools.get(owner) : undefined
       if (!part) continue
       files.add(file)
-      // Repeated observations occupy one view, without losing their actions.
-      if (frames.at(-1)?.file.url === file.url) continue
-      frames.push({ id: `${part.toolCallId}:${frames.length}`, file, toolCallId: part.toolCallId, label: computerActionLabel(part) })
+      // Repeated observations occupy one view, without losing their actions or where they landed.
+      // An act's marks go on its first capture only.
+      const marks = marked.has(part.toolCallId) ? [] : computerActionMarks(part)
+      marked.add(part.toolCallId)
+      const previous = frames.at(-1)
+      if (previous?.file.url === file.url) { previous.marks.push(...marks); continue }
+      frames.push({ id: `${part.toolCallId}:${frames.length}`, file, toolCallId: part.toolCallId, label: computerActionLabel(part), marks })
     }
   }
   const starts = parts.flatMap(part => {
@@ -118,4 +149,16 @@ export function withoutComputerHistory(parts: UIMessage["parts"], history: Compu
   if (!history) return parts
   return parts.filter(part => !(part.type === "dynamic-tool" && history.toolCallIds.has(part.toolCallId))
     && !(part.type === "file" && history.files.has(part)))
+}
+
+/**
+ * With the session card on, the card shows the work: the live computer view opens
+ * only from it, or on its own when the person is needed there (a takeover to end).
+ */
+export function showsLiveComputerView({ historyEnabled, watching, session }: {
+  historyEnabled: boolean
+  watching: boolean
+  session: { state: string } | null | undefined
+}): boolean {
+  return !historyEnabled || watching || session?.state === "paused"
 }

@@ -646,6 +646,14 @@ final class MacAccessibility {
         return hit
     }
 
+    /// Puts keyboard focus back on the exact field or control the agent observed or pressed,
+    /// after the person or the app moved it. checkFocus then verifies it as before. A secure
+    /// field is never refocused: a password goes in only after the person confirms the app.
+    func refocus(_ expected: ElementRecord?) -> Bool {
+        guard let expected, expected.enabled, !expected.protected else { return false }
+        return AXUIElementSetAttributeValue(expected.element, kAXFocusedAttribute as CFString, kCFBooleanTrue) == .success
+    }
+
     func checkFocus(_ expected: ElementRecord?, target: WindowTarget, app: AppIdentity, requireField: Bool, requireFront: Bool = true) throws {
         guard let expected, !expected.protected || expected.textField, expected.enabled, !requireField || expected.textField else {
             throw UseError("focus_required", "Observe a focused normal text field or control before using the keyboard.", next: "observe")
@@ -878,7 +886,7 @@ final class MacAccessibility {
         return false
     }
     func elementAttribute(_ element: AXUIElement, _ name: String) -> AXUIElement? { try? checkedElement(element, name, AXReadBudget()) }
-    func frame(_ element: AXUIElement) -> CGRect? { try? checkedFrame(element, AXReadBudget()) }
+    func frame(_ element: AXUIElement, within seconds: TimeInterval = 0.35) -> CGRect? { try? checkedFrame(element, AXReadBudget(seconds: seconds)) }
 }
 
 /// Notes when the target app last reported an accessibility change while input

@@ -396,6 +396,57 @@ test("screenshot false settles the act with elements only and never reaches the 
   assert.equal(payload(await f.control.execute({ sessionId: "chat", name: "computer_act", args: { observation_id: "observation", action: { type: "key", key: "return" }, screenshot: "no" } })).code, "invalid_arguments");
 });
 
+test("a drag longer than the helpers take keeps its shape in 32 of its own points", async (t) => {
+  const seen = [];
+  const f = fixture({ seen, toolResult: (name) => name === "computer_act" ? text({ ok: true, status: "dispatched", next: "observe" }) : undefined });
+  t.after(() => f.control.reset(true));
+  await f.control.setFeatureEnabled(true);
+  await f.control.execute({ sessionId: "chat", name: "computer_open", args: { app_id: "editor", mode: "control", purpose: "Draw the outline" } });
+  // A closed outline: 40 points along three straight sides, back to where it started.
+  const side = (from, to) => Array.from({ length: 13 }, (_, index) => ({ x: from.x + (to.x - from.x) * index / 13, y: from.y + (to.y - from.y) * index / 13 }));
+  const corners = [{ x: 100, y: 600 }, { x: 400, y: 100 }, { x: 700, y: 600 }];
+  const path = [...side(corners[0], corners[1]), ...side(corners[1], corners[2]), ...side(corners[2], corners[0]), corners[0]];
+  const drag = (points) => f.control.execute({ sessionId: "chat", name: "computer_act", args: { observation_id: "observation", actions: [{ type: "drag", path: points }] } });
+
+  seen.length = 0;
+  const acted = await drag(path);
+  const sent = seen.find((call) => call.name === "computer_act").args.actions[0].path;
+  assert.equal(sent.length, 32);
+  assert.ok(sent.every((point) => path.some((own) => own.x === point.x && own.y === point.y)), "only the stroke's own points");
+  for (const corner of [...corners, corners[0]]) assert.ok(sent.some((point) => point.x === corner.x && point.y === corner.y), "the start, end and corners stay");
+  assert.deepEqual(acted.content.map((part) => JSON.parse(part.text)).find((part) => part.drag_paths_fitted)?.drag_paths_fitted, [{ from: 40, to: 32 }]);
+
+  seen.length = 0;
+  await drag(path.slice(0, 32));
+  assert.deepEqual(seen.find((call) => call.name === "computer_act").args.actions[0].path, path.slice(0, 32), "a path the helpers take is untouched");
+
+  seen.length = 0;
+  const huge = Array.from({ length: 257 }, (_, index) => ({ x: index, y: index }));
+  assert.equal(payload(await drag(huge)).code, "invalid_arguments");
+  assert.ok(!seen.some((call) => call.name === "computer_act"), "nothing is sent past the accepted size");
+});
+
+test("a smooth drag curves through its points and stays where they were checked", async (t) => {
+  const seen = [];
+  const f = fixture({ seen, toolResult: (name) => name === "computer_act" ? text({ ok: true, status: "dispatched", next: "observe" }) : undefined });
+  t.after(() => f.control.reset(true));
+  await f.control.setFeatureEnabled(true);
+  await f.control.execute({ sessionId: "chat", name: "computer_open", args: { app_id: "editor", mode: "control", purpose: "Draw a wave" } });
+  // Three points of a wave: straight lines would meet at a sharp peak.
+  const path = [{ x: 100, y: 400 }, { x: 300, y: 100 }, { x: 500, y: 400 }];
+  seen.length = 0;
+  await f.control.execute({ sessionId: "chat", name: "computer_act", args: { observation_id: "observation", action: { type: "drag", path, smooth: true } } });
+  const sent = seen.find((call) => call.name === "computer_act").args.action;
+  assert.equal(Object.hasOwn(sent, "smooth"), false, "the helpers never see the mark");
+  assert.equal(sent.path.length, 32);
+  assert.deepEqual([sent.path[0], sent.path.at(-1)], [path[0], path[2]], "it starts and ends where asked");
+  assert.ok(sent.path.some((point) => point.y === 100), "it still reaches the peak");
+  assert.ok(sent.path.every((point) => point.x >= 100 && point.x <= 500 && point.y >= 100 && point.y <= 400), "it never leaves the points' box");
+  // Near the peak a curve is rounded: points just beside it sit above the straight lines.
+  const beside = sent.path.filter((point) => Math.abs(point.x - 300) > 10 && Math.abs(point.x - 300) < 60);
+  assert.ok(beside.length && beside.every((point) => point.y < 100 + Math.abs(point.x - 300) * 1.5), "the peak is rounded, not a corner");
+});
+
 test("without a screenshot choice the computer decides whether the settled view needs an image", async (t) => {
   const seen = [];
   const f = fixture({ seen, toolResult: (name) => name === "computer_act" ? text({ ok: true, status: "dispatched", next: "observe" }) : undefined });
@@ -413,6 +464,38 @@ test("without a screenshot choice the computer decides whether the settled view 
   seen.length = 0;
   await f.control.execute({ sessionId: "chat", name: "computer_act", args: { observation_id: "observation", action: { type: "key", key: "return" } } }, { includePostImage: false });
   assert.equal(postRead().include_image, false, "programs never receive a post-action image");
+});
+
+test("an act refused before anything was sent returns a fresh observation instead of a retry", async (t) => {
+  const seen = [];
+  const unsent = { ok: false, status: "failed", completed: 0, may_have_acted: false, next: "observe" };
+  let refusal = { ...unsent, code: "stale_observation", message: "The window image changed. Observe before coordinate input." };
+  const f = fixture({ seen, toolResult: (name) => name === "computer_act" ? { isError: true, ...text(refusal) } : undefined });
+  t.after(() => f.control.reset(true));
+  await f.control.setFeatureEnabled(true);
+  assert.equal(payload(await f.control.execute({ sessionId: "chat", name: "computer_open", args: { app_id: "editor", mode: "control", purpose: "Draw" } })).ok, true);
+  const act = (args, options) => { seen.length = 0; return f.control.execute({ sessionId: "chat", name: "computer_act", args: { observation_id: "observation", ...args } }, options); };
+
+  const refused = await act({ action: { type: "drag", path: [{ x: 10, y: 10 }, { x: 40, y: 40 }] } });
+  const [receipt, post, view] = refused.content.map((part) => JSON.parse(part.text));
+  assert.equal(refused.isError, true);
+  assert.equal(receipt.code, "stale_observation");
+  assert.deepEqual(post, { post_observation: { ok: true }, actions_replayed: false, next: "act", note: "Nothing was sent. Act on this fresh observation." });
+  assert.equal(view.observation_id, "observation");
+  assert.deepEqual(seen.map((call) => call.name), ["computer_act", "computer_observe"], "the refused drag is never sent again");
+  assert.equal(seen[1].args.include_image, true, "pointer steps are re-aimed from a new image");
+
+  refusal = { ...unsent, code: "focus_required", message: "Observe a focused normal text field or control before using the keyboard." };
+  await act({ action: { type: "key", key: "return" }, screenshot: false });
+  assert.equal(seen[1]?.args.include_image, false, "the model's screenshot choice still holds");
+
+  refusal = { ...unsent, code: "scope_denied", next: "open_session" };
+  await act({ action: { type: "click", x: 1, y: 1 } });
+  assert.deepEqual(seen.map((call) => call.name), ["computer_act"], "only refusals that ask for a new look get one");
+
+  refusal = { ...unsent, code: "stale_observation" };
+  await act({ action: { type: "click", x: 1, y: 1 } }, { includePostImage: false, program: true });
+  assert.deepEqual(seen.map((call) => call.name), ["computer_act"], "programs observe for themselves");
 });
 
 test("after an act the model gets only changed elements, while programs and opens get the full list", async (t) => {

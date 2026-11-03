@@ -198,12 +198,18 @@ final class MacInput {
                 }
                 report(.dispatched, point: screen)
             case .key(let key, let flags):
-                try access.checkFocus(focus, target: target, app: app, requireField: ["backspace", "delete"].contains(key), requireFront: !background)
+                try FocusRecovery.check(validate: {
+                    try access.checkFocus(focus, target: target, app: app, requireField: ["backspace", "delete"].contains(key), requireFront: !background)
+                }, refocus: { access.refocus(focus) })
                 let code = try keyCode(key, flags: flags)
                 try modifiers(flags, pid: app.pid, check: check)
                 try keyboard(code, flags: flags, text: nil, pid: app.pid, check: check)
                 releaseModifiers()
             case .type(let text):
+                // Only before the first character: once text is going in, a moved focus stops the step.
+                try FocusRecovery.check(validate: {
+                    try access.checkFocus(focus, target: target, app: app, requireField: true, requireFront: !background)
+                }, refocus: { access.refocus(focus) })
                 try await InputDispatch.type(text, check: check, validate: {
                     try checkWindow()
                     try access.checkFocus(focus, target: target, app: app, requireField: true, requireFront: !background)

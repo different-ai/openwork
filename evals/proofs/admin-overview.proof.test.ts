@@ -64,13 +64,28 @@ test("an admin navigates organizations and member usage without loading every de
     await admin.screenshot();
   });
 
-  await step("after: the admin controls features inside the organization", async () => {
+  await step("after: the Features tab opens on usage, grouped and filtered in place", async () => {
     await admin.type({ role: "textbox", label: "Search organizations" }, "Overview workspace", { replace: true });
     await admin.see({ role: "link", label: "Overview workspace" });
     await admin.click({ testId: "admin-organization-features-link" });
     await admin.see({ role: "heading", label: "Overview workspace" });
-    await admin.see({ role: "heading", label: "Features" });
     await admin.see({ testId: "admin-breadcrumb-current" }, { text: "Features" });
+    await admin.see({ role: "heading", label: "Feature usage" });
+    await admin.click({ testId: "admin-feature-usage-group-added" });
+    const groups = await adminProbe.dom('section[data-testid^="admin-feature-usage-group-added-"]');
+    await admin.type({ role: "textbox", label: "Search features or members" }, "zzz-no-such-feature");
+    await admin.see({ testId: "admin-feature-usage-count" }, { text: /^0 of \d+ features/ });
+    const controls = await adminProbe.dom('[data-testid^="admin-capability-"]');
+    const traffic = await world.traffic("admin");
+    const ok = groups.elements.length > 0 && controls.elements.length === 0 && traffic.features === 0;
+    evidence.recordAssertionEvidence("Usage groups by date added and filters by search without loading the settings", `added groups=${groups.elements.length}; setting controls=${controls.elements.length}; feature reads=${traffic.features}`, ok);
+    expect(ok).toBe(true);
+    await admin.screenshot();
+  });
+
+  await step("after: the admin controls features inside the organization", async () => {
+    await admin.click({ testId: "admin-features-view-settings" });
+    await admin.see({ role: "heading", label: "Features" });
     await admin.see({ testId: "admin-capability-settledSessions" });
     const tabs = await adminProbe.dom('nav[aria-label="Organization sections"] [aria-current="page"]');
     const traffic = await world.traffic("admin");

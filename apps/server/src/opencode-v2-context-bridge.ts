@@ -9,10 +9,12 @@ import { createV2BrowserBridge } from "./opencode-v2-browser-bridge.js";
 import { DRIVE_UPLOAD_PERMISSION, GMAIL_DRAFT_PERMISSION, OPENWORK_CLOUD_UPLOADS_EXTENSION_ID, OUTLOOK_DRAFT_PERMISSION } from "./extensions/cloud-upload-constants.js";
 import { createDriveFileTools, DRIVE_FILE_ACTIONS, type DriveFileAction } from "./opencode-plugins/drive-file-tools.js";
 import { SESSION_GROUP_COMMAND_IDS } from "./opencode-plugins/openwork-session-groups.js";
+import { ASK_WITHOUT_WAITING, askArgs } from "./opencode-plugins/openwork-agent-questions.js";
+import { askWithoutWaiting } from "./opencode-v2-background-questions.js";
 import { loopbackFetch } from "./server-fetch.js";
 
 const requestSchema = z.object({
-  name: z.enum(["openwork_context", "openwork_query", "openwork_execute", "openwork_skills", "openwork_skill_read", "openwork_drive_upload", "openwork_gmail_draft", "openwork_outlook_draft", ...DRIVE_FILE_ACTIONS]),
+  name: z.enum(["openwork_context", "openwork_query", "openwork_execute", "openwork_skills", "openwork_skill_read", "openwork_drive_upload", "openwork_gmail_draft", "openwork_outlook_draft", ASK_WITHOUT_WAITING, ...DRIVE_FILE_ACTIONS]),
   input: z.unknown(),
   sessionId: z.string().max(256).optional(),
   // The calling tool's place in its chat, where a Drive approval is shown.
@@ -23,6 +25,8 @@ const requestSchema = z.object({
 });
 /** How long the person has to answer a Drive approval. */
 const APPROVAL_WAIT_MS = 10 * 60_000;
+/** Questions asked without waiting that can be open at once, across chats. */
+const MAX_OPEN_QUESTIONS = 20;
 /** A pull or push waits on the Desktop confirmation and whole-file transfers, as in v1. */
 const DRIVE_FILE_CALL_MS = 15 * 60_000;
 /** Refusal wording for the Drive file tools that ask the person first. */
@@ -183,6 +187,10 @@ export async function createV2ContextBridge(
 ) {
   const token = randomBytes(32).toString("base64url");
   const plugin = await OpenWorkExtensionsPreview();
+  // Open questions wait for their answers until this bridge closes with its
+  // engine. Each holds one event stream, so only so many stay open at once.
+  const questions = new AbortController();
+  let openQuestions = 0;
   const server = await serve({ hostname: "127.0.0.1", port: 0, fetch: async request => {
     if (request.headers.get("authorization") !== `Bearer ${token}`) return new Response(null, { status: 401 });
     if (request.method !== "POST" || new URL(request.url).pathname !== "/read") return new Response(null, { status: 404 });
@@ -209,6 +217,17 @@ export async function createV2ContextBridge(
           z.object({ urls: z.array(url).min(1).max(150), use: z.boolean().optional() }).strict(),
         ]).parse(call.input);
         return Response.json(await read("/experimental/connect/skills/read", { method: "POST", body: JSON.stringify(input) }));
+      }
+      // A question in the calling chat that no tool call waits on.
+      if (call.name === ASK_WITHOUT_WAITING) {
+        const args = askArgs.parse(call.input);
+        const current = engine?.();
+        if (!call.sessionId || !call.caller || !current) throw new Error("OpenWork cannot ask the person from here, so nothing was asked.");
+        if (openQuestions >= MAX_OPEN_QUESTIONS) throw new Error("Too many questions are waiting for answers, so nothing was asked. Wait for the person to answer one first.");
+        const asked = await askWithoutWaiting(current, { directory: call.caller.directory, sessionId: call.sessionId, questions: args.questions }, request.signal, questions.signal);
+        openQuestions += 1;
+        void asked.settled.finally(() => { openQuestions -= 1; });
+        return Response.json({ ok: true, id: asked.id, message: "Asked. Their answer arrives as a message in this chat; keep working on what does not depend on it." });
       }
       // The Drive upload uses the same authorized-root file transport
       // v1 reaches through extension.call, never arbitrary extension actions,
@@ -348,5 +367,5 @@ export async function createV2ContextBridge(
   } });
   const browser = await createV2BrowserBridge().catch(async error => { await server.stop(); await plugin.dispose(); throw error; });
   return { url: `http://127.0.0.1:${server.port}/read`, token, browser: { url: browser.url, token: browser.token },
-    close: async () => { await browser.close(); await server.stop(); await plugin.dispose(); } };
+    close: async () => { questions.abort(); await browser.close(); await server.stop(); await plugin.dispose(); } };
 }

@@ -1,6 +1,6 @@
 import { useEffect, useState, type ReactNode } from "react"
 import type { DynamicToolUIPart } from "ai"
-import { ChevronRight, CodeXml, Globe, Monitor, Pause, Play } from "lucide-react"
+import { ChevronRight, CodeXml, Globe, Monitor, Pause, PictureInPicture2, Play } from "lucide-react"
 
 import { markFeatureUsed } from "@/app/lib/den"
 import { Button } from "@/components/ui/button"
@@ -9,18 +9,25 @@ import { Image } from "@/components/ui/image"
 import { isToolPartInFlight } from "@/lib/tool-activity"
 import { formatToolCallDuration } from "@/lib/tool-call-duration"
 import { cn } from "@/lib/utils"
-import { isBrowserToolName, type ComputerSessionHistory as History } from "@/lib/computer-session-history"
+import { isBrowserToolName, type ComputerActionMark, type ComputerSessionHistory as History } from "@/lib/computer-session-history"
 
-export function ComputerSessionHistory({ history, active, renderAction }: {
+/**
+ * `live` is the chat's working computer: the card shows its work, and its live
+ * view opens only from here.
+ */
+export function ComputerSessionHistory({ history, active, renderAction, live }: {
   history: History
   active: boolean
   renderAction: (part: DynamicToolUIPart) => ReactNode
+  live?: { watching: boolean; onWatch: (watching: boolean) => void }
 }) {
   const [open, setOpen] = useState(false)
   const [playing, setPlaying] = useState(false)
   // Null follows the newest capture. Browsing pins a stable frame as work continues.
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const [unavailable, setUnavailable] = useState<string | null>(null)
+  // The shown view's pixel size: action marks are in the image pixels the agent acted on.
+  const [size, setSize] = useState<{ url: string; width: number; height: number } | null>(null)
   const { frames, parts } = history
   const selectedIndex = selectedId === null ? frames.length - 1 : frames.findIndex(frame => frame.id === selectedId)
   const index = selectedIndex < 0 ? frames.length - 1 : selectedIndex
@@ -70,31 +77,41 @@ export function ComputerSessionHistory({ history, active, renderAction }: {
         else markFeatureUsed("computerSessionHistory")
       }}
     >
-      <CollapsibleTrigger render={<Button variant="ghost" className="h-auto w-full justify-start gap-3 rounded-none p-3 text-left" />} aria-label={`View ${surface} session history`}>
-        <Icon aria-hidden="true" className="size-4 shrink-0 text-muted-foreground" />
-        <span className="min-w-0 flex-1">
-          <span className={cn("block text-sm font-medium", unfinished && active && "animate-text-shimmer motion-reduce:animate-none")}>{title}</span>
-          <span className="mt-0.5 flex flex-wrap gap-x-3 text-xs font-normal text-muted-foreground">
-            <span>{parts.length} {parts.length === 1 ? "action" : "actions"}</span>
-            {history.durationMs !== null ? <span>{formatToolCallDuration(history.durationMs)}</span> : null}
+      <div className="flex min-w-0 items-center">
+        <CollapsibleTrigger render={<Button variant="ghost" className="h-auto min-w-0 flex-1 justify-start gap-3 rounded-none p-3 text-left" />} aria-label={`View ${surface} session history`}>
+          <Icon aria-hidden="true" className="size-4 shrink-0 text-muted-foreground" />
+          <span className="min-w-0 flex-1">
+            <span className={cn("block text-sm font-medium", unfinished && active && "animate-text-shimmer motion-reduce:animate-none")}>{title}</span>
+            <span className="mt-0.5 flex flex-wrap gap-x-3 text-xs font-normal text-muted-foreground">
+              <span>{parts.length} {parts.length === 1 ? "action" : "actions"}</span>
+              {history.durationMs !== null ? <span>{formatToolCallDuration(history.durationMs)}</span> : null}
+            </span>
           </span>
-        </span>
-        {latest ? <img src={latest.file.url} alt="" className="h-10 w-16 shrink-0 rounded object-contain" loading="lazy" decoding="async" /> : null}
-        <ChevronRight aria-hidden="true" className={cn("size-4 shrink-0 text-muted-foreground transition-transform duration-150 ease-out motion-reduce:transition-none", open && "rotate-90")} />
-      </CollapsibleTrigger>
+          {latest ? <img src={latest.file.url} alt="" className="h-10 w-16 shrink-0 rounded object-contain" loading="lazy" decoding="async" /> : null}
+          <ChevronRight aria-hidden="true" className={cn("size-4 shrink-0 text-muted-foreground transition-transform duration-150 ease-out motion-reduce:transition-none", open && "rotate-90")} />
+        </CollapsibleTrigger>
+        {live && !browserOnly ? <Button variant="ghost" size="sm" className="mr-2 shrink-0" aria-pressed={live.watching} onClick={() => live.onWatch(!live.watching)}>
+          <PictureInPicture2 aria-hidden="true" />{live.watching ? "Hide live view" : "Watch live"}
+        </Button> : null}
+      </div>
       <CollapsibleContent>
         <div className="space-y-3 border-t border-border p-3">
           <Collapsible>
             {frame ? <>
-              {unavailable === frame.file.url ? <p className="py-6 text-sm text-muted-foreground" role="status">This view is unavailable. Choose another captured view.</p> : <Image
-                key={frame.id}
-                src={frame.file.url}
-                alt={`Captured view ${index + 1}: ${frame.label}`}
-                previewMaxHeight={0}
-                previewMaxWidth={0}
-                className="max-h-80 w-full rounded-md bg-muted/30 object-contain"
-                onError={() => { setUnavailable(frame.file.url); setPlaying(false) }}
-              />}
+              {unavailable === frame.file.url ? <p className="py-6 text-sm text-muted-foreground" role="status">This view is unavailable. Choose another captured view.</p> : <div className="relative mx-auto w-fit max-w-full">
+                <Image
+                  key={frame.id}
+                  src={frame.file.url}
+                  alt={`Captured view ${index + 1}: ${frame.label}`}
+                  previewMaxHeight={0}
+                  previewMaxWidth={0}
+                  className="block h-auto max-h-80 w-auto max-w-full rounded-md bg-muted/30"
+                  onLoad={event => setSize({ url: frame.file.url, width: event.currentTarget.naturalWidth, height: event.currentTarget.naturalHeight })}
+                  onError={() => { setUnavailable(frame.file.url); setPlaying(false) }}
+                />
+                {size?.url === frame.file.url && size.width > 0 && size.height > 0 && frame.marks.length > 0
+                  ? <ActionMarks marks={frame.marks} width={size.width} height={size.height} /> : null}
+              </div>}
               <div className="group flex min-w-0 items-center gap-3 pt-2">
                 <Button variant="ghost" size="icon-sm" aria-label={playing ? "Pause captured views" : "Play captured views"} disabled={frames.length < 2} onClick={() => {
                   if (playing) setPlaying(false)
@@ -114,5 +131,23 @@ export function ComputerSessionHistory({ history, active, renderAction }: {
         </div>
       </CollapsibleContent>
     </Collapsible>
+  )
+}
+
+/** Where the view's clicks landed and the paths its drags took, drawn over the capture. */
+function ActionMarks({ marks, width, height }: { marks: ComputerActionMark[]; width: number; height: number }) {
+  const radius = Math.max(width, height) * 0.012
+  return (
+    <svg data-computer-action-marks="" aria-hidden="true" viewBox={`0 0 ${width} ${height}`} preserveAspectRatio="none" className="pointer-events-none absolute inset-0 size-full text-primary">
+      {marks.map((mark, index) => mark.kind === "point"
+        ? <g key={index}>
+          <circle cx={mark.x} cy={mark.y} r={radius * 1.8} className="fill-current opacity-20" />
+          <circle cx={mark.x} cy={mark.y} r={radius * 0.6} className="fill-current" />
+        </g>
+        : <g key={index}>
+          <polyline points={mark.points.map(point => `${point.x},${point.y}`).join(" ")} className="fill-none stroke-current" strokeWidth={2.5} strokeLinecap="round" strokeLinejoin="round" vectorEffect="non-scaling-stroke" />
+          <circle cx={mark.points[0]!.x} cy={mark.points[0]!.y} r={radius * 0.6} className="fill-current" />
+        </g>)}
+    </svg>
   )
 }

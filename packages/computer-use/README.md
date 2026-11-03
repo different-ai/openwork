@@ -77,6 +77,9 @@ the session and releases held input. Only the person's Continue resumes it;
 neither time nor the agent can. Sleep or temporary desktop unavailability
 invalidates observations and releases held input without creating a human
 handoff; fresh target validation is required when the desktop returns.
+A macOS prompt only the person may answer (a permission, sign-in or payment)
+holds an observation for up to a minute until they answer it, and no action
+is sent while one is open.
 
 ## Embedded protocol (`openwork/ui`)
 
@@ -98,7 +101,22 @@ notifications with method `openwork/ui`:
 While a session runs the helper draws presence on the desktop: a frame around
 the selected window, a named cursor that glides to each input with click
 ripples, drag trails, a typing indicator and highlighted controls, narration
-from `intent`, and a "thinking" state between inputs. A pill over the window's
+from `intent`, and a planning state between inputs: the cursor breathes slowly
+with a little wiggle now and then, and names the session's purpose ("planning · Draw a wave"). Its label varies
+("having a look", "lining up the next step"). After each step it nods when
+the window changed, tilts its head when nothing did ("hmm, nothing changed"),
+and shakes when a step was refused ("trying another way"). A scroll zips
+over, a long move leans forward, and when the agent's turn ends after real
+work the cursor hops and bursts in its color before "all yours". With Reduce
+Motion on, it keeps the labels and drops the flourishes. The cursor travels like
+a hand: short hops are quick, long ones take up to about a third of a second,
+it eases in along a slight arc, and a click or a highlight lands when it
+arrives. During a drag the stroke follows the cursor's tip. A drag with
+`smooth: true` is drawn as a curve through its points (the broker turns it into
+32 points that keep every given one), for drawing strokes rather than
+selections. A highlight is
+drawn only where the control still is, so a button whose press closed its
+dialog gets none. A pill over the window's
 buttons offers Take over, Continue and Stop, shows "Your turn" while the person
 has control, and moves to the top of the screen when the window is hidden.
 When the session ends the cursor says it is "all yours" and fades out. Every
@@ -334,8 +352,10 @@ On a Mac, `computer_open` lists the app's enabled menu-bar commands in
 per item without opening a menu; `computer_observe({ menus: true })` lists
 them again. `{ type: "menu", path: ["Format", "Font", "Bold"] }` runs one
 through accessibility: no menu opens, no keyboard focus is needed and it works
-in assist mode. The agent cursor still visits the menu title and a light copy
-of the path shows the command being picked, without delaying input. The Apple
+in assist mode. When the app is in front, the agent cursor still visits the
+menu title and a light copy of the path shows the command being picked,
+without delaying input. In the background the menu bar on screen belongs to
+another app, so the cursor names the command (`File › New…`) instead. The Apple
 and app menus, the Window menu, recent-document lists and any command whose
 shortcut is a blocked chord (Quit, Close, Hide, Minimize, clipboard) are never
 listed or pressed. Commands go to the app's focused window only.

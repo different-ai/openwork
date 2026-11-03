@@ -101,6 +101,16 @@
               ],
               "description": "Desktop: settle finished sessions: Finished sessions can be settled into a collapsed Settled row at the end of their workspace, by hand or after a few idle days, and come back on new activity. Renders DEN_FEATURE_SETTLED_SESSIONS."
             },
+            "appToolRepair": {
+              "enum": [
+                "",
+                "true",
+                "false",
+                true,
+                false
+              ],
+              "description": "Apps: fix a changed tool with an agent: When a connected tool an App uses changes at its provider, so OpenWork blocks the App's call to it, the App's managers see a Fix with agent button in Artifacts that starts a conversation to update the App. Renders DEN_FEATURE_APP_TOOL_REPAIR."
+            },
             "composerBackgroundTasks": {
               "enum": [
                 "",
@@ -110,6 +120,16 @@
                 false
               ],
               "description": "Desktop: background tasks on the composer: Commands the agent leaves running in the background are listed on top of the composer, under the Agents list, with how long each has run, instead of a count in the chat. Renders DEN_FEATURE_COMPOSER_BACKGROUND_TASKS."
+            },
+            "agentQuestions": {
+              "enum": [
+                "",
+                "true",
+                "false",
+                true,
+                false
+              ],
+              "description": "Desktop: agents ask and keep working: Agents ask in chat instead of ending a turn to wait for your reply. A question that the rest of the work does not depend on stays open while the agent keeps going, and your answer reaches it even after its turn has ended. Renders DEN_FEATURE_AGENT_QUESTIONS."
             },
             "administratorRecovery": {
               "enum": [

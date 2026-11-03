@@ -127,6 +127,10 @@ jobs:
         run: |
           pnpm --filter @openwork/app exec bun test --isolate ./tests/mcp-app-member-access.test.ts
           pnpm --filter @openwork/app exec bun test --isolate ./tests/use-member-activity-sync-access.test.tsx
+      - name: Test fixing an App whose tool changed
+        run: |
+          pnpm --filter @openwork/app exec bun test --isolate ./tests/mcp-app-tool-change.test.tsx
+          pnpm --filter @openwork/app exec bun test --isolate ./tests/artifacts-page.test.tsx
       - name: Check desktop links open real Den pages
         run: pnpm --filter @openwork/app test:den-links
       - name: Test Library connector setup and translated placeholders

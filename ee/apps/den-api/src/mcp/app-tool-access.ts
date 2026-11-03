@@ -58,3 +58,18 @@ export function runsWithoutClick(binding: ClickFields): boolean {
 export function stillRunsWithoutClick(binding: ClickFields, accesses: CapabilityAccess[]): boolean {
   return binding.readOnly ? accesses.every((access) => access === "read") : !accesses.includes("writes")
 }
+
+/** The reason on an App tool's refusal when the App itself must change before the call can run. */
+export const MCP_APP_NEEDS_UPDATE = "app_needs_update"
+
+/**
+ * Why a call to one of the App's tools was refused because the tool changed
+ * at its provider since the App was published, or null for any other
+ * refusal. Only an editor updating the App can fix these; retrying cannot.
+ */
+export function appToolChangeMessage(binding: Pick<McpAppToolBinding, "name" | "readOnly" | "loadOnOpen">, reason: string | undefined): string | null {
+  if (reason === "provider_schema_changed") return `${binding.name} now takes different inputs than when this App was published, so OpenWork blocked it. An editor of this App needs to update its tools.`
+  if (binding.loadOnOpen && reason === "provider_destructive") return `${binding.name} is now marked destructive by its provider, so OpenWork blocked it. An editor of this App needs to update its tools.`
+  if (binding.readOnly && reason === "provider_not_read_only") return `${binding.name} is no longer marked read-only by its provider, so OpenWork blocked it. An editor of this App needs to update its tools.`
+  return null
+}
