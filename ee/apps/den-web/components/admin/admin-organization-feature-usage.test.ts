@@ -98,3 +98,26 @@ test("features added in the last two weeks are new and lead the default view, ne
   assert.deepEqual([...keys(fresh), ...keys(rest)].sort(), keys(sample).sort());
   assert.deepEqual(keys(filterFeatureUsage(sample, { ...NO_FEATURE_FILTER, status: "new" }, 3, now)), keys(sample.filter((feature) => isNewFeature(feature.key, now))));
 });
+
+test("settings group newest first, by author or by category, listing every feature once", async () => {
+  const { groupFeatureKeys } = await import("./admin-organization-feature-controls");
+  const all = Object.keys(FEATURES) as AdminFeatureUsage["key"][];
+  const newest = [...all].sort((a, b) => FEATURES[b].added.localeCompare(FEATURES[a].added))[0]!;
+  const now = Date.parse(`${FEATURES[newest].added}T00:00:00.000Z`) + 24 * 60 * 60 * 1000;
+  for (const grouping of ["recent", "category", "author"] as const) {
+    const groups = groupFeatureKeys(all, grouping, now);
+    assert.deepEqual(groups.flatMap((group) => group.keys).sort(), [...all].sort(), grouping);
+  }
+  const recent = groupFeatureKeys(all, "recent", now);
+  assert.equal(recent[0]?.id, "new");
+  assert.equal(recent[0]?.keys[0], newest);
+  assert.ok(recent[0]?.keys.every((key) => isNewFeature(key, now)));
+  const added = recent.flatMap((group) => group.keys.map((key) => FEATURES[key].added));
+  assert.deepEqual(added, [...added].sort().reverse());
+  const byAuthor = groupFeatureKeys(all, "author", now);
+  assert.deepEqual(byAuthor.map((group) => group.id), [...byAuthor.map((group) => group.id)].sort((a, b) => a.localeCompare(b, undefined, { sensitivity: "base" })));
+  for (const group of byAuthor) {
+    assert.equal(group.label, `@${group.id}`);
+    assert.ok(group.keys.every((key) => FEATURES[key].author === group.id));
+  }
+});

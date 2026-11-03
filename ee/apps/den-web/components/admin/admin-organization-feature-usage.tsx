@@ -139,7 +139,7 @@ export function turnedOnAt(feature: AdminFeatureUsage): string | null {
   return change && feature.enabledMembers > 0 && (change.action === "on" || change.action === "restored") ? change.at : null;
 }
 
-const monthLabel = (iso: string) => new Intl.DateTimeFormat(undefined, { month: "long", year: "numeric", timeZone: "UTC" }).format(new Date(iso));
+export const monthLabel = (iso: string) => new Intl.DateTimeFormat(undefined, { month: "long", year: "numeric", timeZone: "UTC" }).format(new Date(iso));
 
 /** UTC calendar months, newest first; features without a date go last, still on before off. */
 export function groupFeatureUsage(features: readonly AdminFeatureUsage[], grouping: "turnedOn" | "added"): FeatureUsageGroup[] {
