@@ -254,6 +254,17 @@ export const FEATURES = defineFeatures({
     default: false,
     outcomes: true,
   },
+  browserUploadPermissions: {
+    label: "Browser: managed and remembered file-sharing permissions",
+    description: "Admins set Allow, Ask first or Block for browser uploads, with website exceptions. Members can remember permission for one website and a folder on this computer across chats and Slack-started tasks, and revoke it in Settings.",
+    category: "computerUse",
+    added: "2026-11-02",
+    since: "2026-11",
+    author: "benjaminshafii",
+    docs: "docs/features/browser-upload-permissions/README.md",
+    deployments: everywhere,
+    default: false,
+  },
   agentHarnessPermissions: {
     label: "Agent permissions: computer use, app scripting and outside folders",
     description: "Admins choose Allow, Ask first or Block for computer use, Mac app scripting and folders outside the workspace on the Agents tab, and members' desktop apps apply them.",

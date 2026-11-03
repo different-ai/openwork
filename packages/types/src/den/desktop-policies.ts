@@ -411,6 +411,13 @@ export const desktopConfigDefaultModelSchema = z
   })
   .meta({ ref: "DenDesktopConfigDefaultModel" });
 
+/** Verified account scope for browser upload consent; never inferred from cached tokens. */
+export const desktopBrowserUploadPermissionsSchema = z.object({
+  enabled: z.boolean(),
+  organizationId: z.string().min(1).max(255),
+  memberId: z.string().min(1).max(255),
+}).meta({ ref: "DenDesktopBrowserUploadPermissions" });
+
 export const desktopConfigSchema = desktopPolicyValueSchema
   .extend({
     execution: effectiveDesktopExecutionPolicySchema.optional(),
@@ -438,6 +445,8 @@ export const desktopConfigSchema = desktopPolicyValueSchema
     onboardingPromptDescriptions: onboardingPromptDescriptionsSchema.optional(),
     /** The member's agent permissions, present when the organization has them on. */
     agentPermissions: desktopAgentPermissionsSchema.optional(),
+    /** Present only for clients supporting browser upload permissions. */
+    browserUploadPermissions: desktopBrowserUploadPermissionsSchema.optional(),
     /** The member's default model for new chats, present when the organization has one and the feature is on. */
     defaultModel: desktopConfigDefaultModelSchema.optional(),
   })
@@ -833,6 +842,7 @@ export function normalizeDesktopConfig(value: unknown): DesktopConfig {
   const onboardingPromptConfig = normalizeOnboardingPromptConfig(raw);
   const execution = raw?.execution === undefined ? undefined : effectiveDesktopExecutionPolicySchema.parse(raw.execution);
   const agentPermissions = desktopAgentPermissionsSchema.safeParse(raw?.agentPermissions);
+  const browserUploadPermissions = desktopBrowserUploadPermissionsSchema.safeParse(raw?.browserUploadPermissions);
   const defaultModel = desktopConfigDefaultModelSchema.safeParse(raw?.defaultModel);
 
   return {
@@ -853,6 +863,7 @@ export function normalizeDesktopConfig(value: unknown): DesktopConfig {
     ...(typeof raw?.removeOpencodeZen === "boolean" ? { removeOpencodeZen: raw.removeOpencodeZen } : {}),
     ...(onboardingPromptConfig !== undefined ? onboardingPromptConfig : {}),
     ...(agentPermissions.success ? { agentPermissions: agentPermissions.data } : {}),
+    ...(browserUploadPermissions.success ? { browserUploadPermissions: browserUploadPermissions.data } : {}),
     ...(defaultModel.success ? { defaultModel: defaultModel.data } : {}),
   };
 }

@@ -2893,6 +2893,7 @@ type DenRequestOptions = {
   timeoutMs?: number;
   organizationId?: string | null;
   automationModelAttentionCapable?: boolean;
+  browserUploadPermissionsCapable?: boolean;
   /** Cancels the request, e.g. a waiting status call when the window hides. */
   signal?: AbortSignal;
   /** Leave the request out of connection diagnostics: its failure is not a connection problem. */
@@ -2980,6 +2981,9 @@ async function requestJsonRaw<T>(
   if (organizationId) {
     headers[ORG_SCOPE_HEADER] = organizationId;
     headers[ORG_PROXY_HEADER] = organizationId;
+  }
+  if (options.browserUploadPermissionsCapable) {
+    headers["X-OpenWork-Browser-Upload-Permissions"] = "1";
   }
   if (options.automationModelAttentionCapable) {
     headers[AUTOMATION_MODEL_ATTENTION_CAPABILITY_HEADER] = AUTOMATION_MODEL_ATTENTION_CAPABILITY;
@@ -3186,6 +3190,7 @@ export function createDenClient(options: {
         method: "GET",
         token,
         organizationId: orgId,
+        browserUploadPermissionsCapable: true,
       });
       return normalizeDenDesktopConfig(payload);
     },

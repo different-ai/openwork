@@ -325,6 +325,12 @@ export function createComputerControl({ adapters, runProgram, runScript, onTimin
     if (site && answer === "always") (grant.credentialsAlwaysFor ??= new Set()).add(site);
     return answer;
   }
+  function canonicalBrowserSite(site) {
+    try {
+      const url = new URL(site);
+      return ["http:", "https:"].includes(url.protocol) && url.origin === site;
+    } catch { return false; }
+  }
   /** One in-chat approval at a time per chat; answered through answerRequest. */
   function approve(grant, request, signal) {
     return new Promise((resolve) => {
@@ -1222,7 +1228,7 @@ export function createComputerControl({ adapters, runProgram, runScript, onTimin
     /**
      * The person's answer to an in-chat request: allow this chat, always
      * allow, or not now. Setup itself is answered by macOS permissions.
-     * @param {ChatInput & { answer?: "dismiss" | "allow" | "always", id?: string }} input
+     * @param {ChatInput & { answer?: "dismiss" | "allow" | "always" | "remember", id?: string }} input
      */
     async answerRequest({ sessionId, answer, id } = {}) {
       const grant = await grantFor(sessionId);
@@ -1230,7 +1236,13 @@ export function createComputerControl({ adapters, runProgram, runScript, onTimin
       if (pending) {
         // A script runs only on the person's answer to the exact request they saw.
         if (typeof id !== "string" || id !== pending.request.id) throw new Error("This script request changed. Review the current one.");
-        if (!["allow", "always", "dismiss"].includes(answer)) throw new Error("Choose allow, always allow or don't allow.");
+        if (!["allow", "always", "dismiss", "remember"].includes(answer)) throw new Error("Choose allow, always allow or don't allow.");
+        if (answer === "remember" && !(pending.request.reason === "files" && pending.request.files?.canRemember === true && canonicalBrowserSite(pending.request.files.site))) {
+          throw new Error("Remembering is only available for this browser file request.");
+        }
+        if (answer === "always" && pending.request.reason === "files" && pending.request.files?.site && pending.request.files.canRemember !== true) {
+          throw new Error("This browser upload needs approval each time.");
+        }
         pending.settle(answer);
         return view(grant);
       }
@@ -1274,6 +1286,31 @@ export function createComputerControl({ adapters, runProgram, runScript, onTimin
       const grant = await grantFor(sessionId);
       if (!grant.enabled) return false;
       return ["allow", "always"].includes(await approveFiles(grant, { app: String(app ?? "a website"), names: files }, signal));
+    },
+    /**
+     * Browser file consent is independent of computer use and native file panels.
+     * The trusted browser service alone decides whether a durable grant is available.
+     * @param {ChatInput & { site?: string, files?: string[], canRemember?: boolean, accountScope?: string }} input
+     * @returns {Promise<"allow" | "always" | "dismiss" | "aborted" | "timeout" | "remember">}
+     */
+    async requestBrowserFiles({ sessionId, site, files, canRemember, accountScope } = {}, { signal = new AbortController().signal } = {}) {
+      if (closed || resetting) return "aborted";
+      if (!canonicalBrowserSite(site) || site.length > 200 || !Array.isArray(files) || !files.length || files.length > 20 || files.some((name) => typeof name !== "string" || !name || name.length > 1024)) return "dismiss";
+      const grant = await grantFor(sessionId);
+      if (signal.aborted) return "aborted";
+      // Even chat-only approvals belong to one verified account, not just the
+      // session id. Never inherit another member's Always after switching sign-in.
+      const account = typeof accountScope === "string" && /^[a-f0-9]{64}$/.test(accountScope) ? accountScope : null;
+      const approvalKey = account ? JSON.stringify([account, site]) : null;
+      canRemember = canRemember === true && approvalKey !== null;
+      if (canRemember && grant.browserFilesAlwaysFor?.has(approvalKey)) return "always";
+      if (scriptRequests.has(grant.sessionId)) return "dismiss";
+      const local = [...targets.values()].find((target) => target.placement === "local");
+      const answer = await approve(grant, { id: randomUUID(), reason: /** @type {const} */ ("files"), computer: local?.label ?? "This computer", placement: "local",
+        ...(canRemember === true ? {} : { standing: false }),
+        files: { app: site, names: [...files], site, canRemember: canRemember === true } }, signal);
+      if (answer === "always" && canRemember === true && approvalKey) (grant.browserFilesAlwaysFor ??= new Set()).add(approvalKey);
+      return answer;
     },
     /**
      * Asks the person before the built-in browser types a password or code on `site`

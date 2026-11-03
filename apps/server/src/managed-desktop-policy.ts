@@ -147,7 +147,9 @@ class ManagedDesktopPolicy {
       if (remainingMs <= 0) throw new Error("Den read deadline exceeded");
       try {
         const response = await externalFetch(`${session.baseUrl}${path}`, {
-          headers: { Accept: "application/json", Authorization: `Bearer ${session.token}`, "x-openwork-org-id": session.orgId, "x-openwork-legacy-org-id": session.orgId },
+          headers: { Accept: "application/json", Authorization: `Bearer ${session.token}`, "x-openwork-org-id": session.orgId, "x-openwork-legacy-org-id": session.orgId,
+            ...(path === "/v1/me/desktop-config" ? { "X-OpenWork-Browser-Upload-Permissions": "1" } : {}),
+          },
           redirect: "error",
           signal: AbortSignal.timeout(Math.min(DEN_READ_ATTEMPT_TIMEOUT_MS, remainingMs)),
         });
@@ -379,6 +381,32 @@ class ManagedDesktopPolicy {
     }
     const policy = verified ?? (await readGlobalRuntimeOpencodeConfig(this.config)).managedPolicy;
     return agentPermissionRulesForActions(agentPermissionRulesOf(policy), actions);
+  }
+  /**
+   * Upload consent may persist across chats. Its identity and authority must be
+   * fresh and verified, never an old disk policy, renderer state or token hash.
+   * Unreachable Den cannot authorize an upload with a remembered grant.
+   */
+  async browserUploadPolicy(): Promise<{
+    enabled: boolean;
+    scope: { baseUrl: string; organizationId: string; memberId: string } | null;
+    rules: AgentPermissionRule[];
+  }> {
+    const session = this.session;
+    const generation = this.generation;
+    if (!session) return { enabled: false, scope: null, rules: [] };
+    const policy = desktopConfigSchema.parse(await this.readDenJson(session, "/v1/me/desktop-config", generation));
+    this.identityChanged(generation);
+    const uploads = policy.browserUploadPermissions;
+    if (!uploads?.enabled) return { enabled: false, scope: null, rules: [] };
+    if (uploads.organizationId !== session.orgId || !uploads.memberId) {
+      throw new ApiError(403, "policy_identity_changed", "The signed-in file-sharing account could not be verified.");
+    }
+    return {
+      enabled: true,
+      scope: { baseUrl: session.baseUrl, organizationId: uploads.organizationId, memberId: uploads.memberId },
+      rules: agentPermissionRulesForActions(agentPermissionRulesOf(policy), ["browser_upload"]),
+    };
   }
   websiteRules(): Promise<AgentPermissionRule[]> {
     return this.agentPermissionRulesFor(["webfetch"]);

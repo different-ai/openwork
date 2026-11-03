@@ -201,6 +201,16 @@
               ],
               "description": "Workbot: Your agent: Every member gets a read-only background agent that checks Gmail and Google Calendar each morning and about every three working hours, sending a short Workbot Slack DM only when needed. Members review checks and messages in My bot, tell it what they care about, narrow its hours and limits, undo changes, snooze or mute it. Admins choose its responsibilities and see aggregate 7-day health in Manage › Workbot, without member names or content. It never sends email, accepts invitations or edits data for them. Renders DEN_FEATURE_WORKBOT_PROACTIVE."
             },
+            "browserUploadPermissions": {
+              "enum": [
+                "",
+                "true",
+                "false",
+                true,
+                false
+              ],
+              "description": "Browser: managed and remembered file-sharing permissions: Admins set Allow, Ask first or Block for browser uploads, with website exceptions. Members can remember permission for one website and a folder on this computer across chats and Slack-started tasks, and revoke it in Settings. Renders DEN_FEATURE_BROWSER_UPLOAD_PERMISSIONS."
+            },
             "agentHarnessPermissions": {
               "enum": [
                 "",

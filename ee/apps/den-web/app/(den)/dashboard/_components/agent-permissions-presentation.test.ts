@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { decideAgentPermission, resolveAgentPermissionRules, type AgentPermissionSettings } from "@openwork/types/den/agent-permissions";
-import { agentPermissionBlockedBy, effectiveAgentPermissionSettings, visibleAgentPermissionGroups, visibleAgentPermissionTryKinds } from "./agent-permissions-presentation";
+import { agentPermissionDefaultDecision, agentPermissionDefinitions, decideAgentPermission, resolveAgentPermissionRules, type AgentPermissionSettings } from "@openwork/types/den/agent-permissions";
+import { agentPermissionBlockedBy, agentPermissionChoiceOptions, agentPermissionChoiceValue, storedAgentPermissionDecision, effectiveAgentPermissionSettings, visibleAgentPermissionGroups, visibleAgentPermissionTryKinds } from "./agent-permissions-presentation";
 
 function visibleKeys(area: "all" | "agents" | "browser", harnessEnabled: boolean, computerUseEnabled: boolean) {
   return visibleAgentPermissionGroups(area, harnessEnabled, computerUseEnabled).flatMap((group) => group.definitions.map((definition) => definition.key));
@@ -64,6 +64,41 @@ test("disabled computer use removes own and inherited scripting blocks from prev
   }
   assert.equal(saved.computerUse?.decision, "deny");
   assert.equal(effectiveAgentPermissionSettings(saved, true), saved);
+});
+
+test("browser uploads have an independent gate and reuse the website editor and request preview", () => {
+  for (const harness of [false, true]) {
+    assert.deepEqual(visibleAgentPermissionGroups("browser", harness, false, true).flatMap(group => group.definitions.map(definition => definition.key)), ["websites", "browserUploads"]);
+    assert.deepEqual(visibleAgentPermissionTryKinds("browser", harness, false, true).map(kind => kind.action), ["webfetch", "browser_upload"]);
+    assert.equal(visibleAgentPermissionGroups("agents", harness, true, true).some(group => group.definitions.some(definition => definition.key === "browserUploads")), false);
+  }
+  for (const definition of agentPermissionDefinitions) {
+    assert.equal(agentPermissionDefaultDecision(definition.key), definition.key === "browserUploads" ? "ask" : "allow");
+    assert.equal(storedAgentPermissionDecision(definition, null, "allow"), definition.key === "browserUploads" ? "allow" : undefined);
+    assert.equal(storedAgentPermissionDecision(definition, null, "ask"), "ask");
+    assert.equal(storedAgentPermissionDecision(definition, "Test team", "allow"), "allow");
+  }
+});
+
+test("upload defaults are distinct from explicit Ask without changing existing controls", () => {
+  for (const definition of agentPermissionDefinitions) {
+    const everyoneOptions = agentPermissionChoiceOptions(definition, null);
+    const teamOptions = agentPermissionChoiceOptions(definition, "Reviewers");
+    if (definition.key === "browserUploads") {
+      assert.deepEqual(everyoneOptions, [{ value: "inherit", label: "Member decides" }, { value: "allow", label: "Allow" }, { value: "ask", label: "Ask first" }, { value: "deny", label: "Block" }]);
+      assert.deepEqual(teamOptions[0], { value: "inherit", label: "Use Everyone's" });
+      assert.equal(agentPermissionChoiceValue(definition, undefined, "ask"), "inherit");
+      assert.equal(agentPermissionChoiceValue(definition, undefined, "deny"), "inherit");
+      assert.equal(agentPermissionChoiceValue(definition, "ask", "ask"), "ask");
+      const setting = { decision: "ask", allow: ["files.example.test"], block: ["private.example.test"] };
+      const inherited = { ...setting, decision: storedAgentPermissionDecision(definition, null, undefined) };
+      assert.deepEqual(inherited, { decision: undefined, allow: setting.allow, block: setting.block });
+    } else {
+      assert.deepEqual(everyoneOptions, teamOptions);
+      assert.equal(everyoneOptions.some(option => option.value === "inherit"), false);
+      assert.equal(agentPermissionChoiceValue(definition, undefined, "ask"), "ask");
+    }
+  }
 });
 
 test("the existing commands block retains its reason and test id suffix", () => {
