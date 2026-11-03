@@ -191,6 +191,16 @@
               ],
               "description": "Workbot: workspace assistant: Members ask Workbot about the document or calendar view they have open, chat without leaving their work, and navigate from a compact sidebar. Workbot offers to open the documents it mentions, and the conversation stays open beside the document. Renders DEN_FEATURE_WORKBOT_WORKSPACE_ASSISTANT."
             },
+            "workbotDriveFiles": {
+              "enum": [
+                "",
+                "true",
+                "false",
+                true,
+                false
+              ],
+              "description": "Workbot: reading Drive files: Workbot reads PDFs, Office files and large files from Google Drive or OneDrive on its computer instead of saying they are too large. When it has no computer (and in Slack) it says plainly when a file is too large and asks the person to send the file instead. Renders DEN_FEATURE_WORKBOT_DRIVE_FILES."
+            },
             "workbotProactive": {
               "enum": [
                 "",

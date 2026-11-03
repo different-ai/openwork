@@ -28,6 +28,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 /** A runner that accepts everything and records the body of every turn it is sent. */
 function fakeRunner(catalog?: { defaultModel: string; models: { id: string; name: string }[]; verified?: boolean }) {
   const turns: Record<string, unknown>[] = []
+  const sessions: Record<string, unknown>[] = []
   const json = (status: number, body: unknown) => new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } })
   const runnerFetch: typeof fetch = async (input, init) => {
     const url = new URL(typeof input === "string" ? input : input instanceof URL ? input.href : input.url)
@@ -37,6 +38,10 @@ function fakeRunner(catalog?: { defaultModel: string; models: { id: string; name
       const body: unknown = JSON.parse(typeof init?.body === "string" ? init.body : "{}")
       if (isRecord(body)) turns.push(body)
       return json(202, { state: "accepted" })
+    }
+    if (method === "PUT") {
+      const body: unknown = JSON.parse(typeof init?.body === "string" ? init.body : "{}")
+      if (isRecord(body)) sessions.push(body)
     }
     if (method === "PUT") return json(200, { id: decodeURIComponent(url.pathname.split("/").at(-1) ?? "") })
     if (method === "DELETE") return json(200, { removed: [] })
@@ -58,7 +63,7 @@ function fakeRunner(catalog?: { defaultModel: string; models: { id: string; name
     mintToken: async () => ({ token: "mcp-token" }),
     maxTokenTtlMs: 60_000,
   })
-  return { client, turns }
+  return { client, turns, sessions }
 }
 
 async function sendEveryKind(deps: WorkbotDeps) {
@@ -178,4 +183,28 @@ test("resuming an interrupted turn carries step mode only with stepTurns", async
     assert.equal(turns[0]?.prompt, "resume")
     assert.equal(turns[0]?.execution, stepTurns ? "steps" : undefined)
   }
+})
+
+test("workbotDriveFiles reaches the instructions of the main chat and side chats, and only when Den turns it on", async () => {
+  const instructionsOf = async (driveFiles?: boolean) => {
+    const runner = fakeRunner()
+    const deps: WorkbotDeps = { client: runner.client, canSchedule: async () => false, ...(driveFiles === undefined ? {} : { driveFiles: async () => driveFiles }) }
+    await sendWorkbotMessage(actor, { id: "message_one", text: "hi" }, deps)
+    await sendWorkbotMessage(actor, { id: "message_two", text: "in a side chat", chat: "sidechat000000001" }, deps)
+    return runner.sessions.flatMap((session) => typeof session.instructions === "string" ? [session.instructions] : [])
+  }
+  const on = await instructionsOf(true)
+  assert.ok(on.length >= 2)
+  for (const instructions of on) assert.ok(instructions.includes("createGoogleDriveDownloadLink"))
+  for (const instructions of [...await instructionsOf(false), ...await instructionsOf()]) assert.equal(instructions.includes("createGoogleDriveDownloadLink"), false)
+  // A Den from before the feature doesn't say: off.
+  const older = {
+    user: { id: "user_test", name: null, email: "person@example.test" },
+    organization: { id: "org_test", name: "Test Org", brandAppName: null },
+    memberId: "member_test",
+    enabled: true,
+    canSchedule: false,
+  }
+  assert.equal(denSessionSchema.parse(older).driveFiles, false)
+  assert.equal(denSessionSchema.parse({ ...older, driveFiles: true }).driveFiles, true)
 })

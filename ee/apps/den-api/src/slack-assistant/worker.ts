@@ -9,12 +9,13 @@ import {
 } from "./run.js"
 import { z } from "zod"
 import { appLogger } from "../observability/logger.js"
+import { organizationFeatureEnabled } from "../features.js"
 import { openworkYourConnectionsUrl } from "../mcp/connection-navigation.js"
 import {
   buildSlackEnvelope,
   buildSlackPrompt,
   isInvocation,
-  SLACK_WORKBOT_INSTRUCTIONS,
+  slackWorkbotInstructions,
   SlackApiError,
   slackClient,
   slackEventSchema,
@@ -57,7 +58,12 @@ type WorkerDeps = {
   slack: typeof slackClient
   runner: (actor: SlackActor) => SlackRunner
   live: LiveFeedSource
+  /** Whether the member's organization has `workbotDriveFiles` on. Unset: Den's feature rollout. */
+  driveFiles?: (actor: SlackActor) => Promise<boolean>
 }
+
+const slackDriveFilesEnabled = (actor: SlackActor) =>
+  organizationFeatureEnabled(actor.organizationId, "workbotDriveFiles", { userId: actor.userId })
 
 const defaultWorkerDeps: WorkerDeps = {
   slack: slackClient,
@@ -70,9 +76,9 @@ const defaultWorkerDeps: WorkerDeps = {
  * The runner session's setup before each message. Off, the instructions travel in each message and the session has
  * none of Workbot's extras, which also takes them away from threads that had them.
  */
-function slackSessionSettings(workbot: boolean): SlackSessionSettings {
+function slackSessionSettings(workbot: boolean, driveFiles: boolean): SlackSessionSettings {
   return workbot
-    ? { instructions: SLACK_WORKBOT_INSTRUCTIONS, reactions: true, tasks: true }
+    ? { instructions: slackWorkbotInstructions({ driveFiles }), reactions: true, tasks: true }
     : { instructions: "", reactions: false, tasks: false }
 }
 
@@ -303,6 +309,7 @@ export async function processSlackEvent(event: EventRow, suppliedDeps: WorkerDep
     cp.live = installation.progressUpdates
     // Chosen once per message, so turning the feature off never changes a reply half-way.
     cp.workbot = true
+    cp.driveFiles = await (suppliedDeps.driveFiles ?? slackDriveFilesEnabled)(actor).catch(() => false)
     cp.recipientUserId = event.slackUserId
     cp.recipientTeamId = event.teamId
     cp.privateReply =
@@ -375,7 +382,7 @@ export async function processSlackEvent(event: EventRow, suppliedDeps: WorkerDep
     },
     persist: (checkpoint) => persistSlackCheckpoint(event, checkpoint),
     title: `${event.channelId} · ${(payload.text ?? "Task").slice(0, 85)}`,
-    settings: slackSessionSettings(cp.workbot),
+    settings: slackSessionSettings(cp.workbot, cp.driveFiles),
     ...(cp.workbot ? { live: deps.live } : {}),
     renew: () => renewSlackLease(event),
     log: (message, fields) => appLogger.warn(message, { event_id: event.id, ...fields }),

@@ -29,6 +29,18 @@ test("guided navigation follows the workspace assistant rollout after Workbot be
   }
 })
 
+test("Workbot is told how to read Drive files only while workbotDriveFiles is on", async () => {
+  const workspace = await den.createOrg(await den.signUp("Drive Owner"), "Drive workspace")
+  const token = await den.mintMcpToken(workspace.owner, workspace.orgId)
+  for (const enabled of [false, true, false]) {
+    const changed = await den.setFeature(workspace.orgId, "workbotDriveFiles", enabled)
+    assert.equal(changed.status, 200, summary(changed))
+    const result = await den.request(token, "GET", "/v1/workbot/session")
+    assert.equal(result.status, 200, summary(result))
+    assert.equal(field(result.body, "driveFiles"), enabled)
+  }
+})
+
 test("an owner always sees explicit Luna readiness and keeps an isolated organization model choice", async () => {
   const workspace = await den.createOrg(await den.signUp("Workspace Owner"), "Model workspace")
   const other = await den.createOrg(await den.signUp("Another Owner"), "Another workspace")
