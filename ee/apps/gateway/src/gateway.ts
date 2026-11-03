@@ -45,6 +45,7 @@ import { loadProviderCredentialFromDb, resolveUpstreamCredential } from "./provi
 import type { GatewayCredential, GatewayProvider, LoadProviderCredential, ResolvedUpstreamCredential } from "./provider-credentials.js"
 import { isEventStreamContentType, isJsonContentType, trackStream, readBoundedBody, RequestBodyLimitError, upstreamLifetime } from "./relay.js"
 import { env } from "./env.js"
+import { gatewayLog } from "./log.js"
 import { respondBeforeUpstream } from "./early-response.js"
 import type { EarlyStreamProtocol } from "./early-response.js"
 import { createRequestLogRecorder, REQUEST_LOG_UNAVAILABLE_MESSAGE } from "./request-log.js"
@@ -64,7 +65,7 @@ import { createOpenAiChatSseUsageParser, parseOpenAiChatJsonUsage } from "./usag
 import { createOpenAiResponsesSseUsageParser, parseOpenAiResponsesJsonUsage } from "./usage/openai-responses.js"
 import { createJsonBodyUsageParser, emptyUsage } from "./usage/shared.js"
 import type { ParsedUsage, UsageParser } from "./usage/shared.js"
-import { AUTO_ROUTER_MODEL_ID } from "@openwork/types/den/auto-router"
+import { autoRouterIdFromModel } from "@openwork/types/den/auto-router"
 import { loadAutoRouterConfigFromDb, type LoadAutoRouterConfig } from "./auto-router/config.js"
 import { handleAutoRequest } from "./auto-router/handler.js"
 import { createJevClient, type AskJev } from "./auto-router/jev.js"
@@ -96,10 +97,12 @@ export type GatewayDependencies = {
   mintAwsRoleCredentials: MintAwsRoleCredentials
   catalog: ProviderCatalog
   now: () => Date
-  /** Auto Router (feature `autoRouter`): the organization's routes, and Jev. */
+  /** Smart Model Router (feature `autoRouter`): a member's router, and Jev. */
   loadAutoRouterConfig: LoadAutoRouterConfig
   askJev: AskJev
   autoRouterReasoning: ReasoningStore
+  /** Whether a TypeSafe key is configured; without one Smart is off. */
+  autoRouterRoutingConfigured: boolean
 }
 
 export type GatewayRouteDependencies =
@@ -667,7 +670,11 @@ function relayStreamResponse(upstream: Response, protocol: GatewayRequestProtoco
       finish(upstreamOutcome(upstream))
     },
     fail() {
-      finish(lifetime.signal.aborted && !lifetime.timedOut ? "client_aborted" : "upstream_error")
+      const outcome = lifetime.signal.aborted && !lifetime.timedOut ? "client_aborted" : "upstream_error"
+      if (outcome === "client_aborted") gatewayLog.debug("inference response cancelled", {
+        component: "relay", request_id: headers.get("x-openwork-request-id") ?? undefined, http_status_code: upstream.status,
+      })
+      finish(outcome)
     },
   }, lifetime)
   return new Response(body, { status: upstream.status, statusText: upstream.statusText, headers })
@@ -676,7 +683,8 @@ function relayStreamResponse(upstream: Response, protocol: GatewayRequestProtoco
 function refreshMemberTokenWithDb(): RefreshMemberToken {
   let refresher: Promise<RefreshMemberToken> | null = null
   return (input) => {
-    refresher ??= import("./db.js").then(({ db }) => createOauthRefresher({ store: createDbOauthRefreshStore(db) }))
+    // primary: each step re-reads the row it just compare-and-set; a lagging replica would fail every refresh.
+    refresher ??= import("./db.js").then(({ db }) => createOauthRefresher({ store: createDbOauthRefreshStore(db.$primary) }))
     return refresher.then((refresh) => refresh(input))
   }
 }
@@ -749,11 +757,11 @@ async function routeByModel(raw: Request, organizationId: string, resolveProvide
 }
 
 /**
- * Reads a provider-less chat request once. Auto requests (model
- * `openwork-auto`) come back with their parsed body; others with a rebuilt
- * request for routeByModel.
+ * Reads a provider-less chat request once. Smart requests (model
+ * `openwork-smart-<router id>`) come back with their parsed body and router
+ * id; others with a rebuilt request for routeByModel.
  */
-async function readAutoBody(raw: Request): Promise<{ request: Request; body: JsonObject | null } | { error: Response }> {
+async function readAutoBody(raw: Request): Promise<{ request: Request; body: JsonObject | null; routerId: string | null } | { error: Response }> {
   let bytes: Uint8Array<ArrayBuffer>
   try { bytes = await readBoundedBody(raw) } catch (error) {
     const limited = error instanceof RequestBodyLimitError
@@ -761,8 +769,9 @@ async function readAutoBody(raw: Request): Promise<{ request: Request; body: Jso
   }
   const request = new Request(raw.url, { method: raw.method, headers: raw.headers, body: bytes, signal: raw.signal })
   let body: unknown = null
-  try { body = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(bytes)) } catch { return { request, body: null } }
-  return { request, body: isJsonObject(body) && body.model === AUTO_ROUTER_MODEL_ID ? body : null }
+  try { body = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(bytes)) } catch { return { request, body: null, routerId: null } }
+  const routerId = isJsonObject(body) ? autoRouterIdFromModel(body.model) : null
+  return isJsonObject(body) && routerId ? { request, body, routerId } : { request, body: null, routerId: null }
 }
 
 function restOfPath(pathname: string, inferenceProviderId: string) {
@@ -796,6 +805,7 @@ export function registerGatewayRoutes(api: Hono<GatewayEnv>, input: GatewayRoute
       fetch: input.fetch,
     }),
     autoRouterReasoning: input.autoRouterReasoning ?? createDbReasoningStore(),
+    autoRouterRoutingConfigured: input.autoRouterRoutingConfigured ?? Boolean(env.autoRouter.typesafeApiKey),
   }
 
   // `target` is set by the provider-less routes, which pick the provider from the model alias.
@@ -1237,10 +1247,11 @@ export function registerGatewayRoutes(api: Hono<GatewayEnv>, input: GatewayRoute
           auto.error.headers.set("x-openwork-request-id", c.get("openworkRequestId"))
           return auto.error
         }
-        if (auto.body) {
+        if (auto.body && auto.routerId) {
           const response = await handleAutoRequest({
             request: auto.request,
             body: auto.body,
+            routerId: auto.routerId,
             identity,
             dependencies: {
               loadConfig: dependencies.loadAutoRouterConfig,
@@ -1248,8 +1259,9 @@ export function registerGatewayRoutes(api: Hono<GatewayEnv>, input: GatewayRoute
               catalog: dependencies.catalog,
               askJev: dependencies.askJev,
               reasoningStore: dependencies.autoRouterReasoning,
+              routingConfigured: dependencies.autoRouterRoutingConfigured,
               forward: (target) => handleGatewayRequest(c, target),
-              onJevError: (error) => console.warn("[gateway] Auto Router could not ask Jev; using the fallback route", {
+              onJevError: (error) => console.warn("[gateway] Smart Model Router could not ask Jev; using the fallback model", {
                 openworkRequestId: c.get("openworkRequestId"),
                 organizationId: identity.organizationId,
                 error: error instanceof Error ? error.message : String(error),

@@ -59,15 +59,6 @@ export type { BrowserStatePayload } from "@openwork/browser-tabs";
 
 export type BrowserPresentationMode = "hidden" | "floating" | "side" | "fullscreen";
 
-export type BrowserThumbnail = {
-  tabId: string;
-  url: string;
-  dataUrl: string;
-  width: number;
-  height: number;
-  capturedAt: number;
-};
-
 export type BrowserProxyState = {
   proxy: { rules: string; authenticated: boolean } | null;
 };
@@ -211,7 +202,10 @@ declare global {
         /** Tells the host how the visible conversation shows its browser, so Escape inside a full-screen page can leave full screen. */
         setPresentation?: (sessionId: string | null, mode: BrowserPresentationMode) => Promise<boolean>;
         /** A small JPEG preview of the visible conversation's on-screen tab, or null when none may be captured. */
-        thumbnail?: (tabId: string) => Promise<BrowserThumbnail | null>;
+        /** Brings the popped-out browser window to the front. Only for the person's own action. */
+        focusWindow?: () => Promise<boolean>;
+        /** A new thread's first message made it this session: its browser tabs become the session's. */
+        claimDraftTabs?: (sessionId: string) => Promise<boolean>;
         navigate?: (url: string) => Promise<void>;
         back?: () => Promise<void>;
         forward?: () => Promise<void>;
@@ -229,8 +223,6 @@ declare global {
         reorderTabs?: (tabIds: string[]) => Promise<BrowserPanelTab[]>;
         taskControl?: (tabId: string, action: "pause" | "resume") => Promise<void>;
         listTabs?: () => Promise<BrowserPanelTab[]>;
-        listWebMcpTools?: (args?: { tabId?: string }) => Promise<unknown>;
-        executeWebMcpTool?: (args: { toolId: string; input?: unknown }) => Promise<unknown>;
         setProxy?: (proxy?: string | null) => Promise<BrowserProxyState>;
         getProxy?: () => Promise<BrowserProxyState>;
         setControlEnabled?: (enabled: boolean) => Promise<boolean>;
@@ -566,8 +558,8 @@ export async function openDesktopPath(target: string): Promise<void> {
  * the path on disk and launches only a real file inside the real workspace; a path that
  * resolves outside (for example through a symlink) is revealed in its folder instead.
  */
-export async function openDesktopWorkspaceFile(workspaceRoot: string, target: string): Promise<"opened" | "revealed"> {
-  const result = await invokeElectronHelper("__openWorkspaceFile", workspaceRoot, target);
+export async function openDesktopWorkspaceFile(workspaceRoot: string, target: string, options?: { reveal?: boolean }): Promise<"opened" | "revealed" | "unavailable"> {
+  const result = await invokeElectronHelper("__openWorkspaceFile", workspaceRoot, target, options);
   if (!result || typeof result !== "object" || !("ok" in result)) {
     throw new Error("Could not open this file.");
   }
@@ -629,6 +621,20 @@ export async function relaunchDesktopApp(): Promise<void> {
 
 export async function getDesktopHomeDir(): Promise<string> {
   return invokeElectronHelper("__homeDir");
+}
+
+let cachedHomeDir: Promise<string | null> | null = null;
+
+/** The home folder for expanding `~/` in chat file links; null outside the desktop app. */
+export function getCachedDesktopHomeDir(): Promise<string | null> {
+  if (typeof window === "undefined" || !window.__OPENWORK_ELECTRON__?.invokeDesktop) return Promise.resolve(null);
+  cachedHomeDir ??= getDesktopHomeDir()
+    .then((home) => (typeof home === "string" && home.trim() ? home : null))
+    .catch(() => {
+      cachedHomeDir = null;
+      return null;
+    });
+  return cachedHomeDir;
 }
 
 export async function joinDesktopPath(...parts: string[]): Promise<string> {

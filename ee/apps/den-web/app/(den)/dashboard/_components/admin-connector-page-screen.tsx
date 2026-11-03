@@ -4,7 +4,7 @@ import { ChevronDown, Lock } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { type ReactNode, useRef, useState } from "react";
 import { DenButton } from "../../_components/ui/button";
-import { getLibraryConnectorRoute, getMcpConnectionRoute, getMcpConnectionsRoute, getOrgAccessFlags, getToolTesterRoute, orgFeatureEnabled, permissionLockReason } from "../../_lib/den-org";
+import { getLibraryConnectorRoute, getMcpConnectionRoute, getMcpConnectionsRoute, getOrgAccessFlags, getToolTesterRoute, permissionLockReason } from "../../_lib/den-org";
 import { useDenFlow } from "../../_providers/den-flow-provider";
 import { useOrgDashboard } from "../_providers/org-dashboard-provider";
 import { type AccessDraft, accessAddedToast } from "./access-summary";
@@ -137,9 +137,8 @@ export function AdminConnectorPageScreen({ connection, confirmRemove = false }: 
   const router = useRouter();
   const toast = useDenToast();
   const { orgSlug, orgContext } = useOrgDashboard();
-  const libraryNavigation = orgFeatureEnabled(orgContext, "libraryConnectorNavigation");
-  const usable = useMcpConnections("usable", { enabled: libraryNavigation });
-  const assignedConnection = assignedConnectorForLibrary(libraryNavigation, connection.id, usable.data);
+  const usable = useMcpConnections("usable");
+  const assignedConnection = assignedConnectorForLibrary( connection.id, usable.data);
   const personalDisconnectLabel = personalConnectorDisconnectLabel(assignedConnection);
   const disconnectMyAccount = useDisconnectMyProviderAccount();
   const memberAccess = orgContext

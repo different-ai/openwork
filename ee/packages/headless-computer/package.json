@@ -18,11 +18,13 @@
     "test": "tsx --test src/*.test.ts",
     "snapshot:build:daytona": "NODE_OPTIONS=\"${NODE_OPTIONS:-} --conditions=development\" tsx scripts/build-daytona-snapshot.ts",
     "proof:live": "NODE_OPTIONS=\"${NODE_OPTIONS:-} --conditions=development\" tsx scripts/prove-computer.ts",
-    "snapshot:build:freestyle-desktop": "NODE_OPTIONS=\"${NODE_OPTIONS:-} --conditions=development\" tsx scripts/build-freestyle-desktop-snapshot.ts"
+    "snapshot:build:freestyle-desktop": "NODE_OPTIONS=\"${NODE_OPTIONS:-} --conditions=development\" tsx scripts/build-freestyle-desktop-snapshot.ts",
+    "snapshot:build:freestyle-guest": "NODE_OPTIONS=\"${NODE_OPTIONS:-} --conditions=development\" tsx scripts/build-freestyle-guest-snapshot.ts"
   },
   "dependencies": {
     "@openwork/sandbox": "workspace:*",
     "@openwork/sandbox-daytona": "workspace:*",
+    "@openwork/sandbox-differently": "workspace:*",
     "@openwork/sandbox-freestyle": "workspace:*",
     "freestyle": "0.2.13",
     "ws": "8.21.0",

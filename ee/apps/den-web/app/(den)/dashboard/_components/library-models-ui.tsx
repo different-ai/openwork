@@ -1,12 +1,13 @@
 "use client";
 
-import { ChevronRight, LoaderCircle, LogIn } from "lucide-react";
+import { ChevronRight, LoaderCircle } from "lucide-react";
 import { DenBrandMark } from "../../_components/ui/brand-mark";
 import { DenButton } from "../../_components/ui/button";
 import { getLibraryModelRoute, getLibraryRoute } from "../../_lib/den-org";
 import { useOrgDashboard } from "../_providers/org-dashboard-provider";
 import { ItemHeader, ItemPage, SectionTitle } from "./item-header";
-import { ItemMenu, ItemPanel, ItemRow } from "./item-list";
+import { ItemMenu, ItemPanel } from "./item-list";
+import { LibraryCompactRow } from "./library-compact";
 import {
   type LibraryModelProvider,
   modelCount,
@@ -33,14 +34,23 @@ export function LibraryModelRow({ provider, signIn }: { provider: LibraryModelPr
   const { orgSlug } = useOrgDashboard();
   const waiting = signIn.waitingFor === provider.id;
   const failure = signIn.failureFor(provider.id);
-  const action = provider.state === "blocked" ? null
-    : waiting ? <DenButton variant="ghost" size="xs" onClick={signIn.cancel}>Cancel</DenButton>
-      : provider.state === "needs_signin" ? (
-        <DenButton variant="secondary" size="xs" icon={LogIn} aria-label={failure ? "Try again" : "Sign in"} className="size-7 p-0" onClick={() => void signIn.signIn(provider)} />
-      ) : <ChevronRight className="h-4 w-4 text-gray-400" aria-hidden />;
+  const notice = provider.state === "blocked" ? "Your admin needs to finish setup" : waiting ? "Finish signing in in your browser" : failure;
+  const action = waiting ? <DenButton variant="ghost" size="xs" onClick={signIn.cancel}>Cancel</DenButton>
+    : provider.state === "needs_signin" ? (
+      <DenButton variant="secondary" size="xs" aria-label={failure ? "Try again" : "Sign in"} onClick={() => void signIn.signIn(provider)}>{failure ? "Try again" : "Sign in"}</DenButton>
+    ) : provider.state === "blocked" ? <span className="text-[12px] text-[var(--dls-text-secondary)]">Set up</span> : undefined;
   return (
-    <div data-library-item={provider.name} data-library-kind="model" data-model-state={provider.state} title={modelNamesSummary(provider.models)}>
-      <ItemRow compact href={getLibraryModelRoute(orgSlug, provider.id)} logo={<ProviderLogo provider={provider} />} title={provider.name} description={provider.state === "blocked" ? "Your admin needs to finish setup" : waiting ? "Finish signing in in your browser" : failure ?? modelNamesSummary(provider.models)} status={provider.state === "blocked" ? "Set up" : provider.state === "needs_signin" || waiting ? "Sign in" : "Ready"} action={action ?? <span />} />
+    <div data-model-state={provider.state} title={notice ?? modelNamesSummary(provider.models)}>
+      <LibraryCompactRow
+        href={getLibraryModelRoute(orgSlug, provider.id)}
+        kind="model"
+        testName={provider.name}
+        logo={<DenBrandMark name={provider.name} simpleIconSlug={provider.iconSlug} className="h-6 w-6 rounded-md border-gray-200" imageClassName="h-3.5 w-3.5" />}
+        name={provider.name}
+        description={notice ?? modelNamesSummary(provider.models)}
+        action={action}
+        revealAction={false}
+      />
     </div>
   );
 }

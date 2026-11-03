@@ -5,8 +5,12 @@
  */
 
 import { randomUUID } from "node:crypto"
+import sanitizeHtml from "sanitize-html"
+import { renderGmailDraftBody, type DraftBody } from "./gmail-draft-body.js"
 
-const HARD_WRAP_MIN_LINE_LENGTH = 50
+const HARD_WRAP_MIN_LINE_LENGTH = 68
+const HARD_WRAP_MAX_LINE_LENGTH = 80
+const HARD_WRAP_MAX_WIDTH_VARIATION = 8
 
 function hasNonAscii(value: string): boolean {
   for (const char of value) {
@@ -23,7 +27,46 @@ export type GmailDraftAttachment = {
 
 export type GmailDraftQuote = {
   attribution: string
+  attributionHtml?: string
   body: string
+  html?: string
+}
+
+/** Keep email layout, not active content or remotely loaded tracking images.
+ * Only attached/inline CID image references survive; linked pictures are dropped.
+ */
+export function sanitizeGmailQuoteHtml(html: string): string {
+  const safeStyle = /^(?!.*(?:url|expression|behavior|binding))[-#(),.%\w\s]+$/i
+  return sanitizeHtml(html, {
+    allowedTags: [...sanitizeHtml.defaults.allowedTags, "img", "font"],
+    allowedAttributes: {
+      "*": ["class", "dir", "lang", "title", "style"],
+      a: ["href", "name"],
+      img: ["src", "alt", "width", "height"],
+      font: ["color", "face", "size"],
+      table: ["width", "height", "border", "cellpadding", "cellspacing", "align"],
+      td: ["colspan", "rowspan", "width", "height", "align", "valign"],
+      th: ["colspan", "rowspan", "width", "height", "align", "valign"],
+    },
+    allowedStyles: {
+      "*": Object.fromEntries([
+        "color", "background-color", "font", "font-family", "font-size", "font-weight", "font-style",
+        "text-align", "text-decoration", "white-space", "line-height", "vertical-align",
+        "margin", "margin-top", "margin-right", "margin-bottom", "margin-left",
+        "padding", "padding-top", "padding-right", "padding-bottom", "padding-left",
+        "border", "border-top", "border-right", "border-bottom", "border-left", "border-collapse",
+        "width", "height", "max-width", "min-width", "table-layout",
+      ].map((property) => [property, [safeStyle]])),
+    },
+    allowedSchemes: ["http", "https", "mailto"],
+    allowedSchemesByTag: { img: ["cid"] },
+    // Scheme filtering also permits relative URLs; explicitly require a CID.
+    // Drop the whole image rather than leave a broken image or alt placeholder.
+    exclusiveFilter: (frame) => frame.tag === "img" && !/^cid:[^\s]+$/i.test(frame.attribs.src ?? ""),
+    allowProtocolRelative: false,
+    nonTextTags: ["script", "style", "head", "title", "textarea", "option", "iframe", "object", "template", "svg", "math"],
+    nestingLimit: 50,
+  })
 }
 
 function encodeMimeParameter(value: string): string {
@@ -42,11 +85,15 @@ function draftBodyHtml(body: string): string {
   return body.split("\n").map((line) => `<div>${line.length === 0 ? "<br>" : escapeHtml(line)}</div>`).join("")
 }
 
-function alternativeMimeParts(boundary: string, body: string, quote?: GmailDraftQuote): string[] {
-  const plain = quote ? `${body}\n\n${quote.attribution}\n${quote.body.split("\n").map((line) => `> ${line}`).join("\n")}` : body
-  // Only generated markup is HTML; both new prose and quoted history remain escaped text.
-  const html = draftBodyHtml(body) + (quote
-    ? `<div><br></div><div class="gmail_quote"><div dir="ltr" class="gmail_attr">${escapeHtml(quote.attribution)}</div><blockquote class="gmail_quote" style="margin:0 0 0 .8ex;border-left:1px solid #ccc;padding-left:1ex">${draftBodyHtml(quote.body)}</blockquote></div>`
+function quoteTextHtml(body: string): string {
+  return body.split("\n").map((line) => `<div>${line.length === 0 ? "<br>" : escapeHtml(line)}</div>`).join("")
+}
+
+function alternativeMimeParts(boundary: string, body: DraftBody, quote?: GmailDraftQuote): string[] {
+  const plain = quote ? `${body.plain}\n\n${quote.attribution}\n${quote.body.split("\n").map((line) => `> ${line}`).join("\n")}` : body.plain
+  // Authored body markup and sanitized original-message quotes use separate renderers.
+  const html = body.html + (quote
+    ? `<div><br></div><div class="gmail_quote gmail_quote_container"><div dir="ltr" class="gmail_attr">${quote.attributionHtml ?? escapeHtml(quote.attribution)}</div><blockquote class="gmail_quote" style="margin:0px 0px 0px 0.8ex;border-left:1px solid rgb(204,204,204);padding-left:1ex">${quote.html ?? quoteTextHtml(quote.body)}</blockquote></div>`
     : "")
   return [
     `--${boundary}`,
@@ -74,13 +121,16 @@ function normalizeDraftBody(body: string): string {
     })
     if (hasStructure) return block
 
-    const cleanedLines = lines.map((line) => line
-      .replace(/^#{1,6}\s+/, "")
-      .replace(/\*\*([^*\n]+)\*\*/g, "$1")
-      .replace(/__([^_\n]+)__/g, "$1")
-      .replace(/`([^`\n]+)`/g, "$1"))
-    const looksHardWrapped = lines.slice(0, -1).every((line) => line.trimEnd().length >= HARD_WRAP_MIN_LINE_LENGTH)
-    return lines.length > 1 && looksHardWrapped ? cleanedLines.map((line) => line.trim()).join(" ") : cleanedLines.join("\n")
+    const wrappedLines = lines.slice(0, -1).map((line) => line.trimEnd())
+    // Require repeated, similarly sized mid-sentence wraps. A pair of long
+    // signature/address lines or complete sentences is not evidence of wrapping.
+    const widths = wrappedLines.map((line) => line.length)
+    const looksHardWrapped = wrappedLines.length >= 2
+      && wrappedLines.every((line) => line.length >= HARD_WRAP_MIN_LINE_LENGTH
+        && line.length <= HARD_WRAP_MAX_LINE_LENGTH && !/[.!?,;:][\"')\]]*$/.test(line))
+      && Math.max(...widths) - Math.min(...widths) <= HARD_WRAP_MAX_WIDTH_VARIATION
+      && lines[lines.length - 1].trimEnd().length <= Math.max(...widths)
+    return looksHardWrapped ? lines.map((line) => line.trim()).join(" ") : block
   })
 }
 
@@ -171,7 +221,7 @@ export function buildGmailDraftRaw(input: { to: string; cc?: string; bcc?: strin
     ...(input.headers ?? []).map((header) => mimeHeaderLine(header.name, header.value)),
   ].filter((line) => typeof line === "string")
   const attachments = input.attachments ?? []
-  const body = normalizeDraftBody(input.body)
+  const body = renderGmailDraftBody(input.body, normalizeDraftBody)
   const alternativeBoundary = `openwork-alternative-${randomUUID()}`
   const message = attachments.length === 0 ? [
     ...headers,

@@ -10,7 +10,7 @@ import { createActivationCache } from "./activation-cache";
 
 /**
  * The signed-in person's Get set up checklist from Den (`GET /v1/me/activation`). Den answers 404 while the
- * `activationChecklist` feature is off; the client then has no checklist and reports nothing.
+ * checklist is unavailable; the client then has no checklist and reports nothing.
  */
 
 type DenScope = ReturnType<typeof readGatewayUsageScope>;

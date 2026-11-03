@@ -1,6 +1,6 @@
 import assert from "node:assert/strict"
 import test from "node:test"
-import { CUT_OFF_CALL, ModelError, openAIResponsesModel, toResponsesInput } from "../src/model.js"
+import { CUT_OFF_CALL, ModelError, openAIResponsesModel, streamedDescription, toResponsesInput } from "../src/model.js"
 import type { Message } from "../src/types.js"
 
 const tool = { name: "mail_search", description: "Search mail", inputSchema: { type: "object", properties: { query: { type: "string" } } } }
@@ -81,6 +81,32 @@ test("streamed call: forwards text deltas and tool starts, and returns the compl
   assert.deepEqual(tools, ["mail_search"])
   assert.deepEqual(step.toolCalls, [{ id: "call_2", name: "mail_search", input: { query: "x" } }])
   assert.equal(step.text, "Searching.")
+})
+
+test("a streamed call says what it is doing once its description is written, before the rest of its input", async () => {
+  const { fetch } = recorder(() => sse([
+    { type: "response.output_item.added", output_index: 0, item: { type: "function_call", name: "desktop" } },
+    { type: "response.function_call_arguments.delta", output_index: 0, delta: "{\"view\":\"computer\",\"descrip" },
+    { type: "response.function_call_arguments.delta", output_index: 0, delta: "tion\":\"Drawing the \\\"ground\\\"" },
+    { type: "response.function_call_arguments.delta", output_index: 0, delta: " and trunk\",\"args\":{\"code\":\"bpy." },
+    { type: "response.function_call_arguments.delta", output_index: 0, delta: "ops\"}}" },
+    { type: "response.completed", response: { status: "completed", output: [
+      { type: "function_call", call_id: "call_1", name: "desktop", arguments: "{\"view\":\"computer\",\"description\":\"Drawing the \\\"ground\\\" and trunk\",\"args\":{\"code\":\"bpy.ops\"}}" },
+    ], usage: { input_tokens: 10, output_tokens: 5 } } },
+  ]))
+  const tools: Array<[string, string | undefined]> = []
+  await openAIResponsesModel({ baseUrl: "https://gateway.test/v1", maxOutputTokens: 100, fetch })
+    .complete(request({ onText: () => undefined, onTool: (name, description) => tools.push([name, description]) }))
+  assert.deepEqual(tools, [["desktop", undefined], ["desktop", 'Drawing the "ground" and trunk']])
+})
+
+test("only a call's own top-level description counts, once it is complete", () => {
+  assert.equal(streamedDescription('{"view":"browser","description":"Checking listings"'), "Checking listings")
+  assert.equal(streamedDescription('{"view":"browser","description":"Checking list'), null)
+  assert.equal(streamedDescription('{"args":{"description":"a field of the page"},"view":"browser"}'), null)
+  assert.equal(streamedDescription('{"args":{"text":"\\"description\\":\\"no\\""},"description":"Typing a note"}'), "Typing a note")
+  assert.equal(streamedDescription('{"description":"   "}'), null)
+  assert.equal(streamedDescription(`{"args":{"code":"${"x".repeat(5_000)}"},"description":"Late"}`), null)
 })
 
 test("a failed response is a model error, not an empty answer", async () => {

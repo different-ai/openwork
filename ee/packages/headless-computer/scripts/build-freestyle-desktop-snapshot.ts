@@ -7,11 +7,12 @@
  *   FREESTYLE_API_KEY=... pnpm --filter @openwork-ee/headless-computer snapshot:build:freestyle-desktop
  *
  * Then run the runner with HEADLESS_COMPUTER=freestyle, HEADLESS_COMPUTER_DESKTOP=true and
- * HEADLESS_COMPUTER_SNAPSHOT=<printed slug>. The slug follows the desktop guest's version, so a
- * runner and its snapshot always match; re-running with an unchanged guest is a no-op.
+ * HEADLESS_COMPUTER_SNAPSHOT=<printed slug>. The slug follows the desktop image's identity, so a
+ * runner and its snapshot always match; re-running with an unchanged image is a no-op, and a runner
+ * with a newer guest installs it into the computers it starts. Building a new snapshot gives the
+ * ones it replaces an unused-for-14-days deletion window, so old images don't pile up.
  * The API key stays on this machine; it never enters the VM.
  */
-import { createHash } from "node:crypto"
 import { readFile, readdir } from "node:fs/promises"
 import { Freestyle, FreestyleApiError } from "freestyle"
 import { DESKTOP_COMPUTER_INSTALL_SCRIPT } from "../src/image.js"
@@ -24,18 +25,18 @@ if (!apiKey) {
 const root = new URL("../", import.meta.url)
 const repo = new URL("../../../../", import.meta.url)
 const text = (path: string, base = root) => readFile(new URL(path, base), "utf8")
-const guestVersion = await text("dist/desktop-guest.version").catch(() => {
+const [imageVersion, guestVersion] = await Promise.all([text("dist/desktop-image.version"), text("dist/desktop-guest.version")]).catch(() => {
   console.error("Build the desktop guest first: pnpm --filter @openwork-ee/headless-computer build")
   process.exit(1)
 })
-// What the runner asks the bridge for (desktop.ts): the guest's version, without private browsing.
-const desktopVersion = createHash("sha256").update(await readFile(new URL("dist/desktop-guest.version", root))).digest("hex")
 const base = process.env.FREESTYLE_DESKTOP_BASE ?? "freestyle/ubuntu"
 // Chromium for Testing through Playwright: Ubuntu ships Chromium only as a snap.
 const playwright = "1.56.1"
 // A fixed Node release, checked against its published SHA-256 (nodejs.org/dist/v24.22.1/SHASUMS256.txt.asc).
 const node = { version: "24.22.1", sha256: "6c172a9ab6718f7b801fb5a7bd486af2ee5e32758086a04b84fcce2aa77095e6" }
-const slug = process.env.HEADLESS_COMPUTER_SNAPSHOT ?? `workbot-desktop-freestyle-${guestVersion.trim().slice(0, 16)}`
+const slug = process.env.HEADLESS_COMPUTER_SNAPSHOT ?? `workbot-desktop-freestyle-${imageVersion.trim().slice(0, 16)}`
+/** Superseded snapshots are deleted once nothing has booted from them for this long; rolling back can still use them. */
+const RETIRED_SNAPSHOT_SECONDS = 14 * 24 * 3600
 const api = new Freestyle({ apiKey })
 
 const exists = await api.vms.snapshots.get(slug).then(() => true, (error: unknown) => {
@@ -68,6 +69,7 @@ const files: Record<string, string> = {
   "build-desktop-vnc.sh": await text("scripts/build-desktop-vnc.sh"),
   "guest.mjs": await text("dist/desktop-guest.mjs"),
   "guest.version": guestVersion,
+  "image.version": imageVersion,
   "start.sh": await text("ee/apps/den-worker-runtime/scripts/cloud-desktop.sh", repo),
   "openwork-desktop-bridge": await text("scripts/desktop-bridge.py"),
   "vnc-stdio.py": await text("scripts/vnc-stdio.py"),
@@ -114,6 +116,7 @@ install -m 0644 $B/scripting/* /usr/local/share/openwork-desktop/scripting/
 chmod 0755 /usr/local/share/openwork-desktop/scripting
 install -m 0644 $B/guest.mjs /usr/local/share/openwork-desktop/guest.mjs
 install -m 0644 $B/guest.version /usr/local/share/openwork-desktop/guest.version
+install -m 0644 $B/image.version /usr/local/share/openwork-desktop/image.version
 install -m 0644 $B/start.sh /usr/local/share/openwork-desktop/start.sh
 install -m 0644 $B/vnc-stdio.py /usr/local/share/openwork-desktop/vnc-stdio.py
 install -m 0755 $B/openwork-desktop-bridge /usr/local/sbin/openwork-desktop-bridge
@@ -158,7 +161,7 @@ try {
 
   // Start the desktop exactly as the runner does, so the snapshot captures it running
   // and a new computer's first viewer request finds it healthy at once.
-  const start = await vm.exec({ command: `sudo -n /usr/local/sbin/openwork-desktop-bridge start ${desktopVersion}`, timeoutMs: 60_000 })
+  const start = await vm.exec({ command: `sudo -n /usr/local/sbin/openwork-desktop-bridge start ${imageVersion.trim()} ${guestVersion.trim()}`, timeoutMs: 60_000 })
   console.log(start.stdout?.trim())
   if (start.statusCode !== 0) throw new Error(`desktop did not start: ${start.stderr ?? ""}`)
   // The bridge returns once the guest is launched; poll until it listens, as the runner does.
@@ -176,7 +179,26 @@ try {
 
   const snapshot = await vm.snapshot({ slug, displayName: `Workbot desktop ${slug}` })
   console.log(`Snapshot ${slug} ready (${snapshot.snapshotId}) after ${Math.round((Date.now() - started) / 1000)}s.`)
+  await retireOlderSnapshots().catch((error: unknown) => console.warn(`Older snapshots keep no deletion window: ${error instanceof Error ? error.message : String(error)}`))
   console.log(`Run the runner with HEADLESS_COMPUTER=freestyle HEADLESS_COMPUTER_DESKTOP=true HEADLESS_COMPUTER_SNAPSHOT=${slug}`)
 } finally {
   await vm.delete().catch(() => undefined)
+}
+
+/**
+ * Gives every earlier desktop snapshot without a deletion window one: Freestyle deletes it once no computer has been
+ * created from it for RETIRED_SNAPSHOT_SECONDS. Computers already made from it keep running; only new ones can't use it.
+ */
+async function retireOlderSnapshots() {
+  let retired = 0
+  for (let offset = 0; ; offset += 100) {
+    const page = await api.vms.snapshots.list({ limit: 100, offset })
+    for (const snapshot of page.snapshots) {
+      if (snapshot.slug === slug || !/^workbot-desktop-freestyle-[0-9a-f]{16}$/.test(snapshot.slug ?? "") || snapshot.autoDeleteSeconds != null) continue
+      await api.vms.snapshots.update(snapshot.id, { autoDeleteSeconds: RETIRED_SNAPSHOT_SECONDS })
+      retired++
+    }
+    if (page.snapshots.length < 100 || offset + 100 >= page.totalCount) break
+  }
+  console.log(`Gave ${retired} older snapshot${retired === 1 ? "" : "s"} a ${RETIRED_SNAPSHOT_SECONDS / 86400}-day unused deletion window.`)
 }

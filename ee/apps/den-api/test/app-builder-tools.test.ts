@@ -27,17 +27,13 @@ function assertDescriptions(value: unknown, path: string) {
   if (schema.items) assertDescriptions(schema.items, `${path}[]`)
 }
 
-test("App preparation lists built-in libraries only for an editor who has them", () => {
+test("App preparation lists built-in libraries", () => {
   const input = { title: "Procedural scene" }
-  const off = appAuthoringStarter(input, [])
-  const on = appAuthoringStarter(input, [], { libraries: true })
-  assert.deepEqual(on.nextSteps.slice(0, -1), off.nextSteps)
-  assert.doesNotMatch(off.nextSteps.join("\n"), /built-in libraries/i)
+  const on = appAuthoringStarter(input, [])
   for (const specifier of ["lucide-react", "recharts", "motion/react", "three/addons/controls/OrbitControls.js"]) {
     assert.match(on.nextSteps.at(-1) ?? "", new RegExp(`"${specifier}"|${specifier} for`))
   }
   assert.match(on.nextSteps.at(-1) ?? "", /<svg>/)
-  assert.equal(on.starter.reactSource, off.starter.reactSource)
   assert.match(BUILD_AN_APP_SKILL_SOURCE, /When prepare_app's nextSteps lists built-in libraries, import only those/)
 })
 
@@ -97,6 +93,10 @@ test("App builder metadata describes all inputs and keeps create_app concise", a
     assert.match(BUILD_AN_APP_SKILL_SOURCE, /openwork\/result-cache/)
     assert.match(BUILD_AN_APP_SKILL_SOURCE, /one such call per click/)
     assert.match(BUILD_AN_APP_SKILL_SOURCE, /app\.revisionId/)
+    assert.match(BUILD_AN_APP_SKILL_SOURCE, /first load comes before everything else/)
+    assert.match(BUILD_AN_APP_SKILL_SOURCE, /compare executedAt with fetchedAt/)
+    assert.match(BUILD_AN_APP_SKILL_SOURCE, /Promise\.all\(ids\.map\(\(id\) => tools\.x\.y\(\{ id \}\)\)\)/)
+    assert.match(BUILD_AN_APP_SKILL_SOURCE, /one at a time even inside Promise\.all/)
   } finally {
     await client.close()
     await server.close()

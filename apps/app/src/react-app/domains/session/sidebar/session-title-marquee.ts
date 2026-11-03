@@ -3,6 +3,19 @@ export const SESSION_TITLE_SPEED_PX_PER_SECOND = 32;
 
 export type SessionTitleIntent = "hover" | "focus" | null;
 
+/**
+ * Only keyboard focus should hold a title scrolled. Clicking a row also
+ * focuses it, and the selected row keeps that focus after the pointer leaves,
+ * which used to leave its title stuck mid-scroll.
+ */
+export function isKeyboardFocus(element: { matches: (selector: string) => boolean }) {
+  try {
+    return element.matches(":focus-visible");
+  } catch {
+    return true;
+  }
+}
+
 export type SessionTitleMarqueeState = {
   durationMs: number;
   moving: boolean;

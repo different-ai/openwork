@@ -75,7 +75,7 @@ export type HeadlessRunnerDeps = {
    * to report the session's content-free totals and state to Den's session index.
    */
   mintToken: (
-    input: HeadlessRunnerActor & { ttlMs?: number; sessionId?: string; messageId?: string; readOnly?: boolean; model?: string; modelAccessRequired?: boolean },
+    input: HeadlessRunnerActor & { ttlMs?: number; sessionId?: string; messageId?: string; readOnly?: boolean; scopes?: readonly string[]; model?: string; modelAccessRequired?: boolean },
   ) => Promise<{ token: string; resumeGrant?: string; modelAccess?: HeadlessModelAccess; indexCapability?: string }>
   /** Resolve scoped turns' persisted model before minting, even when today's default is no longer accessible. */
   modelAccessRequired?: (actor: HeadlessRunnerActor) => Promise<boolean> | boolean
@@ -257,6 +257,8 @@ export type RunnerCapabilities = {
   reactions?: boolean
   tasks?: boolean
   documentNavigation?: boolean
+  /** The computer runs through the runner's sandbox gateway (its SANDBOX_GATEWAY) instead of the runner's own provider. */
+  sandboxGateway?: boolean
 }
 export const RUNNER_DESKTOP_VIEWS = ["browser", "computer"] as const
 export type RunnerDesktopView = (typeof RUNNER_DESKTOP_VIEWS)[number]
@@ -277,6 +279,7 @@ const capabilityFields = (input: RunnerCapabilities & RunnerSessionSettings) => 
   ...(input.reactions !== undefined ? { reactions: input.reactions } : {}),
   ...(input.tasks !== undefined ? { tasks: input.tasks } : {}),
   ...(input.documentNavigation !== undefined ? { documentNavigation: input.documentNavigation } : {}),
+  ...(input.sandboxGateway !== undefined ? { sandboxGateway: input.sandboxGateway } : {}),
   ...(input.owner ? { owner: input.owner } : {}),
   ...(input.ref ? { ref: input.ref } : {}),
   ...(input.timeZone ? { timeZone: input.timeZone } : {}),
@@ -367,9 +370,15 @@ export function createHeadlessRunnerClient(deps: HeadlessRunnerDeps) {
       const extras = { ...(input.repeats ? { repeats: input.repeats } : {}), ...capabilityFields(input) }
       let { status, payload } = await request(deps, "PUT", sessionPath(id), { ...base, ...extras })
       let compatible: Record<string, unknown> = extras
-      // The newest setting first. An older runner can't limit the desktop to some views, so a conversation allowed fewer
-      // than all of them gets no desktop there rather than every view; it keeps its other settings. Such a conversation
-      // is never saved without turning its desktop off: if the runner won't take that either, the update fails.
+      // The newest setting first. An older runner has no sandbox gateway: the computer stays on the runner's own provider.
+      if (unknownSetting(status, payload) && input.sandboxGateway !== undefined) {
+        const { sandboxGateway: _gateway, ...rest } = compatible
+        compatible = rest
+        ;({ status, payload } = await request(deps, "PUT", sessionPath(id), { ...base, ...compatible }))
+      }
+      // An older runner can't limit the desktop to some views, so a conversation allowed fewer than all of them gets no
+      // desktop there rather than every view; it keeps its other settings. Such a conversation is never saved without
+      // turning its desktop off: if the runner won't take that either, the update fails.
       let limited = false
       if (unknownSetting(status, payload) && input.desktopViews !== undefined) {
         const { desktopViews: _views, ...rest } = compatible
@@ -457,6 +466,11 @@ export function createHeadlessRunnerClient(deps: HeadlessRunnerDeps) {
          * keep notes in `memory/` but can't change anything through MCP. `readOnly` also removes the file tools.
          */
         mcpReadOnly?: boolean
+        /**
+         * Extra scopes for the read-scoped token, minted by the trusted caller only (a member's background agent
+         * carries the sources it may read). Ignored without `mcpReadOnly` or `readOnly`.
+         */
+        mcpScopes?: readonly string[]
         interrupt?: boolean
         execution?: "steps"
       },
@@ -472,6 +486,7 @@ export function createHeadlessRunnerClient(deps: HeadlessRunnerDeps) {
           ...(model ? { model } : {}),
           ...(modelAccessRequired ? { modelAccessRequired: true } : {}),
           ...(input.readOnly || input.mcpReadOnly ? { readOnly: true } : {}),
+          ...((input.readOnly || input.mcpReadOnly) && input.mcpScopes?.length ? { scopes: input.mcpScopes } : {}),
         })
         const modelAccess = issued.modelAccess ?? await deps.modelAccess?.(actor, { ...(model ? { model } : {}), ...(modelAccessRequired ? { modelAccessRequired: true } : {}) })
         return { ...issued, modelAccess }

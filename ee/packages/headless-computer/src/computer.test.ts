@@ -3,6 +3,11 @@ import { test } from "node:test"
 import { createFakeProvider } from "@openwork/sandbox/testing"
 import { SandboxError } from "@openwork/sandbox"
 import { Computers } from "./computer.js"
+import { DesktopError } from "./desktop.js"
+import { createHash } from "node:crypto"
+import type { RunSpec, SandboxHandle, SandboxProvider } from "@openwork/sandbox"
+import identity from "../dist/desktop-identity.mjs"
+import { DESKTOP_PROTOCOL } from "./desktop-protocol.mjs"
 
 function fixture(input: { timeout?: boolean } = {}) {
   let launches = 0
@@ -67,6 +72,104 @@ test("idle policy uses stop when pause is absent", async () => {
   await computers.delete("idle")
 })
 
+test("an idle timer leaves a computer alone while a command is running", async () => {
+  let finish = () => {}
+  const running = new Promise<void>(resolve => { finish = resolve })
+  const provider = createFakeProvider({ async onRun(spec) {
+    if (spec.env?.WORKBOT_COMMAND) await running
+    return { exitCode: 0, stdout: "0", stderr: "" }
+  } })
+  const computers = new Computers({ provider, idlePauseMs: 10, keepDays: 1 }, { readFile: async () => ({ text: "" }) })
+  const box = await computers.vm("busy")
+  const command = computers.run("busy", "bash", { command: "sleep 100", timeout: 10 })
+  await new Promise(resolve => setTimeout(resolve, 20))
+  await computers.pauseIdle("busy")
+  assert.equal((await provider.inspect(box)).state, "running")
+  finish()
+  await command
+  computers.release("busy")
+  await new Promise(resolve => setTimeout(resolve, 40))
+  assert.equal((await provider.inspect(box)).state, "stopped")
+  await computers.delete("busy")
+})
+
+/** A computer whose pause lasts until `finish`, or until a start calls it off where `callsOff` says it can. */
+function pausable(callsOff: boolean, onRun?: (spec: RunSpec) => Promise<{ exitCode: number; stdout: string; stderr: string }>) {
+  const fake = createFakeProvider({ onRun: onRun ?? (() => ({ exitCode: 0, stdout: "0", stderr: "" })) })
+  let finish = () => {}
+  const state = { pausing: false, finish: () => finish() }
+  const pauses = new Map<string, number>()
+  const provider: SandboxProvider = {
+    ...fake,
+    describe: () => ({ ...fake.describe(), callsOffPause: callsOff }),
+    inspect: async box => ({ ...await fake.inspect(box), ...(state.pausing ? { state: "stopped" as const } : {}) }),
+    start: async () => { state.pausing = false; finish() },
+    blocks: { ...fake.blocks, pause: () => { state.pausing = true; return new Promise<void>(resolve => { finish = resolve }) } },
+  }
+  const computers = new Computers({ provider, idlePauseMs: 60_000, keepDays: 1, pauses: { set: (id, at) => { pauses.set(id, at) }, clear: id => { pauses.delete(id) } } }, { readFile: async () => ({ text: "" }) })
+  return { computers, state, pauses }
+}
+
+async function until(done: () => boolean) {
+  for (let i = 0; i < 200 && !done(); i++) await new Promise(resolve => setTimeout(resolve, 5))
+  assert.ok(done())
+}
+
+test("coming back during a pause calls it off, and the computer stays due to pause", async () => {
+  const { computers, state, pauses } = pausable(true)
+  await computers.vm("back")
+  const idle = computers.pauseIdle("back")
+  await until(() => state.pausing)
+  const box = await computers.vm("back") // would hang here if it waited for the pause
+  assert.equal(box.state, "running")
+  assert.equal(state.pausing, false)
+  await idle
+  assert.ok(pauses.has("back"), "still pauses if this process stops before releasing it")
+  await computers.delete("back")
+})
+
+test("a pause nothing can call off is waited for, and leaves nothing due", async () => {
+  const { computers, state, pauses } = pausable(false)
+  await computers.vm("wait")
+  const idle = computers.pauseIdle("wait")
+  await until(() => state.pausing)
+  let back = false
+  const returning = computers.vm("wait").then(() => { back = true })
+  await new Promise(resolve => setTimeout(resolve, 20))
+  assert.equal(back, false)
+  state.pausing = false
+  state.finish()
+  await idle
+  await returning
+  assert.equal(back, true)
+  await computers.delete("wait")
+  assert.equal(pauses.has("wait"), false)
+})
+
+test("what runs before a pause is still waited for, even where the pause can be called off", async () => {
+  let checked = () => {}
+  const checking = new Promise<void>(resolve => { checked = resolve })
+  let probing = false
+  const { computers, state } = pausable(true, async spec => {
+    if (spec.command.includes(".jobs/")) { probing = true; await checking }
+    return { exitCode: 0, stdout: "0", stderr: "" }
+  })
+  await computers.vm("checks")
+  const idle = computers.pauseIdle("checks")
+  await until(() => probing)
+  let back = false
+  const returning = computers.vm("checks").then(() => { back = true })
+  await new Promise(resolve => setTimeout(resolve, 20))
+  assert.equal(back, false)
+  checked()
+  await until(() => state.pausing)
+  state.pausing = false
+  state.finish()
+  await idle
+  await returning
+  await computers.delete("checks")
+})
+
 test("a computer pauses from its stored time after the process that used it is gone", async () => {
   const f = fixture()
   const due = new Map<string, number>()
@@ -90,6 +193,19 @@ test("a computer pauses from its stored time after the process that used it is g
   assert.equal(f.provider.fake.count("start"), starts)
   assert.equal(due.has("stored"), false)
   await used.delete("stored")
+})
+
+test("a provider that can neither pause nor stop leaves an idle computer running, with nothing left due", async () => {
+  const fake = createFakeProvider({ onRun: () => ({ exitCode: 0, stdout: "0", stderr: "" }) })
+  const provider: SandboxProvider = { ...fake, describe: () => ({ ...fake.describe(), stopResume: false }) }
+  const due = new Map<string, number>()
+  const pauses = { set: (sessionId: string, at: number) => { due.set(sessionId, at) }, clear: (sessionId: string) => { due.delete(sessionId) } }
+  const computers = new Computers({ provider, idlePauseMs: 60_000, keepDays: 1, pauses }, { readFile: async () => ({ text: "" }) })
+  const box = await computers.vm("idle")
+  await computers.pauseIdle("idle")
+  assert.equal((await provider.inspect(box)).state, "running")
+  assert.equal(due.has("idle"), false)
+  await computers.delete("idle")
 })
 
 test("desktop stays off on existing computers and opening a paused desktop does not wake it", async () => {
@@ -118,14 +234,14 @@ test("rebuilding replaces the conversation's VM and starts the desktop on the ne
   assert.equal(provider.fake.count("create"), 2)
   const after = await computers.vm("rebuild")
   assert.notDeepEqual(after.ref, before.ref)
-  assert.ok(commands.some(command => / start [a-f0-9]{64}$/.test(command)), "the new VM's desktop is started")
+  assert.ok(commands.some(command => / start [a-f0-9]{64} [a-f0-9]{64}$/.test(command)), "the new VM's desktop is started")
   await computers.delete("rebuild")
 })
 
 test("opening and resuming a desktop log one line with where the time went", async t => {
   let desktopUp = false
   const provider = createFakeProvider({ capabilities: { platform: { os: "linux", isolation: "microvm" } }, onRun(spec) {
-    if (/ start [a-f0-9]{64}$/.test(spec.command)) desktopUp = true
+    if (/ start [a-f0-9]{64} [a-f0-9]{64}$/.test(spec.command)) desktopUp = true
     if (spec.command.includes("call '/health'")) return desktopUp ? { exitCode: 0, stdout: JSON.stringify({ version: "running" }), stderr: "" } : { exitCode: 1, stdout: "", stderr: "" }
     return { exitCode: 0, stdout: "0", stderr: "" }
   } })
@@ -208,14 +324,235 @@ test("desktop computers expose only the viewer port, and persistent computers ar
   await persistent.delete("forever")
 })
 
-test("a desktop call's description narrates for the person and never reaches the computer", async () => {
+test("a desktop call's description and show are for the person and never reach the computer", async () => {
   const f = fixture()
   const computers = new Computers({ provider: f.provider, idlePauseMs: 1000, keepDays: 1, desktop: true }, { readFile: async () => ({ text: "" }) })
-  assert.ok(computers.desktopTools[0]?.inputSchema.properties && "description" in (computers.desktopTools[0].inputSchema.properties as object))
+  for (const field of ["description", "show"]) assert.ok(computers.desktopTools[0]?.inputSchema.properties && field in (computers.desktopTools[0].inputSchema.properties as object))
   const sent: unknown[] = []
   Object.assign(computers as unknown as Record<string, unknown>, { desktop: { start: async () => {}, call: async (_box: unknown, path: string, body: unknown) => { sent.push({ path, body }); return { ok: true } } } })
-  const result = await computers.desktopRun("narrated", { view: "browser", operation: "open", args: { url: "https://example.test" }, description: "Checking listings" })
+  const result = await computers.desktopRun("narrated", { view: "browser", operation: "open", args: { url: "https://example.test" }, description: "Checking listings", show: true })
   assert.equal(result.isError, false)
   assert.deepEqual(sent, [{ path: "/browser/task", body: { sessionId: "narrated", operation: "open", args: { url: "https://example.test" } } }])
   await computers.delete("narrated")
+})
+
+/**
+ * Desktop computers whose helper behaves like desktop-bridge.py: the first one made was built from another image, and
+ * so is every later one while `state.behind` is set, like a gateway whose template hasn't been rebuilt yet.
+ */
+function upgradeFixture(old: { helper: "current" | "old"; protocol?: number }) {
+  const base = createFakeProvider({ capabilities: { platform: { os: "linux", isolation: "microvm" } } })
+  const image = identity.image.trim(), guest = identity.guest.trim()
+  const current = createHash("sha256").update(identity.image).update(identity.guest).digest("hex")
+  type Vm = { image: string; guest: string; helper: "current" | "old"; protocol?: number; running: boolean; files: Map<string, Uint8Array>; imported: string[]; tasks: number }
+  const vms = new Map<string, Vm>()
+  const state = { jobs: 0, gate: Promise.resolve(), behind: false }
+  const vmOf = (box: SandboxHandle) => {
+    const key = JSON.stringify(box.ref)
+    let vm = vms.get(key)
+    if (!vm) {
+      vm = vms.size === 0 || state.behind
+        ? { image: "e".repeat(64), guest: "f".repeat(64), helper: old.helper, protocol: old.protocol, running: true, files: new Map(), imported: [], tasks: 0 }
+        : { image, guest, helper: "current", protocol: DESKTOP_PROTOCOL, running: true, files: new Map(), imported: [], tasks: 0 }
+      vms.set(key, vm)
+    }
+    return vm
+  }
+  const ok = (stdout = "") => ({ exitCode: 0, stdout, stderr: "" })
+  const fail = (stderr: string) => ({ exitCode: 1, stdout: "", stderr })
+  const run = async (box: SandboxHandle, spec: RunSpec) => {
+    const vm = vmOf(box)
+    const { command } = spec
+    if (command.endsWith("openwork-desktop-bridge command")) { await state.gate; return ok("done") }
+    if (command.startsWith("ls /workspace/.jobs/*.running")) return ok(String(state.jobs))
+    if (command.startsWith("rm -f")) return ok()
+    if (command.includes("call '/health'")) return vm.running ? ok(JSON.stringify({ version: vm.image === image && vm.guest === guest ? current : "other", ...(vm.protocol === undefined ? {} : { protocol: vm.protocol }) })) : fail("")
+    if (command.includes("call '/browser/task'")) { vm.tasks++; return ok(JSON.stringify({ ok: true })) }
+    if (command.includes("call '/viewer'")) return ok(JSON.stringify({ token: "t".repeat(43), paused: false }))
+    const packed = command.match(/^tar -czf (\S+) /)
+    if (packed) { vm.files.set(packed[1]!, new TextEncoder().encode("workspace packed")); return ok() }
+    const noted = command.match(/^echo (.+) > (\S+)$/)
+    if (noted) { vm.files.set(noted[2]!, new TextEncoder().encode(noted[1]!)); return ok() }
+    const shown = command.match(/^cat (\S+)/)
+    if (shown) { const bytes = vm.files.get(shown[1]!); return bytes ? ok(new TextDecoder().decode(bytes)) : fail("") }
+    if (vm.helper === "old") return fail("Use command, start VERSION or call with a supported desktop route.")
+    if (command.endsWith(" versions")) return ok(JSON.stringify({ image: vm.image, guest: vm.guest }))
+    const exported = command.match(/ export (\w+) > (\S+)$/)
+    if (exported) { vm.files.set(exported[2]!, new TextEncoder().encode(`${exported[1]} from the old computer`)); return ok() }
+    const imported = command.match(/ import (\w+) < (\S+)$/)
+    if (imported) { vm.imported.push(`${imported[1]}: ${new TextDecoder().decode(vm.files.get(imported[2]!))}`); return ok() }
+    const start = command.match(/ start ([a-f0-9]{64}) ([a-f0-9]{64})$/)
+    if (start) {
+      if (start[1] !== vm.image) return fail("The desktop image is out of date. Rebuild its snapshot for this runner.")
+      if (start[2] !== vm.guest) return fail("The desktop guest is out of date. Install this runner's guest.")
+      vm.running = true
+      return ok()
+    }
+    return ok("0")
+  }
+  const files = {
+    read: async (box: SandboxHandle, path: string) => { const bytes = vmOf(box).files.get(path); if (!bytes) throw new Error(`no ${path}`); return bytes },
+    write: async (box: SandboxHandle, path: string, bytes: Uint8Array) => { vmOf(box).files.set(path, bytes) },
+    stat: async (box: SandboxHandle, path: string) => { const bytes = vmOf(box).files.get(path); return bytes ? { size: bytes.byteLength, kind: "file" as const } : null },
+  }
+  const provider = { ...base, blocks: { ...base.blocks, run, files } } as SandboxProvider
+  const computers = new Computers({ provider, idlePauseMs: 20, keepDays: 1, desktop: true }, { readFile: async () => ({ text: "" }) })
+  const vm = (index: number) => [...vms.values()][index]
+  return { base, provider, computers, state, vm }
+}
+
+const browse = { view: "browser", operation: "open", args: {} }
+const DAY_MS = 24 * 60 * 60_000
+
+/** Waits until the newest computer has paused, past any replacement on the way. */
+async function paused(f: ReturnType<typeof upgradeFixture>) {
+  for (let waited = 0; f.base.fake.sandboxes().at(-1)?.state !== "stopped" && waited < 2000; waited += 10) await new Promise(resolve => setTimeout(resolve, 10))
+}
+
+test("an outdated computer is replaced when nothing else runs on it, carrying its workspace and browser profile", async t => {
+  const f = upgradeFixture({ helper: "current", protocol: DESKTOP_PROTOCOL + 1 })
+  t.after(() => f.computers.delete("upgrade"))
+  t.mock.method(console, "log", () => {})
+  const result = await f.computers.desktopRun("upgrade", browse)
+  assert.equal(result.isError, false)
+  assert.equal(f.base.fake.count("destroy"), 1)
+  assert.deepEqual(f.vm(1)?.imported, ["workspace: workspace from the old computer", "profile: profile from the old computer"])
+  assert.deepEqual([f.vm(0)?.tasks, f.vm(1)?.tasks], [0, 1], "the step ran on the new computer")
+})
+
+test("a computer from before carrying keeps its workspace but never its private browser profile", async t => {
+  const f = upgradeFixture({ helper: "old" })
+  t.after(() => f.computers.delete("legacy"))
+  t.mock.method(console, "log", () => {})
+  assert.equal((await f.computers.desktopRun("legacy", browse)).isError, false)
+  assert.deepEqual(f.vm(1)?.imported, ["workspace: workspace packed"])
+})
+
+test("an outdated computer with other work running says it is updating instead of replacing it", async t => {
+  const f = upgradeFixture({ helper: "current", protocol: DESKTOP_PROTOCOL + 1 })
+  t.after(() => f.computers.delete("busy"))
+  let release = () => {}
+  f.state.gate = new Promise<void>(resolve => { release = resolve })
+  const command = f.computers.run("busy", "bash", { command: "sleep 1", timeout_seconds: 10 })
+  await new Promise(resolve => setTimeout(resolve, 10))
+  // The runner hands this message to the model as the step's result (desktop_updating to Workbot).
+  const updating = (error: unknown) => error instanceof DesktopError && error.desktopCode === "desktop_updating" && /updating to a new version/.test(error.message)
+  await assert.rejects(f.computers.desktopRun("busy", browse), updating)
+  release()
+  await command
+  f.state.jobs = 1
+  await assert.rejects(f.computers.desktopRun("busy", browse), updating, "a background job counts as work")
+  assert.equal(f.base.fake.count("destroy"), 0)
+})
+
+test("a computer from an older image that still speaks the protocol is used, then replaced once idle", async t => {
+  const f = upgradeFixture({ helper: "current", protocol: DESKTOP_PROTOCOL })
+  t.after(() => f.computers.delete("stale"))
+  const lines: string[] = []
+  t.mock.method(console, "log", (line: string) => { lines.push(line) })
+  assert.equal((await f.computers.desktopRun("stale", browse)).isError, false)
+  assert.deepEqual([f.base.fake.count("destroy"), f.vm(0)?.tasks], [0, 1], "it kept working on the computer it had")
+  await paused(f)
+  assert.equal(f.base.fake.count("destroy"), 1)
+  assert.deepEqual(f.vm(1)?.imported, ["workspace: workspace from the old computer", "profile: profile from the old computer"])
+  assert.deepEqual(f.base.fake.sandboxes().map(record => record.state), ["missing", "stopped"], "and the new one is paused like the old one would have been")
+  assert.ok(lines.some(line => line.startsWith("[headless-computer] computer replaced")))
+})
+
+test("the view and the chat's glimpse opening an outdated computer together replace it once", async t => {
+  const f = upgradeFixture({ helper: "current", protocol: DESKTOP_PROTOCOL + 1 })
+  t.after(() => f.computers.delete("together"))
+  t.mock.method(console, "log", () => {})
+  const open = () => f.computers.desktopViewer("together", { view: "browser", control: false, origin: "https://chat.example.test" })
+  const [view, glimpse] = await Promise.all([open(), open()])
+  assert.deepEqual([view.state, glimpse.state], ["connected", "connected"])
+  assert.deepEqual([f.base.fake.count("destroy"), f.base.fake.count("create")], [1, 2])
+})
+
+test("a replacement that comes up on the same older image isn't replaced again on every idle", async t => {
+  const f = upgradeFixture({ helper: "current", protocol: DESKTOP_PROTOCOL })
+  f.state.behind = true
+  t.after(() => f.computers.delete("behind"))
+  t.mock.method(console, "log", () => {})
+  for (let use = 0; use < 3; use++) {
+    assert.equal((await f.computers.desktopRun("behind", browse)).isError, false)
+    await paused(f)
+  }
+  assert.deepEqual([f.base.fake.count("destroy"), f.base.fake.count("create")], [1, 2], "replaced once, then left on the image new computers still get")
+  assert.equal(f.vm(1)?.tasks, 2, "and it kept working")
+})
+
+test("a chat's next process still knows a replacement gained nothing", async t => {
+  const f = upgradeFixture({ helper: "current", protocol: DESKTOP_PROTOCOL })
+  f.state.behind = true
+  t.after(() => f.computers.delete("evicted"))
+  t.mock.method(console, "log", () => {})
+  await f.computers.desktopRun("evicted", browse)
+  await paused(f)
+  // An idle chat leaves memory, so its pause usually runs in a process that has never seen this computer.
+  const next = new Computers({ provider: f.provider, idlePauseMs: 60_000, keepDays: 1, desktop: true }, { readFile: async () => ({ text: "" }) })
+  await next.start("evicted")
+  await next.pauseIdle("evicted")
+  assert.equal(f.base.fake.count("destroy"), 1)
+  assert.equal(f.base.fake.sandboxes().at(-1)?.state, "stopped")
+})
+
+test("a computer left on an older image moves once the provider really has the newer one", async t => {
+  t.mock.timers.enable({ apis: ["Date"], now: Date.now() })
+  const f = upgradeFixture({ helper: "current", protocol: DESKTOP_PROTOCOL })
+  f.state.behind = true
+  t.after(() => f.computers.delete("rebuilt"))
+  t.mock.method(console, "log", () => {})
+  const useThenIdle = async () => {
+    assert.equal((await f.computers.desktopRun("rebuilt", browse)).isError, false)
+    await paused(f)
+    return f.base.fake.count("destroy")
+  }
+  assert.equal(await useThenIdle(), 1)
+  // A rebuilt template keeps its name, so the only sign of it is what a new computer comes up on: tried again, daily.
+  t.mock.timers.setTime(Date.now() + DAY_MS)
+  assert.equal(await useThenIdle(), 2, "tried again, still behind")
+  assert.equal(await useThenIdle(), 2, "and left alone for another day")
+  f.state.behind = false
+  t.mock.timers.setTime(Date.now() + DAY_MS)
+  assert.equal(await useThenIdle(), 3, "moved to the newer image")
+  assert.deepEqual(f.vm(3)?.imported, ["workspace: workspace from the old computer", "profile: profile from the old computer"])
+  assert.equal(await useThenIdle(), 3, "where it stays")
+})
+
+test("a new runner image is tried at once on a computer left on an older one", async t => {
+  const f = upgradeFixture({ helper: "current", protocol: DESKTOP_PROTOCOL })
+  f.state.behind = true
+  t.after(() => f.computers.delete("redeployed"))
+  t.mock.method(console, "log", () => {})
+  await f.computers.desktopRun("redeployed", browse)
+  await paused(f)
+  const files = f.vm(1)!.files
+  const note = [...files].find(([, bytes]) => /^[a-f0-9]{64} \d+$/.test(new TextDecoder().decode(bytes)))
+  assert.ok(note, "the replacement holds a note of what it was made for")
+  files.set(note[0], new TextEncoder().encode(new TextDecoder().decode(note[1]).replace(/^[a-f0-9]{64}/, "d".repeat(64))))
+  await f.computers.desktopRun("redeployed", browse)
+  await paused(f)
+  assert.equal(f.base.fake.count("destroy"), 2)
+})
+
+test("an outdated computer a replacement can't help says so at once, and moves soon after the provider catches up", async t => {
+  t.mock.timers.enable({ apis: ["Date"], now: Date.now() })
+  const f = upgradeFixture({ helper: "current", protocol: DESKTOP_PROTOCOL + 1 })
+  f.state.behind = true
+  t.after(() => f.computers.delete("stuck"))
+  t.mock.method(console, "log", () => {})
+  const hasCode = (code: string) => (error: unknown) => error instanceof DesktopError && error.desktopCode === code
+  await assert.rejects(f.computers.desktopRun("stuck", browse), hasCode("desktop_outdated"))
+  await assert.rejects(f.computers.desktopRun("stuck", browse), hasCode("desktop_outdated"))
+  assert.equal(f.base.fake.count("destroy"), 1, "one replacement, not one per request")
+  // Workbot rebuilds a computer it hears is outdated, so running work still hears that it is updating.
+  f.state.jobs = 1
+  await assert.rejects(f.computers.desktopRun("stuck", browse), hasCode("desktop_updating"))
+  f.state.jobs = 0
+  // Someone is waiting on this one, so a rebuilt template reaches them in minutes, not a day.
+  f.state.behind = false
+  t.mock.timers.setTime(Date.now() + 10 * 60_000)
+  assert.equal((await f.computers.desktopRun("stuck", browse)).isError, false)
+  assert.equal(f.base.fake.count("destroy"), 2)
 })

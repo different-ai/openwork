@@ -23,6 +23,8 @@ export type AggregateThought = {
   afterIndex: number
   text: string
   isStreaming: boolean
+  /** How long the model thought, when the engine reported both ends. */
+  durationMs?: number | null
 }
 
 /**

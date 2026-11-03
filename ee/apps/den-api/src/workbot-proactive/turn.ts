@@ -15,8 +15,9 @@ import {
  *   Workbot chat and never `memoryOf` it: what the agent reads stays in its own transcript and `memory/` notes.
  *   Only the text Den actually delivers leaves it.
  * - Standard runner tools only (its scratch files, so `memory/` notes persist across passes) plus Connect tools
- *   with a read-scoped MCP token (`mcp:read`): it can search Gmail and list Calendar events, and can't send, edit
- *   or accept anything. Not `credentials.readOnly`, which would also take away its file tools.
+ *   with a read-scoped MCP token (`mcp:read`) that carries its sources as an allowlist (agent-read-sources.ts): it
+ *   reads the member's calendar, email, team chat and other sources that are on, and can't send, edit or accept
+ *   anything. Not `credentials.readOnly`, which would also take away its file tools.
  * - Silence by default: the answer is parsed with the shared `NO_REPLY` rule; anything unexpected is silence too.
  */
 
@@ -55,7 +56,7 @@ export function agentMessageId(memberId: string, wakeAt: number) {
 }
 
 export async function runAgentTurn(
-  input: { actor: HeadlessRunnerActor; sessionId: string; instructions: string; model: string; prompt: string; messageId: string },
+  input: { actor: HeadlessRunnerActor; sessionId: string; instructions: string; model: string; prompt: string; messageId: string; scopes?: readonly string[] },
   deps: AgentTurnDeps,
 ): Promise<AgentTurnResult> {
   const client = deps.client
@@ -67,7 +68,7 @@ export async function runAgentTurn(
     .catch(() => null)
   if (!session?.ok) return { kind: "unavailable", code: session?.error ?? "runner_unreachable" }
   const send = () => client
-    .sendTurn(input.actor, { sessionId: input.sessionId, messageId: input.messageId, prompt: input.prompt, model: input.model, mcpReadOnly: true, ttlMs: TOKEN_TTL_MS, execution: "steps" })
+    .sendTurn(input.actor, { sessionId: input.sessionId, messageId: input.messageId, prompt: input.prompt, model: input.model, mcpReadOnly: true, ...(input.scopes?.length ? { mcpScopes: input.scopes } : {}), ttlMs: TOKEN_TTL_MS, execution: "steps" })
     .catch(() => null)
   const sent = await send()
   if (!sent?.ok) return { kind: "unavailable", code: sent?.error ?? "runner_unreachable" }

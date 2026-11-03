@@ -22,7 +22,8 @@ const errorSchema = z.object({ error: z.string(), message: z.string() })
 type Context = Parameters<MiddlewareHandler<{ Variables: OrgRouteVariables }>>[0]
 export type MicrosoftDocumentsAccess =
   /** `otherDrives`: whether other people's drives and SharePoint are reachable, to read and to save. */
-  | { ok: true; accessToken: string; canWrite: boolean; otherDrives: { read: boolean; write: boolean } }
+  /** graphBaseUrl: set only for a sandbox's sample Microsoft 365 (its workplace's Graph instead of Microsoft's). */
+  | { ok: true; accessToken: string; graphBaseUrl?: string; canWrite: boolean; otherDrives: { read: boolean; write: boolean } }
   | { ok: false; reply: Response }
 type Granted = Extract<MicrosoftDocumentsAccess, { ok: true }>
 
@@ -43,8 +44,10 @@ async function boundedBytes(response: Response): Promise<Uint8Array> {
 
 export function registerMicrosoftDocumentRoutes<T extends { Variables: OrgRouteVariables }>(routeApp: Hono<T>, options: MicrosoftDocumentsOptions) {
   const app = new Hono<{ Variables: OrgRouteVariables }>()
-  const graphRoot = new URL(options.graphBaseUrl.replace(/\/+$/, "") + "/")
-  const graphUrl = (path: string) => new URL(path.replace(/^\/+/, ""), graphRoot)
+  const rootOf = (base: string) => new URL(base.replace(/\/+$/, "") + "/")
+  const defaultGraphRoot = rootOf(options.graphBaseUrl)
+  const graphRootFor = (access: Granted) => access.graphBaseUrl ? rootOf(access.graphBaseUrl) : defaultGraphRoot
+  const graphUrl = (access: Granted, path: string) => new URL(path.replace(/^\/+/, ""), graphRootFor(access))
   const guard: MiddlewareHandler<{ Variables: OrgRouteVariables }> = async (c, next) => {
     const context = c.get("organizationContext")
     if (!context?.features.workbotDocuments) return c.json({ error: "feature_disabled", message: "Documents is off for this workspace." }, 403)
@@ -76,9 +79,9 @@ export function registerMicrosoftDocumentRoutes<T extends { Variables: OrgRouteV
     return { ok: false, reply: c.json({ error: "microsoft_graph_error", message: `Microsoft 365 returned HTTP ${response.status}.${detail}` }, 502) } as const
   }
   /** The member's own drive, for connections limited to it. */
-  const ownDrive = async (c: Context, accessToken: string) => {
-    const url = graphUrl("me/drive"); url.searchParams.set("$select", "id")
-    const result = await graph(c, accessToken, url); if (!result.ok) return result
+  const ownDrive = async (c: Context, access: Granted) => {
+    const url = graphUrl(access, "me/drive"); url.searchParams.set("$select", "id")
+    const result = await graph(c, access.accessToken, url); if (!result.ok) return result
     const drive = z.object({ id: z.string() }).safeParse(await result.response.json().catch(() => null))
     if (!drive.success) return { ok: false, reply: c.json({ error: "microsoft_graph_error", message: "Microsoft 365 did not report your OneDrive." }, 502) } as const
     return { ok: true, id: drive.data.id } as const
@@ -86,7 +89,7 @@ export function registerMicrosoftDocumentRoutes<T extends { Variables: OrgRouteV
   /** Like the file routes, other drives and SharePoint need the all-files permission: read-all to read, full access to save. */
   const reachable = async (c: Context, access: Granted, driveId: string, write: boolean) => {
     if (write ? access.otherDrives.write : access.otherDrives.read) return { ok: true } as const
-    const own = await ownDrive(c, access.accessToken); if (!own.ok) return own
+    const own = await ownDrive(c, access); if (!own.ok) return own
     return own.id === driveId ? { ok: true } as const : { ok: false, reply: c.json({ error: "needs_connection", message: new MicrosoftGraphScopeError().message }, 409) } as const
   }
   const item = async (c: Context, access: Granted, fileId: string, write = false) => {
@@ -94,20 +97,20 @@ export function registerMicrosoftDocumentRoutes<T extends { Variables: OrgRouteV
     if (!ids) return { ok: false, reply: failure(c, "This is not a OneDrive file.") } as const
     const allowed = await reachable(c, access, ids.driveId, write); if (!allowed.ok) return allowed
     const path = `drives/${encodeURIComponent(ids.driveId)}/items/${encodeURIComponent(ids.itemId)}`
-    const url = graphUrl(path); url.searchParams.set("$select", FIELDS)
+    const url = graphUrl(access, path); url.searchParams.set("$select", FIELDS)
     const result = await graph(c, access.accessToken, url); if (!result.ok) return result
     const parsed = graphItemSchema.safeParse(await result.response.json().catch(() => null))
     if (!parsed.success || parsed.data.folder || !parsed.data.file) return { ok: false, reply: failure(c, "This OneDrive item is not a file.") } as const
     return { ok: true, ids, path, file: parsed.data, mimeType: parsed.data.file.mimeType ?? "application/octet-stream", revision: parsed.data.eTag ?? "" } as const
   }
-  const download = async (c: Context, accessToken: string, path: string) => {
-    const result = await graph(c, accessToken, graphUrl(`${path}/content`)); if (!result.ok) return result
+  const download = async (c: Context, access: Granted, path: string) => {
+    const result = await graph(c, access.accessToken, graphUrl(access, `${path}/content`)); if (!result.ok) return result
     return { ok: true, bytes: await boundedBytes(result.response) } as const
   }
 
   /** For edits: a refused download ends the save with Graph's own reply. */
-  const downloadOrThrow = async (c: Context, accessToken: string, path: string) => {
-    const source = await download(c, accessToken, path)
+  const downloadOrThrow = async (c: Context, access: Granted, path: string) => {
+    const source = await download(c, access, path)
     if (!source.ok) throw source.reply
     return source.bytes
   }
@@ -126,22 +129,22 @@ export function registerMicrosoftDocumentRoutes<T extends { Variables: OrgRouteV
       // Continue only Microsoft's own next page link, never an arbitrary address.
       let next: URL
       try { next = new URL(Buffer.from(input.cursor, "base64url").toString("utf8")) } catch { return failure(c, "This page link is invalid.") }
-      if (next.origin !== graphRoot.origin || !next.pathname.startsWith(graphRoot.pathname)) return failure(c, "This page link is invalid.")
+      if (next.origin !== graphRootFor(access).origin || !next.pathname.startsWith(graphRootFor(access).pathname)) return failure(c, "This page link is invalid.")
       url = next
     } else if (input.query) {
-      url = graphUrl(`me/drive/root/search(q='${encodeURIComponent(input.query.replace(/'/g, "''"))}')`); url.searchParams.set("$top", String(PAGE_SIZE))
+      url = graphUrl(access, `me/drive/root/search(q='${encodeURIComponent(input.query.replace(/'/g, "''"))}')`); url.searchParams.set("$top", String(PAGE_SIZE))
     } else if (input.view === "recent") {
-      url = graphUrl("me/drive/recent"); url.searchParams.set("$top", String(PAGE_SIZE))
+      url = graphUrl(access, "me/drive/recent"); url.searchParams.set("$top", String(PAGE_SIZE))
     } else if (input.folderId === "shared") {
       if (!access.otherDrives.read) return c.json({ error: "needs_connection", message: new MicrosoftGraphScopeError().message }, 409)
-      url = graphUrl("me/drive/sharedWithMe")
+      url = graphUrl(access, "me/drive/sharedWithMe")
     } else if (input.folderId === "root") {
-      url = graphUrl("me/drive/root/children"); url.searchParams.set("$top", String(PAGE_SIZE)); url.searchParams.set("$select", FIELDS)
+      url = graphUrl(access, "me/drive/root/children"); url.searchParams.set("$top", String(PAGE_SIZE)); url.searchParams.set("$select", FIELDS)
     } else {
       const ids = decodeMicrosoftDocumentId(input.folderId)
       if (!ids) return failure(c, "This is not a OneDrive folder.")
       const allowed = await reachable(c, access, ids.driveId, false); if (!allowed.ok) return allowed.reply
-      url = graphUrl(`drives/${encodeURIComponent(ids.driveId)}/items/${encodeURIComponent(ids.itemId)}/children`); url.searchParams.set("$top", String(PAGE_SIZE)); url.searchParams.set("$select", FIELDS)
+      url = graphUrl(access, `drives/${encodeURIComponent(ids.driveId)}/items/${encodeURIComponent(ids.itemId)}/children`); url.searchParams.set("$top", String(PAGE_SIZE)); url.searchParams.set("$select", FIELDS)
     }
     const result = await graph(c, access.accessToken, url); if (!result.ok) return result.reply
     const listing = graphListingSchema.safeParse(await result.response.json().catch(() => null))
@@ -149,7 +152,7 @@ export function registerMicrosoftDocumentRoutes<T extends { Variables: OrgRouteV
     let files = listing.data.value.flatMap(raw => { const entry = microsoftDocumentItem(raw); return entry ? [entry] : [] })
     if (!access.otherDrives.read) {
       // Recent files and shortcuts can point into other drives this connection may not open.
-      const own = await ownDrive(c, access.accessToken); if (!own.ok) return own.reply
+      const own = await ownDrive(c, access); if (!own.ok) return own.reply
       files = files.filter(file => decodeMicrosoftDocumentId(file.id)?.driveId === own.id)
     }
     const next = listing.data["@odata.nextLink"]
@@ -178,7 +181,7 @@ export function registerMicrosoftDocumentRoutes<T extends { Variables: OrgRouteV
     c.header("cache-control", "no-store")
     try {
       if (meta.mimeType === XLSX || meta.mimeType === DOCX || meta.mimeType.startsWith("text/")) {
-        const source = await download(c, access.accessToken, meta.path); if (!source.ok) return source.reply
+        const source = await download(c, access, meta.path); if (!source.ok) return source.reply
         if (meta.mimeType === XLSX) return c.json({ ...common, ...await openExcel(source.bytes, input) })
         if (meta.mimeType === DOCX) return c.json({ ...common, ...await openWord(source.bytes) })
         return c.json({ ...common, kind: "text", text: new TextDecoder("utf-8", { fatal: true }).decode(source.bytes) })
@@ -198,12 +201,12 @@ export function registerMicrosoftDocumentRoutes<T extends { Variables: OrgRouteV
     c.header("cache-control", "no-store")
     try {
       let updated: Uint8Array
-      if (meta.mimeType === XLSX && save.kind === "spreadsheet") updated = await patchExcel(await downloadOrThrow(c, access.accessToken, meta.path), save)
-      else if (meta.mimeType === DOCX && save.kind === "document") updated = await patchWord(await downloadOrThrow(c, access.accessToken, meta.path), save)
+      if (meta.mimeType === XLSX && save.kind === "spreadsheet") updated = await patchExcel(await downloadOrThrow(c, access, meta.path), save)
+      else if (meta.mimeType === DOCX && save.kind === "document") updated = await patchWord(await downloadOrThrow(c, access, meta.path), save)
       else if (meta.mimeType.startsWith("text/") && save.kind === "text") updated = new TextEncoder().encode(save.text)
       else return failure(c, "This file type does not support these edits.")
       // If-Match makes OneDrive refuse the write when someone else saved in between.
-      const result = await graph(c, access.accessToken, graphUrl(`${meta.path}/content`), { method: "PUT", body: new Uint8Array(updated).buffer, headers: { "content-type": meta.mimeType, "if-match": meta.revision }, redirect: "error" })
+      const result = await graph(c, access.accessToken, graphUrl(access, `${meta.path}/content`), { method: "PUT", body: new Uint8Array(updated).buffer, headers: { "content-type": meta.mimeType, "if-match": meta.revision }, redirect: "error" })
       if (!result.ok) return result.reply
       const receipt = graphItemSchema.safeParse(await result.response.json().catch(() => null))
       if (!receipt.success || receipt.data.id !== meta.ids.itemId) return c.json({ error: "save_unconfirmed", message: "OneDrive did not confirm the save. Keep your edits and check OneDrive before trying again." }, 502)
@@ -220,7 +223,7 @@ export function registerMicrosoftDocumentRoutes<T extends { Variables: OrgRouteV
     const meta = await item(c, access, fileId); if (!meta.ok) return meta.reply
     if (!PREVIEWS.has(meta.mimeType)) return failure(c, "This file has no safe inline preview.")
     try {
-      const source = await download(c, access.accessToken, meta.path); if (!source.ok) return source.reply
+      const source = await download(c, access, meta.path); if (!source.ok) return source.reply
       return new Response(new Uint8Array(source.bytes).buffer, { headers: { "content-type": meta.mimeType, "cache-control": "no-store", "x-content-type-options": "nosniff", "content-security-policy": "default-src 'none'; sandbox" } })
     } catch { return failure(c, "This preview is too large.") }
   })

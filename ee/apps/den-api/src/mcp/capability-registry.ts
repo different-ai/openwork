@@ -29,6 +29,7 @@ import {
   buildNativeProviderToolTree,
   isCredentialBoundNativeOperation,
   type BuiltCodemodeTools,
+  type RequiredCapability,
 } from "./codemode-tools.js"
 import {
   codemodeScriptPath,
@@ -90,6 +91,7 @@ import {
   type CapabilityMatch,
   type SearchCapabilityType,
 } from "./search.js"
+import { ENGINE_LISTED_SOURCE_KINDS, unlistedCapabilityMatches } from "./engine-tool-view.js"
 import { externalToolContent } from "./tool-content.js"
 import { capabilityCallInput, capabilityToolMatch, type CapabilityToolMatch } from "./capability-tool.js"
 
@@ -129,6 +131,8 @@ export type CapabilityExecuteInput = {
   requireSchemaMatch?: boolean
   /** Refuse an external tool that its provider no longer marks read-only for this caller. */
   requireReadOnly?: boolean
+  /** Refuse an external tool that its provider now marks destructive for this caller. */
+  refuseDestructive?: boolean
   /** One object matching the search match's `inputSchema`; wins over path/query/body. */
   arguments?: unknown
   path?: unknown
@@ -147,10 +151,8 @@ export type CapabilityRegistryContext = {
   generatedArtifactViewsEnabled: boolean
   /** Managed deployment planning, launch preparation and status (managed deployments enabled). */
   managedDeploymentsEnabled: boolean
-  /** `remote-session:status`, rolled out with the desktop's remote sub-agents. */
-  remoteSessionStatusEnabled: boolean
-  /** `slack_send_as_bot` (feature `slackSendAsBot`); it also needs a member and the write scope. */
-  slackSendAsBotEnabled: boolean
+  /** remote-session:answer: the member's agent answers a task's question for the person, after asking them. */
+  remoteSessionAnswersAllowed: boolean
   resolvePlatformAdmin: () => Promise<boolean>
   resolveNamespaceContext: () => Promise<CodemodeConnectionNamespaceContext>
   /** Set only by MCP transports: direct service mutations are audited for this caller (src/audit/service-actions.ts). */
@@ -169,7 +171,7 @@ export type CapabilityRegistryContextInput = {
   redirectUriBase: string
   generatedArtifactViewsEnabled: boolean
   /** Effective features of the organization (see features.ts). */
-  organizationFeatures: Partial<Pick<FeatureMap, "remoteSessionSubagents" | "managedDeployments" | "slackSendAsBot" | "outlookAttachments">>
+  organizationFeatures: Partial<Pick<FeatureMap, "managedDeployments" | "outlookAttachments">>
   /** MCP transports pass the verified caller; route and Automation contexts omit it (their route records the request). */
   audit?: McpAuditPrincipal | null
   /**
@@ -208,8 +210,8 @@ export function createCapabilityRegistryContext(input: CapabilityRegistryContext
     redirectUriBase: input.redirectUriBase,
     generatedArtifactViewsEnabled: input.generatedArtifactViewsEnabled,
     managedDeploymentsEnabled: input.organizationFeatures.managedDeployments === true,
-    remoteSessionStatusEnabled: input.organizationFeatures.remoteSessionSubagents === true,
-    slackSendAsBotEnabled: input.organizationFeatures.slackSendAsBot === true,
+    // Only a chat with the person in it may answer: never an Automation, a Workflow run or an App.
+    remoteSessionAnswersAllowed: input.usageSource === "agent",
     resolvePlatformAdmin,
     resolveNamespaceContext,
     audit: input.audit ?? null,
@@ -249,15 +251,15 @@ export function workflowExecutionAudit(ctx: Pick<CapabilityRegistryContext, "aud
 }
 
 /**
- * Whether this caller may see and run slack_send_as_bot: the feature on, an active member, and a token that may
+ * Whether this caller may see and run slack_send_as_bot: an active member and a token that may
  * write. Read-only tokens (Your agent's background turns) never list it.
  */
-export function slackSendAsBotAvailable(ctx: Pick<CapabilityRegistryContext, "slackSendAsBotEnabled" | "member" | "principal">): boolean {
-  return ctx.slackSendAsBotEnabled && ctx.member !== null && ctx.principal.scopes.has(DEN_MCP_WRITE_SCOPE)
+export function slackSendAsBotAvailable(ctx: Pick<CapabilityRegistryContext, "member" | "principal">): boolean {
+  return ctx.member !== null && ctx.principal.scopes.has(DEN_MCP_WRITE_SCOPE)
 }
 
 const remoteSessionAuditActions: Partial<Record<RemoteSessionAction, AuditServiceActionName>> = {
-  create: "remote_session.create", send: "remote_session.send", stop: "remote_session.stop",
+  create: "remote_session.create", send: "remote_session.send", stop: "remote_session.stop", answer: "remote_session.answer",
 }
 
 function remoteSessionResourceId(body: unknown): string | null {
@@ -290,7 +292,7 @@ export type CapabilitySource = {
   kind: CapabilitySourceKind
   parseName: (name: string) => ParsedCapability | null
   search: (ctx: CapabilitySearchContext, query: string, limit: number) => Promise<CapabilityMatch[]>
-  enumerate: (ctx: CapabilityRegistryContext) => Promise<CapabilityLeaf[]> | CapabilitySourceExclusion
+  enumerate: (ctx: CapabilityRegistryContext, required?: readonly RequiredCapability[]) => Promise<CapabilityLeaf[]> | CapabilitySourceExclusion
   execute: (ctx: CapabilityRegistryContext, parsed: ParsedCapability, input: CapabilityExecuteInput) => Promise<ExecuteCapabilityToolResult>
 }
 
@@ -490,7 +492,7 @@ async function executeMarketplaceSource(
 ): Promise<MarketplaceCapabilityExecuteResult> {
   return executeMarketplaceCapability({
     // Only a Workflow builds tools: what its script calls is Workflow use.
-    buildTools: () => buildCapabilityToolTree(workflowUsageContext(ctx)),
+    buildTools: (required) => buildCapabilityToolTree(workflowUsageContext(ctx), required),
     organizationId: ctx.organizationId,
     member: ctx.member,
     pluginId: parsed.pluginId,
@@ -567,6 +569,7 @@ const nativeSource: CapabilitySource = {
       catalog: ctx.catalog,
       limit,
       namespaceContext: await ctx.resolveNamespaceContext(),
+      scopes: ctx.principal.scopes,
     })
   },
   enumerate: async (ctx) => leavesFromBuilt(await buildNativeProviderToolTree({
@@ -608,15 +611,17 @@ const externalMcpSource: CapabilitySource = {
       limit,
       namespaceContext: await ctx.resolveNamespaceContext(),
       reportCoverage: (coverage) => ctx.reportExternalCoverage(externalMcpSearchCoverageHint(coverage)),
+      scopes: ctx.principal.scopes,
     })
   },
-  enumerate: async (ctx) => {
+  enumerate: async (ctx, required) => {
     return leavesFromBuilt(await buildExternalMcpToolTree({
       organizationId: ctx.organizationId,
       member: ctx.member,
       scopes: ctx.principal.scopes,
       redirectUriBase: ctx.redirectUriBase,
       namespaceContext: await ctx.resolveNamespaceContext(),
+      required,
       usageSource: ctx.usageSource,
     }))
   },
@@ -653,6 +658,7 @@ const externalMcpSource: CapabilitySource = {
       schemaDigest: input.schemaDigest,
       ...(input.requireSchemaMatch ? { requireSchemaMatch: true } : {}),
       ...(input.requireReadOnly ? { requireReadOnly: true } : {}),
+      ...(input.refuseDestructive ? { refuseDestructive: true } : {}),
       redirectUriBase: ctx.redirectUriBase,
       usageSource: ctx.usageSource,
     })
@@ -763,7 +769,7 @@ const remoteSessionSource: CapabilitySource = {
   },
   search: async (ctx, query, limit) => {
     if (!ctx.sourceFilter.api || !ctx.member) return []
-    return searchRemoteSessionCapabilities(query, limit, { status: ctx.remoteSessionStatusEnabled })
+    return searchRemoteSessionCapabilities(query, limit, { answer: ctx.remoteSessionAnswersAllowed })
   },
   // Deliberately absent from the confined-script tool tree in v1: remote
   // sessions are long-lived side effects that agents should drive through
@@ -771,7 +777,7 @@ const remoteSessionSource: CapabilitySource = {
   enumerate: () => Promise.resolve([]),
   execute: async (ctx, parsed, input) => {
     if (!parsedForKind(parsed, "remoteSession")) return unknownCapabilityResult(input.name)
-    if (parsed.action === "status" && !ctx.remoteSessionStatusEnabled) return unknownCapabilityResult(input.name)
+    if (parsed.action === "answer" && !ctx.remoteSessionAnswersAllowed) return unknownCapabilityResult(input.name)
     if (!ctx.member) {
       return capabilityErrorResult({
         error: "membership_required",
@@ -808,11 +814,11 @@ const slackSendAsBotSource: CapabilitySource = {
   // Not in Code Mode scripts in v1: each message is one explicit call the person can see.
   enumerate: () => Promise.resolve([]),
   execute: async (ctx, parsed, input) => {
-    if (!parsedForKind(parsed, "slackSendAsBot") || !ctx.slackSendAsBotEnabled) return unknownCapabilityResult(input.name)
+    if (!parsedForKind(parsed, "slackSendAsBot")) return unknownCapabilityResult(input.name)
     const run = () => executeSlackSendAsBot({
       organizationId: ctx.organizationId,
       userId: ctx.principal.userId,
-      member: ctx.member !== null,
+      memberId: ctx.member?.orgMembershipId ?? null,
       hasWriteScope: ctx.principal.scopes.has(DEN_MCP_WRITE_SCOPE),
       body: input.body,
     })
@@ -884,7 +890,13 @@ export function createCapabilityRegistry(sources: Record<CapabilitySourceKind, C
   return {
     search: async (
       ctx: CapabilityRegistryContext,
-      input: { query: string; limit: number; type?: SearchCapabilityType },
+      input: {
+        query: string
+        limit: number
+        type?: SearchCapabilityType
+        /** Only what has no tool of its own in the full view (engine-tool-view.ts). */
+        unlistedOnly?: boolean
+      },
     ): Promise<{ matches: CapabilityMatch[]; externalCoverageHint?: string }> => {
       let externalCoverageHint: string | undefined
       const sourceFilter = searchCapabilitySourceFilter(input.type)
@@ -896,10 +908,13 @@ export function createCapabilityRegistry(sources: Record<CapabilitySourceKind, C
           externalCoverageHint = hint
         },
       }
-      const sourceMatches = await Promise.all(CAPABILITY_SOURCE_KINDS.map((kind) => (
+      const kinds = input.unlistedOnly
+        ? CAPABILITY_SOURCE_KINDS.filter((kind) => !ENGINE_LISTED_SOURCE_KINDS.has(kind))
+        : CAPABILITY_SOURCE_KINDS
+      const sourceMatches = (await Promise.all(kinds.map((kind) => (
         sources[kind].search(searchContext, input.query, input.limit)
-      )))
-      const matches = sourceMatches.flat()
+      )))).flat()
+      const matches = (input.unlistedOnly ? unlistedCapabilityMatches(sourceMatches) : sourceMatches)
         .sort(compareCapabilityMatches)
         .slice(0, input.limit)
       return {
@@ -923,9 +938,9 @@ export function createCapabilityRegistry(sources: Record<CapabilitySourceKind, C
       }
       return unknownCapabilityResult(input.name)
     },
-    buildToolTree: async (ctx: CapabilityRegistryContext): Promise<BuiltCodemodeTools> => {
+    buildToolTree: async (ctx: CapabilityRegistryContext, required?: readonly RequiredCapability[]): Promise<BuiltCodemodeTools> => {
       const enumerated = await Promise.all(SCRIPT_SOURCE_KINDS.map(async (kind) => {
-        const result = await sources[kind].enumerate(ctx)
+        const result = await sources[kind].enumerate(ctx, required)
         return "excluded" in result ? [] : result
       }))
       const leaves = enumerated.flat()

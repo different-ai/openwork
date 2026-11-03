@@ -5,11 +5,14 @@ import { access, chmod, mkdir, readdir, readFile, rename, rm, stat, statfs, writ
 import { homedir } from "node:os";
 import { dirname, isAbsolute, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { createInterface } from "node:readline";
+import { resolveServerLogFileSink, redactServerLogFileRecord } from "./server-log-file.js";
+import { isolatedOpencodeV1Database } from "./managed-opencode.js";
 import { importNodeSqlite } from "./runtime-db.js";
 import {
   createManagedOpencodeV2Server, type ManagedOpencodeV2Server,
 } from "./managed-opencode-v2.js";
-import { attachHistory, copyHistoryBatches, externalizeHistory, openHistoryDatabase, restoreHistoryPayloads } from "./opencode-v2-history-store.js";
+import { attachHistory, copyHistoryBatches, externalizeHistory, numberField, openHistoryDatabase, restoreHistoryPayloads } from "./opencode-v2-history-store.js";
 import { acquireHistoryCopyLock, historyCopyFenced, rollbackPartialHistoryCopy } from "./opencode-v2-history-lock.js";
 
 export interface EngineV2MigrationStatus {
@@ -17,10 +20,11 @@ export interface EngineV2MigrationStatus {
   /**
    * While running: `starting` until the history snapshot is counted,
    * `converting` while the engine converts it (counts do not move), then
-   * `copying` as chats are imported. Lets clients show indeterminate progress
-   * instead of a stalled "0 of N".
+   * `restoring` with message counts, then `copying` as chats are imported.
    */
-  phase?: "starting" | "converting" | "copying";
+  phase?: "starting" | "converting" | "restoring" | "copying";
+  restored?: number;
+  restoreTotal?: number;
   imported: number;
   skipped: number;
   total: number;
@@ -115,6 +119,9 @@ export async function backupV2Database(options: { database: string; directory: s
 export function opencodeV1DatabasePath(env: NodeJS.ProcessEnv = process.env): string {
   if (env.OPENCODE_DB === ":memory:") throw new Error("In-memory OpenCode history cannot be migrated.");
   if (env.OPENCODE_DB?.trim()) return resolve(env.OPENCODE_DB);
+  // Engine v1 moved off a shared database a standalone OpenCode v2 owns.
+  const isolated = isolatedOpencodeV1Database();
+  if (isolated) return isolated;
   return join(env.XDG_DATA_HOME || join(env.HOME || homedir(), ".local", "share"), "opencode", "opencode.db");
 }
 
@@ -214,6 +221,24 @@ export async function hasV1Chat(database: string, id: string): Promise<boolean> 
   }
 }
 
+/** The folder v1 recorded for the top-level chat `id`; null when v1 has no such
+ * chat, it is delegated, or the database is missing or unreadable. */
+export async function v1ChatDirectory(database: string, id: string): Promise<string | null> {
+  try {
+    await access(database);
+    const db = typeof process.versions.bun === "string"
+      ? new (await import("bun:sqlite")).Database(database, { readonly: true })
+      : new (await importNodeSqlite()).DatabaseSync(database, { readOnly: true });
+    try {
+      const row: unknown = db.prepare("SELECT directory, parent_id FROM session WHERE id = ?").get(id);
+      return isRecord(row) && row.parent_id === null && typeof row.directory === "string" && isAbsolute(row.directory)
+        ? row.directory : null;
+    } finally { db.close(); }
+  } catch {
+    return null;
+  }
+}
+
 export interface MigrationRequest {
   source: string;
   storageDir: string;
@@ -301,12 +326,16 @@ async function remainingCopyBytes(request: Pick<MigrationRequest, "source" | "st
     const source = await databaseSize(request.source);
     return source * (SNAPSHOT_COPIES + ONE_WAL_MULTIPLIER + TARGET_GROWTH_MULTIPLIER) + target;
   }
-  const converted = await databaseSize(paths.converted);
-  if (saved.phase === "copying") {
-    // Snapshot and conversion are done; remaining: finish target growth + target-wal + backup (if not yet taken).
-    return converted * (TARGET_GROWTH_MULTIPLIER + ONE_WAL_MULTIPLIER) + (saved.backupPath ? 0 : target);
+  if (saved.phase === "restoring" || saved.phase === "copying") {
+    if (!saved.sourceKey) throw new Error("The saved history source is missing its fingerprint.");
+    // Once the projected schema exists, count only the rows still ahead, not
+    // the staging files' allocated pages. Do this before stopping any engine.
+    return remainingProjectedCopyBytes(paths.original, paths.converted, request.targetDatabase,
+      saved.phase === "restoring", !saved.backupPath, saved.sourceKey);
   }
-  // externalizing / converting / restoring: snapshot is on disk; remaining: finish conversion WAL, target growth, target-wal, backup.
+  const converted = await databaseSize(paths.converted);
+  // externalizing / converting: the projected schema may not exist yet.
+  // Both snapshots are on disk; allow conversion/copy WAL, target growth and backup.
   return converted * (TARGET_GROWTH_MULTIPLIER + ONE_WAL_MULTIPLIER) + target;
 }
 
@@ -346,6 +375,47 @@ export async function releaseInterruptedHistoryCopy(options: { targetDatabase: s
   } finally { await ownership.release(); }
 }
 
+/** Estimate only the stages still ahead. Raw archives and projections can be
+ * much smaller than a v1 file's allocated pages; do not charge five fresh copies
+ * for a resume that has already snapshotted and converted. Values stay in SQL. */
+async function remainingProjectedCopyBytes(original: string, converted: string, target: string, restoring: boolean, backup: boolean, sourceKey: string): Promise<number> {
+  // Preflight also runs while the user's engine is serving. Open only a private
+  // in-memory connection and read-only attachments: a refusal must not create
+  // a missing target or write to either staging database.
+  const db = await openHistoryDatabase(":memory:");
+  try {
+    attachHistory(db, original, "original");
+    attachHistory(db, converted, "converted");
+    if (await fileSize(target)) attachHistory(db, target, "destination");
+    else db.exec("ATTACH DATABASE ':memory:' AS destination");
+    let archive = 0;
+    for (const table of ["message", "part"]) {
+      const archived = db.prepare("SELECT 1 FROM destination.sqlite_master WHERE type = 'table' AND name = ?").get(`openwork_v1_${table}`);
+      archive += numberField(db.prepare(`SELECT coalesce(sum(length(CAST(s.data AS BLOB))), 0) AS n FROM original.${table} s
+        ${archived ? `WHERE NOT EXISTS (SELECT 1 FROM destination.openwork_v1_${table} t WHERE t.source_key = ? AND t.id = s.id AND t.data = s.data)` : ""}`)
+        .get(...(archived ? [sourceKey] : [])), "n");
+    }
+    const projected = db.prepare("SELECT 1 FROM destination.sqlite_master WHERE type = 'table' AND name = 'session_message'").get();
+    const projection = numberField(db.prepare(`SELECT coalesce(sum(length(CAST(data AS BLOB))), 0) AS n FROM converted.session_message
+      ${projected ? `WHERE session_id IN (SELECT DISTINCT s.session_id FROM converted.session_message s
+        WHERE NOT EXISTS (SELECT 1 FROM destination.session_message t WHERE t.id = s.id))` : ""}`).get(), "n");
+    const payload = restoring ? numberField(db.prepare("SELECT coalesce(sum(length(CAST(json_quote(value) AS BLOB))), 0) AS n FROM converted.openwork_payload").get(), "n") : 0;
+    // Payloads can grow both the staging projection and its target copy. Count
+    // all of them conservatively; neither archived raw rows nor a saved backup
+    // need to be allocated again on a copying-stage resume.
+    return archive + projection + payload * 2 + (backup ? await databaseSize(target) : 0);
+  } finally { db.close(); }
+}
+
+function historyLog(event: string, attributes: Record<string, string | number | undefined>): void {
+  const record = { severityText: "INFO", body: `History copy ${event}`, attributes: { ...attributes, "process.pid": process.pid }, time: new Date().toISOString() };
+  const line = JSON.stringify(record);
+  // Workers are piped to the supervisor's file sink, not its (possibly /dev/null)
+  // inherited stdout. In-process servers use that same sink directly.
+  if (!process.send) resolveServerLogFileSink()?.write(line);
+  console.log(line);
+}
+
 /** The transfer is entirely SQLite-to-SQLite. Large strings never enter a JS
  * chat object; reversible references bound the native converter's payloads.
  * Stage files survive errors and process death, and target batches checkpoint
@@ -365,8 +435,6 @@ export async function migrateOpencodeV1History(options: MigrationRequest & {
 }): Promise<void> {
   await mkdir(options.storageDir, { recursive: true, mode: 0o700 });
   const directory = join(options.storageDir, "history-copy");
-  await mkdir(directory, { recursive: true, mode: 0o700 });
-  await chmod(directory, 0o700);
   const path = join(directory, "checkpoint.json");
   const original = join(directory, "source.db");
   const convertedDirectory = join(directory, "converted");
@@ -382,6 +450,7 @@ export async function migrateOpencodeV1History(options: MigrationRequest & {
     await preflightHistoryCopy(options);
     ownership = await acquireHistoryCopyLock(options.targetDatabase, { stopOrphanEngines: true });
     await mkdir(directory, { recursive: true, mode: 0o700 });
+    await chmod(directory, 0o700);
     let saved = await checkpointAt(path);
     if (saved && (saved.source !== resolve(options.source) || saved.target !== resolve(options.targetDatabase))) {
       throw new Error("The saved history copy belongs to another profile. Its files were preserved.");
@@ -395,7 +464,22 @@ export async function migrateOpencodeV1History(options: MigrationRequest & {
     const checkpoint: Checkpoint = saved ?? { source: resolve(options.source), target: resolve(options.targetDatabase), phase: "snapshot", snapshotStartedAt: Date.now() };
     status.resumed = saved !== undefined;
     status.startedAt = new Date(checkpoint.snapshotStartedAt).toISOString();
+    let stageStarted = Date.now();
+    let stageDone = 0;
+    let stageTotal = 0;
+    let lastLogged = stageStarted;
+    const logStage = (event: string) => {
+      const seconds = (Date.now() - stageStarted) / 1000;
+      historyLog(event, { stage: checkpoint.phase, done: stageDone, total: stageTotal, seconds, perSecond: seconds > 0 ? stageDone / seconds : 0 });
+    };
+    logStage("stage start");
     const commitStage = async (phase: Stage) => {
+      if (phase !== checkpoint.phase) {
+        logStage("stage end");
+        stageStarted = Date.now(); stageDone = 0; stageTotal = 0;
+        checkpoint.phase = phase;
+        logStage("stage start");
+      }
       checkpoint.phase = phase;
       await writeFile(`${path}.tmp`, JSON.stringify(checkpoint), { mode: 0o600 });
       await rename(`${path}.tmp`, path);
@@ -412,13 +496,18 @@ export async function migrateOpencodeV1History(options: MigrationRequest & {
       await clearStaleConversionMarker(converted);
       await commitStage("externalizing");
     }
+    if (!checkpoint.sourceKey) throw new Error("The saved history source is missing its fingerprint.");
     const sessions = await readMigrationSessions(original);
     if (await sourceDigest(original) !== checkpoint.sourceKey) throw new Error("The saved source changed. Its files and v2 history were preserved.");
     status.total = sessions.length;
+    stageTotal = sessions.length;
     report();
     if (checkpoint.phase === "externalizing") {
       const db = await openHistoryDatabase(converted);
-      try { attachHistory(db, original, "original"); await externalizeHistory(db, options.signal); }
+      try { attachHistory(db, original, "original"); await externalizeHistory(db, options.signal, (done, total) => {
+        stageDone = done; stageTotal = total;
+        if (Date.now() - lastLogged >= 5000) { logStage("progress"); lastLogged = Date.now(); }
+      }); }
       finally { db.close(); }
       await commitStage("converting");
     }
@@ -437,7 +526,7 @@ export async function migrateOpencodeV1History(options: MigrationRequest & {
         options.signal?.throwIfAborted();
         const result = await converter.fetchJson("/api/experimental/migration/v1");
         if (result.status !== 200 || !isRecord(result.json)) throw new Error("Could not verify the history conversion.");
-        if (result.json.status === "completed") break;
+        if (result.json.status === "completed") { stageDone = sessions.length; stageTotal = sessions.length; break; }
         if (result.json.status === "error") throw new Error("The history conversion stopped. Its checkpoint and the original history were preserved.");
         if (Date.now() > deadline) throw new Error("History conversion timed out. Retry to resume.");
         await new Promise(resolve => setTimeout(resolve, 250));
@@ -447,11 +536,21 @@ export async function migrateOpencodeV1History(options: MigrationRequest & {
       await commitStage("restoring");
     }
     if (checkpoint.phase === "restoring") {
+      status.phase = "restoring"; report();
       const db = await openHistoryDatabase(converted);
-      try { await restoreHistoryPayloads(db, options.signal); } finally { db.close(); }
+      let initialDone: number | undefined;
+      try { await restoreHistoryPayloads(db, options.signal, (done, total) => {
+        initialDone ??= done;
+        status.restored = done; status.restoreTotal = total;
+        stageDone = done - initialDone; stageTotal = total - initialDone;
+        report();
+        if (Date.now() - lastLogged >= 5000) { logStage("progress"); lastLogged = Date.now(); }
+      }); } finally { db.close(); }
       await commitStage("copying");
     }
-    status.phase = "copying"; report();
+    await ensureMigrationDiskSpace({ directory: options.storageDir, freeBytes: options.freeBytes,
+      neededBytes: await remainingProjectedCopyBytes(original, converted, options.targetDatabase, false, Boolean(options.backup && !checkpoint.backupPath), checkpoint.sourceKey) });
+    status.phase = "copying"; stageTotal = sessions.length; report();
     if (!checkpoint.sourceKey) throw new Error("The saved history source is missing its fingerprint.");
     if (options.backup && !checkpoint.backupPath) {
       checkpoint.backupPath = await backupV2Database(options.backup);
@@ -465,13 +564,17 @@ export async function migrateOpencodeV1History(options: MigrationRequest & {
     try {
       attachHistory(db, original, "original"); attachHistory(db, converted, "converted");
       const result = await copyHistoryBatches({ database: db, sourceKey: checkpoint.sourceKey, batch: options.batch, signal: options.signal,
-        progress: (_id, outcome) => { status[outcome]++; report(); } });
+        progress: (_id, outcome) => {
+          status[outcome]++; stageDone = status.imported + status.skipped; report();
+          if (Date.now() - lastLogged >= 5000) { logStage("progress"); lastLogged = Date.now(); }
+        } });
       status.imported = result.imported; status.skipped = result.skipped;
     } finally { db.close(); }
     await commitStage("completed");
     await ownership.complete();
     // Raw original rows are verified in the target before staging is retired.
     await rm(directory, { recursive: true });
+    logStage("stage end");
     status.state = "completed"; status.phase = undefined; report();
   } catch (error) {
     status.state = "error"; status.phase = undefined;
@@ -489,6 +592,7 @@ export async function migrateOpencodeV1History(options: MigrationRequest & {
         status.error = `${status.error} Unfinished chats could not be undone yet (${rollbackError instanceof Error ? rollbackError.message : "unknown error"}); OpenWork retries before opening them.`;
       }
     }
+    historyLog("failed", { imported: status.imported, skipped: status.skipped, restored: status.restored });
     report();
   } finally { try { await converter?.close(); } finally { await ownership?.release(); } }
 }
@@ -509,8 +613,16 @@ export async function runOpencodeV1HistoryMigration(options: MigrationRequest & 
   let last: EngineV2MigrationStatus = { state: "running", phase: "starting", imported: 0, skipped: 0, total: 0 };
   let converterPid: number | undefined;
   const child = spawn(process.execPath, [join(dirname(fileURLToPath(import.meta.url)), "opencode-v2-migration-process.js")], {
-    env: { ...process.env, ELECTRON_RUN_AS_NODE: "1" }, stdio: ["ignore", "inherit", "inherit", "ipc"], serialization: "json", windowsHide: true,
+    env: { ...process.env, ELECTRON_RUN_AS_NODE: "1" }, stdio: ["ignore", "pipe", "pipe", "ipc"], serialization: "json", windowsHide: true,
   });
+  for (const stream of [child.stdout, child.stderr]) {
+    if (!stream) continue;
+    createInterface({ input: stream }).on("line", line => {
+      const record = redactServerLogFileRecord({ body: line, attributes: { "process.pid": child.pid } }, []);
+      const sink = resolveServerLogFileSink();
+      if (sink) sink.write(JSON.stringify(record)); else console.log(JSON.stringify(record));
+    });
+  }
   child.on("message", (message: unknown) => {
     if (!isRecord(message)) return;
     if (message.type === "scratch" && isRecord(message.scratch)) {
@@ -525,7 +637,10 @@ export async function runOpencodeV1HistoryMigration(options: MigrationRequest & 
     if (value.state !== "idle" && value.state !== "running" && value.state !== "completed" && value.state !== "error") return;
     if (typeof value.imported !== "number" || typeof value.skipped !== "number" || typeof value.total !== "number") return;
     last = { state: value.state, imported: value.imported, skipped: value.skipped, total: value.total,
-      ...(value.phase === "starting" || value.phase === "converting" || value.phase === "copying" ? { phase: value.phase } : {}),
+      ...(value.phase === "starting" || value.phase === "converting" || value.phase === "restoring" || value.phase === "copying" ? { phase: value.phase } : {}),
+      ...(typeof value.restored === "number" ? { restored: value.restored } : {}),
+      ...(typeof value.restoreTotal === "number" ? { restoreTotal: value.restoreTotal } : {}),
+      ...(typeof value.startedAt === "string" ? { startedAt: value.startedAt } : {}),
       ...(typeof value.backupPath === "string" ? { backupPath: value.backupPath } : {}),
       ...(typeof value.error === "string" ? { error: value.error } : {}), ...(value.resumed === true ? { resumed: true } : {}) };
     progress(last);

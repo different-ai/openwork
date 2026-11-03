@@ -22,6 +22,7 @@ import { z } from "zod"
 import { deleteTeamAgentPermissionPolicy } from "../../agent-permissions.js"
 import { deleteTeamDefaultModel } from "../../default-model.js"
 import { deleteTeamPrompts } from "../../prompts.js"
+import { deleteTeamAutoRouterAccess } from "../../auto-router.js"
 import { db } from "../../db.js"
 import { invalidateTeamInferenceOAuth } from "../../llm/inference-provider-lifecycle.js"
 import { isScimManagedTeam } from "../../scim-groups.js"
@@ -450,6 +451,7 @@ async function deleteTeam(c: ResourceActionContext, payload: ResourceOrganizatio
     await deleteTeamAgentPermissionPolicy(tx, team.id)
     await deleteTeamDefaultModel(tx, team.id)
     await deleteTeamPrompts(tx, team.id)
+    await deleteTeamAutoRouterAccess(tx, team.id)
     await tx.delete(ExternalMcpConnectionAccessGrantTable).where(eq(ExternalMcpConnectionAccessGrantTable.teamId, team.id))
     await tx.delete(LlmProviderAccessTable).where(eq(LlmProviderAccessTable.teamId, team.id))
     // Usage-limit assignments have no removed_at; unassigning deletes them. This
@@ -548,7 +550,8 @@ export function registerOrgTeamRoutes<T extends { Variables: OrgRouteVariables }
       }
       const { externalKey } = c.req.valid("param")
       const input = c.req.valid("json")
-      const [existing] = await db.select().from(TeamTable).where(and(
+      // primary: create-or-update by key must see a team written moments ago (re-applied configuration).
+      const [existing] = await db.$primary.select().from(TeamTable).where(and(
         eq(TeamTable.organizationId, payload.organization.id),
         eq(TeamTable.externalKey, externalKey),
       )).limit(1)
@@ -559,7 +562,7 @@ export function registerOrgTeamRoutes<T extends { Variables: OrgRouteVariables }
         if (!isDuplicateEntry(error)) throw error
         // A concurrent creator can win between lookup and insert. Retry against
         // its identity instead of creating a second resource.
-        const [winner] = await db.select().from(TeamTable).where(and(
+        const [winner] = await db.$primary.select().from(TeamTable).where(and(
         eq(TeamTable.organizationId, payload.organization.id),
         eq(TeamTable.externalKey, externalKey),
       )).limit(1)
@@ -582,7 +585,8 @@ export function registerOrgTeamRoutes<T extends { Variables: OrgRouteVariables }
     async (c) => {
       const payload = c.get("organizationContext")
       const { externalKey } = c.req.valid("param")
-      const [existing] = await db.select().from(TeamTable).where(and(
+      // primary: deleting a team created moments ago must not report it as already removed.
+      const [existing] = await db.$primary.select().from(TeamTable).where(and(
         eq(TeamTable.organizationId, payload.organization.id),
         eq(TeamTable.externalKey, externalKey),
       )).limit(1)

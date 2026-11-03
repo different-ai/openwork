@@ -3,8 +3,8 @@ name: Warden quick review
 # Fast, advisory security feedback on every push to a same-repository PR.
 # Re-reviews only the files whose own changes moved since the newest complete
 # Warden review of this PR (full or quick); findings for the other files carry
-# over. It never approves, posts no check of its own, and leaves clearance to
-# the full Warden review. See .warden/README.md.
+# over. It never approves or blocks PRs and posts no check of its own. The full
+# review is advisory too; no Warden job is a merge requirement. See .warden/README.md.
 on:
   pull_request:
     types: [opened, synchronize, reopened, ready_for_review]

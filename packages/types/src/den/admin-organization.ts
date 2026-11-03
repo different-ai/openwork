@@ -13,8 +13,8 @@ export const adminOrganizationDetailSchema = z.object({
     plan: organizationPlanStateSchema.optional(),
     /** Users split into joined members and unexpired pending invitations. Older Den APIs omit it. */
     people: z.object({ joined: count, invited: count }).optional(),
-    /** The organization's Team (seat) and Enterprise Stripe subscriptions, as last recorded. Older Den APIs omit it. */
-    subscriptions: z.object({ team: adminSubscriptionSummarySchema.nullable(), enterprise: adminSubscriptionSummarySchema.nullable() }).optional(),
+    /** The organization's Team (seat) Stripe subscription, as last recorded. Older Den APIs omit it. */
+    subscriptions: z.object({ team: adminSubscriptionSummarySchema.nullable() }).optional(),
     /** Complimentary OpenWork Web access and any paid OpenWork Web subscription. Older Den APIs omit it. */
     openworkWeb: z.object({
       complimentaryAccess: z.boolean(), hasAccess: z.boolean(), hasOngoingSubscription: z.boolean(), subscriptionStatus: z.string().nullable(),

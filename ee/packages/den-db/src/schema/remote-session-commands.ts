@@ -39,6 +39,10 @@ export const RemoteSessionCommandTable = mysqlTable(
     session_error_code: varchar("session_error_code", { length: 60 }),
     session_error_message: varchar("session_error_message", { length: 2000 }),
     session_message_count: int("session_message_count"),
+    /** The step the session ran last, as a short sentence; reported by newer runners only. */
+    session_latest_step: varchar("session_latest_step", { length: 240 }),
+    // The question or permission the session waits on, as the runner read it (remote_session_answer_v1 runners).
+    session_pending: json("session_pending").$type<Record<string, unknown>>(),
     session_observed_at: timestamp("session_observed_at", { fsp: 3 }),
     ...timestamps,
   },
@@ -70,7 +74,7 @@ export const RemoteSessionRequestTable = mysqlTable(
     session_id: varchar("session_id", { length: 240 }).notNull(),
     // The engine the session runs on, as last reported for the command.
     session_engine: mysqlEnum("session_engine", ["v1", "v2"]),
-    action: mysqlEnum("action", ["read", "send", "stop"]).notNull(),
+    action: mysqlEnum("action", ["read", "send", "stop", "answer"]).notNull(),
     input: json("input").$type<Record<string, unknown>>().notNull(),
     status: mysqlEnum("status", ["pending", "claimed", "done", "failed", "expired"]).notNull(),
     // Bounded to 256 KB by the runner completion schema.

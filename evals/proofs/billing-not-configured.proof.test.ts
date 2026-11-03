@@ -70,7 +70,7 @@ test("an owner on a deployment that sells nothing sees what isn't sold and the a
       results.push(`${JSON.stringify(attempt.body)} → ${result.status} ${String(field(result.body, "error"))}${field(result.body, "product") ? `/${String(field(result.body, "product"))}` : ""}`);
       expect(result.status).not.toBe(500);
       if (attempt.product) expect(result.body).toMatchObject({ error: "billing_not_configured", product: attempt.product });
-      else expect(result.body).toEqual({ error: "feature_disabled", feature: "selfServeEnterprise" });
+      else expect(result.status).toBe(400); // Enterprise is never sold by card.
     }
     evidence.recordAssertionEvidence(
       "No configuration path returns 500",

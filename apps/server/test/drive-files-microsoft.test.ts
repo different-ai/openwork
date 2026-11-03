@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
@@ -76,7 +76,7 @@ test("OneDrive and SharePoint links pull into the workspace through OpenWork Clo
   assert.equal(calls[0].url.searchParams.get("url"), LINK);
   const content = calls.find(({ url }) => url.pathname.endsWith("/content"))!;
   assert.deepEqual([content.url.searchParams.get("itemId"), content.url.searchParams.get("driveId"), content.headers.get("range")], ["item-1", "b!lib", `bytes=0-${CONTENT.length - 1}`]);
-  assert.deepEqual([workspace.approvals[0].provider, workspace.approvals[0].action], ["microsoft-365", "pull"]);
+  assert.deepEqual(workspace.approvals, [], "a new file under drive/ needs no confirmation");
 
   const status = await callDriveFileAction(workspace.config, "drive_file_status", {}, {}, dependencies) as Record<string, any>;
   assert.deepEqual([status.files[0].provider, status.files[0].driveId, status.files[0].local, status.files[0].drive], ["microsoft-365", "b!lib", "unchanged", "unchanged"]);
@@ -94,6 +94,49 @@ test("OneDrive and SharePoint links pull into the workspace through OpenWork Clo
 
   const again = await callDriveFileAction(workspace.config, "drive_push_file", { path: "drive/Plan.docx" }, {}, dependencies) as Record<string, any>;
   assert.equal(again.unchanged, true, "the link now records the saved version");
+});
+
+test("a pull asks only when it replaces a local copy or saves outside the drive folder", async () => {
+  await using workspace = await fixture();
+  let revision = ETAG;
+  const { dependencies } = cloud(({ url }) => url.pathname.endsWith("/drive-files") ? Response.json({ ok: true, file: file({ revision }), download: { format: null, mimeType: file().mimeType, extension: null, size: CONTENT.length, exported: false, maxBytes: 1024 } }) : undefined);
+  const pull = (args: Record<string, unknown>) => callDriveFileAction(workspace.config, "drive_pull_file", { fileId: LINK, ...args }, {}, dependencies);
+  const asked = () => workspace.approvals.splice(0).map(({ action }) => action);
+
+  await pull({ path: "drive/reports/Plan.docx" });
+  assert.deepEqual(asked(), [], "a folder the agent chose under drive/ counts");
+
+  revision = SAVED_ETAG;
+  await pull({ path: "drive/reports/Plan.docx" });
+  assert.deepEqual(asked(), [], "refreshing an unedited copy loses nothing");
+
+  await writeFile(join(workspace.root, "drive", "reports", "Plan.docx"), "local edits");
+  await pull({ path: "drive/reports/Plan.docx", overwrite: true });
+  assert.deepEqual(asked(), ["overwrite"]);
+
+  await pull({ path: ".opencode/plugins/Plan.docx" });
+  assert.deepEqual(asked(), ["pull"], "other folders can hold files the engine loads");
+
+  delete workspace.config.driveFileApproval;
+  await pull({ path: "drive/unattended/Plan.docx" });
+  await assert.rejects(pull({ path: "notes/Plan.docx" }), /must confirm this Drive transfer/);
+});
+
+test("a drive folder that links elsewhere still asks", async () => {
+  await using workspace = await fixture();
+  await mkdir(join(workspace.root, ".opencode"));
+  await symlink(join(workspace.root, ".opencode"), join(workspace.root, "drive"));
+  await callDriveFileAction(workspace.config, "drive_pull_file", { fileId: LINK }, {}, cloud().dependencies);
+  assert.deepEqual(workspace.approvals.map(({ action }) => action), ["pull"]);
+});
+
+test("a path outside the workspace says where to save instead, before asking", async () => {
+  await using workspace = await fixture();
+  await assert.rejects(
+    callDriveFileAction(workspace.config, "drive_pull_file", { fileId: LINK, path: join(tmpdir(), "Plan.docx") }, {}, cloud().dependencies),
+    (error: Error) => error.message.includes(workspace.root) && error.message.includes("Leave out path"),
+  );
+  assert.deepEqual(workspace.approvals, []);
 });
 
 test("a newer version in Microsoft 365 stops the save before any bytes are sent", async () => {

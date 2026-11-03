@@ -1,11 +1,18 @@
-// Auto (feature `autoRouter`): a desktop sends an OpenAI chat request with
-// model `openwork-auto`. The gateway asks Jev which of the organization's
-// routes and thinking levels fits the latest prompt, rewrites the request for
-// that model's protocol under the member's own Gateway alias, and hands it to
+// Smart Model Router (feature `autoRouter`): a desktop sends an OpenAI chat
+// request with model `openwork-smart-<router id>`. The gateway asks Jev to
+// score the latest prompt against the router's tasks, picks the model whose
+// tasks score highest in total at the thinking level Jev suggests, rewrites
+// the request for that model's protocol under the member's own Gateway alias,
+// and hands it to
 // the normal Gateway pipeline, which authorizes, meters and forwards it as if
 // the member had picked that model. Responses go back as Chat Completions.
+import { createHash } from "node:crypto"
 import { createGatewayModelAlias } from "@openwork-ee/utils/gateway-routing"
 import {
+  AUTO_ROUTER_THINKING_LABELS,
+  AUTO_ROUTER_THINKING_LEVELS,
+  type AutoRouterThinkingLevel,
+  autoRouterThinkingLevels,
   AUTO_ROUTER_RESPONSE_MODEL_HEADER,
   AUTO_ROUTER_RESPONSE_MODEL_NAME_HEADER,
   AUTO_ROUTER_RESPONSE_PROVIDER_HEADER,
@@ -26,8 +33,9 @@ import { googleTranslator } from "./google.js"
 import { openAiResponsesTranslator } from "./openai-responses.js"
 import { chatToolCallIds, type AutoTranslator, type TranslateResponseInput } from "./protocol.js"
 import type { ReasoningStore } from "./reasoning-store.js"
-import type { AutoRouterConfig, AutoRouterConfigRoute } from "./config.js"
-import { decideAutoRoute, type AutoCandidate } from "./decide.js"
+import type { AutoRouterConfigModel, LoadAutoRouterConfig } from "./config.js"
+import { decideAutoRoute, type AutoCandidate, type SharedTurnChoices } from "./decide.js"
+import type { AutoRouterConfig } from "./config.js"
 import type { AskJev } from "./jev.js"
 
 
@@ -41,18 +49,20 @@ export type AutoTarget = {
 }
 
 export type AutoRouterDependencies = {
-  loadConfig: (input: { organizationId: string }) => Promise<AutoRouterConfig | null>
+  loadConfig: LoadAutoRouterConfig
   loadMemberGatewayAccess: (identity: GatewayContext) => Promise<GatewayMemberAccessRow[]>
   catalog: ProviderCatalog
   askJev: AskJev
   reasoningStore: ReasoningStore
+  /** False when this gateway has no TypeSafe key: Auto is then off, as Den reports to admins. */
+  routingConfigured: boolean
   /** The normal Gateway pipeline for a rewritten request. */
   forward: (target: AutoTarget) => Promise<Response>
   onJevError?: (error: unknown) => void
 }
 
 type RoutedCandidate = AutoCandidate & {
-  route: AutoRouterConfigRoute
+  route: AutoRouterConfigModel
   row: GatewayMemberAccessRow
   family: ProtocolFamily
   translator: AutoTranslator
@@ -86,6 +96,10 @@ export function translatorFor(family: ProtocolFamily, npm: string | null): AutoT
   }
 }
 
+function isThinkingLevel(value: string): value is AutoRouterThinkingLevel {
+  return AUTO_ROUTER_THINKING_LEVELS.some((level) => level === value)
+}
+
 function accessPriority(row: GatewayMemberAccessRow) {
   return row.grant.org_membership_id !== null ? 3 : row.grant.team_id !== null ? 2 : 1
 }
@@ -104,10 +118,10 @@ function maxOutputTokens(row: GatewayMemberAccessRow) {
   return typeof limit === "number" && Number.isInteger(limit) && limit > 0 ? Math.min(limit, 128_000) : null
 }
 
-/** The routes this member can use right now, each tied to one of the member's access rows. */
+/** The router's models this member can use right now, each tied to one of the member's access rows. */
 export function autoCandidates(config: AutoRouterConfig, rows: GatewayMemberAccessRow[], catalog: ProviderCatalog): RoutedCandidate[] {
   const candidates: RoutedCandidate[] = []
-  config.routes.forEach((route, routeIndex) => {
+  config.models.forEach((route, modelIndex) => {
     const matches = rows
       .filter((row) => row.provider.id === route.providerId && row.model?.model_id === route.modelId && row.model.gateway_provider_id === row.provider.id)
       .sort((a, b) => accessPriority(b) - accessPriority(a) || a.grant.id.localeCompare(b.grant.id))
@@ -118,11 +132,11 @@ export function autoCandidates(config: AutoRouterConfig, rows: GatewayMemberAcce
     const translator = family ? translatorFor(family, catalogProvider?.npm ?? null) : null
     if (!family || !translator) return
     candidates.push({
-      routeIndex,
+      modelIndex,
       routeId: route.id,
       modelName: modelName(row),
-      prompt: route.prompt,
-      thinkingLevels: route.thinkingLevels,
+      tasks: route.tasks,
+      thinkingLevels: row.model ? autoRouterThinkingLevels(row.model.model_id, row.model.model_config) : ["default"],
       route,
       row,
       family,
@@ -155,6 +169,63 @@ export function withRouteHeaders(response: Response, route: AutoRouteInfo, body:
   return new Response(body, { status: response.status, statusText: response.statusText, headers })
 }
 
+/** The turn's chosen route in the shared reasoning store, keyed by a hash of the turn. */
+function sharedTurns(store: ReasoningStore, organizationId: string): SharedTurnChoices {
+  const key = (turnKey: string) => `turn:${createHash("sha256").update(turnKey).digest("base64url")}`
+  return {
+    async recall(turnKey) {
+      const id = key(turnKey)
+      const found = (await store.recall(organizationId, [id])).get(id)
+      const block = found?.kind === "turn" ? found.blocks[0] : undefined
+      const routeId = block?.routeId
+      const thinking = block?.thinking
+      if (typeof routeId !== "string") return null
+      return { routeId, thinking: typeof thinking === "string" && isThinkingLevel(thinking) ? thinking : "default" }
+    },
+    remember: (turnKey, choice) => store.remember(organizationId, [key(turnKey)], { kind: "turn", blocks: [{ routeId: choice.routeId, thinking: choice.thinking }] }),
+  }
+}
+
+/** "Smart chose Claude Opus 5.5 · Medium thinking", so every error names the model that was asked. */
+export function autoRouteNote(route: AutoRouteInfo) {
+  const name = route.name ?? route.model
+  return route.thinking === "default" ? `Smart chose ${name}.` : `Smart chose ${name} · ${AUTO_ROUTER_THINKING_LABELS[route.thinking]} thinking.`
+}
+
+export function annotateChatError(body: JsonObject, route: AutoRouteInfo): JsonObject {
+  if (!isJsonObject(body.error)) return body
+  const message = typeof body.error.message === "string" && body.error.message ? body.error.message : "The provider failed."
+  return { ...body, error: { ...body.error, message: `${message} (${autoRouteNote(route)})` }, openwork_route: route }
+}
+
+/** Appends the routed model to every error event of a Chat Completions SSE stream. */
+export function annotateChatStreamErrors(body: ReadableStream<Uint8Array>, route: AutoRouteInfo): ReadableStream<Uint8Array> {
+  const decoder = new TextDecoder()
+  const encoder = new TextEncoder()
+  let buffer = ""
+  const rewrite = (line: string) => {
+    if (!line.startsWith("data:") || !line.includes("\"error\"")) return line
+    try {
+      const parsed: unknown = JSON.parse(line.slice(5).trim())
+      return isJsonObject(parsed) && isJsonObject(parsed.error) ? `data: ${JSON.stringify(annotateChatError(parsed, route))}` : line
+    } catch {
+      return line
+    }
+  }
+  return body.pipeThrough(new TransformStream<Uint8Array, Uint8Array>({
+    transform(chunk, controller) {
+      buffer += decoder.decode(chunk, { stream: true })
+      const lines = buffer.split("\n")
+      buffer = lines.pop() ?? ""
+      if (lines.length) controller.enqueue(encoder.encode(`${lines.map(rewrite).join("\n")}\n`))
+    },
+    flush(controller) {
+      buffer += decoder.decode()
+      if (buffer) controller.enqueue(encoder.encode(rewrite(buffer)))
+    },
+  }))
+}
+
 async function readJson(response: Response): Promise<unknown> {
   return response.json().catch(() => null)
 }
@@ -164,16 +235,16 @@ async function translateResponse(response: Response, translator: AutoTranslator,
   const { route } = input
   if (!response.ok) {
     const body = isJsonContentType(contentType) ? await readJson(response) : (await response.body?.cancel().catch(() => {}), null)
-    return withRouteHeaders(response, route, JSON.stringify(translator.errorToChat(body, response.status)), "application/json")
+    return withRouteHeaders(response, route, JSON.stringify(annotateChatError(translator.errorToChat(body, response.status), route)), "application/json")
   }
   if (response.body && (isEventStreamContentType(contentType) || isAwsEventStreamContentType(contentType) || (input.stream && !isJsonContentType(contentType)))) {
-    return withRouteHeaders(response, route, translator.streamToChat(response.body, input), "text/event-stream; charset=utf-8")
+    return withRouteHeaders(response, route, annotateChatStreamErrors(translator.streamToChat(response.body, input), route), "text/event-stream; charset=utf-8")
   }
   if (isJsonContentType(contentType)) {
     const body = await readJson(response)
     // Google streams a JSON array without alt=sse; translators accept it as a body.
     if (input.stream && Array.isArray(body)) {
-      return withRouteHeaders(response, route, translator.streamToChat(new Response(`data: ${body.map((item) => JSON.stringify(item)).join("\n\ndata: ")}\n\n`).body ?? new ReadableStream(), input), "text/event-stream; charset=utf-8")
+      return withRouteHeaders(response, route, annotateChatStreamErrors(translator.streamToChat(new Response(`data: ${body.map((item) => JSON.stringify(item)).join("\n\ndata: ")}\n\n`).body ?? new ReadableStream(), input), route), "text/event-stream; charset=utf-8")
     }
     return withRouteHeaders(response, route, JSON.stringify(translator.jsonToChat(body, input)), "application/json")
   }
@@ -183,14 +254,21 @@ async function translateResponse(response: Response, translator: AutoTranslator,
 export async function handleAutoRequest(input: {
   request: Request
   body: JsonObject
+  /** From the model id, `openwork-smart-<router id>`. */
+  routerId: string
   identity: GatewayContext
   dependencies: AutoRouterDependencies
 }): Promise<Response> {
-  const { request, body, identity, dependencies } = input
-  const config = await dependencies.loadConfig({ organizationId: identity.organizationId })
-  if (!config) return autoError(404, "auto_router_unavailable", "Auto isn't set up for your organization. Choose another model.")
+  const { request, body, routerId, identity, dependencies } = input
+  if (!dependencies.routingConfigured) {
+    return autoError(404, "auto_router_not_configured", "Smart models aren't available yet: the AI Gateway is missing its routing key. Ask your administrator, or choose another model.")
+  }
+  const config = identity.orgMembershipId
+    ? await dependencies.loadConfig({ organizationId: identity.organizationId, routerId, memberId: identity.orgMembershipId })
+    : null
+  if (!config) return autoError(404, "auto_router_unavailable", "This Smart model isn't available to you anymore. Choose another model.")
   const candidates = autoCandidates(config, await dependencies.loadMemberGatewayAccess(identity), dependencies.catalog)
-  if (!candidates.length) return autoError(403, "auto_router_no_models", "None of Auto's models are available to you. Choose another model, or ask your administrator for access.")
+  if (!candidates.length) return autoError(403, "auto_router_no_models", "None of this Smart model's models are available to you. Choose another model, or ask your administrator for access.")
 
   const prompt = readAutoPrompt(body)
   const session = request.headers.get("x-opencode-session-id") ?? request.headers.get("x-openwork-session-id")
@@ -199,13 +277,14 @@ export async function handleAutoRequest(input: {
     prompt: prompt.prompt,
     context: prompt.context,
     continuation: prompt.continuation,
-    turnKey: `${identity.gatewayKeyId}:${session ?? ""}:${prompt.turnFingerprint}`,
+    turnKey: `${identity.gatewayKeyId}:${config.id}:${session ?? ""}:${prompt.turnFingerprint}`,
     askJev: dependencies.askJev,
     signal: request.signal,
     onJevError: dependencies.onJevError,
+    shared: sharedTurns(dependencies.reasoningStore, identity.organizationId),
   })
   const chosen = decision ? candidates.find((candidate) => candidate.routeId === decision.candidate.routeId) : undefined
-  if (!decision || !chosen?.row.model) return autoError(503, "auto_router_no_decision", "Auto couldn't choose a model. Try again, or choose a model yourself.")
+  if (!decision || !chosen?.row.model) return autoError(503, "auto_router_no_decision", "Smart couldn't choose a model. Try again, or choose a model yourself.")
 
   const alias = createGatewayModelAlias({ modelGroupId: chosen.row.group.id, credentialSetId: chosen.row.credentialSet.id, gatewayProviderModelId: chosen.row.model.id })
   const route: AutoRouteInfo = {
@@ -221,6 +300,7 @@ export async function handleAutoRequest(input: {
     model: alias,
     upstreamModel: chosen.row.model.model_id,
     thinkingLevel: decision.thinkingLevel,
+    thinkingLevels: chosen.thinkingLevels,
     maxOutputTokens: maxOutputTokens(chosen.row),
     reasoning,
   })

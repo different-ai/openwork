@@ -1,0 +1,121 @@
+name: Warden fixer
+
+# Prototype, off by default (docs/ci/warden-fixer.md). Turns a completed Warden
+# review's high-confidence suggested fixes into one small fix PR against the
+# reviewed PR's branch. Authors merge it to accept the fixes or close it to
+# reject them. Never pushes to the PR branch, never approves, never merges.
+#
+# Enable: set the repository variable WARDEN_FIXER_ENABLED to true. Kill switch:
+# unset it (or disable this workflow). Run from dev only:
+#   gh workflow run warden-fixer.yml --ref dev -f pr=<number> -f warden_run=<Warden run id>
+on:
+  workflow_dispatch:
+    inputs:
+      pr:
+        description: PR number to fix
+        required: true
+        type: string
+      warden_run:
+        description: ID of the completed Warden run for that PR's current head
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+# One fixer at a time; a run never cancels another mid-push.
+concurrency:
+  group: warden-fixer
+  cancel-in-progress: false
+
+jobs:
+  fix:
+    # Trusted code only: the scripts come from dev, never from the PR.
+    if: vars.WARDEN_FIXER_ENABLED == 'true' && github.ref == 'refs/heads/dev'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      actions: read
+      contents: write
+      pull-requests: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      PR: ${{ inputs.pr }}
+      WARDEN_RUN: ${{ inputs.warden_run }}
+    steps:
+      - name: Checkout trusted fixer
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          path: trusted
+          persist-credentials: false
+          sparse-checkout: .github/scripts
+
+      - name: Check the PR and the Warden run
+        id: pr
+        run: |
+          set -euo pipefail
+          [[ "$PR" =~ ^[1-9][0-9]*$ && "$WARDEN_RUN" =~ ^[1-9][0-9]*$ ]] || { echo "::error::pr and warden_run must be numbers"; exit 1; }
+          gh api "repos/$GITHUB_REPOSITORY/pulls/$PR" > "$RUNNER_TEMP/pr.json"
+          gh api "repos/$GITHUB_REPOSITORY/actions/runs/$WARDEN_RUN" > "$RUNNER_TEMP/run.json"
+          gh api --paginate "repos/$GITHUB_REPOSITORY/pulls/$PR/files" --jq '.[].filename' | jq -R . | jq -s . > "$RUNNER_TEMP/files.json"
+          node --input-type=module <<'NODE'
+          import { readFileSync, appendFileSync } from "node:fs"
+          import { eligiblePr } from "./trusted/.github/scripts/warden-fixer.mjs"
+          const temp = process.env.RUNNER_TEMP
+          const pr = JSON.parse(readFileSync(`${temp}/pr.json`, "utf8"))
+          const run = JSON.parse(readFileSync(`${temp}/run.json`, "utf8"))
+          if (run.path?.split("@")[0] !== ".github/workflows/warden.yml" || run.event !== "pull_request" || run.status !== "completed")
+            throw new Error("warden_run is not a completed Warden PR review")
+          const reason = eligiblePr(pr, { repository: process.env.GITHUB_REPOSITORY, reviewedHead: run.head_sha })
+          if (reason) throw new Error(`No fixes for this PR: ${reason}`)
+          appendFileSync(process.env.GITHUB_OUTPUT, `branch=${pr.head.ref}\nhead=${pr.head.sha}\n`)
+          NODE
+
+      - name: Download the review's security findings
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: warden-findings
+          run-id: ${{ inputs.warden_run }}
+          github-token: ${{ github.token }}
+          path: ${{ runner.temp }}/findings
+
+      - name: Plan the fixes
+        env:
+          HEAD_SHA: ${{ steps.pr.outputs.head }}
+        run: node trusted/.github/scripts/warden-fixer.mjs plan --findings "$RUNNER_TEMP/findings/warden-findings.json" --files "$RUNNER_TEMP/files.json" --pr "$PR" --head "$HEAD_SHA" --out "$RUNNER_TEMP/plan"
+
+      # The PR's files are only patched with git apply; nothing from it runs.
+      - name: Checkout the reviewed head
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ steps.pr.outputs.head }}
+          path: pr
+          persist-credentials: true
+
+      - name: Apply, commit and open the fix PR
+        env:
+          PR_BRANCH: ${{ steps.pr.outputs.branch }}
+        working-directory: pr
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          patches=("$RUNNER_TEMP"/plan/*.patch)
+          if [ "${#patches[@]}" -eq 0 ]; then
+            echo "No qualifying fixes." | tee -a "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          FIX_BRANCH=$(jq -r .branch "$RUNNER_TEMP/plan/plan.json")
+          if git ls-remote --exit-code --heads origin "$FIX_BRANCH" >/dev/null; then
+            echo "$FIX_BRANCH already exists; one fix PR per reviewed head." | tee -a "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          git switch -c "$FIX_BRANCH"
+          applied=0
+          for patch in "${patches[@]}"; do
+            if git apply --check "$patch"; then git apply "$patch"; applied=$((applied + 1)); else echo "::warning::$(basename "$patch") no longer applies; skipped"; fi
+          done
+          [ "$applied" -gt 0 ] || { echo "No fix applied cleanly." | tee -a "$GITHUB_STEP_SUMMARY"; exit 0; }
+          git -c user.name="github-actions[bot]" -c user.email="41898282+github-actions[bot]@users.noreply.github.com" \
+            commit -am "fix: apply Warden's suggested fixes for #$PR" -m "Release note: none"
+          git push origin "HEAD:refs/heads/$FIX_BRANCH"
+          gh pr create --base "$PR_BRANCH" --head "$FIX_BRANCH" --title "fix: Warden's suggested fixes for #$PR" --body-file "$RUNNER_TEMP/plan/body.md"

@@ -69,6 +69,11 @@ export type LocalPreferences = {
   desktopNotifications: DesktopNotificationPreference;
   linkOpenDestination: LinkOpenDestination;
   askBeforeOpeningLinks: boolean;
+  /**
+   * Desktop only: stop the computer sleeping while an agent is working.
+   * On by default so long tasks are not cut off when the computer sleeps.
+   */
+  keepAwake: boolean;
 };
 
 type LocalContextValue = {
@@ -98,6 +103,7 @@ const INITIAL_PREFS: LocalPreferences = {
   desktopNotifications: DEFAULT_DESKTOP_NOTIFICATION_PREFERENCE,
   linkOpenDestination: "openwork",
   askBeforeOpeningLinks: true,
+  keepAwake: true,
 };
 
 function readStored(key: string): unknown {

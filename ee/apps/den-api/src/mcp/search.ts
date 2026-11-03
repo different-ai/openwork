@@ -97,9 +97,10 @@ const STOP_WORDS = new Set(["a", "an", "and", "any", "at", "for", "i", "in", "me
 
 /**
  * Words people use for the same capability. A synonym earns less than the
- * word itself, so a direct match still ranks first.
+ * word itself, so a direct match still ranks first. The groups of names for
+ * things come first; engine-tool-view.ts also adds them to tool descriptions.
  */
-const SYNONYM_GROUPS: readonly (readonly string[])[] = [
+export const THING_SYNONYM_GROUPS: readonly (readonly string[])[] = [
   ["email", "mail", "gmail", "inbox"],
   ["meeting", "event", "appointment"],
   ["ticket", "issue"],
@@ -108,6 +109,12 @@ const SYNONYM_GROUPS: readonly (readonly string[])[] = [
   ["sprint", "cycle", "iteration"],
   ["pr", "pull"],
   ["repo", "repository"],
+  ["spreadsheet", "sheet"],
+  ["folder", "directory"],
+]
+
+const SYNONYM_GROUPS: readonly (readonly string[])[] = [
+  ...THING_SYNONYM_GROUPS,
   ["find", "search", "lookup"],
   ["get", "read", "fetch", "retrieve", "view"],
   ["create", "add", "new", "make"],
@@ -115,12 +122,10 @@ const SYNONYM_GROUPS: readonly (readonly string[])[] = [
   ["delete", "remove"],
   ["send", "post"],
   ["reply", "respond"],
-  ["spreadsheet", "sheet"],
-  ["folder", "directory"],
 ]
 
 /** Singular form of a plural word ("issues" → "issue", "entries" → "entry", "searches" → "search"). */
-function singular(token: string): string {
+export function singular(token: string): string {
   if (token.length > 4 && token.endsWith("ies")) return `${token.slice(0, -3)}y`
   if (token.length > 4 && /(?:ss|x|z|ch|sh)es$/.test(token)) return token.slice(0, -2)
   if (token.length > 3 && token.endsWith("s") && !/(?:ss|us|is)$/.test(token)) return token.slice(0, -1)

@@ -17,19 +17,7 @@ test("an owner gets a Get set up checklist after the first answer, and a member 
   const memberProbe = probe.on(world.memberApp);
   const rowState = async (id: string, state: string, on = probe) => (await on.dom(`[data-testid="activation-step-${id}"][data-state="${state}"]`)).elements.length === 1;
 
-  await step("before: with Get set up off, the owner's sidebar has no checklist", async () => {
-    await user.see("composer", { editable: true });
-    await user.notSee(card);
-    const den = await world.activation("admin");
-    expect(den.status).toBe(404);
-    evidence.recordAssertionEvidence("Get set up is off by default", `GET /v1/me/activation -> ${den.status}; no card in the sidebar`, den.status === 404);
-    await user.screenshot();
-  });
-
-  await step("after turning it on, there is still no card before the first answer", async () => {
-    await world.setChecklist(true);
-    await user.reload();
-    await member.reload();
+  await step("the checklist is available by default but has no card before the first answer", async () => {
     await user.see("composer", { editable: true });
     const den = await probe.eventually(() => world.activation("admin"), { within: 30_000, label: "Den serves the checklist", until: (value) => value.status === 200 });
     // Avery already invited Riley in this world; that fact must not reveal the card before an answer.

@@ -145,7 +145,8 @@ async function resolveOidcEndpoints(input: OidcRegistrationInput) {
 }
 
 async function getSsoProviderByProviderId(providerId: string) {
-  const rows = await db
+  // primary: only used to read back providers Better Auth registered moments ago.
+  const rows = await db.$primary
     .select()
     .from(SsoProviderTable)
     .where(eq(SsoProviderTable.providerId, providerId))
@@ -208,8 +209,8 @@ async function registerBetterAuthSsoProvider(input: OrganizationSsoRegistrationI
           spMetadata: {
             entityID: audience,
           },
+          // Better Auth always takes the SAML subject from the NameID.
           mapping: {
-            id: "nameID",
             email: "email",
             name: "displayName",
             extraFields: SSO_IDENTITY_EXTRA_FIELDS,
@@ -233,8 +234,8 @@ async function registerBetterAuthSsoProvider(input: OrganizationSsoRegistrationI
         ...oidcEndpoints,
         scopes: input.scopes ?? ["openid", "email", "profile"],
         pkce: true,
+        // Better Auth always takes the OIDC subject from `sub`.
         mapping: {
-          id: "sub",
           email: "email",
           emailVerified: "email_verified",
           name: "name",
@@ -247,8 +248,10 @@ async function registerBetterAuthSsoProvider(input: OrganizationSsoRegistrationI
   })
 }
 
-export async function getOrganizationSsoConnection(organizationId: OrganizationId) {
-  const rows = await db
+type SsoReader = Pick<typeof db.$primary, "select">
+
+export async function getOrganizationSsoConnection(organizationId: OrganizationId, reader: SsoReader = db) {
+  const rows = await reader
     .select()
     .from(SsoConnectionTable)
     .where(eq(SsoConnectionTable.organizationId, organizationId))
@@ -310,10 +313,10 @@ async function cleanupLegacySsoProvider(
 }
 
 /** Connection plus provider verification state for audit snapshots (never provider configuration). */
-export async function getOrganizationSsoAuditState(organizationId: OrganizationId): Promise<SsoConnectionAuditState | null> {
-  const connection = await getOrganizationSsoConnection(organizationId)
+export async function getOrganizationSsoAuditState(organizationId: OrganizationId, reader: SsoReader = db): Promise<SsoConnectionAuditState | null> {
+  const connection = await getOrganizationSsoConnection(organizationId, reader)
   if (!connection) return null
-  const [provider] = await db.select({ domainVerified: SsoProviderTable.domainVerified }).from(SsoProviderTable)
+  const [provider] = await reader.select({ domainVerified: SsoProviderTable.domainVerified }).from(SsoProviderTable)
     .where(and(eq(SsoProviderTable.providerId, connection.providerId), eq(SsoProviderTable.organizationId, organizationId))).limit(1)
   return { connection, provider: provider ?? null }
 }
@@ -339,7 +342,8 @@ export async function deleteOrganizationSsoConnection(organizationId: Organizati
 
 export async function registerOrganizationSsoConnection(input: OrganizationSsoRegistrationInput) {
   const providerId = buildOrganizationSsoProviderId(input.organizationId)
-  const existing = await getOrganizationSsoConnection(input.organizationId)
+  // primary throughout: each step reads back what Better Auth or the step before just wrote.
+  const existing = await getOrganizationSsoConnection(input.organizationId, db.$primary)
   const domainVerified = isDevLoopbackIssuer(input.issuer) || isMicrosoftEntraManagedDomain({
     domain: input.domain,
     issuer: input.issuer,
@@ -368,7 +372,7 @@ export async function registerOrganizationSsoConnection(input: OrganizationSsoRe
           .where(eq(SsoConnectionTable.id, existing.id))
       })
 
-      const connection = await getOrganizationSsoConnection(input.organizationId)
+      const connection = await getOrganizationSsoConnection(input.organizationId, db.$primary)
       if (!connection) {
         throw new Error("SSO connection was updated, but could not be loaded.")
       }
@@ -407,7 +411,7 @@ export async function registerOrganizationSsoConnection(input: OrganizationSsoRe
         .where(eq(SsoProviderTable.providerId, draftProviderId))
     })
 
-    const connection = await getOrganizationSsoConnection(input.organizationId)
+    const connection = await getOrganizationSsoConnection(input.organizationId, db.$primary)
     if (!connection) {
       throw new Error("SSO connection was updated, but could not be loaded.")
     }
@@ -444,7 +448,7 @@ export async function registerOrganizationSsoConnection(input: OrganizationSsoRe
     lastError: null,
   })
 
-  const connection = await getOrganizationSsoConnection(input.organizationId)
+  const connection = await getOrganizationSsoConnection(input.organizationId, db.$primary)
   if (!connection) {
     throw new Error("SSO connection was created, but could not be loaded.")
   }
@@ -466,8 +470,8 @@ export async function startOrganizationSsoSignIn(input: {
   })
 }
 
-export async function getSsoProviderForConnection(connection: SsoConnection) {
-  const rows = await db
+export async function getSsoProviderForConnection(connection: SsoConnection, reader: SsoReader = db) {
+  const rows = await reader
     .select()
     .from(SsoProviderTable)
     .where(and(

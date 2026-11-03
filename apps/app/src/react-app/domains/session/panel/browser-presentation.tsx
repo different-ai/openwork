@@ -7,11 +7,11 @@ import { Button } from "@/components/ui/button";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
 
-import { BrowserFloatingCardPortal } from "./browser-floating-card";
-import { useSessionFloatingSlot } from "./floating-slot";
-import { useFitFloatingWindow, useFloatingWindow, useScreenFullscreen } from "./floating-window";
+import { BrowserWindow } from "./browser-window";
+import { useFloatingWindow, useScreenFullscreen } from "./floating-window";
 import { BrowserPanelContent } from "./side-panel";
 import type { BrowserPresentationController } from "./use-browser-presentation";
+import { getElectronBrowser } from "./utils";
 
 type BrowserFullscreenDialogProps = {
   sessionId: string;
@@ -67,12 +67,12 @@ function BrowserFullscreenDialog({ sessionId, controller }: BrowserFullscreenDia
                 <Tooltip>
                   <TooltipTrigger
                     render={(
-                      <Button variant="ghost" size="icon-sm" aria-label="Float browser" data-testid="browser-mode-float" onClick={() => present("floating")}>
+                      <Button variant="ghost" size="icon-sm" aria-label="Pop out browser" data-testid="browser-mode-float" onClick={() => present("floating")}>
                         <PictureInPicture2 />
                       </Button>
                     )}
                   />
-                  <TooltipContent>Float over chat</TooltipContent>
+                  <TooltipContent>Pop out into its own window</TooltipContent>
                 </Tooltip>
                 <DialogPrimitive.Close
                   ref={exitRef}
@@ -101,28 +101,36 @@ function BrowserFullscreenDialog({ sessionId, controller }: BrowserFullscreenDia
   );
 }
 
-/** The floating card and the full-screen view, for the conversation on screen. */
+/** The browser's own window and the full-screen view, for the conversation on screen. */
 export function BrowserPresentationSurfaces({ sessionId, controller }: BrowserFullscreenDialogProps) {
-  const inChat = useSessionFloatingSlot();
-  const { mode, tab, presentation, present, setSnap } = controller;
-  const floating = controller.enabled && mode === "floating" && tab !== null;
-  const detached = useFloatingWindow("browser", floating, { title: "Browser", width: 280, height: 260, onClosed: () => present("hidden") });
-  useFitFloatingWindow(detached);
-  const slot = detached ?? inChat;
+  const { mode, tab, browserTabs, present, focusWindowOnOpen } = controller;
+  const poppedOut = controller.enabled && mode === "floating" && tab !== null;
+  // Closing the window, by its button or the system's close, puts the page back
+  // beside the chat, as does a window that could not open.
+  const slot = useFloatingWindow("browser", poppedOut, {
+    title: `${tab?.label ?? "New tab"} · Browser`,
+    width: 1280,
+    height: 900,
+    onClosed: () => present("side"),
+  });
+
+  React.useEffect(() => {
+    if (!slot || !focusWindowOnOpen.current) return;
+    focusWindowOnOpen.current = false;
+    void getElectronBrowser()?.focusWindow?.().catch(() => undefined);
+  }, [focusWindowOnOpen, slot]);
+
   if (!controller.enabled) return null;
   return (
     <>
-      {floating && tab && slot ? (
-        <BrowserFloatingCardPortal
+      {poppedOut && tab && slot ? (
+        <BrowserWindow
           slot={slot}
-          detached={slot === detached}
+          sessionId={sessionId}
           tab={tab}
-          snap={presentation.snap}
-          onSnap={setSnap}
+          tabs={browserTabs}
           // From its own window, bring the app forward to show the page.
-          onOpenSide={() => { if (slot === detached) window.focus(); present("side"); }}
-          onFullscreen={() => present("fullscreen")}
-          onHide={() => present("hidden")}
+          onPresent={(next) => { window.focus(); present(next); }}
         />
       ) : null}
       <BrowserFullscreenDialog sessionId={sessionId} controller={controller} />
@@ -130,10 +138,12 @@ export function BrowserPresentationSurfaces({ sessionId, controller }: BrowserFu
   );
 }
 
-/** The session header's browser toggle: hidden ↔ the last floating or side choice. */
-/** The side rail's Browser button while the floating browser is on: it shows and hides the page wherever it was. */
+/**
+ * The side rail's Browser button while the floating browser is on: it opens
+ * and closes the browser beside the chat, like the rail's other panels.
+ */
 export function BrowserRailButton({ controller }: { controller: BrowserPresentationController }) {
-  const shown = controller.mode !== "hidden";
+  const shown = controller.mode === "side";
   const label = `Browser · ${controller.status}`;
   return (
     <Tooltip>

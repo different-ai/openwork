@@ -2,6 +2,7 @@
 import { useEffect } from "react"
 import {
   AUTOMATION_MODEL_ATTENTION_CAPABILITY,
+  REMOTE_SESSION_ANSWER_RUNNER_CAPABILITY,
   REMOTE_SESSION_CONTROL_RUNNER_CAPABILITY,
   REMOTE_SESSION_DESKTOP_RUNNER_CAPABILITY,
   REMOTE_SESSION_RECOVERY_RUNNER_CAPABILITY,
@@ -95,7 +96,9 @@ function ActivatedAutomationRunnerBridge() {
               REMOTE_SESSION_CONTROL_RUNNER_CAPABILITY,
               REMOTE_SESSION_RECOVERY_RUNNER_CAPABILITY,
             ]
+            // Den sends answer requests only to runners that say they take them.
             const capabilitySets: AutomationDesktopRunnerCapability[][] = deploymentEnabled ? [
+              [...recoveryCapabilities, REMOTE_SESSION_ANSWER_RUNNER_CAPABILITY],
               recoveryCapabilities,
               [
                 AUTOMATION_MODEL_ATTENTION_CAPABILITY,
@@ -105,6 +108,12 @@ function ActivatedAutomationRunnerBridge() {
               [AUTOMATION_MODEL_ATTENTION_CAPABILITY, REMOTE_SESSION_DESKTOP_RUNNER_CAPABILITY],
               [AUTOMATION_MODEL_ATTENTION_CAPABILITY],
             ] : [[
+              REMOTE_SESSION_DESKTOP_RUNNER_CAPABILITY,
+              REMOTE_SESSION_CONTROL_RUNNER_CAPABILITY,
+              REMOTE_SESSION_RECOVERY_RUNNER_CAPABILITY,
+              REMOTE_SESSION_ONLY_RUNNER_CAPABILITY,
+              REMOTE_SESSION_ANSWER_RUNNER_CAPABILITY,
+            ], [
               REMOTE_SESSION_DESKTOP_RUNNER_CAPABILITY,
               REMOTE_SESSION_CONTROL_RUNNER_CAPABILITY,
               REMOTE_SESSION_RECOVERY_RUNNER_CAPABILITY,

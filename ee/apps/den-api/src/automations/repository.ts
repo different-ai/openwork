@@ -228,7 +228,7 @@ function mapEvent(row: EventRow): AutomationRunEvent {
 }
 
 async function latestRun(automationId: AutomationRow["id"]): Promise<AutomationRun | null> {
-  const rows = await db.select().from(AutomationRunTable)
+  const rows = await db.$primary.select().from(AutomationRunTable)
     .where(eq(AutomationRunTable.automation_id, automationId))
     .orderBy(desc(AutomationRunTable.created_at), desc(AutomationRunTable.id)).limit(1)
   return rows[0] ? mapRun(rows[0]) : null
@@ -455,13 +455,14 @@ export class DenAutomationRepository implements AutomationRepository {
   }
 
   async get(input: Parameters<AutomationRepository["get"]>[0]): Promise<AutomationListItem | null> {
-    const rows = await db.select().from(AutomationTable).where(and(
+    // primary: create/update/setState read back what they just wrote.
+    const rows = await db.$primary.select().from(AutomationTable).where(and(
       eq(AutomationTable.id, normalizeAutomationId(input.automationId)),
       eq(AutomationTable.organization_id, normalizeOrganizationId(input.organizationId)),
       eq(AutomationTable.owner_member_id, normalizeMemberId(input.ownerMemberId)),
     )).limit(1)
     if (!rows[0]) return null
-    const revisions = await db.select().from(AutomationRevisionTable)
+    const revisions = await db.$primary.select().from(AutomationRevisionTable)
       .where(eq(AutomationRevisionTable.id, rows[0].current_revision_id)).limit(1)
     return revisions[0] ? itemFromRows(rows[0], revisions[0]) : null
   }
@@ -668,7 +669,8 @@ export class DenAutomationRepository implements AutomationRepository {
     engineKind: string | null
     model: { providerId: string; modelId: string }
   } | null> {
-    const rows = await db.select({
+    // primary: called right after claim() queues the run.
+    const rows = await db.$primary.select({
       organizationId: AutomationTable.organization_id,
       ownerMemberId: AutomationTable.owner_member_id,
       engineKind: AutomationRunTable.engine_kind,
@@ -808,7 +810,8 @@ export class DenAutomationRepository implements AutomationRepository {
   }
 
   async cloudRunState(runId: string): Promise<{ cancelRequested: boolean; receipt: Record<string, unknown> | null } | null> {
-    const rows = await db.select({
+    // primary: a stale "not running" right after claimCloud would abort the run.
+    const rows = await db.$primary.select({
       cancelRequestedAt: AutomationRunTable.cancel_requested_at,
       receipt: AutomationRunTable.engine_receipt,
     }).from(AutomationRunTable).where(and(
@@ -888,7 +891,7 @@ export class DenAutomationRepository implements AutomationRepository {
       eq(AutomationRunTable.lease_owner, input.leaseOwner),
       inArray(AutomationRunTable.status, ["claimed", "running"]),
     ))
-    const rows = await db.select({ id: AutomationRunTable.id }).from(AutomationRunTable).where(and(
+    const rows = await db.$primary.select({ id: AutomationRunTable.id }).from(AutomationRunTable).where(and(
       eq(AutomationRunTable.id, normalizeRunId(input.runId)), eq(AutomationRunTable.lease_owner, input.leaseOwner),
       inArray(AutomationRunTable.status, ["claimed", "running"]),
     )).limit(1)
@@ -967,7 +970,8 @@ export class DenAutomationRepository implements AutomationRepository {
   }
 
   async recoverExpiredLeases(input: Parameters<AutomationRepository["recoverExpiredLeases"]>[0]): Promise<AutomationRun[]> {
-    const rows = await db.select().from(AutomationRunTable).where(and(
+    // primary: a stale lease must not be reported as recovered.
+    const rows = await db.$primary.select().from(AutomationRunTable).where(and(
       inArray(AutomationRunTable.status, ["claimed", "running"]),
       lt(AutomationRunTable.lease_expires_at, new Date(input.now)),
     )).orderBy(asc(AutomationRunTable.lease_expires_at)).limit(input.limit)
@@ -999,7 +1003,8 @@ export class DenAutomationRepository implements AutomationRepository {
   }
 
   async requestCancellation(input: Parameters<AutomationRepository["requestCancellation"]>[0]): Promise<AutomationRun | null> {
-    const owned = await db.select({ run: AutomationRunTable }).from(AutomationRunTable)
+    // primary: a stale "queued" status would cancel a run that already started.
+    const owned = await db.$primary.select({ run: AutomationRunTable }).from(AutomationRunTable)
       .innerJoin(AutomationTable, eq(AutomationTable.id, AutomationRunTable.automation_id))
       .where(and(
         eq(AutomationRunTable.id, normalizeRunId(input.runId)),
@@ -1044,7 +1049,7 @@ export class DenAutomationRepository implements AutomationRepository {
     const organizationId = normalizeOrganizationId(input.organizationId)
     const ownerMemberId = normalizeMemberId(input.ownerMemberId)
     const id = automationRunnerRowId(input)
-    const existing = await db.select({ organizationId: AutomationRunnerTable.organization_id, ownerMemberId: AutomationRunnerTable.owner_member_id })
+    const existing = await db.$primary.select({ organizationId: AutomationRunnerTable.organization_id, ownerMemberId: AutomationRunnerTable.owner_member_id })
       .from(AutomationRunnerTable).where(eq(AutomationRunnerTable.id, id)).limit(1)
     // The row id hashes its own scope, so this only trips on a row that took
     // the id under the old install-id keying for someone else.
@@ -1150,7 +1155,8 @@ export class DenAutomationRepository implements AutomationRepository {
     executionTarget: "desktop"
     workspaceId?: string
   }>> {
-    const rows = await db.select({
+    // primary: runners ask for work as soon as a work_available hint arrives.
+    const rows = await db.$primary.select({
       runId: AutomationRunTable.id,
       revisionTarget: AutomationRevisionTable.execution_target,
       workspaceId: AutomationRevisionTable.workspace_id,
@@ -1248,7 +1254,7 @@ export class DenAutomationRepository implements AutomationRepository {
       gt(AutomationRunTable.lease_expires_at, new Date(input.now)),
     ))
     if (!automationUpdateChangedRows(renewal)) return null
-    const rows = await db.select({
+    const rows = await db.$primary.select({
       leaseExpiresAt: AutomationRunTable.lease_expires_at,
       cancelRequestedAt: AutomationRunTable.cancel_requested_at,
     }).from(AutomationRunTable).where(and(
@@ -1561,7 +1567,7 @@ export class DenAutomationRepository implements AutomationRepository {
         eq(AutomationRunTable.attempt_count, run.attempt_count),
         lte(AutomationRunTable.claim_deadline_at, new Date(input.now)),
       ))
-      const confirmed = await db.select({ status: AutomationRunTable.status, error: AutomationRunTable.error })
+      const confirmed = await db.$primary.select({ status: AutomationRunTable.status, error: AutomationRunTable.error })
         .from(AutomationRunTable).where(eq(AutomationRunTable.id, run.id)).limit(1)
       if (confirmed[0]?.status === status && confirmed[0].error?.code === code) {
         expired.push(run.id)
@@ -1571,7 +1577,8 @@ export class DenAutomationRepository implements AutomationRepository {
   }
 
   async getRunReceipt(input: Parameters<AutomationRepository["getRunReceipt"]>[0]) {
-    const owned = await db.select({ automation: AutomationTable, run: AutomationRunTable })
+    // primary: polled right after a run is created.
+    const owned = await db.$primary.select({ automation: AutomationTable, run: AutomationRunTable })
       .from(AutomationRunTable).innerJoin(AutomationTable, eq(AutomationTable.id, AutomationRunTable.automation_id))
       .where(and(
         eq(AutomationRunTable.id, normalizeRunId(input.runId)),
@@ -1579,7 +1586,7 @@ export class DenAutomationRepository implements AutomationRepository {
         eq(AutomationTable.owner_member_id, normalizeMemberId(input.ownerMemberId)),
       )).limit(1)
     if (!owned[0]) return null
-    const revisions = await db.select().from(AutomationRevisionTable)
+    const revisions = await db.$primary.select().from(AutomationRevisionTable)
       .where(eq(AutomationRevisionTable.id, owned[0].run.revision_id)).limit(1)
     if (!revisions[0]) return null
     const events = await db.select().from(AutomationRunEventTable)
@@ -1672,7 +1679,8 @@ export class DenAutomationRepository implements AutomationRepository {
   }
 
   async queueRetry(input: { runId: string; leaseOwner: string; now: number }): Promise<boolean> {
-    const rows = await db.select().from(AutomationRunTable).where(and(
+    // primary: re-queuing a run that already finished would run it twice.
+    const rows = await db.$primary.select().from(AutomationRunTable).where(and(
       eq(AutomationRunTable.id, normalizeRunId(input.runId)),
       eq(AutomationRunTable.lease_owner, input.leaseOwner),
       eq(AutomationRunTable.status, "running"),
@@ -1717,7 +1725,7 @@ export class DenAutomationRepository implements AutomationRepository {
   }
 
   private async runById(runId: string): Promise<AutomationRun | null> {
-    const rows = await db.select().from(AutomationRunTable).where(eq(AutomationRunTable.id, normalizeRunId(runId))).limit(1)
+    const rows = await db.$primary.select().from(AutomationRunTable).where(eq(AutomationRunTable.id, normalizeRunId(runId))).limit(1)
     return rows[0] ? mapRun(rows[0]) : null
   }
 }

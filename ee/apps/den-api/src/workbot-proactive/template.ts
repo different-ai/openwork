@@ -21,7 +21,7 @@ import { db } from "../db.js"
 export const AGENT_TEMPLATE_PATH = "openwork/agents/your-agent.md"
 export const AGENT_TEMPLATE_SCHEMA_VERSION = "openwork-agent/1"
 const TEMPLATE_TITLE = "Your agent"
-const TEMPLATE_DESCRIPTION = "Reads each member's Gmail and Google Calendar on a schedule and tells them only what needs them."
+const TEMPLATE_DESCRIPTION = "Reads each member's calendar, email, team chat and the connections they turn on, on a schedule, and tells them only what needs them."
 
 export type AgentTemplateVersion = AgentTemplateContent & {
   /** The saved version, or null for the built-in default. */
@@ -39,7 +39,7 @@ export function renderAgentTemplate(content: AgentTemplateContent): string {
     "name: your-agent",
     `description: ${TEMPLATE_DESCRIPTION}`,
     "mode: primary",
-    "sources: gmail, google_calendar",
+    "sources: calendar, email, chat, connections",
     `responsibilities: ${enabledResponsibilities(content).join(", ") || "none"}`,
     `schedule: morning pass, then every ${hours} hours in working hours`,
     "---",
@@ -49,8 +49,8 @@ export function renderAgentTemplate(content: AgentTemplateContent): string {
   return `${lines.join("\n")}\n`
 }
 
-async function findTemplateObject(organizationId: DenTypeId<"organization">) {
-  const [row] = await db
+async function findTemplateObject(organizationId: DenTypeId<"organization">, database: typeof db.$primary) {
+  const [row] = await database
     .select({ id: ConfigObjectTable.id })
     .from(ConfigObjectTable)
     .where(and(
@@ -66,10 +66,10 @@ async function findTemplateObject(organizationId: DenTypeId<"organization">) {
 }
 
 /** The organization's current template: its newest saved version, or the built-in default. */
-export async function readAgentTemplate(organizationId: DenTypeId<"organization">): Promise<AgentTemplateVersion> {
-  const object = await findTemplateObject(organizationId)
+export async function readAgentTemplate(organizationId: DenTypeId<"organization">, database: typeof db.$primary = db): Promise<AgentTemplateVersion> {
+  const object = await findTemplateObject(organizationId, database)
   if (!object) return BUILTIN_AGENT_TEMPLATE
-  const [latest] = await db
+  const [latest] = await database
     .select({ id: ConfigObjectVersionTable.id, payload: ConfigObjectVersionTable.normalizedPayloadJson })
     .from(ConfigObjectVersionTable)
     .where(and(eq(ConfigObjectVersionTable.configObjectId, object.id), eq(ConfigObjectVersionTable.isDeletedVersion, false)))
@@ -77,7 +77,7 @@ export async function readAgentTemplate(organizationId: DenTypeId<"organization"
     .limit(1)
   const parsed = agentTemplateContentSchema.safeParse(latest?.payload)
   if (!latest || !parsed.success) return BUILTIN_AGENT_TEMPLATE
-  const [saved] = await db.select({ versions: count() }).from(ConfigObjectVersionTable).where(eq(ConfigObjectVersionTable.configObjectId, object.id))
+  const [saved] = await database.select({ versions: count() }).from(ConfigObjectVersionTable).where(eq(ConfigObjectVersionTable.configObjectId, object.id))
   return { ...parsed.data, versionId: latest.id, version: (saved?.versions ?? 0) + 1 }
 }
 
@@ -139,5 +139,6 @@ export async function saveAgentTemplate(input: {
       createdAt: now,
     })
   })
-  return readAgentTemplate(input.organizationId)
+  // primary: reads back the version saved above.
+  return readAgentTemplate(input.organizationId, db.$primary)
 }

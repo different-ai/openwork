@@ -1,5 +1,7 @@
 import { getDisplaySessionTitle } from "@/app/lib/session-title";
 import { t } from "@/i18n";
+import { sessionActivityAt } from "@/react-app/domains/session/sidebar/session-settle";
+import { getRootSessions } from "@/react-app/domains/session/sidebar/utils";
 
 import type { SessionOption } from "./command-palette";
 import type { RouteSession, RouteWorkspace } from "./route-workspaces";
@@ -33,11 +35,12 @@ export function buildCommandPaletteSessions(
       workspace.path?.trim() ||
       t("session.workspace_fallback");
 
-    for (const session of sessionsByWorkspaceId[workspace.id] ?? []) {
+    // Sub-agent sessions live inside their parent's task card, not in pickers.
+    for (const session of getRootSessions(sessionsByWorkspaceId[workspace.id] ?? [])) {
       const sessionId = session.id.trim();
       if (!sessionId) continue;
       const title = getDisplaySessionTitle(session.title ?? "");
-      const updatedAt = session.time.updated ?? session.time.created;
+      const updatedAt = sessionActivityAt(session);
       options.push({
         workspaceId: workspace.id,
         sessionId,

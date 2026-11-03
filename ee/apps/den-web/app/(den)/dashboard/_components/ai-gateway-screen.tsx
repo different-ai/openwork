@@ -10,10 +10,9 @@ import { DenCard } from "../../_components/ui/card";
 import { DashboardPageTemplate } from "../../_components/ui/dashboard-page-template";
 import { DenNotice } from "../../_components/ui/notice";
 import { type TabItem, UnderlineTabs } from "../../_components/ui/tabs";
-import { getInferenceRoute, getAiGatewayRoute, getNewAiGatewayProviderRoute, getOrgAccessFlags, orgFeatureEnabled, type DenOrgAccessFlags } from "../../_lib/den-org";
+import { getInferenceRoute, getAiGatewayRoute, getNewAiGatewayProviderRoute, getOrgAccessFlags, type DenOrgAccessFlags } from "../../_lib/den-org";
 import { canOpenGatewayArea, gatewayAreaLockedMessage, type GatewayDashboardArea } from "../_lib/gateway-dashboard-access";
 import { useOrgDashboard } from "../_providers/org-dashboard-provider";
-import { AutoRouterSection } from "./auto-router-section";
 import { useGatewayDashboardAccess } from "./gateway-dashboard-capability-guard";
 import { GatewaySpendBreakdown } from "./gateway-spend-breakdown";
 import { getProviderIconSlug } from "./llm-provider-data";
@@ -110,13 +109,16 @@ export function AiGatewayScreen({ providerContent, pageContent, pageTab }: { pro
   );
   const router = useRouter();
   const searchParams = useSearchParams();
+  const tabs = AI_GATEWAY_TABS;
+  // Smart Routers moved into AI Providers; old links to their tab land there.
+  const requestedTab = searchParams.get("tab") === "auto-router" ? "ai-providers" : searchParams.get("tab");
   const nestedContent = providerContent ?? pageContent;
   const nestedTab = providerContent !== undefined ? "ai-providers" : pageTab;
   // Without an explicit tab, land on the first one this person can open.
-  const defaultTab = AI_GATEWAY_TABS.find((item) => canOpenAiGatewayTab(memberAccess, item.value))?.value ?? "overview";
+  const defaultTab = tabs.find((item) => canOpenAiGatewayTab(memberAccess, item.value))?.value ?? "overview";
   const tab = nestedContent !== undefined && nestedTab
     ? nestedTab
-    : AI_GATEWAY_TABS.find((item) => item.value === searchParams.get("tab"))?.value ?? defaultTab;
+    : tabs.find((item) => item.value === requestedTab)?.value ?? defaultTab;
   const gatewayTabArea = tab === "openwork-models" ? "any" : GATEWAY_TAB_AREAS[tab];
   const access = useGatewayDashboardAccess(gatewayTabArea);
 
@@ -135,22 +137,21 @@ export function AiGatewayScreen({ providerContent, pageContent, pageTab }: { pro
       description={null}
     >
       <div data-testid="ai-gateway-tabs" className="mb-6">
-        <UnderlineTabs tabs={AI_GATEWAY_TABS} activeTab={tab} onChange={setTab} />
+        <UnderlineTabs tabs={tabs} activeTab={tab} onChange={setTab} />
       </div>
       <div
         key={tab}
         role="tabpanel"
-        aria-label={AI_GATEWAY_TABS.find((item) => item.value === tab)?.label}
+        aria-label={tabs.find((item) => item.value === tab)?.label}
         data-testid={`ai-gateway-panel-${tab}`}
       >
         {nestedContent !== undefined ? nestedContent : (
           <>
-            {tab === "overview" || tab === "ai-providers" || tab === "limits" || tab === "users-and-teams" ? (
+            {tab !== "openwork-models" ? (
               orgError ? <DenNotice tone="error" message={orgError} />
                 : access === "enabled" && orgId && orgContext ? (
                   <>
                     {tab === "overview" ? <AiGatewayOverview key={orgId} orgId={orgId} /> : null}
-                    {tab === "ai-providers" && orgFeatureEnabled(orgContext, "autoRouter") ? <AutoRouterSection key={`auto-router-${orgId}`} /> : null}
                     {tab === "ai-providers" ? <GatewayProvidersSection key={orgId} /> : null}
                     {tab === "users-and-teams" ? <GatewayUsersTeamsSection key={orgId} orgId={orgId} orgSlug={orgSlug} orgContext={orgContext} /> : null}
                     {tab === "limits" ? (
@@ -162,7 +163,6 @@ export function AiGatewayScreen({ providerContent, pageContent, pageTab }: { pro
                           orgSlug={orgSlug}
                           teams={orgContext.teams}
                           members={orgContext.members}
-
                         />
                       </>
                     ) : null}

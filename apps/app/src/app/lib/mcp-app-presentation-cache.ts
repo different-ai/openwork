@@ -39,6 +39,7 @@ export function createMcpAppPresentationCache(scope: Scope, workspaceId: string)
     async read(launch: OpenworkMcpAppLaunchReference): Promise<OpenworkMcpAppResource | null> {
       const revision = parseMcpAppResourceUri(launch.resourceUri);
       if (!scope.current() || !revision || !("connectionId" in launch) || revision.appId !== launch.connectionId) return null;
+      await chatPresentationStore.loadDocument(CHAT_PRESENTATION_STORAGE_KEY, entryId(scope, launch.resourceUri));
       const stored = chatPresentationStore.read(CHAT_PRESENTATION_STORAGE_KEY, entryId(scope, launch.resourceUri));
       if (!stored || stored.workspaceId !== workspaceId || stored.app.toolName !== launch.toolName
         || stored.app.resourceUri !== launch.resourceUri || stored.argumentsSignature !== await resourceDigest(stored.app)

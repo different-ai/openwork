@@ -14,6 +14,11 @@ export type TranslateRequestInput = {
   /** The catalog (upstream) model id, for model-specific behaviour. */
   upstreamModel: string
   thinkingLevel: AutoRouterThinkingLevel
+  /**
+   * The levels the model's catalog allows. `none` among them means the model
+   * accepts turning thinking off; otherwise translators must never send it.
+   */
+  thinkingLevels: readonly AutoRouterThinkingLevel[]
   /** The model's catalog output limit, when known. */
   maxOutputTokens: number | null
   /** Reasoning state remembered for earlier tool calls, by tool call id. */

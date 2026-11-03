@@ -117,7 +117,7 @@ function pageRecorder(makePrivacyFilter) {
 }
 const SCRIPT = `(${pageRecorder.toString()})(${privacyFilter.toString()})`;
 
-function connect(url, onEvent) {
+function connect(url, onEvent, onClose = () => {}) {
   const socket = new WebSocket(url);
   let nextId = 0;
   const pending = new Map();
@@ -128,7 +128,7 @@ function connect(url, onEvent) {
   });
   void ready.catch(() => {});
   const close = () => { for (const item of pending.values()) { clearTimeout(item.timer); item.reject(new Error("The teaching tab disconnected. Reconnect to continue.")); } pending.clear(); };
-  socket.addEventListener("close", close);
+  socket.addEventListener("close", () => { close(); onClose(); });
   socket.addEventListener("message", event => {
     let message; try { message = JSON.parse(String(event.data)); } catch { return; }
     if (!message.id) { onEvent(message); return; }
@@ -220,6 +220,15 @@ export function createBrowserDemonstration({ path, endpoint = "http://127.0.0.1:
       const { control, ...data } = value;
       const parsed = demonstrationSchema.shape.steps.element.safeParse({ ...data, id: 1, explanation: "", ...(value.kind === "fill" || value.kind === "select" ? { parameter: "input_1" } : {}), ...(value.kind === "extract" ? { field: "field_1" } : {}) });
       if (parsed.success) { const { id, explanation, parameter, field, ...step } = parsed.data; enqueue(() => append(step, Number.isSafeInteger(control) ? `${event.params.executionContextId}:${control}` : null)); }
+    }, () => {
+      if (generation !== connectionGeneration) return;
+      // The taught tab closed (the Browser view's tabs can close it) or the browser restarted: nothing more reaches
+      // this recording, so say so instead of showing it as still recording.
+      connectionGeneration++; wire = null; contextId = null; scriptId = null; contexts.clear();
+      enqueue(async () => {
+        if (demo?.phase !== "recording") return;
+        demo.phase = "paused"; demo.notice = "The taught tab closed. Recording paused."; await persist();
+      });
     });
     await wire.send("Runtime.enable"); await wire.send("Page.enable");
     const tree = await wire.send("Page.getFrameTree"); frameId = tree.frameTree.frame.id;
@@ -241,6 +250,8 @@ export function createBrowserDemonstration({ path, endpoint = "http://127.0.0.1:
     const targets = await response.json();
     return targets.filter(target => target.type === "page").slice(0, 12);
   }
+  // Teaching records one tab, so bring it to the front where the person is watching. Best effort: recording works anyway.
+  const show = id => fetch(`${endpoint}/json/activate/${encodeURIComponent(id)}`, { signal: AbortSignal.timeout(5000), redirect: "error" }).then(response => response.body?.cancel(), () => {});
   async function command(sessionId, raw) {
     if (!loaded) {
       try {
@@ -261,7 +272,7 @@ export function createBrowserDemonstration({ path, endpoint = "http://127.0.0.1:
       if (!target || !await allowed(target.url)) throw new Error("Choose a permitted browser tab.");
       privacy.clear(); owner = sessionId; until = now() + 12_000;
       demo = { id: randomUUID(), phase: "recording", tabId: target.id, steps: [] };
-      try { await attach(target); await navigation(target.url); } catch (error) { await detach(); privacy.clear(); demo = null; owner = null; throw error; }
+      try { await attach(target); await navigation(target.url); await show(target.id); } catch (error) { await detach(); privacy.clear(); demo = null; owner = null; throw error; }
     } else if (input.action === "discard") {
       await detach(); await writing; await unlink(path).catch(error => { if (error.code !== "ENOENT") throw error; }); demo = null; owner = null; privacy.clear();
     } else if (demo) {
@@ -275,6 +286,7 @@ export function createBrowserDemonstration({ path, endpoint = "http://127.0.0.1:
         if (!target || !await allowed(target.url)) throw new Error("The chosen tab is unavailable. Finish this skill or discard it.");
         demo.phase = "recording"; demo.notice = undefined; until = now() + 12_000;
         try { if (!wire) await attach(target); await setMode(); } catch (error) { demo.phase = "paused"; throw error; }
+        await show(target.id);
       } else if (input.action === "pick") {
         if (!active()) throw new Error("Resume teaching before selecting information."); await setMode(true);
       } else if (input.action === "annotate") {

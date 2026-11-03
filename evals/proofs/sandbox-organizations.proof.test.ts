@@ -15,20 +15,7 @@ test("a platform admin creates a sandbox organization from /admin and people who
   const casey = user.on(world.webCasey), anonymous = user.on(world.anonymous);
   let organizationId = "", joinLink = "", outlookId = "";
 
-  await step("before: Sandboxes in /admin is locked until the rollout is turned on", async () => {
-    await admin.see({ role: "heading", label: "Sandbox organizations are off" }, { timeoutMs: 60_000 });
-    const state = await world.sandboxes();
-    evidence.recordAssertionEvidence("No sandbox can be created while the rollout is off", `enabled=${state.enabled}; sandboxes=${state.sandboxes.length}`, !state.enabled && state.sandboxes.length === 0);
-    expect(state.enabled).toBe(false);
-    await admin.screenshot();
-  });
-
-  await step("the admin turns on Sandbox organizations for the deployment", async () => {
-    await admin.click({ role: "link", label: "Open Feature rollouts" });
-    await admin.see({ testId: "admin-feature-sandboxOrgs" }, { timeoutMs: 30_000 });
-    await admin.click({ testId: "admin-feature-sandboxOrgs-on" });
-    await admin.see({ testId: "admin-feature-state-sandboxOrgs" }, { text: "On for everyone · organization overrides apply" });
-    await admin.click({ testId: "admin-nav-sandbox-orgs" });
+  await step("Sandbox organizations are available by default", async () => {
     await admin.see({ testId: "admin-sandbox-orgs" });
     const state = await world.sandboxes();
     evidence.recordAssertionEvidence("The Sandboxes page opens with nothing created yet", `enabled=${state.enabled}; sandboxes=${state.sandboxes.length}`, state.enabled && state.sandboxes.length === 0);

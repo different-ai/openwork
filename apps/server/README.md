@@ -194,7 +194,7 @@ Token management (scoped tokens):
 File injection / artifacts:
 
 - `OPENWORK_INBOX_ENABLED` (`1` | `0`)
-- `OPENWORK_INBOX_MAX_BYTES` (default: 50MB, capped)
+- `OPENWORK_INBOX_MAX_BYTES` (default: 10GB)
 - `OPENWORK_OUTBOX_ENABLED` (`1` | `0`)
 
 Sandbox advertisement (for capability discovery):
@@ -235,7 +235,7 @@ Token management (collaborator or owner bearer token):
 
 Inbox/outbox:
 
-- `POST /workspace/:id/inbox` (multipart upload into `.opencode/openwork/inbox/`)
+- `POST /workspace/:id/inbox?path=<path>` (streams the raw body into `.opencode/openwork/inbox/`; multipart is also accepted, up to 250MB)
 - `GET /workspace/:id/artifacts`
 - `GET /workspace/:id/artifacts/:artifactId`
 - `POST /workspace/:id/files/sessions`

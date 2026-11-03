@@ -1,5 +1,5 @@
 import { boolean, index, int, mysqlTable, primaryKey, timestamp, uniqueIndex, varchar } from "drizzle-orm/mysql-core"
-import { denTypeIdColumn } from "../columns"
+import { compatJsonColumn, denTypeIdColumn } from "../columns"
 
 /**
  * A resume grant for one headless runner turn (saved step turns). The runner keeps the grant and
@@ -20,6 +20,11 @@ export const HeadlessResumeGrantTable = mysqlTable(
     messageId: varchar("message_id", { length: 128 }).notNull(),
     /** Tokens exchanged for this grant can only read, like the token minted with it. */
     readOnly: boolean("read_only").notNull().default(false),
+    /**
+     * Extra scopes the turn's token carried (a background agent's read allowlist); every token exchanged for this grant
+     * carries them too, so a resumed turn reads no more than the first one. Null: none.
+     */
+    scopes: compatJsonColumn<string[]>("scopes"),
     /** SHA-256 (hex) of the grant; the grant itself is never stored. */
     tokenHash: varchar("token_hash", { length: 64 }).notNull(),
     expiresAt: timestamp("expires_at", { fsp: 3 }).notNull(),

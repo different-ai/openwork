@@ -1,18 +1,32 @@
 import assert from "node:assert/strict"
 import { beforeEach, test } from "node:test"
-import { autoRouterOptionKey, autoRouterThinkingLevels } from "@openwork/types/den/auto-router"
+import { autoRouterIdFromModel, autoRouterModelId, autoRouterThinkingLevels, type AutoRouterThinkingLevel } from "@openwork/types/den/auto-router"
 import { anthropicJsonToChat, anthropicStreamToChat, claudeTakesEffort, toAnthropicBody } from "../src/auto-router/anthropic.js"
 import { createMemoryReasoningStore } from "../src/auto-router/reasoning-store.js"
 import { injectRouteIntoChatStream, readAutoPrompt, toOpenAiChatBody, type AutoRouteInfo } from "../src/auto-router/chat.js"
-import { clearAutoTurnChoices, decideAutoRoute, fallbackDecision, type AutoCandidate } from "../src/auto-router/decide.js"
-import { jevRequestBody, type AskJev } from "../src/auto-router/jev.js"
+import { annotateChatError, annotateChatStreamErrors, autoRouteNote } from "../src/auto-router/handler.js"
+import { clearAutoTurnChoices, decideAutoRoute, fallbackDecision, jevTasks, thinkingLevelFor, type AutoCandidate, type TurnChoice } from "../src/auto-router/decide.js"
+import { JEV_THINKING_KEY, jevRequestBody, readJevScores, type AskJev, type JevScores } from "../src/auto-router/jev.js"
 
 const route: AutoRouteInfo = { provider: "anthropic", model: "claude-opus-5", thinking: "high", reason: "jev" }
 
+const ALL_LEVELS: AutoRouterThinkingLevel[] = ["default", "low", "medium", "high", "max"]
+
 const candidates: AutoCandidate[] = [
-  { routeIndex: 0, routeId: "arr_fast", modelName: "Claude Haiku 5", prompt: "Quick questions and small edits", thinkingLevels: ["default", "low"] },
-  { routeIndex: 1, routeId: "arr_deep", modelName: "Claude Opus 5", prompt: "Hard coding and planning", thinkingLevels: ["medium", "high", "max"] },
+  { modelIndex: 0, routeId: "arm_sonnet", modelName: "Claude Sonnet 5", tasks: ["Writing", "Code review"], thinkingLevels: ALL_LEVELS },
+  { modelIndex: 1, routeId: "arm_haiku", modelName: "Claude Haiku 5", tasks: ["Quick questions"], thinkingLevels: ["default", "low", "medium", "high"] },
+  { modelIndex: 2, routeId: "arm_opus", modelName: "Claude Opus 5", tasks: ["Debugging", "code review", "Planning"], thinkingLevels: ALL_LEVELS },
 ]
+
+/** Jev's answer from task names to scores (0..1); keys are resolved from the request. */
+function jevAnswering(byName: Record<string, number>, thinking: number | null = 0.5, seen?: { names: string[] }[]): AskJev {
+  return async ({ tasks }) => {
+    seen?.push({ names: tasks.map((task) => task.name) })
+    const scores: JevScores = { tasks: new Map(), thinking, model: "jev-1" }
+    for (const task of tasks) if (task.name in byName) scores.tasks.set(task.key, byName[task.name] ?? 0)
+    return scores
+  }
+}
 
 function stream(text: string) {
   return new ReadableStream<Uint8Array>({
@@ -38,57 +52,145 @@ beforeEach(() => {
   clearAutoTurnChoices()
 })
 
-test("the fallback is the first route allowing High, at High", () => {
-  const decision = fallbackDecision(candidates)
-  assert.equal(decision?.candidate.routeId, "arr_deep")
-  assert.equal(decision?.thinkingLevel, "high")
-  assert.equal(fallbackDecision([candidates[0]!])?.thinkingLevel, "default")
+test("Smart model ids carry the router id", () => {
+  assert.equal(autoRouterModelId("aur_1"), "openwork-smart-aur_1")
+  assert.equal(autoRouterIdFromModel("openwork-smart-aur_1"), "aur_1")
+  assert.equal(autoRouterIdFromModel("openwork-smart-"), null)
+  assert.equal(autoRouterIdFromModel("openwork-auto"), null)
+  assert.equal(autoRouterIdFromModel(42), null)
 })
 
-test("Jev's choice picks the route and thinking level by option id", async () => {
-  const asked: string[][] = []
-  const askJev: AskJev = async ({ options }) => {
-    asked.push(options.map((option) => option.key))
-    return { key: autoRouterOptionKey(0, "low"), confidence: 0.9, model: "jev-1" }
-  }
-  const decision = await decideAutoRoute({ candidates, prompt: "rename this variable", context: null, continuation: false, turnKey: "t1", askJev })
-  assert.equal(decision?.candidate.routeId, "arr_fast")
+test("the fallback is the first model the member can use, at the provider's default thinking", () => {
+  const decision = fallbackDecision(candidates)
+  assert.equal(decision?.candidate.routeId, "arm_sonnet")
+  assert.equal(decision?.thinkingLevel, "default")
+  assert.equal(decision?.reason, "fallback")
+  assert.equal(fallbackDecision([candidates[2]!, candidates[1]!])?.candidate.routeId, "arm_haiku")
+  assert.equal(fallbackDecision([]), null)
+})
+
+test("each distinct task is one Jev question, shared tasks once (case-insensitive)", () => {
+  const { tasks } = jevTasks(candidates)
+  assert.deepEqual(tasks, [
+    { key: "task_1", name: "Writing" },
+    { key: "task_2", name: "Code review" },
+    { key: "task_3", name: "Quick questions" },
+    { key: "task_4", name: "Debugging" },
+    { key: "task_5", name: "Planning" },
+  ])
+})
+
+test("the model whose tasks score highest in total answers, even against a single stronger match", async () => {
+  // Haiku has the single best match (0.9), but Opus's two matches add up to more (0.7 + 0.6).
+  const decision = await decideAutoRoute({
+    candidates,
+    prompt: "this crashes, help me fix it and plan the refactor",
+    context: null,
+    continuation: false,
+    turnKey: "t1",
+    askJev: jevAnswering({ "Quick questions": 0.9, Debugging: 0.7, Planning: 0.6 }),
+  })
+  assert.equal(decision?.candidate.routeId, "arm_opus")
+  assert.equal(decision?.reason, "jev")
+  assert.ok(Math.abs((decision?.totals?.get("arm_opus") ?? 0) - 1.3) < 1e-9)
+  assert.equal(decision?.totals?.get("arm_haiku"), 0.9)
+})
+
+test("a task shared by two models counts for both; ties go to the model listed first", async () => {
+  const decision = await decideAutoRoute({ candidates, prompt: "review this PR", context: null, continuation: false, turnKey: null, askJev: jevAnswering({ "Code review": 1 }) })
+  assert.equal(decision?.totals?.get("arm_sonnet"), 1)
+  assert.equal(decision?.totals?.get("arm_opus"), 1)
+  assert.equal(decision?.candidate.routeId, "arm_sonnet")
+})
+
+test("Jev's thinking score picks the closest level the chosen model allows", () => {
+  assert.equal(thinkingLevelFor(0, ALL_LEVELS), "low", "no none level: the closest is low")
+  assert.equal(thinkingLevelFor(0, ["default", "none", "low"]), "none")
+  assert.equal(thinkingLevelFor(0.34, ALL_LEVELS), "low")
+  assert.equal(thinkingLevelFor(0.66, ALL_LEVELS), "medium")
+  assert.equal(thinkingLevelFor(1, ALL_LEVELS), "high")
+  assert.equal(thinkingLevelFor(1, ["default", "low", "max"]), "max", "ties go to more reasoning")
+  assert.equal(thinkingLevelFor(0.66, ["default", "low", "high"]), "high")
+  assert.equal(thinkingLevelFor(1, ["default"]), "default", "a model without effort levels")
+  assert.equal(thinkingLevelFor(null, ALL_LEVELS), "default")
+})
+
+test("the chosen model runs at the thinking level Jev scored", async () => {
+  const decision = await decideAutoRoute({ candidates, prompt: "plan a migration", context: null, continuation: false, turnKey: null, askJev: jevAnswering({ Planning: 1 }, 1) })
+  assert.equal(decision?.candidate.routeId, "arm_opus")
+  assert.equal(decision?.thinkingLevel, "high")
+})
+
+test("a single usable model only asks Jev how much to think", async () => {
+  const seen: { names: string[] }[] = []
+  const decision = await decideAutoRoute({ candidates: [candidates[1]!], prompt: "hi", context: null, continuation: false, turnKey: null, askJev: jevAnswering({}, 0, seen) })
+  assert.deepEqual(seen, [{ names: [] }])
+  assert.equal(decision?.candidate.routeId, "arm_haiku")
   assert.equal(decision?.thinkingLevel, "low")
   assert.equal(decision?.reason, "jev")
-  assert.deepEqual(asked[0], ["route_1_default", "route_1_low", "route_2_medium", "route_2_high", "route_2_max"])
 })
 
-test("a continuation of the same turn reuses the choice without asking Jev", async () => {
+test("a continuation of the same turn reuses the model and thinking without asking Jev", async () => {
   let calls = 0
-  const askJev: AskJev = async () => { calls++; return { key: autoRouterOptionKey(1, "max"), confidence: 1, model: null } }
+  const inner = jevAnswering({ Planning: 1 }, 1)
+  const askJev: AskJev = async (input) => { calls++; return inner(input) }
   await decideAutoRoute({ candidates, prompt: "design a system", context: null, continuation: false, turnKey: "turn", askJev })
   const next = await decideAutoRoute({ candidates, prompt: "design a system", context: null, continuation: true, turnKey: "turn", askJev })
   assert.equal(calls, 1)
   assert.equal(next?.reason, "turn")
-  assert.equal(next?.thinkingLevel, "max")
+  assert.equal(next?.candidate.routeId, "arm_opus")
+  assert.equal(next?.thinkingLevel, "high")
 })
 
-test("Jev failing or answering nothing usable falls back", async () => {
+test("Jev failing, answering nothing, or an empty prompt falls back to the first model", async () => {
   const errors: unknown[] = []
   const failing: AskJev = async () => { throw new Error("jev_http_500") }
-  const decision = await decideAutoRoute({ candidates, prompt: "hi", context: null, continuation: false, turnKey: null, askJev: failing, onJevError: (error) => errors.push(error) })
-  assert.equal(decision?.reason, "fallback")
+  const failed = await decideAutoRoute({ candidates, prompt: "hi", context: null, continuation: false, turnKey: null, askJev: failing, onJevError: (error) => errors.push(error) })
+  assert.equal(failed?.reason, "fallback")
+  assert.equal(failed?.candidate.routeId, "arm_sonnet")
   assert.equal(errors.length, 1)
-  const unknown: AskJev = async () => ({ key: "route_9_high", confidence: 1, model: null })
-  assert.equal((await decideAutoRoute({ candidates, prompt: "hi", context: null, continuation: false, turnKey: null, askJev: unknown }))?.reason, "fallback")
+  const unconfigured: AskJev = async () => null
+  assert.equal((await decideAutoRoute({ candidates, prompt: "hi", context: null, continuation: false, turnKey: null, askJev: unconfigured }))?.reason, "fallback")
+  let asked = false
+  const never: AskJev = async () => { asked = true; return null }
+  const empty = await decideAutoRoute({ candidates, prompt: "  ", context: null, continuation: false, turnKey: null, askJev: never })
+  assert.equal(asked, false)
+  assert.equal(empty?.candidate.routeId, "arm_sonnet")
 })
 
-test("the Jev request carries option ids and descriptions, never provider ids", () => {
+test("the Jev request has one Score question per task plus thinking, and never provider or model ids", () => {
   const body = jevRequestBody({
     prompt: "fix the failing test",
-    context: null,
+    context: "earlier",
     model: "jev-latest",
-    options: [{ key: "route_1_high", modelName: "Claude Opus 5", useWhen: "Hard coding", thinkingLevel: "high" }],
+    tasks: [{ key: "task_1", name: "Debugging" }, { key: "task_2", name: "Code review" }],
   })
-  assert.equal(body.questions.route.type, "choice")
-  assert.deepEqual(Object.keys(body.questions.route.criteria), ["route_1_high"])
+  assert.deepEqual(Object.keys(body.questions), ["task_1", "task_2", JEV_THINKING_KEY])
+  assert.equal(body.questions.task_1?.type, "score")
+  assert.equal(body.questions.task_1?.criteria.length, 3)
+  assert.match(JSON.stringify(body.questions.task_2), /Code review/)
+  assert.equal(body.questions[JEV_THINKING_KEY]?.criteria.length, 4)
   assert.equal(body.state.latest_request, "fix the failing test")
-  assert.doesNotMatch(JSON.stringify(body), /ipr_|gwm_/)
+  assert.equal(body.state.earlier_conversation, "earlier")
+  assert.doesNotMatch(JSON.stringify(body), /ipr_|gwm_|claude/)
+})
+
+test("Jev's Score answers are normalized to 0..1", () => {
+  const tasks = [{ key: "task_1", name: "Debugging" }, { key: "task_2", name: "Writing" }]
+  const scores = readJevScores({
+    model: "jev-1.13.0",
+    answers: {
+      task_1: { type: "score", score: 1.5, confidence: 0.4 },
+      task_2: { type: "score", score: 0 },
+      [JEV_THINKING_KEY]: { type: "score", score: 3 },
+    },
+  }, tasks)
+  assert.equal(scores?.tasks.get("task_1"), 0.75)
+  assert.equal(scores?.tasks.get("task_2"), 0)
+  assert.equal(scores?.thinking, 1)
+  assert.equal(scores?.model, "jev-1.13.0")
+  assert.equal(readJevScores({ answers: {} }, tasks), null)
+  assert.equal(readJevScores("nope", tasks), null)
 })
 
 test("the prompt is the latest user message; tool results continue the turn", () => {
@@ -144,18 +246,42 @@ test("a chat request becomes a Messages request with tools, results and effort",
   ] }])
 })
 
-test("a tool-use turn without its signed thinking continues with thinking off", () => {
-  const body = toAnthropicBody({ messages: [
+test("a tool-use turn without its signed thinking thinks off only where the model allows it", () => {
+  const messages = [
     { role: "user", content: "read a.ts" },
     { role: "assistant", content: "", tool_calls: [{ id: "toolu_1", type: "function", function: { name: "read", arguments: "{\"path\":\"a.ts\"}" } }] },
     { role: "tool", tool_call_id: "toolu_1", content: "export {}" },
-  ] }, { model: "gwm_x", upstreamModel: "claude-opus-5", thinkingLevel: "high", maxOutputTokens: null })
+  ]
+  const body = toAnthropicBody({ messages }, { model: "gwm_x", upstreamModel: "claude-opus-5", thinkingLevel: "high", maxOutputTokens: null, thinkingLevels: ["default", "none", "high"] })
   assert.deepEqual(body.thinking, { type: "disabled" })
   assert.deepEqual(body.messages, [
     { role: "user", content: [{ type: "text", text: "read a.ts" }] },
     { role: "assistant", content: [{ type: "tool_use", id: "toolu_1", name: "read", input: { path: "a.ts" } }] },
     { role: "user", content: [{ type: "tool_result", tool_use_id: "toolu_1", content: "export {}" }] },
   ])
+})
+
+test("a model that only takes adaptive thinking never gets thinking disabled; the unsigned turn becomes text", () => {
+  const messages = [
+    { role: "user", content: "read a.ts" },
+    { role: "assistant", content: "", tool_calls: [{ id: "toolu_1", type: "function", function: { name: "read", arguments: "{\"path\":\"a.ts\"}" } }] },
+    { role: "tool", tool_call_id: "toolu_1", content: "export {}" },
+  ]
+  for (const thinkingLevel of ["medium", "default"] as const) {
+    const body = toAnthropicBody({ messages }, { model: "gwm_x", upstreamModel: "claude-opus-5-5", thinkingLevel, maxOutputTokens: null, thinkingLevels: ["default", "low", "medium", "high"] })
+    assert.notDeepEqual(body.thinking, { type: "disabled" })
+    assert.deepEqual(body.messages, [
+      { role: "user", content: [{ type: "text", text: "read a.ts" }] },
+      { role: "assistant", content: [{ type: "text", text: "[Called the read tool with {\"path\":\"a.ts\"}]" }] },
+      { role: "user", content: [{ type: "text", text: "[Result of the read tool]\nexport {}" }] },
+    ])
+  }
+  const medium = toAnthropicBody({ messages }, { model: "gwm_x", upstreamModel: "claude-opus-5-5", thinkingLevel: "medium", maxOutputTokens: null, thinkingLevels: ["default", "medium"] })
+  assert.deepEqual(medium.thinking, { type: "adaptive", display: "summarized" })
+  assert.deepEqual(medium.output_config, { effort: "medium" })
+  // Earlier turns keep their structured tool calls.
+  const later = toAnthropicBody({ messages: [...messages, { role: "assistant", content: "Done." }, { role: "user", content: "next" }] }, { model: "gwm_x", upstreamModel: "claude-opus-5-5", thinkingLevel: "medium", maxOutputTokens: null, thinkingLevels: ["default", "medium"] })
+  assert.match(JSON.stringify(later.messages), /tool_use/)
 })
 
 test("a Messages stream becomes a chat stream, and its thinking is replayed on the next request", async () => {
@@ -235,4 +361,32 @@ test("a model allows default plus its catalog effort levels, in order", () => {
   assert.deepEqual(autoRouterThinkingLevels("claude-opus-5", { reasoning: true, reasoning_options: [{ type: "effort", values: ["max", "low", "high", "bogus"] }] }), ["default", "low", "high", "max"])
   assert.deepEqual(autoRouterThinkingLevels("claude-sonnet-4-5", { reasoning: true, reasoning_options: [{ type: "effort", values: ["low"] }] }), ["default"])
   assert.deepEqual(autoRouterThinkingLevels("gpt-5", { reasoning: false, reasoning_options: [{ type: "effort", values: ["low"] }] }), ["default"])
+})
+
+test("a continuation on another gateway instance keeps the turn's model and thinking from the shared store", async () => {
+  const shared = new Map<string, TurnChoice>()
+  const store = { recall: async (key: string) => shared.get(key) ?? null, remember: async (key: string, choice: TurnChoice) => { shared.set(key, choice) } }
+  let calls = 0
+  const inner = jevAnswering({ "Quick questions": 1 }, 0.66)
+  const askJev: AskJev = async (input) => { calls++; return inner(input) }
+  await decideAutoRoute({ candidates, prompt: "what time is it in Tokyo", context: null, continuation: false, turnKey: "turn-shared", askJev, shared: store })
+  clearAutoTurnChoices() // as if the next request landed on another instance
+  const next = await decideAutoRoute({ candidates, prompt: "what time is it in Tokyo", context: null, continuation: true, turnKey: "turn-shared", askJev, shared: store })
+  assert.equal(calls, 1)
+  assert.equal(next?.reason, "turn")
+  assert.equal(next?.candidate.routeId, "arm_haiku")
+  assert.equal(next?.thinkingLevel, "medium")
+})
+
+test("every error says which model Smart chose", async () => {
+  const chosen = { ...route, name: "Claude Opus 5.5", thinking: "medium" as const }
+  assert.equal(autoRouteNote(chosen), "Smart chose Claude Opus 5.5 · Medium thinking.")
+  assert.equal(autoRouteNote({ ...chosen, thinking: "default" }), "Smart chose Claude Opus 5.5.")
+  const json = annotateChatError({ error: { message: "Overloaded", type: "overloaded_error" } }, chosen)
+  assert.deepEqual(json.error, { message: "Overloaded (Smart chose Claude Opus 5.5 · Medium thinking.)", type: "overloaded_error" })
+  assert.deepEqual(json.openwork_route, chosen)
+  const text = await new Response(annotateChatStreamErrors(stream(`data: ${JSON.stringify({ choices: [{ delta: { content: "a" } }] })}\n\ndata: ${JSON.stringify({ error: { message: "Boom", type: "api_error" } })}\n\n`), chosen)).text()
+  const events = dataEvents(text).map((event) => JSON.parse(event))
+  assert.equal(events[0].choices[0].delta.content, "a")
+  assert.equal(events[1].error.message, "Boom (Smart chose Claude Opus 5.5 · Medium thinking.)")
 })

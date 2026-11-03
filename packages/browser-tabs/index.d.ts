@@ -65,7 +65,7 @@ export type BrowserStatePayload = {
   visibleSessionId?: string | null;
   tabs?: BrowserPanelTab[];
   /** Actual native hierarchy and bounds, included by getState (not state events). */
-  nativeViews?: Array<{ tabId: string; attached: boolean; aboveApp: boolean; bounds: Bounds }>;
+  nativeViews?: Array<{ tabId: string; attached: boolean; aboveApp: boolean; poppedOut?: boolean; focused?: boolean; bounds: Bounds }>;
 };
 
 export type BrowserPanelOwnerPayload = {
@@ -101,6 +101,7 @@ export type BrowserTabRegistry = {
   add(tab: { tabId: string; ownerSessionId?: string | null }): RegistryTab;
   select(tabId: string): RegistryTab;
   remove(tabId: string): RemovedRegistryTab | null;
+  reassignOwner(fromOwnerSessionId: string | null | undefined, toOwnerSessionId: string | null | undefined): string[];
   reorder(tabIds: string[]): RegistryTab[];
   get(tabId: string): RegistryTab | null;
   has(tabId: string): boolean;
@@ -117,17 +118,20 @@ export type BrowserTabRegistry = {
   size(): number;
 };
 
+export const DRAFT_OWNER_KEY: "__openwork_no_session__";
 export const SHARED_OWNER_KEY: "*";
 export const BACKGROUND_TAB_VIEWPORT: Readonly<Viewport>;
 
 export function backgroundTabEmulationCommands(viewport?: Viewport): CdpCommand[];
 export function foregroundTabEmulationCommands(): CdpCommand[];
 
-export type AgentViewportKey = "desktop" | "tablet" | "phone";
-export type AgentViewport = Viewport & { label: string; mobile: boolean };
+export type AgentViewportKey = "panel" | "desktop" | "tablet" | "phone";
+/** `fitsPanel`: locks to the page's on-screen size; width and height are the off-screen fallback. */
+export type AgentViewport = Viewport & { label: string; mobile: boolean; fitsPanel?: boolean };
 export const AGENT_VIEWPORTS: Readonly<Record<AgentViewportKey, Readonly<AgentViewport>>>;
 export const DEFAULT_AGENT_VIEWPORT: AgentViewportKey;
 export function agentViewportFor(key: unknown): Readonly<AgentViewport>;
+export function lockedAgentViewport(key: unknown, bounds: Viewport | null): Readonly<AgentViewport>;
 export function fitAgentViewport(viewport: Viewport, bounds: Bounds): { scale: number; bounds: Bounds };
 export function mobileUserAgentOverride(chromeVersion: string): { userAgent: string; userAgentMetadata: Record<string, unknown> };
 export function agentViewportEmulationCommands(viewport: AgentViewport, scale: number, chromeVersion: string): CdpCommand[];

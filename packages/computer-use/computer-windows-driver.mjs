@@ -3,7 +3,9 @@
 // helpers/openwork-computer-use.exe) and talks to it over stdin/stdout, one JSON
 // object per line. The helper resolves each window by handle, process id and
 // start time, captures only the selected window, and stops input as soon as the
-// window loses focus, moves or closes, Windows locks, or the host cancels.
+// window loses focus, moves or closes, Windows locks, the host cancels, or the
+// person clicks or types. It takes the front only for the agent's moment and
+// then gives the front and the pointer back.
 // Sessions, receipts, Take over, Continue, Stop and watch frames come from the
 // shared runtime in computer-remote.mjs.
 import { spawn } from "node:child_process";

@@ -37,7 +37,8 @@ test(`AGENT-VIS-04 ${resolveEvalEngine()}: a person asks for a report from a con
   await step("the step reads in plain words, never as raw tool names", async () => {
     await user.see({ text: world.proof }, { timeoutMs: 60_000 });
     await user.see("Run task", { timeoutMs: 30_000 });
-    // A finished one-call run shows its step rows directly; there is no folded group to open.
+    // A finished run folds to one "Worked for…" line (DESIGN.md T1); the person opens it to see each step.
+    await user.click({ testId: "completed-work-rail" });
     await user.see({ text: /current amber report/i });
     await user.notSee({ text: /openwork-cloud_execute_capability|execute_capability|search_capabilities/ });
     const rows = (await probe.dom("[data-capability-call]")).elements.map((element) => element.text);

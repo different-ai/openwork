@@ -4,12 +4,12 @@ import { healthFixture } from "./den-service-readiness.ts";
 import { enableOrganizationCapabilities } from "./organization-capabilities.ts";
 
 /** A fixed, valid TypeID for the seeded connection. */
-const SLACK_CONNECTION_ID = "emc_01k8z5wq0s0000000000000000";
+export const SLACK_CONNECTION_ID = "emc_01k8z5wq0s0000000000000000";
 /** This world's Den encrypts columns with its own key, so the fixture can write the Slack app's synthetic secrets. */
-const ENCRYPTION_KEY = "workbot-agent-world-encryption-key-synthetic-0001";
+export const ENCRYPTION_KEY = "workbot-agent-world-encryption-key-synthetic-0001";
 
 /** Den's column encryption (ee/packages/den-db/src/columns.ts), for synthetic fixture values only. */
-function encryptForDen(value: string) {
+export function encryptForDen(value: string) {
   const iv = randomBytes(12);
   const cipher = createCipheriv("aes-256-gcm", new Uint8Array(createHash("sha256").update(ENCRYPTION_KEY).digest()), new Uint8Array(iv));
   const encrypted = cipher.update(value, "utf8", "base64") + cipher.final("base64");
@@ -43,7 +43,7 @@ export async function workbotProactiveWorld(seed: Seed) {
         DEN_DB_ENCRYPTION_KEY: ENCRYPTION_KEY,
       },
     });
-    const organizationId = await enableOrganizationCapabilities(seed, den.admin, { workbotProactive: true, workbotAgentHealthView: true });
+    const organizationId = await enableOrganizationCapabilities(seed, den.admin, { workbotProactive: true });
     const context = await seed.api(den.admin, "/v1/org");
     const currentMember = isRecord(context.body) && isRecord(context.body.currentMember) ? context.body.currentMember : null;
     const ownerMemberId = typeof currentMember?.id === "string" ? currentMember.id : "";

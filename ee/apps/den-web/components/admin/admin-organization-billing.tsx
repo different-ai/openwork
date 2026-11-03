@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState, type FormEvent, type ReactNode } from "react";
-import { ChevronRight, Lock } from "lucide-react";
+import { Lock } from "lucide-react";
 import type { AdminOrganizationDetail } from "@openwork/types/den/admin-organization";
 import { organizationPlanStateSchema, type OrganizationPlanState } from "@openwork/types/den/billing-plans";
 import { DenButton } from "../../app/(den)/_components/ui/button";
@@ -9,7 +9,6 @@ import { DenInput } from "../../app/(den)/_components/ui/input";
 import { DenSelect } from "../../app/(den)/_components/ui/select";
 import { DenSwitch } from "../../app/(den)/_components/ui/switch";
 import { countLabel, formatPlanDate, planName, type PlanTierName } from "../../app/(den)/_lib/plan-display";
-import { AdminEnterpriseBilling } from "./admin-enterprise-billing";
 import type { AdminFeatureAccessFailure } from "./admin-organization-feature-controls";
 import { sendAdmin } from "./admin-request";
 
@@ -29,12 +28,7 @@ function draftFrom(plan: OrganizationPlanState): Draft {
 
 function subscriptionLabel(organization: Organization): string {
   const team = organization.subscriptions?.team ?? null;
-  const enterprise = organization.subscriptions?.enterprise ?? null;
-  const parts = [
-    ...(enterprise ? [`Enterprise · ${enterprise.status.replace(/_/g, " ")}`] : []),
-    ...(team ? [`Team · ${team.status.replace(/_/g, " ")}`] : []),
-  ];
-  return parts.length ? parts.join(", ") : "No Team or Enterprise subscription";
+  return team ? `Team · ${team.status.replace(/_/g, " ")}` : "No Team subscription";
 }
 
 function Row({ label, children, testId }: { label: string; children: ReactNode; testId?: string }) {
@@ -49,8 +43,9 @@ function Row({ label, children, testId }: { label: string; children: ReactNode; 
 /**
  * /admin › organization › Billing: the one place a platform admin sets an
  * organization's plan and how many users it may have (enforced the same way
- * by invitations, SSO and SCIM), plus its Stripe state, complimentary
- * OpenWork Web, and billing an Enterprise contract through Stripe.
+ * by invitations, SSO and SCIM), plus its Team subscription in Stripe and
+ * complimentary OpenWork Web. Enterprise is set here and invoiced outside
+ * OpenWork; it is never linked to Stripe.
  */
 export function AdminOrganizationBilling({ organization, onSaved, onAccessFailure }: {
   organization: Organization;
@@ -80,6 +75,9 @@ export function AdminOrganizationBilling({ organization, onSaved, onAccessFailur
   const users = Number(draft.users);
   const usersValid = Number.isInteger(users) && users >= FREE_USERS && users <= 100_000;
   const paidInStripe = plan.paidBy !== "none";
+  // Setting Enterprise does not touch Stripe: a workspace still paying for Team
+  // by card keeps being charged, and no user limit applies while it pays.
+  const teamStillBilled = plan.paidBy === "stripe_team" && draft.tier === "enterprise";
   const joined = organization.people?.joined ?? plan.users;
   const invited = organization.people?.invited ?? 0;
   const limit = plan.userLimit;
@@ -150,7 +148,7 @@ export function AdminOrganizationBilling({ organization, onSaved, onAccessFailur
         {plan.ended ? <p className="mt-2 text-xs text-[color:var(--dls-text-secondary)]">Still active. Nothing changes until an admin edits the plan.</p> : null}
         {paidInStripe ? (
           <p data-testid="admin-billing-stripe-plan" className="mt-2 text-xs text-[color:var(--dls-text-secondary)]">
-            <Lock className="mr-1 inline" size={12} aria-hidden="true" />{planName(plan.paidBy === "stripe_enterprise" ? "enterprise" : "team")} · paid in Stripe. Stripe sets this plan. Change or cancel it in Stripe.
+            <Lock className="mr-1 inline" size={12} aria-hidden="true" />{planName("team")} · paid in Stripe. Stripe sets this plan. Change or cancel it in Stripe.
           </p>
         ) : null}
       </div>
@@ -182,6 +180,11 @@ export function AdminOrganizationBilling({ organization, onSaved, onAccessFailur
           </label>
         </div>
         {!usersValid ? <p className="text-xs text-[color:var(--dls-text-secondary)]">Users allowed is a whole number, at least {FREE_USERS}.</p> : null}
+        {teamStillBilled ? (
+          <p role="status" data-testid="admin-billing-team-still-billed" className="rounded-md bg-amber-50 px-3 py-2 text-xs text-amber-900">
+            This workspace still pays for Team by card. Saving Enterprise does not change Stripe: the card keeps being charged and the users allowed are not enforced until you cancel the Team subscription in Stripe.
+          </p>
+        ) : null}
         <div className="flex items-center gap-2">
           <DenButton type="submit" size="sm" loading={saving} disabled={!changed || !usersValid} data-testid="admin-billing-save-plan">Save plan</DenButton>
           {changed ? <DenButton type="button" size="sm" variant="ghost" disabled={saving} onClick={() => setDraft(saved)}>Discard</DenButton> : null}
@@ -215,13 +218,6 @@ export function AdminOrganizationBilling({ organization, onSaved, onAccessFailur
             {webError ? <p role="alert" className="w-full text-right text-xs text-red-700">{webError}</p> : null}
           </form>
         ) : null}
-        <details className="group border-t border-[var(--dls-border)]" data-testid="admin-billing-enterprise-contract">
-          <summary className="flex min-h-11 cursor-pointer list-none items-center gap-2 py-2 text-[13px] font-medium">
-            <ChevronRight size={14} aria-hidden="true" className="transition-transform duration-150 ease-out group-open:rotate-90" />
-            Bill an Enterprise contract through Stripe
-          </summary>
-          <AdminEnterpriseBilling organizationId={organization.id} onAccessFailure={onAccessFailure} onChanged={onSaved} />
-        </details>
       </div>
     </section>
   );

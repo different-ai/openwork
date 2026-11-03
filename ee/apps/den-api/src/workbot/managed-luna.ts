@@ -6,21 +6,8 @@ import { isWorkbotManagedLuna, WORKBOT_FREE_LUNA_ID, WORKBOT_PAID_LUNA_ID } from
 import type { HeadlessModelAccess } from "@openwork-ee/headless-protocol"
 import { db } from "../db.js"
 import { env } from "../env.js"
-import { getOrganizationFeatures, type FeatureMap } from "../features.js"
 import { ensureMemberInferenceKey, getMemberInferenceAccess, issueMemberFreeInferenceCredential, organizationAllowsManagedModels, readInferenceMetadata } from "../inference.js"
 import { CloudAgentGatewayAccessError, type CloudAgentGatewayActor } from "./gateway-model.js"
-
-/**
- * Whether Workbot routes its default through the member's included OpenWork models. `workbotIncludedModels` is the
- * default on its own; `workbotUsageRecovery` adds in-conversation upgrades and has always implied it.
- */
-export function workbotIncludedModelsEnabled(features: Pick<FeatureMap, "workbotIncludedModels" | "workbotUsageRecovery">): boolean {
-  return features.workbotIncludedModels || features.workbotUsageRecovery
-}
-
-export async function workbotIncludedModelsEnabledFor(organizationId: string, userId: string): Promise<boolean> {
-  return workbotIncludedModelsEnabled(await getOrganizationFeatures(organizationId, { userId }))
-}
 
 /** The managed starter is the default only while no custom model is saved; a saved custom model is never migrated. */
 export function workbotUsesManagedDefault(chosen: string | null): boolean {

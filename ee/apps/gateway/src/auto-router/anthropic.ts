@@ -58,7 +58,7 @@ function toolCallsOf(message: JsonObject): JsonObject[] {
   return Array.isArray(message.tool_calls) ? message.tool_calls.filter(isJsonObject) : []
 }
 
-type AnthropicMessage = { role: "user" | "assistant"; content: JsonObject[] }
+export type AnthropicMessage = { role: "user" | "assistant"; content: JsonObject[] }
 
 function pushMessage(list: AnthropicMessage[], role: "user" | "assistant", content: JsonObject[]) {
   if (!content.length) return
@@ -92,11 +92,15 @@ export function toAnthropicBody(body: JsonObject, input: {
   maxOutputTokens: number | null
   /** Reasoning state remembered for earlier tool calls, by tool call id. */
   reasoning?: ReadonlyMap<string, ReasoningPayload>
+  /** The levels the model allows; thinking is only ever turned off when `none` is among them. */
+  thinkingLevels?: readonly AutoRouterThinkingLevel[]
 }): JsonObject {
   const system: JsonObject[] = []
   const list: AnthropicMessage[] = []
   const source = Array.isArray(body.messages) ? body.messages.filter(isJsonObject) : []
   let lastAssistantMissingThinking = false
+  // Tool calls of the current turn that have no signed thinking to replay, and their names.
+  let unsignedCalls = new Map<string, string>()
   for (const message of source) {
     switch (message.role) {
       case "system":
@@ -108,6 +112,7 @@ export function toAnthropicBody(body: JsonObject, input: {
       case "user":
         pushMessage(list, "user", userParts(message.content))
         lastAssistantMissingThinking = false
+        unsignedCalls = new Map()
         break
       case "assistant": {
         const calls = toolCallsOf(message)
@@ -123,6 +128,12 @@ export function toAnthropicBody(body: JsonObject, input: {
         }
         pushMessage(list, "assistant", content)
         lastAssistantMissingThinking = calls.length > 0 && thinking === null
+        if (thinking === null) {
+          for (const call of calls) {
+            const fn = isJsonObject(call.function) ? call.function : {}
+            if (typeof call.id === "string") unsignedCalls.set(call.id, typeof fn.name === "string" ? fn.name : "tool")
+          }
+        }
         break
       }
       case "tool":
@@ -156,13 +167,23 @@ export function toAnthropicBody(body: JsonObject, input: {
     else next.tool_choice = { type: "auto" }
   }
 
-  // A tool-use turn with thinking on must replay the signed thinking; without it, think off.
-  const level = lastAssistantMissingThinking && input.thinkingLevel !== "default" ? "none" : input.thinkingLevel
-  const thinkingOn = level !== "default" && level !== "none" && claudeTakesEffort(input.upstreamModel)
+  // A tool-use turn with thinking on must replay the signed thinking. When it
+  // is missing (the turn started on another model, or the state expired):
+  // models that accept it think off for this request; models that only take
+  // adaptive thinking ("thinking.type.disabled is not supported") get this
+  // turn's unsigned tool calls as plain text instead, so thinking stays on.
+  const effortModel = claudeTakesEffort(input.upstreamModel)
+  const allowsDisabled = input.thinkingLevels?.includes("none") ?? false
+  let level = input.thinkingLevel
+  if (lastAssistantMissingThinking && effortModel) {
+    if (level !== "default" && allowsDisabled) level = "none"
+    else next.messages = flattenUnsignedToolCalls(list, unsignedCalls)
+  }
+  const thinkingOn = level !== "default" && level !== "none" && effortModel
   if (thinkingOn) {
     next.thinking = { type: "adaptive", display: "summarized" }
     next.output_config = { effort: level }
-  } else if (level === "none" && claudeTakesEffort(input.upstreamModel)) {
+  } else if (level === "none" && effortModel && allowsDisabled) {
     next.thinking = { type: "disabled" }
   }
   if (!thinkingOn) {
@@ -172,6 +193,33 @@ export function toAnthropicBody(body: JsonObject, input: {
   if (isJsonObject(body.metadata) && typeof body.metadata.user_id === "string") next.metadata = { user_id: body.metadata.user_id }
   else if (typeof body.user === "string") next.metadata = { user_id: body.user }
   return next
+}
+
+function blockText(content: unknown): string {
+  if (typeof content === "string") return content
+  if (!Array.isArray(content)) return ""
+  return content.flatMap((block) => isJsonObject(block) && block.type === "text" && typeof block.text === "string" ? [block.text] : []).join("\n")
+}
+
+/**
+ * The same conversation with these tool calls and their results written as
+ * text, for a model that requires signed thinking before structured tool use.
+ */
+export function flattenUnsignedToolCalls(list: AnthropicMessage[], calls: ReadonlyMap<string, string>): AnthropicMessage[] {
+  if (!calls.size) return list
+  return list.map((message) => ({
+    role: message.role,
+    content: message.content.flatMap((block): JsonObject[] => {
+      if (block.type === "tool_use" && typeof block.id === "string" && calls.has(block.id)) {
+        return [{ type: "text", text: `[Called the ${String(block.name)} tool with ${JSON.stringify(block.input ?? {})}]` }]
+      }
+      if (block.type === "tool_result" && typeof block.tool_use_id === "string" && calls.has(block.tool_use_id)) {
+        const media = Array.isArray(block.content) ? block.content.filter((part) => isJsonObject(part) && part.type !== "text") : []
+        return [{ type: "text", text: `[Result of the ${calls.get(block.tool_use_id) ?? "tool"} tool]\n${blockText(block.content)}` }, ...media.filter(isJsonObject)]
+      }
+      return [block]
+    }),
+  }))
 }
 
 function readMaxTokens(body: JsonObject) {

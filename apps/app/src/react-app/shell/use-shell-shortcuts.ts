@@ -26,6 +26,7 @@ import { isFavoriteModelShortcut } from "./favorite-model-shortcut";
 import { isCycleModelSourceShortcut } from "@/react-app/domains/models/model-catalog";
 import { isFastModeShortcut } from "./fast-mode-shortcut";
 import { isNewSessionShortcut } from "./new-session-shortcut";
+import { isSettleSessionShortcut } from "./settle-session-shortcut";
 
 const NO_SESSION_NUMBER_TARGETS: readonly SessionNumberShortcutTarget[] = [];
 
@@ -38,6 +39,8 @@ export type UseShellShortcutsInput = {
   onCycleFavoriteModel?: () => void;
   onCycleModelSource?: () => void;
   onToggleFastMode?: () => void;
+  /** Settle the open session, or un-settle it when it is already settled. */
+  onToggleSettleSession?: () => void;
 };
 
 export function useCommandPaletteShortcut(enabled = true) {
@@ -130,6 +133,7 @@ export function useShellShortcuts(input: UseShellShortcutsInput) {
   //   Ctrl+Alt+T / Ctrl+Alt+Shift+T (Windows/Linux) -> next / previous thinking mode
   //   Ctrl+Shift+M      -> next favorite model
   //   Ctrl+Shift+F (macOS) / Ctrl+Alt+F (Windows/Linux) -> toggle Fast
+  //   Cmd/Ctrl+Shift+E  -> settle or un-settle the open session
   //   Cmd/Ctrl+1–9      -> matching visible sidebar session
   const handleGlobalShortcut = useEffectEvent((event: KeyboardEvent) => {
     if (event.defaultPrevented) return;
@@ -146,6 +150,11 @@ export function useShellShortcuts(input: UseShellShortcutsInput) {
     if (isFastModeShortcut(event, thinkingModeShortcutOs)) {
       event.preventDefault();
       if (!event.repeat) onToggleFastMode?.();
+      return;
+    }
+    if (isSettleSessionShortcut(event, sessionNumberOs)) {
+      event.preventDefault();
+      if (!event.repeat) input.onToggleSettleSession?.();
       return;
     }
     const thinkingModeDirection = getThinkingModeShortcutDirection(event, thinkingModeShortcutOs);

@@ -6,13 +6,77 @@
     <meta name="theme-color" content="#fbfcfd" />
     <title>Workbot</title>
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <!-- The layout the boot page draws (workspace or classic), as the last visit had it, before the first paint. -->
+    <script>try { if (localStorage.getItem("workbot.layout") === "workspace") document.documentElement.dataset.workbotLayout = "workspace" } catch (error) {}</script>
     <!-- Ask who is signed in while the app's script downloads; host.ts uses this answer for its first read. -->
     <script>window.__workbotMe = fetch("/v1/workbot/me", { credentials: "same-origin", headers: { accept: "application/json" } }).catch(function () { return null })</script>
+    <!-- Then read the newest messages for that person, still before the script arrives. The read names them the way
+         host.ts does, so the server refuses it for anyone else; host.ts uses it once, for the same first read
+         (FIRST_TURNS in screen.tsx). -->
+    <script>
+      window.__workbotThread = window.__workbotMe.then(function (response) {
+        if (!response || !response.ok) return null
+        return response.clone().json().then(function (me) {
+          // The sign-in answer says which layout the app will draw (screen.tsx's workspace shell): match it now.
+          var layout = me.workspaceAssistant || me.browserDemonstrations ? "workspace" : "classic"
+          if (layout === "workspace") document.documentElement.dataset.workbotLayout = layout
+          else delete document.documentElement.dataset.workbotLayout
+          try { localStorage.setItem("workbot.layout", layout) } catch (error) {}
+          if (!me.enabled || !me.userId || !me.organizationId) return null
+          var chat = me.sideChats ? new URLSearchParams(location.search).get("chat") : null
+          var path = "/v1/workbot?turns=8" + (chat && /^[a-z0-9]{16,40}$/.test(chat) ? "&chat=" + chat : "")
+          var headers = { accept: "application/json", "x-openwork-client-user": me.userId, "x-openwork-client-organization": me.organizationId }
+          return { path: path, userId: me.userId, organizationId: me.organizationId, response: fetch(path, { credentials: "same-origin", headers: headers }) }
+        })
+      }).catch(function () { return null })
+    </script>
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400..700&family=IBM+Plex+Mono:wght@400;500&display=swap" />
+    <!-- The boot page's own styles: it paints before the app's stylesheet and script arrive. Values follow screen.tsx. -->
+    <style>
+      html, body { height: 100%; margin: 0; background: #fbfcfd; }
+      #workbot-boot { position: fixed; inset: 0; z-index: 1; display: flex; flex-direction: column; background: #fbfcfd; color: #11181c; font-family: "Inter", "Segoe UI", system-ui, sans-serif; -webkit-font-smoothing: antialiased; }
+      #workbot-boot header { display: flex; height: 52px; flex-shrink: 0; align-items: center; justify-content: space-between; padding: 0 16px; }
+      #workbot-boot .name { display: flex; align-items: center; gap: 8px; font-size: 15px; font-weight: 600; line-height: 20px; letter-spacing: -0.015em; }
+      #workbot-boot .mark { position: relative; width: 16px; height: 20px; overflow: hidden; }
+      #workbot-boot .mark img { position: absolute; left: -5px; top: 0; width: 28.5px; height: 22.2px; }
+      #workbot-boot .avatar { width: 32px; height: 32px; border-radius: 9999px; background: #f1f3f5; }
+      #workbot-boot main { flex: 1; }
+      #workbot-boot .bar { display: flex; justify-content: center; padding: 12px; }
+      #workbot-boot form { display: flex; align-items: flex-end; gap: 4px; width: 100%; max-width: 640px; min-width: 0; padding: 7px; border-radius: 9999px; background: #fff; box-shadow: 0 0 0 1px #01162717, 0 4px 14px -6px #0116271a; }
+      #workbot-boot .attach, #workbot-boot .send { width: 36px; height: 36px; flex-shrink: 0; border-radius: 9999px; }
+      #workbot-boot .attach { background: #f1f3f5; }
+      #workbot-boot .send { background: #c1c8cd; }
+      #workbot-boot textarea { flex: 1; min-width: 0; height: 36px; margin: 0; padding: 7px 6px; border: 0; resize: none; background: transparent; color: #11181c; font: inherit; font-size: 16px; line-height: 22px; outline: none; }
+      #workbot-boot textarea::placeholder { color: #8b9196; }
+      @media (min-width: 640px) {
+        #workbot-boot header { padding: 0 20px; }
+        #workbot-boot .bar { padding: 12px 40px 28px; }
+        #workbot-boot form { padding: 8px 8px 8px 7px; }
+        #workbot-boot textarea { padding: 9px 6px; font-size: 14px; line-height: 18px; }
+      }
+      /* The workspace layout keeps the message box closer to the bottom at every width. */
+      [data-workbot-layout="workspace"] #workbot-boot .bar { padding: 12px 12px 16px; }
+    </style>
   </head>
   <body>
+    <!-- Drawn from the first bytes: the header and a message box that takes typing. main.tsx hands what was typed to
+         the app's own message box and removes this once the app draws. -->
+    <div id="workbot-boot" aria-busy="true">
+      <header><span class="name"><span class="mark"><img src="/favicon.svg" alt="" /></span>Workbot</span><span class="avatar"></span></header>
+      <main></main>
+      <div class="bar"><form onsubmit="return false"><span class="attach"></span><textarea rows="1" placeholder="Message Workbot" aria-label="Message Workbot" autofocus></textarea><span class="send"></span></form></div>
+    </div>
+    <script>
+      // The other pages (Computer, Documents, Calendar) have no message box: they wait for the app as before. Enter
+      // keeps the words for the app's box rather than adding a line.
+      (function () {
+        var boot = document.getElementById("workbot-boot")
+        if (/^\/(computer|browser|documents|calendar)(\/|$)/.test(location.pathname)) { boot.remove(); return }
+        boot.querySelector("textarea").addEventListener("keydown", function (event) { if (event.key === "Enter" && !event.shiftKey) event.preventDefault() })
+      })()
+    </script>
     <div id="root"></div>
     <script type="module" src="./main.tsx"></script>
   </body>

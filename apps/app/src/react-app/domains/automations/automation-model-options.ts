@@ -2,15 +2,19 @@ import type { DenOrgLlmProvider } from "@/app/lib/den"
 import { getModelBehaviorSummary } from "@/app/lib/model-behavior"
 import type { ModelOption, ProviderListItem } from "@/app/types"
 import type { AutomationModel } from "@openwork/types/automations"
-import { AUTOMATION_FREE_MODEL } from "@openwork/types/automations"
+import { AUTOMATION_FREE_MODEL, isDenAuthorizedAutomationProvider } from "@openwork/types/automations"
 import {
   automationModelOptions as sharedAutomationModelOptions,
+  compareAutomationModelOptions,
   findAutomationModelOption,
   type AutomationModelOption,
 } from "@openwork/types/automation-models"
 
+/** The local runtime's model record, with the name of the provider it belongs to. */
+export type AutomationCatalogModel = ProviderListItem["models"][string] & { providerName?: string }
+
 /** providerId → modelId → the local runtime's model record. */
-export type AutomationProviderCatalog = Record<string, Record<string, ProviderListItem["models"][string]>>
+export type AutomationProviderCatalog = Record<string, Record<string, AutomationCatalogModel>>
 
 export type { AutomationModelOption }
 
@@ -29,14 +33,36 @@ export type AutomationModelAvailability = {
 /**
  * Den's usable-provider response is already scoped to the active member; the shared helper keeps the submitted
  * value normalized to the IDs the server revalidates.
+ *
+ * With the desktop runtime's catalog, the models connected only on this desktop (its own providers and the AI
+ * Gateway providers synced for the member) are offered too: a Desktop Automation runs in that runtime, and Den
+ * accepts them for Desktop placement only.
  */
 export function automationModelOptions(
   providers: readonly DenOrgLlmProvider[],
   options: AutomationModelAvailability = {},
 ): AutomationModelOption[] {
   const { catalog, ...shared } = options
-  return sharedAutomationModelOptions(providers, shared)
-    .filter((model) => catalog === undefined || Boolean(catalog[model.providerId]?.[model.modelId]))
+  const fromDen = sharedAutomationModelOptions(providers, shared)
+  if (catalog === undefined) return fromDen
+  return [
+    ...fromDen.filter((model) => Boolean(catalog[model.providerId]?.[model.modelId])),
+    ...desktopRuntimeModelOptions(catalog),
+  ].sort(compareAutomationModelOptions)
+}
+
+/** The runtime's models from providers Den does not authorize itself; Den's own providers come from Den. */
+function desktopRuntimeModelOptions(catalog: AutomationProviderCatalog): AutomationModelOption[] {
+  return Object.entries(catalog)
+    .filter(([providerId]) => !isDenAuthorizedAutomationProvider(providerId))
+    .flatMap(([providerId, models]) => Object.entries(models).map(([modelId, model]): AutomationModelOption => ({
+      providerId,
+      modelId,
+      providerName: model.providerName?.trim() || providerId,
+      modelName: model.name?.trim() || modelId,
+      logoProviderId: providerId,
+      accessKind: "desktop_runtime",
+    })))
 }
 
 export { findAutomationModelOption }
@@ -46,7 +72,10 @@ export function automationProviderCatalog(
   providers: readonly ProviderListItem[] | undefined,
 ): AutomationProviderCatalog {
   const catalog: AutomationProviderCatalog = {}
-  for (const provider of providers ?? []) catalog[provider.id] = { ...(provider.models ?? {}) }
+  for (const provider of providers ?? []) {
+    catalog[provider.id] = Object.fromEntries(Object.entries(provider.models ?? {})
+      .map(([modelId, model]) => [modelId, { ...model, providerName: provider.name }]))
+  }
   return catalog
 }
 

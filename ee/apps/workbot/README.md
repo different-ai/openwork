@@ -46,6 +46,31 @@ Signing out revokes the refresh token at Den.
 On Den, set `DEN_WORKBOT_URL` (den-api) to the same address as `WORKBOT_PUBLIC_URL`; den-web's `/workbot` redirects
 there. Workbot is generally available; service configuration and each member's model access are still required.
 
+### Separate deployment domains
+
+Workbot, Den web and Den API can use unrelated HTTPS domains. Workbot discovers
+the authorization server from `WORKBOT_DEN_API_URL`; browser sign-in visits Den
+and returns to Workbot, while the code exchange runs on Workbot's server. Their
+browser cookies do not need a shared parent domain.
+
+- Set `DEN_WORKBOT_URL` and `WORKBOT_PUBLIC_URL` to the same canonical Workbot
+  origin. Den registers exactly `<origin>/auth/callback`. An alias or preview
+  host cannot share that callback: its host-only login cookie belongs to the
+  host where sign-in started. Keep this value consistent across Den replicas.
+- Set Den's `DEN_BASE_URL` (and `BETTER_AUTH_URL`, if supplied) to its public web
+  origin, and `DEN_API_PUBLIC_URL` to the public API origin. Configure
+  `DEN_API_BASE` on den-web for its server-side API connection. Browser session
+  requests use den-web's same-origin auth and browser proxies.
+- Set `WORKBOT_DEN_WEB_URL` explicitly when dashboard links should use a
+  different origin from the discovered issuer. It controls links, not OAuth
+  discovery. `WORKBOT_DEN_API_URL` must be reachable from the Workbot server.
+- These values are origins, not subpath mounts. Changing the Workbot origin
+  during an in-progress sign-in or account connection requires a fresh attempt.
+
+The focused auth test covers discovery and code exchange across three custom
+domains with synthetic endpoints; it does not verify deployed DNS, TLS, ingress
+or a live identity provider.
+
 ### Internal health check
 
 `GET /internal/readiness` authenticates with the existing `WORKBOT_RUNNER_TOKEN`.

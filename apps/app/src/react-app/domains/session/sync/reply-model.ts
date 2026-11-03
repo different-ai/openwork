@@ -5,7 +5,7 @@ import {
   AUTO_ROUTER_THINKING_LEVELS,
   type AutoRouterReplyRoute,
 } from "@openwork/types/den/auto-router";
-import { AUTO_MODEL_ID } from "@/react-app/domains/models/model-catalog";
+import { AUTO_MODEL_ID, SMART_MODEL_FALLBACK_NAME } from "@/react-app/domains/models/model-catalog";
 
 function field(value: unknown, key: string): unknown {
   return value && typeof value === "object" ? Reflect.get(value, key) : undefined;
@@ -42,7 +42,7 @@ export function mergeReplyMetadata(previous: unknown, next: unknown) {
   } };
 }
 
-/** The requested Auto route keeps OpenWork's mark even after routing upstream. */
+/** The requested OpenWork Free model keeps OpenWork's mark even after routing upstream; Smart replies show the routed model's maker. */
 export function replyModelProvider(message: UIMessage, autoRoutes: readonly AutoRouterReplyRoute[] = []) {
   const route = autoRouteForReply(message, autoRoutes);
   if (route) return route.provider && !/^(ipr|gwm)_/.test(route.provider) ? route.provider : undefined;
@@ -57,7 +57,7 @@ export function replyModelProvider(message: UIMessage, autoRoutes: readonly Auto
 }
 
 export type ReplyModelTitleResolver = (model: { providerID: string; modelID: string }) => string | undefined;
-/** A catalog name for an upstream model id the gateway routed an Auto reply to. */
+/** A catalog name for an upstream model id the gateway routed a Smart reply to. */
 export type AutoRouteNameResolver = (modelID: string) => string | undefined;
 
 /**
@@ -67,8 +67,8 @@ export type AutoRouteNameResolver = (modelID: string) => string | undefined;
 const AUTO_ROUTE_SLACK_MS = 2_000;
 
 /**
- * The gateway's routing decision for an Auto reply (feature `autoRouter`).
- * Each Auto step makes one request, so its decision arrives between the
+ * The gateway's routing decision for a Smart reply (feature `autoRouter`).
+ * Each Smart step makes one request, so its decision arrives between the
  * reply's start and its completion; the latest one in that window wins, which
  * is the one that answered when a request was retried.
  */
@@ -116,16 +116,20 @@ export function replyModelLabel(
   const model = field(field(message.metadata, "opencode"), "replyModel");
   const modelID = text(field(model, "modelID"));
   if (!modelID) return null;
+  const requestedModelID = text(field(model, "requestedModelID")) ?? modelID;
+  const providerID = text(field(model, "requestedProviderID")) ?? text(field(model, "providerID"));
+  // A Smart Router's replies are named by `autoRoutes` above; without a
+  // recorded decision they keep the router's own name ("Smart: Engineering"),
+  // never its `openwork-smart-…` id.
+  if (providerID === AUTO_ROUTER_PROVIDER_ID) {
+    return publicLabel(resolveTitle?.({ providerID, modelID: requestedModelID })) ?? SMART_MODEL_FALLBACK_NAME;
+  }
   if (field(model, "resolved") === true) {
     if (modelID === AUTO_MODEL_ID) return "GPT-6 Luna";
     const resolvedLabel = publicLabel(field(model, "name")) ?? publicLabel(modelID);
     if (resolvedLabel) return resolvedLabel;
   }
-  const requestedModelID = text(field(model, "requestedModelID")) ?? modelID;
-  const providerID = text(field(model, "requestedProviderID")) ?? text(field(model, "providerID"));
   // OpenWork Free routes upstream itself: its id is not the model that answered.
-  // The Auto Router's replies are named by `autoRoutes` above; without one
-  // they keep the catalog title ("Auto").
   if (!providerID || requestedModelID === AUTO_MODEL_ID) return null;
   return publicLabel(resolveTitle?.({ providerID, modelID: requestedModelID })) ?? null;
 }

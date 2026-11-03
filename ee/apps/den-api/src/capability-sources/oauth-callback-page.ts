@@ -9,9 +9,22 @@ export function escapeHtml(value: string): string {
   return value.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;")
 }
 
+/** A link to the provider page where the person fixes the failure. */
+export type ConnectCallbackFixLink = { label: string; href: string }
+
+function safeFixLink(link: ConnectCallbackFixLink | undefined): ConnectCallbackFixLink | undefined {
+  if (!link) return undefined
+  try {
+    return new URL(link.href).protocol === "https:" ? link : undefined
+  } catch {
+    return undefined
+  }
+}
+
 export function connectCallbackPage(input:
   | { ok: true; name: string }
-  | { ok: false; name: string; message: string; referenceId?: string }, workbotReturn?: WorkbotOAuthReturn & { connectionId: string }): string {
+  | { ok: false; name: string; message: string; referenceId?: string; fixLink?: ConnectCallbackFixLink }, workbotReturn?: WorkbotOAuthReturn & { connectionId: string }): string {
+  const fixLink = input.ok ? undefined : safeFixLink(input.fixLink)
   const brand = workbotReturn ? "Workbot" : "OpenWork"
   // Finishing OAuth is not a readiness check. Workbot verifies the usable connection on return.
   const title = workbotReturn ? input.ok ? `Signed in to ${input.name}` : "Connection not verified" : input.ok ? "You're connected" : "Connection failed"
@@ -32,6 +45,7 @@ export function connectCallbackPage(input:
         <span class="status-icon" aria-hidden="true">!</span>
         <span><strong>${escapeHtml(input.name)}</strong><small>${escapeHtml(input.message)}</small></span>
       </div>
+      ${fixLink ? `<p><a class="fix-link" href="${escapeHtml(fixLink.href)}" target="_blank" rel="noopener noreferrer">${escapeHtml(fixLink.label)}</a></p>` : ""}
       ${input.referenceId ? `<p class="reference">Diagnostic reference: <code>${escapeHtml(input.referenceId)}</code></p>` : ""}
       <p>Return to OpenWork to try connecting again. You can close this window.</p>`
   // No token, account detail, or provider error crosses the popup boundary. The opener must re-read readiness.
@@ -63,6 +77,7 @@ export function connectCallbackPage(input:
       .failure { border-color: #fecaca; background: #fef2f2; }
       .failure .status-icon { color: #b42318; background: #fee2e2; }
       .reference { margin-top: 18px; font-size: 13px; }
+      .fix-link { color: var(--dls-text-primary); font-weight: 500; text-underline-offset: .2em; }
       code { font: 12px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace; overflow-wrap: anywhere; user-select: all; }
       @media (max-width: 640px) { main { padding: 40px 32px 48px; } h1 { margin-top: 40px; font-size: 30px; line-height: 38px; } }
       @media (max-width: 380px) { body { padding: 32px 16px; } main { padding: 32px 24px; } }${workbotReturn ? `

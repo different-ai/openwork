@@ -2,7 +2,8 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { flushSync } from "react-dom";
 import type { Agent } from "@opencode-ai/sdk/v2/client";
-import { Cloud, Monitor, ArrowUp, Check, ChevronDown, FileText, LoaderCircle, RefreshCw, Square, Terminal, Zap } from "lucide-react";
+import { Cloud, Monitor, Check, ChevronDown, FileText, RefreshCw, Terminal, Zap } from "lucide-react";
+import { ComposerSendButton } from "./composer-send-button";
 import fuzzysort from "fuzzysort";
 import { toast } from "@/components/ui/sonner";
 import type { CloudImportedPlugin, CloudImportedPluginFile } from "@/app/cloud/import-state";
@@ -49,6 +50,7 @@ import { ComposerSuggestionMenu, composerSuggestionRowClass } from "./composer-s
 import type { PlusMenuAgent, PlusMenuConnector, PlusMenuSection } from "./composer-plus-menu-model";
 import { connectionDiagnosticHistory, type ConnectionDiagnosticSource, type SendDiagnosticReason } from "@/app/lib/connection-diagnostic-history";
 import { composerDiagnosticBlockers } from "./composer-diagnostics";
+import { resolveComposerSubmit } from "./composer-submit";
 import { ModelRecoveryNote } from "./model-recovery-note";
 import { modelRecoveryChatKey, useModelRecoveryStore } from "../model-recovery-store";
 import { useNativeDictation } from "@openwork/ui/react";
@@ -80,6 +82,7 @@ type ComposerProps = {
   onQueue: () => void | Promise<void>;
   onStop: () => void | Promise<void>;
   busy: boolean;
+  childConversation?: boolean;
   editing?: boolean;
   stopping?: boolean;
   steering: boolean;
@@ -368,28 +371,23 @@ export const ReactSessionComposer = memo(function ReactSessionComposer(props: Co
     if (escapeTimerRef.current) clearTimeout(escapeTimerRef.current);
   }, []);
 
-  // Editor submit (Enter). While idle this sends normally; while busy
-  // Enter queues until the agent finishes, and Cmd/Ctrl+Enter steers.
-  // An edit always replaces its original turn through the immediate send path.
+  // Editor submit (Enter, or Cmd/Ctrl+Enter when `queue` is set).
   const handleEditorSubmit = useCallback((options: { queue: boolean }) => {
     const current = prepareVoiceSubmission();
-    const hasContent = current.draft.trim().length > 0 || current.attachments.length > 0;
-    if (!hasContent) return;
-    if (current.submissionPreparing) return;
-    // A new Enter after Stop is fresh work, not a follow-up to the interrupted
-    // turn. The immediate send path fences admission on the shared interruption
-    // promise; dropping Enter here silently leaves the person's draft unsent.
-    if (current.stopping) {
-      void current.onSend();
-      return;
-    }
-    if (current.busy && !current.editing) {
-      if (options.queue) void current.onSteer();
-      else void current.onQueue();
-      return;
-    }
-    void current.onSend();
-  }, [props.busy, props.editing, props.draft, props.attachments, props.onSend, props.onSteer, props.onQueue, props.submissionPreparing, props.stopping]);
+    const action = resolveComposerSubmit({
+      hasContent: current.draft.trim().length > 0 || current.attachments.length > 0,
+      disabled: current.disabled,
+      // A helper's conversation sends right away; it cannot queue or steer.
+      busy: current.busy && !current.childConversation,
+      editing: Boolean(current.editing),
+      stopping: Boolean(current.stopping),
+      submissionPreparing: current.submissionPreparing,
+      steer: options.queue,
+    });
+    if (action === "send") void current.onSend();
+    else if (action === "steer") void current.onSteer();
+    else if (action === "queue") void current.onQueue();
+  }, [props.childConversation, props.busy, props.disabled, props.editing, props.draft, props.attachments, props.onSend, props.onSteer, props.onQueue, props.submissionPreparing, props.stopping]);
 
   const showStop = props.busy && !props.editing;
 
@@ -1122,7 +1120,7 @@ export const ReactSessionComposer = memo(function ReactSessionComposer(props: Co
     // Escape can still close menus. First press arms a confirmation prompt
     // for 3s; a second Escape within that window stops the agent.
     const anyMenuOpen = agentMenuOpen || toolMenuOpen || props.modelPickerOpen || Boolean(activeMenu);
-    if (event.key === "Escape" && props.busy && !anyMenuOpen) {
+    if (event.key === "Escape" && props.busy && !props.childConversation && !anyMenuOpen) {
       event.preventDefault();
       if (props.stopping) return;
       if (escapeArmed) {
@@ -1200,10 +1198,12 @@ export const ReactSessionComposer = memo(function ReactSessionComposer(props: Co
       }
     }
 
-    // The task list also shows "no match", so Escape closes it even when empty.
-    if (activeMenu === "session" && event.key === "Escape") {
+    // Escape closes even an empty menu without navigating out of the child.
+    if (activeMenu && event.key === "Escape") {
       event.preventDefault();
-      dismissSessionMenu();
+      if (activeMenu === "session") dismissSessionMenu();
+      setSlashOpen(false);
+      setMentionOpen(false);
       return;
     }
     if (!activeMenu || !activeItems.length) return;
@@ -1222,11 +1222,6 @@ export const ReactSessionComposer = memo(function ReactSessionComposer(props: Co
       event.stopPropagation();
       void acceptActiveItem();
       return;
-    }
-    if (event.key === "Escape") {
-      event.preventDefault();
-      setSlashOpen(false);
-      setMentionOpen(false);
     }
   };
 
@@ -1408,6 +1403,7 @@ export const ReactSessionComposer = memo(function ReactSessionComposer(props: Co
     <div
       ref={rootRef}
       onFocusCapture={() => { lastFocusedComposerRoot = rootRef.current; }}
+      data-composer-menu-open={agentMenuOpen || toolMenuOpen || props.modelPickerOpen || Boolean(activeMenu) ? "true" : undefined}
       className={props.flush ? `relative ${toolMenuOpen ? "z-50" : "z-20"}` : `sticky bottom-0 shrink-0 ${toolMenuOpen ? "z-50" : "z-20"} bg-gradient-to-t from-dls-surface via-dls-surface/95 to-transparent px-4 pb-[max(0.5rem,env(safe-area-inset-bottom))] max-lg:px-3 lg:px-8 ${props.compactTopSpacing ? "pt-0" : "pt-1"}`}
       style={{ contain: "layout style" }}
       onKeyDownCapture={handleKeyDownCapture}
@@ -1665,25 +1661,26 @@ export const ReactSessionComposer = memo(function ReactSessionComposer(props: Co
               */}
               <div data-composer-actions className="col-start-2 row-start-2 ml-auto flex shrink-0 items-center gap-1.5">
                 {nativeDictationEnabled ? <NativeDictationControl dictation={dictation} disabled={props.disabled} text={props.draft} /> : null}
-                <button
-                  type="button"
+                <ComposerSendButton
+                  mode={props.stopping ? "stopping" : showStop ? "stop" : props.submissionPreparing ? "preparing" : "send"}
+                  ready={canSend && !props.disabled}
                   onPointerDown={(event) => {
                     // Preserve focus until submission succeeds; rejected sends keep the keyboard.
                     if (event.pointerType === "touch" && window.matchMedia("(max-width: 1023px)").matches) event.preventDefault();
                   }}
                   onClick={
                     showStop
-                      ? props.onStop
+                      ? () => void props.onStop()
                       : !canSend || props.submissionPreparing
                         ? undefined
                         : () => void prepareVoiceSubmission().onSend()
                   }
                   disabled={
                     props.disabled
-                    || props.stopping
-                    || (!showStop && (!canSend || props.submissionPreparing))
+                    || Boolean(props.stopping)
+                    || (!showStop && (!canSend || Boolean(props.submissionPreparing)))
                   }
-                  aria-label={
+                  label={
                     props.stopping
                       ? t("composer.stopping")
                       : showStop
@@ -1692,45 +1689,7 @@ export const ReactSessionComposer = memo(function ReactSessionComposer(props: Co
                           ? props.submissionPreparingLabel ?? "Preparing connected service tools…"
                           : t("composer.run_task")
                   }
-                  aria-busy={props.stopping || props.submissionPreparing || undefined}
-                  className={`inline-flex h-9 max-h-9 w-9 shrink-0 items-center justify-center rounded-full transition-colors ${
-                    props.stopping
-                      ? "cursor-wait bg-[var(--dls-accent)] text-[var(--dls-accent-fg)]"
-                      : showStop
-                        ? "bg-[var(--dls-accent)] text-[var(--dls-accent-fg)] hover:bg-[var(--dls-accent-hover)]"
-                        : !canSend || props.disabled || props.submissionPreparing
-                          ? "bg-gray-4 text-gray-10"
-                          : "bg-[var(--dls-accent)] text-[var(--dls-accent-fg)] hover:bg-[var(--dls-accent-hover)]"
-                  }`}
-                  title={
-                    props.stopping
-                      ? t("composer.stopping")
-                      : showStop
-                        ? t("composer.stop")
-                        : props.submissionPreparing
-                          ? props.submissionPreparingLabel ?? "Preparing connected service tools…"
-                          : t("composer.run_task")
-                  }
-                >
-                  {props.stopping ? (
-                    <LoaderCircle size={15} className="animate-spin" />
-                  ) : showStop ? (
-                    <Square size={12} fill="currentColor" />
-                  ) : props.submissionPreparing ? (
-                    <LoaderCircle size={15} className="animate-spin" />
-                  ) : (
-                    <ArrowUp size={15} />
-                  )}
-                  <span className="sr-only">
-                    {props.stopping
-                      ? t("composer.stopping")
-                      : showStop
-                        ? t("composer.stop")
-                        : props.submissionPreparing
-                          ? props.submissionPreparingLabel ?? "Preparing connected service tools…"
-                          : t("composer.run_task")}
-                  </span>
-                </button>
+                />
               </div>
             </div>
           </div>

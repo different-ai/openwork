@@ -53,9 +53,12 @@ export function computeBrowserBounds(el: HTMLElement): BrowserBounds | null {
   return { x: left, y: top, width: right - left, height: bottom - top };
 }
 
+/** The window that measured the bounds, when it is not the app window. */
+export type BrowserBoundsTarget = "window" | undefined;
+
 type BrowserBoundsBridge = {
-  show?: (bounds: BrowserBounds, sessionId: string) => Promise<boolean | void>;
-  setBounds?: (bounds: BrowserBounds) => Promise<boolean | void>;
+  show?: (bounds: BrowserBounds, sessionId: string, target?: BrowserBoundsTarget) => Promise<boolean | void>;
+  setBounds?: (bounds: BrowserBounds, target?: BrowserBoundsTarget) => Promise<boolean | void>;
   hide?: () => Promise<void>;
 };
 
@@ -65,6 +68,7 @@ export function createBrowserBoundsSync(
   browser: BrowserBoundsBridge,
   sessionId: string,
   onError: (error: unknown) => void,
+  target?: BrowserBoundsTarget,
 ) {
   let disposed = false;
   let shown = false;
@@ -83,8 +87,8 @@ export function createBrowserBoundsSync(
     if (show) showInFlight = geometry;
     try {
       const accepted = await (show
-        ? browser.show?.(geometry.bounds, sessionId)
-        : browser.setBounds?.(geometry.bounds));
+        ? browser.show?.(geometry.bounds, sessionId, target)
+        : browser.setBounds?.(geometry.bounds, target));
       if (disposed || lastGeometry !== geometry) return;
       if (accepted === false) {
         lastGeometry = null;

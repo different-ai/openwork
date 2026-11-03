@@ -38,6 +38,14 @@
       "development": "./src/den-urls.ts",
       "default": "./dist/den-urls.js"
     },
+    "./provider-test-signature": {
+      "types": {
+        "openwork-build": "./dist/types/src/provider-test-signature.d.ts",
+        "default": "./src/provider-test-signature.ts"
+      },
+      "development": "./src/provider-test-signature.ts",
+      "default": "./dist/provider-test-signature.js"
+    },
     "./client-ip-signature": {
       "types": {
         "openwork-build": "./dist/types/src/client-ip-signature.d.ts",

@@ -6,22 +6,26 @@ import { env } from "./env.js"
 import { gatewayCatalog, writeGatewayGrant, writeGatewayGroup, writeGatewayModels, writeGatewaySet, type GatewayProvider } from "./llm/gateway-matrix.js"
 import { appLogger } from "./observability/logger.js"
 
-/** Whether new sandboxes get an AI Gateway provider: the deployment runs the Gateway and has a sandbox key. */
+/** Whether new sandboxes get an AI Gateway provider: the deployment runs the Gateway and has a shared sandbox key or mints one per sandbox. */
 export function sandboxGatewayConfigured() {
-  return env.gatewayEnabled && env.sandbox.gateway !== null
+  return env.gatewayEnabled && env.sandbox.gateway !== null && (env.sandbox.gateway.apiKey !== null || Boolean(env.openRouterManagementApiKey))
 }
 
 /**
- * Adds the deployment's sandbox model key to a new sandbox organization as an AI Gateway provider every member can
- * use, through the same writes as Settings › AI Gateway › Add provider: catalog models, the default credential set,
- * an "All Allowed Models" group and an organization-wide grant. Returns the provider id, or null when not configured.
+ * Adds a model key to a new sandbox organization as an AI Gateway provider every member can use, through the same
+ * writes as Settings › AI Gateway › Add provider: catalog models, the default credential set, an "All Allowed
+ * Models" group and an organization-wide grant. The key is the sandbox's own (`apiKey`) or the deployment's shared
+ * one. Returns the provider id, or null when not configured.
  */
 export async function addSandboxGatewayProvider(input: {
   organizationId: DenTypeId<"organization">
   ownerMemberId: DenTypeId<"member">
+  /** The sandbox's own key; omitted uses the deployment's shared key. */
+  apiKey?: string
 }): Promise<DenTypeId<"inferenceProvider"> | null> {
   const config = env.sandbox.gateway
-  if (!env.gatewayEnabled || !config) return null
+  const apiKey = input.apiKey ?? config?.apiKey ?? null
+  if (!env.gatewayEnabled || !config || !apiKey) return null
   const catalog = await gatewayCatalog(config.providerId, config.modelIds)
   const now = new Date()
   const provider: GatewayProvider = {
@@ -29,7 +33,7 @@ export async function addSandboxGatewayProvider(input: {
     organization_id: input.organizationId,
     created_by_org_membership_id: input.ownerMemberId,
     provider_id: catalog.catalog.id,
-    name: `${catalog.catalog.name ?? config.providerId} (sandbox)`,
+    name: input.apiKey ? "Sandbox models" : `${catalog.catalog.name ?? config.providerId} (sandbox)`,
     model_ids: [...new Set(config.modelIds)],
     pinned_model_ids: [],
     provider_config: catalog.config,
@@ -44,7 +48,7 @@ export async function addSandboxGatewayProvider(input: {
   await db.transaction(async (tx) => {
     await tx.insert(GatewayProviderTable).values(provider)
     await writeGatewayModels(tx, provider, catalog.models)
-    const set = await writeGatewaySet(tx, provider, { name: "Default credentials", credentialMode: "org", credential: { kind: "api_key", secret: config.apiKey } }, { createdByOrgMembershipId: input.ownerMemberId })
+    const set = await writeGatewaySet(tx, provider, { name: "Default credentials", credentialMode: "org", credential: { kind: "api_key", secret: apiKey } }, { createdByOrgMembershipId: input.ownerMemberId })
     const models = await tx.select().from(GatewayProviderModelTable).where(eq(GatewayProviderModelTable.gateway_provider_id, provider.id))
     if (models.length === 0) throw new Error("sandbox_gateway_models_missing")
     const groupId = await writeGatewayGroup(tx, provider, { name: "All Allowed Models", modelIds: models.map(model => model.model_id) })

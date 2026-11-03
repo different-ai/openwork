@@ -24,7 +24,7 @@ beforeEach(() => {
   Reflect.deleteProperty(window, "__OPENWORK_ELECTRON__");
   queryClient = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: Infinity } } });
   queryClient.setQueryData(["den", "org-features", orgId], {
-    nativeDictation: true, automationCalendar: true,
+    nativeDictation: true, computerUse: true,
   });
   const client = createDenClient({ baseUrl: "https://den.example.test", token: "test-token" });
   spyOn(client, "getOrgFeatures").mockResolvedValue({});
@@ -52,10 +52,10 @@ async function renderFeatures(options: { desktopOnly?: boolean; active?: boolean
   root = createRoot(host);
   function Features() {
     const dictation = useOrgFeature("nativeDictation", options);
-    const calendar = useOrgFeature("automationCalendar");
+    const computer = useOrgFeature("computerUse");
     const missing = useOrgFeature("missingFeature");
     const state = useOrgFeatureState("nativeDictation", options);
-    return <div data-dictation={dictation} data-calendar={calendar} data-missing={missing} data-state={state.data} />;
+    return <div data-dictation={dictation} data-computer={computer} data-missing={missing} data-state={state.data} />;
   }
   await act(async () => {
     root?.render(<QueryClientProvider client={queryClient}><Features /></QueryClientProvider>);
@@ -67,7 +67,7 @@ test("desktop-only features ignore a shared true cache on a non-Electron window,
   const node = await renderFeatures({ desktopOnly: true });
   expect(node?.getAttribute("data-dictation")).toBe("false");
   expect(node?.getAttribute("data-state")).toBe("false");
-  expect(node?.getAttribute("data-calendar")).toBe("true");
+  expect(node?.getAttribute("data-computer")).toBe("true");
   expect(context.client?.getOrgFeatures).not.toHaveBeenCalled();
   expect(queryClient.getQueryData(["den", "org-features", orgId])).toMatchObject({ nativeDictation: true });
 });
@@ -76,7 +76,7 @@ test("a desktop-only feature remains available from the same cache in Electron",
   Reflect.set(window, "__OPENWORK_ELECTRON__", {});
   const node = await renderFeatures({ desktopOnly: true });
   expect(node?.getAttribute("data-dictation")).toBe("true");
-  expect(node?.getAttribute("data-calendar")).toBe("true");
+  expect(node?.getAttribute("data-computer")).toBe("true");
 });
 
 for (const guard of ["signed-out", "missing-client", "missing-organization"]) {
@@ -85,11 +85,11 @@ for (const guard of ["signed-out", "missing-client", "missing-organization"]) {
     if (guard === "missing-client") context = { ...context, client: null };
     if (guard === "missing-organization") {
       context = { ...context, organizationId: null };
-      queryClient.setQueryData(["den", "org-features", null], { nativeDictation: true, automationCalendar: true });
+      queryClient.setQueryData(["den", "org-features", null], { nativeDictation: true, computerUse: true });
     }
     const node = await renderFeatures();
     expect(node?.getAttribute("data-dictation")).toBe("false");
-    expect(node?.getAttribute("data-calendar")).toBe("false");
+    expect(node?.getAttribute("data-computer")).toBe("false");
     expect(node?.getAttribute("data-state")).toBe("false");
   });
 }
@@ -97,7 +97,7 @@ for (const guard of ["signed-out", "missing-client", "missing-organization"]) {
 test("inactive and missing features are false even when another observer enabled the cache", async () => {
   const node = await renderFeatures({ active: false });
   expect(node?.getAttribute("data-dictation")).toBe("false");
-  expect(node?.getAttribute("data-calendar")).toBe("true");
+  expect(node?.getAttribute("data-computer")).toBe("true");
   expect(node?.getAttribute("data-missing")).toBe("false");
 });
 

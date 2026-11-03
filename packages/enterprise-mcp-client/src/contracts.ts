@@ -369,7 +369,10 @@ export type EnterpriseMcpConnectionRequirements = {
     resource?: string
     protectedResourceMetadataUrl?: string
     authorizationServers: EnterpriseMcpAuthorizationServerRequirement[]
+    /** Scopes requested by the resource's authentication challenge, not inferred from its URL or tools. */
     requiredScopes: string[]
+    /** Protected-resource advertisement, kept separate so callers can disclose contradictory challenges. */
+    resourceScopesSupported?: string[]
     recommendedScopes: string[]
     refreshSupport: "supported" | "not_advertised" | "unknown"
     availableRegistrationMethods: Array<"pre_registered" | "client_metadata" | "dynamic">
@@ -389,7 +392,16 @@ export type EnterpriseMcpConnectionRequirements = {
   warnings: EnterpriseMcpRequirementWarning[]
 }
 
+export type EnterpriseMcpDiscoveryCheck = {
+  id: "server" | "resource" | "provider"
+  status: "running" | "passed" | "failed" | "skipped"
+  httpStatus?: number
+  code?: "authentication_required" | "not_required" | "issuer_mismatch" | "unavailable" | "unsupported"
+}
+
 export type DiscoverEnterpriseMcpConnectionRequirementsInput = {
+  onCheck?: (check: EnterpriseMcpDiscoveryCheck) => void
+  signal?: AbortSignal
   serverUrl: string
   fetch: EnterpriseMcpFetch
   timeoutMs?: number

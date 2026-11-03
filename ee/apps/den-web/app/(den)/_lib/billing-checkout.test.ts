@@ -19,7 +19,6 @@ import {
 const plan = { tier: "free", source: "default", people: 6, joined: 5, invited: 1, freeSeatCount: 5 } as const;
 const plans = {
   team: { available: true, unitAmount: 1000, currency: "usd", interval: "month" },
-  enterprise: { available: false, unitAmount: 2000, currency: "usd", interval: "month" },
 };
 
 test("Den web refuses the same unsafe return targets as Den API", () => {
@@ -63,11 +62,11 @@ test("startCheckout sends only a safe returnTo and returns where to go next", as
   assert.deepEqual(sent, [{ type: "plan", plan: "team", addPeople: 1 }]);
   assert.deepEqual(result, { url: "https://checkout.example/cs_1" });
 
-  const completed = await startCheckout({ type: "plan", plan: "enterprise", returnTo: "desktop" }, async (_path, init) => {
+  const completed = await startCheckout({ type: "plan", plan: "team", returnTo: "desktop" }, async (_path, init) => {
     sent.push(JSON.parse(String(init.body)));
     return { response: new Response(null, { status: 200 }), payload: { url: "/dashboard/billing/stripe/checking?return=plan", completed: true } };
   });
-  assert.deepEqual(sent.at(-1), { type: "plan", plan: "enterprise", returnTo: "desktop" });
+  assert.deepEqual(sent.at(-1), { type: "plan", plan: "team", returnTo: "desktop" });
   assert.equal(completed.completed, true);
 });
 

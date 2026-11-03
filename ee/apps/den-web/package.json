@@ -30,6 +30,7 @@
     "@opentelemetry/semantic-conventions": "1.42.0",
     "@openwork-ee/telemetry-contracts": "workspace:*",
     "@openwork-ee/utils": "workspace:*",
+    "@openwork/enterprise-mcp-client": "workspace:*",
     "@openwork/features": "workspace:*",
     "@openwork/types": "workspace:*",
     "@openwork/ui": "workspace:*",

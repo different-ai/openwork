@@ -1,7 +1,6 @@
 "use client"
 
 import { useEffect, useRef, useState } from "react"
-import { ArrowUpRight, ShieldAlert, Square } from "lucide-react"
 
 import {
   Collapsible,
@@ -52,7 +51,7 @@ export function subagentRunActivity(input: {
   return "completed"
 }
 
-function agentName(slug: string): string {
+export function agentName(slug: string): string {
   const words = slug.split(/[-_.\s]+/).filter(Boolean)
   if (words.length === 0) return "Agent"
   return words
@@ -60,19 +59,17 @@ function agentName(slug: string): string {
     .join(" ")
 }
 
+/** A task the person (or a Stop) interrupted reads as stopped, not failed (DESIGN.md C5). */
+export function isStoppedTaskError(errorText: string | undefined): boolean {
+  return /abort|interrupt|cancel/i.test(errorText ?? "")
+}
+
 /**
- * Running sub-agent task cards use a quiet text shimmer for activity.
- * Line 1 = task title + agent name; line 2 = live status verb or
- * "Completed". The card is the doorway into the sub-agent's own session:
- * when the engine reports the child session id, clicking it opens that
- * session in the main chat surface. Without that route, details stay limited
- * to safe task/output labels, never raw prompts or payloads.
+ * Live state of one sub-agent task, from its tool part plus the child
+ * session's activity record and status. Shared by the transcript line and the
+ * composer's Agents list so both always agree.
  */
-export function SubagentRunLine({ part, className, parentActive = true }: SubagentRunLineProps) {
-  const [open, setOpen] = useState(false)
-  const { onOpenSubagentSession, onStopSubagentSession, syncDegraded, workspaceId } = useMessageList()
-  const [stopping, setStopping] = useState(false)
-  const stoppedByPerson = useRef(false)
+export function useSubagentRunState(part: TaskToolPart, parentActive: boolean, workspaceId: string, syncDegraded: boolean) {
   const childSessionId = taskChildSessionId(part)
   const child = useSessionActivityStore((state) => (
     childSessionId
@@ -87,8 +84,6 @@ export function SubagentRunLine({ part, className, parentActive = true }: Subage
   const childRunning = child?.runActive === true || childStatus?.type === "busy" || childStatus?.type === "retry"
   const inFlight = isToolPartInFlight(part) || childRunning
   const isFailed = part.state === "output-error"
-  const duration = trackToolCallDuration(part)
-  const [elapsedSeconds, setElapsedSeconds] = useState(0)
   // Native start time survives reload; optimistic timing survives remounts.
   const startedAt = childRunning && child && child.runStartedAt > 0 ? child.runStartedAt : getToolCallStartedAt(part)
   const lastProgressAt = child?.lastProgressAt || startedAt || 0
@@ -102,23 +97,55 @@ export function SubagentRunLine({ part, className, parentActive = true }: Subage
     childFailed: child?.errorActive,
     resultPending: !childRunning && (Boolean(child && !child.runActive && child.runStatusAt > 0) || !parentActive),
   })
+  const errorText = part.state === "output-error" ? part.errorText : undefined
+  return {
+    childSessionId, child, childRunning, inFlight, isFailed, permissionPending, questionPending,
+    startedAt, activity, stoppedByError: isFailed && isStoppedTaskError(errorText),
+  }
+}
+
+/** Whole seconds since `startedAt`, ticking only while the run is live and confirmed. */
+export function useElapsedSeconds(active: boolean, startedAt: number | null, syncDegraded: boolean, key?: string): number {
+  const [elapsedSeconds, setElapsedSeconds] = useState(0)
   useEffect(() => {
     // While run liveness is unconfirmed the counter must not tick; the
     // module-scoped anchor resumes the true elapsed time on recovery.
-    if (!inFlight || startedAt === null || syncDegraded) return
+    if (!active || startedAt === null || syncDegraded) return
     const update = () => {
       setElapsedSeconds(Math.max(0, Math.floor((Date.now() - startedAt) / 1000)))
     }
     update()
     const interval = window.setInterval(update, 1000)
     return () => window.clearInterval(interval)
-  }, [inFlight, startedAt, part.toolCallId, syncDegraded])
+  }, [active, startedAt, key, syncDegraded])
+  return elapsedSeconds
+}
+
+/**
+ * Running sub-agent task cards use a quiet text shimmer for activity.
+ * Line 1 = task title + agent name; line 2 = live status verb or
+ * "Completed". The card is the doorway into the sub-agent's own session:
+ * when the engine reports the child session id, clicking it opens that
+ * session in the main chat surface. Without that route, details stay limited
+ * to safe task/output labels, never raw prompts or payloads.
+ */
+export function SubagentRunLine({ part, className, parentActive = true }: SubagentRunLineProps) {
+  const [open, setOpen] = useState(false)
+  const { onOpenSubagentSession, onStopSubagentSession, composerSubagentToolCallIds, syncDegraded, workspaceId } = useMessageList()
+  const [stopping, setStopping] = useState(false)
+  const [stopError, setStopError] = useState<string | null>(null)
+  const stoppedByPerson = useRef(false)
+  const {
+    childSessionId, child, childRunning, inFlight, isFailed, permissionPending, questionPending,
+    startedAt, activity, stoppedByError,
+  } = useSubagentRunState(part, parentActive, workspaceId, syncDegraded)
+  const duration = trackToolCallDuration(part)
+  const elapsedSeconds = useElapsedSeconds(inFlight, startedAt, syncDegraded, part.toolCallId)
   const title = part.input?.description?.trim().slice(0, 160) || "Sub-agent task"
   // A helper the person stopped is not a failure (DESIGN.md C5): say "Stopped".
-  const errorText = part.state === "output-error" ? part.errorText : undefined
-  const stopped = isFailed && (stoppedByPerson.current || /abort|interrupt|cancel/i.test(errorText ?? ""))
+  const stopped = stoppedByPerson.current || stoppedByError
   const agent = agentName(part.input?.subagent_type ?? "")
-  const status = permissionPending
+  const status = stopping ? "Stopping…" : stopError ? "Could not stop — retry" : stopped && !childRunning ? "Stopped" : permissionPending
     ? t("session.subagent_permission_needed")
     : questionPending ? t("session.subagent_question_pending")
     : activity === "retrying" ? "Retrying"
@@ -141,21 +168,8 @@ export function SubagentRunLine({ part, className, parentActive = true }: Subage
           {title}
           <span className="text-muted-foreground/70"> · {agent} agent</span>
         </span>
-        {permissionPending ? (
-          <ShieldAlert
-            data-subagent-permission-icon
-            aria-label={t("session.subagent_permission_needed")}
-            className="size-3.5 shrink-0 text-amber-10"
-          />
-        ) : null}
-        {childSessionId && onOpenSubagentSession ? (
-          <ArrowUpRight
-            aria-hidden="true"
-            className="size-3.5 shrink-0 text-muted-foreground/70 opacity-0 transition-opacity group-hover:opacity-100 group-focus-visible:opacity-100"
-          />
-        ) : null}
       </span>
-      <span className={cn("min-w-0 truncate text-xs", permissionPending ? "font-medium text-amber-11" : "text-muted-foreground/70")}>
+      <span role={stopError ? "alert" : undefined} className={cn("min-w-0 truncate text-xs", permissionPending ? "font-medium text-amber-11" : "text-muted-foreground/70")}>
         {status}
         {!inFlight && !isFailed && duration ? ` · ${duration}` : ""}
       </span>
@@ -184,21 +198,24 @@ export function SubagentRunLine({ part, className, parentActive = true }: Subage
         >
           {lines}
         </button>
-        {/* Stop just this helper; the turn's own Stop stays in the composer. */}
-        {childRunning && onStopSubagentSession ? (
+        {/* Stop just this helper; the turn's own Stop stays in the composer.
+            While the composer's Agents list shows this call, its Stop lives there. */}
+        {childRunning && onStopSubagentSession && !composerSubagentToolCallIds.has(part.toolCallId) ? (
           <button
             type="button"
             data-subagent-stop=""
             disabled={stopping}
             aria-label={stopping ? `${title}. Stopping sub-agent` : `${title}. Stop sub-agent`}
-            className="mt-0.5 flex size-5 shrink-0 cursor-pointer items-center justify-center rounded-md text-muted-foreground/70 transition-colors hover:bg-muted hover:text-foreground disabled:cursor-default disabled:opacity-50"
+            className="mt-0.5 shrink-0 cursor-pointer rounded-md px-1.5 text-xs text-muted-foreground transition-colors hover:bg-muted hover:text-foreground disabled:cursor-default disabled:opacity-50"
             onClick={() => {
-              stoppedByPerson.current = true
+              setStopError(null)
               setStopping(true)
-              void Promise.resolve(onStopSubagentSession(childSessionId)).finally(() => setStopping(false))
+              void Promise.resolve().then(() => onStopSubagentSession(childSessionId)).then(() => { stoppedByPerson.current = true }, error => {
+                setStopError(error instanceof Error ? error.message : "Could not stop")
+              }).finally(() => setStopping(false))
             }}
           >
-            <Square className="size-2.5 fill-current" aria-hidden="true" />
+            {t("text_activity.stop")}
           </button>
         ) : null}
       </div>

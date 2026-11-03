@@ -9,7 +9,8 @@ import {
 } from "@openwork/types/automations"
 
 import { createDenClient, DenApiError, readDenSettings } from "@/app/lib/den"
-import { remoteThreadFollowUpSessionId, remoteToolCallStartedAt, type RemoteThreadStart } from "@/lib/remote-session-thread"
+import { remoteFollowUpMatches, type RemoteThreadFollowUp, type RemoteThreadStart } from "@/lib/remote-session-thread"
+import { remoteThreadFollowUpsInPart } from "@/lib/remote-thread-starts"
 
 /**
  * Tasks the agent started on other computers, followed for the chat.
@@ -23,8 +24,7 @@ import { remoteThreadFollowUpSessionId, remoteToolCallStartedAt, type RemoteThre
  * - A task stops being followed when it finishes or fails, 15 minutes after
  *   nothing on screen shows it, or 6 hours after it last started work.
  * - Nothing is called while the window is hidden or offline, nor when no
- *   task needs following. Failures back off to a minute; the feature turning
- *   off stops the loop.
+ *   task needs following. Failures back off to a minute.
  *
  * Transcripts are not part of this: the open panel reads one only when the
  * status says something changed.
@@ -36,7 +36,8 @@ const MIN_CALL_INTERVAL_MS = 2_000
 const BACKOFF_BASE_MS = 2_000
 const BACKOFF_MAX_MS = 60_000
 const LINGER_MS = 15 * 60_000
-const FOLLOW_MAX_MS = 6 * 60 * 60_000
+export const REMOTE_THREAD_FOLLOW_MAX_MS = 6 * 60 * 60_000
+const FOLLOW_MAX_MS = REMOTE_THREAD_FOLLOW_MAX_MS
 /** After a follow-up, an idle status is still the previous turn until the task reports work again. */
 const FOLLOW_UP_GRACE_MS = 90_000
 /** Only a follow-up the agent just sent revives a task; reopening an old chat does not. */
@@ -58,28 +59,32 @@ export type RemoteThreadEntry = {
   /** When this window first showed the task. */
   firstSeenAt: number
   followedUpAt: number | null
+  /** The status version a follow-up was sent against: a different one is the new turn, even one that already finished. */
+  followUpVersion: string | null
+  /** When the agent sent the latest follow-up it revived this task for, so each revives it once. */
+  revivedAt: number | null
   owners: Record<string, RemoteThreadOwner>
   viewers: number
   lastViewedAt: number
 }
 
 type RemoteThreadState = {
-  enabled: boolean
-  /** `remoteSessionThreadView`: a row opens the task's conversation beside the chat. */
-  threadView: boolean
   threads: Record<string, RemoteThreadEntry>
-  setEnabled: (enabled: boolean) => void
-  setThreadView: (threadView: boolean) => void
   watch: (start: RemoteThreadStart, input: { owner: RemoteThreadOwner; organizationId: string; startedAt: number | null }) => () => void
   followedUp: (key: string) => void
-  /** The agent sent the task a follow-up itself. */
-  revive: (sessionId: string) => void
+  /** The agent sent the task a follow-up itself; reviving for the same follow-up again changes nothing. */
+  revive: (followUp: RemoteThreadFollowUp) => void
   apply: (result: RemoteSessionStatusResult, keys: readonly string[], checkedAt: number) => void
   markStale: (keys: readonly string[]) => void
 }
 
 function settled(entry: RemoteThreadEntry) {
   return entry.status?.state === "idle" || entry.status?.state === "error"
+}
+
+/** A follow-up was accepted and the task hasn't reported the new turn yet. */
+export function remoteThreadAwaitingFollowUp(entry: RemoteThreadEntry, now: number): boolean {
+  return settled(entry) && entry.followedUpAt !== null && now - entry.followedUpAt < FOLLOW_UP_GRACE_MS
 }
 
 export function remoteThreadNeedsStatus(entry: RemoteThreadEntry, organizationId: string, now: number): boolean {
@@ -92,16 +97,7 @@ export function remoteThreadNeedsStatus(entry: RemoteThreadEntry, organizationId
 }
 
 export const useRemoteThreadStore = create<RemoteThreadState>()((set, get) => ({
-  enabled: false,
-  threadView: false,
   threads: {},
-  setEnabled: (enabled) => {
-    if (get().enabled === enabled) return
-    set({ enabled })
-    if (enabled) kick()
-    else stopFollowing()
-  },
-  setThreadView: (threadView) => set({ threadView }),
   watch: (start, input) => {
     const ownerKey = `${input.owner.workspaceId}:${input.owner.sessionId}`
     const now = Date.now()
@@ -119,6 +115,8 @@ export const useRemoteThreadStore = create<RemoteThreadState>()((set, get) => ({
             activeSince: input.startedAt,
             firstSeenAt: now,
             followedUpAt: null,
+            followUpVersion: null,
+            revivedAt: null,
             owners: { [ownerKey]: input.owner },
             viewers: 1,
             lastViewedAt: now,
@@ -139,13 +137,21 @@ export const useRemoteThreadStore = create<RemoteThreadState>()((set, get) => ({
     set((state) => {
       const current = state.threads[key]
       if (!current) return state
-      return { threads: { ...state.threads, [key]: { ...current, followedUpAt: now, activeSince: now } } }
+      return { threads: { ...state.threads, [key]: { ...current, followedUpAt: now, followUpVersion: current.version, activeSince: now } } }
     })
     kick(true)
   },
-  revive: (sessionId) => {
-    const key = Object.values(get().threads).find((entry) => (entry.status?.sessionId ?? entry.start.sessionId) === sessionId)?.start.key
-    if (key) get().followedUp(key)
+  revive: (followUp) => {
+    const sentAt = followUp.sentAt
+    if (sentAt === null) return
+    const entry = Object.values(get().threads).find((candidate) => remoteFollowUpMatches(followUp, candidate.start, candidate.status?.sessionId ?? null))
+    if (!entry || (entry.revivedAt !== null && entry.revivedAt >= sentAt)) return
+    const key = entry.start.key
+    set((state) => {
+      const current = state.threads[key]
+      return current ? { threads: { ...state.threads, [key]: { ...current, revivedAt: sentAt } } } : state
+    })
+    get().followedUp(key)
   },
   apply: (result, keys, checkedAt) => {
     set((state) => {
@@ -159,8 +165,11 @@ export const useRemoteThreadStore = create<RemoteThreadState>()((set, get) => ({
           threads[key] = { ...current, version: thread.version, stale: thread.stale === true, checkedAt: thread.stale ? current.checkedAt : checkedAt }
           continue
         }
-        // Work reported after a follow-up ends its grace: the new turn is now visible.
-        const followedUpAt = current.followedUpAt !== null && thread.state !== "idle" && thread.state !== "error" ? null : current.followedUpAt
+        // Work reported after a follow-up, or a newer version than the one it was sent against,
+        // ends its grace: the new turn is now visible.
+        const newTurn = thread.state !== "idle" && thread.state !== "error"
+          || (current.followUpVersion !== null && thread.version !== current.followUpVersion)
+        const followedUpAt = current.followedUpAt !== null && newTurn ? null : current.followedUpAt
         threads[key] = { ...current, version: thread.version, status: thread, stale: false, checkedAt, followedUpAt }
       }
       return { threads }
@@ -238,18 +247,12 @@ function listen() {
   window.addEventListener("offline", onChange)
 }
 
-function stopFollowing() {
-  inflight?.controller.abort()
-  wake?.()
-}
-
 /**
  * Follow newly shown tasks now: a waiting call restarts with them. A row that
  * only remounts (scrolling) changes nothing, so it never cuts a backoff or a
  * wait short; `now` does, for a follow-up or the window coming back.
  */
 function kick(now = false) {
-  if (!useRemoteThreadStore.getState().enabled) return
   listen()
   const context = denContext()
   const keys = context ? keysToCheck(context.organizationId, Date.now()) : []
@@ -264,7 +267,6 @@ async function follow() {
   let failures = 0
   try {
     for (;;) {
-      if (!useRemoteThreadStore.getState().enabled) return
       const context = denContext()
       if (!context) return
       const keys = keysToCheck(context.organizationId, Date.now())
@@ -296,8 +298,7 @@ async function follow() {
         await pause(Math.max(next, MIN_CALL_INTERVAL_MS - (Date.now() - calledAt)))
       } catch (error) {
         if (controller.signal.aborted) continue
-        if (error instanceof DenApiError && (error.code === "feature_disabled" || error.status === 401)) {
-          if (error.code === "feature_disabled") useRemoteThreadStore.getState().setEnabled(false)
+        if (error instanceof DenApiError && error.status === 401) {
           return
         }
         failures += 1
@@ -312,22 +313,12 @@ async function follow() {
   }
 }
 
-export function useRemoteThreadsEnabled(): boolean {
-  return useRemoteThreadStore((state) => state.enabled)
-}
-
-/** Whether a task's row opens its conversation; rows alone show progress. */
-export function useRemoteThreadViewEnabled(): boolean {
-  return useRemoteThreadStore((state) => state.enabled && state.threadView)
-}
-
 export function useRemoteThread(key: string | null): RemoteThreadEntry | null {
   return useRemoteThreadStore((state) => key ? state.threads[key] ?? null : null)
 }
 
 /** Follow a task while this component shows it (and for a while after). */
 export function useFollowRemoteThread(start: RemoteThreadStart | null, owner: RemoteThreadOwner, startedAt: number | null) {
-  const enabled = useRemoteThreadsEnabled()
   // A task is identified by its key; a re-rendered part with the same key is the same task.
   const latest = useRef({ start, startedAt })
   latest.current = { start, startedAt }
@@ -335,21 +326,31 @@ export function useFollowRemoteThread(start: RemoteThreadStart | null, owner: Re
   const { workspaceId, sessionId } = owner
   useEffect(() => {
     const current = latest.current
-    if (!enabled || !key || !current.start) return
+    if (!key || !current.start) return
     const organizationId = readDenSettings().activeOrgId?.trim()
     if (!organizationId) return
     return useRemoteThreadStore.getState().watch(current.start, { owner: { workspaceId, sessionId }, organizationId, startedAt: current.startedAt })
-  }, [enabled, key, workspaceId, sessionId])
+  }, [key, workspaceId, sessionId])
 }
 
-/** The agent's own `remote-session:send` to a task the chat shows: follow it again. */
+/** Revive the tasks these follow-ups went to, if the agent sent them just now. */
+export function reviveRemoteThreads(followUps: readonly RemoteThreadFollowUp[], now = Date.now()) {
+  for (const followUp of followUps) {
+    if (followUp.sentAt === null || now - followUp.sentAt > REVIVE_WINDOW_MS) continue
+    useRemoteThreadStore.getState().revive(followUp)
+  }
+}
+
+/** The agent's own `remote-session:send`, directly or from a script, to a task the chat shows: follow it again. */
 export function useReviveRemoteThread(part: DynamicToolUIPart | null) {
-  const sessionId = part ? remoteThreadFollowUpSessionId(part) : null
-  const sentAt = part && sessionId ? remoteToolCallStartedAt(part) : null
+  const followUps = part ? remoteThreadFollowUpsInPart(part) : []
+  // A re-rendered step with the same follow-ups is the same send.
+  const latest = useRef(followUps)
+  latest.current = followUps
+  const signature = followUps.map((followUp) => `${followUp.toolCallId}@${followUp.sentAt ?? ""}`).join("\n")
   useEffect(() => {
-    if (!sessionId || sentAt === null || Date.now() - sentAt > REVIVE_WINDOW_MS) return
-    useRemoteThreadStore.getState().revive(sessionId)
-  }, [sessionId, sentAt])
+    if (signature) reviveRemoteThreads(latest.current)
+  }, [signature])
 }
 
 export type RemoteThreadAttention = { kind: "permission" | "question"; title: string }
@@ -361,7 +362,6 @@ export type RemoteThreadAttention = { kind: "permission" | "question"; title: st
  */
 export function useRemoteThreadAttentionKey(): string {
   return useRemoteThreadStore((state) => {
-    if (!state.enabled) return "[]"
     const rows: string[][] = []
     for (const entry of Object.values(state.threads)) {
       if (entry.status?.state !== "waiting") continue

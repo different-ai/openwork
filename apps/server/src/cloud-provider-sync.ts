@@ -4,9 +4,9 @@ import type { GatewayAuthorizationRequest, GatewayDesktopOauthStartResponse, Gat
 import { CLOUD_MODEL_CONFIG_VERSION } from "@openwork/types/cloud-model-fast";
 import { composeMemberPromptText, memberPromptsSchema } from "@openwork/types/den/prompts";
 import {
-  AUTO_ROUTER_MODEL_ID,
-  AUTO_ROUTER_MODEL_NAME,
+  AUTO_ROUTER_PRODUCT_NAME,
   AUTO_ROUTER_PROVIDER_ID,
+  autoRouterModelName,
   autoRouterConnectSchema,
   type AutoRouterConnect,
 } from "@openwork/types/den/auto-router";
@@ -177,7 +177,11 @@ type DenProviderConnection = DenProvider & {
 };
 
 const gatewayProviderSource = "openwork_gateway";
-/** The organization's Auto Router: one runtime provider whose only model asks the Gateway to pick. */
+/**
+ * The organization's Smart Routers (feature `autoRouter`): one runtime provider
+ * with one model per router that applies to the member; the Gateway picks the
+ * real model for every prompt.
+ */
 const autoRouterProviderSource = "openwork_auto_router";
 /** Not OPENWORK_-prefixed: the env store reserves that prefix for OpenWork internals. */
 export const AUTO_ROUTER_API_KEY_ENV = "OW_AUTO_ROUTER_API_KEY";
@@ -624,10 +628,10 @@ async function fetchOrganizationPrompts(
 }
 
 /**
- * The organization's Auto Router for this member, from
- * GET /v1/org/auto-router/connect. null when there is none: the feature is
- * off, no router is configured, the member has no access (404), or Den
- * answered something unusable. undefined when it could not be read right now,
+ * The organization's Smart Routers for this member, from
+ * GET /v1/org/auto-router/connect. null when there are none: the feature is
+ * off, no router applies to the member (404), or Den answered something
+ * unusable. undefined when it could not be read right now,
  * so the last known answer for this sign-in stays. Never fails the sync pass.
  */
 async function fetchAutoRouter(
@@ -648,11 +652,25 @@ async function fetchAutoRouter(
   }
   if (payload === undefined) return null;
   const parsed = autoRouterConnectSchema.safeParse(payload);
-  if (!parsed.success || !parsed.data.apiKey.trim() || !isHttpUrl(parsed.data.baseURL)) {
-    logger?.warn("auto router connect response is invalid; Auto is not offered", {});
+  const models = parsed.success ? smartModels(parsed.data.models) : [];
+  if (!parsed.success || !parsed.data.apiKey.trim() || !isHttpUrl(parsed.data.baseURL) || !models.length) {
+    logger?.warn("auto router connect response is invalid; Smart is not offered", {});
     return null;
   }
-  return parsed.data;
+  return { ...parsed.data, models };
+}
+
+/** The routers' models with usable ids, first of each id kept, names trimmed. */
+function smartModels(models: AutoRouterConnect["models"]): AutoRouterConnect["models"] {
+  const seen = new Set<string>();
+  const usable: AutoRouterConnect["models"] = [];
+  for (const model of models) {
+    const id = model.id.trim();
+    if (!id || seen.has(id)) continue;
+    seen.add(id);
+    usable.push({ id, name: model.name.trim() || autoRouterModelName("") });
+  }
+  return usable;
 }
 
 function isHttpUrl(value: string): boolean {
@@ -664,13 +682,12 @@ function isHttpUrl(value: string): boolean {
   }
 }
 
-/** Auto as a Den provider row, so it materializes, fingerprints and retires like every managed provider. */
+/** Smart as a Den provider row, so it materializes, fingerprints and retires like every managed provider. */
 function autoRouterProvider(connect: AutoRouterConnect): DenProviderConnection {
-  const name = connect.model.name.trim() || AUTO_ROUTER_MODEL_NAME;
   return {
     id: AUTO_ROUTER_PROVIDER_ID,
     providerId: AUTO_ROUTER_PROVIDER_ID,
-    name: AUTO_ROUTER_MODEL_NAME,
+    name: AUTO_ROUTER_PRODUCT_NAME,
     source: autoRouterProviderSource,
     updatedAt: null,
     providerConfig: {
@@ -678,11 +695,11 @@ function autoRouterProvider(connect: AutoRouterConnect): DenProviderConnection {
       env: [AUTO_ROUTER_API_KEY_ENV],
       options: { baseURL: connect.baseURL.replace(/\/+$/, "") },
     },
-    models: [{
-      id: AUTO_ROUTER_MODEL_ID,
+    models: connect.models.map(({ id, name }) => ({
+      id,
       name,
       config: {
-        id: AUTO_ROUTER_MODEL_ID,
+        id,
         name,
         attachment: true,
         reasoning: false,
@@ -690,7 +707,7 @@ function autoRouterProvider(connect: AutoRouterConnect): DenProviderConnection {
         limit: { context: 200_000, output: 32_000 },
         modalities: { input: ["text", "image"], output: ["text"] },
       },
-    }],
+    })),
     pinnedModelIds: [],
     apiKey: connect.apiKey.trim(),
     apiKeys: null,
@@ -943,7 +960,7 @@ export class CloudProviderSync {
   private managedProviderIds = new Set<string>();
   private providerEnvHashes = new Map<string, Record<string, string>>();
   private importedAtByCloudProviderId = new Map<string, number>();
-  /** Last Auto Router answer, reused for the same sign-in when Den cannot be read. */
+  /** Last Smart Router answer, reused for the same sign-in when Den cannot be read. */
   private autoRouter: { contextKey: string; connect: AutoRouterConnect | null } | null = null;
   private reloadPending = false;
   private queue: Promise<void> = Promise.resolve();
@@ -954,6 +971,8 @@ export class CloudProviderSync {
   private interval: ReturnType<typeof setInterval> | null = null;
   private pendingReloadRetry: ReturnType<typeof setTimeout> | null = null;
   private suspended = false;
+  /** See providerBridgeSession(). */
+  private bridgeSession: CloudProviderDenSession | null = null;
   private providerFetchController = new AbortController();
   private readonly reloadRetryMs: number;
 
@@ -974,15 +993,32 @@ export class CloudProviderSync {
     return this.session ? { ...this.session } : null;
   }
 
+  /**
+   * The sign-in the V2 provider bridge serves. It is not cleared by a
+   * suspension for the same sign-in (a repeated identity delivery), only by a
+   * different sign-in or sign-out, so live Gateway replies are not cut while
+   * provider materialization pauses.
+   */
+  providerBridgeSession(): CloudProviderDenSession | null {
+    return this.bridgeSession ? { ...this.bridgeSession } : null;
+  }
+
   /** Invalidate the credential bridge before asynchronous policy hydration. */
   suspendForSession(session: CloudProviderDenSession): Promise<void> {
-    return this.session && this.sessionContextKey(this.session) === this.sessionContextKey(session)
+    const contextKey = this.sessionContextKey(session);
+    // A different sign-in revokes the old bridge identity synchronously.
+    if (this.bridgeSession && this.sessionContextKey(this.bridgeSession) !== contextKey) this.bridgeSession = null;
+    return this.session && this.sessionContextKey(this.session) === contextKey
       ? Promise.resolve() : this.suspend();
   }
 
   setSession(session: CloudProviderDenSession): Promise<void> {
     const contextKey = this.sessionContextKey(session);
-    if (this.session && this.sessionContextKey(this.session) === contextKey) return Promise.resolve();
+    if (this.bridgeSession && this.sessionContextKey(this.bridgeSession) !== contextKey) this.bridgeSession = null;
+    if (this.session && this.sessionContextKey(this.session) === contextKey) {
+      this.bridgeSession = session;
+      return Promise.resolve();
+    }
     if (this.pendingSession?.contextKey === contextKey) return this.pendingSession.promise;
 
     const hasMaterializedContext = this.session !== null
@@ -994,6 +1030,7 @@ export class CloudProviderSync {
 
     if (!hasMaterializedContext && !this.suspended) {
       this.session = session;
+      this.bridgeSession = session;
       this.startInterval();
       void this.run("den_session_updated");
       return Promise.resolve();
@@ -1019,6 +1056,7 @@ export class CloudProviderSync {
       }
       if (generation !== this.contextGeneration) return;
       this.session = session;
+      this.bridgeSession = session;
       this.suspended = false;
       this.startInterval();
       void this.run("den_session_updated");
@@ -1063,6 +1101,7 @@ export class CloudProviderSync {
     this.contextGeneration += 1;
     this.pendingSession = null;
     this.session = null;
+    this.bridgeSession = null;
     this.stopInterval();
     const trailing = this.trailingRun;
     this.trailingRun = null;
@@ -1603,7 +1642,7 @@ export class CloudProviderSync {
       if (!desiredCloudIds.has(cloudId)) this.importedAtByCloudProviderId.delete(cloudId);
     }
     const now = Date.now();
-    // Auto is a model, not an imported provider; Settings never lists it.
+    // Smart models are not an imported provider; Settings never lists them.
     this.providers = prepared.providers.filter((entry) => entry.provider.source !== autoRouterProviderSource).map((entry) => {
       const importedAt = this.importedAtByCloudProviderId.get(entry.provider.id) ?? now;
       this.importedAtByCloudProviderId.set(entry.provider.id, importedAt);

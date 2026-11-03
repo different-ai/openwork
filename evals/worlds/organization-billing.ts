@@ -1,7 +1,7 @@
 import type { Place, Seed } from "@openwork/env";
 import { organizationPlanStateSchema } from "@openwork/types/den/billing-plans";
 import { fakeStripe } from "./fake-stripe.ts";
-import { enableOrganizationCapabilities, seededOrganizationId } from "./organization-capabilities.ts";
+import { seededOrganizationId } from "./organization-capabilities.ts";
 
 function record(value: unknown): Record<string, unknown> {
   return value && typeof value === "object" && !Array.isArray(value) ? Object.fromEntries(Object.entries(value)) : {};
@@ -32,7 +32,6 @@ export async function organizationBillingWorld(seed: Seed, { place }: { place: P
   const created = await seed.api(den.admin, "/v1/org", { method: "POST", body: JSON.stringify({ name: "Example Corp" }) });
   const paidId = record(record(created.body).organization).id;
   if (!created.response.ok || typeof paidId !== "string") throw new Error(`Example Corp failed (${created.response.status}).`);
-  await enableOrganizationCapabilities(seed, den.admin, { teamPlan: true }, paidId);
   const scoped = { "x-openwork-org-id": paidId, "content-type": "application/json" };
   const checkout = await seed.api(den.admin, "/v1/billing/stripe/checkout", { method: "POST", headers: scoped, body: JSON.stringify({ type: "plan", plan: "team" }) });
   const checkoutUrl = record(checkout.body).url;

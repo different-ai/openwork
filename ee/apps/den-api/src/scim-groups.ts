@@ -567,8 +567,8 @@ export async function deleteScimGroup(input: {
   })
 }
 
-export async function serializeScimGroup(group: ScimGroup, baseUrl: string): Promise<ScimGroupResource> {
-  const members = await loadGroupMembers(group.id)
+export async function serializeScimGroup(group: ScimGroup, baseUrl: string, database: Pick<typeof db, "select"> = db): Promise<ScimGroupResource> {
+  const members = await loadGroupMembers(group.id, database)
   const resource: ScimGroupResource = {
     schemas: [SCIM_GROUP_SCHEMA],
     id: group.id,

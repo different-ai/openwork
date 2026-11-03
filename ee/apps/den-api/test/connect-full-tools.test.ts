@@ -63,6 +63,19 @@ test("one rollout gates every supported client and preserves the existing client
   }
 })
 
+test("OpenWork's own engine keeps capability search, while its token in another client follows that client", () => {
+  const openwork = { enabled: true, firstPartyToken: true }
+  assert.equal(connectToolView({ name: "opencode", version: "2.0.26" }, openwork), "search")
+  assert.equal(connectToolView({ name: " OpenCode " }, openwork), "search")
+  // Standalone OpenCode signs in with its own OAuth token.
+  assert.equal(connectToolView({ name: "opencode" }, { enabled: true, firstPartyToken: false }), "full")
+  assert.equal(connectToolView(CLAUDE_CODE, openwork), "full")
+  assert.equal(connectToolView({ name: "cursor" }, openwork), "search")
+  // The explicit override still decides, so OpenWork can opt in deliberately; the flag still gates it.
+  assert.equal(connectToolView({ name: "opencode" }, { ...openwork, override: "full" }), "full")
+  assert.equal(connectToolView({ name: "opencode" }, { ...openwork, enabled: false, override: "full" }), "search")
+})
+
 test("clientInfo comes only from the request's own _meta", () => {
   assert.deepEqual(requestClientInfo({ _meta: { [CLIENT_INFO_META_KEY]: CLAUDE_CODE } }), CLAUDE_CODE)
   assert.deepEqual(requestClientInfo({ _meta: { [CLIENT_INFO_META_KEY]: { name: "claude-code" } } }), { name: "claude-code" })
@@ -115,6 +128,34 @@ test("the full list is deterministic, uniquely named within MCP name rules, and 
   const drive = tools.find((tool) => tool.capability.startsWith("native:"))
   assert.equal(drive?.name.length, 64)
   assert.match(drive?.name ?? "", /^google_workspace\.getCapabilities.*-[0-9a-f]{8}$/)
+})
+
+test("every full-view tool has a title and a safety hint, keeping what its source states", () => {
+  const tools = buildConnectFullTools([
+    candidate("linear", "list_issues", { title: "List issues", annotations: { readOnlyHint: true, openWorldHint: false } }),
+    candidate("linear", "create_issue_label", { annotations: { readOnlyHint: false, destructiveHint: false } }),
+    candidate("run-workflow", "weekly_report", { capability: "plugin:plg_1:cob_1", title: "Weekly report" }),
+    candidate("google_workspace", "getCapabilitiesGoogleWorkspaceGmailMessages", {
+      capability: "native:emc_g:getCapabilitiesGoogleWorkspaceGmailMessages",
+      description: "List or search Gmail messages as the calling member",
+      annotations: { readOnlyHint: true },
+    }),
+    candidate("notion", "notion-update-page", { description: `[Notion] ${"Update a page. ".repeat(20)}` }),
+  ])
+  const byName = new Map(tools.map((tool) => [tool.name, tool]))
+  assert.equal(byName.get("linear.list_issues")?.title, "List issues")
+  // A read-only claim is kept as stated, never extended into a harmless one.
+  assert.deepEqual(byName.get("linear.list_issues")?.annotations, { readOnlyHint: true, openWorldHint: false })
+  // A write its provider calls harmless stays so; a Workflow states nothing, so it is a destructive write.
+  assert.deepEqual(byName.get("linear.create_issue_label")?.annotations, { readOnlyHint: false, destructiveHint: false })
+  assert.deepEqual(byName.get("run-workflow.weekly_report")?.annotations, { readOnlyHint: false, destructiveHint: true })
+  // Without a title, a one-line summary is the title, else the name in words.
+  assert.equal(byName.get("google_workspace.getCapabilitiesGoogleWorkspaceGmailMessages")?.title, "List or search Gmail messages as the calling member")
+  assert.equal(byName.get("notion.notion-update-page")?.title, "Notion update page")
+  for (const tool of tools) {
+    assert.ok(tool.title.length > 0, tool.name)
+    assert.ok(tool.annotations.readOnlyHint === true || typeof tool.annotations.destructiveHint === "boolean", tool.name)
+  }
 })
 
 test("an external connection lists only the tools its policy allows, with the provider's schemas and annotations", () => {
@@ -184,7 +225,7 @@ function modernRequest(method: string, params: object, url = "https://den.test/m
 }
 
 const listResult = z.object({ result: z.object({
-  tools: z.array(z.object({ name: z.string(), description: z.string().optional(), inputSchema: z.record(z.string(), z.unknown()), outputSchema: z.record(z.string(), z.unknown()).optional(), annotations: z.record(z.string(), z.unknown()).optional() })),
+  tools: z.array(z.object({ name: z.string(), title: z.string().optional(), description: z.string().optional(), inputSchema: z.record(z.string(), z.unknown()), outputSchema: z.record(z.string(), z.unknown()).optional(), annotations: z.record(z.string(), z.unknown()).optional() })),
   ttlMs: z.number(),
   cacheScope: z.string(),
 }) })
@@ -218,6 +259,10 @@ test("full-view tools list privately and run through the capability executor wit
   assert.deepEqual(issues?.inputSchema, issueSchema)
   assert.deepEqual(issues?.outputSchema, { type: "object" })
   assert.deepEqual(issues?.annotations, { readOnlyHint: true })
+  for (const tool of listed.result.tools) {
+    assert.ok(tool.title, `${tool.name} has a title`)
+    assert.ok(tool.annotations?.readOnlyHint === true || typeof tool.annotations?.destructiveHint === "boolean", tool.name)
+  }
 
   // Arguments are not validated here: the executor checks them, as for execute_capability.
   const ran = callResult.parse(await call("tools/call", { name: "linear.list_issues", arguments: { unexpected: 1 } }))

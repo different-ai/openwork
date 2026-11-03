@@ -44,6 +44,8 @@ export const AuditOperationTable = mysqlTable("audit_operation", {
   uniqueIndex("audit_operation_binding").on(table.organization_id, table.binding_key),
   index("audit_operation_org_time").on(table.organization_id, table.first_recorded_at, table.id),
   index("audit_operation_retention").on(table.organization_id, table.retention_state, table.first_recorded_at, table.id),
+  // Covers refreshAuditUsageCounts so the daily totals read only this index.
+  index("audit_operation_usage").on(table.organization_id, table.retention_state, table.event_count, table.logical_bytes),
 ])
 
 export const AuditOperationStepTable = mysqlTable("audit_operation_step", {

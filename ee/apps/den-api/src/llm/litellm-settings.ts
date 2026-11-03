@@ -51,20 +51,21 @@ export function liteLlmCatalogProvider(provider: { settings: Record<string, unkn
 const ATTENTION_STATUSES = ["not_in_litellm", "no_key_to_mirror", "no_models", "error"] as const
 
 /** Read-only management view. Never includes keys. */
-export async function liteLlmStatus(provider: { id: typeof GatewayCredentialSetTable.$inferSelect.gateway_provider_id; provider_id: string; settings: Record<string, unknown> }): Promise<GatewayLiteLlmStatus | undefined> {
+export async function liteLlmStatus(provider: { id: typeof GatewayCredentialSetTable.$inferSelect.gateway_provider_id; provider_id: string; settings: Record<string, unknown> }, primary = false): Promise<GatewayLiteLlmStatus | undefined> {
   const settings = isLiteLlmProviderId(provider.provider_id) ? readLiteLlmSettings(provider.settings) : null
   if (!settings) return undefined
-  const set = await db.select().from(GatewayCredentialSetTable).where(eq(GatewayCredentialSetTable.gateway_provider_id, provider.id))
-  const credentials = set.length ? await db.select({ subject: GatewayProviderCredentialTable.subject, status: GatewayProviderCredentialTable.status, memberId: GatewayProviderCredentialTable.org_membership_id })
+  const reader = primary ? db.$primary : db
+  const set = await reader.select().from(GatewayCredentialSetTable).where(eq(GatewayCredentialSetTable.gateway_provider_id, provider.id))
+  const credentials = set.length ? await reader.select({ subject: GatewayProviderCredentialTable.subject, status: GatewayProviderCredentialTable.status, memberId: GatewayProviderCredentialTable.org_membership_id })
     .from(GatewayProviderCredentialTable).where(inArray(GatewayProviderCredentialTable.credential_set_id, set.map((row) => row.id))) : []
   const syncSubject = settings.mode === "org" ? "org" : LITELLM_ADMIN_CREDENTIAL_SUBJECT
   let baseUrl: string | null = null
   try { baseUrl = typeof provider.settings.upstreamBaseUrl === "string" ? normalizeLiteLlmBaseUrl(provider.settings.upstreamBaseUrl).adminBaseUrl : null } catch { baseUrl = null }
   const issued = settings.mode === "member" && settings.keySource === "issued"
-  const issuedRows = issued ? await db.select({ memberId: GatewayLiteLlmIssuedKeyTable.org_membership_id, slot: GatewayLiteLlmIssuedKeyTable.slot, status: GatewayLiteLlmIssuedKeyTable.status })
+  const issuedRows = issued ? await reader.select({ memberId: GatewayLiteLlmIssuedKeyTable.org_membership_id, slot: GatewayLiteLlmIssuedKeyTable.slot, status: GatewayLiteLlmIssuedKeyTable.status })
     .from(GatewayLiteLlmIssuedKeyTable).where(eq(GatewayLiteLlmIssuedKeyTable.gateway_provider_id, provider.id)) : []
   const attentionRows = issuedRows.filter((row) => row.slot === "member" && ATTENTION_STATUSES.some((status) => status === row.status))
-  const people = attentionRows.length ? await db.select({ id: MemberTable.id, name: AuthUserTable.name, email: AuthUserTable.email }).from(MemberTable)
+  const people = attentionRows.length ? await reader.select({ id: MemberTable.id, name: AuthUserTable.name, email: AuthUserTable.email }).from(MemberTable)
     .innerJoin(AuthUserTable, eq(AuthUserTable.id, MemberTable.userId)).where(inArray(MemberTable.id, attentionRows.slice(0, 50).map((row) => row.memberId))) : []
   return {
     mode: settings.mode,

@@ -16,10 +16,18 @@ export function constantTimeEquals(a: string, b: string) {
   return left.length === right.length && timingSafeEqual(left, right)
 }
 
+type SelectDb = Pick<typeof db, "select">
+
+/** Replica first; a miss retries on the primary, since Den API may have created the key moments ago. */
+async function firstOrPrimary<T>(lookup: (database: SelectDb) => PromiseLike<T[]>): Promise<T[]> {
+  const rows = await lookup(db)
+  return rows.length > 0 ? rows : lookup(db.$primary)
+}
+
 export async function findActiveInferenceKey(key: InferenceBearerKey) {
   if (key.value.startsWith("ow_gw_")) return null
   const keyHashes = await inferenceBearerKeyLookupDigests(key)
-  const [row] = await db
+  const lookup = (database: SelectDb) => database
     .select({ inferenceKey: InferenceKeyTable })
     .from(InferenceKeyTable)
     .innerJoin(MemberTable, eq(InferenceKeyTable.org_membership_id, MemberTable.id))
@@ -30,6 +38,7 @@ export async function findActiveInferenceKey(key: InferenceBearerKey) {
       isNull(MemberTable.removedAt),
     ))
     .limit(1)
+  const [row] = await firstOrPrimary(lookup)
   if (!row) {
     return null
   }
@@ -52,7 +61,7 @@ export async function assertOrganizationManagedModelsAllowed(organizationId: str
 
 export async function findActiveGatewayKey(key: GatewayBearerKey): Promise<Pick<typeof GatewayKeyTable.$inferSelect, "id" | "organization_id" | "org_membership_id"> | null> {
   const digest = await gatewayBearerKeyLookupDigest(key)
-  const [row] = await db.select({
+  const [row] = await firstOrPrimary((database) => database.select({
     id: GatewayKeyTable.id,
     organization_id: GatewayKeyTable.organization_id,
     org_membership_id: GatewayKeyTable.org_membership_id,
@@ -60,7 +69,7 @@ export async function findActiveGatewayKey(key: GatewayBearerKey): Promise<Pick<
     .innerJoin(MemberTable, and(eq(MemberTable.id, GatewayKeyTable.org_membership_id), eq(MemberTable.organizationId, GatewayKeyTable.organization_id)))
     .where(and(eq(GatewayKeyTable.key_hash, digest), eq(GatewayKeyTable.status, "active"), isNull(GatewayKeyTable.revoked_at),
       isNull(MemberTable.removedAt), isNotNull(MemberTable.userId)))
-    .limit(1)
+    .limit(1))
   return row ?? null
 }
 

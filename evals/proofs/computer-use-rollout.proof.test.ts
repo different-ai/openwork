@@ -3,7 +3,7 @@ import { spec } from "@openwork/testkit";
 import { computerUseWorld } from "../worlds/desktop-chat-features.ts";
 
 const test = spec.world(computerUseWorld, {
-  resources: { surfaces: ["desktop"], services: ["den"], nativeReason: "Computer readiness and rollout cancellation use the Electron broker and real macOS helper." },
+  resources: { surfaces: ["desktop"], services: ["den", "mock"], nativeReason: "Computer readiness and rollout cancellation use the Electron broker and real macOS helper." },
 });
 
 // The chat header used to carry a Computer status button; setup now lives in Settings.

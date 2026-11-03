@@ -16,6 +16,7 @@ The person sees this same desktop. Access is enabled: do not ask for computer co
     properties: {
       view: { type: "string", enum: ["browser", "computer"] },
       description: { type: "string", maxLength: 120, description: "What you are doing, in a few plain words the person sees live, e.g. \"Checking 2-bedroom listings on Zillow\". Never include typed values or private data." },
+      show: { type: "boolean", description: "true puts this view in the person's chat so they can watch, only when they asked to see it or there is something to look at or decide together. Leave it out otherwise; false takes it away." },
       operation: { type: "string", enum: ["tabs", "open", "navigate", "observe", "act", "extract", "computer_run", "computer_discover", "computer_apps", "computer_launch", "computer_app_script", "computer_open", "computer_observe", "computer_act", "computer_zoom", "computer_status", "computer_close"] },
       args: {
         type: "object", additionalProperties: true,

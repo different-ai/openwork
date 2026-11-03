@@ -302,6 +302,15 @@ export function getCapabilityCallSentence(
 
   if (toolName.endsWith("execute_capability")) {
     const name = isRecord(part.input) && typeof part.input.name === "string" ? part.input.name : null
+    // Reading the organization directory to find a person or team by name.
+    if (name && /(?:^|:)getOrg$/.test(name)) {
+      return {
+        service: null,
+        present: "Looking up people in your organization",
+        past: "Looked up people in your organization",
+        failure: "Couldn't look up people in your organization",
+      }
+    }
     const split = name ? splitCapabilityName(name) : null
     if (split) {
       const suffix = quoted ? `:${quoted}` : ""

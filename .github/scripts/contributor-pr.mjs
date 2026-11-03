@@ -192,7 +192,7 @@ async function main(mode) {
     const needsScreen = !statuses[AI_SCREEN_CONTEXT];
     const runUrl = `${process.env.GITHUB_SERVER_URL ?? "https://github.com"}/${repo}/actions/runs/${env("GITHUB_RUN_ID")}`;
     await reply(repo, number, needsScreen
-      ? `Running the AI screen for \`${decision.sha}\`, as reviewed by @${actor}. Tests and the Warden security review start if it's clear: ${runUrl}`
+      ? `Running the AI screen for \`${decision.sha}\`, as reviewed by @${actor}. Tests and the Warden security review start independently; the AI screen is advisory: ${runUrl}`
       : `Running tests and the Warden security review for \`${decision.sha}\`, as reviewed by @${actor}: ${runUrl}`);
     await output("sha", decision.sha);
     await output("needs_screen", String(needsScreen));

@@ -65,10 +65,9 @@ test("a grandfathered plan follows the same rule as an admin-set plan", () => {
   assert.equal(personAddRefusal(state), "plan_limit_reached")
 })
 
-test("an active paid Stripe plan has no limit, even on top of an admin-set plan", () => {
+test("an active Team subscription has no limit, even on top of an admin-set Enterprise plan", () => {
   assert.equal(resolve({ plan: { tier: "team", source: "stripe" }, paidBy: "stripe_team", users: 500 }).userLimit, null)
-  assert.equal(resolve({ plan: { tier: "enterprise", source: "stripe" }, paidBy: "stripe_enterprise", users: 500 }).userLimit, null)
-  const manual = resolve({ plan: { tier: "enterprise", source: "manual" }, metadata: { plan: { seats: 20 } }, paidBy: "stripe_enterprise", users: 50 })
+  const manual = resolve({ plan: { tier: "enterprise", source: "manual" }, metadata: { plan: { seats: 20 } }, paidBy: "stripe_team", users: 50 })
   assert.equal(manual.userLimit, null)
   assert.equal(canAddPerson(manual), true)
   assert.equal(personAddRefusal(manual), null)
@@ -78,17 +77,13 @@ test("a Team plan Stripe set without an active subscription falls back to the Fr
   assert.equal(resolve({ plan: { tier: "team", source: "stripe" }, users: 5 }).userLimit, 5)
 })
 
-test("who pays: seat subscriptions while active or trialing, Enterprise also while past due", () => {
-  const enterprisePriceId = "price_enterprise"
-  assert.equal(planPaidBy({ seat: { status: "active", stripePriceId: "price_seat" }, enterprise: null, enterprisePriceId }), "stripe_team")
-  assert.equal(planPaidBy({ seat: { status: "trialing", stripePriceId: "price_seat" }, enterprise: null, enterprisePriceId }), "stripe_team")
-  assert.equal(planPaidBy({ seat: { status: "past_due", stripePriceId: "price_seat" }, enterprise: null, enterprisePriceId }), "none")
-  assert.equal(planPaidBy({ seat: { status: "active", stripePriceId: enterprisePriceId }, enterprise: null, enterprisePriceId }), "stripe_enterprise")
-  for (const status of ["active", "trialing", "past_due"]) {
-    assert.equal(planPaidBy({ seat: null, enterprise: { status }, enterprisePriceId }), "stripe_enterprise", status)
+test("who pays: a Team (seat) subscription while active or trialing; Enterprise is never paid through Stripe", () => {
+  assert.equal(planPaidBy({ seat: { status: "active" } }), "stripe_team")
+  assert.equal(planPaidBy({ seat: { status: "trialing" } }), "stripe_team")
+  for (const status of ["past_due", "canceled", "unpaid", "incomplete"]) {
+    assert.equal(planPaidBy({ seat: { status } }), "none", status)
   }
-  assert.equal(planPaidBy({ seat: null, enterprise: { status: "canceled" }, enterprisePriceId }), "none")
-  assert.equal(planPaidBy({ seat: null, enterprise: null, enterprisePriceId: undefined }), "none")
+  assert.equal(planPaidBy({ seat: null }), "none")
 })
 
 test("where seat billing does not gate member additions nothing is limited", () => {

@@ -92,7 +92,7 @@ test("pinned V2 replays desktop inventory and real model filters through native 
   let inventoryReads = 0;
   let inferenceRequests = 0;
   let streamStatus = 200;
-  let streamError = "feature_disabled";
+  let streamError = "organization_not_found";
   let streamAttempts = 0;
   let holdNextInventory = false;
   let heldInventory: { response: ServerResponse; body: string } | undefined;
@@ -191,7 +191,7 @@ export default {
       }
     } } });
     const disposeDesktop = await desktop.setup({ ...ctx, options: {
-      liveProviderSync: true, desktopSession: process.env.OPENWORK_TEST_SESSION_ENDPOINT
+      desktopSession: process.env.OPENWORK_TEST_SESSION_ENDPOINT
     } });
     return async () => {
       await disposeDesktop?.();
@@ -505,24 +505,6 @@ export default {
     }
   });
 
-  await scenario("12/14: explicit rollout kill 404 keeps snapshot but never reopens killed stream", async () => {
-    await until(async () => subscriptions.size, size => size > 0, "kill baseline subscription");
-    streamStatus = 404;
-    streamError = "feature_disabled";
-    const attempts = streamAttempts;
-    for (const response of subscriptions) response.end();
-    await until(async () => streamAttempts, count => count > attempts, "kill response read");
-    const snapshot = await models();
-    assert.equal(snapshot.length, 1);
-    assert.equal(snapshot[0]?.name, "Regranted after 403");
-    const killedAttempts = streamAttempts;
-    providers = [gateway(providerID, [{ id: "gwm_keep", name: "Must not appear while killed" }])];
-    streamStatus = 200;
-    await delay(1300);
-    assert.deepEqual(await models(), snapshot, "kill does not erase offline usable known inventory");
-    assert.equal(streamAttempts, killedAttempts, "feature kill is terminal for this plugin lifetime");
-    // The managed-engine fixture separately proves the next OFF boot selects legacy.
-  });
   assert.equal(await readFile(configPath, "utf8"), config, "live inventory never materializes providers/models into config");
   assert.deepEqual(await request("/api/config"), initialConfig, "all native config sources remain unchanged");
   assert.equal(inferenceRequests, 0, "offline and stale-key loopback probes never reach upstream inference");

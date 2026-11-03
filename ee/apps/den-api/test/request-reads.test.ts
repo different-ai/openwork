@@ -1,6 +1,6 @@
 import assert from "node:assert/strict"
 import { test } from "node:test"
-import { forgetRequestReadsOnWrite, requestRead, withRequestReads } from "../src/request-reads.ts"
+import { forgetRequestReadsOnWrite, requestRead, requestReadMany, withRequestReads } from "../src/request-reads.ts"
 
 function counter() {
   let loads = 0
@@ -79,4 +79,40 @@ test("a write in a nested request also drops the outer request's shared reads", 
     })
     assert.equal(await requestRead("k", reads.load), 2)
   })
+})
+
+test("many ids load in one call, reuse earlier reads, and are shared one by one afterwards", async () => {
+  const batches: string[][] = []
+  const loadMany = async (missing: string[]) => {
+    batches.push(missing)
+    return new Map(missing.filter((id) => id !== "gone").map((id) => [id, `row:${id}`]))
+  }
+  const single = counter()
+  await withRequestReads(async () => {
+    assert.equal(await requestRead("row:a", async () => "row:a (single)"), "row:a (single)")
+    const rows = await requestReadMany(["a", "b", "c", "b", "gone"], (id) => `row:${id}`, loadMany, null)
+    assert.deepEqual([...rows], [["a", "row:a (single)"], ["b", "row:b"], ["c", "row:c"], ["gone", null]])
+    assert.deepEqual(batches, [["b", "c", "gone"]], "only ids nobody read yet load, together and once each")
+    assert.equal(await requestRead("row:c", single.load), "row:c", "a later single read of a loaded id shares it")
+    assert.equal(await requestRead("row:gone", single.load), null, "so does an id the batch did not find")
+    assert.deepEqual([...await requestReadMany(["c"], (id) => `row:${id}`, loadMany, null)], [["c", "row:c"]])
+  })
+  assert.equal(single.loads(), 0)
+  assert.equal(batches.length, 1)
+})
+
+test("a failed batch is not shared, and an empty batch loads nothing", async () => {
+  let attempts = 0
+  const loadMany = async (missing: string[]) => {
+    attempts += 1
+    if (attempts === 1) throw new Error("database unavailable")
+    return new Map(missing.map((id) => [id, id.toUpperCase()]))
+  }
+  await withRequestReads(async () => {
+    await assert.rejects(requestReadMany(["a", "b"], (id) => id, loadMany, null), /database unavailable/)
+    assert.equal(await requestRead("a", async () => "single"), "single", "the failed id reads again")
+    assert.deepEqual([...await requestReadMany(["a", "b"], (id) => id, loadMany, null)], [["a", "single"], ["b", "B"]])
+    assert.deepEqual([...await requestReadMany([], (id) => id, loadMany, null)], [])
+  })
+  assert.equal(attempts, 2)
 })

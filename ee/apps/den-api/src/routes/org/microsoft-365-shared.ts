@@ -50,7 +50,8 @@ export type Microsoft365Identity = {
 
 /** A ready Graph client for the calling member, or the reply explaining why there is none. */
 export type Microsoft365Access = (input: Microsoft365Identity & { features: readonly string[]; label: string }) => Promise<
-  | { ok: true; graph: (options?: { signal?: AbortSignal; timeoutMs?: number }) => MicrosoftGraphClient }
+  /** graphBaseUrl: set only for a sandbox's sample Microsoft 365 (its workplace's Graph). */
+  | { ok: true; graph: (options?: { signal?: AbortSignal; timeoutMs?: number }) => MicrosoftGraphClient; graphBaseUrl?: string }
   | { ok: false; status: 401 | 403 | 409 | 502; body: { error: string; message: string } }
 >
 

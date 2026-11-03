@@ -15,7 +15,7 @@ process.env.OPENWORK_DEV_MODE ??= "1"
 const { db } = await import("../src/db.js")
 // Better Auth seeds its resource registry on import. Return an already-present
 // synthetic registry row while the modules initialize, without SQL I/O.
-const bootstrapSelect = mock.method(db, "select", () => ({
+const bootstrapSelect = mock.method(db.$primary, "select", () => ({
   from() { return { async where() { return [{ id: "unit_oauth_resource", identifier: "http://unit.test/mcp/agent", policyVersion: 1 }] } } },
 }))
 const { auth } = await import("../src/auth.js")
@@ -67,6 +67,10 @@ test("admin write tools refuse a token without mcp:write, as connection writes d
     ["den_update_org_plan", { organizationId: "org_unit", tier: "enterprise", seatLimit: 50 }],
     ["den_set_org_capability", { organizationId: "org_unit", capability: feature, enabled: true }],
     ["den_set_feature_rollout", { feature, killed: true }],
+    ["den_sandbox_create", { name: "Unit sandbox", days: 14, memberLimit: 10, creditUsd: 25 }],
+    ["den_sandbox_extend", { sandboxId: "sbx_unit", days: 7 }],
+    ["den_sandbox_set_credit", { sandboxId: "sbx_unit", creditUsd: 75 }],
+    ["den_sandbox_close", { sandboxId: "sbx_unit" }],
   ] as const) {
     const result = await executeCapability(context, { name: `admin:${tool}`, arguments: args })
     assert.equal(result.isError, true, tool)

@@ -150,6 +150,23 @@ local env vars — see `.env.example`):
 | `DATABASE_USERNAME` | PlanetScale branch password username |
 | `DATABASE_PASSWORD` | PlanetScale branch password |
 
+### Read replicas
+
+`createDenDb` always returns `db` wrapped in Drizzle's
+[`withReplicas`](https://orm.drizzle.team/docs/read-replicas). Reads
+(`select`, `selectDistinct`, `$count`, `with`, `query`) go to the replica;
+writes, `execute` and transactions go to the primary.
+
+Den API and the Gateway read optional `DATABASE_READ_USERNAME` and
+`DATABASE_READ_PASSWORD`: replica credentials for the same host as the primary
+(`DATABASE_HOST`, or the host in `DATABASE_URL`). Without both, the replica *is*
+the primary, so self-hosted and single-credential deployments behave as before.
+
+Replicas can lag the primary slightly. A read that must see a write made
+moments earlier should use `db.$primary.select()...`; Better Auth's adapter is
+pinned to `db.$primary` for this reason. Migration and maintenance scripts
+don't pass replica credentials and always use the primary.
+
 ### One-time baseline
 
 This is not a recovery path for pending or partial 0097. Do not use baselining to

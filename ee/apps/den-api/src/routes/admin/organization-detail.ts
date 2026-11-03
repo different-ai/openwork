@@ -41,10 +41,10 @@ async function organizationDetail(id: typeof OrganizationTable.$inferSelect.id, 
     db.select({
       type: OrgSubscriptionTable.type, status: OrgSubscriptionTable.status, stripe_price_id: OrgSubscriptionTable.stripe_price_id,
       payment_failed: OrgSubscriptionTable.payment_failed, currentPeriodEnd: OrgSubscriptionTable.current_period_end, cancelAtPeriodEnd: OrgSubscriptionTable.cancel_at_period_end,
-    }).from(OrgSubscriptionTable).where(and(eq(OrgSubscriptionTable.organization_id, id), inArray(OrgSubscriptionTable.type, ["seat", "enterprise", "web"]))),
+    }).from(OrgSubscriptionTable).where(and(eq(OrgSubscriptionTable.organization_id, id), inArray(OrgSubscriptionTable.type, ["seat", "web"]))),
   ])
   const plan = planStates.get(organization.id)
-  const subscription = (type: "seat" | "enterprise") => {
+  const subscription = (type: "seat") => {
     const row = subscriptionRows.find((entry) => entry.type === type)
     return row ? { status: row.status, currentPeriodEnd: row.currentPeriodEnd?.toISOString() ?? null, cancelAtPeriodEnd: row.cancelAtPeriodEnd } : null
   }
@@ -56,7 +56,7 @@ async function organizationDetail(id: typeof OrganizationTable.$inferSelect.id, 
       memberCount: Number(totals[0]?.total ?? 0),
       ...(plan ? { plan } : {}),
       people: { joined: people.joined, invited: people.invited },
-      subscriptions: { team: subscription("seat"), enterprise: subscription("enterprise") },
+      subscriptions: { team: subscription("seat") },
       openworkWeb: { complimentaryAccess: web.complimentaryAccess, hasAccess: web.hasAccess, hasOngoingSubscription: web.hasOngoingSubscription, subscriptionStatus: web.subscriptionStatus },
     },
     members: members.map((member) => ({ ...member, joinedAt: member.joinedAt?.toISOString() ?? null })),

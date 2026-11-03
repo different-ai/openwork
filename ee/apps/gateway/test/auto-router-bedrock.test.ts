@@ -159,7 +159,7 @@ test("Claude 4.6+ thinking uses adaptive effort and drops sampling", () => {
   const high = toConverseBody({ messages, temperature: 0.5, top_p: 0.9 }, { upstreamModel: "us.anthropic.claude-opus-5-v1:0", thinkingLevel: "high", maxOutputTokens: 64000 })
   assert.deepEqual(high.additionalModelRequestFields, { thinking: { type: "adaptive" }, output_config: { effort: "high" } })
   assert.deepEqual(high.inferenceConfig, { maxTokens: 64000 })
-  const none = toConverseBody({ messages, temperature: 0.5 }, { upstreamModel: "anthropic.claude-sonnet-4-6", thinkingLevel: "none", maxOutputTokens: null })
+  const none = toConverseBody({ messages, temperature: 0.5 }, { upstreamModel: "anthropic.claude-sonnet-4-6", thinkingLevel: "none", maxOutputTokens: null, thinkingLevels: ["default", "none", "high"] })
   assert.deepEqual(none.additionalModelRequestFields, { thinking: { type: "disabled" } })
   assert.deepEqual(none.inferenceConfig, { temperature: 0.5 })
   const fallback = toConverseBody({ messages }, { upstreamModel: "anthropic.claude-opus-5", thinkingLevel: "default", maxOutputTokens: null })
@@ -170,7 +170,7 @@ test("Claude 4.6+ thinking uses adaptive effort and drops sampling", () => {
   assert.equal(nonClaude.additionalModelRequestFields, undefined)
 })
 
-test("remembered reasoning is replayed before the tool use; missing reasoning turns thinking off", () => {
+test("remembered reasoning is replayed; missing reasoning thinks off where allowed, else flattens the turn", () => {
   const messages = [
     { role: "user", content: "read it" },
     { role: "assistant", content: null, tool_calls: [{ id: "tool_1", type: "function", function: { name: "read", arguments: "{}" } }] },
@@ -184,10 +184,21 @@ test("remembered reasoning is replayed before the tool use; missing reasoning tu
   assert.deepEqual(replayed.additionalModelRequestFields, { thinking: { type: "adaptive" }, output_config: { effort: "high" } })
 
   const otherKind = new Map<string, ReasoningPayload>([["tool_1", { kind: "anthropic", blocks: [{ type: "thinking" }] }]])
-  const missing = toConverseBody({ messages }, { upstreamModel: "anthropic.claude-opus-5", thinkingLevel: "high", maxOutputTokens: null, reasoning: otherKind })
+  const missing = toConverseBody({ messages }, { upstreamModel: "anthropic.claude-opus-5", thinkingLevel: "high", maxOutputTokens: null, reasoning: otherKind, thinkingLevels: ["default", "none", "high"] })
   const missingList = Array.isArray(missing.messages) ? missing.messages : []
   assert.deepEqual(missingList[1], { role: "assistant", content: [{ toolUse: { toolUseId: "tool_1", name: "read", input: {} } }] })
   assert.deepEqual(missing.additionalModelRequestFields, { thinking: { type: "disabled" } })
+
+  // A model that only takes adaptive thinking never gets "disabled": the unsigned calls become text.
+  const adaptiveOnly = toConverseBody({ messages }, { upstreamModel: "anthropic.claude-opus-5-5", thinkingLevel: "high", maxOutputTokens: null, reasoning: otherKind, thinkingLevels: ["default", "low", "medium", "high"] })
+  assert.deepEqual(adaptiveOnly.additionalModelRequestFields, { thinking: { type: "adaptive" }, output_config: { effort: "high" } })
+  assert.deepEqual(adaptiveOnly.messages, [
+    { role: "user", content: [{ text: "read it" }] },
+    { role: "assistant", content: [{ text: "[Called the read tool with {}]" }] },
+    { role: "user", content: [{ text: "[Result of the read tool]\ndone" }] },
+  ])
+  assert.doesNotMatch(JSON.stringify(adaptiveOnly.messages), /toolUse|toolResult/)
+  assert.match(JSON.stringify(adaptiveOnly.messages), /Called the read tool/)
 })
 
 test("the event stream becomes chat SSE, even with frames split across chunks", async () => {

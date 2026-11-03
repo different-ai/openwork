@@ -16,6 +16,7 @@ import {
   readDenSettings,
   resolveDenBaseUrls,
   type DenOrgLlmProvider,
+  type DenOrgUsableGatewayProvider,
   type DenOrgLlmProviderConnection,
 } from "../../../../app/lib/den";
 import { readGatewayUsageScope } from "../../../../app/lib/gateway-usage-scope";
@@ -87,6 +88,7 @@ import {
   isCloudManagedProviderKey,
   isCloudProviderOutOfSync,
   isGatewayModelReady,
+  isLiveGatewaySetConnected,
   type GatewayConnectProvider,
   resolveCloudProviderCredentials,
 } from "./cloud-provider-config";
@@ -318,6 +320,12 @@ export type ProviderAuthStoreSnapshot = {
   cloudOrgProviders: DenOrgLlmProvider[];
   importedCloudProviders: Record<string, CloudImportedProvider>;
   cloudProviderServerSync: CloudProviderServerSyncState | null;
+  /**
+   * The member's Gateway providers read straight from Den while the engine
+   * owns the Gateway catalog (live provider sync). The server sync no longer
+   * reports them then, so Settings would otherwise list none. null otherwise.
+   */
+  liveGatewayProviders: DenOrgUsableGatewayProvider[] | null;
   lastSyncError: Record<string, CloudProviderSyncError>;
 };
 
@@ -354,6 +362,12 @@ type MutableState = {
   cloudOrgProviders: DenOrgLlmProvider[];
   importedCloudProviders: Record<string, CloudImportedProvider>;
   cloudProviderServerSync: CloudProviderServerSyncState | null;
+  /**
+   * The member's Gateway providers read straight from Den while the engine
+   * owns the Gateway catalog (live provider sync). The server sync no longer
+   * reports them then, so Settings would otherwise list none. null otherwise.
+   */
+  liveGatewayProviders: DenOrgUsableGatewayProvider[] | null;
   lastSyncError: Record<string, CloudProviderSyncError>;
 };
 
@@ -373,6 +387,20 @@ function providerListModelEntitlementOptions(
 }
 
 export type ProviderAuthStore = ReturnType<typeof createProviderAuthStore>;
+
+/**
+ * The Den session last delivered to each local server, shared by every store:
+ * each route builds its own store (with its own view of the same server), and
+ * re-sending an unchanged sign-in on every route mount paused provider sync and
+ * cut live Gateway replies (ENG-994). Keyed by sharedDenSessionDeliveryKey;
+ * cleared on sign-out, when the server forgets the session.
+ */
+const deliveredDenSession = { identity: "", sync: "" };
+
+export function forgetDeliveredDenSession() {
+  deliveredDenSession.identity = "";
+  deliveredDenSession.sync = "";
+}
 
 export function createProviderAuthStore(options: CreateProviderAuthStoreOptions) {
   const listeners = new Set<() => void>();
@@ -394,6 +422,7 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
     cloudOrgProviders: [],
     importedCloudProviders: {},
     cloudProviderServerSync: null,
+    liveGatewayProviders: null,
     lastSyncError: {},
   };
 
@@ -507,6 +536,30 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
     ]);
   };
 
+  /**
+   * The same sign-in on the same server process, however this route reaches it
+   * (root or workspace-mounted URL, client token). Empty without a known server
+   * generation: a restarted server must receive the session again.
+   */
+  const sharedDenSessionDeliveryKey = () => {
+    const openworkSnapshot = options.openworkServer.getSnapshot();
+    const settings = readDenSettings();
+    const generation = openworkSnapshot.openworkServerHostInfo?.generation;
+    const baseUrl = openworkSnapshot.openworkServerClient?.baseUrl ?? "";
+    if (generation === null || generation === undefined || !baseUrl || !serverHandlesProviderSync()
+      || !settings.authToken?.trim() || !settings.activeOrgId?.trim()) return "";
+    let origin = baseUrl;
+    try { origin = new URL(baseUrl).origin; } catch { /* keep the raw base URL */ }
+    return JSON.stringify([
+      settings.apiBaseUrl ?? resolveDenBaseUrls(settings).apiBaseUrl,
+      settings.activeOrgId.trim(),
+      settings.authToken.trim(),
+      origin,
+      openworkSnapshot.openworkServerAuth?.hostToken,
+      generation,
+    ]);
+  };
+
   const invalidateDenSessionDelivery = () => {
     denSessionDelivery?.controller.abort();
     denSessionDelivery = null;
@@ -536,7 +589,9 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
     const delivery = syncDenSessionDelivery();
     const openworkClient = options.openworkServer.getSnapshot().openworkServerClient;
     if (!delivery || !openworkClient || disposed) return Promise.resolve(false);
-    if (!force && delivery.key === (mode === "identity" ? lastDenIdentityPushKey : lastDenSessionPushKey)) return Promise.resolve(true);
+    const sharedKey = sharedDenSessionDeliveryKey();
+    if (!force && (delivery.key === (mode === "identity" ? lastDenIdentityPushKey : lastDenSessionPushKey)
+      || (sharedKey !== "" && sharedKey === deliveredDenSession[mode]))) return Promise.resolve(true);
     if (denSessionPushInFlight) {
       if (denSessionPushInFlight.mode === mode) return denSessionPushInFlight.promise;
       // Readiness can recover during early verification, including an older
@@ -545,7 +600,10 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
         isCurrentDenSessionDelivery(delivery) ? pushDenSession(mode, force) : false);
     }
     if (mode === "sync" && !hasCloudProviderSyncPrerequisites()) return Promise.resolve(false);
-    if (mode === "sync") lastDenSessionPushKey = "";
+    if (mode === "sync") {
+      lastDenSessionPushKey = "";
+      deliveredDenSession.sync = "";
+    }
     const settings = readDenSettings();
     const apiBaseUrl = settings.apiBaseUrl ?? resolveDenBaseUrls(settings).apiBaseUrl;
     const token = settings.authToken?.trim() ?? "";
@@ -561,6 +619,8 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
           if (!isCurrentDenSessionDelivery(delivery)) return false;
           lastDenIdentityPushKey = delivery.key;
           lastDenSessionPushKey = mode === "sync" ? delivery.key : "";
+          deliveredDenSession.identity = sharedKey;
+          deliveredDenSession.sync = mode === "sync" ? sharedKey : "";
           return true;
         } catch (error) {
           if (!isCurrentDenSessionDelivery(delivery)) return false;
@@ -606,6 +666,7 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
       cloudOrgProviders: state.cloudOrgProviders,
       importedCloudProviders: state.importedCloudProviders,
       cloudProviderServerSync: state.cloudProviderServerSync,
+      liveGatewayProviders: state.liveGatewayProviders,
       lastSyncError: state.lastSyncError,
     };
   };
@@ -1044,17 +1105,16 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
       throw new Error(t("providers.provider_id_required"));
     }
 
-    const currentDisabled = normalizeDisabledProviders(options.disabledProviders());
-    const nextDisabled = disabled
-      ? [...currentDisabled.filter((entry) => entry !== resolvedProviderId), resolvedProviderId]
-      : currentDisabled.filter((entry) => entry !== resolvedProviderId);
-
-    if (
+    // Already in the requested state: keep the list as is (order included), so
+    // a merged read in another order never looks like a change.
+    const nextFrom = (currentDisabled: string[]) => currentDisabled.includes(resolvedProviderId) === disabled
+      ? currentDisabled
+      : disabled
+        ? [...currentDisabled, resolvedProviderId]
+        : currentDisabled.filter((entry) => entry !== resolvedProviderId);
+    const unchanged = (currentDisabled: string[], nextDisabled: string[]) =>
       nextDisabled.length === currentDisabled.length &&
-      nextDisabled.every((entry, index) => entry === currentDisabled[index])
-    ) {
-      return false;
-    }
+      nextDisabled.every((entry, index) => entry === currentDisabled[index]);
 
     // Prefer runtime OPENCODE_CONFIG injection (server SQLite) so OpenCode Zen
     // and other built-in/env-backed providers can be disabled without editing
@@ -1075,6 +1135,23 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
     );
 
     if (canUseManagedRuntime || c) {
+      // Each write replaces the whole list. This store's copy can be stale (the
+      // chat route disables OpenCode Zen on every mount, after Settings may
+      // have disconnected another provider), and writing it back re-enabled
+      // that provider (ENG-994). Build on the current list.
+      const currentDisabled = normalizeDisabledProviders(await readManagedDisabledProviders({
+        opencodeClient: c,
+        openworkClient: openworkSnapshot.openworkServerClient,
+        workspaceId,
+        workspaceType,
+      }).catch(() => options.disabledProviders()));
+      const nextDisabled = nextFrom(currentDisabled);
+      if (unchanged(currentDisabled, nextDisabled)) {
+        if (!unchanged(normalizeDisabledProviders(options.disabledProviders()), currentDisabled)) {
+          options.setDisabledProviders(currentDisabled);
+        }
+        return false;
+      }
       const result = await updateManagedDisabledProviders({
         opencodeClient: c,
         openworkClient: openworkSnapshot.openworkServerClient,
@@ -1090,6 +1167,10 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
       emitChange();
       return true;
     }
+
+    const currentDisabled = normalizeDisabledProviders(options.disabledProviders());
+    const nextDisabled = nextFrom(currentDisabled);
+    if (unchanged(currentDisabled, nextDisabled)) return false;
 
     const updatedConfig = await updateProjectConfigFile(
       (raw) => formatConfigWithProviderDisabledState(raw, resolvedProviderId, disabled),
@@ -1325,6 +1406,28 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
     cloudOrgProvidersInFlight = request;
     cloudOrgProvidersInFlightKey = loadKey;
     return request;
+  };
+
+  /**
+   * Reads the member's Gateway providers from Den. Only used while the engine
+   * owns the Gateway catalog; a failed read keeps the last known list.
+   */
+  const refreshLiveGatewayProviders = async (isCurrent: () => boolean) => {
+    const settings = readDenSettings();
+    const token = settings.authToken?.trim() ?? "";
+    const orgId = settings.activeOrgId?.trim() ?? "";
+    if (!token || !orgId) {
+      setStateField("liveGatewayProviders", []);
+      return;
+    }
+    try {
+      const providers = await createDenClient({ baseUrl: settings.baseUrl, token }).listOrgUsableGatewayProviders(orgId);
+      if (isCurrent()) setStateField("liveGatewayProviders", providers);
+    } catch (error) {
+      // Display-only: chat keeps working from the engine's own catalog.
+      console.warn("[cloud-provider-sync] Could not read AI Gateway providers for Settings.", error);
+      if (isCurrent() && state.liveGatewayProviders === null) setStateField("liveGatewayProviders", []);
+    }
   };
 
   // Track whether the provider list has been loaded at least once.
@@ -2379,7 +2482,14 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
   }
 
   function isGatewayModelAvailable(provider: GatewayConnectProvider, model: { providerID: string; modelID: string }) {
-    return isGatewayModelReady(provider, model, state)
+    const ready = state.liveGatewayProviders === null
+      ? isGatewayModelReady(provider, model, state)
+      // Live sync: the engine owns the catalog, so Den's pending sign-ins plus
+      // the engine's own model list below decide readiness.
+      : Boolean(provider.credentialSetId) && model.providerID === provider.cloudProviderId
+        && model.modelID.split("_")[2] === provider.credentialSetId?.slice(4)
+        && isLiveGatewaySetConnected(provider, state.liveGatewayProviders);
+    return ready
       && isProviderAllowedByDesktopPolicy({ providerId: model.providerID,
         restrictToCloud: options.checkDesktopAppRestriction({ restriction: "allowCustomProviders" }),
         checkRestriction: options.checkDesktopAppRestriction })
@@ -2504,8 +2614,13 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
           // Reread rather than treating ownership as proof a failed run recovered.
           await refreshImportedCloudProviders();
           if (!isCurrent()) return;
+          // The server no longer reports Gateway rows in this mode, so read
+          // them from Den for Settings and member sign-in rows.
+          await refreshLiveGatewayProviders(isCurrent);
+          if (!isCurrent()) return;
           return { outcome: "handled_live" };
         }
+        if (state.liveGatewayProviders !== null) setStateField("liveGatewayProviders", null);
         // Re-derive the imported records (and reloadPending/skips) from the
         // server's status after EVERY server-handled pass. Without this the
         // Cloud Providers rows kept whatever the one-shot start() read found
@@ -2804,12 +2919,14 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
             providerAuthMethods: {},
             providerAuthError: null,
             cloudProviderServerSync: null,
+            liveGatewayProviders: null,
             lastSyncError: {},
           }));
           void refreshCloudOrgProviders({ force: true }).catch(() => undefined);
           void runCloudProviderSync("sign_in");
         } else {
           invalidateDenSessionDelivery();
+          forgetDeliveredDenSession();
           const connectedProviderIdsBeforeLogout = options.providerConnectedIds();
           const logoutProviderIds = [...new Set([
             ...Object.values(state.importedCloudProviders).map((provider) => provider.providerId),
@@ -2835,6 +2952,7 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
             providerAuthMethods: {},
             providerAuthError: null,
             cloudProviderServerSync: null,
+            liveGatewayProviders: null,
             lastSyncError: {},
           }));
           if (serverHandlesProviderSync()) {
@@ -2907,6 +3025,7 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
               providerAuthError: null,
               importedCloudProviders: {},
               cloudProviderServerSync: null,
+              liveGatewayProviders: null,
               lastSyncError: {},
             }));
             refreshSnapshot();
@@ -2985,6 +3104,7 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
             ...current,
             importedCloudProviders: {},
             cloudProviderServerSync: null,
+            liveGatewayProviders: null,
           }));
           refreshSnapshot();
           emitChange();

@@ -21,6 +21,7 @@ import { SetupChecks } from "./setup-checks";
 export function useConnectorTarget(catalogId: string): { target: ConnectorTarget | null; loading: boolean; missing: boolean; failed: boolean } {
   const searchParams = useSearchParams();
   const presets = useMcpConnectionPresets();
+  // A preset's own minimum wins until the admin chooses more; its optional list feeds that choice.
   const customUrl = searchParams.get("url");
   const customName = searchParams.get("name");
   return useMemo(() => {
@@ -36,7 +37,14 @@ export function useConnectorTarget(catalogId: string): { target: ConnectorTarget
         name: preset.displayName,
         url: preset.url,
         description: shortDescription(preset.description),
-        preset: { authType: preset.authType, requiresOAuthClient: preset.requiresOAuthClient, defaultOAuthClientId: preset.defaultOAuthClientId },
+        preset: {
+          presetId: preset.presetId,
+          authType: preset.authType,
+          requiresOAuthClient: preset.requiresOAuthClient,
+          defaultOAuthClientId: preset.defaultOAuthClientId,
+          defaultOAuthScopes: preset.defaultOAuthScopes, optionalOAuthScopes: preset.optionalOAuthScopes,
+          oauthCallbackUrl: preset.oauthCallbackUrl,
+        },
       },
       loading: false,
       missing: false,

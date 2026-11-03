@@ -14,12 +14,19 @@ import {
 import { bundledLanguages, codeToHtml } from "shiki";
 
 import { faviconUrlForHref } from "@/lib/favicon";
+import { localPathName, parseLocalPathReference } from "@/react-app/domains/session/artifacts/local-path";
 
 import { markdownMath } from "./markdown-math";
 import { parseSessionReference } from "@/components/chat/session-reference";
 import { containsInlineHtml, markUnsafeReferenceTokens, stripSessionReferenceAttributes, renderSessionReferenceText, sessionReferenceHtml, type ResolveSessionReference } from "./session-reference-html";
 
-export type MarkdownPresentation = "chat" | "surface";
+/**
+ * `remote` is chat prose written somewhere we do not trust (a task on another
+ * computer): raw HTML is dropped, images and video links render as plain links
+ * and links carry no favicon, so viewing it never makes the browser fetch a
+ * URL the remote side chose (localhost, private network, tracking pixels).
+ */
+export type MarkdownPresentation = "chat" | "surface" | "remote";
 type RawHtmlMode = "passthrough" | "shiki-only";
 type ShikiThemeConfig =
   | { kind: "single"; theme: string }
@@ -33,7 +40,7 @@ type MarkdownProfile = {
   codeBlockHtml: (text: string, lang: string | undefined) => string;
   codeSpanClassName: string;
   linkPresentation: "chat" | "simple";
-  imagePresentation: "chat" | "simple";
+  imagePresentation: "chat" | "simple" | "link";
   tableHeaderClassName: string;
   tableCellClassName: string;
   shikiContainer: string;
@@ -46,14 +53,13 @@ const CODE_COPY_ICON = `<svg data-openwork-code-copy-icon="" xmlns="http://www.w
 const CODE_COPIED_ICON = `<svg data-openwork-code-copy-check-icon="" xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="h-3.5 w-3.5" aria-hidden="true" hidden><path d="M20 6 9 17l-5-5"/></svg>`;
 const CODE_WRAP_ICON = `<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="h-3.5 w-3.5" aria-hidden="true"><path d="M3 6h18M3 12h15a3 3 0 1 1 0 6h-3"/><path d="m12 18-3 3 3 3"/></svg>`;
 const INLINE_CODE_FILE_EXTENSIONS = new Set([
-  "mp4", "webm", "mov", "m4v", "ogv",
+  "mp4", "webm", "mov", "m4v", "ogv", "mp3", "wav", "m4a", "csv",
   "astro", "bash", "c", "cc", "cpp", "cs", "css", "dart", "docx", "ex", "exs", "gif", "go", "graphql",
   "h", "hpp", "htm", "html", "java", "jpeg", "jpg", "js", "json", "jsonc", "jsx", "key", "kt", "kts",
   "lua", "markdown", "md", "mdx", "mmd", "mjs", "cjs", "odp", "ods", "pdf", "php", "png", "pot", "potx",
   "ppt", "pptm", "pptx", "prisma", "py", "rb", "rs", "scss", "sh", "sql", "svelte", "svg", "swift",
   "toml", "ts", "tsv", "tsx", "txt", "log", "vue", "webp", "xls", "xlsx", "xml", "yaml", "yml", "zig",
 ]);
-const INLINE_CODE_LINE_SUFFIX = /(?::\d+(?::\d+)?|#L\d+(?:-L?\d+)?)$/i;
 
 function escapeHtml(value: string) {
   return value
@@ -68,29 +74,29 @@ function escapeAttribute(value: string) {
   return escapeHtml(value).replace(/`/g, "&#96;");
 }
 
+/**
+ * The file an inline code span names, or null when it should stay plain code.
+ * Only spans that read as one file reference with a known file extension are
+ * clickable; the shared path reader removes `:line[:col]` and quotes and turns
+ * away anything that is not a local path (URLs, `~user/`, `../` escapes), so a
+ * span that could never open is never shown as a link.
+ */
 export function inlineCodeArtifactPath(value: string): string | null {
-  const trimmed = value.trim();
-  const path = trimmed.replace(INLINE_CODE_LINE_SUFFIX, "");
-
-  if (
-    !path ||
-    path.length > 500 ||
-    /[\u0000-\u001f<>"'`|?*]/.test(path) ||
-    /^(?:https?|wss?|ftp|mailto|tel|file):/i.test(path)
-  ) {
-    return null;
-  }
+  // Code is literal text: a `file://` span is a URL to read, not a link to follow.
+  if (/^\s*(?:https?|wss?|ftp|mailto|tel|file):/i.test(value)) return null;
+  const reference = parseLocalPathReference(value);
+  if (!reference) return null;
+  const { path } = reference;
+  if (path.length > 500 || /[<>"`|?*]/.test(path)) return null;
 
   const normalized = path.replace(/[\\]+/g, "/");
   const withoutDrive = normalized.replace(/^[A-Za-z]:\//, "/");
+  // Leftover colons mean code (`a:b.ts`), not a path with a line suffix.
   if (withoutDrive.slice(1).includes(":")) return null;
 
-  const segments = withoutDrive.split("/").filter(Boolean);
-  const filename = segments.at(-1);
-  if (!filename || segments.some((segment) => segment === "." || segment === "..")) return null;
-
+  const filename = localPathName(normalized);
   const extensionIndex = filename.lastIndexOf(".");
-  const extension = extensionIndex >= 0 ? filename.slice(extensionIndex + 1).toLowerCase() : "";
+  const extension = extensionIndex > 0 ? filename.slice(extensionIndex + 1).toLowerCase() : "";
   return INLINE_CODE_FILE_EXTENSIONS.has(extension) ? path : null;
 }
 
@@ -327,6 +333,9 @@ function sanitizeMarkdownHtml(value: string) {
 }
 
 function markdownProfileForPresentation(presentation: MarkdownPresentation): MarkdownProfile {
+  if (presentation === "remote") {
+    return { ...markdownProfileForPresentation("chat"), rawHtmlMode: "shiki-only", linkPresentation: "simple", imagePresentation: "link" };
+  }
   if (presentation === "surface") {
     return {
       rawHtmlMode: "shiki-only",
@@ -370,6 +379,8 @@ function markdownProfileForPresentation(presentation: MarkdownPresentation): Mar
 
 function renderVideo(href: string, label: string, fallbackHtml: string) {
   if (!/\.(?:mp4|webm|mov|m4v|ogv)(?:[?#].*)?$/i.test(href)) return null;
+  // Only the workspace can stream a video; a home-folder file stays a reference that reveals it.
+  if (/^~[\\/]/.test(href)) return null;
   if (/^[a-z][a-z0-9+.-]*:/i.test(href) && !/^(?:https?|file):/i.test(href) && !/^[A-Za-z]:[\\/]/.test(href)) return null;
   const remote = /^https?:/i.test(href);
   const source = remote ? ` src="${escapeAttribute(safeHref(href))}"` : "";
@@ -396,6 +407,12 @@ function renderLinkHtml(profile: MarkdownProfile, href: string, title: string | 
     const originalHref = escapeAttribute(href);
     const isFilePath = !/^(https?|wss?|ftp|mailto|tel):/i.test(href);
 
+    // A destination that is neither a web address nor a local file (`#top`,
+    // `javascript:`, a network share) keeps its words but is not a link.
+    if (isFilePath && (href.trim().startsWith("#") || !parseLocalPathReference(href, { decode: true }))) {
+      return `<span${titleAttr}>${text}</span>`;
+    }
+
     if (isFilePath) {
       const fileIcon = `<svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="shrink-0 text-muted-foreground"><path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z"/><path d="M14 2v5h5"/></svg>`;
       const chevron = `<svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="shrink-0 text-muted-foreground"><path d="m6 9 6 6 6-6"/></svg>`;
@@ -415,6 +432,7 @@ function renderLinkHtml(profile: MarkdownProfile, href: string, title: string | 
 }
 
 function renderImage(profile: MarkdownProfile, href: string, title: string | null | undefined, text: string) {
+  if (profile.imagePresentation === "link") return renderLinkHtml(profile, href, title, escapeHtml(text || href));
   const video = profile.linkPresentation === "chat" ? renderVideo(href, href, renderLinkHtml(profile, href, title, escapeHtml(text || href))) : null;
   if (video) return video;
   const safe = escapeAttribute(safeHref(href));
@@ -439,7 +457,7 @@ function createMarkedOptions(profile: MarkdownProfile, presentation: MarkdownPre
     async: isAsync,
     // Chat text is written line by line, so a single newline stays a line break.
     // File previews keep CommonMark wrapping for hard-wrapped Markdown files.
-    breaks: presentation === "chat",
+    breaks: presentation !== "surface",
     gfm: true,
     pedantic: false,
     silent: true,
@@ -619,12 +637,15 @@ function createMarkdownParsers(presentation: MarkdownPresentation, resolveRefere
 
 const chatParsers = createMarkdownParsers("chat");
 const surfaceParsers = createMarkdownParsers("surface");
+const remoteParsers = createMarkdownParsers("remote");
 
 // One parser pair per inventory revision, shared by all message blocks. Never
 // mutate the global parsers with a workspace/user resolver.
 const referenceParsers = new WeakMap<ResolveSessionReference, ReturnType<typeof createMarkdownParsers>>();
 function parsersForPresentation(presentation: MarkdownPresentation, resolveReference?: ResolveSessionReference) {
   if (presentation === "surface") return surfaceParsers;
+  // Untrusted prose never resolves local session references.
+  if (presentation === "remote") return remoteParsers;
   if (!resolveReference) return chatParsers;
   let parsers = referenceParsers.get(resolveReference);
   if (!parsers) {

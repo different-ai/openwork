@@ -29,7 +29,7 @@ export const PER_PERSON_PRICING_MODEL = "per_person"
 
 type StripeMetadata = Record<string, string | null | undefined> | null | undefined
 
-/** The plan a seat subscription pays for. Seat subscriptions bought before plans existed are Team. */
+/** The plan a seat subscription pays for: always Team (Enterprise is set in /admin, never bought by card). */
 export function planTierFromSubscriptionMetadata(metadata: StripeMetadata): PlanCheckoutTier {
   const tier = metadata?.plan_tier?.trim()
   return isPlanCheckoutTier(tier) ? tier : "team"

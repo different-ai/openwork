@@ -24,12 +24,18 @@ mentions get a private note instead of a reply.
    Bot installation uses a single-use, ten-minute OAuth state. A Slack workspace
    can belong to only one connector installation.
 5. Start with private rollout replies and a small channel allowlist. Members
-   complete their own existing Slack OAuth flow. Already connected members must
-   reconnect once to establish the assistant identity binding.
+   complete their own existing Slack OAuth flow. Members who connected before
+   the bot install don't reconnect: when an unlinked Slack user messages the
+   assistant, `linkConnectedSlackMembers` links existing connections from their
+   stored tokens (see below). Only a token for another workspace or a revoked
+   one still needs a reconnect.
 
 The connect card links to Your Connections. Successful member OAuth verifies
 `auth.test` using that member's token, binds its user/team identity, and replays
-pending invocations received within fifteen minutes. Email is never an identity
+pending invocations received within fifteen minutes. The same binding runs
+server-side for members connected before the bot install (`linkConnectedSlackMembers`,
+at most once per installation every ten minutes per process, up to 200 accounts);
+tokens never leave Den. Email is never an identity
 source. Membership, connector grants, credential freshness, and the
 platform capability are rechecked while processing each turn.
 
@@ -116,8 +122,10 @@ platform capability are rechecked while processing each turn.
 Den records which Slack run each MCP token was minted for (`slack_assistant_run_token`). When that run calls `remote-session:create`
 with target `desktop`, the command is linked to the thread its reply went to
 (`slack_assistant_desktop_handoff`); nothing the model sends picks the thread.
-A sweep on worker nodes then posts, mentioning the member: the finished answer
-(first ~600 characters, with mentions and links escaped), a session failure, an
+A sweep on worker nodes then posts, mentioning the member: the whole finished
+answer (converted from Markdown to Slack mrkdwn by `slack-text.ts`, split across
+section blocks at paragraph or sentence breaks, mentions and broadcasts
+escaped), a session failure, an
 unclaimed command expiring, or a delivery failure, each once; and "waiting for
 you to approve" once per waiting episode. Leases keep several Den instances from
 posting twice. Nothing is posted once the assistant is off, the member lost

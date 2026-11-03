@@ -37,7 +37,8 @@ const diagnosticTokenSchema = z.object({
 type OrganizationId = typeof OrganizationDiagnosticCredentialTable.$inferSelect.organizationId
 
 async function configuredBearerToken(organizationId: OrganizationId) {
-  const rows = await db
+  // primary: the token is usually saved just before a diagnostic runs.
+  const rows = await db.$primary
     .select({ bearerToken: OrganizationDiagnosticCredentialTable.bearerToken })
     .from(OrganizationDiagnosticCredentialTable)
     .where(eq(OrganizationDiagnosticCredentialTable.organizationId, organizationId))

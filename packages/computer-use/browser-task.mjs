@@ -20,6 +20,9 @@ export function browserTaskUrl(value) {
 function safeUrl(value) {
   try { const url = new URL(value); return `${url.origin}${url.pathname}`; } catch { return ""; }
 }
+function originOf(value) {
+  try { return new URL(value).origin; } catch { return null; }
+}
 
 // After click, key or scroll: wait for navigation, network idle and a DOM that
 // stops changing structure (text-only tickers and clocks do not count).
@@ -40,8 +43,10 @@ const BLOCKED_CHORDS = [
 ].map((parts) => ({ key: parts.at(-1), modifiers: parts.slice(0, -1) }));
 // Chromium on macOS runs these through the app menu, not page key events.
 const EDIT_COMMANDS = { a: "selectAll", z: "undo", "shift+z": "redo" };
-const ACTION_TYPES = ["click", "fill", "select", "set_checked", "key", "scroll", "reveal"];
-const PREPARE_CODES = ["stale_observation", "stale_element", "sign_in_required", "unverifiable_focus", "element_disabled", "element_outside_viewport",
+const ACTION_TYPES = ["click", "fill", "select", "set_checked", "key", "scroll", "reveal", "attach"];
+/** As many files as the approval card lists; the broker refuses more. */
+const MAX_FILES = 20;
+const PREPARE_CODES = ["stale_observation", "stale_element", "use_attach", "unverifiable_focus", "element_disabled", "element_outside_viewport",
   "element_obscured", "not_editable", "not_selectable", "option_unavailable", "not_checkable", "outside_viewport"];
 
 /** @param {{ key?: unknown, modifiers?: unknown }} action */
@@ -97,8 +102,12 @@ function observePage(id, options = {}) {
   // only whether a field is filled, unless the agent entered that exact value itself. In-page
   // staleness and verification checks read the real value (reveal).
   const entered = globalThis.__openworkAgentEntered ??= new WeakMap();
-  const isSensitive = element => element.matches('input[type="password"]') ||
-    (element.getAttribute("autocomplete") || "").toLowerCase().split(/\s+/).some(token => token === "one-time-code" || token.startsWith("cc-"));
+  const autocomplete = element => (element.getAttribute("autocomplete") || "").toLowerCase().split(/\s+/);
+  const isPayment = element => autocomplete(element).some(token => token.startsWith("cc-"));
+  const isCredential = element => element.matches('input[type="password"]')
+    || autocomplete(element).some(token => ["current-password", "new-password", "one-time-code"].includes(token));
+  // Passwords, one-time codes and card fields are never read back, even after the agent fills them.
+  const isSensitive = element => isCredential(element) || isPayment(element);
   const isTextValue = element => element instanceof HTMLTextAreaElement ||
     element instanceof HTMLInputElement && !["button", "submit", "reset", "checkbox", "radio", "hidden", "file", "range", "color"].includes(element.type) ||
     element.isContentEditable || ["textbox", "combobox"].includes(element.getAttribute("role"));
@@ -170,8 +179,8 @@ function observePage(id, options = {}) {
       readOnly: element.readOnly === true || element.getAttribute("aria-readonly") === "true",
     };
     if (input) state.type = element.type;
-    if (!sensitive && field) {
-      if (reveal || (!select && entered.get(element) === value)) { state.value = value.slice(0, 8000); state.valueTruncated = value.length > 8000; }
+    if (field) {
+      if (reveal || (!sensitive && !select && entered.get(element) === value)) { state.value = value.slice(0, 8000); state.valueTruncated = value.length > 8000; }
       else { state.filled = value.length > 0; state.valueWithheld = true; }
     }
     if (input && ["checkbox", "radio"].includes(element.type)) state.checked = element.indeterminate ? "mixed" : element.checked;
@@ -273,6 +282,7 @@ function observePage(id, options = {}) {
   registry.describe = describe;
   registry.optionRef = optionRef;
   registry.identify = identify;
+  registry.isCredential = isCredential;
   registry.observations.set(id, { createdAt: performance.now(), width: innerWidth, height: innerHeight, x: scrollX, y: scrollY });
   registry.latest = id;
   for (const old of registry.observations.keys()) { if (registry.observations.size <= 20) break; registry.observations.delete(old); }
@@ -290,15 +300,17 @@ function observePage(id, options = {}) {
     registry.last = { mode, items: current };
   }
   const focused = registry.byElement.get(document.activeElement);
-  const signIn = [...candidates].some((element) => {
-    if (!(element instanceof HTMLElement) || !isSensitive(element)) return false;
-    const rect = element.getBoundingClientRect(); return rect.width > 0 && rect.height > 0;
-  });
-  const page = { viewport: { width: innerWidth, height: innerHeight }, scroll: { x: scrollX, y: scrollY }, hasPasswordField: signIn };
+  // A card field shows its digits in an image. Page script can copy a typed or autofilled
+  // password or code into visible text, then clear, hide or remove the field: no image while
+  // the document has such a field anywhere, or after the agent filled one in it.
+  const onScreen = (element) => { const rect = element.getBoundingClientRect(); return rect.width > 0 && rect.height > 0; };
+  const payment = [...candidates].some((element) => element instanceof HTMLElement && isPayment(element) && onScreen(element));
+  const credential = globalThis.__openworkCredentialEntered === true
+    || [...candidates].some((element) => element instanceof HTMLElement && isCredential(element));
+  const page = { viewport: { width: innerWidth, height: innerHeight }, scroll: { x: scrollX, y: scrollY }, hasPaymentField: payment, hasCredentialField: credential };
   if (!interactive) {
     return { truncated, scrollRegions, title: text(document.title, 300), ...(includeText ? { text: text(document.body?.innerText, 16000) } : {}), elements,
       ...page, ...(diff ? { diff } : {}), ...(focused ? { focused } : {}),
-      webmcp: "modelContext" in document ? "available" : "check_site_tools",
       limitations: ["DOM references cover the top document and open controls; use a fresh image for frames or canvas."] };
   }
   const shown = diff ? items.filter((item) => diff.added.includes(item.ref) || diff.changed.includes(item.ref)) : items;
@@ -307,7 +319,7 @@ function observePage(id, options = {}) {
     .map((element) => text(element instanceof HTMLElement ? element.innerText : "", 300)).filter(Boolean).slice(0, 5);
   return { mode, title: text(document.title, 300), elements: shown, ...(diff ? { diff } : {}), ...(focused ? { focused } : {}),
     ...(status.length ? { status } : {}), ...(truncated ? { truncated } : {}), ...(includeText ? { text: text(document.body?.innerText, 16000) } : {}),
-    ...page, ...("modelContext" in document ? { webmcp: "available" } : {}) };
+    ...page };
 }
 // Records when the document last changed structure. Text-only changes (live
 // counters, clocks) are ignored; elements appearing, disappearing, showing,
@@ -335,12 +347,11 @@ function prepareAction(id, action) {
   const control = element ? registry.describe(element) : null;
   // The control must still be what the model saw: same kind and name.
   if (element && registry.identities.get(element) !== registry.identify(element, control)) throw new Error("stale_element");
-  if (element?.matches('input[type="password"],input[autocomplete="one-time-code"]')) throw new Error("sign_in_required");
   if (control?.disabled) throw new Error("element_disabled");
   if (action.type === "key") {
     if (element && document.activeElement !== element) element.focus();
     if (element && document.activeElement !== element) throw new Error("unverifiable_focus");
-    if (document.activeElement?.matches('input[type="password"],input[type="file"],input[autocomplete="one-time-code"]')) throw new Error("sign_in_required");
+    if (document.activeElement?.matches('input[type="file"]')) throw new Error("use_attach");
     // Only a directly focused, observed control can receive keys. Frames and
     // generic containers can conceal a different focused descendant.
     if (!document.activeElement?.matches('input,textarea,select,button,a,[contenteditable]:not([contenteditable="false"]),[role="textbox"],[role="combobox"],[role="listbox"],[role="option"],[role="checkbox"],[role="radio"],[role="switch"]')
@@ -368,7 +379,7 @@ function prepareAction(id, action) {
   }
   if (action.type === "reveal" && !element) throw new Error("stale_element");
   if (action.type === "fill") {
-    const editable = element instanceof HTMLTextAreaElement || element?.isContentEditable || (element instanceof HTMLInputElement && ["text", "search", "email", "url", "tel", "number", "date", "time", "datetime-local", "month", "week"].includes(element.type));
+    const editable = element instanceof HTMLTextAreaElement || element?.isContentEditable || (element instanceof HTMLInputElement && ["text", "search", "email", "url", "tel", "number", "password", "date", "time", "datetime-local", "month", "week"].includes(element.type));
     if (!editable || control.readOnly) throw new Error("not_editable");
   }
   if (action.type === "select") {
@@ -388,9 +399,19 @@ function prepareAction(id, action) {
   if ((action.type === "click" || action.type === "scroll") && (!Number.isFinite(x) || !Number.isFinite(y) || x < 0 || y < 0 || x >= innerWidth || y >= innerHeight)) throw new Error("outside_viewport");
   if (!element && action.type === "click") {
     const hit = document.elementFromPoint(x, y);
-    if (hit?.matches('input[type="password"],input[type="file"],input[autocomplete="one-time-code"]')) throw new Error("sign_in_required");
+    if (hit?.matches('input[type="file"]')) throw new Error("use_attach");
   }
   return { x, y, unchanged: action.type === "set_checked" && control.checked === action.checked };
+}
+/** Whether this step would click, fill or press a key in a password or one-time-code field. */
+function credentialTarget(id, action) {
+  const registry = globalThis.__openworkBrowserRefs;
+  if (!registry?.observations.get(id)) return false;
+  const point = action.type === "click" && Number.isFinite(action.x) && Number.isFinite(action.y);
+  const element = action.ref ? registry.byRef.get(action.ref)?.deref() : point ? document.elementFromPoint(action.x, action.y) : document.activeElement;
+  // Clicking a label, or anything inside one, focuses its field.
+  const control = element?.closest?.("label")?.control ?? element;
+  return control?.isConnected === true && registry.isCredential(control);
 }
 function applyFormAction(action) {
   const registry = globalThis.__openworkBrowserRefs;
@@ -398,6 +419,8 @@ function applyFormAction(action) {
   if (!element?.isConnected) throw new Error("stale_element");
   if (registry.identities.get(element) !== registry.identify(element, registry.describe(element))) throw new Error("stale_element");
   if (registry.snapshots.get(element) !== JSON.stringify(registry.describe(element, true))) throw new Error("stale_observation");
+  // Once a password or code was filled in this document, it takes no more images.
+  if (action.type === "fill" && registry.isCredential(element)) globalThis.__openworkCredentialEntered = true;
   // The agent may read back exactly what it entered.
   if (action.type === "fill" || action.type === "select") globalThis.__openworkAgentEntered?.set(element, action.type === "select"
     ? JSON.stringify([...element.options].filter(option => action.values.includes(registry.optionRefs.get(option)?.ref)).map(option => option.value))
@@ -523,9 +546,50 @@ function relevantPassages(text, question, maxChars) {
  * A host that draws the page scaled reports that scale in `inputScale`, since
  * CDP input is in view pixels, and may `capture` the page at full resolution.
  */
+/**
+ * Clicks an upload control with the page's file chooser intercepted, then gives
+ * the input that asked these files. The system file picker never opens.
+ * @returns {Promise<"attached" | "no_file_chooser" | "single_file">}
+ */
+async function attachFiles(contents, point, files, signal, waitMs) {
+  const cdp = contents.debugger;
+  const attached = !cdp.isAttached();
+  if (attached) cdp.attach("1.3");
+  let listener = null;
+  try {
+    const opened = new Promise((resolve) => {
+      listener = (_event, method, params) => { if (method === "Page.fileChooserOpened") resolve(params); };
+      cdp.on("message", listener);
+      setTimeout(() => resolve(null), waitMs).unref?.();
+    });
+    await cdp.sendCommand("Page.enable");
+    await cdp.sendCommand("Page.setInterceptFileChooserDialog", { enabled: true });
+    signal.throwIfAborted();
+    await cdp.sendCommand("Input.dispatchMouseEvent", { type: "mousePressed", x: point.x, y: point.y, button: "left", clickCount: 1 });
+    await cdp.sendCommand("Input.dispatchMouseEvent", { type: "mouseReleased", x: point.x, y: point.y, button: "left", clickCount: 1 });
+    const chooser = await opened;
+    signal.throwIfAborted();
+    if (!chooser || !Number.isInteger(chooser.backendNodeId)) return "no_file_chooser";
+    if (chooser.mode === "selectSingle" && files.length > 1) return "single_file";
+    await cdp.sendCommand("DOM.setFileInputFiles", { files, backendNodeId: chooser.backendNodeId });
+    return "attached";
+  } finally {
+    if (listener) cdp.removeListener("message", listener);
+    if (cdp.isAttached()) await cdp.sendCommand("Page.setInterceptFileChooserDialog", { enabled: false }).catch(() => {});
+    if (attached && cdp.isAttached()) cdp.detach();
+  }
+}
+
 export function createBrowserTaskHost({ getTab, tabsFor, ownerOf, activeFor, isVisible, openTab, navigate,
   allowed, enabled, changed, siteTools, runSiteTool, beforeInput = async (_tab) => {}, inFlight = (_tab, _since) => 0,
-  prepare = async (_tab) => {}, inputScale = (_tab) => 1, capture = (_tab, _viewport) => null }) {
+  prepare = async (_tab) => {}, inputScale = (_tab) => 1, capture = (_tab, _viewport) => null,
+  // A page receives files only after the person approves exactly these, in the chat.
+  checkFiles = /** @type {(paths: string[]) => Promise<void>} */ (async () => { throw new Error("files_unavailable"); }),
+  approveFiles = async (_sessionId, _request, _signal) => false,
+  // A password or code is typed only on a site (exact origin) the person confirmed. Without
+  // this, as on hosts that cannot ask, sign-in fields stay with the person.
+  approveCredential = /** @type {((sessionId: string, request: { site: string }, signal: AbortSignal) => Promise<boolean>) | undefined} */ (undefined),
+  fileChooserMs = 5000 }) {
   const states = new Map();
   // request_id -> first receipt, per conversation: a retried act never replays input.
   const receipts = new Map();
@@ -676,7 +740,8 @@ export function createBrowserTaskHost({ getTab, tabsFor, ownerOf, activeFor, isV
       ...(typeof options.includeText === "boolean" ? { includeText: options.includeText } : {}) });
     let image, digest;
     if (includeImage) {
-      if (page.hasPasswordField) fail("sign_in_required", "This page contains protected sign-in or payment fields. Take over and complete them directly in the browser, then resume.");
+      if (page.hasPaymentField) fail("payment_required", "This page shows payment card fields. Take over and complete them directly in the browser, then resume.");
+      if (page.hasCredentialField) fail("credential_on_screen", "This page has a password or code field, or one was filled on it, so no image was taken. Work from its controls without an image.");
       const png = await captureObservation(tab.view.webContents, page.viewport, (viewport) => capture(tab, viewport));
       digest = imageDigest(png);
       image = { mimeType: "image/png", data: png.toString("base64"), width: page.viewport.width, height: page.viewport.height };
@@ -689,11 +754,14 @@ export function createBrowserTaskHost({ getTab, tabsFor, ownerOf, activeFor, isV
     if (state.latest && (state.latest.revision !== revision || state.latest.url !== url)) state.observations.clear();
     state.observations.set(id, record); state.latest = record;
     for (const old of state.observations.keys()) { if (state.observations.size <= 20) break; state.observations.delete(old); }
+    // This page script is isolated from the site's own tools, so the host's count says whether to look for them.
+    const siteTools = tab.webMcpToolCount > 0 ? { siteTools: tab.webMcpToolCount } : {};
     if (mode === "interactive") {
-      const { hasPasswordField, viewport: _viewport, scroll: _scroll, ...compact } = page;
-      return { ok: true, tabId: tab.tabId, observationId: id, url: safeUrl(url), trust: TRUST, ...compact, ...(hasPasswordField ? { signIn: "take_over" } : {}), ...(image ? { image } : {}) };
+      const { hasPaymentField, hasCredentialField: _credential, viewport: _viewport, scroll: _scroll, ...compact } = page;
+      return { ok: true, tabId: tab.tabId, observationId: id, url: safeUrl(url), trust: TRUST, ...compact, ...siteTools, ...(hasPaymentField ? { payment: "take_over" } : {}), ...(image ? { image } : {}) };
     }
-    return { ok: true, tabId: tab.tabId, observationId: id, url: safeUrl(url), trust: TRUST, ...page, ...(image ? { image } : {}) };
+    const { hasCredentialField: _credential, ...full } = page;
+    return { ok: true, tabId: tab.tabId, observationId: id, url: safeUrl(url), trust: TRUST, ...full, ...siteTools, ...(image ? { image } : {}) };
   }
   /** Bounded wait after input: navigation, in-flight requests and DOM structure. */
   async function settle(tab, observed, since, signal) {
@@ -729,7 +797,7 @@ export function createBrowserTaskHost({ getTab, tabsFor, ownerOf, activeFor, isV
       ...(passages.length ? {} : { next: "No passage matched. Try other words, or browser_observe with includeText." }) };
   }
   /**
-   * @typedef {{ type?: string, ref?: string, text?: string, checked?: boolean, values?: string[], key?: string, modifiers?: string[], x?: number, y?: number, deltaY?: number }} BrowserAction
+   * @typedef {{ type?: string, ref?: string, text?: string, checked?: boolean, values?: string[], key?: string, modifiers?: string[], x?: number, y?: number, deltaY?: number, files?: string[] }} BrowserAction
    * @param {{ sessionId?: string, operation?: string, args?: { tabId?: string, url?: string, provider?: string, includeImage?: boolean, mode?: string, limit?: number, includeText?: boolean,
    *   query?: {role?: string, name?: string, text?: string, exact?: boolean}, observationId?: string, toolId?: string, input?: unknown, question?: string, maxChars?: number,
    *   action?: BrowserAction, actions?: BrowserAction[], request_id?: string } }} request
@@ -856,13 +924,17 @@ export function createBrowserTaskHost({ getTab, tabsFor, ownerOf, activeFor, isV
         if (!observed || observed.revision !== tab.webMcpRevision || observed.url !== tab.view.webContents.getURL()) fail("stale_observation", "Observe the current page before acting.");
         const keys = new Map();
         for (const [index, action] of actions.entries()) {
-          if (!action || typeof action !== "object" || !ACTION_TYPES.includes(action.type)) fail("invalid_action", "Use click, fill, select, set_checked, key or scroll.");
+          if (!action || typeof action !== "object" || !ACTION_TYPES.includes(action.type)) fail("invalid_action", "Use click, fill, select, set_checked, key, scroll, reveal or attach.");
           if (action.ref !== undefined && (typeof action.ref !== "string" || !action.ref || action.ref.length > 64)) fail("invalid_action", "Use a ref from an observation of this page.");
           if (action.type === "click" && !action.ref) {
             if (index > 0) fail("invalid_action", "An image-coordinate click can only be the first action. Use refs for later steps.");
             if (!observed.digest || state.latest !== observed) fail("image_required", "Observe with includeImage before clicking image coordinates.");
           }
           if (action.type === "fill" && (typeof action.text !== "string" || action.text.length > 8000 || !action.ref)) fail("invalid_action", "Fill needs an observed editable reference and text of at most 8000 characters.");
+          if (action.type === "attach" && (!action.ref || !Array.isArray(action.files) || action.files.length < 1 || action.files.length > 10
+            || !action.files.every((file) => typeof file === "string" && file.startsWith("/") && file.length <= 4096))) {
+            fail("invalid_action", "Attach needs the observed upload control's ref and one to ten absolute file paths.");
+          }
           if (action.type === "select" && (!action.ref || !Array.isArray(action.values) || action.values.length > 200 || !action.values.every(value => typeof value === "string" && value.length <= 8000))) fail("invalid_action", "Select needs an observed select reference and an array of option values.");
           if (action.type === "set_checked" && (!action.ref || typeof action.checked !== "boolean")) fail("invalid_action", "Set_checked needs an observed checkbox, radio or switch reference and checked true or false.");
           if (action.type === "reveal" && !action.ref) fail("invalid_action", "Reveal needs an observed reference.");
@@ -875,6 +947,22 @@ export function createBrowserTaskHost({ getTab, tabsFor, ownerOf, activeFor, isV
           ? JSON.stringify([action.type, action.ref ?? null, action.x ?? null, action.y ?? null, keys.get(index)?.chord ?? null]) : null;
         if (actions.some((action, index) => observed.sent.has(signature(action, index)))) {
           fail("repeat_requires_observe", "That click or key was already sent from this observation. Observe to confirm the page before repeating it; nothing was dispatched.");
+        }
+        // Files leave this computer only with the person's yes to exactly these paths.
+        const attaching = actions.filter((action) => action.type === "attach").flatMap((action) => action.files);
+        // The person sees every file before any is sent, so a batch never carries more than the card lists.
+        if (attaching.length > MAX_FILES) fail("invalid_action", `Attach at most ${MAX_FILES} files in one call. Nothing was dispatched.`);
+        if (attaching.length) {
+          let host = "this page";
+          try { host = new URL(observed.url).host || host; } catch { /* Keep the generic name. */ }
+          // Nothing about the files is read before the person answers, so a page cannot probe
+          // paths; afterwards each must be exactly the regular file approved, not a link to another.
+          if (!await approveFiles(sessionId, { app: host, files: attaching }, requestSignal)) {
+            fail("files_declined", "The person did not approve giving these files to the page. Nothing was dispatched.");
+          }
+          requestSignal.throwIfAborted();
+          try { await checkFiles(attaching); }
+          catch { fail("file_unavailable", "Attach readable regular files by their real absolute paths, not links. Nothing was dispatched."); }
         }
         if (!await allowed(observed.url) || state.observations.get(observed.id) !== observed || observed.revision !== tab.webMcpRevision || observed.url !== tab.view.webContents.getURL()) fail("page_changed", "The page changed or access was blocked while preparing the action. Observe again.");
         requestSignal.throwIfAborted();
@@ -894,20 +982,42 @@ export function createBrowserTaskHost({ getTab, tabsFor, ownerOf, activeFor, isV
         const contents = tab.view.webContents;
         const steps = [];
         let failure = null, page = null, interrupted = null;
+        // A password or code goes only to the exact site the person confirmed, asked at the step
+        // that clicks, fills or presses a key in its field: focusing it can autofill a saved
+        // password, Enter can submit one, and a click earlier in a batch can focus the field.
+        let confirmedSite = null;
+        // Taking focus gives a page a moment to leave: nothing goes out unless it is still on that site.
+        const leftConfirmedSite = () => confirmedSite !== null && originOf(contents.getURL()) !== confirmedSite;
+        const LEFT_SITE = "The page left the site the person confirmed, so nothing was sent to it.";
         for (const [index, action] of actions.entries()) {
           checkNavigation(navigationScope);
+          if (!confirmedSite && observed.url === contents.getURL() && ["click", "fill", "key"].includes(action.type)
+            && await isolated(contents, credentialTarget, observed.id, action)) {
+            const site = new URL(observed.url).origin;
+            const refused = !approveCredential ? ["sign_in_required", "Take over and sign in directly in the browser, then resume."]
+              : !await approveCredential(sessionId, { site }, requestSignal) ? ["credential_declined", "The person did not confirm entering a password or code on this site."] : null;
+            requestSignal.throwIfAborted();
+            if (refused) {
+              if (!batch) fail(refused[0], refused[1]);
+              failure = { index, type: action.type, ...(action.ref ? { ref: action.ref } : {}), code: refused[0], error: refused[1] };
+              break;
+            }
+            confirmedSite = site;
+          }
+          // Runs after the person's answer too, so a redirect while they decide stops here.
           if (state.observations.get(observed.id) !== observed || observed.revision !== tab.webMcpRevision || observed.url !== contents.getURL()) {
             if (!steps.length) fail("stale_observation", "The page or observation changed while preparing the action. Observe again.");
             interrupted = "page_changed";
             break;
           }
           let point;
-          try { point = await isolated(contents, prepareAction, observed.id, action); }
+          // Attach clicks the observed upload control, which opens the page's file chooser.
+          try { point = await isolated(contents, prepareAction, observed.id, action.type === "attach" ? { type: "click", ref: action.ref } : action); }
           catch (error) {
             const code = PREPARE_CODES.find((item) => String(error?.message).includes(item));
             if (!code) throw error;
             const message = code === "unverifiable_focus" ? "Keyboard input requires a directly focused observed page control. Pass the control's ref or click it first."
-              : code === "sign_in_required" ? "Take over and sign in directly in the browser, then resume."
+              : code === "use_attach" ? "Upload controls take files through attach with the control's ref."
               : "The observed control is no longer ready. Observe again before choosing an action.";
             if (!batch) fail(code, message);
             failure = { index, type: action.type, ...(action.ref ? { ref: action.ref } : {}), code, error: message };
@@ -921,9 +1031,19 @@ export function createBrowserTaskHost({ getTab, tabsFor, ownerOf, activeFor, isV
           if (sent) observed.sent.add(sent);
           const since = Date.now();
           if (["click", "key", "scroll"].includes(action.type)) await isolated(contents, readSettle, true).catch(() => null);
+          if (action.type === "key" && leftConfirmedSite()) {
+            if (!steps.length) fail("page_changed", LEFT_SITE);
+            interrupted = "page_changed";
+            break;
+          }
           if (action.type === "fill" || action.type === "select") {
             const prepared = await isolated(contents, applyFormAction, action);
             if (action.type === "fill" && !prepared.inserted) {
+              if (leftConfirmedSite()) {
+                if (!steps.length) fail("page_changed", LEFT_SITE);
+                interrupted = "page_changed";
+                break;
+              }
               if (action.text) await contents.insertText(action.text);
               else {
                 await contents.sendInputEvent({ type: "keyDown", keyCode: "Backspace" });
@@ -931,6 +1051,19 @@ export function createBrowserTaskHost({ getTab, tabsFor, ownerOf, activeFor, isV
                 await contents.sendInputEvent({ type: "keyUp", keyCode: "Backspace" });
               }
             }
+          }
+          if (action.type === "attach") {
+            const scale = inputScale(tab);
+            const outcome = await attachFiles(contents, { x: point.x * scale, y: point.y * scale }, action.files, requestSignal, fileChooserMs);
+            if (outcome !== "attached") {
+              const error = outcome === "single_file" ? "This control takes one file. Attach one." : "No file chooser opened. Use the page's upload button or file input ref.";
+              if (!batch) fail(outcome, error);
+              failure = { index, type: action.type, ref: action.ref, code: outcome, error };
+              break;
+            }
+            if (!batch) return { ok: true, dispatched: true, outcome: "attached", files: action.files.length, retrySafe: false, tabId: tab.tabId, next: "observe" };
+            steps.push({ i: index, type: action.type, ref: action.ref, outcome: "attached" });
+            continue;
           }
           if (action.type === "click" || action.type === "scroll" || (action.type === "set_checked" && !point.unchanged)) {
             // sendInputEvent targets the main widget, not an OOPIF's widget.

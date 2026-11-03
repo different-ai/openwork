@@ -68,8 +68,8 @@ async function requestLimits<T>(orgId: string, path: string, schema: z.ZodType<T
 
 const queryDefaults = { retry: false, staleTime: 0, gcTime: 0 };
 
-export function useGatewayPolicies(orgId: string) {
-  return useQuery({ ...queryDefaults, queryKey: [...gatewayLimitsKey(orgId), "policies"],
+export function useGatewayPolicies(orgId: string, options: { enabled?: boolean } = {}) {
+  return useQuery({ ...queryDefaults, queryKey: [...gatewayLimitsKey(orgId), "policies"], enabled: options.enabled ?? true,
     queryFn: ({ signal }) => requestLimits(orgId, policiesPath, policiesSchema, { signal }),
   });
 }
@@ -182,6 +182,14 @@ export function formatLimitMoney(value: number): string {
 
 export const timeframeLabels = { day: "1 day", week: "1 week", month: "1 month" };
 export const timeframePeriods = { day: "a day", week: "a week", month: "a month" };
+
+const periodOrder = { day: 0, week: 1, month: 2 };
+
+/** "$4,000.00 a month" style amounts, shortest period first. */
+export function describeLimitAmounts(policy: Pick<GatewayUsageLimitPolicy, "limits">): string {
+  return [...policy.limits].sort((a, b) => periodOrder[a.timeframe] - periodOrder[b.timeframe])
+    .map((limit) => `${formatLimitMoney(limit.costLimitMicroUsd)} ${timeframePeriods[limit.timeframe]}`).join(", ");
+}
 
 export function newGatewayPolicy(): GatewayUsagePolicyWrite {
   return { name: "", providerId: null, hardLimit: true, allowRequestReset: true, limits: [{ timeframe: "month", costUsd: "" }] };

@@ -5,6 +5,7 @@ import { getAuthResumeUrl } from "./auth-resume";
 import { ORG_SCOPE_HEADER, getRequestOrgScope, shouldPinOrgScopePath } from "./org-scope";
 import { getRuntimeConfig } from "./runtime-config";
 import { getSafeMemberReturnTo } from "./member-auth-routing";
+import { workbotAuthReturnTo } from "../dashboard/_lib/workbot-team-link";
 
 export type AuthMode = "sign-in" | "sign-up";
 export type SocialAuthProvider = "github" | "google";
@@ -209,6 +210,8 @@ export function getSocialCallbackUrl(authCallbackBaseUrl = "", requestedReturnTo
       if (returnTo) {
         callbackUrl.searchParams.set("returnTo", returnTo);
       }
+      const workbotReturnTo = workbotAuthReturnTo(params.get("workbotReturnTo"));
+      if (workbotReturnTo) callbackUrl.searchParams.set("workbotReturnTo", workbotReturnTo);
     }
     return callbackUrl.toString();
   } catch {
@@ -437,9 +440,10 @@ export function getWorkflowRuns(payload: unknown): WorkflowRun[] {
   });
 }
 
-export async function requestJson(path: string, init: RequestInit = {}, timeoutMs = 30000) {
+/** Shared authenticated transport for JSON and streamed browser requests. */
+export async function requestResponse(path: string, init: RequestInit = {}, timeoutMs = 30000): Promise<Response> {
   const headers = new Headers(init.headers);
-  headers.set("Accept", "application/json");
+  if (!headers.has("Accept")) headers.set("Accept", "application/json");
 
   if (init.body && !(init.body instanceof FormData) && !headers.has("Content-Type")) {
     headers.set("Content-Type", "application/json");
@@ -501,6 +505,11 @@ export async function requestJson(path: string, init: RequestInit = {}, timeoutM
     }
   }
 
+  return response;
+}
+
+export async function requestJson(path: string, init: RequestInit = {}, timeoutMs = 30000) {
+  const response = await requestResponse(path, init, timeoutMs);
   const text = await response.text();
   let payload: unknown = null;
 

@@ -55,6 +55,25 @@ test("commands run in the background are their own step, apart from work on the 
   assert.deepEqual(steps[0]?.updates, ["Rendering the scene with Blender", "Checking the frames"])
 })
 
+test("a screen step keeps the last show Workbot gave, and background work has none", () => {
+  const shown = (id: string, show?: boolean) => ({ id, name: "desktop", input: { view: "computer", operation: "computer_observe", args: {}, ...(show === undefined ? {} : { show }) } })
+  const snapshot = {
+    status: "busy", finalAssistantText: "", hasEarlier: false,
+    turns: [{ messageId: "wb_show", status: "running", createdAt: 100, error: null }],
+    messages: [
+      { messageId: "wb_show", role: "user", text: "Show me the scene" },
+      { messageId: "wb_show", role: "assistant", text: "", createdAt: 110, toolCalls: [shown("c1"), shown("c2", true), shown("c3")] },
+      { messageId: "wb_show", role: "tool", callId: "c1", name: "desktop", isError: false, createdAt: 120 },
+      { messageId: "wb_show", role: "tool", callId: "c2", name: "desktop", isError: false, createdAt: 130 },
+      { messageId: "wb_show", role: "tool", callId: "c3", name: "desktop", isError: false, createdAt: 140 },
+      { messageId: "wb_show", role: "assistant", text: "", createdAt: 150, toolCalls: [{ id: "c4", name: "bash", input: { command: "ls", show: true } }, shown("c5", false)] },
+    ],
+  } satisfies RunnerSnapshot
+  const [turn] = buildWorkbotTurns(snapshot)
+  const steps = turn?.parts.flatMap((part) => (part.kind === "steps" ? part.steps : [])) ?? []
+  assert.deepEqual(steps.map((step) => [step.label, step.shown ?? null]), [["Using my computer", true], ["Working on my computer", null], ["Using my computer", false]])
+})
+
 test("the browser and background-then-screen nudges are only given when the computer is on", () => {
   const base = { name: "Workbot", organizationName: "Example", firstName: "Alex", timeZone: "UTC", canSchedule: false }
   assert.equal(workbotInstructions(base).includes("check it in your browser"), false)
@@ -64,4 +83,44 @@ test("the browser and background-then-screen nudges are only given when the comp
     assert.equal(workbotInstructions(base).includes(rule), false)
     assert.ok(workbotInstructions({ ...base, browser: true }).includes(rule))
   }
+})
+
+test("work in Microsoft 365 is named for the app the person uses, with the verb its operation names", () => {
+  const capability = (id: string, name: string) => ({ id, name: "execute_capability", input: { name } })
+  const calls = [
+    capability("c1", "native:microsoft-365:getCapabilitiesMicrosoft365CalendarEvents"),
+    capability("c2", "native:microsoft-365:updateMicrosoft365CalendarEvent"),
+    capability("c3", "native:microsoft-365:postCapabilitiesMicrosoft365CalendarEvents"),
+    capability("c4", "native:microsoft-365:getCapabilitiesMicrosoft365MailMessages"),
+    capability("c5", "native:microsoft-365:createMicrosoft365ReplyDraft"),
+    capability("c6", "native:microsoft-365:sendMicrosoft365MailDraft"),
+    capability("c7", "native:microsoft-365:putCapabilitiesMicrosoft365DriveFiles"),
+    capability("c8", "native:microsoft-365:getCapabilitiesMicrosoft365TeamsChats"),
+    capability("c9", "native:google-workspace:getCapabilitiesGoogleWorkspaceCalendarEvents"),
+    capability("c10", "gmail_create_draft"),
+  ]
+  const snapshot = {
+    status: "idle", finalAssistantText: "Done.", hasEarlier: false,
+    turns: [{ messageId: "wb_m365", status: "done", createdAt: 100, error: null }],
+    messages: [
+      { messageId: "wb_m365", role: "user", text: "Move my supplier sync" },
+      { messageId: "wb_m365", role: "assistant", text: "", createdAt: 110, toolCalls: calls },
+      ...calls.map((call, index) => ({ messageId: "wb_m365", role: "tool" as const, callId: call.id, name: "execute_capability", isError: false, createdAt: 120 + index })),
+      { messageId: "wb_m365", role: "assistant", text: "Done.", createdAt: 200, toolCalls: [] },
+    ],
+  } satisfies RunnerSnapshot
+  const [turn] = buildWorkbotTurns(snapshot)
+  const steps = turn?.parts.flatMap((part) => (part.kind === "steps" ? part.steps : [])) ?? []
+  assert.deepEqual(steps.map((step) => step.label), [
+    "Checking Outlook Calendar",
+    "Updating Outlook Calendar",
+    "Adding to Outlook Calendar",
+    "Checking Outlook",
+    "Drafting in Outlook",
+    "Sending in Outlook",
+    "Updating OneDrive",
+    "Checking Microsoft Teams",
+    "Checking Google Calendar",
+    "Drafting in Gmail",
+  ])
 })

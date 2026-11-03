@@ -17,7 +17,7 @@ function record(value: unknown): value is Record<string, unknown> {
 // native worker tests. All messages are imported through the actual engine API.
 test("semantic search pages real v2 histories of 150, 200, 201, 400 and 450 messages", { timeout: 90_000 }, async t => {
   try { await access(binary); } catch {
-    t.skip("needs: pinned OpenCode 2.0.26 binary; set OPENWORK_TEST_OPENCODE2");
+    t.skip("needs: pinned OpenCode v2 binary; set OPENWORK_TEST_OPENCODE2");
     return;
   }
   assert.match(spawnSync(binary, ["--version"], { encoding: "utf8", timeout: 15_000 }).stdout, /\bv2\.0\.26\b/);

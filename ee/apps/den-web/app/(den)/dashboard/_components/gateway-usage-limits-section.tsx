@@ -16,7 +16,7 @@ import { useGatewayAccessProviders } from "./gateway-subject-access-data";
 import { describeWho } from "./gateway-limit-editor-screen";
 import { providerLimitLabel } from "./provider-limit-scope";
 export { providerLimitLabel } from "./provider-limit-scope";
-import { formatLimitMoney, timeframeLabels, timeframePeriods, useGatewayLimitsMutation, useGatewayMembers, useGatewayPolicies, type GatewayUsageMember } from "./gateway-usage-limits-data";
+import { describeLimitAmounts, formatLimitMoney, timeframeLabels, useGatewayLimitsMutation, useGatewayMembers, useGatewayPolicies, type GatewayUsageMember } from "./gateway-usage-limits-data";
 
 type Directory = { teams: DenOrgTeam[]; members: DenOrgMember[] };
 type OrgSlug = string | null | undefined;
@@ -183,12 +183,7 @@ export function GatewayMemberUsageDetails({ status, policies, teams }: { status:
   </div>;
 }
 
-const periodOrder = { day: 0, week: 1, month: 2 };
-
-export function describeLimitAmounts(policy: GatewayUsageLimitPolicy): string {
-  return [...policy.limits].sort((a, b) => periodOrder[a.timeframe] - periodOrder[b.timeframe])
-    .map((limit) => `${formatLimitMoney(limit.costLimitMicroUsd)} ${timeframePeriods[limit.timeframe]}`).join(", ");
-}
+export { describeLimitAmounts } from "./gateway-usage-limits-data";
 
 function policyWho(policy: GatewayUsageLimitPolicy, teams: DenOrgTeam[], members: DenOrgMember[]) {
   return describeWho({
@@ -247,22 +242,26 @@ export function GatewayLimitRow({ policy, orgSlug, teams, members, providers, ca
   canEdit?: boolean;
 } & Directory) {
   const who = policyWho(policy, teams, members);
+  // Its provider was deleted: the limit caps nothing until it points at a provider again.
+  const providerRemoved = policy.providerStatus === "removed";
   return (
-    <li className="flex items-center gap-3 px-4 py-3" data-testid="gateway-limit-row" data-policy-id={policy.id}>
+    <li className="flex items-center gap-3 px-4 py-3" data-testid="gateway-limit-row" data-policy-id={policy.id} data-provider-status={policy.providerStatus ?? undefined}>
       <LimitIcon policy={policy} />
       <span className="flex min-w-0 flex-[1.2] flex-col">
         <span className="truncate text-[13px] font-medium text-gray-900">{policy.name}</span>
         <span className="truncate text-[12px] text-gray-500">{!who ? "Not applied to anyone yet" : who === policy.name ? targetKind(policy) : who}</span>
       </span>
-      {(
-        <span className="flex w-36 shrink-0 flex-col" data-testid="gateway-limit-provider-label">
-          <span className="text-[12px] text-gray-700">{providerLimitLabel(policy.providerId, providers)}</span>
-
-        </span>
-      )}
+      <span className="flex w-36 shrink-0 flex-col items-start gap-0.5" data-testid="gateway-limit-provider-label">
+        {providerRemoved ? <>
+          <DenBadge tone="warning" size="sm">Provider removed</DenBadge>
+          <span className="text-[12px] text-gray-500">Not applied</span>
+        </> : <span className="text-[12px] text-gray-700">{providerLimitLabel(policy.providerId, providers)}</span>}
+      </span>
       <span className="min-w-0 flex-1 text-[13px] tabular-nums text-gray-700">{describeLimitAmounts(policy)} each</span>
       <span className="w-28 shrink-0 text-[12px] text-gray-600">{policy.hardLimit ? "Pauses them" : "Only warns"}</span>
-      {canEdit ? <Link href={getAiGatewayLimitRoute(orgSlug, policy.id)} aria-label={`Edit ${policy.name}`} data-testid="gateway-limit-edit" className={buttonVariants({ variant: "secondary", size: "sm" })}>Edit</Link> : null}
+      {canEdit ? providerRemoved
+        ? <Link href={getAiGatewayLimitRoute(orgSlug, policy.id)} aria-label={`Choose a provider for ${policy.name}`} data-testid="gateway-limit-choose-provider" className={buttonVariants({ variant: "secondary", size: "sm" })}>Choose provider</Link>
+        : <Link href={getAiGatewayLimitRoute(orgSlug, policy.id)} aria-label={`Edit ${policy.name}`} data-testid="gateway-limit-edit" className={buttonVariants({ variant: "secondary", size: "sm" })}>Edit</Link> : null}
     </li>
   );
 }

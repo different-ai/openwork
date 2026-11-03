@@ -3,6 +3,7 @@ import { after, test } from "node:test"
 import { and, eq } from "@openwork-ee/den-db/drizzle"
 import { ConfigObjectTable, ConfigObjectVersionTable, OrganizationTable } from "@openwork-ee/den-db/schema"
 import { DEFAULT_AGENT_TEMPLATE, DEFAULT_WORKBOT_PROACTIVE_SETTINGS } from "@openwork/types/den/workbot-proactive"
+import type { AgentItem } from "@openwork/automations/proactive"
 import { bootDen, field, summary } from "./harness.js"
 
 // Members' agents: behind workbotProactive and Workbot on the deployment. Admin settings are read with View/Manage
@@ -110,8 +111,12 @@ test("admins see seven days of agent health per responsibility, counts only", as
   assert.equal((await den.setFeature(workspace.orgId, "workbotProactive", true)).status, 200)
   const owner = den.as(workspace.owner, workspace.orgId)
   const healthPath = `${path}/health`
-  assert.equal((await owner("GET", healthPath)).status, 404, "behind its own rollout")
-  assert.equal((await den.setFeature(workspace.orgId, "workbotAgentHealthView", true)).status, 200)
+  assert.equal((await owner("GET", healthPath)).status, 200, "the parent rollout includes agent health")
+  assert.equal((await den.setFeature(workspace.orgId, "workbotProactive", false)).status, 200)
+  const hidden = await owner("GET", healthPath)
+  assert.equal(hidden.status, 404, summary(hidden))
+  assert.equal(field(hidden.body, "feature"), "workbotProactive")
+  assert.equal((await den.setFeature(workspace.orgId, "workbotProactive", true)).status, 200)
   const repository = await import("../../src/workbot-proactive/repository.js")
   const { normalizeDenTypeId } = await import("@openwork-ee/utils/typeid")
   const organizationId = normalizeDenTypeId("organization", workspace.orgId)
@@ -150,14 +155,15 @@ test("the ledger delivers each item at most once and leases keep two instances o
   assert.equal((await repository.claimDueAgents(10, now)).filter((row) => row.memberId === memberId).length, 0, "a leased agent is not claimed twice")
   assert.equal(await repository.holdsAgentLease(claimed), true)
 
-  const item = { responsibility: "waiting_on_you" as const, ref: "thread-1" }
+  const item: AgentItem = { source: "email", id: "thread-1", preset: "waiting_on_you" }
   const first = await repository.reserveAgentDelivery({ organizationId, memberId, item })
   assert.ok(first)
   assert.equal(await repository.reserveAgentDelivery({ organizationId, memberId, item }), null, "only one insert wins")
   await repository.finishAgentDelivery(first, "sent")
-  await repository.reserveAgentDelivery({ organizationId, memberId, item: { responsibility: "calendar_changes", ref: "evt2:x" }, outcome: "folded" })
-  const told = await repository.toldAgentItems(memberId, [item, { responsibility: "calendar_changes", ref: "evt2:x" }, { responsibility: "calendar_changes", ref: "evt3:y" }])
-  assert.deepEqual([...told].sort(), ["calendar_changes:evt2:x", "waiting_on_you:thread-1"])
+  const slack: AgentItem = { source: "chat", id: "https://example.slack.com/archives/C1/p1", preset: null }
+  await repository.reserveAgentDelivery({ organizationId, memberId, item: slack, outcome: "folded" })
+  const told = await repository.toldAgentItems(memberId, [item, slack, { source: "calendar", id: "evt3:y", preset: "calendar_changes" }])
+  assert.deepEqual([...told].sort(), ["chat:https://example.slack.com/archives/C1/p1", "email:thread-1"])
   assert.equal(await repository.agentSentSince(memberId, new Date(now.getTime() - 60_000)), 1, "folded items don't count as messages")
 
   assert.equal(await repository.settleAgent(claimed, { nextWakeAt: new Date(now.getTime() + 300_000), state: "{}", timeZone: "UTC" }), true)

@@ -13,7 +13,6 @@ import {
   getOrgAccessFlags,
   getPluginDetailsRoute,
   getPluginsRoute,
-  orgFeatureEnabled,
 } from "../../_lib/den-org";
 import { useOrgDashboard } from "../_providers/org-dashboard-provider";
 import { type AccessDraft, accessAddedToast, ownedAccessStatus } from "./access-summary";
@@ -38,7 +37,13 @@ export function pluginChatDeepLink(plugin: Pick<DenPlugin, "name">): string {
   return `openwork://chat?${params.toString()}`;
 }
 
-export function WhatsInside({ plugin, appMcpServersEnabled = false, skillPreviews = false }: { plugin: DenPlugin; appMcpServersEnabled?: boolean; skillPreviews?: boolean }) {
+export function WhatsInside({
+  plugin,
+  appMcpServersEnabled = false,
+}: {
+  plugin: DenPlugin;
+  appMcpServersEnabled?: boolean;
+}) {
   const rows = [
     ...plugin.authoredApps.map((app) => ({
       key: `app:${app.id}`,
@@ -76,7 +81,7 @@ export function WhatsInside({ plugin, appMcpServersEnabled = false, skillPreview
       <ItemPanel>
         {rows.length === 0 ? <p className="px-5 py-4 text-[13px] text-gray-500">Nothing inside yet.</p> : null}
         {rows.map((row) => {
-          const skill = skillPreviews ? plugin.skills.find((entry) => row.key === `skill:${entry.id}`) : undefined;
+          const skill = plugin.skills.find((entry) => row.key === `skill:${entry.id}`);
           return skill ? <SkillPreview key={row.key} skill={skill} /> : (
             <ItemRow compact key={row.key} logo={row.logo} title={row.title} description={row.description || undefined} href={"href" in row && typeof row.href === "string" ? row.href : undefined} action={<span className="text-[12px] text-gray-500">{row.kind}</span>} />
           );
@@ -256,7 +261,10 @@ function PluginPage({ pluginId, mode, libraryItems }: { pluginId: string; mode: 
         </section>
       ) : null}
 
-      <WhatsInside plugin={data} appMcpServersEnabled={orgContext?.capabilities.appMcpServers === true} skillPreviews={orgFeatureEnabled(orgContext, "libraryConnectorNavigation")} />
+      <WhatsInside
+        plugin={data}
+        appMcpServersEnabled={orgContext?.capabilities.appMcpServers === true}
+      />
       <AppMcpServers plugin={data} />
 
       {!canManage ? <p className="flex items-center gap-2 text-[13px] text-[var(--dls-text-secondary)]" data-testid="plugin-manage-locked"><LockKeyhole className="size-4 shrink-0" aria-hidden />Only a plugin manager or organization admin can edit or remove it.</p> : null}

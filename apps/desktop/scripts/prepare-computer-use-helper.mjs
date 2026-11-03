@@ -8,7 +8,9 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 const desktopRoot = resolve(__dirname, "..");
 const repoRoot = resolve(desktopRoot, "../..");
 const packagePath = resolve(repoRoot, "packages", "computer-use", "native");
-const iconPath = resolve(desktopRoot, "resources", "icons", "icon.icns");
+// The OpenWork tile with a pointer badge: System Settings lists this helper
+// right next to OpenWork, so the two rows must not look the same.
+const iconPath = resolve(desktopRoot, "resources", "icons", "computer-use.icns");
 const productName = "ComputerUse";
 const helperExecutableName = "ComputerUse";
 const helperAppName = "OpenWork Computer Use.app";

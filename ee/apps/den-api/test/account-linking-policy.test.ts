@@ -57,7 +57,7 @@ const auth = betterAuth({
       // The id token is the email Google vouches for.
       getUserInfo: async (token) => {
         const email = token.idToken ?? ""
-        return { user: { id: `google-${email}`, email, emailVerified: true, name: "Synthetic Person" }, data: {} }
+        return { user: { id: `google-${email}`, email, emailVerified: true, name: "Synthetic Person" }, data: { sub: `google-${email}` } }
       },
     },
   },
@@ -177,6 +177,19 @@ test("a domain-verified SSO sign-in joins a verified password account and keeps 
   assert.equal((await signInWithSso("kim@acme.test")).pathname, "/signed-in")
   assert.deepEqual(await providerIds(userId), [SSO_PROVIDER_ID, "credential"].sort())
   assert.equal(await passwordSignInStatus("kim@acme.test"), 200)
+})
+
+// /setup marks the first administrator's email verified (the operator
+// configured it and proved it with the one-time setup code), so running the
+// SSO connection test as that administrator must not lock them out.
+test("the /setup administrator keeps their password and dashboard session when SSO links to their account", async () => {
+  const { token, userId } = await signUpWithPassword("setup-admin@acme.test")
+  await context.internalAdapter.updateUser(userId, { emailVerified: true })
+
+  assert.equal((await signInWithSso("setup-admin@acme.test")).pathname, "/signed-in")
+  assert.deepEqual(await providerIds(userId), [SSO_PROVIDER_ID, "credential"].sort())
+  assert.equal(await passwordSignInStatus("setup-admin@acme.test"), 200)
+  assert.ok(await context.internalAdapter.findSession(token), "the dashboard session that started the test is still signed in")
 })
 
 test("SSO never creates a user whose email is outside the provider's verified domain", async () => {

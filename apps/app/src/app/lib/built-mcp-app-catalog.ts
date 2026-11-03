@@ -16,6 +16,10 @@ const entrySchema = z
     pluginId: z.string(),
     pluginName: z.string(),
     requiresApproval: z.boolean(),
+    // Older deployments cannot classify provenance; never guess ownership.
+    isOwner: z.boolean().optional(),
+    // Older deployments do not say, so nobody sees a delete that may be refused.
+    canDelete: z.boolean().optional(),
   })
   .refine(
     (entry) =>

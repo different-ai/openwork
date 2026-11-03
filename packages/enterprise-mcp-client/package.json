@@ -12,6 +12,14 @@
       },
       "development": "./src/index.ts",
       "default": "./dist/index.js"
+    },
+    "./manual-oauth": {
+      "types": {
+        "openwork-build": "./dist/types/src/manual-oauth.d.ts",
+        "default": "./src/manual-oauth.ts"
+      },
+      "development": "./src/manual-oauth.ts",
+      "default": "./src/manual-oauth.ts"
     }
   },
   "files": [

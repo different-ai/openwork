@@ -10,7 +10,6 @@ minimumReleaseAgeExclude:
   - "postcss"
   - "hono@4.13.11"
   - "follow-redirects@1.16.1"
-  - "vite@6.4.4"
   - "@modelcontextprotocol/sdk@1.32.1"
   - "@modelcontextprotocol/client@2.3.1"
   - "@modelcontextprotocol/core@2.3.1"
@@ -77,10 +76,11 @@ overrides:
   "@react-email/ui>next": 16.4.1
   "@xmldom/xmldom@>=0.7.0 <=0.8.14": 0.8.15
   "@grpc/grpc-js@<1.14.5": 1.14.5
+  "@hono/node-server@<2.1.3": 2.1.5
   "@modelcontextprotocol/sdk@>=1.12.0 <1.32.1": 1.32.1
   "axios@<1.20.0": 1.20.0
   baseline-browser-mapping: 2.11.5
-  "body-parser@>=2.0.0 <2.3.0": 2.3.0
+  "body-parser@>=2.0.0 <2.4.0": 2.4.0
   "brace-expansion@<1.1.21": 1.1.21
   "brace-expansion@>=2.0.0 <2.1.7": 2.1.7
   "brace-expansion@>=5.0.0 <5.0.12": 5.0.12
@@ -90,15 +90,16 @@ overrides:
   "dompurify@<3.4.17": 3.4.17
   "engine.io@>=6.0.0 <6.6.11": 6.6.11
   "browserslist@<=4.28.6": 4.28.7
-  "fast-uri@>=3.0.0 <3.1.8": 3.1.8
+  "fast-uri@>=3.0.0 <3.1.9": 3.1.9
   "fast-xml-parser@>=5.0.0 <5.7.0": 5.7.0
-  "follow-redirects@<1.16.1": 1.16.1
+  "follow-redirects@<1.16.2": 1.16.2
   "form-data@>=4.0.0 <4.0.6": 4.0.6
+  "glob@>=9.0.0 <14.0.2": 14.0.2
   # 0.25.12 keeps the >=0.25.0 dev-server CORS fix. Do not bump to 0.28.x:
   # its browser-name target lists (Vite optimizeDeps defaults) refuse to
   # lower plain destructuring, which kills `vite dev` on every fresh install.
   esbuild: 0.25.12
-  better-call: 1.3.7
+  better-call: 1.4.0
   "hono@<4.13.11": 4.13.11
   "http-cache-semantics@<=4.2.0": 4.3.0
   "ip-address@>=10.0.0 <10.7.4": 10.7.4
@@ -106,13 +107,17 @@ overrides:
   "zod@<4.6.6": 4.6.6
   "js-yaml@>=4.0.0 <4.3.2": 4.3.2
   "katex@>=0.11.0 <0.18.2": 0.18.2
+  # Only 9.x/10.x share v11's named-export API. 3.x and 5.x export a bare
+  # function (require("minimatch")(...)), so forcing them onto 11 breaks
+  # eslint 8, @electron/asar and spectral; they have no patched release.
+  "minimatch@>=9.0.0 <11.0.1": 11.0.1
   "nanoid@<3.3.18": 3.3.18
   "nanoid@>=4.0.0 <5.1.16": 5.1.16
   "postcss@<8.5.23": 8.5.23
   "postcss-selector-parser@<7.1.6": 7.1.6
   "protobufjs@<7.6.5": 7.6.5
   "proxy-addr@>=1.1.0 <2.0.8": 2.0.8
-  "qs@>=6.0.0 <6.16.0": 6.16.0
+  "qs@>=6.0.0 <6.16.1": 6.16.1
   "rollup@>=4.0.0 <4.59.0": 4.59.0
   "samlify@<2.13.0": 2.13.0
   "sharp@<0.35.5": 0.35.5
@@ -124,7 +129,7 @@ overrides:
   "undici@>=6.0.0 <6.29.1": 6.29.1
   "undici@>=7.0.0 <7.30.1": 7.30.1
   "uuid@<11.1.1": 11.1.1
-  "vite@>=6.0.0 <6.4.4": 6.4.4
+  "vite@>=6.0.0 <6.4.5": 6.4.5
   "ws@>=8.0.0 <8.21.0": 8.21.0
 allowBuilds:
   # @stoplight/spectral-cli -> @scarf/scarf is install analytics; never run it.
@@ -149,8 +154,6 @@ allowBuilds:
   # ESLint's resolver ships prebuilt bindings; do not run its fallback installer.
   unrs-resolver: false
 patchedDependencies:
-  '@better-auth/cimd@1.7.0-beta.10': patches/@better-auth__cimd@1.7.0-beta.10.patch
-  '@better-auth/drizzle-adapter@1.7.0-beta.10': patches/@better-auth__drizzle-adapter@1.7.0-beta.10.patch
-  '@better-auth/sso@1.7.0-beta.10': patches/@better-auth__sso@1.7.0-beta.10.patch
+  '@better-auth/sso@1.7.7': patches/@better-auth__sso@1.7.7.patch
   '@modelcontextprotocol/client@2.3.1': patches/@modelcontextprotocol__client@2.3.1.patch
   '@modelcontextprotocol/sdk': patches/@modelcontextprotocol__sdk.patch

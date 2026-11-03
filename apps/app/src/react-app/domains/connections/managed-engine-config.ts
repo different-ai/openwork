@@ -59,14 +59,21 @@ export async function readManagedDisabledProviders(
 ): Promise<string[]> {
   const client = options.opencodeClient;
   const workspaceId = options.workspaceId?.trim() ?? "";
-  if (client && isOpencodeV2Client(client)) {
-    if (!options.openworkClient || !workspaceId || options.workspaceType !== "local") return [];
-    const result = await options.openworkClient.getRuntimeDisabledProviders(workspaceId);
-    return normalizeDisabledProviders(result.disabledProviders);
-  }
+  const openworkClient = options.openworkClient;
+  const managedRuntime = Boolean(openworkClient && workspaceId && options.workspaceType === "local");
+  const readRuntime = async () => openworkClient && managedRuntime
+    ? normalizeDisabledProviders((await openworkClient.getRuntimeDisabledProviders(workspaceId)).disabledProviders)
+    : [];
+  if (client && isOpencodeV2Client(client)) return readRuntime();
   if (!client) return [];
   const config = unwrap(await client.config.get(options.directory ? { directory: options.directory } : undefined));
-  return disabledProvidersFromConfig(config);
+  const fromConfig = disabledProvidersFromConfig(config);
+  if (!managedRuntime) return fromConfig;
+  // updateManagedDisabledProviders writes this list on the server. v1 only
+  // reads it after an engine reload, which v2 chat routing never runs, so its
+  // config alone misses a provider that was just disabled (ENG-994).
+  const fromRuntime = await readRuntime().catch(() => []);
+  return normalizeDisabledProviders([...fromConfig, ...fromRuntime]);
 }
 
 function configWithDisabledProviders(

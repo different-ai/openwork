@@ -91,6 +91,19 @@ async function renderOverlay(discoverRunningMigration?: boolean) {
   });
 }
 
+test("restoring reports message counts rather than a stalled chat counter", async () => {
+  Reflect.set(window, "__OPENWORK_ELECTRON__", {});
+  const client = engineClient();
+  const migration = { state: "running", phase: "restoring", imported: 0, skipped: 0, total: 2471, restored: 44000, restoreTotal: 208014 } satisfies EngineV2PreviewStatus["migration"];
+  spyOn(client, "getEngineV2PreviewStatus").mockResolvedValue({ ...status, migration });
+  useEngineMigrationStore.setState({ progress: {
+    client, migration, selected: "v1", view: "dialog", retrying: false, runningTasks: 0, switchWhenDone: true,
+  } });
+  await renderOverlay();
+  expect(document.querySelector('[data-testid="engine-migration-count"]')?.textContent).toBe("Restoring messages: 44,000 of 208,014");
+  expect(document.querySelector('[role="progressbar"]')?.getAttribute("aria-valuenow")).toBe("21");
+});
+
 test("web never upgrades the engine from another consumer's enabled feature cache", async () => {
   const client = engineClient();
   expect(isDesktopRuntime()).toBe(false);

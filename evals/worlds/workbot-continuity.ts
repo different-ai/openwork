@@ -18,6 +18,16 @@ export async function workbotContinuity(_seed: Seed, { place }: { place: Place }
   const requests: number[] = [];
   const historyPages: Array<{ records: number; messages: number }> = [];
   let uploadCount = 0;
+  // Holds conversation reads, so a check can look at the page before its first read answers.
+  let holdThread = false;
+  const releaseThreads: (() => void)[] = [];
+  const releaseThread = () => { holdThread = false; for (const resolve of releaseThreads.splice(0)) resolve(); };
+  // Holds the app's script, so a check can see what the page does before it arrives.
+  let holdScript = false;
+  const releaseScripts: (() => void)[] = [];
+  const releaseScript = () => { holdScript = false; for (const resolve of releaseScripts.splice(0)) resolve(); };
+  // Who each conversation read named, in the order they arrived.
+  const threadReads: Array<{ turns: number; chat: string; user: string | null }> = [];
   const turn = (id: string, text: string, index: number) => ({ id, text, sentAt: 1_790_000_000_000 + index * 1000, finishedAt: 1_790_000_000_100 + index * 1000, status: "done", attachments: [], outputs: [], parts: [{ kind: "text", text: `Reply ${index + 1}` }], modelSteps: 1, error: null });
   try {
     const fixtureDir = await mkdtemp(join(tmpdir(), "workbot-continuity-"));
@@ -42,6 +52,7 @@ export async function workbotContinuity(_seed: Seed, { place }: { place: Place }
               </body></html>`);
             return;
           }
+          if (url.pathname === "/main.tsx" && holdScript) { await new Promise<void>(resolve => releaseScripts.push(resolve)); return next(); }
           if (!url.pathname.startsWith("/v1/workbot")) return next();
           const referring = new URL(req.headers.referer ?? "http://fixture");
           const json = (body: unknown, status = 200) => { res.statusCode = status; res.setHeader("content-type", "application/json"); res.end(JSON.stringify(body)); };
@@ -50,6 +61,10 @@ export async function workbotContinuity(_seed: Seed, { place }: { place: Place }
           if (url.pathname === "/v1/workbot/me") return json({ name: "Alex", email: "alex@example.test", userId: "user_example", organizationId: "org_example", organizationName: "Example", enabled: true, calendar: true, documents: true, documentEditing: true, nativeDictation: referring.searchParams.get("dictation") === "on", workspaceAssistant: referring.searchParams.get("assistant") !== "off", canSchedule: false, sideChats: true, denUrl: "https://workspace.example.test" });
           if (url.pathname === "/v1/workbot") {
             const count = Math.min(200, Number(url.searchParams.get("turns") ?? 30));
+            // Recorded when they arrive, so a held read counts as made.
+            const user = req.headers["x-openwork-client-user"];
+            threadReads.push({ turns: count, chat, user: typeof user === "string" ? user : null });
+            if (holdThread) await new Promise<void>(resolve => releaseThreads.push(resolve));
             requests.push(count);
             const prior = Array.from({ length: history ? 230 : 2 }, (_, index) => turn(`message${String(index).padStart(4, "0")}`, index === 0 ? "Use Monday" : `Earlier question ${index + 1}`, index));
             const all = [...prior, ...(accepted.get(chat) ?? [])];
@@ -96,10 +111,12 @@ export async function workbotContinuity(_seed: Seed, { place }: { place: Place }
       } }],
     });
     resources.defer(() => vite.close());
+    resources.defer(releaseThread);
+    resources.defer(releaseScript);
     await vite.listen();
     const url = vite.resolvedUrls?.local[0];
     if (!url) throw new Error("Workbot fixture did not start");
     const web = resources.use(await chrome({ host: place.host(), name: "workbot-continuity", startUrl: `${url}?chat=sidechat000000001`, headless: true }));
-    return { web, url, notesPath, attempts: () => [...attempts], uploads: () => uploadCount, windows: () => [...requests], historyPages: () => [...historyPages], async [Symbol.asyncDispose]() { await resources.disposeAsync(); } };
+    return { web, url, notesPath, attempts: () => [...attempts], uploads: () => uploadCount, windows: () => [...requests], historyPages: () => [...historyPages], holdThread: () => { holdThread = true; }, pendingThreads: () => releaseThreads.length, releaseThread, holdScript: () => { holdScript = true; }, pendingScripts: () => releaseScripts.length, releaseScript, threadReads: () => [...threadReads], async [Symbol.asyncDispose]() { await resources.disposeAsync(); } };
   } catch (error) { await resources.disposeAsync(); throw error; }
 }

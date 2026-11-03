@@ -12,7 +12,12 @@ import {
   denMicrosoftCalendarEventsResponseSchema,
 } from "../../../../packages/calendar/src/den-contract";
 import { CalendarConnectionError } from "../../../../packages/calendar/src/event";
-import { createMockCalendarTransport } from "../../../../apps/app/src/react-app/domains/calendar/calendar-source";
+import {
+  calendarRangeSearch,
+  DEN_GOOGLE_CALENDAR_EVENTS_PATH,
+  DEN_MICROSOFT_CALENDAR_EVENTS_PATH,
+  type DenCalendarRangeQuery,
+} from "../../../../packages/calendar/src/den-contract";
 import { calendarRange } from "../../../../packages/calendar/src/time";
 import {
   createCalendarMockState,
@@ -26,9 +31,8 @@ import {
 /**
  * One chain, both providers: the calendar mock's provider payloads (Google
  * Calendar v3 / Graph calendarView shapes) → den-api's real extractors → the
- * Den capability route body → the desktop adapters' normalized events. The mock
- * must serve exactly what Den would, so the desktop can switch between the
- * mock and real connections with no code change.
+ * Den capability route body → the shared adapters' normalized events. The mock
+ * must serve exactly what Den would so Workbot previews use the real contracts.
  */
 
 const ZONE = "America/Los_Angeles";
@@ -93,7 +97,7 @@ describe("calendar mock mirrors Den's calendar contracts", () => {
   });
 });
 
-describe("desktop adapters normalize both providers", () => {
+describe("shared adapters normalize both providers", () => {
   const state = createCalendarMockState({ now: NOW, timeZone: ZONE });
   const google = denGoogleCalendarEventsResponseSchema.parse(denCalendarEvents(state, "google", denQuery(WEEK.start, WEEK.end + 7 * 86_400_000, 100)).body).events;
   const outlook = denMicrosoftCalendarEventsResponseSchema.parse(denCalendarEvents(state, "microsoft", denQuery(WEEK.start, WEEK.end + 7 * 86_400_000, 100)).body).events;
@@ -156,7 +160,23 @@ describe("adapters against the running mock", () => {
   beforeAll(async () => {
     // 150 extra events on Tuesday overflow Den's 100-event page.
     mock = await startCalendarMock({ now: NOW, timeZone: ZONE, load: 150 });
-    transport = createMockCalendarTransport(mock.baseUrl);
+    async function request(path: string, query: DenCalendarRangeQuery, signal?: AbortSignal): Promise<unknown> {
+      const response = await fetch(`${mock.baseUrl}${path}?${calendarRangeSearch(query)}`, { signal });
+      const payload: unknown = await response.json();
+      if (!response.ok) {
+        const body = record(payload);
+        throw Object.assign(new Error(typeof body.message === "string" ? body.message : "Calendar request failed"), {
+          status: response.status,
+          code: body.error,
+        });
+      }
+      return payload;
+    }
+    transport = {
+      kind: "mock",
+      google: async (query, signal) => denGoogleCalendarEventsResponseSchema.parse(await request(DEN_GOOGLE_CALENDAR_EVENTS_PATH, query, signal)).events,
+      microsoft: async (query, signal) => denMicrosoftCalendarEventsResponseSchema.parse(await request(DEN_MICROSOFT_CALENDAR_EVENTS_PATH, query, signal)).events,
+    };
   });
   afterAll(async () => { await mock?.stop(); });
 

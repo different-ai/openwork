@@ -14,13 +14,8 @@ on:
   push:
     branches:
       - dev
-    paths:
-      - "ee/apps/headless-runner/**"
-      - "ee/packages/headless-protocol/**"
-      - "ee/packages/headless-computer/**"
-      - "packages/sandbox-daytona/**"
-      - "pnpm-lock.yaml"
-      - ".github/workflows/celld-runner-deploy.yml"
+    # Classify the runner's dependency closure before requesting production
+    # approval. Keeping a second package list here misses transitive inputs.
   workflow_dispatch:
     inputs:
       compat_base:
@@ -37,20 +32,46 @@ on:
 permissions:
   contents: read
 
-concurrency:
-  group: celld-runner-deploy
-  cancel-in-progress: false
-
+# Only selected deploys acquire the fleet lock. Unrelated pushes must not
+# replace a pending runner deployment before its inputs can be classified.
 jobs:
+  changes:
+    name: Detect runner build inputs
+    if: github.repository == 'different-ai/openwork'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      affected: ${{ steps.classify.outputs.affected }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - name: Setup Node
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: 24.22.1
+      - name: Classify runner build inputs
+        id: classify
+        env:
+          BUILD_BASE: ${{ github.event.before }}
+          BUILD_HEAD: ${{ github.sha }}
+        # Unknown ranges and manual deploys keep the full preflight/deploy path.
+        run: node .github/scripts/build-inputs.mjs --target headless-runner --base "${BUILD_BASE:-0000000000000000000000000000000000000000}" --head "$BUILD_HEAD"
+
   deploy:
     name: Deploy runner to celld
-    if: github.repository == 'different-ai/openwork'
+    needs: changes
+    if: github.repository == 'different-ai/openwork' && needs.changes.outputs.affected == 'true'
+    concurrency:
+      group: celld-runner-deploy
+      cancel-in-progress: false
     runs-on: blacksmith-4vcpu-ubuntu-2404
     environment: celld-production
     timeout-minutes: 30
 
     env:
-      CELLD_VERSION: v0.6.2
+      CELLD_VERSION: v0.6.3
       AWS_ACCESS_KEY_ID: ${{ secrets.CELLD_R2_ACCESS_KEY_ID }}
       AWS_SECRET_ACCESS_KEY: ${{ secrets.CELLD_R2_SECRET_ACCESS_KEY }}
       AWS_REGION: auto
@@ -106,13 +127,14 @@ jobs:
           pnpm install --filter "@openwork-ee/headless-runner..." --frozen-lockfile
           pnpm --filter "@openwork-ee/headless-runner^..." --if-present run build
 
-      # The runner only accepts a computer whose desktop guest has its identity (dist/desktop-guest.version), and
-      # rebuilding a computer starts it again from the configured snapshot. A runner whose guest changed (its code, or a
-      # package it bundles, such as a lockfile bump) would turn every computer "out of date" until a new snapshot exists,
-      # so stop before the fleet changes. Build the snapshot with snapshot:build:freestyle-desktop at this commit, set
-      # HEADLESS_COMPUTER_SNAPSHOT in CELLD_RUNNER_VARS, then rerun this run.
-      - name: Check the computer snapshot was built for this runner
+      # New computers start from the configured snapshot, named after its desktop image (dist/desktop-image.version).
+      # The runner installs its own guest into a computer built from the same image, keeps driving one from an older
+      # image while their protocols match, and replaces that one once it is idle. A runner whose image changed needs a
+      # snapshot of it, so build that snapshot here, with the runner's own Freestyle key, and bundle the runner with it.
+      # A later run with the same image finds it already built. If the build fails, stop before the fleet changes.
+      - name: Use a computer snapshot built for this runner
         id: snapshot
+        timeout-minutes: 20
         run: |
           set -euo pipefail
           computer="$(printf '%s' "$RUNNER_VARS" | jq -r '.HEADLESS_COMPUTER // ""')"
@@ -123,19 +145,86 @@ jobs:
             echo "No Freestyle desktop computers configured; nothing to check."
             exit 0
           fi
-          identity="$(head -c 16 ee/packages/headless-computer/dist/desktop-guest.version)"
-          if ! [[ "$snapshot" =~ ^workbot-desktop-freestyle-([0-9a-f]{16})$ ]]; then
+          identity="$(head -c 16 ee/packages/headless-computer/dist/desktop-image.version)"
+          if ! [[ "$snapshot" =~ ^workbot-desktop-freestyle-([0-9a-f]{16})(-[0-9a-f]{16})?$ ]]; then
             echo "::warning title=Computer snapshot not checked::$snapshot isn't named by snapshot:build:freestyle-desktop, so its desktop can't be compared with this runner's ($identity)."
             exit 0
           fi
-          if [ "${BASH_REMATCH[1]}" != "$identity" ]; then
-            echo "::error title=Computer snapshot is out of date::$snapshot was built for desktop ${BASH_REMATCH[1]}, but this runner's desktop is $identity. Build workbot-desktop-freestyle-$identity with snapshot:build:freestyle-desktop at this commit, set it as HEADLESS_COMPUTER_SNAPSHOT in CELLD_RUNNER_VARS, then rerun."
+          built="${BASH_REMATCH[1]}"
+          echo "checked=true" >> "$GITHUB_OUTPUT"
+          if [ "$built" = "$identity" ]; then
+            echo "$snapshot was built for this runner's desktop."
+            exit 0
+          fi
+          expected="workbot-desktop-freestyle-$identity"
+          key="$(printf '%s' "$RUNNER_VARS" | jq -r '.FREESTYLE_API_KEY // ""')"
+          if [ -z "$key" ]; then
+            echo "::error title=Computer snapshot is out of date::$snapshot was built for desktop $built, but this runner's desktop is $identity, and CELLD_RUNNER_VARS has no FREESTYLE_API_KEY to build $expected with."
             exit 1
           fi
-          echo "$snapshot was built for this runner's desktop."
+          echo "::add-mask::$key"
+          echo "$snapshot was built for desktop $built; this runner's desktop is $identity, so it needs $expected."
+          FREESTYLE_API_KEY="$key" HEADLESS_COMPUTER_SNAPSHOT="$expected" \
+            pnpm --filter @openwork-ee/headless-computer snapshot:build:freestyle-desktop
+          echo "name=$expected" >> "$GITHUB_OUTPUT"
+
+      # Guests change most days and images rarely, so a snapshot of the image usually carries an older guest, and a new
+      # computer installs this runner's on first open. Layering the guest onto that snapshot takes seconds, so bundle the
+      # runner with the layer. A later run with the same guest finds it already built. It only saves time: if it fails,
+      # the deploy carries on and the runner installs its guest, as it does into every computer older than this run.
+      - name: Layer this runner's guest onto the computer snapshot
+        id: guest
+        if: steps.snapshot.outputs.checked == 'true'
+        continue-on-error: true
+        timeout-minutes: 3
+        run: |
+          set -euo pipefail
+          key="$(printf '%s' "$RUNNER_VARS" | jq -r '.FREESTYLE_API_KEY // ""')"
+          if [ -z "$key" ]; then
+            echo "CELLD_RUNNER_VARS has no FREESTYLE_API_KEY, so new computers install this runner's guest on first open."
+            exit 0
+          fi
+          echo "::add-mask::$key"
+          FREESTYLE_API_KEY="$key" pnpm --filter @openwork-ee/headless-computer snapshot:build:freestyle-guest
+          image="$(head -c 16 ee/packages/headless-computer/dist/desktop-image.version)"
+          guest="$(head -c 16 ee/packages/headless-computer/dist/desktop-guest.version)"
+          echo "name=workbot-desktop-freestyle-$image-$guest" >> "$GITHUB_OUTPUT"
 
       - name: Check model and smoke result boundaries
         run: pnpm --filter @openwork-ee/headless-runner exec tsx --test scripts/model-responses.test.ts scripts/celld-smoke-result.test.ts
+
+      # A sandbox gateway keeps its own copies of the desktop: its template names a Fast Sandbox template and a Freestyle
+      # snapshot, and this run can update neither. Those computers stay on the older image until a person rebuilds them
+      # (the runner README's "Fast Sandbox microVMs"), which is worth a warning, not worth holding back every other
+      # computer. The snapshot's slug names the image both entries were built for. A guest-only change needs nothing.
+      - name: Check the sandbox gateway's computer template
+        id: gateway
+        continue-on-error: true
+        run: |
+          set -euo pipefail
+          gateway="$(printf '%s' "$RUNNER_VARS" | jq -r '.SANDBOX_GATEWAY // ""')"
+          url="$(printf '%s' "$RUNNER_VARS" | jq -r '.SANDBOX_GATEWAY_URL // ""')"
+          key="$(printf '%s' "$RUNNER_VARS" | jq -r '.SANDBOX_GATEWAY_API_KEY // ""')"
+          template="$(printf '%s' "$RUNNER_VARS" | jq -r '.SANDBOX_GATEWAY_TEMPLATE // ""')"
+          if [ "$gateway" != "differently" ] || [ -z "$template" ]; then
+            echo "No sandbox gateway template configured; nothing to check."
+            exit 0
+          fi
+          echo "::add-mask::$key"
+          identity="$(head -c 16 ee/packages/headless-computer/dist/desktop-image.version)"
+          slug="$(printf 'Authorization: Bearer %s\n' "$key" | curl -fsS --max-time 20 -H @- "${url%/}/v1/templates" \
+            | jq -r --arg name "$template" '.items[] | select(.name == $name) | .images.freestyle // empty' || true)"
+          if ! [[ "$slug" =~ ^workbot-desktop-freestyle-([0-9a-f]{16})(-[0-9a-f]{16})?$ ]]; then
+            echo "::warning title=Gateway computer template not checked::$template has no Freestyle snapshot named by its desktop image (found '${slug:-nothing}'), so it can't be compared with this runner's ($identity)."
+            exit 0
+          fi
+          built="${BASH_REMATCH[1]}"
+          if [ "$built" = "$identity" ]; then
+            echo "$template was built for this runner's desktop."
+            exit 0
+          fi
+          echo "::warning title=Gateway computer template is out of date::$template was built for desktop $built, but this runner's desktop is $identity. Rebuild it and update both of its entries."
+          echo "behind=$built" >> "$GITHUB_OUTPUT"
 
       - name: Install celld
         run: |
@@ -183,6 +272,7 @@ jobs:
       # GitHub masks the whole secret, not the values inside it.
       - name: Bundle the runner
         env:
+          HEADLESS_COMPUTER_SNAPSHOT: ${{ steps.guest.outputs.name || steps.snapshot.outputs.name || vars.HEADLESS_COMPUTER_SNAPSHOT }}
           HEADLESS_SENTRY_DSN: ${{ secrets.HEADLESS_SENTRY_DSN }}
           HEADLESS_DEN_API_URL: ${{ vars.HEADLESS_DEN_API_URL }}
           HEADLESS_DEN_CALLBACK_TOKEN: ${{ secrets.HEADLESS_DEN_CALLBACK_TOKEN }}
@@ -197,7 +287,7 @@ jobs:
           set -euo pipefail
           umask 077
           printf '%s' "$RUNNER_VARS" > "$RUNNER_TEMP/vars.json"
-          # Snapshot rotation is a plain environment variable; when unset, keep the secret's existing value.
+          # The snapshot this run built, else the plain environment variable; when neither, keep the secret's value.
           if [ -n "${HEADLESS_COMPUTER_SNAPSHOT:-}" ]; then
             jq --arg snapshot "$HEADLESS_COMPUTER_SNAPSHOT" '. + { HEADLESS_COMPUTER_SNAPSHOT: $snapshot }' \
               "$RUNNER_TEMP/vars.json" > "$RUNNER_TEMP/vars.merged.json"
@@ -325,7 +415,7 @@ jobs:
 
       # Posts only when CELLD_DEPLOY_SLACK_WEBHOOK_URL (a Slack incoming webhook) is set on the celld-production
       # environment. A failed post is a warning: the deploy has already happened or failed by now.
-      # TODO: add "cells switched" and "cells force-cancelled". celld v0.6.2 logs `generation_swap_out` per switched
+      # TODO: add "cells switched" and "cells force-cancelled". celld v0.6.3 logs `generation_swap_out` per switched
       # cell (with a per-node generation number, not the version) and nothing distinct when CELLD_DEPLOY_MAX_AGE_S
       # forces a busy cell, so Render's logs can't give the forced count yet. Count it here, the way the wait step
       # counts deployment_adopted, once celld logs a forced swap.
@@ -337,6 +427,7 @@ jobs:
           FLEET_OUTCOME: ${{ steps.fleet.outcome }}
           COMPAT_OUTCOME: ${{ steps.compat.outcome }}
           SNAPSHOT_OUTCOME: ${{ steps.snapshot.outcome }}
+          GATEWAY_BEHIND: ${{ steps.gateway.outputs.behind }}
           UNCHANGED: ${{ steps.fleet.outputs.unchanged }}
           VERSION: ${{ steps.fleet.outputs.version }}
           PREVIOUS: ${{ steps.live.outputs.version }}
@@ -363,7 +454,7 @@ jobs:
             summary=":red_circle: Runner \`$VERSION\` is in the fleet bucket but only ${ADOPTED:-?} of ${INSTANCES:-?} nodes adopted it (was \`$previous\`)."
           elif [ "$SNAPSHOT_OUTCOME" = "failure" ]; then
             outcome="failed"
-            summary=":red_circle: Runner deploy stopped: its computer desktop changed and the configured snapshot was built for the old one. Build a new snapshot, set it in CELLD_RUNNER_VARS and rerun. The fleet stays on \`$previous\`."
+            summary=":red_circle: Runner deploy stopped: its computer desktop changed and building the new snapshot failed. Rerun once the run's snapshot step says why. The fleet stays on \`$previous\`."
           elif [ "$COMPAT_OUTCOME" = "failure" ]; then
             outcome="failed"
             summary=":red_circle: Runner deploy stopped: the live runner and this one can't serve each other during a switch. The fleet stays on \`$previous\`."
@@ -372,6 +463,9 @@ jobs:
             summary=":red_circle: Runner deploy $ended before the fleet changed. The fleet stays on \`$previous\`."
           fi
           text="$summary"$'\n'"Commit <$COMMIT_URL|${GITHUB_SHA:0:12}> · <$RUN_URL|run $GITHUB_RUN_ID>"
+          if [ -n "$GATEWAY_BEHIND" ]; then
+            text="$text"$'\n'":warning: The sandbox gateway's computer template is still on desktop \`$GATEWAY_BEHIND\`: rebuild it and update both of its entries."
+          fi
           if ! jq -n --arg text "$text" '{text: $text, unfurl_links: false}' \
             | curl -sS --fail --max-time 20 -X POST -H 'Content-Type: application/json' --data-binary @- "$SLACK_WEBHOOK_URL" > /dev/null; then
             echo "::warning::Could not post the $outcome deploy message to Slack."

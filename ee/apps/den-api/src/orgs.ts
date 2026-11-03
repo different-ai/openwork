@@ -16,6 +16,7 @@ import {
   MemberTable,
   OrganizationTable,
   PluginAccessGrantTable,
+  SandboxOrganizationTable,
   ScimGroupMemberTable,
   ScimProviderTable,
   ScimUserTombstoneTable,
@@ -35,6 +36,7 @@ import { revokeUpstreamCredentials, revokeInferenceCredentialsForMembers } from 
 import { ensureMemberGatewayKey } from "./gateway-keys.js"
 import { db } from "./db.js"
 import { env } from "./env.js"
+import { parseOrganizationPlan, type PlanTier } from "./entitlements.js"
 import { getOrganizationFeatures, readOrganizationForAuthorization, type FeatureMap } from "./features.js"
 import {
   getRoleValueAfterOwnershipTransfer,
@@ -44,6 +46,7 @@ import {
   validateOrganizationMemberRoleChange,
   type MemberLifecycleValidation,
 } from "./organization-member-guards.js"
+import { ORGANIZATION_DELETION_METADATA_KEY } from "./organization-metadata.js"
 import { runPostOrganizationMemberChangeHooks } from "./organization-member-hooks.js"
 import { isScimDeprovisionedIdentity } from "./scim-deprovisioning.js"
 import { getScimManagedTeamIds } from "./scim-groups.js"
@@ -191,6 +194,8 @@ export type UserOrgSummary = {
   orgMemberId: string
   membershipId: string
   memberCount: number
+  planTier: PlanTier
+  isSandbox: boolean
   createdAt: Date
   updatedAt: Date
 }
@@ -409,14 +414,15 @@ function serializeMetadataRecord(metadata: Record<string, unknown>) {
  * Organization metadata as members see it. Feature overrides are platform
  * administration data (still mirrored into metadata.capabilities for one
  * release, for rollback) and are never sent; clients read the effective
- * `features` from GET /v1/org instead.
+ * `features` from GET /v1/org instead. An unfinished deletion's progress is
+ * platform-only too.
  */
 export function serializeMemberFacingOrganizationMetadata(input: OrganizationMetadataInput) {
   const metadata = parseMetadataRecord(input)
-  if (!("capabilities" in metadata)) {
+  if (!("capabilities" in metadata) && !(ORGANIZATION_DELETION_METADATA_KEY in metadata)) {
     return serializeOrganizationMetadata(input)
   }
-  const { capabilities: _platformOnly, ...memberFacing } = metadata
+  const { capabilities: _platformOnly, [ORGANIZATION_DELETION_METADATA_KEY]: _deletionProgress, ...memberFacing } = metadata
   return serializeMetadataRecord(memberFacing)
 }
 
@@ -437,8 +443,8 @@ export class OrganizationEmailDomainRestrictionError extends Error {
   }
 }
 
-async function listMembershipRows(userId: UserId) {
-  return db
+async function listMembershipRows(userId: UserId, reader: Pick<typeof db.$primary, "select"> = db) {
+  return reader
     .select()
     .from(MemberTable)
     .where(and(eq(MemberTable.userId, userId), isNull(MemberTable.removedAt)))
@@ -494,13 +500,15 @@ async function insertMemberIfMissing(input: {
   role: string
   email?: string | null
 }) {
-  const existing = await db
+  const findActiveMember = async (reader: Pick<typeof db.$primary, "select">) => (await reader
     .select()
     .from(MemberTable)
     .where(and(eq(MemberTable.organizationId, input.organizationId), eq(MemberTable.userId, input.userId), isNull(MemberTable.removedAt)))
-    .limit(1)
+    .limit(1))[0] ?? null
 
-  const existingMember = existing[0] ?? null
+  // Single-org mode runs this on many requests: the replica answers the usual
+  // "already a member", and the primary confirms a miss before anything is written.
+  const existingMember = await findActiveMember(db) ?? await findActiveMember(db.$primary)
   if (existingMember) {
     await ensureMemberGatewayKey({ organizationId: input.organizationId, memberId: existingMember.id })
     return existingMember
@@ -544,30 +552,28 @@ async function insertMemberIfMissing(input: {
     await cache.org.deleteMembership({ organizationId: input.organizationId, userId: input.userId })
   } catch {}
 
-  const created = await db
-    .select()
-    .from(MemberTable)
-    .where(and(eq(MemberTable.organizationId, input.organizationId), eq(MemberTable.userId, input.userId), isNull(MemberTable.removedAt)))
-    .limit(1)
+  // primary: reads back the row inserted above.
+  const created = await findActiveMember(db.$primary)
 
-  if (!created[0]) {
+  if (!created) {
     throw new Error("failed_to_create_member")
   }
   if (inserted) {
     // A new member changes billing like any other join (and issues the
     // member's gateway key through the same hooks).
-    await runPostOrganizationMemberChangeHooks({ organizationId: input.organizationId, memberId: created[0].id, change: "added" })
+    await runPostOrganizationMemberChangeHooks({ organizationId: input.organizationId, memberId: created.id, change: "added" })
   } else {
-    await ensureMemberGatewayKey({ organizationId: input.organizationId, memberId: created[0].id })
+    await ensureMemberGatewayKey({ organizationId: input.organizationId, memberId: created.id })
   }
-  return created[0]
+  return created
 }
 
 async function findSoftRemovedMemberForUser(input: {
   organizationId: OrgId
   userId: UserId
 }) {
-  const rows = await db
+  // primary: a removal moments ago must keep the user out (callers then write).
+  const rows = await db.$primary
     .select()
     .from(MemberTable)
     .where(and(eq(MemberTable.organizationId, input.organizationId), eq(MemberTable.userId, input.userId), isNotNull(MemberTable.removedAt)))
@@ -624,7 +630,8 @@ export async function acceptPendingInvitationForBootstrapMembership(input: {
 }
 
 export async function reconcilePendingInvitationsForUser(userId: UserId) {
-  const userRows = await db
+  // primary throughout: runs as the session is created, right after sign-up or SSO JIT wrote the user and member.
+  const userRows = await db.$primary
     .select({ email: AuthUserTable.email })
     .from(AuthUserTable)
     .where(eq(AuthUserTable.id, userId))
@@ -635,7 +642,7 @@ export async function reconcilePendingInvitationsForUser(userId: UserId) {
   }
 
   const now = new Date()
-  const invitations = await db
+  const invitations = await db.$primary
     .select()
     .from(InvitationTable)
     .where(and(
@@ -651,7 +658,7 @@ export async function reconcilePendingInvitationsForUser(userId: UserId) {
       continue
     }
 
-    const existingMemberRows = await db
+    const existingMemberRows = await db.$primary
       .select({ id: MemberTable.id })
       .from(MemberTable)
       .where(and(eq(MemberTable.organizationId, invitation.organizationId), eq(MemberTable.userId, userId), isNull(MemberTable.removedAt)))
@@ -1102,8 +1109,8 @@ async function createOrganizationRecord(input: {
   return organizationId
 }
 
-export async function getSingletonOrganization() {
-  const rows = await db
+export async function getSingletonOrganization(reader: Pick<typeof db.$primary, "select"> = db) {
+  const rows = await reader
     .select()
     .from(OrganizationTable)
     .where(eq(OrganizationTable.slug, env.singleOrg.slug))
@@ -1157,16 +1164,19 @@ async function countActiveOwners(organizationId: OrgId) {
 }
 
 export async function ensureSingletonOrganizationForUser(userId: UserId, options?: { forceOwner?: boolean }) {
-  const userRows = await db
+  // Runs on many requests in single-org mode, and at sign-up right after the
+  // user (and possibly the organization) was written: the replica answers,
+  // and the primary confirms anything it does not find.
+  const readUserEmail = async (reader: Pick<typeof db.$primary, "select">) => (await reader
     .select({
       email: AuthUserTable.email,
     })
     .from(AuthUserTable)
     .where(eq(AuthUserTable.id, userId))
-    .limit(1)
-  const userEmail = userRows[0]?.email ?? null
+    .limit(1))[0]?.email ?? null
+  const userEmail = await readUserEmail(db) ?? await readUserEmail(db.$primary)
 
-  let organization = await getSingletonOrganization()
+  let organization = await getSingletonOrganization() ?? await getSingletonOrganization(db.$primary)
   if (!organization) {
     if (!options?.forceOwner && !isSingleOrgOwnerEmailEligible({
       email: userEmail,
@@ -1183,7 +1193,7 @@ export async function ensureSingletonOrganizationForUser(userId: UserId, options
       })
       return organizationId
     } catch {
-      organization = await getSingletonOrganization()
+      organization = await getSingletonOrganization(db.$primary)
       if (!organization) {
         throw new Error("failed_to_create_single_org")
       }
@@ -1250,7 +1260,14 @@ export async function ensurePersonalOrganizationForUser(userId: UserId) {
     return null
   }
 
-  const userRows = await db
+  // primary: confirm there is still no membership (one may have been created
+  // moments ago) before creating a personal organization.
+  const [primaryMembership] = await listMembershipRows(userId, db.$primary)
+  if (primaryMembership) {
+    return primaryMembership.organizationId
+  }
+
+  const userRows = await db.$primary
     .select({
       name: AuthUserTable.name,
       email: AuthUserTable.email,
@@ -1428,7 +1445,8 @@ export async function setSessionActiveOrganization(sessionId: SessionId, organiz
     .set({ activeOrganizationId: organizationId })
     .where(eq(AuthSessionTable.id, sessionId))
 
-  const rows = await db
+  // primary: a session created moments ago must still have its cached entry cleared.
+  const rows = await db.$primary
     .select({ token: AuthSessionTable.token })
     .from(AuthSessionTable)
     .where(eq(AuthSessionTable.id, sessionId))
@@ -1440,11 +1458,12 @@ export async function setSessionActiveOrganization(sessionId: SessionId, organiz
   await cache.auth.deleteSessionId(sessionId)
 }
 
-export async function listUserOrgs(userId: UserId) {
-  const memberships = await db
+export async function listUserOrgs(userId: UserId, reader: Pick<typeof db.$primary, "select"> = db) {
+  const memberships = await reader
     .select({
       membershipId: MemberTable.id,
       role: MemberTable.role,
+      sandboxOrganizationId: SandboxOrganizationTable.organizationId,
       organization: {
         id: OrganizationTable.id,
         name: OrganizationTable.name,
@@ -1458,13 +1477,14 @@ export async function listUserOrgs(userId: UserId) {
     })
     .from(MemberTable)
     .innerJoin(OrganizationTable, eq(MemberTable.organizationId, OrganizationTable.id))
+    .leftJoin(SandboxOrganizationTable, eq(SandboxOrganizationTable.organizationId, OrganizationTable.id))
     .where(and(eq(MemberTable.userId, userId), isNull(MemberTable.removedAt)))
     .orderBy(asc(MemberTable.createdAt))
 
   const organizationIds = memberships.map((row) => row.organization.id)
   const memberCounts = new Map<OrgId, number>()
   if (organizationIds.length > 0) {
-    const counts = await db
+    const counts = await reader
       .select({
         organizationId: MemberTable.organizationId,
         memberCount: count(),
@@ -1492,6 +1512,8 @@ export async function listUserOrgs(userId: UserId) {
       orgMemberId: row.membershipId,
       membershipId: row.membershipId,
       memberCount: memberCounts.get(row.organization.id) ?? 0,
+      planTier: parseOrganizationPlan(row.organization.metadata).tier,
+      isSandbox: row.sandboxOrganizationId !== null,
       createdAt: row.organization.createdAt,
       updatedAt: row.organization.updatedAt,
     } satisfies UserOrgSummary
@@ -1501,10 +1523,12 @@ export async function listUserOrgs(userId: UserId) {
 export async function resolveUserOrganizations(input: {
   activeOrganizationId?: string | null
   userId: UserId
+  /** Pass `db.$primary` right after creating a membership in the same flow. */
+  reader?: Pick<typeof db.$primary, "select">
 }) {
   await ensureUserOrgAccess({ userId: input.userId })
 
-  const visibleOrgs = await listUserOrgs(input.userId)
+  const visibleOrgs = await listUserOrgs(input.userId, input.reader)
   const orgs = env.orgMode === "single_org"
     ? visibleOrgs.filter((org) => org.slug === env.singleOrg.slug)
     : visibleOrgs
@@ -1676,8 +1700,9 @@ async function listOrganizationTeams(organizationId: OrgId) {
 
 export { listTeamsForMember } from "./member-teams.js"
 
+// primary: last-owner/admin guards decide a write; a stale row could remove the last one.
 async function listActiveOrganizationMemberGuardRows(organizationId: OrgId) {
-  return db
+  return db.$primary
     .select({
       id: MemberTable.id,
       role: MemberTable.role,
@@ -1708,7 +1733,7 @@ export async function validateOrganizationMemberRoleUpdate(input: {
   memberId: MemberRow["id"]
   nextRole: string
 }): Promise<MemberMutationResult> {
-  const memberRows = await db
+  const memberRows = await db.$primary
     .select()
     .from(MemberTable)
     .where(and(eq(MemberTable.id, input.memberId), eq(MemberTable.organizationId, input.organizationId), isNull(MemberTable.removedAt)))
@@ -1832,7 +1857,7 @@ export async function validateOrganizationMemberRemovalForHook(input: {
   organizationId: OrgId
   memberId: MemberRow["id"]
 }): Promise<MemberMutationResult> {
-  const memberRows = await db
+  const memberRows = await db.$primary
     .select()
     .from(MemberTable)
     .where(and(eq(MemberTable.id, input.memberId), eq(MemberTable.organizationId, input.organizationId), isNull(MemberTable.removedAt)))

@@ -102,30 +102,34 @@ test("with the flag off, neither the override nor a known client changes Connect
   }
 })
 
-test("one flag switches Desktop and Claude Code off, on and off at the unchanged URL", async () => {
+test("one flag switches Claude Code off, on and off at the unchanged URL, while OpenWork's own engine keeps search", async () => {
+  // The member tokens are minted for OpenWork, like Desktop's, so OpenCode's name here is OpenWork's own engine.
   const desktop = { clientInfo: { name: "opencode", version: "2.0.26" } }
+  const claude = { clientInfo: { name: "claude-code", version: "2" } }
   for (const enabled of [false, true, false]) {
     const rollout = await den.setFeature(orgId, "connectStandardTools", enabled)
     assert.ok(rollout.status < 300, summary(rollout))
-    const names = await toolNames(rileyToken, desktop)
+    const names = await toolNames(rileyToken, claude)
     assert.equal(names.includes("status_board.read_status"), enabled, names.join(","))
     assert.equal(names.includes("search_capabilities"), !enabled)
     assert.equal(names.includes("execute_capability"), !enabled)
     assert.ok(!names.includes("status_board.reset_status"), "disabled tools stay hidden")
     assert.ok((await toolNames(rileyToken)).includes("search_capabilities"), "legacy probes stay compatible")
-    const claude = await toolNames(rileyToken, { clientInfo: { name: "claude-code", version: "2" } })
-    assert.deepEqual(claude, names, "supported clients follow the same rollout")
-    const direct = await rpc(rileyToken, "tools/call", { name: "status_board.read_status", arguments: {} }, desktop)
+    const own = await toolNames(rileyToken, desktop)
+    assert.ok(own.includes("search_capabilities") && own.includes("execute_capability"), own.join(","))
+    assert.ok(!own.some((name) => name.startsWith("status_board.")), "OpenWork's own engine keeps capability search")
+    const direct = await rpc(rileyToken, "tools/call", { name: "status_board.read_status", arguments: {} }, claude)
     if (!enabled) {
       assert.ok(direct.error !== undefined || field(direct.result, "isError") === true)
       continue
     }
     assert.notEqual(field(direct.result, "isError"), true, JSON.stringify(direct))
     assert.equal(resultText(direct.result), PROOF)
-    assert.ok((await toolNames(rileyToken, { ...desktop, query: "?tools=search" })).includes("search_capabilities"))
-    assert.ok(!(await toolNames(samToken, desktop)).some((name) => name.startsWith("status_board.")))
+    assert.ok((await toolNames(rileyToken, { ...desktop, query: "?tools=full" })).includes("status_board.read_status"), "OpenWork can opt in explicitly")
+    assert.ok((await toolNames(rileyToken, { ...claude, query: "?tools=search" })).includes("search_capabilities"))
+    assert.ok(!(await toolNames(samToken, claude)).some((name) => name.startsWith("status_board.")))
     for (const [token, name] of [[samToken, "status_board.read_status"], [rileyToken, "status_board.reset_status"]]) {
-      const denied = await rpc(token, "tools/call", { name, arguments: {} }, desktop)
+      const denied = await rpc(token, "tools/call", { name, arguments: {} }, claude)
       assert.ok(denied.error !== undefined || field(denied.result, "isError") === true)
       assert.doesNotMatch(JSON.stringify(denied), new RegExp(PROOF))
     }
@@ -140,7 +144,7 @@ test("the existing member allowlist controls tools and schemas, and cannot bypas
     body: { capabilities: { connectStandardTools: value } },
   })
   const killed = (value: boolean) => den.request(admin, "PUT", "/v1/admin/features/connectStandardTools", { body: { killed: value } })
-  const options = { clientInfo: { name: "opencode", version: "2.0.26" } }
+  const options = { clientInfo: { name: "claude-code", version: "2" } }
   try {
     const allowed = await change(true)
     assert.equal(allowed.status, 200, summary(allowed))
@@ -260,4 +264,41 @@ test("with the flag on, the full view lists only granted, enabled tools and runs
   assert.notEqual(field(prepared.result, "isError"), true, JSON.stringify(prepared))
   const bound = list(field(prepared.result, "structuredContent", "tools"))
   assert.deepEqual(bound.map((tool) => tool.capability), [`mcp:${connectionId}:read_status`])
+})
+
+test("on its own flag, OpenWork's engine gets a tool per action, search for the rest and a service directory", async () => {
+  // The member tokens are minted for OpenWork, like Desktop's, so OpenCode's name here is OpenWork's own engine.
+  const engine = { clientInfo: { name: "opencode", version: "2.0.26" } }
+  const claude = { clientInfo: { name: "claude-code", version: "2" } }
+  assert.ok((await den.setFeature(orgId, "connectStandardTools", false)).status < 300)
+  try {
+    const rollout = await den.setFeature(orgId, "connectEngineTools", true)
+    assert.ok(rollout.status < 300, summary(rollout))
+    const names = await toolNames(rileyToken, engine)
+    assert.ok(names.includes("status_board.read_status") && !names.includes("status_board.reset_status"), names.join(","))
+    assert.ok(names.includes("search_capabilities") && names.includes("execute_capability") && names.includes("connection_status"), names.join(","))
+    // Every other client follows connectStandardTools, which is off.
+    const others = await toolNames(rileyToken, claude)
+    assert.ok(others.includes("search_capabilities") && !others.some((name) => name.startsWith("status_board.")), others.join(","))
+
+    const direct = await rpc(rileyToken, "tools/call", { name: "status_board.read_status", arguments: {} }, engine)
+    assert.notEqual(field(direct.result, "isError"), true, JSON.stringify(direct))
+    assert.equal(resultText(direct.result), PROOF)
+
+    // Search leaves out what is a tool, except when the person asks to connect.
+    const connectionMatches = (result: unknown) => list(field(result, "structuredContent", "matches"))
+      .filter((entry) => String(entry.name).startsWith(`mcp:${connectionId}:`))
+    const searched = await rpc(rileyToken, "tools/call", { name: "search_capabilities", arguments: { query: "status page" } }, engine)
+    assert.deepEqual(connectionMatches(searched.result), [], JSON.stringify(searched))
+    const connect = await rpc(rileyToken, "tools/call", { name: "search_capabilities", arguments: { query: "status board", intent: "connect" } }, engine)
+    assert.ok(connectionMatches(connect.result).length > 0, JSON.stringify(connect))
+
+    // The instructions name the service by the prefix the engine shows its tools with.
+    const discovered = await rpc(rileyToken, "server/discover", {}, engine)
+    assert.match(String(field(discovered.result, "instructions")), /\n- status_board_: Status Board/)
+  } finally {
+    assert.ok((await den.setFeature(orgId, "connectEngineTools", false)).status < 300)
+  }
+  const off = await toolNames(rileyToken, engine)
+  assert.ok(off.includes("search_capabilities") && !off.some((name) => name.startsWith("status_board.")), "off restores capability search")
 })

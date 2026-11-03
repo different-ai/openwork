@@ -47,6 +47,21 @@ export function inferenceEgressAllowedOrigins(value = process.env.GATEWAY_EGRESS
   return origins
 }
 
+// Shared by Den configuration validation and Gateway tests/inference. Multi-region
+// endpoints use a different host from ordinary regions and keep location eu/us.
+export function vertexHost(location: string) {
+  if (location === "eu" || location === "us") return `aiplatform.${location}.rep.googleapis.com`
+  return location === "global" ? "aiplatform.googleapis.com" : `${location}-aiplatform.googleapis.com`
+}
+
+export function vertexPublisherBase(settings: Record<string, unknown>, publisher: "google" | "anthropic") {
+  const project = settings.project
+  const location = settings.location
+  if (typeof project !== "string" || !/^(?:[a-z][a-z0-9-]{4,61}[a-z0-9]|[0-9]{6,20})$/.test(project)
+    || typeof location !== "string" || !/^(?:global|eu|us|[a-z]+(?:-[a-z]+)*[0-9]+)$/.test(location)) return null
+  return `https://${vertexHost(location)}/v1/projects/${project}/locations/${location}/publishers/${publisher}`
+}
+
 /** AWS region codes such as us-east-1, eu-central-2 or us-gov-west-1; never a hostname fragment. */
 export function isAwsRegion(value: unknown): value is string {
   return typeof value === "string" && value.length <= 32 && /^[a-z]{2}(?:-[a-z]+)+-\d{1,2}$/.test(value)

@@ -1,6 +1,5 @@
 /**
- * The libraries an App built in OpenWork may import, once the
- * `mcpAppLibraries` feature is on for its editor. Each package is pinned in
+ * The libraries an MCP App built in OpenWork may import. Each package is pinned in
  * den-api's package.json and bundled into the App's own hash-authorized
  * script at build time: authors never choose a version, install a package or
  * load a CDN, and an App carries only what it imports. React stays injected.

@@ -1,3 +1,4 @@
+import type { AgentMemberCheckMessage } from "@openwork-ee/den-db/schema"
 import type { AgentDestinationBlock } from "@openwork/types/den/workbot-proactive"
 import {
   resolveWorkbotDirectMessageTarget,
@@ -12,11 +13,12 @@ import {
  * agent reads private email, and its messages go only to the member.
  */
 
-export type DeliveryResult = { ok: true } | { ok: false; code: AgentDestinationBlock | "send_failed" }
+/** `message`: where the DM landed, so the member can open it in Slack from My agent. */
+export type DeliveryResult = { ok: true; message?: AgentMemberCheckMessage } | { ok: false; code: AgentDestinationBlock | "send_failed" }
 
 export type DeliveryDeps = {
   target: (input: { organizationId: string; userId: string }) => Promise<WorkbotDirectMessageTarget>
-  send: (input: { organizationId: string; userId: string; text: string }) => Promise<WorkbotDirectMessageResult>
+  send: (input: { organizationId: string; userId: string; text: string; permalink?: boolean }) => Promise<WorkbotDirectMessageResult>
 }
 
 export const defaultDeliveryDeps: DeliveryDeps = {
@@ -31,7 +33,7 @@ export async function destinationBlock(input: { organizationId: string; userId: 
 }
 
 export async function deliverAgentMessage(input: { organizationId: string; userId: string; text: string }, deps: DeliveryDeps = defaultDeliveryDeps): Promise<DeliveryResult> {
-  const sent = await deps.send(input)
-  if (sent.ok) return { ok: true }
+  const sent = await deps.send({ ...input, permalink: true })
+  if (sent.ok) return { ok: true, message: { channelId: sent.channelId, messageTs: sent.messageTs, permalink: sent.permalink ?? null } }
   return { ok: false, code: sent.reason === "slack_error" ? "send_failed" : sent.reason }
 }

@@ -498,7 +498,8 @@ async function listAdminTeams(organizationId: OrganizationId) {
 /** Active (non-archived) sets: Member defaults, Admin defaults, then team sets by name. */
 async function listActiveSets(organizationId: OrganizationId): Promise<PermissionSetRow[]> {
   const defaults = await ensureCurrentDefaultPermissionSets(organizationId)
-  const rows = await db.select().from(PermissionSetTable)
+  // primary: the line above may have just created the default sets.
+  const rows = await db.$primary.select().from(PermissionSetTable)
     .where(and(eq(PermissionSetTable.organizationId, organizationId), isNull(PermissionSetTable.archivedAt)))
     .orderBy(asc(PermissionSetTable.name), asc(PermissionSetTable.id))
   const rank = (row: PermissionSetRow) => row.id === defaults.member.id ? 0 : row.id === defaults.admin.id ? 1 : 2
@@ -526,8 +527,8 @@ const historyColumns = {
   changedByEmail: AuthUserTable.email,
 }
 
-function historyQuery(organizationId: OrganizationId, permissionSetId: PermissionSetId, after?: KeysetCursor) {
-  return db.select(historyColumns)
+function historyQuery(organizationId: OrganizationId, permissionSetId: PermissionSetId, after?: KeysetCursor, database: PermissionDatabase = db) {
+  return database.select(historyColumns)
     .from(PermissionSetPermissionTable)
     .leftJoin(MemberTable, eq(MemberTable.id, PermissionSetPermissionTable.changedByOrgMembershipId))
     .leftJoin(AuthUserTable, eq(AuthUserTable.id, MemberTable.userId))
@@ -549,10 +550,14 @@ async function mayViewRosters(c: PermissionRouteContext): Promise<boolean> {
   return (await callerPermissions(c))?.has("teams.view") ?? false
 }
 
-async function loadPermissionSetDetail(organizationId: OrganizationId, set: PermissionSetRow, includeIdentities: boolean) {
+/**
+ * After a write, call it through `loadPermissionSetDetailFromPrimary`: the
+ * permission rows and team links it reads were usually just written.
+ */
+async function loadPermissionSetDetail(organizationId: OrganizationId, set: PermissionSetRow, includeIdentities: boolean, database: PermissionDatabase = db) {
   const [rows, links] = await Promise.all([
-    historyQuery(organizationId, set.id),
-    readTeamLinks(db, organizationId, [set.id]),
+    historyQuery(organizationId, set.id, undefined, database),
+    readTeamLinks(database, organizationId, [set.id]),
   ])
   const states = permissionSetKeyStates({ defaultKey: set.defaultKey, rows })
   const team = currentTeam(links.get(set.id), set.archivedAt !== null)
@@ -595,6 +600,11 @@ async function loadPermissionSetDetail(organizationId: OrganizationId, set: Perm
     })),
     appliesTo,
   }
+}
+
+/** A read-only transaction keeps every read on the primary, so the response shows the write just made. */
+function loadPermissionSetDetailFromPrimary(organizationId: OrganizationId, set: PermissionSetRow, includeIdentities: boolean) {
+  return db.transaction((tx) => loadPermissionSetDetail(organizationId, set, includeIdentities, tx))
 }
 
 async function auditStateFor(database: PermissionDatabase, set: PermissionSetRow, teamId: TeamId | null, teamIds?: readonly TeamId[]): Promise<PermissionSetAuditState> {
@@ -927,7 +937,7 @@ export function registerOrgPermissionRoutes<T extends { Variables: OrgRouteVaria
             allowedKeys: joinKeys(allowed),
           },
         }, created.auditEventIds)
-        return c.json({ set: await loadPermissionSetDetail(organizationId, created.set, await mayViewRosters(c)) }, 201)
+        return c.json({ set: await loadPermissionSetDetailFromPrimary(organizationId, created.set, await mayViewRosters(c)) }, 201)
       }
       if (body.name !== undefined || body.teamIds !== undefined) {
         return c.json({ error: "invalid_request" as const, message: "Send either teamId, or a name and teamIds.", details: [] }, 400)
@@ -1030,7 +1040,7 @@ export function registerOrgPermissionRoutes<T extends { Variables: OrgRouteVaria
         },
       }, result.auditEventIds)
 
-      return c.json({ set: await loadPermissionSetDetail(organizationId, result.set, await mayViewRosters(c)) }, 201)
+      return c.json({ set: await loadPermissionSetDetailFromPrimary(organizationId, result.set, await mayViewRosters(c)) }, 201)
     },
   )
 
@@ -1125,7 +1135,7 @@ export function registerOrgPermissionRoutes<T extends { Variables: OrgRouteVaria
           payload: { permissionSetId: result.set.id, permissionSetName: result.set.name, previousName: result.previousName ?? null },
         }, result.auditEventIds)
       }
-      return c.json({ set: await loadPermissionSetDetail(organizationId, result.set, await mayViewRosters(c)) })
+      return c.json({ set: await loadPermissionSetDetailFromPrimary(organizationId, result.set, await mayViewRosters(c)) })
     },
   )
 
@@ -1209,7 +1219,7 @@ export function registerOrgPermissionRoutes<T extends { Variables: OrgRouteVaria
           },
         }, result.auditEventIds)
       }
-      return c.json({ set: result.set ? await loadPermissionSetDetail(organizationId, result.set, await mayViewRosters(c)) : null })
+      return c.json({ set: result.set ? await loadPermissionSetDetailFromPrimary(organizationId, result.set, await mayViewRosters(c)) : null })
     },
   )
 
@@ -1319,7 +1329,7 @@ export function registerOrgPermissionRoutes<T extends { Variables: OrgRouteVaria
         }, result.auditEventIds)
       }
 
-      return c.json({ set: await loadPermissionSetDetail(organizationId, result.set, await mayViewRosters(c)) })
+      return c.json({ set: await loadPermissionSetDetailFromPrimary(organizationId, result.set, await mayViewRosters(c)) })
     },
   )
 

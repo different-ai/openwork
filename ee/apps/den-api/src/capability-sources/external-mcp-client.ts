@@ -1,9 +1,11 @@
 import { randomUUID } from "node:crypto"
 import { Buffer } from "node:buffer"
 import { Client } from "@modelcontextprotocol/sdk/client/index.js"
+import { db } from "../db.js"
 import { env } from "../env.js"
 import { parseGrantedOAuthScopes } from "./oauth-credentials.js"
 import { createGuardedFetch, createRealmSafeFetch } from "./url-guard.js"
+import { parseStoredExternalMcpRequestHeaders, withExternalMcpRequestHeaders } from "./external-mcp-request-headers.js"
 import {
   type OAuthClientProvider,
   UnauthorizedError,
@@ -358,7 +360,7 @@ export class ExternalMcpOAuthProvider implements OAuthClientProvider {
     const refreshed = await getExternalMcpConnection({
       organizationId: this.connection.organizationId,
       connectionId: this.connection.id,
-    })
+    }, db.$primary)
     if (refreshed) this.connection = refreshed
     this.diagnostic.passed("AUTH_TOKEN_ACQUISITION")
   }
@@ -389,7 +391,7 @@ export class ExternalMcpOAuthProvider implements OAuthClientProvider {
         const refreshed = await getExternalMcpConnection({
           organizationId: this.connection.organizationId,
           connectionId: this.connection.id,
-        })
+        }, db.$primary)
         if (refreshed) this.connection = refreshed
       }
     }
@@ -465,7 +467,13 @@ function buildTransport(
   const provider = connection.authType === "oauth"
     ? new ExternalMcpOAuthProvider(connection, redirectUri, signedState, member, diagnostic, lifecycleDeadline)
     : undefined
-  const guardedFetch = env.allowPrivateMcpUrls ? createRealmSafeFetch() : createGuardedFetch()
+  // Administrator request headers go on the innermost fetch, and only to the
+  // MCP URL itself, so OAuth servers, diagnostics and inspection never see them.
+  const guardedFetch = withExternalMcpRequestHeaders(
+    env.allowPrivateMcpUrls ? createRealmSafeFetch() : createGuardedFetch(),
+    connection.url,
+    parseStoredExternalMcpRequestHeaders(connection.requestHeaders),
+  )
   const lifecycleFetch = lifecycleDeadline
     ? bindExternalMcpFetchToLifecycle(guardedFetch, lifecycleDeadline, diagnostic)
     : guardedFetch

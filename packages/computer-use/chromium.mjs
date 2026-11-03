@@ -266,7 +266,9 @@ export function createCloudBrowser({ statePath, assertActive, enabled, beforeInp
     void wire.send("Network.enable", {}, false).catch(() => {});
     return tab;
   }
-  async function refresh() {
+  // Page targets in the order Chromium lists them: the tab most recently in front first.
+  let order = [];
+  async function refresh(claim) {
     if (!loaded) {
       try {
         const saved = JSON.parse(await readFile(statePath, "utf8"));
@@ -275,6 +277,13 @@ export function createCloudBrowser({ statePath, assertActive, enabled, beforeInp
       loaded = true;
     }
     const targets = await json("/json/list");
+    // A tab the person opened belongs to no conversation until one names it, as Workbot does with the tab in front of
+    // its Browser view when they send a message from there.
+    if (claim && !owners.has(claim.tabId) && targets.some(target => target.type === "page" && target.id === claim.tabId)) {
+      owners.set(claim.tabId, claim.sessionId);
+      await persist();
+    }
+    order = targets.flatMap(target => target.type === "page" ? [target.id] : []);
     const live = new Set();
     for (const target of targets) if (target.type === "page" && owners.has(target.id)) {
       live.add(target.id);
@@ -285,7 +294,8 @@ export function createCloudBrowser({ statePath, assertActive, enabled, beforeInp
   }
   const host = createBrowserTaskHost({
     getTab: id => tabs.get(id), tabsFor: sessionId => [...tabs.values()].filter(tab => owners.get(tab.tabId) === sessionId),
-    ownerOf: id => owners.get(id), activeFor: sessionId => [...owners].find(([id, owner]) => owner === sessionId && tabs.has(id))?.[0],
+    // A conversation's active tab is the one of its tabs most recently in front, which is the one the person sees.
+    ownerOf: id => owners.get(id), activeFor: sessionId => order.find(id => owners.get(id) === sessionId && tabs.has(id)),
     // Prompt-injected pages must not steer the agent to this VM's worker, other
     // private hosts or cloud metadata. The VM firewall backs this up for pages
     // the person opens themselves and for redirects.
@@ -307,7 +317,12 @@ export function createCloudBrowser({ statePath, assertActive, enabled, beforeInp
     siteTools: async () => ({ ok: true, tools: [] }), runSiteTool: async () => ({ ok: false, dispatched: false, code: "unsupported" }),
   });
   return {
-    async request(input, options) { await verifyEgress(); await refresh(); return host.request(input, options); },
+    async request(input, options) {
+      await verifyEgress();
+      const tabId = input?.args?.tabId, sessionId = input?.sessionId;
+      await refresh(typeof tabId === "string" && typeof sessionId === "string" && sessionId.trim() ? { tabId, sessionId } : null);
+      return host.request(input, options);
+    },
     invalidate() { for (const id of tabs.keys()) host.invalidate(id); },
     pause() { for (const id of tabs.keys()) host.pause(id); },
     resume() { for (const id of tabs.keys()) host.resume(id); },

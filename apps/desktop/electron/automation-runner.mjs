@@ -371,6 +371,8 @@ export const REMOTE_SESSION_RECOVERY_CAPABILITY = "remote_session_recovery_v1"
 const TRANSCRIPT_TEXT_LIMIT = 20_000
 const TOOL_SUMMARY_LIMIT = 2_000
 const TOOL_CALLS_PER_MESSAGE_LIMIT = 200
+const TRANSCRIPT_PARTS_LIMIT = 200
+const REASONING_PART_LIMIT = 4_000
 /** Summaries past this per-message budget are dropped so one message always fits a page. */
 const TOOL_SUMMARY_BUDGET_BYTES = 64 * 1024
 /** Den accepts 256 KB; the rest is headroom for the result envelope. */
@@ -420,20 +422,83 @@ function transcriptToolCalls(message) {
   })
 }
 
+function timestamp(value) {
+  return Number.isSafeInteger(value) && value >= 0 ? value : null
+}
+
+/**
+ * The message's text, reasoning and tool steps in the order the engine
+ * recorded them. Tool summaries share the same per-message budget as
+ * `toolCalls`; past it a step keeps its name and status only.
+ */
+function transcriptParts(message) {
+  const parts = (Array.isArray(message?.parts) ? message.parts : [])
+    .filter((part) => !part?.synthetic && !part?.ignored)
+    .filter((part) => part?.type === "tool" || ((part?.type === "text" || part?.type === "reasoning") && typeof part.text === "string" && part.text.trim()))
+    .slice(0, TRANSCRIPT_PARTS_LIMIT)
+  let budget = TOOL_SUMMARY_BUDGET_BYTES
+  // Text and reasoning share one character budget, so a message's steps never
+  // outgrow the page however many text parts it has.
+  let chars = TRANSCRIPT_TEXT_LIMIT
+  const prose = (text, cap) => {
+    const kept = text.slice(0, Math.min(cap, chars))
+    chars -= kept.length
+    return kept
+  }
+  return parts.map((part) => {
+    if (part.type === "text") return { type: "text", text: prose(part.text, TRANSCRIPT_TEXT_LIMIT) }
+    const startedAt = timestamp(part.startedAt)
+    const endedAt = timestamp(part.endedAt)
+    if (part.type === "reasoning") {
+      return {
+        type: "reasoning",
+        text: prose(part.text, REASONING_PART_LIMIT),
+        ...(startedAt !== null && endedAt !== null && endedAt >= startedAt ? { durationMs: endedAt - startedAt } : {}),
+      }
+    }
+    const input = boundedSummary(part.toolInput)
+    const output = boundedSummary(part.toolOutput)
+    const error = boundedSummary(part.toolError)
+    const step = {
+      type: "tool",
+      id: String(part.id ?? "").slice(0, 240),
+      name: String(part.tool ?? "").slice(0, 240),
+      status: typeof part.toolStatus === "string" ? part.toolStatus.slice(0, 60) : null,
+      ...(typeof part.toolTitle === "string" && part.toolTitle ? { title: part.toolTitle.slice(0, 240) } : {}),
+      input: input.text,
+      output: output.text,
+      error: error.text,
+      truncated: input.truncated || output.truncated || error.truncated,
+      ...(startedAt === null ? {} : { startedAt }),
+      ...(endedAt === null ? {} : { endedAt }),
+    }
+    const size = jsonBytes(step)
+    if (size > budget) {
+      budget = 0
+      return { ...step, input: null, output: null, error: null, truncated: step.truncated || step.input !== null || step.output !== null || step.error !== null }
+    }
+    budget -= size
+    return step
+  })
+}
+
 function transcriptMessage(message) {
   const text = messageText(message)
   const failure = message?.error ? classifyRemoteSessionError(message.error) : null
   const toolCount = (Array.isArray(message?.parts) ? message.parts : []).filter((part) => part?.type === "tool").length
+  const completedAt = timestamp(message?.completedAt)
   return {
     id: String(message.id ?? "").slice(0, 240),
     role: message.role,
-    createdAt: Number.isSafeInteger(message?.createdAt) && message.createdAt >= 0 ? message.createdAt : null,
+    createdAt: timestamp(message?.createdAt),
     text: text.slice(0, TRANSCRIPT_TEXT_LIMIT),
     truncated: text.length > TRANSCRIPT_TEXT_LIMIT || toolCount > TOOL_CALLS_PER_MESSAGE_LIMIT,
     toolCalls: transcriptToolCalls(message),
     error: failure
       ? { code: failure.code.slice(0, 60), message: (failure.message || "The turn failed").slice(0, REMOTE_SESSION_MESSAGE_LIMIT) }
       : null,
+    parts: transcriptParts(message),
+    ...(completedAt === null ? {} : { completedAt }),
   }
 }
 

@@ -1,11 +1,13 @@
-import type { Tool, ToolAnnotations } from "@modelcontextprotocol/server"
+import type { Tool } from "@modelcontextprotocol/server"
 import type { ExternalMcpToolPolicy } from "@openwork-ee/den-db"
 import { isToolDisabled } from "../capability-sources/external-mcp-tool-policy.js"
+import { toolTitle, withSafetyHints } from "./tool-labels.js"
 
 /**
  * Standard MCP tools for one connection's own MCP server (connection-server.ts).
  * The server is the namespace, so each tool keeps its provider's name, and each
- * runs as the Connect capability execute_capability takes for it.
+ * runs as the Connect capability execute_capability takes for it. Every tool has
+ * a title and a safety hint (tool-labels.ts).
  */
 
 /** Under the agent OAuth resource, so its metadata and tokens apply as they do on /mcp/agent. */
@@ -87,15 +89,16 @@ export function providerConnectionServerTools(input: {
     if (!inputSchema || isToolDisabled(input.toolPolicy, listed.name) || !visibleToModel(listed)) return []
     const outputSchema = objectSchema(listed.outputSchema)
     const description = listed.description ?? listed.title ?? listed.name
+    const annotationTitle = isRecord(listed.annotations) && typeof listed.annotations.title === "string" ? listed.annotations.title : undefined
     return [{
       tool: {
         name: listed.name,
-        ...(listed.title ? { title: listed.title } : {}),
+        title: listed.title ?? annotationTitle ?? toolTitle(listed.name, listed.description),
         description,
         inputSchema: inputSchema as Tool["inputSchema"],
         ...(outputSchema ? { outputSchema: outputSchema as Tool["outputSchema"] } : {}),
-        // Passed through as the provider sent them, as they describe the tool to clients.
-        ...(isRecord(listed.annotations) ? { annotations: listed.annotations as ToolAnnotations } : {}),
+        // The provider's own annotations, as they describe the tool to clients, with any missing safety hint filled in.
+        annotations: withSafetyHints(listed.annotations),
       },
       capability: input.capabilityName(listed.name),
       call: "arguments" as const,
@@ -117,10 +120,10 @@ export function nativeConnectionServerTools(input: {
     return [{
       tool: {
         name: operation.name,
-        ...(operation.summary ? { title: operation.summary } : {}),
+        title: operation.summary ?? toolTitle(operation.name),
         description: operation.description ?? operation.summary ?? operation.name,
         inputSchema: inputSchema as Tool["inputSchema"],
-        annotations: { readOnlyHint: operation.method === "GET", openWorldHint: true },
+        annotations: withSafetyHints({ readOnlyHint: operation.method === "GET", openWorldHint: true }),
       },
       capability: input.capabilityName(operation.name),
       call: "api" as const,

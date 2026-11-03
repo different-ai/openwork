@@ -46,7 +46,6 @@ import {
 } from "./session-lifetime.js";
 import { DEN_ACCOUNT_CONFIG, DEN_USER_CONFIG } from "./account-linking-policy.js";
 import { cache } from "./cache.js";
-import { deploymentFeatureEnabled } from "./features.js";
 import { lastSignInCookieChange, lastSignInCookieWrites } from "./last-sign-in-method.js";
 import { hashSessionTokens } from "./session-token.js";
 import { auditBetterAuthAfter, auditBetterAuthBefore, auditBetterAuthRefusal, auditBetterAuthSessionAfter, auditBetterAuthSessionBefore, BETTER_AUTH_AUDIT_AFTER_PATHS, BETTER_AUTH_AUDIT_BEFORE_PATHS, BETTER_AUTH_SESSION_AFTER_PATHS, BETTER_AUTH_SESSION_BEFORE_PATHS, noteOAuthConsentReference, noteOAuthRevocation, noteOAuthTokenIssuance, type BetterAuthHookSession } from "./audit/better-auth.js";
@@ -54,7 +53,7 @@ import { auditUserUpdateAfter, auditUserUpdateBefore, recordAccountDeleted, reco
 import { auditSessionMethod, auditSessionRevokeReason, recordSessionCreated, recordSessionRevoked } from "./audit/domain/sessions.js";
 import { SCIM_TOKEN_STORAGE_STRATEGY } from "./scim-token-storage.js";
 import { createScimExistingUserLinkCheck } from "./scim-existing-user-linking.js";
-import { isCimdClientIdUrlAllowed } from "./mcp/cimd-policy.js";
+import { fetchCimdMetadataResource, isCimdClientIdUrlAllowed } from "./mcp/cimd-policy.js";
 import { withLoopbackRedirectRelaxation } from "./mcp/cimd-loopback-redirects.js";
 import { syncDenSignupContact } from "./loops.js";
 import { sendEmail } from "./utils/email/send-email.js";
@@ -93,7 +92,7 @@ import { SSO_DOMAIN_VERIFICATION_TOKEN_PREFIX } from "./sso-domain-verification.
 import {
   authorizeOrganizationSsoSignIn,
   completeOrganizationSsoTestIntent,
-  failOrganizationSsoTestIntent,
+  failOrganizationSsoTestAuthentication,
   getSsoTestIntentIdFromCallbackUrl,
 } from "./sso-test-lifecycle.js";
 import {
@@ -107,11 +106,11 @@ import {
 } from "./enterprise-auth-requirement.js";
 import { normalizeLoginEmail } from "./auth-login-options.js";
 import { getAuthBodyEmail, getSingleOrgEmailSignupPolicyViolation } from "./single-org-signup-policy.js";
-import { readInitialAdminBootstrapGrantFromBody } from "./initial-admin-bootstrap.js";
+import { authorizeInitialAdminBootstrapSignup, readInitialAdminBootstrapGrantFromBody } from "./initial-admin-bootstrap.js";
 import { createDenTypeId, normalizeDenTypeId } from "@openwork-ee/utils/typeid";
 import * as schema from "@openwork-ee/den-db/schema";
 import { apiKey } from "@better-auth/api-key";
-import { cimdClientDiscovery } from "@better-auth/cimd";
+import { createCimdClientDiscovery } from "@better-auth/cimd";
 import { extendOAuthProvider, oauthProvider } from "@better-auth/oauth-provider";
 import { scim } from "@better-auth/scim";
 import { sso } from "@better-auth/sso";
@@ -755,12 +754,10 @@ function getEnterpriseAuthRedirectUrl(input: {
   return url.toString();
 }
 
-const lastSignInLogger = appLogger.child({ component: "last_sign_in_method" });
-
 /**
  * Remembers a password, Google or GitHub sign-in in a long-lived cookie, and
- * forgets it after an SSO sign-in (feature `lastUsedSignIn`). Never fails the
- * sign-in: a broken feature lookup only skips remembering.
+ * forgets it after an SSO sign-in. Available on every deployment without a
+ * feature-service lookup during authentication.
  */
 async function updateLastSignInCookie(ctx: Parameters<Parameters<typeof createAuthMiddleware>[0]>[0]) {
   const change = lastSignInCookieChange({
@@ -769,13 +766,6 @@ async function updateLastSignInCookie(ctx: Parameters<Parameters<typeof createAu
     signedIn: Boolean(ctx.context.newSession),
   });
   if (!change) return;
-  if (change.type === "remember") {
-    const enabled = await deploymentFeatureEnabled("lastUsedSignIn").catch((error: unknown) => {
-      lastSignInLogger.warn("could not read lastUsedSignIn; not remembering the sign-in method", { auth_path: ctx.path, error_name: error instanceof Error ? error.name : typeof error });
-      return false;
-    });
-    if (!enabled) return;
-  }
   const writes = lastSignInCookieWrites(change, {
     secure: env.betterAuthUrl.startsWith("https:"),
     cookieDomain: env.betterAuthCookieDomain,
@@ -812,13 +802,14 @@ export const auth = betterAuth({
       : undefined,
   socialProviders:
     Object.keys(socialProviders).length > 0 ? socialProviders : undefined,
-  // Session tokens are stored hashed once sessionTokenHashing is on (src/session-token.ts).
-  database: hashSessionTokens(drizzleAdapter(db, {
+  // Session tokens are stored hashed (src/session-token.ts).
+  // Primary only: the MySQL adapter inserts then selects the row back, which a
+  // lagging read replica would miss.
+  database: hashSessionTokens(drizzleAdapter(db.$primary, {
     provider: "mysql",
     schema,
   }), {
     secret: env.betterAuthSecret,
-    hashTokens: () => deploymentFeatureEnabled("sessionTokenHashing"),
   }),
   account: DEN_ACCOUNT_CONFIG,
   user: DEN_USER_CONFIG,
@@ -841,11 +832,17 @@ export const auth = betterAuth({
           }
           const verifiedByInvitation = context?.path === "/sign-up/email"
             && await invitationLinkVerifiesEmail({ inviteToken: readSignUpInvite(context), email });
+          // The /setup administrator's email is one the operator configured,
+          // and the one-time setup code proves the person signing up is that
+          // operator. Like an invitation link, that vouches for the address,
+          // so linking SSO later keeps their password and session.
+          const verifiedByBootstrap = !verifiedByInvitation && context?.path === "/sign-up/email"
+            && Boolean(await authorizeInitialAdminBootstrapSignup({ body: context.body, email }));
           return {
             data: {
               ...user,
               email,
-              ...(verifiedByInvitation ? { emailVerified: true } : {}),
+              ...(verifiedByInvitation || verifiedByBootstrap ? { emailVerified: true } : {}),
             },
           };
         },
@@ -1311,7 +1308,7 @@ export const auth = betterAuth({
 
         const newSession = ctx.context.newSession;
         if (!newSession) {
-          await failOrganizationSsoTestIntent(intentId, "authentication");
+          await failOrganizationSsoTestAuthentication(intentId);
           return;
         }
 
@@ -1577,7 +1574,8 @@ export const auth = betterAuth({
           }
 
           if (hasRole(role, ORGANIZATION_OWNER_ROLE)) {
-            const existingMembers = await db
+            // primary: a lagging replica could miss members added moments ago and allow a second owner.
+            const existingMembers = await db.$primary
               .select({ id: schema.MemberTable.id })
               .from(schema.MemberTable)
               .where(eq(schema.MemberTable.organizationId, normalizeDenTypeId("organization", member.organizationId)))
@@ -1789,12 +1787,13 @@ export const auth = betterAuth({
           // Same discovery the @better-auth/cimd plugin installs, wrapped so a
           // registered loopback redirect matches on any port (RFC 8252 §7.3),
           // which native MCP clients such as Claude Code depend on.
-          clientDiscovery: withLoopbackRedirectRelaxation(cimdClientDiscovery({
+          clientDiscovery: withLoopbackRedirectRelaxation(createCimdClientDiscovery({
             // Redirect URIs are matched at authorize time and Den's MCP redirect
             // policy still applies; native clients legitimately redirect to
             // loopback or another origin than the one hosting their document.
             originBoundFields: ["post_logout_redirect_uris", "client_uri"],
-            allowFetch: (url) => isCimdClientIdUrlAllowed(url),
+            fetchClientMetadataResource: fetchCimdMetadataResource,
+            isMetadataDocumentUrlAllowed: (url) => isCimdClientIdUrlAllowed(url),
             onClientCreated: ({ client }) => {
               logger.info("Registered MCP client from its client ID metadata document", {
                 clientId: client.clientId,

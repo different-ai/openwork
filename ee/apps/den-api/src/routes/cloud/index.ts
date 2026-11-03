@@ -108,7 +108,7 @@ type CloudInstanceUpdateResponse =
   | { ok: true; status: "update_requested" }
   | { ok: false; error: "already_current" | "flush_failed" | "busy" | "activity_unknown" }
 type CloudWorkerStore = CloudRuntimeStore & {
-  getCloudWorker: (input: { orgId: OrgId; userId: UserId }) => Promise<CloudWorker | null>
+  getCloudWorker: (input: { orgId: OrgId; userId: UserId; primary?: boolean }) => Promise<CloudWorker | null>
   insertCloudWorkerWithTokens: (input: {
     workerId: WorkerId
     orgId: OrgId
@@ -250,7 +250,7 @@ const databaseCloudWorkerStore: CloudWorkerStore = {
     // instances. Follow-up: admin user deletion currently nulls
     // created_by_user_id (src/user-deletion.ts), orphaning instances; cleanup is
     // tracked separately.
-    const rows = await db
+    const rows = await (input.primary ? db.$primary : db)
       .select()
       .from(WorkerTable)
       .where(and(
@@ -403,8 +403,8 @@ function gatewaySecretMatches(requestSecret: string | undefined, configuredSecre
   return timingSafeStringEqual(candidate, expected)
 }
 
-async function getCloudWorker(orgId: OrgId, userId: UserId, store: CloudWorkerStore) {
-  return store.getCloudWorker({ orgId, userId })
+async function getCloudWorker(orgId: OrgId, userId: UserId, store: CloudWorkerStore, options: { primary?: boolean } = {}) {
+  return store.getCloudWorker({ orgId, userId, ...options })
 }
 
 async function createCloudWorker(input: {
@@ -429,7 +429,8 @@ async function createCloudWorker(input: {
     activityToken,
   })
 
-  const canonical = await getCloudWorker(input.orgId, input.createdByUserId, input.store)
+  // Primary: must see the row inserted above and any concurrent winner.
+  const canonical = await getCloudWorker(input.orgId, input.createdByUserId, input.store, { primary: true })
   if (canonical && canonical.id !== workerId) {
     // No unique index exists for (org_id, created_by_user_id, destination,
     // sandbox_backend), and a partial unique is not viable across legacy rows.

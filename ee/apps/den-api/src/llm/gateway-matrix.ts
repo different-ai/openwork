@@ -1,10 +1,10 @@
 import { isDeepStrictEqual } from "node:util"
-import { and, eq, inArray, isNull, or } from "@openwork-ee/den-db/drizzle"
+import { and, asc, eq, inArray, isNull, or } from "@openwork-ee/den-db/drizzle"
 import { AuthUserTable, GatewayCredentialSetTable, GatewayModelGroupModelTable, GatewayModelGroupTable, GatewayProviderAccessTable, GatewayProviderCredentialTable, GatewayProviderModelTable, GatewayProviderOauthStateTable, GatewayProviderTable, MemberTable, TeamTable } from "@openwork-ee/den-db/schema"
 import { createDenTypeId, normalizeDenTypeId } from "@openwork-ee/utils/typeid"
 import { createGatewayModelAlias, gatewayAudienceKey } from "@openwork-ee/utils/gateway-routing"
 import { inferenceCredentialEnvNames, isInferenceCredentialKindSupported, pickInferenceApiKeyFromMap } from "@openwork-ee/utils/inference-credentials"
-import { isAwsRegion } from "@openwork-ee/utils/inference-egress"
+import { isAwsRegion, vertexPublisherBase } from "@openwork-ee/utils/inference-egress"
 import { isLiteLlmProviderId } from "@openwork-ee/utils/litellm-catalog"
 import { MICROSOFT_FOUNDRY_PROVIDER_ID, isMicrosoftFoundryResourceName } from "@openwork-ee/utils/microsoft-foundry-catalog"
 import { parseGatewayProviderSecret, type GatewayAccessGrant, type GatewayAccessGrantWrite, type GatewayCredentialSet, type GatewayCredentialSetPatch, type GatewayModelGroup, type GatewayModelGroupPatch, type GatewayProviderDetails, type GatewayProviderSummary, type GatewayUsableModel } from "@openwork/types/den/gateway"
@@ -36,10 +36,8 @@ export function validateGatewaySettings(config: Record<string, unknown>, setting
   if (error) throw new GatewayWriteError(400, "invalid_settings", error)
   const npm = readProviderConfigNpm(config)
   if (npm === "@ai-sdk/google-vertex" || npm === "@ai-sdk/google-vertex/anthropic") {
-    // Keep identical to Gateway's vertexPublisherBase (gateway/src/protocols.ts); no shared validator exists yet.
-    if (typeof settings.project !== "string" || !/^(?:[a-z][a-z0-9-]{4,61}[a-z0-9]|[0-9]{6,20})$/.test(settings.project)
-      || typeof settings.location !== "string" || !/^(?:global|[a-z]+(?:-[a-z]+)*[0-9]+)$/.test(settings.location)) {
-      throw new GatewayWriteError(400, "invalid_settings", "Vertex requires a 6-63 character project ID or 6-20 digit project number, and global or a region ending in digits.")
+    if (!vertexPublisherBase(settings, npm === "@ai-sdk/google-vertex" ? "google" : "anthropic")) {
+      throw new GatewayWriteError(400, "invalid_settings", "Vertex requires a 6-63 character project ID or 6-20 digit project number, and global, eu, us, or a region ending in digits.")
     }
   }
   const bedrockError = isAwsGatewayNpm(npm) ? bedrockSettingsError(settings) : null
@@ -264,7 +262,7 @@ export async function writeGatewayGroup(tx: GatewayTx, provider: GatewayProvider
   return id
 }
 
-function normalizeCredential(input: GatewayCredentialSetPatch, provider: GatewayProvider, existing?: Credential): CredentialInput | null {
+export function normalizeCredential(input: GatewayCredentialSetPatch, provider: GatewayProvider, existing?: Credential): CredentialInput | null {
   const envNames = readProviderEnvNames(provider.provider_config)
   let credential = input.credential ?? null
   if (input.apiKeys) {
@@ -454,31 +452,129 @@ export function publicGatewayPinnedModelIds(pinnedModelIds: readonly string[], u
  * are dropped (attentionCount stays); createdBy, oauthTenantId, awsSso and settings.upstreamBaseUrl
  * are omitted, and oauthClientId and litellm.baseUrl are null.
  */
-export type GatewaySummaryOptions = { managerDetails?: boolean }
-export function gatewaySummary(provider: GatewayProvider, memberId: GatewayMemberId, baseUrl: string, manage: true, options?: GatewaySummaryOptions): Promise<GatewayProviderDetails>
-export function gatewaySummary(provider: GatewayProvider, memberId: GatewayMemberId, baseUrl: string, manage: boolean, options?: GatewaySummaryOptions): Promise<GatewayProviderSummary>
-export async function gatewaySummary(provider: GatewayProvider, memberId: GatewayMemberId, baseUrl: string, manage: boolean, options: GatewaySummaryOptions = {}): Promise<GatewayProviderDetails | GatewayProviderSummary> {
-  const identities = manage && options.managerDetails === true
-  const [member] = await db.select({ userId: MemberTable.userId }).from(MemberTable).where(and(eq(MemberTable.id, memberId), eq(MemberTable.organizationId, provider.organization_id), isNull(MemberTable.removedAt)))
+export type GatewaySummaryOptions = {
+  managerDetails?: boolean
+  /** Read from the primary: the caller just wrote this provider's rows and returns them. */
+  primary?: boolean
+}
+
+type GatewaySummaryRows = {
+  access: Array<typeof GatewayProviderAccessTable.$inferSelect>
+  catalogModels: Array<typeof GatewayProviderModelTable.$inferSelect>
+  credentials: Array<{ credential: typeof GatewayProviderCredentialTable.$inferSelect; memberName: string | null; memberEmail: string | null }>
+  groups: Array<typeof GatewayModelGroupTable.$inferSelect>
+  links: Array<typeof GatewayModelGroupModelTable.$inferSelect>
+  sets: Array<typeof GatewayCredentialSetTable.$inferSelect>
+}
+
+/** The rows gatewaySummary reads, for one or many providers of an organization at once. */
+export type GatewaySummaryReads = {
+  creators: Array<{ id: GatewayMemberId; name: string | null; email: string | null }>
+  identities: boolean
+  manage: boolean
+  memberId: GatewayMemberId
+  providers: ReadonlyMap<GatewayProvider["id"], GatewaySummaryRows>
+  teamIds: string[]
+}
+
+function rowsByProvider<Row>(rows: Row[], providerId: (row: Row) => GatewayProvider["id"]) {
+  const grouped = new Map<GatewayProvider["id"], Row[]>()
+  for (const row of rows) {
+    const existing = grouped.get(providerId(row))
+    if (existing) existing.push(row)
+    else grouped.set(providerId(row), [row])
+  }
+  return grouped
+}
+
+/**
+ * Reads everything gatewaySummary needs for these providers of one
+ * organization, one query per table however many providers there are. Each
+ * provider's rows keep the order its own lookup returns them in (the
+ * provider index order), so a summary does not depend on how many providers
+ * were read with it. Read-only: never refreshes the catalog or locks the
+ * provider. Catalog sync happens on provider/group writes and
+ * GET /v1/inference-providers/:id/models. Throws 403 unless the member is
+ * active in the organization.
+ */
+export async function readGatewaySummaries(input: { identities: boolean; manage: boolean; memberId: GatewayMemberId; organizationId: GatewayProvider["organization_id"]; providers: GatewayProvider[]; primary?: boolean }): Promise<GatewaySummaryReads> {
+  const { manage, memberId, organizationId } = input
+  const reader = input.primary ? db.$primary : db
+  const providerIds = input.providers.map((provider) => provider.id)
+  if (input.providers.some((provider) => provider.organization_id !== organizationId)) throw new Error("gateway_summary_organization_mismatch")
+  const [[member], catalogModels, groups, sets, links, access, credentials, teams] = await Promise.all([
+    reader.select({ userId: MemberTable.userId }).from(MemberTable).where(and(eq(MemberTable.id, memberId), eq(MemberTable.organizationId, organizationId), isNull(MemberTable.removedAt))),
+    providerIds.length ? reader.select().from(GatewayProviderModelTable).where(inArray(GatewayProviderModelTable.gateway_provider_id, providerIds))
+      .orderBy(asc(GatewayProviderModelTable.gateway_provider_id), asc(GatewayProviderModelTable.model_id)) : [],
+    providerIds.length ? reader.select().from(GatewayModelGroupTable).where(inArray(GatewayModelGroupTable.gateway_provider_id, providerIds))
+      .orderBy(asc(GatewayModelGroupTable.gateway_provider_id), asc(GatewayModelGroupTable.id)) : [],
+    providerIds.length ? reader.select().from(GatewayCredentialSetTable).where(inArray(GatewayCredentialSetTable.gateway_provider_id, providerIds))
+      .orderBy(asc(GatewayCredentialSetTable.gateway_provider_id), asc(GatewayCredentialSetTable.id)) : [],
+    providerIds.length ? reader.select({ link: GatewayModelGroupModelTable, providerId: GatewayModelGroupTable.gateway_provider_id }).from(GatewayModelGroupModelTable)
+      .innerJoin(GatewayModelGroupTable, eq(GatewayModelGroupTable.id, GatewayModelGroupModelTable.model_group_id))
+      .where(inArray(GatewayModelGroupTable.gateway_provider_id, providerIds)) : [],
+    providerIds.length ? reader.select().from(GatewayProviderAccessTable).where(inArray(GatewayProviderAccessTable.gateway_provider_id, providerIds))
+      .orderBy(asc(GatewayProviderAccessTable.gateway_provider_id), asc(GatewayProviderAccessTable.audience_key), asc(GatewayProviderAccessTable.model_group_id), asc(GatewayProviderAccessTable.credential_set_id)) : [],
+    providerIds.length ? reader.select({ credential: GatewayProviderCredentialTable, memberName: AuthUserTable.name, memberEmail: AuthUserTable.email }).from(GatewayProviderCredentialTable)
+      .leftJoin(MemberTable, and(eq(MemberTable.id, GatewayProviderCredentialTable.org_membership_id), eq(MemberTable.organizationId, organizationId))).leftJoin(AuthUserTable, eq(AuthUserTable.id, MemberTable.userId))
+      .where(and(inArray(GatewayProviderCredentialTable.gateway_provider_id, providerIds), eq(GatewayProviderCredentialTable.organization_id, organizationId),
+        manage ? undefined : or(
+          and(eq(GatewayProviderCredentialTable.subject, "org"), isNull(GatewayProviderCredentialTable.org_membership_id)),
+          and(eq(GatewayProviderCredentialTable.subject, memberId), eq(GatewayProviderCredentialTable.org_membership_id, memberId)),
+        )))
+      .orderBy(asc(GatewayProviderCredentialTable.gateway_provider_id), asc(GatewayProviderCredentialTable.id)) : [],
+    memberGatewayTeams(reader, organizationId, memberId),
+  ])
   if (!member?.userId) throw new GatewayWriteError(403, "forbidden")
-  // Read-only: never refreshes the catalog or locks the provider. Catalog sync
-  // happens on provider/group writes and GET /v1/inference-providers/:id/models.
-  const catalogModels = await db.select().from(GatewayProviderModelTable).where(eq(GatewayProviderModelTable.gateway_provider_id, provider.id))
+  const creatorIds = [...new Set(sets.flatMap((set) => set.created_by_org_membership_id ? [set.created_by_org_membership_id] : []))]
+  const creators = input.identities && creatorIds.length ? await reader.select({ id: MemberTable.id, name: AuthUserTable.name, email: AuthUserTable.email }).from(MemberTable)
+    .leftJoin(AuthUserTable, eq(AuthUserTable.id, MemberTable.userId))
+    .where(and(inArray(MemberTable.id, creatorIds), eq(MemberTable.organizationId, organizationId), isNull(MemberTable.removedAt))) : []
+  const modelsByProvider = rowsByProvider(catalogModels, (row) => row.gateway_provider_id)
+  const groupsByProvider = rowsByProvider(groups, (row) => row.gateway_provider_id)
+  const setsByProvider = rowsByProvider(sets, (row) => row.gateway_provider_id)
+  const linksByProvider = rowsByProvider(links, (row) => row.providerId)
+  const accessByProvider = rowsByProvider(access, (row) => row.gateway_provider_id)
+  const credentialsByProvider = rowsByProvider(credentials, (row) => row.credential.gateway_provider_id)
+  return {
+    creators,
+    identities: input.identities,
+    manage,
+    memberId,
+    providers: new Map(providerIds.map((id) => [id, {
+      access: accessByProvider.get(id) ?? [],
+      catalogModels: modelsByProvider.get(id) ?? [],
+      credentials: credentialsByProvider.get(id) ?? [],
+      groups: groupsByProvider.get(id) ?? [],
+      links: (linksByProvider.get(id) ?? []).map((row) => row.link),
+      sets: setsByProvider.get(id) ?? [],
+    }])),
+    teamIds: teams.map((team) => team.id),
+  }
+}
+
+/** The caller's effective grants for a provider, from rows readGatewaySummaries read: active groups and sets only. */
+export function effectiveGatewaySummaryGrants(provider: GatewayProvider, memberId: GatewayMemberId, reads: GatewaySummaryReads) {
+  const rows = reads.providers.get(provider.id)
+  if (!rows) return []
+  const activeGroupIds = new Set(rows.groups.filter((group) => group.status === "active").map((group) => group.id))
+  const activeSetIds = new Set(rows.sets.filter((set) => set.status === "active").map((set) => set.id))
+  const activeAccess = rows.access.filter((grant) => activeGroupIds.has(grant.model_group_id) && activeSetIds.has(grant.credential_set_id))
+  return effectiveGatewayGrants(activeAccess, memberId, reads.teamIds)
+}
+
+export function gatewaySummary(provider: GatewayProvider, memberId: GatewayMemberId, baseUrl: string, manage: true, options?: GatewaySummaryOptions, reads?: GatewaySummaryReads): Promise<GatewayProviderDetails>
+export function gatewaySummary(provider: GatewayProvider, memberId: GatewayMemberId, baseUrl: string, manage: boolean, options?: GatewaySummaryOptions, reads?: GatewaySummaryReads): Promise<GatewayProviderSummary>
+export async function gatewaySummary(provider: GatewayProvider, memberId: GatewayMemberId, baseUrl: string, manage: boolean, options: GatewaySummaryOptions = {}, reads?: GatewaySummaryReads): Promise<GatewayProviderDetails | GatewayProviderSummary> {
+  const identities = manage && options.managerDetails === true
+  // A list (or the connect payload) passes the rows it already read; otherwise read this provider's.
+  const summaryReads = reads ?? await readGatewaySummaries({ identities, manage, memberId, organizationId: provider.organization_id, providers: [provider], primary: options.primary })
+  const rows = summaryReads.providers.get(provider.id)
+  if (!rows || summaryReads.memberId !== memberId || summaryReads.manage !== manage || summaryReads.identities !== identities) throw new Error("gateway_summary_reads_mismatch")
+  const { access, catalogModels, credentials, groups, links, sets } = rows
   const catalogModelsById = new Map(catalogModels.map((model) => [model.id, model]))
   const models = catalogModels.filter((model) => (!provider.model_ids.length || provider.model_ids.includes(model.model_id))
       && !gatewayModelConfigurationError(provider.provider_config, [model.model_config]))
-  const groups = await db.select().from(GatewayModelGroupTable).where(eq(GatewayModelGroupTable.gateway_provider_id, provider.id))
-  const sets = await db.select().from(GatewayCredentialSetTable).where(eq(GatewayCredentialSetTable.gateway_provider_id, provider.id))
-  const links = groups.length ? await db.select().from(GatewayModelGroupModelTable).where(inArray(GatewayModelGroupModelTable.model_group_id, groups.map((group) => group.id))) : []
-  const access = await db.select().from(GatewayProviderAccessTable).where(eq(GatewayProviderAccessTable.gateway_provider_id, provider.id))
-  const credentials = await db.select({ credential: GatewayProviderCredentialTable, memberName: AuthUserTable.name, memberEmail: AuthUserTable.email }).from(GatewayProviderCredentialTable)
-    .leftJoin(MemberTable, and(eq(MemberTable.id, GatewayProviderCredentialTable.org_membership_id), eq(MemberTable.organizationId, provider.organization_id))).leftJoin(AuthUserTable, eq(AuthUserTable.id, MemberTable.userId))
-    .where(and(eq(GatewayProviderCredentialTable.gateway_provider_id, provider.id), eq(GatewayProviderCredentialTable.organization_id, provider.organization_id),
-      manage ? undefined : or(
-        and(eq(GatewayProviderCredentialTable.subject, "org"), isNull(GatewayProviderCredentialTable.org_membership_id)),
-        and(eq(GatewayProviderCredentialTable.subject, memberId), eq(GatewayProviderCredentialTable.org_membership_id, memberId)),
-      )))
-  const teams = await memberGatewayTeams(db, provider.organization_id, memberId)
   // Index this request's live rows only; access and credential state are never
   // reused across reads. Large catalogs otherwise rescan every link per model.
   const groupsById = new Map(groups.map((group) => [group.id, group]))
@@ -492,11 +588,8 @@ export async function gatewaySummary(provider: GatewayProvider, memberId: Gatewa
   }
   const modelsByGroupId = new Map(groups.map((group) => [group.id, models.filter((model) => linkedModelIds.get(group.id)?.has(model.id))]))
   const activeAccess = access.filter((grant) => activeGroupIds.has(grant.model_group_id) && activeSetIds.has(grant.credential_set_id))
-  const grants = provider.status === "active" ? effectiveGatewayGrants(activeAccess, memberId, teams.map((team) => team.id)) : []
-  const creatorIds = sets.flatMap((set) => set.created_by_org_membership_id ? [set.created_by_org_membership_id] : [])
-  const creators = identities && creatorIds.length ? await db.select({ id: MemberTable.id, name: AuthUserTable.name, email: AuthUserTable.email }).from(MemberTable)
-    .leftJoin(AuthUserTable, eq(AuthUserTable.id, MemberTable.userId))
-    .where(and(inArray(MemberTable.id, creatorIds), eq(MemberTable.organizationId, provider.organization_id), isNull(MemberTable.removedAt))) : []
+  const grants = provider.status === "active" ? effectiveGatewayGrants(activeAccess, memberId, summaryReads.teamIds) : []
+  const creators = summaryReads.creators
   const setSummaries: GatewayCredentialSet[] = sets.map((set) => {
     const creator = creators.find((member) => member.id === set.created_by_org_membership_id)
     const subject = set.credential_mode === "org" ? "org" : memberId
@@ -582,7 +675,7 @@ export async function gatewaySummary(provider: GatewayProvider, memberId: Gatewa
   if (!manage) return summary
   const modelGroups: GatewayModelGroup[] = groups.map((group) => ({ id: group.id, name: group.name, description: group.description, status: group.status,
     modelIds: (modelsByGroupId.get(group.id) ?? []).map((model) => model.model_id) }))
-  const status = await liteLlmStatus(provider)
+  const status = await liteLlmStatus(provider, options.primary)
   const litellm = status && !identities ? { ...status, baseUrl: null, attention: [] } : status
   const settings = publicProviderSettings(provider.settings)
   if (!identities) delete settings.upstreamBaseUrl

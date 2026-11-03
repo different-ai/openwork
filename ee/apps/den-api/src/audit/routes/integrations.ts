@@ -90,8 +90,8 @@ export const integrationsAuditRoutes: readonly AuditRouteDeclaration[] = [
   external("POST", `${GW}/gmail-message/:messageId/untrash`, "capability.gmail.message.untrash", GWK, res("gmail_message", "messageId"), GOOGLE, CAP),
   access("GET", `${GW}/calendar-events`, "capability.google_calendar.event.list", GWK, res("google_calendar_event"), CAP_CONTENT),
   access("GET", `${GW}/calendar-events/:eventId`, "capability.google_calendar.event.read", GWK, res("google_calendar_event", "eventId"), CAP_CONTENT),
-  external("POST", `${GW}/calendar-events`, "capability.google_calendar.event.create", GWK, res("google_calendar_event"), GOOGLE, `${CAP} May send invitations to attendees.`),
-  external("PATCH", `${GW}/calendar-events/:eventId`, "capability.google_calendar.event.update", GWK, res("google_calendar_event", "eventId"), GOOGLE, `${CAP} May notify attendees; response echoes event incl. attendees.`),
+  external("POST", `${GW}/calendar-events`, "capability.google_calendar.event.create", GWK, res("google_calendar_event"), GOOGLE, `${CAP} Creates a one-time event or recurring meeting series; may send invitations to attendees.`),
+  external("PATCH", `${GW}/calendar-events/:eventId`, "capability.google_calendar.event.update", GWK, res("google_calendar_event", "eventId"), GOOGLE, `${CAP} Edits one occurrence or the whole recurring series by ID, including recurrence; may notify attendees; response echoes event incl. attendees.`),
   external("PATCH", `${GW}/calendar-event/:eventId`, "capability.google_calendar.event.meet.add", GWK, res("google_calendar_event", "eventId"), GOOGLE, `${CAP} Adds a Google Meet conference.`),
   external("DELETE", `${GW}/calendar-events/:eventId`, "capability.google_calendar.event.delete", GWK, res("google_calendar_event", "eventId"), GOOGLE, `${CAP} May notify attendees.`),
   access("GET", `${GW}/drive-files`, "capability.google_drive.file.search", GWK, res("google_drive_file"), `${CAP} Response lists file names and links.`),
@@ -116,6 +116,10 @@ export const integrationsAuditRoutes: readonly AuditRouteDeclaration[] = [
   access("POST", `${GW}/drive-download-links`, "capability.google_drive.download_link.create", GWK, res("google_drive_file"), `${CAP} Returns a five-minute signed link to one file; the link is not audit evidence.`),
   handlerRoute("tenant_access", "GET", "/v1/direct-downloads/google-workspace/drive-link", "capability.google_drive.download_link.use", GWK, res("google_drive_file"), { notes: "Signed five-minute link bound to one member, connection, file and format; attributed to that member after verification, with organization access rechecked. Bytes are not audit evidence." }),
   external("POST", "/v1/direct-uploads/google-workspace/gmail-drafts", "capability.gmail.draft.attachments.create", GWK, res("gmail_draft"), GOOGLE, "cloudTransportRoute (MCP OAuth token, org from token); creates a draft with attachments, never sends. Conditional token refresh write."),
+  access("GET", `${GW}/chat-spaces`, "capability.google_chat.space.list", GWK, res("google_chat_space"), `${CAP} Response lists conversation names.`),
+  access("GET", `${GW}/chat-direct-message`, "capability.google_chat.direct_message.find", GWK, res("google_chat_space"), `${CAP} The looked-up email is not audit evidence.`),
+  access("GET", `${GW}/chat-spaces/:spaceId/messages`, "capability.google_chat.message.list", GWK, res("google_chat_space", "spaceId"), CAP_CONTENT),
+  external("POST", `${GW}/chat-spaces/:spaceId/messages`, "capability.google_chat.message.send", GWK, res("google_chat_space", "spaceId"), GOOGLE, `${CAP} Posts a Google Chat message.`),
 
   // Microsoft 365 capabilities
   access("GET", `${MS}/mail-messages`, "capability.outlook_mail.message.search", MSK, res("outlook_message"), CAP_CONTENT),
@@ -231,7 +235,7 @@ export const integrationsAuditRoutes: readonly AuditRouteDeclaration[] = [
 
   // Inference providers (reads, member OAuth, uncovered mutations)
   read("/v1/inference-providers", "inference_provider.list", IP, res("provider")),
-  read("/v1/inference-providers/inventory/revision", "inference_provider.inventory.revision", IP, res("provider"), "Read-only opaque member-scoped inventory revision; liveProviderSync gated."),
+  read("/v1/inference-providers/inventory/revision", "inference_provider.inventory.revision", IP, res("provider"), "Read-only opaque member-scoped inventory revision."),
   read("/v1/inference-providers/inventory/events", "inference_provider.inventory.watch", IP, res("provider"), "SSE opaque revisions only. Session, membership and rollout revalidated from the database every two seconds; fail closed on revocation or unavailable checks."),
   read("/v1/inference-providers/model-management", "inference_provider.model_management.list", IP, res("provider")),
   read("/v1/inference-providers/member-connections", "inference_provider.member_connection.list", IPO, res("provider_credential")),
@@ -249,6 +253,7 @@ export const integrationsAuditRoutes: readonly AuditRouteDeclaration[] = [
   handlerRoute("tenant_external", "POST", "/v1/inference-providers/oauth/browser-aws-poll", "inference_provider.member_oauth.browser_aws_poll", IPO, res("provider_credential"), { external: "AWS IAM Identity Center (CreateToken, GetRoleCredentials, Logout) and STS GetCallerIdentity", notes: "Public poll. Attributed like browser-aws-start once the cookie user matches the attempt; at most one AWS token request per polling interval. On approval verifies role credentials and identity, then stores the member credential and consumes the attempt." }),
   handlerRoute("tenant_external", "GET", "/v1/inference-providers/oauth/callback", "inference_provider.member_oauth.complete", IPO, res("provider_credential"), { external: "Google OAuth or Microsoft Entra ID (code exchange; Google token revocation on cleanup)", notes: "Attributed after the signed cookie, single-use state and provider/set binding are verified and before the state claim and Google code exchange: org = provider.organization_id, actor = initiating user + member. Failures render HTML 400 or a 302 with an error parameter (a 302 maps to confirmed)." }),
   external("DELETE", "/v1/inference-providers/:inferenceProviderId/oauth", "inference_provider.member_oauth.disconnect", IPO, res("provider", "inferenceProviderId"), "Google OAuth token revocation; AWS IAM Identity Center logout", "Deletes the member credential locally, then best-effort revocation after commit; status reflects the local result."),
+  external("POST", "/v1/inference-providers/test-connection", "inference_provider.connection.test", IP, res("provider"), "AI Gateway (one test prompt to the catalog provider)", "Sends the caller-supplied, unsaved organization key through AI Gateway to the trusted catalog provider; no local write and no usage recorded."),
   change("POST", "/v1/inference-providers/migrate-from-llm-provider", "inference_provider.llm_provider.migrate", IP, res("provider"), "Not covered by provider emitter (providerUncoveredRoutes)."),
 
   // LiteLLM providers (litellm feature; not covered by the provider emitter, see providerUncoveredRoutes)
@@ -318,6 +323,7 @@ export const integrationsAuditRoutes: readonly AuditRouteDeclaration[] = [
   change("PUT", "/v1/mcp-connections/:connectionId/my-credential", "mcp_connection.member_credential.set_own", MCPO, res("mcp_connection", "connectionId"), "Session-only (API keys and MCP internal calls get 403); stores the caller's personal API key encrypted for a member-api-key connection; response is ok only. Removal uses disconnect-my-account."),
   change("POST", "/v1/mcp-connections/:connectionId/oauth/issuer-review", "mcp_connection.oauth_issuer.confirm", MCPO, res("mcp_connection", "connectionId"), "Live discovery fetch; writes only on confirm."),
   external("POST", "/v1/mcp-connections/discover", "mcp_connection.requirements.discover", MCP, res("mcp_connection"), "Caller-supplied MCP server URL", "Guarded outbound discovery fetch; no local write."),
+  external("POST", "/v1/mcp-connections/discover/stream", "mcp_connection.requirements.discover_stream", MCP, res("mcp_connection"), "Caller-supplied MCP server URL", "Guarded outbound discovery fetch with progress; no local write."),
   external("POST", "/v1/mcp-connections/resolve", "mcp_connection.resolve", MCP, res("mcp_connection"), "Candidate MCP server URLs", "Outbound probes of candidate URLs; no local write."),
   external("GET", "/v1/mcp-connections/:connectionId/connect/start", "mcp_connection.oauth.start", MCPO, res("mcp_connection", "connectionId"), "MCP authorization server (discovery; dynamic client registration)", "Writes pending OAuth state; may update issuer config and perform dynamic client registration at the authorization server."),
   handlerRoute("tenant_external", "GET", "/v1/mcp-connections/:connectionId/connect/callback", "mcp_connection.oauth.complete", MCPO, res("mcp_connection", "connectionId"), { external: "MCP authorization server (token exchange; Slack auth.test for Slack)", notes: "Attributed (attributeOAuthCallbackMember) after the HMAC-signed state, connection and active initiating member are verified, before issuer validation and token exchange: org = state organization, actor = that member's user." }),

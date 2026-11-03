@@ -1,5 +1,5 @@
 import type { DynamicToolUIPart } from "ai";
-import { getCapabilityCallSentence } from "./capability-call";
+import { getCapabilityCallSentence, type CapabilityCallSentence } from "./capability-call";
 
 /** A summary of the work, not a mirror of whichever child happened to run last. */
 export function codeModeSummary(
@@ -8,8 +8,18 @@ export function codeModeSummary(
     running: boolean;
     failed: boolean;
     serviceName: (call: DynamicToolUIPart) => string | null;
+    /** A sentence the caller knows better (OpenWork's own tools, skills); null falls back. */
+    sentence?: (call: DynamicToolUIPart) => CapabilityCallSentence | null;
+    /** A call the organization's policy refused: neutral, never a failure (C5). */
+    isBlocked?: (call: DynamicToolUIPart) => boolean;
   },
 ): string {
+  const sentenceOf = (call: DynamicToolUIPart, includeQuery = false) =>
+    options.sentence?.(call) ?? getCapabilityCallSentence(call, { connectionName: options.serviceName(call), includeQuery });
+  const blocked = calls.filter((call) => call.state === "output-error" && options.isBlocked?.(call) === true);
+  if (blocked.length > 0 && blocked.length === calls.filter((call) => call.state === "output-error").length) {
+    return blocked.length === 1 ? "Sharing is blocked by your organization" : `${blocked.length} actions are blocked by your organization`;
+  }
   const failedCalls = calls.filter((call) => call.state === "output-error");
   // A finished script whose every call failed did not "look up" anything,
   // even when the engine reports the script itself as completed.
@@ -17,7 +27,7 @@ export function codeModeSummary(
   if (options.failed || allFailed) {
     // Name what failed when one call did ("Script on OpenWork Cloud failed").
     const only = failedCalls.length === 1 ? failedCalls[0] : undefined;
-    const failure = only ? getCapabilityCallSentence(only, { connectionName: options.serviceName(only), includeQuery: false }).failure : undefined;
+    const failure = only ? sentenceOf(only).failure : undefined;
     return failure ?? "Script failed";
   }
   if (calls.length === 0) return options.running ? "Running a script" : "Ran a script";
@@ -31,7 +41,7 @@ export function codeModeSummary(
   });
   if (changes.length === 1) {
     const call = changes[0]!;
-    const sentence = getCapabilityCallSentence(call, { connectionName: options.serviceName(call), includeQuery: false });
+    const sentence = sentenceOf(call);
     const label = options.running && (call.state === "input-available" || call.state === "input-streaming") ? sentence.present : sentence.past;
     // A successful write is more informative than a later read. Don't report
     // success for a write the engine says failed.

@@ -8,6 +8,7 @@
   "scripts": {
     "build:native": "swift build --package-path native -c release --product ComputerUse",
     "check": "swift test --package-path native",
+    "prove:mac-apps": "node scripts/prove-mac-apps.mjs",
     "build": "pnpm --filter @openwork/codemode build && tsup && tsc -p tsconfig.build.json",
     "typecheck": "tsc --noEmit"
   },

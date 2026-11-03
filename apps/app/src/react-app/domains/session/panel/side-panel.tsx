@@ -9,6 +9,7 @@ import {
   Loader2,
   MessagesSquare,
   Maximize2,
+  PanelRight,
   PictureInPicture2,
   ShieldOff,
   Plus,
@@ -43,6 +44,7 @@ import {
 } from "./panel-tab-store";
 import { useControlAction, type OpenworkControlAction } from "../../../shell/control/control-provider";
 import type { OpenTarget } from "../artifacts/open-target";
+import type { OpenTargetOptions } from "@/lib/target-provider";
 import { useSidePanelTabs } from "./use-side-panel-tabs";
 import { handlePanelEscape, PanelEmpty } from "./panel-empty";
 import {
@@ -65,6 +67,8 @@ type SidePanelProps = {
   client: OpenworkServerClient | null;
   workspaceId: string | null;
   workspaceRoot: string;
+  onOpenTarget?: (target: OpenTarget, options?: OpenTargetOptions) => void;
+  isLocalWorkspace?: boolean;
   onClose: () => void;
   onOpenExtensions?: () => void;
   /** Floating browser presentation; undefined keeps the docked-only browser. */
@@ -90,21 +94,23 @@ function AgentViewportMenu({ viewport }: { viewport: { key: AgentViewportKey; sc
       <PopoverTrigger
         render={(
           <Button variant="ghost" size="sm" className="h-6 shrink-0 px-2 text-xs text-muted-foreground"
-            aria-label={`Agent page size: ${AGENT_VIEWPORTS[active].label}. Change it`}>
+            aria-label={`Agent page size: ${AGENT_VIEWPORTS[active].label}. Change it`} data-testid="browser-agent-page-size">
             {AGENT_VIEWPORTS[active].label}{viewport && viewport.scale < 1 ? ` · ${Math.round(viewport.scale * 100)}%` : ""}
           </Button>
         )}
       />
       <PopoverContent align="end" side="bottom" sideOffset={8} className="w-64 gap-0 p-1">
         <p className="px-2 pb-1.5 pt-1 text-xs text-muted-foreground">
-          While the agent works, pages keep this size and scale to fit the panel.
+          While the agent works, pages keep this size. A fixed size scales to fit the panel.
         </p>
         {(Object.keys(AGENT_VIEWPORTS) as AgentViewportKey[]).map((key) => (
-          <button key={key} type="button" aria-pressed={key === active}
+          <button key={key} type="button" aria-pressed={key === active} data-testid={`browser-agent-page-size-${key}`}
             className="flex w-full items-center justify-between rounded-md px-2 py-1.5 text-left text-xs hover:bg-muted aria-pressed:bg-muted"
             onClick={() => { setChosen(key); chooseAgentViewport(key); }}>
             <span className="font-medium">{AGENT_VIEWPORTS[key].label}</span>
-            <span className="text-muted-foreground">{AGENT_VIEWPORTS[key].width} × {AGENT_VIEWPORTS[key].height}</span>
+            <span className="text-muted-foreground">
+              {AGENT_VIEWPORTS[key].fitsPanel ? "Fits the panel" : `${AGENT_VIEWPORTS[key].width} × ${AGENT_VIEWPORTS[key].height}`}
+            </span>
           </button>
         ))}
       </PopoverContent>
@@ -136,6 +142,12 @@ type SidePanelTabProps = {
   onClose: (tab: PanelTabEntry) => void;
 };
 
+/** A browser tab's site icon, a spinner while it loads, or a globe. */
+export function BrowserTabIcon({ tab }: { tab: BrowserPanelTab }) {
+  if (tab.favicon) return <img src={tab.favicon} alt="" className="size-3.5 shrink-0 rounded-[2px]" />;
+  return tab.status === "loading" ? <Loader2 className="animate-spin" /> : <Globe />;
+}
+
 function SidePanelTab({ tab, active, onSelect, onClose }: SidePanelTabProps) {
   const dragControls = useDragControls();
   const tabRef = React.useRef<HTMLDivElement>(null);
@@ -163,6 +175,15 @@ function SidePanelTab({ tab, active, onSelect, onClose }: SidePanelTabProps) {
         event.stopPropagation();
         showBrowserTabContextMenu({ clientX: event.clientX, clientY: event.clientY });
       } : undefined}
+      // Middle-click closes a tab, as in a browser; stopping mousedown keeps it from starting autoscroll.
+      onMouseDown={(event: React.MouseEvent<HTMLDivElement>) => {
+        if (event.button === 1) event.preventDefault();
+      }}
+      onAuxClick={(event: React.MouseEvent<HTMLDivElement>) => {
+        if (event.button !== 1) return;
+        event.preventDefault();
+        onClose(tab);
+      }}
     >
       <div ref={tabRef} className="relative" data-browser-shortcut-tab={tab.type === "browser" ? tab.id : undefined}>
         <PanelTab
@@ -186,15 +207,7 @@ function SidePanelTab({ tab, active, onSelect, onClose }: SidePanelTabProps) {
           title={tab.label}
           aria-label={`Select tab: ${tab.label}`}
         >
-          {tab.type === "browser" ? (
-            tab.favicon ? (
-              <img src={tab.favicon} alt="" className="size-3.5 shrink-0 rounded-[2px]" />
-            ) : tab.status === "loading" ? (
-              <Loader2 className="animate-spin" />
-            ) : (
-              <Globe />
-            )
-          ) : (tab.type === "app" || tab.type === "mcp-app") ? <Blocks /> : tab.type === "remote-thread" ? <MessagesSquare /> : (
+          {tab.type === "browser" ? <BrowserTabIcon tab={tab} /> : (tab.type === "app" || tab.type === "mcp-app") ? <Blocks /> : tab.type === "remote-thread" ? <MessagesSquare /> : (
             <ArtifactIcon type={tab.preview} />
           )}
           <span className="min-w-0 flex-1 truncate text-left">{tab.label}</span>
@@ -214,7 +227,7 @@ type BrowserPanelContentProps = {
   tab: BrowserPanelTab;
   onClose: () => void;
   /** Where this content is shown and how to move it, with the floating browser feature on. */
-  presentation?: BrowserPresentationControls & { mode: "side" | "fullscreen" };
+  presentation?: BrowserPresentationControls & { mode: "side" | "fullscreen" | "window" };
 };
 
 export function BrowserPanelContent({
@@ -287,16 +300,18 @@ export function BrowserPanelContent({
       return;
     }
 
+    // Drawn into the popped-out window, this content measures and repaints with that window.
+    const view = content.ownerDocument.defaultView ?? window;
     let disposed = false;
     let ready = false;
     let boundsFrame: number | null = null;
     const boundsSync = createBrowserBoundsSync(browser, sessionId, (error) => {
       reportFailure("Could not show the browser. Try reopening this tab.", error);
-    });
+    }, view === window ? undefined : "window");
 
     const scheduleBounds = () => {
       if (!disposed && ready && boundsFrame === null) {
-        boundsFrame = window.requestAnimationFrame(watchBounds);
+        boundsFrame = view.requestAnimationFrame(watchBounds);
       }
     };
 
@@ -316,9 +331,9 @@ export function BrowserPanelContent({
       if (!ready || disposed) return;
       const bounds = computeBrowserBounds(content);
       const occluded = extendedOccluders
-        ? hasNativeBrowserOccluder({ bounds, exclude: content.closest("[data-browser-fullscreen-dialog]") })
+        ? hasNativeBrowserOccluder({ bounds, exclude: content.closest("[data-browser-fullscreen-dialog]"), doc: content.ownerDocument })
         : hasNativeBrowserOccluder();
-      boundsSync.sync(bounds, window.devicePixelRatio, occluded);
+      boundsSync.sync(bounds, view.devicePixelRatio, occluded);
     };
 
     const invalidateBounds = () => {
@@ -338,17 +353,18 @@ export function BrowserPanelContent({
     // Panel constraints can settle in ResizeObserver after this frame's RAF.
     const observer = new ResizeObserver(syncBounds);
     observer.observe(content);
-    window.addEventListener("resize", invalidateBounds);
+    view.addEventListener("resize", invalidateBounds);
+    // The bridge lives in the app window, so this event always arrives there.
     window.addEventListener("openwork:browser:bounds-invalidated", invalidateBounds);
 
     return () => {
       disposed = true;
       observer.disconnect();
-      window.removeEventListener("resize", invalidateBounds);
+      view.removeEventListener("resize", invalidateBounds);
       window.removeEventListener("openwork:browser:bounds-invalidated", invalidateBounds);
 
       if (boundsFrame !== null) {
-        window.cancelAnimationFrame(boundsFrame);
+        view.cancelAnimationFrame(boundsFrame);
       }
 
       boundsSync.dispose();
@@ -511,12 +527,12 @@ export function BrowserPanelContent({
             <Tooltip>
               <TooltipTrigger
                 render={(
-                  <Button variant="ghost" size="icon-sm" aria-label="Float browser" data-testid="browser-mode-float" onClick={() => presentation.onPresent("floating")}>
+                  <Button variant="ghost" size="icon-sm" aria-label="Pop out browser" data-testid="browser-mode-float" onClick={() => presentation.onPresent("floating")}>
                     <PictureInPicture2 />
                   </Button>
                 )}
               />
-              <TooltipContent>Float over chat</TooltipContent>
+              <TooltipContent>Pop out into its own window</TooltipContent>
             </Tooltip>
             <Tooltip>
               <TooltipTrigger
@@ -530,7 +546,19 @@ export function BrowserPanelContent({
             </Tooltip>
           </>
         ) : null}
-        {presentation?.mode === "fullscreen" ? null : (
+        {isAvailable && presentation?.mode === "window" ? (
+          <Tooltip>
+            <TooltipTrigger
+              render={(
+                <Button variant="ghost" size="icon-sm" aria-label="Open beside chat" data-testid="browser-mode-side" onClick={() => presentation.onPresent("side")}>
+                  <PanelRight />
+                </Button>
+              )}
+            />
+            <TooltipContent>Open beside chat</TooltipContent>
+          </Tooltip>
+        ) : null}
+        {presentation?.mode === "fullscreen" || presentation?.mode === "window" ? null : (
           <Button
             variant="ghost"
             size="icon-sm"
@@ -582,6 +610,8 @@ export function SidePanel({
   client,
   workspaceId,
   workspaceRoot,
+  onOpenTarget,
+  isLocalWorkspace,
   onClose,
   onOpenExtensions,
   browserPresentation,
@@ -856,6 +886,8 @@ export function SidePanel({
               client={client}
               workspaceId={workspaceId}
               workspaceRoot={workspaceRoot}
+              onOpenTarget={onOpenTarget}
+              isLocalWorkspace={isLocalWorkspace}
               onClose={onClose}
             />
           </div>

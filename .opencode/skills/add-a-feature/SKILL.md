@@ -1,13 +1,17 @@
 ---
 name: add-a-feature
-description: Add a new feature, put work behind a feature flag, roll something out (per organization, for everyone, cloud or self-hosted), revert or kill a feature, or make a big change to existing behavior such as a new engine. Use BEFORE writing the feature code, and when finishing or removing a rollout.
+description: Decide whether work needs a feature flag (any change to product behavior users can see does), then declare it, roll it out (per organization, for everyone, cloud or self-hosted), revert or kill it. Use for any user-visible behavior change, and when finishing or removing a rollout.
 ---
 
 # Skill: Add a feature
 
-Every new user-visible feature, and every change existing users would notice,
-is a **feature** in the registry, declared **before any feature code**, off.
-Nothing big ships ungated.
+**Default: flag what users see.** Any change to product behavior that users
+can see ships behind a feature, so it can be turned off without a deploy.
+Work users won't notice as a behavior change ships directly and is reverted
+with a normal revert if needed.
+
+When a flag is warranted, it is a **feature** in the registry, declared
+**before any feature code**, off.
 
 Registry: `packages/features/src/registry.ts` (package `@openwork/features`).
 That file is the only one you edit to declare a feature. The rules live in
@@ -40,27 +44,32 @@ Member overrides are scoped to a membership, never a user globally. Pass `{ user
 
 ## Does this need a feature?
 
-Yes, if any of these is true:
+**Yes**, whenever the change alters product behavior that users can see, in
+the desktop app, Den (including organization admin screens), MCP Apps or the
+gateway:
 
-- People get a new screen, tab, button, tool, route family, worker, or engine.
-- Existing users would notice the change (a flow works differently, something moves or disappears).
-- It should roll out gradually, be revertable, or might not belong on self-hosted installs.
+- New or changed flows, steps, screens, tabs, options, settings or tools.
+- Changed defaults, or something users relied on that now works differently
+  or is removed.
+- New product areas, engines or workers, and rewrites of core flows
+  (sign-in, chat runs, sync, billing, access control).
 
-No for bug fixes, copy changes, refactors and internal tooling.
+These ship without a flag:
 
-Not a feature: anything that only platform admins see in `/admin` (the
-pages we use to manage the deployment itself: Features, organizations, grants,
-plans, sandboxes, recovery). Feature flags control what people in
-organizations get, not the tools of the people running the deployment. Ship
-those `/admin` controls without a flag; platform admin access already gates
-them. This is about `/admin` only: organization admin screens in Den (the
-dashboard, Manage, team settings) are things customers get, so they still need
-a feature when they are new.
+- **Platform `/admin`**: the pages we use to run the deployment (Features,
+  organizations, grants, plans, sandboxes, recovery) and the admin MCP tools.
+  Platform admin access already gates them.
+- Bug fixes that restore intended behavior.
+- Polish that doesn't change what people can do: spacing, density, icons,
+  wording.
+- Refactors, internal tooling, dev/eval/CI scripts.
 
 Not a feature either: something that only keeps older clients working
 (compat shim with a removal condition), something worked out from what is
 configured (derive it in code), or a setting that changes *how* something
 works rather than *whether* people get it (put it in `env.ts` / Helm `config.<area>`).
+
+If you are unsure, add a flag. When you ship without one, say in the PR why users won't see a behavior change.
 
 ## 1. Declare it, off
 
@@ -118,10 +127,30 @@ environment variable to decide whether a feature is on.
 Gated UI follows DESIGN.md P4: show a locked entry point with a plain reason
 rather than silently removing it, when the person could act on it.
 
+## See who uses it
+
+`/admin` › organization › Features shows, per feature, how many members have
+it on, who used it in the last 7 and 30 days, and when each person last used it.
+
+- Gated routes count automatically: a request that passes `requireFeature(key)` is a use.
+- Client-only features: call `markFeatureUsed(key)` (den-web `app/(den)/_lib/feature-usage.ts`,
+  desktop `apps/app/src/app/lib/den.ts`) at the action that actually exercises
+  the feature, never on render of shared chrome.
+- Den records only keys that are on for the member, one row per member and feature (ids and days, no content).
+- Background work (a schedule, a calendar, an agent's checks, messages a run sends) has no request: call
+  `markFeaturesUsed` once at the chokepoint where that work happens for a member, as automation dispatch,
+  the Your agent wake and `slack_send_as_bot` do.
+
+`/admin` › Features (`/admin/feature-usage`) shows the same per feature across organizations, and whether it
+works. A background feature sets `outcomes: true` in the registry and registers one reader in
+`ee/apps/den-api/src/feature-outcomes/readers.ts` that counts outcomes from the table it already writes (runs,
+succeeded, failed, skipped by reason, delivered, per day and organization). The typecheck and
+`test/feature-outcomes.test.ts` fail until the reader exists. Never add a usage table for this.
+
 ## 4. Roll it out
 
 1. Turn it on for our own organization (override in `/admin`).
-2. Turn it on for more organizations, one override at a time, checking errors as you go.
+2. Turn it on for more organizations, one override at a time, checking errors and who uses it as you go.
 3. Turn it on for everyone in `/admin` › Features. Organizations can still be turned off one by one.
 4. Anything wrong: **Turn off everywhere** (kill switch). Fix, restore, continue.
 5. Once it is on everywhere: set `default: true`, then delete the entry and every check. `pnpm features:check` asks for a decision six months after `since` unless the entry is `permanent`.

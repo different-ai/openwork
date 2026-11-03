@@ -1,7 +1,7 @@
 // Deliberately separated colors for the first categories, before adding shades.
 // Assign slots across the chart, rather than hashing each ID independently:
 // unrelated IDs can otherwise produce almost indistinguishable colors.
-const palette = [
+export const SERIES_PALETTE = [
   "#2563eb", "#ea580c", "#16a34a", "#9333ea", "#dc2626", "#0891b2",
   "#ca8a04", "#db2777", "#0d9488", "#64748b", "#4f46e5", "#65a30d",
   "#c2410c", "#a21caf", "#0284c7", "#be123c", "#15803d", "#7c3aed",
@@ -14,8 +14,8 @@ export function assignSeriesColors(ids: string[], previous: ReadonlyMap<string, 
   const colors = new Map(previous);
   for (const id of missing) {
     const index = colors.size;
-    const extra = index - palette.length;
-    colors.set(id, palette[index] ?? `hsl(${((extra * 137.508 + 17) % 360).toFixed(2)} 65% ${40 + (extra % 3) * 8}%)`);
+    const extra = index - SERIES_PALETTE.length;
+    colors.set(id, SERIES_PALETTE[index] ?? `hsl(${((extra * 137.508 + 17) % 360).toFixed(2)} 65% ${40 + (extra % 3) * 8}%)`);
   }
   return colors;
 }

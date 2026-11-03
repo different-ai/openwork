@@ -8,23 +8,36 @@ on:
   push:
     branches:
       - dev
-    paths:
-      - ".spectral.yaml"
-      - ".spectral-baseline.json"
-      - "scripts/api-lint.mjs"
-      - "scripts/den-contract*.mjs"
-      - "packages/sdk/**"
-      - "ee/apps/den-api/**"
-      - "ee/packages/**"
-      - "packages/types/**"
-      - "packages/features/**"
 
 permissions:
   contents: read
 
 jobs:
+  scope:
+    name: Select API contract inputs
+    runs-on: ubuntu-latest
+    outputs:
+      affected: ${{ steps.inputs.outcome == 'success' && steps.inputs.outputs.fingerprint != '' && steps.inputs.outputs.affected || 'true' }}
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          fetch-depth: 2
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: 24.22.1
+      - name: Compare API contract inputs
+        id: inputs
+        continue-on-error: true
+        env:
+          BASE_SHA: ${{ github.event.before }}
+          HEAD_SHA: ${{ github.sha }}
+        run: node .github/scripts/build-inputs.mjs --target den-contract --base "$BASE_SHA" --head "$HEAD_SHA"
+
   openapi-snapshot-and-lint:
     name: Generate and validate the API contract
+    needs: scope
+    # A failed selector is not permission to drop contract/audit coverage.
+    if: ${{ !cancelled() && needs.scope.outputs.affected != 'false' }}
     runs-on: blacksmith-4vcpu-ubuntu-2204
     # Importing the live app initializes Better Auth's OAuth resource registry,
     # which needs a reachable database even though the snapshot itself never

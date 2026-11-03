@@ -14,6 +14,7 @@ import type { MiddlewareHandler } from "hono"
 import { cache } from "./cache.js"
 import { db } from "./db.js"
 import { env } from "./env.js"
+import { markFeaturesUsed } from "./feature-usage.js"
 import type { OrganizationContextVariables } from "./middleware/organization-context.js"
 
 /**
@@ -136,6 +137,8 @@ export function requireFeature(key: FeatureKey): MiddlewareHandler<{ Variables: 
     if (!payload) return c.json({ error: "organization_not_found" }, 404)
     // Reuse the feature snapshot already resolved for this request.
     if (!payload.features[key]) return c.json({ error: "feature_disabled", feature: key }, 404)
+    // A request through a gated route is a use of the feature, for /admin.
+    markFeaturesUsed({ organizationId: payload.organization.id, memberId: payload.currentMember.id, keys: [key] })
     await next()
   }
 }

@@ -6,15 +6,15 @@ import { join } from "node:path";
 import test from "node:test";
 import { createCloudBrowser, publicDestination } from "./chromium.mjs";
 
-async function fixture({ rejectInterception = false, holdInterception = false, existing = true, missingEgress = false } = {}) {
+async function fixture({ rejectInterception = false, holdInterception = false, existing = true, missingEgress = false, pages = existing ? ["tab"] : [], owned = pages } = {}) {
   const directory = await mkdtemp(join(tmpdir(), "openwork-browser-network-"));
   const commands = [], sockets = [], held = [];
   let origin;
-  const target = (url = "https://8.8.8.8/resource") => ({ type: "page", id: "tab", url, title: "Test page",
-    webSocketDebuggerUrl: origin.replace("http:", "ws:") + "/devtools/page/tab" });
+  const target = (url = "https://8.8.8.8/resource", id = "tab") => ({ type: "page", id, url, title: "Test page",
+    webSocketDebuggerUrl: origin.replace("http:", "ws:") + `/devtools/page/${id}` });
   const server = createServer((request, response) => {
     response.setHeader("content-type", "application/json");
-    response.end(JSON.stringify(request.url.startsWith("/json/new") ? target("about:blank") : existing ? [target()] : []));
+    response.end(JSON.stringify(request.url.startsWith("/json/new") ? target("about:blank") : pages.map(id => target(undefined, id))));
   });
   await new Promise(resolve => server.listen(0, "127.0.0.1", resolve));
   origin = `http://127.0.0.1:${server.address().port}`;
@@ -37,7 +37,7 @@ async function fixture({ rejectInterception = false, holdInterception = false, e
   }
   globalThis.WebSocket = Socket;
   const statePath = join(directory, "owners.json");
-  await writeFile(statePath, JSON.stringify(existing ? [["tab", "chat"]] : []));
+  await writeFile(statePath, JSON.stringify(owned.map(id => [id, "chat"])));
   const browser = createCloudBrowser({ statePath, endpoint: origin, assertActive() {}, enabled: () => true, beforeInput: async () => {},
     verifyEgress: async () => { if (missingEgress) throw Object.assign(new Error("Missing kernel filter"), { code: "egress_unavailable" }); } });
   return { browser, commands, sockets, release() { for (const reply of held.splice(0)) reply(); },
@@ -97,6 +97,26 @@ test("cloud navigation waits for interception and fails closed when it cannot be
       assert.equal(f.commands.some(command => command.method === "Page.navigate"), !rejectInterception);
     } finally { await f.close(); }
   }
+});
+
+test("a conversation works in a tab the person opened once it names that tab", async () => {
+  const f = await fixture({ owned: [] });
+  try {
+    assert.deepEqual((await f.browser.request({ sessionId: "chat", operation: "tabs" })).tabs, []);
+    assert.equal((await f.browser.request({ sessionId: "chat", operation: "pause", args: { tabId: "closed" } })).code, "tab_closed");
+    const named = await f.browser.request({ sessionId: "chat", operation: "pause", args: { tabId: "tab" } });
+    assert.equal(named.tabId, "tab", JSON.stringify(named));
+    assert.deepEqual((await f.browser.request({ sessionId: "chat", operation: "tabs" })).tabs.map(tab => tab.tabId), ["tab"]);
+    // Once a conversation has it, another can't take it by naming it.
+    assert.equal((await f.browser.request({ sessionId: "side", operation: "pause", args: { tabId: "tab" } })).code, "wrong_conversation");
+  } finally { await f.close(); }
+});
+
+test("a conversation's active tab is the one of its tabs most recently in front", async () => {
+  const f = await fixture({ pages: ["second", "first"], owned: ["first", "second"] });
+  try {
+    assert.equal((await f.browser.request({ sessionId: "chat", operation: "pause" })).tabId, "second");
+  } finally { await f.close(); }
 });
 
 test("cloud destination checks reject private IPv4, IPv6 and translated addresses", async () => {

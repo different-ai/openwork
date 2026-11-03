@@ -4,13 +4,13 @@ import path from "node:path"
 import { CLIENT_IP_SECRET_MIN_LENGTH } from "@openwork-ee/utils/client-ip-signature"
 import { denUrls } from "@openwork-ee/utils/den-urls"
 import { parseGatewayDeploymentEnv } from "@openwork-ee/utils/gateway-env"
+import { readReplicaCredentialsFromEnv } from "@openwork-ee/den-db"
 import { DEN_WORKER_POLL_INTERVAL_MS } from "./CONSTS.js"
 import { normalizeConfiguredPublicApiBaseUrl } from "./request-url.js"
 import { resolveDenServiceVersion } from "./service-version.js"
 import { denApiAppVersion } from "./version.js"
 import { z } from "zod"
 import { readFreeInferenceConfig } from "@openwork/types/den/inference"
-import { DEFAULT_ENTERPRISE_PLAN_UNIT_AMOUNT } from "@openwork/types/den/billing-plans"
 import { parseFeatureEnvironment } from "@openwork/features"
 
 export const DEFAULT_DEN_DIAGNOSTICS_ORIGIN = "https://diagnostic.openworklabs.com"
@@ -20,6 +20,8 @@ const EnvSchema = z.object({
   DATABASE_HOST: z.string().min(1).optional(),
   DATABASE_USERNAME: z.string().min(1).optional(),
   DATABASE_PASSWORD: z.string().optional(),
+  DATABASE_READ_USERNAME: z.string().optional(),
+  DATABASE_READ_PASSWORD: z.string().optional(),
   DEN_DB_ENCRYPTION_KEY: z.string().trim().min(32),
   DB_MODE: z.enum(["mysql", "planetscale"]).optional(),
   BETTER_AUTH_SECRET: z.string().min(32),
@@ -141,6 +143,9 @@ const EnvSchema = z.object({
   DEN_SANDBOX_GATEWAY_PROVIDER: z.string().optional(),
   DEN_SANDBOX_GATEWAY_MODELS: z.string().optional(),
   DEN_SANDBOX_GATEWAY_API_KEY: z.string().optional(),
+  // With DEN_SANDBOX_GATEWAY_PROVIDER=openrouter and no shared key, each sandbox gets its own OpenRouter key
+  // (minted with OPENROUTER_MANAGEMENT_API_KEY) capped at this many US dollars unless the admin picks another cap.
+  DEN_SANDBOX_CREDIT_USD: z.string().optional(),
   DEN_DASHBOARDS_ENABLED: z.string().optional(),
   // Default-on deployment kill switches.
   DEN_AUDIT_CAPTURE_ENABLED: z.enum(["true", "false"]).default("true"),
@@ -183,6 +188,12 @@ const EnvSchema = z.object({
   SCIM_MAINTENANCE_INTERVAL_MS: z.string().optional(),
   LIFECYCLE_EMAILS_ENABLED: z.string().optional(),
   LIFECYCLE_EMAILS_INTERVAL_MS: z.string().optional(),
+  ADMIN_METRICS_REFRESH_ENABLED: z.string().optional(),
+  ADMIN_METRICS_FAST_INTERVAL_MS: z.string().optional(),
+  ADMIN_METRICS_HEAVY_INTERVAL_MS: z.string().optional(),
+  MCP_REGISTRATION_PROBE_ENABLED: z.string().optional(),
+  MCP_REGISTRATION_PROBE_TRY_REGISTRATION: z.string().optional(),
+  MCP_REGISTRATION_PROBE_INTERVAL_MS: z.string().optional(),
   DAYTONA_API_URL: z.string().optional(),
   DAYTONA_API_KEY: z.string().optional(),
   DAYTONA_TARGET: z.string().optional(),
@@ -221,10 +232,7 @@ const EnvSchema = z.object({
   STRIPE_WEBHOOK_SECRET: z.string().optional(),
   STRIPE_INFERENCE_PRICE_ID: z.string().optional(),
   STRIPE_SEAT_PRICE_ID: z.string().optional(),
-  STRIPE_ENTERPRISE_PRICE_ID: z.string().optional(),
-  DEN_ENTERPRISE_UNIT_AMOUNT: z.string().optional(),
   STRIPE_OPENWORK_WEB_PRICE_ID: z.string().optional(),
-  STRIPE_ENTERPRISE_PRODUCT_ID: z.string().optional(),
   STRIPE_BILLING_SUCCESS_URL: z.string().optional(),
   STRIPE_BILLING_CANCEL_URL: z.string().optional(),
 }).superRefine((value, ctx) => {
@@ -300,13 +308,6 @@ function automationTuning(value: string | undefined, fallback: number) {
 function optionalString(value: string | undefined) {
   const trimmed = value?.trim()
   return trimmed ? trimmed : undefined
-}
-
-// A malformed or non-positive amount keeps the planned price rather than
-// quoting $0 or NaN to a buyer.
-function parseEnterpriseUnitAmount(value: string | undefined) {
-  const amount = Number(value)
-  return value !== undefined && Number.isSafeInteger(amount) && amount > 0 ? amount : DEFAULT_ENTERPRISE_PLAN_UNIT_AMOUNT
 }
 
 function readOptionalSecretFile(envName: string, pathValue: string | undefined) {
@@ -697,16 +698,27 @@ const planetscaleCredentials =
       }
     : null
 
+// Optional read-replica credentials; reads stay on the primary without both.
+const readReplicaCredentials = readReplicaCredentialsFromEnv(parsed)
+
 // OpenWork Cloud's sandboxes use OpenWork's public workshop service unless configured otherwise.
 const sandboxWorkplaceUrl = optionalString(parsed.DEN_SANDBOX_WORKPLACE_URL)
   ?? (featureEnvironment.deployment === "cloud" ? "https://open-workplace-workshop.onrender.com" : null)
 const sandboxGatewayApiKey = optionalString(parsed.DEN_SANDBOX_GATEWAY_API_KEY)
+const sandboxGatewayProvider = optionalString(parsed.DEN_SANDBOX_GATEWAY_PROVIDER) ?? (sandboxGatewayApiKey ? "openai" : "openrouter")
+// One OpenRouter key per sandbox, capped, instead of one shared key: needs a management key and no shared key.
+const sandboxMintsOpenRouterKeys = !sandboxGatewayApiKey && sandboxGatewayProvider === "openrouter" && Boolean(optionalString(parsed.OPENROUTER_MANAGEMENT_API_KEY))
+const sandboxDefaultModels = sandboxGatewayProvider === "openrouter"
+  ? "anthropic/claude-sonnet-5.5,openai/gpt-5.5,google/gemini-3.8-flash"
+  : "gpt-6-luna"
+const sandboxCreditUsd = Number.parseInt(optionalString(parsed.DEN_SANDBOX_CREDIT_USD) ?? "50", 10)
 
 export const env = {
   databaseUrl: parsed.DATABASE_URL,
   dbEncryptionKey: optionalString(parsed.DEN_DB_ENCRYPTION_KEY),
   dbMode: parsed.DB_MODE ?? (parsed.DATABASE_URL ? "mysql" : "planetscale"),
   planetscale: planetscaleCredentials,
+  readReplica: readReplicaCredentials,
   betterAuthSecret: parsed.BETTER_AUTH_SECRET,
   betterAuthUrl,
   betterAuthCookieDomain,
@@ -755,6 +767,21 @@ export const env = {
   lifecycleEmails: {
     enabled: parsed.LIFECYCLE_EMAILS_ENABLED?.trim() === "1",
     intervalMs: Number(parsed.LIFECYCLE_EMAILS_INTERVAL_MS ?? "900000"),
+  },
+  // Admin Control Center snapshots (admin-metrics/worker.ts): today's and 7-day KPIs on the fast tier,
+  // cohorts, sharing, revenue and accounts on the heavy tier. ADMIN_METRICS_REFRESH_ENABLED=0 turns it off.
+  adminMetrics: {
+    enabled: parsed.ADMIN_METRICS_REFRESH_ENABLED?.trim() !== "0",
+    fastIntervalMs: Math.max(60_000, Number(parsed.ADMIN_METRICS_FAST_INTERVAL_MS ?? "300000") || 300_000),
+    heavyIntervalMs: Math.max(300_000, Number(parsed.ADMIN_METRICS_HEAVY_INTERVAL_MS ?? "1800000") || 1_800_000),
+  },
+  // Scheduled check of which preset MCP providers let OpenWork register (mcp-registration/probe.ts). Off unless
+  // MCP_REGISTRATION_PROBE_ENABLED=1; registering a test client with providers is a further opt-in, so self-hosted
+  // installs never create registrations with third parties on their own.
+  mcpRegistrationProbe: {
+    enabled: parsed.MCP_REGISTRATION_PROBE_ENABLED?.trim() === "1",
+    tryRegistration: parsed.MCP_REGISTRATION_PROBE_TRY_REGISTRATION?.trim() === "1",
+    intervalMs: Math.max(3_600_000, Number(parsed.MCP_REGISTRATION_PROBE_INTERVAL_MS ?? "86400000") || 86_400_000),
   },
   requireEmailVerification,
   passwordBreachScreeningEnabled,
@@ -904,11 +931,14 @@ export const env = {
   dashboardsEnabled,
   sandbox: {
     workplaceUrl: sandboxWorkplaceUrl,
-    gateway: sandboxGatewayApiKey
+    gateway: sandboxGatewayApiKey || sandboxMintsOpenRouterKeys
       ? {
-          providerId: optionalString(parsed.DEN_SANDBOX_GATEWAY_PROVIDER) ?? "openai",
-          modelIds: (optionalString(parsed.DEN_SANDBOX_GATEWAY_MODELS) ?? "gpt-6-luna").split(",").map(value => value.trim()).filter(Boolean),
-          apiKey: sandboxGatewayApiKey,
+          providerId: sandboxGatewayProvider,
+          modelIds: (optionalString(parsed.DEN_SANDBOX_GATEWAY_MODELS) ?? sandboxDefaultModels).split(",").map(value => value.trim()).filter(Boolean),
+          /** The key every sandbox shares, or null when each sandbox gets its own capped OpenRouter key. */
+          apiKey: sandboxGatewayApiKey ?? null,
+          /** Default cap for a sandbox's own key; null with a shared key. */
+          creditUsd: sandboxMintsOpenRouterKeys ? (Number.isFinite(sandboxCreditUsd) && sandboxCreditUsd > 0 ? sandboxCreditUsd : 50) : null,
         }
       : null,
   },
@@ -933,14 +963,7 @@ export const env = {
     webhookSecret: optionalString(parsed.STRIPE_WEBHOOK_SECRET),
     inferencePriceId: optionalString(parsed.STRIPE_INFERENCE_PRICE_ID),
     seatPriceId: optionalString(parsed.STRIPE_SEAT_PRICE_ID),
-    // Self-serve Enterprise (per person). Without it Enterprise is not sold by card.
-    enterprisePriceId: optionalString(parsed.STRIPE_ENTERPRISE_PRICE_ID),
-    // Planned per-person Enterprise price in cents, for quotes and display only;
-    // Stripe charges the configured price.
-    enterpriseUnitAmount: parseEnterpriseUnitAmount(optionalString(parsed.DEN_ENTERPRISE_UNIT_AMOUNT)),
     openworkWebPriceId: optionalString(parsed.STRIPE_OPENWORK_WEB_PRICE_ID),
-    // Enterprise prices are custom per customer, so subscriptions are matched by product.
-    enterpriseProductId: optionalString(parsed.STRIPE_ENTERPRISE_PRODUCT_ID),
     billingSuccessUrl: optionalString(parsed.STRIPE_BILLING_SUCCESS_URL),
     billingCancelUrl: optionalString(parsed.STRIPE_BILLING_CANCEL_URL),
   },

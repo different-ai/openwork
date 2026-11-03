@@ -1,5 +1,5 @@
 import { z } from "zod"
-import { excerpt, slackSafeText } from "./desktop-handoff-messages.js"
+import { excerpt, markdownToPlainText, slackSafeText, splitSlackText } from "./slack-text.js"
 import type { RunnerFailure, SlackRunner, SlackRunSnapshot, SlackRunStep, SlackSessionSettings } from "./headless.js"
 import type { LiveFeed, LiveFeedSource } from "./live.js"
 import { scopeKey, slackReactionName, SlackApiError, type SlackCall } from "./protocol.js"
@@ -631,7 +631,7 @@ function withoutBroadcasts(text: string) {
     .replace(/@(here|channel|everyone)\b/gi, "@\u200b$1")
 }
 
-/** Characters of a report shown in its reply (Slack allows 12,000 across markdown blocks). */
+/** Characters of a report in one reply (Slack allows 12,000 across markdown blocks); longer ones continue in more. */
 const REPORT_LIMIT = 11_000
 
 /**
@@ -662,19 +662,30 @@ export async function advanceSlackWatch(input: {
       if (!written.ok) {
         if (written.retryable) continue
       } else if (written.text.trim()) {
-        const text = withoutBroadcasts(written.text.trim())
-        await input.slack("chat.postMessage", {
-          channel: cp.channel,
-          thread_ts: cp.threadTs,
-          // The notification and fallback text; the blocks carry the report in Markdown.
-          text: `${mention} ${slackSafeText(excerpt(written.text, 300))}`.trim(),
-          blocks: [
-            ...(mention ? [{ type: "section", text: { type: "mrkdwn", text: mention } }] : []),
-            { type: "markdown", text: text.length > REPORT_LIMIT ? `${text.slice(0, REPORT_LIMIT - 1)}…` : text },
-          ],
-          unfurl_links: false,
-          unfurl_media: false,
-        })
+        // A long report continues in further replies, split at paragraph breaks, instead of being cut off.
+        const parts = splitSlackText(withoutBroadcasts(written.text.trim()), REPORT_LIMIT)
+        for (const [index, part] of parts.entries()) {
+          const partId = `${report.id}#${index}`
+          if (parts.length > 1 && cp.reported.includes(partId)) continue
+          const notification = slackSafeText(excerpt(markdownToPlainText(index === 0 ? written.text : part), 300))
+          await input.slack("chat.postMessage", {
+            channel: cp.channel,
+            thread_ts: cp.threadTs,
+            // The notification and fallback text; the blocks carry the report in Markdown.
+            text: index === 0 ? `${mention} ${notification}`.trim() : notification,
+            blocks: [
+              ...(index === 0 && mention ? [{ type: "section", text: { type: "mrkdwn", text: mention } }] : []),
+              { type: "markdown", text: part },
+            ],
+            unfurl_links: false,
+            unfurl_media: false,
+          })
+          // A retry after a failed later part does not post the earlier parts again.
+          if (parts.length > 1) {
+            cp.reported.push(partId)
+            await input.persist?.(cp)
+          }
+        }
       }
     } else if (report.status === "failed") {
       const title = titles.get(report.task) || report.title

@@ -30,7 +30,6 @@ import { validateWorkflowAutomationAction } from "../workflows.js"
 import type { CloudAgentExecution, CloudAgentExecutorInput } from "./cloud-agent-executor.js"
 import { cloudAutomationRuntime, HEADLESS_AGENT_ENGINE_KIND, type CloudAutomationRuntime } from "./headless-runtime.js"
 import { automationTargetAllowed } from "./organization-availability.js"
-import { keepsCurrentSchedule, ownerScheduleFeatureEnabled } from "./schedule-features.js"
 import { CalendarTriggerSource, type CalendarTriggerSourceDeps } from "./calendar-trigger-source.js"
 import { normalizeDenTypeId } from "@openwork-ee/utils/typeid"
 import { appLogger } from "../observability/logger.js"
@@ -65,10 +64,6 @@ type OwnerScope = {
    * as if they did not exist. Absent or null: every kind.
    */
   readableScheduleKinds?: ReadonlySet<AutomationScheduleKind> | null
-  /** `automationIntervalSchedules` for this caller, checked when a request sets an interval schedule. */
-  intervalSchedules?: boolean
-  /** `automationCalendarTriggers` for this caller, checked when a request sets a calendar trigger. */
-  calendarTriggers?: boolean
 }
 
 function readableBy(scope: OwnerScope, schedule: AutomationSchedule) {
@@ -153,10 +148,6 @@ export function configureHeadlessAgentExecutor(execute: (input: CloudAgentExecut
 export type AutomationServiceOptions = {
   getOpenWorkWebAccess?: OpenWorkWebRuntimeAccessResolver
   cloudRuntime?: (organizationId: string) => Promise<CloudAutomationRuntime>
-  /** Whether an Automation's owner may still run interval schedules; the scheduler checks it per due occurrence. */
-  intervalSchedulesEnabled?: (owner: { organizationId: string; ownerMemberId: string }) => Promise<boolean>
-  /** Whether Den reads an owner's calendar for their calendar triggers. */
-  calendarTriggersEnabled?: CalendarTriggerSourceDeps["enabled"]
   /** Reads an owner's primary Google Calendar around now. */
   readCalendar?: CalendarTriggerSourceDeps["read"]
 }
@@ -176,18 +167,16 @@ export class AutomationService {
   private readonly cloudExecutions = new Map<string, Promise<void>>()
   private readonly getOpenWorkWebAccess: OpenWorkWebRuntimeAccessResolver
   private readonly cloudRuntime: (organizationId: string) => Promise<CloudAutomationRuntime>
-  private readonly intervalSchedulesEnabled: (owner: { organizationId: string; ownerMemberId: string }) => Promise<boolean>
   private readonly calendarTriggers: CalendarTriggerSource
   private runnerPruneDueAt = 0
 
   constructor(options: AutomationServiceOptions = {}) {
     this.getOpenWorkWebAccess = options.getOpenWorkWebAccess ?? getOpenWorkWebRuntimeAccess
     this.cloudRuntime = options.cloudRuntime ?? cloudAutomationRuntime
-    this.intervalSchedulesEnabled = options.intervalSchedulesEnabled
-      ?? ((owner) => ownerScheduleFeatureEnabled(owner, "automationIntervalSchedules"))
     this.calendarTriggers = new CalendarTriggerSource({
       list: (limit) => automationRepository.listActiveCalendarTriggers({ limit }),
-      enabled: options.calendarTriggersEnabled ?? ((owner) => ownerScheduleFeatureEnabled(owner, "automationCalendarTriggers")),
+      // GA: Den reads the owner's calendar for every active calendar-triggered Automation,
+      // gated only by Cloud placement and the Google Calendar connection.
       read: options.readCalendar ?? readOwnerCalendar,
       claim: (item, occurrence) => this.claimAndDispatch(item, occurrence, Date.now()),
       needsConnection: async (item, message) => {
@@ -203,20 +192,16 @@ export class AutomationService {
   }
 
   /**
-   * A new interval or calendar schedule needs its feature; keeping the one an
-   * Automation already has does not. Calendar triggers run only in the cloud.
+   * Calendar triggers run only in the cloud; keeping the schedule an
+   * Automation already has needs no check (the per-kind flags are GA).
    */
   private requireScheduleAllowed(
-    scope: OwnerScope,
+    _scope: OwnerScope,
     schedule: AutomationSchedule | undefined,
     target: AutomationExecutionTarget,
-    current?: AutomationSchedule,
+    _current?: AutomationSchedule,
   ) {
-    if (!schedule) return
-    if (schedule.kind === "calendar" && target !== "cloud") throw new Error("automation_calendar_trigger_cloud_only")
-    if (current && keepsCurrentSchedule(schedule, current)) return
-    if (schedule.kind === "interval" && scope.intervalSchedules !== true) throw new Error("automation_interval_schedule_disabled")
-    if (schedule.kind === "calendar" && scope.calendarTriggers !== true) throw new Error("automation_calendar_trigger_disabled")
+    if (schedule?.kind === "calendar" && target !== "cloud") throw new Error("automation_calendar_trigger_cloud_only")
   }
 
   /** The organization's setting (and, for Cloud, the deployment's headless runner) for this kind of Automation. */
@@ -354,13 +339,15 @@ export class AutomationService {
     const page = { ...listed, items: listed.items.filter((item) => readableBy(scope, item.revision.schedule)) }
     const modelAccessBySelection = new Map<string, ReturnType<typeof resolveAutomationModelAccess>>()
     const resolveModelAccess = (item: AutomationListItem) => {
-      const key = JSON.stringify([item.revision.model.providerId, item.revision.model.modelId])
+      const executionTarget = item.revision.executionTarget ?? "desktop"
+      const key = JSON.stringify([item.revision.model.providerId, item.revision.model.modelId, executionTarget])
       const existing = modelAccessBySelection.get(key)
       if (existing) return existing
       const access = resolveAutomationModelAccess({
         organizationId: item.automation.organizationId,
         ownerMemberId: item.automation.ownerMemberId,
         ...item.revision.model,
+        executionTarget,
       })
       modelAccessBySelection.set(key, access)
       return access
@@ -501,7 +488,7 @@ export class AutomationService {
     if (current.revision.action?.kind === "saved_script") {
       if (!await isActiveAutomationOwner(scope)) throw new Error("automation_owner_inactive")
     } else if (!blocked) {
-      const access = await resolveAutomationModelAccess({ ...scope, ...current.revision.model })
+      const access = await resolveAutomationModelAccess({ ...scope, ...current.revision.model, executionTarget: target })
       if (!access.ok && shouldApplyAutomationModelAccessFailure({
         model: current.revision.model,
         failure: access,
@@ -511,7 +498,8 @@ export class AutomationService {
     }
     if (blocked) {
       const now = Date.now()
-      await automationRepository.markNeedsAttention({
+      // A desktop-only model blocks one run in the cloud, not the Automation's own schedule.
+      if (ownPlacement(current.revision, target)) await automationRepository.markNeedsAttention({
         automationId: current.automation.id,
         expectedRevisionId: current.revision.id,
         reason: { ...blocked, occurredAt: now },
@@ -618,6 +606,7 @@ export class AutomationService {
           organizationId: item.automation.organizationId,
           ownerMemberId: item.automation.ownerMemberId,
           ...item.revision.model,
+          executionTarget: item.revision.executionTarget ?? "desktop",
         })
     let claim: AutomationClaimResult
     try {
@@ -641,11 +630,6 @@ export class AutomationService {
     if (claim.kind !== "duplicate") await recordAutomationRunStarted(claim.run.id)
     if (claim.kind === "overlap") await recordAutomationRunCompleted({ runId: claim.run.id, terminalAt: now })
     if (claim.kind !== "claimed") return null
-    if (item.revision.schedule.kind === "interval" && !await this.intervalSchedulesEnabled(item.automation)) {
-      // Turned off after the Automation was made: it stays, and each occurrence is recorded as skipped until it is back.
-      await this.skipRun({ runId: claim.run.id, code: "execution_runtime_unavailable", message: "Every-few-hours schedules are turned off for this organization.", now })
-      return null
-    }
     const target = item.revision.executionTarget ?? "desktop"
     if (!await automationTargetAllowed(item.automation.organizationId, target)) {
       // The organization turned this kind off: the occurrence is recorded as skipped and the schedule advances.
@@ -754,6 +738,7 @@ export class AutomationService {
       organizationId: scope.organizationId,
       ownerMemberId: scope.ownerMemberId,
       ...claimed.revision.model,
+      executionTarget: "desktop",
     })
     if (!access.ok && shouldApplyAutomationModelAccessFailure({
       model: claimed.revision.model,
@@ -869,7 +854,7 @@ export class AutomationService {
       error.name = "model_access_lost"
       throw error
     }
-    const result = await resolveAutomationModelAccess({ ...scope, ...model })
+    const result = await resolveAutomationModelAccess({ ...scope, ...model, executionTarget: target })
     if (!result.ok && shouldApplyAutomationModelAccessFailure({
       model,
       failure: result,
@@ -889,6 +874,7 @@ export class AutomationService {
       organizationId: item.automation.organizationId,
       ownerMemberId: item.automation.ownerMemberId,
       ...item.revision.model,
+      executionTarget: item.revision.executionTarget ?? "desktop",
     }),
   ): Promise<AutomationListItem> {
     if (item.automation.state !== "active" || item.revision.action?.kind === "saved_script") return item

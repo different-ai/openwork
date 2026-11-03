@@ -24,7 +24,8 @@ import { SlackApiError, slackClient, type SlackCall } from "./protocol.js"
 export type WorkbotDirectMessageFailure = "slack_app_not_installed" | "member_not_linked" | "slack_error"
 
 export type WorkbotDirectMessageResult =
-  | { ok: true; channelId: string; messageTs: string }
+  /** `permalink` only when asked for: the message's Slack link, or null when Slack didn't give one. */
+  | { ok: true; channelId: string; messageTs: string; permalink?: string | null }
   | { ok: false; reason: WorkbotDirectMessageFailure; code?: string; retryAfterMs?: number }
 
 /** Where a DM to this member would go, without sending anything. */
@@ -107,7 +108,7 @@ export async function resolveWorkbotDirectMessageTarget(
 
 /** DMs the member from the Workbot Slack app's bot. Plain text (Slack mrkdwn), links not unfurled. */
 export async function sendWorkbotDirectMessage(
-  input: { organizationId: string; userId: string; text: string; threadTs?: string },
+  input: { organizationId: string; userId: string; text: string; threadTs?: string; permalink?: boolean },
   deps: WorkbotDirectMessageDeps = defaultWorkbotDirectMessageDeps,
 ): Promise<WorkbotDirectMessageResult> {
   const target = await resolveWorkbotDirectMessageTarget(input, deps)
@@ -115,10 +116,25 @@ export async function sendWorkbotDirectMessage(
   return sendWorkbotDirectMessageTo(target, input, deps)
 }
 
-/** The same DM to a member already resolved, optionally as a reply in one of its threads. */
+/** A Slack message link Den may show the member: https on a Slack host only. */
+function slackPermalink(value: unknown): string | null {
+  const parsed = z.object({ permalink: z.string() }).safeParse(value)
+  if (!parsed.success) return null
+  try {
+    const url = new URL(parsed.data.permalink)
+    return url.protocol === "https:" && (url.hostname === "slack.com" || url.hostname.endsWith(".slack.com")) ? url.toString() : null
+  } catch {
+    return null
+  }
+}
+
+/**
+ * The same DM to a member already resolved, optionally as a reply in one of its threads. With `permalink`, also asks
+ * Slack for the message's link (`chat.getPermalink`, no extra scope); a failure there never fails the send.
+ */
 export async function sendWorkbotDirectMessageTo(
   target: WorkbotSlackMember,
-  message: { text: string; threadTs?: string },
+  message: { text: string; threadTs?: string; permalink?: boolean },
   deps: Pick<WorkbotDirectMessageDeps, "botToken" | "slack"> = defaultWorkbotDirectMessageDeps,
 ): Promise<WorkbotDirectMessageResult> {
   const token = await deps.botToken(target.connectionId)
@@ -137,7 +153,10 @@ export async function sendWorkbotDirectMessageTo(
       }),
     )
     if (!posted.success) return { ok: false, reason: "slack_error", code: "post_unconfirmed" }
-    return { ok: true, channelId: opened.data.channel.id, messageTs: posted.data.ts }
+    const sent: WorkbotDirectMessageResult = { ok: true, channelId: opened.data.channel.id, messageTs: posted.data.ts }
+    if (!message.permalink) return sent
+    const permalink = await slack("chat.getPermalink", { channel: opened.data.channel.id, message_ts: posted.data.ts }).then(slackPermalink, () => null)
+    return { ...sent, permalink }
   } catch (error) {
     if (error instanceof SlackApiError) return { ok: false, reason: "slack_error", code: error.code, ...(error.retryAfterMs ? { retryAfterMs: error.retryAfterMs } : {}) }
     return { ok: false, reason: "slack_error", code: "request_failed" }

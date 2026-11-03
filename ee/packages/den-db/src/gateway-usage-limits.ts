@@ -47,9 +47,14 @@ import {
 } from "./schema/gateway-usage-limits"
 
 export { GatewayUsageError, safeUsageDatabaseCode } from "./gateway-usage-errors"
-export { withGatewayUsageEntitlementMutation } from "./gateway-usage-entitlements"
+export { withGatewayUsageEntitlementMutation, lockUsageOrganization } from "./gateway-usage-entitlements"
 export { gatewayProviderUsageLimitsEnabled } from "./gateway-usage-features"
 export { deleteGatewayUsageForOrganization } from "./gateway-usage-erasure"
+export {
+  GatewayProviderUsageLimitsError,
+  settleGatewayProviderUsageLimits,
+  type GatewayProviderRemovalLimitsResult,
+} from "./gateway-usage-provider-removal"
 export { reconcileGatewayUsageBatch } from "./gateway-usage-reconciliation"
 export { listPendingGatewayUsageRequests, recoverGatewayUsageRequests, rotateGatewayUsageEpoch } from "./gateway-usage-operations"
 export {

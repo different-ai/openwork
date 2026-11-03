@@ -36,6 +36,8 @@ export const providerBackgroundSteps = ["catalog.refresh"]
 export const providerUncoveredRoutes = [
   "DELETE /v1/inference-providers/:inferenceProviderId/oauth",
   "POST /v1/inference-providers/migrate-from-llm-provider",
+  // Testing an unsaved key through AI Gateway: no local write, request evidence only.
+  "POST /v1/inference-providers/test-connection",
   // LiteLLM setup, sync and member key connection: request evidence only (routes/integrations.ts).
   "POST /v1/inference-providers/litellm",
   "POST /v1/inference-providers/:inferenceProviderId/litellm/sync",

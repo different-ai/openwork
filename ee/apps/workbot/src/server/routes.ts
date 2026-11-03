@@ -8,13 +8,14 @@ import {
   WorkbotUnavailableError,
   type WorkbotActor,
   type WorkbotChat,
+  type WorkbotEventsUnavailable,
 } from "@openwork-ee/workbot-server"
 import type { Context, Hono, MiddlewareHandler } from "hono"
 import { bodyLimit } from "hono/body-limit"
 import { streamSSE } from "hono/streaming"
 import { z } from "zod"
 import { browserTeachingPrompt, compileBrowserDemonstration, demonstrationCommandSchema } from "@openwork/types/browser-demonstration"
-import { workbotContextPrompt, workbotViewContextSchema, WORKBOT_MAX_MESSAGE_CHARS } from "@openwork/types/workbot-context"
+import { workbotContextPrompt, workbotViewContextSchema, WORKBOT_MAX_MESSAGE_CHARS, type WorkbotViewContext } from "@openwork/types/workbot-context"
 import { activationEventRequestSchema } from "@openwork/types/den/activation"
 import type { AppEnv, Member } from "./auth.js"
 import type { Config } from "./config.js"
@@ -68,12 +69,22 @@ const KEEP_ALIVE_MS = 15_000
 const SOCKET_MIN_MS = 10_000
 const SOCKET_REST_MS = 60_000
 const SOCKET_REST_MAX = 10_000
+/** How long the page waits before reopening live events the runner couldn't open (its own backoff may wait longer). */
+const EVENTS_RETRY_AFTER_S = 5
+/** At most one log line this often for live events the runner couldn't open, counting each reason since the last. */
+const EVENTS_UNAVAILABLE_LOG_MS = 60_000
 /** Matches the runner's per-file limit; a bigger upload is refused before it is read. */
 const MAX_UPLOAD_BYTES = 100 * 1024 * 1024
 /** Plenty for a person typing; stops a runaway script from spending the organization's model budget. */
 const MESSAGES_PER_WINDOW = 30
 const MESSAGE_WINDOW_MS = 10 * 60_000
 const RUN_TOKEN_TTL_MS = 60 * 60_000
+
+/** Which open view a message may name: the browser tab with browser use, documents and the calendar with the workspace assistant. */
+function sharesContext(den: Pick<Member["den"], "browser" | "workspaceAssistant" | "calendar" | "documents">, context: WorkbotViewContext) {
+  if (context.kind === "browser") return den.browser
+  return den.workspaceAssistant && (context.kind === "calendar" ? den.calendar === true : den.documents === true)
+}
 
 /** The views of Workbot's computer this person may use: the browser (`browserUse`) and the native apps (`computerUse`). */
 function desktopViewsOf(den: Pick<Member["den"], "browser" | "computer">): RunnerDesktopView[] {
@@ -91,6 +102,10 @@ function actorOf(member: Member): WorkbotActor {
     userId: den.user.id,
     firstName: firstName || null,
   }
+}
+
+export function workbotConnectionUrl(denWeb: string, organizationId: string, connectionId: string) {
+  return `${denWeb}/dashboard/your-connections?${new URLSearchParams({ connectionId, workbotOrganizationId: organizationId })}`
 }
 
 export function registerWorkbotRoutes(app: Hono<AppEnv>, input: { config: Config; den: Den; member: MiddlewareHandler<AppEnv>; sameOrigin: MiddlewareHandler }) {
@@ -129,6 +144,7 @@ export function registerWorkbotRoutes(app: Hono<AppEnv>, input: { config: Config
       workspaceAssistant: async () => member.den.workspaceAssistant,
       // Opening a document on request needs Documents too; Den still checks the member's Drive access on open.
       guidedNavigation: async () => member.den.guidedNavigation && member.den.documents === true,
+      sandboxGateway: member.den.sandboxGateway,
       // Saved steps are GA; older Dens may omit stepTurns, so preserve their continuous-turn protocol.
       stepTurns: member.den.stepTurns,
       // Per-chat cells are GA; older Dens may omit sessionCells, so preserve their legacy placement.
@@ -225,13 +241,14 @@ export function registerWorkbotRoutes(app: Hono<AppEnv>, input: { config: Config
       computer: who.enabled && who.computer,
       browser: who.enabled && who.browser,
       browserDemonstrations: who.enabled && who.browser && who.browserDemonstrations,
-      browserLiveView: who.enabled && who.browser && who.browserLiveView,
+      // Older clients still read this field; the Browser view now always uses the page stream.
+      browserLiveView: who.enabled && who.browser,
       documentEditing: who.enabled && who.documents === true && who.documentEditing,
       nativeDictation: who.enabled && who.nativeDictation,
       workspaceAssistant: who.enabled && who.workspaceAssistant,
       guidedNavigation: who.enabled && who.workspaceAssistant && who.guidedNavigation,
-      usageRecovery: who.enabled && who.usageRecovery,
-      activationChecklist: who.enabled && who.activationChecklist,
+      usageRecovery: who.enabled,
+      activationChecklist: who.enabled,
       canSchedule: who.enabled && who.canSchedule,
       sideChats: who.enabled && who.sideChats,
       commandPalette: true,
@@ -246,18 +263,23 @@ export function registerWorkbotRoutes(app: Hono<AppEnv>, input: { config: Config
   const desktopFailure = (c: Context<AppEnv>, operation: string, code: string, rebuilt = false) => {
     console.error("[workbot] desktop unavailable", { operation, code, rebuilt })
     if (code === "desktop_outdated") return c.json({ error: code, message: rebuilt ? "Your computer still needs an update after rebuilding. Ask your workspace admin for help." : "Your computer needs an update before it can connect. Rebuild it, or ask your workspace admin if that doesn't help." }, 409)
+    // The runner moves the computer to the new version itself once the work running on it finishes.
+    if (code === "desktop_updating") return c.json({ error: code, message: "Your computer is updating. It will be ready when its current work finishes." }, 409)
     return c.json({ error: "desktop_unavailable", message: "Your computer is unavailable. Try reconnecting." }, 409)
   }
   /** One automatic rebuild per computer at a time: the Browser view and the chat's live glimpse can both find it outdated. */
   const autoRebuilds = new Map<string, Promise<{ ok: boolean; error: string }>>()
 
-  // No sandbox ids or preview credentials are accepted from the page: the member determines the computer.
+  // No sandbox ids or preview credentials are accepted from the page: the member and the chat (each side chat has its
+  // own computer) determine the computer.
   app.post("/v1/workbot/computer/:operation", async (c) => {
     const member = c.get("member")
     c.header("Cache-Control", "no-store")
     if (!member.den.enabled || !desktopViewsOf(member.den).length) return c.json({ error: "feature_disabled" }, 403)
     const operation = c.req.param("operation")
     if (operation !== "viewer" && operation !== "action") return c.json({ error: "not_found" }, 404)
+    const scope = chatOf(c)
+    if (scope.refused) return scope.refused
     const raw: unknown = await c.req.json().catch(() => null)
     const viewer = z.object({ view: z.enum(["browser", "computer"]), control: z.boolean().default(false), wake: z.boolean().default(false) }).strict().safeParse(raw)
     const action = z.object({ action: z.enum(["continue", "pause", "resume", "rebuild"]) }).strict().safeParse(raw)
@@ -276,9 +298,9 @@ export function registerWorkbotRoutes(app: Hono<AppEnv>, input: { config: Config
       const views = await allowedViews()
       if (!views) return c.json({ error: "feature_disabled" }, 403)
       const workbot = workbotFor(member, views)
-      let sessionId = await workbot.sessionIdOf(actorOf(member))
+      let sessionId = await workbot.sessionIdOf(actorOf(member), scope.chat)
       const existing = await client.readSession(sessionId, { turns: 1, limit: 1, outputs: "none" })
-      if (!existing.ok && existing.status === 404) sessionId = await workbot.ensureComputer(actorOf(member))
+      if (!existing.ok && existing.status === 404) sessionId = await workbot.ensureComputer(actorOf(member), scope.chat)
       else {
         if (!existing.ok) return desktopFailure(c, operation, existing.error)
         const updated = await client.putSession(sessionId, { computer: true, desktop: true, desktopViews: views })
@@ -300,9 +322,14 @@ export function registerWorkbotRoutes(app: Hono<AppEnv>, input: { config: Config
         const body = viewer
         if (!body.success) return c.json({ error: "invalid_request" }, 400)
         const { wake, ...view } = body.data
-        if (view.control) await workbot.stop(actorOf(member))
+        if (view.control) await workbot.stop(actorOf(member), scope.chat)
         const open = () => client.desktopViewer(sessionId, { ...view, origin: new URL(config.publicUrl).origin })
         let result = await open()
+        // The runner can drop a request while its process is recycled; asking for a viewer again is harmless.
+        if (!result.ok && result.error === "desktop_unavailable") {
+          await new Promise(resolve => setTimeout(resolve, 500))
+          result = await open()
+        }
         // Opening the full view of a paused computer resumes it: Freestyle restores its memory in about a second, so
         // asking the person to press Resume only adds a round trip. The chat's live glimpse never wakes it.
         if (wake && result.ok && result.value.state === "paused") {
@@ -326,7 +353,7 @@ export function registerWorkbotRoutes(app: Hono<AppEnv>, input: { config: Config
       if (!body.success) return c.json({ error: "invalid_request" }, 400)
       if (!await allowedViews()) return c.json({ error: "feature_disabled" }, 403)
       // Rebuilding deletes the VM under any running turn, so stop the turn first, as pausing does.
-      if (body.data.action === "pause" || body.data.action === "rebuild") await workbot.stop(actorOf(member))
+      if (body.data.action === "pause" || body.data.action === "rebuild") await workbot.stop(actorOf(member), scope.chat)
       let result = await client.desktopAction(sessionId, body.data.action)
       let rebuilt = body.data.action === "rebuild"
       if (!result.ok && result.error === "desktop_outdated" && body.data.action === "resume" && canRebuild) {
@@ -342,7 +369,7 @@ export function registerWorkbotRoutes(app: Hono<AppEnv>, input: { config: Config
 
   app.get("/v1/workbot/model-recovery", async (c) => {
     const member = c.get("member")
-    if (!member.den.enabled || !member.den.usageRecovery) return c.json({ error: "feature_disabled" }, 404)
+    if (!member.den.enabled) return c.json({ error: "feature_disabled" }, 404)
     const result = await den.modelRecovery(member.accessToken)
     return new Response(JSON.stringify(result.payload), { status: result.status, headers: { "Content-Type": "application/json", "Cache-Control": "no-store" } })
   })
@@ -350,14 +377,14 @@ export function registerWorkbotRoutes(app: Hono<AppEnv>, input: { config: Config
   /** The Get set up checklist in the header: Den's answer as it is (Den computes the steps and enforces the feature). */
   app.get("/v1/workbot/activation", async (c) => {
     const member = c.get("member")
-    if (!member.den.enabled || !member.den.activationChecklist) return c.json({ error: "feature_disabled" }, 404)
+    if (!member.den.enabled) return c.json({ error: "feature_disabled" }, 404)
     const result = await den.activation(member.accessToken)
     return new Response(JSON.stringify(result.payload), { status: result.status, headers: { "Content-Type": "application/json", "Cache-Control": "no-store" } })
   })
   /** Only the events Workbot itself observes (its first answer) and hiding the checklist; Den validates the body. */
   app.post("/v1/workbot/activation/events", bodyLimit({ maxSize: 1024 }), async (c) => {
     const member = c.get("member")
-    if (!member.den.enabled || !member.den.activationChecklist) return c.json({ error: "feature_disabled" }, 404)
+    if (!member.den.enabled) return c.json({ error: "feature_disabled" }, 404)
     const body = activationEventRequestSchema.safeParse(await c.req.json().catch(() => null))
     if (!body.success || body.data.step === "own_provider" || body.data.step === "use_skill") return c.json({ error: "invalid_request" }, 400)
     const result = await den.activationEvent(member.accessToken, body.data)
@@ -469,7 +496,7 @@ export function registerWorkbotRoutes(app: Hono<AppEnv>, input: { config: Config
       connections: connections.map((connection) => ({
         ...connection,
         // Den's own link, at the Den web origin this Workbot is configured with.
-        connectUrl: connection.ready || !denWeb ? connection.connectUrl : `${denWeb}/dashboard/your-connections?connectionId=${encodeURIComponent(connection.id)}`,
+        connectUrl: connection.ready || !denWeb ? connection.connectUrl : workbotConnectionUrl(denWeb, member.den.organization.id, connection.id),
       })),
     })
   })
@@ -497,7 +524,7 @@ export function registerWorkbotRoutes(app: Hono<AppEnv>, input: { config: Config
     const scope = chatOf(c)
     if (scope.refused) return scope.refused
     const member = c.get("member")
-    if (body.data.context && (!member.den.workspaceAssistant || (body.data.context.kind === "calendar" ? !member.den.calendar : !member.den.documents))) return c.json({ error: "feature_disabled", message: "Contextual chat is off for this workspace." }, 403)
+    if (body.data.context && !sharesContext(member.den, body.data.context)) return c.json({ error: "feature_disabled", message: "Contextual chat is off for this workspace." }, 403)
     if (workbotContextPrompt(body.data.text, body.data.context).length > MAX_MESSAGE_CHARS) return c.json(messageTooLong, 400)
     const retryAfter = rateLimited(member.den.memberId)
     if (retryAfter !== null) return c.json({ error: "rate_limited" as const, retryAfter }, 429)
@@ -505,7 +532,8 @@ export function registerWorkbotRoutes(app: Hono<AppEnv>, input: { config: Config
       let text = body.data.text
       if (body.data.teachingId) {
         const fresh = await den.session(member.accessToken)
-        if (scope.chat !== null || !fresh.enabled || !fresh.computer || !fresh.browserDemonstrations || fresh.user.id !== member.den.user.id || fresh.organization.id !== member.den.organization.id || fresh.memberId !== member.den.memberId) return c.json({ error: "feature_disabled" }, 403)
+        // Teaching rolls out with browser use, as the teaching route checks: an organization may have no Computer view.
+        if (scope.chat !== null || !fresh.enabled || !fresh.browser || !fresh.browserDemonstrations || fresh.user.id !== member.den.user.id || fresh.organization.id !== member.den.organization.id || fresh.memberId !== member.den.memberId) return c.json({ error: "feature_disabled" }, 403)
         const client = runnerClientFor(member)
         const sessionId = await workbotFor(member).sessionIdOf(actorOf(member))
         const state = await client.browserDemonstration(sessionId, { action: "read" })
@@ -519,7 +547,7 @@ export function registerWorkbotRoutes(app: Hono<AppEnv>, input: { config: Config
         const annotated = await client.browserDemonstration(sessionId, { action: "annotate", text, messageId: body.data.id, ...(focused ? { stepId: focused.id } : {}) })
         if (!annotated.ok || !annotated.value.demonstration) return c.json({ error: "teaching_unavailable" }, 409)
         const confirmed = await den.session(member.accessToken)
-        if (!confirmed.enabled || !confirmed.computer || !confirmed.browserDemonstrations || confirmed.user.id !== fresh.user.id || confirmed.organization.id !== fresh.organization.id || confirmed.memberId !== fresh.memberId) return c.json({ error: "feature_disabled" }, 403)
+        if (!confirmed.enabled || !confirmed.browser || !confirmed.browserDemonstrations || confirmed.user.id !== fresh.user.id || confirmed.organization.id !== fresh.organization.id || confirmed.memberId !== fresh.memberId) return c.json({ error: "feature_disabled" }, 403)
         text = browserTeachingPrompt(text, annotated.value.demonstration.steps, { phase: annotated.value.demonstration.phase, stepId: focused?.id ?? annotated.value.demonstration.steps.at(-1)?.id })
         if (text.length > MAX_MESSAGE_CHARS) return c.json(messageTooLong, 400)
       }
@@ -591,7 +619,7 @@ export function registerWorkbotRoutes(app: Hono<AppEnv>, input: { config: Config
     const scope = chatOf(c)
     if (scope.refused) return scope.refused
     const member = c.get("member")
-    if (body.data.context && (!member.den.workspaceAssistant || (body.data.context.kind === "calendar" ? !member.den.calendar : !member.den.documents))) return c.json({ error: "feature_disabled", message: "Contextual chat is off for this workspace." }, 403)
+    if (body.data.context && !sharesContext(member.den, body.data.context)) return c.json({ error: "feature_disabled", message: "Contextual chat is off for this workspace." }, 403)
     if (workbotContextPrompt(body.data.text, body.data.context).length > MAX_MESSAGE_CHARS) return c.json(messageTooLong, 400)
     const retryAfter = rateLimited(member.den.memberId)
     if (retryAfter !== null) return c.json({ error: "rate_limited" as const, retryAfter }, 429)
@@ -678,6 +706,18 @@ export function registerWorkbotRoutes(app: Hono<AppEnv>, input: { config: Config
     })
   }
 
+  /** Why live events couldn't open, by reason, since the last log line (no ids: reasons are fixed codes). */
+  const eventsUnavailable = new Map<WorkbotEventsUnavailable, number>()
+  let eventsUnavailableLoggedAt = 0
+  const logEventsUnavailable = (code: WorkbotEventsUnavailable) => {
+    eventsUnavailable.set(code, (eventsUnavailable.get(code) ?? 0) + 1)
+    const now = Date.now()
+    if (now - eventsUnavailableLoggedAt < EVENTS_UNAVAILABLE_LOG_MS) return
+    eventsUnavailableLoggedAt = now
+    console.error("[workbot] live events unavailable", Object.fromEntries(eventsUnavailable))
+    eventsUnavailable.clear()
+  }
+
   app.get("/v1/workbot/events", async (c) => {
     if (!enabled(c)) return c.json({ error: "workbot_not_enabled" }, 409)
     const scope = chatOf(c)
@@ -686,9 +726,13 @@ export function registerWorkbotRoutes(app: Hono<AppEnv>, input: { config: Config
     const upstream = new AbortController()
     const socket = member.den.stepTurns ? await openLiveSocket(member, scope.chat, upstream.signal) : null
     if (socket) return relayLiveSocket(c, socket, upstream)
-    const opened = await workbotFor(member).openEvents(actorOf(member), upstream.signal, scope.chat).catch(() => null)
-    if (!opened?.body) return c.json({ error: "workbot_runner_unavailable" }, 409)
-    const body = opened.body
+    const opened = await workbotFor(member).openEvents(actorOf(member), upstream.signal, scope.chat)
+    const body = opened.ok ? opened.response.body : null
+    if (!body) {
+      logEventsUnavailable(opened.ok ? "runner_refused" : opened.code)
+      // 409 like every other route the runner can't serve; Retry-After tells the page when to try again.
+      return c.json({ error: "workbot_runner_unavailable" }, 409, { "Retry-After": String(EVENTS_RETRY_AFTER_S) })
+    }
     c.header("Cache-Control", "no-cache, no-transform")
     c.header("X-Accel-Buffering", "no")
     return streamSSE(c, async (stream) => {

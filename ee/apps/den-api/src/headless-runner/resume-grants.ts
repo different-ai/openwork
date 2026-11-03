@@ -77,6 +77,8 @@ export async function mintHeadlessResumeGrant(input: {
   sessionId: string
   messageId: string
   readOnly?: boolean
+  /** Extra scopes the turn's read-only token carries; every exchanged token gets them too. */
+  scopes?: readonly string[]
   /** When the member was authorized for this turn; stored as the grant's `createdAt`. */
   now?: Date
 }): Promise<{ grant: string; grantId: string; expiresAt: Date }> {
@@ -92,6 +94,7 @@ export async function mintHeadlessResumeGrant(input: {
     sessionId: input.sessionId,
     messageId: input.messageId,
     readOnly: input.readOnly === true,
+    scopes: input.readOnly === true && input.scopes?.length ? [...input.scopes] : null,
     tokenHash: hashHeadlessResumeGrant(grant),
     expiresAt,
     createdAt: now,
@@ -114,6 +117,7 @@ async function resumeGrantForTurn(input: {
   sessionId?: string
   messageId?: string
   readOnly?: boolean
+  scopes?: readonly string[]
   authorizedAt: Date
 }): Promise<string | undefined> {
   const { sessionId, messageId } = input
@@ -138,6 +142,8 @@ export async function mintHeadlessTurnCredentials(input: {
   organizationId: string
   ttlMs?: number
   readOnly?: boolean
+  /** Extra scopes for a read-only token (a background agent's sources); never on a writing one. */
+  scopes?: readonly string[]
   sessionId?: string
   messageId?: string
   /** Exact selected alias; never an upstream credential or client-supplied route. */
@@ -170,7 +176,8 @@ export type HeadlessResumeGrantError =
 /** The stored grant behind a presented one, or null when it is malformed or unknown. */
 export async function findHeadlessResumeGrant(grant: string): Promise<GrantRow | null> {
   if (!HEADLESS_RESUME_GRANT_PATTERN.test(grant)) return null
-  const [row] = await db
+  // primary: a grant is minted at turn start and may be presented moments later; revocation must be visible.
+  const [row] = await db.$primary
     .select()
     .from(HeadlessResumeGrantTable)
     .where(eq(HeadlessResumeGrantTable.tokenHash, hashHeadlessResumeGrant(grant)))
@@ -186,7 +193,8 @@ export function headlessResumeGrantCovers(row: Pick<GrantRow, "sessionId" | "mes
 
 /** The member id when the grant's user is still an active member of its organization. */
 export async function activeHeadlessResumeGrantMember(row: Pick<GrantRow, "userId" | "organizationId">): Promise<string | null> {
-  const [member] = await db
+  // primary: a just-removed member must not resume.
+  const [member] = await db.$primary
     .select({ id: MemberTable.id })
     .from(MemberTable)
     .where(and(eq(MemberTable.organizationId, row.organizationId), eq(MemberTable.userId, row.userId), isNull(MemberTable.removedAt)))
@@ -200,7 +208,8 @@ export async function activeHeadlessResumeGrantMember(row: Pick<GrantRow, "userI
  * concurrently can be written after that sweep; this check refuses it anyway.
  */
 export async function headlessResumeGrantAuthorizedBeforeRevocation(row: Pick<GrantRow, "userId" | "organizationId" | "createdAt">) {
-  const [revocation] = await db
+  // primary: the revocation race below relies on seeing a revocation as soon as it is written.
+  const [revocation] = await db.$primary
     .select({ revokedAt: HeadlessResumeRevocationTable.revokedAt })
     .from(HeadlessResumeRevocationTable)
     .where(and(eq(HeadlessResumeRevocationTable.organizationId, row.organizationId), eq(HeadlessResumeRevocationTable.userId, row.userId)))
@@ -211,7 +220,7 @@ export async function headlessResumeGrantAuthorizedBeforeRevocation(row: Pick<Gr
 
 /** The grant read again: marked revoked, or authorized before the member's latest credential revocation. */
 async function headlessResumeGrantRevokedNow(row: GrantRow) {
-  const [current] = await db
+  const [current] = await db.$primary
     .select({ revokedAt: HeadlessResumeGrantTable.revokedAt })
     .from(HeadlessResumeGrantTable)
     .where(eq(HeadlessResumeGrantTable.id, row.id))
@@ -265,7 +274,8 @@ export async function exchangeHeadlessResumeGrant(
       return { ok: false, status: 403, error: "model_unavailable" }
     }
   }
-  const minted = await mintHeadlessRunMcpToken({ userId: row.userId, organizationId: row.organizationId, readOnly: row.readOnly })
+  // The same allowlist as the turn's first token (a background agent's sources): a resumed turn reads no more.
+  const minted = await mintHeadlessRunMcpToken({ userId: row.userId, organizationId: row.organizationId, readOnly: row.readOnly, ...(row.scopes?.length ? { scopes: row.scopes } : {}) })
   await input.afterMint?.()
   // A credential revocation may have run between the checks above and the mint. Revocation records its moment before
   // deleting the member's tokens (credential-revocation.ts), so either it deleted this token already, or it is visible

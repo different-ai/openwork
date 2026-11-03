@@ -142,15 +142,41 @@ function toolChoiceOf(value: unknown): JsonObject {
   return { auto: {} }
 }
 
+/** The same conversation with these tool calls and their results written as text. */
+export function flattenUnsignedConverseToolCalls(list: ConverseMessage[], calls: ReadonlyMap<string, string>): ConverseMessage[] {
+  if (!calls.size) return list
+  return list.map((message) => ({
+    role: message.role,
+    content: message.content.flatMap((block): JsonObject[] => {
+      const use = isJsonObject(block.toolUse) ? block.toolUse : null
+      if (use && typeof use.toolUseId === "string" && calls.has(use.toolUseId)) {
+        return [{ text: `[Called the ${String(use.name)} tool with ${JSON.stringify(use.input ?? {})}]` }]
+      }
+      const result = isJsonObject(block.toolResult) ? block.toolResult : null
+      if (result && typeof result.toolUseId === "string" && calls.has(result.toolUseId)) {
+        const parts = Array.isArray(result.content) ? result.content.filter(isJsonObject) : []
+        const text = parts.flatMap((part) => typeof part.text === "string" ? [part.text] : part.json !== undefined ? [JSON.stringify(part.json)] : []).join("\n")
+        const media = parts.filter((part) => part.image !== undefined || part.document !== undefined)
+        return [{ text: `[Result of the ${calls.get(result.toolUseId) ?? "tool"} tool]\n${text}` }, ...media]
+      }
+      return [block]
+    }),
+  }))
+}
+
 export function toConverseBody(body: JsonObject, input: {
   upstreamModel: string
   thinkingLevel: AutoRouterThinkingLevel
   maxOutputTokens: number | null
   /** Reasoning state remembered for earlier tool calls, by tool call id. */
   reasoning?: ReadonlyMap<string, ReasoningPayload>
+  /** The levels the model allows; thinking is only ever turned off when `none` is among them. */
+  thinkingLevels?: readonly AutoRouterThinkingLevel[]
 }): JsonObject {
   const system: JsonObject[] = []
-  const list: ConverseMessage[] = []
+  let list: ConverseMessage[] = []
+  // Tool calls of the current turn that have no signed reasoning to replay, and their names.
+  let unsignedCalls = new Map<string, string>()
   const nameDocument = createDocumentNamer()
   const source = Array.isArray(body.messages) ? body.messages.filter(isJsonObject) : []
   let lastAssistantMissingThinking = false
@@ -166,6 +192,7 @@ export function toConverseBody(body: JsonObject, input: {
       case "user":
         pushMessage(list, "user", userBlocks(message.content, nameDocument))
         lastAssistantMissingThinking = false
+        unsignedCalls = new Map()
         break
       case "assistant": {
         const calls = toolCallsOf(message)
@@ -182,6 +209,12 @@ export function toConverseBody(body: JsonObject, input: {
         }
         pushMessage(list, "assistant", content)
         lastAssistantMissingThinking = calls.length > 0 && reasoning === null
+        if (reasoning === null) {
+          for (const call of calls) {
+            const fn = isJsonObject(call.function) ? call.function : {}
+            if (typeof call.id === "string") unsignedCalls.set(call.id, typeof fn.name === "string" ? fn.name : "tool")
+          }
+        }
         break
       }
       case "tool":
@@ -204,11 +237,18 @@ export function toConverseBody(body: JsonObject, input: {
   const claude = isClaude(input.upstreamModel)
   // Bedrock ids carry date stamps (`claude-3-7-sonnet-20250219-v1:0`) that read as a version.
   const effort = claude && claudeTakesEffort(input.upstreamModel.replace(/-\d{8}(?=-|$|:)/g, ""))
-  // A tool-use turn with thinking on must replay the signed reasoning; without it, think off.
-  const level = lastAssistantMissingThinking && input.thinkingLevel !== "default" ? "none" : input.thinkingLevel
+  // A tool-use turn with thinking on must replay the signed reasoning. When it
+  // is missing, models that accept it think off; models that only take
+  // adaptive thinking get this turn's unsigned tool calls as plain text.
+  const allowsDisabled = input.thinkingLevels?.includes("none") ?? false
+  let level = input.thinkingLevel
+  if (lastAssistantMissingThinking && effort) {
+    if (level !== "default" && allowsDisabled) level = "none"
+    else next.messages = list = flattenUnsignedConverseToolCalls(list, unsignedCalls)
+  }
   const thinkingOn = effort && level !== "default" && level !== "none"
   if (thinkingOn) next.additionalModelRequestFields = { thinking: { type: "adaptive" }, output_config: { effort: level } }
-  else if (effort && level === "none") next.additionalModelRequestFields = { thinking: { type: "disabled" } }
+  else if (effort && level === "none" && allowsDisabled) next.additionalModelRequestFields = { thinking: { type: "disabled" } }
 
   const inference: JsonObject = {}
   const maxTokens = readMaxTokens(body) ?? input.maxOutputTokens

@@ -8,6 +8,7 @@ import { DenButton } from "../../app/(den)/_components/ui/button";
 import { DenInput } from "../../app/(den)/_components/ui/input";
 import { DenTable, type DenTableColumn } from "../../app/(den)/_components/ui/table";
 import { AdminOrganizationFeatureControls, type AdminFeatureAccessFailure } from "./admin-organization-feature-controls";
+import { AdminOrganizationFeatureUsageView } from "./admin-organization-feature-usage";
 import { AdminAccessScreen } from "./admin-access-screen";
 import { AdminBreadcrumbs } from "./admin-breadcrumbs";
 import { ADMIN_LIST_PAGE_SIZE, useAdminListLocation } from "./admin-list-location";
@@ -44,7 +45,7 @@ function Coverage({ totals }: { totals: AdminOrganizationUsageTotals }) {
 function planSummary(organization: Organization) {
   const plan = organization.plan;
   if (!plan) return planName(organization.planTier === "team" || organization.planTier === "enterprise" ? organization.planTier : "free");
-  if (plan.paidBy !== "none") return `${planName(plan.paidBy === "stripe_enterprise" ? "enterprise" : "team")} · paid in Stripe`;
+  if (plan.paidBy !== "none") return `${planName("team")} · paid in Stripe`;
   if (plan.tier === "free") return "Free";
   return `${planName(plan.tier)} · ${plan.source === "grandfathered" ? "grandfathered" : "set by admin"}`;
 }
@@ -259,7 +260,10 @@ export function AdminOrganizationPage({ organizationId, section }: { organizatio
     return () => { cancelled = true; window.clearTimeout(timeout); };
   }, [path, section, search, refreshKey, fail]);
 
-  if (section === "features") return <AdminOrganizationFeatureControls key={organizationId} organizationId={organizationId} refreshKey={refreshKey} onAccessFailure={fail} />;
+  if (section === "features") return <>
+    <AdminOrganizationFeatureUsageView key={`usage:${organizationId}`} organizationId={organizationId} refreshKey={refreshKey} onAccessFailure={fail} />
+    <AdminOrganizationFeatureControls key={organizationId} organizationId={organizationId} refreshKey={refreshKey} onAccessFailure={fail} />
+  </>;
   if (section === "billing") return organization ? <AdminOrganizationBilling key={organizationId} organization={organization} onSaved={refresh} onAccessFailure={fail} /> : <SectionSkeleton label="Loading billing" />;
 
   const data = snapshot && (snapshot.trusted || verified) ? snapshot.data : null;

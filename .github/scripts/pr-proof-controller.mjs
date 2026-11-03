@@ -3,15 +3,25 @@ import { appendFile, readFile } from "node:fs/promises";
 import { internalProofContributor } from "./internal-proof-contributor.mjs";
 import { CORE_SPECS, changedFiles, checkpointTagged, packagedJourney, packagedProofOs, proofKey, proofLanes, safePath, selectProof } from "./pr-proof.mjs";
 
-const event = JSON.parse(await readFile(process.env.GITHUB_EVENT_PATH, "utf8"));
-if (!event.pull_request) throw new Error("Proof selection requires a pull request event.");
 const repo = process.env.GITHUB_REPOSITORY;
-const pr = event.pull_request.number;
 function api(path) {
   const result = spawnSync("gh", ["api", path], { encoding: "utf8", timeout: 30_000, maxBuffer: 64 * 1024 * 1024 });
   if (result.status !== 0) throw new Error("GitHub proof selection unavailable.");
   return JSON.parse(result.stdout);
 }
+let event = JSON.parse(await readFile(process.env.GITHUB_EVENT_PATH, "utf8"));
+// PRs no longer run proof automatically. A manual run names the PR and must be
+// dispatched on its head branch at its current head commit; the PR as GitHub
+// reports it stands in for the event. Secret-bearing lanes (core journey,
+// checkpoints) check the real event in the workflow and stay off for it.
+if (!event.pull_request) {
+  const number = process.env.PROOF_PR ?? "";
+  if (!/^\d+$/.test(number)) throw new Error("Proof selection requires a pull request event or a PR number.");
+  const pull = api(`repos/${repo}/pulls/${number}`);
+  if (pull.head.sha !== process.env.GITHUB_SHA) throw new Error("Run PR change proof on the PR's head branch at its current head commit.");
+  event = { pull_request: pull, repository: api(`repos/${repo}`) };
+}
+const pr = event.pull_request.number;
 const current = api(`repos/${repo}/pulls/${pr}`);
 if (current.head.sha !== event.pull_request.head.sha) throw new Error("PR head changed; rerun proof selection on the current head.");
 const files = await changedFiles(api, repo, pr, current.changed_files);
@@ -31,7 +41,7 @@ const internalContributor = internalProofContributor(event.pull_request, event.r
 const matrix = selected => JSON.stringify({ include: selected.map(spec => ({ spec, key: proofKey(spec) })) });
 const packagedMatrix = selected => JSON.stringify({ include: selected.map(spec => ({ spec, key: proofKey(spec), journey: packagedJourney(spec), os: packagedProofOs(spec) })) });
 if (process.env.GITHUB_OUTPUT) await appendFile(process.env.GITHUB_OUTPUT,
-  `internalContributor=${internalContributor}\ncoreMatrix=${matrix(coreSpecs)}\ncoreSelected=${coreSpecs.length > 0}\nmatrix=${matrix(normalSpecs)}\nselected=${normalSpecs.length > 0}\npackagedMatrix=${packagedMatrix(packagedSpecs)}\npackagedSelected=${packagedSpecs.length > 0}\ncheckpointMatrix=${matrix(checkpointSpecs)}\ncheckpointSelected=${checkpointSpecs.length > 0}\n`);
+  `head=${latest.head.sha}\ninternalContributor=${internalContributor}\ncoreMatrix=${matrix(coreSpecs)}\ncoreSelected=${coreSpecs.length > 0}\nmatrix=${matrix(normalSpecs)}\nselected=${normalSpecs.length > 0}\npackagedMatrix=${packagedMatrix(packagedSpecs)}\npackagedSelected=${packagedSpecs.length > 0}\ncheckpointMatrix=${matrix(checkpointSpecs)}\ncheckpointSelected=${checkpointSpecs.length > 0}\n`);
 const running = [...coreSpecs, ...normalSpecs, ...packagedSpecs, ...checkpointSpecs].sort();
 const label = spec => CORE_SPECS.includes(spec) ? `- \`${spec}\` (core journey; its end state is this PR's preview)` : `- \`${spec}\``;
 const summary = running.length

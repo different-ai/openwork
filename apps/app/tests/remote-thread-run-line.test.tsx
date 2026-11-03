@@ -24,12 +24,11 @@ const start: RemoteThreadStart = {
 const part = { type: "dynamic-tool", toolName: "remote-session:create", toolCallId: "call_1", state: "output-available", input: {}, output: {} } as unknown as DynamicToolUIPart
 
 // The store is read on the client; server rendering only sees its initial state.
-async function withRow(flags: { enabled: boolean; threadView: boolean }, check: (row: HTMLElement) => Promise<void> | void) {
+async function withRow(check: (row: HTMLElement) => Promise<void> | void) {
   const ownedDom = typeof window === "undefined"
   if (ownedDom) GlobalRegistrator.register({ url: "http://localhost/" })
   const actEnvironment = Reflect.get(globalThis, "IS_REACT_ACT_ENVIRONMENT")
   Reflect.set(globalThis, "IS_REACT_ACT_ENVIRONMENT", true)
-  useRemoteThreadStore.setState(flags)
   const container = document.createElement("div")
   document.body.append(container)
   const root = createRoot(container)
@@ -49,20 +48,13 @@ async function withRow(flags: { enabled: boolean; threadView: boolean }, check: 
   } finally {
     await act(async () => { root.unmount() })
     container.remove()
-    useRemoteThreadStore.setState({ enabled: false, threadView: false })
     Reflect.set(globalThis, "IS_REACT_ACT_ENVIRONMENT", actEnvironment)
     if (ownedDom) await GlobalRegistrator.unregister()
   }
 }
 
-test("without the thread view a task row shows progress only", async () => {
-  await withRow({ enabled: true, threadView: false }, (row) => {
-    expect(row.querySelector("button")).toBeNull()
-  })
-})
-
-test("with the thread view the row opens the task's conversation beside the chat", async () => {
-  await withRow({ enabled: true, threadView: true }, async (row) => {
+test("the row opens the task's conversation beside the chat", async () => {
+  await withRow(async (row) => {
     const open = row.querySelector("button")
     expect(open?.getAttribute("aria-label")).toContain("Open the task on")
     await act(async () => { open?.click() })

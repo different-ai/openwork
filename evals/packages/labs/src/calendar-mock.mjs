@@ -6,8 +6,8 @@
 //      DEN_MICROSOFT_GRAPH_BASE_URL=<mock>/v1.0):
 //        GET /calendar/v3/calendars/primary/events   Google Calendar API v3 events.list
 //        GET /v1.0/me/calendarView                    Microsoft Graph calendarView
-//   2. Den's capability routes (what OpenWork clients call; point the desktop at the mock with
-//      VITE_OPENWORK_CALENDAR_MOCK_URL or localStorage "openwork.calendar.mockUrl"):
+//   2. Den's capability routes (what OpenWork clients call; Workbot previews use
+//      WORKBOT_CALENDAR_MOCK_URL to proxy these routes to the mock):
 //        GET /v1/capabilities/google-workspace/calendar-events?timeMin&timeMax&maxResults
 //        GET /v1/capabilities/microsoft-365/calendar-events?timeMin&timeMax&maxResults
 //      Same validation, defaults (25, max 100, no page token), field extraction and error envelopes as den-api

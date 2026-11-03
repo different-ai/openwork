@@ -13,8 +13,8 @@ import { activationCardModel, type ActivationRow, type ActivationRowAction } fro
 import { reportActivationEvent, useActivation } from "./use-activation";
 
 /**
- * "Get set up" in the sidebar, above the account (feature `activationChecklist`). Nothing before the first answer,
- * signed out, while the feature is off, or once all six steps are done; one quiet "Next" line after the person hides
+ * "Get set up" in the sidebar, above the account. Nothing before the first answer,
+ * signed out, when unavailable, or once all six steps are done; one quiet "Next" line after the person hides
  * it. Opens a popover with the six steps, each with at most one action (DESIGN S2, S7).
  */
 export function ActivationCard(props: { onOpenExtensions: () => void }) {

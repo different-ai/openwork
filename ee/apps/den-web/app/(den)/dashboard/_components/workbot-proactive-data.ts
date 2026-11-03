@@ -1,6 +1,7 @@
 "use client";
 
 import {
+  mergeAgentSourcesPolicy,
   workbotProactiveHealthSchema,
   workbotProactiveViewSchema,
   type WorkbotProactiveHealth,
@@ -65,10 +66,10 @@ export function useSaveWorkbotProactive(orgId: string) {
       await queryClient.cancelQueries({ queryKey: key });
       const previous = queryClient.getQueryData<WorkbotProactiveView>(key);
       if (previous) {
-        const { responsibilities, instructions, ...policy } = change;
+        const { responsibilities, instructions, sources, ...policy } = change;
         queryClient.setQueryData<WorkbotProactiveView>(key, {
           ...previous,
-          settings: { ...previous.settings, ...policy },
+          settings: { ...previous.settings, ...policy, sources: mergeAgentSourcesPolicy(previous.settings.sources, sources) },
           template: {
             ...previous.template,
             responsibilities: { ...previous.template.responsibilities, ...responsibilities },

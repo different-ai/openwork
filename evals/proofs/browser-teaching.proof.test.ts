@@ -59,6 +59,15 @@ test("a member teaches and corrects a browser task in Workbot chat, then reuses 
     evidence.recordAssertionEvidence("Recording starts only for the chosen tab", `phase=${world.state().demonstration?.phase}`, world.state().demonstration?.phase === "recording");
     await user.screenshot();
   });
+  await step("hiding the floating teaching window keeps the demonstration recording", async () => {
+    await user.click({ role: "button", label: "Hide teaching" });
+    await user.notSee({ testId: "workbot-teaching" });
+    expect(world.state().demonstration?.phase).toBe("recording");
+    await user.click({ role: "button", label: "Teach Workbot" });
+    await user.see({ testId: "workbot-teaching" });
+    await user.see({ text: /^Recorded steps/ });
+    evidence.recordAssertionEvidence("The teaching window hides without stopping the demonstration", `phase=${world.state().demonstration?.phase}`, world.state().demonstration?.phase === "recording");
+  });
   await step("the member demonstrates a search and explains the changing input alongside it", async () => {
     await user.type({ role: "textbox", label: "Message Workbot" }, "I will show you how to search this registry and collect its status.", { replace: true });
     await user.click({ role: "button", label: "Send" });

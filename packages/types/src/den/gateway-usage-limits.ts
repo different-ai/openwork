@@ -91,10 +91,36 @@ export type GatewayUsageLimitPolicy = {
   revision: number
   /** Null for a default limit; the organization Gateway provider this limit applies to otherwise. */
   providerId?: string | null
+  /**
+   * Null for a default limit. "removed" when providerId names a provider that no
+   * longer exists in the organization: the limit then applies to no requests.
+   */
+  providerStatus?: GatewayUsagePolicyProviderStatus | null
   limits: { timeframe: GatewayUsageTimeframe; costLimitMicroUsd: number }[]
   assignments: { id: string; memberId: string | null; teamId: string | null; organization: boolean }[]
   archivedAt?: string | null
 }
+export const GATEWAY_USAGE_POLICY_PROVIDER_STATUSES = ["available", "removed"] as const
+export type GatewayUsagePolicyProviderStatus = (typeof GATEWAY_USAGE_POLICY_PROVIDER_STATUSES)[number]
+
+/**
+ * What happens to the usage limits scoped to a Gateway provider when it is
+ * deleted: move them to another active provider of the organization, or
+ * archive them. Required once such limits exist.
+ */
+export const GATEWAY_PROVIDER_REMOVAL_LIMIT_ACTIONS = ["move", "archive"] as const
+export type GatewayProviderRemovalLimitChoice =
+  | { action: "move"; providerId: string }
+  | { action: "archive" }
+/** One active usage limit that would be orphaned by deleting its provider. */
+export type GatewayProviderRemovalUsageLimit = {
+  id: string
+  name: string
+  revision: number
+  hardLimit: boolean
+  limits: { timeframe: GatewayUsageTimeframe; costLimitMicroUsd: number }[]
+}
+export const GATEWAY_PROVIDER_HAS_USAGE_LIMITS = "provider_has_usage_limits"
 export type GatewayUsageResetStatus = "pending" | "approved" | "denied" | "expired"
 export const gatewayUsageProvenanceSchema = z.discriminatedUnion("kind", [
   z
@@ -209,6 +235,7 @@ export const gatewayUsageLimitPolicySchema: z.ZodType<GatewayUsageLimitPolicy> =
   allowRequestReset: z.boolean(),
   revision: z.number().int(),
   providerId: z.string().nullable().optional(),
+  providerStatus: z.enum(GATEWAY_USAGE_POLICY_PROVIDER_STATUSES).nullable().optional(),
   limits: z.array(
     z.object({ timeframe: gatewayUsageTimeframeSchema, costLimitMicroUsd: moneySchema }),
   ),
@@ -222,6 +249,23 @@ export const gatewayUsageLimitPolicySchema: z.ZodType<GatewayUsageLimitPolicy> =
   ),
   archivedAt: z.iso.datetime().nullable().optional(),
 })
+export const gatewayProviderRemovalUsageLimitSchema: z.ZodType<GatewayProviderRemovalUsageLimit> =
+  z.object({
+    id: z.string(),
+    name: z.string(),
+    revision: z.number().int(),
+    hardLimit: z.boolean(),
+    limits: z.array(
+      z.object({ timeframe: gatewayUsageTimeframeSchema, costLimitMicroUsd: moneySchema }),
+    ),
+  })
+/** 409 body when a provider with active usage limits is deleted without a choice. */
+export const gatewayProviderHasUsageLimitsSchema = z.object({
+  error: z.literal(GATEWAY_PROVIDER_HAS_USAGE_LIMITS),
+  message: z.string(),
+  usageLimits: z.array(gatewayProviderRemovalUsageLimitSchema),
+})
+export type GatewayProviderHasUsageLimits = z.infer<typeof gatewayProviderHasUsageLimitsSchema>
 const gatewayUsageBucketSchema: z.ZodType<GatewayUsageBucket> = z.object({
   id: z.string(),
   timeframe: gatewayUsageTimeframeSchema,

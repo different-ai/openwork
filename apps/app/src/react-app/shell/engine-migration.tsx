@@ -127,6 +127,9 @@ const handledCount = (migration: EngineV2MigrationStatus) =>
 export function engineMigrationMessage(migration: EngineV2MigrationStatus | undefined): string | undefined {
   if (!migration) return undefined;
   if (migration.state === "running") {
+    if (migration.phase === "restoring") return t("engine_migration.progress_restored", {
+      done: formatCount(migration.restored ?? 0), total: formatCount(migration.restoreTotal ?? 0),
+    });
     if (migration.phase === "starting" || migration.phase === "converting" || migration.total === 0) {
       return t("engine_migration.settings_starting");
     }
@@ -344,11 +347,13 @@ function useElapsed(startedAt: string | undefined, running: boolean) {
 
 function MigrationProgressBar(props: { migration: EngineV2MigrationStatus }) {
   const { migration } = props;
-  const done = handledCount(migration);
+  const restoring = migration.phase === "restoring";
+  const done = restoring ? migration.restored ?? 0 : handledCount(migration);
+  const total = restoring ? migration.restoreTotal ?? 0 : migration.total;
   const copying = migration.phase === "copying" || (migration.phase === undefined && done > 0);
   const elapsed = useElapsed(migration.startedAt, migration.state === "running");
-  const value = copying && migration.total > 0 ? Math.min(100, Math.round((done / migration.total) * 100)) : null;
-  const label = copying && migration.total > 0
+  const value = (copying || restoring) && total > 0 ? Math.min(100, Math.round((done / total) * 100)) : null;
+  const label = restoring ? t("engine_migration.progress_restored", { done: formatCount(done), total: formatCount(total) }) : copying && migration.total > 0
     ? t("engine_migration.progress_copied", { done: formatCount(done), total: formatCount(migration.total) })
     : migration.total > 0
       ? t("engine_migration.progress_total", { count: migration.total, total: formatCount(migration.total) })
@@ -574,7 +579,7 @@ function MigrationFloatingRegion(props: PropsWithChildren) {
 function MigrationBanner(props: { progress: ProgressState }) {
   const { migration } = props.progress;
   const done = handledCount(migration);
-  const count = migration.phase === "copying" && migration.total > 0
+  const count = migration.phase === "restoring" ? engineMigrationMessage(migration) : migration.phase === "copying" && migration.total > 0
     ? t("engine_migration.progress_copied", { done: formatCount(done), total: formatCount(migration.total) })
     : null;
   return (

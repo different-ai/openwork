@@ -5,7 +5,7 @@ import { readWorkbotModel, WORKBOT_DEFAULT_MODEL_ID } from "@openwork/types/den/
 import { db } from "../db.js"
 import { cloudAgentGatewayCatalog } from "./gateway-model.js"
 import { createHeadlessRunnerClient, defaultHeadlessRunnerDeps, type HeadlessModelCatalog } from "../headless-runner/client.js"
-import { workbotIncludedModelsEnabledFor, workbotManagedLunaRoutable, workbotManagedLunaState } from "./managed-luna.js"
+import { workbotManagedLunaRoutable, workbotManagedLunaState } from "./managed-luna.js"
 
 /**
  * The organization's default model for its cloud agents on the headless runner: Workbot, the Slack assistant, and
@@ -62,13 +62,13 @@ export async function cloudAgentModelCatalog(actor: CloudModelActor): Promise<He
 
 /** Workbot's managed starter is separate from custom cloud-agent defaults, as on desktop. */
 export async function workbotModelCatalog(actor: CloudModelActor): Promise<HeadlessModelCatalog | null> {
-  if (!await workbotIncludedModelsEnabledFor(actor.organizationId, actor.userId)) return cloudAgentModelCatalog(actor)
   const [catalog, state] = await Promise.all([
     cloudAgentModelCatalog(actor).catch(() => null), workbotManagedLunaState(actor),
   ])
   const ready = state.paid ? state.paidReady : workbotManagedLunaRoutable(state)
-  // Without included access the workspace's Gateway default stays the default, as with the rollout off.
-  if (!workbotManagedLunaRoutable(state) && catalog) return catalog
+  // Without included access the workspace's Gateway default stays the default. When the Gateway cannot be read
+  // either, nothing is verified: report that (null) instead of an empty catalog that reads as "unavailable".
+  if (!workbotManagedLunaRoutable(state)) return catalog
   return { defaultModel: state.model, verified: true, models: [
     ...(ready ? [{ id: state.model, name: state.paid ? "OpenWork: GPT-6 Luna" : "Auto", provider: state.paid ? "openwork" : "openwork-free" }] : []),
     ...(catalog?.models ?? []),

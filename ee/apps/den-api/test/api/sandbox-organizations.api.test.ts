@@ -1,6 +1,6 @@
 /**
- * Sandbox organizations: platform admins create try-it-out organizations behind the cloud-only sandboxOrgs
- * rollout; anyone with the join link joins as a member until the seats run out, the sandbox closes, or the
+ * Sandbox organizations: platform admins create try-it-out organizations on cloud deployments;
+ * anyone with the join link joins as a member until the seats run out, the sandbox closes, or the
  * link is replaced. A closed or expired sandbox gets no Free Auto (Den API reads the sandbox row; no grants or
  * benefit settings are written) without removing members, and extending it restores Free Auto.
  */
@@ -36,17 +36,6 @@ const grantRows = async (orgId: string) => {
   const [rows] = await client.query("SELECT (SELECT count(*) FROM organization_grant WHERE organization_id = ?) + (SELECT count(*) FROM organization_benefit_setting WHERE organization_id = ?) AS total", [orgId, orgId])
   return Number(field(Array.isArray(rows) ? rows[0] : null, "total") ?? -1)
 }
-
-test("sandboxes stay unavailable until the platform turns the rollout on", async () => {
-  const listed = await den.request(admin.token, "GET", "/v1/admin/sandbox-orgs")
-  assert.equal(listed.status, 200, summary(listed))
-  assert.equal(field(listed.body, "enabled"), false)
-  const refused = await create({})
-  assert.equal(refused.status, 404, summary(refused))
-  assert.equal(field(refused.body, "error"), "feature_disabled")
-  const enabled = await den.request(admin.token, "PUT", "/v1/admin/features/sandboxOrgs", { body: { enabled: true } })
-  assert.equal(enabled.status, 200, summary(enabled))
-})
 
 test("only platform admins create or list sandboxes", async () => {
   const person = await den.signUp("Not Admin")
@@ -84,6 +73,15 @@ test("a sandbox gets five per-person connectors, Free Auto and a join link that 
   assert.equal(field(context.body, "currentMember", "role"), "member", summary(context))
 
   await join((await den.signUp("Riley Trial")).token, joinToken)
+  for (const person of [admin, avery]) {
+    const directory = await den.request(person.token, "GET", "/v1/me/orgs")
+    assert.equal(directory.status, 200, summary(directory))
+    const entry = list(field(directory.body, "orgs")).find((org) => org.id === orgId)
+    assert.equal(field(entry, "isSandbox"), true, "owners and joiners see the same sandbox identity")
+    assert.equal(field(entry, "planTier"), "enterprise", "the sandbox label is separate from its Enterprise plan")
+    assert.equal(field(entry, "memberCount"), 3)
+    assert.equal(field(entry, "joinToken"), undefined, "the directory never exposes sandbox join secrets")
+  }
   const late = await join((await den.signUp("Casey Late")).token, joinToken)
   assert.equal(late.status, 409, summary(late))
   assert.equal(field(late.body, "error"), "sandbox_full")
@@ -98,6 +96,9 @@ test("closing stops joins and Free Auto, keeps members, and extending reopens bo
   const closed = await den.request(admin.token, "POST", `/v1/admin/sandbox-orgs/${id}/close`)
   assert.equal(field(closed.body, "sandbox", "state"), "closed", summary(closed))
   assert.equal(field(closed.body, "sandbox", "memberCount"), 2)
+  const directory = await den.request(admin.token, "GET", "/v1/me/orgs")
+  const closedEntry = list(field(directory.body, "orgs")).find((org) => org.id === orgId)
+  assert.equal(field(closedEntry, "isSandbox"), true, "closing does not relabel a sandbox as Free")
   assert.equal(await freeAuto(orgId), false)
   const refused = await join((await den.signUp("After Close")).token, joinToken)
   assert.equal(field(refused.body, "error"), "sandbox_closed", summary(refused))
@@ -120,6 +121,23 @@ test("a sandbox whose time ran out gets no Free Auto, even before anyone lists o
   const extended = await den.request(admin.token, "POST", `/v1/admin/sandbox-orgs/${id}/extend`, { body: { days: 7 } })
   assert.equal(field(extended.body, "sandbox", "state"), "open", summary(extended))
   assert.equal(await freeAuto(orgId), true)
+})
+
+test("the organization directory reports real plans independently of ownership", async () => {
+  const ordinary = await den.createOrg(admin, "Ordinary plan workspace")
+  for (const tier of ["free", "team", "enterprise"]) {
+    if (tier !== "free") {
+      const saved = await den.request(admin.token, "PATCH", `/v1/admin/organizations/${ordinary.orgId}/plan`, { body: { tier, seatLimit: 10 } })
+      assert.equal(saved.status, 200, summary(saved))
+    }
+    const directory = await den.request(admin.token, "GET", "/v1/me/orgs")
+    assert.equal(directory.status, 200, summary(directory))
+    const entry = list(field(directory.body, "orgs")).find((org) => org.id === ordinary.orgId)
+    assert.equal(field(entry, "role"), "owner")
+    assert.equal(field(entry, "isSandbox"), false)
+    assert.equal(field(entry, "planTier"), tier)
+    assert.equal(field(entry, "memberCount"), 1)
+  }
 })
 
 test("replacing the link stops the old one; a domain-limited sandbox refuses other email domains", async () => {
@@ -193,14 +211,4 @@ test("an admin sandbox makes people who join admins; changing it later never cha
   assert.equal(field((await den.request(mo.token, "GET", "/v1/org", { orgId })).body, "currentMember", "role"), "member")
   assert.equal(field((await den.request(ada.token, "GET", "/v1/org", { orgId })).body, "currentMember", "role"), "admin", "Ada keeps her role")
   assert.equal((await den.request(ada.token, "POST", `/v1/admin/sandbox-orgs/${id}/join-role`, { body: { joinRole: "admin" } })).status, 403, "a sandbox admin is not a platform admin")
-})
-
-test("the kill switch stops join links everywhere without deleting sandboxes", async () => {
-  const sandbox = field((await create({})).body, "sandbox")
-  const killed = await den.request(admin.token, "PUT", "/v1/admin/features/sandboxOrgs", { body: { killed: true } })
-  assert.equal(killed.status, 200, summary(killed))
-  assert.equal((await join((await den.signUp("During Kill")).token, tokenOf(sandbox))).status, 404)
-  await den.request(admin.token, "PUT", "/v1/admin/features/sandboxOrgs", { body: { killed: false } })
-  const listed = await den.request(admin.token, "GET", "/v1/admin/sandbox-orgs")
-  assert.ok(list(field(listed.body, "sandboxes")).some((entry) => entry.id === field(sandbox, "id")))
 })

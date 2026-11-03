@@ -81,14 +81,14 @@ function fakeRunner(options: { split?: number } = {}) {
   return { calls, fetch, sessions, state }
 }
 
-function workbotWith(runner: ReturnType<typeof fakeRunner>, compat: { sessionCells?: boolean; indexCapability?: string } = {}) {
+function workbotWith(runner: ReturnType<typeof fakeRunner>, compat: { sessionCells?: boolean; indexCapability?: string; sandboxGateway?: boolean } = {}) {
   const client = createHeadlessRunnerClient({
     config: { url: "http://runner.test", token: "x".repeat(32), owner },
     fetch: runner.fetch,
     mintToken: async () => ({ token: "turn-token", ...(compat.indexCapability ? { indexCapability: compat.indexCapability } : {}) }),
     maxTokenTtlMs: 3_600_000,
   })
-  return createWorkbot({ client, canSchedule: async () => false, ...(compat.sessionCells ? { sessionCells: true } : {}) })
+  return createWorkbot({ client, canSchedule: async () => false, ...(compat.sessionCells ? { sessionCells: true } : {}), ...(compat.sandboxGateway !== undefined ? { sandboxGateway: compat.sandboxGateway } : {}) })
 }
 
 const puts = (calls: Call[]) => calls.filter((call) => call.method === "PUT")
@@ -106,6 +106,19 @@ test("Den protocol compatibility: missing sessionCells from an older Den default
   const base = { user: { id: "u", name: null, email: "a@example.test" }, organization: { id: "o", name: "O", brandAppName: null }, memberId: "m", enabled: true, canSchedule: false }
   assert.equal(denSessionSchema.parse(base).sessionCells, false)
   assert.equal(denSessionSchema.parse({ ...base, sessionCells: true }).sessionCells, true)
+})
+
+test("Den's sandbox gateway flag reaches every chat's runner settings, and older Dens leave it out", async () => {
+  const base = { user: { id: "u", name: null, email: "a@example.test" }, organization: { id: "o", name: "O", brandAppName: null }, memberId: "m", enabled: true, canSchedule: false }
+  assert.equal(denSessionSchema.parse(base).sandboxGateway, false)
+  const runner = fakeRunner()
+  await workbotWith(runner, { sandboxGateway: true }).send(actor, { id: "message_0001", text: "Side", chat: SIDE })
+  assert.ok(puts(runner.calls).length >= 2, "main and side chat")
+  for (const call of puts(runner.calls)) assert.equal(call.body?.sandboxGateway, true)
+  restart()
+  const older = fakeRunner()
+  await workbotWith(older).send(actor, { id: "message_0001", text: "Hello" })
+  for (const call of puts(older.calls)) assert.equal(call.body?.sandboxGateway, undefined)
 })
 
 test("older Den, new person: chats are created exactly as before (legacy ids, memoryOf, no split, no index capability)", async () => {

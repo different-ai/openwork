@@ -11,7 +11,7 @@ import {
 import { flushSync } from "react-dom";
 import { useQueryClient } from "@tanstack/react-query";
 import { permissionsQueryKeys } from "../_components/permissions-query-keys";
-import { linkedWorkbotOrganization } from "../_lib/workbot-team-link";
+import { linkedWorkbotOrganization, workbotSignInRoute } from "../_lib/workbot-team-link";
 import { usePathname, useRouter } from "next/navigation";
 import { useDenFlow } from "../../_providers/den-flow-provider";
 import { getErrorMessage, getOrgLimitError, getOrgPaymentRequiredError, getRequestError, isReauthRequiredError, requestJson, WORKSPACE_REAUTH_SECURITY_MESSAGE } from "../../_lib/den-flow";
@@ -23,7 +23,6 @@ import {
   PENDING_WORKSPACE_CLAIM_STORAGE_KEY,
   getOrgDashboardRoute,
   getOrgAccessFlags,
-  orgFeatureEnabled,
   parseOrgContextPayload,
   parseOrgListPayload,
   roleIncludesCanonicalRole,
@@ -391,7 +390,6 @@ export function OrgDashboardProvider({
       const context = await loadOrgContext(targetOrg.id, boot?.context ?? null);
       if (!isCurrent()) return;
       if (linkedOrgId) {
-        if (!orgFeatureEnabled(context, "workbotIncludedModels") && !orgFeatureEnabled(context, "workbotUsageRecovery")) throw new Error("Workbot recovery links are off for this workspace. A platform admin can turn them on.");
         // Consume only after the exact workspace loaded. Later explicit switches stay authoritative.
         const url = new URL(window.location.href);
         url.searchParams.delete("workbotOrganizationId");
@@ -1055,6 +1053,12 @@ export function OrgDashboardProvider({
 
     if (!user) {
       void refreshOrgData();
+      const signInRoute = workbotSignInRoute(window.location.href);
+      if (signInRoute !== "/") {
+        // A fresh auth page reads the preserved intent after the old session is cleared.
+        void signOut().then(() => window.location.replace(signInRoute));
+        return;
+      }
       void signOut();
       router.replace("/");
       return;

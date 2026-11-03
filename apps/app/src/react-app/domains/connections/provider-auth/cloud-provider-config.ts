@@ -85,7 +85,7 @@ export const getCloudManagedProviderId = (
  * A provider key in `opencode.jsonc` that is owned by the cloud-import system:
  * `lpr_*` keys (org-managed providers), `ipr_*` keys (providers routed through
  * the OpenWork inference gateway), the `openwork` hosted provider and the
- * organization's Auto Router (`openwork-auto`).
+ * organization's Smart Routers (`openwork-auto`).
  * These keys are never hand-authored, so re-importing over an existing block
  * with one of these ids is a safe reconcile (recovers a lost import baseline)
  * rather than a clobber of a user's manual provider (#2346).
@@ -149,6 +149,63 @@ export const resolveGatewayConnectProviders = (
       name: provider.name,
       authUrl: provider.authUrl ?? null,
     }));
+
+/** The fields of a Den Gateway provider the live-sync helpers below read. */
+export type LiveGatewayProvider = {
+  id: string;
+  providerId: string;
+  name: string;
+  credentialStatus: "ready" | "member_auth_required" | "org_credential_missing";
+  updatedAt: string;
+  models: GatewayUsableModel[];
+  authorizationRequests: { credentialSetId: string; name: string; authUrl: string; models?: GatewayUsableModel[] }[];
+};
+
+/**
+ * Sign-in rows for live provider sync, built from Den's Gateway list the same
+ * way the server sync derives its `member_auth_required` skips.
+ */
+export const resolveLiveGatewayConnectProviders = (providers: readonly LiveGatewayProvider[]): GatewayConnectProvider[] =>
+  providers.flatMap((provider) => {
+    const requests = provider.authorizationRequests.map((request) => ({
+      cloudProviderId: provider.id,
+      credentialSetId: request.credentialSetId,
+      ...(request.models === undefined ? {} : { models: request.models }),
+      providerId: provider.id,
+      name: `${provider.name} / ${request.name}`,
+      authUrl: null,
+    }));
+    if (requests.length > 0 || provider.models.length > 0 || provider.credentialStatus !== GATEWAY_MEMBER_AUTH_REQUIRED_REASON) return requests;
+    return [{ cloudProviderId: provider.id, providerId: provider.id, name: provider.name, authUrl: null }];
+  });
+
+/**
+ * Ready Gateway providers in the shape Settings lists synced providers, for
+ * live provider sync where the engine (not the server sync) delivers them.
+ */
+export const resolveLiveGatewayImportedProviders = (providers: readonly LiveGatewayProvider[]): Record<string, CloudImportedProvider> =>
+  Object.fromEntries(providers.filter((provider) => provider.models.length > 0).map((provider) => [provider.id, {
+    cloudProviderId: provider.id,
+    providerId: provider.id,
+    sourceProviderId: provider.providerId,
+    name: provider.name,
+    source: OPENWORK_GATEWAY_PROVIDER_SOURCE,
+    updatedAt: provider.updatedAt || null,
+    modelIds: provider.models.map((model) => model.id).sort(),
+    importedAt: null,
+  } satisfies CloudImportedProvider]));
+
+/** Whether Den no longer asks this member to sign in to the row's provider or credential set. */
+export function isLiveGatewaySetConnected(provider: GatewayConnectProvider, providers: readonly LiveGatewayProvider[]) {
+  const live = providers.find((entry) => entry.id === provider.cloudProviderId);
+  if (!live) return false;
+  if (provider.credentialSetId) {
+    const suffix = provider.credentialSetId.slice(4);
+    return !live.authorizationRequests.some((request) => request.credentialSetId === provider.credentialSetId)
+      && live.models.some((model) => model.id.split("_")[2] === suffix);
+  }
+  return live.models.length > 0;
+}
 
 export function pendingGatewayModelOptions(providers: readonly GatewayConnectProvider[]): ModelOption[] {
   return providers.flatMap((provider) => (provider.models ?? []).flatMap((model) => {

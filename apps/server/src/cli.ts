@@ -159,11 +159,15 @@ if (manageEngine) {
     OPENCODE_CONFIG: runtimeConfigPath,
     OPENCODE_MODELS_URL: opencodeModelsUrl,
   };
+  // Where engine v1 keeps a database or global config of its own when a
+  // standalone OpenCode v2 install owns the shared ones.
+  const engineStateDir = join(runtimeStorageDir(config), "opencode-v1", "state");
   const engineSpawnTemplate: EngineSpawnTemplate = {
     bin: process.env.OPENWORK_OPENCODE_BIN,
     cwd: managedOpencodeCwd,
     runtimeConfigPath,
     env: engineEnv,
+    stateDir: engineStateDir,
     reservedPorts: () => {
       const poolPorts = enginePool?.connections().map((connection) => Number(new URL(connection.baseUrl).port) || 0) ?? [];
       return [...new Set([config.port, ...poolPorts].filter((port) => port > 0))];
@@ -174,6 +178,7 @@ if (manageEngine) {
     cwd: managedOpencodeCwd,
     excludedPorts: [config.port],
     env: engineEnv,
+    stateDir: engineStateDir,
   });
   if (!readInstalledOpencodeVersion()) {
     setInstalledOpencodeVersion(readBinaryVersion(process.env.OPENWORK_OPENCODE_BIN?.trim() || "opencode"));

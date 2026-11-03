@@ -22,6 +22,7 @@ import {
   type FeatureKey,
   type FeatureMap,
   type FeatureOverrides,
+  type OutcomeFeatureKey,
 } from "@openwork/features/registry"
 
 /**
@@ -36,12 +37,13 @@ export const RETIRED_FEATURE_KEYS = [
   "implicitCloudSkills", "platformAuditReads",
   // Folded into another feature (2026-10): analyticsIntegrated → libraryUsage; the rest → workbot.
   "analyticsIntegrated", "workbotCalendar", "workbotSideChats", "workbotDefaultModel",
-  // Generally available (2026-10, second pass). calendarPolish is always on
-  // wherever Workbot or the desktop Calendar is.
+  // Generally available (2026-10, second pass). calendarPolish is always on in Workbot.
   "denFlatPageHeaders", "dashboardActivity", "libraryIntegrated", "libraryUsage", "modelsAnalytics",
   "headlessAutomations", "calendarPolish",
   // Removed (2026-10): organization Dashboards and copy-only Workbot sharing
   "orgManagedDashboards", "workbotSharing",
+  // Removed (2026-10): desktop Calendar; Workbot Calendar and meeting triggers remain separate.
+  "automationCalendar",
   // Generally available (2026-10, third pass): always on, on cloud and self-hosted.
   "agentPermissions", "appBuildProgress", "backgroundShellTasks", "desktopPolicyScreenRemoval",
   "gatewayProviderUsageLimits", "googleDocumentTools", "inviteLinkVerifiesEmail", "lastTurnModelFooter",
@@ -76,6 +78,30 @@ export const RETIRED_FEATURE_KEYS = [
   // Removed (2026-10): an organization's plan and seats are set in one place in /admin (Billing);
   // Stripe-billed Enterprise is a plain /admin control and organization grants are gone.
   "enterprisePlan", "organizationGrants",
+  // Billing without flags (2026-10): Team checkout is always sold where Stripe seat billing is set up,
+  // and Enterprise is only set in /admin (no card purchase, no Stripe Enterprise subscriptions).
+  "teamPlan", "selfServeEnterprise",
+  // Generally available (2026-10): completed rollouts. Sandbox organizations remain cloud-only.
+  "libraryDetailBreadcrumbs", "nativeAffordanceCodeMode", "libraryConnectorNavigation", "mcpAppLibraries",
+  "gatewayProviderTest", "mermaidZoom", "sandboxOrgs", "slackSendAsBot", "liveProviderSync",
+  "browserFloatingView", "remoteSessionSubagents", "remoteSessionThreadView", "remoteSessionAnswers",
+  "activationChecklist", "gatewayProviderAuthErrors", "providerCredentialStatus", "sessionTokenHashing",
+  "customConnectorSetup", "expandedMcpPresets", "analyticsDailyTrends", "gatewayProviderRemovalLimits",
+  "guidedSlackSetup", "libraryConnectorOrgSetup",
+  // Generally available (2026-10): included models and permission-aware recovery; entitlement still applies.
+  "workbotIncludedModels", "workbotUsageRecovery",
+  // Generally available (2026-10): live reply model, composer Agents list, text-first activity, list-first Artifacts.
+  "liveReplyModel", "composerSubagentTracker", "textActivityRail", "artifactsListFirst",
+  // Generally available (2026-10): every-few-hours and before/after-meetings schedules are always on;
+  // Desktop or Cloud placement, calendar scope and the headless runner stay enforced without a flag.
+  "automationIntervalSchedules", "automationCalendarTriggers",
+  // Folded (2026-10): Your agent includes health and Library; browser use includes
+  // its live view; computer use includes background interaction on supported Macs.
+  "workbotAgentHealthView", "workbotAgentLibrary", "browserLiveView", "computerUseBackground",
+  // Generally available (2026-10): remembered sign-in and helper-style tasks on other computers.
+  "lastUsedSignIn", "remoteSessionHelperView",
+  // Removed, not graduated (2026-10): early restart and its download-progress window.
+  "desktopUpdateDownloadWindow",
 ] as const
 
 export function isFeatureKey(value: string): value is FeatureKey {
@@ -104,6 +130,14 @@ export function featuresByCategory(keys: readonly FeatureKey[] = FEATURE_KEYS): 
   }
   return groups
 }
+
+/** The feature declares `outcomes`: /admin › Features reads whether it ran and worked. */
+export function featureHasOutcomes(key: FeatureKey): key is OutcomeFeatureKey {
+  return featureDefinition(key).outcomes === true
+}
+
+/** Every feature that declares `outcomes`, in registry order. */
+export const OUTCOME_FEATURE_KEYS: readonly OutcomeFeatureKey[] = FEATURE_KEYS.filter(featureHasOutcomes)
 
 /** Internal docs are read in the open-source repo, on the default branch. */
 export const FEATURE_DOCS_BASE_URL = "https://github.com/different-ai/openwork/blob/dev/"

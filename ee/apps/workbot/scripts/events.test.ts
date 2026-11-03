@@ -1,7 +1,7 @@
 /**
  * Workbot's live-events relay: with `stepTurns` (saved step turns) it reads the runner's events over a WebSocket,
  * falling back to the runner's SSE when the runner doesn't upgrade; without it, SSE only. The page gets the same SSE
- * either way.
+ * either way, or a 409 that says when to try again.
  */
 import assert from "node:assert/strict"
 import { createHash } from "node:crypto"
@@ -49,6 +49,21 @@ async function pageStream(response: Response) {
   return blocks.slice(1).map((block) => JSON.parse(block.replace(/^data: /, "")))
 }
 
+/** Workbot's routes against a runner on `port`, for the member (and their flags) named in each request's test headers. */
+function workbotEvents(port: number) {
+  const config = loadConfig({ WORKBOT_PUBLIC_URL: "http://localhost:3090", WORKBOT_DEN_API_URL: "http://localhost:3091", WORKBOT_RUNNER_URL: `http://127.0.0.1:${port}`, WORKBOT_RUNNER_TOKEN: token, WORKBOT_SESSION_SECRET: "s".repeat(32) })
+  const den = { ...createDen({ apiUrl: config.denApiUrl, publicUrl: config.publicUrl }), runToken: async () => ({ token: "scoped-test-token" }) }
+  const auth = createAuth({ config, den })
+  const app = new Hono<AppEnv>()
+  registerWorkbotRoutes(app, { config, den, sameOrigin: auth.sameOrigin, member: async (c, next) => {
+    const member = c.req.header("x-test-member") ?? "member_a"
+    const who = denSessionSchema.parse({ user: { id: member, name: "Alex", email: "alex@example.test" }, organization: { id: "org_example", name: "Example", brandAppName: null }, memberId: member, enabled: c.req.header("x-test-workbot") !== "off", canSchedule: false, stepTurns: c.req.header("x-test-step-turns") === "on" })
+    c.set("member", { session: { id: member, userId: member, organizationId: who.organization.id, tokens: { accessToken: "test", expiresAt: Date.now() + 60000 }, createdAt: Date.now() }, accessToken: "test", den: who })
+    await next()
+  } })
+  return (headers: Record<string, string>) => app.request("http://localhost:3090/v1/workbot/events", { headers })
+}
+
 test("Workbot reads live events over the runner's socket only with stepTurns, and falls back to SSE", async () => {
   let upgrades = true
   const sockets: IncomingMessage[] = []
@@ -77,17 +92,7 @@ test("Workbot reads live events over the runner's socket only with stepTurns, an
   const address = runner.address()
   assert.ok(address && typeof address === "object")
   try {
-    const config = loadConfig({ WORKBOT_PUBLIC_URL: "http://localhost:3090", WORKBOT_DEN_API_URL: "http://localhost:3091", WORKBOT_RUNNER_URL: `http://127.0.0.1:${address.port}`, WORKBOT_RUNNER_TOKEN: token, WORKBOT_SESSION_SECRET: "s".repeat(32) })
-    const den = { ...createDen({ apiUrl: config.denApiUrl, publicUrl: config.publicUrl }), runToken: async () => ({ token: "scoped-test-token" }) }
-    const auth = createAuth({ config, den })
-    const app = new Hono<AppEnv>()
-    registerWorkbotRoutes(app, { config, den, sameOrigin: auth.sameOrigin, member: async (c, next) => {
-      const member = c.req.header("x-test-member") ?? "member_a"
-      const who = denSessionSchema.parse({ user: { id: member, name: "Alex", email: "alex@example.test" }, organization: { id: "org_example", name: "Example", brandAppName: null }, memberId: member, enabled: true, canSchedule: false, stepTurns: c.req.header("x-test-step-turns") === "on" })
-      c.set("member", { session: { id: member, userId: member, organizationId: who.organization.id, tokens: { accessToken: "test", expiresAt: Date.now() + 60000 }, createdAt: Date.now() }, accessToken: "test", den: who })
-      await next()
-    } })
-    const events = (headers: Record<string, string>) => app.request("http://localhost:3090/v1/workbot/events", { headers })
+    const events = workbotEvents(address.port)
 
     // Off: SSE only, as before.
     assert.deepEqual(await pageStream(await events({ "x-test-member": "member_a" })), pageEvents("via sse"))
@@ -121,6 +126,37 @@ test("Workbot reads live events over the runner's socket only with stepTurns, an
   } finally {
     runner.closeAllConnections()
     for (const socket of open) socket.destroy()
+    await new Promise<void>((resolve) => runner.close(() => resolve()))
+  }
+})
+
+test("Live events the runner can't open: 409 with Retry-After, and why, logged at most once a minute", async (t) => {
+  const logged = t.mock.method(console, "error", () => undefined)
+  const runner = createServer((request, response) => {
+    if (request.url?.startsWith("/v1/sessions?")) return void response.writeHead(200, { "content-type": "application/json" }).end(JSON.stringify({ sessions: [] }))
+    response.writeHead(503, { "content-type": "application/json" }).end(JSON.stringify({ error: "unavailable" }))
+  })
+  await new Promise<void>((resolve) => runner.listen(0, "127.0.0.1", resolve))
+  const address = runner.address()
+  assert.ok(address && typeof address === "object")
+  try {
+    const events = workbotEvents(address.port)
+    for (const member of ["member_a", "member_b"]) {
+      const refused = await events({ "x-test-member": member })
+      assert.equal(refused.status, 409)
+      assert.equal(refused.headers.get("retry-after"), "5")
+      assert.deepEqual(await refused.json(), { error: "workbot_runner_unavailable" })
+    }
+    // The first reason is logged; the second waits for the next minute's line.
+    assert.deepEqual(logged.mock.calls.map((call) => call.arguments), [["[workbot] live events unavailable", { runner_refused: 1 }]])
+
+    // Workbot off for the organization: the page stops trying, so there's no Retry-After.
+    const off = await events({ "x-test-member": "member_c", "x-test-workbot": "off" })
+    assert.equal(off.status, 409)
+    assert.equal(off.headers.get("retry-after"), null)
+    assert.deepEqual(await off.json(), { error: "workbot_not_enabled" })
+  } finally {
+    runner.closeAllConnections()
     await new Promise<void>((resolve) => runner.close(() => resolve()))
   }
 })
