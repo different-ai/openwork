@@ -115,6 +115,8 @@ jobs:
           pnpm --filter @openwork/app exec bun test --isolate ./tests/chat-file-links.test.ts
           bun test apps/server/test/artifact-resolve-search.test.ts
           node --test apps/desktop/electron/workspace-file-access.test.mjs apps/desktop/electron/open-with-applications.test.mjs
+      - name: Test the warm App sandbox
+        run: pnpm --filter @openwork/app exec bun test --isolate ./tests/mcp-app-warm-sandbox.test.tsx
       - name: Test large attachments reach the workspace
         run: |
           pnpm --filter @openwork/app exec bun test --isolate ./tests/attachment-upload.test.ts

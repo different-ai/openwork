@@ -4,10 +4,12 @@ import { Blocks } from "lucide-react";
 
 import { readDenSettings } from "@/app/lib/den";
 import { denSettingsChangedEvent } from "@/app/lib/den-session-events";
+import { McpAppWarmSandbox } from "@/components/chat/mcp-app-warm-sandbox";
 import { Skeleton } from "@/components/ui/skeleton";
 import { CloudSignInBanner, CloudSignInBannerIcon } from "@/react-app/domains/cloud/cloud-sign-in-banner";
 import { t } from "../../../i18n";
 import { useDenAuth } from "@/react-app/domains/cloud/den-auth-provider";
+import { useWorkspace } from "@/react-app/shell/workspace-provider";
 import { dashboardTileCacheScopeKey } from "./dashboard-tile-cache";
 import type { DashboardLaunchEndpoint } from "./mcp-app-tile";
 import type { CreateDashboardApp } from "./dashboard-apps";
@@ -27,6 +29,7 @@ export function DashboardPage({ fallbackEndpoints, onCreateApp, headerActionsTar
   fallbackEndpoints?: DashboardLaunchEndpoint[];
 }) {
   const denAuth = useDenAuth();
+  const { openworkServerClient } = useWorkspace();
   const personal = useSavedApps();
   // The active org lives in den settings, which change outside React; track
   // them through the settings-changed event so an org switch swaps the board
@@ -67,6 +70,7 @@ export function DashboardPage({ fallbackEndpoints, onCreateApp, headerActionsTar
       data-dashboard-page
       data-dashboard-cache-scope={cacheScopeKey}
     >
+      {openworkServerClient ? <McpAppWarmSandbox client={openworkServerClient} /> : null}
       <ArtifactsPage key={cacheScopeKey} active={active} onCreateApp={onCreateApp} fallbackEndpoints={fallbackEndpoints} headerActionsTarget={headerActionsTarget} />
     </div>
   );
