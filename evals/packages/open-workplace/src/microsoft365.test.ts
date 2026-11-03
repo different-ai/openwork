@@ -135,6 +135,15 @@ describe("Open Outlook, Open Calendar and Open Drive", () => {
     expect(array((await json(await rest("/me/mailFolders/sentitems/messages"))).value)).toHaveLength(0);
   });
 
+  test("seeds a full working week of meetings around now, with the customer review the next working day", async () => {
+    const events = array((await json(await rest("/me/calendarView?startDateTime=2026-10-12T00:00:00Z&endDateTime=2026-10-16T23:59:59Z"))).value).map(record);
+    const days = new Set(events.map((entry) => String(record(entry.start).dateTime).slice(0, 10)));
+    expect(days).toEqual(new Set(["2026-10-12", "2026-10-13", "2026-10-14", "2026-10-15", "2026-10-16"]));
+    expect(events.map((entry) => entry.subject)).toContain("Weekly leadership sync");
+    const review = array((await json(await rest("/me/events"))).value).map(record).find((entry) => entry.subject === "Northwind / Blue Harbor customer pilot review");
+    expect(String(record(review?.start).dateTime)).toMatch(/^2026-10-19T16:00:00/);
+  });
+
   test("seeds useful real Office ZIP bytes with document, workbook and presentation parts", async () => {
     const files = array((await json(await rest("/me/drive/root/children"))).value).map(record);
     expect(files).toHaveLength(4);
@@ -371,7 +380,7 @@ describe("Open Outlook, Open Calendar and Open Drive", () => {
     await toolValue("file_write", { path: "temporary.txt", content: "ephemeral" });
     await toolValue("mail_create_draft", { subject: "temporary", body: "ephemeral", to: [] });
     await fetch(`${base}/reset`, { method: "POST" }); const restored = await json(await fetch(`${base}/state`));
-    expect(array(restored.files)).toHaveLength(array(original.files).length); expect(array(restored.messages)).toHaveLength(array(original.messages).length); expect(array(restored.events)).toHaveLength(1);
+    expect(array(restored.files)).toHaveLength(array(original.files).length); expect(array(restored.messages)).toHaveLength(array(original.messages).length); expect(array(restored.events)).toHaveLength(array(original.events).length); expect(array(original.events).length).toBeGreaterThan(5);
     expect(restored).toEqual(original); // OPEN_WORKPLACE_NOW also resets generated IDs and seed timestamps.
     expect(array(restored.files).map(record).map((entry) => entry.name)).not.toContain("temporary.txt");
     expect(array(restored.files).map(record).map((entry) => record(record(entry.file).hashes).sha256Hash)).toEqual(array(original.files).map(record).map((entry) => record(record(entry.file).hashes).sha256Hash));
