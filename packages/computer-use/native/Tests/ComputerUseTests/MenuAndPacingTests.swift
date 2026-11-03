@@ -43,6 +43,32 @@ final class MenuAndPacingTests: XCTestCase {
         XCTAssertEqual(MenuRules.leadingMenus, 2, "the Apple and app menus are never offered")
     }
 
+    func testAShortcutWithNothingToTypeIntoRunsItsMenuCommand() throws {
+        let entries = [MenuEntry(path: ["File", "Save"], shortcut: "command+s"), MenuEntry(path: ["Edit", "Fill…"], shortcut: "shift+f5")]
+        let save = try Action(["type": "key", "key": "s", "modifiers": ["command"]], policy: .embedded)
+        XCTAssertEqual(InputDelivery.menuForShortcut(save, in: entries), ["File", "Save"])
+        XCTAssertNil(InputDelivery.menuForShortcut(.key("z", .maskCommand), in: entries), "no menu command, no fallback")
+        XCTAssertNil(InputDelivery.menuForShortcut(try Action(["type": "key", "key": "enter"], policy: .embedded), in: entries), "only Command shortcuts")
+    }
+
+    func testASetValueThatDidNotTakeIsReported() {
+        XCTAssertTrue(ValueReadBack.took("72", before: "12" as CFString, after: "72" as CFString))
+        XCTAssertTrue(ValueReadBack.took("72", before: "12" as CFString, after: "72 pt" as CFString), "a reformatted value still changed")
+        XCTAssertFalse(ValueReadBack.took("5", before: NSNumber(value: 3), after: NSNumber(value: 3)), "the brush kept its old size")
+        XCTAssertTrue(ValueReadBack.took("5", before: NSNumber(value: 3), after: NSNumber(value: 5)))
+        XCTAssertFalse(ValueReadBack.took("Blue", before: "Red" as CFString, after: "Red" as CFString))
+        XCTAssertTrue(ValueReadBack.took("Blue", before: nil, after: "Red" as CFString), "nothing to compare, so no claim")
+    }
+
+    func testStrokesInARowStopWhenAWindowOpens() {
+        let before = WindowChanges(windows: [1], panels: [], frontmost: true)
+        XCTAssertFalse(WindowChanges(windows: [1], panels: [], frontmost: true).opened(since: before))
+        XCTAssertTrue(WindowChanges(windows: [1, 2], panels: [], frontmost: true).opened(since: before))
+        XCTAssertTrue(WindowChanges(windows: [1], panels: [9], frontmost: true).opened(since: before))
+        XCTAssertTrue(Action.isStroke(.drag([.zero, CGPoint(x: 1, y: 1)])))
+        XCTAssertFalse(Action.isStroke(.click(.zero, 1, [])))
+    }
+
     func testMenuTitlesMatchAsAPersonReadsThem() {
         XCTAssertTrue(MenuRules.same("\u{200E}Bold", "bold"))
         XCTAssertTrue(MenuRules.same("Find…", " Find… "))

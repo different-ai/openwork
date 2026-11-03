@@ -29,6 +29,15 @@ enum InputDelivery: String {
         return .background
     }
 
+    /// The menu command an app offers for a Command shortcut, run in its place when no
+    /// observed field or control has the keyboard. Only commands the catalog lists, so
+    /// blocked chords never reach a menu either.
+    static func menuForShortcut(_ action: Action, in entries: [MenuEntry]) -> [String]? {
+        guard case .key(let key, let flags) = action, flags.contains(.maskCommand) else { return nil }
+        let chord = NativeKey.chord(key, flags)
+        return entries.first { $0.shortcut == chord }?.path
+    }
+
     /// Steps a background session still takes the front for: menu shortcuts
     /// (background keys never reach an app's menus), modified clicks (apps drop
     /// modifier state from process-targeted clicks), hover and drags (tracking
