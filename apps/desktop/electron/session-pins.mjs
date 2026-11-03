@@ -64,9 +64,9 @@ export function createSessionPins(directory) {
 
 export function registerSessionPins({ ipcMain, directory, isTrusted }) {
   const journal = createSessionPins(directory);
-  for (const [channel, operation] of [
-    ["openwork:session-pins:read", () => journal.read()],
-    ["openwork:session-pins:update", payload => journal.update(payload)],
+  for (const { channel, operation } of [
+    { channel: "openwork:session-pins:read", operation: () => journal.read() },
+    { channel: "openwork:session-pins:update", operation: payload => journal.update(payload) },
   ]) {
     ipcMain.on(channel, (event, payload) => {
       try {
