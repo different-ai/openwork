@@ -168,6 +168,15 @@ test("a create key cannot imply Cloud idempotency that is not implemented", asyn
   assert.equal(result.payload.error, "invalid_capability_arguments")
 })
 
+test("a send meant to start a new task points the agent to create", async () => {
+  const misrouted = await call("send", { computerId: "computer_unit", prompt: "Write the .ics script" }, deps())
+  assert.equal(misrouted.payload.error, "invalid_capability_arguments")
+  assert.match(String(misrouted.payload.hint), /remote-session:create with the computerId/)
+  const followUp = await call("send", { sessionId: "ses_unit", prompt: "" }, deps())
+  assert.equal(followUp.payload.error, "invalid_capability_arguments")
+  assert.equal(followUp.payload.hint, undefined, "a send to an existing session gets no new-task hint")
+})
+
 test("registered offloads preserve trusted Slack result handoff", async () => {
   const queued = command()
   let linked = false

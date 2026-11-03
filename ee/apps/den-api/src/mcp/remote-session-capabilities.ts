@@ -220,13 +220,13 @@ const REMOTE_SESSION_DEFINITIONS: RemoteSessionDefinition[] = [
     summary:
       "Offload a task to a native session. Cloud (default) runs on your OpenWork Web instance; on cloud_runtime_provisioning wait retryAfterMs before retrying. target registered runs on an opted-in OpenWork or OpenCode client; call targets first and pass its computerId and optional workspaceId/model. target desktop preserves the existing desktop flow. Give the complete task as prompt. Registered/desktop creates return a durable commandId: poll read for delivery, progress, approval needs, and the final answer. Do not retry a create with an unknown outcome blindly.",
     searchExtraTokens:
-      "remote session sessions chat thread cloud web instance browser openwork opencode plugin harness registered client create start new open run task delegate offload handoff background workspace",
+      "remote session sessions chat thread cloud web instance browser openwork opencode plugin harness registered client create start new open run send submit task delegate offload handoff background workspace computer machine",
     argumentsSchema: {
       type: "object",
       properties: {
         target: { type: "string", enum: ["cloud", "desktop", "registered"], description: "Where the session runs. Defaults to cloud (OpenWork Web). registered runs on an opted-in OpenWork or OpenCode client; choose its computerId from targets." },
         title: { type: "string", maxLength: 120, description: "Session title shown in OpenWork." },
-        idempotencyKey: { type: "string", maxLength: 160, description: "Desktop/registered targets: reuse this key with the same arguments when retrying a create after a dropped response. Cloud does not support this key." },
+        idempotencyKey: { type: "string", maxLength: 160, description: "Desktop/registered targets: a new unique key for each new task (for example with a random suffix); reuse it, with the same arguments, only to retry this create after a dropped response. A key is held for 10 minutes. Cloud does not support this key." },
         prompt: { type: "string", description: "Optional first prompt. When present the session starts working immediately." },
         model: MODEL_ARGUMENT_SCHEMA,
         computerId: { type: "string", description: "Desktop or registered targets: the computerId from remote-session:targets. Omit to let any of your connected desktops take it." },
@@ -237,7 +237,7 @@ const REMOTE_SESSION_DEFINITIONS: RemoteSessionDefinition[] = [
   {
     action: "send",
     summary:
-      "Send a follow-up prompt to an existing remote session on your OpenWork Web instance, or on your desktop for a session created with target \"desktop\". Returns an acceptance receipt; poll remote-session:read for the reply (for a desktop session, read with its commandId until session.status settles again). A desktop that has not answered within about 20 seconds returns state \"pending\" with a requestId to collect through remote-session:read.",
+      "Only for a session that already exists (needs its sessionId): to start or send a new task to a computer, use remote-session:create. Send a follow-up prompt to an existing remote session on your OpenWork Web instance, or on your desktop for a session created with target \"desktop\". Returns an acceptance receipt; poll remote-session:read for the reply (for a desktop session, read with its commandId until session.status settles again). A desktop that has not answered within about 20 seconds returns state \"pending\" with a requestId to collect through remote-session:read.",
     searchExtraTokens:
       "remote session sessions chat thread cloud web instance send prompt message turn continue follow up reply ask tell",
     argumentsSchema: {
@@ -276,16 +276,18 @@ const REMOTE_SESSION_DEFINITIONS: RemoteSessionDefinition[] = [
   {
     action: "status",
     summary:
-      `Follow remote sessions cheaply: one call returns the compact status (state starting, running, waiting, idle or error; waitingFor; computer; latestStep, the step it ran last as a short sentence, while it works; a short preview of the answer) of up to ${REMOTE_SESSION_STATUS_THREADS_MAX} sessions, by commandId for desktop or registered targets and by sessionId for Cloud. Pass back each version you received: an unchanged session returns only its ref and version. Pass waitMs (up to ${REMOTE_SESSION_STATUS_WAIT_MAX_MS}) to wait in one call until one changes instead of polling; it returns at once when every session has settled. Use remote-session:read for the transcript or the full answer.`,
+      `Follow remote sessions cheaply: one call returns the compact status (state starting, running, waiting, idle or error; waitingFor; computer; latestStep, the step it ran last as a short sentence, while it works; a short preview of the answer) of up to ${REMOTE_SESSION_STATUS_THREADS_MAX} sessions, by commandId for desktop or registered targets and by sessionId for Cloud. Pass back each version you received: an unchanged session returns only its ref and version. Pass waitMs (up to ${REMOTE_SESSION_STATUS_WAIT_MAX_MS}) to wait in one call until one changes instead of polling; it returns at once when every session has settled. Use remote-session:read for the transcript or the full answer. Not for checking whether a computer is online before starting: remote-session:targets lists that.`,
     searchExtraTokens: "remote session sessions status progress poll wait follow watch check done finished waiting question permission batch several many",
     argumentsSchema: {
       type: "object",
       properties: {
         threads: {
           type: "array",
+          minItems: 1,
           maxItems: REMOTE_SESSION_STATUS_THREADS_MAX,
           items: {
             type: "object",
+            oneOf: [{ required: ["commandId"] }, { required: ["sessionId"] }],
             properties: {
               commandId: { type: "string", description: "Desktop or registered targets: the commandId from remote-session:create." },
               sessionId: { type: "string", description: "Cloud: the sessionId from remote-session:create." },
@@ -293,7 +295,7 @@ const REMOTE_SESSION_DEFINITIONS: RemoteSessionDefinition[] = [
             },
           },
         },
-        waitMs: { type: "number", description: `Wait up to this long (max ${REMOTE_SESSION_STATUS_WAIT_MAX_MS}) for a change. Defaults to 0.` },
+        waitMs: { type: "integer", minimum: 0, maximum: REMOTE_SESSION_STATUS_WAIT_MAX_MS, description: `Milliseconds to wait (max ${REMOTE_SESSION_STATUS_WAIT_MAX_MS}) for a change. Defaults to 0.` },
       },
       required: ["threads"],
     },
@@ -1154,6 +1156,14 @@ function remoteSessionStatusSources(input: RemoteSessionExecuteInput, deps: Remo
   }
 }
 
+/** `send` only continues an existing session; a send with no sessionId was meant to start a task. */
+function newTaskSentToExistingSessionHint(action: RemoteSessionAction, body: unknown): { hint?: string } {
+  if (action !== "send") return {}
+  const normalized = normalizeToolBody(body)
+  if (normalized && typeof normalized === "object" && "sessionId" in normalized && normalized.sessionId) return {}
+  return { hint: "remote-session:send only continues an existing session. To start a new task, call remote-session:create with the computerId from remote-session:targets and the task as prompt." }
+}
+
 async function executeRemoteSession(
   input: RemoteSessionExecuteInput,
   deps: RemoteSessionExecuteDeps,
@@ -1175,6 +1185,7 @@ async function executeRemoteSession(
         path: issue.path.join("."),
         message: issue.message,
       })),
+      ...newTaskSentToExistingSessionHint(input.action, input.body),
       retryable: false,
     })
   }
@@ -1515,7 +1526,7 @@ export async function executeRemoteSessionCapability(
     return await executeRemoteSession(input, deps)
   } catch (error) {
     if (error instanceof Error && error.message === "remote_session_idempotency_conflict") {
-      return errorResult({ error: "remote_session_idempotency_conflict", message: "This create key already belongs to a different task. Inspect the existing command or use a new key for genuinely new work.", retryable: false })
+      return errorResult({ error: "remote_session_idempotency_conflict", message: "This create key was used for a different task in the last 10 minutes. If this is new work, call create again with a new idempotencyKey; the earlier task does not replace it.", retryable: false })
     }
     throw error
   }
