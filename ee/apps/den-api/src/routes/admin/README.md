@@ -45,7 +45,9 @@ A real active user ran at least one `task.*` event with a session id from the ap
 excluding setup agents and removed members. Pulse refreshes every `ADMIN_METRICS_FAST_INTERVAL_MS` (default 5 minutes);
 the other sections every `ADMIN_METRICS_HEAVY_INTERVAL_MS` (default 30 minutes). `ADMIN_METRICS_REFRESH_ENABLED=0`
 turns the loop off. Each metric holds a lease while it runs, so one den-api instance recomputes it at a time; a failure
-keeps the last good snapshot and records the error. Queries read platform tables through indexed time windows
+keeps the last good snapshot, records the error and waits out the interval on every instance unless an admin refreshes
+by hand. Each metric runs its queries one at a time, on a read replica when `DATABASE_READ_USERNAME` and
+`DATABASE_READ_PASSWORD` are set. Queries read platform tables through indexed time windows
 (`telemetry_event_ts_window`, `invitation_created_at`, `created_at`/`bucket_start` indexes), select no credential or
 secret columns and read invitations only as counts and durations. Payloads are aggregates, apart from organization names.
 

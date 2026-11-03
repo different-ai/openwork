@@ -7,7 +7,8 @@ import { dbRows } from "./sql.js"
 
 const logger = appLogger.child({ component: "admin_metrics" })
 const owner = defaultOwner()
-// Let the server finish booting before the first refresh.
+// Let the server finish booting before the first refresh. Deploys restart the
+// timers, so a boot checks once; the lease lets it run only what is already due.
 const FIRST_REFRESH_DELAY_MS = 15_000
 
 export const adminMetricIntervals = (): Intervals => ({ fast: env.adminMetrics.fastIntervalMs, heavy: env.adminMetrics.heavyIntervalMs })
