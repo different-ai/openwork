@@ -108,7 +108,7 @@ export function BrowserPresentationSurfaces({ sessionId, controller }: BrowserFu
   // Closing the window, by its button or the system's close, puts the page back
   // beside the chat, as does a window that could not open.
   const slot = useFloatingWindow("browser", poppedOut, {
-    title: `${tab?.label ?? "New tab"} · Browser`,
+    title: `${tab?.label ?? "New tab"} Browser`,
     width: 1280,
     height: 900,
     onClosed: () => present("side"),
