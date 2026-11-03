@@ -15,7 +15,7 @@ for (const scenario of ["quit", "busy", "kill", "read", "corrupt", "unavailable"
       await user.see({ text: /^Pinned$/ });
       before = await world.snapshot();
       expect(before.pins).toEqual(expected);
-      evidence.recordAssertionEvidence("Two pins are present before the fault", JSON.stringify(before), true);
+      evidence.recordAssertionEvidence("Two pins are present before the fault", JSON.stringify(before), JSON.stringify(before.pins) === JSON.stringify(expected));
     });
     await step(`when: the isolated desktop encounters ${scenario}`, async () => {
       if (scenario === "quit" || scenario === "busy" || scenario === "kill") await world.restart(scenario);
@@ -34,7 +34,9 @@ for (const scenario of ["quit", "busy", "kill", "read", "corrupt", "unavailable"
         await user.on(world.app).see({ text: /^Durable pin 1$/ });
         await user.on(world.app).see({ text: /^Durable pin 2$/ });
       }
-      evidence.recordAssertionEvidence("No stored pin is pruned by missing session inventory", JSON.stringify(await world.snapshot()), true);
+      const final = await world.snapshot();
+      evidence.recordAssertionEvidence("No stored pin is pruned by missing session inventory", JSON.stringify(final), JSON.stringify(final.pins) === JSON.stringify(expected));
+      expect(final.pins).toEqual(expected);
       if (scenario !== "unavailable") await user.on(world.app).looks(["The OpenWork sidebar shows a Pinned section containing Durable pin 1 and Durable pin 2."]);
     });
   });
