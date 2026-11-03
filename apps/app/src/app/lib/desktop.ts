@@ -96,6 +96,10 @@ declare global {
         command: C,
         ...args: DesktopCommandArgs<C>
       ) => Promise<DesktopCommandResult<C>>;
+      sessionPins?: {
+        read: () => { ok: true; pins: string[] | null } | { ok: false; error: string };
+        update: (change: { previous: string[]; next: string[] }) => { ok: true; pins: string[] } | { ok: false; error: string };
+      };
       computer?: {
         onRequest?: (callback: (payload: { sessionId: string; request: ComputerRequest | null }) => void) => () => void;
       };

@@ -159,6 +159,10 @@ contextBridge.exposeInMainWorld("__OPENWORK_ELECTRON__", {
   invokeDesktop(command, ...args) {
     return ipcRenderer.invoke("openwork:desktop", command, ...args);
   },
+  sessionPins: {
+    read() { return ipcRenderer.sendSync("openwork:session-pins:read"); },
+    update(change) { return ipcRenderer.sendSync("openwork:session-pins:update", change); },
+  },
   computer: {
     // The agent needs computer use the chat does not have yet; null when answered.
     onRequest(callback) {
