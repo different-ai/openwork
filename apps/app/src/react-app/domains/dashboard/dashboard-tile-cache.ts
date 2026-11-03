@@ -196,8 +196,7 @@ export function createPresentationCacheStore(maxBytes: number) {
       const scope = store.read(scopeKey);
       if (!scope) return;
       const previous = scope.get(entryId);
-      // What the App loaded outlives a refresh of its launch, not a change of App.
-      if (!next.storedReads && previous?.storedReads && previous.app.resourceUri === next.app.resourceUri) next.storedReads = previous.storedReads;
+      // Stored reads must be supplied with a verified current provider identity; do not inherit them here.
       scope.set(entryId, next);
       store.schedule(scopeKey);
       if (previous?.app.html !== next.app.html) void mcpAppDocuments.save(scopeKey, entryId, next.app.html);
