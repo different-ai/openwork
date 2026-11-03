@@ -1,4 +1,5 @@
 import { Message, MessageContent } from "@/components/ui/message";
+import { textDirectionOf } from "@/lib/text-direction";
 import { TaskRecovery } from "@/components/chat/task-recovery";
 import { presentOpencodeSessionError } from "../sync/session-error";
 import { persistableComposerDraftText } from "../surface/composer-state-store";
@@ -18,7 +19,7 @@ export function PendingConversationView({ conversation, composer }: { conversati
       <div className="absolute inset-0 overflow-x-hidden overflow-y-auto overscroll-y-contain touch-pan-y px-3 pb-4 pt-4 sm:px-5">
         <div className="mx-auto w-full max-w-[720px]">
           <Message className="mx-auto flex w-full max-w-3xl flex-col items-end gap-2 px-2 md:px-10" data-message-role="user">
-            <MessageContent className="bg-muted text-foreground max-w-[85%] rounded-3xl px-4 py-2.5 leading-6 sm:max-w-[75%] !select-text not-prose">
+            <MessageContent className="bg-muted text-foreground max-w-[85%] rounded-3xl px-4 py-2.5 leading-6 sm:max-w-[75%] !select-text not-prose" dir={textDirectionOf(text) ?? "ltr"}>
               <span className="whitespace-pre-wrap">{text}</span>
               {conversation.submitted.attachments.map((attachment) => <div key={attachment.id} className="text-xs text-muted-foreground">{attachment.name}</div>)}
             </MessageContent>
