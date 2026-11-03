@@ -90,6 +90,8 @@ jobs:
           POLICY_PATH: ${{ github.workspace }}/.warden/sweep.toml
           WARDEN_BIN: ${{ runner.temp }}/warden-cli/node_modules/@sentry/warden/bin/warden.js
           PI_CODING_AGENT_DIR: ${{ github.workspace }}/.warden/pi
+          WARDEN_SWEEP_FIXES: ${{ vars.WARDEN_SWEEP_FIXES }}
+          WARDEN_MODEL: ${{ vars.WARDEN_MODEL }}
           WARDEN_OPENAI_API_KEY: ${{ secrets.WARDEN_OPENAI_API_KEY }}
           SLACK_BOT_TOKEN: ${{ secrets.SLACK_BOT_TOKEN }}
           SLACK_WARDEN_SWEEP_CHANNEL_ID: ${{ vars.SLACK_WARDEN_SWEEP_CHANNEL_ID }}
@@ -134,7 +136,12 @@ jobs:
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
           ref: ${{ needs.sweep.outputs.head }}
+          fetch-depth: 0
           persist-credentials: true
+
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: 24.22.1
 
       - name: Download planned fix PRs
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
@@ -155,46 +162,13 @@ jobs:
           permission-pull-requests: write
           permission-contents: read
 
-      - name: Open fix PRs
+      - name: Open fix PRs and report actual outcomes
+        if: always()
         env:
           GH_TOKEN: ${{ github.token }}
-          PR_TOKEN: ${{ steps.automation.outputs.token || github.token }}
+          PR_TOKEN: ${{ steps.automation.outputs.token }}
           BASE: ${{ needs.sweep.outputs.head }}
-        run: |
-          set -euo pipefail
-          shopt -s nullglob
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          [ "$HAS_AUTOMATION_APP" = "true" ] || echo "::warning::No automation App: fix PRs are opened with GITHUB_TOKEN, so CI won't start on them until someone pushes."
-          for dir in "$RUNNER_TEMP"/fixes/*/; do
-            branch=$(jq -r .branch "$dir/plan.json")
-            title=$(jq -r .title "$dir/plan.json")
-            if ! [[ "$branch" =~ ^warden-fix/merged-[a-z0-9]+-[0-9a-f]{12}$ ]]; then
-              echo "::warning::Unexpected branch name $branch; skipped"
-              continue
-            fi
-            if git ls-remote --exit-code --heads origin "$branch" >/dev/null; then
-              echo "- $branch already exists; skipped" >> "$GITHUB_STEP_SUMMARY"
-              continue
-            fi
-            git switch --quiet --detach "$BASE"
-            git switch --quiet -c "$branch"
-            applied=0
-            for patch in "$dir"*.patch; do
-              if git apply --check "$patch" 2>/dev/null; then git apply "$patch"; applied=$((applied + 1)); else echo "::warning::$branch: $(basename "$patch") no longer applies to dev; skipped"; fi
-            done
-            if [ "$applied" -eq 0 ] || git diff --quiet; then
-              echo "- $branch: no fix applied cleanly" >> "$GITHUB_STEP_SUMMARY"
-              continue
-            fi
-            # Defense in depth: fixes never touch CI or review machinery.
-            if git diff --name-only | grep -Eq '^(\.github/|\.opencode/|opencode\.jsonc?$|warden\.toml$|\.warden/|\.agents/skills/|\.claude/skills/)'; then
-              echo "::error::$branch touches CI or review machinery; refusing"
-              git checkout --quiet -- .
-              continue
-            fi
-            git commit --quiet -am "$title" -m "Release note: none"
-            git push --quiet origin "HEAD:refs/heads/$branch"
-            url=$(GH_TOKEN="$PR_TOKEN" gh pr create --base dev --head "$branch" --title "$title" --body-file "$dir/body.md")
-            echo "- Opened $url" >> "$GITHUB_STEP_SUMMARY"
-          done
+          FIXES_DIR: ${{ runner.temp }}/fixes
+          SLACK_BOT_TOKEN: ${{ secrets.SLACK_BOT_TOKEN }}
+          SLACK_WARDEN_SWEEP_CHANNEL_ID: ${{ vars.SLACK_WARDEN_SWEEP_CHANNEL_ID }}
+        run: node .github/scripts/warden-sweep-open.mjs

@@ -96,6 +96,33 @@ export function createV2ReadAdapter(read: Read): Read {
   };
 }
 
+function nativeSessionPath(workspaceId: string, sessionId: string): string {
+  return `/workspace/${encodeURIComponent(workspaceId)}/opencode2/api/session/${encodeURIComponent(sessionId)}`;
+}
+
+/**
+ * Native `Session.Message.Info` rows of every type, unfiltered, in timeline
+ * order: the first `limit` from the start, or the newest `limit` from the end
+ * (all of them when `limit` is omitted). Used by `session.read` detail reads.
+ */
+export async function readV2NativeMessages(
+  read: Read,
+  workspaceId: string,
+  sessionId: string,
+  options: { from: "start" | "end"; limit?: number },
+): Promise<Record<string, unknown>[]> {
+  const order = options.from === "start" ? "asc" : "desc";
+  const rows = await pages(read, `${nativeSessionPath(workspaceId, sessionId)}/message?order=${order}`, options.limit);
+  const timeline = order === "desc" ? rows.reverse() : rows;
+  // Stable sort: messages sharing a timestamp keep the engine's timeline order.
+  return timeline.sort((a, b) => Number(isRecord(a.time) ? a.time.created : 0) - Number(isRecord(b.time) ? b.time.created : 0));
+}
+
+/** One native `Session.Message.Info` row by id. */
+export async function readV2NativeMessage(read: Read, workspaceId: string, sessionId: string, messageId: string): Promise<unknown> {
+  return data(await read(`${nativeSessionPath(workspaceId, sessionId)}/message/${encodeURIComponent(messageId)}`));
+}
+
 export async function readV2SessionActivity(read: Read, workspaceId: string, sessionId: string) {
   const base = `/workspace/${encodeURIComponent(workspaceId)}/opencode2`;
   const native: Read = path => read(base + path);

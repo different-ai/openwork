@@ -21,6 +21,8 @@ let ids: string[] = ["overview"];
 let scope = "artifacts-test-member-org";
 let verified = true;
 let catalogReady = true;
+let deletions: string[] = [];
+let deleteFails = false;
 let pageActive = true;
 let launches: string[] = [];
 let mounts = 0;
@@ -28,7 +30,7 @@ let createPrompts: string[] = [];
 const legacy: SavedAppSummary = { view: { id: "saved-view", configObjectId: "config", title: "Saved report", description: null, status: "active", activeRevisionId: null, revisions: [], createdAt: "2026-01-01T00:00:00Z", updatedAt: "2026-01-01T00:00:00Z" }, workflowTitle: "Saved report", canManage: true, onDashboard: false };
 
 mock.module("../src/react-app/domains/dashboard/built-dashboard-apps", () => ({
-  useBuiltDashboardApps: () => ({ ready: catalogReady, apps: verified ? apps : [], ids, identityVerified: verified, cacheScopeKey: scope, scope: [scope], query: { isPending: false, isSuccess: true, isError: false }, setAdded: (id: string, added: boolean) => { ids = added ? [...ids, id] : ids.filter((item) => item !== id); } }),
+  useBuiltDashboardApps: () => ({ ready: catalogReady, orgId: "org", client: { deleteBuiltMcpApp: async (orgId: string, appId: string) => { deletions.push(appId); if (deleteFails) throw new Error("Only a manager can delete this artifact."); apps = apps.filter((item) => item.connectionId !== appId); } }, setAdded: (id: string, added: boolean) => { ids = added ? [...ids, id] : ids.filter((item) => item !== id); }, apps: verified ? apps : [], ids, identityVerified: verified, cacheScopeKey: scope, scope: [scope], query: { isPending: false, isSuccess: true, isError: false }, setAdded: (id: string, added: boolean) => { ids = added ? [...ids, id] : ids.filter((item) => item !== id); } }),
 }));
 mock.module("../src/react-app/domains/apps/use-apps", () => ({
   useSavedApps: () => ({ identityVerified: verified, available: true, canManage: true, scope: [scope], query: { isSuccess: true, isError: false, data: { items: [legacy] } } }),
@@ -60,6 +62,7 @@ async function click(label: string) {
   await act(async () => { button.click(); await new Promise((resolve) => setTimeout(resolve, 0)); });
 }
 beforeEach(() => {
+  deletions = []; deleteFails = false;
   apps = initialApps; ids = ["overview"]; verified = true; catalogReady = true; pageActive = true; scope = "artifacts-test-member-org"; launches = []; mounts = 0; createPrompts = [];
   rememberArtifactSelection(scope, null);
   rememberArtifactSelection("another-member-org", null);
@@ -151,6 +154,63 @@ test("a catalog that has not loaded removes nothing", async () => {
   await render();
   expect(readDashboardTileCache(scope, "personal:queue")).not.toBeNull();
   removeDashboardTileCache(scope, "personal:queue");
+});
+
+const deletable = () => { apps = [{ ...initialApps[0]!, canDelete: true }, initialApps[1]!]; };
+const pageButton = (label: string) => [...document.querySelectorAll("button")].find((item) => item.textContent === label);
+async function confirm(label: string) {
+  const button = pageButton(label);
+  if (!button) throw new Error(`Missing button: ${label}`);
+  await act(async () => { button.click(); await new Promise((resolve) => setTimeout(resolve, 0)); });
+}
+
+test("Delete shows only on an artifact this member may delete", async () => {
+  deletable();
+  await render();
+  await click("Open Review queue");
+  expect(pageButton("Delete")).toBeUndefined();
+  await click("Open Overview");
+  expect(pageButton("Delete")).not.toBeUndefined();
+});
+
+test("an older deployment that does not say shows no Delete", async () => {
+  await render(); await click("Open Overview");
+  expect(pageButton("Delete")).toBeUndefined();
+});
+
+test("nothing is deleted until the member confirms, and Cancel leaves the artifact", async () => {
+  deletable();
+  await render(); await click("Open Overview");
+  await confirm("Delete");
+  expect(document.body.textContent).toContain("removes the artifact for everyone");
+  expect(deletions).toEqual([]);
+  await confirm("Cancel");
+  expect(deletions).toEqual([]);
+  expect(mounts).toBe(1);
+});
+
+test("deleting closes the artifact, unpins it, and clears what this device saved", async () => {
+  deletable();
+  writeDashboardTileCache(scope, "personal:overview", { argumentsSignature: "{}", cachedAt: Date.now(), workspaceId: "w", result: { content: [] },
+    app: { serverName: "artifacts", toolName: "open_app", resourceUri: "ui://overview", html: "<html></html>", prefersBorder: false, csp: { connectDomains: [], resourceDomains: [], frameDomains: [], baseUriDomains: [] } } });
+  await render(); await click("Open Overview");
+  await confirm("Delete"); await confirm("Delete artifact");
+  await render();
+  expect(deletions).toEqual(["overview"]);
+  expect(ids).toEqual([]);
+  expect(mounts).toBe(0);
+  expect(readDashboardTileCache(scope, "personal:overview")).toBeNull();
+  expect(host.textContent).not.toContain("Overview");
+  expect(host.textContent).toContain("Select an artifact to open it.");
+});
+
+test("a refused delete says why and leaves the artifact open", async () => {
+  deletable(); deleteFails = true;
+  await render(); await click("Open Overview");
+  await confirm("Delete"); await confirm("Delete artifact");
+  expect(document.body.textContent).toContain("Only a manager can delete this artifact.");
+  expect(mounts).toBe(1);
+  expect(ids).toEqual(["overview"]);
 });
 
 test("selection survives parent remount but never crosses identity scope", async () => {

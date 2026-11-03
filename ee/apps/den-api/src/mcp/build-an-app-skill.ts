@@ -31,7 +31,7 @@ An App is a small React view that OpenWork compiles and publishes as its own MCP
 
 ## Steps
 
-1. Find the data and actions it needs, unless it is self-contained: search_capabilities with 2-4 keyword variants, then pick exact matches that create_app can bind. Prefer tools that only read (readOnly: true). When the data must be combined or computed each time, save a live Workflow first, as execute_capability_script describes.
+1. Find the data and actions it needs, unless it is self-contained: search_capabilities with 2-4 keyword variants, then pick exact matches that create_app can bind. Prefer tools that only read (readOnly: true). When the data must be combined or computed each time, save a live Workflow first, as execute_capability_script describes, and time it as Make it fast says.
 2. Call prepare_app with a title that names the outcome ("Open Linear issues", not "Dashboard"), one sentence on what the person sees and does, and those exact tools. It verifies them and returns their input schemas and a starter already wired to them.
 3. Write the App from that starter. Keep its theme, state handling, and tool calls. Replace the general result view with the focal view, rename buttons to their outcome, and keep only the inputs the person needs.
 4. Call create_app with the preparationId, the same tools, the complete React and CSS, and a textFallback of one or two sentences on what the App shows. If it fails, fix exactly what the error names and call create_app again with the same preparationId. Never fall back to a local HTML file, save_artifact_view, or config-object writes.
@@ -69,12 +69,18 @@ prepare_app picks one from the tools you declare. Each is also a resource you ca
 
 ## Make it fast
 
+The first load comes before everything else in this guide. Design the read so the person sees real data within a few seconds of opening the App, then build the view around it.
+
+- Time the read before you build the view: run it with execute_capability_script and compare executedAt with fetchedAt. Keep it under 3 seconds. An open waits up to 4 seconds to bring read-only data with the App; a slower read is discarded and run again, so the App opens late and its data arrives later still.
 - Load what the focal view needs in one call: one tool, or one live Workflow that combines the sources, rather than several calls or a call that waits on another.
-- Start independent reads together, never one after another.
+- Start independent reads together, never one after another. In Workflow code pass the calls straight to Promise.all, as in Promise.all(ids.map((id) => tools.x.y({ id }))), or Promise.allSettled when one failure should not sink the rest. A helper that awaits inside, such as an async map callback, holds up the whole script, so its calls run one at a time even inside Promise.all. To page several lists, fetch one page of each per round.
+- Ask the source for less: a date window, a summary or report endpoint, and no expanded records the view does not show. Each page of records can add a second or more, so never page through history for a number the source can give you directly.
+- When the whole picture cannot be fast, split it: a quick read for the focal view, and a slower tool for the detail that fills in behind it.
 - Load on open. Opening the App is enough intent, from the chat, a dashboard, or the catalog, so its read-only data loads with no click; never leave an empty "click to load" state for data it can read. Clicks are for changes (send, create, update, delete) and anything that needs approval.
 - Keep the starter's cached read: the last result for its inputs shows at once while the live load refreshes it, with its "Updated" time, and stays on screen, marked stale, if the refresh fails; OpenWork then forgets it, so the next open starts fresh.
 - Let the launch input carry the record or filter, so the chat opens the App on it without a lookup first.
 - Return only what the view shows: the top rows and a count, not full records.
+- Show data the moment it arrives: no entrance animations, staggered reveals, or chart draw-in (recharts isAnimationActive={false}). Import a built-in library only when the view needs it: charts add about 400 KB to every open.
 
 ## What a good App looks like
 
