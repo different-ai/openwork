@@ -24,12 +24,12 @@ import { normalizeToolBody } from "./invoke.js"
 type CodemodeDb = ReturnType<typeof createDenDb>["db"]
 
 /**
- * The Code Mode that new Workflow code is tested and saved for. It is read per
- * organization, like every run, so a Workflow always runs on the Code Mode it
+ * The language new Workflow code is tested and saved in. It is read per
+ * organization, like every run, so a Workflow always runs on the interpreter it
  * was tested on while the feature stays on.
  */
 export async function newWorkflowLanguage(organizationId: string): Promise<CodemodeLanguage> {
-  return await organizationFeatureEnabled(organizationId, "opencodeCodeMode") ? "opencode-codemode" : "codemode-js"
+  return await organizationFeatureEnabled(organizationId, "standardCodeMode") ? "ecmascript" : "codemode-js"
 }
 
 export type WorkflowExecutionResult =
@@ -148,10 +148,10 @@ export async function executeWorkflow(input: {
     }
   }
 
-  // Only Workflows written for OpenCode's Code Mode check the feature; a revert runs them on OpenWork's.
+  // Only Workflows written in standard JavaScript check the feature; a revert runs them on OpenWork's Code Mode.
   const runtime = codemodeRuntimeFor(
     parsed.payload.language,
-    parsed.payload.language === "opencode-codemode" && await organizationFeatureEnabled(input.organizationId, "opencodeCodeMode"),
+    parsed.payload.language === "ecmascript" && await organizationFeatureEnabled(input.organizationId, "standardCodeMode"),
   )
   const startedAt = new Date()
   const result = await runCodemodeScript({

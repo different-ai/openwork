@@ -433,14 +433,14 @@ export const FEATURES = defineFeatures({
     deployments: everywhere,
     default: false,
   },
-  opencodeCodeMode: {
-    label: "Workflows on OpenCode's Code Mode",
-    description: "Workflows written from now on, and Workflow tests, run on OpenCode's Code Mode, the same JavaScript the OpenCode engine runs. Workflows saved before keep running as they always have. Turning this off runs every Workflow on OpenWork's original Code Mode again.",
+  standardCodeMode: {
+    label: "Workflows as standard JavaScript",
+    description: "Workflows written from now on, and Workflow tests, run as standard JavaScript (ECMAScript, checked against test262), calling tools described the MCP way with JSON Schema. The engine is @opencode/codemode. Workflows saved before keep running as they always have. Turning this off runs every Workflow on OpenWork's original Code Mode again.",
     category: "automations",
     added: "2026-11-03",
     since: "2026-11",
     author: "reachjalil",
-    docs: "docs/features/opencode-code-mode/README.md",
+    docs: "docs/features/standard-code-mode/README.md",
     deployments: everywhere,
     default: false,
   },

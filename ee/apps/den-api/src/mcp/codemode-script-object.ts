@@ -4,12 +4,12 @@ import type { JsonSchemaType } from "@modelcontextprotocol/sdk/validation"
 export type JsonSchemaObject = JsonSchemaType
 
 /**
- * The Code Mode a Workflow was written for: `codemode-js` is OpenWork's original
- * interpreter, `opencode-codemode` is OpenCode's (`@opencode/codemode`).
+ * The language a Workflow was written in: `codemode-js` is the restricted dialect
+ * of OpenWork's original interpreter, `ecmascript` is standard JavaScript.
  */
-export type CodemodeLanguage = "codemode-js" | "opencode-codemode"
+export type CodemodeLanguage = "codemode-js" | "ecmascript"
 
-const CODEMODE_LANGUAGES: readonly string[] = ["codemode-js", "opencode-codemode"] satisfies CodemodeLanguage[]
+const CODEMODE_LANGUAGES: readonly string[] = ["codemode-js", "ecmascript"] satisfies CodemodeLanguage[]
 
 function isCodemodeLanguage(value: unknown): value is CodemodeLanguage {
   return typeof value === "string" && CODEMODE_LANGUAGES.includes(value)
@@ -88,7 +88,7 @@ export function parseCodemodeScriptPayload(normalizedPayloadJson: unknown):
   }
   const language = normalizedPayloadJson.language
   if (!isCodemodeLanguage(language)) {
-    return { ok: false, message: "The Workflow language must be codemode-js or opencode-codemode." }
+    return { ok: false, message: "The Workflow language must be codemode-js or ecmascript." }
   }
   if (normalizedPayloadJson.inputSchema !== undefined && !isJsonSchemaObject(normalizedPayloadJson.inputSchema)) {
     return { ok: false, message: "The Workflow inputSchema must be a JSON Schema object." }

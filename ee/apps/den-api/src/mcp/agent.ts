@@ -1382,7 +1382,7 @@ export function registerAgentMcpRoutes<T extends { Variables: RequestIdVariables
             return await runMcpServiceAction("workflow_run.record", auditPrincipal, null, () => executeWorkflowAuthoringTest(request, {
               organizationId,
               orgMembershipId: memberIdentity?.orgMembershipId,
-              runtime: language === "opencode-codemode" ? "opencode" : "openwork",
+              runtime: language === "ecmascript" ? "standard" : "openwork",
               buildTools: () => buildCapabilityToolTree(capabilityContext),
               recordRun: (receipt) => recordWorkflowRun(db, receipt),
             }), { result: toolResultStatus })

@@ -1,19 +1,22 @@
 import { CodeMode } from "@openwork/codemode"
 import { Effect } from "effect"
-import { runOnOpencodeCodeMode } from "./codemode-run-opencode.js"
+import { runStandardCodeMode } from "./codemode-run-standard.js"
 import type { CodemodeLanguage } from "./codemode-script-object.js"
 import type { CodemodeToolTree } from "./codemode-tools.js"
 
-/** Which interpreter runs a script: OpenWork's original Code Mode or OpenCode's. */
-export type CodemodeRuntime = "openwork" | "opencode"
+/**
+ * Which interpreter runs a script: OpenWork's original Code Mode, or the
+ * standard one, which runs ECMAScript (today `@opencode/codemode`).
+ */
+export type CodemodeRuntime = "openwork" | "standard"
 
 /**
- * Saved code keeps the Code Mode it was written for: OpenWork's for
- * `codemode-js`, OpenCode's for `opencode-codemode` while the organization has
- * `opencodeCodeMode`. Turning the feature off runs everything on OpenWork's again.
+ * Saved code keeps the interpreter it was written for: OpenWork's for
+ * `codemode-js`, the standard one for `ecmascript` while the organization has
+ * `standardCodeMode`. Turning the feature off runs everything on OpenWork's again.
  */
-export function codemodeRuntimeFor(language: CodemodeLanguage, opencodeCodeMode: boolean): CodemodeRuntime {
-  return language === "opencode-codemode" && opencodeCodeMode ? "opencode" : "openwork"
+export function codemodeRuntimeFor(language: CodemodeLanguage, standardCodeMode: boolean): CodemodeRuntime {
+  return language === "ecmascript" && standardCodeMode ? "standard" : "openwork"
 }
 
 type CodemodeRunCommon = {
@@ -70,8 +73,8 @@ export async function runCodemodeScript(input: {
     maxToolCalls: input.maxToolCalls ?? DEFAULT_MAX_TOOL_CALLS,
     maxOutputBytes: input.maxOutputBytes ?? 65_536,
   }
-  const result = input.runtime === "opencode"
-    ? await runOnOpencodeCodeMode({ code: input.code, tools: input.tools, ...(bindings ? { bindings } : {}), limits })
+  const result = input.runtime === "standard"
+    ? await runStandardCodeMode({ code: input.code, tools: input.tools, ...(bindings ? { bindings } : {}), limits })
     : await Effect.runPromise(CodeMode.execute({
         code: input.code,
         tools: input.tools,

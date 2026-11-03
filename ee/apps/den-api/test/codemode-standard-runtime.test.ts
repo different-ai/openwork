@@ -46,42 +46,42 @@ const run = (code: string, runtime?: CodemodeRuntime, extra: { scriptInput?: unk
 test("saved Workflows keep the Code Mode they were written for, and the feature's revert wins", () => {
   assert.equal(codemodeRuntimeFor("codemode-js", true), "openwork")
   assert.equal(codemodeRuntimeFor("codemode-js", false), "openwork")
-  assert.equal(codemodeRuntimeFor("opencode-codemode", true), "opencode")
-  assert.equal(codemodeRuntimeFor("opencode-codemode", false), "openwork")
+  assert.equal(codemodeRuntimeFor("ecmascript", true), "standard")
+  assert.equal(codemodeRuntimeFor("ecmascript", false), "openwork")
 })
 
 test("a Workflow payload names either Code Mode and nothing else", () => {
-  for (const language of ["codemode-js", "opencode-codemode"]) {
+  for (const language of ["codemode-js", "ecmascript"]) {
     const parsed = parseCodemodeScriptPayload({ language, requiredCapabilities: [] })
     assert.equal(parsed.ok && parsed.payload.language, language)
   }
   assert.equal(parseCodemodeScriptPayload({ language: "javascript", requiredCapabilities: [] }).ok, false)
 })
 
-test("OpenCode's Code Mode runs a Den tool and returns its value even without an output schema", async () => {
+test("the standard interpreter runs a Den tool and returns its value even without an output schema", async () => {
   const result = await run(`
     const found = await tools.host.echo({ id: input.id })
     return { found, double: found.id * 2 }
-  `, "opencode", { scriptInput: { id: 21 } })
+  `, "standard", { scriptInput: { id: 21 } })
   assert.deepEqual(result.ok && result.value, { found: { id: 21 }, double: 42 })
   assert.deepEqual(result.toolCalls, [{ name: "host.echo" }])
 })
 
-test("each engine is the one that runs: only OpenCode's has promise chaining", async () => {
+test("each engine is the one that runs: only the standard one has promise chaining", async () => {
   const code = `return await tools.host.echo({ id: 1 }).then((found) => found.id + 1)`
-  const opencode = await run(code, "opencode")
-  assert.equal(opencode.ok && opencode.value, 2)
+  const standard = await run(code, "standard")
+  assert.equal(standard.ok && standard.value, 2)
   const openwork = await run(code)
   assert.equal(openwork.ok, false)
   assert.equal(!openwork.ok && openwork.error.kind, "UnsupportedSyntax")
 })
 
-test("async helpers on OpenCode's Code Mode run their calls side by side", async () => {
+test("async helpers in standard JavaScript run their calls side by side", async () => {
   const started = Date.now()
   const result = await run(`
     const load = async (id) => { const found = await tools.host.slow({ id }); return found.id }
     return await Promise.all([1, 2, 3, 4].map(load))
-  `, "opencode")
+  `, "standard")
   assert.deepEqual(result.ok && result.value, [1, 2, 3, 4])
   // Four 80 ms calls one after another would take 320 ms.
   assert.ok(Date.now() - started < 250, `took ${Date.now() - started} ms`)
@@ -90,15 +90,15 @@ test("async helpers on OpenCode's Code Mode run their calls side by side", async
 test("a Den tool refusal is a catchable ToolFailure with its own message", async () => {
   const caught = await run(`
     try { await tools.host.refuse({}) } catch (error) { return error.message }
-  `, "opencode")
+  `, "standard")
   assert.equal(caught.ok && caught.value, "Lookup refused")
-  const failed = await run(`return await tools.host.refuse({})`, "opencode")
+  const failed = await run(`return await tools.host.refuse({})`, "standard")
   assert.equal(!failed.ok && failed.error.kind, "ToolFailure")
   assert.match(!failed.ok ? failed.error.message : "", /Lookup refused/)
 })
 
-test("an unexpected tool failure shows no internal detail on either Code Mode", async () => {
-  for (const runtime of ["opencode", "openwork"] satisfies CodemodeRuntime[]) {
+test("an unexpected tool failure shows no internal detail on either interpreter", async () => {
+  for (const runtime of ["standard", "openwork"] satisfies CodemodeRuntime[]) {
     const caught = await run(`try { await tools.host.crash({}) } catch (error) { return error.message }`, runtime)
     assert.equal(caught.ok && caught.value, "Tool execution failed", runtime)
     const failed = await run(`return await tools.host.crash({})`, runtime)
@@ -107,33 +107,33 @@ test("an unexpected tool failure shows no internal detail on either Code Mode", 
   }
 })
 
-test("warnings from OpenCode's Code Mode reach the run's logs", async () => {
+test("warnings from the standard interpreter reach the run's logs", async () => {
   // The refusal settles while the slow call runs; nothing awaits it.
   const result = await run(`
     tools.host.refuse({})
     await tools.host.slow({ id: 1 })
     console.log("done")
     return 1
-  `, "opencode")
+  `, "standard")
   assert.equal(result.ok && result.value, 1)
   assert.equal(result.logs[0], "done")
   assert.ok(result.logs.slice(1).some((line) => line.startsWith("warning: ToolFailure:") && line.includes("Lookup refused")), result.logs.join("\n"))
 })
 
-test("a program on OpenCode's Code Mode reaches no host network, process, module or Function constructor", async () => {
-  const globals = await run(`return [typeof fetch, typeof process, typeof require, typeof globalThis, typeof setTimeout]`, "opencode")
+test("a standard JavaScript program reaches no host network, process, module or Function constructor", async () => {
+  const globals = await run(`return [typeof fetch, typeof process, typeof require, typeof globalThis, typeof setTimeout]`, "standard")
   assert.deepEqual(globals.ok && globals.value, ["undefined", "undefined", "undefined", "undefined", "undefined"])
   for (const code of [
     `import fs from "node:fs"; return typeof fs`,
     `const fs = await import("fs"); return typeof fs.readFileSync`,
     `return [].constructor.constructor("return 1")()`,
   ]) {
-    const result = await run(code, "opencode")
+    const result = await run(code, "standard")
     assert.equal(result.ok, false, code)
   }
 })
 
-test("the timeout bounds a run on OpenCode's Code Mode", async () => {
-  const result = await run(`while (true) {}`, "opencode", { timeoutMs: 150 })
+test("the timeout bounds a standard JavaScript run", async () => {
+  const result = await run(`while (true) {}`, "standard", { timeoutMs: 150 })
   assert.equal(!result.ok && result.error.kind, "TimeoutExceeded")
 })
