@@ -235,12 +235,12 @@ function reset() {
   while ([0, 6].includes(day.getUTCDay())) day.setUTCDate(day.getUTCDate() + 1);
   const review = { subject: "Northwind / Blue Harbor customer pilot review", start: day.getTime(), minutes: 60, attendees: [recipient("mateo@acme.test", "Mateo Rivera"), recipient("priya@acme.test", "Priya Shah"), recipient("nora@acme.test", "Nora Patel"), recipient("kenji@acme.test", "Kenji Tanaka")], location: "Acme Robotics · customer briefing room", body: "Customer review. Northwind Atlas2 roaming test; Blue Harbor AtlasLift safety and training; forecast and next actions. Documents are in shared OneDrive." };
   // A full working week around "now", so "what's on my calendar this week" has an answer whatever day it is.
-  // Times are UTC in US/EU working hours and never overlap the customer review.
+  // Times are UTC, 16:30–20:30: US working hours (8:30 am Pacific onward) and EU late afternoon. They never overlap the customer review.
   const monday = new Date(clock()); monday.setUTCHours(0, 0, 0, 0); monday.setUTCDate(monday.getUTCDate() - ((monday.getUTCDay() + 6) % 7));
   const at = (weekday, hour, minute = 0) => monday.getTime() + weekday * 86400000 + (hour * 60 + minute) * 60000;
   const person = (handle, name) => recipient(`${handle}@acme.test`, name);
   const week = [
-    { subject: "Weekly leadership sync", start: at(0, 15, 30), minutes: 45, attendees: [person("maya", "Maya Singh"), person("sam", "Sam Okafor"), person("liam", "Liam O'Connor")], location: "Teams", body: "Pipeline, hiring and this week's customer meetings. Bring the Northwind and Blue Harbor status." },
+    { subject: "Weekly leadership sync", start: at(0, 16, 30), minutes: 45, attendees: [person("maya", "Maya Singh"), person("sam", "Sam Okafor"), person("liam", "Liam O'Connor")], location: "Teams", body: "Pipeline, hiring and this week's customer meetings. Bring the Northwind and Blue Harbor status." },
     { subject: "Atlas2 firmware standup", start: at(1, 17, 30), minutes: 15, attendees: [person("priya", "Priya Shah"), person("jamal", "Jamal Brooks")], location: "Teams", body: "Firmware 2.0-rc4 status, aisle C roaming test plan, field log collection." },
     { subject: "Blue Harbor safety walkthrough prep", start: at(1, 20, 0), minutes: 30, attendees: [person("nora", "Nora Patel"), person("kenji", "Kenji Tanaka")], location: "Acme Robotics · lab 2", body: "Walk through the AtlasLift safety guide, turning envelope and emergency-stop procedure before the customer review." },
     { subject: "Q4 forecast review with Finance", start: at(2, 19, 0), minutes: 30, attendees: [person("sam", "Sam Okafor"), person("maya", "Maya Singh")], location: "Teams", body: "Committed $768,000 (Northwind + Blue Harbor). Keep the 24-unit Northwind expansion out of committed numbers. Pilot terms timing." },
