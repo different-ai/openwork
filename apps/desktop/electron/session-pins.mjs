@@ -32,8 +32,12 @@ export function createSessionPins(directory) {
     const fd = openSync(temporary, "w", 0o600);
     try { writeFileSync(fd, value, "utf8"); fsyncSync(fd); } finally { closeSync(fd); }
     renameSync(temporary, destination);
-    const dir = openSync(directory, "r");
-    try { fsyncSync(dir); } finally { closeSync(dir); }
+    // Windows does not expose directory fsync through Node. File contents are
+    // still flushed before atomic replacement, which survives process death.
+    if (process.platform !== "win32") {
+      const dir = openSync(directory, "r");
+      try { fsyncSync(dir); } finally { closeSync(dir); }
+    }
   }
   function save(value) {
     const encoded = JSON.stringify({ version: 1, pinnedIds: value });
