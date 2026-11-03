@@ -179,6 +179,17 @@ export const FEATURES = defineFeatures({
     deployments: everywhere,
     default: false,
   },
+  desktopPersonalConnectors: {
+    label: "Desktop: members add their own connectors",
+    description: "Members can add a custom MCP server from the desktop app's Library and sign in with their own account, the same way they can from My Library on the web. Without it, the desktop only lets owners and admins finish connector setup.",
+    category: "connect",
+    added: "2026-11-02",
+    since: "2026-11",
+    author: "benjaminshafii",
+    docs: "docs/features/desktop-personal-connectors/README.md",
+    deployments: everywhere,
+    default: false,
+  },
   managedDeployments: {
     label: "Managed deployments",
     description: "Organization admins install OpenWork in their own AWS account or Google Cloud project and see its health and updates in OpenWork, and agents connected to OpenWork can create and follow those deployments.",
