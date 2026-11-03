@@ -789,8 +789,12 @@ final class SessionRuntime {
                 try check()
                 progress.dispatched(path: path); uncertain = false
                 let dispatchedAt = now
-                controls.showAction(action, records: records)
-                if case .menu = action, let menu = input.lastMenu { controls.showMenu(titleFrame: menu.titleFrame, path: menu.path, shortcut: menu.shortcut) }
+                // The press already ran: outline the control only where it still is.
+                controls.showAction(action, records: records, live: { [access] record in access.frame(record.element, within: 0.05) })
+                if case .menu = action, let menu = input.lastMenu {
+                    controls.showMenu(titleFrame: menu.titleFrame, path: menu.path, shortcut: menu.shortcut,
+                        menuBarShowing: NSWorkspace.shared.frontmostApplication?.processIdentifier == current.app.pid)
+                }
                 switch action {
                 case .click:
                     focus = current.records.first { record in record.textField && pointerTarget.map { CFEqual($0, record.element) } == true }
