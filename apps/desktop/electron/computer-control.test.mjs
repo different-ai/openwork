@@ -445,6 +445,38 @@ test("without a screenshot choice the computer decides whether the settled view 
   assert.equal(postRead().include_image, false, "programs never receive a post-action image");
 });
 
+test("an act refused before anything was sent returns a fresh observation instead of a retry", async (t) => {
+  const seen = [];
+  const unsent = { ok: false, status: "failed", completed: 0, may_have_acted: false, next: "observe" };
+  let refusal = { ...unsent, code: "stale_observation", message: "The window image changed. Observe before coordinate input." };
+  const f = fixture({ seen, toolResult: (name) => name === "computer_act" ? { isError: true, ...text(refusal) } : undefined });
+  t.after(() => f.control.reset(true));
+  await f.control.setFeatureEnabled(true);
+  assert.equal(payload(await f.control.execute({ sessionId: "chat", name: "computer_open", args: { app_id: "editor", mode: "control", purpose: "Draw" } })).ok, true);
+  const act = (args, options) => { seen.length = 0; return f.control.execute({ sessionId: "chat", name: "computer_act", args: { observation_id: "observation", ...args } }, options); };
+
+  const refused = await act({ action: { type: "drag", path: [{ x: 10, y: 10 }, { x: 40, y: 40 }] } });
+  const [receipt, post, view] = refused.content.map((part) => JSON.parse(part.text));
+  assert.equal(refused.isError, true);
+  assert.equal(receipt.code, "stale_observation");
+  assert.deepEqual(post, { post_observation: { ok: true }, actions_replayed: false, next: "act", note: "Nothing was sent. Act on this fresh observation." });
+  assert.equal(view.observation_id, "observation");
+  assert.deepEqual(seen.map((call) => call.name), ["computer_act", "computer_observe"], "the refused drag is never sent again");
+  assert.equal(seen[1].args.include_image, true, "pointer steps are re-aimed from a new image");
+
+  refusal = { ...unsent, code: "focus_required", message: "Observe a focused normal text field or control before using the keyboard." };
+  await act({ action: { type: "key", key: "return" }, screenshot: false });
+  assert.equal(seen[1]?.args.include_image, false, "the model's screenshot choice still holds");
+
+  refusal = { ...unsent, code: "scope_denied", next: "open_session" };
+  await act({ action: { type: "click", x: 1, y: 1 } });
+  assert.deepEqual(seen.map((call) => call.name), ["computer_act"], "only refusals that ask for a new look get one");
+
+  refusal = { ...unsent, code: "stale_observation" };
+  await act({ action: { type: "click", x: 1, y: 1 } }, { includePostImage: false, program: true });
+  assert.deepEqual(seen.map((call) => call.name), ["computer_act"], "programs observe for themselves");
+});
+
 test("after an act the model gets only changed elements, while programs and opens get the full list", async (t) => {
   const seen = [];
   let display = "0";

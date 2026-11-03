@@ -33,9 +33,11 @@ const withHandoff = (result, status) => {
   return { ...result, isError: result.isError === true || !continued,
     content: [...result.content, { type: "text", text: JSON.stringify({ handoff: state, next: continued ? "observe" : "human_takeover", fresh_observation_required: true, actions_replayed: false }) }] };
 };
-const withPostObservation = (receipt, status, content = []) => ({ ...receipt, content: [...receipt.content,
+const withPostObservation = (receipt, status, content = [], extra = {}) => ({ ...receipt, content: [...receipt.content,
   { type: "text", text: JSON.stringify({ post_observation: status, actions_replayed: false,
-    ...(!status.ok ? { next: status.next, fresh_observation_required: true } : {}) }) }, ...content] });
+    ...(!status.ok ? { next: status.next, fresh_observation_required: true } : {}), ...extra }) }, ...content] });
+const COORDINATE_ACTIONS = new Set(["move", "click", "double_click", "triple_click", "scroll", "drag"]);
+const actionEntries = (args) => [args.action, ...(Array.isArray(args.actions) ? args.actions : [])].filter((entry) => entry && typeof entry === "object");
 const observationPart = (content) => {
   for (const [index, part] of content.entries()) {
     if (part.type !== "text") continue;
@@ -863,9 +865,16 @@ export function createComputerControl({ adapters, runProgram, runScript, onTimin
         if (name === "computer_open" && state.ok && !current.nativeId) throw new Error("The native helper returned no session identity.");
         const inputLanded = name === "computer_act" && (!result.isError && state.ok && state.status === "dispatched"
           || state.status === "partial" && state.may_have_acted === true && state.next === "observe");
-        if (current.nativeId && (inputLanded || name === "computer_open" && !result.isError && state.ok && state.state === "active")) {
-          call.post = { current, generation, nativeId: current.nativeId, receipt: result, captured: false,
+        // The helper refused before sending anything and asks for a new look, such as when
+        // the window image changed: the model would observe next, so it gets that look now.
+        // The refused input is never retried; the model decides again from the fresh view.
+        const refusedUnsent = name === "computer_act" && !call.program && nativeResult !== undefined && state.ok === false
+          && state.status === "failed" && state.completed === 0 && state.may_have_acted === false && state.next === "observe";
+        if (current.nativeId && (inputLanded || refusedUnsent || name === "computer_open" && !result.isError && state.ok && state.state === "active")) {
+          call.post = { current, generation, nativeId: current.nativeId, receipt: result, captured: false, refused: refusedUnsent,
             observationGeneration: name === "computer_open" ? current.observationGeneration : observationGeneration };
+          // Coordinates are read off the image, so a refused pointer step gets one unless the model declined it.
+          if (refusedUnsent && call.postImage === undefined && actionEntries(call.args).some((entry) => COORDINATE_ACTIONS.has(entry.type))) call.postImage = true;
         }
         progress();
         if (nativeStopped(current, result)) return result;
@@ -913,7 +922,8 @@ export function createComputerControl({ adapters, runProgram, runScript, onTimin
                 const listed = listChanges(name === "computer_act" ? current.listing : null, observation.content);
                 current.listing = listed.listing; shown = listed.content;
               }
-              call.post.result = withPostObservation(result, { ok: true }, shown);
+              call.post.result = withPostObservation(result, { ok: true }, shown,
+                call.post.refused ? { next: "act", note: "Nothing was sent. Act on this fresh observation." } : {});
               return result;
             } catch {
               current.needsObservation = true;
@@ -1464,7 +1474,7 @@ export function createComputerControl({ adapters, runProgram, runScript, onTimin
         const call = { name, program, postImage: !includePostImage || screenshot === false ? false : screenshot, args: structuredClone(nativeArgs), grant, revision: grant.revision, featureGeneration: generation, remoteGeneration: remoteRevision, remoteTarget: grant.adapter.placement === "remote" };
         // Text marked secret is a password or code the person gave: they confirm the app it
         // goes to first. The mark is the broker's; the native call never sees it.
-        const entries = name === "computer_act" ? [call.args.action, ...(Array.isArray(call.args.actions) ? call.args.actions : [])].filter((entry) => entry && typeof entry === "object") : [];
+        const entries = name === "computer_act" ? actionEntries(call.args) : [];
         const secret = entries.some((entry) => entry.secret === true);
         for (const entry of entries) delete entry.secret;
         // A stroke longer than the helpers take is fitted to them, and the receipt says so.
