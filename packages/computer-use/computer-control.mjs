@@ -81,6 +81,32 @@ const setupNotFinished = (answer) => failure("not_allowed", answer === "dismisse
 const SEQUENCE_CODES = new Set(["session_open", "session_required"]);
 const uiText = (value, limit) => typeof value === "string" && value.length <= limit;
 const uiNumber = (value, max = Number.MAX_SAFE_INTEGER) => Number.isSafeInteger(value) && value >= 0 && value <= max;
+/** The Mac and Windows helpers take at most this many drag points. */
+export const DRAG_POINTS = 32;
+/** The most a drag may ask for; anything longer than DRAG_POINTS is fitted to it. */
+export const DRAG_POINTS_ACCEPTED = 256;
+
+/**
+ * The same stroke in at most `max` of its own points. Repeatedly drops the point
+ * nearest the line between its neighbours, so the start, the end and every corner
+ * stay. A long or closed outline then keeps its shape instead of being refused.
+ * @param {Array<{ x: number, y: number }>} path
+ */
+export function fitDragPath(path, max = DRAG_POINTS) {
+  const points = [...path];
+  const offset = (index) => {
+    const { x, y } = points[index], a = points[index - 1], b = points[index + 1];
+    const dx = b.x - a.x, dy = b.y - a.y, length = dx * dx + dy * dy;
+    const t = length ? Math.max(0, Math.min(1, ((x - a.x) * dx + (y - a.y) * dy) / length)) : 0;
+    return Math.hypot(x - (a.x + t * dx), y - (a.y + t * dy));
+  };
+  while (points.length > Math.max(2, max)) {
+    let drop = 1;
+    for (let index = 2; index < points.length - 1; index++) if (offset(index) < offset(drop)) drop = index;
+    points.splice(drop, 1);
+  }
+  return points;
+}
 
 async function bounded(promise, ms) {
   let timer;
@@ -1441,6 +1467,15 @@ export function createComputerControl({ adapters, runProgram, runScript, onTimin
         const entries = name === "computer_act" ? [call.args.action, ...(Array.isArray(call.args.actions) ? call.args.actions : [])].filter((entry) => entry && typeof entry === "object") : [];
         const secret = entries.some((entry) => entry.secret === true);
         for (const entry of entries) delete entry.secret;
+        // A stroke longer than the helpers take is fitted to them, and the receipt says so.
+        const fitted = [];
+        for (const entry of entries) {
+          if (entry.type !== "drag" || !Array.isArray(entry.path) || entry.path.length <= DRAG_POINTS) continue;
+          if (entry.path.length > DRAG_POINTS_ACCEPTED) return failure("invalid_arguments", `A drag takes at most ${DRAG_POINTS_ACCEPTED} points. Nothing was dispatched.`);
+          if (!entry.path.every((point) => Number.isFinite(point?.x) && Number.isFinite(point?.y))) continue;
+          fitted.push({ from: entry.path.length, to: DRAG_POINTS });
+          entry.path = fitDragPath(entry.path);
+        }
         let confirmedApp = null;
         if (secret) {
           const app = typeof grant.lastOpen?.app_id === "string" ? grant.lastOpen.app_id : "";
@@ -1499,7 +1534,8 @@ export function createComputerControl({ adapters, runProgram, runScript, onTimin
         }
         recordStep(grant, name, started);
         if (result.isError && stateOf(result)?.code === "permissions_required" && targetFor(grant).placement === "local") return await recoverPermissions(grant, name, args, signal);
-        return deliverResult(call, result);
+        const delivered = deliverResult(call, result);
+        return fitted.length ? { ...delivered, content: [...delivered.content, { type: "text", text: JSON.stringify({ drag_paths_fitted: fitted }) }] } : delivered;
       } catch (error) {
         return failure("computer_error", `${error instanceof Error ? error.message : String(error)} Do not replay this call; inspect the computer controls before continuing.`);
       } finally { limit?.dispose(); }

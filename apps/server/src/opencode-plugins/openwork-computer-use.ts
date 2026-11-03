@@ -21,7 +21,8 @@ const action = z.discriminatedUnion("type", [
   z.object({ type: z.literal("key"), key: z.string().min(1).max(16), modifiers }).strict(),
   z.object({ type: z.literal("wait"), ms: z.number().int().min(50).max(3000) }).strict(),
   z.object({ type: z.literal("scroll"), x: number, y: number, delta_x: z.number().int().min(-1200).max(1200), delta_y: z.number().int().min(-1200).max(1200) }).strict(),
-  z.object({ type: z.literal("drag"), path: z.array(point).min(2).max(32) }).strict(),
+  // The desktop fits a path over 32 points to the helpers' 32 (DRAG_POINTS_ACCEPTED in computer-control.mjs).
+  z.object({ type: z.literal("drag"), path: z.array(point).min(2).max(256) }).strict(),
   z.object({ type: z.literal("menu"), path: z.array(z.string().min(1).max(200)).min(2).max(4).describe("A menu-bar command by its titles, as listed in an observation's menus, such as [\"Format\", \"Font\", \"Bold\"].") }).strict(),
 ]);
 const intent = z.string().min(1).max(120).optional().describe("A few words the person watching sees on your cursor, such as 'opening the Export menu'.");
