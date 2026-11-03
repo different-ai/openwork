@@ -347,6 +347,9 @@ async function checkComputerPermission(sessionId) {
   return null;
 }
 
+/** The renderer reports the `agentQuestions` feature; the engine offers ask_without_waiting while it is on. */
+let agentQuestionsEnabled = false;
+
 const uiControlServer = createUiControlServer({
   app,
   appName: APP_NAME,
@@ -373,6 +376,7 @@ const uiControlServer = createUiControlServer({
     return computerControl.script(args, { ...options, approveEachScript: decision.effect === "ask" });
   },
   computerEnabled: () => computerControl.featureEnabled(),
+  agentQuestionsEnabled: () => agentQuestionsEnabled,
 });
 
 const terminalProcesses = new Map();
@@ -2197,6 +2201,11 @@ const desktopCommandHandlers = {
   "computerSetFeatureEnabled": async (event, enabled) => {
       assertComputerSender(event);
       return computerControl.setFeatureEnabled(enabled === true);
+  },
+  "agentQuestionsSetEnabled": async (event, enabled) => {
+      if (!mainWindow || event.sender !== mainWindow.webContents) throw new Error("Only the main OpenWork window reports features.");
+      agentQuestionsEnabled = enabled === true;
+      return agentQuestionsEnabled;
   },
   "computerSetRemoteEnabled": async (event, enabled) => {
       assertComputerSender(event);

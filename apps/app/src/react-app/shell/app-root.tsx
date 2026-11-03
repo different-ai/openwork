@@ -18,6 +18,7 @@ import { evalRelaunchDesktopApp, readDesktopDistributionInfo } from "../../app/l
 import { outboundEgressAllowed } from "../../app/lib/enterprise-activation";
 import { isDesktopRuntime, isElectronRuntime } from "../../app/lib/runtime-env";
 import { ComputerBridge } from "../domains/session/computer/computer-store";
+import { AgentQuestionsBridge } from "../domains/session/status/agent-questions-bridge";
 import { Button } from "../../components/ui/button";
 import { t } from "../../i18n";
 import { useDenAuth } from "../domains/cloud/den-auth-provider";
@@ -470,6 +471,7 @@ export function AppRoot() {
                 <CloudWorkspaceStatusProvider>
                   {/* Settings unmounts the chat; computer use stays connected on every route. */}
                   {isElectronRuntime() ? <ComputerBridge /> : null}
+                  {isElectronRuntime() ? <AgentQuestionsBridge /> : null}
                   <Routes>
               <Route
                 path="/signin"

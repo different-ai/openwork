@@ -159,6 +159,17 @@ export const FEATURES = defineFeatures({
     deployments: everywhere,
     default: false,
   },
+  agentQuestions: {
+    label: "Desktop: agents ask and keep working",
+    description: "Agents ask in chat instead of ending a turn to wait for your reply. A question that the rest of the work does not depend on stays open while the agent keeps going, and your answer reaches it even after its turn has ended.",
+    category: "experience",
+    added: "2026-11-03",
+    since: "2026-11",
+    author: "reachjalil",
+    docs: "docs/features/agent-questions/README.md",
+    deployments: everywhere,
+    default: false,
+  },
   administratorRecovery: {
     label: "Deploy-time administrator recovery",
     description: "Run a one-time, operator-selected Admin-team permission repair at deployment; disabling stops future repairs, not existing grants.",
