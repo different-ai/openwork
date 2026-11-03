@@ -1,4 +1,5 @@
 import { workflowConnectionError } from "../workflow-connection-error.js"
+import { organizationFeatureEnabled } from "../features.js"
 import type { createDenDb } from "@openwork-ee/den-db"
 import type { DenTypeId } from "@openwork-ee/utils/typeid"
 import { recordWorkflowRun, recordWorkflowResult } from "../workflow-runs.js"
@@ -13,13 +14,23 @@ import {
   parseCodemodeScriptPayload,
   validateCodemodeScriptInput,
   validateCodemodeScriptOutput,
+  type CodemodeLanguage,
   type CodemodeScriptInputIssue,
 } from "./codemode-script-object.js"
 import { restrictCodemodeToolTree, type BuildCodemodeTools } from "./codemode-tools.js"
-import { runCodemodeScript } from "./codemode-run.js"
+import { codemodeRuntimeFor, runCodemodeScript } from "./codemode-run.js"
 import { normalizeToolBody } from "./invoke.js"
 
 type CodemodeDb = ReturnType<typeof createDenDb>["db"]
+
+/**
+ * The language new Workflow code is tested and saved in. It is read per
+ * organization, like every run, so a Workflow always runs on the interpreter it
+ * was tested on while the feature stays on.
+ */
+export async function newWorkflowLanguage(organizationId: string): Promise<CodemodeLanguage> {
+  return await organizationFeatureEnabled(organizationId, "standardCodeMode") ? "ecmascript" : "codemode-js"
+}
 
 export type WorkflowExecutionResult =
   | {
@@ -117,6 +128,18 @@ export async function executeWorkflow(input: {
     }
   }
 
+  // Only Workflows written in standard JavaScript check the feature. Without it
+  // they stop here, before any tool runs, instead of running on another interpreter.
+  const runtime = codemodeRuntimeFor(
+    parsed.payload.language,
+    parsed.payload.language === "ecmascript" && await organizationFeatureEnabled(input.organizationId, "standardCodeMode"),
+  )
+  if (!runtime) {
+    const message = "This Workflow is written in standard JavaScript, which is turned off for this organization. Turn it back on, or test and save the Workflow again to write it for OpenWork's Code Mode."
+    await recordPreflightFailure("LanguageUnavailable", message)
+    return { ok: false, error: "unsupported", message }
+  }
+
   // Like any workflow engine, a Workflow may call every capability its runner
   // can currently use (Den actions and connection tools, reads and writes),
   // whether it runs on demand, live in an App, or from an Automation. Each call
@@ -146,6 +169,7 @@ export async function executeWorkflow(input: {
     timeoutMs: Math.min(parsed.payload.limits?.timeoutMs ?? 120_000, 170_000),
     maxToolCalls: parsed.payload.limits?.maxToolCalls,
     maxOutputBytes: parsed.payload.limits?.maxOutputBytes,
+    runtime,
   })
   const finishedAt = new Date()
   if (!result.ok) {

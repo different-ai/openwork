@@ -11,7 +11,7 @@ import {
 } from "../workflow-authoring-receipts.js"
 import type { RecordWorkflowRunInput } from "../workflow-runs.js"
 import type { ExecuteCapabilityToolResult } from "./capability-registry.js"
-import { runCodemodeScript } from "./codemode-run.js"
+import { runCodemodeScript, type CodemodeRuntime } from "./codemode-run.js"
 import { validateCodemodeScriptInput, validateCodemodeScriptOutput } from "./codemode-script-object.js"
 import type { BuiltCodemodeTools } from "./codemode-tools.js"
 import { normalizeToolBody } from "./invoke.js"
@@ -56,6 +56,8 @@ export const workflowAuthoringTestOutputSchema = z.object({
 export async function executeWorkflowAuthoringTest(request: unknown, context: {
   organizationId: DenTypeId<"organization">
   orgMembershipId?: DenTypeId<"member">
+  /** The Code Mode a Workflow saved from this test would run on. */
+  runtime?: CodemodeRuntime
   buildTools: () => Promise<BuiltCodemodeTools>
   recordRun: (input: RecordWorkflowRunInput) => Promise<DenTypeId<"workflowRun"> | null>
   retainSource?: (input: WorkflowAuthoringSourceInput) => Promise<boolean>
@@ -99,7 +101,7 @@ export async function executeWorkflowAuthoringTest(request: unknown, context: {
   // Live and adhoc tests see the same tools; live only fixes the input to server-supplied runtime values.
   const built = await context.buildTools()
   const startedAt = new Date()
-  const result = await runCodemodeScript({ code, scriptInput, readOnlyInput: mode === "live", tools: built.tools, timeoutMs: 170_000 })
+  const result = await runCodemodeScript({ code, scriptInput, readOnlyInput: mode === "live", tools: built.tools, timeoutMs: 170_000, runtime: context.runtime })
   const finishedAt = new Date()
   if (!result.ok) {
     const receiptId = await record({ ...receipt, status: "failed", errorKind: result.error.kind,

@@ -3,8 +3,20 @@ import type { JsonSchemaType } from "@modelcontextprotocol/sdk/validation"
 
 export type JsonSchemaObject = JsonSchemaType
 
+/**
+ * The language a Workflow was written in: `codemode-js` is the restricted dialect
+ * of OpenWork's original interpreter, `ecmascript` is standard JavaScript.
+ */
+export type CodemodeLanguage = "codemode-js" | "ecmascript"
+
+const CODEMODE_LANGUAGES: readonly string[] = ["codemode-js", "ecmascript"] satisfies CodemodeLanguage[]
+
+function isCodemodeLanguage(value: unknown): value is CodemodeLanguage {
+  return typeof value === "string" && CODEMODE_LANGUAGES.includes(value)
+}
+
 export type CodemodeScriptPayload = {
-  language: "codemode-js"
+  language: CodemodeLanguage
   inputSchema?: JsonSchemaObject
   outputSchema?: JsonSchemaObject
   exampleInput?: unknown
@@ -74,8 +86,9 @@ export function parseCodemodeScriptPayload(normalizedPayloadJson: unknown):
   if (!isRecord(normalizedPayloadJson) || !hasOnlyKeys(normalizedPayloadJson, ["language", "inputSchema", "outputSchema", "exampleInput", "requiredCapabilities", "limits"])) {
     return { ok: false, message: "The Workflow payload must contain only language, inputSchema, outputSchema, exampleInput, requiredCapabilities, and limits." }
   }
-  if (normalizedPayloadJson.language !== "codemode-js") {
-    return { ok: false, message: "The Workflow language must be codemode-js." }
+  const language = normalizedPayloadJson.language
+  if (!isCodemodeLanguage(language)) {
+    return { ok: false, message: "The Workflow language must be codemode-js or ecmascript." }
   }
   if (normalizedPayloadJson.inputSchema !== undefined && !isJsonSchemaObject(normalizedPayloadJson.inputSchema)) {
     return { ok: false, message: "The Workflow inputSchema must be a JSON Schema object." }
@@ -128,7 +141,7 @@ export function parseCodemodeScriptPayload(normalizedPayloadJson: unknown):
   return {
     ok: true,
     payload: {
-      language: "codemode-js",
+      language,
       ...(normalizedPayloadJson.inputSchema === undefined ? {} : { inputSchema: normalizedPayloadJson.inputSchema }),
       ...(normalizedPayloadJson.outputSchema === undefined ? {} : { outputSchema: normalizedPayloadJson.outputSchema }),
       ...(normalizedPayloadJson.exampleInput === undefined ? {} : { exampleInput: normalizedPayloadJson.exampleInput }),

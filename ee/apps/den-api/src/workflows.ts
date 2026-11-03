@@ -33,10 +33,10 @@ type WorkflowReader = typeof db.$primary
 import { snapshotReadAccess, workflowSnapshotStateRows } from "./workflow-snapshot-state.js"
 import { keysetAfter, keysetPage, type KeysetCursor } from "./list-pagination.js"
 import { resolveOrganizationMemberAuthority } from "./organization-team-roles.js"
-import { parseCodemodeScriptPayload, validateCodemodeScriptInput } from "./mcp/codemode-script-object.js"
+import { parseCodemodeScriptPayload, validateCodemodeScriptInput, type CodemodeLanguage } from "./mcp/codemode-script-object.js"
 import { codemodeCallName } from "./mcp/codemode-namespaces.js"
 import type { BuildCodemodeTools, BuiltCodemodeTools, CodemodeManifestEntry } from "./mcp/codemode-tools.js"
-import { executeWorkflow } from "./mcp/workflow-service.js"
+import { executeWorkflow, newWorkflowLanguage } from "./mcp/workflow-service.js"
 import {
   artifactDigest,
   artifactFreshness,
@@ -138,9 +138,9 @@ async function workflowResource(
   return rows[0]
 }
 
-function normalizedPayload(draft: WorkflowDraft) {
+function normalizedPayload(draft: WorkflowDraft, language: CodemodeLanguage) {
   const value = {
-    language: "codemode-js",
+    language,
     ...(draft.inputSchema === undefined ? {} : { inputSchema: draft.inputSchema }),
     ...(draft.outputSchema === undefined ? {} : { outputSchema: draft.outputSchema }),
     ...(draft.exampleInput === undefined ? {} : { exampleInput: draft.exampleInput }),
@@ -569,7 +569,7 @@ export async function testWorkflowDraft(input: {
   buildTools: BuildCodemodeTools
 }) {
   const resource = await workflowResource(input.context, input.configObjectId, "manager")
-  const payload = normalizedPayload(input.draft)
+  const payload = normalizedPayload(input.draft, await newWorkflowLanguage(resource.configObject.organizationId))
   const execution = await executeWorkflow({
     database: db,
     organizationId: resource.configObject.organizationId,
@@ -606,7 +606,7 @@ export async function createWorkflowVersion(input: {
 }) {
   const resource = await workflowResource(input.context, input.configObjectId, "manager")
   assertWorkflowSourceSafe(input.draft.code)
-  const payload = normalizedPayload(input.draft)
+  const payload = normalizedPayload(input.draft, await newWorkflowLanguage(resource.configObject.organizationId))
   if (payload.parsed.inputSchema) {
     const validation = validateCodemodeScriptInput(payload.parsed.inputSchema, input.draft.exampleInput)
     if (!validation.ok) throw new Error("workflow_current_input_invalid")
@@ -932,7 +932,7 @@ export async function saveWorkflow(input: {
     }
   }
   const normalizedPayloadJson = {
-    language: "codemode-js",
+    language: await newWorkflowLanguage(organizationId),
     ...(input.workflow.inputSchema === undefined ? {} : { inputSchema: input.workflow.inputSchema }),
     ...(input.workflow.outputSchema === undefined ? {} : { outputSchema: input.workflow.outputSchema }),
     ...(retained?.mode === "live" || input.workflow.currentInput === undefined ? {} : { exampleInput: input.workflow.currentInput }),
