@@ -4,13 +4,15 @@ import { DatabaseSync } from "node:sqlite";
 import { createHash } from "node:crypto";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { preflightHistoryCopy } from "../../../apps/server/dist/opencode-v2-migration.js";
-
+// Do not await app.whenReady() during ESM entry evaluation: Electron waits
+// for entry evaluation before emitting ready.
+async function main() {
 const directory = process.argv[2];
 if (!directory) throw new Error("A synthetic fixture directory is required");
 app.setPath("userData", join(directory, "electron-profile"));
-await app.whenReady();
+void app.whenReady().then(async () => {
 try {
+  const { preflightHistoryCopy } = await import("../../../apps/server/dist/opencode-v2-migration.js");
   const storageDir = join(directory, "storage");
   const staging = join(storageDir, "history-copy");
   await mkdir(join(staging, "converted"), { recursive: true });
@@ -23,14 +25,14 @@ try {
   const insert = raw.prepare("INSERT INTO part VALUES (?, ?)");
   const payload = "synthetic payload ".repeat(Math.ceil(8 * 1024 ** 2 / 18));
   raw.exec("BEGIN");
-  for (let i = 0; i < 96; i++) insert.run(`part-${i}`, payload);
+  for (let i = 0; i < 256; i++) insert.run(`part-${i}`, payload);
   raw.exec("COMMIT");
   raw.close();
   const projection = new DatabaseSync(converted);
   projection.exec("CREATE TABLE session_message(id TEXT PRIMARY KEY, session_id TEXT, data TEXT); CREATE TABLE openwork_payload(value TEXT)");
   projection.prepare("INSERT INTO session_message VALUES ('message', 'session', ?)").run('{"text":"projection"}');
   projection.exec("BEGIN");
-  for (let i = 0; i < 64; i++) projection.prepare("INSERT INTO openwork_payload VALUES (?)").run(payload);
+  for (let i = 0; i < 128; i++) projection.prepare("INSERT INTO openwork_payload VALUES (?)").run(payload);
   projection.exec("COMMIT");
   projection.close();
   await writeFile(source, "synthetic source sentinel");
@@ -41,7 +43,7 @@ try {
   const beforeSource = await digest(source);
   // Pure expected arithmetic independent of the production estimator.
   const bytes = Buffer.byteLength(payload);
-  const needed = 96 * bytes + Buffer.byteLength('{"text":"projection"}') + 64 * (bytes + 2) * 2;
+  const needed = 256 * bytes + Buffer.byteLength('{"text":"projection"}') + 128 * (bytes + 2) * 2;
   const expected = `Not enough free disk space to upgrade safely. Free up about ${Math.ceil(((needed + 1024 ** 3) / 1024 ** 3) * 10) / 10} GB and try again. Nothing was changed.`;
   let previous = performance.now();
   let maxLag = 0;
@@ -70,3 +72,6 @@ try {
   console.error(error);
   app.exit(1);
 }
+});
+}
+void main();
