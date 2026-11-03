@@ -1,7 +1,7 @@
 import { join } from "node:path";
 import { openHistoryDatabase } from "../src/opencode-v2-history-store.js";
 
-/** Synthetic only: 320 chats, 320 messages, and 320 large tool payloads (320 MiB).
+/** Synthetic only: 320 chats and messages, four 64 MiB payloads and 316 256 KiB payloads.
  * No wall-clock sleeps or mocked SQL cost: the shipping revision scanner does the work.
  */
 export async function largeHistoryFixture(directory: string) {
@@ -16,11 +16,13 @@ export async function largeHistoryFixture(directory: string) {
     const session = db.prepare("INSERT INTO session VALUES (?, ?, ?, NULL, ?)");
     const message = db.prepare("INSERT INTO message VALUES (?, ?, ?)");
     const part = db.prepare("INSERT INTO part VALUES (?, ?, ?)");
-    const payload = Buffer.alloc(1024 * 1024, 120);
+    const small = Buffer.alloc(256 * 1024, 120);
+    const large = Buffer.alloc(64 * 1024 * 1024, 120);
     for (let index = 0; index < 320; index++) {
       const id = String(index).padStart(4, "0");
       session.run(`ses_${id}`, `Synthetic history ${id}`, directory, index);
       message.run(`msg_${id}`, `ses_${id}`, '{"role":"assistant","synthetic":true}');
+      const payload = index < 4 ? large : small;
       payload.writeUInt32LE(index, 0);
       part.run(`prt_${id}`, `msg_${id}`, payload);
     }
