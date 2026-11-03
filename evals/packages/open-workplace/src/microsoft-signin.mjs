@@ -148,7 +148,7 @@ export function createMicrosoftSignIn(input) {
   function clientAuthenticated(request, params) {
     let id = params.get("client_id"); let key = params.get("client_secret");
     const basic = String(request.headers.authorization || "").match(/^Basic\s+(.+)$/i);
-    if (basic) { const [user, pass] = Buffer.from(basic[1], "base64").toString("utf8").split(":"); id = decodeURIComponent(user || ""); key = decodeURIComponent(pass || ""); }
+    if (basic) { const [user, pass] = Buffer.from(basic[1], "base64").toString("utf8").split(":"); id = decodeURIComponent((user || "").replace(/\+/g, " ")); key = decodeURIComponent((pass || "").replace(/\+/g, " ")); }
     return Boolean(id && key && same(id, config.clientId) && same(key, config.clientSecret));
   }
 
