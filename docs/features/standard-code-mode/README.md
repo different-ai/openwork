@@ -1,4 +1,4 @@
-# Workflows as standard JavaScript
+# Workflows and computer programs as standard JavaScript
 
 Feature `standardCodeMode` (cloud and self-hosted, off by default). Author: `reachjalil`.
 
@@ -34,6 +34,28 @@ With the feature on for an organization:
 Tools, grants, tool policy, audit, receipts and limits (`timeoutMs`, `maxToolCalls`, `maxOutputBytes`) work the same on
 both.
 
+## Computer-use programs
+
+`computer_run` programs (agent-written code that drives `tools.ui` on the desktop app's computer or browser, or on a
+cloud computer) run on the standard interpreter while the feature is on for the member. They are written and run in
+the same turn, so there is no saved code to keep on one interpreter: each program runs start to finish on the one
+chosen when it starts, and the next program follows the feature as it is then.
+
+- **Desktop app:** the app window reads the feature like every desktop feature (`GET /v1/org` features, member
+  overrides included; signed out, `GET /v1/features`) and reports it to the desktop process
+  (`computerSetStandardCodeMode`), as it reports `computerUse`.
+- **Cloud computer** (the OpenWork server on a member's cloud worker): the server reads the signed-in organization's
+  `GET /v1/org` features itself (`ManagedDesktopPolicy.standardCodeModeEnabled`), reusing an answer for up to 30
+  seconds. Unreachable or signed out means OpenWork's Code Mode.
+- **Never the request.** Nothing in a program request picks the interpreter. The choice grants nothing either: both
+  interpreters run the same `tools.ui` helpers, under the same chat, takeover, Stop and receipt rules.
+- **Await every helper.** A helper the program does not await is cancelled when the program returns and sends no
+  input afterwards, so receipts stay true. OpenWork's dialect waited for it.
+- **Workbot computers** keep OpenWork's Code Mode: their runner does not read organization features yet.
+
+Program errors keep their codes: a helper's refusal (`target_not_found: ...`) still reaches the program, and any
+other failure reads "Tool execution failed". With the feature off, programs run exactly as before.
+
 ## How the two languages differ
 
 | | OpenWork's dialect (`codemode-js`) | Standard JavaScript (`ecmascript`) |
@@ -60,7 +82,8 @@ The engine does these differently from a JavaScript runtime. We accept them and 
 
 ## Where the bridge adapts the engine to the standards
 
-`codemode-run-standard.ts` keeps Den's tools MCP-shaped and converts them only at the engine boundary:
+The bridge, `StandardCodeMode` in `packages/codemode/src/standard.ts`, is shared by Den's Workflows and computer-use
+programs. It keeps OpenWork's tools MCP-shaped and converts them only at the engine boundary:
 
 - **Tool results without an `outputSchema`.** The engine returns nothing for a tool that declares no output schema;
   in MCP the result still comes back. The bridge gives such tools an empty (permissive) schema.
@@ -72,8 +95,9 @@ The engine does these differently from a JavaScript runtime. We accept them and 
 
 ## Turning it on and off
 
-Turn `standardCodeMode` on for an organization in `/admin` (Features, or the organization's row). The flag is read
-per organization, never per member, so a Workflow is always tested and run on the same interpreter.
+Turn `standardCodeMode` on for an organization in `/admin` (Features, or the organization's row). For Workflows the
+flag is read per organization, never per member, so a Workflow is always tested and run on the same interpreter.
+Computer programs follow the member's own feature state, as their app sees it.
 
 A saved Workflow never switches interpreter silently. With the feature off (or the kill switch):
 
@@ -93,14 +117,19 @@ A saved Workflow never switches interpreter silently. With the feature off (or t
 
 ## Code
 
-- `ee/apps/den-api/src/mcp/codemode-run-standard.ts`: the bridge that runs a script on the engine with Den's tools.
-  Den, `packages/codemode` and `packages/computer-use` use Effect 4.0.6, the version the engine pins, so both
-  interpreters share one Effect.
+- `packages/codemode/src/standard.ts`: the bridge that runs a program on the engine with OpenWork's tools.
+  `ee/apps/den-api/src/mcp/codemode-run-standard.ts` runs Workflows through it. Den, `packages/codemode` and
+  `packages/computer-use` use Effect 4.0.6, the version the engine pins, so both interpreters share one Effect.
 - `codemode-run.ts` (`codemodeRuntimeFor`), `codemode-script-object.ts` (the two languages), `workflow-service.ts`
   (`newWorkflowLanguage`, and choosing or refusing an interpreter for each run), `workflows.ts` and `agent.ts`
   (tests and saves).
-- Tests: `ee/apps/den-api/test/codemode-standard-runtime.test.ts`.
+- Computer use: `packages/computer-use/src/runtime.ts` (`runComputerProgram`'s `standardCodeMode` option),
+  `computer-control.mjs` (`setStandardCodeMode`), `cloud.mjs`, `apps/server/src/managed-desktop-policy.ts` and the
+  app's `ComputerBridge` (`computer-store.ts`).
+- Tests: `ee/apps/den-api/test/codemode-standard-runtime.test.ts`,
+  `packages/computer-use/program-standard-code-mode.test.mjs`, `packages/computer-use/cloud.test.mjs` and
+  `apps/desktop/electron/computer-program.test.mjs`.
 
-Not covered yet, each its own change: computer-use programs on the standard interpreter; agent guidance (the
-build-an-app skill and Workflow authoring instructions) for standard JavaScript and the departures above; retiring
+Not covered yet, each its own change: Workbot computers; agent guidance (the build-an-app skill, Workflow authoring
+instructions and the `computer_run` description) for standard JavaScript and the departures above; retiring
 `packages/codemode` once no saved Workflow uses `codemode-js`.

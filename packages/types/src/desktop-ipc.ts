@@ -499,6 +499,8 @@ export type DesktopCommandMap = {
   computerSetFeatureEnabled: { args: [enabled: boolean]; result: boolean };
   agentQuestionsSetEnabled: { args: [enabled: boolean]; result: boolean };
   computerSetRemoteEnabled: { args: [enabled: boolean]; result: boolean };
+  /** Reports the `standardCodeMode` feature: computer programs that start afterwards run as standard JavaScript. */
+  computerSetStandardCodeMode: { args: [enabled: boolean]; result: boolean };
   /** Compatibility-only no-op for older renderers; returns the computerUse state. */
   computerSetBackgroundEnabled: { args: [enabled: boolean]; result: boolean };
   computerResetPermission: { args: [permission: ComputerPermission]; result: { setupId: string } };

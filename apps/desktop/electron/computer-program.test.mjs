@@ -260,3 +260,27 @@ test("the broker gates programs and cancels old waits across off/on", async (t) 
   await new Promise(resolve => setTimeout(resolve, 150));
   assert.equal(f.calls.length, count);
 });
+
+test("the reported standardCodeMode feature picks the interpreter for programs that start afterwards", async (t) => {
+  const f = browserFixture();
+  const seen = [];
+  const control = createComputerControl({
+    adapters: [{ id: "local", label: "Local", placement: "local", protocol: COMPUTER_PROTOCOL, readiness: async () => ({ readiness: "ready", detail: "Ready" }), connect: async () => { throw new Error("Browser programs never open a native helper"); } }],
+    runProgram: (request, host, signal, options) => { seen.push(options?.standardCodeMode); return runComputerProgram(request, host, signal, options); },
+    browserTask: ({ operation, args }, { signal }) => f.host.browser(operation, args, signal),
+  });
+  t.after(() => control.reset(true));
+  await control.setFeatureEnabled(true);
+  // TypeScript annotations: OpenWork's Code Mode strips them, standard JavaScript rejects them.
+  const typed = { sessionId: "chat", surface: "browser", code: 'const found: boolean = await tools.ui.exists({target:{name:"Save"}}); return found;' };
+  assert.equal((await control.program(typed)).value, true);
+  // A program request cannot pick the interpreter.
+  assert.equal((await control.program({ ...typed, standardCodeMode: true })).value, true);
+  assert.equal(control.setStandardCodeMode(true), true);
+  const standard = await control.program(typed);
+  assert.equal(standard.ok, false);
+  assert.equal(standard.error.kind, "ParseError");
+  assert.equal(control.setStandardCodeMode(false), false);
+  assert.equal((await control.program(typed)).value, true);
+  assert.deepEqual(seen, [false, false, true, false]);
+});

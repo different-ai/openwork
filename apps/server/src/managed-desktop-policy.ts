@@ -26,6 +26,8 @@ const DEN_READ_DEADLINE_MS = 6_000;
 const DEN_READ_ATTEMPT_TIMEOUT_MS = 3_500;
 const DEN_READ_MAX_ATTEMPTS = 2;
 const DEN_READ_RETRY_DELAY_MS = 200;
+// How long a `standardCodeMode` read is reused, as the desktop app's feature reads are.
+const FEATURE_STALE_MS = 30_000;
 const RETRYABLE_DEN_STATUSES = new Set([502, 503, 504]);
 const RETRYABLE_TRANSPORT_CODES = new Set([
   "ABORT_ERR",
@@ -79,6 +81,8 @@ class ManagedDesktopPolicy {
   private fetching: { generation: number; promise: Promise<DesktopConfig | null> } | undefined;
   /** The last policy verified for this sign-in, used while a fresh read is in flight or Den is unreachable. */
   private lastKnown: { key: string; policy: DesktopConfig } | undefined;
+  /** The last `standardCodeMode` read for this sign-in. */
+  private standardCodeMode: { generation: number; at: number; enabled: boolean } | undefined;
   onChange: (() => void) | undefined;
   /** Live rollout state, independent of persisted model and permission changes. */
   onV2OnlyChange: ((enabled: boolean) => void) | undefined;
@@ -354,6 +358,30 @@ class ManagedDesktopPolicy {
       return features.computerUse === true && features.remoteComputers === true;
     } catch {
       // Missing, unreachable, signed-out or changed identity never grants access.
+      return false;
+    }
+  }
+
+  /**
+   * The signed-in organization's `standardCodeMode` feature: whether its
+   * computer-use programs run as standard JavaScript. It picks an interpreter
+   * and grants nothing, so a read up to 30 s old for this sign-in is reused.
+   * Missing, unreachable or signed out means off: OpenWork's original Code Mode.
+   */
+  async standardCodeModeEnabled(): Promise<boolean> {
+    const session = this.session;
+    const generation = this.generation;
+    if (!session) return false;
+    const known = this.standardCodeMode;
+    if (known?.generation === generation && Date.now() - known.at < FEATURE_STALE_MS) return known.enabled;
+    try {
+      const payload = await this.readDenJson(session, "/v1/org", generation);
+      this.identityChanged(generation);
+      const features = isRecord(payload) && isRecord(payload.features) ? payload.features : {};
+      const enabled = features.standardCodeMode === true;
+      this.standardCodeMode = { generation, at: Date.now(), enabled };
+      return enabled;
+    } catch {
       return false;
     }
   }

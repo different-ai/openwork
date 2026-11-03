@@ -241,7 +241,7 @@ const computerControl = createComputerControl({
   }) } : {}),
   // Where computer steps spend their time: on this computer, or waiting for the model.
   onTiming: (_sessionId, step) => console.info(`[computer] ${step.name} computer ${Math.round(step.computerMs)} ms${step.modelMs === undefined ? "" : ` · model ${Math.round(step.modelMs)} ms`}`),
-  runProgram: async (request, host, signal) => (await import("@openwork/computer-use/runtime")).runComputerProgram(request, host, signal),
+  runProgram: async (request, host, signal, options) => (await import("@openwork/computer-use/runtime")).runComputerProgram(request, host, signal, options),
   browserTask: (request, options) => browserPanel?.browserTask(request, options) ?? Promise.resolve({ ok: false, code: "browser_unavailable" }),
   readRemoteFeatureEnabled: async () => {
     const server = await runtimeManager.openworkServerInfo();
@@ -2210,6 +2210,10 @@ const desktopCommandHandlers = {
   "computerSetRemoteEnabled": async (event, enabled) => {
       assertComputerSender(event);
       return computerControl.setRemoteEnabled(enabled === true);
+  },
+  "computerSetStandardCodeMode": async (event, enabled) => {
+      assertComputerSender(event);
+      return computerControl.setStandardCodeMode(enabled === true);
   },
   // Compatibility for older renderers; background delivery now follows computerUse.
   "computerSetBackgroundEnabled": async (event) => {

@@ -86,13 +86,13 @@ test("an unused cloud host loads before SDK build artifacts exist", async () => 
   } finally { await computer?.close(); await rm(directory, { recursive:true, force:true }); }
 });
 
-async function fixture(t, applications) {
+async function fixture(t, applications, options = {}) {
   let allowed = true;
   const commands = [];
   const requests = [];
   let screenRead = async () => ({ exitCode: 0, stdout: "1280 800", stderr: "" });
   const directory = await mkdtemp(join(tmpdir(), "cloud-computer-test-"));
-  const computer = await createCloudComputer({ directory, enabled: async () => allowed, applications, machine: {
+  const computer = await createCloudComputer({ directory, enabled: async () => allowed, applications, ...options, machine: {
     async run(command) {
       commands.push(command);
       if (command.includes('echo "missing:')) return { exitCode: 0, stdout: "missing:\ndisplay:ok", stderr: "" };
@@ -229,4 +229,25 @@ test("cloud programs use the shared input rail and validate their surface", asyn
   assert.equal(result.value, 42);
   await f.computer.interact({action:"takeover"});
   await assert.rejects(f.computer.task("/computer/program", {sessionId:"a",surface:"computer",code:"return true;"}), {code:"paused"});
+});
+
+test("cloud programs run as standard JavaScript only while the organization's feature is on", async t => {
+  let standard = false;
+  const f = await fixture(t, undefined, { standardCodeMode: async () => standard });
+  // TypeScript annotations: OpenWork's Code Mode strips them, standard JavaScript rejects them.
+  const typed = { sessionId: "a", surface: "computer", code: "const value: number = input.value; return value + 1;", input: { value: 41 } };
+  assert.equal((await f.computer.task("/computer/program", typed)).value, 42);
+  // Nothing in the request picks the interpreter.
+  assert.equal((await f.computer.task("/computer/program", { ...typed, standardCodeMode: true })).value, 42);
+  standard = true;
+  const result = await f.computer.task("/computer/program", typed);
+  assert.equal(result.ok, false);
+  assert.equal(result.error.kind, "ParseError");
+  assert.equal((await f.computer.task("/computer/program", { ...typed, code: "return input.value + 1;" })).value, 42);
+});
+
+test("an unreadable standardCodeMode keeps cloud programs on OpenWork's Code Mode", async t => {
+  const f = await fixture(t, undefined, { standardCodeMode: async () => { throw new Error("Den unreachable"); } });
+  const result = await f.computer.task("/computer/program", { sessionId: "a", surface: "computer", code: "const value: number = 1; return value;" });
+  assert.equal(result.value, 1);
 });
