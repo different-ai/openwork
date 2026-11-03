@@ -188,6 +188,8 @@ jobs:
         run: bun test apps/server/test/mcp-app-resource-cache.test.ts
       - name: Test the agent's Automation listing reads every schedule kind
         run: bun test apps/server/test/connect-automation-catalog.test.ts
+      - name: Test browser upload approvals outlive the HTTP header timeout
+        run: pnpm --filter openwork-server exec tsx --test test/browser-approval-transport.test.ts
       - name: Test native MCP readiness and Stop ownership
         run: pnpm --filter openwork-server test:readiness
 

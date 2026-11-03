@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { approvalLoopbackFetch } from "./approval-loopback-fetch.js";
 import { registerCloudSkillDiscovery, type CloudSkillContext } from "./openwork-cloud-skills-v2.js";
 import { server as browserTools } from "./openwork-chrome-devtools.js";
 import { server as computerTools } from "./openwork-computer-use.js";
@@ -152,7 +153,7 @@ export default {
           input: z.toJSONSchema(z.object(definition.args)),
           options: { codemode: false },
           async execute(input, call) {
-            const response = await fetch(browser.url, {
+            const response = await approvalLoopbackFetch(browser.url, {
               method: "POST", redirect: "error", signal: call.signal,
               headers: { Authorization: `Bearer ${browser.token}`, "Content-Type": "application/json" },
               body: JSON.stringify({ name, input, sessionId: call.sessionID }),
