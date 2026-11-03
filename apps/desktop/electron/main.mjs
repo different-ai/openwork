@@ -1534,6 +1534,8 @@ const desktopAutomationRunner = createDesktopAutomationRunner({
   // rollout only for endpoints trusted before the renderer starts issuing IPC.
   legacyBaseUrls: legacyRunnerBaseUrls,
   getJournalRoot: () => path.join(app.getPath("userData"), "session-runner"),
+  // Start remote-session tasks as soon as Den announces them (Den's remoteSessionPush feature).
+  remoteSessionPush: true,
   getLocalRuntime: async () => {
     const server = await runtimeManager.openworkServerInfo();
     return { baseUrl: server.baseUrl, token: server.clientToken ?? server.ownerToken };

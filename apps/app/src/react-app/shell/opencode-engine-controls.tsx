@@ -56,8 +56,11 @@ export function useOpencodeEngineControls(client: OpencodeEngineClient | null | 
   const busy = switching || consentOpen;
   const disabled = Boolean(blockedReason) || busy || migrating;
   const selected: ChatEngine = status ? selectedChatEngine(status) : "v1";
+  // The organization runs every chat on OpenCode v2: v1 stays visible but locked (DESIGN P4).
+  const v2Only = status?.v2Only === true;
+  const v1Locked = v2Only ? V2_ONLY_REASON : undefined;
   const select = (engine: ChatEngine) => {
-    if (!client || disabled || engine === selected) return;
+    if (!client || disabled || engine === selected || (engine === "v1" && v2Only)) return;
     void requestEngineSwitch(client, engine, selected).then((next) => { if (next) setStatus(next); });
   };
   const openMigration = () => {
@@ -68,12 +71,14 @@ export function useOpencodeEngineControls(client: OpencodeEngineClient | null | 
     id: `opencode.switch-${engine}`, title: `Switch to OpenCode ${engine}`,
     keywords: ["engine", "toggle", "enable", "opencode", engine], group: "actions",
     meta: selected === engine && status ? "Selected" : engine === "v2" ? "Preview" : undefined,
-    detail: blockedReason ?? (migrating ? "Wait for chat migration to finish." : undefined),
-    disabled: disabled || (Boolean(status) && selected === engine), action: () => select(engine),
+    detail: blockedReason ?? (engine === "v1" ? v1Locked : undefined) ?? (migrating ? "Wait for chat migration to finish." : undefined),
+    disabled: disabled || (Boolean(status) && selected === engine) || (engine === "v1" && v2Only), action: () => select(engine),
   }));
   items.push({ id: "opencode.migrate-v2", title: "Migrate chats to OpenCode v2", keywords: ["migration", "history", "import", "v1", "v2"],
     group: "actions", disabled: disabled || !status?.migration,
     detail: blockedReason ?? (!status?.migration ? "Update OpenWork to migrate chats." : undefined),
     action: openMigration });
-  return { status, selected, disabled, blockedReason, busy, migrating, error, select, items: desktop ? items : [], message: engineMigrationMessage(migration), openMigration };
+  return { status, selected, disabled, blockedReason, busy, migrating, error, select, v2Only, v1Locked, items: desktop ? items : [], message: engineMigrationMessage(migration), openMigration };
 }
+
+export const V2_ONLY_REASON = "Your organization runs every chat on OpenCode v2.";

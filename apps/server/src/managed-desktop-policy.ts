@@ -80,6 +80,8 @@ class ManagedDesktopPolicy {
   /** The last policy verified for this sign-in, used while a fresh read is in flight or Den is unreachable. */
   private lastKnown: { key: string; policy: DesktopConfig } | undefined;
   onChange: (() => void) | undefined;
+  /** Live rollout state, independent of persisted model and permission changes. */
+  onV2OnlyChange: ((enabled: boolean) => void) | undefined;
   constructor(private readonly config: ServerConfig) {}
   authenticatesEvaluation(request: Request): boolean {
     const supplied = request.headers.get("authorization")?.match(/^Bearer\s+(.+)$/i)?.[1];
@@ -95,6 +97,7 @@ class ManagedDesktopPolicy {
     if (!current || sessionKey(current) !== sessionKey(session)) {
       this.generation++;
       this.installed = undefined;
+      this.onV2OnlyChange?.(false);
     }
     this.session = session;
     if (current && sessionKey(current) !== sessionKey(session)) {
@@ -113,6 +116,7 @@ class ManagedDesktopPolicy {
     this.generation++;
     this.installed = undefined;
     this.lastKnown = undefined;
+    this.onV2OnlyChange?.(false);
     const cleared = await clearManagedDesktopPolicy(this.config);
     if (cleared.changed) this.onChange?.();
   }
@@ -190,11 +194,16 @@ class ManagedDesktopPolicy {
     try {
       policy = desktopConfigSchema.parse(await this.readDenJson(session, "/v1/me/desktop-config", generation));
     } catch (error) {
+      this.identityChanged(generation);
       if (error instanceof ApiError && error.code === "policy_identity_changed") throw error;
+      this.onV2OnlyChange?.(false);
       if (!DESKTOP_POLICY_ENFORCEMENT_ENABLED) {
         // Never block on Den: keep the last policy verified for this sign-in, or none.
         console.warn("[openwork:model-access] Den unreachable; using the last known model access");
-        return this.lastKnown?.key === sessionKey(session) ? this.lastKnown.policy : null;
+        // Model access/permissions keep their offline policy. A rollout is
+        // different: a stale grant must not re-enable v2-only mode after its
+        // kill switch changed while disconnected.
+        return this.lastKnown?.key === sessionKey(session) ? { ...this.lastKnown.policy, opencodeV2Only: false } : null;
       }
       throw new ApiError(403, "policy_unavailable", "Your organization's policy could not be verified. Try again when connected.");
     }
@@ -209,6 +218,7 @@ class ManagedDesktopPolicy {
     if (generation !== this.generation) throw new ApiError(409, "policy_identity_changed", "The signed-in account changed. Retry the action.");
     this.installed = { generation, policy };
     this.lastKnown = { key: sessionKey(session), policy };
+    this.onV2OnlyChange?.(policy.opencodeV2Only === true);
     if (result.changed) this.onChange?.();
     return policy;
   }

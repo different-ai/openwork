@@ -244,6 +244,11 @@ export type SessionPageProps = {
   isSessionReferenceCurrent?: (reference: SessionReferenceIdentity) => boolean;
   sessionNumberShortcuts: SessionNumberShortcutsState;
   selectedSessionId: string | null;
+  /**
+   * The route's conversation id for back/forward history: the selected
+   * session, or a `remote:` thread route that has no local session.
+   */
+  historySessionId?: string | null;
   selectedWorkspaceId: string;
   selectedWorkspaceDisplay: {
     id?: string;
@@ -572,8 +577,9 @@ export function SessionPage(props: SessionPageProps) {
   const openWorkbenchTab = useWorkbenchStore((state) => state.openTab);
   const setWorkbenchSplit = useWorkbenchStore((state) => state.setSplit);
   const focusWorkbenchPane = useWorkbenchStore((state) => state.focusPane);
+  const historySessionId = props.historySessionId ?? props.selectedSessionId;
   const [conversationHistory, setConversationHistory] = useState(() => (
-    createConversationTabHistory(props.selectedWorkspaceId, props.selectedSessionId)
+    createConversationTabHistory(props.selectedWorkspaceId, historySessionId)
   ));
   const [pendingConversationHistoryNavigation, setPendingConversationHistoryNavigation] = useState<PendingConversationHistoryNavigation | null>(null);
   const [createGroupOpen, setCreateGroupOpen] = useState(false);
@@ -1039,7 +1045,7 @@ export function SessionPage(props: SessionPageProps) {
     if (pendingConversationHistoryNavigation) {
       if (
         pendingConversationHistoryNavigation.history.workspaceId === props.selectedWorkspaceId &&
-        pendingConversationHistoryNavigation.targetSessionId === props.selectedSessionId
+        pendingConversationHistoryNavigation.targetSessionId === historySessionId
       ) {
         setConversationHistory(pendingConversationHistoryNavigation.history);
         // The workbench restores the destination session’s own side chat.
@@ -1048,7 +1054,7 @@ export function SessionPage(props: SessionPageProps) {
       }
       if (
         pendingConversationHistoryNavigation.fromWorkspaceId === props.selectedWorkspaceId &&
-        pendingConversationHistoryNavigation.fromSessionId === props.selectedSessionId
+        pendingConversationHistoryNavigation.fromSessionId === historySessionId
       ) {
         return;
       }
@@ -1058,13 +1064,13 @@ export function SessionPage(props: SessionPageProps) {
     setConversationHistory((current) => syncConversationTabHistory(
       current,
       props.selectedWorkspaceId,
-      props.selectedSessionId,
+      historySessionId,
       splitSession?.sessionId ?? null,
     ));
   }, [
+    historySessionId,
     openWorkbenchTab,
     pendingConversationHistoryNavigation,
-    props.selectedSessionId,
     props.selectedWorkspaceId,
     props.sidebar.workspaceSessionGroups,
     setWorkbenchSplit,
@@ -1221,13 +1227,13 @@ export function SessionPage(props: SessionPageProps) {
   const canGoBackInConversationHistory = !pendingConversationHistoryNavigation && canNavigateSelectedConversationHistory(
     conversationHistory,
     props.selectedWorkspaceId,
-    props.selectedSessionId,
+    historySessionId,
     "back",
   );
   const canGoForwardInConversationHistory = !pendingConversationHistoryNavigation && canNavigateSelectedConversationHistory(
     conversationHistory,
     props.selectedWorkspaceId,
-    props.selectedSessionId,
+    historySessionId,
     "forward",
   );
 
@@ -1350,7 +1356,7 @@ export function SessionPage(props: SessionPageProps) {
     if (!canNavigateSelectedConversationHistory(
       conversationHistory,
       props.selectedWorkspaceId,
-      props.selectedSessionId,
+      historySessionId,
       direction,
     )) return;
     const next = navigateConversationTabHistory(conversationHistory, direction);
@@ -1358,12 +1364,12 @@ export function SessionPage(props: SessionPageProps) {
     setPendingConversationHistoryNavigation({
       history: next.history,
       fromWorkspaceId: props.selectedWorkspaceId,
-      fromSessionId: props.selectedSessionId,
+      fromSessionId: historySessionId,
       targetSessionId: next.entry.sessionId,
       targetSplitSessionId: next.entry.splitSessionId,
     });
     props.sidebar.onOpenSession(next.history.workspaceId, next.entry.sessionId);
-  }, [conversationHistory, props.selectedSessionId, props.selectedWorkspaceId, props.sidebar]);
+  }, [conversationHistory, historySessionId, props.selectedWorkspaceId, props.sidebar]);
 
   useEffect(() => {
     if (!showSessionLoadingState) {
