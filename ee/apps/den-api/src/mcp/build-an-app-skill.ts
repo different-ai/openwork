@@ -1,14 +1,28 @@
 import { appStarterResourceUri } from "./app-authoring-starter.js"
+import type { CodemodeLanguage } from "./codemode-script-object.js"
 
 export const BUILTIN_BUILD_AN_APP_CAPABILITY = "skill:build-an-app"
+
+/**
+ * Which forms run one item at a time. OpenWork's dialect awaits an async
+ * callback in forEach, filter or reduce; standard JavaScript never does. The
+ * language rules themselves are stated once, in execute_capability_script's
+ * description (workflowCodeRules).
+ */
+const SERIAL_FORMS: Record<CodemodeLanguage, string> = {
+  "codemode-js": "A for...of loop that awaits each item, or an async forEach, filter, or reduce callback, runs one item at a time.",
+  ecmascript: "A for...of loop that awaits each item runs one item at a time, and forEach, filter, and reduce never await an async callback, so pass async callbacks only to map.",
+}
 
 /**
  * The one place agents learn how OpenWork builds Apps: when to build one, the
  * order of calls, source and tool-call rules, and what a good App looks like.
  * Server instructions and the concise builder tool descriptions route here
- * for the detailed rules the compiler and host enforce.
+ * for the detailed rules the compiler and host enforce. Only the Workflow code
+ * forms depend on the organization's Workflow language.
  */
-export const BUILD_AN_APP_SKILL_SOURCE = `---
+export function buildAnAppSkillSource(language: CodemodeLanguage): string {
+  return `---
 name: build-an-app
 description: |
   Build or change an App: a small interactive view, such as a dashboard, tracker, lookup, form, or calculator, that opens beside the chat and in any MCP Apps host.
@@ -74,7 +88,7 @@ The first load comes before everything else in this guide. Design the read so th
 
 - Time the read before you build the view: run it with execute_capability_script and compare executedAt with fetchedAt. Keep it under 3 seconds. An open waits up to 4 seconds to bring read-only data with the App; a slower read is discarded and run again, so the App opens late and its data arrives later still.
 - Load what the focal view needs in one call: one tool, or one live Workflow that combines the sources, rather than several calls or a call that waits on another.
-- Start independent reads together, never one after another. In Workflow code collect them in one Promise.all, or Promise.allSettled when one failure should not sink the rest: Promise.all(ids.map((id) => tools.x.y({ id }))). Async helpers run side by side too, so give each source its own, such as one that pages through a list, and start them together: Promise.all([listOrders(), listRefunds()]). A for...of loop that awaits each item, or an async forEach, filter, or reduce callback, runs one item at a time. When the App itself calls several tools, start those calls together the same way.
+- Start independent reads together, never one after another. In Workflow code collect them in one Promise.all, or Promise.allSettled when one failure should not sink the rest: Promise.all(ids.map((id) => tools.x.y({ id }))). Async helpers run side by side too, so give each source its own, such as one that pages through a list, and start them together: Promise.all([listOrders(), listRefunds()]). ${SERIAL_FORMS[language]} When the App itself calls several tools, start those calls together the same way.
 - Ask the source for less: a date window, a summary or report endpoint, and no expanded records the view does not show. Each page of records can add a second or more, so never page through history for a number the source can give you directly.
 - When the whole picture cannot be fast, split it: a quick read for the focal view, and a slower tool for the detail that fills in behind it.
 - Load on open. Opening the App is enough intent, from the chat, a dashboard, or the catalog, so its read-only data loads with no click; never leave an empty "click to load" state for data it can read. Clicks are for changes (send, create, update, delete) and anything that needs approval.
@@ -94,3 +108,4 @@ The first load comes before everything else in this guide. Design the read so th
 - Colors and fonts come from the host theme the starter applies, such as var(--color-text-primary) and var(--color-border-primary), with system colors (CanvasText, Canvas) as fallbacks, so it follows light and dark by itself. No hard-coded colors, gradients, emoji, or decorative badges.
 - The launch input fills the App's inputs, so the chat can open it on a specific record.
 `
+}

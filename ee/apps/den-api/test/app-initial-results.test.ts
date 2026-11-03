@@ -2,7 +2,7 @@ import assert from "node:assert/strict"
 import { test, type TestContext } from "node:test"
 import { MCP_APP_INITIAL_RESULTS_META, type McpAppToolBinding } from "@openwork/types/mcp-app"
 import { appStarter } from "../src/mcp/app-authoring-starter.js"
-import { BUILD_AN_APP_SKILL_SOURCE } from "../src/mcp/build-an-app-skill.js"
+import { buildAnAppSkillSource } from "../src/mcp/build-an-app-skill.js"
 import { launchInitialResults, launchReadHandoff, loadInitialResults, type McpAppLaunchDataStore } from "../src/mcp/app-launch-data.js"
 import type { ExecuteCapabilityToolResult } from "../src/mcp/capability-registry.js"
 import { DEN_MCP_READ_SCOPE, DEN_MCP_WRITE_SCOPE } from "../src/mcp/scopes.js"
@@ -328,5 +328,5 @@ test("the starter reads a saved Workflow's value, not its run receipt", () => {
   assert.deepEqual(valueOf({ structuredContent: { value: 3, unit: "USD" } }), { value: 3, unit: "USD" })
   assert.equal(valueOf({ content: [{ type: "text", text: "plain" }] }), "plain")
   // Authors who replace the starter are told too.
-  assert.match(BUILD_AN_APP_SKILL_SOURCE, /A saved Workflow answers with its run receipt/)
+  assert.match(buildAnAppSkillSource("ecmascript"), /A saved Workflow answers with its run receipt/)
 })

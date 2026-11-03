@@ -74,6 +74,7 @@ import {
   type ExecuteCapabilityToolResult,
 } from "./capability-registry.js"
 import { executeWorkflowAuthoringTest, workflowAuthoringTestInputSchema, workflowAuthoringTestOutputSchema } from "./workflow-authoring-test.js"
+import { workflowCodeRules } from "./codemode-script-object.js"
 import { newWorkflowLanguage } from "./workflow-service.js"
 import { parseNativeCapabilityName } from "./native-capabilities.js"
 import { gmailFileInputPreflightSchema } from "../capability-sources/gmail-file-input.js"
@@ -324,7 +325,7 @@ export async function resolveAgentSkills(input: {
   const marketplace = await listAccessibleMarketplaceSkillSources({ organizationId: input.organizationId, member: input.member })
   const sources = new Map<string, RemoteSkillSource>(marketplace)
   for (const skill of input.skills) {
-    const builtin = executeBuiltinSkillCapability(skill.capability)
+    const builtin = await executeBuiltinSkillCapability(skill.capability, input.organizationId)
     if (builtin) sources.set(skill.capability, { content: builtin.content, provenance: builtin.provenance })
   }
   return resolveSkills(input.skills, sources)
@@ -342,7 +343,7 @@ export async function readRemoteSkillSource(input: {
    */
   recordUse: boolean
 }): Promise<RemoteSkillSource> {
-  const builtinResult = executeBuiltinSkillCapability(input.skill.capability)
+  const builtinResult = await executeBuiltinSkillCapability(input.skill.capability, input.organizationId)
   if (builtinResult) return { content: builtinResult.content, provenance: builtinResult.provenance }
   const marketplace = parseMarketplaceCapabilityName(input.skill.capability)
   if (!marketplace) return null
@@ -1352,12 +1353,15 @@ export function registerAgentMcpRoutes<T extends { Variables: RequestIdVariables
       }
     }
 
+    // Only tools/list shows this description and only tools/call runs a test, so
+    // only they read the language; both then name the one the test runs in.
+    const workflowLanguage = method === "tools/list" || method === "tools/call" ? await newWorkflowLanguage(organizationId) : "codemode-js"
     server.registerTool(
       EXECUTE_CAPABILITY_SCRIPT_TOOL_NAME,
       {
         title: "Execute capability script",
         description: [
-          "Test a confined JavaScript function body; end with return of JSON-safe data. No imports, fetch, process or host access; use tools for external work and Promise.all for independent calls.",
+          workflowCodeRules(workflowLanguage),
           "mode defaults to adhoc with optional input parameters. Explicit live mode can call the same tools as adhoc (including connection tools), rejects all caller input, and supplies only input.runtime.{now,today,dayStart,dayEnd,timeZone} from the server; optional IANA timeZone defaults to UTC and is live-only.",
           toolShapes
             ? "Use exact scriptPath from search_capabilities, never guessed namespaces or operation names. Call a discovered path with the arguments its match's inputSchema describes; OpenWork API operations wrap them in path, query, and body, e.g. {query:{q:input.query}}."
@@ -1378,11 +1382,10 @@ export function registerAgentMcpRoutes<T extends { Variables: RequestIdVariables
             return { isError: true, content: textContent(JSON.stringify({ error: "membership_required", message: "Workflow tests require an active organization membership." })) }
           }
           try {
-            const language = await newWorkflowLanguage(organizationId)
             return await runMcpServiceAction("workflow_run.record", auditPrincipal, null, () => executeWorkflowAuthoringTest(request, {
               organizationId,
               orgMembershipId: memberIdentity?.orgMembershipId,
-              runtime: language === "ecmascript" ? "standard" : "openwork",
+              runtime: workflowLanguage === "ecmascript" ? "standard" : "openwork",
               buildTools: () => buildCapabilityToolTree(capabilityContext),
               recordRun: (receipt) => recordWorkflowRun(db, receipt),
             }), { result: toolResultStatus })

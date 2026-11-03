@@ -72,7 +72,9 @@ saved in.
 
 ## Intentional departures from JavaScript
 
-The engine does these differently from a JavaScript runtime. We accept them and say so to authors:
+The engine does these differently from a JavaScript runtime. We accept them and say so to authors: with the feature
+on, `execute_capability_script`'s description asks for standard JavaScript, says TypeScript annotations are rejected
+and states the first two below, and the build-an-app skill names the forms that run one item at a time.
 
 - **A call nothing awaits is cancelled when the program returns.** A JavaScript runtime would let it finish. Await
   every call, including writes; OpenWork's dialect waited for them.
@@ -123,6 +125,7 @@ A saved Workflow never switches interpreter silently. With the feature off (or t
 - `codemode-run.ts` (`codemodeRuntimeFor`), `codemode-script-object.ts` (the two languages), `workflow-service.ts`
   (`newWorkflowLanguage`, and choosing or refusing an interpreter for each run), `workflows.ts` and `agent.ts`
   (tests and saves).
+- Agent guidance: `codemode-script-object.ts` (`workflowCodeRules`, the language rules) and `build-an-app-skill.ts`.
 - Computer use: `packages/computer-use/src/runtime.ts` (`runComputerProgram`'s `standardCodeMode` option),
   `computer-control.mjs` (`setStandardCodeMode`), `cloud.mjs`, `apps/server/src/managed-desktop-policy.ts` and the
   app's `ComputerBridge` (`computer-store.ts`).
@@ -130,6 +133,5 @@ A saved Workflow never switches interpreter silently. With the feature off (or t
   `packages/computer-use/program-standard-code-mode.test.mjs`, `packages/computer-use/cloud.test.mjs` and
   `apps/desktop/electron/computer-program.test.mjs`.
 
-Not covered yet, each its own change: Workbot computers; agent guidance (the build-an-app skill, Workflow authoring
-instructions and the `computer_run` description) for standard JavaScript and the departures above; retiring
-`packages/codemode` once no saved Workflow uses `codemode-js`.
+Not covered yet, each its own change: Workbot computers; the `computer_run` description for standard JavaScript and
+the departures above; retiring `packages/codemode` once no saved Workflow uses `codemode-js`.

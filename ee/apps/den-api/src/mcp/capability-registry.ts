@@ -750,11 +750,11 @@ const builtinSkillSource: CapabilitySource = {
     description: skill.description,
     readOnly: true,
     authority: "den",
-    run: async () => executeBuiltinSkillCapability(skill.capability)?.content ?? "",
+    run: async () => (await executeBuiltinSkillCapability(skill.capability, ctx.organizationId))?.content ?? "",
   }))),
-  execute: async (_ctx, parsed, input) => {
+  execute: async (ctx, parsed, input) => {
     if (!parsedForKind(parsed, "builtinSkill")) return unknownCapabilityResult(input.name)
-    const result = executeBuiltinSkillCapability(parsed.name)
+    const result = await executeBuiltinSkillCapability(parsed.name, ctx.organizationId)
     return result
       ? { content: textContent(JSON.stringify(result, null, 2)) }
       : unknownCapabilityResult(input.name)
