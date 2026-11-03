@@ -93,6 +93,10 @@ test("App builder metadata describes all inputs and keeps create_app concise", a
     assert.match(BUILD_AN_APP_SKILL_SOURCE, /openwork\/result-cache/)
     assert.match(BUILD_AN_APP_SKILL_SOURCE, /one such call per click/)
     assert.match(BUILD_AN_APP_SKILL_SOURCE, /app\.revisionId/)
+    assert.match(BUILD_AN_APP_SKILL_SOURCE, /first load comes before everything else/)
+    assert.match(BUILD_AN_APP_SKILL_SOURCE, /compare executedAt with fetchedAt/)
+    assert.match(BUILD_AN_APP_SKILL_SOURCE, /Promise\.all\(ids\.map\(\(id\) => tools\.x\.y\(\{ id \}\)\)\)/)
+    assert.match(BUILD_AN_APP_SKILL_SOURCE, /one at a time even inside Promise\.all/)
   } finally {
     await client.close()
     await server.close()
