@@ -17,3 +17,4 @@
 - The OpenAPI export was removed with the dropped OpenAPI implementation.
 - Host-supplied named bindings can be exposed as read-only program-scope variables through `CodeMode.execute` and `CodeMode.make`.
 - Upstream pins `acorn` 8.15.0; this workspace pins 8.16.0 to reuse the existing workspace resolution.
+- `async` functions return promises and run their bodies concurrently, each call with its own scope chain. A per-execution turn (`src/interpreter/turn.ts`) keeps code between awaits from interleaving. This follows the design of anomalyco/opencode#48082 (per-call frames) and anomalyco/opencode#54276 (the turn); upstream has since replaced it with one job queue (anomalyco/opencode#57976), which is not vendored here. Unlike upstream, callbacks whose result the interpreter uses, and `forEach`, await an async callback's promise, so programs written against the earlier inline behavior keep their results.
