@@ -4,7 +4,10 @@ import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
 import { FEATURE_CATEGORIES, FEATURE_KEYS, FEATURES, featureDocsUrl, featuresByCategory, mapFeatures, type FeatureKey } from "@openwork/features";
 import { DenButton } from "../../app/(den)/_components/ui/button";
+import { DenChip } from "../../app/(den)/_components/ui/chip";
+import { DenSegmented } from "../../app/(den)/_components/ui/segmented";
 import { DenSwitch } from "../../app/(den)/_components/ui/switch";
+import { isNewFeature, monthLabel, NEW_FEATURE_DAYS } from "./admin-organization-feature-usage";
 import { requestAdmin, sendAdmin } from "./admin-request";
 import { describeFeatureChange, parseFeatureChange, type AdminFeatureChange } from "./feature-change";
 
@@ -73,6 +76,30 @@ function visibleKeys(features: AdminOrganizationFeatures): FeatureKey[] {
   return FEATURE_KEYS.filter((key) => features[key].source !== "unavailable");
 }
 
+export type FeatureSettingsGrouping = "recent" | "category" | "author";
+export type FeatureKeyGroup = { id: string; label: string; keys: FeatureKey[] };
+const SETTINGS_GROUPINGS = [
+  { value: "recent", label: "Newest" }, { value: "category", label: "Category" }, { value: "author", label: "Author" },
+] as const satisfies readonly { value: FeatureSettingsGrouping; label: string }[];
+
+const newestFirst = (keys: readonly FeatureKey[]) => [...keys].sort((a, b) => FEATURES[b].added.localeCompare(FEATURES[a].added));
+
+/** Newest: the last two weeks, then each earlier month. Author: by handle, newest first within. Category: registry order. */
+export function groupFeatureKeys(keys: readonly FeatureKey[], grouping: FeatureSettingsGrouping, now = Date.now()): FeatureKeyGroup[] {
+  if (grouping === "category") return featuresByCategory(keys).map(({ category, keys: inCategory }) => ({ id: category, label: FEATURE_CATEGORIES[category].label, keys: inCategory }));
+  const groups = new Map<string, FeatureKeyGroup>();
+  for (const key of newestFirst(keys)) {
+    const { added, author } = FEATURES[key];
+    const [id, label] = grouping === "author" ? [author, `@${author}`]
+      : isNewFeature(key, now) ? ["new", `New in the last ${NEW_FEATURE_DAYS} days`] : [added.slice(0, 7), monthLabel(`${added}T00:00:00.000Z`)];
+    const group = groups.get(id) ?? { id, label, keys: [] };
+    group.keys.push(key);
+    groups.set(id, group);
+  }
+  const ordered = [...groups.values()];
+  return grouping === "author" ? ordered.sort((a, b) => a.id.localeCompare(b.id, undefined, { sensitivity: "base" })) : ordered;
+}
+
 export type AdminFeatureAccessFailure = { access: "signed-out" | "forbidden"; message: string };
 
 function parseFeatures(payload: unknown): AdminOrganizationFeatures | null {
@@ -93,6 +120,7 @@ export function AdminOrganizationFeatureControls({ organizationId, memberId, ref
   const [saving, setSaving] = useState(false);
   const savingRef = useRef(false);
   const [attempt, setAttempt] = useState(0);
+  const [grouping, setGrouping] = useState<FeatureSettingsGrouping>("recent");
   const path = `/v1/admin/organizations/${encodeURIComponent(organizationId)}${memberId ? `/members/${encodeURIComponent(memberId)}` : ""}/capabilities`;
 
   useEffect(() => {
@@ -144,6 +172,11 @@ export function AdminOrganizationFeatureControls({ organizationId, memberId, ref
         <h2 className="text-sm font-semibold text-gray-900">Features</h2>
         <Link href="/admin/features" prefetch={false} className="text-xs font-medium text-slate-500 underline-offset-2 hover:underline">Feature rollouts</Link>
       </div>
+      <div className="mt-3 flex min-w-0 flex-wrap items-center gap-2 text-xs text-gray-600">
+        <span>Group by</span>
+        <DenSegmented aria-label="Group feature settings by" options={SETTINGS_GROUPINGS} value={grouping} onChange={setGrouping} className="max-w-full flex-wrap"
+          optionTestId={(value) => `admin-feature-settings-group-${value}`} />
+      </div>
       {loadError ? <div className="mt-3 text-sm text-red-700" role="alert">
         <p>{loadError}</p>
         <DenButton variant="secondary" size="sm" onClick={() => setAttempt((value) => value + 1)}>Retry features</DenButton>
@@ -152,8 +185,10 @@ export function AdminOrganizationFeatureControls({ organizationId, memberId, ref
         {[0, 1, 2].map((row) => <div key={row} className="h-16 rounded-lg bg-gray-100" aria-hidden="true" />)}
       </div> : null}
       {saveError ? <p data-testid="admin-capability-error" role="alert" className="mt-3 text-sm text-red-700">Could not confirm the save. Showing the previous setting. {saveError}</p> : null}
-      {features ? featuresByCategory(visibleKeys(features)).map(({ category, keys }) => <section key={category} className="mt-4 min-w-0" aria-labelledby={`admin-feature-group-${category}`} data-testid={`admin-feature-group-${category}`}>
-        <h3 id={`admin-feature-group-${category}`} className="text-xs font-semibold uppercase tracking-wide text-slate-500">{FEATURE_CATEGORIES[category].label}</h3>
+      {features ? groupFeatureKeys(visibleKeys(features), grouping).map(({ id: groupId, label, keys }) => {
+        const sectionId = grouping === "category" ? `admin-feature-group-${groupId}` : `admin-feature-group-${grouping}-${groupId}`;
+        return <section key={sectionId} className="mt-4 min-w-0" aria-labelledby={sectionId} data-testid={sectionId}>
+        <h3 id={sectionId} className="text-xs font-semibold uppercase tracking-wide text-slate-500">{label}{grouping === "category" ? null : ` · ${keys.length}`}</h3>
         <ul className="mt-1 min-w-0 divide-y divide-slate-200">
         {keys.map((key) => {
           const state = features[key];
@@ -164,7 +199,7 @@ export function AdminOrganizationFeatureControls({ organizationId, memberId, ref
                 <span className="shrink-0 pt-0.5"><DenSwitch testId={`admin-capability-${key}`} aria-label={definition.label} checked={state.enabled} size="sm"
                   aria-describedby={`admin-feature-source-${key}`} disabled={!state.overrideApplies || loading || saving} onChange={(enabled) => void save(key, enabled)} /></span>
                 <span className="min-w-0 flex-1 [overflow-wrap:anywhere]">
-                  <span className="block text-sm font-medium text-slate-700">{definition.label}</span>
+                  <span className="flex flex-wrap items-center gap-2 text-sm font-medium text-slate-700">{definition.label}{isNewFeature(key) ? <DenChip tone="info" data-testid={`admin-capability-new-${key}`}>New</DenChip> : null}</span>
                   <span id={`admin-feature-source-${key}`} className="mt-1 block text-xs text-slate-500" data-testid={`admin-capability-source-${key}`}>{memberId && state.source === "everyone" ? `Organization setting: ${state.enabled ? "on" : "off"}` : describeSource(state)}</span>
                   <span className="mt-1 block text-xs leading-5 text-slate-500">{definition.description}</span>
                   {state.lastChange ? <span className="mt-1 block text-xs text-slate-500" data-testid={`admin-capability-last-change-${key}`}>Last change: {describeFeatureChange(state.lastChange, { showScope: true })}</span> : null}
@@ -183,7 +218,8 @@ export function AdminOrganizationFeatureControls({ organizationId, memberId, ref
           );
         })}
         </ul>
-      </section>) : null}
+      </section>;
+      }) : null}
     </section>
   );
 }
