@@ -1682,6 +1682,13 @@ export function createEngineV2Preview(options: {
       // Keep the source engine serving and the private copy/checkpoint for the
       // next boot. There is deliberately no retry loop in this process.
       chatRouting = false;
+      if (stopping && autoUpgradeAbort.signal.aborted && error === autoUpgradeAbort.signal.reason) {
+        // stop() cancelled the attempt because OpenWork is closing. Nothing
+        // failed, so the next boot resumes it without an error or backoff.
+        warn(`Automatic upgrade paused: ${errorMessage(error)}`);
+        await persistState().catch((error) => warn(`Automatic upgrade state: ${errorMessage(error)}`));
+        return false;
+      }
       const message = errorMessage(error);
       migration = { ...migration, state: "error", error: message,
         startedAt: attemptedCopy ? migration.startedAt ?? attemptStartedAt : attemptStartedAt };
