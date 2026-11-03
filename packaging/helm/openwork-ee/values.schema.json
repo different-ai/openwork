@@ -131,6 +131,16 @@
               ],
               "description": "Connect: an MCP server for each connection: Members can add one connected service, such as Gmail or Linear, to an agent like Claude Code as its own MCP server that lists only that service's tools. Renders DEN_FEATURE_CONNECTION_MCP_SERVERS."
             },
+            "desktopPersonalConnectors": {
+              "enum": [
+                "",
+                "true",
+                "false",
+                true,
+                false
+              ],
+              "description": "Desktop: members add their own connectors: Members can add a custom MCP server from the desktop app's Library and sign in with their own account, the same way they can from My Library on the web. Without it, the desktop only lets owners and admins finish connector setup. Renders DEN_FEATURE_DESKTOP_PERSONAL_CONNECTORS."
+            },
             "opencodeV2Only": {
               "enum": [
                 "",

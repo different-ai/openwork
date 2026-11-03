@@ -947,6 +947,7 @@ export default {
   "extensions.add_mcp_api_key_label": "API key",
   "extensions.add_mcp_api_key_hint": "Stored encrypted as one organization credential.",
   "extensions.add_mcp_api_key_required": "Enter the API key for the MCP server.",
+  "extensions.add_mcp_personal_key_admin": "This server needs a key. Ask an admin to add it; you can then add your own key from your Library.",
   "extensions.add_mcp_account_label": "Whose account does the AI use?",
   "extensions.add_mcp_account_per_member": "Individual accounts",
   "extensions.add_mcp_account_per_member_hint": "Each person signs in with their own account from Your Connections. Their AI acts as them, with their permissions.",

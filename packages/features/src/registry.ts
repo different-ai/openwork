@@ -179,6 +179,17 @@ export const FEATURES = defineFeatures({
     deployments: everywhere,
     default: false,
   },
+  desktopPersonalConnectors: {
+    label: "Desktop: members add their own connectors",
+    description: "Members can add a custom MCP server from the desktop app's Library and sign in with their own account, the same way they can from My Library on the web. Without it, the desktop only lets owners and admins finish connector setup.",
+    category: "connect",
+    added: "2026-11-02",
+    since: "2026-11",
+    author: "benjaminshafii",
+    docs: "docs/features/desktop-personal-connectors/README.md",
+    deployments: everywhere,
+    default: false,
+  },
   opencodeV2Only: {
     label: "OpenCode v2 only",
     description: "Desktop chats always run on OpenCode v2: switching to OpenCode v1 is turned off and earlier chats are copied to v2 in the background.",
