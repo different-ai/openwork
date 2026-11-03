@@ -10,6 +10,7 @@ import { connectionActionAppResourceUri, legacyConnectionActionAppResourceUri } 
 import { parseMcpAppResourceUri } from "@openwork/types/mcp-app"
 import { appToolResultConnectionToolName, connectionCardFromMcpToolResult, isConnectionDiscoveryTool } from "@/components/tools/error-attribution"
 import { DashboardConnectionCard } from "@/react-app/domains/dashboard/dashboard-connection-card"
+import { memberAccessConfirmed } from "@/react-app/domains/dashboard/mcp-app-member-access"
 import { AppChatArtifact } from "@/react-app/domains/apps/app-chat-artifact"
 import { createConnectionActionController, hasHostConnectionActions, standardMcpToolResult } from "./mcp-connection-action"
 import { openDesktopUrl } from "@/app/lib/desktop"
@@ -342,8 +343,9 @@ export type McpAppSandboxViewProps = {
   resolveLiveActions?: (staleLaunchId?: string, need?: "lease") => Promise<{ origin: McpAppOrigin; app: OpenworkMcpAppResource }>
   /**
    * With resolveLiveActions: this saved view goes live in place, so the App
-   * may ask for its kept read-only results. Like every call, such a read
-   * waits for the lease and a current read check before anything is shown.
+   * may ask for its kept read-only results. Such a read waits for the lease
+   * and a current read check, unless this session already compared the
+   * member's access; then it shows at once and the check follows.
    */
   goesLiveInPlace?: boolean
   /**
@@ -609,20 +611,28 @@ export function McpAppSandboxView({ origin, app, resolveLiveActions, goesLiveInP
         // first rechecks that the call is allowed now without approval (lease,
         // visibility, workspace denies, read-only label); the tool never runs.
         // That takes a lease, not the launch's result, which may be running
-        // the App's reads, so the stored answer can arrive first.
+        // the App's reads, so the stored answer can arrive first. A saved view
+        // whose member access this session already compared answers at once
+        // and checks behind it, as its saved launch data does.
         if (cacheRequest === "read") {
           const miss = { content: [], isError: true, _meta: { [MCP_APP_CACHED_RESULT_META]: false } }
           const cached = await cachedMcpAppResult(origin, app, name, args ?? {})
           if (!cached) return miss
-          await bindLiveActions(undefined, "lease")
-          const identity = await actions.checkRead(name, args ?? {}).catch(() => null)
-          if (disposed || failed) throw new Error("This artifact view has closed or changed.")
-          // Kept from this same verified server only; a replaced server starts empty.
-          if (!identity || identity !== cached.providerIdentity) {
+          const stillAllowed = async () => {
+            await bindLiveActions(undefined, "lease")
+            const identity = await actions.checkRead(name, args ?? {}).catch(() => null)
+            if (disposed || failed) throw new Error("This artifact view has closed or changed.")
+            // Kept from this same verified server only; a replaced server starts empty.
+            if (identity && identity === cached.providerIdentity) return true
             void forgetMcpAppResult(origin, app, name, args ?? {})
-            return miss
+            return false
           }
-          return cached.result
+          if (savedLive && memberAccessConfirmed()) {
+            if (disposed || failed) throw new Error("This artifact view has closed or changed.")
+            void stillAllowed().catch(() => undefined)
+            return cached.result
+          }
+          return await stillAllowed() ? cached.result : miss
         }
         await bindLiveActions()
         const userInteraction = _meta?.["openwork/userInteraction"] === true
