@@ -178,15 +178,47 @@ commit at a time so every finding names the PR that caused it, with
   Vercel's Web Interface Guidelines. `DESIGN.md` wins where they disagree
   (sentence case, skeletons, tracking, shadows), as listed in
   `.warden/ui-skills/header.md`.
-- Failing tests: workflows that failed on dev at the merge commit, marked
-  "first failure on dev" when the same workflow passed on the run before.
-  Commits whose CI is still running are re-checked by the next sweeps for
-  up to 24 hours.
+- Failing CI: inspect failed jobs and bounded logs for push, scheduled and
+  manually triggered workflows on dev. Previous-run conclusions are context,
+  not proof that a failure was introduced by a particular merge or is pre-existing.
+  Still-running CI is re-checked by later sweeps for up to 24 hours. The current
+  dev head and queued CI failures are investigated even with no new merges;
+  Warden's own workflows and PR/fork runs are excluded from this repair path.
 
 Results go to the Slack channel in the `SLACK_WARDEN_SWEEP_CHANNEL_ID`
 repository variable (via `SLACK_BOT_TOKEN`), only when something needs
 fixing. The job summary has the same table; since the repository is public,
 security findings appear there only as counts.
+
+### CI failure investigation and suggestions
+
+For up to three failed dev workflow runs per sweep, Warden reads failed-job
+metadata and bounded, redacted log excerpts. A tool-free model diagnoses the
+failure and suggests a next step. Log text, paths and suggestions are untrusted
+input, never commands to execute. The private Slack report includes the diagnosis,
+its evidence and suggested fix; the public job summary contains only run links,
+counts and fixed disposition categories, not raw logs or model text.
+
+High-confidence source/test defects with a valid current file location enter the
+existing small-patch generation and independent verification path. CI repairs may
+touch a tracked source file identified by the logs even if that file was not in
+the merge diff. A separate draft uses `warden-fix/ci-<run-id>-<source-sha>`; the
+writer independently rechecks the failed run's head, attempt and result, current
+files and patch limits before opening it. Recovered runs, moved attempts and
+existing repair PRs do not generate duplicate fixes.
+
+Workflow/reviewer-policy changes remain manual-review suggestions: generated
+patches cannot modify `.github/`, `.warden/` or agent configuration. Missing
+credentials, runner outages and inconclusive failures get operator guidance,
+not speculative source changes. Never disable tests, weaken assertions, reduce
+coverage or loosen security to make CI green. Investigation is log/source review,
+not a local reproduction; normal CI must validate any proposed patch.
+
+CI investigation adds at most three diagnosis model calls per run. Proposed
+patches share the existing five-attempt generation budget with other findings.
+Retries store only run ID, attempt, source SHA and counters (at most 60 entries,
+three investigation rounds); exhausted attempts and queue overflow are reported.
+No approval, required-check or branch-protection settings change.
 
 **Why the previous sweep never produced patches.** Pinned Warden 0.43.0's
 [`FindingSchema`](https://github.com/getsentry/warden/blob/8759014a14130cd2b82e59d3fb450a7385721221/packages/warden/src/types/index.ts)
@@ -216,14 +248,16 @@ machinery are refused. Each generated fix must use exact, unique current
 before/after replacements or explicitly decline with `no_fix`. Deterministic
 patches are built in temporary files outside the checkout. Existing suggested
 diffs undergo the same patch validation and independent model verification.
-The verifier must accept current applicability, root-cause correction and
-minimality; git independently checks actual patch paths, size and applicability.
+The verifier must accept current applicability, root-cause correction,
+minimality and preservation of tests, assertions, coverage and security checks;
+git independently checks actual patch paths, size and applicability.
 Design repairs must preserve DESIGN.md, tokens and existing primitives. Model
 acceptance is **not** runtime/test evidence; no tests run in these jobs.
 
 The existing `warden-fixer` caps remain: at most 3 files and 40 added+deleted
 lines per fix, at most 5 fixes per PR, only existing files the source merge
-changed, never review/CI machinery. A separate write-token job revalidates the
+changed (or bounded log-located source files for CI repairs), never review/CI
+machinery. A separate write-token job revalidates the
 artifact identity, source-merge ancestry, file allowlist, current regular files,
 patch size and applicability before applying it. It executes no model or project
 scripts; Git hooks are disabled. It opens **draft** PRs against dev (one

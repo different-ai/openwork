@@ -76,7 +76,7 @@ test("Slack lists every kind with escaped model text; the public summary hides s
   assert.match(message.text, /1 security · 1 bug · 1 failing workflow/);
   assert.match(message.text, /feat: &lt;b&gt;&amp;&lt;\/b&gt;/);
   assert.match(message.text, /SSRF in &lt;proxy&gt; @\u200bhere/);
-  assert.match(message.text, /first failure on dev/);
+  assert.match(message.text, /previous run passed; cause not established/);
   assert.match(message.text, /2 more merged PR/);
 
   const summary = jobSummary({ repo: "o/r", prs, deferred: 0, lateCi: [], base: sha(1), head: sha(2), slack: "Posted to Slack." });

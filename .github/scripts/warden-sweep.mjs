@@ -34,6 +34,8 @@ import { parseWardenJsonl } from "./contributor-screen.mjs";
 import { qualifyingFixes } from "./warden-fixer.mjs";
 import { generateFixes, generationModel, GENERATION_LIMITS, fixOutcomeLine } from "./warden-generate.mjs";
 import { redact, wardenEnvironment } from "./warden-fast.mjs";
+import { planCiRepairs, ciRepairState } from "./warden-ci-plan.mjs";
+import { redactCiText } from "./warden-ci.mjs";
 
 export const SKILLS = ["diff-security-review", "diff-bug-review", "design-spec-review", "ui-skills-review"];
 export const KIND = { "diff-security-review": "security", "diff-bug-review": "bug", "design-spec-review": "design", "ui-skills-review": "design" };
@@ -62,7 +64,7 @@ export function validState(state) {
     ? state.ciPending.filter((entry) => SHA.test(entry?.sha ?? "") && Number.isFinite(Date.parse(entry.since)))
     : [];
   const fixPending = Array.isArray(state.fixPending) ? state.fixPending.filter((entry) => SHA.test(entry?.sha ?? "") && Number.isSafeInteger(entry.attempts) && entry.attempts >= 0 && entry.attempts < GENERATION_LIMITS.commitAttempts).slice(0, GENERATION_LIMITS.queue).map(({ sha, attempts }) => ({ sha, attempts })) : [];
-  return { version: 1, reviewedThrough: state.reviewedThrough, ciPending, fixPending };
+  return { version: 1, reviewedThrough: state.reviewedThrough, ciPending, fixPending, ciRepairs: ciRepairState(state.ciRepairs) };
 }
 
 /**
@@ -142,8 +144,8 @@ export function planFix(pr, changedFiles) {
     `Warden's post-merge sweep found ${fixes.length} problem(s) in ${ref} and is confident of the fix. Review and merge to accept, or close to reject.`,
     "",
     // Security fixes land in a public repository: name the file, not the issue.
-    ...fixes.map((fix) => kinds.get(fix.title) === "security"
-      ? `- **security · ${fix.severity}**${fix.path ? ` in \`${fix.path.slice(0, 200)}\`` : ""}: details are in the team's Slack sweep report.`
+    ...fixes.map((fix) => ["security", "ci"].includes(kinds.get(fix.title))
+      ? `- **${kinds.get(fix.title)} · ${fix.severity}**${fix.path ? ` in \`${fix.path.slice(0, 200)}\`` : ""}: details are in the team's Slack sweep report.`
       : `- **${kinds.get(fix.title) ?? "bug"} · ${fix.severity}**: ${mdEscape(fix.title)}${fix.path ? ` (\`${fix.path.slice(0, 200)}\`)` : ""}`),
   ];
   const left = candidates.length - fixes.length;
@@ -180,7 +182,7 @@ export async function ciStatus(runs, previousConclusion) {
     if (run.status !== "completed") pending += 1;
     else if (FAILED.has(run.conclusion)) {
       const before = await previousConclusion(run);
-      failed.push({ name: clean(run.name, 120), url: run.html_url, newlyFailing: before === "success" });
+      failed.push({ name: clean(run.name, 120), url: run.html_url, newlyFailing: before === "success", previousConclusion: before ?? null, id: run.id, runAttempt: run.run_attempt || 1 });
     }
   }
   failed.sort((a, b) => Number(b.newlyFailing) - Number(a.newlyFailing) || a.name.localeCompare(b.name));
@@ -232,11 +234,11 @@ export function slackMessage({ repo, prs, runUrl, deferred, lateCi, fixPlans = 0
       lines.push(`• [${finding.kind} · ${finding.severity}] ${slackEscape(finding.title)}${at}`);
       if (finding.description) lines.push(`    ${slackEscape(finding.description.slice(0, 300))}`);
     }
-    for (const run of pr.ci.failed) lines.push(`• [tests] <${run.url}|${slackEscape(run.name)}> failed${run.newlyFailing ? " (first failure on dev)" : " (already failing before)"}`);
+    for (const run of pr.ci.failed) lines.push(`• [tests] <${run.url}|${slackEscape(run.name)}> failed${run.newlyFailing ? " (previous run passed; cause not established)" : run.previousConclusion ? " (previous run did not pass; cause not established)" : " (previous result unknown)"}`);
   }
   for (const entry of lateFailures) {
     lines.push("", `*Late CI results for #${entry.number ?? entry.sha.slice(0, 10)}*`);
-    for (const run of entry.ci.failed) lines.push(`• [tests] <${run.url}|${slackEscape(run.name)}> failed${run.newlyFailing ? " (first failure on dev)" : " (already failing before)"}`);
+    for (const run of entry.ci.failed) lines.push(`• [tests] <${run.url}|${slackEscape(run.name)}> failed${run.newlyFailing ? " (previous run passed; cause not established)" : run.previousConclusion ? " (previous run did not pass; cause not established)" : " (previous result unknown)"}`);
   }
   if (fixPlans) lines.push("", `Prepared ${fixPlans} fix PR plan(s), not opened yet. The separate write job reports actual draft PR URLs or failures (kill switch may prevent opening).`);
   for (const pr of prs) if (pr.fixOutcomes) lines.push(`Fix generation for #${pr.number ?? pr.sha.slice(0, 10)}: ${fixOutcomeLine(pr.fixOutcomes)}`);
@@ -264,7 +266,7 @@ export function jobSummary({ repo, prs, deferred, lateCi, base, head, slack, fix
   const details = prs.flatMap((pr) => [
     ...pr.findings.filter((finding) => finding.kind !== "security").map((finding) =>
       `- #${pr.number ?? pr.sha.slice(0, 10)} [${finding.kind} · ${finding.severity}] ${mdEscape(finding.title)}${where(finding) ? ` — \`${where(finding).replace(/`/g, "'")}\`` : ""}`),
-    ...pr.ci.failed.map((run) => `- #${pr.number ?? pr.sha.slice(0, 10)} [tests] [${mdEscape(run.name)}](${run.url}) failed${run.newlyFailing ? " (first failure on dev)" : ""}`),
+    ...pr.ci.failed.map((run) => `- #${pr.number ?? pr.sha.slice(0, 10)} [tests] [${mdEscape(run.name)}](${run.url}) failed${run.newlyFailing ? " (previous run passed; cause not established)" : ""}`),
   ]);
   for (const entry of lateCi) for (const run of entry.ci.failed) details.push(`- #${entry.number ?? entry.sha.slice(0, 10)} [tests, late result] [${mdEscape(run.name)}](${run.url}) failed`);
   if (details.length) lines.push("<details><summary>Bugs, design and failing workflows</summary>", "", ...details, "", "</details>", "");
@@ -275,6 +277,33 @@ export function jobSummary({ repo, prs, deferred, lateCi, base, head, slack, fix
   for (const pr of prs) if (pr.fixQueueReason) lines.push(`- Fix retry for #${pr.number ?? pr.sha.slice(0, 10)}: ${pr.fixQueueReason}`);
   for (const pr of prs) if (pr.fixRelated?.length) lines.push(`- Related existing follow-up(s), coverage requires human review: ${pr.fixRelated.join(", ")}`);
   lines.push(slack);
+  return lines.join("\n");
+}
+
+// Raw CI evidence and hypotheses stay in Slack, never the public summary.
+export function ciRepairSlack(reports) {
+  const safe = (value, max = 1200) => slackEscape(redactCiText(value, "", max));
+  const lines = [];
+  for (const report of reports) {
+    lines.push("", `*CI investigation — <${report.url}|run ${report.id}>*`, safe(report.disposition, 240));
+    for (const suggestion of report.suggestions) {
+      lines.push(`• [${suggestion.classification} · ${suggestion.status}] ${safe(suggestion.title, 160)}`,
+        `Observed: ${safe(suggestion.observedFailure, 600)}`,
+        `Cause hypothesis: ${safe(suggestion.causeHypothesis || "Not established", 600)}`,
+        `Evidence: ${safe(suggestion.evidence || "Unavailable", 800)}`,
+        `Suggested fix / next step: ${safe(suggestion.suggestedFix, 1000)}`);
+    }
+    if (report.generation.length) lines.push(fixOutcomeLine(report.generation));
+    if (report.prUrl) lines.push(`Existing repair: ${report.prUrl}`);
+    if (report.retry) lines.push(report.retry);
+  }
+  return lines.join("\n");
+}
+export function ciRepairSummary(reports, queueOverflow) {
+  const lines = ["## CI investigations", ""];
+  for (const report of reports) lines.push(`- [Run ${report.id}](${report.url}): ${report.suggestions.length} suggestion(s), ${report.planned ? 1 : 0} draft plan(s). ${report.disposition}.${report.retry ? ` ${report.retry}.` : ""}`);
+  if (queueOverflow) lines.push(`${queueOverflow} CI investigation(s) exceeded the bounded retry queue; manual follow-up required.`);
+  if (reports.length) lines.push("", "Diagnosis text and log excerpts are sent to Slack only. CI failures are observed, not locally reproduced; required checks remain unchanged.");
   return lines.join("\n");
 }
 
@@ -348,11 +377,12 @@ function loadPreviousState(repo, workflow, runId) {
 }
 
 function ciFor(repo, sha) {
-  const runs = (api(`repos/${repo}/actions/runs?head_sha=${sha}&branch=dev&event=push&per_page=100`).workflow_runs ?? [])
-    // This sweep's own runs are scheduled, never push; skip anything else odd.
-    .filter((run) => run.head_sha === sha);
+  const runs = (api(`repos/${repo}/actions/runs?head_sha=${sha}&branch=dev&per_page=100`).workflow_runs ?? [])
+    // PR/fork jobs are not trusted evidence for a merged dev commit. Never
+    // recursively repair Warden's own sweeps or review workflows.
+    .filter((run) => run.head_sha === sha && ["push", "schedule", "workflow_dispatch"].includes(run.event) && !/(?:^|\/)warden[^/]*\.yml$/.test(run.path ?? ""));
   return ciStatus(runs, async (run) => {
-    const earlier = api(`repos/${repo}/actions/workflows/${run.workflow_id}/runs?branch=dev&event=push&status=completed&per_page=30`).workflow_runs ?? [];
+    const earlier = api(`repos/${repo}/actions/workflows/${run.workflow_id}/runs?branch=dev&event=${run.event}&status=completed&per_page=30`).workflow_runs ?? [];
     return earlier.find((candidate) => candidate.head_sha !== sha && Date.parse(candidate.created_at) < Date.parse(run.created_at))?.conclusion ?? null;
   });
 }
@@ -443,6 +473,20 @@ async function main() {
   const budget = { remaining: GENERATION_LIMITS.attempts };
   let model;
   try { model = generationModel(readFileSync(configPath, "utf8"), env.WARDEN_MODEL); } catch { /* visible per-finding failures below */ }
+  // Investigate fresh, late and queued CI failures even on a sweep with no
+  // new merges. CI plans share the existing five-patch budget.
+  const ciSources = [...prs, ...lateCi];
+  if (!ciSources.some((source) => source.sha === head)) {
+    try { ciSources.push({ sha: head, number: prNumber(git(cwd, ["show", "-s", "--format=%s", head])), ci: await ciFor(repo, head) }); }
+    catch { console.warn("Current dev CI lookup failed; no healthy-CI claim made."); }
+  }
+  const ciRepair = await planCiRepairs({ cwd, repo, head, sources: ciSources, previous: previous?.ciRepairs,
+    budget, model, apiKey: env.WARDEN_OPENAI_API_KEY, api, makePlan: planFix,
+    loadLog: (job) => execFileSync("gh", ["api", "--allow-escape-sequences", `repos/${repo}/actions/jobs/${job.id}/logs`], {
+      encoding: "utf8", maxBuffer: 4 * 1024 * 1024, stdio: ["ignore", "pipe", "pipe"],
+    }),
+  });
+  plans.push(...ciRepair.plans);
   let openPrs = [];
   try { openPrs = api(`repos/${repo}/pulls?state=open&base=dev&sort=created&direction=desc&per_page=100`); } catch { console.warn("Open follow-up discovery unavailable; deterministic branch dedup remains active."); }
   for (const pr of prs) {
@@ -480,7 +524,7 @@ async function main() {
     const dir = join(fixesDir, String(index + 1).padStart(2, "0"));
     mkdirSync(dir, { recursive: true });
     plan.patches.forEach((patch, n) => writeFileSync(join(dir, `${String(n + 1).padStart(2, "0")}.patch`), patch));
-    writeFileSync(join(dir, "plan.json"), `${JSON.stringify({ branch: plan.branch, title: plan.title, number: plan.number, sha: plan.sha }, null, 2)}\n`);
+    writeFileSync(join(dir, "plan.json"), `${JSON.stringify({ branch: plan.branch, title: plan.title, number: plan.number, sha: plan.sha, ...(plan.ci ? { ci: plan.ci } : {}) }, null, 2)}\n`);
     writeFileSync(join(dir, "body.md"), plan.body);
   });
   if (env.GITHUB_OUTPUT) appendFileSync(env.GITHUB_OUTPUT, `fixes=${plans.length ? "true" : "false"}\nhead=${head}\n`);
@@ -488,8 +532,11 @@ async function main() {
 
   const runUrl = `${env.GITHUB_SERVER_URL || "https://github.com"}/${repo}/actions/runs/${env.GITHUB_RUN_ID || ""}`;
   const queueNote = `${fixPending.length} source commit(s) pending bounded fix retry. ${retiredRetries.length} retry source commit(s) retired because no longer on dev; human action required for those. ${env.WARDEN_SWEEP_FIXES === "off" ? "Fix PR opening disabled by WARDEN_SWEEP_FIXES=off." : "Draft PR creation is delegated to the separate write job."}`;
-  const message = slackMessage({ repo, prs, runUrl, deferred, lateCi, fixPlans: plans.length }) ?? (retiredRetries.length ? { text: `Warden retry retirement: ${retiredRetries.map((entry) => entry.sha.slice(0, 12)).join(", ")}`, unfurl_links: false, unfurl_media: false } : null);
-  if (message) message.text += `\n${queueNote}`;
+  const message = slackMessage({ repo, prs, runUrl, deferred, lateCi, fixPlans: plans.length }) ?? (retiredRetries.length || ciRepair.reports.length || ciRepair.queueOverflow ? { text: `Warden follow-up — <${runUrl}|view run>`, unfurl_links: false, unfurl_media: false } : null);
+  if (message) {
+    const ciText = ciRepairSlack(ciRepair.reports);
+    message.text = `${message.text.slice(0, ciText ? 22000 : 36000)}\n${queueNote}\n${ciText}${ciRepair.queueOverflow ? `\n${ciRepair.queueOverflow} CI investigations need manual follow-up: retry queue full.` : ""}`.slice(0, 38000);
+  }
   let slack = "Nothing to report to Slack.";
   if (message && local) {
     slack = "Local run: Slack skipped.";
@@ -502,14 +549,14 @@ async function main() {
     console.warn(slack);
   }
 
-  const summary = `${jobSummary({ repo, prs, deferred, lateCi, base, head: reviewedThrough ?? head, slack, fixPlans: plans.length })}\n\n${queueNote}`;
+  const summary = `${jobSummary({ repo, prs, deferred, lateCi, base, head: reviewedThrough ?? head, slack, fixPlans: plans.length })}\n\n${queueNote}\n\n${ciRepairSummary(ciRepair.reports, ciRepair.queueOverflow)}`;
   if (env.GITHUB_STEP_SUMMARY) appendFileSync(env.GITHUB_STEP_SUMMARY, `${summary}\n`);
   else console.log(summary);
 
-  const state = { version: 1, reviewedThrough: reviewedThrough ?? base, ciPending, fixPending };
+  const state = { version: 1, reviewedThrough: reviewedThrough ?? base, ciPending, fixPending, ciRepairs: ciRepair.state };
   writeFileSync(join(outDir, "state.json"), `${JSON.stringify(state, null, 2)}\n`);
   // Incomplete reviews and generation failures remain queued, but still fail visibly.
-  if (prs.some((pr) => !pr.complete || pr.fixOutcomes?.some((outcome) => outcome.status === "failed"))) process.exitCode = 1;
+  if (prs.some((pr) => !pr.complete || pr.fixOutcomes?.some((outcome) => outcome.status === "failed")) || ciRepair.reports.some((report) => report.disposition.includes("failed") || report.outcomes.some((outcome) => /(?:loading|diagnosis) failed$/.test(outcome.reason)))) process.exitCode = 1;
 }
 
 if (import.meta.url === pathToFileURL(process.argv[1] ?? "").href) {
