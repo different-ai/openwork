@@ -82,6 +82,7 @@
     "effect": "4.0.0-rc.112",
     "fast-png": "8.0.0",
     "jpeg-js": "0.4.4",
+    "tsx": "^4.23.1",
     "typescript": "^5.6.3"
   },
   "engines": {
