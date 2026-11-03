@@ -10,6 +10,7 @@
  */
 import { create } from "zustand";
 import { createJSONStorage, persist } from "zustand/middleware";
+import { sessionManagementStorage } from "./session-management-storage";
 
 export type SessionGroupDefinition = {
   id: string;
@@ -541,7 +542,7 @@ export const useSessionManagementStore = create<SessionManagementStore>()(
     }),
     {
       name: "openwork.react.sessionManagement",
-      storage: createJSONStorage(() => localStorage),
+      storage: createJSONStorage(sessionManagementStorage),
     },
   ),
 );

@@ -32,6 +32,10 @@ const OPENWORK_CONFIG_FILENAMES = [
   "legacy-sweep-state.json",
 ];
 const USERDATA_WORKSPACE_FILENAMES = [
+  "session-pins.v1.json",
+  "session-pins.v1.json.backup",
+  "session-pins.v1.json.tmp",
+  "session-pins.v1.json.backup.tmp",
   "openwork-workspaces.json",
   "workspace-state.json",
   "openwork-server-tokens.json",
