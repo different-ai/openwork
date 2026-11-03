@@ -681,6 +681,17 @@ final class SessionRuntime {
                     "message": "Choosing files hands them to the app. The person is asked first; nothing was sent."])
             }
         }
+        // Opening a file hands it to the app: the person approves the exact file first.
+        if let file = actions.lazy.compactMap({ action -> URL? in if case .openFile(let url) = action { return url }; return nil }).first {
+            guard actions.count == 1 else {
+                throw UseError("open_file_alone", "Open a file as its own step. Nothing was sent.", next: "observe")
+            }
+            guard let fileApproval, fileApproval == [file.path] else {
+                return text(["ok": false, "code": "files_approval_required", "files": [file.path],
+                    "app": current.app.name, "dispatched": false, "next": "observe",
+                    "message": "Opening a file hands it to the app. The person is asked first; nothing was sent."])
+            }
+        }
         session?.observation = nil; session?.focus = nil; session?.lastUsed = now
         if let intent { controls.narrate(intent) }
         session?.receiptInputs[requestID] = fingerprint
@@ -801,13 +812,27 @@ final class SessionRuntime {
                 try check()
                 try observation.validate(id: observationID, generation: current.generation, frame: bounds, now: now)
                 session?.actionCount += 1
-                let path = try await input.execute(action, app: current.app, target: current.target, lease: observation,
+                var path = try await input.execute(action, app: current.app, target: current.target, lease: observation,
                     access: access, records: records, focus: focus, pointerTarget: pointerTarget,
                     check: checkInput, checkWindow: checkWindow, background: background || !current.parents.isEmpty, feedback: { [weak self] feedback in
                         guard let self, self.session?.id == id else { return }
                         self.controls.inputFeedback(feedback)
                     })
                 uncertain = path != "waited"
+                if case .openFile = action {
+                    // A success from Launch Services is not proof: the file counts as opened once the
+                    // app shows it, in a new window or this one retitled for it, within a few seconds.
+                    let title = current.target.title
+                    path = "file_open_unconfirmed"
+                    for _ in 0..<30 {
+                        try check()
+                        if access.windowChanges(current.app).opened(since: windowsBefore)
+                            || (access.attribute(current.target.element, kAXTitleAttribute) as? String).map({ $0 != title }) == true {
+                            path = "file_opened"; break
+                        }
+                        try await Task.sleep(nanoseconds: 100_000_000)
+                    }
+                }
                 try check()
                 progress.dispatched(path: shortcutMenu == nil ? path : "menu_for_shortcut"); uncertain = false
                 let dispatchedAt = now

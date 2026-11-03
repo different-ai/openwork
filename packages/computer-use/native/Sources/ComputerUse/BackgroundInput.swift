@@ -49,7 +49,7 @@ enum InputDelivery: String {
         case .type: return route == .skyLight && !signedKeys
         case .click(_, _, let flags): return !flags.isEmpty
         case .move, .drag: return true
-        case .press, .setValue, .scroll, .wait, .menu: return false
+        case .press, .setValue, .scroll, .wait, .menu, .openFile: return false
         }
     }
 }

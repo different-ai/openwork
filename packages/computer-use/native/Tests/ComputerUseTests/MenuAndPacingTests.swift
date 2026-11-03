@@ -69,6 +69,30 @@ final class MenuAndPacingTests: XCTestCase {
         XCTAssertFalse(Action.isStroke(.click(.zero, 1, [])))
     }
 
+    func testOpenFileNamesTheRealFileItWillHandOver() throws {
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let photo = folder.appendingPathComponent("photo.png")
+        try Data([1, 2, 3]).write(to: photo)
+        let link = folder.appendingPathComponent("shortcut.png")
+        try FileManager.default.createSymbolicLink(at: link, withDestinationURL: photo)
+        let real = photo.resolvingSymlinksInPath().path
+
+        guard case .openFile(let opened) = try Action(["type": "open_file", "path": photo.path], policy: .embedded) else { return XCTFail() }
+        XCTAssertEqual(opened.path, real)
+        guard case .openFile(let followed) = try Action(["type": "open_file", "path": link.path], policy: .embedded) else { return XCTFail() }
+        XCTAssertEqual(followed.path, real, "the person approves the file a link points to, not the link")
+        XCTAssertTrue(try Action(["type": "open_file", "path": photo.path], policy: .embedded).requiresControl)
+
+        for (path, code) in [("photo.png", "invalid_arguments"), (folder.path, "file_unavailable"), (folder.appendingPathComponent("missing.png").path, "file_unavailable")] {
+            XCTAssertThrowsError(try Action(["type": "open_file", "path": path], policy: .embedded), path) { error in
+                XCTAssertEqual((error as? UseError)?.code, code, path)
+            }
+        }
+        XCTAssertThrowsError(try Action(["type": "open_file", "path": photo.path], policy: .desktop), "only the OpenWork host offers it")
+    }
+
     func testMenuTitlesMatchAsAPersonReadsThem() {
         XCTAssertTrue(MenuRules.same("\u{200E}Bold", "bold"))
         XCTAssertTrue(MenuRules.same("Find…", " Find… "))
