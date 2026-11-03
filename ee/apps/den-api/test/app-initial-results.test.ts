@@ -1,9 +1,9 @@
 import assert from "node:assert/strict"
-import { test } from "node:test"
+import { test, type TestContext } from "node:test"
 import { MCP_APP_INITIAL_RESULTS_META, type McpAppToolBinding } from "@openwork/types/mcp-app"
 import { appStarter } from "../src/mcp/app-authoring-starter.js"
 import { BUILD_AN_APP_SKILL_SOURCE } from "../src/mcp/build-an-app-skill.js"
-import { launchInitialResults, loadInitialResults, type McpAppLaunchDataStore } from "../src/mcp/app-launch-data.js"
+import { launchInitialResults, launchReadHandoff, loadInitialResults, type McpAppLaunchDataStore } from "../src/mcp/app-launch-data.js"
 import type { ExecuteCapabilityToolResult } from "../src/mcp/capability-registry.js"
 import { DEN_MCP_READ_SCOPE, DEN_MCP_WRITE_SCOPE } from "../src/mcp/scopes.js"
 
@@ -78,6 +78,103 @@ test("a read past its time budget is left out rather than holding the launch", a
   }
   const { results } = await loading
   assert.deepEqual(results.map((entry) => entry.name).sort(), ["broken_read", "count_issues"])
+})
+
+/** Advances mocked time in steps until the work settles, so the budget expires whenever its timer started. */
+async function untilSettled(t: TestContext, work: Promise<unknown>) {
+  let settled = false
+  void work.finally(() => { settled = true })
+  for (let step = 0; step < 100 && !settled; step++) {
+    t.mock.timers.tick(100)
+    await new Promise((resolve) => setImmediate(resolve))
+  }
+}
+
+const ok = (text: string): ExecuteCapabilityToolResult => ({ content: [{ type: "text", text }] })
+
+/** A tool whose runs finish only when the test says so. */
+function slowTool() {
+  const runs: Array<{ name: string; args: Record<string, unknown> }> = []
+  const pending: Array<(result: ExecuteCapabilityToolResult) => void> = []
+  const callTool = (tool: McpAppToolBinding, args: Record<string, unknown>) => {
+    runs.push({ name: tool.name, args })
+    return new Promise<ExecuteCapabilityToolResult>((resolve) => { pending.push(resolve) })
+  }
+  return { runs, callTool, finish: (result: ExecuteCapabilityToolResult) => pending.shift()?.(result) }
+}
+
+test("a launch read past its budget is handed to the App's own call, so each open runs it once", async (t) => {
+  t.mock.timers.enable({ apis: ["setTimeout"] })
+  const mrr = binding({})
+  const tool = slowTool()
+  const handoff = launchReadHandoff("member-a")
+  const opening = loadInitialResults({ tools: [mrr], scopes: new Set([DEN_MCP_READ_SCOPE]), timeZone: "Europe/Paris", callTool: tool.callTool, handoff })
+  await untilSettled(t, opening)
+  assert.deepEqual(await opening, [], "the App opens without the late read")
+  // The App asks for the same read, as the App server's tools/call does, and
+  // gets the launch's run when it finishes instead of starting another.
+  const appCall = handoff.call(mrr, { timeZone: "Europe/Paris" }, () => tool.callTool(mrr, { timeZone: "Europe/Paris" }))
+  assert.equal(tool.runs.length, 1, "the App's call waits for the launch's run")
+  tool.finish(ok("MRR"))
+  assert.deepEqual(await appCall, ok("MRR"))
+  assert.deepEqual(tool.runs, [{ name: "load_mrr", args: { timeZone: "Europe/Paris" } }])
+  // It is taken once; the App's next call runs the tool.
+  const again = handoff.call(mrr, { timeZone: "Europe/Paris" }, () => tool.callTool(mrr, { timeZone: "Europe/Paris" }))
+  tool.finish(ok("MRR again"))
+  assert.deepEqual(await again, ok("MRR again"))
+  assert.equal(tool.runs.length, 2)
+})
+
+test("a read finished within its budget is not held, so the App's own call runs it", async () => {
+  const mrr = binding({})
+  const handoff = launchReadHandoff("member-in-time")
+  let runs = 0
+  const callTool = async () => { runs += 1; return ok(`run ${runs}`) }
+  const opened = await loadInitialResults({ tools: [mrr], scopes: new Set([DEN_MCP_READ_SCOPE]), timeZone: "UTC", callTool, handoff })
+  assert.equal(opened.length, 1)
+  assert.deepEqual(await handoff.call(mrr, { timeZone: "UTC" }, callTool), ok("run 2"))
+})
+
+test("only the same caller, binding and arguments take a held read", async () => {
+  const mrr = binding({})
+  const args = { timeZone: "Europe/Paris" }
+  let runs = 0
+  const run = async () => { runs += 1; return ok("ran") }
+  const handoff = launchReadHandoff("member-b")
+  handoff.hold(mrr, args, Promise.resolve(ok("held")))
+  assert.deepEqual(await launchReadHandoff("member-c").call(mrr, args, run), ok("ran"), "another caller")
+  assert.deepEqual(await handoff.call(mrr, { timeZone: "Asia/Tokyo" }, run), ok("ran"), "other arguments")
+  assert.deepEqual(await handoff.call(binding({ capability: "plugin:plg_1:cob_2" }), args, run), ok("ran"), "a rebound tool of the same name")
+  assert.equal(runs, 3)
+  assert.deepEqual(await handoff.call(mrr, args, run), ok("held"))
+  assert.equal(runs, 3)
+})
+
+test("a held read that fails is not handed over; the App's own call runs it again", async () => {
+  const mrr = binding({})
+  const args = { timeZone: "UTC" }
+  const handoff = launchReadHandoff("member-d")
+  const run = async () => ok("fresh")
+  handoff.hold(mrr, args, Promise.resolve({ isError: true, content: [{ type: "text", text: "provider_failed" }] }))
+  assert.deepEqual(await handoff.call(mrr, args, run), ok("fresh"))
+  handoff.hold(mrr, args, Promise.reject(new Error("dropped")))
+  assert.deepEqual(await handoff.call(mrr, args, run), ok("fresh"))
+})
+
+test("a finished read nobody takes is dropped after a short grace", async (t) => {
+  t.mock.timers.enable({ apis: ["setTimeout"] })
+  const mrr = binding({})
+  const args = { timeZone: "UTC" }
+  const run = async () => ok("fresh")
+  const handoff = launchReadHandoff("member-e", 1_000)
+  handoff.hold(mrr, args, Promise.resolve(ok("held")))
+  await new Promise((resolve) => setImmediate(resolve))
+  t.mock.timers.tick(999)
+  assert.deepEqual(await handoff.call(mrr, args, run), ok("held"), "taken within the grace")
+  handoff.hold(mrr, args, Promise.resolve(ok("held")))
+  await new Promise((resolve) => setImmediate(resolve))
+  t.mock.timers.tick(1_000)
+  assert.deepEqual(await handoff.call(mrr, args, run), ok("fresh"), "dropped after it")
 })
 
 function memoryStore() {

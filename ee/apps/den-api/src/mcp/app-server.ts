@@ -39,7 +39,7 @@ import {
 } from "../mcp-apps.js"
 import { executeCapabilityWithBudget } from "./agent.js"
 import { runsWithoutClick } from "./app-tool-access.js"
-import { launchInitialResults, requiredScope, type McpAppLaunchDataStore } from "./app-launch-data.js"
+import { launchInitialResults, launchReadHandoff, requiredScope, type LaunchReadHandoff, type McpAppLaunchDataStore } from "./app-launch-data.js"
 import { callMcpAppTool, mcpAppToolKeepable } from "./app-tools.js"
 import { mcpAuditPrincipal } from "../audit/mcp-service-audit.js"
 import { mcpPrincipalCredentialId, type McpPrincipal } from "./auth.js"
@@ -175,6 +175,8 @@ export function createMcpAppServer(input: {
   launchData?: McpAppLaunchDataStore
   /** Whether a read's result may be kept for this caller's next open. */
   canKeep?: (binding: McpAppToolBinding) => boolean
+  /** Where a launch read past its budget waits for this caller's own call. */
+  launchReads?: LaunchReadHandoff
 }) {
   const { app, tools } = input.definition
   const server = new McpServer({ name: app.title, version: "1.0.0" }, {
@@ -198,7 +200,7 @@ export function createMcpAppServer(input: {
       // without any gets reads made ahead of it. They stay out of the model's
       // view in _meta, which hosts pass to the App with the result.
       const initialResults = input.definition.loadsWithLaunch && Object.keys(launchInput).length === 0
-        ? await launchInitialResults({ tools, scopes: input.scopes, timeZone: typeof args.timeZone === "string" ? args.timeZone : undefined, callTool: input.callTool, store: input.launchData, canKeep: input.canKeep })
+        ? await launchInitialResults({ tools, scopes: input.scopes, timeZone: typeof args.timeZone === "string" ? args.timeZone : undefined, callTool: input.callTool, store: input.launchData, canKeep: input.canKeep, handoff: input.launchReads })
         : []
       return {
         content: [{ type: "text", text: app.textFallback }],
@@ -215,7 +217,8 @@ export function createMcpAppServer(input: {
     }
     const scope = requiredScope(binding)
     if (!input.scopes.has(scope)) return scopeError(binding.name, scope)
-    return input.callTool(binding, args)
+    const run = () => input.callTool(binding, args)
+    return input.launchReads ? input.launchReads.call(binding, args, run) : run()
   })
 
   server.server.setRequestHandler(ListResourcesRequestSchema, async () => ({
@@ -304,6 +307,12 @@ async function handleMcpAppServerRequestUntimed(input: {
       invoke: () => callMcpAppTool(capabilityContext, binding, args),
     }),
     canKeep: (binding) => mcpAppToolKeepable(capabilityContext, binding),
+    // The launch and the App's later call arrive as separate requests, so a
+    // read is matched to its caller by everything that shapes its result.
+    launchReads: launchReadHandoff(JSON.stringify([
+      organizationId, member.orgMembershipId, [...member.teamIds].sort(), mcpPrincipalCredentialId(principal),
+      [...principal.scopes].sort(), definition.app.appId, definition.app.revisionId,
+    ])),
     launchData: {
       // The inventory revision limits stale hits; launchInitialResults still
       // runs every read through current authorization before accepting a hit.
