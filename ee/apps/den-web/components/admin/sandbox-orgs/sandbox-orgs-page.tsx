@@ -174,7 +174,7 @@ function SandboxRow({ sandbox, busy, onRotate, onExtend, onClose, onJoinRole, on
           {" · "}{sandbox.state === "open" ? `Ends ${date(sandbox.expiresAt)}` : sandbox.closedAt ? `Closed ${date(sandbox.closedAt)}` : `Ended ${date(sandbox.expiresAt)}`}
           {" · "}<span className="tabular-nums">{sandbox.memberCount} / {sandbox.memberLimit} seats</span>
           {" · "}{sandbox.connectorCount ? `${sandbox.connectorCount} sample apps` : "No connectors"}
-          {sandbox.sampleMicrosoft365 ? <span data-testid="admin-sandbox-microsoft">{" · "}Microsoft 365 for Workbot</span> : null}
+          {sandbox.sampleMicrosoft365 ? <span data-testid="admin-sandbox-microsoft">{" "}Microsoft 365 for Workbot</span> : null}
           {sandbox.planTier === "enterprise" ? " · Enterprise" : ""}
           {credit ? <>{" · "}<span className="tabular-nums" data-testid="admin-sandbox-credit">{credit.remainingUsd === null ? `${dollars(credit.limitUsd)} model credit` : `${dollars(credit.remainingUsd)} of ${dollars(credit.limitUsd)} left`}</span></>
             : sandbox.modelProviderCount ? ` · ${sandbox.modelProviderCount} AI Gateway provider${sandbox.modelProviderCount === 1 ? "" : "s"}` : ""}
