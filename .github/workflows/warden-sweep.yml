@@ -35,6 +35,7 @@ jobs:
     outputs:
       fixes: ${{ steps.sweep.outputs.fixes }}
       head: ${{ steps.sweep.outputs.head }}
+      slack_ts: ${{ steps.sweep.outputs.slack_ts }}
     steps:
       # Only merged dev code runs here: policy, skills and the script come from
       # the same trusted commit that is being reviewed.
@@ -170,6 +171,8 @@ jobs:
           PR_TOKEN: ${{ steps.automation.outputs.token }}
           BASE: ${{ needs.sweep.outputs.head }}
           FIXES_DIR: ${{ runner.temp }}/fixes
+          SLACK_THREAD_TS: ${{ needs.sweep.outputs.slack_ts }}
+          SWEEP_RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
           SLACK_BOT_TOKEN: ${{ secrets.SLACK_BOT_TOKEN }}
           SLACK_WARDEN_SWEEP_CHANNEL_ID: ${{ vars.SLACK_WARDEN_SWEEP_CHANNEL_ID }}
         run: node .github/scripts/warden-sweep-open.mjs
