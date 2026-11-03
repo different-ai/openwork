@@ -27,7 +27,7 @@ final class SessionRuntime {
         var app: AppIdentity
         var target: WindowTarget
         let mode: AccessMode
-        /// Background until the app shows it needs the front for keys.
+        /// Background until the app shows it needs the front for keys or pointer steps.
         var delivery: InputDelivery
         /// The windows under the dialogs being worked in, the session's own first.
         var parents: [(app: AppIdentity, target: WindowTarget, kind: DialogTarget.Kind?)] = []
@@ -615,8 +615,11 @@ final class SessionRuntime {
         var returns = 0
         var disturbed = try await shareDesktop(current, returns: &returns, since: moment, front: front)
         // The observation showed the window behind other work; coordinates need a fresh look.
+        // The front is handed back before that look, so a background one would land here
+        // again: the look and this app's later steps take the front.
         if inBackground, front, disturbed, actions.contains(where: \.usesCoordinates) {
-            throw UseError("observation_required", "This step needs the app in front, so its window was brought forward. Observe again, then repeat the step; nothing was sent.", next: "observe")
+            session?.delivery = .foreground
+            throw UseError("observation_required", "This step needs the app in front, so its next steps bring the window forward. Observe again, then repeat the step; nothing was sent.", next: "observe")
         }
         let bounds: CGRect
         do { bounds = try access.validate(current.target, app: current.app, requireFrontmost: frontCheck) }
