@@ -421,7 +421,7 @@ export const automationExecutionTargetListSchema = z.object({
 export type AutomationExecutionTargetList = z.infer<typeof automationExecutionTargetListSchema>
 
 export const automationRunnerNotificationSchema = z.object({
-  type: z.enum(["automation_work_available", "automation_cancellation_available"]),
+  type: z.enum(["automation_work_available", "automation_cancellation_available", "remote_session_work_available"]),
   cursor: z.string().trim().min(1).max(40),
 }).strict()
 export type AutomationRunnerNotification = z.infer<typeof automationRunnerNotificationSchema>
