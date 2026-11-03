@@ -2,6 +2,7 @@
 // broker owns conversation control, the native session, receipts and observations; model
 // arguments never select a session, receipt identity or helper command.
 import { z } from "zod";
+import { fileLargeListings, forgetListings } from "./computer-listing-files.js";
 import { uiBridgeRequest } from "./openwork-ui-bridge.js";
 
 const string = z.string().min(1).max(256);
@@ -55,8 +56,9 @@ function computerTool<T extends z.ZodTypeAny>(name: string, description: string,
         ? { ok: false, code: "computer_unavailable", message: "Computer use is unavailable. Open the OpenWork desktop app on the same computer as this task's server." }
         : result);
     }
+    if (name === "computer_close") await forgetListings(parsed.data.sessionID);
     // The engine's native tool result retains image attachments alongside text.
-    const output = native.data.content.flatMap(part => part.type === "text" ? [part.text] : []).join("\n");
+    const output = await fileLargeListings(parsed.data.sessionID, native.data.content.flatMap(part => part.type === "text" ? [part.text] : []).join("\n"));
     const attachments = native.data.content.flatMap(part => part.type === "image"
       ? [{ type: "file" as const, mime: part.mimeType, url: `data:${part.mimeType};base64,${part.data}` }] : []);
     return { title: name.replace("computer_", "Computer: "), output, metadata: { isError: native.data.isError === true }, attachments };
