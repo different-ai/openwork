@@ -8,8 +8,10 @@ import {
   REQUIRED_BOT_SCOPES,
   SLACK_ASSISTANT_INSTRUCTIONS,
   SLACK_RUN_INSTRUCTIONS,
+  SLACK_DRIVE_FILES_INSTRUCTIONS,
   SLACK_WORKBOT_INSTRUCTIONS,
   slackManifest,
+  slackWorkbotInstructions,
   slackReactionName,
 } from "../src/slack-assistant/protocol.js"
 import { createSlackEventLoop } from "../src/slack-assistant/queue.js"
@@ -31,6 +33,20 @@ const workbotCp = (input: Partial<Checkpoint> = {}) =>
   checkpointSchema.parse({ phase: "create", prompt: "{}", channel: "C1", threadTs: "1.0", live: false, workbot: true, reactTo: { channel: "C1", ts: "1.0" }, recipientUserId: "U0ABC", ...input })
 
 // --- Session setup ---------------------------------------------------------------------------------------------------
+
+test("with workbotDriveFiles, Slack is told to read Drive files inline and to ask for the file when it is too large", () => {
+  assert.equal(slackWorkbotInstructions({ driveFiles: false }), SLACK_WORKBOT_INSTRUCTIONS, "off: unchanged")
+  const on = slackWorkbotInstructions({ driveFiles: true })
+  assert.ok(on.startsWith(SLACK_WORKBOT_INSTRUCTIONS) && on.endsWith(SLACK_DRIVE_FILES_INSTRUCTIONS), "every other rule stays, in order")
+  for (const phrase of ["no computer here", "share the file in this thread", "about 10 MB", "Never say you can't do anything"]) assert.ok(on.includes(phrase), phrase)
+  // Slack has no computer: it is never told to download a file.
+  for (const phrase of ["createGoogleDriveDownloadLink", "curl", "/workspace"]) assert.equal(on.includes(phrase), false, phrase)
+  assert.equal(slackWorkbotInstructions({ driveFiles: true }), on, "the same text every message, for the prompt cache")
+  assert.ok(!/\d{4}-\d{2}-\d{2}|\d{1,2}:\d{2}/.test(on))
+  // In-flight checkpoints from before the feature keep their instructions.
+  assert.equal(workbotCp().driveFiles, false)
+})
+
 
 test("instructions live in the session, keep every safety rule, and never change between messages", () => {
   for (const rule of [SLACK_ASSISTANT_INSTRUCTIONS, SLACK_RUN_INSTRUCTIONS]) assert.ok(SLACK_WORKBOT_INSTRUCTIONS.includes(rule))

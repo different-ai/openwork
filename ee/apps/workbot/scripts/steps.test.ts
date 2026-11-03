@@ -85,6 +85,29 @@ test("the browser and background-then-screen nudges are only given when the comp
   }
 })
 
+test("Drive PDFs and Office files are pulled onto the computer only when there is one, and only with workbotDriveFiles", () => {
+  const base = { name: "Workbot", organizationName: "Example", firstName: "Alex", timeZone: "UTC", canSchedule: false }
+  const pull = "createGoogleDriveDownloadLink"
+  const ask = "ask them to send it to you in this chat"
+  // Off: Workbot's instructions are exactly as before, with or without a computer.
+  assert.equal(workbotInstructions({ ...base, computer: true }), workbotInstructions(base))
+  for (const phrase of [pull, ask]) assert.equal(workbotInstructions({ ...base, computer: true }).includes(phrase), false)
+
+  const withComputer = workbotInstructions({ ...base, computer: true, driveFiles: true })
+  for (const phrase of [pull, "createMicrosoft365DriveDownloadLink", "/workspace", "pdftotext", "never show or share it"]) assert.ok(withComputer.includes(phrase), phrase)
+  // Read-only turns run without the computer even in a conversation that has one, so that case is covered too.
+  assert.ok(withComputer.includes("read-only and have no computer"))
+  assert.ok(withComputer.includes(ask))
+
+  const withoutComputer = workbotInstructions({ ...base, driveFiles: true })
+  assert.equal(withoutComputer.includes(pull), false, "no download path is offered without a computer")
+  assert.equal(withoutComputer.includes("/workspace"), false)
+  assert.equal(withoutComputer.includes("open it on your computer"), false, "a conversation without a computer is never pointed at one")
+  assert.ok(withoutComputer.includes("too large or has no readable text"))
+  assert.ok(withoutComputer.includes(ask))
+  assert.ok(withoutComputer.includes("Never say you can't do anything with it."))
+})
+
 test("work in Microsoft 365 is named for the app the person uses, with the verb its operation names", () => {
   const capability = (id: string, name: string) => ({ id, name: "execute_capability", input: { name } })
   const calls = [

@@ -74,6 +74,8 @@ const sessionSchema = z.object({
   workspaceAssistant: z.boolean().optional(),
   /** Offers to open mentioned documents and keeps the chat beside them: on with the workspace assistant. */
   guidedNavigation: z.boolean().optional(),
+  /** Workbot is told how to read PDFs, Office and large files from Drive (`workbotDriveFiles`); older Dens omit it: off. */
+  driveFiles: z.boolean().optional(),
   usageRecovery: z.boolean().optional(),
   /** The Get set up checklist (`GET /v1/workbot/activation`); older Dens omit it: off. */
   activationChecklist: z.boolean().optional(),
@@ -399,6 +401,7 @@ export function registerWorkbotRoutes<T extends { Variables: object }>(app: Hono
         nativeDictation: features.nativeDictation,
         workspaceAssistant: features.workbotWorkspaceAssistant,
         guidedNavigation: features.workbotWorkspaceAssistant,
+        driveFiles: features.workbotDriveFiles,
         // The limit card and model recovery links: included models need them as much as upgrades do.
         usageRecovery: true,
         activationChecklist: true,

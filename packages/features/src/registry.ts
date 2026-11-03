@@ -253,6 +253,17 @@ export const FEATURES = defineFeatures({
     deployments: everywhere,
     default: false,
   },
+  workbotDriveFiles: {
+    label: "Workbot: reading Drive files",
+    description: "Workbot reads PDFs, Office files and large files from Google Drive or OneDrive on its computer instead of saying they are too large. When it has no computer (and in Slack) it says plainly when a file is too large and asks the person to send the file instead.",
+    category: "workbot",
+    added: "2026-11-02",
+    since: "2026-11",
+    author: "benjaminshafii",
+    docs: "docs/features/workbot-drive-files/README.md",
+    deployments: everywhere,
+    default: false,
+  },
   workbotProactive: {
     label: "Workbot: Your agent",
     description: "Every member gets a read-only background agent that checks Gmail and Google Calendar each morning and about every three working hours, sending a short Workbot Slack DM only when needed. Members review checks and messages in My bot, tell it what they care about, narrow its hours and limits, undo changes, snooze or mute it. Admins choose its responsibilities and see aggregate 7-day health in Manage › Workbot, without member names or content. It never sends email, accepts invitations or edits data for them.",
