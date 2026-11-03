@@ -110,6 +110,56 @@ export function fitDragPath(path, max = DRAG_POINTS) {
   return points;
 }
 
+/**
+ * A drag marked `smooth` draws a curve through its points (Catmull-Rom) instead of straight
+ * lines between them, as DRAG_POINTS points. Every given point stays on the stroke, and the
+ * steps between them are shared out by length. It never leaves the box the given points
+ * span, so it stays inside the observation they were checked against.
+ * @param {Array<{ x: number, y: number }>} path
+ */
+export function smoothDragPath(path, max = DRAG_POINTS) {
+  const points = path.length > max ? fitDragPath(path, max) : path.map(({ x, y }) => ({ x, y }));
+  if (points.length < 3) return points;
+  const xs = points.map((point) => point.x), ys = points.map((point) => point.y);
+  const clamp = (value, values) => Math.round(Math.min(Math.max(value, Math.min(...values)), Math.max(...values)));
+  // Each segment as a fine curve, with its running length.
+  const segments = points.slice(0, -1).map((b, index) => {
+    const a = points[Math.max(0, index - 1)], c = points[index + 1], d = points[Math.min(points.length - 1, index + 2)];
+    const curve = [b];
+    for (let step = 1; step <= 16; step++) {
+      const t = step / 16, t2 = t * t, t3 = t2 * t;
+      const at = (p0, p1, p2, p3) => 0.5 * (2 * p1 + (p2 - p0) * t + (2 * p0 - 5 * p1 + 4 * p2 - p3) * t2 + (3 * p1 - p0 - 3 * p2 + p3) * t3);
+      curve.push({ x: at(a.x, b.x, c.x, d.x), y: at(a.y, b.y, c.y, d.y) });
+    }
+    const lengths = [0];
+    for (let at = 1; at < curve.length; at++) lengths.push(lengths[at - 1] + Math.hypot(curve[at].x - curve[at - 1].x, curve[at].y - curve[at - 1].y));
+    return { curve, lengths, length: lengths.at(-1) };
+  });
+  const total = segments.reduce((sum, segment) => sum + segment.length, 0);
+  if (!total) return points;
+  // At least one step per segment, the rest by length, adding up to max - 1.
+  const steps = segments.map((segment) => Math.max(1, Math.round(segment.length / total * (max - 1))));
+  for (let extra = steps.reduce((sum, count) => sum + count, 0) - (max - 1); extra !== 0; extra += extra > 0 ? -1 : 1) {
+    const order = steps.map((count, index) => index).sort((a, b) => segments[b].length / steps[b] - segments[a].length / steps[a]);
+    const index = extra > 0 ? order.reverse().find((candidate) => steps[candidate] > 1) : order[0];
+    if (index === undefined) break;
+    steps[index] += extra > 0 ? -1 : 1;
+  }
+  const result = [{ ...points[0] }];
+  segments.forEach(({ curve, lengths, length }, index) => {
+    let at = 0;
+    for (let step = 1; step < steps[index]; step++) {
+      const along = length * step / steps[index];
+      while (at < curve.length - 2 && lengths[at + 1] < along) at++;
+      const span = lengths[at + 1] - lengths[at];
+      const t = span ? Math.min(1, (along - lengths[at]) / span) : 0;
+      result.push({ x: clamp(curve[at].x + (curve[at + 1].x - curve[at].x) * t, xs), y: clamp(curve[at].y + (curve[at + 1].y - curve[at].y) * t, ys) });
+    }
+    result.push({ ...points[index + 1] });
+  });
+  return result;
+}
+
 async function bounded(promise, ms) {
   let timer;
   try { return await Promise.race([promise, new Promise((_, reject) => { timer = setTimeout(() => reject(new Error("Computer cleanup or operation timed out.")), ms); })]); }
@@ -1480,11 +1530,17 @@ export function createComputerControl({ adapters, runProgram, runScript, onTimin
         // A stroke longer than the helpers take is fitted to them, and the receipt says so.
         const fitted = [];
         for (const entry of entries) {
-          if (entry.type !== "drag" || !Array.isArray(entry.path) || entry.path.length <= DRAG_POINTS) continue;
+          if (entry.type !== "drag" || !Array.isArray(entry.path)) continue;
+          // The mark is the broker's: the helpers take only points.
+          const smooth = entry.smooth === true;
+          delete entry.smooth;
           if (entry.path.length > DRAG_POINTS_ACCEPTED) return failure("invalid_arguments", `A drag takes at most ${DRAG_POINTS_ACCEPTED} points. Nothing was dispatched.`);
           if (!entry.path.every((point) => Number.isFinite(point?.x) && Number.isFinite(point?.y))) continue;
-          fitted.push({ from: entry.path.length, to: DRAG_POINTS });
-          entry.path = fitDragPath(entry.path);
+          if (smooth) entry.path = smoothDragPath(entry.path);
+          else if (entry.path.length > DRAG_POINTS) {
+            fitted.push({ from: entry.path.length, to: DRAG_POINTS });
+            entry.path = fitDragPath(entry.path);
+          }
         }
         let confirmedApp = null;
         if (secret) {

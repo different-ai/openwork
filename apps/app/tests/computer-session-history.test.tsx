@@ -3,7 +3,7 @@ import { GlobalRegistrator } from "@happy-dom/global-registrator"
 import { act, createElement } from "react"
 import { createRoot, type Root } from "react-dom/client"
 import type { DynamicToolUIPart, UIMessage } from "ai"
-import { collectComputerSessionHistory, showsLiveComputerView, withoutComputerHistory } from "../src/lib/computer-session-history"
+import { collectComputerSessionHistory, computerActionMarks, showsLiveComputerView, withoutComputerHistory } from "../src/lib/computer-session-history"
 import { parseDynamicToolUIPart, withToolAttachmentOwner } from "../src/react-app/domains/session/sync/parse-tool-parts"
 import { browserHistoryMessages, computerHistoryMessages } from "../test-fixtures/computer-session-history-data"
 
@@ -18,6 +18,24 @@ afterEach(async () => {
   if (mounted) { await act(async () => mounted!.root.unmount()); mounted.container.remove(); mounted = null }
 })
 afterAll(() => { Reflect.deleteProperty(globalThis, "IS_REACT_ACT_ENVIRONMENT"); GlobalRegistrator.unregister() })
+
+test("each captured view shows where its own clicks landed and the paths its drags took", () => {
+  const act = (id: string, input: Record<string, unknown>): DynamicToolUIPart => ({ type: "dynamic-tool", toolName: "computer_act", toolCallId: id, state: "output-available", input, output: '{"ok":true}' })
+  const stroke = act("stroke", { observation_id: "o1", action: { type: "drag", path: [{ x: 10, y: 20 }, { x: 30, y: 40 }], smooth: true } })
+  const batch = act("batch", { observation_id: "o2", actions: [{ type: "click", x: 5, y: 6 }, { type: "press", ref: "e1" }, { type: "scroll", x: 7, y: 8, delta_x: 0, delta_y: -3 }] })
+  const same = act("same", { observation_id: "o3", action: { type: "double_click", x: 9, y: 9 } })
+  const view = (image: string, id: string) => withToolAttachmentOwner([{ type: "file", mediaType: "image/png", url: image }], id)
+  const history = collectComputerSessionHistory([{ id: "a", role: "assistant", parts: [
+    stroke, ...view(images[0]!, "stroke"), batch, ...view(images[1]!, "batch"), ...view(images[2]!, "batch"), same, ...view(images[2]!, "same"),
+  ] }])!
+  expect(history.frames.map(frame => frame.marks)).toEqual([
+    [{ kind: "path", points: [{ x: 10, y: 20 }, { x: 30, y: 40 }] }],
+    [{ kind: "point", x: 5, y: 6 }, { kind: "point", x: 7, y: 8 }],
+    // A second capture of the same act carries no marks; an unchanged view keeps the next act's.
+    [{ kind: "point", x: 9, y: 9 }],
+  ])
+  expect(computerActionMarks({ ...batch, toolName: "browser_act" })).toEqual([])
+})
 
 test("one history spans narration and message boundaries, retaining only its own raster attachments", () => {
   const messages = computerHistoryMessages(images)

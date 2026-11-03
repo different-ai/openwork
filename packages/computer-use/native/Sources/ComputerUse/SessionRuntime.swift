@@ -177,8 +177,14 @@ final class SessionRuntime {
             let panelAccess = policy == .embedded ? (values["file_panel_access"] as? NSNumber)?.uint32Value : nil
             // The app the person confirmed may receive a password or code they gave.
             let credentialApproval = policy == .embedded ? values["credential_approval"] as? String : nil
-            return try await act(id: id, observationID: observationID, requestID: requestID, actions: actions, raw: raw, intent: intent,
-                fileApproval: fileApproval, filePanelAccess: panelAccess, pacing: pacing, credentialApproval: credentialApproval)
+            do {
+                return try await act(id: id, observationID: observationID, requestID: requestID, actions: actions, raw: raw, intent: intent,
+                    fileApproval: fileApproval, filePanelAccess: panelAccess, pacing: pacing, credentialApproval: credentialApproval)
+            } catch let error as UseError {
+                // Refused before anything was sent: the cursor shakes it off and tries another way.
+                if error.next == "observe" || error.next == "correct_request" { controls.react(.refused) }
+                throw error
+            }
         case "computer_zoom" where policy == .embedded:
             try a.only(["session_id", "observation_id", "x", "y", "width", "height"])
             return try await zoom(try a.string("session_id"), observationID: try a.string("observation_id"),
@@ -510,6 +516,7 @@ final class SessionRuntime {
             "truncated": state.truncated || state.listCapped, "protected_fields": state.protectedFrames.count,
             "content_trust": "untrusted_app_content", "next": "act_once_then_observe"]
         if let afterAction { payload["after_action"] = afterAction }
+        if let reaction = CursorReaction.after(afterAction) { controls.react(reaction) }
         if otherWindowFocused { payload["other_window_focused"] = true }
         if let kind = current.dialogKind {
             // Elements and coordinates are the dialog's; it is worked in until it closes.

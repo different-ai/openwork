@@ -49,6 +49,9 @@ final class MenuAndPacingTests: XCTestCase {
         XCTAssertFalse(MenuRules.same("Bold", "Bolder"))
         XCTAssertEqual(MenuEntry(path: ["Format", "Font", "Bold"], shortcut: "command+b").display, "Format › Font › Bold (command+b)")
         XCTAssertEqual(AgentCursor.glyphs("command+shift+b"), "⇧⌘B")
+        XCTAssertEqual(AgentCursor.goalLabel("  Draw a wave\n"), "Draw a wave")
+        XCTAssertEqual(AgentCursor.goalLabel(String(repeating: "a", count: 60))?.count, 48, "long goals end with an ellipsis")
+        XCTAssertNil(AgentCursor.goalLabel(" "))
     }
 
     func testMenuActionsNeedAMenuAndACommand() throws {
