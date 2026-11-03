@@ -27,6 +27,7 @@ config:
   # The /admin kill switch still turns a feature off, even when locked on.
   features:
     googleCalendarRecurrence: ""  # default off · Create and change recurring meeting series through the native Google Calendar capabilities.
+    googleDrivePdfText: ""        # default off · Agents read the text of PDFs in Google Drive, up to 50 MB, instead of being told the file is too large.
     autoRouter: ""                # default off (cloud only) · Admins create Smart Routers for everyone, teams or people, listing AI Gateway models and the tasks each handles. Members pick "Smart: <name>": each prompt goes to the model whose tasks fit it best, at the thinking level it needs.
     settledSessions: ""           # default off · Finished sessions can be settled into a collapsed Settled row at the end of their workspace, by hand or after a few idle days, and come back on new activity.
     composerBackgroundTasks: ""   # default off · Commands the agent leaves running in the background are listed on top of the composer, under the Agents list, with how long each has run, instead of a count in the chat.

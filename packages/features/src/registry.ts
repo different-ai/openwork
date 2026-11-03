@@ -115,6 +115,17 @@ export const FEATURES = defineFeatures({
     deployments: everywhere,
     default: false,
   },
+  googleDrivePdfText: {
+    label: "Google Drive PDF text",
+    description: "Agents read the text of PDFs in Google Drive, up to 50 MB, instead of being told the file is too large.",
+    category: "connect",
+    added: "2026-11-02",
+    since: "2026-11",
+    author: "benjaminshafii",
+    docs: "docs/features/google-drive-pdf-text/README.md",
+    deployments: everywhere,
+    default: false,
+  },
   autoRouter: {
     label: "AI Gateway: Smart Model Router",
     description: "Admins create Smart Routers for everyone, teams or people, listing AI Gateway models and the tasks each handles. Members pick \"Smart: <name>\": each prompt goes to the model whose tasks fit it best, at the thinking level it needs.",
