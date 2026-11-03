@@ -1,5 +1,6 @@
 import type { DynamicToolUIPart } from "ai";
 import { getCapabilityCallSentence, type CapabilityCallSentence } from "./capability-call";
+import { codeModeScriptError } from "./code-mode-tools";
 
 /** A summary of the work, not a mirror of whichever child happened to run last. */
 export function codeModeSummary(
@@ -80,4 +81,23 @@ export function codeModeSummary(
     getCapabilityCallSentence(call, { includeQuery: false }).past.startsWith("Searched "));
   if (allSearches && names) return `${options.running ? "Searching" : "Searched"} ${names}`;
   return `${options.running ? "Looking up" : "Looked up"} ${names || "information"}`;
+}
+
+/** The first sentence of why a script or call failed, short enough for one rail line. */
+export function shortFailureReason(part: DynamicToolUIPart): string | null {
+  const text = codeModeScriptError(part) ?? (part.state === "output-error" ? part.errorText : null);
+  if (!text) return null;
+  const first = text.replace(/\s+/g, " ").trim().split(/(?<=[.!?])\s/)[0] ?? "";
+  return first.length > 90 ? `${first.slice(0, 89)}…` : first || null;
+}
+
+/**
+ * Why a finished script group failed (T2): the script's own error, else the one
+ * failed call's. Never shown while running; null when nothing explains it.
+ */
+export function codeModeFailureReason(part: DynamicToolUIPart, failedCalls: DynamicToolUIPart[], running: boolean): string | null {
+  if (running) return null;
+  const own = part.state === "output-error" ? shortFailureReason(part) : null;
+  if (own) return own;
+  return failedCalls.length === 1 && failedCalls[0] ? shortFailureReason(failedCalls[0]) : null;
 }

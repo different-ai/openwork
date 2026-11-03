@@ -7,12 +7,12 @@ import { isOpenWorkSkillCall } from "@/lib/created-skill";
 import { splitSentence } from "@/lib/text-activity";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { getCapabilityCallSentence } from "@/lib/capability-call";
-import { codeModeSummary } from "@/lib/code-mode-summary";
+import { codeModeFailureReason, codeModeSummary, shortFailureReason } from "@/lib/code-mode-summary";
 import type { CapabilityCallSentence } from "@/lib/capability-call";
 import { savedSkillSentence, skillShareFailureReason, skillShareRequest, skillShareSentence } from "@/lib/created-skill";
 import { openWorkNativeSentence } from "@/lib/openwork-native-activity";
 import { useCreatedSkills } from "./created-skill-card";
-import { codeModeScriptError, codeModeToolCalls } from "@/lib/code-mode-tools";
+import { codeModeToolCalls } from "@/lib/code-mode-tools";
 import type { CurrentToolLifecycle } from "@/lib/current-tool-lifecycle";
 import { isToolPartInFlight } from "@/lib/tool-activity";
 import { cn } from "@/lib/utils";
@@ -37,12 +37,7 @@ export function isSilentCodeModePart(part: DynamicToolUIPart): boolean {
 }
 
 /** One short line from a script error, for the row itself. */
-function shortReason(part: DynamicToolUIPart): string | null {
-  const text = codeModeScriptError(part) ?? (part.state === "output-error" ? part.errorText : null);
-  if (!text) return null;
-  const first = text.replace(/\s+/g, " ").trim().split(/(?<=[.!?])\s/)[0] ?? "";
-  return first.length > 90 ? `${first.slice(0, 89)}…` : first || null;
-}
+const shortReason = shortFailureReason;
 
 export function CodeModeTool({ part, calls: allCalls, lifecycle, connectors }: {
   part: DynamicToolUIPart;
@@ -171,6 +166,7 @@ export function CodeModeTool({ part, calls: allCalls, lifecycle, connectors }: {
     return [identity?.id ?? "", identity] as const;
   })).values()];
   const groupMark = groupMarks.length === 1 ? groupMarks[0] ?? null : null;
+  const groupReason = codeModeFailureReason(part, failedCalls, running);
 
   return (
     <Collapsible open={open} onOpenChange={setUserOpen} data-code-mode-call={part.toolCallId}>
@@ -182,6 +178,8 @@ export function CodeModeTool({ part, calls: allCalls, lifecycle, connectors }: {
           <TextSentenceLine {...splitSentence(label)} mark={groupMark ? <ConnectorMark connector={groupMark} /> : null} tone={running && !current ? "running" : "normal"} />
           {waitingOn ? <RailMeta>Waiting on {waitingOn}</RailMeta> : null}
           {failedCalls.length > 0 ? <RailMeta className="text-red-11">{failedCalls.length} failed</RailMeta> : null}
+          {/* Say why, in one line, instead of a bare red count (T2). */}
+          {groupReason ? <span data-code-mode-failure-reason className="min-w-0 flex-1 truncate text-xs text-muted-foreground">{groupReason}</span> : null}
           {blockedCalls.length > 0 ? <RailMeta>{blockedCalls.length} blocked</RailMeta> : null}
           <TrailingChevron open={open} />
         </CollapsibleTrigger>

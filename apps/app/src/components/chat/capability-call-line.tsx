@@ -13,6 +13,7 @@ import {
 } from "@/components/tools/use-chat-tool-reconnect"
 import { Button } from "@/components/ui/button"
 import { getCapabilityCallSentence, type CapabilityCallSentence } from "@/lib/capability-call"
+import { codeModeScriptError } from "@/lib/code-mode-tools"
 import {
   isOpenWorkSkillCall,
   savedSkillSentence,
@@ -322,10 +323,13 @@ export function CapabilityCallLine({
   if (isFailed && quietFailure && !reconnectAction) {
     const sentence = sentenceFor(false)
     const label = sentence.failure ?? `${sentence.past} failed`
+    // Quiet, but never unexplained: one muted line says why (T2).
+    const quietReason = shortError(codeModeScriptError(part) ?? undefined)
     return (
       <div data-capability-call={part.toolName} className={cn(RAIL_ROW, className)}>
         <div className={RAIL_LINE}>
-          <TextSentenceLine {...splitSentence(label)} mark={mark ? <ConnectorMark connector={mark} /> : null} tone="failed" />
+          <TextSentenceLine {...splitSentence(label)} mark={mark ? <ConnectorMark connector={mark} /> : null} tone="failed" className="shrink-0" />
+          {quietReason ? <span data-capability-failure-reason className="min-w-0 flex-1 truncate text-xs text-muted-foreground" title={quietReason}>{quietReason}</span> : null}
           <DetailsToggle open={open} onToggle={() => setOpen(!open)} label={label} alwaysVisible />
         </div>
         {open ? <TechnicalDetailsPanel part={part} /> : null}
