@@ -32,12 +32,14 @@ export const useComputerRequest = (sessionId: string | null | undefined) =>
 
 /**
  * Connects the desktop's computer broker to the app, once per window and on
- * every route, Settings included: reports the `computerUse` and
- * `remoteComputers` features and keeps in-chat requests current.
+ * every route, Settings included: reports the `computerUse`,
+ * `remoteComputers` and `standardCodeMode` features and keeps in-chat
+ * requests current.
  */
 export function ComputerBridge() {
   const enabled = useDesktopFeature("computerUse")
   const remote = useDesktopFeature("remoteComputers")
+  const standardCodeMode = useDesktopFeature("standardCodeMode")
   useEffect(() => {
     void desktopBridge.computerSetRemoteEnabled(enabled && remote).catch(() => {})
   }, [enabled, remote])
@@ -45,6 +47,11 @@ export function ComputerBridge() {
   useEffect(() => {
     void desktopBridge.computerSetFeatureEnabled(enabled).catch(() => {})
   }, [enabled])
+
+  // Computer programs that start while it is on run as standard JavaScript.
+  useEffect(() => {
+    void desktopBridge.computerSetStandardCodeMode(standardCodeMode).catch(() => {})
+  }, [standardCodeMode])
 
   // The broker raises computer-use requests only while computer use is on, but the
   // built-in browser's sign-in confirmations arrive either way.

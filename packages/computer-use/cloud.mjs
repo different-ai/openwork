@@ -11,8 +11,12 @@ const execute = promisify(execFile);
 const failure = (code, error) => Object.assign(new Error(error), { code });
 const quote = value => `'${String(value).replaceAll("'", "'\\''")}'`;
 
-/** One member-owned VM, one input lease, and the existing browser and computer contracts. */
-export async function createCloudComputer({ directory, display = ":99", enabled, machine, browserEndpoint, applications, onActivity = () => {}, privateBrowsing = false }) {
+/**
+ * One member-owned VM, one input lease, and the existing browser and computer contracts.
+ * `standardCodeMode` reads the organization's feature of that name when a program starts;
+ * without it programs keep OpenWork's original Code Mode.
+ */
+export async function createCloudComputer({ directory, display = ":99", enabled, standardCodeMode = async () => false, machine, browserEndpoint, applications, onActivity = () => {}, privateBrowsing = false }) {
   await mkdir(directory, { recursive: true, mode: 0o700 });
   let owner = null;
   let paused = false;
@@ -102,6 +106,9 @@ export async function createCloudComputer({ directory, display = ":99", enabled,
           if (!["computer", "browser"].includes(body.surface) || typeof body.code !== "string" || body.code.length > 32_000
             || body.timeoutMs !== undefined && (!Number.isInteger(body.timeoutMs) || body.timeoutMs < 1000 || body.timeoutMs > 60_000)) throw failure("invalid_arguments", "Provide a surface, bounded code and a timeout from 1000 to 60000 milliseconds.");
           const { runComputerProgram } = await import("@openwork/computer-use/runtime");
+          // The organization picks the interpreter; nothing in the request body can. Unreadable means the original.
+          const options = { standardCodeMode: await Promise.resolve().then(standardCodeMode).then(value => value === true, () => false) };
+          assertActive();
           const signal = current.signal;
           return await runComputerProgram(body, {
             computer: async (name, args, signal) => {
@@ -114,7 +121,7 @@ export async function createCloudComputer({ directory, display = ":99", enabled,
               const result = await browser.request({ sessionId: body.sessionId, operation, args }, { signal });
               assertActive(); return result;
             },
-          }, signal);
+          }, signal, options);
         }
         if (path === "/browser/task") {
           const result = await browser.request(body, { signal: current.signal });

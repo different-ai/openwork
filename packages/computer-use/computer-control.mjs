@@ -235,7 +235,7 @@ const isWebBrowser = (app) => String(app).toLowerCase().split(/[^a-z0-9]+/).some
  * a time, never through the model's thinking. Other computers serve one chat.
  * @param {{
  *   adapters: ComputerAdapter[],
- *   runProgram?: (request: import("@openwork/computer-use/runtime").ProgramRequest, host: import("@openwork/computer-use/runtime").ProgramHost, signal: AbortSignal) => Promise<import("@openwork/computer-use/runtime").ProgramResult>,
+ *   runProgram?: (request: import("@openwork/computer-use/runtime").ProgramRequest, host: import("@openwork/computer-use/runtime").ProgramHost, signal: AbortSignal, options: import("@openwork/computer-use/runtime").ProgramOptions) => Promise<import("@openwork/computer-use/runtime").ProgramResult>,
  *   browserTask?: (request: { sessionId: string, operation: string, args: Record<string, unknown> }, options: { signal: AbortSignal }) => Promise<unknown>,
  *   readRemoteFeatureEnabled?: () => Promise<boolean>,
  *   standing?: { read: () => Promise<SavedChoices>, write: (state: SavedChoices) => Promise<void> },
@@ -286,6 +286,8 @@ export function createComputerControl({ adapters, runProgram, runScript, onTimin
   // `remoteComputers`: off, VMs are hidden and every chat uses a local computer.
   let remoteEnabled = false;
   let remoteRequested = false;
+  // `standardCodeMode`: on, programs run as standard JavaScript.
+  let standardCodeMode = false;
   let saved = null;
   let loadingChoices = null;
   let remembering = Promise.resolve();
@@ -1312,6 +1314,16 @@ export function createComputerControl({ adapters, runProgram, runScript, onTimin
       return remoteEnabled;
     },
     /**
+     * The renderer reports the `standardCodeMode` feature. It picks the
+     * interpreter for programs that start afterwards; a running program
+     * finishes on the one it started on. It grants nothing: both interpreters
+     * run the same tools under the same checks.
+     */
+    setStandardCodeMode(enabled) {
+      standardCodeMode = enabled === true;
+      return standardCodeMode;
+    },
+    /**
      * The person's answer to an in-chat request: allow this chat, always
      * allow, or not now. Setup itself is answered by macOS permissions.
      * @param {ChatInput & { answer?: "dismiss" | "allow" | "always" | "remember", id?: string }} input
@@ -1460,6 +1472,7 @@ export function createComputerControl({ adapters, runProgram, runScript, onTimin
       if (humanPaused(grant)) return { ok: false, error: { code: "computer_paused", message: "The person took over. They return control with Continue. No program was started." } };
       if (programs.has(grant.sessionId)) return { ok: false, error: { code: "program_busy", message: "A program is already running in this chat." } };
       const revision = grant.revision;
+      const options = { standardCodeMode };
       const remote = input.surface === "computer" && targetFor(grant).placement === "remote";
       const remoteRevision = remoteGeneration;
       const controller = new AbortController();
@@ -1476,7 +1489,7 @@ export function createComputerControl({ adapters, runProgram, runScript, onTimin
         return await runProgram(input, {
           computer: async (name, args, callSignal) => { check(); const result = await api.execute({ sessionId: grant.sessionId, name, args }, { signal: AbortSignal.any([active, callSignal]), includePostImage: false, program: true }); check(); return result; },
           browser: async (operation, args, callSignal) => { check(); if (!browserTask) throw new Error("The browser is unavailable."); const result = await browserTask({ sessionId: grant.sessionId, operation, args }, { signal: AbortSignal.any([active, callSignal]) }); check(); return result; },
-        }, active);
+        }, active, options);
       } catch {
         return { ok: false, error: { code: "program_stopped", message: "The program stopped. Previously dispatched actions were not replayed." }, mayHaveActed: true };
       } finally { if (programs.get(grant.sessionId) === current) programs.delete(grant.sessionId); }
