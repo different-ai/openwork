@@ -16,6 +16,8 @@ test("a member can keep using the desktop while large v1 history is checked and 
     expect(observed.sessions).toBe(320);
   });
   await step("the desktop and its status API remain responsive during history preparation", async () => {
+    await user.press("Escape");
+    await user.type("composer", "Draft while my history is being checked", { verify: true });
     const status = await world.status();
     await user.screenshot();
     evidence.recordAssertionEvidence("The embedded status API answers without blocking the desktop", `HTTP ${status.http}, ${status.apiMs.toFixed(1)} ms`, status.http === 200 && status.apiMs < 250);

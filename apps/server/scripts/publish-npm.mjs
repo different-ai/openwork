@@ -59,6 +59,7 @@ export async function stageNpmPackage(packageRoot, outputRoot = resolve(packageR
   await cp(resolve(packageRoot, "bin/openwork-server.mjs"), resolve(outputRoot, "bin/openwork-server.mjs"));
   await cp(resolve(packageRoot, "bin/platform.mjs"), resolve(outputRoot, "bin/platform.mjs"));
   await cp(bundle, resolve(outputRoot, "dist/openwork-server.mjs"));
+  await cp(resolve(packageRoot, "dist/npm-bundle/history-preparation-process.js"), resolve(outputRoot, "dist/history-preparation-process.js"));
   await cp(pdfiumWasm, resolve(outputRoot, "dist/pdfium.wasm"));
   await cp(resolve(packageRoot, "dist", pluginDepsArchives[0]), resolve(outputRoot, "dist", pluginDepsArchives[0]));
   await cp(pluginDist, resolve(outputRoot, "dist/opencode-plugins"), {
