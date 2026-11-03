@@ -18,6 +18,7 @@ export function createUiControlServer({
   computerProgram = undefined,
   computerScript = undefined,
   computerEnabled = undefined,
+  agentQuestionsEnabled = undefined,
 }) {
   let uiControlServer = null;
   let uiControlDiscoveryPath = null;
@@ -171,6 +172,10 @@ export function createUiControlServer({
         }
         if (request.method === "GET" && url.pathname === "/computer/enabled") {
           sendJsonResponse(response, 200, { enabled: typeof computerEnabled === "function" && computerEnabled() === true });
+          return;
+        }
+        if (request.method === "GET" && url.pathname === "/agent-questions/enabled") {
+          sendJsonResponse(response, 200, { enabled: typeof agentQuestionsEnabled === "function" && agentQuestionsEnabled() === true });
           return;
         }
         if (request.method === "POST" && url.pathname === "/computer/program") {

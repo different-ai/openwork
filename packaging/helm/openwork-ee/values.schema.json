@@ -111,6 +111,16 @@
               ],
               "description": "Desktop: background tasks on the composer: Commands the agent leaves running in the background are listed on top of the composer, under the Agents list, with how long each has run, instead of a count in the chat. Renders DEN_FEATURE_COMPOSER_BACKGROUND_TASKS."
             },
+            "agentQuestions": {
+              "enum": [
+                "",
+                "true",
+                "false",
+                true,
+                false
+              ],
+              "description": "Desktop: agents ask and keep working: Agents ask in chat instead of ending a turn to wait for your reply. A question that the rest of the work does not depend on stays open while the agent keeps going, and your answer reaches it even after its turn has ended. Renders DEN_FEATURE_AGENT_QUESTIONS."
+            },
             "administratorRecovery": {
               "enum": [
                 "",

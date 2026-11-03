@@ -3,6 +3,7 @@ import { z } from "zod";
 import { serve } from "./serve-node.js";
 import { server as browserTools } from "./opencode-plugins/openwork-chrome-devtools.js";
 import { computerToolsOffered, server as computerTools } from "./opencode-plugins/openwork-computer-use.js";
+import { agentQuestionsOffered } from "./opencode-plugins/openwork-agent-questions.js";
 
 const requestSchema = z.object({
   name: z.string().min(1),
@@ -20,6 +21,8 @@ export async function createV2BrowserBridge() {
     if (request.headers.get("authorization") !== `Bearer ${token}`) return new Response(null, { status: 401 });
     // The engine offers the computer tools only while the desktop has the feature on.
     if (request.method === "GET" && new URL(request.url).pathname === "/computer") return Response.json({ offered: await computerToolsOffered() });
+    // And a question that does not stop the agent only while `agentQuestions` is on.
+    if (request.method === "GET" && new URL(request.url).pathname === "/agent-questions") return Response.json({ offered: await agentQuestionsOffered() });
     if (request.method !== "POST" || new URL(request.url).pathname !== "/browser") return new Response(null, { status: 404 });
     try {
       const text = await request.text();
