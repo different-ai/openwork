@@ -148,6 +148,17 @@ export const FEATURES = defineFeatures({
     deployments: everywhere,
     default: false,
   },
+  appToolRepair: {
+    label: "Apps: fix a changed tool with an agent",
+    description: "When a connected tool an App uses changes at its provider, so OpenWork blocks the App's call to it, the App's managers see a Fix with agent button in Artifacts that starts a conversation to update the App.",
+    category: "experience",
+    added: "2026-11-03",
+    since: "2026-11",
+    author: "reachjalil",
+    docs: "docs/features/app-tool-repair/README.md",
+    deployments: everywhere,
+    default: false,
+  },
   composerBackgroundTasks: {
     label: "Desktop: background tasks on the composer",
     description: "Commands the agent leaves running in the background are listed on top of the composer, under the Agents list, with how long each has run, instead of a count in the chat.",

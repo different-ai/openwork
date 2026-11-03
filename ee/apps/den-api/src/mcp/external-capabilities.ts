@@ -1011,7 +1011,7 @@ export type ExternalCapabilityExecuteResult =
         | "policy_blocked"
         | "insufficient_mcp_scope"
       /** Why a policy_blocked call was refused, when a caller acts on it. */
-      reason?: "provider_not_read_only" | "provider_destructive"
+      reason?: "provider_not_read_only" | "provider_destructive" | "provider_schema_changed"
       message: string
       requiredScope?: "mcp:read" | "mcp:write"
       referenceId?: string
@@ -1497,6 +1497,7 @@ export async function executeExternalCapability(input: {
         return {
           ok: false,
           error: "policy_blocked",
+          reason: "provider_schema_changed",
           capability: buildExternalCapabilityName(connection.id, input.toolName),
           message: `${input.toolName} now takes different inputs than when this App was published, so OpenWork blocked the call. An editor can update the App to use the tool's current inputs.`,
           sameArgumentsRetryable: false,

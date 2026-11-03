@@ -7,6 +7,9 @@ import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
+import { mcpAppToolRepairPrompt } from "@/components/chat/mcp-app-tool-change";
+import { markFeatureUsed } from "@/app/lib/den";
+import { useOrgFeature } from "../cloud/use-org-feature";
 import { BuiltAppShareDialog } from "../apps/built-app-share-button";
 import { useSavedApps } from "../apps/use-apps";
 import { useBuiltDashboardApps } from "./built-dashboard-apps";
@@ -27,6 +30,7 @@ export function ArtifactsPage({ onCreateApp, fallbackEndpoints, headerActionsTar
 }) {
   const surfaceActive = useArtifactSurfaceActive();
   const active = routeActive && surfaceActive;
+  const toolRepair = useOrgFeature("appToolRepair");
   const built = useBuiltDashboardApps();
   const saved = useSavedApps();
   const cache = useQueryClient();
@@ -141,6 +145,10 @@ export function ArtifactsPage({ onCreateApp, fallbackEndpoints, headerActionsTar
         {selected.kind === "built" ? <McpAppTile key={`${scope}:${selected.id}`} cacheScopeKey={built.cacheScopeKey} fallbackEndpoints={fallbackEndpoints}
           entry={{ ...selected.app, kind: "mcp", id: selected.id, launchArguments: { input: {} }, autoLaunch: true }}
           chromeTarget={chromeSlot}
+          onFixChangedTool={toolRepair && selected.app.canDelete ? async (tool) => {
+            markFeatureUsed("appToolRepair");
+            await onCreateApp(mcpAppToolRepairPrompt({ appId: selected.app.connectionId, title: selected.title, tool }));
+          } : undefined}
           renderActions={({ onRefresh, refreshing }) => onRefresh ? <Button variant="ghost" size="icon" className="size-7" aria-label={`Refresh ${selected.title}`} disabled={refreshing} onClick={onRefresh}><RefreshCw className={`size-4 ${refreshing ? "animate-spin" : ""}`} /></Button> : null} />
           : <SavedDashboardApp key={`${scope}:${selected.id}`} app={selected.app} onCreateApp={onCreateApp} fallbackEndpoints={fallbackEndpoints} removing={placement.isPending} onRemove={() => placement.mutate({ appId: selected.app.view.id, added: false })} />}
         </div>
