@@ -1,11 +1,12 @@
 "use client";
 
 import Link from "next/link";
-import { usePathname } from "next/navigation";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { createContext, lazy, Suspense, useCallback, useContext, useEffect, useState, type ReactNode } from "react";
 import { adminOrganizationDetailSchema, adminOrganizationInsightsSchema, adminOrganizationUsageSchema, type AdminOrganizationDetail, type AdminOrganizationInsights as InsightReport, type AdminOrganizationUsage, type AdminOrganizationUsageTotals } from "@openwork/types/den/admin-organization";
 import { DenButton } from "../../app/(den)/_components/ui/button";
 import { DenInput } from "../../app/(den)/_components/ui/input";
+import { DenSegmented } from "../../app/(den)/_components/ui/segmented";
 import { DenTable, type DenTableColumn } from "../../app/(den)/_components/ui/table";
 import { AdminOrganizationFeatureControls, type AdminFeatureAccessFailure } from "./admin-organization-feature-controls";
 import { AdminOrganizationFeatureUsageView } from "./admin-organization-feature-usage";
@@ -224,6 +225,33 @@ function SectionSkeleton({ label }: { label: string }) {
   return <div aria-busy="true" aria-label={label} className="py-5"><div className="h-5 w-40 rounded-sm bg-gray-100" /><div className="mt-4 h-10 rounded-sm bg-gray-100" /><div className="mt-4 h-56 rounded-sm bg-gray-100" /></div>;
 }
 
+type FeaturesView = "usage" | "settings";
+const FEATURES_VIEWS = [{ value: "usage", label: "Usage" }, { value: "settings", label: "Settings" }] as const satisfies readonly { value: FeaturesView; label: string }[];
+
+/** Usage and on/off settings as sub tabs; `?view=settings` keeps the choice across refresh and links. Each view loads when first opened. */
+function OrganizationFeatures({ organizationId, refreshKey, fail }: { organizationId: string; refreshKey: number; fail: (failure: AdminFeatureAccessFailure) => void }) {
+  const params = useSearchParams();
+  const router = useRouter();
+  const pathname = usePathname();
+  const view: FeaturesView = params.get("view") === "settings" ? "settings" : "usage";
+  const [opened, setOpened] = useState<ReadonlySet<FeaturesView>>(() => new Set([view]));
+  useEffect(() => setOpened((current) => current.has(view) ? current : new Set([...current, view])), [view]);
+
+  function choose(next: FeaturesView) {
+    const query = new URLSearchParams(params.toString());
+    if (next === "settings") query.set("view", next); else query.delete("view");
+    router.replace(`${pathname}${query.size ? `?${query}` : ""}`, { scroll: false });
+  }
+
+  return <>
+    <div className="pt-5"><DenSegmented aria-label="Feature views" options={FEATURES_VIEWS} value={view} onChange={choose} optionTestId={(value) => `admin-features-view-${value}`} /></div>
+    {opened.has("usage") ? <div hidden={view !== "usage"}>
+      <AdminOrganizationFeatureUsageView key={`usage:${organizationId}`} organizationId={organizationId} refreshKey={refreshKey} onAccessFailure={fail} />
+    </div> : null}
+    {view === "settings" ? <AdminOrganizationFeatureControls key={organizationId} organizationId={organizationId} refreshKey={refreshKey} onAccessFailure={fail} /> : null}
+  </>;
+}
+
 export function AdminOrganizationPage({ organizationId, section }: { organizationId: string; section: Section }) {
   const { organization, verified, refreshKey, refresh, fail, setSectionBusy } = useOrganization();
   const { search, draftSearch, page, offset, setSearch, setPage } = useAdminListLocation();
@@ -260,10 +288,7 @@ export function AdminOrganizationPage({ organizationId, section }: { organizatio
     return () => { cancelled = true; window.clearTimeout(timeout); };
   }, [path, section, search, refreshKey, fail]);
 
-  if (section === "features") return <>
-    <AdminOrganizationFeatureUsageView key={`usage:${organizationId}`} organizationId={organizationId} refreshKey={refreshKey} onAccessFailure={fail} />
-    <AdminOrganizationFeatureControls key={organizationId} organizationId={organizationId} refreshKey={refreshKey} onAccessFailure={fail} />
-  </>;
+  if (section === "features") return <OrganizationFeatures organizationId={organizationId} refreshKey={refreshKey} fail={fail} />;
   if (section === "billing") return organization ? <AdminOrganizationBilling key={organizationId} organization={organization} onSaved={refresh} onAccessFailure={fail} /> : <SectionSkeleton label="Loading billing" />;
 
   const data = snapshot && (snapshot.trusted || verified) ? snapshot.data : null;
