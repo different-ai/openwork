@@ -29,6 +29,14 @@ enum InputDelivery: String {
         return .background
     }
 
+    /// Apps whose single letters pick tools: design, photo, video and music apps, by
+    /// the category they declare. Elsewhere a bare letter can act (archive, delete).
+    static let toolKeyCategories: Set<String> = ["public.app-category.graphics-design", "public.app-category.photography",
+        "public.app-category.video", "public.app-category.music"]
+    static func takesToolKeys(info: [String: Any]) -> Bool {
+        (info["LSApplicationCategoryType"] as? String).map { toolKeyCategories.contains($0.lowercased()) } ?? false
+    }
+
     /// The menu command an app offers for a Command shortcut, run in its place when no
     /// observed field or control has the keyboard. Only commands the catalog lists, so
     /// blocked chords never reach a menu either.
@@ -48,7 +56,8 @@ enum InputDelivery: String {
         case .key(_, let flags): return flags.contains(.maskCommand) || route == .skyLight && !signedKeys
         case .type: return route == .skyLight && !signedKeys
         case .click(_, _, let flags): return !flags.isEmpty
-        case .move, .drag: return true
+        case .move, .drag, .rightClick, .hold: return true
+        case .showMenu: return false
         case .press, .setValue, .scroll, .wait, .menu, .openFile: return false
         }
     }

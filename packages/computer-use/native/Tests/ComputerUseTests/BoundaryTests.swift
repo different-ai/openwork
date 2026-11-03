@@ -152,7 +152,9 @@ final class BoundaryTests: XCTestCase {
             do { _ = try Action(["type": "key", "key": blocked.0, "modifiers": blocked.1], policy: .embedded); XCTFail("\(blocked) was allowed") }
             catch let error as UseError { XCTAssertEqual(error.code, "blocked_shortcut", blocked.0) }
         }
-        for key in ["f1", "f11", "n", "v", "q"] { XCTAssertThrowsError(try Action(["type": "key", "key": key], policy: .embedded)) }
+        for key in ["f1", "f11"] { XCTAssertThrowsError(try Action(["type": "key", "key": key], policy: .embedded)) }
+        // Bare letters parse as tool keys; the computer allows them only in creative apps with no text field focused.
+        for key in ["n", "v", "q"] { XCTAssertTrue(NativeKey.isToolKey(key, [])) }
         XCTAssertFalse(NativeKey.isBlocked("3", .maskCommand))
         XCTAssertTrue(NativeKey.isBlocked("3", [.maskCommand, .maskShift]))
         if case .key(let key, let flags) = try Action(["type": "key", "key": "redo"]) {
