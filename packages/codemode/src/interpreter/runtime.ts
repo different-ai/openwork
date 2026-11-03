@@ -1,5 +1,5 @@
 import { parse } from "acorn"
-import { Cause, Effect, Exit, Fiber, Semaphore } from "effect"
+import { Cause, Effect, Exit, Fiber, Scope, Semaphore } from "effect"
 import { DiagnosticCategory, ModuleKind, ScriptTarget, flattenDiagnosticMessageText, transpileModule } from "typescript"
 import {
   copyIn,
@@ -55,6 +55,7 @@ import {
   unsupportedSyntax,
   UriFunction,
 } from "./model.js"
+import { Turn } from "./turn.js"
 import { arrayMethods, mapMethods, setMethods, spreadItems } from "../stdlib/collections.js"
 import { consoleMethods, MAX_CONSOLE_DEPTH } from "../stdlib/console.js"
 import { dateMethods, dateStatics, invokeDateMethod, invokeDateStatic } from "../stdlib/date.js"
@@ -600,69 +601,80 @@ const collectPatternNames = (pattern: AstNode, out: Array<string> = []): Array<s
   return out
 }
 
-class Interpreter<R> {
-  private scopes: Array<Map<string, Binding>>
-  private readonly invokeTool: (path: ReadonlyArray<string>, args: Array<unknown>) => Effect.Effect<unknown, unknown, R>
+type InvokeTool<R> = (path: ReadonlyArray<string>, args: Array<unknown>) => Effect.Effect<unknown, unknown, R>
+
+// What every call in one execution shares. Each call that can wait on its own fiber (the
+// program, an async call) gets its own Interpreter with its own scope chain, so its waits
+// never disturb the scopes of the code running meanwhile.
+type Execution<R> = {
+  readonly invokeTool: InvokeTool<R>
   // Enumerable namespace/tool names at a node of the host tool tree, threaded from
   // ToolRuntime.make like invokeTool: the interpreter never holds the tree itself.
-  private readonly toolKeys: (path: ReadonlyArray<string>) => ReadonlyArray<string>
-  private readonly logs: Array<string>
-  private lastValue: unknown
+  readonly toolKeys: (path: ReadonlyArray<string>) => ReadonlyArray<string>
+  readonly logs: Array<string>
   // Caps how many eagerly forked tool calls run at once (the parallel-call concurrency cap).
-  private readonly callPermits: Semaphore.Semaphore
+  readonly callPermits: Semaphore.Semaphore
   // Fiber-backed promises whose settlement no program construct has observed yet. Successful
   // program completion drains these (like a runtime waiting on in-flight work at exit) and
   // surfaces a never-awaited failure as an unhandled-rejection diagnostic.
-  private readonly pendingSettlements = new Set<SandboxPromise>()
+  readonly pendingSettlements: Set<SandboxPromise>
+  // Only the fiber holding the turn evaluates program code.
+  readonly turn: Turn
+  // Tool calls and async calls fork here, so they outlive the call that started them while the
+  // execution timeout and teardown still interrupt them.
+  readonly scope: Scope.Scope
+}
+
+// The builtin globals and host bindings, under the program's own module scope.
+const globalScope = (bindings: ReadonlyArray<readonly [string, unknown]>): Map<string, Binding> => {
+  const globalScope = new Map<string, Binding>()
+  globalScope.set("tools", { mutable: false, value: new ToolReference([]) })
+  globalScope.set("Promise", { mutable: false, value: new PromiseNamespace() })
+  globalScope.set("undefined", { mutable: false, value: undefined })
+  globalScope.set("Object", { mutable: false, value: new GlobalNamespace("Object") })
+  globalScope.set("Math", { mutable: false, value: new GlobalNamespace("Math") })
+  globalScope.set("JSON", { mutable: false, value: new GlobalNamespace("JSON") })
+  globalScope.set("Number", { mutable: false, value: new CoercionFunction("Number") })
+  globalScope.set("String", { mutable: false, value: new CoercionFunction("String") })
+  globalScope.set("Boolean", { mutable: false, value: new CoercionFunction("Boolean") })
+  globalScope.set("Array", { mutable: false, value: new GlobalNamespace("Array") })
+  globalScope.set("console", { mutable: false, value: new GlobalNamespace("console") })
+  globalScope.set("parseInt", { mutable: false, value: new CoercionFunction("parseInt") })
+  globalScope.set("parseFloat", { mutable: false, value: new CoercionFunction("parseFloat") })
+  globalScope.set("Date", { mutable: false, value: new GlobalNamespace("Date") })
+  globalScope.set("RegExp", { mutable: false, value: new GlobalNamespace("RegExp") })
+  globalScope.set("Map", { mutable: false, value: new GlobalNamespace("Map") })
+  globalScope.set("Set", { mutable: false, value: new GlobalNamespace("Set") })
+  globalScope.set("URL", { mutable: false, value: new GlobalNamespace("URL") })
+  globalScope.set("URLSearchParams", { mutable: false, value: new GlobalNamespace("URLSearchParams") })
+  globalScope.set("encodeURI", { mutable: false, value: new UriFunction("encodeURI") })
+  globalScope.set("encodeURIComponent", { mutable: false, value: new UriFunction("encodeURIComponent") })
+  globalScope.set("decodeURI", { mutable: false, value: new UriFunction("decodeURI") })
+  globalScope.set("decodeURIComponent", { mutable: false, value: new UriFunction("decodeURIComponent") })
+  // Error constructors are real values, so `x instanceof Error` works and `Error("msg")`
+  // (with or without `new`) constructs a branded { name, message } error object.
+  for (const name of errorConstructors) {
+    globalScope.set(name, { mutable: false, value: new ErrorConstructorReference(name) })
+  }
+  // NaN/Infinity flow as ordinary in-sandbox values (normalized to null only at the data
+  // boundary - see copyOut), so their global bindings must exist too, e.g. `reduce(max, -Infinity)`.
+  globalScope.set("NaN", { mutable: false, value: NaN })
+  globalScope.set("Infinity", { mutable: false, value: Infinity })
+  for (const [name, value] of bindings) {
+    globalScope.set(name, { mutable: false, value })
+  }
+  return globalScope
+}
+
+class Interpreter<R> {
+  private scopes: Array<Map<string, Binding>>
+  private lastValue: unknown = undefined
 
   constructor(
-    invokeTool: (path: ReadonlyArray<string>, args: Array<unknown>) => Effect.Effect<unknown, unknown, R>,
-    toolKeys: (path: ReadonlyArray<string>) => ReadonlyArray<string>,
-    bindings: ReadonlyArray<readonly [string, unknown]>,
-    logs: Array<string> = [],
+    private readonly execution: Execution<R>,
+    scopes: Array<Map<string, Binding>>,
   ) {
-    const globalScope = new Map<string, Binding>()
-    this.scopes = [globalScope]
-    this.invokeTool = invokeTool
-    this.toolKeys = toolKeys
-    this.logs = logs
-    this.lastValue = undefined
-    this.callPermits = Semaphore.makeUnsafe(TOOL_CALL_CONCURRENCY)
-    globalScope.set("tools", { mutable: false, value: new ToolReference([]) })
-    globalScope.set("Promise", { mutable: false, value: new PromiseNamespace() })
-    globalScope.set("undefined", { mutable: false, value: undefined })
-    globalScope.set("Object", { mutable: false, value: new GlobalNamespace("Object") })
-    globalScope.set("Math", { mutable: false, value: new GlobalNamespace("Math") })
-    globalScope.set("JSON", { mutable: false, value: new GlobalNamespace("JSON") })
-    globalScope.set("Number", { mutable: false, value: new CoercionFunction("Number") })
-    globalScope.set("String", { mutable: false, value: new CoercionFunction("String") })
-    globalScope.set("Boolean", { mutable: false, value: new CoercionFunction("Boolean") })
-    globalScope.set("Array", { mutable: false, value: new GlobalNamespace("Array") })
-    globalScope.set("console", { mutable: false, value: new GlobalNamespace("console") })
-    globalScope.set("parseInt", { mutable: false, value: new CoercionFunction("parseInt") })
-    globalScope.set("parseFloat", { mutable: false, value: new CoercionFunction("parseFloat") })
-    globalScope.set("Date", { mutable: false, value: new GlobalNamespace("Date") })
-    globalScope.set("RegExp", { mutable: false, value: new GlobalNamespace("RegExp") })
-    globalScope.set("Map", { mutable: false, value: new GlobalNamespace("Map") })
-    globalScope.set("Set", { mutable: false, value: new GlobalNamespace("Set") })
-    globalScope.set("URL", { mutable: false, value: new GlobalNamespace("URL") })
-    globalScope.set("URLSearchParams", { mutable: false, value: new GlobalNamespace("URLSearchParams") })
-    globalScope.set("encodeURI", { mutable: false, value: new UriFunction("encodeURI") })
-    globalScope.set("encodeURIComponent", { mutable: false, value: new UriFunction("encodeURIComponent") })
-    globalScope.set("decodeURI", { mutable: false, value: new UriFunction("decodeURI") })
-    globalScope.set("decodeURIComponent", { mutable: false, value: new UriFunction("decodeURIComponent") })
-    // Error constructors are real values, so `x instanceof Error` works and `Error("msg")`
-    // (with or without `new`) constructs a branded { name, message } error object.
-    for (const name of errorConstructors) {
-      globalScope.set(name, { mutable: false, value: new ErrorConstructorReference(name) })
-    }
-    // NaN/Infinity flow as ordinary in-sandbox values (normalized to null only at the data
-    // boundary - see copyOut), so their global bindings must exist too, e.g. `reduce(max, -Infinity)`.
-    globalScope.set("NaN", { mutable: false, value: NaN })
-    globalScope.set("Infinity", { mutable: false, value: Infinity })
-    for (const [name, value] of bindings) {
-      globalScope.set(name, { mutable: false, value })
-    }
+    this.scopes = scopes
   }
 
   run(program: ProgramNode): Effect.Effect<unknown, unknown, R> {
@@ -703,53 +715,71 @@ class Interpreter<R> {
     }).pipe(Effect.ensuring(Effect.sync(() => self.popScope())))
   }
 
-  // Awaits every fiber-backed promise the program abandoned (fire-and-forget tool calls), so
-  // their work completes before the execution ends - mirroring a JS runtime waiting on
-  // in-flight I/O at exit. A failure nobody could have handled becomes an unhandled-rejection
-  // diagnostic (interrupted calls, e.g. Promise.race losers, are ignored).
+  // Awaits every fiber-backed promise the program abandoned (fire-and-forget tool and async
+  // calls), so their work completes before the execution ends - mirroring a JS runtime waiting
+  // on in-flight I/O at exit. An abandoned async call can start more work while this waits, so
+  // it drains until nothing is left. A failure nobody could have handled becomes an
+  // unhandled-rejection diagnostic (interrupted calls, e.g. Promise.race losers, are ignored).
   private drainPendingSettlements(): Effect.Effect<void, unknown, never> {
     const self = this
+    const pending = this.execution.pendingSettlements
     return Effect.gen(function* () {
-      for (const promise of [...self.pendingSettlements]) {
+      for (let promise = pending.values().next().value; promise; promise = pending.values().next().value) {
         const exit = yield* self.observePromise(promise)
         if (Exit.isSuccess(exit) || Cause.hasInterruptsOnly(exit.cause)) continue
         const failure = normalizeError(Cause.squash(exit.cause))
         throw new InterpreterRuntimeError(
-          `Unhandled rejection from an un-awaited tool call: ${failure.message}`,
+          `Unhandled rejection from an un-awaited promise: ${failure.message}`,
           undefined,
           failure.kind,
-          ["Await tool calls - `const result = await tools.ns.tool(...)` - so failures can be caught and handled."],
+          ["Await promises - `const result = await tools.ns.tool(...)` - so failures can be caught and handled."],
         )
       }
     })
   }
 
-  // Eagerly starts a tool call on a supervised child fiber (so the execution timeout and
-  // scope teardown interrupt it) gated by the concurrency semaphore, and wraps the fiber in a
-  // first-class promise value. `startImmediately` makes the runtime admit the call - charging
-  // the tool-call budget and firing onToolCallStart - at the call site, before any await.
+  // Eagerly starts a tool call on a fiber in the execution scope (so the execution timeout and
+  // teardown interrupt it, but not the end of the async call that started it) gated by the
+  // concurrency semaphore, and wraps the fiber in a first-class promise value.
+  // `startImmediately` makes the runtime admit the call - charging the tool-call budget and
+  // firing onToolCallStart - at the call site, before any await.
   private createToolCallPromise(
     path: ReadonlyArray<string>,
     args: Array<unknown>,
   ): Effect.Effect<SandboxPromise, never, R> {
-    const self = this
+    const { callPermits, invokeTool, scope } = this.execution
     return Effect.map(
-      Effect.forkChild(this.callPermits.withPermit(Effect.suspend(() => self.invokeTool(path, args))), {
-        startImmediately: true,
-      }),
-      (fiber) => {
-        const promise = new SandboxPromise(fiber)
-        self.pendingSettlements.add(promise)
-        return promise
-      },
+      Effect.forkIn(
+        callPermits.withPermit(Effect.suspend(() => invokeTool(path, args))),
+        scope,
+        { startImmediately: true },
+      ),
+      (fiber) => this.trackPromise(fiber),
     )
+  }
+
+  private trackPromise(fiber: Fiber.Fiber<unknown, unknown>): SandboxPromise {
+    const promise = new SandboxPromise(fiber)
+    this.execution.pendingSettlements.add(promise)
+    return promise
   }
 
   // The promise's settlement as an Exit, marking it observed for unhandled-rejection tracking.
   // Fiber settlement is idempotent, so observing the same promise repeatedly (await twice,
   // Promise.all([p, p])) never re-runs the underlying call.
   private observePromise(promise: SandboxPromise): Effect.Effect<Exit.Exit<unknown, unknown>> {
-    this.pendingSettlements.delete(promise)
+    return this.awayFromTurn(this.promiseSettlement(promise))
+  }
+
+  // Waits without the turn, so other async calls run meanwhile. Yielding after the wait keeps the
+  // continuation from running inline in the step that settled what it waited for.
+  private awayFromTurn<A, E>(wait: Effect.Effect<A, E>): Effect.Effect<A, E> {
+    return this.execution.turn.suspend(Effect.tap(wait, () => Effect.yieldNow))
+  }
+
+  // Marks the promise observed and returns its settlement, without giving up the turn.
+  private promiseSettlement(promise: SandboxPromise): Effect.Effect<Exit.Exit<unknown, unknown>> {
+    this.execution.pendingSettlements.delete(promise)
     return promise.fiber !== undefined ? Fiber.await(promise.fiber) : Effect.exit(promise.immediate ?? Effect.void)
   }
 
@@ -863,6 +893,7 @@ class Interpreter<R> {
       getArray(node, "params").map((parameter, index) => asNode(parameter, `params[${index}]`)),
       getNode(node, "body"),
       this.scopes.slice(),
+      node.async === true,
     )
   }
 
@@ -1150,7 +1181,7 @@ class Interpreter<R> {
   // Returns undefined for everything else so callers can raise a contextual error.
   private enumerableKeys(value: unknown): Array<string> | undefined {
     if (value instanceof ToolReference) {
-      return [...this.toolKeys(value.path)]
+      return [...this.execution.toolKeys(value.path)]
     }
     if (Array.isArray(value)) {
       return Object.keys(value)
@@ -1962,7 +1993,7 @@ class Interpreter<R> {
   private invokeConsole(name: string, args: Array<unknown>, node: AstNode): undefined {
     if (!consoleMethods.has(name))
       throw new InterpreterRuntimeError(`console.${name} is not available in CodeMode.`, node)
-    this.logs.push(publicErrorMessage(this.formatConsoleMessage(name, args, node)))
+    this.execution.logs.push(publicErrorMessage(this.formatConsoleMessage(name, args, node)))
     return undefined
   }
 
@@ -2196,13 +2227,13 @@ class Interpreter<R> {
         }
         const observations = items.map((item, index) =>
           item instanceof SandboxPromise
-            ? Effect.map(this.observePromise(item), (exit) => ({ index, exit }))
+            ? Effect.map(this.promiseSettlement(item), (exit) => ({ index, exit }))
             : Effect.succeed({ index, exit: Exit.succeed(item as unknown) }),
         )
         return Effect.gen(function* () {
           // First settlement (fulfilled OR rejected) wins; the observations never fail, so
           // racing them yields exactly that. Losing in-flight calls are then interrupted.
-          const winner = yield* Effect.raceAll(observations)
+          const winner = yield* self.awayFromTurn(Effect.raceAll(observations))
           for (const [index, item] of items.entries()) {
             if (index === winner.index || !(item instanceof SandboxPromise) || item.fiber === undefined) continue
             item.interrupted = true
@@ -2220,36 +2251,12 @@ class Interpreter<R> {
   }
 
   private invokeFunction(fn: CodeModeFunction, args: Array<unknown>): Effect.Effect<unknown, unknown, R> {
+    if (fn.async) return this.startAsyncCall(fn, args)
     const self = this
     return Effect.suspend(() => {
       const savedScopes = self.scopes
       self.scopes = [...fn.capturedScopes, new Map<string, Binding>()]
-      const run = Effect.gen(function* () {
-        // Seed every parameter name into the scope as a TDZ slot first, so a default that
-        // references another parameter resolves to that (uninitialized) param rather than
-        // silently falling through to an outer binding of the same name - matching JS.
-        const paramScope = self.currentScope()
-        for (const parameter of fn.parameters) {
-          for (const name of collectPatternNames(parameter)) {
-            paramScope.set(name, { mutable: true, value: undefined, initialized: false })
-          }
-        }
-        for (const [index, parameter] of fn.parameters.entries()) {
-          if (parameter.type === "RestElement") {
-            yield* self.declarePattern(getNode(parameter, "argument"), args.slice(index), true, parameter)
-            break
-          }
-          yield* self.declarePattern(parameter, args[index], true, parameter)
-        }
-
-        if (fn.body.type === "BlockStatement") {
-          const result = yield* self.evaluateStatement(fn.body)
-          return result.kind === "return" || result.kind === "value" ? result.value : undefined
-        }
-
-        return yield* self.evaluateExpression(fn.body)
-      })
-      return run.pipe(
+      return self.runFunctionBody(fn, args).pipe(
         Effect.ensuring(
           Effect.sync(() => {
             self.scopes = savedScopes
@@ -2257,6 +2264,59 @@ class Interpreter<R> {
         ),
       )
     })
+  }
+
+  // An async call returns a promise at once, as in JS. Its body runs on its own fiber with its
+  // own scope chain, on the caller's turn until it first waits, so it interleaves with the caller
+  // and other async calls only at awaits. A returned promise is adopted.
+  private startAsyncCall(fn: CodeModeFunction, args: Array<unknown>): Effect.Effect<SandboxPromise, never, R> {
+    return Effect.suspend(() => {
+      const call = new Interpreter(this.execution, [...fn.capturedScopes, new Map<string, Binding>()])
+      const body = Effect.flatMap(call.runFunctionBody(fn, args), (value) =>
+        value instanceof SandboxPromise ? call.settlePromise(value) : Effect.succeed(value),
+      )
+      return Effect.map(this.execution.turn.fork(body, this.execution.scope), (fiber) => this.trackPromise(fiber))
+    })
+  }
+
+  // Binds the parameters in the current scope, which the caller has just opened, and runs the body.
+  private runFunctionBody(fn: CodeModeFunction, args: Array<unknown>): Effect.Effect<unknown, unknown, R> {
+    const self = this
+    return Effect.gen(function* () {
+      // Seed every parameter name into the scope as a TDZ slot first, so a default that
+      // references another parameter resolves to that (uninitialized) param rather than
+      // silently falling through to an outer binding of the same name - matching JS.
+      const paramScope = self.currentScope()
+      for (const parameter of fn.parameters) {
+        for (const name of collectPatternNames(parameter)) {
+          paramScope.set(name, { mutable: true, value: undefined, initialized: false })
+        }
+      }
+      for (const [index, parameter] of fn.parameters.entries()) {
+        if (parameter.type === "RestElement") {
+          yield* self.declarePattern(getNode(parameter, "argument"), args.slice(index), true, parameter)
+          break
+        }
+        yield* self.declarePattern(parameter, args[index], true, parameter)
+      }
+
+      if (fn.body.type === "BlockStatement") {
+        const result = yield* self.evaluateStatement(fn.body)
+        return result.kind === "return" || result.kind === "value" ? result.value : undefined
+      }
+
+      return yield* self.evaluateExpression(fn.body)
+    })
+  }
+
+  // Callbacks whose result CodeMode itself uses (a predicate, comparator, accumulator,
+  // replacement or array to flatten) or that forEach runs one at a time: an async callback's
+  // promise is awaited before the next call, so these keep working as they always have here.
+  // Only `map` hands its promises back, for Promise.all to collect.
+  private awaitAsyncCallback(callback: unknown, result: unknown, node: AstNode): Effect.Effect<unknown, unknown, R> {
+    return callback instanceof CodeModeFunction && callback.async && result instanceof SandboxPromise
+      ? this.settlePromise(result, node)
+      : Effect.succeed(result)
   }
 
   private invokeIntrinsic(
@@ -2379,7 +2439,9 @@ class Interpreter<R> {
         ? Effect.succeed(invokeCoercion(callback, callbackArgs, node))
         : callback instanceof UriFunction
           ? Effect.succeed(invokeUriFunction(callback, callbackArgs, node))
-          : this.invokeFunction(callback, callbackArgs)
+          : Effect.flatMap(this.invokeFunction(callback, callbackArgs), (result) =>
+              this.awaitAsyncCallback(callback, result, node),
+            )
   }
 
   private invokeMapMethod(
@@ -2657,12 +2719,17 @@ class Interpreter<R> {
     // Accept a user function or supported builtin callable, so idioms such as
     // `filter(Boolean)`, `map(String)`, and `map(encodeURIComponent)` work as in JS. Builtins
     // are synchronous; only CodeModeFunctions can await tool calls.
-    const apply = (callbackArgs: Array<unknown>): Effect.Effect<unknown, unknown, R> =>
+    const call = (callbackArgs: Array<unknown>): Effect.Effect<unknown, unknown, R> =>
       callback instanceof CoercionFunction
         ? Effect.succeed(invokeCoercion(callback, callbackArgs, node))
         : callback instanceof UriFunction
           ? Effect.succeed(invokeUriFunction(callback, callbackArgs, node))
           : self.invokeFunction(callback, callbackArgs)
+    const apply =
+      name === "map"
+        ? call
+        : (callbackArgs: Array<unknown>): Effect.Effect<unknown, unknown, R> =>
+            Effect.flatMap(call(callbackArgs), (result) => self.awaitAsyncCallback(callback, result, node))
     return Effect.gen(function* () {
       // Iterate a snapshot taken at call time so a callback that mutates the array can't
       // self-extend the loop - matching JS, where elements appended during iteration are not visited.
@@ -2791,7 +2858,8 @@ class Interpreter<R> {
         while (leftIndex < left.length && rightIndex < right.length) {
           // Coerce the comparator's result like JS ToNumber (data objects -> NaN, never a host
           // crash) and treat NaN as 0 - the spec's "no consistent order" -> keep the left element.
-          const order = coerceToNumber(yield* self.invokeFunction(comparator, [left[leftIndex], right[rightIndex]]))
+          const compared = yield* self.invokeFunction(comparator, [left[leftIndex], right[rightIndex]])
+          const order = coerceToNumber(yield* self.awaitAsyncCallback(comparator, compared, node))
           if (Number.isNaN(order) || order <= 0) merged.push(left[leftIndex++])
           else merged.push(right[rightIndex++])
         }
@@ -3331,6 +3399,37 @@ class Interpreter<R> {
   }
 }
 
+// The program's fiber holds the turn until the execution scope has interrupted leftover work, so
+// nothing else runs program code after the program ends.
+const runProgram = <R>(
+  program: ProgramNode,
+  invokeTool: InvokeTool<R>,
+  toolKeys: (path: ReadonlyArray<string>) => ReadonlyArray<string>,
+  bindings: ReadonlyArray<readonly [string, unknown]>,
+  logs: Array<string>,
+): Effect.Effect<unknown, unknown, R> => {
+  const turn = new Turn()
+  return turn.hold(
+    Effect.acquireUseRelease(
+      Scope.make("parallel"),
+      (scope) =>
+        new Interpreter<R>(
+          {
+            invokeTool,
+            toolKeys,
+            logs,
+            callPermits: Semaphore.makeUnsafe(TOOL_CALL_CONCURRENCY),
+            pendingSettlements: new Set(),
+            turn,
+            scope,
+          },
+          [globalScope(bindings)],
+        ).run(program),
+      (scope, exit) => Scope.close(scope, exit),
+    ),
+  )
+}
+
 const freezeBinding = (value: unknown): void => {
   if (value === null || typeof value !== "object") return
   for (const child of Object.values(value)) freezeBinding(child)
@@ -3387,8 +3486,7 @@ export const executeWithLimits = <const Tools extends Record<string, unknown>>(
       return [name, copied] as const
     })
     const program = parseProgram(options.code)
-    const interpreter = new Interpreter<Services<Tools>>(tools.invoke, tools.keys, bindings, logs)
-    const value = yield* interpreter.run(program)
+    const value = yield* runProgram<Services<Tools>>(program, tools.invoke, tools.keys, bindings, logs)
     const result = copyOut(copyIn(value, "Execution result"), true) as DataValue
     return {
       ok: true,

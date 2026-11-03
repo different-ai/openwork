@@ -21,6 +21,7 @@
   ],
   "scripts": {
     "build": "tsup && tsc -p tsconfig.build.json",
+    "test": "bun test",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
