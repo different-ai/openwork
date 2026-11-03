@@ -20,7 +20,7 @@ const scannedPdf = padTo(buildPdf([[]]), 200 * 1024)
 const files: Record<string, { mimeType: string; size: number; bytes: Uint8Array | null }> = {
   breakdown_pdf: { mimeType: "application/pdf", size: textPdf.byteLength, bytes: textPdf },
   scanned_pdf: { mimeType: "application/pdf", size: scannedPdf.byteLength, bytes: scannedPdf },
-  huge_pdf: { mimeType: "application/pdf", size: 11 * 1024 * 1024, bytes: null },
+  huge_pdf: { mimeType: "application/pdf", size: 51 * 1024 * 1024, bytes: null },
 }
 const downloads: string[] = []
 
@@ -72,7 +72,7 @@ test("an agent reads the text of a few-hundred-KB PDF in Drive once googleDriveP
   const before = await read("breakdown_pdf")
   assert.equal(before.status, 200, summary(before))
   assert.equal(field(before.body, "file", "contentUnavailableReason"), "file_too_large")
-  assert.deepEqual(downloads, [])
+  assert.equal(downloads.length, 0)
 
   assert.equal((await den.setFeature(orgId, "googleDrivePdfText", true)).status, 200)
   const enabled = await read("breakdown_pdf")
@@ -95,11 +95,15 @@ test("an agent reads the text of a few-hundred-KB PDF in Drive once googleDriveP
   assert.equal(viaMcp.isError, false, viaMcp.text)
   assert.ok(viaMcp.text.includes("Phase 2: rollout (3 weeks)"), viaMcp.text.slice(0, 1000))
 
-  // A scan has no text layer, and a PDF over 10 MB is not downloaded at all.
+  // A scan has no text layer, and a PDF over 50 MB is not downloaded at all; both say what to do instead.
   const scanned = await read("scanned_pdf")
   assert.equal(field(scanned.body, "file", "contentUnavailableReason"), "no_extractable_text", summary(scanned))
   assert.equal(field(scanned.body, "file", "content"), null)
   const huge = await read("huge_pdf")
   assert.equal(field(huge.body, "file", "contentUnavailableReason"), "file_too_large", summary(huge))
   assert.equal(downloads.includes("huge_pdf"), false)
+  for (const unavailable of [scanned, huge]) {
+    assert.match(text(field(unavailable.body, "file", "contentUnavailableHint"), "hint"), /createGoogleDriveDownloadLink/)
+  }
+  assert.equal(field(before.body, "file", "contentUnavailableHint"), undefined, "nothing changes with the feature off")
 })

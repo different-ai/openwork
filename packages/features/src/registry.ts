@@ -117,7 +117,7 @@ export const FEATURES = defineFeatures({
   },
   googleDrivePdfText: {
     label: "Google Drive PDF text",
-    description: "Agents read the text of PDFs in Google Drive, up to 10 MB, instead of being told the file is too large.",
+    description: "Agents read the text of PDFs in Google Drive, up to 50 MB, instead of being told the file is too large.",
     category: "connect",
     added: "2026-11-02",
     since: "2026-11",
