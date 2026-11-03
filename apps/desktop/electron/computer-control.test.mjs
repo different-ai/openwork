@@ -426,6 +426,27 @@ test("a drag longer than the helpers take keeps its shape in 32 of its own point
   assert.ok(!seen.some((call) => call.name === "computer_act"), "nothing is sent past the accepted size");
 });
 
+test("a smooth drag curves through its points and stays where they were checked", async (t) => {
+  const seen = [];
+  const f = fixture({ seen, toolResult: (name) => name === "computer_act" ? text({ ok: true, status: "dispatched", next: "observe" }) : undefined });
+  t.after(() => f.control.reset(true));
+  await f.control.setFeatureEnabled(true);
+  await f.control.execute({ sessionId: "chat", name: "computer_open", args: { app_id: "editor", mode: "control", purpose: "Draw a wave" } });
+  // Three points of a wave: straight lines would meet at a sharp peak.
+  const path = [{ x: 100, y: 400 }, { x: 300, y: 100 }, { x: 500, y: 400 }];
+  seen.length = 0;
+  await f.control.execute({ sessionId: "chat", name: "computer_act", args: { observation_id: "observation", action: { type: "drag", path, smooth: true } } });
+  const sent = seen.find((call) => call.name === "computer_act").args.action;
+  assert.equal(Object.hasOwn(sent, "smooth"), false, "the helpers never see the mark");
+  assert.equal(sent.path.length, 32);
+  assert.deepEqual([sent.path[0], sent.path.at(-1)], [path[0], path[2]], "it starts and ends where asked");
+  assert.ok(sent.path.some((point) => point.y === 100), "it still reaches the peak");
+  assert.ok(sent.path.every((point) => point.x >= 100 && point.x <= 500 && point.y >= 100 && point.y <= 400), "it never leaves the points' box");
+  // Near the peak a curve is rounded: points just beside it sit above the straight lines.
+  const beside = sent.path.filter((point) => Math.abs(point.x - 300) > 10 && Math.abs(point.x - 300) < 60);
+  assert.ok(beside.length && beside.every((point) => point.y < 100 + Math.abs(point.x - 300) * 1.5), "the peak is rounded, not a corner");
+});
+
 test("without a screenshot choice the computer decides whether the settled view needs an image", async (t) => {
   const seen = [];
   const f = fixture({ seen, toolResult: (name) => name === "computer_act" ? text({ ok: true, status: "dispatched", next: "observe" }) : undefined });

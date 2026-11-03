@@ -9,7 +9,7 @@ import { Image } from "@/components/ui/image"
 import { isToolPartInFlight } from "@/lib/tool-activity"
 import { formatToolCallDuration } from "@/lib/tool-call-duration"
 import { cn } from "@/lib/utils"
-import { isBrowserToolName, type ComputerSessionHistory as History } from "@/lib/computer-session-history"
+import { isBrowserToolName, type ComputerActionMark, type ComputerSessionHistory as History } from "@/lib/computer-session-history"
 
 /**
  * `live` is the chat's working computer: the card shows its work, and its live
@@ -26,6 +26,8 @@ export function ComputerSessionHistory({ history, active, renderAction, live }: 
   // Null follows the newest capture. Browsing pins a stable frame as work continues.
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const [unavailable, setUnavailable] = useState<string | null>(null)
+  // The shown view's pixel size: action marks are in the image pixels the agent acted on.
+  const [size, setSize] = useState<{ url: string; width: number; height: number } | null>(null)
   const { frames, parts } = history
   const selectedIndex = selectedId === null ? frames.length - 1 : frames.findIndex(frame => frame.id === selectedId)
   const index = selectedIndex < 0 ? frames.length - 1 : selectedIndex
@@ -96,15 +98,20 @@ export function ComputerSessionHistory({ history, active, renderAction, live }: 
         <div className="space-y-3 border-t border-border p-3">
           <Collapsible>
             {frame ? <>
-              {unavailable === frame.file.url ? <p className="py-6 text-sm text-muted-foreground" role="status">This view is unavailable. Choose another captured view.</p> : <Image
-                key={frame.id}
-                src={frame.file.url}
-                alt={`Captured view ${index + 1}: ${frame.label}`}
-                previewMaxHeight={0}
-                previewMaxWidth={0}
-                className="max-h-80 w-full rounded-md bg-muted/30 object-contain"
-                onError={() => { setUnavailable(frame.file.url); setPlaying(false) }}
-              />}
+              {unavailable === frame.file.url ? <p className="py-6 text-sm text-muted-foreground" role="status">This view is unavailable. Choose another captured view.</p> : <div className="relative mx-auto w-fit max-w-full">
+                <Image
+                  key={frame.id}
+                  src={frame.file.url}
+                  alt={`Captured view ${index + 1}: ${frame.label}`}
+                  previewMaxHeight={0}
+                  previewMaxWidth={0}
+                  className="block h-auto max-h-80 w-auto max-w-full rounded-md bg-muted/30"
+                  onLoad={event => setSize({ url: frame.file.url, width: event.currentTarget.naturalWidth, height: event.currentTarget.naturalHeight })}
+                  onError={() => { setUnavailable(frame.file.url); setPlaying(false) }}
+                />
+                {size?.url === frame.file.url && size.width > 0 && size.height > 0 && frame.marks.length > 0
+                  ? <ActionMarks marks={frame.marks} width={size.width} height={size.height} /> : null}
+              </div>}
               <div className="group flex min-w-0 items-center gap-3 pt-2">
                 <Button variant="ghost" size="icon-sm" aria-label={playing ? "Pause captured views" : "Play captured views"} disabled={frames.length < 2} onClick={() => {
                   if (playing) setPlaying(false)
@@ -124,5 +131,23 @@ export function ComputerSessionHistory({ history, active, renderAction, live }: 
         </div>
       </CollapsibleContent>
     </Collapsible>
+  )
+}
+
+/** Where the view's clicks landed and the paths its drags took, drawn over the capture. */
+function ActionMarks({ marks, width, height }: { marks: ComputerActionMark[]; width: number; height: number }) {
+  const radius = Math.max(width, height) * 0.012
+  return (
+    <svg data-computer-action-marks="" aria-hidden="true" viewBox={`0 0 ${width} ${height}`} preserveAspectRatio="none" className="pointer-events-none absolute inset-0 size-full text-primary">
+      {marks.map((mark, index) => mark.kind === "point"
+        ? <g key={index}>
+          <circle cx={mark.x} cy={mark.y} r={radius * 1.8} className="fill-current opacity-20" />
+          <circle cx={mark.x} cy={mark.y} r={radius * 0.6} className="fill-current" />
+        </g>
+        : <g key={index}>
+          <polyline points={mark.points.map(point => `${point.x},${point.y}`).join(" ")} className="fill-none stroke-current" strokeWidth={2.5} strokeLinecap="round" strokeLinejoin="round" vectorEffect="non-scaling-stroke" />
+          <circle cx={mark.points[0]!.x} cy={mark.points[0]!.y} r={radius * 0.6} className="fill-current" />
+        </g>)}
+    </svg>
   )
 }

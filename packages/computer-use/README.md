@@ -101,10 +101,14 @@ notifications with method `openwork/ui`:
 While a session runs the helper draws presence on the desktop: a frame around
 the selected window, a named cursor that glides to each input with click
 ripples, drag trails, a typing indicator and highlighted controls, narration
-from `intent`, and a "thinking" state between inputs. The cursor travels like
+from `intent`, and a planning state between inputs: the cursor breathes slowly
+and names the session's purpose ("planning · Draw a wave"). The cursor travels like
 a hand: short hops are quick, long ones take up to about a third of a second,
 it eases in along a slight arc, and a click or a highlight lands when it
-arrives. During a drag the stroke follows the cursor's tip. A highlight is
+arrives. During a drag the stroke follows the cursor's tip. A drag with
+`smooth: true` is drawn as a curve through its points (the broker turns it into
+32 points that keep every given one), for drawing strokes rather than
+selections. A highlight is
 drawn only where the control still is, so a button whose press closed its
 dialog gets none. A pill over the window's
 buttons offers Take over, Continue and Stop, shows "Your turn" while the person

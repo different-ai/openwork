@@ -101,6 +101,8 @@ final class AgentCursor {
     private var paused = false
     private var canContinue = false
     private var narration: String?
+    /// The finished result the agent named when it opened the session, shown while it plans.
+    private var goal: String?
     private var resetTag: DispatchWorkItem?
     private var tracker: Timer?
     private var idle: DispatchWorkItem?
@@ -127,12 +129,13 @@ final class AgentCursor {
 
     // MARK: Session lifecycle
 
-    func begin(windowFrame frame: CGRect, windowID id: CGWindowID, appName name: String, layered: Bool = false) {
+    func begin(windowFrame frame: CGRect, windowID id: CGWindowID, appName name: String, layered: Bool = false, purpose: String? = nil) {
         guard enabled else { return }
         generation += 1
         let fresh = window == nil
         paused = false; canContinue = false; narration = nil; hidden = false; strokeLag = nil
         windowID = id; appName = name; self.layered = layered
+        goal = purpose.flatMap(Self.goalLabel)
         if fresh { build() }
         window?.alphaValue = 1; badge?.alphaValue = 1
         place(frame)
@@ -541,15 +544,25 @@ final class AgentCursor {
         drawTrail(fading: lifting)
     }
 
-    /// Between inputs the model is deciding its next step: say so with a gentle wiggle.
+    /// The session's purpose, short enough for the cursor's label.
+    nonisolated static func goalLabel(_ purpose: String) -> String? {
+        let cleaned = purpose.replacingOccurrences(of: "\n", with: " ").trimmingCharacters(in: .whitespaces)
+        guard !cleaned.isEmpty else { return nil }
+        return cleaned.count > 48 ? String(cleaned.prefix(47)).trimmingCharacters(in: .whitespaces) + "…" : cleaned
+    }
+
+    /// Between inputs the model is deciding its next step, which takes seconds: the cursor
+    /// breathes slowly and names what the agent is working toward, instead of fidgeting.
     private func scheduleThinking() {
         idle?.cancel()
         let work = DispatchWorkItem { [weak self] in
             guard let self, self.window != nil, !self.paused else { return }
-            let wiggle = CAKeyframeAnimation(keyPath: "transform.rotation.z")
-            wiggle.values = [0, 0.09, 0, -0.09, 0]; wiggle.duration = 1.4; wiggle.repeatCount = .infinity
-            self.arrow.add(wiggle, forKey: "think")
-            self.say("\(self.presence.name) · thinking", busy: true, hold: nil)
+            let breath = CABasicAnimation(keyPath: "transform.scale")
+            breath.fromValue = 1; breath.toValue = 0.92; breath.duration = 1.2
+            breath.autoreverses = true; breath.repeatCount = .infinity
+            breath.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
+            self.arrow.add(breath, forKey: "think")
+            self.say("\(self.presence.name) · " + (self.goal.map { "planning · \($0)" } ?? "planning the next step"), busy: true, hold: nil)
         }
         idle = work
         DispatchQueue.main.asyncAfter(deadline: .now() + 1.6, execute: work)
