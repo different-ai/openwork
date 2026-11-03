@@ -12,7 +12,7 @@ for (const scenario of ["quit", "busy", "kill", "read", "corrupt", "unavailable"
     const expected = world.sessions.slice(0, 2).map(session => session.sessionId);
     let before: Awaited<ReturnType<typeof world.snapshot>>;
     await step("given: two conversations are pinned and a third is not", async () => {
-      await user.see({ text: "Pinned", exact: true });
+      await user.see({ text: /^Pinned$/ });
       before = await world.snapshot();
       expect(before.pins).toEqual(expected);
       evidence.recordAssertionEvidence("Two pins are present before the fault", JSON.stringify(before), true);
@@ -30,9 +30,9 @@ for (const scenario of ["quit", "busy", "kill", "read", "corrupt", "unavailable"
     });
     await step("after: both pinned conversations remain available in the sidebar", async () => {
       if (scenario !== "unavailable") {
-        await user.on(world.app).see({ text: "Pinned", exact: true });
-        await user.on(world.app).see({ text: "Durable pin 1", exact: true });
-        await user.on(world.app).see({ text: "Durable pin 2", exact: true });
+        await user.on(world.app).see({ text: /^Pinned$/ });
+        await user.on(world.app).see({ text: /^Durable pin 1$/ });
+        await user.on(world.app).see({ text: /^Durable pin 2$/ });
       }
       evidence.recordAssertionEvidence("No stored pin is pruned by missing session inventory", JSON.stringify(await world.snapshot()), true);
       if (scenario !== "unavailable") await user.on(world.app).looks(["The OpenWork sidebar shows a Pinned section containing Durable pin 1 and Durable pin 2."]);
