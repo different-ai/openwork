@@ -90,7 +90,7 @@ test("a Slack message runs on the real runner: session instructions, live text, 
     const context = await loadSlackContext({ slack: memberSlack, event, channelId: "C1", log: () => assert.fail("context fetch failed") })
     const envelope = buildSlackEnvelope({ event, teamId: "T1", botUserId: "B1", context, privateReply: false })
     const messageId = `msg_${"a".repeat(64)}`
-    const cp = checkpointSchema.parse({ phase: "create", prompt: envelope, channel: "C1", threadTs: "1.0", live: false, workbot: true, reactTo: { channel: "C1", ts: "1.0" }, recipientUserId: "U0ABC", startedAt: Date.now() })
+    const cp = checkpointSchema.parse({ phase: "create", prompt: envelope, channel: "C1", threadTs: "1.0", live: false, workbot: true, reactTo: { channel: "C1", ts: "2.0" }, recipientUserId: "U0ABC", startedAt: Date.now() })
     let done = false
     for (let i = 0; i < 20 && !done; i++) {
       const result = await advanceSlackRun({
@@ -124,7 +124,7 @@ test("a Slack message runs on the real runner: session instructions, live text, 
     const pieces = appends().filter((piece) => firstSentence.includes(piece.trim()) && piece.trim())
     assert.ok(pieces.length >= 2, `streamed in pieces: ${JSON.stringify(appends())}`)
     assert.equal(text(), `${firstSentence}\n\nI'm on it and will post the deck here.`)
-    assert.deepEqual(calls.find((call) => call.method === "reactions.add")?.body, { channel: "C1", timestamp: "1.0", name: "thumbsup" })
+    assert.deepEqual(calls.find((call) => call.method === "reactions.add")?.body, { channel: "C1", timestamp: "2.0", name: "thumbsup" })
     assert.deepEqual(cp.taskIds, [`${messageId}.t1`])
 
     // The task runs, reports back, and the report is posted once in the thread.
