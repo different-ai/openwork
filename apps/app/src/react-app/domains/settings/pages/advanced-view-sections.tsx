@@ -22,7 +22,6 @@ import {
   type DenEndpointSource,
 } from "@/app/lib/den-endpoint-sources";
 import { useOpencodeEngineControls } from "@/react-app/shell/opencode-engine-controls";
-import { showEngineMigrationProgress } from "@/react-app/shell/engine-migration";
 import { isDesktopRuntime } from "@/app/utils";
 import { t } from "@/i18n";
 import { ControlPlaneUrlEditor } from "../cloud/control-plane-url-editor";
@@ -739,7 +738,7 @@ export function AdvancedEngineV2PreviewSection(props: { client: OpenworkServerCl
   const engine = useOpencodeEngineControls(props.client);
   if (!isDesktopRuntime()) return null;
   const runtimeError = engine.status?.enabled ? engine.status.lastError : undefined;
-  const engineNote = engine.blockedReason ?? engine.v1Locked ?? (engine.migrating ? "Wait for chat migration to finish." : undefined);
+  const engineNote = engine.blockedReason ?? engine.v1Locked;
   return (
     <LayoutSection id="advanced-experimental-engine">
       <LayoutSectionHeader><LayoutSectionTitle>OpenCode engine</LayoutSectionTitle></LayoutSectionHeader>
@@ -749,7 +748,7 @@ export function AdvancedEngineV2PreviewSection(props: { client: OpenworkServerCl
           <LayoutSectionItemHeaderActions>
             <ToggleGroup aria-label="Chat engine" value={[engine.selected]} variant="outline" disabled={engine.disabled}
               onValueChange={(value) => { if (value[0] === "v1" || value[0] === "v2") engine.select(value[0]); }}>
-              <ToggleGroupItem value="v1" data-engine="v1" disabled={engine.v2Only}>OpenCode v1</ToggleGroupItem>
+              <ToggleGroupItem value="v1" data-engine="v1" disabled={Boolean(engine.v1Locked)}>OpenCode v1</ToggleGroupItem>
               <ToggleGroupItem value="v2" data-engine="v2">OpenCode v2 (preview)</ToggleGroupItem>
             </ToggleGroup>
           </LayoutSectionItemHeaderActions>
@@ -758,19 +757,7 @@ export function AdvancedEngineV2PreviewSection(props: { client: OpenworkServerCl
         {engine.status?.enabled && !engine.status.running && !engine.status.lastError ? <p role="status" className="text-xs text-muted-foreground">OpenCode v2 is starting…</p> : null}
         {engine.error || runtimeError ? <p role="alert" className="text-xs text-destructive">{engine.error ?? runtimeError}</p> : null}
       </LayoutSectionItem>
-      <LayoutSectionItem>
-        <LayoutSectionItemHeader>
-          <LayoutSectionItemTitle>V1 chat history</LayoutSectionItemTitle>
-          <LayoutSectionItemHeaderActions>
-            {engine.migrating
-              ? <Button variant="outline" size="sm" onClick={showEngineMigrationProgress}>{t("engine_migration.show_progress")}</Button>
-              : <Button variant="outline" size="sm" disabled={engine.disabled || !engine.status?.migration} onClick={engine.openMigration}>Migrate chats to OpenCode v2</Button>}
-          </LayoutSectionItemHeaderActions>
-        </LayoutSectionItemHeader>
-        {engine.message ? <p role="status" className="text-xs text-muted-foreground">{engine.message}</p> : null}
-      </LayoutSectionItem>
       <details className="text-xs text-muted-foreground"><summary>Engine details</summary>
-        <p className="py-2">Each engine has its own chat history. Switching engines does not migrate chats.</p>
         {engine.status?.running ? <p>OpenCode {engine.status.version} · {engine.status.mirroredProviderIds.length} providers · {engine.status.catalogModelIds.length} models</p> : null}
       </details>
     </LayoutSection>

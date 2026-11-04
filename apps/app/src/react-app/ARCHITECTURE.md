@@ -83,12 +83,11 @@ src/index.react.tsx                       React entry
   kernel, shell, and connections.
 - Feature state tightly coupled to one domain lives inside that domain
   (`domains/session/sync/`, `domains/settings/state/`).
-- Automatic v1-to-v2 history migration belongs to the OpenWork host. It runs
-  by default with backups and idle checks, independently of Den features or
-  sign-in. `shell/engine-migration.tsx` only observes host status, displays
-  non-blocking progress, and refreshes routing after a host-owned switch;
-  manual migration/switch requests retain their explicit user confirmation.
-  Legacy Den policy values cannot disable migration or revert the host.
+- Engine lifecycle and history conversion belong to the OpenWork host and
+  upstream engine, not the renderer. `shell/use-engine-routing.ts` refreshes
+  routing after a host-owned engine switch without migration progress,
+  consent, or actions. `shell/engine-switch.tsx` keeps activity confirmations
+  for manual engine switches. Legacy Den policy values cannot revert the host.
 
 ## Active workspace and session
 

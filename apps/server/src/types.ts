@@ -132,7 +132,7 @@ export interface ServerConfig {
    * engine choice is already saved or OpenCode v1 history exists.
    */
   freshInstallEngine?: "v2";
-  /** Automatic v1-to-v2 migration is on by default; false is an explicit local opt-out. */
+  /** Automatic v2 engine selection is on by default; false is an explicit local opt-out. */
   engineAutoUpgrade?: boolean;
   /** @deprecated Legacy rollout marker, ignored. Never reverts a migrated instance. */
   engineForcePolicy?: boolean;

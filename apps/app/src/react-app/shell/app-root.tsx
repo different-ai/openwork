@@ -40,8 +40,8 @@ import { useVisualViewportInset } from "../../hooks/use-visual-viewport-inset";
 import { DevProfiler, DevProfilerOverlay } from "./dev-profiler";
 import { ReactRenderWatchdogOverlay } from "./react-render-watchdog-overlay";
 import { CloudWorkspaceOverlay, CloudWorkspaceStatusProvider } from "./cloud-workspace-overlay";
-import { EngineMigrationOverlay } from "./engine-migration";
-import { useEngineMigrationAnalytics } from "./use-engine-migration-analytics";
+import { EngineSwitchOverlay } from "./engine-switch";
+import { useEngineRouting } from "./use-engine-routing";
 import { MemberApiKeyDialog } from "../domains/connections/member-api-key-dialog";
 import { AppMenuProvider } from "./app-menu";
 import {
@@ -429,7 +429,7 @@ export function AppRoot() {
   useVisualViewportInset();
   const egressAllowed = useOutboundEgressAllowed();
   useMemberActivitySync(egressAllowed);
-  useEngineMigrationAnalytics(egressAllowed);
+  useEngineRouting(egressAllowed);
 
   // Module-level dedupe keeps StrictMode double-mounts from double-counting.
   useEffect(() => {
@@ -589,7 +589,7 @@ export function AppRoot() {
                   </Routes>
                   <LoadingOverlay />
                   <CloudWorkspaceOverlay />
-                  <EngineMigrationOverlay />
+                  <EngineSwitchOverlay />
                   <MemberApiKeyDialog />
                 </CloudWorkspaceStatusProvider>
               </OpenWorkWebAccessGate>

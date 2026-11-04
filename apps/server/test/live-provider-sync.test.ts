@@ -143,13 +143,19 @@ for (const live of [false, true]) test(`cloud sync ${live ? "v2 suppresses Gatew
 
 test("managed v2 owns Gateway inventory before sign-in hydration; v1 retains its own writer", async () => {
   const dir = await mkdtemp(join(tmpdir(), "openwork-live-owner-"));
+  const previousDatabase = process.env.OPENCODE_DB;
+  process.env.OPENCODE_DB = join(dir, "original.db");
   await writeFile(join(dir, "engine-v2-preview.json"), JSON.stringify({ enabled: true, chatRouting: true }));
   const engine = createEngineV2Preview({ config: config(dir), deferStart: true, providerSession: () => null });
   try {
     assert.equal(engine.status().liveProviderSync, true);
     await engine.setChatRouting(false);
     assert.equal(engine.status().liveProviderSync, false);
-  } finally { await engine.stop(); await rm(dir, { recursive: true, force: true }); }
+  } finally {
+    await engine.stop();
+    if (previousDatabase === undefined) delete process.env.OPENCODE_DB; else process.env.OPENCODE_DB = previousDatabase;
+    await rm(dir, { recursive: true, force: true });
+  }
 });
 
 test("only provider ownership transitions trigger a cloud sync pass", () => {

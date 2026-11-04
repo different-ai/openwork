@@ -10,6 +10,7 @@ const test = spec.world(automaticEngineForcePolicy, {
 
 test("a member's existing v1 chat migrates by default and an old policy opt-out cannot revert it", async ({ world, user, probe, step, evidence }) => {
   async function noUpgradeUi() {
+    await user.press("Escape");
     for (const testId of ["engine-migration-consent", "engine-migration-banner", "engine-migration-progress", "engine-switch-prompt"]) {
       await user.notSee({ testId });
     }
@@ -22,18 +23,18 @@ test("a member's existing v1 chat migrates by default and an old policy opt-out 
   await step("after: the member reads that same chat on v2 without Den, an opt-in, or an upgrade notice", async () => {
     const status = await probe.eventually(() => world.status(), {
       within: 120_000,
-      label: "the default host copies the existing v1 chat to the real v2 engine",
-      until: value => value.chatRouting && value.running && value.migration.state === "completed",
+      label: "the default host starts the real v2 engine with upstream history migration",
+      until: value => value.chatRouting && value.running,
     });
+    expect(status).not.toHaveProperty("migration");
     expect(status.version).toBe(world.engineVersions.v2);
-    expect(status.migration.imported).toBe(1);
-    expect(status.migration.total).toBe(1);
-    expect(status.migration.backupPath).toBeTruthy();
+    expect(status.engineForced).toBe(true);
+    expect(status.engineOrigin).toBe("forced");
     expect(await world.messages()).toContain(retainedHistoryText);
     await user.reload();
     await user.see({ text: retainedHistoryText });
     await noUpgradeUi();
-    evidence.recordAssertionEvidence("Default migration serves the original chat on v2 and retains a backup", JSON.stringify(status), status.chatRouting && status.running && status.migration.imported === 1 && Boolean(status.migration.backupPath));
+    evidence.recordAssertionEvidence("Upstream migration serves the original v1 chat on the real forced v2 engine", JSON.stringify(status), status.chatRouting && status.running && status.engineForced && status.version === world.engineVersions.v2);
     await user.screenshot();
   });
 
@@ -43,7 +44,6 @@ test("a member's existing v1 chat migrates by default and an old policy opt-out 
     expect(status.chatRouting).toBe(true);
     expect(status.running).toBe(true);
     expect(status.engineOrigin).not.toBe("reverted");
-    expect(status.migration.state).toBe("completed");
     expect(await world.messages()).toContain(retainedHistoryText);
     await user.reload();
     await user.see({ text: retainedHistoryText });

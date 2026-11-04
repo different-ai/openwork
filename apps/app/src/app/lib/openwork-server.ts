@@ -81,58 +81,7 @@ export type OpenworkCloudProviderSyncStatus = {
   skippedProviders: OpenworkCloudProviderSyncSkippedProvider[];
 };
 
-export interface EngineV2MigrationStatus {
-  state: "idle" | "running" | "completed" | "error";
-  /** Restoring counts messages separately from the chat-copy counts. */
-  phase?: "starting" | "converting" | "restoring" | "copying";
-  restored?: number;
-  restoreTotal?: number;
-  imported: number;
-  skipped: number;
-  total: number;
-  /** ISO time the current migration started. */
-  startedAt?: string;
-  error?: string;
-  /** Where the v2 chat database was copied before this migration wrote to it. */
-  backupPath?: string;
-  /** Chats left in v1 because they could not be copied; older servers omit it. */
-  notCopied?: Array<{ id: string; title: string }>;
-  /** Chats copied without their largest outputs and attachments; older servers omit it. */
-  trimmed?: Array<{ id: string; title: string }>;
-  /** This run picks up a migration OpenWork closed before it finished. */
-  resumed?: boolean;
-}
-
-function parseChats(value: unknown): Array<{ id: string; title: string }> {
-  if (!Array.isArray(value)) return [];
-  return value.flatMap((chat: unknown) =>
-    chat && typeof chat === "object" && "id" in chat && typeof chat.id === "string"
-      ? [{ id: chat.id, title: "title" in chat && typeof chat.title === "string" ? chat.title : "" }]
-      : []);
-}
-
-function parseEngineV2Migration(value: unknown): EngineV2MigrationStatus | undefined {
-  if (!value || typeof value !== "object" || !("state" in value)
-    || !["idle", "running", "completed", "error"].includes(String(value.state))) return undefined;
-  if (value.state !== "idle" && value.state !== "running" && value.state !== "completed" && value.state !== "error") return undefined;
-  if (!("imported" in value) || typeof value.imported !== "number"
-    || !("skipped" in value) || typeof value.skipped !== "number"
-    || !("total" in value) || typeof value.total !== "number") return undefined;
-  const phase = "phase" in value && (value.phase === "starting" || value.phase === "converting" || value.phase === "restoring" || value.phase === "copying")
-    ? value.phase : undefined;
-  return { state: value.state, imported: value.imported, skipped: value.skipped, total: value.total,
-    ...(phase ? { phase } : {}),
-    ...("restored" in value && typeof value.restored === "number" ? { restored: value.restored } : {}),
-    ...("restoreTotal" in value && typeof value.restoreTotal === "number" ? { restoreTotal: value.restoreTotal } : {}),
-    ...("startedAt" in value && typeof value.startedAt === "string" ? { startedAt: value.startedAt } : {}),
-    ...("backupPath" in value && typeof value.backupPath === "string" ? { backupPath: value.backupPath } : {}),
-    ...("notCopied" in value ? { notCopied: parseChats(value.notCopied) } : {}),
-    ...("trimmed" in value ? { trimmed: parseChats(value.trimmed) } : {}),
-    ...("resumed" in value && value.resumed === true ? { resumed: true } : {}),
-    error: "error" in value && typeof value.error === "string" ? value.error : undefined };
-}
-
-/** Work an engine switch or migration would interrupt, as counts only. */
+/** Work an engine switch would interrupt, as counts only. */
 export interface EngineActivityCount {
   verdict: "idle" | "busy" | "unknown";
   busySessions: number;
@@ -173,16 +122,13 @@ export interface EngineV2PreviewStatus {
   engineOrigin?: "fresh" | "manual" | "forced" | "reverted";
   engineChangedAt?: string;
   engineForced?: boolean;
-  /** The host is preparing a forced upgrade; engine ownership has not moved yet. */
-  forceUpgradePending?: boolean;
   version?: string;
   pid?: number;
   binSource?: string;
-  migration?: EngineV2MigrationStatus;
-  /** Older servers omit it; treat that as unknown and do not prompt. */
-  v1HistoryAvailable?: boolean;
   /** The organization runs every chat on OpenCode v2 (the opencodeV2Only rollout). Older servers omit it: off. */
   v2Only?: boolean;
+  /** Shared history has been adopted by v2 and can no longer be opened safely by v1. */
+  v1UnavailableReason?: string;
   mirroredProviderIds: string[];
   skippedProviderIds: string[];
   /** Why each skipped provider is not on OpenCode v2. Older servers, and the rollout switched off, omit it. */
@@ -251,15 +197,13 @@ function parseEngineV2PreviewStatus(value: unknown): EngineV2PreviewStatus {
   }
   const skippedProviders = parseEngineV2SkippedProviders("skippedProviders" in value ? value.skippedProviders : undefined);
   return {
-    migration: parseEngineV2Migration("migration" in value ? value.migration : undefined),
-    ...("v1HistoryAvailable" in value && typeof value.v1HistoryAvailable === "boolean"
-      ? { v1HistoryAvailable: value.v1HistoryAvailable } : {}),
     ...("engineOrigin" in value && (value.engineOrigin === "fresh" || value.engineOrigin === "manual"
       || value.engineOrigin === "forced" || value.engineOrigin === "reverted") ? { engineOrigin: value.engineOrigin } : {}),
     ...("engineChangedAt" in value && typeof value.engineChangedAt === "string" ? { engineChangedAt: value.engineChangedAt } : {}),
     ...("engineForced" in value && typeof value.engineForced === "boolean" ? { engineForced: value.engineForced } : {}),
-    ...("forceUpgradePending" in value && typeof value.forceUpgradePending === "boolean"
-      ? { forceUpgradePending: value.forceUpgradePending } : {}),
+    ...("v2Only" in value && typeof value.v2Only === "boolean" ? { v2Only: value.v2Only } : {}),
+    ...("v1UnavailableReason" in value && typeof value.v1UnavailableReason === "string"
+      ? { v1UnavailableReason: value.v1UnavailableReason } : {}),
     enabled: value.enabled,
     running: value.running,
     chatRouting: "chatRouting" in value && typeof value.chatRouting === "boolean" ? value.chatRouting : false,
@@ -1777,12 +1721,6 @@ export function createOpenworkServerClient(options: { baseUrl: string; token?: s
       parseEngineActivity(await requestJson<unknown>(baseUrl, "/experimental/engine-v2-preview/activity", {
         token,
         timeoutMs: timeouts.config,
-      })),
-    /** Rejects with `engine_migration_active_sessions` (409) while v1 tasks run, unless allowed. */
-    migrateOpencodeHistory: async (options: { allowActiveSessions?: boolean } = {}): Promise<EngineV2PreviewStatus> =>
-      parseEngineV2PreviewStatus(await requestJson<unknown>(baseUrl, "/experimental/engine-v2-preview/migrate", {
-        token, hostToken, method: "POST", timeoutMs: timeouts.config,
-        body: { confirm: true, ...(options.allowActiveSessions ? { allowActiveSessions: true } : {}) },
       })),
     setEngineV2PreviewEnabled: async (enabled: boolean): Promise<EngineV2PreviewStatus> =>
       parseEngineV2PreviewStatus(await requestJson<unknown>(baseUrl, "/experimental/engine-v2-preview", {

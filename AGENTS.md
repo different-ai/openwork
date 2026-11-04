@@ -22,10 +22,11 @@ The app consumes OpenWork server surfaces (self-hosted or hosted) rather than
 inventing parallel behavior. Anything OpenCode can do is available in OpenWork,
 even before a dedicated UI exists.
 
-OpenCode v2 is the default. Hosts automatically back up and migrate existing v1
-history when idle, without a Den feature flag or Helm setting. Respect explicit
-manual engine choices and local support/test overrides; never restore the retired
-`engineV2ForceUpgrade` gate. See `docs/opencode-engine-migration.md`.
+OpenCode v2 is the default. Hosts select v2 when idle; vanilla upstream OpenCode
+owns in-place history migration on startup. Keep populated legacy separate v2
+stores readable; never revive OpenWork's retired history-copy worker or locks.
+Respect explicit manual engine choices and local support/test overrides; never
+restore the retired `engineV2ForceUpgrade` gate. See `docs/opencode-engine-migration.md`.
 
 Customer-cloud managed installation architecture lives in
 `infra/managed-deployments/README.md` and `docs/managed-deployments.md`. AWS
