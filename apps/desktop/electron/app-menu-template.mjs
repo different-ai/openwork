@@ -46,6 +46,20 @@ export function buildApplicationMenuTemplate({ isMac, isPackaged, appName, actio
     : [separator, { role: "reload" }, { role: "forceReload" }, { role: "toggleDevTools" }];
 
   /** @type {import("electron").MenuItemConstructorOptions[]} */
+  const editPlatformItems = isMac
+    ? [
+        { role: "pasteAndMatchStyle" },
+        { role: "delete" },
+        { role: "selectAll" },
+        separator,
+        { label: "Speech", submenu: [{ role: "startSpeaking" }, { role: "stopSpeaking" }] },
+      ]
+    : [{ role: "delete" }, separator, { role: "selectAll" }];
+
+  /** @type {import("electron").MenuItemConstructorOptions[]} */
+  const windowPlatformItems = isMac ? [separator, { role: "front" }, separator, { role: "window" }] : [];
+
+  /** @type {import("electron").MenuItemConstructorOptions[]} */
   const template = [];
 
   if (isMac) {
@@ -103,15 +117,7 @@ export function buildApplicationMenuTemplate({ isMac, isPackaged, appName, actio
       { role: "cut" },
       { role: "copy" },
       { role: "paste" },
-      ...(isMac
-        ? [
-            { role: "pasteAndMatchStyle" },
-            { role: "delete" },
-            { role: "selectAll" },
-            separator,
-            { label: "Speech", submenu: [{ role: "startSpeaking" }, { role: "stopSpeaking" }] },
-          ]
-        : [{ role: "delete" }, separator, { role: "selectAll" }]),
+      ...editPlatformItems,
     ],
   });
 
@@ -144,7 +150,7 @@ export function buildApplicationMenuTemplate({ isMac, isPackaged, appName, actio
     submenu: [
       { role: "minimize" },
       { role: "zoom" },
-      ...(isMac ? [separator, { role: "front" }, separator, { role: "window" }] : []),
+      ...windowPlatformItems,
     ],
   });
 
