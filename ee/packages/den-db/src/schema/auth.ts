@@ -320,6 +320,8 @@ export const DeviceCodeTable = mysqlTable(
   {
     id: denTypeIdColumn("deviceCode", "id").notNull().primaryKey(),
     deviceCode: varchar("device_code", { length: 128 }).notNull(),
+    // Exact SSO proof held by the approving browser, never inferred at redemption.
+    ssoProviderId: varchar("sso_provider_id", { length: 255 }),
     userCode: varchar("user_code", { length: 32 }).notNull(),
     userId: denTypeIdColumn("user", "user_id"),
     organizationId: denTypeIdColumn("organization", "organization_id"),

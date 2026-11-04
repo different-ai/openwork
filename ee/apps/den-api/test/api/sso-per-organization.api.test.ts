@@ -12,9 +12,9 @@
  * in through its SSO. "Restrict this domain to our SSO" brings back the strict
  * behavior for the whole domain.
  *
- * The IdP round trip itself is a separate journey that needs a real IdP: the
- * tests ARRANGE an enabled connection and an SSO-signed-in session directly in
- * the database, and observe every outcome through the public API.
+ * These policy tests ARRANGE an enabled connection and SSO session directly.
+ * sso-callback.api.test.ts separately proves provenance through real signed
+ * OIDC and SAML callbacks; the arranged rows here are not callback evidence.
  */
 import assert from "node:assert/strict"
 import { after, test } from "node:test"

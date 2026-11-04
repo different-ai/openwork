@@ -155,7 +155,7 @@ async function organizationIdForSlug(slug: string | null) {
 
 // A device session approved into an organization, from session.create.before
 // to its after-hook in the same request (keyed by the new session's token).
-const deviceApprovedSessionOrganizations = new Map<string, string>();
+const deviceApprovedSessionOrganizations = new Map<string, { organizationId: string; ssoProviderId: string | null }>();
 
 function localMcpResourceAliases(resource: string) {
   if (!env.devMode) {
@@ -980,12 +980,12 @@ export const auth = betterAuth({
         before: async (session, context) => {
           const userId = normalizeDenTypeId("user", session.userId);
           const deviceCode = context?.path === "/device/token" ? readStringProperty(context.body, "device_code") : null;
-          const deviceOrganizationId = deviceCode
+          const deviceApproval = deviceCode
             ? await takeDeviceSessionOrganization({ deviceCode, userId })
             : null;
-          const activeOrganizationId = deviceOrganizationId ?? await getInitialActiveOrganizationIdForUser(userId);
-          if (deviceOrganizationId && typeof session.token === "string") {
-            deviceApprovedSessionOrganizations.set(session.token, deviceOrganizationId);
+          const activeOrganizationId = deviceApproval?.organizationId ?? await getInitialActiveOrganizationIdForUser(userId);
+          if (deviceApproval && typeof session.token === "string") {
+            deviceApprovedSessionOrganizations.set(session.token, deviceApproval);
           }
           try {
             // SSO JIT creates the raw member row before the session row, so this
@@ -1015,10 +1015,10 @@ export const auth = betterAuth({
               providerId: readStringProperty(context?.params, "providerId"),
             }).catch((error) => logger.error("session SSO provenance could not be recorded", { error }));
           }
-          const deviceOrganizationId = typeof session.token === "string" ? deviceApprovedSessionOrganizations.get(session.token) : undefined;
+          const deviceApproval = typeof session.token === "string" ? deviceApprovedSessionOrganizations.get(session.token) : undefined;
           if (typeof session.token === "string") deviceApprovedSessionOrganizations.delete(session.token);
-          if (deviceOrganizationId && typeof session.id === "string") {
-            await recordDeviceSessionSsoAuthentication({ sessionId: session.id, userId: session.userId, organizationId: deviceOrganizationId })
+          if (deviceApproval?.ssoProviderId && typeof session.id === "string") {
+            await recordDeviceSessionSsoAuthentication({ sessionId: session.id, userId: session.userId, ...deviceApproval, providerId: deviceApproval.ssoProviderId })
               .catch((error) => logger.error("device session SSO provenance could not be recorded", { error }));
           }
           await recordFreeAutoSignIn(db, { userId: normalizeDenTypeId("user", session.userId), now: session.createdAt })
