@@ -11,11 +11,11 @@ import { authorizeDecision, isFork, latestStatuses, machineryFiles, parseTestCom
 const head = 'a'.repeat(40);
 const nextHead = 'b'.repeat(40);
 const base = { ref: 'dev', sha: 'c'.repeat(40), repo: { full_name: 'sample-org/sample-project', fork: false } };
-const fork = { number: 1, state: 'open', changed_files: 1, user: { type: 'User' }, base, head: { sha: head, repo: { full_name: 'sample-fork/sample-project', fork: true } } };
+const fork = { number: 1, state: 'open', changed_files: 1, user: { type: 'User' }, base, head: { sha: head, ref: 'fix-branch', repo: { full_name: 'sample-fork/sample-project', fork: true, owner: { login: 'sample-fork' } } } };
 const sameRepo = { ...fork, head: { sha: head, repo: base.repo } };
 const file = (filename) => ({ filename });
 const input = { permission: 'write', pr: fork, files: [file('apps/a.ts')], command: { sha: head }, screen: { state: 'success' } };
-const run = (extra = {}) => ({ id: 11, event: 'pull_request', head_sha: head, head_repository: fork.head.repo, pull_requests: [{ number: 1 }], created_at: '2026-10-07T10:00:00Z', status: 'action_required', ...extra });
+const run = (extra = {}) => ({ id: 11, event: 'pull_request', head_sha: head, head_branch: 'fix-branch', head_repository: fork.head.repo, pull_requests: [{ number: 1 }], created_at: '2026-10-07T10:00:00Z', status: 'action_required', ...extra });
 
 test('CI and agent configuration includes deletions and renames', () => {
   assert.deepEqual(machineryFiles([file('.github/workflows/ci-tests.yml'), file('apps/a.ts')]), ['.github/workflows/ci-tests.yml']);
@@ -62,6 +62,12 @@ test('run selection excludes different SHA, repository, PR and event, and missin
   assert.deepEqual(runsForPr([run(), run({ head_sha: nextHead }), run({ event: 'push' }), run({ pull_requests: [] }), run({ pull_requests: [{ number: 2 }] }), run({ head_repository: base.repo })], fork), [run()]);
 });
 
+test('fork runs without PR attribution count only for the sole open PR from that branch', () => {
+  const unattributed = run({ pull_requests: [] });
+  assert.deepEqual(runsForPr([unattributed], fork, { soleOpenPr: true }), [unattributed]);
+  assert.deepEqual(runsForPr([unattributed, run({ pull_requests: [], head_branch: 'other' }), run({ pull_requests: [], head_sha: nextHead }), run({ pull_requests: [], head_repository: base.repo }), run({ pull_requests: [{ number: 2 }] })], fork, { soleOpenPr: true }), [unattributed]);
+});
+
 test('latest status per context wins', () => {
   assert.equal(latestStatuses({ statuses: [
     { context: 'screen', state: 'pending', updated_at: '2026-10-07T10:00:00Z' },
@@ -99,6 +105,7 @@ function fixture(path) {
   if (path === `${prefix}/compare/${base.sha}...${head}`) return { files: [file('apps/a.ts')] };
   if (path.endsWith('/permission')) return { permission: 'write' };
   if (path === `${prefix}/actions/runs`) return { workflow_runs: [run()] };
+  if (path === `${prefix}/pulls`) return [fork];
   if (path.endsWith('/statuses')) return [{ context: 'contributor-pr/screen', state: 'success', updated_at: '2026-10-07T10:00:00Z' }];
   if (path.endsWith('/comments') || path.endsWith('/approve')) return {};
 }
@@ -142,6 +149,23 @@ test('CLI approves only exact reviewed PR run IDs and refuses a new head at star
   const stale = await cli(t, 'approve-runs', fixture, { HEAD_SHA: nextHead });
   assert.equal(stale.code, 1);
   assert.ok(!stale.calls.some((call) => call.method === 'POST'));
+});
+
+test('CLI approves unattributed fork runs only while the fork branch has one open PR', async (t) => {
+  // GitHub returns `pull_requests: []` on runs from forks.
+  const runs = { workflow_runs: [run({ pull_requests: [] }), run({ id: 12, pull_requests: [], head_branch: 'other' })] };
+  const sole = await cli(t, 'approve-runs', (path, _method, _calls, query) => {
+    if (path === `${prefix}/pulls`) return query.get('head') === 'sample-fork:fix-branch' && query.get('state') === 'open' ? [fork] : [];
+    return path === `${prefix}/actions/runs` ? runs : fixture(path);
+  });
+  assert.equal(sole.code, undefined, sole.stderr);
+  assert.deepEqual(sole.calls.filter((call) => call.method === 'POST').map((call) => call.path), [`${prefix}/actions/runs/11/approve`]);
+  const shared = await cli(t, 'approve-runs', (path) => {
+    if (path === `${prefix}/pulls`) return [fork, { ...fork, number: 2 }];
+    return path === `${prefix}/actions/runs` ? runs : fixture(path);
+  });
+  assert.equal(shared.code, undefined, shared.stderr);
+  assert.ok(!shared.calls.some((call) => call.method === 'POST'));
 });
 
 test('CLI fork machinery is refused, including a rename out of the protected path', async (t) => {
