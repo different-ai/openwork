@@ -1729,6 +1729,11 @@ export function createComputerControl({ adapters, runProgram, runScript, onTimin
           // the text into an editor it cannot name as a field.
           call.args = { ...call.args, credential_approval: app };
         }
+        // Only the Mac helper saves what the agent sees; it asks the organization's file rule
+        // through the handover below, as save_as does.
+        if (entries.some((step) => step.type === "save_image") && (platform !== "darwin" || targetFor(grant).placement !== "local")) {
+          return failure("unsupported_platform", "save_image works on a Mac only. Nothing was saved.");
+        }
         // The operation budget starts once the person has answered.
         limit = deadline(operationMs);
         const started = now();

@@ -1291,6 +1291,33 @@ test("an organization that asks shows the save card each time, and one that bloc
   assert.equal(broken.acts(), 1);
 });
 
+test("the agent saves what it sees as an image under the same file rule as save_as, on a Mac only", async (t) => {
+  const saveImage = (f, path) => f.control.execute({ sessionId: "chat", name: "computer_act", args: { observation_id: "observation", action: { type: "save_image", path } } });
+  const f = saveFixture(); t.after(() => f.control.reset(true));
+  await openForSaving(f);
+  assert.equal(payload(await saveImage(f, "/Users/me/Desktop/map.png")).path, "file_saved");
+  assert.deepEqual(f.cards(), [], "by default the agent decides");
+  assert.ok(f.control.savedFile({ sessionId: "chat", path: "/Users/me/Desktop/map.png" }), "the session card can open it");
+
+  const ask = saveFixture({ movePolicy: async () => ({ effect: "ask" }) }); t.after(() => ask.control.reset(true));
+  await openForSaving(ask);
+  const pending = saveImage(ask, "/Users/me/Desktop/map.png");
+  for (let waited = 0; !ask.cards().length && waited < 2_000; waited += 5) await new Promise((resolve) => setTimeout(resolve, 5));
+  assert.deepEqual(ask.cards()[0].files, { app: "Preview", names: ["/Users/me/Desktop/map.png"], save: true }, "the save card");
+  await ask.control.answerRequest({ sessionId: "chat", answer: "dismiss", id: ask.cards()[0].id });
+  assert.equal(payload(await pending).code, "save_declined");
+
+  const blocked = saveFixture({ movePolicy: async () => ({ effect: "deny", message: "Your organization does not let agents move files between apps." }) }); t.after(() => blocked.control.reset(true));
+  await openForSaving(blocked);
+  assert.equal(payload(await saveImage(blocked, "/Users/me/Desktop/map.png")).code, "organization_policy_denied");
+  assert.equal(blocked.acts(), 1, "nothing was sent with an approval");
+
+  const windows = saveFixture({ platform: "win32" }); t.after(() => windows.control.reset(true));
+  await openForSaving(windows);
+  assert.equal(payload(await saveImage(windows, "C:/map.png")).code, "unsupported_platform");
+  assert.equal(windows.acts(), 0, "a Windows PC never receives it");
+});
+
 /** A Mac helper with an Open panel in front: it asks before showing the panel, and picks the file once its path is approved. */
 function openPanelFixture(options = {}) {
   const seen = [];
