@@ -4,6 +4,7 @@ import { createServer } from "vite";
 import type { Place, Seed } from "@openwork/env";
 import { browserScript } from "@openwork/cdp";
 import { chrome } from "@openwork/hosts";
+import { writeXlsxWorkbook } from "../../packages/workbook/src/index.ts";
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -44,6 +45,7 @@ export async function workbotWorkspace(seed: Seed, { place }: { place: Place }) 
   let pendingIdentities = 0;
   const releaseIdentities: (() => void)[] = [];
   let listingFailure = false;
+  let viewerReads = 0;
   let recentStatus = 200;
   let folderStatus = 200;
   let holdFolder = false;
@@ -103,7 +105,7 @@ export async function workbotWorkspace(seed: Seed, { place }: { place: Place }) 
             identityReads.push(identityStatus);
             identityScopes.push({ principalId, organizationId, status: identityStatus });
             if (identityStatus !== 200) return json({ error: identityStatus === 401 ? "unauthorized" : "identity_unavailable" }, identityStatus);
-            return json({ name: "Alex", email: "alex@example.test", userId: principalId, organizationId, organizationName: "Example", enabled: true, calendar: true, documents, documentEditing, computer: referring.searchParams.get("computer") === "on", workspaceAssistant: enabled, guidedNavigation: referring.searchParams.get("guided") === "on", canSchedule: false, sideChats: referring.searchParams.get("sideChats") === "on", denUrl: "https://workspace.example.test" });
+            return json({ name: "Alex", email: "alex@example.test", userId: principalId, organizationId, organizationName: "Example", enabled: true, calendar: true, documents, documentEditing, computer: referring.searchParams.get("computer") === "on", browser: referring.searchParams.get("browser") === "on", browserChat: referring.searchParams.get("browserChat") === "on", workspaceAssistant: enabled, guidedNavigation: referring.searchParams.get("guided") === "on", canSchedule: false, sideChats: referring.searchParams.get("sideChats") === "on", denUrl: "https://workspace.example.test" });
           }
           const expectedUser = req.headers["x-openwork-client-user"];
           const expectedOrganization = req.headers["x-openwork-client-organization"];
@@ -113,6 +115,15 @@ export async function workbotWorkspace(seed: Seed, { place }: { place: Place }) 
             threadRequests.push({ actor, expectedUser: typeof expectedUser === "string" ? expectedUser : null });
             if (actor === "user_other" && holdOtherThread) { pendingOtherThreads++; await new Promise<void>(resolve => releaseOtherThreads.push(resolve)); pendingOtherThreads--; }
             return json({ available: true, name: "Workbot", organizationName: "Example", status: "idle", turns: thread(actor), hasEarlier: false, filesEnabled: false });
+          }
+          // No cloud computer in this fixture: its viewer always answers that the computer is paused.
+          if (url.pathname === "/v1/workbot/computer/viewer") { viewerReads++; return json({ state: "paused" }); }
+          // A spreadsheet Workbot wrote in the conversation (seedOwnerSpreadsheet): its bytes, and no rendered preview.
+          if (url.pathname === "/v1/workbot/files/out_budget/preview") return json({ error: "not_found" }, 404);
+          if (url.pathname === "/v1/workbot/files/out_budget") {
+            const { bytes } = await writeXlsxWorkbook([{ name: "Budget", rows: [["Item", "Cost"], ["Venue", 1200], ["Catering", 800]], header: true }]);
+            res.setHeader("content-type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
+            return void res.end(Buffer.from(bytes));
           }
           if (url.pathname === "/v1/workbot/connections") return json({ connections: [{ id: "google-workspace", name: "Google Workspace", app: "gmail", nativeProviderKey: "google-workspace", ready: !denied, connectMode: "external", connectUrl: "https://workspace.example.test/dashboard/your-connections?connectionId=google-workspace" }] });
           if (url.pathname === "/v1/workbot/chats") return json({ main: null, side: [{ id: "sidechat000000001", title: "Document questions", createdAt: Date.now(), updatedAt: Date.now() }] });
@@ -217,13 +228,14 @@ export async function workbotWorkspace(seed: Seed, { place }: { place: Place }) 
     resources.defer(releaseContent);
     resources.defer(releaseMetadata);
     return {
-      web, url, messages: () => [...messages], opened: () => [...opened], editorReads: () => [...editorReads], editorConnections: () => [...editorConnections], documentWrites: () => [...documentWrites],
+      web, url, messages: () => [...messages], viewerReads: () => viewerReads, opened: () => [...opened], editorReads: () => [...editorReads], editorConnections: () => [...editorConnections], documentWrites: () => [...documentWrites],
       holdDocumentMetadata: () => { holdMetadata = true; }, releaseDocumentMetadata: releaseMetadata,
       holdPreviewContent: () => { holdContent = true; }, releasePreviewContent: releaseContent, contentReads: () => [...contentReads],
       identityReads: () => [...identityReads], identityScopes: () => [...identityScopes], listingReads: () => [...listingReads], pendingFolders: () => pendingFolders,
       holdIdentity: () => { holdIdentity = true; }, pendingIdentities: () => pendingIdentities, releaseIdentity,
       threadRequests: () => [...threadRequests], pendingOtherThreads: () => pendingOtherThreads,
       holdOtherThread: () => { holdOtherThread = true; }, releaseOtherThread: releaseOther,
+      seedOwnerSpreadsheet: () => { thread("user_example").push({ id: "owner_sheet_turn", text: "Make me a budget sheet", sentAt: Date.now(), finishedAt: Date.now(), status: "done", attachments: [], outputs: [{ id: "out_budget", name: "Budget.xlsx", mediaType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", size: 4096, updatedAt: Date.now() }], parts: [{ kind: "text", text: "Here is the budget." }], modelSteps: 1, error: null }); },
       seedOwnerConversation: (text: string) => { thread("user_example").push({ id: "owner_account_turn", text, sentAt: Date.now(), finishedAt: Date.now(), status: "done", attachments: [], outputs: [], parts: [{ kind: "text", text: "Original account answer" }], modelSteps: 1, error: null }); },
       async documentReadStatus() { const response = await fetch(`${url}v1/workbot/documents/v1/documents/google-drive/files/file_brief/editor`); await response.arrayBuffer(); return response.status; },
       officeOpens: () => [...officeOpens], officeRequests: () => [...officeRequests], officeCloses: () => [...officeCloses], officeLaunches: () => [...officeLaunches],
