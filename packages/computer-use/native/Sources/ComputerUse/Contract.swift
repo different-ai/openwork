@@ -186,6 +186,8 @@ enum Action {
     case openFile(URL)
     /// The session's own window moved and resized on its screen, so apps sit side by side.
     case arrange(WindowLayout)
+    /// The app's open Save or Export sheet writes to this file: its name and folder are set, then Save.
+    case saveAs(URL, replace: Bool)
 
     static let batchLimit = 8
     static func batch(_ values: [String: Any], policy: RuntimePolicy = .desktop) throws -> [Action] {
@@ -238,6 +240,10 @@ enum Action {
                 throw UseError("invalid_arguments", "layout must be left_half, right_half, full or beside_openwork.")
             }
             self = .arrange(layout)
+        case "save_as" where policy == .embedded:
+            try a.only(["type", "path", "replace"])
+            guard values["replace"] == nil || (values["replace"] as? NSNumber).map({ CFGetTypeID($0) == CFBooleanGetTypeID() }) == true else { throw UseError("invalid_arguments", "replace must be true or false.") }
+            self = .saveAs(try FileHandoff.destination(try a.string("path", max: 1024)), replace: values["replace"] as? Bool == true)
         case "menu" where policy == .embedded:
             try a.only(["type", "path"])
             guard let path = values["path"] as? [String], (2...MenuRules.maxDepth + 1).contains(path.count),
@@ -298,6 +304,7 @@ enum Action {
         case .menu: return "menu"
         case .openFile: return "open_file"
         case .arrange: return "arrange"
+        case .saveAs: return "save_as"
         case .rightClick: return "right_click"
         case .hold: return "press_and_hold"
         case .showMenu: return "show_menu"

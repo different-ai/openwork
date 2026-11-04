@@ -9,7 +9,8 @@ import { browserHistoryMessages, computerHistoryMessages } from "../test-fixture
 
 GlobalRegistrator.register({ url: "https://web.example/" })
 Reflect.set(globalThis, "IS_REACT_ACT_ENVIRONMENT", true)
-const { ComputerSessionHistory } = await import("../src/components/chat/computer-session-history")
+const { ComputerSessionHistory, attachFileToComposer } = await import("../src/components/chat/computer-session-history")
+const { useComposerStateStore } = await import("../src/react-app/domains/session/surface/composer-state-store")
 const { TooltipProvider } = await import("../src/components/ui/tooltip")
 const { useComputerSessionHistoryStore } = await import("../src/components/chat/computer-session-history-store")
 const images = ["first", "second", "third"].map(value => `data:image/png;base64,${btoa(value)}`)
@@ -240,4 +241,60 @@ test("the live view choice is per chat and clears without touching other chats",
   store.setWorking("chat", true)
   expect(useComputerSessionHistoryStore.getState().working).toEqual({ chat: true })
   store.setWorking("chat", false); store.setWatching("other", false)
+})
+
+test("the card lists the files its session saved, each once, with Open, Show in Finder and Attach to chat", async () => {
+  const step = (id: string, output: unknown, toolName = "computer_act"): DynamicToolUIPart =>
+    ({ type: "dynamic-tool", toolName, toolCallId: id, state: "output-available", input: { observation_id: id, action: { type: "save_as", path: "/x" } }, output })
+  const saved = (path: string, bytes: number) => ({ ok: true, status: "dispatched", path: "file_saved", saved_file: { path, bytes } })
+  const history = collectComputerSessionHistory([{ id: "a", role: "assistant", parts: [
+    step("first", `${JSON.stringify(saved("/Users/me/Desktop/report.pdf", 2048))}\n{"post_observation":{"ok":true}}`),
+    step("chart", saved("/Users/me/Desktop/chart.png", 10)),
+    // Pressed Save but never found on disk, refused, or from the browser: not handed back.
+    step("unconfirmed", { ok: true, path: "file_save_unconfirmed", saved_file: { path: "/Users/me/ghost.pdf", bytes: 1 } }),
+    step("refused", { ok: false, code: "file_exists", next: "correct_request", saved_file: { path: "/Users/me/old.pdf", bytes: 1 } }),
+    step("browser", saved("/Users/me/page.pdf", 1), "browser_act"),
+    step("again", saved("/Users/me/Desktop/report.pdf", 4096)),
+  ] }])!
+  expect(history.savedFiles).toEqual([
+    { path: "/Users/me/Desktop/chart.png", name: "chart.png", bytes: 10 },
+    { path: "/Users/me/Desktop/report.pdf", name: "report.pdf", bytes: 4096 },
+  ])
+
+  const container = document.createElement("div"); document.body.append(container)
+  const root = createRoot(container); mounted = { root, container }
+  const calls: string[] = []
+  const fileActions = { open: (path: string) => calls.push(`open ${path}`), reveal: (path: string) => calls.push(`reveal ${path}`), attach: (path: string) => calls.push(`attach ${path}`) }
+  const render = async (next: typeof history, actions?: typeof fileActions) => {
+    await act(async () => root.render(createElement(TooltipProvider, { children: createElement(ComputerSessionHistory, { history: next, active: false, renderAction: part => createElement("p", {}, part.toolCallId), fileActions: actions }) })))
+  }
+  const press = async (label: string) => act(async () => container.querySelector<HTMLButtonElement>(`[aria-label="${label}"]`)!.click())
+  await render(history, fileActions)
+  // Shown without opening the card.
+  expect(container.querySelector('[data-computer-view-count]')).toBeNull()
+  const rows = [...container.querySelectorAll("[data-computer-saved-file]")]
+  expect(rows.map(row => row.querySelector("[title]")?.getAttribute("title"))).toEqual(["/Users/me/Desktop/chart.png", "/Users/me/Desktop/report.pdf"])
+  expect(rows[1]!.textContent).toContain("4 KB")
+  await press("Open report.pdf"); await press("Show report.pdf in Finder"); await press("Attach chart.png to chat")
+  expect(calls).toEqual(["open /Users/me/Desktop/report.pdf", "reveal /Users/me/Desktop/report.pdf", "attach /Users/me/Desktop/chart.png"])
+
+  // Off the desktop the files are still named, with nothing to press.
+  await render(history)
+  expect(container.querySelectorAll("[data-computer-saved-file]")).toHaveLength(2)
+  expect(container.querySelector('[aria-label="Open report.pdf"]')).toBeNull()
+  await render(collectComputerSessionHistory(computerHistoryMessages(images))!, fileActions)
+  expect(container.querySelector("[data-computer-saved-files]")).toBeNull()
+})
+
+test("attaching a saved file puts it in that chat's composer once, as a file mention", () => {
+  const store = useComposerStateStore.getState()
+  store.setDraft("chat", "Summarize")
+  attachFileToComposer("chat", "/Users/me/My Report.pdf")
+  attachFileToComposer("chat", "/Users/me/My Report.pdf")
+  const state = useComposerStateStore.getState()
+  expect(state.sessions.chat?.draft).toBe("Summarize @/Users/me/My%20Report.pdf ")
+  expect(state.sessions.chat?.mentions).toEqual({ "/Users/me/My Report.pdf": "file" })
+  expect(state.pendingFocusSessionId).toBe("chat")
+  expect(state.sessions.other).toBeUndefined()
+  store.clearSession("chat"); useComposerStateStore.setState({ pendingFocusSessionId: null })
 })

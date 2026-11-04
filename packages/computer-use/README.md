@@ -490,6 +490,28 @@ puts the agent's copy back first. Menus keep hiding Copy,
 Cut and Paste, and other chords with C, X or V stay blocked. The standalone
 helper, Windows and Linux refuse all three.
 
+`{ type: "save_as", path: "/Users/…/Desktop/report.pdf", replace?: true }`
+fills the app's open Save or Export sheet in one step: it opens the sheet's
+Go To field for the folder, sets the name and presses Save, setting each value
+through accessibility and reading it back. The sheet must be open and observed
+first, and the step is sent on its own. The path must be absolute and name a
+file in an existing folder; links are resolved and folders refused.
+
+The agent decides where to save without asking the person. A save is a file
+moved between apps, so it goes through the same Agent permissions check as
+`open_file` (`movePolicy`, kind `computer_files`): with no rule it goes ahead;
+Ask first shows the card "Save report.pdf to Desktop from Preview?" each time,
+with nothing remembered; Block, or a rule that cannot be read, refuses it. On
+this Mac, `computer_open` also returns a `save_folder` the desktop made for the
+chat (`~/Downloads/OpenWork/<chat>`), where the agent saves when the person
+names no folder.
+
+A file already at the path is refused before anything is sent unless the step
+says `replace: true`, the agent's own guard against overwriting by accident; the
+sheet's own "Replace?" prompt is answered the same way (Cancel otherwise). The
+step path is `file_saved`, with `saved_file: { path, bytes }` in the receipt,
+only once the file is on disk and written after Save; otherwise it is
+`file_save_unconfirmed`. Windows and Linux helpers refuse the step.
 
 A program defaults to 30 seconds, accepts a timeout up to 60 seconds, and is
 limited to 80 helper calls and 32 KB of returned program data. The desktop

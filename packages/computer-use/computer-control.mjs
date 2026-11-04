@@ -199,7 +199,7 @@ function deadline(ms) {
  * @typedef {{ isError?: boolean, content: Array<{ type: string, text?: string, data?: string, mimeType?: string }> }} ComputerResult
  * @typedef {{ sessionId?: string }} ChatInput
  * @typedef {{ ok?: boolean, error?: { code: string, message: string }, mayHaveActed?: boolean, [key: string]: unknown }} ScriptResult
- * @typedef {{ id: string, reason: "setup" | "script" | "files" | "credential", computer: string, placement: "local" | "remote", detail?: string, appId?: string, purpose?: string, standing?: boolean, script?: { app: string, code: string }, files?: { app: string, names: string[] }, credential?: { site?: string, app?: string, appId?: string } }} ComputerRequest
+ * @typedef {{ id: string, reason: "setup" | "script" | "files" | "credential", computer: string, placement: "local" | "remote", detail?: string, appId?: string, purpose?: string, standing?: boolean, script?: { app: string, code: string }, files?: { app: string, names: string[], save?: boolean }, credential?: { site?: string, app?: string, appId?: string } }} ComputerRequest
  * @typedef {{ targets?: Record<string, string>, computer?: string }} SavedChoices
  * @typedef {{ effect: "allow" } | { effect: "ask" } | { effect: "deny", message: string }} MoveDecision
  * @typedef {{ kind: "files", app: string, names: string[], save?: boolean } | { kind: "clipboard" }} ContentMove
@@ -254,6 +254,7 @@ const isWebBrowser = (app) => String(app).toLowerCase().split(/[^a-z0-9]+/).some
  *   permissionEntry?: () => Promise<{ name: string, ours: boolean }>,
  *   onRequest?: (sessionId: string, request: ComputerRequest | null) => void,
  *   movePolicy?: (input: { kind: "computer_files" | "computer_clipboard", sessionId: string }) => Promise<MoveDecision>,
+ *   saveFolder?: (sessionId: string) => Promise<string | null>,
  *   requestMs?: number,
  *   runScript?: (request: { app: string, code: string, timeoutMs: number }, signal: AbortSignal) => Promise<ScriptResult>,
  *   onTiming?: (sessionId: string, step: { name: string, computerMs: number, modelMs?: number, followed?: boolean }) => void,
@@ -262,6 +263,7 @@ const isWebBrowser = (app) => String(app).toLowerCase().split(/[^a-z0-9]+/).some
  */
 export function createComputerControl({ adapters, runProgram, runScript, onTiming = () => {}, browserTask, readRemoteFeatureEnabled = async () => false, standing = { read: async () => ({ targets: {} }), write: async (_state) => {} }, presence = null, platform = process.platform,
   permissionEntry = async () => ({ name: "OpenWork", ours: false }), onRequest = () => {}, movePolicy = async (_input) => ({ effect: "allow" }),
+  saveFolder = async (_sessionId) => null,
   cleanupMs = 3000, operationMs = 120_000, pollMs = 750, idleMs = 90_000, requestMs = 600_000, now = Date.now }) {
   const targets = new Map();
   for (const candidate of Array.isArray(adapters) ? adapters : []) {
@@ -292,6 +294,8 @@ export function createComputerControl({ adapters, runProgram, runScript, onTimin
    * most computers, and up to APPS_PER_CHAT on a parallel one.
    */
   const leases = new Map();
+  /** Per chat: files a save_as step confirmed on this computer, which the person may open from the chat. */
+  const savedFiles = new Map();
   /** Per computer: whose control call has the keyboard and pointer, and who waits. */
   const slots = new Map();
   /** Chats on screen in a visible OpenWork window, as the desktop reports them (debounced there). */
@@ -446,6 +450,7 @@ export function createComputerControl({ adapters, runProgram, runScript, onTimin
    * Shows which files an app or page is about to receive and waits for Send, Always
    * allow in this chat, or Don't send. Files leave this computer only on that answer.
    * `everyTime`: the organization asks about each file, so nothing is remembered.
+   * `save`: the one name is where the app will save a file; the card asks to save it there.
    * @param {{ app: string, names: string[], save?: boolean, everyTime?: boolean }} files
    * @returns {Promise<"allow" | "always" | "dismiss" | "aborted" | "timeout" | "busy" | "too_many">}
    */
@@ -456,13 +461,14 @@ export function createComputerControl({ adapters, runProgram, runScript, onTimin
     const app = String(files.app);
     if (!app || app.length > 200) return "too_many";
     const everyTime = files.everyTime === true;
+    const save = files.save === true && files.names.length === 1;
     // "Always" covers only the recipient it was given for, and only handing over files.
     if (files.names.length && !everyTime && grant.filesAlwaysFor?.has(app)) return "always";
     if (scriptRequests.has(grant.sessionId)) return "busy";
     const target = targetFor(grant);
     const names = [...files.names];
     const answer = await approve(grant, { id: randomUUID(), reason: /** @type {const} */ ("files"), computer: target.label, placement: target.placement,
-      ...(everyTime ? { standing: false } : {}), files: { app, names } }, signal);
+      ...(everyTime ? { standing: false } : {}), files: { app, names, ...(save ? { save } : {}) } }, signal);
     if (everyTime) return answer === "always" ? "allow" : answer;
     // Allowing a panel to be browsed lists no files, so it never becomes a standing approval.
     if (answer === "always" && !names.length) return "allow";
@@ -1749,15 +1755,18 @@ export function createComputerControl({ adapters, runProgram, runScript, onTimin
         const handover = (name === "computer_act" || name === "computer_open") && asked?.code === "files_approval_required";
         if ((panel || handover) && asked.dispatched === false) {
           const names = handover && Array.isArray(asked.files) ? asked.files : [];
+          const save = handover && asked.save === true;
           const checked = handover && !names.length ? /** @type {const} */ ({ answer: "unreadable" })
-            : await approveMove(grant, { kind: "files", app: typeof asked.app === "string" ? asked.app : "the app", names }, signal);
+            : await approveMove(grant, { kind: "files", app: typeof asked.app === "string" ? asked.app : "the app", names, ...(save ? { save } : {}) }, signal);
           const answer = checked.answer;
           if (checked.answer === "blocked") {
             result = failure("organization_policy_denied", name === "computer_open" ? `${checked.message} Nothing was opened.`
+              : save ? `${checked.message} Nothing was saved; cancel the sheet or ask the person to save it.`
               : `${checked.message} ${panel ? "The agent cannot look through files here; cancel the panel" : "Nothing was sent; cancel the panel"} or ask the person to choose.`);
           } else if (answer !== "allow") {
-            result = failure(panel ? "file_panel_declined" : "files_declined", answer === "dismiss"
+            result = failure(panel ? "file_panel_declined" : save ? "save_declined" : "files_declined", answer === "dismiss"
               ? panel ? "The person chose not to let the agent look through their files. Cancel the panel or ask what to choose."
+                : save ? "The person chose not to save this file there. Nothing was saved; ask where to save it."
                 : name === "computer_open" ? "The person chose not to hand this file to the app. Nothing was opened; ask what to use instead."
                 : "The person chose not to hand these files to the app. Nothing was sent; cancel the panel or ask what to choose."
               : answer === "too_many" ? "More files are selected than one approval can show. Select at most 20. Nothing was sent."
@@ -1774,6 +1783,11 @@ export function createComputerControl({ adapters, runProgram, runScript, onTimin
             }
           }
         }
+        const saved = name === "computer_act" && !result.isError && targetFor(grant).placement === "local" ? stateOf(result) : null;
+        if (saved?.path === "file_saved" && typeof saved.saved_file?.path === "string") {
+          const files = savedFiles.get(grant.sessionId) ?? new Set();
+          if (files.size < 200) savedFiles.set(grant.sessionId, files.add(saved.saved_file.path));
+        }
         recordStep(grant, name, started, stateOf(result)?.desktop?.followed);
         if (result.isError && stateOf(result)?.code === "permissions_required" && targetFor(grant).placement === "local") return await recoverPermissions(grant, name, args, signal);
         let delivered = deliverResult(call, result);
@@ -1782,7 +1796,12 @@ export function createComputerControl({ adapters, runProgram, runScript, onTimin
           delivered = { ...delivered, content: [...delivered.content, { type: "text", text: JSON.stringify({ open_sessions: listApps(grant),
             note: "Pass session_id to observe, act, zoom, status or close another app; without it, calls go to the app opened last." }) }] };
         }
-        return fitted.length ? { ...delivered, content: [...delivered.content, { type: "text", text: JSON.stringify({ drag_paths_fitted: fitted }) }] } : delivered;
+        // Where this chat saves when the person names no folder: the agent's default, not an approval.
+        if (name === "computer_open" && !result.isError && platform === "darwin" && targetFor(grant).placement === "local") {
+          grant.saveFolder ??= await saveFolder(grant.sessionId).then((folder) => typeof folder === "string" && folder.startsWith("/") ? folder : undefined, () => undefined);
+        }
+        const notes = { ...(fitted.length ? { drag_paths_fitted: fitted } : {}), ...(name === "computer_open" && grant.saveFolder ? { save_folder: grant.saveFolder } : {}) };
+        return Object.keys(notes).length ? { ...delivered, content: [...delivered.content, { type: "text", text: JSON.stringify(notes) }] } : delivered;
       } catch (error) {
         return failure("computer_error", `${error instanceof Error ? error.message : String(error)} Do not replay this call; inspect the computer controls before continuing.`);
       } finally { limit?.dispose(); }
@@ -1800,6 +1819,13 @@ export function createComputerControl({ adapters, runProgram, runScript, onTimin
       if (own.length) return (await Promise.all(own.map((current) => release(current, true)))).every(Boolean);
       await rearm(sessionId);
       return true;
+    },
+    /**
+     * Whether this chat's computer use saved exactly this file on this computer.
+     * @param {{ sessionId?: string, path?: string }} input
+     */
+    savedFile({ sessionId, path } = {}) {
+      return typeof sessionId === "string" && typeof path === "string" && savedFiles.get(sessionId)?.has(path) === true;
     },
     /** @param {ChatInput} input */
     async revoke({ sessionId } = {}) {

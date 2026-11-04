@@ -116,6 +116,10 @@ function FilesRequest({ sessionId, request, files }: { sessionId: string; reques
   }
 
   const count = files.names.length
+  // A save names where the app will write a file: its name and folder, with the full path on hover.
+  const saving = files.save === true && count === 1 ? files.names[0]! : null
+  const savingName = saving?.slice(saving.lastIndexOf("/") + 1)
+  const savingFolder = saving ? saving.slice(0, saving.lastIndexOf("/")).split("/").pop() || "/" : null
   // Each name exactly as stored: hidden characters shown, no right-to-left reordering.
   const shown = files.names.map(revealHidden)
   const hidden = shown.reduce((sum, name) => sum + name.hidden, 0)
@@ -127,8 +131,10 @@ function FilesRequest({ sessionId, request, files }: { sessionId: string; reques
             <Monitor size={16} strokeWidth={1.9} />
           </div>
           <div className="min-w-0 flex-1">
-            <div className="text-[13px] font-medium leading-5 text-dls-text">{count ? `Give ${count === 1 ? "this file" : `these ${count} files`} to ${files.app}?` : `Let the agent look through your files for ${files.app}?`}</div>
-            <div className="mt-0.5 text-[12px] leading-5 text-dls-secondary">{count
+            <div className="text-[13px] font-medium leading-5 text-dls-text" title={saving ?? undefined}>{saving ? `Save ${savingName} to ${savingFolder} from ${files.app}?` : count ? `Give ${count === 1 ? "this file" : `these ${count} files`} to ${files.app}?` : `Let the agent look through your files for ${files.app}?`}</div>
+            <div className="mt-0.5 text-[12px] leading-5 text-dls-secondary">{saving
+              ? `The agent chose where ${files.app} saves on ${request.computer}.`
+              : count
               ? `The agent chose ${count === 1 ? "it" : "them"} on ${request.computer}. ${files.app} can upload what it receives.`
               : `${files.app} opened a file panel on ${request.computer}. The agent sees the file names it shows, and asks again before handing any file over.`}</div>
             {files.canRemember && files.site ? <div className="mt-1 text-[12px] leading-5 text-dls-secondary" data-testid="session-computer-files-remember-scope">Choosing a folder remembers file sharing with {files.site} from that folder across chats and Slack tasks on this computer. A system folder picker opens next. Remove permission in Settings → Computer use.</div> : null}
@@ -140,10 +146,10 @@ function FilesRequest({ sessionId, request, files }: { sessionId: string; reques
           </div>
         </div>
         <div className="flex flex-wrap items-center justify-end gap-2">
-          <Button type="button" variant="ghost" size="sm" disabled={busy !== null} aria-busy={busy === "dismiss"} data-testid="session-computer-files-dismiss" onClick={() => void answer("dismiss")}>{count ? "Don't give" : "Don't allow"}</Button>
-          {count && request.standing !== false ? <Button type="button" variant="outline" size="sm" disabled={busy !== null} aria-busy={busy === "always"} data-testid="session-computer-files-always" onClick={() => void answer("always")}>Always give files to {files.app} in this chat</Button> : null}
+          <Button type="button" variant="ghost" size="sm" disabled={busy !== null} aria-busy={busy === "dismiss"} data-testid="session-computer-files-dismiss" onClick={() => void answer("dismiss")}>{saving ? "Don't save" : count ? "Don't give" : "Don't allow"}</Button>
+          {count && !saving && request.standing !== false ? <Button type="button" variant="outline" size="sm" disabled={busy !== null} aria-busy={busy === "always"} data-testid="session-computer-files-always" onClick={() => void answer("always")}>Always give files to {files.app} in this chat</Button> : null}
           {files.canRemember ? <Button type="button" variant="outline" size="sm" disabled={busy !== null} aria-busy={busy === "remember"} data-testid="session-computer-files-remember" onClick={() => void answer("remember")}>Choose folder and remember</Button> : null}
-          <Button type="button" size="sm" disabled={busy !== null} aria-busy={busy === "allow"} data-testid="session-computer-files-allow" onClick={() => void answer("allow")}>{count ? `Give ${count === 1 ? "file" : "files"}` : "Allow"}</Button>
+          <Button type="button" size="sm" disabled={busy !== null} aria-busy={busy === "allow"} data-testid="session-computer-files-allow" onClick={() => void answer("allow")}>{saving ? "Save" : count ? `Give ${count === 1 ? "file" : "files"}` : "Allow"}</Button>
         </div>
       </div>
     </div>

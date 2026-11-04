@@ -111,7 +111,64 @@ enum DialogRules {
     }
 }
 
+/// Save and Export sheets: the step that writes a file answers their replace prompt itself.
+enum SaveRules {
+    /// The button to press when the sheet asks whether to replace a file, or nil when these
+    /// buttons are not that prompt. Replacing happens only when the step said so.
+    static func replaceAnswer(buttons: [String], replace: Bool) -> String? {
+        let titles = buttons.map { $0.trimmingCharacters(in: .whitespaces) }
+        guard let yes = titles.first(where: { $0.lowercased() == "replace" }),
+              let no = titles.first(where: { $0.lowercased() == "cancel" }) else { return nil }
+        return replace ? yes : no
+    }
+}
+
 extension MacAccessibility {
+    /// The name field of a Save or Export sheet ("Save As"), by the identifier AppKit gives it.
+    func saveNameField(_ dialog: WindowTarget) -> AXUIElement? {
+        firstElement(in: dialog.element) { element in
+            (attribute(element, kAXRoleAttribute) as? String) == "AXTextField"
+                && (attribute(element, kAXIdentifierAttribute) as? String)?.lowercased().contains("save") == true
+        }
+    }
+
+    /// The text field that has the keyboard in `pid`: after Command-Shift-G, the panel's Go To field.
+    func focusedTextField(_ pid: pid_t) -> AXUIElement? {
+        guard let focused = elementAttribute(AXUIElementCreateApplication(pid), kAXFocusedUIElementAttribute),
+              ["AXTextField", "AXComboBox"].contains(attribute(focused, kAXRoleAttribute) as? String ?? "") else { return nil }
+        return focused
+    }
+
+    /// The buttons of a prompt over a save sheet: a sheet on it, or a dialog the app focused.
+    func savePrompt(over dialog: WindowTarget, app: AppIdentity) -> [(title: String, button: AXUIElement)] {
+        var prompts = (attribute(dialog.element, kAXChildrenAttribute) as? [AXUIElement] ?? [])
+            .filter { (attribute($0, kAXRoleAttribute) as? String) == "AXSheet" }
+        if let focused = elementAttribute(AXUIElementCreateApplication(app.pid), kAXFocusedWindowAttribute), !CFEqual(focused, dialog.element),
+           DialogRules.dialogSubroles.contains(attribute(focused, kAXSubroleAttribute) as? String ?? "") {
+            prompts.append(focused)
+        }
+        return prompts.flatMap { prompt in
+            elements(in: prompt) { (attribute($0, kAXRoleAttribute) as? String) == "AXButton" }
+                .compactMap { button in (attribute(button, kAXTitleAttribute) as? String).map { ($0, button) } }
+        }
+    }
+
+    private func firstElement(in root: AXUIElement, where match: (AXUIElement) -> Bool) -> AXUIElement? {
+        elements(in: root, limit: 1, where: match).first
+    }
+    private func elements(in root: AXUIElement, limit: Int = 40, where match: (AXUIElement) -> Bool) -> [AXUIElement] {
+        var found: [AXUIElement] = []
+        var pending: [(AXUIElement, Int)] = [(root, 0)]
+        var visited = 0
+        while let (element, depth) = pending.popLast(), visited < 400, found.count < limit {
+            visited += 1
+            if match(element) { found.append(element) }
+            guard depth < 12, let children = attribute(element, kAXChildrenAttribute) as? [AXUIElement] else { continue }
+            pending += children.map { ($0, depth + 1) }
+        }
+        return found
+    }
+
     /// A dialog over `target`, if an action opened one.
     func dialog(over target: WindowTarget, app: AppIdentity) async -> DialogTarget? {
         let root = AXUIElementCreateApplication(app.pid)

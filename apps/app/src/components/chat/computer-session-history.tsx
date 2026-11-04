@@ -1,15 +1,47 @@
 import { useEffect, useState, type ReactNode } from "react"
 import type { DynamicToolUIPart } from "ai"
-import { ChevronRight, CodeXml, Monitor, Pause, PictureInPicture2, Play } from "lucide-react"
+import { ChevronRight, CodeXml, ExternalLink, FileText, FolderOpen, Monitor, Paperclip, Pause, PictureInPicture2, Play } from "lucide-react"
 
 import { markFeatureUsed } from "@/app/lib/den"
+import { desktopBridge } from "@/app/lib/desktop"
 import { Button } from "@/components/ui/button"
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible"
 import { Image } from "@/components/ui/image"
+import { toast } from "@/components/ui/sonner"
 import { isToolPartInFlight } from "@/lib/tool-activity"
 import { formatToolCallDuration } from "@/lib/tool-call-duration"
-import { cn } from "@/lib/utils"
+import { cn, formatFileSize } from "@/lib/utils"
 import { type ComputerActionMark, type ComputerSessionHistory as History } from "@/lib/computer-session-history"
+import { encodeComposerMentionValue } from "@/react-app/domains/session/surface/composer/mention-encoding"
+import { getComposerDraft, getComposerMentions, useComposerStateStore } from "@/react-app/domains/session/surface/composer-state-store"
+
+export type SavedFileActions = { open: (path: string) => void; reveal: (path: string) => void; attach: (path: string) => void }
+
+/** Puts a saved file in the chat's composer as a file mention, as the composer's own file picker does. */
+export function attachFileToComposer(sessionId: string, path: string) {
+  const state = useComposerStateStore.getState()
+  const draft = getComposerDraft(state, sessionId)
+  const mentions = getComposerMentions(state, sessionId)
+  const token = `@${encodeComposerMentionValue(path)}`
+  if (mentions[path] !== "file" || !draft.includes(token)) {
+    state.setDraft(sessionId, `${draft}${draft && !/\s$/.test(draft) ? " " : ""}${token} `)
+    state.setMentions(sessionId, { ...mentions, [path]: "file" })
+  }
+  useComposerStateStore.setState({ pendingFocusSessionId: sessionId })
+}
+
+/**
+ * Open and Show in Finder go through the desktop, which launches only a file this chat's
+ * computer use saved on this computer and otherwise shows it in its folder.
+ */
+export function desktopSavedFileActions(sessionId: string): SavedFileActions {
+  const show = (path: string, reveal: boolean) => void desktopBridge.computerOpenSavedFile({ sessionId, path, ...(reveal ? { reveal } : {}) }).then(result => {
+    if (!result.ok) toast.error(result.error || "Could not open this file.")
+    else if (result.action === "unavailable") toast.error("This file is no longer on this computer.")
+    else if (result.action === "revealed" && !reveal) toast.info("Shown in Finder: only files the computer saved here in this run open directly.")
+  }, () => toast.error("Could not reach this file."))
+  return { open: path => show(path, false), reveal: path => show(path, true), attach: path => attachFileToComposer(sessionId, path) }
+}
 
 /**
  * `live` is the chat's working computer: the card shows its work, and its live
@@ -18,11 +50,13 @@ import { type ComputerActionMark, type ComputerSessionHistory as History } from 
 /** Replay speeds, in turn: a capture every 1.5 s at 1×. */
 const SPEEDS = [1, 2, 4, 0.5] as const
 
-export function ComputerSessionHistory({ history, active, renderAction, live }: {
+export function ComputerSessionHistory({ history, active, renderAction, live, fileActions }: {
   history: History
   active: boolean
   renderAction: (part: DynamicToolUIPart) => ReactNode
   live?: { watching: boolean; onWatch: (watching: boolean) => void }
+  /** On the desktop: what the person can do with a file the session saved. */
+  fileActions?: SavedFileActions
 }) {
   const [open, setOpen] = useState(false)
   const [playing, setPlaying] = useState(false)
@@ -100,6 +134,19 @@ export function ComputerSessionHistory({ history, active, renderAction, live }: 
           <PictureInPicture2 aria-hidden="true" />{live.watching ? "Hide live view" : "Watch live"}
         </Button> : null}
       </div>
+      {/* What the session made for the person, without opening the card. */}
+      {history.savedFiles.length > 0 ? <ul data-computer-saved-files="" aria-label="Saved files" className="space-y-1 border-t border-border px-3 py-2">
+        {history.savedFiles.map(file => <li key={file.path} data-computer-saved-file="" className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
+          <FileText aria-hidden="true" className="size-4 shrink-0 text-muted-foreground" />
+          <span className="min-w-0 flex-1 truncate text-sm" title={file.path}>{file.name}</span>
+          <span className="shrink-0 text-xs tabular-nums text-muted-foreground">{formatFileSize(file.bytes)}</span>
+          {fileActions ? <span className="flex shrink-0 items-center">
+            <Button variant="ghost" size="xs" aria-label={`Open ${file.name}`} onClick={() => fileActions.open(file.path)}><ExternalLink aria-hidden="true" />Open</Button>
+            <Button variant="ghost" size="xs" aria-label={`Show ${file.name} in Finder`} onClick={() => fileActions.reveal(file.path)}><FolderOpen aria-hidden="true" />Show in Finder</Button>
+            <Button variant="ghost" size="xs" aria-label={`Attach ${file.name} to chat`} onClick={() => fileActions.attach(file.path)}><Paperclip aria-hidden="true" />Attach to chat</Button>
+          </span> : null}
+        </li>)}
+      </ul> : null}
       <CollapsibleContent>
         <div className="space-y-3 border-t border-border p-3">
           <Collapsible>
