@@ -309,6 +309,8 @@ export function createComputerControl({ adapters, runProgram, runScript, onTimin
   let remoteRequested = false;
   // `standardCodeMode`: on, programs run as standard JavaScript.
   let standardCodeMode = false;
+  // `parallelComputerUse`: on, a subagent works on its chat's computer as part of the chat.
+  let parallelAgents = false;
   let saved = null;
   let loadingChoices = null;
   let remembering = Promise.resolve();
@@ -320,12 +322,13 @@ export function createComputerControl({ adapters, runProgram, runScript, onTimin
    * chat's computer, Stop, Take over and Continue, questions and output folder are its; its
    * apps, leases, steps and approvals stay its own.
    */
-  const head = (grant) => grant.root ?? grant;
+  const rootOf = (grant) => parallelAgents ? grant.root ?? null : null;
+  const head = (grant) => rootOf(grant) ?? grant;
   /** The chat and every subagent working for it. */
   const crew = (grant) => [...grants.values()].filter((other) => head(other) === head(grant));
   const crewLeases = (grant) => [...leases.values()].filter((current) => head(current.grant) === head(grant));
   /** What the chat's Computer view shows: a subagent's view shows its own apps, the chat's every agent's. */
-  const shownLeases = (grant) => grant.root ? mine(grant) : crewLeases(grant);
+  const shownLeases = (grant) => rootOf(grant) ? mine(grant) : crewLeases(grant);
   /** A takeover of any of the chat's apps pauses all its agents until Continue. */
   const handoffOf = (grant) => crew(grant).find((other) => other.handoff) ?? null;
   /** Where the chat's questions to the person show: in the chat itself, never only in a subagent. */
@@ -615,8 +618,8 @@ export function createComputerControl({ adapters, runProgram, runScript, onTimin
   async function grantFor(sessionId, rootSessionId) {
     if (closed || resetting) throw new Error("Computer use is stopping.");
     if (typeof sessionId !== "string" || !sessionId.trim()) throw new Error("A chat is required.");
-    relate(sessionId, rootSessionId);
-    const rootId = roots.get(sessionId);
+    if (parallelAgents) relate(sessionId, rootSessionId);
+    const rootId = parallelAgents ? roots.get(sessionId) : undefined;
     const root = rootId ? await grantFor(rootId) : null;
     let grant = grants.get(sessionId);
     if (!grant) {
@@ -1503,6 +1506,15 @@ export function createComputerControl({ adapters, runProgram, runScript, onTimin
       return standardCodeMode;
     },
     /**
+     * The renderer reports the `parallelComputerUse` feature. Off, every session is its own
+     * chat, as before; a subagent's link to its chat counts again once it is back on.
+     */
+    setParallelAgents(enabled) {
+      parallelAgents = enabled === true;
+      return parallelAgents;
+    },
+    parallelAgents() { return parallelAgents; },
+    /**
      * The person's answer to an in-chat request: allow this chat, always
      * allow, or not now. Setup itself is answered by macOS permissions.
      * @param {ChatInput & { answer?: "dismiss" | "allow" | "always" | "remember", id?: string }} input
@@ -1881,7 +1893,7 @@ export function createComputerControl({ adapters, runProgram, runScript, onTimin
      * @param {ChatInput} input
      */
     chatOf({ sessionId } = {}) {
-      return typeof sessionId === "string" ? roots.get(sessionId) ?? sessionId : "";
+      return typeof sessionId !== "string" ? "" : parallelAgents ? roots.get(sessionId) ?? sessionId : sessionId;
     },
     /** @param {ChatInput} input */
     async revoke({ sessionId } = {}) {

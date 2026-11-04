@@ -54,8 +54,11 @@ export default {
     const browser = context.options.browser;
     // A subagent's computer work belongs to the chat that started it: that chat's Stop, Take
     // over, computer and output folder. The engine's session tree says which; model input never does.
+    // Only while the desktop has `parallelComputerUse` on; off, each session is its own chat.
+    let parallelOn = false;
     const roots = new Map<string, string>();
     const rootOf = async (sessionID: string): Promise<string | undefined> => {
+      if (!parallelOn) return undefined;
       const known = roots.get(sessionID);
       if (known) return known;
       let id = sessionID;
@@ -88,6 +91,7 @@ export default {
           redirect: "error", signal: AbortSignal.timeout(5_000), headers: { Authorization: `Bearer ${browser.token}` },
         });
         const body: unknown = response.ok ? await response.json() : undefined;
+        if (body && typeof body === "object" && "parallel" in body) parallelOn = body.parallel === true;
         return body && typeof body === "object" && "offered" in body && typeof body.offered === "boolean" ? body.offered : current;
       } catch {
         return current;

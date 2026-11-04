@@ -892,6 +892,7 @@ test("subagents work in their chat's computer: one folder, one Stop and Take ove
   });
   t.after(() => f.control.reset(true));
   await f.control.setFeatureEnabled(true);
+  f.control.setParallelAgents(true);
   // The bridge names each subagent's chat; the model never does.
   const agent = (sessionId, name, args) => f.control.execute({ sessionId, rootSessionId: "chat", name, args });
   const open = (sessionId, app) => agent(sessionId, "computer_open", { app_id: app, mode: "control", purpose: `Work in ${app}` });
@@ -924,6 +925,22 @@ test("subagents work in their chat's computer: one folder, one Stop and Take ove
   // The chat's next turn turns it back on for them.
   await f.control.endTurn({ sessionId: "chat" });
   assert.equal(notes(await open("maps-agent", "maps")).ok, true);
+});
+
+test("with parallel computer use off, a subagent is its own chat, as before", async (t) => {
+  const f = parallelFixture({ control: { platform: "darwin", saveFolder: async (sessionId) => `/Users/me/Downloads/OpenWork/${sessionId}` } });
+  t.after(() => f.control.reset(true));
+  await f.control.setFeatureEnabled(true);
+  const open = (sessionId, app) => f.control.execute({ sessionId, rootSessionId: "chat", name: "computer_open", args: { app_id: app, mode: "control", purpose: `Work in ${app}` } });
+  const folder = (result) => Object.assign({}, ...result.content.map((part) => part.type === "text" ? JSON.parse(part.text) : {})).save_folder;
+  assert.equal(folder(await open("maps-agent", "maps")), "/Users/me/Downloads/OpenWork/maps-agent", "its own folder");
+  assert.equal(f.control.chatOf({ sessionId: "maps-agent" }), "maps-agent");
+  await f.control.halt({ sessionId: "chat" });
+  assert.equal(payload(await f.control.execute({ sessionId: "maps-agent", rootSessionId: "chat", name: "computer_observe", args: {} })).observation_id, "observation-maps", "the chat's Stop does not reach it");
+  // Turned on later, the link counts from the next call (after the stopped chat's next turn).
+  await f.control.endTurn({ sessionId: "chat" });
+  f.control.setParallelAgents(true);
+  assert.equal(folder(await open("slides-agent", "powerpoint")), "/Users/me/Downloads/OpenWork/chat");
 });
 
 test("a computer that is not parallel keeps one app per chat", async (t) => {

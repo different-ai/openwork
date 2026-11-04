@@ -1613,6 +1613,7 @@ function MessageGroup({
   const computerHistoryEnabled = useComputerSessionHistoryStore(state => state.enabled)
   const computerHistory = React.useMemo(() => computerHistoryEnabled ? collectComputerSessionHistory(items.map(item => item.message), { thinking: showThinking }) : null, [computerHistoryEnabled, items, showThinking])
   const computerWorking = useComputerSessionHistoryStore(state => Boolean(state.working[sessionId]))
+  const parallelComputer = useComputerSessionHistoryStore(state => state.parallel)
   const savedFileActions = React.useMemo(() => isElectronRuntime() && !readOnly ? desktopSavedFileActions(sessionId) : undefined, [readOnly, sessionId])
   const watchingComputer = useComputerSessionHistoryStore(state => Boolean(state.watching[sessionId]))
   // steadyLiveTurn: a running turn keeps its parts in arrival order (no
@@ -1864,7 +1865,7 @@ function MessageGroup({
           live={computerWorking && isLastGroup ? { watching: watchingComputer, onWatch: watching => useComputerSessionHistoryStore.getState().setWatching(sessionId, watching) } : undefined}
           fileActions={savedFileActions}
           turnEndedAt={isLiveGroup && parentActive ? null : getMessageCompleted(lastItem.message)}
-          turnStartedAt={getMessageCreated(items[0]!.message) ?? null} />
+          turnStartedAt={parallelComputer ? getMessageCreated(items[0]!.message) ?? null : null} />
       </Message> : null}
       {groupSkillCards.length > 0 ? (
         <div data-created-skills="" className="mx-auto mt-1 flex w-full max-w-3xl flex-col gap-2 px-2 md:px-10">

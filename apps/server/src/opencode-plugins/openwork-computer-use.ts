@@ -98,8 +98,14 @@ const scriptResult = z.object({ ok: z.boolean().optional() }).passthrough();
  * host (a cloud worker's bridge, or none at all) keeps the tools offered.
  */
 export async function computerToolsOffered(): Promise<boolean> {
+  return (await computerFeatures()).offered;
+}
+
+/** The desktop's computer features in one read; `parallel` is `parallelComputerUse`, off unless it says on. */
+export async function computerFeatures(): Promise<{ offered: boolean; parallel: boolean }> {
   const result = await uiBridgeRequest("/computer/enabled");
-  return !(result && typeof result === "object" && "enabled" in result && result.enabled === false);
+  const body = result && typeof result === "object" ? result as Record<string, unknown> : {};
+  return { offered: body.enabled !== false, parallel: body.parallel === true };
 }
 
 /** The desktop broker selects this Mac or Windows PC, or a configured remote computer. */

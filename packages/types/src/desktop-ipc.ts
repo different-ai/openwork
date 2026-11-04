@@ -507,6 +507,8 @@ export type DesktopCommandMap = {
   computerSetRemoteEnabled: { args: [enabled: boolean]; result: boolean };
   /** Reports the `standardCodeMode` feature: computer programs that start afterwards run as standard JavaScript. */
   computerSetStandardCodeMode: { args: [enabled: boolean]; result: boolean };
+  /** Reports the `parallelComputerUse` feature: a chat's subagents work on its computer as part of it. */
+  computerSetParallelAgents: { args: [enabled: boolean]; result: boolean };
   /** Compatibility-only no-op for older renderers; returns the computerUse state. */
   computerSetBackgroundEnabled: { args: [enabled: boolean]; result: boolean };
   computerResetPermission: { args: [permission: ComputerPermission]; result: { setupId: string } };

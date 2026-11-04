@@ -351,7 +351,7 @@ function computerPolicyDenied(message) {
 }
 
 /** The chat a call belongs to: a subagent's is the chat that started it, as the trusted bridge reports. */
-const computerChatOf = (args) => typeof args?.rootSessionId === "string" && args.rootSessionId ? args.rootSessionId : args?.sessionId;
+const computerChatOf = (args) => computerControl.parallelAgents() && typeof args?.rootSessionId === "string" && args.rootSessionId ? args.rootSessionId : args?.sessionId;
 
 /** @param {string} sessionId */
 async function checkComputerPermission(sessionId) {
@@ -392,6 +392,7 @@ const uiControlServer = createUiControlServer({
     return computerControl.script(args, { ...options, approveEachScript: decision.effect === "ask" });
   },
   computerEnabled: () => computerControl.featureEnabled(),
+  computerParallel: () => computerControl.parallelAgents(),
   agentQuestionsEnabled: () => agentQuestionsEnabled,
 });
 
@@ -2255,6 +2256,10 @@ const desktopCommandHandlers = {
   "computerSetStandardCodeMode": async (event, enabled) => {
       assertComputerSender(event);
       return computerControl.setStandardCodeMode(enabled === true);
+  },
+  "computerSetParallelAgents": async (event, enabled) => {
+      assertComputerSender(event);
+      return computerControl.setParallelAgents(enabled === true);
   },
   // Compatibility for older renderers; background delivery now follows computerUse.
   "computerSetBackgroundEnabled": async (event) => {

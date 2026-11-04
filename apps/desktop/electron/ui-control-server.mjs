@@ -18,6 +18,7 @@ export function createUiControlServer({
   computerProgram = undefined,
   computerScript = undefined,
   computerEnabled = undefined,
+  computerParallel = undefined,
   agentQuestionsEnabled = undefined,
 }) {
   let uiControlServer = null;
@@ -171,7 +172,8 @@ export function createUiControlServer({
           return;
         }
         if (request.method === "GET" && url.pathname === "/computer/enabled") {
-          sendJsonResponse(response, 200, { enabled: typeof computerEnabled === "function" && computerEnabled() === true });
+          sendJsonResponse(response, 200, { enabled: typeof computerEnabled === "function" && computerEnabled() === true,
+            parallel: typeof computerParallel === "function" && computerParallel() === true });
           return;
         }
         if (request.method === "GET" && url.pathname === "/agent-questions/enabled") {

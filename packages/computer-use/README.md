@@ -53,8 +53,9 @@ turn at the keyboard and pointer and its idle release; end of turn releases
 them all, Take over on any of them holds the whole chat until Continue, and Stop
 ends them all. Watch live shows the app being worked in, and the session card
 names the app of each step. Other computers keep one app per chat.
-A subagent the chat starts (OpenCode's `subagent` tool) works on the chat's
-computer as part of the chat. The bridge reads the subagent's root chat from the
+With `parallelComputerUse` on ([docs](../../docs/features/parallel-computer-use/README.md)),
+a subagent the chat starts (OpenCode's `subagent` tool) works on the chat's
+computer as part of the chat; off, it is its own chat. The bridge reads the subagent's root chat from the
 engine's session tree and sends it as `rootSessionId`; model input never names
 it. The subagent keeps its own apps, `session_id`s, helpers, turns at the
 keyboard and approvals, while the chat's computer choice, Stop, Take over and
