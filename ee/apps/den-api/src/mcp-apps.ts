@@ -625,6 +625,45 @@ export async function loadMcpAppResource(input: McpAppAccessInput & { appId: str
   }
 }
 
+/** The App's current revision as an editor sees it, for publishing it publicly. */
+export async function publishableMcpAppRevision(input: { context: PluginArchActorContext; appId: string }) {
+  const { version, payload } = await editableApp(input.context, appId(input.appId))
+  return { appId: version.configObjectId, revisionId: version.id, title: payload.title, tools: payload.tools }
+}
+
+/**
+ * One pinned revision of an active App, without any member's Plugin access:
+ * only a public App's server calls this, for the revision an owner or admin
+ * published. A deleted or archived App is not available.
+ */
+export async function loadPinnedMcpAppRevision(input: { organizationId: string; appId: string; revisionId: string }): Promise<McpAppResource & { tools: McpAppToolBinding[] }> {
+  const id = appId(input.appId)
+  const versionId = revisionId(input.revisionId)
+  const organizationId = normalizeDenTypeId("organization", input.organizationId)
+  const [active, [head]] = await Promise.all([
+    activeApp(organizationId, id),
+    db.select(revisionHeadColumns).from(ConfigObjectVersionTable).where(and(
+      eq(ConfigObjectVersionTable.organizationId, organizationId),
+      eq(ConfigObjectVersionTable.configObjectId, id),
+      eq(ConfigObjectVersionTable.id, versionId),
+    )).limit(1),
+  ])
+  const content = active && head ? await revisionContent(organizationId, id, head) : null
+  if (!content) return notFound()
+  const { payload } = content
+  content.intact ??= digest(payload.html) === payload.resourceDigest && Buffer.byteLength(payload.html) === payload.htmlBytes
+  if (!content.intact) {
+    throw new McpAppError(422, "mcp_app_digest_mismatch", "The MCP App revision failed its integrity check.")
+  }
+  return {
+    app: summarizeMcpAppRevision({ appId: id, revisionId: versionId, payload }),
+    html: payload.html,
+    csp: payload.csp,
+    resourceDigest: payload.resourceDigest,
+    tools: payload.tools,
+  }
+}
+
 // Opt-in numeric profiling only; never emit request payloads or identities.
 if (process.env.OPENWORK_MCP_APP_TIMINGS === "1") {
   new PerformanceObserver(list => {
