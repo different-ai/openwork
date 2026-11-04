@@ -13,6 +13,8 @@ import { type TabItem, UnderlineTabs } from "../../_components/ui/tabs";
 import { getInferenceRoute, getAiGatewayRoute, getNewAiGatewayProviderRoute, getOrgAccessFlags, type DenOrgAccessFlags } from "../../_lib/den-org";
 import { canOpenGatewayArea, gatewayAreaLockedMessage, type GatewayDashboardArea } from "../_lib/gateway-dashboard-access";
 import { useOrgDashboard } from "../_providers/org-dashboard-provider";
+import { FeatureIntroGate, useFeatureIntroRuntime, useFeatureIntroUnseen, type FeatureIntroKey } from "../_features/feature-intros";
+import { useAiGatewayIntroFacts } from "./ai-gateway-intro-facts";
 import { useGatewayDashboardAccess } from "./gateway-dashboard-capability-guard";
 import { GatewaySpendBreakdown } from "./gateway-spend-breakdown";
 import { getProviderIconSlug } from "./llm-provider-data";
@@ -34,6 +36,15 @@ const AI_GATEWAY_TABS: readonly TabItem<AiGatewayTab>[] = [
   { value: "users-and-teams", label: "Users & Teams", icon: Users },
   { value: "openwork-models", label: "OpenWork Models", icon: Sparkles },
 ];
+
+/** Each tab's feature intro, for its unseen dot (DESIGN.md I9). */
+const AI_GATEWAY_TAB_INTROS: Record<AiGatewayTab, FeatureIntroKey> = {
+  overview: "ai-gateway.overview",
+  "ai-providers": "ai-gateway.ai-providers",
+  limits: "ai-gateway.limits",
+  "users-and-teams": "ai-gateway.users-and-teams",
+  "openwork-models": "ai-gateway.openwork-models",
+};
 
 const GATEWAY_TAB_AREAS: Record<Exclude<AiGatewayTab, "openwork-models">, GatewayDashboardArea> = {
   overview: "overview",
@@ -63,33 +74,38 @@ function AiGatewayOverview({ orgId }: { orgId: string }) {
     );
   }
 
-  if (inferenceProviders.length === 0) {
-    return (
-      <section aria-label="Gateway usage" data-testid="gateway-usage-no-providers">
-        <DenCard className="flex flex-col items-center gap-4 px-8 py-16 text-center">
-          <span className="flex items-center gap-2" aria-hidden="true">
-            {EMPTY_STATE_PROVIDERS.map((provider) => (
-              <DenBrandMark key={provider.id} name={provider.name} simpleIconSlug={getProviderIconSlug(provider.id)} className="h-7 w-7 rounded-[8px]" imageClassName="h-4 w-4" />
-            ))}
-          </span>
-          <span className="flex flex-col gap-1">
-            <span className="text-[15px] font-medium text-gray-950">No usage yet</span>
-            <span className="text-[13px] text-gray-500">Spend and the models people use show up here after the first request.</span>
-          </span>
-          <Link href={getNewAiGatewayProviderRoute(orgSlug)} className={buttonVariants({ variant: "primary", size: "sm" })} data-testid="gateway-usage-add-provider">Add provider</Link>
-          <Link href={getInferenceRoute(orgSlug)} scroll={false} className="text-[12px] text-gray-600 underline underline-offset-4 hover:text-gray-900">
-            Or subscribe to OpenWork Models
-          </Link>
-        </DenCard>
-      </section>
-    );
-  }
-
+  // With feature intros on, the overview intro replaces "No usage yet" (DESIGN.md I1); off, the page is unchanged.
   return (
-    <>
-      <GatewayUsageSection orgId={orgId} />
-      <GatewaySpendBreakdown orgId={orgId} orgSlug={orgSlug} />
-    </>
+    <FeatureIntroGate introKey="ai-gateway.overview" facts={{ providers: inferenceProviders.length }}>
+      {inferenceProviders.length === 0 ? <AiGatewayNoUsage orgSlug={orgSlug} /> : (
+        <>
+          <GatewayUsageSection orgId={orgId} />
+          <GatewaySpendBreakdown orgId={orgId} orgSlug={orgSlug} />
+        </>
+      )}
+    </FeatureIntroGate>
+  );
+}
+
+function AiGatewayNoUsage({ orgSlug }: { orgSlug: string | null }) {
+  return (
+    <section aria-label="Gateway usage" data-testid="gateway-usage-no-providers">
+      <DenCard className="flex flex-col items-center gap-4 px-8 py-16 text-center">
+        <span className="flex items-center gap-2" aria-hidden="true">
+          {EMPTY_STATE_PROVIDERS.map((provider) => (
+            <DenBrandMark key={provider.id} name={provider.name} simpleIconSlug={getProviderIconSlug(provider.id)} className="h-7 w-7 rounded-[8px]" imageClassName="h-4 w-4" />
+          ))}
+        </span>
+        <span className="flex flex-col gap-1">
+          <span className="text-[15px] font-medium text-gray-950">No usage yet</span>
+          <span className="text-[13px] text-gray-500">Spend and the models people use show up here after the first request.</span>
+        </span>
+        <Link href={getNewAiGatewayProviderRoute(orgSlug)} className={buttonVariants({ variant: "primary", size: "sm" })} data-testid="gateway-usage-add-provider">Add provider</Link>
+        <Link href={getInferenceRoute(orgSlug)} scroll={false} className="text-[12px] text-gray-600 underline underline-offset-4 hover:text-gray-900">
+          Or subscribe to OpenWork Models
+        </Link>
+      </DenCard>
+    </section>
   );
 }
 
@@ -110,10 +126,14 @@ export function AiGatewayScreen({ providerContent, pageContent, pageTab }: { pro
   const router = useRouter();
   const searchParams = useSearchParams();
   const tabs = AI_GATEWAY_TABS;
+  const introUnseen = useFeatureIntroUnseen();
+  const introsEnabled = useFeatureIntroRuntime().enabled;
   // Smart Routers moved into AI Providers; old links to their tab land there.
   const requestedTab = searchParams.get("tab") === "auto-router" ? "ai-providers" : searchParams.get("tab");
   const nestedContent = providerContent ?? pageContent;
   const nestedTab = providerContent !== undefined ? "ai-providers" : pageTab;
+  // Sub-pages (provider, router and limit forms) never show the section intro.
+  const gatewayIntroFacts = useAiGatewayIntroFacts(introsEnabled && nestedContent === undefined);
   // Without an explicit tab, land on the first one this person can open.
   const defaultTab = tabs.find((item) => canOpenAiGatewayTab(memberAccess, item.value))?.value ?? "overview";
   const tab = nestedContent !== undefined && nestedTab
@@ -131,13 +151,13 @@ export function AiGatewayScreen({ providerContent, pageContent, pageTab }: { pro
     router.push(query ? `${route}?${query}` : route, { scroll: false });
   }
 
-  return (
+  const page = (
     <DashboardPageTemplate
       title="AI Gateway"
       description={null}
     >
       <div data-testid="ai-gateway-tabs" className="mb-6">
-        <UnderlineTabs tabs={tabs} activeTab={tab} onChange={setTab} />
+        <UnderlineTabs tabs={tabs.map((item) => ({ ...item, unseen: introUnseen(AI_GATEWAY_TAB_INTROS[item.value]) }))} activeTab={tab} onChange={setTab} />
       </div>
       <div
         key={tab}
@@ -183,4 +203,8 @@ export function AiGatewayScreen({ providerContent, pageContent, pageTab }: { pro
       </div>
     </DashboardPageTemplate>
   );
+
+  if (nestedContent !== undefined) return page;
+  // Nothing set up yet (no providers, OpenWork Models off): the section intro replaces the page (DESIGN.md I2).
+  return <FeatureIntroGate introKey="ai-gateway" facts={gatewayIntroFacts}>{page}</FeatureIntroGate>;
 }

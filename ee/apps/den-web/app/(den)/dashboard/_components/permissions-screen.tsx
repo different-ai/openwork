@@ -14,5 +14,7 @@ export function PermissionsScreen() {
   const create = canCreateRole({ canManageTeams: permissions.access.canManageTeams, canManagePermissions: permissions.access.canManagePermissions })
     ? <DenButton icon={Plus} href={getNewRoleRoute(permissions.orgSlug)} data-testid="roles-create">Create role</DenButton>
     : undefined;
-  return <PermissionsPage title="Roles" testId="permissions-landing"><RolesTab action={create} /></PermissionsPage>;
+  // Settings › Roles (only when Members is hidden) reuses the Members › Roles intro: a box in place of
+  // "No custom roles yet" with feature intros on, unchanged with them off.
+  return <PermissionsPage title="Roles" testId="permissions-landing"><RolesTab action={create} showIntro /></PermissionsPage>;
 }

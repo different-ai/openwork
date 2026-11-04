@@ -146,7 +146,7 @@ Rollout order (each step independently safe):
 
 ## UX when gated
 
-- **den-web dashboard** (`dashboard/sso/`, `dashboard/(admin)/desktop-policies/`,
+- **den-web dashboard** (`dashboard/sso/` and its `auth-security` tab, `dashboard/(admin)/desktop-policies/`,
   org settings requireSso/version toggles): screens stay visible but show an
   "Enterprise" badge and a "Talk to us" CTA (→ `openworklabs.com/enterprise#book`)
   instead of the create/edit actions, driven by an `entitlements` object added

@@ -522,6 +522,9 @@ export function useOrgLlmProviders(
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const scope = options.scope ?? "manageable";
+  /** Which organization and scope the last finished load was for, so `loaded` never reports a previous one. */
+  const [loadedKey, setLoadedKey] = useState<string | null>(null);
+  const requestKey = `${orgId ?? ""}:${scope}`;
 
   async function loadProviders() {
     if (!orgId) {
@@ -550,6 +553,7 @@ export function useOrgLlmProviders(
       setError(loadError instanceof Error ? loadError.message : "Failed to load the provider library.");
     } finally {
       setBusy(false);
+      setLoadedKey(requestKey);
     }
   }
 
@@ -561,6 +565,8 @@ export function useOrgLlmProviders(
     llmProviders,
     busy,
     error,
+    /** A load for this organization and scope has finished (it may have failed: see `error`). */
+    loaded: Boolean(orgId) && loadedKey === requestKey && !busy,
     reloadProviders: loadProviders,
   };
 }

@@ -84,7 +84,7 @@ For mover and leaver handling:
 - Rotate or revoke organization API keys that were issued for the affected member.
 - Prefer SCIM deprovisioning where an identity provider is the system of record.
 
-SCIM lifecycle failures should not be treated as successful offboarding. OpenWork records failed SCIM provisioning and deprovisioning work for retry, runs periodic local SCIM drift reconciliation, and surfaces unresolved SCIM health issues in the organization SCIM screen. Operators should monitor those health indicators and route Den API logs that include `[scim][sync_failure_recorded]` or `[scim][maintenance_failed]` to their alerting system.
+SCIM lifecycle failures should not be treated as successful offboarding. OpenWork records failed SCIM provisioning and deprovisioning work for retry, runs periodic local SCIM drift reconciliation, and surfaces unresolved SCIM health issues in **Settings → Auth & Security → User provisioning (SCIM)**. Operators should monitor those health indicators and route Den API logs that include `[scim][sync_failure_recorded]` or `[scim][maintenance_failed]` to their alerting system.
 
 ## Emergency access
 

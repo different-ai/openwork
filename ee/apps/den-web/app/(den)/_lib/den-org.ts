@@ -962,6 +962,22 @@ export function getSsoRoute(orgSlug?: string | null): string {
   return `${getOrgDashboardRoute(orgSlug)}/sso`;
 }
 
+export type AuthSecurityTab = "sso" | "scim";
+
+/**
+ * Settings › Auth & Security (feature `authSecuritySettings`): SSO and SCIM as
+ * tabs. `setup` opens the tab's setup form directly instead of its intro.
+ */
+export function getAuthSecurityRoute(orgSlug?: string | null, tab?: AuthSecurityTab, options: { setup?: boolean } = {}): string {
+  const base = `${getOrgDashboardRoute(orgSlug)}/auth-security`;
+  const params = new URLSearchParams();
+  if (tab) params.set("tab", tab);
+  if (options.setup) params.set("setup", "1");
+  const query = params.toString();
+  return query ? `${base}?${query}` : base;
+}
+
+
 export function getPluginsRoute(orgSlug?: string | null): string {
   return `${getOrgDashboardRoute(orgSlug)}/plugins`;
 }

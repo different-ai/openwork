@@ -1,7 +1,8 @@
 "use client";
 
 import Link from "next/link";
-import { type ElementType, useEffect, useMemo, useState } from "react";
+import { useSearchParams } from "next/navigation";
+import { type ElementType, type ReactNode, useEffect, useMemo, useState } from "react";
 import {
   CheckCircle2,
   Circle,
@@ -31,6 +32,8 @@ import { buildDenFeedbackUrl } from "../../_lib/feedback";
 import { OrgLimitDialog } from "../../_components/org-limit-dialog";
 import { desktopPolicyScreenRemoved } from "../_lib/desktop-policy-screen-rollout";
 import { useOrgDashboard } from "../_providers/org-dashboard-provider";
+import { FeatureIntroGate, useFeatureIntro, useFeatureIntroUnseen, type FeatureIntroResolution } from "../_features/feature-intros";
+import type { MembersFacts } from "../_features/feature-intros/intros/members";
 import { UnderlineTabs } from "../../_components/ui/tabs";
 import { DashboardPageTemplate } from "../../_components/ui/dashboard-page-template";
 import { DenButton } from "../../_components/ui/button";
@@ -156,11 +159,21 @@ export function ManageMembersScreen() {
 
   // Members gets a Roles tab (built-in roles and each team's custom role).
 
+  const searchParams = useSearchParams();
+  const introUnseen = useFeatureIntroUnseen();
   useEffect(() => {
-    // ?tab=roles or ?tab=teams opens that tab, e.g. coming back from Create role.
-    const tab = new URLSearchParams(window.location.search).get("tab");
+    // ?tab=roles or ?tab=teams opens that tab, e.g. coming back from Create role or from a feature intro.
+    const tab = searchParams.get("tab");
     if (tab === "roles" || tab === "teams") setActiveTab(tab);
-  }, []);
+  }, [searchParams]);
+  // The tab is kept in the address, so `?` and a reload open the same tab.
+  function chooseTab(tab: MembersTab) {
+    setActiveTab(tab);
+    const url = new URL(window.location.href);
+    if (tab === "members") url.searchParams.delete("tab");
+    else url.searchParams.set("tab", tab);
+    window.history.replaceState(null, "", url);
+  }
   const shownTab: MembersTab = activeTab;
   // custom roles show wherever roles do (people's rows, the invite picker, the Teams list).
 
@@ -335,6 +348,48 @@ export function ManageMembersScreen() {
       setMemberRoleDraft("member");
     }
   }, [access.canManageRoles]);
+
+  // Feature intro actions land here (DESIGN.md I5): ?invite=1 opens the invite form, ?newTeam=1 the
+  // Create team form and ?editTeam=<id> that team's form. Each is read once, then dropped from the address.
+  const inviteRequested = searchParams.get("invite") === "1";
+  const newTeamRequested = searchParams.get("newTeam") === "1";
+  const editTeamRequested = searchParams.get("editTeam");
+  const [focusInvite, setFocusInvite] = useState(false);
+  useEffect(() => {
+    if (!orgContext || (!inviteRequested && !newTeamRequested && !editTeamRequested)) return;
+    if (inviteRequested && access.canInviteMembers) {
+      setActiveTab("members");
+      setEditingMemberId(null);
+      setShowInviteForm(true);
+      setFocusInvite(true);
+    }
+    if (newTeamRequested && access.canManageTeams) {
+      setActiveTab("teams");
+      setEditingTeamId(null);
+      setShowTeamForm(true);
+    }
+    const team = editTeamRequested ? orgContext.teams.find((entry) => entry.id === editTeamRequested) : undefined;
+    if (team) {
+      setActiveTab("teams");
+      if (!team.managedByScim && access.canManageTeams && (!team.grantsOrganizationAdmin || access.canManageAdminTeams)) {
+        setShowTeamForm(false);
+        setEditingTeamId(team.id);
+        setTeamNameDraft(team.name);
+        setTeamMemberDraft(team.memberIds);
+      }
+    }
+    const url = new URL(window.location.href);
+    for (const param of ["invite", "newTeam", "editTeam"]) url.searchParams.delete(param);
+    if (team || (newTeamRequested && access.canManageTeams)) url.searchParams.set("tab", "teams");
+    window.history.replaceState(null, "", url);
+  }, [orgContext, inviteRequested, newTeamRequested, editTeamRequested, access.canInviteMembers, access.canManageTeams, access.canManageAdminTeams]);
+  useEffect(() => {
+    if (!focusInvite || !showInviteForm) return;
+    const input = document.querySelector<HTMLInputElement>('[data-testid="invite-email"]');
+    if (!input) return;
+    input.focus();
+    setFocusInvite(false);
+  }, [focusInvite, showInviteForm]);
 
   if (orgBusy && !orgContext) {
     return (
@@ -591,7 +646,35 @@ export function ManageMembersScreen() {
       </DenCard>
     ) : null;
 
-  return (
+  // Section facts for the Members intro (DESIGN.md I2), all from `GET /v1/org` and the roles already loaded.
+  const membersIntroFacts: MembersFacts = {
+    people: orgContext.members.length,
+    pendingInvites: orgContext.invitations.filter((invitation) => invitation.status === "pending").length,
+    teams: orgContext.teams.length,
+    ...(access.canViewPermissions && roleSets.data ? { customRoles: customSets.length } : {}),
+  };
+  const teamFormOpen = showTeamForm || Boolean(editingTeamId);
+
+  const everyoneRow = (agentPermissionsColumn || desktopPolicyScreenRemoved(orgContext)) && ("everyone".includes(teamFilter.trim().toLocaleLowerCase())) ? (
+    <TeamsListRow
+      testId="team-row-everyone"
+      columns={teamListColumns}
+      icon={Globe}
+      name="Everyone"
+      href={getEveryoneRoute(orgSlug)}
+      subtitle="Every member, including people in no team"
+      lanes={(
+        <>
+          <TeamsListLane testId="team-row-role">Member</TeamsListLane>
+          {agentPermissionsColumn ? <TeamsListLane testId="team-row-agent-permissions">Base for every team</TeamsListLane> : null}
+          <TeamsListLane testId="team-row-members" tone="muted">{peopleCount(orgContext.members.length)}</TeamsListLane>
+        </>
+      )}
+      action={<TeamsListOpenLink href={getEveryoneRoute(orgSlug)} name="Everyone" />}
+    />
+  ) : null;
+
+  const page = (
     <DashboardPageTemplate
       icon={Users}
       title="Members"
@@ -639,16 +722,17 @@ export function ManageMembersScreen() {
       <UnderlineTabs
         className="mb-6"
         activeTab={shownTab}
-        onChange={setActiveTab}
+        onChange={chooseTab}
         tabs={[
           { value: "members", label: "Members", icon: User, count: tabCounts.members },
-          { value: "teams", label: "Teams", icon: Users, count: tabCounts.teams },
-          ...([{ value: "roles" as const, label: "Roles", icon: ShieldCheck }]),
+          { value: "teams", label: "Teams", icon: Users, count: tabCounts.teams, unseen: introUnseen("members.teams") },
+          ...([{ value: "roles" as const, label: "Roles", icon: ShieldCheck, unseen: introUnseen("members.roles") }]),
         ]}
       />
 
       {shownTab === "roles" ? (
         <RolesTab
+          showIntro
           action={orgContext && canCreateRole({ canManageTeams: access.canManageTeams, canManagePermissions: access.canManagePermissions })
             ? <DenButton size="sm" icon={Plus} href={getNewRoleRoute(orgSlug)} data-testid="roles-create">Create role</DenButton>
             : undefined}
@@ -867,110 +951,118 @@ export function ManageMembersScreen() {
       ) : null}
 
       {activeTab === "teams" ? (
-        <div>
-          <MemberListToolbar collection="teams" value={teamFilter} onChange={setTeamFilter} action={<DenButton size="sm" icon={access.canManageTeams ? Plus : Lock} disabled={!access.canManageTeams} title={!access.canManageTeams ? permissionLockReason("teams.manage") : undefined} onClick={() => { resetTeamEditor(); setShowTeamForm((current) => !current); }}>Create team</DenButton>} />
+        // With feature intros on and no teams yet, the Teams intro takes the list's place (DESIGN.md I1); Everyone stays above it.
+        <MembersTeamsIntroSlot facts={teamFormOpen ? null : { teams: orgContext.teams.length }}>
+          {(intro) => intro.size === "box" ? (
+            <div data-testid="teams-intro">
+              {everyoneRow ? (
+                <div className="rounded-2xl border border-gray-100 bg-white" data-testid="teams-list">
+                  <TeamsListHeader columns={teamListColumns} agentPermissions={agentPermissionsColumn} />
+                  {everyoneRow}
+                </div>
+              ) : null}
+              {intro.element}
+            </div>
+          ) : (
+            <div>
+              <MemberListToolbar collection="teams" value={teamFilter} onChange={setTeamFilter} action={<DenButton size="sm" icon={access.canManageTeams ? Plus : Lock} disabled={!access.canManageTeams} title={!access.canManageTeams ? permissionLockReason("teams.manage") : undefined} onClick={() => { resetTeamEditor(); setShowTeamForm((current) => !current); }}>Create team</DenButton>} />
 
-          <div className="rounded-2xl border border-gray-100 bg-white" data-testid="teams-list">
-            <TeamsListHeader columns={teamListColumns} agentPermissions={agentPermissionsColumn} />
+              <div className="rounded-2xl border border-gray-100 bg-white" data-testid="teams-list">
+                <TeamsListHeader columns={teamListColumns} agentPermissions={agentPermissionsColumn} />
 
-            {(agentPermissionsColumn || desktopPolicyScreenRemoved(orgContext)) && ("everyone".includes(teamFilter.trim().toLocaleLowerCase())) ? (
-              <TeamsListRow
-                testId="team-row-everyone"
-                columns={teamListColumns}
-                icon={Globe}
-                name="Everyone"
-                href={getEveryoneRoute(orgSlug)}
-                subtitle="Every member, including people in no team"
-                lanes={(
-                  <>
-                    <TeamsListLane testId="team-row-role">Member</TeamsListLane>
-                    {agentPermissionsColumn ? <TeamsListLane testId="team-row-agent-permissions">Base for every team</TeamsListLane> : null}
-                    <TeamsListLane testId="team-row-members" tone="muted">{peopleCount(orgContext.members.length)}</TeamsListLane>
-                  </>
+                {everyoneRow}
+
+                {visibleTeams.length === 0 ? (
+                  <div className="px-5 py-6 text-[13px] text-gray-500" role="status">
+                    {teamFilter.trim() ? "No teams match your filter." : "No teams yet."}
+                  </div>
+                ) : (
+                  visibleTeams.map((team) => {
+                    const names = teamMemberNames.get(team.id) ?? [];
+                    const role = team.grantsOrganizationAdmin || access.canViewPermissions
+                        ? team.grantsOrganizationAdmin || !customRoles.setByTeam.get(team.id)
+                          ? TEAM_ROLE_LABELS[teamRole({ admin: team.grantsOrganizationAdmin, customSetId: customRoles.setByTeam.get(team.id)?.id ?? null })]
+                          : customRoles.setByTeam.get(team.id)?.name ?? ""
+                        : "—";
+                    const canEdit = !team.managedByScim && access.canManageTeams && (!team.grantsOrganizationAdmin || access.canManageAdminTeams);
+                    return (
+                      <TeamsListRow
+                        key={team.id}
+                        testId="team-row"
+                        columns={teamListColumns}
+                        icon={Users}
+                        name={team.name}
+                        href={access.canViewTeams ? getTeamRoute(orgSlug, team.id) : undefined}
+                        badge={team.managedByScim ? (
+                          <span className="shrink-0 rounded-full bg-gray-100 px-2 py-0.5 text-[11px] font-medium text-gray-600">Managed by SCIM</span>
+                        ) : null}
+                        subtitle={names.length > 0 ? names.join(", ") : team.memberIds.length > 0 ? peopleCount(team.memberIds.length) : "No members yet"}
+                        lanes={(
+                          <>
+                            <TeamsListLane testId="team-row-role" title={role}>{role}</TeamsListLane>
+                            {agentPermissionsColumn ? <TeamAgentPermissionsCell summary={agentPolicies.isSuccess ? teamOverrideSummary(agentPolicies.data.teams.find((policy) => policy.scopeId === team.id)) : undefined} failed={agentPolicies.isError} /> : null}
+                            <TeamsListLane testId="team-row-members" tone="muted">{peopleCount(team.memberIds.length)}</TeamsListLane>
+                          </>
+                        )}
+                        action={canEdit ? (
+                          <ItemMenu
+                            label={`Actions for ${team.name}`}
+                            entries={[
+                              {
+                                label: "Edit",
+                                onSelect: () => {
+                                  setShowTeamForm(false);
+                                  setEditingTeamId(team.id);
+                                  setTeamNameDraft(team.name);
+                                  setTeamMemberDraft(team.memberIds);
+                                },
+                              },
+                              {
+                                label: "Delete",
+                                destructive: true,
+                                disabled: mutationBusy === "delete-team",
+                                confirm: {
+                                  title: `Delete ${team.name}?`,
+                                  description: `${team.memberIds.length > 0 ? `${peopleCount(team.memberIds.length)} ${team.memberIds.length === 1 ? "loses" : "lose"}` : "Nobody loses"} this team's ${teamLosses({ agentPermissions: agentPermissionsColumn })}. This cannot be undone.`,
+                                  action: "Delete team",
+                                },
+                                onSelect: async () => {
+                                  setPageError(null);
+                                  await deleteTeam(team.id);
+                                  if (editingTeamId === team.id) resetTeamEditor();
+                                },
+                              },
+                            ]}
+                          />
+                        ) : (
+                          <TeamsListLocked
+                            reason={team.managedByScim
+                              ? "Managed by your identity provider"
+                              : access.canManageTeams ? permissionLockReason("teams.manage_admin") : permissionLockReason("teams.manage")}
+                          />
+                        )}
+                      />
+                    );
+                  })
                 )}
-                action={<TeamsListOpenLink href={getEveryoneRoute(orgSlug)} name="Everyone" />}
-              />
-            ) : null}
-
-            {visibleTeams.length === 0 ? (
-              <div className="px-5 py-6 text-[13px] text-gray-500" role="status">
-                {teamFilter.trim() ? "No teams match your filter." : "No teams yet."}
               </div>
-            ) : (
-              visibleTeams.map((team) => {
-                const names = teamMemberNames.get(team.id) ?? [];
-                const role = team.grantsOrganizationAdmin || access.canViewPermissions
-                    ? team.grantsOrganizationAdmin || !customRoles.setByTeam.get(team.id)
-                      ? TEAM_ROLE_LABELS[teamRole({ admin: team.grantsOrganizationAdmin, customSetId: customRoles.setByTeam.get(team.id)?.id ?? null })]
-                      : customRoles.setByTeam.get(team.id)?.name ?? ""
-                    : "—";
-                const canEdit = !team.managedByScim && access.canManageTeams && (!team.grantsOrganizationAdmin || access.canManageAdminTeams);
-                return (
-                  <TeamsListRow
-                    key={team.id}
-                    testId="team-row"
-                    columns={teamListColumns}
-                    icon={Users}
-                    name={team.name}
-                    href={access.canViewTeams ? getTeamRoute(orgSlug, team.id) : undefined}
-                    badge={team.managedByScim ? (
-                      <span className="shrink-0 rounded-full bg-gray-100 px-2 py-0.5 text-[11px] font-medium text-gray-600">Managed by SCIM</span>
-                    ) : null}
-                    subtitle={names.length > 0 ? names.join(", ") : team.memberIds.length > 0 ? peopleCount(team.memberIds.length) : "No members yet"}
-                    lanes={(
-                      <>
-                        <TeamsListLane testId="team-row-role" title={role}>{role}</TeamsListLane>
-                        {agentPermissionsColumn ? <TeamAgentPermissionsCell summary={agentPolicies.isSuccess ? teamOverrideSummary(agentPolicies.data.teams.find((policy) => policy.scopeId === team.id)) : undefined} failed={agentPolicies.isError} /> : null}
-                        <TeamsListLane testId="team-row-members" tone="muted">{peopleCount(team.memberIds.length)}</TeamsListLane>
-                      </>
-                    )}
-                    action={canEdit ? (
-                      <ItemMenu
-                        label={`Actions for ${team.name}`}
-                        entries={[
-                          {
-                            label: "Edit",
-                            onSelect: () => {
-                              setShowTeamForm(false);
-                              setEditingTeamId(team.id);
-                              setTeamNameDraft(team.name);
-                              setTeamMemberDraft(team.memberIds);
-                            },
-                          },
-                          {
-                            label: "Delete",
-                            destructive: true,
-                            disabled: mutationBusy === "delete-team",
-                            confirm: {
-                              title: `Delete ${team.name}?`,
-                              description: `${team.memberIds.length > 0 ? `${peopleCount(team.memberIds.length)} ${team.memberIds.length === 1 ? "loses" : "lose"}` : "Nobody loses"} this team's ${teamLosses({ agentPermissions: agentPermissionsColumn })}. This cannot be undone.`,
-                              action: "Delete team",
-                            },
-                            onSelect: async () => {
-                              setPageError(null);
-                              await deleteTeam(team.id);
-                              if (editingTeamId === team.id) resetTeamEditor();
-                            },
-                          },
-                        ]}
-                      />
-                    ) : (
-                      <TeamsListLocked
-                        reason={team.managedByScim
-                          ? "Managed by your identity provider"
-                          : access.canManageTeams ? permissionLockReason("teams.manage_admin") : permissionLockReason("teams.manage")}
-                      />
-                    )}
-                  />
-                );
-              })
-            )}
-          </div>
-        </div>
+            </div>
+          )}
+        </MembersTeamsIntroSlot>
       ) : null}
 
     </DashboardPageTemplate>
   );
+
+  // The invite and team forms are the setup step itself, so they show even while the intro would.
+  if (showInviteForm || teamFormOpen) return page;
+  // Nobody else here yet (no other members, invites or teams): the section intro replaces the page (DESIGN.md I2).
+  return <FeatureIntroGate introKey="members" facts={membersIntroFacts}>{page}</FeatureIntroGate>;
+}
+
+/** Teams tab body: lets the Teams intro (box) take the list's place while there are no teams. */
+function MembersTeamsIntroSlot({ facts, children }: { facts: Pick<MembersFacts, "teams"> | null; children: (intro: FeatureIntroResolution) => ReactNode }) {
+  return <>{children(useFeatureIntro("members.teams", facts))}</>;
 }
 
 /** A team's agent permissions in the Teams list: its own overrides, or that it follows Everyone. */

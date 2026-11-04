@@ -14,6 +14,10 @@ import { ItemPanel, ItemRow } from "./item-list";
 import { ModelsPanel, modelsTabVisible } from "./team-models-panel";
 import { PromptsPanel, promptsTabVisible } from "./prompts-panel";
 import { usePermissionSets } from "./permissions-data";
+import { useFeatureIntroRuntime, useFeatureIntroUnseen } from "../_features/feature-intros";
+import type { TeamDetailFacts } from "../_features/feature-intros/intros/team-detail";
+import { useAiGatewayIntroFacts } from "./ai-gateway-intro-facts";
+import { TEAM_DETAIL_TAB_INTROS, TeamTabIntro } from "./team-detail-screen";
 
 export type EveryoneTab = "role" | "agents" | "browser" | "models" | "prompts" | "desktop";
 
@@ -47,6 +51,11 @@ export function EveryoneScreen({ initialTab }: { initialTab: EveryoneTab | null 
       : chosenTab === "prompts" && showPrompts ? "prompts"
         : chosenTab === "desktop" && showDesktop ? "desktop" : "role";
   const memberCount = orgContext?.members.length ?? 0;
+  // Everyone shares the team tabs' intros (DESIGN.md I10); only Models and Prompts can show a box here.
+  const introUnseen = useFeatureIntroUnseen();
+  const introsEnabled = useFeatureIntroRuntime().enabled;
+  const introFacts: TeamDetailFacts | null = orgContext ? {} : null;
+  const modelsFacts = useAiGatewayIntroFacts(introsEnabled && activeTab === "models");
   const canViewSets = Boolean(orgContext && access?.canViewPermissions);
   const setsQuery = usePermissionSets(orgId, canViewSets);
   const memberSet = setsQuery.data?.find((set) => set.kind === "member_default");
@@ -78,11 +87,12 @@ export function EveryoneScreen({ initialTab }: { initialTab: EveryoneTab | null 
         </span>
       </header>
 
-      <UnderlineTabs className="mt-6" tabs={tabs} activeTab={activeTab} onChange={chooseTab} />
+      <UnderlineTabs className="mt-6" tabs={tabs.map((item) => ({ ...item, unseen: introUnseen(TEAM_DETAIL_TAB_INTROS[item.value]) }))} activeTab={activeTab} onChange={chooseTab} />
 
       <div className="mt-6">
-        {activeTab === "desktop" ? (<div role="tabpanel" aria-label="Desktop"><DesktopSuggestionsPanel team={null} /></div>) : activeTab === "role" ? (
+        {activeTab === "desktop" ? (<div role="tabpanel" aria-label="Desktop"><TeamTabIntro tab="desktop" facts={introFacts}><DesktopSuggestionsPanel team={null} /></TeamTabIntro></div>) : activeTab === "role" ? (
           <div role="tabpanel" aria-label="Role">
+            <TeamTabIntro tab="role" facts={introFacts}>
             <ItemPanel>
               <ItemRow
                 logo={<IconTile icon={ShieldCheck} />}
@@ -93,14 +103,17 @@ export function EveryoneScreen({ initialTab }: { initialTab: EveryoneTab | null 
                 testId="everyone-role-member"
               />
             </ItemPanel>
+            </TeamTabIntro>
           </div>
         ) : activeTab === "browser" ? (
           <div role="tabpanel" aria-label="Browser">
-            <AgentsPanel team={null} area="browser" />
+            <TeamTabIntro tab="browser" facts={introFacts}><AgentsPanel team={null} area="browser" /></TeamTabIntro>
           </div>
         ) : activeTab === "models" ? (
           <div role="tabpanel" aria-label="Models">
-            <ModelsPanel team={null} />
+            <TeamTabIntro tab="models" facts={modelsFacts ? { providers: modelsFacts.providers, openworkModels: modelsFacts.openworkModels } : null}>
+              <ModelsPanel team={null} />
+            </TeamTabIntro>
           </div>
         ) : activeTab === "prompts" ? (
           <div role="tabpanel" aria-label="Prompts">
@@ -108,7 +121,7 @@ export function EveryoneScreen({ initialTab }: { initialTab: EveryoneTab | null 
           </div>
         ) : (
           <div role="tabpanel" aria-label="Agents">
-            <AgentsPanel team={null} area="agents" />
+            <TeamTabIntro tab="agents" facts={introFacts}><AgentsPanel team={null} area="agents" /></TeamTabIntro>
           </div>
         )}
       </div>

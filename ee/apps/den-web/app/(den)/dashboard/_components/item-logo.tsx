@@ -22,7 +22,11 @@ const BRAND_BY_NAME: Record<string, BrandHint> = {
   jira: { simpleIconSlug: "jira" },
   linear: { serviceUrl: "https://linear.app" },
   "microsoft 365": { serviceUrl: "https://microsoft.com" },
+  // Entra ID is Microsoft's identity provider: the Microsoft mark, as for Microsoft 365.
+  "microsoft entra id": { serviceUrl: "https://microsoft.com" },
   notion: { serviceUrl: "https://notion.com" },
+  // Bundled: okta.com's favicon is a dark generic mark, not Okta's logo.
+  okta: { simpleIconSlug: "okta" },
   salesforce: { simpleIconSlug: "salesforce" },
   sentry: { serviceUrl: "https://sentry.io" },
   slack: { serviceUrl: "https://slack.com" },

@@ -261,6 +261,7 @@
           {
             "group": "SSO and SCIM",
             "pages": [
+              "cloud/auth-and-security",
               "cloud/sso-google-workspace",
               "cloud/scim-google-workspace",
               "cloud/sso-okta",
@@ -408,7 +409,7 @@
     },
     {
       "source": "/sso",
-      "destination": "/cloud/get-started"
+      "destination": "/cloud/auth-and-security"
     }
   ],
   "errors": {

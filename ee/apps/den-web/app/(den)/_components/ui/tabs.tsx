@@ -10,6 +10,8 @@ export type TabItem<T extends string> = {
   count?: number;
   countTone?: DenChipTone;
   countClassName?: string;
+  /** Quiet neutral dot: this tab's feature intro hasn't been viewed (DESIGN.md I9). */
+  unseen?: boolean;
 };
 
 type UnderlineTabsProps<T extends string> = {
@@ -20,6 +22,19 @@ type UnderlineTabsProps<T extends string> = {
   /** Keeps empty tabs honest: shows "0" instead of hiding the count. */
   showZeroCounts?: boolean;
 };
+
+/** Small neutral "not viewed yet" dot for tabs and sidebar entries (DESIGN.md I9); never amber or red. */
+export function UnseenDot() {
+  return (
+    <span
+      className="h-1.5 w-1.5 shrink-0 rounded-full bg-gray-400"
+      role="img"
+      aria-label="Not viewed yet"
+      title="Not viewed yet"
+      data-testid="unseen-dot"
+    />
+  );
+}
 
 /** Shared appearance for Den's tab buttons and route-based tab links. */
 export function underlineTabClassName(selected: boolean) {
@@ -36,7 +51,7 @@ export function UnderlineTabs<T extends string>({
   return (
     <div className={`border-b border-gray-200 ${className}`}>
       <nav className="-mb-px flex flex-wrap gap-6" role="tablist">
-        {tabs.map(({ value, label, icon: Icon, count, countTone = "neutral", countClassName }) => {
+        {tabs.map(({ value, label, icon: Icon, count, countTone = "neutral", countClassName, unseen }) => {
           const selected = activeTab === value;
           return (
             <button
@@ -61,6 +76,7 @@ export function UnderlineTabs<T extends string>({
                   {count}
                 </DenChip>
               ) : null}
+              {unseen && !selected ? <UnseenDot /> : null}
             </button>
           );
         })}

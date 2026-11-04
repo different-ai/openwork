@@ -12,6 +12,8 @@ import { DenSelect } from "../../_components/ui/select";
 import { getOrgAccessFlags, type DenOrgContext, type DenOrgMember } from "../../_lib/den-org";
 import { useOrgDashboard } from "../_providers/org-dashboard-provider";
 import { ItemPanel, ItemRow, ItemRowsSkeleton } from "./item-list";
+import { auditLogsIntroFacts } from "./audit-logs-intro-facts";
+import { useFeatureIntro } from "../_features/feature-intros";
 import { auditQueryKey, isAuditAccessError, useAuditEventTypes, useAuditOperations, type AuditFilters, type AuditReadError, type AuditScope } from "./audit-logs-data";
 import {
   AuditChevron, AuditLocked, AuditOutcome, AuditReadFailure, AuditSkeleton, AuditTime, AuditTimeline, AuditUsage,
@@ -43,7 +45,7 @@ export function AuditLogsScreen() {
   if (access === "unavailable") return <AuditPage><AuditLocked unavailable /></AuditPage>;
   if (access === "locked" || !dashboard.orgContext || !dashboard.orgId) return <AuditPage><AuditLocked /></AuditPage>;
   const member = dashboard.orgContext.currentMember;
-  return <AuditLogsContent key={JSON.stringify([dashboard.orgId, member.id, member.userId, member.role, member.isOwner, member.permissions])} scope={{ orgId: dashboard.orgId, memberId: member.id }} members={dashboard.orgContext.members} />;
+  return <AuditLogsContent key={JSON.stringify([dashboard.orgId, member.id, member.userId, member.role, member.isOwner, member.permissions])} scope={{ orgId: dashboard.orgId, memberId: member.id }} members={dashboard.orgContext.members} captureIncluded={dashboard.orgContext.entitlements.auditLogs} />;
 }
 
 function AuditFiltersForm({ filters, members, operations, eventTypes, eventTypesPending, onApply }: {
@@ -149,7 +151,11 @@ function AuditCompactOperations({ operations, scope, members, expanded, onExpand
   </ItemPanel></div>;
 }
 
-export function AuditLogsContent({ scope, members }: { scope: AuditScope; members: readonly DenOrgMember[] }) {
+export function AuditLogsContent({ scope, members, captureIncluded }: {
+  scope: AuditScope; members: readonly DenOrgMember[];
+  /** `entitlements.auditLogs`: new activity is recorded. Only used for the feature intro. */
+  captureIncluded: boolean;
+}) {
   const client = useQueryClient();
   const [filters, setFilters] = useState<AuditFilters>({});
   const [expanded, setExpanded] = useState<string | null>(null);
@@ -161,13 +167,18 @@ export function AuditLogsContent({ scope, members }: { scope: AuditScope; member
   const accessError = isAuditAccessError(query.error) ? query.error : isAuditAccessError(eventTypes.error) ? eventTypes.error : detailAccessError;
   const refreshing = query.isFetching || eventTypes.isFetching;
   function applyFilters(next: AuditFilters) { setExpanded(null); setFilters(next); }
+  // With `featureIntros` on: full screen while nothing has been kept, banner when history
+  // exists but the plan no longer records new activity.
+  const intro = useFeatureIntro("audit-logs", auditLogsIntroFacts({ included: captureIncluded, filters, operations: query.data ? operations : undefined }));
   if (accessError) return <AuditPage><AuditLocked error={accessError}>
     <DenButton variant="secondary" disabled={refreshing} onClick={() => {
       setExpanded(null); setUsageOpen(false);
       void Promise.all([query.refetch(), eventTypes.refetch()]).then((results) => { if (results.every((result) => !result.error)) setDetailAccessError(null); });
     }}>Retry access check</DenButton>
   </AuditLocked></AuditPage>;
+  if (intro.size === "fullscreen") return intro.element;
   return <AuditPage action={<DenButton variant="secondary" size="sm" disabled={refreshing} onClick={() => void client.invalidateQueries({ queryKey: auditQueryKey(scope) })}>Refresh history</DenButton>}>
+    {intro.size === "banner" ? intro.element : null}
     <AuditFiltersForm key={JSON.stringify(filters)} filters={filters} members={members} operations={operations} eventTypes={eventTypes.data?.eventTypes ?? []} eventTypesPending={eventTypes.isPending} onApply={applyFilters} />
     {eventTypes.isError ? <div className="flex flex-wrap items-center gap-3">
       <DenNotice tone="error" message={eventTypes.data ? "Could not refresh event types. Showing the last verified catalog." : "Could not load event types. Try again."} />

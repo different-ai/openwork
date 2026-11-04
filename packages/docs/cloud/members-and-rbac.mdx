@@ -81,7 +81,7 @@ You can use teams to control access to Collections and LLM providers without ass
 
 ### Manage teams with SCIM Groups
 
-Organizations using SCIM can open **Settings › SCIM** and enable **Create teams from SCIM groups**. OpenWork then creates a team for each provisioned Group and keeps its membership synchronized from the identity provider. These teams are labeled **Managed by SCIM** and must be changed in the identity provider; manually created teams and memberships remain independent.
+Organizations using SCIM can open **Settings › Auth & Security › User provisioning (SCIM)** (older versions: **Settings › SCIM**) and enable **Create teams from SCIM groups**. OpenWork then creates a team for each provisioned Group and keeps its membership synchronized from the identity provider. These teams are labeled **Managed by SCIM** and must be changed in the identity provider; manually created teams and memberships remain independent.
 
 To connect an identity provider, follow
 [Okta SCIM provisioning](/cloud/scim-okta) or
@@ -121,7 +121,7 @@ SCIM changes apply only after the identity provider sends them and OpenWork proc
 
 ### SCIM mapping changes and reapproval
 
-When **Create teams from SCIM groups** is switched off in **Settings › SCIM**, OpenWork clears the affected teams' Admin grants but retains the teams and their current memberships as manually managed teams. Retaining a team does not retain its approval to grant Admin. The owner must review the retained membership and select the Admin checkbox again if manual Admin access is intended.
+When **Create teams from SCIM groups** is switched off in **Settings › Auth & Security › User provisioning (SCIM)**, OpenWork clears the affected teams' Admin grants but retains the teams and their current memberships as manually managed teams. Retaining a team does not retain its approval to grant Admin. The owner must review the retained membership and select the Admin checkbox again if manual Admin access is intended.
 
 While team sync is off, subsequent SCIM group renames, membership updates, or group deletion do not change the retained manual team's name, membership, or reapproved Admin grant. This does not disable SCIM user deprovisioning. Saving the already-disabled mapping mode (`metadata_only`) again does not clear a manual reapproval.
 

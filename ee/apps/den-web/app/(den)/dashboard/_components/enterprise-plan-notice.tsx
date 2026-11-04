@@ -3,10 +3,8 @@
 import { Lock } from "lucide-react";
 import { buttonVariants } from "../../_components/ui/button";
 import { DenNotice } from "../../_components/ui/notice";
+import { ENTERPRISE_CONTACT_URL } from "../_lib/enterprise-contact";
 import { useOrgDashboard } from "../_providers/org-dashboard-provider";
-
-const ENTERPRISE_CONTACT_URL =
-  process.env.NEXT_PUBLIC_ENTERPRISE_CONTACT_URL || "https://openworklabs.com/enterprise#book";
 
 type Props = {
   feature: string;

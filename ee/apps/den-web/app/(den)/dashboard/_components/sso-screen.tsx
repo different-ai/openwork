@@ -1,14 +1,17 @@
 "use client";
 
 import { CheckCircle2, Copy, KeyRound, LoaderCircle, RefreshCw, Shield, ShieldAlert, Trash2, X } from "lucide-react";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { DashboardPageTemplate } from "../../_components/ui/dashboard-page-template";
 import { DenButton } from "../../_components/ui/button";
 import { DenSecretInput } from "../../_components/ui/secret-input";
 import { DenNotice } from "../../_components/ui/notice";
 import { getRequestError, isReauthRequiredError, requestJson } from "../../_lib/den-flow";
 import { getBillingRoute, getOrgAccessFlags, orgFeatureEnabled, parseOrgSsoPayload, type DenOrgSsoConnection, permissionLockReason } from "../../_lib/den-org";
+import { FeatureIntroGate } from "../_features/feature-intros";
+import type { AuthSecurityFacts } from "../_features/feature-intros/intros/auth-security";
 import { useOrgDashboard } from "../_providers/org-dashboard-provider";
+import { ssoIntroState } from "./auth-security-intro-facts";
 import { EnterprisePlanNotice } from "./enterprise-plan-notice";
 import { SsoRequirementSection } from "./sso-requirement-section";
 
@@ -27,9 +30,27 @@ function readSsoTestMessage(value: unknown) {
   return value.intentId;
 }
 
-export function SsoScreen() {
+const SSO_DESCRIPTION = "Configure one enterprise SSO connection per workspace and share the generated sign-in URL with your team.";
+
+/** The page shell on its own route; inside Auth & Security the tab names it, so no second title (P2). */
+function SsoFrame({ embedded, description, children }: { embedded: boolean; description: string; children: ReactNode }) {
+  if (embedded) return <div data-testid="sso-tab-content">{children}</div>;
+  return <DashboardPageTemplate icon={Shield} title="SSO" description={description}>{children}</DashboardPageTemplate>;
+}
+
+export type SsoScreenProps = {
+  /** Shown as the Single sign-on tab of Settings › Auth & Security. */
+  embedded?: boolean;
+  /** `?setup=1` from an intro's action: open the setup form instead of the intro (DESIGN.md I5). */
+  setupMode?: boolean;
+  /** Latest setup facts, so the Auth & Security section intro follows changes made here. */
+  onIntroFacts?: (facts: AuthSecurityFacts) => void;
+};
+
+export function SsoScreen({ embedded = false, setupMode = false, onIntroFacts }: SsoScreenProps = {}) {
   const { orgId, orgContext, runReauthableAction } = useOrgDashboard();
   const [connection, setConnection] = useState<DenOrgSsoConnection | null>(null);
+  const [loaded, setLoaded] = useState(false);
   const [busy, setBusy] = useState(false);
   const [saving, setSaving] = useState(false);
   const [deleting, setDeleting] = useState(false);
@@ -88,6 +109,7 @@ export function SsoScreen() {
       const parsed = parseOrgSsoPayload(payload);
       if (isCurrent()) {
         setConnection(parsed.connection);
+        setLoaded(true);
         if (!quiet) {
           syncFormFromConnection(parsed.connection);
           setEditing(false);
@@ -464,14 +486,26 @@ export function SsoScreen() {
     setEditing(false);
   }
 
+  // Feature intro facts (DESIGN.md I2) once the connection has loaded; embedded in Auth & Security only.
+  const introState = loaded ? ssoIntroState(connection) : null;
+  const ssoIncluded = orgContext?.entitlements.sso;
+  useEffect(() => {
+    if (!embedded || !introState || ssoIncluded === undefined) return;
+    onIntroFacts?.({ sso: introState, ssoIncluded });
+  }, [embedded, introState, ssoIncluded, onIntroFacts]);
+  // `?setup=1` skips the intro that stands in for an empty form; a saved connection still gets its banner.
+  const introFacts = embedded && introState && ssoIncluded !== undefined && !(setupMode && introState === "none")
+    ? { sso: introState, ssoIncluded }
+    : null;
+
   const formReadOnly = !access.canManageSso;
   const showConnectionForm = access.canViewSso && (!connection || editing || formReadOnly);
 
   if (!orgContext) {
     return (
-      <DashboardPageTemplate icon={Shield} title="SSO" description="Set up enterprise single sign-on for this workspace.">
+      <SsoFrame embedded={embedded} description="Set up enterprise single sign-on for this workspace.">
         <div className="rounded-[28px] border border-gray-200 bg-white px-6 py-10 text-[15px] text-gray-500">Loading organization details...</div>
-      </DashboardPageTemplate>
+      </SsoFrame>
     );
   }
 
@@ -479,11 +513,11 @@ export function SsoScreen() {
   const ssoSettingsOnSsoPage = orgFeatureEnabled(orgContext, "ssoSettingsOnSsoPage");
 
   return (
-    <DashboardPageTemplate icon={Shield} title="SSO" description="Configure one enterprise SSO connection per workspace and share the generated sign-in URL with your team.">
+    <SsoFrame embedded={embedded} description={SSO_DESCRIPTION}>
       {!access.canViewSso ? (
         <div className="rounded-[28px] border border-[var(--dls-border)] bg-[var(--dls-hover)] px-6 py-5 text-[14px] text-[var(--dls-text-primary)]">{permissionLockReason("sso.view")}</div>
       ) : (
-        <>
+        <FeatureIntroGate introKey="auth-security.sso" facts={introFacts}>
           {!orgContext.entitlements.sso ? (
             <EnterprisePlanNotice feature="SSO" plan="team" billingHref={getBillingRoute(orgContext.organization.slug)} />
           ) : null}
@@ -592,7 +626,7 @@ export function SsoScreen() {
             </div>
           ) : null}
 
-          <div className="rounded-[30px] border border-gray-200 bg-white p-6 shadow-[0_18px_48px_-34px_rgba(15,23,42,0.22)]">
+          <div id="sso-connection" className="scroll-mt-6 rounded-[30px] border border-gray-200 bg-white p-6 shadow-[0_18px_48px_-34px_rgba(15,23,42,0.22)]">
             <div className="flex items-start justify-between gap-4">
               <div>
                 <p className="text-[16px] font-semibold tracking-[-0.03em] text-gray-900">Current connection</p>
@@ -618,7 +652,7 @@ export function SsoScreen() {
             {connection ? (
               <div className="mt-5 space-y-4">
                 {!connection.domainVerified ? (
-                  <section data-testid="sso-domain-verification" className="overflow-hidden rounded-[24px] border border-[var(--dls-border)] bg-[var(--dls-surface)] text-[14px] text-[var(--dls-text-primary)]">
+                  <section id="sso-domain-verification" data-testid="sso-domain-verification" className="scroll-mt-6 overflow-hidden rounded-[24px] border border-[var(--dls-border)] bg-[var(--dls-surface)] text-[14px] text-[var(--dls-text-primary)]">
                     <div className="flex flex-col gap-4 border-b border-[var(--dls-border)] bg-[var(--dls-hover)] px-5 py-5 sm:flex-row sm:items-start sm:justify-between">
                       <div className="flex items-start gap-3">
                         <span className="mt-0.5 rounded-full bg-amber-900 p-2 text-amber-50"><ShieldAlert size={18} aria-hidden="true" /></span>
@@ -760,8 +794,8 @@ export function SsoScreen() {
               </div>
             </div>
           ) : null}
-        </>
+        </FeatureIntroGate>
       )}
-    </DashboardPageTemplate>
+    </SsoFrame>
   );
 }

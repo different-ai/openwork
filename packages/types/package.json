@@ -295,6 +295,14 @@
       "development": "./src/den/activation.ts",
       "default": "./src/den/activation.ts"
     },
+    "./den/feature-intros": {
+      "types": {
+        "openwork-build": "./dist/types/src/den/feature-intros.d.ts",
+        "default": "./src/den/feature-intros.ts"
+      },
+      "development": "./src/den/feature-intros.ts",
+      "default": "./src/den/feature-intros.ts"
+    },
     "./den/workbot-settings": {
       "types": {
         "openwork-build": "./dist/types/src/den/workbot-settings.d.ts",

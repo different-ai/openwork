@@ -29,7 +29,7 @@ it** flow before relying on Entra as the identity source.
 ## 1. Get the OpenWork connection values
 
 In OpenWork, select the organization you want to connect, then open
-**Settings → SCIM**.
+**Settings → Auth & Security → User provisioning (SCIM)** (older versions: **Settings → SCIM**).
 
 Confirm that the page shows **SAML/SSO active**, then:
 
@@ -45,7 +45,7 @@ You will enter these values in Entra:
 
 | Entra field | Where to get the value |
 | --- | --- |
-| Tenant URL | OpenWork **Settings → SCIM → SCIM base URL**. It normally ends in `/api/auth/scim/v2`. |
+| Tenant URL | OpenWork **Settings → Auth & Security → User provisioning (SCIM) → SCIM base URL**. It normally ends in `/api/auth/scim/v2`. |
 | Secret Token | The one-time **SCIM bearer token** shown after you create or rotate the connector. |
 
 Treat the bearer token like a password. Do not put it in tickets, screenshots,
@@ -195,7 +195,7 @@ successful provisioning, and confirm that inherited access is gone. Review
 | User or group is not found in **Provision on demand** | The object is outside the provisioning scope | Assign it under the enterprise application's **Users and groups** page |
 | Entra will not allow a group assignment | The tenant plan does not support assigning groups to enterprise applications | Enable a suitable Entra plan or test with directly assigned users |
 | On-demand group provisioning reports an internal server error without an OpenWork request | The group is empty or no members were selected for the on-demand run | Add members, select up to five under **Selected users**, and retry |
-| A group provisions but no OpenWork team appears | OpenWork team synchronization is disabled | Open **Settings → SCIM** and enable **Create teams from SCIM groups** |
+| A group provisions but no OpenWork team appears | OpenWork team synchronization is disabled | Open **Settings → Auth & Security → User provisioning (SCIM)** and enable **Create teams from SCIM groups** |
 | Entra creates a duplicate OpenWork member | SAML and SCIM use different email identifiers | Align the SAML NameID and the SCIM `userName` mapping |
 | Entra reports success but OpenWork still shows the old state | The UI or incremental cycle has not refreshed | Refresh OpenWork, check Entra **Provisioning logs**, and review the SCIM health status in OpenWork |
 

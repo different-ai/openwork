@@ -20,6 +20,7 @@ export function apexDomain(serviceUrl?: string | null): string | undefined {
 const BUNDLED_ICONS_BY_APEX: Record<string, string> = {
   "notion.com": "/integrations/notion.svg",
   "linear.app": "/integrations/linear.svg",
+  "okta.com": "/integrations/okta.svg",
   "slack.com": "/integrations/slack.svg",
   "stripe.com": "/integrations/stripe.svg",
   "sentry.dev": "/integrations/sentry.svg",
@@ -31,6 +32,7 @@ const BUNDLED_ICONS_BY_APEX: Record<string, string> = {
 };
 
 const BUNDLED_ICONS_BY_SLUG: Record<string, string> = {
+  okta: "/integrations/okta.svg",
   openai: "/integrations/openai.svg",
   openwork: "/openwork-mark.svg",
   slack: "/integrations/slack.svg",

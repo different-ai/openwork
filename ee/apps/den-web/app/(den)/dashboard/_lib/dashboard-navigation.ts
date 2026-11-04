@@ -23,6 +23,7 @@ import {
   getAnalyticsRoute,
   getApiKeysRoute,
   getAuditLogsRoute,
+  getAuthSecurityRoute,
   getAutomationsRoute,
   getBillingRoute,
   getDesktopPoliciesRoute,
@@ -101,6 +102,8 @@ export type BuildDashboardNavSectionsInput = {
   organizationId?: string | null;
   /** The member's own agent is available to them (see myAgentAvailable). */
   myBot?: boolean;
+  /** The authSecuritySettings feature: one Auth & Security entry instead of SSO and SCIM. */
+  authSecuritySettings?: boolean;
 };
 
 export function buildDashboardNavSections({
@@ -115,6 +118,7 @@ export function buildDashboardNavSections({
   workbotEntry = { kind: "open" },
   organizationId = null,
   myBot = false,
+  authSecuritySettings = false,
 }: BuildDashboardNavSectionsInput): DashboardNavSection[] {
   const workflowsEnabled = capabilities.workflows;
   const showWeb = runtimeConfigLoaded && capabilities.openworkWeb;
@@ -175,8 +179,7 @@ export function buildDashboardNavSections({
           { href: getApiKeysRoute(orgSlug), label: "API Keys" },
         ].filter((item) => canOpen(item.href)),
         ...permissionsNavChildren(orgSlug, access, canOpen(getMembersRoute(orgSlug))),
-        ...(access.canViewSso ? [{ href: getSsoRoute(orgSlug), label: "SSO" }] : []),
-        ...(access.canViewScim ? [{ href: getScimRoute(orgSlug), label: "SCIM" }] : []),
+        ...authSecurityNavChildren(orgSlug, access, authSecuritySettings),
         ...(canOpen(getMarketplacesRoute(orgSlug))
           ? [{ href: getMarketplacesRoute(orgSlug), label: "Advanced" }]
           : []),
@@ -213,6 +216,17 @@ function permissionsNavChildren(orgSlug: string, access: DenOrgAccessFlags, memb
   return access.canViewPermissions && !membersOpen ? [{ href: getPermissionsRoute(orgSlug), label: "Roles" }] : [];
 }
 
+/** SSO and SCIM: one Auth & Security entry with the feature on, shown when either tab is visible. */
+function authSecurityNavChildren(orgSlug: string, access: DenOrgAccessFlags, combined: boolean): DashboardNavChild[] {
+  if (combined) {
+    return access.canViewSso || access.canViewScim ? [{ href: getAuthSecurityRoute(orgSlug), label: "Auth & Security" }] : [];
+  }
+  return [
+    ...(access.canViewSso ? [{ href: getSsoRoute(orgSlug), label: "SSO" }] : []),
+    ...(access.canViewScim ? [{ href: getScimRoute(orgSlug), label: "SCIM" }] : []),
+  ];
+}
+
 // Alias order is ranking priority in the command palette.
 const PAGE_KEYWORDS: Record<string, string[]> = {
   Advanced: ["marketplace", "collections", "branding", "brand appearance"],
@@ -220,6 +234,7 @@ const PAGE_KEYWORDS: Record<string, string[]> = {
   Analytics: ["usage", "stats", "workflow runs", "history"],
   "Audit logs": ["audit", "history", "operations", "changes", "security"],
   "API Keys": ["token", "secret"],
+  "Auth & Security": ["sso", "single sign on", "saml", "oidc", "scim", "provisioning", "directory", "okta", "entra", "identity provider"],
   Billing: ["plan", "invoice", "payment"],
   "Bring Your Own Keys (Legacy)": ["llm", "provider", "byok", "api key"],
   Connectors: ["mcp", "integrations", "servers", "connect"],

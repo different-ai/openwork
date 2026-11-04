@@ -1,5 +1,6 @@
 import { Suspense } from "react";
 import { ConnectorSetupFallback } from "../../../../_components/connector-setup-fallback";
+import { ConnectorsAddIntro } from "../../../../_components/connectors-add-intro";
 import { AdminConnectorSetupScreen } from "../../../../_components/admin-connector-setup-screen";
 import { isNativeProviderCatalogId } from "../../../../_components/connector-catalog";
 import { NativeProviderSetupScreen } from "../../../../_components/native-provider-setup";
@@ -11,10 +12,14 @@ export default async function AddConnectorSetupPage({ params, searchParams }: {
   const { catalogId } = await params;
   const { from, name, url } = await searchParams;
   const id = decodeURIComponent(catalogId);
-  if (isNativeProviderCatalogId(id)) return <NativeProviderSetupScreen providerKey={id} returnToAgent={from === "my-agent"} />;
   return (
-    <Suspense fallback={<ConnectorSetupFallback name={name} url={url} />}>
-      <AdminConnectorSetupScreen catalogId={id} />
-    </Suspense>
+    <>
+      <ConnectorsAddIntro />
+      {isNativeProviderCatalogId(id) ? <NativeProviderSetupScreen providerKey={id} returnToAgent={from === "my-agent"} /> : (
+        <Suspense fallback={<ConnectorSetupFallback name={name} url={url} />}>
+          <AdminConnectorSetupScreen catalogId={id} />
+        </Suspense>
+      )}
+    </>
   );
 }

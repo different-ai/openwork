@@ -14,6 +14,8 @@ import { getMembersRoute } from "../../../_lib/den-org";
 import { DenButton } from "../../../_components/ui/button";
 import { DenNotice } from "../../../_components/ui/notice";
 import { DenSegmented } from "../../../_components/ui/segmented";
+import { analyticsHasActivity, analyticsUsageIntroFacts } from "../../_components/analytics-intro-facts";
+import { useFeatureIntro } from "../feature-intros";
 
 /* ── Formatting ── */
 
@@ -82,10 +84,11 @@ export function AnalyticsScreen() {
 
   const projectScoped = projectValue.length > 0;
   // A workspace nobody has used yet gets one clear empty state, not a page of zeros.
-  const noActivity = Boolean(data) && !projectScoped && !isError
-    && (data?.activeMembers30d ?? 0) === 0 && (data?.sessions30d ?? 0) === 0
-    && (data?.tasksCompleted30d ?? 0) + (data?.tasksFailed30d ?? 0) === 0
-    && (data?.weekly ?? []).every((week) => week.activeMembers === 0 && week.sessions === 0);
+  const noActivity = data !== undefined && !projectScoped && !isError && !analyticsHasActivity(data);
+  // With `featureIntros` on, the Analytics intro replaces the plan notice and "No activity yet"
+  // below the header; the tabs stay, since Plugins & connectors and Workflow runs have their own data.
+  const intro = useFeatureIntro("analytics", analyticsUsageIntroFacts({ included: orgContext ? !locked : null, data, projectScoped }));
+  const introShown = intro.size === "fullscreen";
   const weekly = data?.weekly ?? [];
   // Older servers may not return daily trends; keep their weekly data usable.
   const dailyAvailable = Array.isArray(data?.daily);
@@ -103,9 +106,9 @@ export function AnalyticsScreen() {
     <div className={analyticsPageClass}>
       <AnalyticsPageHeader orgSlug={activeOrg?.slug} active="adoption"
         title="Usage & adoption"
-        action={!locked && !isError ? <DenButton variant="secondary" disabled={isFetching} onClick={() => void refetch()}><RefreshCw className={`mr-2 h-3.5 w-3.5 ${isFetching ? "animate-spin" : ""}`} aria-hidden="true" />Refresh analytics</DenButton> : null} />
+        action={!locked && !isError && !introShown ? <DenButton variant="secondary" disabled={isFetching} onClick={() => void refetch()}><RefreshCw className={`mr-2 h-3.5 w-3.5 ${isFetching ? "animate-spin" : ""}`} aria-hidden="true" />Refresh analytics</DenButton> : null} />
 
-      {locked ? (
+      {introShown ? <div className="-mx-4 -mt-4 md:-mx-8 md:-mt-8">{intro.element}</div> : locked ? (
         <EnterprisePlanNotice feature="Usage analytics" detail="Team usage is unavailable on this plan." />
       ) : isError && !data ? <AnalyticsErrorState title="Couldn't load analytics" onRetry={() => void refetch()} retrying={isFetching} />
       : isLoading ? <AnalyticsLoading label="Loading analytics" /> : noActivity ? (

@@ -15,6 +15,7 @@ import {
   getPluginsRoute,
 } from "../../_lib/den-org";
 import { useOrgDashboard } from "../_providers/org-dashboard-provider";
+import { useFeatureIntro } from "../_features/feature-intros";
 import { type AccessDraft, accessAddedToast, ownedAccessStatus } from "./access-summary";
 import { useDenToast } from "./den-toast";
 import { formatAddedDate } from "./item-dates";
@@ -28,6 +29,7 @@ import { receivedStatus } from "./library-view";
 import { usePluginAccess } from "./plugin-access-data";
 import { type DenPlugin, pluginQueryKeys, usePlugin } from "./plugin-data";
 import { PluginPageSkeleton } from "./plugin-skeletons";
+import { pluginSharedBeyondOwner } from "./plugins-intro-facts";
 import { WhoCanUseIt } from "./who-can-use-it";
 import { SkillPreview, skillTitle } from "./skill-preview";
 export { skillTitle } from "./skill-preview";
@@ -148,6 +150,14 @@ function PluginPage({ pluginId, mode, libraryItems }: { pluginId: string; mode: 
   const [savingAccess, setSavingAccess] = useState(false);
   const [accessError, setAccessError] = useState<string | null>(null);
   const back = mode === "admin" ? { href: getPluginsRoute(orgSlug), label: "Plugins" } : { href: getLibraryRoute(orgSlug), label: "My Library" };
+  // Feature intros (flag `featureIntros`): on Manage, a banner while nobody besides its owner can use this plugin.
+  const accessIntro = useFeatureIntro("plugins.access", mode === "admin" && plugin.data && access.data && orgContext ? {
+    // This plugin exists, so the section is set up.
+    plugins: 1,
+    sharedBeyondOwner: pluginSharedBeyondOwner(draftFromPluginGrants(access.data), plugin.data.createdByOrgMembershipId),
+    canEditAccess: plugin.data.createdByOrgMembershipId === orgContext.currentMember.id
+      || getOrgAccessFlags(orgContext.currentMember.role, orgContext.currentMember.isOwner, orgContext.currentMember.permissions).canManageAllShared,
+  } : null);
 
   if (plugin.isLoading) {
     return <PluginPageSkeleton back={back} mode={mode} compact />;
@@ -242,8 +252,10 @@ function PluginPage({ pluginId, mode, libraryItems }: { pluginId: string; mode: 
         )}
       />
 
+      {accessIntro.size === "banner" ? accessIntro.element : null}
+
       {mode === "admin" && orgContext && draft ? (
-        <section className="flex flex-col gap-2.5">
+        <section id="who-can-use-it" className="flex scroll-mt-6 flex-col gap-2.5">
           <SectionTitle title="Who can use it" />
           <WhoCanUseIt
             value={draft}
