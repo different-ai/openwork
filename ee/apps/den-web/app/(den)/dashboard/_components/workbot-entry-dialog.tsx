@@ -7,7 +7,7 @@ import { usePathname } from "next/navigation";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { type DenOrgAccessFlags, type DenOrgContext } from "../../_lib/den-org";
 import { buttonVariants } from "../../_components/ui/button";
-import { decideWorkbotEntry, WORKBOT_ENTRY_COPY, WORKBOT_ENTRY_HREF, type WorkbotEntry } from "../_lib/workbot-entry";
+import { decideWorkbotEntry, WORKBOT_ENTRY_COPY, isWorkbotEntryHref, type WorkbotEntry } from "../_lib/workbot-entry";
 import { useWorkbotReadiness } from "./workbot-readiness-data";
 
 type BlockedWorkbotEntry = Exclude<WorkbotEntry, { kind: "open" }>;
@@ -87,7 +87,7 @@ export function useWorkbotEntry({ orgId, orgSlug, orgContext, access, enabled }:
 
   /** True when the navigation to `href` was handled here and the caller must not navigate. */
   const interceptNavigation = useCallback((href: string) => {
-    if (href !== WORKBOT_ENTRY_HREF || !blocked) return false;
+    if (!isWorkbotEntryHref(href) || !blocked) return false;
     setDialogOpen(true);
     return true;
   }, [blocked]);

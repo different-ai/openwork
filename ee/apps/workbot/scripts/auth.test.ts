@@ -424,3 +424,56 @@ test("OAuth discovery keeps separate Workbot, Den web and API deployment domains
   assert.equal(tokenRequests[0].get("code_verifier"), "fixture-verifier")
   assert.equal(tokenRequests[0].get("resource"), resource)
 })
+
+test("opening Workbot from another workspace signs in again instead of showing the last workspace's Workbot", async () => {
+  const w = world()
+  const app = w.instance()
+  const { session } = await signIn(app)
+  const cookie = { cookie: `__Host-workbot=${session}` }
+
+  const same = await app.request("/?organization=org_test", { headers: cookie })
+  assert.equal(same.status, 302)
+  assert.equal(same.headers.get("location"), "/")
+
+  const other = await app.request("/documents?organization=org_other", { headers: cookie })
+  assert.equal(other.status, 302)
+  const login = new URL(other.headers.get("location") ?? "", config.publicUrl)
+  assert.equal(login.pathname, "/auth/login")
+  assert.equal(login.searchParams.get("organization"), "org_other")
+  assert.equal(login.searchParams.get("return"), "/documents")
+
+  const signedOut = await app.request("/?organization=org_other")
+  assert.equal(new URL(signedOut.headers.get("location") ?? "", config.publicUrl).searchParams.get("organization"), "org_other")
+
+  for (const hint of ["", "org other", "x".repeat(200), "../evil"]) {
+    const ignored = await app.request(`/?organization=${encodeURIComponent(hint)}`, { headers: cookie })
+    assert.equal(ignored.headers.get("location"), "/", `hint ${JSON.stringify(hint)}`)
+  }
+  // API and sign-in routes never treat the hint as a page link.
+  assert.notEqual((await app.request("/v1/workbot/me?organization=org_other", { headers: cookie })).status, 302)
+})
+
+test("when Den signs in to a different workspace than Workbot was opened from, the person chooses instead", async () => {
+  const w = world()
+  const app = w.instance()
+  const login = await app.request("/auth/login?organization=org_other&return=%2Fdocuments")
+  const loginCookie = cookieValue(login, "__Host-workbot-login")
+  const state = new URL(login.headers.get("location") ?? "").searchParams.get("state")
+  const callback = await app.request(`/auth/callback?state=${state}&code=test-code`, { headers: { cookie: `__Host-workbot-login=${loginCookie}` } })
+  assert.equal(callback.status, 302)
+  const next = new URL(callback.headers.get("location") ?? "", config.publicUrl)
+  assert.equal(next.pathname, "/auth/login")
+  assert.equal(next.searchParams.get("workspace"), "choose")
+  assert.equal(next.searchParams.get("organization"), null)
+  assert.equal(next.searchParams.get("return"), "/documents")
+  assert.equal(cookieValue(callback, "__Host-workbot"), undefined)
+  assert.deepEqual(w.calls.revoke, ["refresh-0"])
+
+  // Opened from the workspace Den signs in to: signed in as usual.
+  const matching = await app.request("/auth/login?organization=org_test&return=%2Fdocuments")
+  const matchingCookie = cookieValue(matching, "__Host-workbot-login")
+  const matchingState = new URL(matching.headers.get("location") ?? "").searchParams.get("state")
+  const done = await app.request(`/auth/callback?state=${matchingState}&code=test-code`, { headers: { cookie: `__Host-workbot-login=${matchingCookie}` } })
+  assert.equal(done.headers.get("location"), "/documents")
+  assert.ok(cookieValue(done, "__Host-workbot"))
+})

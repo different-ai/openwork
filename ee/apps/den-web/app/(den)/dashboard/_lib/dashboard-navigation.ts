@@ -44,7 +44,7 @@ import {
 } from "../../_lib/den-org";
 import type { DenOrgMode } from "../../_lib/runtime-config";
 import { canOpenAdminRoute } from "./admin-route-access";
-import { WORKBOT_ENTRY_HREF, type WorkbotEntry, workbotNavMarker } from "./workbot-entry";
+import { type WorkbotEntry, workbotEntryHref, workbotNavMarker } from "./workbot-entry";
 
 export type DashboardNavChild = {
   href: string;
@@ -97,6 +97,8 @@ export type BuildDashboardNavSectionsInput = {
   canManageDeploymentServices?: boolean;
   /** What clicking Workbot does; a blocked entry stays visible with a marker. */
   workbotEntry?: WorkbotEntry;
+  /** The workspace on screen, so the Workbot entry opens Workbot for it. */
+  organizationId?: string | null;
   /** The member's own agent is available to them (see myAgentAvailable). */
   myBot?: boolean;
 };
@@ -111,13 +113,14 @@ export function buildDashboardNavSections({
   desktopPolicyScreenRemoved = false,
   canManageDeploymentServices = false,
   workbotEntry = { kind: "open" },
+  organizationId = null,
   myBot = false,
 }: BuildDashboardNavSectionsInput): DashboardNavSection[] {
   const workflowsEnabled = capabilities.workflows;
   const showWeb = runtimeConfigLoaded && capabilities.openworkWeb;
   const workItems: DashboardNavItem[] = [
     ...(capabilities.workbot
-      ? [{ href: WORKBOT_ENTRY_HREF, label: "Workbot", icon: MessageCircle, testId: "dashboard-nav-workbot", ...workbotNavMarker(workbotEntry) }]
+      ? [{ href: workbotEntryHref(organizationId), label: "Workbot", icon: MessageCircle, testId: "dashboard-nav-workbot", ...workbotNavMarker(workbotEntry) }]
       : []),
     ...(myBot && orgSlug
       ? [{ href: getLibraryMyAgentRoute(orgSlug), label: "My bot", icon: Radar, testId: "dashboard-nav-my-bot" }]
