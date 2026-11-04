@@ -84,3 +84,12 @@ test("configured instructions never send local or secret files", async () => {
     await rm(workspace, { recursive: true, force: true });
   }
 });
+
+test("V2 browser instructions open pages directly and keep websites off computer tools", () => {
+  const { browser } = buildOpenWorkV2Instructions(true);
+  assert.match(browser, /call browser_open directly/);
+  assert.match(browser, /already includes the page's controls, so act next/);
+  assert.match(browser, /Call browser_tabs only when the person refers to a tab that is already open/);
+  assert.match(browser, /never drive a browser app \(Chrome, Safari, Edge\) with computer tools/);
+  assert.doesNotMatch(browser, /Start with browser_tabs/);
+});

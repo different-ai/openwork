@@ -455,7 +455,7 @@ export function BrowserPanelContent({
                 onBlur={() => {
                   urlFocusedRef.current = false;
                 }}
-                placeholder="Enter URL..."
+                placeholder="Search or enter address"
                 spellCheck={false}
                 autoComplete="off"
               />
