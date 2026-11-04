@@ -57,6 +57,8 @@ export type ComputerHistoryFrame = {
   marks: ComputerActionMark[]
   /** The agent's reasoning just before the step, when the chat shows thinking. */
   thinking?: string
+  /** The app the step ran in, when known. */
+  app?: string
 }
 
 export type ComputerActionMark =
@@ -94,6 +96,36 @@ export type ComputerSessionHistory = {
   purpose: string | null
   /** What the agent is doing now: the newest step's intent or action. */
   latest: string
+  /** Every app the session worked in, in the order it opened them. */
+  apps: string[]
+}
+
+const opensApp = (part: DynamicToolUIPart) => /(?:^|_)computer_open(?:_session)?$/.test(part.toolName)
+
+/**
+ * Which app each step ran in. A chat can keep a few apps open: a step names one by the
+ * session_id its open returned, and otherwise goes to the app opened last.
+ */
+function stepApps(parts: readonly DynamicToolUIPart[]): Map<string, string> {
+  const bySession = new Map<string, string>()
+  const apps = new Map<string, string>()
+  let latest: string | undefined
+  for (const part of parts) {
+    const input = record(part.input) ? part.input : {}
+    if (opensApp(part)) {
+      const output = result(part)
+      const named = record(output) && typeof output.app_name === "string" && output.app_name.trim() ? output.app_name.trim()
+        : typeof input.app_id === "string" && input.app_id.trim() ? input.app_id.trim() : undefined
+      if (!named) continue
+      latest = named
+      if (record(output) && typeof output.session_id === "string") bySession.set(output.session_id, named)
+      apps.set(part.toolCallId, named)
+      continue
+    }
+    const app = typeof input.session_id === "string" ? bySession.get(input.session_id) : latest
+    if (app) apps.set(part.toolCallId, app)
+  }
+  return apps
 }
 
 /** Only supported raster captures; no new requests to arbitrary result URLs. */
@@ -121,6 +153,9 @@ export function collectComputerSessionHistory(messages: readonly UIMessage[], op
   const parts = [...tools.values()]
   const first = parts[0]
   if (!first) return null
+  const apps = stepApps(parts)
+  const label = (part: DynamicToolUIPart) => opensApp(part) && apps.has(part.toolCallId) && !(record(part.input) && typeof part.input.intent === "string" && part.input.intent.trim())
+    ? `Opened ${apps.get(part.toolCallId)}` : computerActionLabel(part)
   const files = new Set<FileUIPart>()
   const frames: ComputerHistoryFrame[] = []
   const marked = new Set<string>()
@@ -138,8 +173,9 @@ export function collectComputerSessionHistory(messages: readonly UIMessage[], op
       marked.add(part.toolCallId)
       const previous = frames.at(-1)
       if (previous?.file.url === file.url) { previous.marks.push(...marks); continue }
-      frames.push({ id: `${part.toolCallId}:${frames.length}`, file, toolCallId: part.toolCallId, label: computerActionLabel(part), marks,
-        ...(thinking.has(part.toolCallId) ? { thinking: thinking.get(part.toolCallId) } : {}) })
+      frames.push({ id: `${part.toolCallId}:${frames.length}`, file, toolCallId: part.toolCallId, label: label(part), marks,
+        ...(thinking.has(part.toolCallId) ? { thinking: thinking.get(part.toolCallId) } : {}),
+        ...(apps.has(part.toolCallId) ? { app: apps.get(part.toolCallId) } : {}) })
     }
   }
   const starts = parts.flatMap(part => {
@@ -154,7 +190,8 @@ export function collectComputerSessionHistory(messages: readonly UIMessage[], op
     ? Math.max(0, Math.max(...ends) - Math.min(...starts)) : null
   const opened = parts.find(part => /(?:^|_)computer_open(?:_session)?$/.test(part.toolName) && record(part.input) && typeof part.input.purpose === "string")
   const purpose = opened && record(opened.input) && typeof opened.input.purpose === "string" ? opened.input.purpose.trim() || null : null
-  return { id: first.toolCallId, parts, frames, toolCallIds: new Set(tools.keys()), files, durationMs, purpose, latest: computerActionLabel(parts.at(-1)!) }
+  return { id: first.toolCallId, parts, frames, toolCallIds: new Set(tools.keys()), files, durationMs, purpose, latest: label(parts.at(-1)!),
+    apps: [...new Set(apps.values())] }
 }
 
 export function withoutComputerHistory(parts: UIMessage["parts"], history: ComputerSessionHistory | null): UIMessage["parts"] {

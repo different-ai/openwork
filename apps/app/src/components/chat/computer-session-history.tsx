@@ -41,6 +41,8 @@ export function ComputerSessionHistory({ history, active, renderAction, live }: 
   const nextFrameId = frames[index + 1]?.id
   const unfinished = parts.some(isToolPartInFlight)
   const title = unfinished ? active ? "Using computer" : "Computer status unavailable" : "Used computer"
+  // With several apps in one session, each step says which one it ran in.
+  const several = history.apps.length > 1
 
   useEffect(() => {
     if (!open || !playing) return
@@ -87,6 +89,7 @@ export function ComputerSessionHistory({ history, active, renderAction, live }: 
               ? <span data-computer-session-description="" className="mt-0.5 block truncate text-xs font-normal text-muted-foreground">{unfinished && active ? history.latest : history.purpose ?? history.latest}</span> : null}
             <span className="mt-0.5 flex flex-wrap gap-x-3 text-xs font-normal text-muted-foreground">
               <span>{parts.length} {parts.length === 1 ? "action" : "actions"}</span>
+              {several ? <span data-computer-session-apps="">{history.apps.join(", ")}</span> : null}
               {history.durationMs !== null ? <span>{formatToolCallDuration(history.durationMs)}</span> : null}
             </span>
           </span>
@@ -105,7 +108,7 @@ export function ComputerSessionHistory({ history, active, renderAction, live }: 
                 <Image
                   key={frame.id}
                   src={frame.file.url}
-                  alt={`Captured view ${index + 1}: ${frame.label}`}
+                  alt={`Captured view ${index + 1}: ${several && frame.app ? `${frame.app}, ` : ""}${frame.label}`}
                   previewMaxHeight={0}
                   previewMaxWidth={0}
                   className="block h-auto max-h-80 w-auto max-w-full rounded-md bg-muted/30"
@@ -116,7 +119,7 @@ export function ComputerSessionHistory({ history, active, renderAction, live }: 
                   ? <ActionMarks marks={frame.marks} width={size.width} height={size.height} /> : null}
               </div>}
               <div data-computer-view-step="" className="pt-2 text-xs">
-                <p className="font-medium text-foreground">{frame.label}</p>
+                <p className="font-medium text-foreground">{several && frame.app ? <span data-computer-view-app="" className="text-muted-foreground">{frame.app} · </span> : null}{frame.label}</p>
                 {frame.thinking ? <p className="mt-0.5 line-clamp-3 whitespace-pre-line text-muted-foreground">{frame.thinking}</p> : null}
               </div>
               <div className="group flex min-w-0 items-center gap-3 pt-2">

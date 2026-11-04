@@ -49,7 +49,8 @@ already holds returns `session_open` with its `session_id`; a fourth app returns
 `too_many_sessions` until one is closed. Every app keeps its window lock, its
 turn at the keyboard and pointer and its idle release; end of turn releases
 them all, Take over on any of them holds the whole chat until Continue, and Stop
-ends them all. Other computers keep one app per chat. Grants, element references,
+ends them all. Watch live shows the app being worked in, and the session card
+names the app of each step. Other computers keep one app per chat. Grants, element references,
 screenshots and receipts live in process memory and are discarded on close.
 
 | Tool | Purpose |
@@ -404,8 +405,12 @@ is on another one). It sets only that window's accessibility position and size,
 never another app's, and is sent on its own, not over a dialog and only in
 control mode. The new frame is read back: the step path is `window_arranged`,
 or `window_arranged_partly` when the app kept its own size. Every observed
-coordinate is stale after it, so the receipt carries a fresh observation. It is
-Mac only; Windows PCs and remote computers refuse it before anything is sent.
+coordinate is stale after it, so the receipt carries a fresh observation. The
+window's frame before its first `arrange` is kept, and when the session closes
+(close, end of turn, idle release or Stop) the window goes back there, unless
+the person moved or resized it since. The agent is told to arrange only for a
+task across two apps the person may watch, or when asked. It is Mac only;
+Windows PCs and remote computers refuse it before anything is sent.
 
 `{ type: "open_file", path: "/Users/…/photo.png" }` hands a file to the
 session's app the way Finder's Open With does, instead of a drag between two

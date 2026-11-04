@@ -830,6 +830,10 @@ test("end of turn, takeover and Stop cover every app in the chat", async (t) => 
   assert.equal(f.events.filter((event) => event === "blender:computer_open_session:start").length, 2);
   assert.equal(f.events.filter((event) => event === "photoshop:computer_open_session:start").length, 1);
   assert.equal(payload(await look(f.control, "chat", "native-photoshop")).observation_id, "observation-photoshop");
+  // Watch live follows the app being worked in, not only the one opened last.
+  assert.equal((await f.control.presentation({ sessionId: "chat", visible: true })).id, "view-photoshop");
+  await look(f.control, "chat", "native-blender");
+  assert.equal((await f.control.presentation({ sessionId: "chat", visible: true })).appName, "blender");
   // Taking over one app holds the whole chat until Continue.
   await f.control.interact({ sessionId: "chat", id: "view-blender", action: "takeover" });
   const act = payload(await f.control.execute({ sessionId: "chat", name: "computer_act", args: { session_id: "native-photoshop", observation_id: "observation-photoshop", action: { type: "click", x: 1, y: 1 } } }));

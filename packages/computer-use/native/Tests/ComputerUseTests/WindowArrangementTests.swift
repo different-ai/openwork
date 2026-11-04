@@ -65,6 +65,24 @@ final class WindowArrangementTests: XCTestCase {
         }
     }
 
+    func testClosingPutsAnArrangedWindowBackWhereThePersonHadIt() {
+        let original = CGRect(x: 200, y: 120, width: 900, height: 640)
+        let arranged = CGRect(x: 0, y: 25, width: 720, height: 875)
+        let placement = WindowArrangement.Placement(window: AXUIElementCreateApplication(getpid()), original: original, arranged: arranged)
+        XCTAssertEqual(WindowArrangement.restoring(placement, current: arranged), original)
+        XCTAssertEqual(WindowArrangement.restoring(placement, current: CGRect(x: 1, y: 25, width: 721, height: 874)), original, "within the readback's rounding")
+    }
+
+    func testAWindowThePersonMovedSinceIsLeftWhereTheyPutIt() {
+        let original = CGRect(x: 200, y: 120, width: 900, height: 640)
+        let arranged = CGRect(x: 0, y: 25, width: 720, height: 875)
+        let placement = WindowArrangement.Placement(window: AXUIElementCreateApplication(getpid()), original: original, arranged: arranged)
+        XCTAssertNil(WindowArrangement.restoring(placement, current: CGRect(x: 300, y: 25, width: 720, height: 875)), "moved")
+        XCTAssertNil(WindowArrangement.restoring(placement, current: CGRect(x: 0, y: 25, width: 1000, height: 875)), "resized")
+        XCTAssertNil(WindowArrangement.restoring(placement, current: nil), "closed")
+        XCTAssertNil(WindowArrangement.restoring(WindowArrangement.Placement(window: placement.window, original: original), current: original), "never arranged")
+    }
+
     func testTheReceiptSaysWhetherTheAppTookTheWholeFrame() {
         let wanted = CGRect(x: 0, y: 25, width: 720, height: 875)
         XCTAssertTrue(WindowArrangement.matches(CGRect(x: 0, y: 25, width: 721, height: 874), wanted), "apps round sizes to their own grid")

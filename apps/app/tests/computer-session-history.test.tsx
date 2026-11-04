@@ -176,6 +176,31 @@ test("streaming transcript updates do not keep restarting playback", async () =>
   expect(container.querySelector('[data-computer-view-count]')?.textContent).toBe("2 / 3")
 })
 
+test("with two apps in one session, each step names the app it ran in", async () => {
+  const call = (id: string, name: string, input: Record<string, unknown>, output: unknown): DynamicToolUIPart =>
+    ({ type: "dynamic-tool", toolName: name, toolCallId: id, state: "output-available", input, output: JSON.stringify(output) })
+  const view = (image: string, id: string) => withToolAttachmentOwner([{ type: "file", mediaType: "image/png", url: image }], id)
+  const history = collectComputerSessionHistory([{ id: "a", role: "assistant", parts: [
+    call("ps", "computer_open", { app_id: "com.adobe.Photoshop", purpose: "Turn the image into a PDF" }, { ok: true, session_id: "s-ps", app_name: "Photoshop" }), ...view(images[0]!, "ps"),
+    call("pv", "computer_open", { app_id: "com.apple.Preview", purpose: "Export the PDF" }, { ok: true, session_id: "s-pv", app_name: "Preview" }),
+    call("export", "computer_act", { observation_id: "o1", intent: "Export as PDF", action: { type: "menu", path: ["File", "Export as PDF…"] } }, { ok: true }), ...view(images[1]!, "export"),
+    call("back", "computer_act", { session_id: "s-ps", observation_id: "o2", intent: "Check the image", action: { type: "press", ref: "e1" } }, { ok: true }), ...view(images[2]!, "back"),
+  ] }])!
+  expect(history.apps).toEqual(["Photoshop", "Preview"])
+  expect(history.frames.map(frame => [frame.app, frame.label])).toEqual([["Photoshop", "Opened Photoshop"], ["Preview", "Export as PDF"], ["Photoshop", "Check the image"]])
+  const container = document.createElement("div"); document.body.append(container)
+  const root = createRoot(container); mounted = { root, container }
+  await act(async () => root.render(createElement(TooltipProvider, { children: createElement(ComputerSessionHistory, { history, active: false, renderAction: part => createElement("p", {}, part.toolCallId) }) })))
+  expect(container.querySelector("[data-computer-session-apps]")?.textContent).toBe("Photoshop, Preview")
+  await act(async () => container.querySelector<HTMLElement>('[aria-label="View computer session history"]')!.click())
+  expect(container.querySelector("[data-computer-view-step]")?.textContent).toContain("Photoshop · Check the image")
+  // One app: no names, as before.
+  const single = collectComputerSessionHistory([{ id: "b", role: "assistant", parts: [call("one", "computer_open", { app_id: "notes", purpose: "Write" }, { ok: true, session_id: "s", app_name: "Notes" }), ...view(images[0]!, "one")] }])!
+  await act(async () => root.render(createElement(TooltipProvider, { children: createElement(ComputerSessionHistory, { history: single, active: false, renderAction: () => null }) })))
+  expect(container.querySelector("[data-computer-session-apps]")).toBeNull()
+  expect(container.querySelector("[data-computer-view-app]")).toBeNull()
+})
+
 test("with the card on, the live computer view opens from the card or when the person is needed", () => {
   const working = { state: "active" }
   expect(showsLiveComputerView({ historyEnabled: false, watching: false, session: working })).toBe(true)

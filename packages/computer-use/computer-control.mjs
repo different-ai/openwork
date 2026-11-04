@@ -305,9 +305,12 @@ export function createComputerControl({ adapters, runProgram, runScript, onTimin
   /** The chat's app a call goes to when it names none: the one it opened last. */
   const appOf = (grant) => grant.apps.get(grant.latest) ?? null;
   const leaseOf = (grant, app = appOf(grant)) => mine(grant).find((current) => current.app === app) ?? null;
-  /** The session the Computer view shows: one the person took over, else the latest app's. */
-  const shownLease = (grant) => mine(grant).find((current) => current.presentation?.phase === "paused") ?? leaseOf(grant) ?? mine(grant)[0] ?? null;
+  /** The session Watch live shows: one the person took over, else the app being worked in, else the one used last. */
+  const shownLease = (grant) => { const own = mine(grant); return own.find((current) => current.presentation?.phase === "paused") ?? own.find((current) => current.busy)
+    ?? own.reduce((shown, current) => !shown || (current.usedAt ?? 0) > (shown.usedAt ?? 0) ? current : shown, null); };
   const leased = (current) => leases.get(current.key) === current;
+  /** Orders the chat's apps by their last call. */
+  let uses = 0;
   const listApps = (grant) => [...grant.apps.values()].map((app) => ({ session_id: app.id, app_id: app.lastOpen.app_id,
     ...(Number.isSafeInteger(app.lastOpen.window_id) ? { window_id: app.lastOpen.window_id } : {}) }));
   function forget(grant, app) {
@@ -866,7 +869,7 @@ export function createComputerControl({ adapters, runProgram, runScript, onTimin
       if (!own) leases.set(current.key, current);
       if (!opening) current.app ??= call.app;
       clearTimeout(current.idleTimer);
-      current.busy = true;
+      current.busy = true; current.usedAt = ++uses;
       // The engine cancelled this tool: end the native session, keep the chat's permission.
       const abort = () => { if (leased(current)) { current.expectedClose = true; void cleanup(current); } };
       signal.addEventListener("abort", abort, { once: true });

@@ -83,6 +83,30 @@ enum WindowArrangement {
         return matches(read(window), frame) ? "window_arranged" : "window_arranged_partly"
     }
 
+    /// The person's window as it was before the session's first `arrange`, and where the
+    /// last `arrange` left it, so closing the session can put it back.
+    struct Placement {
+        let window: AXUIElement
+        let original: CGRect
+        var arranged: CGRect?
+    }
+
+    /// The frame to put back on close: the original, unless the person moved or resized the
+    /// window since the session last arranged it. Their own placement always wins.
+    static func restoring(_ placement: Placement, current: CGRect?) -> CGRect? {
+        guard let arranged = placement.arranged, matches(current, arranged), !matches(current, placement.original) else { return nil }
+        return placement.original
+    }
+
+    /// Puts the window back where it was, when the person has not moved it since.
+    @discardableResult
+    static func restore(_ placement: Placement) -> Bool {
+        guard let original = restoring(placement, current: read(placement.window)) else { return false }
+        return (try? apply(original, to: placement.window, check: {})) == "window_arranged"
+    }
+
+    static func frame(of window: AXUIElement) -> CGRect? { read(window) }
+
     /// Within a couple of points: apps round sizes to their own grid.
     static func matches(_ actual: CGRect?, _ wanted: CGRect, tolerance: CGFloat = 2) -> Bool {
         guard let actual else { return false }
