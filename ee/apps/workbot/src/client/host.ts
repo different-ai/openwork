@@ -27,6 +27,8 @@ export const meSchema = z.object({
   canSchedule: z.boolean().default(false),
   /** Side chats are on for this person (while Workbot is on). */
   sideChats: z.boolean().default(false),
+  /** The header avatar opens the account menu with Sign out (`workbotAccountMenu`); older servers omit it. */
+  accountMenu: z.boolean().default(false),
   /** The Cmd+K / Ctrl+K command palette; older servers omit it. */
   denUrl: z.string().nullable(),
 })
@@ -36,6 +38,20 @@ export type Me = z.infer<typeof meSchema>
 export function signIn() {
   const back = `${window.location.pathname}${window.location.search}`
   window.location.assign(`/auth/login?return=${encodeURIComponent(back)}`)
+}
+
+/** Ends this browser's Workbot sign-in, then shows the signed-out page (never straight back into sign-in). */
+export async function signOut() {
+  const response = await fetch("/auth/logout", { method: "POST", credentials: "same-origin", signal: AbortSignal.timeout(15_000) }).catch(() => null)
+  // Never say signed out while the sign-in cookie may still be there.
+  if (!response?.ok) throw new Error("Workbot couldn't sign you out. Check your connection and try again.")
+  window.location.assign("/auth/signed-out")
+}
+
+/** Signs in again through Den's workspace chooser, then comes back to this page. */
+export function switchWorkspace() {
+  const back = `${window.location.pathname}${window.location.search}`
+  window.location.assign(`/auth/login?workspace=choose&return=${encodeURIComponent(back)}`)
 }
 
 /** The conversation read index.html started for the person its early /me answer named. */
@@ -135,6 +151,7 @@ export function createHost(me: Me, recovery: { authorization?: WorkbotHost["docu
         && current.userId === me.userId && current.organizationId === me.organizationId
     },
     sideChats: me.sideChats,
+    account: me.accountMenu ? { email: me.email, organizationName: me.organizationName, signOut, switchWorkspace } : undefined,
     identity: me.userId && me.organizationId ? { principalId: me.userId, organizationId: me.organizationId } : undefined,
   }
 }

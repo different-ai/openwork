@@ -81,6 +81,8 @@ const sessionSchema = z.object({
   activationChecklist: z.boolean().optional(),
   /** The person can start side chats next to their main chat (while Workbot is on). */
   sideChats: z.boolean(),
+  /** The header avatar opens the account menu with Sign out (`workbotAccountMenu`); older Dens omit it: off. */
+  accountMenu: z.boolean().optional(),
   /** Always true for older Workbot clients; the command palette is available by default. */
   commandPalette: z.boolean().optional(),
   /**
@@ -406,6 +408,7 @@ export function registerWorkbotRoutes<T extends { Variables: object }>(app: Hono
         usageRecovery: true,
         activationChecklist: true,
         sideChats: true,
+        accountMenu: features.workbotAccountMenu,
         commandPalette: true,
         model,
         gatewayModels: true,

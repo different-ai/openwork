@@ -252,6 +252,8 @@ export function registerWorkbotRoutes(app: Hono<AppEnv>, input: { config: Config
       activationChecklist: who.enabled,
       canSchedule: who.enabled && who.canSchedule,
       sideChats: who.enabled && who.sideChats,
+      // Signing out and switching workspace don't depend on Workbot being on for this workspace.
+      accountMenu: who.accountMenu,
       commandPalette: true,
       denUrl: config.denWebUrl ?? (await den.webUrl().catch(() => null)),
     })
