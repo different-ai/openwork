@@ -3,14 +3,14 @@
 Feature: `computerSessionHistory`. Cloud and self-hosted. Author: `reachjalil`.
 Off by default.
 
-Computer and browser actions in one assistant turn share a compact card. Open
-it to browse the screenshots the agent received, play them in sequence, or
-inspect the original actions. Narration, other attachments, failed calls,
-approval requests and browser sign-in handoffs remain in the conversation. No
-new recording or screenshot capture is introduced.
+Computer actions in one assistant turn share a compact card. Open it to browse
+the screenshots the agent received, play them in sequence, or inspect the
+original actions. Narration, other attachments, failed calls and approval
+requests remain in the conversation. No new recording or screenshot capture
+is introduced.
 
-The card reads "Used browser" when the turn only used the built-in browser, and
-"Used computer" when it used computer tools, alone or with the browser.
+Built-in browser steps are not part of the card; they keep their usual
+"Used browser" steps in the conversation.
 
 While the feature is on, the floating live computer view no longer opens by
 itself: the card shows the work. While the chat's computer is working, the
@@ -22,7 +22,7 @@ takeover. The next computer session starts in the card again.
 ![Computer session history open in the chat](computer-session-history.webp)
 
 Enable the feature for a test organization or member in platform admin, then
-open a conversation with computer or browser actions. Signed-out clients follow the
+open a conversation with computer actions. Signed-out clients follow the
 deployment's feature setting. A missing or unreachable setting stays off.
 
 The collapsed card follows the newest capture. Browsing an earlier view pins

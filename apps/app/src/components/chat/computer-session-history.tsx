@@ -1,6 +1,6 @@
 import { useEffect, useState, type ReactNode } from "react"
 import type { DynamicToolUIPart } from "ai"
-import { ChevronRight, CodeXml, Globe, Monitor, Pause, PictureInPicture2, Play } from "lucide-react"
+import { ChevronRight, CodeXml, Monitor, Pause, PictureInPicture2, Play } from "lucide-react"
 
 import { markFeatureUsed } from "@/app/lib/den"
 import { Button } from "@/components/ui/button"
@@ -9,7 +9,7 @@ import { Image } from "@/components/ui/image"
 import { isToolPartInFlight } from "@/lib/tool-activity"
 import { formatToolCallDuration } from "@/lib/tool-call-duration"
 import { cn } from "@/lib/utils"
-import { isBrowserToolName, type ComputerActionMark, type ComputerSessionHistory as History } from "@/lib/computer-session-history"
+import { type ComputerActionMark, type ComputerSessionHistory as History } from "@/lib/computer-session-history"
 
 /**
  * `live` is the chat's working computer: the card shows its work, and its live
@@ -40,11 +40,7 @@ export function ComputerSessionHistory({ history, active, renderAction, live }: 
   const currentFrameId = frame?.id
   const nextFrameId = frames[index + 1]?.id
   const unfinished = parts.some(isToolPartInFlight)
-  const browserOnly = parts.every(part => isBrowserToolName(part.toolName))
-  const surface = browserOnly ? "browser" : "computer"
-  const surfaceTitle = browserOnly ? "Browser" : "Computer"
-  const Icon = browserOnly ? Globe : Monitor
-  const title = unfinished ? active ? `Using ${surface}` : `${surfaceTitle} status unavailable` : `Used ${surface}`
+  const title = unfinished ? active ? "Using computer" : "Computer status unavailable" : "Used computer"
 
   useEffect(() => {
     if (!open || !playing) return
@@ -72,7 +68,7 @@ export function ComputerSessionHistory({ history, active, renderAction, live }: 
     <Collapsible
       data-computer-session-history=""
       role="group"
-      aria-label={`${surfaceTitle} session history`}
+      aria-label="Computer session history"
       className="w-full min-w-0 overflow-hidden rounded-xl border border-border bg-background"
       open={open}
       onOpenChange={value => {
@@ -82,8 +78,8 @@ export function ComputerSessionHistory({ history, active, renderAction, live }: 
       }}
     >
       <div className="flex min-w-0 items-center">
-        <CollapsibleTrigger render={<Button variant="ghost" className="h-auto min-w-0 flex-1 justify-start gap-3 rounded-none p-3 text-left" />} aria-label={`View ${surface} session history`}>
-          <Icon aria-hidden="true" className="size-4 shrink-0 text-muted-foreground" />
+        <CollapsibleTrigger render={<Button variant="ghost" className="h-auto min-w-0 flex-1 justify-start gap-3 rounded-none p-3 text-left" />} aria-label="View computer session history">
+          <Monitor aria-hidden="true" className="size-4 shrink-0 text-muted-foreground" />
           <span className="min-w-0 flex-1">
             <span className={cn("block text-sm font-medium", unfinished && active && "animate-text-shimmer motion-reduce:animate-none")}>{title}</span>
             {/* While it works, what it is doing now; afterwards, what it was for. */}
@@ -97,7 +93,7 @@ export function ComputerSessionHistory({ history, active, renderAction, live }: 
           {latest ? <img src={latest.file.url} alt="" className="h-10 w-16 shrink-0 rounded object-contain" loading="lazy" decoding="async" /> : null}
           <ChevronRight aria-hidden="true" className={cn("size-4 shrink-0 text-muted-foreground transition-transform duration-150 ease-out motion-reduce:transition-none", open && "rotate-90")} />
         </CollapsibleTrigger>
-        {live && !browserOnly ? <Button variant="ghost" size="sm" className="mr-2 shrink-0" aria-pressed={live.watching} onClick={() => live.onWatch(!live.watching)}>
+        {live ? <Button variant="ghost" size="sm" className="mr-2 shrink-0" aria-pressed={live.watching} onClick={() => live.onWatch(!live.watching)}>
           <PictureInPicture2 aria-hidden="true" />{live.watching ? "Hide live view" : "Watch live"}
         </Button> : null}
       </div>
@@ -133,11 +129,11 @@ export function ComputerSessionHistory({ history, active, renderAction, live }: 
                 <span className="shrink-0 text-xs tabular-nums text-muted-foreground" data-computer-view-count="">{index + 1} / {frames.length}</span>
                 <Button variant="ghost" size="xs" className="shrink-0 tabular-nums text-muted-foreground" aria-label={`Playback speed ${speed}×`} disabled={frames.length < 2}
                   onClick={() => setSpeed(SPEEDS[(SPEEDS.indexOf(speed) + 1) % SPEEDS.length]!)}>{speed}×</Button>
-                <CollapsibleTrigger render={<Button variant="ghost" size="icon-xs" className="text-muted-foreground opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 pointer-coarse:opacity-100" />} aria-label={`View ${surface} actions`}><CodeXml aria-hidden="true" /></CollapsibleTrigger>
+                <CollapsibleTrigger render={<Button variant="ghost" size="icon-xs" className="text-muted-foreground opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 pointer-coarse:opacity-100" />} aria-label="View computer actions"><CodeXml aria-hidden="true" /></CollapsibleTrigger>
               </div>
             </> : <div className="flex flex-wrap items-center justify-between gap-2">
               <p className="text-xs text-muted-foreground">No captured views in this session.</p>
-              <CollapsibleTrigger render={<Button variant="ghost" size="sm" />} aria-label={`View ${surface} actions`}>View actions</CollapsibleTrigger>
+              <CollapsibleTrigger render={<Button variant="ghost" size="sm" />} aria-label="View computer actions">View actions</CollapsibleTrigger>
             </div>}
             <CollapsibleContent><div className="space-y-2 pt-3">{parts.map(part => <div key={part.toolCallId}>{renderAction(part)}</div>)}</div></CollapsibleContent>
           </Collapsible>
