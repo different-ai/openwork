@@ -173,6 +173,13 @@ test("flag on, Require SSO: the person still signs in and uses other organizatio
   assert.equal(field(options.body, "ssoRequired"), true)
   assert.equal(field(options.body, "alternativeStep"), "password")
 
+  // Den Web repeats this older preflight when the person submits the chosen
+  // password. It must not undo login-options and send them back to SSO.
+  const preflight = await den.request(null, "GET", `/v1/orgs/sso/resolve?email=${encodeURIComponent(both.email)}`)
+  assert.equal(preflight.status, 200, summary(preflight))
+  assert.equal(field(preflight.body, "requireSso"), false)
+  assert.equal(field(preflight.body, "method"), "password")
+
   const signIn = await den.signIn(both.email)
   assert.equal(signIn.status, 200, summary(signIn))
   const viaPassword: Session = { ...both, token: text(field(signIn.body, "token"), "token"), cookie: "" }
@@ -233,6 +240,11 @@ test("restricting the domain needs the flag, and brings back sign-in-wide SSO fo
   assert.equal(field(options.body, "nextStep"), "sso")
   assert.equal(field(options.body, "alternativeStep"), undefined, "SSO is the only way in")
   assert.equal(field(options.body, "allowInvitationSignup"), false)
+
+  const preflight = await den.request(null, "GET", `/v1/orgs/sso/resolve?email=${encodeURIComponent(both.email)}`)
+  assert.equal(preflight.status, 200, summary(preflight))
+  assert.equal(field(preflight.body, "method"), "sso")
+  assert.equal(field(preflight.body, "requireSso"), true)
 
   const signIn = await den.signIn(both.email)
   assert.equal(signIn.status, 403, summary(signIn))

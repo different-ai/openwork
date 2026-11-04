@@ -657,12 +657,14 @@ export function registerOrgCoreRoutes<T extends { Variables: OrgRouteVariables }
       }
 
       const requirement = await findEnterpriseAuthRequirementForEmailDomain(query.email)
-      // ssoPerOrganization: only an organization that requires SSO (or
-      // restricts its domain) sends this email to SSO here.
+      // This is the password/Google preflight, not organization access. With
+      // per-org SSO, Require SSO must not undo the alternative offered by login
+      // options: the person may still sign in for their other organizations.
+      // Only restricting the entire domain (or the legacy behavior) redirects.
       const domainPolicy = requirement ? await findDomainSsoRequirement(query.email) : null
-      const ssoOptional = Boolean(domainPolicy?.perOrganization && !domainPolicy.policy.requireSso && !domainPolicy.policy.restrictDomainToSso)
+      const permitsNonSsoSignIn = Boolean(domainPolicy?.perOrganization && !domainPolicy.policy.restrictDomainToSso)
 
-      if (requirement && !ssoOptional) {
+      if (requirement && !permitsNonSsoSignIn) {
         return c.json({
           requireSso: true,
           method: "sso",

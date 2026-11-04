@@ -84,9 +84,11 @@ have no SSO record.
 
 ## Recovering an administrator's session safely
 
-If saving Require SSO returns `sso_session_required`, leave SSO optional and
-complete a fresh sign-in at the organization's `/sso/<slug>` page. Then return
-to Settings and save again. A configuration test in another browser or an
+If saving Require SSO returns `sso_session_required`, use **Sign in with SSO**
+in the notice. It opens the organization's `/sso/<slug>` page with Settings as
+the return destination. If Den asks you to select a workspace, select this
+organization and reopen Settings. Leave SSO optional until that fresh sign-in
+succeeds, then save again. A configuration test in another browser or an
 account link from an older session is not a substitute for this session's
 SSO authentication. Never backfill session proof from account history.
 
@@ -101,7 +103,12 @@ to test this while SSO remains optional.
 callbacks against a disposable database, including tampered SAML rejection,
 password-session credential denial and approval-to-redemption policy changes.
 Those callbacks also work on the original implementation: the device race and
-single-organization guard are the independently reproduced regressions.
+single-organization guard are independently reproduced regressions. The
+[headless browser matrix](./browser-proof.md) additionally exercises the real
+password preflight, SAML redirects, recovery action and invitation flow; it
+catches the older preflight incorrectly forcing SSO after an organization
+requires it, even though ordinary sign-in for other organizations remains
+permitted.
 
 ## What to watch
 
