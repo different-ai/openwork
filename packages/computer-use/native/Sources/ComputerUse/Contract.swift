@@ -500,6 +500,31 @@ enum ObservationPreparation {
 /// Moving the mouse never holds the agent up; a click or key press during its
 /// moment pauses that step until the person is idle, and then it carries on.
 /// Only Take over pauses the agent for Continue, and only Stop stops it.
+/// Bringing the selected window to the front for a step that needs it. From a background
+/// helper, `NSRunningApplication.activate` can return true and do nothing (cooperative
+/// activation on macOS 26), and some apps refuse the accessibility raise, so each way is
+/// tried in turn, once, until the window reads back in front: raise and activate, the
+/// app's accessibility frontmost flag, the window as its app's main and focused window,
+/// then the make-key event records background delivery sends (`BackgroundFocus`).
+enum WindowFront {
+    enum Way: String, CaseIterable { case raise, frontmost, mainWindow, keyRecords }
+    static let refused = UseError("front_unavailable", "The app did not bring the selected window to the front, so nothing was sent. Observe again; the next step tries again.", next: "observe")
+    /// Read back after each way, every `interval`, for at most `polls` reads.
+    @MainActor static func bring(ways: [Way] = Way.allCases, polls: Int = 4, interval: TimeInterval = 0.05,
+        attempt: (Way) -> Void, inFront: () -> Bool, check: () throws -> Void, sleep: (TimeInterval) async throws -> Void) async throws -> Way {
+        for way in ways {
+            try check()
+            attempt(way)
+            for poll in 0..<polls {
+                if inFront() { return way }
+                try check()
+                if poll < polls - 1 { try await sleep(interval) }
+            }
+        }
+        throw refused
+    }
+}
+
 enum SharedDesktop {
     static let refocusLimit = 2
     /// Keys this recent mean the person is mid-keystroke (a shortcut, a game, a list).

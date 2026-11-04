@@ -225,6 +225,8 @@ final class SessionRuntime {
                     // Nothing stays half open: the host opens the session again later.
                     close()
                     throw error
+                } catch let error as UseError where error.code == WindowFront.refused.code {
+                    // The session opens with its window where it is: each step takes the front again.
                 }
                 if followed { arrangeBeside(id) }
             }
@@ -492,6 +494,9 @@ final class SessionRuntime {
             catch let error where SharedDesktop.isPersonInput(error) {
                 // The person clicked or typed first: look without the front, which stays with them.
                 self.handFrontBack(current)
+                otherWindowFocused = true
+            } catch let error as UseError where error.code == WindowFront.refused.code {
+                // A look does not need the front: read the window where it is; the next step tries again.
                 otherWindowFocused = true
             }
         }
@@ -1582,16 +1587,27 @@ final class SessionRuntime {
         let window = current.frontTarget, owner = current.frontApp
         if current.mode == .control {
             _ = try access.validate(window, app: owner)
-            guard AXUIElementPerformAction(window.element, kAXRaiseAction as CFString) == .success,
-                  owner.app.activate(options: []) else {
-                throw UseError("window_unavailable", "The selected window could not be focused. Refresh the app state.", next: "observe")
-            }
-            // Request focus once; never keep stealing it if a person intervenes.
-            for attempt in 0..<10 {
-                guard session?.id == current.id, session?.generation == current.generation else { throw UseError("session_changed", "Control changed during focus. No input was dispatched.", next: "observe") }
-                if inFront(current) { break }
-                if attempt < 9 { try await Task.sleep(nanoseconds: 50_000_000) }
-            }
+            // Each way once, read back after each; never keep stealing the front if a person intervenes.
+            let app = AXUIElementCreateApplication(owner.pid)
+            _ = try await WindowFront.bring(attempt: { way in
+                switch way {
+                case .raise:
+                    _ = AXUIElementPerformAction(window.element, kAXRaiseAction as CFString)
+                    _ = owner.app.activate(options: [])
+                case .frontmost:
+                    _ = AXUIElementSetAttributeValue(app, kAXFrontmostAttribute as CFString, kCFBooleanTrue)
+                case .mainWindow:
+                    _ = AXUIElementSetAttributeValue(window.element, kAXMainAttribute as CFString, kCFBooleanTrue)
+                    _ = AXUIElementSetAttributeValue(window.element, kAXFocusedAttribute as CFString, kCFBooleanTrue)
+                    _ = AXUIElementSetAttributeValue(app, kAXFrontmostAttribute as CFString, kCFBooleanTrue)
+                case .keyRecords:
+                    _ = BackgroundFocus.post(pid: owner.pid, window: window.id, makeKey: true)
+                    _ = AXUIElementSetAttributeValue(app, kAXFrontmostAttribute as CFString, kCFBooleanTrue)
+                    _ = owner.app.activate(options: [])
+                }
+            }, inFront: { self.inFront(current) }, check: {
+                guard self.session?.id == current.id, self.session?.generation == current.generation else { throw UseError("session_changed", "Control changed during focus. No input was dispatched.", next: "observe") }
+            }, sleep: { try await Task.sleep(nanoseconds: UInt64($0 * 1_000_000_000)) })
         }
         guard desktopAvailable else { throw UseError("desktop_unavailable", "The desktop is temporarily unavailable. Observe again when available.", next: "observe") }
         guard session?.id == current.id, session?.generation == current.generation else { throw UseError("session_changed", "Control changed during focus.", next: "observe") }
