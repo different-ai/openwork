@@ -3103,6 +3103,7 @@ export function SessionRoute() {
     },
     openModelPicker: openModelPickerForControl,
     refreshRouteState,
+    reloadWorkspaceSessions,
     archiveSession,
   });
 
