@@ -6,25 +6,26 @@ import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { test } from "node:test";
 import { fileURLToPath } from "node:url";
+import constants from "../../../constants.json" with { type: "json" };
 
 const repo = resolve(dirname(fileURLToPath(import.meta.url)), "../../..");
 const binary = process.env.OPENWORK_TEST_OPENCODE2 ?? "/Applications/OpenWork.app/Contents/Resources/sidecars/opencode2";
 
 test("real managed V2 ownership, restart, and v1 routing", { timeout: 180_000 }, async t => {
   try { await access(binary); } catch {
-    t.skip(`needs: pinned OpenCode 2.0.26 binary (${binary}); set OPENWORK_TEST_OPENCODE2`);
+    t.skip(`needs: pinned OpenCode ${constants.opencodeV2Version} binary (${binary}); set OPENWORK_TEST_OPENCODE2`);
     return;
   }
   const version = spawnSync(binary, ["--version"], { encoding: "utf8", timeout: 15_000 });
   assert.equal(version.status, 0, version.stderr);
-  assert.match(version.stdout, /\bv2\.0\.26\b/);
+  assert.equal(version.stdout.match(/\bv?(\d+\.\d+\.\d+)\b/)?.[1], constants.opencodeV2Version);
   const temp = process.env.OPENCODE_TEST_TMPDIR ?? join(tmpdir(), "opencode");
   await mkdir(temp, { recursive: true });
   const root = await mkdtemp(join(temp, "openwork-managed-native-"));
   t.after(() => rm(root, { recursive: true, force: true }));
   const plugins = join(root, "plugins");
   await mkdir(plugins);
-  const entries = ["openwork-gateway-quota-v2", "openwork-provider-filters-v2", "openwork-mcp-results-v2", "openwork-mcp-readiness-v2", "openwork-visible-reasoning-v2", "openwork-agent-permissions-v2", "openwork-context-v2"];
+  const entries = ["openwork-gateway-quota-v2", "openwork-provider-filters-v2", "openwork-mcp-results-v2", "openwork-mcp-readiness-v2", "openwork-visible-reasoning-v2", "openwork-auto-route-v2", "openwork-agent-permissions-v2", "openwork-context-v2"];
   const buildPlugins = spawnSync("bun", ["build", ...entries.map(name => join(repo, "apps/server/src/opencode-plugins", `${name}.ts`)), "--target=node", "--format=esm", `--outdir=${plugins}`], { cwd: repo, encoding: "utf8", timeout: 30_000 });
   assert.equal(buildPlugins.status, 0, buildPlugins.stderr);
   const buildProvider = spawnSync("bun", ["build", join(repo, "packages/opencode-plugin/server.ts"), "--target=node", "--format=esm", `--outfile=${join(plugins, "openwork-provider-sync-v2.js")}`], { cwd: repo, encoding: "utf8", timeout: 30_000 });

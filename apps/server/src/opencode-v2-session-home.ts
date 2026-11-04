@@ -1,5 +1,5 @@
 import { realpath } from "node:fs/promises";
-import { opencodeV1DatabasePath, v1ChatDirectory } from "./opencode-v2-migration.js";
+import { opencodeV1DatabasePath, v1ChatDirectory } from "./opencode-history.js";
 import { openRuntimeSqliteDatabase, runtimeDbPath, type RuntimeSqliteDatabase } from "./runtime-db.js";
 import type { ServerConfig } from "./types.js";
 import { isRecord } from "./workspace-kv-store.js";

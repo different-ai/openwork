@@ -141,7 +141,7 @@ try {
   await until(models, rows => rows.some(model => model.name === "Live initial") && !rows.some(model => model.id === "gwm_legacy"), "managed Gateway is live on startup");
   assert.equal(engine?.status().liveProviderSync, true);
   assert.ok(!engine?.status().mirroredProviderIds.includes(gatewayID));
-  assert.ok(engine?.status().mirroredProviderIds.includes(legacyID));
+  await until(async () => engine?.status().mirroredProviderIds ?? [], ids => ids.includes(legacyID), "local-provider mirror settles independently of the live Gateway catalog");
   const beforeConfig = await generatedConfig();
   const parsed: unknown = JSON.parse(beforeConfig);
   assert.ok(record(parsed) && record(parsed.providers));
@@ -296,12 +296,14 @@ try {
   assert.equal(engine?.status().liveProviderSync, true);
   console.log("Passed managed restart: every managed child starts with live Gateway ownership without a Den rollout lookup");
 
-  // This checks server ownership/routing only. It deliberately does not claim a V1 binary run.
-  await engine?.setChatRouting(false);
-  assert.equal(engine?.status().liveProviderSync, false);
-  assert.equal(engine?.status().chatRouting, false);
+  // In-place v2 adoption is one-way: native v1 tables are no longer a live
+  // projection. Retain both the Gateway owner and the materialized config.
+  assert.ok(engine);
+  await assert.rejects(engine.setChatRouting(false), { code: "engine_v1_history_adopted" });
+  assert.equal(engine.status().liveProviderSync, true);
+  assert.equal(engine.status().chatRouting, true);
   assert.ok((await readGlobalRuntimeOpencodeConfig(config)).provider?.[gatewayID]);
-  console.log("Passed managed 12 V1 routing regression: choosing V1 retains legacy materialized config (not a V1 engine execution)");
+  console.log("Passed managed 12 V1 routing regression: adopted shared history keeps v2 ownership and legacy materialized config");
 } finally {
   await stop();
   for (const stream of streams) stream.end();

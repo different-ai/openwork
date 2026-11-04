@@ -17,7 +17,7 @@ interface EngineStatus {
   chatRouting: boolean;
   running: boolean;
   version?: string;
-  migration: { state: string; imported: number; total: number; backupPath?: string };
+  lastError?: string;
 }
 
 /** Arrange history with the real pinned v1 engine BEFORE an unpinned OpenWork host can migrate it. */
@@ -94,9 +94,8 @@ export async function automaticEngineForcePolicy(seed: Seed, { place }: { place:
       // Remove appWeb's test-only v1/v2 preview selector: this is a default boot.
       OPENWORK_ENGINE_V2_PREVIEW: "" },
   });
-  // Leave the host idle while it copies existing history. Creating/opening a
-  // workspace here can create a new v1 draft during the copy and correctly
-  // trigger the production source-change safety check.
+  // Leave the host idle until v2 starts: upstream owns in-place schema conversion.
+  // Do not create a new v1 draft after conversion may have begun.
   async function request(path: string, init: RequestInit = {}) {
     const response = await fetch(`${app.openworkUrl}${path}`, {
       ...init, headers: { Authorization: `Bearer ${token}`, "x-openwork-host-token": hostToken,
@@ -109,14 +108,14 @@ export async function automaticEngineForcePolicy(seed: Seed, { place }: { place:
   let ready = false;
   while (Date.now() < deadline) {
     const status: EngineStatus = await (await request("/experimental/engine-v2-preview/status")).json();
-    if (status.migration.state === "error") throw new Error(`Default migration failed before the workspace opened: ${JSON.stringify(status)}`);
-    if (status.running && status.chatRouting && status.migration.state === "completed") { ready = true; break; }
+    if (status.lastError && !status.running) throw new Error(`Default v2 startup failed before the workspace opened: ${JSON.stringify(status)}`);
+    if (status.running && status.chatRouting) { ready = true; break; }
     await delay(250);
   }
   if (!ready) throw new Error("Default migration did not complete before opening the prepared chat");
   // appWeb cannot use the desktop's native folder picker. Register this fixture's
   // existing directory through the shipping host API, only AFTER the real v2
-  // engine and copied history are ready (not an engine-less workspace seed).
+  // engine is ready (not an engine-less workspace seed).
   const workspace = await (await request("/workspaces/local", {
     method: "POST", body: JSON.stringify({ folderPath: workspacePath, name: "Existing v1 project" }),
   })).json() as { activeId: string };

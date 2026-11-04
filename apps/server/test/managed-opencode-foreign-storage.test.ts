@@ -4,7 +4,7 @@ import { createServer } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createManagedOpencodeServer, isolatedOpencodeV1Database } from "../src/managed-opencode.js";
-import { opencodeV1DatabasePath } from "../src/opencode-v2-migration.js";
+import { opencodeV1DatabasePath } from "../src/opencode-history.js";
 
 // A standalone OpenCode v2 shares engine v1's default database and global
 // config. These tests run a stand-in engine that exits exactly like v1 does on
@@ -85,7 +85,10 @@ test("a v2 database moves only the database, and history migration follows it", 
     const database = join(w.stateDir, "opencode.db");
     expect(spawns[1]).toEqual({ OPENCODE_DB: database, XDG_CONFIG_HOME: spawns[0]?.XDG_CONFIG_HOME });
     expect(isolatedOpencodeV1Database()).toBe(database);
-    expect(opencodeV1DatabasePath({ HOME: "/home/example" })).toBe(database);
+    const previousDatabase = process.env.OPENCODE_DB;
+    delete process.env.OPENCODE_DB;
+    try { expect(opencodeV1DatabasePath()).toBe(database); }
+    finally { if (previousDatabase !== undefined) process.env.OPENCODE_DB = previousDatabase; }
   } finally {
     await server.close();
   }

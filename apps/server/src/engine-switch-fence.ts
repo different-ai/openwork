@@ -64,9 +64,10 @@ export async function enterEngineMutation(config: object, engine: Engine, signal
 }
 
 /** Block new mutations immediately, drain forwarded HTTP mutations, then run
- * the final idle/revision/routing commit. This does not stop running tasks:
- * operation must reject if the engine is not idle. Start the destination engine
- * before entering this short fence. All callers must share config identity.
+ * the final idle/routing commit. This does not stop running tasks:
+ * operation must reject if the engine is not idle. A destination that converts
+ * the source database must not start before that check and routing commit.
+ * All callers must share config identity.
  *
  * operation must resolve only after routing has committed, and must leave the
  * source selected if it throws. Successful transitions alone invalidate queued
