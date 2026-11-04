@@ -26,6 +26,16 @@ test("Code Mode engine tools never name the engine or its plumbing", () => {
   }
 })
 
+test("Drive upload activity names the upload and file, never the noun Drive as a verb", () => {
+  for (const path of ["/private/reports/archive.zip", String.raw`C:\Reports\archive.zip`]) {
+    const sentence = getCapabilityCallSentence(call("openwork_drive_upload", { path }));
+    expect(sentence).toEqual({ service: "Google Drive", present: "Uploading “archive.zip” to Google Drive", past: "Uploaded “archive.zip” to Google Drive", failure: "Couldn't upload “archive.zip” to Google Drive" });
+    expect(JSON.stringify(sentence)).not.toContain("Couldn't drive");
+    expect(JSON.stringify(sentence)).not.toContain("Reports");
+  }
+  expect(getCapabilityCallSentence(call("openwork_drive_upload", {})).failure).toBe("Couldn't upload a file to Google Drive");
+});
+
 test("the native skill tool names the skill a person would recognize", () => {
   expect(skillDisplayName({ id: "openwork-cloud-debug-openwork-logs-ex2w5r7s" })).toBe("debug-openwork-logs")
   expect(skillDisplayName({ id: "openwork-cloud-create-skill" })).toBe("create-skill")

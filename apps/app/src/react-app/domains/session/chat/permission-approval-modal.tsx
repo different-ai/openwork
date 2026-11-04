@@ -49,6 +49,7 @@ const metadataDetailKeys: Array<{ key: string; labelKey: string; multiline?: boo
 
 function readablePermissionLabel(permission: string): string {
   if (permission === "bash") return "Bash";
+  if (permission === "drive_upload_file") return t("session.permission_kind_drive_upload");
   if (permission === "edit") return t("session.permission_kind_edit");
   if (permission === "read") return t("session.permission_kind_read");
   if (permission === "external_directory") return t("session.permission_kind_external_directory");
@@ -60,6 +61,9 @@ function readablePermissionLabel(permission: string): string {
 }
 
 function permissionCopy(permission: string): Pick<PermissionPresentation, "title" | "message"> {
+  if (permission === "drive_upload_file") {
+    return { title: t("session.permission_title_drive_upload"), message: t("session.permission_message_drive_upload") };
+  }
   if (permission === "bash") {
     return {
       title: t("session.permission_title_bash"),
@@ -167,18 +171,30 @@ function describePermissionRequest(permission: PendingPermission): PermissionPre
   }
 
   const copy = permissionCopy(permission.permission);
+  const uploadPath = permission.permission === "drive_upload_file" && typeof permission.metadata?.path === "string"
+    ? permission.metadata.path : null;
   return {
     title: copy.title,
     message: copy.message,
     permissionLabel: readablePermissionLabel(permission.permission),
     scopeLabel: t("session.scope_label"),
-    scopeValue: patterns.join(", ") || t("session.permission_scope_empty"),
+    scopeValue: uploadPath
+      ? [uploadPath, permission.metadata?.target, permission.metadata?.connectionId].filter(value => typeof value === "string" && value.length > 0).join(" → ")
+      : (patterns.join(", ") || t("session.permission_scope_empty")),
     isDoomLoop: false,
-    note: null,
+    note: uploadPath
+      ? permissionCanRemember(permission) ? t("session.permission_drive_session_scope")
+        : typeof permission.metadata?.connectionId !== "string" ? t("session.permission_drive_default_account") : null
+      : null,
   };
 }
 
+export function permissionCanRemember(permission: PendingPermission): boolean {
+  return Array.isArray(permission.always) && permission.always.some(value => typeof value === "string" && value.length > 0);
+}
+
 export function PermissionApprovalPanel(props: PermissionApprovalModalProps) {
+  const canRemember = permissionCanRemember(props.permission);
   const presentation = useMemo(() => describePermissionRequest(props.permission), [props.permission]);
   const metadata =
     props.permission.metadata && typeof props.permission.metadata === "object"
@@ -232,16 +248,18 @@ export function PermissionApprovalPanel(props: PermissionApprovalModalProps) {
               <Clock3 data-icon="inline-start" />
               {t("session.allow_once")}
             </Button>
-            <Button
-              type="button"
-              variant="outline"
-              size="sm"
-              onClick={() => props.respondPermission?.(props.permission.id, "always")}
-              disabled={props.busy || !props.respondPermission}
-            >
-              <Check data-icon="inline-start" />
-              {t("session.allow_for_session")}
-            </Button>
+            {canRemember ? (
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={() => props.respondPermission?.(props.permission.id, "always")}
+                disabled={props.busy || !props.respondPermission}
+              >
+                <Check data-icon="inline-start" />
+                {t("session.allow_for_session")}
+              </Button>
+            ) : null}
           </div>
         </div>
 
@@ -259,7 +277,7 @@ export function PermissionApprovalPanel(props: PermissionApprovalModalProps) {
               <div className="text-[10px] font-semibold uppercase tracking-[0.16em] text-dls-secondary">
                 {presentation.scopeLabel}
               </div>
-              <div className="mt-1 truncate rounded-lg border border-dls-border bg-dls-hover/55 px-2.5 py-1.5 font-mono text-[12px] leading-5 text-dls-text">
+              <div title={presentation.scopeValue} className="mt-1 truncate rounded-lg border border-dls-border bg-dls-hover/55 px-2.5 py-1.5 font-mono text-[12px] leading-5 text-dls-text">
                 {presentation.scopeValue}
               </div>
             </div>

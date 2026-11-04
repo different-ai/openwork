@@ -98,7 +98,9 @@ export async function openWorkspaceFileForReading(realRoot: string, path: string
   await refuseLinkedFolder(path, label, "missing");
   let handle: FileHandle;
   try {
-    handle = await open(path, constants.O_RDONLY | NO_FOLLOW);
+    // A path swapped to a FIFO must not block before the regular-file proof.
+    // O_NONBLOCK has no effect on regular files and is ignored where unsupported.
+    handle = await open(path, constants.O_RDONLY | NO_FOLLOW | (constants.O_NONBLOCK ?? 0));
   } catch (error) {
     const code = errorCode(error);
     if (code === "ENOENT" || code === "ENOTDIR") throw new WorkspaceFileError("missing", `${label} was not found in the workspace.`);

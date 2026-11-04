@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, open, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
@@ -100,6 +100,27 @@ test("changed files and cancellation send no bytes", async () => {
   await assert.rejects(uploadDriveResumableFile({ path: file.path, size: 11, mimeType: "video/mp4", uploadUrl: session, fetch }), /changed before upload/);
   await assert.rejects(uploadDriveResumableFile({ path: file.path, size: 10, mimeType: "video/mp4", uploadUrl: session, fetch, signal: controller.signal }));
   assert.equal(calls, 0);
+});
+
+test("a same-size edit during the final chunk read sends no changed bytes", async () => {
+  await using file = await fixture(5 * 1024 * 1024);
+  const handle = await open(file.path, "r");
+  const read = handle.read.bind(handle);
+  let reads = 0;
+  Object.defineProperty(handle, "read", { configurable: true, value: async (buffer: Uint8Array, offset: number, length: number, position: number) => {
+    reads++;
+    const result = await read(buffer, offset, length, position);
+    await writeFile(file.path, Buffer.alloc(file.bytes.length, 99));
+    return result;
+  } });
+  let sent = 0;
+  try {
+    await assert.rejects(uploadDriveResumableFile({ path: file.path, file: handle, size: file.bytes.length, mimeType: "video/mp4", uploadUrl: session,
+      fetch: async () => { sent++; return completed(); },
+    }), /changed during upload/);
+    assert.equal(sent, 0);
+    assert.equal(reads, 1);
+  } finally { await handle.close(); }
 });
 
 test("completed receipts omit unexpected fields and reject mismatched sizes", async () => {
