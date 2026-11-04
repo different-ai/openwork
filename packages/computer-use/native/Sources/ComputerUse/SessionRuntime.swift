@@ -951,9 +951,11 @@ final class SessionRuntime {
         defer { activity?.stop() }
         let windowsBefore = access.windowChanges(current.app)
         var focus = current.focus
-        // A click of this batch, or its typing into the app's editor, already chose what has the
-        // keyboard: typing and editing keys after it may go there (`BatchContinuation.goesToEditor`).
+        // A click or focus step of this batch, or its typing into the app's editor, already chose what
+        // has the keyboard: typing and editing keys after it may go there (`BatchContinuation.goesToEditor`).
         var clicked = false
+        // What each expect step checked, and whether it held; never a value.
+        var checks: [[String: Any]] = []
         var activated = false
         var primed = false
         var needsObservation = false
@@ -981,6 +983,17 @@ final class SessionRuntime {
                     throw UseError("unsupported_key", "\(NativeKey.chord(key, flags)) is not a command in this app's menus, so it was not sent. Observe with menus true to see its shortcuts.", next: "observe")
                 }
                 let action = shortcutMenu.map { Action.menu($0) } ?? action
+                // An expect step sends nothing: it reads the live state and stops the batch when a check
+                // does not hold. What the next step needs is still read back before that step runs.
+                if case .expect(let expectation) = action {
+                    try checkInput()
+                    let results = try await evaluate(expectation, records: records, current: current, background: background)
+                    checks += results.map { ["step": index, "check": $0.check, "ok": $0.ok] }
+                    if let failed = Expectation.failure(results) { throw failed }
+                    progress.dispatched(path: "expected")
+                    index += 1
+                    continue steps
+                }
                 // Drawing: drags in a row are strokes on the same canvas, sent in one call while no
                 // window opens or closes. Each still lands only in the selected window.
                 let followsStrokes = Action.isStroke(action) && index > 0 && actions[..<index].allSatisfy(Action.isStroke)
@@ -1094,7 +1107,8 @@ final class SessionRuntime {
                 }
                 var path = try await input.execute(action, app: current.app, target: current.target, lease: observation,
                     access: access, records: records, focus: focus, pointerTarget: pointerTarget,
-                    check: checkInput, checkWindow: checkWindow, background: background || !current.parents.isEmpty, editorTyping: editorStep == index, feedback: { [weak self] feedback in
+                    check: checkInput, checkWindow: checkWindow, background: background || !current.parents.isEmpty, editorTyping: editorStep == index,
+                    clickToFocus: FocusStep.clicks(in: current.mode), feedback: { [weak self] feedback in
                         guard let self, self.session?.id == id else { return }
                         self.controls.inputFeedback(feedback)
                     })
@@ -1188,6 +1202,12 @@ final class SessionRuntime {
                 case .enterValue:
                     // The value was committed: what has the keyboard now is read again before more keys.
                     focus = nil; needsObservation = true
+                case .focus(let ref):
+                    // The focused control is the next keys' target: exactly, when it is the listed text field
+                    // itself; otherwise (a field editor, a value field drawn by the app) the editor rule.
+                    let live = try? access.focusedEditor(target: current.target, app: current.app, requireFront: !background)
+                    focus = records.first { record in record.ref == ref && record.textField && live.map { CFEqual($0, record.element) } == true }
+                    clicked = true
                 case .press(let ref):
                     focus = records.first { $0.ref == ref && $0.textField }
                     needsObservation = focus == nil
@@ -1296,6 +1316,7 @@ final class SessionRuntime {
         receipt["delivery"] = (background ? InputDelivery.background : .foreground).rawValue
         if let typeNote { receipt["type_note"] = typeNote }
         if let fileAlert { receipt["file_alert"] = fileAlert }
+        if !checks.isEmpty { receipt["checks"] = checks }
         var desktop = desktopBefore.changes(to: DesktopState.now())
         if current.follow != nil { desktop["followed"] = current.followed }
         receipt["desktop"] = desktop
@@ -1303,6 +1324,48 @@ final class SessionRuntime {
         if waited > 0 { receipt["waited_for_person_ms"] = waited }
         if session?.id == id { session?.receipts[requestID] = receipt }
         return text(receipt)
+    }
+    /// An expect step's checks against the live window, in `Expectation.checks` order. Refs must
+    /// come from the observation; a secure field's value is never read.
+    private func evaluate(_ expectation: Expectation, records: [ElementRecord], current: Session, background: Bool) async throws -> [(check: String, ok: Bool)] {
+        func record(_ ref: String) throws -> ElementRecord {
+            guard let record = records.first(where: { $0.ref == ref }) else { throw UseError("unknown_ref", "Use an element ref from the current observation.", next: "observe") }
+            return record
+        }
+        for ref in expectation.refs { _ = try record(ref) }
+        if let ref = expectation.valueRef { try FocusStep.checkComparable(protected: try record(ref).protected) }
+        func present(_ record: ElementRecord) -> Bool {
+            access.attribute(record.element, kAXRoleAttribute) != nil && access.isInWindow(record.element, target: current.target)
+        }
+        let editor = expectation.focused == nil ? nil : try? access.focusedEditor(target: current.target, app: current.app, requireFront: !background)
+        var results: [(check: String, ok: Bool)] = []
+        for check in expectation.checks {
+            let ok: Bool
+            switch check {
+            case "focused":
+                switch expectation.focused {
+                case .ref(let ref)?: ok = try editor.map { access.isWithin($0, try record(ref).element) } == true
+                default: ok = editor.map(access.isTextEditor) == true
+                }
+            case "front":
+                let front = access.isFocusedWindow(current.target, app: current.app)
+                    && (background || NSWorkspace.shared.frontmostApplication?.processIdentifier == current.frontApp.pid)
+                ok = front == expectation.front
+            case "enabled":
+                let control = try record(expectation.enabled!)
+                ok = present(control) && (access.attribute(control.element, kAXEnabledAttribute) as? Bool) != false
+            case "exists": ok = present(try record(expectation.exists!))
+            case "gone": ok = !present(try record(expectation.gone!))
+            case "dialog": ok = (await access.dialog(over: current.target, app: current.app) != nil) == expectation.dialog
+            case "value":
+                let field = try record(expectation.valueRef!)
+                ok = present(field) && Expectation.valueMatches(access.attribute(field.element, kAXValueAttribute), expectation.valueEquals ?? "")
+            default:
+                ok = (access.attribute(current.target.element, kAXTitleAttribute) as? String)?.localizedCaseInsensitiveContains(expectation.titleContains ?? "") == true
+            }
+            results.append((check, ok))
+        }
+        return results
     }
     private enum Readiness { case stop, control(ElementRecord?), keyboard(ElementRecord?), pointer }
     /// After a step that may have changed the view or focus, the batch's next step still runs

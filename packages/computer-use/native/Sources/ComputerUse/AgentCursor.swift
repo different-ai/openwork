@@ -268,7 +268,7 @@ final class AgentCursor {
                 self.drawTrail(fading: false)
             }
         }
-        if phase == .down || (phase == .dispatched && screenPoint != nil && !["scroll", "type", "key", "set_value", "enter_value", "press", "menu"].contains(action)) {
+        if phase == .down || (phase == .dispatched && screenPoint != nil && !["scroll", "type", "key", "set_value", "enter_value", "focus", "press", "menu"].contains(action)) {
             // Aim, then click: the ripple lands when the cursor arrives.
             let press = CAKeyframeAnimation(keyPath: "transform.scale")
             press.values = [1, 0.8, 1]; press.duration = 0.22
@@ -474,6 +474,7 @@ final class AgentCursor {
         case "double_click": return "double-clicking"
         case "triple_click": return "selecting"
         case "type", "set_value", "enter_value": return "typing"
+        case "focus": return "focusing"
         case "key": return "shortcut"
         case "scroll": return "scrolling"
         case "drag": return "dragging"

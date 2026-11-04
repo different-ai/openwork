@@ -78,7 +78,7 @@ enum InputDelivery: String {
         case .move, .drag, .rightClick, .hold, .saveAs, .openInPanel: return true
         case .showMenu: return false
         case .saveImage: return false
-        case .press, .setValue, .scroll, .wait, .menu, .openFile, .arrange: return false
+        case .press, .setValue, .scroll, .wait, .menu, .openFile, .arrange, .focus, .expect: return false
         }
     }
 }

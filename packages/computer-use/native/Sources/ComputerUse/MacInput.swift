@@ -94,7 +94,7 @@ final class MacInput {
     func execute(_ action: Action, app: AppIdentity, target: WindowTarget, lease: ObservationLease,
                  access: MacAccessibility, records: [ElementRecord], focus: ElementRecord?, pointerTarget: AXUIElement?,
                  check: () throws -> Void, checkWindow: () throws -> Void, background: Bool = false, editorTyping: Bool = false,
-                 feedback send: @escaping (InputFeedback) -> Void = { _ in }) async throws -> String {
+                 clickToFocus: Bool = true, feedback send: @escaping (InputFeedback) -> Void = { _ in }) async throws -> String {
         feedback = DispatchFeedback(action: action.name, frame: lease.frame, send: send)
         typedCharacters = 0
         gesture = Int64(UInt32.random(in: 1...UInt32.max))
@@ -146,49 +146,22 @@ final class MacInput {
                 guard result == .success || unanswered else { throw UseError("action_failed", "The app did not confirm the accessible action. Observe before retrying.", next: "observe") }
                 report(.dispatched, point: CGPoint(x: record.frame.midX, y: record.frame.midY))
                 path = unanswered ? "accessibility_unconfirmed" : valueTook ? "accessibility" : "value_not_applied"
+            case .focus(let ref):
+                guard let record = records.first(where: { $0.ref == ref }) else { throw UseError("unknown_ref", "Use an element ref from the current observation.", next: "observe") }
+                guard try await takeKeyboard(record, target: target, app: app, lease: lease, access: access, background: background,
+                    click: clickToFocus, check: check, checkWindow: checkWindow) != nil else {
+                    throw UseError("focus_not_taken", clickToFocus ? "The control did not take the keyboard. Observe again, or click it."
+                        : "The control did not take the keyboard through accessibility, and only a control session may click it.", next: "observe")
+                }
+                report(.dispatched, point: CGPoint(x: record.frame.midX, y: record.frame.midY))
+                path = "focused"
             case .enterValue(let ref, let text, let commit):
                 // As a person enters a value: give the field the keyboard, select all, type, commit.
                 guard let record = records.first(where: { $0.ref == ref }) else { throw UseError("unknown_ref", "Use an element ref from the current observation.", next: "observe") }
-                try access.validateRecord(record, target: target)
-                guard record.enabled, !record.protected else {
-                    throw UseError("protected_input", "enter_value never types into a secure field. A password or code the person gave goes in with type and secret true.", next: "observe")
-                }
-                try check()
                 // Read back, never reported, as for set_value.
-                let before = access.attribute(record.element, kAXValueAttribute)
-                func editor() -> AXUIElement? {
-                    (try? access.focusedEditor(target: target, app: app, requireFront: !background)).flatMap { access.isWithin($0, record.element) ? $0 : nil }
-                }
-                var field = editor()
-                // Moving the keyboard to the field is already input: a refusal after it is reported as dispatched.
-                feedback?.didDispatch = true
-                if field == nil, AXUIElementSetAttributeValue(record.element, kAXFocusedAttribute as CFString, kCFBooleanTrue) == .success {
-                    try await Task.sleep(nanoseconds: 50_000_000); try check()
-                    field = editor()
-                }
-                if field == nil {
-                    // The app ignores accessibility focus: click the field's middle, as a person would.
-                    let screen = CGPoint(x: record.frame.midX, y: record.frame.midY)
-                    let hit = try access.checkHit(screen, target: target, app: app, background: background)
-                    guard access.isWithin(hit, record.element) else {
-                        throw UseError("stale_element", "Something covers this field. Observe again.", next: "observe")
-                    }
-                    try await InputDispatch.press(clicks: 1, check: check, validate: {
-                        try checkWindow()
-                        try access.checkHit(screen, target: target, app: app, expected: hit, background: background)
-                    }, move: {
-                        try self.mouse(.mouseMoved, screen, app.pid, 0, target.id, lease.frame, check: check)
-                    }, down: { click in
-                        if background { try self.primeUserActivation(app.pid, target.id, lease.frame, check: check) }
-                        try self.mouse(.leftMouseDown, screen, app.pid, click, target.id, lease.frame, check: check)
-                    }, up: { click in
-                        try self.mouse(.leftMouseUp, screen, app.pid, click, target.id, lease.frame)
-                    })
-                    try await Task.sleep(nanoseconds: 80_000_000); try check()
-                    field = editor()
-                }
-                // Whatever has the keyboard now is checked as for canvas typing: never secure, inside the window.
-                guard let field else {
+                let before = record.protected ? nil : access.attribute(record.element, kAXValueAttribute)
+                guard let field = try await takeKeyboard(record, target: target, app: app, lease: lease, access: access, background: background,
+                    click: true, check: check, checkWindow: checkWindow) else {
                     throw UseError("focus_required", "The field did not take the keyboard. Click it, then type, or observe again.", next: "observe")
                 }
                 report(.dispatched, point: CGPoint(x: record.frame.midX, y: record.frame.midY))
@@ -213,6 +186,9 @@ final class MacInput {
                 // Some fields keep a value only once committed: give the app a moment, then look.
                 try await Task.sleep(nanoseconds: 100_000_000); try check()
                 path = EnteredValue.outcome(text, before: before, after: access.attribute(record.element, kAXValueAttribute))
+            case .expect:
+                // Not input: the session checks it in the batch loop and never sends it here.
+                throw UseError("invalid_arguments", "An expect step sends no input.", next: "observe")
             case .saveImage:
                 // Not input: the session saves the image before any step is sent.
                 throw UseError("save_image_alone", "Save an image as its own step. Nothing was sent.", next: "observe")
@@ -652,6 +628,47 @@ final class MacInput {
         event.type = .flagsChanged
         event.flags = flags
         post(event, pid)
+    }
+    /// Puts the keyboard on an observed control, as `focus` and `enter_value` do: accessibility
+    /// focus first, then (only when `click` is allowed) a click on its middle, as a person would.
+    /// Returns what then has the keyboard inside the control, read back with the canvas-typing
+    /// check (never secure, inside the window), or nil when it did not land. Never a secure field.
+    private func takeKeyboard(_ record: ElementRecord, target: WindowTarget, app: AppIdentity, lease: ObservationLease,
+                              access: MacAccessibility, background: Bool, click: Bool,
+                              check: () throws -> Void, checkWindow: () throws -> Void) async throws -> AXUIElement? {
+        try access.validateRecord(record, target: target)
+        try FocusStep.checkFocusable(protected: record.protected, enabled: record.enabled)
+        try check()
+        func editor() -> AXUIElement? {
+            (try? access.focusedEditor(target: target, app: app, requireFront: !background)).flatMap { access.isWithin($0, record.element) ? $0 : nil }
+        }
+        if let field = editor() { return field }
+        // Moving the keyboard is already input: a refusal after it is reported as dispatched.
+        feedback?.didDispatch = true
+        if AXUIElementSetAttributeValue(record.element, kAXFocusedAttribute as CFString, kCFBooleanTrue) == .success {
+            try await Task.sleep(nanoseconds: 50_000_000); try check()
+            if let field = editor() { return field }
+        }
+        guard click else { return nil }
+        // The app ignores accessibility focus: click the control's middle.
+        let screen = CGPoint(x: record.frame.midX, y: record.frame.midY)
+        let hit = try access.checkHit(screen, target: target, app: app, background: background)
+        guard access.isWithin(hit, record.element) else {
+            throw UseError("stale_element", "Something covers this control. Observe again.", next: "observe")
+        }
+        try await InputDispatch.press(clicks: 1, check: check, validate: {
+            try checkWindow()
+            try access.checkHit(screen, target: target, app: app, expected: hit, background: background)
+        }, move: {
+            try self.mouse(.mouseMoved, screen, app.pid, 0, target.id, lease.frame, check: check)
+        }, down: { click in
+            if background { try self.primeUserActivation(app.pid, target.id, lease.frame, check: check) }
+            try self.mouse(.leftMouseDown, screen, app.pid, click, target.id, lease.frame, check: check)
+        }, up: { click in
+            try self.mouse(.leftMouseUp, screen, app.pid, click, target.id, lease.frame)
+        })
+        try await Task.sleep(nanoseconds: 80_000_000); try check()
+        return editor()
     }
     private func keyCode(_ key: String, flags: CGEventFlags) throws -> CGKeyCode {
         if let code = NativeKey.navigation[key] { return code }
