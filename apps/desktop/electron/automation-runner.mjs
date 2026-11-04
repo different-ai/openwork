@@ -833,7 +833,8 @@ export async function executeDesktopAutomation(assignment, options) {
   const created = await client.createThread({
     title: `Automation: ${assignment.automationName}`.slice(0, 120),
     ...(assignment.instructions ? { prompt: assignment.instructions } : {}),
-    model: assignment.model,
+    // Den stores an unset variant as null; the engine accepts a string or no key.
+    model: modelInputFromAssignment(assignment.model),
     signal: options.signal,
   })
   const sessionId = created.id
