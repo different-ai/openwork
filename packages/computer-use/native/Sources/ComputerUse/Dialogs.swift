@@ -92,7 +92,7 @@ enum DialogRules {
     /// The most files one approval can name; the person sees every one.
     static let maxApprovedFiles = 20
     /// Default buttons that hand the chosen files to the app.
-    static let fileConfirmTitles: Set<String> = ["open", "choose", "upload", "select", "attach", "insert", "add", "import", "send"]
+    static let fileConfirmTitles: Set<String> = ["open", "choose", "upload", "select", "attach", "insert", "add", "import", "send", "place"]
 
     /// A panel for choosing files: the system panel process, or a dialog with a
     /// file browser whose default button hands files over.
@@ -120,6 +120,66 @@ enum SaveRules {
         guard let yes = titles.first(where: { $0.lowercased() == "replace" }),
               let no = titles.first(where: { $0.lowercased() == "cancel" }) else { return nil }
         return replace ? yes : no
+    }
+}
+
+/// A file panel's Go To field, as a person uses it: open it (Command-Shift-G), set the path
+/// through accessibility and read it back, then Return. Save and Open steps both use it.
+enum PanelGoTo {
+    enum Failure: Equatable { case noField, notTaken }
+    static func enter<Field>(_ path: String, open: () async throws -> Field?, set: (Field, String) -> Bool,
+                             value: (Field) -> String?, submit: (Field) async throws -> Void) async throws -> Failure? {
+        guard let field = try await open() else { return .noField }
+        guard set(field, path), value(field) == path else { return .notTaken }
+        try await submit(field)
+        return nil
+    }
+}
+
+/// Open-style panels (Open, Place, Insert, Attach): the step that picks a file reads back what
+/// it chose and what the app did with it.
+enum OpenPanelRules {
+    /// A panel that hands a file to the app: a file panel with no Save name field, whose
+    /// default button opens or places what is selected.
+    static func isOpenPanel(kind: DialogTarget.Kind?, saveField: Bool, defaultButton: String?) -> Bool {
+        kind == .filePanel && !saveField && confirms(defaultButton)
+    }
+    static func confirms(_ title: String?) -> Bool {
+        title.map { DialogRules.fileConfirmTitles.contains($0.trimmingCharacters(in: .whitespaces).lowercased()) } == true
+    }
+    /// The step in a panel, with its controls passed in: Go To the file, which selects it, then
+    /// the default button. Nothing is pressed until the path and the selection read back right.
+    static func pick(_ file: URL, displayName: String? = nil, goTo: (String) async throws -> PanelGoTo.Failure?,
+                     selection: @escaping () -> [String], until: (() -> Bool) async throws -> Bool,
+                     button: () -> (title: String?, enabled: Bool)?, press: () throws -> AXError) async throws {
+        if let failure = try await goTo(file.path) {
+            throw UseError("panel_path_unavailable", failure == .noField
+                ? "The panel did not open its Go To field, so the file could not be chosen. Nothing was opened."
+                : "The Go To field did not take the path. Nothing was opened.", next: "observe")
+        }
+        guard try await until({ selects(selection(), file: file, displayName: displayName) }) else {
+            throw UseError("file_not_selected", "The panel did not select the file, so nothing was chosen. Observe the panel before trying again.", next: "observe")
+        }
+        guard let shown = button(), confirms(shown.title), shown.enabled else {
+            throw UseError("open_panel_required", "The panel has no Open, Place, Insert or Choose button to press. Nothing was opened.", next: "observe")
+        }
+        let pressed = try press()
+        guard pressed == .success || pressed == .cannotComplete else {
+            throw UseError("action_failed", "The panel did not accept the press. Observe before retrying.", next: "observe")
+        }
+    }
+    /// Exactly this file is selected. Panels may hide the extension, as Finder does.
+    static func selects(_ names: [String], file: URL, displayName: String? = nil) -> Bool {
+        guard names.count == 1, let name = names.first?.trimmingCharacters(in: .whitespaces) else { return false }
+        let shown = displayName ?? FileManager.default.displayName(atPath: file.path)
+        return name == file.lastPathComponent || name == shown
+    }
+    /// The step path once the panel was pressed, or nil while there is nothing to tell yet. An
+    /// alert refutes it; once the panel closed, a new window, a retitle or changed content proves it.
+    static func outcome(panelOpen: Bool, alert: [String: Any]?, windowOpened: Bool, retitled: Bool, contentChanged: Bool) -> String? {
+        if alert != nil { return "file_open_failed" }
+        guard !panelOpen else { return nil }
+        return windowOpened || retitled || contentChanged ? "file_chosen" : nil
     }
 }
 

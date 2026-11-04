@@ -1291,6 +1291,73 @@ test("an organization that asks shows the save card each time, and one that bloc
   assert.equal(broken.acts(), 1);
 });
 
+/** A Mac helper with an Open panel in front: it asks before showing the panel, and picks the file once its path is approved. */
+function openPanelFixture(options = {}) {
+  const seen = [];
+  const f = fixture({ seen, platform: "darwin", ...options, toolResult: (name) => {
+    const args = seen.at(-1).args;
+    const looks = seen.filter((call) => call.name === "computer_observe").length;
+    if (name === "computer_observe" && looks > 1 && args.file_panel_access !== 31) {
+      return text({ ok: false, code: "file_panel_approval_required", app: "Photoshop", panel_id: 31, dispatched: false, next: "observe" });
+    }
+    if (name !== "computer_act") return undefined;
+    return text(JSON.stringify(args.file_approval) === JSON.stringify([args.action.path])
+      ? { ok: true, status: "dispatched", path: "file_chosen" }
+      : { ok: false, code: "files_approval_required", files: [args.action.path], open: true, app: "Photoshop", dispatched: false, next: "observe" });
+  } });
+  const look = () => f.control.execute({ sessionId: "chat", name: "computer_observe", args: {} });
+  const pick = (path) => f.control.execute({ sessionId: "chat", name: "computer_act", args: { observation_id: "observation", action: { type: "open_in_panel", path } } });
+  const cards = () => f.requests.filter((request) => request?.reason === "files");
+  const acts = () => seen.filter((call) => call.name === "computer_act").map((call) => call.args.file_approval ?? null);
+  const card = async (count) => {
+    for (let waited = 0; cards().length < count && waited < 2_000; waited += 5) await new Promise((resolve) => setTimeout(resolve, 5));
+    return cards().at(-1);
+  };
+  const answer = async (count, reply) => f.control.answerRequest({ sessionId: "chat", answer: reply, id: (await card(count)).id });
+  return { ...f, look, pick, cards, acts, card, answer };
+}
+const openForPlacing = (f) => f.control.setFeatureEnabled(true).then(() => f.control.execute({ sessionId: "chat", name: "computer_open", args: { app_id: "editor", mode: "control", purpose: "Place the map" } }));
+
+test("an Open panel is looked through and a file picked in it without a card by default", async (t) => {
+  const asked = [];
+  const f = openPanelFixture({ movePolicy: async (input) => { asked.push(input); return { effect: "allow" }; } }); t.after(() => f.control.reset(true));
+  await openForPlacing(f);
+  assert.equal(payload(await f.look()).ok, true, "the panel opens to the agent");
+  assert.equal(payload(await f.pick("/Users/me/Desktop/map.png")).path, "file_chosen");
+  assert.deepEqual(f.cards(), [], "the agent decides");
+  assert.deepEqual(asked, [{ kind: "computer_files", sessionId: "chat" }, { kind: "computer_files", sessionId: "chat" }],
+    "the organization's rule is checked for the panel and for the file");
+  assert.deepEqual(f.acts(), [null, ["/Users/me/Desktop/map.png"]], "the pick carries exactly the file's path");
+});
+
+test("an organization that asks shows the picked file each time, and one that blocks refuses the pick", async (t) => {
+  const f = openPanelFixture({ movePolicy: askFirst }); t.after(() => f.control.reset(true));
+  await openForPlacing(f);
+  const look = f.look();
+  await f.answer(1, "allow");
+  await look;
+  const first = f.pick("/Users/me/Desktop/map.png");
+  const request = await f.card(2);
+  assert.deepEqual(request.files, { app: "Photoshop", names: ["/Users/me/Desktop/map.png"] });
+  assert.equal(request.standing, false, "no Always: nothing is remembered");
+  await f.control.answerRequest({ sessionId: "chat", answer: "always", id: request.id });
+  assert.equal(payload(await first).path, "file_chosen");
+  const again = f.look();
+  await f.answer(3, "allow");
+  await again;
+  const second = f.pick("/Users/me/Desktop/map.png");
+  await f.answer(4, "dismiss");
+  assert.equal(payload(await second).code, "files_declined", "asked again, and declined");
+
+  const b = openPanelFixture({ movePolicy: async () => ({ effect: "deny", message: "Your organization does not let agents move files between apps." }) });
+  t.after(() => b.control.reset(true));
+  await openForPlacing(b);
+  assert.equal(payload(await b.look()).code, "organization_policy_denied", "a blocked panel is never shown to the agent");
+  assert.equal(payload(await b.pick("/Users/me/Desktop/map.png")).code, "organization_policy_denied");
+  assert.deepEqual(b.cards(), []);
+  assert.deepEqual(b.acts(), [null], "nothing was sent with an approval");
+});
+
 test("declined files are never handed over", async (t) => {
   const f = filePanelFixture(); t.after(() => f.control.reset(true));
   await f.control.setFeatureEnabled(true);

@@ -171,30 +171,13 @@ final class MacInput {
                     throw UseError("save_panel_required", "The Save sheet is no longer open. Nothing was saved.", next: "observe")
                 }
                 func until<T>(_ seconds: Double, _ found: () -> T?) async throws -> T? {
-                    for _ in 0..<Int(seconds * 10) {
-                        try check()
-                        if let value = found() { return value }
-                        try await Task.sleep(nanoseconds: 100_000_000)
-                    }
-                    return nil
+                    try await self.until(seconds, check: check, found)
                 }
-                // The Go To field is the one that takes the keyboard after Command-Shift-G.
-                let earlier = access.focusedTextField(app.pid)
-                let goTo: CGEventFlags = [.maskCommand, .maskShift]
-                try modifiers(goTo, pid: app.pid, check: check)
-                try keyboard(try keyCode("g", flags: goTo), flags: goTo, text: nil, pid: app.pid, check: check)
-                releaseModifiers()
-                guard let folderField = try await until(2, { access.focusedTextField(app.pid).flatMap { live in
-                    CFEqual(live, field) || earlier.map { CFEqual(live, $0) } == true ? nil : live } }) else {
-                    throw UseError("save_folder_unavailable", "The sheet did not open its Go To field, so the folder could not be chosen. Nothing was saved.", next: "observe")
+                if let failure = try await goTo(file.deletingLastPathComponent().path, besides: field, app: app, access: access, check: check) {
+                    throw UseError("save_folder_unavailable", failure == .noField
+                        ? "The sheet did not open its Go To field, so the folder could not be chosen. Nothing was saved."
+                        : "The Go To field did not take the folder. Nothing was saved.", next: "observe")
                 }
-                let folder = file.deletingLastPathComponent().path
-                guard AXUIElementSetAttributeValue(folderField, kAXValueAttribute as CFString, folder as CFString) == .success,
-                      (access.attribute(folderField, kAXValueAttribute) as? String) == folder else {
-                    throw UseError("save_folder_unavailable", "The Go To field did not take the folder. Nothing was saved.", next: "observe")
-                }
-                try keyboard(NativeKey.navigation["enter"]!, flags: [], text: nil, pid: app.pid, check: check)
-                _ = try await until(2, { access.focusedTextField(app.pid).map { CFEqual($0, folderField) } == true ? nil : true })
                 // After Go To, which can rename the file.
                 let name = file.lastPathComponent
                 guard AXUIElementSetAttributeValue(field, kAXValueAttribute as CFString, name as CFString) == .success,
@@ -225,6 +208,21 @@ final class MacInput {
                     }
                 }
                 path = "save_pressed"
+            case .openInPanel(let file):
+                // A person's steps in an Open panel: Go To the file, which selects it, then the
+                // panel's default button. The path and the selection are read back before the press.
+                try await OpenPanelRules.pick(file, goTo: { try await goTo($0, besides: nil, app: app, access: access, check: check) },
+                    selection: { access.selectedFileNames(target) },
+                    until: { selected in try await until(2, check: check, { selected() ? true : nil }) == true },
+                    button: { access.defaultButton(target).map { (access.attribute($0, kAXTitleAttribute) as? String, access.attribute($0, kAXEnabledAttribute) as? Bool != false) } },
+                    press: {
+                        // The button read again right before the press, as the person would see it.
+                        guard let button = access.defaultButton(target) else { return .failure }
+                        try check()
+                        return AXUIElementPerformAction(button, kAXPressAction as CFString)
+                    })
+                report(.dispatched)
+                path = "open_pressed"
             case .menu(let names):
                 // Menu commands go to the app's focused window: never to another document.
                 guard access.isFocusedWindow(target, app: app) else {
@@ -517,6 +515,32 @@ final class MacInput {
               abs(windowLocation(event).x - local.x) < 1, abs(windowLocation(event).y - local.y) < 1 else {
             throw UseError("unsupported_pointer_input", "This macOS version did not address pointer input to the selected window. Use accessible app controls instead.", next: "human_takeover")
         }
+    }
+    /// A file panel's Go To field (`PanelGoTo`), live: the field is the one that takes the keyboard
+    /// after Command-Shift-G, never `besides` (a Save sheet's name field). Nil once it was entered.
+    private func goTo(_ path: String, besides field: AXUIElement?, app: AppIdentity, access: MacAccessibility, check: () throws -> Void) async throws -> PanelGoTo.Failure? {
+        try await PanelGoTo.enter(path, open: { () async throws -> AXUIElement? in
+            let earlier = access.focusedTextField(app.pid)
+            let goTo: CGEventFlags = [.maskCommand, .maskShift]
+            try modifiers(goTo, pid: app.pid, check: check)
+            try keyboard(try keyCode("g", flags: goTo), flags: goTo, text: nil, pid: app.pid, check: check)
+            releaseModifiers()
+            return try await until(2, check: check, { access.focusedTextField(app.pid).flatMap { live in
+                field.map { CFEqual(live, $0) } == true || earlier.map { CFEqual(live, $0) } == true ? nil : live } })
+        }, set: { AXUIElementSetAttributeValue($0, kAXValueAttribute as CFString, $1 as CFString) == .success },
+        value: { access.attribute($0, kAXValueAttribute) as? String },
+        submit: { goToField in
+            try keyboard(NativeKey.navigation["enter"]!, flags: [], text: nil, pid: app.pid, check: check)
+            _ = try await until(2, check: check, { access.focusedTextField(app.pid).map { CFEqual($0, goToField) } == true ? nil : true })
+        })
+    }
+    private func until<T>(_ seconds: Double, check: () throws -> Void, _ found: () -> T?) async throws -> T? {
+        for _ in 0..<Int(seconds * 10) {
+            try check()
+            if let value = found() { return value }
+            try await Task.sleep(nanoseconds: 100_000_000)
+        }
+        return nil
     }
     /// Apps that track modifier keys themselves (canvases, games, Electron
     /// shortcuts) need to see them go down before the click or key.

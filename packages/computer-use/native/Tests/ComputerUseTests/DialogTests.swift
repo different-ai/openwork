@@ -75,4 +75,118 @@ final class DialogTests: XCTestCase {
         XCTAssertFalse(HandoverRules.followsNewWindow(focused: 4, target: 4, opened: [4]))
         XCTAssertFalse(HandoverRules.followsNewWindow(focused: nil, target: 4, opened: [9]))
     }
+
+    func testOpenInPanelTakesAnExistingFileWithLinksResolvedAndRefusesFolders() throws {
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: folder.appendingPathComponent("photos"), withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let map = folder.appendingPathComponent("photos/map.png")
+        try Data([1]).write(to: map)
+        let link = folder.appendingPathComponent("latest.png")
+        try FileManager.default.createSymbolicLink(at: link, withDestinationURL: map)
+
+        guard case .openInPanel(let file) = try Action(["type": "open_in_panel", "path": link.path], policy: .embedded) else { return XCTFail() }
+        XCTAssertEqual(file.path, map.resolvingSymlinksInPath().path, "the panel gets the file a link points to")
+        XCTAssertEqual(try Action(["type": "open_in_panel", "path": map.path], policy: .embedded).name, "open_in_panel")
+        XCTAssertTrue(try Action(["type": "open_in_panel", "path": map.path], policy: .embedded).requiresControl)
+        for (path, code) in [("map.png", "invalid_arguments"), (folder.appendingPathComponent("photos").path, "file_unavailable"),
+                             (folder.appendingPathComponent("missing.png").path, "file_unavailable")] {
+            XCTAssertThrowsError(try Action(["type": "open_in_panel", "path": path], policy: .embedded), path) { error in
+                XCTAssertEqual((error as? UseError)?.code, code, path)
+            }
+        }
+        XCTAssertThrowsError(try Action(["type": "open_in_panel", "path": map.path, "replace": true], policy: .embedded))
+        XCTAssertThrowsError(try Action(["type": "open_in_panel", "path": map.path], policy: .desktop), "only the OpenWork host offers it")
+    }
+
+    func testOpenInPanelIsOnlyForAnOpenStylePanel() {
+        for title in ["Open", "Place", "Insert", "Choose", " attach "] {
+            XCTAssertTrue(OpenPanelRules.isOpenPanel(kind: .filePanel, saveField: false, defaultButton: title), title)
+        }
+        XCTAssertFalse(OpenPanelRules.isOpenPanel(kind: .filePanel, saveField: true, defaultButton: "Open"), "a Save sheet has a name field")
+        XCTAssertFalse(OpenPanelRules.isOpenPanel(kind: .filePanel, saveField: false, defaultButton: "Save"))
+        XCTAssertFalse(OpenPanelRules.isOpenPanel(kind: .sheet, saveField: false, defaultButton: "Open"), "a sheet with no file browser")
+        XCTAssertFalse(OpenPanelRules.isOpenPanel(kind: nil, saveField: false, defaultButton: "Open"), "no panel is open")
+        XCTAssertFalse(OpenPanelRules.isOpenPanel(kind: .filePanel, saveField: false, defaultButton: nil))
+        XCTAssertTrue(DialogRules.isFilePanel(bundleID: "com.adobe.Photoshop", roles: ["AXOutline"], defaultButton: "Place"),
+            "Photoshop's Place panel is a file panel")
+    }
+
+    @MainActor
+    func testPickingAFileGoesToItReadsItBackAndPressesTheDefaultButton() async throws {
+        let file = URL(fileURLWithPath: "/Users/someone/Desktop/map.png")
+        var steps: [String] = []
+        var field = ""
+        try await OpenPanelRules.pick(file, goTo: { path in
+            try await PanelGoTo.enter(path, open: { steps.append("go_to"); return "go-to field" },
+                set: { _, value in field = value; steps.append("set"); return true },
+                value: { _ in field }, submit: { _ in steps.append("return") })
+        }, selection: { ["map.png"] }, until: { $0() },
+           button: { ("Place", true) }, press: { steps.append("place"); return .success })
+        XCTAssertEqual(field, file.path, "the file's own path goes into Go To")
+        XCTAssertEqual(steps, ["go_to", "set", "return", "place"], "read back before Return, the press last")
+
+        // A Save sheet's folder goes through the same Go To field.
+        var folder = ""
+        let saved = try await PanelGoTo.enter("/Users/someone/Desktop", open: { 1 }, set: { _, value in folder = value; return true },
+            value: { _ in folder }, submit: { _ in })
+        XCTAssertNil(saved)
+        XCTAssertEqual(folder, "/Users/someone/Desktop")
+    }
+
+    @MainActor
+    func testNothingIsPressedUnlessThePathAndTheSelectionReadBack() async throws {
+        let file = URL(fileURLWithPath: "/Users/someone/Desktop/map.png")
+        func attempt(goTo: PanelGoTo.Failure? = nil, selected: [String] = ["map.png"], button: (title: String?, enabled: Bool)? = ("Open", true),
+                     pressed: AXError = .success) async -> (code: String?, pressed: Bool) {
+            var didPress = false
+            do {
+                try await OpenPanelRules.pick(file, goTo: { _ in goTo }, selection: { selected }, until: { $0() },
+                    button: { button }, press: { didPress = true; return pressed })
+                return (nil, didPress)
+            } catch { return ((error as? UseError)?.code, didPress) }
+        }
+        var result = await attempt(goTo: .noField)
+        XCTAssertEqual(result.code, "panel_path_unavailable"); XCTAssertFalse(result.pressed)
+        result = await attempt(goTo: .notTaken)
+        XCTAssertEqual(result.code, "panel_path_unavailable"); XCTAssertFalse(result.pressed)
+        for selected in [[], ["other.png"], ["map.png", "map.png"]] {
+            result = await attempt(selected: selected)
+            XCTAssertEqual(result.code, "file_not_selected", "\(selected)"); XCTAssertFalse(result.pressed)
+        }
+        for button in [nil, ("Save", true), ("Open", false)] as [(title: String?, enabled: Bool)?] {
+            result = await attempt(button: button)
+            XCTAssertEqual(result.code, "open_panel_required"); XCTAssertFalse(result.pressed)
+        }
+        result = await attempt(pressed: .failure)
+        XCTAssertEqual(result.code, "action_failed")
+        result = await attempt(pressed: .cannotComplete)
+        XCTAssertNil(result.code, "a press that opened something modal was delivered")
+
+        // A value the field did not keep is never entered.
+        var submitted = false
+        let failure = try await PanelGoTo.enter(file.path, open: { 1 }, set: { _, _ in true }, value: { _ in "/Users/someone/Desk" },
+            submit: { _ in submitted = true })
+        XCTAssertEqual(failure, .notTaken)
+        XCTAssertFalse(submitted)
+    }
+
+    func testTheSelectionMatchesTheFileEvenWithItsExtensionHidden() {
+        let file = URL(fileURLWithPath: "/tmp/map.png")
+        XCTAssertTrue(OpenPanelRules.selects(["map.png"], file: file, displayName: "map.png"))
+        XCTAssertTrue(OpenPanelRules.selects(["map"], file: file, displayName: "map"))
+        XCTAssertFalse(OpenPanelRules.selects(["map"], file: file, displayName: "map.png"))
+        XCTAssertFalse(OpenPanelRules.selects(["map.png", "notes.txt"], file: file, displayName: "map.png"))
+    }
+
+    func testAnAlertAfterThePanelIsAFailureAndAQuietAppIsUnconfirmed() {
+        let alert = FileOpenCheck.alert(title: "Could not place", texts: ["The file is not a supported type."])
+        XCTAssertEqual(OpenPanelRules.outcome(panelOpen: false, alert: alert, windowOpened: true, retitled: false, contentChanged: false), "file_open_failed")
+        XCTAssertEqual(OpenPanelRules.outcome(panelOpen: true, alert: alert, windowOpened: false, retitled: false, contentChanged: false), "file_open_failed")
+        XCTAssertNil(OpenPanelRules.outcome(panelOpen: true, alert: nil, windowOpened: true, retitled: true, contentChanged: true), "still in the panel")
+        XCTAssertEqual(OpenPanelRules.outcome(panelOpen: false, alert: nil, windowOpened: true, retitled: false, contentChanged: false), "file_chosen")
+        XCTAssertEqual(OpenPanelRules.outcome(panelOpen: false, alert: nil, windowOpened: false, retitled: true, contentChanged: false), "file_chosen")
+        XCTAssertEqual(OpenPanelRules.outcome(panelOpen: false, alert: nil, windowOpened: false, retitled: false, contentChanged: true), "file_chosen")
+        XCTAssertNil(OpenPanelRules.outcome(panelOpen: false, alert: nil, windowOpened: false, retitled: false, contentChanged: false), "nothing to show yet")
+    }
 }
