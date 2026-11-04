@@ -713,6 +713,8 @@ function parallelFixture(options = {}) {
   let connections = 0;
   /** The connect options each helper started with. */
   const started = [];
+  /** Who each helper's cursor says is acting. */
+  const presences = [];
   const windows = { blender: 11, photoshop: 12, notes: 13, maps: 14, powerpoint: 15 };
   /** Each app's helper's UI channel, to stand in for its pill. */
   const uis = {};
@@ -721,9 +723,10 @@ function parallelFixture(options = {}) {
     id: "local", label: "This Mac", placement: "local", parallel: true, protocol: COMPUTER_PROTOCOL,
     setup: async () => ({ setupId: "setup" }),
     readiness: async () => ({ readiness: "ready", detail: "Ready" }),
-    connect: async ({ onUi, onClose, background }) => {
+    connect: async ({ onUi, onClose, background, presence }) => {
       connections++;
       started.push({ background: background === true });
+      presences.push(presence);
       let app = "";
       return {
         callTool: async (name, args) => {
@@ -750,7 +753,7 @@ function parallelFixture(options = {}) {
     },
   };
   const control = createComputerControl({ adapters: [adapter], ...options.control });
-  return { control, events, started, connections: () => connections, ui: (app, value) => uis[app](value) };
+  return { control, events, started, presences, connections: () => connections, ui: (app, value) => uis[app](value) };
 }
 const openApp = (control, sessionId, app, mode = "control", windowId) =>
   control.execute({ sessionId, name: "computer_open", args: { app_id: app, mode, purpose: `Work in ${app}`, ...(windowId ? { window_id: windowId } : {}) } });
@@ -941,6 +944,36 @@ test("with parallel computer use off, a subagent is its own chat, as before", as
   await f.control.endTurn({ sessionId: "chat" });
   f.control.setParallelAgents(true);
   assert.equal(folder(await open("slides-agent", "powerpoint")), "/Users/me/Downloads/OpenWork/chat");
+});
+
+test("each subagent's cursor has its own name and a color that stays its own, and the chat keeps OpenWork's", async (t) => {
+  const openwork = { name: "OpenWork", color: "#4585f2" };
+  const f = parallelFixture({ control: { presence: openwork } }); t.after(() => f.control.reset(true));
+  await f.control.setFeatureEnabled(true);
+  f.control.setParallelAgents(true);
+  const open = (sessionId, app, extra = {}) => f.control.execute({ sessionId, ...extra, name: "computer_open", args: { app_id: app, mode: "control", purpose: `Work in ${app}` } });
+  await open("chat", "notes");
+  await Promise.all([open("maps-agent", "maps", { rootSessionId: "chat", agentName: "  Maps\n  " }), open("slides-agent", "powerpoint", { rootSessionId: "chat", agentName: "general" })]);
+  await open("unnamed-agent", "photoshop", { rootSessionId: "chat" });
+  const [chat, maps, slides, unnamed] = f.presences;
+  assert.deepEqual(chat, openwork, "the chat itself stays OpenWork");
+  assert.equal(maps.name, "Maps");
+  assert.equal(slides.name, "general", "without a description, the agent's name");
+  assert.equal(unnamed.name, "Agent 3");
+  assert.equal(new Set([openwork.color, maps.color, slides.color, unnamed.color]).size, 4, "every agent has a color of its own");
+  for (const presence of [maps, slides, unnamed]) assert.match(presence.color, /^#[0-9a-f]{6}$/);
+  // A later helper for the same subagent, after its turn ends, keeps its name and color; a later name never renames it.
+  await f.control.endTurn({ sessionId: "maps-agent" });
+  await f.control.execute({ sessionId: "maps-agent", rootSessionId: "chat", agentName: "Renamed", name: "computer_observe", args: {} });
+  assert.deepEqual(f.presences.at(-1), maps);
+});
+
+test("with parallel computer use off, every helper shows the one presence, as before", async (t) => {
+  const openwork = { name: "OpenWork", color: "#4585f2" };
+  const f = parallelFixture({ control: { presence: openwork } }); t.after(() => f.control.reset(true));
+  await f.control.setFeatureEnabled(true);
+  await f.control.execute({ sessionId: "maps-agent", rootSessionId: "chat", agentName: "Maps", name: "computer_open", args: { app_id: "maps", mode: "control", purpose: "Find it" } });
+  assert.deepEqual(f.presences, [openwork]);
 });
 
 test("a computer that is not parallel keeps one app per chat", async (t) => {

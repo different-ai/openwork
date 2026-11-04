@@ -197,7 +197,7 @@ function deadline(ms) {
 
 /**
  * @typedef {{ isError?: boolean, content: Array<{ type: string, text?: string, data?: string, mimeType?: string }> }} ComputerResult
- * @typedef {{ sessionId?: string, rootSessionId?: string }} ChatInput
+ * @typedef {{ sessionId?: string, rootSessionId?: string, agentName?: string }} ChatInput
  * @typedef {{ ok?: boolean, error?: { code: string, message: string }, mayHaveActed?: boolean, [key: string]: unknown }} ScriptResult
  * @typedef {{ id: string, reason: "setup" | "script" | "files" | "credential", computer: string, placement: "local" | "remote", detail?: string, appId?: string, purpose?: string, standing?: boolean, script?: { app: string, code: string }, files?: { app: string, names: string[], save?: boolean }, credential?: { site?: string, app?: string, appId?: string } }} ComputerRequest
  * @typedef {{ targets?: Record<string, string>, computer?: string }} SavedChoices
@@ -232,6 +232,8 @@ const WEB_BROWSER_PARTS = new Set(["chrome", "chromium", "edge", "msedge", "edge
   "epiphany", "falkon", "konqueror", "midori", "qutebrowser", "seamonkey", "palemoon", "yandex", "whale", "thorium",
   "torbrowser", "mullvadbrowser", "duckduckgo", "kagimacos", "orion"]);
 const isWebBrowser = (app) => String(app).toLowerCase().split(/[^a-z0-9]+/).some((part) => WEB_BROWSER_PARTS.has(part));
+/** Cursor colors for a chat's subagents, in the order they start; none is OpenWork's own blue. */
+const AGENT_COLORS = ["#30a46c", "#f76b15", "#8e4ec6", "#d6409f", "#12a594", "#e5484d"];
 
 /**
  * Adapters are trusted main-process dependencies, never renderer or model
@@ -335,6 +337,20 @@ export function createComputerControl({ adapters, runProgram, runScript, onTimin
   const chatKey = (grant) => head(grant).sessionId;
   /** Subagent sessions by the chat that started them, as the trusted bridge reports them. */
   const roots = new Map();
+  /**
+   * Who the cursor says is acting. The chat itself is OpenWork's own presence; each subagent
+   * shows its short description, or else its agent's name, in a color of its own that stays
+   * the same for the rest of the chat. Display only, never authority.
+   */
+  function presenceFor(grant) {
+    // With `parallelComputerUse` off every helper shows the one presence, as before.
+    const chat = rootOf(grant);
+    if (!chat) return presence;
+    chat.agents ??= new Map();
+    if (!chat.agents.has(grant.sessionId)) chat.agents.set(grant.sessionId, chat.agents.size);
+    const turn = chat.agents.get(grant.sessionId);
+    return { name: grant.agentName ?? `Agent ${turn + 1}`, color: AGENT_COLORS[turn % AGENT_COLORS.length] };
+  }
   /** The chat's app a call goes to when it names none: the one it opened last. */
   const appOf = (grant) => grant.apps.get(grant.latest) ?? null;
   const leaseOf = (grant, app = appOf(grant)) => mine(grant).find((current) => current.app === app) ?? null;
@@ -615,7 +631,7 @@ export function createComputerControl({ adapters, runProgram, runScript, onTimin
     if (roots.size >= 1000) roots.delete(roots.keys().next().value);
     roots.set(sessionId, root);
   }
-  async function grantFor(sessionId, rootSessionId) {
+  async function grantFor(sessionId, rootSessionId, agentName) {
     if (closed || resetting) throw new Error("Computer use is stopping.");
     if (typeof sessionId !== "string" || !sessionId.trim()) throw new Error("A chat is required.");
     if (parallelAgents) relate(sessionId, rootSessionId);
@@ -635,6 +651,9 @@ export function createComputerControl({ adapters, runProgram, runScript, onTimin
     }
     // A subagent joins its chat once, before or after its first call; nothing nests deeper.
     if (root && !grant.root && root !== grant && !root.root && !crew(grant).some((other) => other.root === grant)) grant.root = root;
+    // The subagent's name for its cursor, set once by the bridge.
+    const name = typeof agentName === "string" ? agentName.replace(/\s+/g, " ").trim().slice(0, 32).trim() : "";
+    if (grant.root && name) grant.agentName ??= name;
     return grant;
   }
   // Probes start a helper process; reuse a recent answer, longer once ready.
@@ -1010,7 +1029,7 @@ export function createComputerControl({ adapters, runProgram, runScript, onTimin
         if (!current.transport) {
           try {
             current.transport = await current.adapter.connect({
-              signal: active, presence,
+              signal: active, presence: presenceFor(grant),
               background: current.background,
               onUi: (value) => receiveUi(current, value),
               onClose: () => {
@@ -1622,7 +1641,7 @@ export function createComputerControl({ adapters, runProgram, runScript, onTimin
         || input.timeoutMs !== undefined && (!Number.isInteger(input.timeoutMs) || input.timeoutMs < 1000 || input.timeoutMs > 120_000)) {
         return { ok: false, error: { code: "invalid_arguments", message: `Provide app (${SCRIPT_APPS.join(", ")}), code up to 32000 characters and a timeout from 1000 to 120000 milliseconds.` } };
       }
-      const grant = await grantFor(input.sessionId, input.rootSessionId);
+      const grant = await grantFor(input.sessionId, input.rootSessionId, input.agentName);
       if (!grant.enabled || !head(grant).enabled) return { ok: false, error: { code: "computer_stopped", message: "Computer use stopped for this turn. Continue with the person's next message." } };
       if (humanPaused(grant)) return { ok: false, error: { code: "computer_paused", message: "The person took over. They return control with Continue. No script was run." } };
       if (targetFor(grant).placement !== "local") return { ok: false, error: { code: "script_unavailable", message: "App scripting runs on this Mac only. Use computer_run on remote computers." } };
@@ -1659,7 +1678,7 @@ export function createComputerControl({ adapters, runProgram, runScript, onTimin
         || input.timeoutMs !== undefined && (!Number.isInteger(input.timeoutMs) || input.timeoutMs < 1000 || input.timeoutMs > 60_000)) return { ok: false, error: { code: "invalid_arguments", message: "Provide a surface, bounded code and a timeout from 1000 to 60000 milliseconds." } };
       // Before any await: an off/on toggle while the grant resolves must still stop this program.
       const generation = featureGeneration;
-      const grant = await grantFor(input.sessionId, input.rootSessionId);
+      const grant = await grantFor(input.sessionId, input.rootSessionId, input.agentName);
       if (!grant.enabled || !head(grant).enabled) return { ok: false, error: { code: "computer_stopped", message: "Computer use stopped for this turn. Continue with the person's next message." } };
       if (humanPaused(grant)) return { ok: false, error: { code: "computer_paused", message: "The person took over. They return control with Continue. No program was started." } };
       if (programs.has(grant.sessionId)) return { ok: false, error: { code: "program_busy", message: "A program is already running in this chat." } };
@@ -1692,7 +1711,7 @@ export function createComputerControl({ adapters, runProgram, runScript, onTimin
      * @param {{ signal?: AbortSignal, includePostImage?: boolean, program?: boolean }} options
      * @returns {Promise<ComputerResult>}
      */
-    async execute({ sessionId, rootSessionId, name, args } = {}, { signal = new AbortController().signal, includePostImage = true, program = false } = {}) {
+    async execute({ sessionId, rootSessionId, agentName, name, args } = {}, { signal = new AbortController().signal, includePostImage = true, program = false } = {}) {
       let limit = null;
       try {
         if (!Object.hasOwn(COMPUTER_TOOLS, name)) return failure("unknown_tool", "This computer tool does not exist.");
@@ -1705,7 +1724,7 @@ export function createComputerControl({ adapters, runProgram, runScript, onTimin
         if (!featureEnabled) return failure("computer_unavailable", "Computer use is not turned on in this OpenWork app. Use connected apps or the browser instead.");
         const generation = featureGeneration;
         const remoteRevision = remoteGeneration;
-        const grant = await grantFor(sessionId, rootSessionId);
+        const grant = await grantFor(sessionId, rootSessionId, agentName);
         if (targetFor(grant).placement === "remote" && !await readRemoteFeatureEnabled().catch(() => false)) {
           await api.setRemoteEnabled(false);
           return failure("computer_unavailable", "Your organization's remote computer feature could not be verified. Nothing was dispatched.");

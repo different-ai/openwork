@@ -22,7 +22,7 @@ type Tool = {
   execute(input: unknown, context: ToolCall): Promise<z.infer<typeof browserResult>>;
 };
 type Context = Omit<CloudSkillContext, "session"> & {
-  session?: CloudSkillContext["session"] & { get?(input: { sessionID: string }): Promise<{ readonly parentID?: string } | undefined> };
+  session?: CloudSkillContext["session"] & { get?(input: { sessionID: string }): Promise<{ readonly parentID?: string; readonly title?: string } | undefined> };
   location?: { directory?: string };
   options: { url: string; token: string; browser?: { url: string; token: string } };
   tool: {
@@ -56,21 +56,27 @@ export default {
     // over, computer and output folder. The engine's session tree says which; model input never does.
     // Only while the desktop has `parallelComputerUse` on; off, each session is its own chat.
     let parallelOn = false;
-    const roots = new Map<string, string>();
-    const rootOf = async (sessionID: string): Promise<string | undefined> => {
+    // A subagent's cursor says who it is: its short description (the child session's
+    // title), or else its agent's name.
+    const roots = new Map<string, { rootSessionId: string; agentName?: string }>();
+    const rootOf = async (sessionID: string, agent?: string) => {
       if (!parallelOn) return undefined;
       const known = roots.get(sessionID);
       if (known) return known;
       let id = sessionID;
+      let title: string | undefined;
       for (let depth = 0; depth < 4; depth += 1) {
-        const parent = (await context.session?.get?.({ sessionID: id }).catch(() => undefined))?.parentID;
-        if (!parent) break;
-        id = parent;
+        const session = await context.session?.get?.({ sessionID: id }).catch(() => undefined);
+        if (depth === 0 && typeof session?.title === "string") title = session.title.trim();
+        if (!session?.parentID) break;
+        id = session.parentID;
       }
       if (id === sessionID) return undefined;
+      const agentName = title || agent?.trim();
+      const chat = { rootSessionId: id, ...(agentName ? { agentName: agentName.slice(0, 200) } : {}) };
       if (roots.size >= 500) roots.delete(roots.keys().next().value!);
-      roots.set(sessionID, id);
-      return id;
+      roots.set(sessionID, chat);
+      return chat;
     };
     const browserDefinitions = browser ? (await browserTools()).tool : undefined;
     const computerDefinitions = browser ? (await computerTools()).tool : undefined;
@@ -196,11 +202,11 @@ export default {
           input: z.toJSONSchema(z.object(definition.args)),
           options: { codemode: false },
           async execute(input, call) {
-            const rootSessionId = name.startsWith("computer_") ? await rootOf(call.sessionID) : undefined;
+            const chat = name.startsWith("computer_") ? await rootOf(call.sessionID, call.agent) : undefined;
             const response = await approvalLoopbackFetch(browser.url, {
               method: "POST", redirect: "error", signal: call.signal,
               headers: { Authorization: `Bearer ${browser.token}`, "Content-Type": "application/json" },
-              body: JSON.stringify({ name, input, sessionId: call.sessionID, ...(rootSessionId ? { rootSessionId } : {}) }),
+              body: JSON.stringify({ name, input, sessionId: call.sessionID, ...chat }),
             });
             if (!response.ok) throw new Error(`${name.startsWith("computer_") ? "Computer" : "Browser"} request failed (${response.status})`);
             return browserResult.parse(await response.json());

@@ -200,6 +200,11 @@ The host may pass `OPENWORK_COMPUTER_USE_PRESENCE` as JSON
 `{"name": "…", "color": "#rrggbb"}`. The name falls back to "OpenWork" and the
 color to blue. Presence is display only and never grants access. Embedded mode
 always shows it; standalone `mcp` shows it only when the variable is set.
+OpenWork sets it per helper: the chat's own apps show "OpenWork", and each
+subagent's apps show its short description (the child session's title, such as
+"Maps"), or else its agent's name, in a color of its own from a small palette
+that stays the same for the rest of the chat. The cursor's label, its narration
+and the pill all use that name, so the person can tell the agents apart.
 
 ## Permission guide protocol
 
