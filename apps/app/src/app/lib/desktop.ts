@@ -550,6 +550,16 @@ export async function openDesktopUrl(url: string): Promise<void> {
   await openDesktopUrlWithStatus(url);
 }
 
+/** Read-only native probe for chat file candidates; never opens or reveals the item. */
+export async function resolveDesktopChatFilePath(target: string): Promise<string | null> {
+  if (typeof window === "undefined" || !window.__OPENWORK_ELECTRON__?.invokeDesktop) return null;
+  try {
+    return await invokeElectronHelper("__resolveChatFilePath", target);
+  } catch {
+    return null;
+  }
+}
+
 export async function openDesktopPath(target: string): Promise<void> {
   const result = await invokeElectronHelper("__openPath", target);
   if (typeof result === "string" && result.trim()) {

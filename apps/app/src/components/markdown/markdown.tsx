@@ -10,10 +10,9 @@ import { cn } from "@/lib/utils";
 import { useOpenTargets } from "@/lib/target-provider";
 import { useSessionReferencesMaybe } from "@/components/chat/session-reference-context";
 import { useUntrustedMarkdown } from "./untrusted-markdown";
-import { useOpenArtifactPath } from "@/lib/artifacts";
+import { contextualizeFileTarget, precedingDirectory } from "@/react-app/domains/session/artifacts/path-reference-context";
 import type { OpenTarget } from "@/react-app/domains/session/artifacts/open-target";
-import { openTargetForHref } from "@/react-app/domains/session/artifacts/resolve-open-target";
-import { parseLocalPathReference, workspaceLookupValue } from "@/react-app/domains/session/artifacts/local-path";
+import { openTargetForHref, openTargetFromLocalPath, planFileOpen, resolveCollectibleOpenTarget } from "@/react-app/domains/session/artifacts/resolve-open-target";
 
 import { applyTextHighlights } from "./text-highlights";
 import {
@@ -73,8 +72,15 @@ function MarkdownBlockInner({
   const videoCleanups = useRef(new Map<HTMLVideoElement, () => void>());
   const codeCopyResetTimers = useRef(new Map<HTMLButtonElement, number>());
   const codeWrapStates = useRef(new Map<number, boolean>());
-  const { openTargets, onOpenTarget, client, workspaceId, workspaceRoot, sessionId } = useOpenTargets();
-  const openArtifactPath = useOpenArtifactPath();
+  const { openTargets, sessionFileEvidence, onOpenTarget, client, workspaceId, workspaceRoot, sessionId } = useOpenTargets();
+  const targetAt = useCallback((value: string, node: Element, decode = true) => {
+    const literal = openTargetFromLocalPath(value, { decode });
+    const root = rootRef.current;
+    const contextual = literal && root ? contextualizeFileTarget(literal, precedingDirectory(root, node)) : literal;
+    // Context belongs to this occurrence, not another same-named link or artifact.
+    if (contextual?.pathHints?.length || !decode) return contextual;
+    return openTargetForHref(value, openTargets, workspaceRoot);
+  }, [openTargets, workspaceRoot]);
   useEffect(() => () => {
     videoCleanups.current.forEach((cleanup) => cleanup());
     videoCleanups.current.clear();
@@ -243,20 +249,22 @@ function MarkdownBlockInner({
         if (objectUrl) URL.revokeObjectURL(objectUrl);
       });
       if (/^https?:/i.test(href)) continue;
-      // Only the workspace can stream a video; a home or outside path falls back
-      // to its clickable reference, which reveals it on this computer.
-      const target = openTargetForHref(href, openTargets, workspaceRoot);
-      const reference = parseLocalPathReference(href, { decode: true });
-      const path = target?.exists === true
-        ? target.value
-        : reference && reference.anchor !== "home"
-          ? workspaceLookupValue(reference, { workspaceRoot }).replace(/\\/g, "/")
-          : "";
-      if (!client || !workspaceId || !path || /^(?:\/|[A-Za-z]:\/)/.test(path)) {
+      // Streaming and clicking use the same candidate resolution. Streaming
+      // never probes the desktop or downloads outside the owning workspace.
+      const target = targetAt(href, video, video.dataset.openworkPathDecode === "true");
+      if (!client || !workspaceId || !target) {
         showError();
         continue;
       }
-      void client.downloadWorkspaceFile(workspaceId, path, { sessionId, fileScope: target?.fileScope }).then((result) => {
+      void (async () => {
+        const plan = await planFileOpen(target, {
+          origin: "remote", workspaceRoot, canOpenLocally: false, sessionTargets: sessionFileEvidence,
+          findInWorkspace: (lookup, options) => resolveCollectibleOpenTarget(client, workspaceId, lookup, sessionId, options),
+        });
+        if (cancelled) return;
+        if (plan.kind !== "workspace") { showError(); return; }
+        const path = plan.target.value;
+        const result = await client.downloadWorkspaceFile(workspaceId, path, { sessionId, fileScope: plan.target.fileScope });
         if (cancelled) return;
         const extension = path.split(".").pop()?.toLowerCase();
         const fallbackType = extension === "webm" ? "video/webm" : extension === "ogv" ? "video/ogg" : extension === "mov" ? "video/quicktime" : "video/mp4";
@@ -264,9 +272,9 @@ function MarkdownBlockInner({
         const url = URL.createObjectURL(new Blob([result.data], { type: contentType }));
         objectUrl = url;
         video.src = url;
-      }).catch(() => { if (!cancelled) showError(); });
+      })().catch(() => { if (!cancelled) showError(); });
     }
-  }, [client, workspaceId, workspaceRoot, sessionId, openTargets, rendered]);
+  }, [client, workspaceId, workspaceRoot, sessionId, sessionFileEvidence, targetAt, rendered]);
 
   useEffect(() => {
     const root = rootRef.current;
@@ -323,7 +331,8 @@ function MarkdownBlockInner({
       if (inlineCodePath instanceof HTMLElement) {
         event.preventDefault();
         event.stopPropagation();
-        openArtifactPath(inlineCodePath.dataset.openworkInlineCodePath ?? "");
+        const target = targetAt(inlineCodePath.dataset.openworkInlineCodePath ?? "", inlineCodePath, inlineCodePath.dataset.openworkPathDecode === "true");
+        if (target) onOpenTarget?.(target);
         return;
       }
 
@@ -348,7 +357,7 @@ function MarkdownBlockInner({
         event.preventDefault();
         event.stopPropagation();
         const href = chevron.dataset.openworkLinkChevron ?? "";
-        const target = openTargetForHref(href, openTargets, workspaceRoot);
+        const target = targetAt(href, chevron);
         if (target) {
           setLinkMenu({ target, anchor: chevron });
         }
@@ -358,7 +367,7 @@ function MarkdownBlockInner({
       const link = event.target.closest("a[data-openwork-link-href]");
       if (link instanceof HTMLAnchorElement) {
         const href = link.dataset.openworkLinkHref ?? link.getAttribute("href") ?? "";
-        const target = openTargetForHref(href, openTargets, workspaceRoot);
+        const target = targetAt(href, link);
 
         if (target && onOpenTarget) {
           event.preventDefault();
@@ -382,7 +391,7 @@ function MarkdownBlockInner({
       const link = event.target.closest("[data-openwork-link-href], [data-openwork-link-chevron]");
       if (!(link instanceof HTMLElement)) return;
       const href = link.dataset.openworkLinkHref ?? link.dataset.openworkLinkChevron ?? "";
-      const target = openTargetForHref(href, openTargets, workspaceRoot);
+      const target = targetAt(href, link);
       if (target?.kind !== "file") return;
       event.preventDefault();
       event.stopPropagation();
@@ -395,7 +404,8 @@ function MarkdownBlockInner({
 
       event.preventDefault();
       event.stopPropagation();
-      openArtifactPath(event.target.dataset.openworkInlineCodePath ?? "");
+      const target = targetAt(event.target.dataset.openworkInlineCodePath ?? "", event.target, event.target.dataset.openworkPathDecode === "true");
+      if (target) onOpenTarget?.(target);
     };
 
     root.addEventListener("load", handleLoad, true);
@@ -428,7 +438,7 @@ function MarkdownBlockInner({
       root.removeEventListener("contextmenu", handleContextMenu);
       root.removeEventListener("keydown", handleKeyDown);
     };
-  }, [handleCopy, onOpenTarget, openArtifactPath, openTargets, workspaceRoot, rendered, references, resolveReference, sessionReferences]);
+  }, [handleCopy, onOpenTarget, targetAt, rendered, references, resolveReference, sessionReferences]);
 
   if (isEmpty) {
     return null;

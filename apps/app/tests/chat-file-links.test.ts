@@ -297,7 +297,7 @@ describe("session file origin", () => {
   test("nonexistent local and other-user paths do not become scary disk errors", async () => {
     expect(await planFileOpen(fileTarget("missing-local.md"), {
       origin: "local", workspaceRoot: ROOT, canOpenLocally: true, findInWorkspace: async () => null,
-    })).toEqual({ kind: "unavailable", message: "This file is no longer available on this computer." });
+    })).toEqual({ kind: "unavailable", message: "OpenWork couldn't find this file on this computer." });
     // Absolute local references are checked at the native boundary; no heuristic
     // infers ownership just from /Users/<name> (the real home may be elsewhere).
     expect(await planFileOpen(fileTarget("/Users/other/notes.md"), {
@@ -355,7 +355,7 @@ describe("planFileOpen", () => {
       canOpenLocally: true,
       findInWorkspace: async () => null,
     });
-    expect(plan).toEqual({ kind: "unavailable", message: "This file is no longer available on this computer." });
+    expect(plan).toEqual({ kind: "unavailable", message: "OpenWork couldn't find this file on this computer." });
   });
 
   test("explains a reference that is not a file", async () => {
@@ -367,7 +367,7 @@ describe("planFileOpen", () => {
     const target = found("docs/plan.md");
     let searched = false;
     const plan = await planFileOpen(target, { origin: "local", workspaceRoot: ROOT, canOpenLocally: true, findInWorkspace: async () => { searched = true; return null; } });
-    expect(plan).toEqual({ kind: "unavailable", message: "This file is no longer available on this computer." });
+    expect(plan).toEqual({ kind: "unavailable", message: "OpenWork couldn't find this file on this computer." });
     expect(searched).toBe(true);
     expect(await planFileOpen(target, { origin: "remote", canOpenLocally: false, findInWorkspace: async () => target }))
       .toEqual({ kind: "workspace", target });
@@ -377,11 +377,11 @@ describe("planFileOpen", () => {
     expect(await planFileOpen(fileTarget("docs/plan.md:2"), { origin: "local", workspaceRoot: ROOT, canOpenLocally: true }))
       .toMatchObject({ kind: "native", path: `${ROOT}/docs/plan.md`, action: "open" });
     expect(await planFileOpen(fileTarget("docs/plan.md"), { origin: "local", workspaceRoot: ROOT, canOpenLocally: false }))
-      .toEqual({ kind: "unavailable", message: "This file is no longer available on this computer." });
+      .toEqual({ kind: "unavailable", message: "OpenWork couldn't find this file on this computer." });
   });
 
   test("reports a missing file in the web app without trying the desktop", async () => {
     expect(await planFileOpen(fileTarget("/Users/me/a.md"), { origin: "local", workspaceRoot: ROOT, canOpenLocally: false, findInWorkspace: async () => null }))
-      .toEqual({ kind: "unavailable", message: "This file is no longer available on this computer." });
+      .toEqual({ kind: "unavailable", message: "OpenWork couldn't find this file on this computer." });
   });
 });

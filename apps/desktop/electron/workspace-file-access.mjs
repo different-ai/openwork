@@ -7,6 +7,30 @@ import path from "node:path";
  * @typedef {WorkspaceFileLaunchAllowed | WorkspaceFileLaunchRefused} WorkspaceFileLaunchDecision
  */
 
+/**
+ * Probe a chat file candidate without opening or revealing anything. Launch permissions
+ * are deliberately checked separately by resolveWorkspaceFileLaunch at the final boundary.
+ * @param {string} target
+ * @returns {Promise<string | null>}
+ */
+export async function resolveChatFilePath(target) {
+  // Reject UNC/network and device namespace paths before touching the filesystem.
+  /** @param {string} value */
+  const isLocalAbsolute = (value) => typeof value === "string"
+    && path.isAbsolute(value)
+    && !/^[\\/]{2}/.test(value)
+    && !value.includes("\u0000");
+  if (!isLocalAbsolute(target)) return null;
+  try {
+    const canonical = await realpath(target);
+    if (!isLocalAbsolute(canonical)) return null;
+    const info = await stat(canonical);
+    return info.isFile() || info.isDirectory() ? canonical : null;
+  } catch {
+    return null;
+  }
+}
+
 function describeError(error) {
   if (error instanceof Error && error.message.trim()) return error.message;
   return String(error ?? "unknown error");

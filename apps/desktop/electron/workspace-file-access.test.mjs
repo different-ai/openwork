@@ -1,9 +1,9 @@
 import { after, before, test } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtemp, mkdir, rm, symlink, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, realpath, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { openChatWorkspaceFile } from "./workspace-file-access.mjs";
+import { openChatWorkspaceFile, resolveChatFilePath } from "./workspace-file-access.mjs";
 
 let root;
 let workspace;
@@ -16,6 +16,42 @@ before(async () => {
   await symlink(path.join(root, "clip.mp4"), path.join(workspace, "outside.mp4"));
 });
 after(async () => { await rm(root, { recursive: true, force: true }); });
+
+test("read-only probe resolves real files with spaces and Unicode and directories", async () => {
+  const file = path.join(workspace, "résumé 日本語 notes.md");
+  await writeFile(file, "notes");
+  assert.equal(await resolveChatFilePath(file), await realpath(file));
+  assert.equal(await resolveChatFilePath(workspace), await realpath(workspace));
+});
+
+test("read-only probe returns null for missing and invalid candidates", async () => {
+  for (const candidate of [
+    path.join(workspace, "missing.md"),
+    "notes.md",
+    "./notes.md",
+    "../notes.md",
+    "~/notes.md",
+    "",
+    "file:///workspace/notes.md",
+    "//server/share/notes.md",
+    "\\\\server\\share\\notes.md",
+    "\\\\?\\UNC\\server\\share\\notes.md",
+    `${workspace}\u0000notes.md`,
+  ]) {
+    assert.equal(await resolveChatFilePath(candidate), null, candidate);
+  }
+});
+
+test("read-only probe canonicalizes file and directory symlinks without granting launch access", async () => {
+  const link = path.join(workspace, "outside.mp4");
+  assert.equal(await resolveChatFilePath(link), await realpath(path.join(root, "clip.mp4")));
+  const directoryLink = path.join(root, "workspace-link");
+  await symlink(workspace, directoryLink, process.platform === "win32" ? "junction" : "dir");
+  assert.equal(await resolveChatFilePath(directoryLink), await realpath(workspace));
+  const native = actions();
+  assert.deepEqual(await openChatWorkspaceFile(workspace, link, native), { ok: true, action: "revealed" });
+  assert.deepEqual(native.calls, [["reveal", link]]);
+});
 
 function actions(reveal = false) {
   const calls = [];

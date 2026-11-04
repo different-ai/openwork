@@ -8,6 +8,7 @@ import {
   type LocalPathReference,
 } from "./local-path";
 import { classifyOpenTarget, isOpenableFileTarget, openTargetFromUrl, type OpenTarget } from "./open-target";
+import { sessionFileCandidate } from "./path-reference-context";
 
 /** A file target for a path written in chat, cleaned up by the shared path reader. */
 export function openTargetFromLocalPath(
@@ -148,7 +149,7 @@ export function filePathForCopy(target: OpenTarget, context: { origin: FileOrigi
 
 export function unavailableFileMessage(origin: FileOrigin): string {
   return origin === "local"
-    ? "This file is no longer available on this computer."
+    ? "OpenWork couldn't find this file on this computer."
     : "This file is on another machine or is no longer available.";
 }
 
@@ -165,7 +166,11 @@ export type FileOpenContext = {
    * Ask the workspace for the file, searching for it by name when the path
    * does not exist as written. Absent when the workspace is not connected.
    */
-  findInWorkspace?: (target: OpenTarget) => Promise<OpenTarget | null>;
+  findInWorkspace?: (target: OpenTarget, options?: { search: boolean }) => Promise<OpenTarget | null>;
+  /** Read-only existence/canonicalization on this computer; never called for remote origins. */
+  findOnComputer?: (path: string) => Promise<string | null>;
+  /** File identities from this session's tool calls and verified transcript. */
+  sessionTargets?: OpenTarget[];
 };
 
 function quoted(path: string) {
@@ -177,10 +182,10 @@ function quoted(path: string) {
  * code, Markdown links, file chips, tool rows) reaches this one decision:
  *
  * 1. Read the reference once (`~/`, `file://`, quotes, `:line[:col]`).
- * 2. Ask the workspace for it. The server also finds a bare name such as
- *    `computer-control.test.mjs` wherever it lives in the workspace.
- * 3. Only for a local-origin session, open/reveal an absolute location on this
- *    computer; the desktop checks the item exists before acting.
+ * 2. Check exact directory-context and session-evidence candidates, followed by
+ *    bounded workspace/conversation search for an unresolved relative name.
+ * 3. Only for a local-origin session, canonicalize/check candidates on this
+ *    computer. The desktop rechecks before opening/revealing the selected item.
  * 4. Otherwise give a calm unavailable/other-machine result for the caller's
  *    copy-path fallback, never hand the desktop a guessed or remote path.
  */
@@ -206,17 +211,59 @@ export async function planFileOpen(target: OpenTarget, context: FileOpenContext)
   };
 
   const notFound: FileOpenPlan = { kind: "unavailable", message: unavailableFileMessage(context.origin) };
-  if (context.findInWorkspace) {
-    try {
-      const found = await context.findInWorkspace(lookup);
-      if (found) return { kind: "workspace", target: found };
-    } catch {
-      // An offline/expired remote connection is not a reason to try this computer's disk.
-      return notFound;
+  const pinned = Boolean(target.fileScope || target.resolvedPath || target.exists);
+  const candidates: OpenTarget[] = [];
+  if (!pinned && reference.anchor === "relative") {
+    for (const hint of (target.pathHints ?? []).slice(0, 8)) {
+      const candidate = openTargetFromLocalPath(hint);
+      if (candidate && candidate.value !== target.value) candidates.push(candidate);
     }
+    const evidence = sessionFileCandidate(reference, context.sessionTargets ?? []);
+    // The written directory is strongest evidence. Then try the written path,
+    // then a unique session identity; only afterwards do a bounded name search.
+    if (candidates.length || evidence) candidates.push(lookup);
+    if (evidence) candidates.push(evidence);
+  }
+  const find = async (candidate: OpenTarget, search: boolean): Promise<FileOpenPlan | null> => {
+    const parsed = parseLocalPathReference(candidate.resolvedPath ?? candidate.value);
+    if (!parsed) return null;
+    const candidateLookup = candidate.fileScope ? candidate : { ...candidate, value: workspaceLookupValue(parsed, pathContext) };
+    if (context.findInWorkspace) {
+      try {
+        const found = await context.findInWorkspace(candidateLookup, { search });
+        if (found) return { kind: "workspace", target: found };
+      } catch (error) {
+        // A local server outage doesn't make an existing local file disappear.
+        // Remote and unknown origins must still stop without probing this disk.
+        if (context.origin !== "local" || !context.findOnComputer) throw error;
+      }
+    }
+    if (context.origin !== "local" || !context.canOpenLocally || !context.findOnComputer) return null;
+    // A conversation-relative identity cannot be reconstructed from the workspace
+    // root. If its owning resolver misses, only an exact known absolute path can
+    // be probed; never accidentally open a same-named workspace file.
+    if (candidate.fileScope === "conversation" && !candidate.resolvedPath) return null;
+    const absolute = resolveLocalPath(parsed, pathContext);
+    if (!absolute) return null;
+    const verified = await context.findOnComputer(absolute);
+    if (!verified) return null;
+    const native = nativeFileAction(context.workspaceRoot, verified, { reveal: context.reveal, homeDir });
+    return native ? { kind: "native", ...native, reference: parsed } : null;
+  };
+  try {
+    for (const candidate of candidates) {
+      const found = await find(candidate, false);
+      if (found) return found;
+    }
+    const found = await find(lookup, !pinned);
+    if (found) return found;
+  } catch {
+    // An offline/expired connection isn't evidence that another file is the one
+    // the person meant. In particular, never fall through to local disk remotely.
+    return notFound;
   }
 
-  if (!context.canOpenLocally || context.origin !== "local") return notFound;
+  if (context.findOnComputer || pinned || !context.canOpenLocally || context.origin !== "local") return notFound;
   // The workspace already looked for a relative name and has no such file;
   // joining it to the workspace folder would only name a file that is not there.
   if (reference.anchor === "relative" && context.findInWorkspace) return notFound;

@@ -128,7 +128,7 @@ import { ComposerBackgroundTasks } from "@/react-app/domains/session/surface/com
 import { sessionBackgroundShells, settleBackgroundShell, useBackgroundShellStore } from "@/react-app/domains/session/status/background-shell-store";
 import { useDesktopFeature } from "@/react-app/domains/session/status/use-desktop-feature";
 import { QueuedMessagesPanel } from "@/react-app/domains/session/modals/queued-messages-panel";
-import { deriveOpenTargets, sameOpenTargets, type OpenTarget } from "@/react-app/domains/session/artifacts/open-target";
+import { deriveOpenTargets, deriveSessionFileEvidence, sameOpenTargets, type OpenTarget } from "@/react-app/domains/session/artifacts/open-target";
 import { usePanelTabStore } from "@/react-app/domains/session/panel/panel-tab-store";
 import {
   markSessionSnapshotFetchStart,
@@ -2155,9 +2155,10 @@ export function SessionSurface(props: SessionSurfaceProps) {
     () => openTargets.map((target) => `${target.kind}:${target.value}:${target.confidence}`).join("|"),
     [openTargets],
   );
+  const sessionFileEvidence = useMemo(() => deriveSessionFileEvidence(renderedMessages), [renderedMessages]);
   const handleOpenTarget = useCallback((target: OpenTarget, options?: OpenTargetOptions) => {
-    props.onOpenTarget?.(target, options, props.sessionId);
-  }, [props.onOpenTarget, props.sessionId]);
+    props.onOpenTarget?.(target, { ...options, sessionTargets: sessionFileEvidence }, props.sessionId);
+  }, [props.onOpenTarget, props.sessionId, sessionFileEvidence]);
   const pendingSessionLoad = (!hasFullHistory && Boolean(revertMessageId))
     || (!snapshot && renderedMessages.length === 0);
   const assistantOutputAfterAwaitStart = useMemo(() => {
@@ -3906,6 +3907,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
                   sessionId={props.sessionId}
                   isLocalWorkspace={fileOriginForRuntime({ desktop: isDesktopRuntime(), serverUrl: props.client.baseUrl, sandboxBackend: props.sandboxBackend }) === "local"}
                   openTargets={verifiedOpenTargets}
+                  sessionFileEvidence={sessionFileEvidence}
                   onOpenTarget={handleOpenTarget}
                 >
                   <EnvironmentVariableProvider
