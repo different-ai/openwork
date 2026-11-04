@@ -74,12 +74,14 @@ export function appStepUnrecorded(part: DynamicToolUIPart | undefined): boolean 
   return field(field(result, "structuredContent"), "unrecorded") === true;
 }
 
-const BUILD_AN_APP_SKILL = /(?:^|[/:])build-an-app$/;
+// get_skill names it build-an-app or skill:build-an-app; the native skill tool
+// loads the organization skill as openwork-cloud-build-an-app.
+const BUILD_AN_APP_SKILL = /(?:^|[/:]|^openwork-cloud-)build-an-app$/;
 
 /** Reading the build-an-app guide, directly or as the only work of a Code Mode script. */
 function isAppGuideCall(tool: string, input: unknown): boolean {
   if (!/(?:^|[_.])(?:get_skill|skill)$/.test(tool)) return false;
-  const name = field(input, "name") ?? field(input, "capability");
+  const name = field(input, "name") ?? field(input, "capability") ?? field(input, "id");
   return typeof name === "string" && BUILD_AN_APP_SKILL.test(name);
 }
 
