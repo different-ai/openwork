@@ -76,7 +76,7 @@ test("a member's agent organizes another v2 conversation without opening it or s
 
   await step("after: the agent discovers chat management, renames the notes and changes their model", async () => {
     const prompt = await turn("Rename my planning notes and switch their model without opening them.", [
-      { tool: "execute", arguments: { code: 'const result = await tools.openwork_context(); return typeof result === "string" ? JSON.parse(result) : result;' } },
+      { tool: "execute", arguments: { code: 'const result = await tools.openwork_context(); const context = typeof result === "string" ? JSON.parse(result) : result; return { availableAffordances: context.context.availableAffordances.map(action => ({ id: action.id })) };' } },
       command("session.rename", { ...target, title: world.renamedTitle }),
       command("session.set_model", { ...target, providerId: world.providerId, modelId: world.replacementModelId }),
     ]);
