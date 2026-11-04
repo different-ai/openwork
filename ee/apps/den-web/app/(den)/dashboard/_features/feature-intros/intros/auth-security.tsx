@@ -71,7 +71,7 @@ export const authSecurityIntros = [
     summary: "Let your team sign in with your company account, and keep who has access in sync on its own.",
     highlights: [
       { title: "Single sign-on.", text: "People sign in with the identity provider you already use, such as Okta, Microsoft Entra ID or Google Workspace." },
-      { title: "Your domain, verified.", text: "Email addresses at your verified domain go straight to your company sign-in." },
+      { title: "Your domain, verified.", text: "People at your verified domain see your company sign-in first." },
       { title: "Joiners and leavers.", text: "With user provisioning, people added or removed in Okta or Microsoft Entra ID are added or removed here." },
       { title: "Groups become teams.", text: "Keep OpenWork teams in step with the groups in your identity provider." },
     ],
@@ -108,7 +108,7 @@ export const authSecurityIntros = [
     ],
     example: {
       Component: SsoExample,
-      alt: "Example: an Acme sign-in page with Continue with Okta, the Okta connection on, acme.com verified and SSO required for everyone at acme.com.",
+      alt: "Example: an Acme sign-in page with Continue with Okta, the Okta connection on, acme.com verified and SSO required for the organization.",
     },
     docsUrl: docsPage(`${DOCS}#single-sign-on`),
     ctas: [

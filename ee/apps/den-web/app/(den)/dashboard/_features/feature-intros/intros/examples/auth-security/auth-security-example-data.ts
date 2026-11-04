@@ -11,7 +11,7 @@ export const EXAMPLE_DOMAIN = "acme.com";
 export const ssoExampleSettings: ReadonlyArray<{ label: string; detail: string; state: string }> = [
   { label: "Okta", detail: "SAML connection", state: "On" },
   { label: EXAMPLE_DOMAIN, detail: "Email domain", state: "Verified" },
-  { label: "Require SSO", detail: `For everyone at ${EXAMPLE_DOMAIN}`, state: "On" },
+  { label: "Require SSO", detail: "For this organization", state: "On" },
 ];
 
 /** Section example: both halves of Auth & Security once running. */
