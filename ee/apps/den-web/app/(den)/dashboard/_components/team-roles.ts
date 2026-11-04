@@ -31,6 +31,13 @@ export const TEAM_ROLE_LABELS: Record<TeamRole, string> = {
   custom: "Custom",
 };
 
+export const SUPER_ADMIN_ROLE_LABEL = "Super admin";
+
+/** What the built-in Super admin role is for, in one line. */
+export const SUPER_ADMIN_ROLE_SUMMARY = "Everything the owner can do, except delete the organization";
+
+export const SUPER_ADMIN_ROLE_LOCK_REASON = "Only the owner or a super admin can make someone a super admin.";
+
 /** What the built-in Admin role is for, in one line. */
 export const ADMIN_ROLE_SUMMARY = "Invite people, manage teams, and run connections and models";
 
@@ -143,6 +150,8 @@ export function permissionSourceRoleLabel(source: PermissionSourceLike): string 
   switch (source.kind) {
     case "owner":
       return "Owner";
+    case "super_admin":
+      return SUPER_ADMIN_ROLE_LABEL;
     case "member_default":
       return TEAM_ROLE_LABELS.member;
     case "admin_default":
@@ -180,15 +189,15 @@ export function teamRoleLabels(input: {
 }
 
 /** Invite and role pickers: a built-in role, or a custom role by its team. */
-export type RoleChoiceValue = "member" | "admin" | `team:${string}` | `role:${string}`;
+export type RoleChoiceValue = "member" | "admin" | "super-admin" | `team:${string}` | `role:${string}`;
 
 export function customRoleChoice(teamId: string): RoleChoiceValue {
   return `team:${teamId}`;
 }
 
-export function parseRoleChoice(value: string): { role: "member" | "admin"; teamId: string | null } {
+export function parseRoleChoice(value: string): { role: "member" | "admin" | "super-admin"; teamId: string | null } {
   if (value.startsWith("team:")) return { role: "member", teamId: value.slice("team:".length) || null };
-  return { role: value === "admin" ? "admin" : "member", teamId: null };
+  return { role: value === "super-admin" ? "super-admin" : value === "admin" ? "admin" : "member", teamId: null };
 }
 
 export type MemberRoleOption = {
@@ -213,10 +222,19 @@ export function memberRoleOptions(input: {
   customRoles?: readonly { id: string; name: string; teams: readonly { id: string; name: string | null }[] }[];
   lockReasons?: ReadonlyMap<string, string | null>;
   adminLockReason?: string | null;
+  /** Why the person can't give the super-admin role: only the owner and super-admins can. */
+  superAdminLockReason?: string | null;
 }): MemberRoleOption[] {
   const builtIn: MemberRoleOption[] = [
     { value: "member", label: TEAM_ROLE_LABELS.member, caption: null, disabled: false },
     { value: "admin", label: TEAM_ROLE_LABELS.admin, caption: null, disabled: Boolean(input.adminLockReason), lockReason: input.adminLockReason },
+    {
+      value: "super-admin",
+      label: SUPER_ADMIN_ROLE_LABEL,
+      caption: SUPER_ADMIN_ROLE_SUMMARY,
+      disabled: Boolean(input.superAdminLockReason ?? input.adminLockReason),
+      lockReason: input.superAdminLockReason ?? input.adminLockReason,
+    },
   ];
   return [...builtIn, ...(input.customRoles ?? []).map((role): MemberRoleOption => {
     const lockReason = !input.canManageTeams ? "Needs Manage teams. Ask the organization owner." : input.lockReasons?.get(role.id) ?? null;

@@ -443,6 +443,8 @@ export async function deleteScimProvisionedAccessForProvider(input: {
     const removed = await removeOrganizationMember({
       organizationId: input.provider.organizationId,
       memberId: member.id,
+      // The IdP acts with the authority of whoever set up this SCIM connection.
+      actorlessAuthorityUserId: input.provider.userId,
     })
     if (!removed.ok) {
       return { ok: false as const, status: 409, body: { detail: removed.message } }

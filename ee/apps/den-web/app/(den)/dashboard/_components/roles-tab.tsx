@@ -9,13 +9,14 @@ import {
   getOrgAccessFlags,
   getPermissionKeysRoute,
   getPermissionSetRoute,
+  isSuperAdminRole,
   permissionLockReason,
 } from "../../_lib/den-org";
 import { useOrgDashboard } from "../_providers/org-dashboard-provider";
 import { IconTile } from "./access-rows";
 import { ItemMenu, ItemPanel, ItemRow, ItemRowsSkeleton, ItemSection } from "./item-list";
 import { usePermissionSets } from "./permissions-data";
-import { ADMIN_ROLE_SUMMARY } from "./team-roles";
+import { ADMIN_ROLE_SUMMARY, SUPER_ADMIN_ROLE_LABEL, SUPER_ADMIN_ROLE_SUMMARY } from "./team-roles";
 
 function peopleLabel(count: number): string {
   return `${count} ${count === 1 ? "person" : "people"}`;
@@ -54,6 +55,7 @@ function RolesTabContent({ orgId, orgSlug, canViewSets, action }: {
 
   const owner = orgContext.members.find((member) => member.isOwner);
   const directAdmins = orgContext.members.filter((member) => !member.isOwner && member.userId !== null && member.role === "admin").length;
+  const superAdmins = orgContext.members.filter((member) => !member.isOwner && member.userId !== null && isSuperAdminRole(member.role)).length;
   const adminTeams = orgContext.teams.filter((team) => team.grantsOrganizationAdmin);
   const adminWho = [directAdmins > 0 ? peopleLabel(directAdmins) : null, ...adminTeams.map((team) => team.name)].filter(Boolean).join(", ") || "Nobody yet";
 
@@ -66,7 +68,7 @@ function RolesTabContent({ orgId, orgSlug, canViewSets, action }: {
       <div className="flex flex-col gap-6">
       <ItemSection title="Built-in roles" testId="roles-built-in">
         <ItemPanel>
-          {!["Member", "Admin", "Owner"].some(matches) ? <p className="px-5 py-6 text-[13px] text-gray-500">No built-in roles match your filter.</p> : null}
+          {!["Member", "Admin", SUPER_ADMIN_ROLE_LABEL, "Owner"].some(matches) ? <p className="px-5 py-6 text-[13px] text-gray-500">No built-in roles match your filter.</p> : null}
           {matches("Member") ? (
           <ItemRow
             logo={<IconTile icon={ShieldCheck} />}
@@ -85,6 +87,15 @@ function RolesTabContent({ orgId, orgSlug, canViewSets, action }: {
             status={adminWho}
             href={adminSet ? getPermissionSetRoute(orgSlug, adminSet.id) : undefined}
             testId="role-row-admin"
+          />
+          ) : null}
+          {matches(SUPER_ADMIN_ROLE_LABEL) ? (
+          <ItemRow
+            logo={<IconTile icon={ShieldCheck} />}
+            title={SUPER_ADMIN_ROLE_LABEL}
+            description={SUPER_ADMIN_ROLE_SUMMARY}
+            status={superAdmins > 0 ? peopleLabel(superAdmins) : "Nobody yet"}
+            testId="role-row-super-admin"
           />
           ) : null}
           {matches("Owner") ? (

@@ -129,14 +129,28 @@ test("Invite and Edit role list built-ins first, then every shared role by name,
   const options = memberRoleOptions({ customRoles, canManageTeams: true, lockReasons: new Map([["set_publisher", "Ask the owner"]]) });
   assert.deepEqual(options.map((option) => [option.value, option.label, option.caption, option.disabled]), [
     ["member", "Member", null, false], ["admin", "Admin", null, false],
+    ["super-admin", "Super admin", "Everything the owner can do, except delete the organization", false],
     ["role:set_publisher", "Skill publisher", "On Sales, Engineering", true],
     ["role:set_empty", "Unassigned", "No teams yet", false],
   ]);
-  assert.equal(options[2]?.lockReason, "Ask the owner");
+  assert.equal(options[3]?.lockReason, "Ask the owner");
   assert.deepEqual(parseRoleChoice("role:set_publisher"), { role: "member", teamId: null });
-  assert.ok(memberRoleOptions({ customRoles, canManageTeams: false }).slice(2).every((option) => option.disabled));
+  assert.deepEqual(parseRoleChoice("super-admin"), { role: "super-admin", teamId: null });
+  assert.ok(memberRoleOptions({ customRoles, canManageTeams: false }).slice(3).every((option) => option.disabled));
 });
 
 test("Invite and Edit role keep built-ins when no custom roles exist", () => {
-  assert.deepEqual(memberRoleOptions({ canManageTeams: true }).map((option) => option.value), ["member", "admin"]);
+  assert.deepEqual(memberRoleOptions({ canManageTeams: true }).map((option) => option.value), ["member", "admin", "super-admin"]);
+});
+
+test("only the owner and super-admins can pick Super admin", () => {
+  const locked = memberRoleOptions({ canManageTeams: true, superAdminLockReason: "Only the owner or a super admin can make someone a super admin." });
+  const superAdmin = locked.find((option) => option.value === "super-admin");
+  assert.equal(superAdmin?.disabled, true);
+  assert.equal(superAdmin?.lockReason, "Only the owner or a super admin can make someone a super admin.");
+  assert.equal(locked.find((option) => option.value === "admin")?.disabled, false);
+  // Without Change member roles, Super admin is locked for the same reason as Admin.
+  const noRoles = memberRoleOptions({ canManageTeams: true, adminLockReason: "Needs Change member roles" });
+  assert.equal(noRoles.find((option) => option.value === "super-admin")?.lockReason, "Needs Change member roles");
+  assert.equal(permissionSourceRoleLabel({ kind: "super_admin", label: "Super admin role" }), "Super admin");
 });

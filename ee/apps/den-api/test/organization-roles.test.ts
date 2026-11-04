@@ -5,12 +5,15 @@ import { permissionDefaultKeys, type PermissionKey } from "@openwork/types/den/p
 import {
   assignableOrganizationRole,
   isEffectiveOrganizationAdmin,
+  isOrganizationSuperAdminRole,
   normalizeOrganizationRoleName,
   organizationRoleValueIncludes,
   organizationRoleValueSatisfies,
+  shouldRevokeSessionsForRoleChange,
 } from "../src/organization-role-hierarchy.ts"
 import {
   adminGrantDenial,
+  decideActorlessSuperAdminRemoval,
   decideAdminTeamChange,
   decideMemberRemoval,
   decideRequiredPermission,
@@ -21,52 +24,116 @@ import {
   type RoleAssignmentTarget,
 } from "../src/permissions/role-assignment.ts"
 
-test("only member and admin are assignable; owner and custom role names are dropped", () => {
+test("member, admin and super-admin are assignable; owner and custom role names are dropped", () => {
   assert.equal(assignableOrganizationRole("member"), "member")
   assert.equal(assignableOrganizationRole("admin"), "admin")
+  assert.equal(assignableOrganizationRole("super-admin"), "super-admin")
   assert.equal(assignableOrganizationRole("member, admin"), "admin")
+  assert.equal(assignableOrganizationRole("admin,super-admin"), "super-admin")
   assert.equal(assignableOrganizationRole("owner"), null)
   assert.equal(assignableOrganizationRole("billing-lead"), null)
   assert.equal(assignableOrganizationRole("billing-lead,member"), "member")
 })
 
-test("a stray legacy super-admin value reads as admin", () => {
-  assert.equal(normalizeOrganizationRoleName(" Super-Admin "), "admin")
-  assert.equal(assignableOrganizationRole("super-admin"), "admin")
+test("super-admin is its own role, above admin and below owner, and counts as an admin", () => {
+  assert.equal(normalizeOrganizationRoleName(" Super Admin "), "super-admin")
   assert.equal(organizationRoleValueIncludes("member,super-admin", "admin"), true)
+  assert.equal(organizationRoleValueIncludes("super-admin", "super-admin"), true)
+  // Asking for super-admin never matches a plain admin.
+  assert.equal(organizationRoleValueIncludes("admin", "super-admin"), false)
   assert.equal(organizationRoleValueSatisfies({ roleValue: "super-admin", requiredRole: "admin" }), true)
+  assert.equal(organizationRoleValueSatisfies({ roleValue: "super-admin", requiredRole: "super-admin" }), true)
+  assert.equal(organizationRoleValueSatisfies({ roleValue: "admin", requiredRole: "super-admin" }), false)
+  // Deleting the organization and transferring ownership stay owner-only.
   assert.equal(organizationRoleValueSatisfies({ roleValue: "super-admin", requiredRole: "owner" }), false)
-  assert.equal(organizationRoleValueSatisfies({ roleValue: "admin", requiredRole: "super-admin" }), true)
   assert.equal(isEffectiveOrganizationAdmin({ directRole: "super-admin", adminTeamIds: [] }), true)
+  assert.equal(isOrganizationSuperAdminRole("super-admin"), true)
+  assert.equal(isOrganizationSuperAdminRole("admin"), false)
+  assert.equal(isOrganizationSuperAdminRole("owner,super-admin"), false)
+})
+
+test("demoting a super-admin revokes sessions; promoting one does not", () => {
+  assert.equal(shouldRevokeSessionsForRoleChange("super-admin", "admin"), true)
+  assert.equal(shouldRevokeSessionsForRoleChange("super-admin", "member"), true)
+  assert.equal(shouldRevokeSessionsForRoleChange("admin", "super-admin"), false)
+  assert.equal(shouldRevokeSessionsForRoleChange("member", "super-admin"), false)
 })
 
 test("desktop policy admin assignments match effective admins", () => {
   assert.deepEqual(matchingDesktopPolicyAssignmentRoles("member"), ["member"])
   assert.deepEqual(matchingDesktopPolicyAssignmentRoles("member", { adminViaTeam: true }), ["admin", "member"])
   assert.deepEqual(matchingDesktopPolicyAssignmentRoles("admin"), ["admin", "member"])
+  assert.deepEqual(matchingDesktopPolicyAssignmentRoles("super-admin"), ["admin", "member"])
   assert.deepEqual(matchingDesktopPolicyAssignmentRoles("owner"), ["owner", "admin", "member"])
   assert.deepEqual(matchingDesktopPolicyAssignmentRoles("custom-role"), ["member"])
 })
 
 const ADMIN_DEFAULTS: PermissionKey[] = ["members.update", "permissions.manage", "teams.manage_admin"]
 
-function caller(input: { isOwner?: boolean; isAdmin?: boolean; keys?: readonly PermissionKey[] }): RoleAssignmentCaller {
+function caller(input: { isOwner?: boolean; isSuperAdmin?: boolean; isAdmin?: boolean; keys?: readonly PermissionKey[] }): RoleAssignmentCaller {
   const keys = new Set(input.keys ?? [])
   return {
     isOwner: input.isOwner ?? false,
-    isAdmin: input.isAdmin ?? false,
-    has: (key) => input.isOwner === true || keys.has(key),
+    isSuperAdmin: input.isSuperAdmin ?? false,
+    isAdmin: input.isAdmin ?? input.isSuperAdmin ?? false,
+    has: (key) => input.isOwner === true || input.isSuperAdmin === true || keys.has(key),
   }
 }
 
-const memberTarget = { memberId: "member_target", isDirectAdmin: false }
-const adminTarget = { memberId: "member_target", isDirectAdmin: true }
+const memberTarget = { memberId: "member_target", isDirectAdmin: false, isDirectSuperAdmin: false }
+const adminTarget = { memberId: "member_target", isDirectAdmin: true, isDirectSuperAdmin: false }
+const superAdminTarget = { memberId: "member_target", isDirectAdmin: true, isDirectSuperAdmin: true }
 // Admin only through an Admin team: the decision looks at the direct role alone.
-const teamAdminTarget = { memberId: "member_target", isDirectAdmin: false }
+const teamAdminTarget = { memberId: "member_target", isDirectAdmin: false, isDirectSuperAdmin: false }
 
-function decide(input: { caller: RoleAssignmentCaller; target: RoleAssignmentTarget | null; nextIsAdmin: boolean; callerMemberId?: string }) {
-  return decideRoleAssignment({ callerMemberId: "member_caller", adminDefaultKeys: ADMIN_DEFAULTS, ...input })
+function decide(input: { caller: RoleAssignmentCaller; target: RoleAssignmentTarget | null; nextIsAdmin: boolean; nextIsSuperAdmin?: boolean; callerMemberId?: string }) {
+  return decideRoleAssignment({ callerMemberId: "member_caller", adminDefaultKeys: ADMIN_DEFAULTS, nextIsSuperAdmin: false, ...input })
 }
+
+test("only the owner or a super-admin can make someone a super-admin", () => {
+  const admin = caller({ isAdmin: true, keys: ADMIN_DEFAULTS })
+  const denial = decide({ caller: admin, target: memberTarget, nextIsAdmin: true, nextIsSuperAdmin: true })
+  assert.equal(denial?.reason, "super_admin_requires_super_admin")
+  assert.equal(denial?.message, "Only the owner or a super admin can make someone a super admin.")
+  assert.equal(decide({ caller: admin, target: adminTarget, nextIsAdmin: true, nextIsSuperAdmin: true })?.reason, "super_admin_requires_super_admin")
+  assert.equal(decide({ caller: admin, target: null, nextIsAdmin: true, nextIsSuperAdmin: true })?.reason, "super_admin_requires_super_admin")
+  assert.equal(roleAssignmentNeedsAdminDefaultKeys({ caller: admin, callerMemberId: "member_caller", target: memberTarget, nextIsAdmin: true, nextIsSuperAdmin: true }), false)
+  assert.equal(decide({ caller: caller({ isOwner: true }), target: memberTarget, nextIsAdmin: true, nextIsSuperAdmin: true }), null)
+  assert.equal(decide({ caller: caller({ isSuperAdmin: true }), target: memberTarget, nextIsAdmin: true, nextIsSuperAdmin: true }), null)
+  assert.equal(decide({ caller: caller({ isSuperAdmin: true }), target: null, nextIsAdmin: true, nextIsSuperAdmin: true }), null)
+})
+
+test("only the owner or a super-admin can change a super-admin's role", () => {
+  const admin = caller({ isAdmin: true, keys: ADMIN_DEFAULTS })
+  for (const next of [{ nextIsAdmin: true, nextIsSuperAdmin: false }, { nextIsAdmin: false, nextIsSuperAdmin: false }]) {
+    const denial = decide({ caller: admin, target: superAdminTarget, ...next })
+    assert.equal(denial?.reason, "super_admin_requires_super_admin")
+    assert.equal(denial?.message, "Only the owner or a super admin can change a super admin's role.")
+    assert.equal(decide({ caller: caller({ isSuperAdmin: true }), target: superAdminTarget, ...next }), null)
+    assert.equal(decide({ caller: caller({ isOwner: true }), target: superAdminTarget, ...next }), null)
+  }
+})
+
+test("a super-admin holds owner authority except over their own role", () => {
+  const superAdmin = caller({ isSuperAdmin: true })
+  assert.equal(decide({ caller: superAdmin, target: memberTarget, nextIsAdmin: true }), null)
+  assert.equal(decide({ caller: superAdmin, target: adminTarget, nextIsAdmin: false }), null)
+  assert.equal(decide({ caller: superAdmin, target: { ...superAdminTarget, memberId: "member_caller" }, nextIsAdmin: false })?.reason, "own_role")
+  assert.equal(adminGrantDenial(superAdmin, [...ADMIN_DEFAULTS, "billing.manage"]), null)
+  assert.equal(firstMissingPermission(superAdmin, ["sso.manage", "organization.update"]), null)
+  assert.equal(decideAdminTeamChange({ actor: superAdmin, makesAdminTeam: true, deletesAdminTeam: true }), null)
+})
+
+test("only the owner or a super-admin can remove a super-admin", () => {
+  const removal = { targetIsDirectSuperAdmin: true, targetIsDirectAdmin: true, targetIsAdminViaTeam: false, targetIsPendingInvitation: false }
+  const denial = decideMemberRemoval({ actor: caller({ isAdmin: true, keys: ["members.delete"] }), ...removal })
+  assert.equal(denial?.reason, "super_admin_removal_requires_super_admin")
+  assert.equal(denial?.message, "Only the owner or a super admin can remove a super admin from the organization.")
+  assert.equal(decideMemberRemoval({ actor: caller({ isSuperAdmin: true }), ...removal }), null)
+  assert.equal(decideMemberRemoval({ actor: caller({ isOwner: true }), ...removal }), null)
+  // A pending super-admin invitation is governed by the invitation rules.
+  assert.equal(decideMemberRemoval({ actor: caller({ isAdmin: true, keys: ["members.delete"] }), ...removal, targetIsPendingInvitation: true }), null)
+})
 
 test("with Permissions on, making someone an admin needs an admin caller who also holds every Admin default permission", () => {
   // A non-admin is refused even holding every Admin default key.
@@ -81,7 +148,7 @@ test("with Permissions on, making someone an admin needs an admin caller who als
   assert.equal(denial?.reason, "admin_permissions_missing")
   assert.equal(denial?.requiredPermission, "teams.manage_admin")
   assert.equal(denial?.message, "You can't make someone an admin because admins have permissions you don't have.")
-  assert.equal(roleAssignmentNeedsAdminDefaultKeys({ caller: partial, callerMemberId: "member_caller", target: memberTarget, nextIsAdmin: true }), true)
+  assert.equal(roleAssignmentNeedsAdminDefaultKeys({ caller: partial, callerMemberId: "member_caller", target: memberTarget, nextIsAdmin: true, nextIsSuperAdmin: false }), true)
 
   assert.equal(decide({ caller: caller({ isAdmin: true, keys: ADMIN_DEFAULTS }), target: memberTarget, nextIsAdmin: true }), null)
   assert.equal(decide({ caller: caller({ isOwner: true }), target: memberTarget, nextIsAdmin: true }), null)
@@ -95,7 +162,7 @@ test("the first missing key is reported in sorted order and code defaults apply 
   const adminWithout = caller({ isAdmin: true, keys: [] })
   assert.equal(decide({ caller: adminWithout, target: memberTarget, nextIsAdmin: true })?.requiredPermission, "members.update")
   assert.equal(firstMissingPermission(adminWithout, ["teams.manage_admin", "audit.view"]), "audit.view")
-  const fallback = decideRoleAssignment({ caller: adminWithout, callerMemberId: "member_caller", target: null, nextIsAdmin: true })
+  const fallback = decideRoleAssignment({ caller: adminWithout, callerMemberId: "member_caller", target: null, nextIsAdmin: true, nextIsSuperAdmin: false })
   assert.equal(fallback?.reason, "admin_permissions_missing")
   assert.ok(fallback?.requiredPermission && permissionDefaultKeys("admin").includes(fallback.requiredPermission))
 })
@@ -106,7 +173,7 @@ test("making an Admin-team member a direct admin still needs an admin caller wit
   const denial = decide({ caller: partial, target: teamAdminTarget, nextIsAdmin: true })
   assert.equal(denial?.reason, "admin_permissions_missing")
   assert.equal(denial?.requiredPermission, "permissions.manage")
-  assert.equal(roleAssignmentNeedsAdminDefaultKeys({ caller: partial, callerMemberId: "member_caller", target: teamAdminTarget, nextIsAdmin: true }), true)
+  assert.equal(roleAssignmentNeedsAdminDefaultKeys({ caller: partial, callerMemberId: "member_caller", target: teamAdminTarget, nextIsAdmin: true, nextIsSuperAdmin: false }), true)
   assert.equal(decide({ caller: caller({ isAdmin: true, keys: ADMIN_DEFAULTS }), target: teamAdminTarget, nextIsAdmin: true }), null)
   assert.equal(decide({ caller: caller({ keys: ADMIN_DEFAULTS }), target: teamAdminTarget, nextIsAdmin: true })?.reason, "admin_grant_requires_admin")
 })
@@ -114,7 +181,7 @@ test("making an Admin-team member a direct admin still needs an admin caller wit
 test("keeping a direct admin an admin needs no Admin default permissions", () => {
   const partial = caller({ keys: ["members.update"] })
   assert.equal(decide({ caller: partial, target: adminTarget, nextIsAdmin: true }), null)
-  assert.equal(roleAssignmentNeedsAdminDefaultKeys({ caller: partial, callerMemberId: "member_caller", target: adminTarget, nextIsAdmin: true }), false)
+  assert.equal(roleAssignmentNeedsAdminDefaultKeys({ caller: partial, callerMemberId: "member_caller", target: adminTarget, nextIsAdmin: true, nextIsSuperAdmin: false }), false)
 })
 
 test("only the owner or an admin can demote a direct admin", () => {
@@ -130,7 +197,7 @@ test("only the owner or an admin can demote a direct admin", () => {
 })
 
 test("nobody but the owner changes their own role", () => {
-  const self = { memberId: "member_caller", isDirectAdmin: true }
+  const self = { memberId: "member_caller", isDirectAdmin: true, isDirectSuperAdmin: false }
   assert.equal(decide({ caller: caller({ isAdmin: true, keys: ADMIN_DEFAULTS }), target: self, nextIsAdmin: false })?.reason, "own_role")
   assert.equal(decide({ caller: caller({ keys: ["members.update"] }), target: { ...memberTarget, memberId: "member_caller" }, nextIsAdmin: true })?.reason, "own_role")
   assert.equal(decide({ caller: caller({ isOwner: true }), target: { ...self, isDirectAdmin: false }, nextIsAdmin: true }), null)
@@ -149,6 +216,20 @@ test("only the owner or an admin can remove a direct admin", () => {
   assert.equal(decideMemberRemoval({ actor: teamGranted, ...direct, targetIsDirectAdmin: false }), null)
   assert.equal(decideMemberRemoval({ actor: teamGranted, ...direct, targetIsPendingInvitation: true }), null)
 
+})
+
+test("SCIM removes a super-admin only when the owner or a super-admin set up the SCIM connection", () => {
+  const target = { targetIsDirectSuperAdmin: true, targetIsPendingInvitation: false }
+  const denial = decideActorlessSuperAdminRemoval({ ...target, authority: caller({ isAdmin: true, keys: ["scim.manage"] }) })
+  assert.equal(denial?.reason, "scim_super_admin_removal_requires_super_admin")
+  assert.match(denial?.message ?? "", /set up by the owner or a super admin/)
+  // Unknown or departed connection owner: refused.
+  assert.equal(decideActorlessSuperAdminRemoval({ ...target, authority: null })?.reason, "scim_super_admin_removal_requires_super_admin")
+  assert.equal(decideActorlessSuperAdminRemoval({ ...target, authority: caller({ isOwner: true }) }), null)
+  assert.equal(decideActorlessSuperAdminRemoval({ ...target, authority: caller({ isSuperAdmin: true }) }), null)
+  // Admins, members and pending invitations keep today's SCIM behavior.
+  assert.equal(decideActorlessSuperAdminRemoval({ targetIsDirectSuperAdmin: false, targetIsPendingInvitation: false, authority: null }), null)
+  assert.equal(decideActorlessSuperAdminRemoval({ targetIsDirectSuperAdmin: true, targetIsPendingInvitation: true, authority: null }), null)
 })
 
 test("removing someone who is admin through an Admin team needs the owner or an admin too", () => {
@@ -188,8 +269,8 @@ test("direct member removal re-checks Remove members against the permissions res
 test("an admin assignment decided in the transaction uses the Admin default set read there", () => {
   // The admin caller held every Admin default key before; the owner then added billing.manage to Admin permissions.
   const held = caller({ isAdmin: true, keys: ADMIN_DEFAULTS })
-  assert.equal(decideRoleAssignment({ caller: held, callerMemberId: "member_caller", target: memberTarget, nextIsAdmin: true, adminDefaultKeys: ADMIN_DEFAULTS }), null)
-  const denial = decideRoleAssignment({ caller: held, callerMemberId: "member_caller", target: memberTarget, nextIsAdmin: true, adminDefaultKeys: [...ADMIN_DEFAULTS, "billing.manage"] })
+  assert.equal(decideRoleAssignment({ caller: held, callerMemberId: "member_caller", target: memberTarget, nextIsAdmin: true, nextIsSuperAdmin: false, adminDefaultKeys: ADMIN_DEFAULTS }), null)
+  const denial = decideRoleAssignment({ caller: held, callerMemberId: "member_caller", target: memberTarget, nextIsAdmin: true, nextIsSuperAdmin: false, adminDefaultKeys: [...ADMIN_DEFAULTS, "billing.manage"] })
   assert.equal(denial?.reason, "admin_permissions_missing")
   assert.equal(denial?.requiredPermission, "billing.manage")
 })
@@ -197,10 +278,10 @@ test("an admin assignment decided in the transaction uses the Admin default set 
 test("adminGrantDenial: the owner, or an admin holding every Admin default key; an empty set needs no special case", () => {
   const teamGranted = caller({ keys: ["members.update", "invitations.manage"] })
   // An empty Admin default set no longer lets a non-admin through.
-  assert.equal(decideRoleAssignment({ caller: teamGranted, callerMemberId: "member_caller", target: memberTarget, nextIsAdmin: true, adminDefaultKeys: [] })?.reason, "admin_grant_requires_admin")
-  assert.equal(decideRoleAssignment({ caller: teamGranted, callerMemberId: "member_caller", target: null, nextIsAdmin: true, adminDefaultKeys: [] })?.reason, "admin_grant_requires_admin")
-  assert.equal(decideRoleAssignment({ caller: caller({ isAdmin: true }), callerMemberId: "member_caller", target: memberTarget, nextIsAdmin: true, adminDefaultKeys: [] }), null)
-  assert.equal(decideRoleAssignment({ caller: caller({ isOwner: true }), callerMemberId: "member_caller", target: null, nextIsAdmin: true, adminDefaultKeys: [] }), null)
+  assert.equal(decideRoleAssignment({ caller: teamGranted, callerMemberId: "member_caller", target: memberTarget, nextIsAdmin: true, nextIsSuperAdmin: false, adminDefaultKeys: [] })?.reason, "admin_grant_requires_admin")
+  assert.equal(decideRoleAssignment({ caller: teamGranted, callerMemberId: "member_caller", target: null, nextIsAdmin: true, nextIsSuperAdmin: false, adminDefaultKeys: [] })?.reason, "admin_grant_requires_admin")
+  assert.equal(decideRoleAssignment({ caller: caller({ isAdmin: true }), callerMemberId: "member_caller", target: memberTarget, nextIsAdmin: true, nextIsSuperAdmin: false, adminDefaultKeys: [] }), null)
+  assert.equal(decideRoleAssignment({ caller: caller({ isOwner: true }), callerMemberId: "member_caller", target: null, nextIsAdmin: true, nextIsSuperAdmin: false, adminDefaultKeys: [] }), null)
 
 
   // The shared rule the team-grant check uses for Admin teams.

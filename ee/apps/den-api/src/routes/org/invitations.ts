@@ -16,7 +16,7 @@ import { jsonValidator, orgPermissionRoute, paramValidator } from "../../middlew
 import { denTypeIdSchema, forbiddenSchema, invalidRequestSchema, jsonResponse, notFoundSchema, successSchema, unauthorizedSchema } from "../../openapi.js"
 import { appLogger } from "../../observability/logger.js"
 import { runPostOrganizationMemberChangeHooks } from "../../organization-member-hooks.js"
-import { ORGANIZATION_ADMIN_ROLE, ORGANIZATION_MEMBER_ROLE, ORGANIZATION_OWNER_ROLE } from "../../organization-role-hierarchy.js"
+import { ORGANIZATION_ADMIN_ROLE, ORGANIZATION_MEMBER_ROLE, ORGANIZATION_OWNER_ROLE, ORGANIZATION_SUPER_ADMIN_ROLE } from "../../organization-role-hierarchy.js"
 import { isEmailAllowedForOrganization, listAssignableRoles, removeOrganizationMember } from "../../orgs.js"
 import type { PermissionDatabase } from "@openwork-ee/den-db/permissions"
 import { resolveTeamActorInTransaction, teamGrantDecisionInTransaction, teamGrantsForbiddenResponse, roleAssignmentDeniedHeaders, roleAssignmentDeniedResponse, roleAssignmentDenial, roleAssignmentDenialInTransaction, type RoleAssignmentDenial } from "../../permissions/team-grants.js"
@@ -113,18 +113,20 @@ type InvitationRoleValidation =
   | { ok: false; error: "permission"; response: PermissionCheckFailure }
   | { ok: false; error: "role_assignment"; denial: RoleAssignmentDenial }
 
+type PrivilegedInvitationRole = typeof ORGANIZATION_ADMIN_ROLE | typeof ORGANIZATION_SUPER_ADMIN_ROLE
+
 /**
- * Whether the caller may invite someone as an admin (role-assignment rules). With the root
+ * Whether the caller may invite someone as an admin or super-admin (role-assignment rules). With the root
  * database it is the quick pre-transaction check, read once per request. With the invitation's
  * write transaction it decides again through it: the caller's permissions are re-resolved and the
  * Admin default set is re-read under share locks, so a concurrent Admin permissions edit
  * serializes with the write (roleAssignmentDenialInTransaction).
  */
-type AdminInvitationCheck = (database: PermissionDatabase) => Promise<RoleAssignmentDenial | null | "organization_not_found">
+type AdminInvitationCheck = (database: PermissionDatabase, nextRole: PrivilegedInvitationRole) => Promise<RoleAssignmentDenial | null | "organization_not_found">
 
 function adminInvitationCheck(c: PermissionRouteContext): AdminInvitationCheck {
-  let preTransaction: Promise<RoleAssignmentDenial | null | "organization_not_found"> | null = null
-  return async (database) => {
+  const preTransaction = new Map<PrivilegedInvitationRole, Promise<RoleAssignmentDenial | null | "organization_not_found">>()
+  return async (database, nextRole) => {
     const payload = c.get("organizationContext")
     if (!payload) return "organization_not_found"
     if (database !== db) {
@@ -133,10 +135,12 @@ function adminInvitationCheck(c: PermissionRouteContext): AdminInvitationCheck {
         organizationId: payload.organization.id,
         callerMemberId: payload.currentMember.id,
         target: null,
-        nextRole: ORGANIZATION_ADMIN_ROLE,
+        nextRole,
       })
     }
-    preTransaction ??= (async () => {
+    const cached = preTransaction.get(nextRole)
+    if (cached) return cached
+    const check = (async () => {
       const caller = await memberPermissionsForRequest(c)
       if (!caller) return "organization_not_found"
       return roleAssignmentDenial({
@@ -144,22 +148,24 @@ function adminInvitationCheck(c: PermissionRouteContext): AdminInvitationCheck {
         caller,
         callerMemberId: payload.currentMember.id,
         target: null,
-        nextRole: ORGANIZATION_ADMIN_ROLE,
+        nextRole,
         database,
       })
     })()
-    return preTransaction
+    preTransaction.set(nextRole, check)
+    return check
   }
 }
 
-const BUILT_IN_INVITATION_ROLES: ReadonlySet<string> = new Set([ORGANIZATION_MEMBER_ROLE, ORGANIZATION_ADMIN_ROLE])
+const BUILT_IN_INVITATION_ROLES: ReadonlySet<string> = new Set([ORGANIZATION_MEMBER_ROLE, ORGANIZATION_ADMIN_ROLE, ORGANIZATION_SUPER_ADMIN_ROLE])
 
 /**
  * Which role an invitation may carry. The route marker already requires
  * `invitations.manage`; any role other than `member` also needs
  * `members.update`, and with Permissions on an admin invitation needs every
- * Admin default permission (src/permissions/role-assignment.ts). Only Member
- * and Admin can be assigned. `database` is the open transaction, if any:
+ * Admin default permission (src/permissions/role-assignment.ts); a super-admin
+ * invitation needs the owner or a super-admin. Only Member, Admin and Super
+ * admin can be assigned. `database` is the open transaction, if any:
  * inside it `members.update` is re-checked against the caller's permissions
  * resolved through it, and the admin rule is decided through it too
  * (adminInvitationCheck), so a permission change committed after the route
@@ -193,11 +199,14 @@ async function validateInvitationRole(c: PermissionRouteContext, input: {
   }
 
   if (requestedRoles.some((role) => !input.availableRoles.has(role) || !BUILT_IN_INVITATION_ROLES.has(role))) {
-    return { ok: false, error: "invalid_role", message: "Choose Member or Admin." }
+    return { ok: false, error: "invalid_role", message: "Choose Member, Admin or Super admin." }
   }
 
-  if (requestedRoles.includes(ORGANIZATION_ADMIN_ROLE)) {
-    const denial = await input.adminCheck(input.database)
+  const privilegedRole: PrivilegedInvitationRole | null = requestedRoles.includes(ORGANIZATION_SUPER_ADMIN_ROLE)
+    ? ORGANIZATION_SUPER_ADMIN_ROLE
+    : requestedRoles.includes(ORGANIZATION_ADMIN_ROLE) ? ORGANIZATION_ADMIN_ROLE : null
+  if (privilegedRole) {
+    const denial = await input.adminCheck(input.database, privilegedRole)
     if (denial === "organization_not_found") return { ok: false, error: "permission", response: { error: "organization_not_found" } }
     if (denial) return { ok: false, error: "role_assignment", denial }
   }

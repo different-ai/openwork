@@ -2,6 +2,7 @@ import {
   ORGANIZATION_ADMIN_ROLE,
   ORGANIZATION_MEMBER_ROLE,
   ORGANIZATION_OWNER_ROLE,
+  ORGANIZATION_SUPER_ADMIN_ROLE,
   normalizeOrganizationRoleName,
   organizationRoleValueIncludes,
   splitOrganizationRoles,
@@ -30,6 +31,7 @@ function removeTransferManagedRoles(roleValue: string) {
   return splitOrganizationRoles(roleValue).filter((role) => {
     const normalized = normalizeOrganizationRoleName(role)
     return normalized !== ORGANIZATION_OWNER_ROLE
+      && normalized !== ORGANIZATION_SUPER_ADMIN_ROLE
       && normalized !== ORGANIZATION_ADMIN_ROLE
       && normalized !== ORGANIZATION_MEMBER_ROLE
   })

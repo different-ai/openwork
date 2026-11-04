@@ -23,7 +23,7 @@ import { normalizeDenTypeId } from "@openwork-ee/utils/typeid"
 import { db } from "../db.js"
 import { appLogger } from "../observability/logger.js"
 import { roleIncludesOwner } from "../organization-member-guards.js"
-import { isEffectiveOrganizationAdmin } from "../organization-role-hierarchy.js"
+import { isEffectiveOrganizationAdmin, isOrganizationSuperAdminRole } from "../organization-role-hierarchy.js"
 import type { OrganizationContext } from "../orgs.js"
 import {
   createMemberPermissions,
@@ -31,6 +31,7 @@ import {
   memberPermissionsFromGrants,
   missingDefaultSetsPermissionGrants,
   ownerPermissionGrants,
+  superAdminPermissionGrants,
   type MemberPermissions,
   type PermissionExplanation,
   type PermissionGrant,
@@ -40,6 +41,7 @@ import {
  * Server-side permission resolution (docs/permissions/overview.md, section 6).
  *
  * - Owner: every catalog key.
+ * - Super-admin (direct role): every catalog key, like the owner.
  * - Feature off: code defaults for Member, plus Admin for effective admins.
  *   The permission tables are not read.
  * - Feature on: the union of the Member default set, the Admin default set
@@ -95,6 +97,7 @@ export type ExplainMemberPermissionsInput = Omit<ResolveMemberPermissionsInput, 
 export type MemberPermissionExplanation = {
   featureEnabled: boolean
   isOwner: boolean
+  isSuperAdmin: boolean
   isAdmin: boolean
   permissions: PermissionExplanation[]
 }
@@ -130,6 +133,7 @@ function readLock(reads: PermissionReads): { lock?: "share" } {
 
 type CollectedGrants = {
   isOwner: boolean
+  isSuperAdmin: boolean
   isAdmin: boolean
   grants: PermissionGrant[]
 }
@@ -224,10 +228,11 @@ async function databaseGrants(subject: PermissionSubject, isAdmin: boolean, read
 
 async function collectPermissionGrants(subject: PermissionSubject, reads: PermissionReads = ROOT_READS): Promise<CollectedGrants> {
   const isAdmin = isEffectiveOrganizationAdmin({ directRole: subject.directRole, adminTeamIds: subject.adminTeams.map((team) => team.id) })
-  if (subject.isOwner) return { isOwner: true, isAdmin, grants: ownerPermissionGrants() }
+  if (subject.isOwner) return { isOwner: true, isSuperAdmin: false, isAdmin, grants: ownerPermissionGrants() }
+  if (isOrganizationSuperAdminRole(subject.directRole)) return { isOwner: false, isSuperAdmin: true, isAdmin: true, grants: superAdminPermissionGrants() }
 
   try {
-    return { isOwner: false, isAdmin, grants: await databaseGrants(subject, isAdmin, reads) }
+    return { isOwner: false, isSuperAdmin: false, isAdmin, grants: await databaseGrants(subject, isAdmin, reads) }
   } catch (error) {
     // Fail closed: only missing default sets (which should never happen, and
     // would otherwise lock the org out) fall back to code defaults, and only
@@ -240,7 +245,7 @@ async function collectPermissionGrants(subject: PermissionSubject, reads: Permis
       member_id: subject.memberId,
       error,
     })
-    return { isOwner: false, isAdmin, grants: missingDefaultSetsPermissionGrants({ isAdmin, transaction: reads.transaction }) }
+    return { isOwner: false, isSuperAdmin: false, isAdmin, grants: missingDefaultSetsPermissionGrants({ isAdmin, transaction: reads.transaction }) }
   }
 }
 
@@ -273,6 +278,7 @@ export async function explainMemberPermissions(input: ExplainMemberPermissionsIn
   return {
     featureEnabled: true,
     isOwner: collected.isOwner,
+    isSuperAdmin: collected.isSuperAdmin,
     isAdmin: collected.isAdmin,
     permissions: explainPermissionGrants(collected.grants),
   }

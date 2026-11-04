@@ -265,6 +265,7 @@ const permissionKeyResponseSchema = z.object({
 
 const permissionSourceSchema = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("owner"), label: z.string() }),
+  z.object({ kind: z.literal("super_admin"), label: z.string() }),
   z.object({ kind: z.literal("member_default"), setId: z.string(), setName: z.string(), label: z.string() }),
   z.object({
     kind: z.literal("admin_default"),
@@ -283,6 +284,7 @@ const memberPermissionsResponseSchema = z.object({
   memberId: z.string(),
   featureEnabled: z.boolean(),
   isOwner: z.boolean(),
+  isSuperAdmin: z.boolean(),
   isAdmin: z.boolean(),
   permissions: z.array(z.object({
     key: z.string(),
@@ -1542,6 +1544,7 @@ export function registerOrgPermissionRoutes<T extends { Variables: OrgRouteVaria
         memberId,
         featureEnabled: explanation.featureEnabled,
         isOwner: explanation.isOwner,
+        isSuperAdmin: explanation.isSuperAdmin,
         isAdmin: explanation.isAdmin,
         permissions: explanation.permissions.map((entry) => ({
           key: entry.key,
