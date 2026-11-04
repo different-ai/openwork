@@ -155,6 +155,7 @@ import { modelRecoveryChatKey, useModelRecoveryStore } from "@/react-app/domains
 import { readModelDisplayMemory, rememberModelDisplayNames } from "@/react-app/domains/session/surface/model-display-memory";
 import { useSessionFindStore } from "@/react-app/domains/session/surface/find-store";
 import { useModelPicker } from "@/react-app/domains/session/modals/use-model-picker";
+import { usePreWorkspaceGatewayModels } from "@/react-app/domains/models/use-pre-workspace-gateway-models";
 import { GatewayModelAccessProvider, type GatewayModelSelectionHandle } from "@/react-app/domains/connections/provider-auth/gateway-model-access";
 import { hasPendingGatewayModelSelection } from "@/react-app/domains/connections/provider-auth/pending-gateway-model-selection";
 import { captureFavoriteModelTarget, isFavoriteModelTargetCurrent } from "./favorite-model-shortcut";
@@ -185,7 +186,7 @@ import {
   resolveGatewayCloudProviderIds,
   resolveGatewayProviderIds,
 } from "@/react-app/domains/connections/provider-auth/cloud-provider-config";
-import { assignedModelOptions } from "@/react-app/domains/connections/provider-auth/assigned-model-options";
+import { assignedModelOptions, mergeModelOptions } from "@/react-app/domains/connections/provider-auth/assigned-model-options";
 import { runtimeModelOptions } from "@/react-app/domains/models/catalog";
 import { pickerFallbackModels } from "@/react-app/domains/connections/provider-auth/live-provider-sync";
 import { withImportedModelMetadata, isAutoModel, shouldSelectInitialAuto, starterModel, openWorkModelsLunaReplacement, EXPLICIT_MODEL_CHOICE_KEY } from "@/react-app/domains/models/model-catalog";
@@ -1054,9 +1055,16 @@ export function SessionRoute() {
     setProviderConnectedIds,
     setDisabledProviderIds,
   });
+  const preWorkspaceGatewayModels = usePreWorkspaceGatewayModels({
+    enabled: Boolean(engineRootEndpoint && !opencodeClient),
+    sessionVersion: denSessionVersion,
+  });
   const organizationAssignedModelOptions = useMemo(
-    () => withImportedModelMetadata(assignedModelOptions(sessionProviderAuthSnapshot.cloudOrgProviders), sessionProviderAuthSnapshot.importedCloudProviders),
-    [sessionProviderAuthSnapshot.cloudOrgProviders, sessionProviderAuthSnapshot.importedCloudProviders],
+    () => withImportedModelMetadata(mergeModelOptions(
+      assignedModelOptions(sessionProviderAuthSnapshot.cloudOrgProviders),
+      preWorkspaceGatewayModels.options,
+    ), sessionProviderAuthSnapshot.importedCloudProviders),
+    [preWorkspaceGatewayModels.options, sessionProviderAuthSnapshot.cloudOrgProviders, sessionProviderAuthSnapshot.importedCloudProviders],
   );
   const pickerFallbackOptions = useMemo(() => pickerFallbackModels({
     liveProviderSync,
@@ -1097,8 +1105,9 @@ export function SessionRoute() {
     };
   }, [denAuth.isSignedIn, denAuth.status, denSessionVersion]);
   const handleModelPickerOpen = useCallback(() => {
+    void preWorkspaceGatewayModels.refresh().catch(() => undefined);
     void refreshCloudProviderSync("model_picker_open");
-  }, [refreshCloudProviderSync]);
+  }, [preWorkspaceGatewayModels.refresh, refreshCloudProviderSync]);
   const openWorkModelsEntitled = useMemo(() => {
     if (!denAuth.isSignedIn) return false;
     const fromOrg = sessionProviderAuthSnapshot.cloudOrgProviders.some(
@@ -2472,6 +2481,7 @@ export function SessionRoute() {
         modelPicker.setCompactOpen(open);
         if (open) {
           void sessionProviderAuthStore.refreshCloudOrgProviders({ force: true }).catch(() => undefined);
+          void preWorkspaceGatewayModels.refresh().catch(() => undefined);
           void refreshCloudProviderSync("model_picker_open");
         }
       },
