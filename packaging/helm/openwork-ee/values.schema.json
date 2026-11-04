@@ -329,7 +329,7 @@
                 true,
                 false
               ],
-              "description": "Desktop: computer session history: Computer and browser actions share one compact session card in chat, with captured views to browse or replay. Turning it off restores individual actions and screenshots. Renders DEN_FEATURE_COMPUTER_SESSION_HISTORY."
+              "description": "Desktop: computer session history: Computer actions share one compact session card in chat, with captured views to browse or replay. Turning it off restores individual actions and screenshots. Renders DEN_FEATURE_COMPUTER_SESSION_HISTORY."
             },
             "browserUse": {
               "enum": [
