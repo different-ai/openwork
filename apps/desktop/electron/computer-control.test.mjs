@@ -714,6 +714,8 @@ function parallelFixture(options = {}) {
   /** The connect options each helper started with. */
   const started = [];
   const windows = { blender: 11, photoshop: 12, notes: 13 };
+  /** Each app's helper's UI channel, to stand in for its pill. */
+  const uis = {};
   /** @type {import("@openwork/computer-use/computer-control").ComputerAdapter} */
   const adapter = {
     id: "local", label: "This Mac", placement: "local", parallel: true, protocol: COMPUTER_PROTOCOL,
@@ -725,7 +727,7 @@ function parallelFixture(options = {}) {
       let app = "";
       return {
         callTool: async (name, args) => {
-          if (name === "computer_open_session") app = String(args.app_id);
+          if (name === "computer_open_session") { app = String(args.app_id); uis[app] = onUi; }
           events.push(`${app}:${name}:start`);
           await options.beforeTool?.(name, app);
           events.push(`${app}:${name}:end`);
@@ -744,7 +746,7 @@ function parallelFixture(options = {}) {
     },
   };
   const control = createComputerControl({ adapters: [adapter] });
-  return { control, events, started, connections: () => connections };
+  return { control, events, started, connections: () => connections, ui: (app, value) => uis[app](value) };
 }
 const openApp = (control, sessionId, app, mode = "control", windowId) =>
   control.execute({ sessionId, name: "computer_open", args: { app_id: app, mode, purpose: `Work in ${app}`, ...(windowId ? { window_id: windowId } : {}) } });
@@ -771,6 +773,114 @@ test("a window another chat holds is refused before any helper starts", async (t
   const result = payload(await openApp(f.control, "chat-other", "blender", "control", 11));
   assert.equal(result.code, "window_busy");
   assert.equal(f.connections(), 1);
+});
+
+const look = (control, sessionId, session) =>
+  control.execute({ sessionId, name: "computer_observe", args: session ? { session_id: session } : {} });
+
+test("one chat keeps several apps open, each with its own helper, and session_id picks one", async (t) => {
+  const f = parallelFixture(); t.after(() => f.control.reset(true));
+  await f.control.setFeatureEnabled(true);
+  assert.equal(payload(await openApp(f.control, "chat", "blender")).session_id, "native-blender");
+  const second = await openApp(f.control, "chat", "photoshop");
+  assert.equal(payload(second).session_id, "native-photoshop");
+  assert.equal(f.connections(), 2, "the first app stays open while the second one opens");
+  const listed = second.content.map((part) => part.type === "text" ? JSON.parse(part.text) : {}).find((part) => part.open_sessions);
+  assert.deepEqual(listed.open_sessions.map((open) => open.session_id), ["native-blender", "native-photoshop"]);
+  assert.equal(payload(await look(f.control, "chat")).observation_id, "observation-photoshop", "without session_id, the app opened last");
+  assert.equal(payload(await look(f.control, "chat", "native-blender")).observation_id, "observation-blender");
+  const count = f.events.length;
+  assert.equal(payload(await look(f.control, "chat", "native-unknown")).code, "session_unknown");
+  assert.equal(payload(await look(f.control, "other-chat", "native-blender")).code, "session_unknown", "another chat's session_id selects nothing");
+  assert.equal(f.events.length, count, "nothing reached a helper");
+  assert.equal(payload(await f.control.execute({ sessionId: "chat", name: "computer_close", args: { session_id: "native-blender" } })).ok, true);
+  assert.ok(f.events.includes("blender:close"));
+  assert.ok(!f.events.includes("photoshop:close"), "closing one app keeps the other");
+  assert.equal(payload(await look(f.control, "chat", "native-blender")).code, "session_unknown");
+  assert.equal(payload(await look(f.control, "chat")).observation_id, "observation-photoshop");
+});
+
+test("a chat opens a few apps, each window once", async (t) => {
+  const f = parallelFixture(); t.after(() => f.control.reset(true));
+  await f.control.setFeatureEnabled(true);
+  for (const app of ["blender", "photoshop", "notes"]) assert.equal(payload(await openApp(f.control, "chat", app)).ok, true);
+  const again = payload(await openApp(f.control, "chat", "blender", "control", 11));
+  assert.equal(again.code, "session_open");
+  assert.equal(again.session_id, "native-blender", "the window's session is named so the agent can keep using it");
+  const fourth = payload(await openApp(f.control, "chat", "keynote", "control", 14));
+  assert.equal(fourth.code, "too_many_sessions");
+  assert.equal(fourth.open_sessions.length, 3);
+  assert.equal(f.connections(), 3);
+  // After idle cleanup a closed helper's app is only forgotten, which frees its place.
+  await f.control.endTurn({ sessionId: "chat" });
+  assert.equal(payload(await f.control.execute({ sessionId: "chat", name: "computer_close", args: { session_id: "native-notes" } })).ok, true);
+  assert.equal(f.connections(), 3, "closing a released app starts no helper");
+  assert.equal(payload(await openApp(f.control, "chat", "keynote", "control", 14)).ok, true);
+});
+
+test("end of turn, takeover and Stop cover every app in the chat", async (t) => {
+  const f = parallelFixture(); t.after(() => f.control.reset(true));
+  await f.control.setFeatureEnabled(true);
+  await openApp(f.control, "chat", "blender");
+  await openApp(f.control, "chat", "photoshop");
+  await f.control.endTurn({ sessionId: "chat" });
+  assert.ok(f.events.includes("blender:close") && f.events.includes("photoshop:close"), "the turn's end releases every helper");
+  // Each app renews on its own from the window it opened.
+  assert.equal(payload(await look(f.control, "chat", "native-blender")).observation_id, "observation-blender");
+  assert.equal(f.events.filter((event) => event === "blender:computer_open_session:start").length, 2);
+  assert.equal(f.events.filter((event) => event === "photoshop:computer_open_session:start").length, 1);
+  assert.equal(payload(await look(f.control, "chat", "native-photoshop")).observation_id, "observation-photoshop");
+  // Watch live follows the app being worked in, not only the one opened last.
+  assert.equal((await f.control.presentation({ sessionId: "chat", visible: true })).id, "view-photoshop");
+  await look(f.control, "chat", "native-blender");
+  assert.equal((await f.control.presentation({ sessionId: "chat", visible: true })).appName, "blender");
+  // Taking over one app holds the whole chat until Continue.
+  await f.control.interact({ sessionId: "chat", id: "view-blender", action: "takeover" });
+  const act = payload(await f.control.execute({ sessionId: "chat", name: "computer_act", args: { session_id: "native-photoshop", observation_id: "observation-photoshop", action: { type: "click", x: 1, y: 1 } } }));
+  assert.equal(act.code, "session_paused");
+  assert.equal((await f.control.presentation({ sessionId: "chat", visible: true })).id, "view-blender", "the view shows the app the person took");
+  // Stop on one app's pill ends the others too.
+  f.ui("blender", { kind: "state", id: "view-blender", phase: "closed", cause: "human_stop" });
+  await settle();
+  assert.equal(f.events.filter((event) => event === "photoshop:close").length, 2);
+  assert.equal(payload(await look(f.control, "chat", "native-photoshop")).code, "not_allowed");
+});
+
+test("a computer that is not parallel keeps one app per chat", async (t) => {
+  const f = fixture(); t.after(() => f.control.reset(true));
+  await f.control.setFeatureEnabled(true);
+  await f.control.execute({ sessionId: "chat", name: "computer_open", args: { app_id: "editor", mode: "control", purpose: "Edit" } });
+  const second = payload(await f.control.execute({ sessionId: "chat", name: "computer_open", args: { app_id: "mail", mode: "control", purpose: "Send" } }));
+  assert.equal(second.code, "session_open");
+  assert.equal(f.calls.filter((name) => name === "connect").length, 1);
+  assert.equal(payload(await f.control.execute({ sessionId: "chat", name: "computer_observe", args: { session_id: "native" } })).ok, true, "the one session_id still works");
+});
+
+for (const [where, options] of [["a Windows PC", { platform: "win32" }], ["a remote computer", { platform: "darwin", remote: true, authority: async () => true }]]) {
+  test(`arranging windows is refused on ${where} before anything is sent`, async (t) => {
+    const f = fixture(options); t.after(() => f.control.reset(true));
+    await f.control.setFeatureEnabled(true);
+    if (options.remote) { await f.control.setRemoteEnabled(true); await f.control.choose({ sessionId: "chat", targetId: "vm" }); }
+    await f.control.execute({ sessionId: "chat", name: "computer_open", args: { app_id: "editor", mode: "control", purpose: "Edit" } });
+    const result = payload(await f.control.execute({ sessionId: "chat", name: "computer_act", args: { observation_id: "observation", action: { type: "arrange", layout: "left_half" } } }));
+    assert.equal(result.code, "arrange_unavailable");
+    assert.ok(!f.calls.includes("computer_act"));
+  });
+}
+
+test("on a Mac, arranging a window reaches its helper and returns a fresh look at the new frame", async (t) => {
+  const seen = [];
+  const f = fixture({ platform: "darwin", seen, toolResult: (name) => name === "computer_act" ? text({ ok: true, status: "dispatched", steps: [{ action: "arrange", path: "window_arranged" }] }) : null });
+  t.after(() => f.control.reset(true));
+  await f.control.setFeatureEnabled(true);
+  await f.control.execute({ sessionId: "chat", name: "computer_open", args: { app_id: "editor", mode: "control", purpose: "Edit" } });
+  const looks = seen.filter(({ name }) => name === "computer_observe").length;
+  const result = await f.control.execute({ sessionId: "chat", name: "computer_act", args: { session_id: "native", observation_id: "observation", action: { type: "arrange", layout: "beside_openwork" } } });
+  assert.equal(payload(result).status, "dispatched");
+  const sent = seen.find(({ name }) => name === "computer_act").args;
+  assert.deepEqual(sent.action, { type: "arrange", layout: "beside_openwork" });
+  assert.equal(sent.session_id, "native", "the helper gets its own session, never the model's argument");
+  assert.equal(seen.filter(({ name }) => name === "computer_observe").length, looks + 1, "the moved window is observed again");
 });
 
 test("control calls take turns at the keyboard and pointer, one whole call at a time", async (t) => {

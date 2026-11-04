@@ -74,6 +74,8 @@ final class SessionRuntime {
         var lastImage: ImagePolicy.Sent?
         /// The person interrupted the last step; the read right after it leaves the front to them.
         var yielded = false
+        /// Where the window was before the session first arranged it; put back on close.
+        var placement: WindowArrangement.Placement?
     }
     init(policy: RuntimePolicy = .desktop, clock: @escaping () -> TimeInterval = { ProcessInfo.processInfo.systemUptime }) {
         self.policy = policy; self.clock = clock
@@ -725,6 +727,12 @@ final class SessionRuntime {
                     "message": "Opening a file hands it to the app. The person is asked first; nothing was sent."])
             }
         }
+        // Moving the window makes every observed coordinate stale: it is its own step, and only
+        // for the session's own window, never a dialog over it.
+        if actions.contains(where: { if case .arrange = $0 { return true }; return false }) {
+            guard actions.count == 1 else { throw UseError("arrange_alone", "Arrange a window as its own step. Nothing was sent.", next: "observe") }
+            guard current.parents.isEmpty else { throw UseError("dialog_open", "Close the dialog before arranging the window. Nothing was sent.", next: "observe") }
+        }
         session?.observation = nil; session?.focus = nil; session?.lastUsed = now
         if let intent { controls.narrate(intent) }
         session?.receiptInputs[requestID] = fingerprint
@@ -864,6 +872,12 @@ final class SessionRuntime {
                         self.controls.inputFeedback(feedback)
                     })
                 uncertain = path != "waited"
+                if case .arrange = action {
+                    // Remember the person's frame once, and where this arrange left the window.
+                    var placement = session?.placement ?? WindowArrangement.Placement(window: current.target.element, original: bounds)
+                    placement.arranged = WindowArrangement.frame(of: current.target.element)
+                    session?.placement = placement
+                }
                 if case .openFile = action {
                     // A success from Launch Services is not proof: the file counts as opened once the
                     // app shows it, in a new window or this one retitled for it, within a few seconds.
@@ -1349,6 +1363,8 @@ final class SessionRuntime {
         if now - current.started >= 900 { session?.started = now }
     }
     func close(stoppedByPerson: Bool = false) {
+        // Windows the session arranged go back, unless the person has placed them since.
+        if let placement = session?.placement { WindowArrangement.restore(placement) }
         giveBack(); handBack.reset()
         stopWatching()
         resumingSessionID = nil; session = nil
