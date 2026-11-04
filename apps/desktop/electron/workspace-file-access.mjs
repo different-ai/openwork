@@ -1,4 +1,4 @@
-import { realpath, stat } from "node:fs/promises";
+import { lstat, readdir, realpath, stat } from "node:fs/promises";
 import path from "node:path";
 
 /**
@@ -131,4 +131,60 @@ export async function openChatWorkspaceFile(workspaceRoot, target, actions) {
   }
   const error = await actions.openPath(decision.path);
   return error?.trim() ? { ok: false, error } : { ok: true, action: "opened" };
+}
+
+/**
+ * A chat's output folder: where its computer use puts what it makes for the person,
+ * one folder per chat under Downloads/OpenWork.
+ * @param {string} downloads
+ * @param {string} sessionId
+ * @returns {string | null}
+ */
+export function chatOutputFolder(downloads, sessionId) {
+  const name = String(sessionId).replace(/[^A-Za-z0-9._-]/g, "-").slice(0, 80);
+  return /^\.*$/.test(name) ? null : path.join(downloads, "OpenWork", name);
+}
+
+/**
+ * The files in a chat's output folder, newest first, however they got there: an app's
+ * save, a script's export or a shell command. Regular files only, no links or hidden
+ * names, at most three folders deep and `limit` files.
+ * @param {string} folder
+ * @returns {Promise<Array<{ path: string; bytes: number; modifiedAt: number }>>}
+ */
+export async function listChatOutputFiles(folder, { limit = 200 } = {}) {
+  /** @type {Array<{ path: string; bytes: number; modifiedAt: number }>} */
+  const files = [];
+  let budget = 2000;
+  /** @param {string} dir @param {number} depth */
+  const walk = async (dir, depth) => {
+    const entries = await readdir(dir, { withFileTypes: true }).catch(() => []);
+    for (const entry of entries) {
+      if (--budget < 0) return;
+      if (entry.name.startsWith(".")) continue;
+      const item = path.join(dir, entry.name);
+      if (entry.isDirectory() && depth < 3) await walk(item, depth + 1);
+      else if (entry.isFile()) {
+        const info = await lstat(item).catch(() => null);
+        if (info?.isFile()) files.push({ path: item, bytes: info.size, modifiedAt: info.mtimeMs });
+      }
+    }
+  };
+  const root = await lstat(folder).catch(() => null);
+  if (root?.isDirectory()) await walk(folder, 1);
+  return files.sort((a, b) => b.modifiedAt - a.modifiedAt).slice(0, limit);
+}
+
+/**
+ * Whether Open may launch `target` as this chat's own output: a regular file that is not
+ * a link and not executable, resolving inside the chat's output folder.
+ * @param {string | null} folder
+ * @param {string} target
+ */
+export async function opensFromChatOutput(folder, target) {
+  if (!folder) return false;
+  const decision = await resolveWorkspaceFileLaunch(folder, target);
+  if (decision.ok === false) return false;
+  const info = await lstat(target).catch(() => null);
+  return Boolean(info?.isFile()) && (info.mode & 0o111) === 0;
 }

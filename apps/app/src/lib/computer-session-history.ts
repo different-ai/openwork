@@ -110,7 +110,7 @@ export type ComputerSessionHistory = {
   latest: string
   /** Every app the session worked in, in the order it opened them. */
   apps: string[]
-  /** Files this session saved for the person, each once, in the order of its latest save. */
+  /** Files this session saved for the person, each once, newest save first. */
   savedFiles: ComputerSavedFile[]
 }
 
@@ -210,7 +210,40 @@ export function collectComputerSessionHistory(messages: readonly UIMessage[], op
     if (file) { saved.delete(file.path); saved.set(file.path, file) }
   }
   return { id: first.toolCallId, parts, frames, toolCallIds: new Set(tools.keys()), files, durationMs, purpose, latest: label(parts.at(-1)!),
-    apps: [...new Set(apps.values())], savedFiles: [...saved.values()] }
+    apps: [...new Set(apps.values())], savedFiles: [...saved.values()].reverse() }
+}
+
+/** A file in the chat's output folder, as the desktop lists it. */
+export type ComputerFolderFile = { path: string; bytes: number; modifiedAt: number }
+
+/**
+ * What the card hands back: each file a step saved (`file_saved`), plus each file in the
+ * chat's output folder that changed between the session's first step and `until` (the end
+ * of its turn; null while it runs), whether an app, a script or a shell command made it.
+ * Each once, newest first.
+ */
+export function computerHandedBackFiles(history: ComputerSessionHistory, folder: readonly ComputerFolderFile[], until: number | null): ComputerSavedFile[] {
+  const times = history.parts.flatMap(part => {
+    const time = part.callProviderMetadata?.openwork?.toolStartedAt
+    return typeof time === "number" && Number.isFinite(time) ? [time] : []
+  })
+  if (!times.length || !folder.length) return history.savedFiles
+  // File times are whole seconds on some disks; the last copy can land just after the turn ends.
+  const from = Math.min(...times) - 1000
+  const to = until === null ? Infinity : until + 5000
+  const at = new Map<string, number>()
+  for (const part of history.parts) {
+    const file = computerSavedFile(part)
+    const time = part.callProviderMetadata?.openwork?.toolCompletedAt
+    if (file) at.set(file.path, typeof time === "number" ? time : from)
+  }
+  const files = new Map(history.savedFiles.map(file => [file.path, file]))
+  for (const file of folder) {
+    if (!file.path.startsWith("/") || file.modifiedAt < from || file.modifiedAt > to) continue
+    files.set(file.path, { path: file.path, name: file.path.slice(file.path.lastIndexOf("/") + 1) || file.path, bytes: file.bytes })
+    at.set(file.path, Math.max(at.get(file.path) ?? -Infinity, file.modifiedAt))
+  }
+  return [...files.values()].sort((a, b) => (at.get(b.path) ?? 0) - (at.get(a.path) ?? 0))
 }
 
 export function withoutComputerHistory(parts: UIMessage["parts"], history: ComputerSessionHistory | null): UIMessage["parts"] {

@@ -3,7 +3,7 @@ import { GlobalRegistrator } from "@happy-dom/global-registrator"
 import { act, createElement } from "react"
 import { createRoot, type Root } from "react-dom/client"
 import type { DynamicToolUIPart, UIMessage } from "ai"
-import { collectComputerSessionHistory, computerActionMarks, showsLiveComputerView, withoutComputerHistory } from "../src/lib/computer-session-history"
+import { computerHandedBackFiles, collectComputerSessionHistory, computerActionMarks, showsLiveComputerView, withoutComputerHistory } from "../src/lib/computer-session-history"
 import { parseDynamicToolUIPart, withToolAttachmentOwner } from "../src/react-app/domains/session/sync/parse-tool-parts"
 import { browserHistoryMessages, computerHistoryMessages } from "../test-fixtures/computer-session-history-data"
 
@@ -257,8 +257,8 @@ test("the card lists the files its session saved, each once, with Open, Show in 
     step("again", saved("/Users/me/Desktop/report.pdf", 4096)),
   ] }])!
   expect(history.savedFiles).toEqual([
-    { path: "/Users/me/Desktop/chart.png", name: "chart.png", bytes: 10 },
     { path: "/Users/me/Desktop/report.pdf", name: "report.pdf", bytes: 4096 },
+    { path: "/Users/me/Desktop/chart.png", name: "chart.png", bytes: 10 },
   ])
 
   const container = document.createElement("div"); document.body.append(container)
@@ -273,8 +273,8 @@ test("the card lists the files its session saved, each once, with Open, Show in 
   // Shown without opening the card.
   expect(container.querySelector('[data-computer-view-count]')).toBeNull()
   const rows = [...container.querySelectorAll("[data-computer-saved-file]")]
-  expect(rows.map(row => row.querySelector("[title]")?.getAttribute("title"))).toEqual(["/Users/me/Desktop/chart.png", "/Users/me/Desktop/report.pdf"])
-  expect(rows[1]!.textContent).toContain("4 KB")
+  expect(rows.map(row => row.querySelector("[title]")?.getAttribute("title"))).toEqual(["/Users/me/Desktop/report.pdf", "/Users/me/Desktop/chart.png"])
+  expect(rows[0]!.textContent).toContain("4 KB")
   await press("Open report.pdf"); await press("Show report.pdf in Finder"); await press("Attach chart.png to chat")
   expect(calls).toEqual(["open /Users/me/Desktop/report.pdf", "reveal /Users/me/Desktop/report.pdf", "attach /Users/me/Desktop/chart.png"])
 
@@ -284,6 +284,48 @@ test("the card lists the files its session saved, each once, with Open, Show in 
   expect(container.querySelector('[aria-label="Open report.pdf"]')).toBeNull()
   await render(collectComputerSessionHistory(computerHistoryMessages(images))!, fileActions)
   expect(container.querySelector("[data-computer-saved-files]")).toBeNull()
+})
+
+test("the card also lists what scripts and shell commands wrote to the chat's output folder during its turn", async () => {
+  const folder = "/Users/me/Downloads/OpenWork/chat"
+  const step = (id: string, toolName: string, at: number, output: unknown = { ok: true }): DynamicToolUIPart =>
+    ({ type: "dynamic-tool", toolName, toolCallId: id, state: "output-available", input: {}, output,
+      callProviderMetadata: { openwork: { toolStartedAt: at, toolCompletedAt: at + 100 } } })
+  const history = collectComputerSessionHistory([{ id: "a", role: "assistant", parts: [
+    step("open", "computer_open", 10_000),
+    step("script", "computer_script", 20_000),
+    // A save elsewhere is listed from its receipt; an image saved into the folder is listed once, not twice.
+    step("save", "computer_act", 30_000, { ok: true, path: "file_saved", saved_file: { path: "/Users/me/Desktop/map.png", bytes: 5 } }),
+    step("shot", "computer_act", 40_000, { ok: true, path: "file_saved", saved_file: { path: `${folder}/flyer.png`, bytes: 7, width: 800, height: 600 } }),
+  ] }])!
+  const listed = [
+    { path: `${folder}/deck.pptx`, bytes: 300, modifiedAt: 60_000 }, // copied in by a shell command after the session
+    { path: `${folder}/flyer.png`, bytes: 900, modifiedAt: 50_000 }, // the save_image file, edited again by a script
+    { path: `${folder}/old.txt`, bytes: 1, modifiedAt: 5_000 }, // from before this session
+    { path: `${folder}/next-turn.png`, bytes: 1, modifiedAt: 200_000 }, // a later turn's
+  ]
+  expect(computerHandedBackFiles(history, listed, 100_000)).toEqual([
+    { path: `${folder}/deck.pptx`, name: "deck.pptx", bytes: 300 },
+    { path: `${folder}/flyer.png`, name: "flyer.png", bytes: 900 },
+    { path: "/Users/me/Desktop/map.png", name: "map.png", bytes: 5 },
+  ])
+  // While the turn runs everything since the first step counts; with no folder, only receipts.
+  expect(computerHandedBackFiles(history, listed, null).map(file => file.name)).toEqual(["next-turn.png", "deck.pptx", "flyer.png", "map.png"])
+  expect(computerHandedBackFiles(history, [], null)).toEqual(history.savedFiles)
+
+  const container = document.createElement("div"); document.body.append(container)
+  const root = createRoot(container); mounted = { root, container }
+  let reads = 0
+  const fileActions = { open: () => {}, reveal: () => {}, attach: () => {}, list: async () => { reads++; return listed } }
+  const render = async (turnEndedAt: number | null) => act(async () => root.render(createElement(TooltipProvider, { children: createElement(ComputerSessionHistory,
+    { history, active: false, renderAction: part => createElement("p", {}, part.toolCallId), fileActions, turnEndedAt }) })))
+  await render(100_000)
+  const names = () => [...container.querySelectorAll("[data-computer-saved-file] [title]")].map(item => item.getAttribute("title"))
+  expect(names()).toEqual([`${folder}/deck.pptx`, `${folder}/flyer.png`, "/Users/me/Desktop/map.png"])
+  expect(container.querySelector('[aria-label="Open deck.pptx"]')).not.toBeNull()
+  // Rendering again with nothing new does not read the folder again.
+  await render(100_000)
+  expect(reads).toBe(1)
 })
 
 test("attaching a saved file puts it in that chat's composer once, as a file mention", () => {

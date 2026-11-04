@@ -1,9 +1,9 @@
 import { after, before, test } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtemp, mkdir, realpath, rm, symlink, writeFile } from "node:fs/promises";
+import { chmod, mkdtemp, mkdir, realpath, rm, symlink, utimes, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { openChatWorkspaceFile, resolveChatFilePath } from "./workspace-file-access.mjs";
+import { chatOutputFolder, listChatOutputFiles, openChatWorkspaceFile, opensFromChatOutput, resolveChatFilePath } from "./workspace-file-access.mjs";
 
 let root;
 let workspace;
@@ -92,4 +92,44 @@ test("explicit reveal of an existing workspace file does not launch it", async (
   const native = actions(true);
   assert.deepEqual(await openChatWorkspaceFile(workspace, path.join(workspace, "notes.md"), native), { ok: true, action: "revealed" });
   assert.equal(native.calls[0][0], "reveal");
+});
+
+test("a chat's output folder lists what anything wrote there, newest first, and nothing else", async () => {
+  const downloads = path.join(root, "Downloads");
+  assert.equal(chatOutputFolder(downloads, "ses_1/../x"), path.join(downloads, "OpenWork", "ses_1-..-x"));
+  assert.equal(chatOutputFolder(downloads, ".."), null);
+  const folder = chatOutputFolder(downloads, "ses_1");
+  assert.deepEqual(await listChatOutputFiles(folder), []);
+  await mkdir(path.join(folder, "slides"), { recursive: true });
+  // A shell command's output, a script's export in a subfolder, a hidden file and a link out.
+  await writeFile(path.join(folder, "map.png"), "png");
+  await writeFile(path.join(folder, "slides", "deck.pptx"), "deck!");
+  await writeFile(path.join(folder, ".DS_Store"), "x");
+  await symlink(path.join(root, "clip.mp4"), path.join(folder, "clip.mp4"));
+  await utimes(path.join(folder, "map.png"), 1000, 1000);
+  await utimes(path.join(folder, "slides", "deck.pptx"), 2000, 2000);
+  assert.deepEqual(await listChatOutputFiles(folder), [
+    { path: path.join(folder, "slides", "deck.pptx"), bytes: 5, modifiedAt: 2_000_000 },
+    { path: path.join(folder, "map.png"), bytes: 3, modifiedAt: 1_000_000 },
+  ]);
+  assert.equal((await listChatOutputFiles(folder, { limit: 1 })).length, 1);
+});
+
+test("Open launches a file from the chat's own output folder, never a link, a program or another chat's file", async () => {
+  const downloads = path.join(root, "Downloads-open");
+  const folder = chatOutputFolder(downloads, "ses_1");
+  const other = chatOutputFolder(downloads, "ses_2");
+  await mkdir(folder, { recursive: true });
+  await mkdir(other, { recursive: true });
+  await writeFile(path.join(folder, "flyer.pdf"), "pdf");
+  await writeFile(path.join(folder, "run.command"), "echo hi");
+  await chmod(path.join(folder, "run.command"), 0o755);
+  await writeFile(path.join(other, "theirs.pdf"), "pdf");
+  await symlink(path.join(other, "theirs.pdf"), path.join(folder, "link.pdf"));
+  assert.equal(await opensFromChatOutput(folder, path.join(folder, "flyer.pdf")), true);
+  assert.equal(await opensFromChatOutput(folder, path.join(folder, "run.command")), false);
+  assert.equal(await opensFromChatOutput(folder, path.join(folder, "link.pdf")), false);
+  assert.equal(await opensFromChatOutput(folder, path.join(other, "theirs.pdf")), false);
+  assert.equal(await opensFromChatOutput(folder, path.join(folder, "missing.pdf")), false);
+  assert.equal(await opensFromChatOutput(null, path.join(folder, "flyer.pdf")), false);
 });

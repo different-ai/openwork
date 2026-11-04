@@ -505,7 +505,9 @@ Ask first shows the card "Save report.pdf to Desktop from Preview?" each time,
 with nothing remembered; Block, or a rule that cannot be read, refuses it. On
 this Mac, `computer_open` also returns a `save_folder` the desktop made for the
 chat (`~/Downloads/OpenWork/<chat>`), where the agent saves when the person
-names no folder.
+names no folder. It is the chat's output folder: the guidance asks the agent to
+put every deliverable there, from an app, a `computer_script` export or a shell
+command, and the chat's session card lists what changed there during the session.
 
 A file already at the path is refused before anything is sent unless the step
 says `replace: true`, the agent's own guard against overwriting by accident; the
