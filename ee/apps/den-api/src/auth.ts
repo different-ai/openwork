@@ -101,9 +101,13 @@ import {
   validateOrganizationMemberRoleUpdate,
 } from "./orgs.js";
 import {
-  findEnterpriseAuthRequirementForEmail,
-  findEnterpriseAuthRequirementForUserId,
-} from "./enterprise-auth-requirement.js";
+  deleteSessionSsoAuthentication,
+  findNonSsoSignInBlock,
+  findSsoAccessBlock,
+  recordDeviceSessionSsoAuthentication,
+  recordSessionSsoAuthentication,
+  SSO_REQUIRED_MESSAGE,
+} from "./organization-sso-access.js";
 import { normalizeLoginEmail } from "./auth-login-options.js";
 import { getAuthBodyEmail, getSingleOrgEmailSignupPolicyViolation } from "./single-org-signup-policy.js";
 import { authorizeInitialAdminBootstrapSignup, readInitialAdminBootstrapGrantFromBody } from "./initial-admin-bootstrap.js";
@@ -135,6 +139,23 @@ import { CLIENT_IP_IPV6_SUBNET, RESOLVED_CLIENT_IP_HEADER } from "./client-ip.js
 import { ensureWorkbotOAuthClient } from "./workbot/oauth-client.js";
 
 const logger = appLogger.child({ component: "auth" });
+
+/** Better Auth paths whose new session comes from an organization's SSO (same set as the session audit). */
+const SSO_SESSION_PATHS = new Set(["/sso/callback/:providerId", "/sso/callback", "/sso/saml2/sp/acs/:providerId", "/sso/saml2/callback/:providerId"]);
+
+async function organizationIdForSlug(slug: string | null) {
+  if (!slug) return null;
+  const [organization] = await db
+    .select({ id: schema.OrganizationTable.id })
+    .from(schema.OrganizationTable)
+    .where(eq(schema.OrganizationTable.slug, slug))
+    .limit(1);
+  return organization?.id ?? null;
+}
+
+// A device session approved into an organization, from session.create.before
+// to its after-hook in the same request (keyed by the new session's token).
+const deviceApprovedSessionOrganizations = new Map<string, string>();
 
 function localMcpResourceAliases(resource: string) {
   if (!env.devMode) {
@@ -963,6 +984,9 @@ export const auth = betterAuth({
             ? await takeDeviceSessionOrganization({ deviceCode, userId })
             : null;
           const activeOrganizationId = deviceOrganizationId ?? await getInitialActiveOrganizationIdForUser(userId);
+          if (deviceOrganizationId && typeof session.token === "string") {
+            deviceApprovedSessionOrganizations.set(session.token, deviceOrganizationId);
+          }
           try {
             // SSO JIT creates the raw member row before the session row, so this
             // chokepoint can merge any matching pending invitation without blocking sign-in.
@@ -981,6 +1005,22 @@ export const auth = betterAuth({
         // Every sign-in path that creates a session row: session.created in
         // the session's organization (src/audit/domain/sessions.ts).
         after: async (session, context) => {
+          const path = typeof context?.path === "string" ? context.path : null;
+          if (path && SSO_SESSION_PATHS.has(path) && typeof session.id === "string") {
+            // Which organization's SSO created this session, so an organization
+            // that requires SSO can tell it from a password or Google session.
+            await recordSessionSsoAuthentication({
+              sessionId: session.id,
+              userId: session.userId,
+              providerId: readStringProperty(context?.params, "providerId"),
+            }).catch((error) => logger.error("session SSO provenance could not be recorded", { error }));
+          }
+          const deviceOrganizationId = typeof session.token === "string" ? deviceApprovedSessionOrganizations.get(session.token) : undefined;
+          if (typeof session.token === "string") deviceApprovedSessionOrganizations.delete(session.token);
+          if (deviceOrganizationId && typeof session.id === "string") {
+            await recordDeviceSessionSsoAuthentication({ sessionId: session.id, userId: session.userId, organizationId: deviceOrganizationId })
+              .catch((error) => logger.error("device session SSO provenance could not be recorded", { error }));
+          }
           await recordFreeAutoSignIn(db, { userId: normalizeDenTypeId("user", session.userId), now: session.createdAt })
             .catch(() => logger.warn("Free Auto sign-in behavior could not be recorded."));
           await runAuditHook("session.create", () => recordSessionCreated(session, auditSessionMethod(context)));
@@ -1007,6 +1047,9 @@ export const auth = betterAuth({
           if (typeof session.token === "string") {
             // Sign-out deletes the backing session row, so cached hits must be cleared here.
             await cache.auth.revokeSession(session.token);
+          }
+          if (typeof session.id === "string") {
+            await deleteSessionSsoAuthentication(session.id).catch(() => undefined);
           }
           if (typeof session.id === "string") {
             await cache.auth.revokeSessionId(normalizeDenTypeId("session", session.id));
@@ -1191,6 +1234,21 @@ export const auth = betterAuth({
           }
         }
 
+        if (ctx.path === "/organization/set-active") {
+          // ssoPerOrganization: entering an organization that requires SSO
+          // needs a session signed in through its SSO.
+          const token = await ctx.getSignedCookie(ctx.context.authCookies.sessionToken.name, ctx.context.secret).catch(() => null);
+          const session = typeof token === "string" ? await cache.auth.session(token) : null;
+          const organizationId = readStringProperty(ctx.body, "organizationId")
+            ?? await organizationIdForSlug(readStringProperty(ctx.body, "organizationSlug"));
+          if (session && organizationId) {
+            const ssoBlock = await findSsoAccessBlock({ sessionId: session.session.id, organizationId });
+            if (ssoBlock) {
+              throw new APIError("FORBIDDEN", { message: SSO_REQUIRED_MESSAGE, code: "SSO_REQUIRED", signInPath: ssoBlock.signInPath });
+            }
+          }
+        }
+
         if (ctx.path === "/sign-in/sso") {
           const token = await ctx.getSignedCookie(ctx.context.authCookies.sessionToken.name, ctx.context.secret).catch(() => null);
           const session = typeof token === "string" ? await cache.auth.session(token) : null;
@@ -1229,7 +1287,10 @@ export const auth = betterAuth({
         return;
       }
 
-      const requirement = await findEnterpriseAuthRequirementForEmail(email);
+      // Flag off for the SSO organization: its members must use SSO. With
+      // ssoPerOrganization on, only "Restrict this domain to our SSO" refuses
+      // sign-in; "Require SSO" is enforced when the organization is opened.
+      const requirement = await findNonSsoSignInBlock({ email });
       if (!requirement) {
         return;
       }
@@ -1332,7 +1393,7 @@ export const auth = betterAuth({
         return;
       }
 
-      const requirement = await findEnterpriseAuthRequirementForUserId(newSession.user.id);
+      const requirement = await findNonSsoSignInBlock({ email: newSession.user.email, userId: newSession.user.id });
       if (!requirement) {
         // Signing in (e.g. with Google) with a verified email on an
         // organization's verified SSO domain joins it on the Team plan and up;
@@ -1748,6 +1809,11 @@ export const auth = betterAuth({
           }
 
           const referenceId = normalizeDenTypeId("organization", activeOrganizationId);
+          // An organization that requires SSO grants MCP access only from a session signed in through its SSO.
+          const ssoBlock = await findSsoAccessBlock({ sessionId: typeof session.id === "string" ? session.id : null, organizationId: referenceId });
+          if (ssoBlock) {
+            throw new APIError("FORBIDDEN", { message: SSO_REQUIRED_MESSAGE });
+          }
           if (typeof session.userId === "string") noteOAuthConsentReference({ userId: session.userId, referenceId });
           return referenceId;
         },

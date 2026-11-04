@@ -15,7 +15,7 @@ import { db } from "../../db.js"
 import { env } from "../../env.js"
 import { automationAvailabilityFor, headlessAutomationsConfigured } from "../../automations/organization-availability.js"
 import { authenticatedRoute, jsonValidator, orgMemberRoute, userSessionRoute, type OrganizationContextVariables, type UserOrganizationsContext } from "../../middleware/index.js"
-import { denTypeIdSchema, forbiddenSchema, invalidRequestSchema, jsonResponse, unauthorizedSchema } from "../../openapi.js"
+import { denTypeIdSchema, forbiddenSchema, invalidRequestSchema, jsonResponse, ssoRequiredSchema, unauthorizedSchema } from "../../openapi.js"
 import { normalizeOrganizationMetadata } from "../../organization-limits.js"
 import { resolveUserOrganizations, setSessionActiveOrganization, type UserOrgSummary } from "../../orgs.js"
 import type { AuthContextVariables } from "../../session.js"
@@ -26,6 +26,7 @@ import { readPromptsForMember } from "../../prompts.js"
 import { memberPromptsSchema } from "@openwork/types/den/prompts"
 import { getOrganizationFeatures } from "../../features.js"
 import { DenEmailSendError, sendEmail } from "../../utils/email/send-email.js"
+import { findSsoAccessBlock, ssoRequiredErrorBody } from "../../organization-sso-access.js"
 import { registerMeActivationRoutes } from "./activation.js"
 import { registerMeAgentRoutes } from "./agent.js"
 
@@ -387,7 +388,7 @@ export function registerMeRoutes<T extends { Variables: AuthContextVariables & P
         200: jsonResponse("Active organization updated successfully.", activeOrganizationResponseSchema),
         400: jsonResponse("The active organization request body was invalid.", invalidRequestSchema),
         401: jsonResponse("The caller must be signed in to update active organization.", unauthorizedSchema),
-        403: jsonResponse("The caller cannot switch this kind of session.", forbiddenSchema),
+        403: jsonResponse("The caller cannot switch this kind of session, or the organization requires SSO and this session did not sign in through it (sso_required).", forbiddenSchema.or(ssoRequiredSchema)),
       },
     }),
     userSessionRoute(),
@@ -416,6 +417,11 @@ export function registerMeRoutes<T extends { Variables: AuthContextVariables & P
       }
 
       const sessionId = normalizeDenTypeId("session", session.id)
+      // ssoPerOrganization: an organization that requires SSO is entered only from a session signed in through it.
+      const ssoBlock = await findSsoAccessBlock({ sessionId, organizationId: activeOrg.id })
+      if (ssoBlock) {
+        return c.json(ssoRequiredErrorBody(ssoBlock), 403)
+      }
       await setSessionActiveOrganization(sessionId, activeOrg.id)
       c.set("session", { ...session, activeOrganizationId: activeOrg.id })
       // session.organization_entered in the destination organization only.

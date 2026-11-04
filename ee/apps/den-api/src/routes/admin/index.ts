@@ -15,6 +15,7 @@ import {
   HeadlessResumeGrantTable,
   HeadlessResumeRevocationTable,
   ExternalIdentityTable,
+  SessionSsoAuthenticationTable,
   InvitationTable,
   InferenceOrgLimitPolicyTable,
   InferenceOrgUsageBucketTable,
@@ -1767,6 +1768,7 @@ export function registerAdminRoutes<T extends { Variables: AuthContextVariables 
         await unlessResumeTableMissing("headless_resume_grant", () => tx.delete(HeadlessResumeGrantTable).where(eq(HeadlessResumeGrantTable.userId, userId)))
         await unlessResumeTableMissing("headless_resume_revocation", () => tx.delete(HeadlessResumeRevocationTable).where(eq(HeadlessResumeRevocationTable.userId, userId)))
         await tx.delete(ExternalIdentityTable).where(eq(ExternalIdentityTable.userId, userId))
+        await tx.delete(SessionSsoAuthenticationTable).where(eq(SessionSsoAuthenticationTable.userId, userId))
         await tx.delete(ScimSyncEventTable).where(eq(ScimSyncEventTable.userId, userId))
         if (membershipRows.length > 0) {
           await tx.delete(ConnectedAccountTable).where(inArray(

@@ -3,6 +3,7 @@ import type { MiddlewareHandler } from "hono"
 import { beginUserOrganizationsAuditRequest } from "../audit/request-capture.js"
 import { getApiKeyScopedOrganizationId } from "../api-keys.js"
 import { resolveUserOrganizations, setSessionActiveOrganization, type UserOrgSummary } from "../orgs.js"
+import { findSsoBlockedOrganizations } from "../organization-sso-access.js"
 import type { AuthContextVariables } from "../session.js"
 
 export const LEGACY_ORG_PROXY_HEADER = "x-openwork-legacy-org-id"
@@ -81,10 +82,23 @@ export const resolveUserOrganizationsMiddleware: MiddlewareHandler<{
     ? resolved.orgs.filter((org) => org.id === scopedOrganizationId)
     : resolved.orgs
 
-  const activeOrganizationId = scopedOrganizationId ? scopedOrgs[0]?.id ?? null : resolved.activeOrgId
-  const activeOrganizationSlug = scopedOrganizationId
+  let activeOrganizationId = scopedOrganizationId ? scopedOrgs[0]?.id ?? null : resolved.activeOrgId
+  let activeOrganizationSlug = scopedOrganizationId
     ? scopedOrgs[0]?.slug ?? null
     : resolved.activeOrgSlug
+
+  // ssoPerOrganization: never act in an organization that requires SSO from a
+  // session that did not sign in through it. Fall back to the first
+  // organization the session may open; the list itself stays complete so the
+  // person can still choose it (and be sent through its SSO).
+  if (!apiKey && activeOrganizationId) {
+    const blocked = await findSsoBlockedOrganizations({ sessionId: session?.id ?? null, organizationIds: scopedOrgs.map((org) => org.id) })
+    if (blocked.has(activeOrganizationId)) {
+      const fallback = scopedOrganizationId ? null : scopedOrgs.find((org) => !blocked.has(org.id)) ?? null
+      activeOrganizationId = fallback?.id ?? null
+      activeOrganizationSlug = fallback?.slug ?? null
+    }
+  }
 
   if (shouldHydrateSessionActiveOrganization({
     scopedOrganizationId,

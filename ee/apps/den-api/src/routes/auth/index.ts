@@ -20,7 +20,8 @@ import {
 } from "../../auth-protection.js"
 import { db } from "../../db.js"
 import { env } from "../../env.js"
-import { findEnterpriseAuthRequirementForEmailDomain } from "../../enterprise-auth-requirement.js"
+import { findDomainSsoRequirement, ssoSignInUrl } from "../../organization-sso-access.js"
+import { resolveLoginSsoRouting } from "../../sso-routing.js"
 import {
   authorizeInitialAdminBootstrapSignup,
   completeInitialAdminBootstrapSignup,
@@ -523,6 +524,12 @@ const loginOptionsResponseSchema = z.object({
   organizationSlug: z.string().optional(),
   signInPath: z.string().optional(),
   signInUrl: z.string().url().optional(),
+  /** ssoPerOrganization: the SSO organization's name, shown on the "Continue with SSO" button. */
+  organizationName: z.string().optional(),
+  /** ssoPerOrganization: the organization requires SSO to open it; other methods still sign in. */
+  ssoRequired: z.boolean().optional(),
+  /** ssoPerOrganization: the usual step when the person does not use SSO. Absent: SSO is the only way in. */
+  alternativeStep: z.union([z.literal("google"), z.literal("github"), z.literal("password"), z.literal("new_account")]).optional(),
 }).meta({ ref: "AuthLoginOptionsResponse" })
 
 const loginOptionsBotVerificationFailedSchema = z.object({
@@ -603,12 +610,17 @@ async function getLoginOptionAccounts(email: string) {
 }
 
 async function hasPendingInvitationForEmail(invitationIdOrToken: string | undefined, email: string) {
+  return (await findPendingInvitationOrganizationForEmail(invitationIdOrToken, email)) !== null
+}
+
+/** The organization of a pending, unexpired invitation addressed to this email, or null. */
+async function findPendingInvitationOrganizationForEmail(invitationIdOrToken: string | undefined, email: string) {
   if (!invitationIdOrToken) {
-    return false
+    return null
   }
 
   const [invitation] = await db
-    .select({ inviteToken: InvitationTable.inviteToken })
+    .select({ organizationId: InvitationTable.organizationId })
     .from(InvitationTable)
     .where(and(
       sql`(${InvitationTable.id} = ${invitationIdOrToken} or ${InvitationTable.inviteToken} = ${invitationIdOrToken})`,
@@ -618,7 +630,7 @@ async function hasPendingInvitationForEmail(invitationIdOrToken: string | undefi
     ))
     .limit(1)
 
-  return Boolean(invitation)
+  return invitation?.organizationId ?? null
 }
 
 async function isInvitationSignupAllowed(request: Request) {
@@ -1029,7 +1041,7 @@ export function registerAuthRoutes<T extends { Variables: AuthContextVariables }
       tags: ["Authentication"],
       security: [],
       summary: "Resolve deterministic login option",
-      description: "Returns the deterministic next authentication step for an email address. SSO is preferred before Google, password, GitHub compatibility, and new account creation.",
+      description: "Returns the deterministic next authentication step for an email address. SSO is preferred before Google, password, GitHub compatibility, and new account creation. When the SSO organization has ssoPerOrganization on and does not restrict its domain, the SSO step also carries alternativeStep (the usual method), ssoRequired and organizationName, and a valid pending invitation to another organization skips the domain's SSO.",
       responses: {
         200: jsonResponse("Login option resolved successfully.", loginOptionsResponseSchema),
         400: jsonResponse("The login option query parameters were invalid.", z.object({ error: z.literal("invalid_request") })),
@@ -1069,9 +1081,22 @@ export function registerAuthRoutes<T extends { Variables: AuthContextVariables }
             signInPath: singletonSsoStatus.signInPath,
           }
         : null
-      const requirement = singletonSsoRequirement ?? await findEnterpriseAuthRequirementForEmailDomain(email)
-      const accounts = requirement ? [] : await getLoginOptionAccounts(email)
-      if (!requirement && accounts.length === 0) {
+      const domainRequirement = singletonSsoRequirement ? null : await findDomainSsoRequirement(email)
+      // Today's behavior (flag off, single organization, restricted domain)
+      // never reads the invitation for an SSO domain: SSO is the only way in.
+      const legacySsoOnly = Boolean(singletonSsoRequirement)
+        || Boolean(domainRequirement && (!domainRequirement.perOrganization || domainRequirement.policy.restrictDomainToSso))
+      const invitationOrganizationId = legacySsoOnly ? null : await findPendingInvitationOrganizationForEmail(invite, email)
+      const routing = resolveLoginSsoRouting({
+        singletonSso: Boolean(singletonSsoRequirement),
+        requirement: domainRequirement,
+        invitationOrganizationId,
+      })
+      const ssoTarget = singletonSsoRequirement ?? (domainRequirement && routing.kind !== "none"
+        ? { organizationSlug: domainRequirement.organizationSlug, signInPath: domainRequirement.signInPath }
+        : null)
+      const accounts = routing.kind === "sso_only" ? [] : await getLoginOptionAccounts(email)
+      if (routing.kind !== "sso_only" && accounts.length === 0) {
         const missRetryAfter = await checkLoginOptionsMissRateLimit(rateLimitKeys.domainMiss)
         if (missRetryAfter !== null) {
           c.header("Retry-After", String(missRetryAfter))
@@ -1082,19 +1107,30 @@ export function registerAuthRoutes<T extends { Variables: AuthContextVariables }
         }
       }
       const allowPublicSignup = env.orgMode !== "single_org" || env.singleOrg.allowPublicSignup
-      const allowInvitationSignup = !requirement && await hasPendingInvitationForEmail(invite, email)
-      const nextStep = resolveLoginOptionKind({ requireSso: Boolean(requirement), accounts, allowNewAccount: allowPublicSignup || allowInvitationSignup })
+      const allowInvitationSignup = routing.kind !== "sso_only" && invitationOrganizationId !== null
+      const otherStep = resolveLoginOptionKind({ requireSso: false, accounts, allowNewAccount: allowPublicSignup || allowInvitationSignup })
+      const nextStep = resolveLoginOptionKind({ requireSso: routing.kind !== "none", accounts, allowNewAccount: allowPublicSignup || allowInvitationSignup })
 
-      if (nextStep === "sso" && requirement) {
-        return c.json({
+      if (nextStep === "sso" && ssoTarget) {
+        const ssoStep = {
           email,
           nextStep,
           allowPublicSignup,
           allowInvitationSignup,
-          organizationSlug: requirement.organizationSlug,
-          signInPath: requirement.signInPath,
-          signInUrl: new URL(requirement.signInPath, env.betterAuthTrustedOrigins[0] ?? env.betterAuthUrl).toString(),
-        })
+          organizationSlug: ssoTarget.organizationSlug,
+          signInPath: ssoTarget.signInPath,
+          signInUrl: ssoSignInUrl(ssoTarget.signInPath),
+        }
+        if (routing.kind === "sso_preferred" && domainRequirement && otherStep !== "sso") {
+          // ssoPerOrganization: SSO first, the usual step one click away.
+          return c.json({
+            ...ssoStep,
+            organizationName: domainRequirement.organizationName,
+            ssoRequired: routing.ssoRequired,
+            alternativeStep: otherStep,
+          })
+        }
+        return c.json(ssoStep)
       }
 
       return c.json({ email, nextStep, allowPublicSignup, allowInvitationSignup })

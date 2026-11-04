@@ -6,6 +6,8 @@ import { getOrganizationEntitlements } from "./entitlements.js"
 import { runPostOrganizationMemberChangeHooks } from "./organization-member-hooks.js"
 import { acceptPendingInvitationForBootstrapMembership, ensureBootstrapMembershipForOrganization } from "./orgs.js"
 import { resolveStoredScimProvider } from "./scim-token-storage.js"
+import { readSsoPerOrganization } from "./organization-sso-access.js"
+import { allowsVerifiedDomainAutoJoin, readOrganizationSsoPolicy } from "./sso-routing.js"
 import { ORGANIZATION_SSO_JIT_ROLE } from "./sso-jit.js"
 import { getOrganizationSeatAddEligibility } from "./stripe-billing.js"
 
@@ -106,11 +108,16 @@ export async function provisionVerifiedDomainMembership(input: { userId: UserId;
   const emailDomain = input.email.trim().toLowerCase().split("@")[1]
   if (!emailDomain) return
   const providers = await db
-    .select({ organizationId: SsoProviderTable.organizationId, domain: SsoProviderTable.domain })
+    .select({ organizationId: SsoProviderTable.organizationId, domain: SsoProviderTable.domain, metadata: OrganizationTable.metadata })
     .from(SsoProviderTable)
+    .innerJoin(OrganizationTable, eq(OrganizationTable.id, SsoProviderTable.organizationId))
     .where(eq(SsoProviderTable.domainVerified, true))
   const provider = providers.find((entry) => emailDomainMatches(emailDomain, entry.domain))
   if (!provider) return
+  // ssoPerOrganization: an organization that requires SSO gets members through
+  // SSO sign-up, never from a password or Google sign-in on its domain.
+  const perOrganization = (await readSsoPerOrganization([provider.organizationId])).get(provider.organizationId) === true
+  if (!allowsVerifiedDomainAutoJoin({ policy: readOrganizationSsoPolicy(provider.metadata), perOrganization })) return
   if (await hasMemberRow(provider.organizationId, input.userId)) return
   if (!await organizationAllowsProvisioning(provider.organizationId, "sso")) return
   await ensureBootstrapMembershipForOrganization({
