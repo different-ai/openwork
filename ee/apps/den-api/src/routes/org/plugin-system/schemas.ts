@@ -622,6 +622,7 @@ export const libraryItemSchema = z.discriminatedUnion("type", [
     edges: z.array(effectiveAccessEdgeSchema),
     state: z.enum(["ready", "needs_signin", "needs_admin_setup"]),
     resultState: z.enum(["never_run", "fresh", "stale", "needs_attention"]),
+    failureReason: z.string().nullable().optional(),
     latestSuccessfulAt: nullableTimestampSchema,
     viewState: z.enum(["default", "custom_active", "build_failed", "retired"]),
     activeViewTitle: nullableStringSchema,

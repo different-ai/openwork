@@ -69,6 +69,35 @@ function LongText({ value }: { value: string }) {
   );
 }
 
+/** `**bold**` inside one line of text, rendered as React text (never as HTML). */
+function InlineText({ text }: { text: string }) {
+  const parts = text.split(/(\*\*[^*]+\*\*)/g).filter(Boolean);
+  return <>{parts.map((part, index) => part.startsWith("**") && part.endsWith("**") && part.length > 4
+    ? <strong key={index} className="font-semibold text-gray-900">{part.slice(2, -2)}</strong>
+    : <span key={index}>{part}</span>)}</>;
+}
+
+/** Text written in lines (a brief, a summary): paragraphs and "- " bullets, as the workflow wrote them. */
+function isReadableText(value: unknown): value is string {
+  return typeof value === "string" && value.includes("\n") && !isoDate(value);
+}
+
+function ReadableText({ value }: { value: string }) {
+  const lines = decodeHtmlEntities(value).split("\n");
+  return (
+    <div className="space-y-1 text-[13px] leading-6 text-gray-700" data-testid="den-workflow-readable-text">
+      {lines.map((line, index) => {
+        const trimmed = line.trim();
+        if (!trimmed) return <div key={index} className="h-2" aria-hidden="true" />;
+        const bullet = /^[-*•]\s+/.exec(trimmed);
+        return bullet ? (
+          <p key={index} className="flex gap-2 pl-1"><span className="text-gray-400" aria-hidden="true">•</span><span className="min-w-0"><InlineText text={trimmed.slice(bullet[0].length)} /></span></p>
+        ) : <p key={index}><InlineText text={trimmed} /></p>;
+      })}
+    </div>
+  );
+}
+
 function ScalarValue({ value }: { value: unknown }) {
   if (value === null || value === undefined || value === "") return <span className="text-gray-400">None</span>;
   if (typeof value === "boolean") return <>{value ? "Yes" : "No"}</>;
@@ -97,15 +126,18 @@ function DefinitionList({ entries }: { entries: [string, unknown][] }) {
 function ObjectValue({ value }: { value: Record<string, unknown> }) {
   const entries = Object.entries(value);
   if (entries.length === 0) return <EmptyValue />;
-  const scalars = entries.filter((entry) => !isCollection(entry[1]));
-  const collections = entries.filter((entry) => isCollection(entry[1]));
+  const scalars = entries.filter((entry) => !isCollection(entry[1]) && !isReadableText(entry[1]));
+  const collections = entries.filter((entry) => isCollection(entry[1]) || isReadableText(entry[1]));
+  // A result that is only a written brief reads as the brief, without a label above it.
+  const onlyText = scalars.length === 0 && collections.length === 1 && isReadableText(collections[0]?.[1]);
+  if (onlyText) return <ReadableText value={collections[0]?.[1] as string} />;
   return (
     <div className="space-y-5">
       <DefinitionList entries={scalars} />
       {collections.map(([key, nested]) => (
         <section className="space-y-2 border-t border-gray-100 pt-4" key={key}>
           <h3 className="text-[12px] font-medium text-gray-600">{humanizeIdentifier(key)}</h3>
-          <FriendlyValueContent value={nested} />
+          {isReadableText(nested) ? <ReadableText value={nested} /> : <FriendlyValueContent value={nested} />}
         </section>
       ))}
     </div>
@@ -261,6 +293,7 @@ function FriendlyValueContent({ value }: { value: unknown }) {
   if (value === null || value === undefined) return <EmptyValue />;
   if (Array.isArray(value)) return <ArrayValue value={value} />;
   if (isPlainObject(value)) return <ObjectValue value={value} />;
+  if (isReadableText(value)) return <ReadableText value={value} />;
   return <p className="text-[13px] leading-6 text-gray-700"><ScalarValue value={value} /></p>;
 }
 
