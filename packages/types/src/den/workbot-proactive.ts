@@ -718,9 +718,10 @@ export const memberAgentInputSchema = z
     undo: z.string().trim().min(1).max(64).optional(),
     /**
      * `workbotAgentBrief`: check less often than the organization does (1, 2, 3 or 4 hours, never more often than the
-     * admin's); null goes back to the organization's.
+     * admin's); null goes back to the organization's. One flat union: `.nullable()` on the literal union nests an
+     * `anyOf` inside an `anyOf`, which crashes the Spectral `…At` rules in `pnpm api:lint`.
      */
-    checkEveryHours: agentCheckEveryHoursSchema.nullable().optional(),
+    checkEveryHours: z.union([...agentCheckEveryHoursSchema.options, z.null()]).optional(),
     /**
      * `workbotAgentBrief`: the member's own brief lines. `add`: lines in their words ("Also watch our Render bill.",
      * "Never tell me about newsletters."); `remove`: lines to drop, matched without case; `set`: the whole text (the
