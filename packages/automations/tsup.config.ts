@@ -8,6 +8,7 @@ export default defineConfig({
     testing: "src/testing.ts",
     proactive: "src/proactive.ts",
     "proactive-brief": "src/proactive-brief.ts",
+    "agent-read-tools": "src/agent-read-tools.ts",
   },
   external: ["@openwork/types", "zod", "@openwork/automations/proactive"],
   format: ["esm"],

@@ -54,6 +54,50 @@ export const AGENT_CORE_SOURCE_COPY: Record<AgentCoreSource, { label: string; vi
   chat: { label: "Team chat", via: "Slack or Teams: DMs, mentions and threads they're in" },
 }
 
+/**
+ * `workbotAgentBrief`: an admin's choice for one tool on one connection, which wins over everything but a provider
+ * marking the tool destructive ("Tools agents may use").
+ */
+export const AGENT_TOOL_OVERRIDES = ["allow", "deny"] as const
+export type AgentToolOverride = (typeof AGENT_TOOL_OVERRIDES)[number]
+export const agentToolOverrideSchema = z.enum(AGENT_TOOL_OVERRIDES)
+
+/**
+ * Why a tool may or may not be called by members' agents (`decideAgentReadTool` in @openwork/automations), in the
+ * order they are checked. `destructive` and `native_write` are locked: no admin can allow them.
+ */
+export const AGENT_TOOL_DECISION_REASONS = [
+  "destructive",
+  "admin_allowed",
+  "admin_denied",
+  "reviewed",
+  "not_reviewed",
+  "marked_read",
+  "marked_write",
+  "read_name",
+  "write_name",
+  "unclear",
+  "native_read",
+  "native_write",
+] as const
+export type AgentToolDecisionReason = (typeof AGENT_TOOL_DECISION_REASONS)[number]
+
+/** The reason, as an admin reads it next to the tool. */
+export const AGENT_TOOL_DECISION_COPY: Record<AgentToolDecisionReason, string> = {
+  destructive: "Its provider marks it destructive",
+  admin_allowed: "Allowed by an admin",
+  admin_denied: "Turned off by an admin",
+  reviewed: "Reviewed as a read",
+  not_reviewed: "Not on the reviewed list",
+  marked_read: "Its provider marks it read-only",
+  marked_write: "Its provider says it can change things",
+  read_name: "Reads, by its name",
+  write_name: "Changes things, by its name",
+  unclear: "Not clearly a read",
+  native_read: "Reads only",
+  native_write: "Changes things",
+}
+
 /** How an admin lets agents read a source: on for everyone, members choose, or not allowed. */
 export const AGENT_SOURCE_POLICIES = ["everyone", "members", "off"] as const
 export type AgentSourcePolicy = (typeof AGENT_SOURCE_POLICIES)[number]
@@ -66,14 +110,23 @@ export const AGENT_SOURCE_POLICY_COPY: Record<AgentSourcePolicy, string> = {
 
 /** A core source (`calendar`, `email`, `chat`) or another connection's id. */
 const agentSourceIdSchema = z.string().trim().min(1).max(64)
-const AGENT_SOURCE_CONNECTIONS_MAX = 200
-const AGENT_CORE_CONNECTIONS_MAX = 50
+/**
+ * Input bounds only, far above any organization's connections: every connection is listed whatever its count
+ * (`workbotAgentBrief`); these only stop a request from carrying an unbounded list.
+ */
+const AGENT_SOURCE_CONNECTIONS_MAX = 2000
+const AGENT_CORE_CONNECTIONS_MAX = 2000
+/** Tools per connection an admin can decide on; a server lists far fewer. */
+const AGENT_TOOL_OVERRIDES_MAX = 2000
+const agentToolNameSchema = z.string().trim().min(1).max(255)
 /** The connections an admin picked for one core source; empty reads nothing (turning it off is its policy). */
 const agentCoreConnectionIdsSchema = z.array(agentSourceIdSchema).max(AGENT_CORE_CONNECTIONS_MAX)
 /** The connections an admin added to Other context. */
 const agentOtherConnectionIdsSchema = z.array(agentSourceIdSchema).max(AGENT_SOURCE_CONNECTIONS_MAX)
 const tooManyConnections = { message: "Too many connections." }
 const withinConnectionLimit = (value: Record<string, unknown>) => Object.keys(value).length <= AGENT_SOURCE_CONNECTIONS_MAX
+const tooManyTools = { message: "Too many tools." }
+const withinToolLimit = (value: Record<string, unknown>) => Object.keys(value).length <= AGENT_TOOL_OVERRIDES_MAX
 
 /**
  * The organization's policy per source. Calendar, email and team chat are on for everyone by default; every other
@@ -107,6 +160,13 @@ export const agentSourcesPolicySchema = z.object({
   otherConnections: agentOtherConnectionIdsSchema.optional(),
   /** Other connections by id; one that isn't listed is up to members. */
   connections: z.record(agentSourceIdSchema, agentSourcePolicySchema).refine(withinConnectionLimit, tooManyConnections),
+  /**
+   * `workbotAgentBrief`: per connection id, an admin's choice per tool name ("Tools agents may use"). A tool that isn't
+   * listed is decided by its reviewed list, its provider's annotations, then its name.
+   */
+  toolOverrides: z.record(agentSourceIdSchema, z.record(agentToolNameSchema, agentToolOverrideSchema).refine(withinToolLimit, tooManyTools))
+    .refine(withinConnectionLimit, tooManyConnections)
+    .optional(),
 })
 export type AgentSourcesPolicy = z.infer<typeof agentSourcesPolicySchema>
 
@@ -134,6 +194,14 @@ export const agentSourcesPolicyInputSchema = z
     }).strict().optional(),
     otherConnections: agentOtherConnectionIdsSchema.nullable().optional(),
     connections: z.record(agentSourceIdSchema, agentSourcePolicySchema.nullable()).refine(withinConnectionLimit, tooManyConnections).optional(),
+    /**
+     * `workbotAgentBrief`: per connection id, tools to allow or turn off for agents; null on a tool goes back to its
+     * automatic decision, null on a connection clears all of its choices.
+     */
+    toolOverrides: z.record(
+      agentSourceIdSchema,
+      z.record(agentToolNameSchema, agentToolOverrideSchema.nullable()).refine(withinToolLimit, tooManyTools).nullable(),
+    ).refine(withinConnectionLimit, tooManyConnections).optional(),
   })
   .strict()
 export type AgentSourcesPolicyInput = z.infer<typeof agentSourcesPolicyInputSchema>
@@ -171,6 +239,17 @@ const connectedMembersSchema = z.number().int().min(0).nullable().default(null)
 export const agentCoreSourceConnectionSchema = agentSourceConnectionSchema.extend({ connectedMembers: connectedMembersSchema })
 export type AgentCoreSourceConnection = z.infer<typeof agentCoreSourceConnectionSchema>
 
+/**
+ * A connection in Other context. `workbotAgentBrief` adds whether it is one of Den's own providers (read there for what
+ * isn't calendar, email or chat) and the policy it has now, which can differ from `settings.sources.connections`: a
+ * reviewed connection an admin took out of Other context before every connection was listed stays not allowed.
+ */
+export const agentOtherSourceConnectionSchema = agentSourceConnectionSchema.extend({
+  native: z.boolean().optional(),
+  policy: agentSourcePolicySchema.optional(),
+})
+export type AgentOtherSourceConnection = z.infer<typeof agentOtherSourceConnectionSchema>
+
 /** A connection an admin can add as a source, and where. */
 export const agentSourceOptionSchema = agentSourceConnectionSchema.extend({
   /** Den's own provider (Google Workspace, Microsoft 365), read through Den; otherwise an MCP with reviewed read tools. */
@@ -180,6 +259,36 @@ export const agentSourceOptionSchema = agentSourceConnectionSchema.extend({
   connectedMembers: connectedMembersSchema,
 })
 export type AgentSourceOption = z.infer<typeof agentSourceOptionSchema>
+
+/** `workbotAgentBrief`: one of a connection's tools, and whether members' agents may call it. */
+export const agentToolDecisionViewSchema = z.object({
+  name: z.string(),
+  title: z.string().nullable(),
+  description: z.string().nullable(),
+  allowed: z.boolean(),
+  reason: z.enum(AGENT_TOOL_DECISION_REASONS),
+  /** The admin's choice for it, if any. */
+  override: agentToolOverrideSchema.nullable(),
+  /** No admin can allow it (its provider marks it destructive, or one of Den's operations that changes things). */
+  locked: z.boolean(),
+})
+export type AgentToolDecisionView = z.infer<typeof agentToolDecisionViewSchema>
+
+/**
+ * `GET /v1/org/workbot-settings/proactive/sources/{connectionId}/tools`: a connection's tools as members' agents see
+ * them. `needs_connection`: the admin's own account isn't connected, so its tools can't be listed; `unavailable`: the
+ * service didn't answer.
+ */
+export const agentConnectionToolsViewSchema = z.object({
+  connectionId: z.string(),
+  status: z.enum(["ready", "needs_connection", "unavailable"]),
+  /** Tools agents may call. */
+  readTools: z.number().int().min(0),
+  tools: z.array(agentToolDecisionViewSchema),
+  /** Den's own providers: calendar, mail and chat are read under those sources, not here. */
+  coreSourcesElsewhere: z.boolean(),
+})
+export type AgentConnectionToolsView = z.infer<typeof agentConnectionToolsViewSchema>
 
 /** The policy for one source: a core source's own, or a connection's (members choose unless an admin decided). */
 export function agentSourcePolicy(policy: AgentSourcesPolicy, sourceId: string): AgentSourcePolicy {
@@ -209,6 +318,7 @@ export function mergeAgentSourcesPolicy(current: AgentSourcesPolicy, change: Age
   }
   const requestedOther = change.otherConnections
   const otherConnections = requestedOther === undefined ? current.otherConnections : requestedOther ?? undefined
+  const toolOverrides = mergeToolOverrides(current.toolOverrides, change.toolOverrides)
   return {
     calendar: change.calendar ?? current.calendar,
     email: change.email ?? current.email,
@@ -217,7 +327,32 @@ export function mergeAgentSourcesPolicy(current: AgentSourcesPolicy, change: Age
     ...(Object.keys(coreDefaults).length ? { coreDefaults } : {}),
     ...(otherConnections ? { otherConnections: [...new Set(otherConnections)] } : {}),
     connections,
+    ...(toolOverrides ? { toolOverrides } : {}),
   }
+}
+
+function mergeToolOverrides(current: AgentSourcesPolicy["toolOverrides"], change: AgentSourcesPolicyInput["toolOverrides"]): AgentSourcesPolicy["toolOverrides"] {
+  const next: NonNullable<AgentSourcesPolicy["toolOverrides"]> = {}
+  for (const [id, tools] of Object.entries(current ?? {})) next[id] = { ...tools }
+  for (const [id, tools] of Object.entries(change ?? {})) {
+    if (tools === null) {
+      delete next[id]
+      continue
+    }
+    const merged = { ...next[id] }
+    for (const [name, value] of Object.entries(tools)) {
+      if (value === null) delete merged[name]
+      else merged[name] = value
+    }
+    if (Object.keys(merged).length) next[id] = merged
+    else delete next[id]
+  }
+  return Object.keys(next).length ? next : undefined
+}
+
+/** An admin's choices for one connection's tools, by tool name; empty when they made none. */
+export function agentToolOverrides(policy: AgentSourcesPolicy, connectionId: string): Readonly<Record<string, AgentToolOverride>> {
+  return policy.toolOverrides?.[connectionId] ?? {}
 }
 
 // ---- Your agent's brief and check rhythm (`workbotAgentBrief`) -----------------------------------------------------
@@ -403,8 +538,11 @@ export const workbotProactiveViewSchema = z.object({
     calendar: z.array(agentCoreSourceConnectionSchema),
     email: z.array(agentCoreSourceConnectionSchema),
     chat: z.array(agentCoreSourceConnectionSchema),
-    /** Every other connection agents can read (a service with reviewed read tools), each its own source. */
-    other: z.array(agentSourceConnectionSchema),
+    /**
+     * Every other connection agents can read, each its own source: with `workbotAgentBrief` every connection (Den's
+     * own providers for what isn't calendar, email or chat), else a service with reviewed read tools.
+     */
+    other: z.array(agentOtherSourceConnectionSchema),
     /** Every connection an admin can add as a source, with where it can go. */
     all: z.array(agentSourceOptionSchema),
     /**
@@ -626,6 +764,12 @@ export const memberAgentSourceSchema = z.object({
   /** The member's instruction for it, in their own words. */
   instruction: z.string(),
   lastReadAt: z.iso.datetime().nullable(),
+  /**
+   * `workbotAgentBrief`, other sources: how many of its tools the agent may call (0: none read only, so an admin should
+   * review its tools). Null when they couldn't be listed (the member's account isn't ready, or the service didn't
+   * answer); absent with the feature off.
+   */
+  readTools: z.number().int().min(0).nullable().optional(),
 })
 export type MemberAgentSource = z.infer<typeof memberAgentSourceSchema>
 
