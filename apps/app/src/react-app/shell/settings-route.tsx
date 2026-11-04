@@ -189,6 +189,7 @@ import { CommandPalette, type PaletteItem } from "./command-palette";
 import { applyDefaultModelPreference } from "./command-palette-models";
 import { buildCommandPaletteSessions } from "./command-palette-sessions";
 import { useCommandPaletteShortcut } from "./use-shell-shortcuts";
+import { NATIVE_MENU_NEW_SESSION_EVENT, useNativeMenuEvent } from "./native-menu-events";
 import { buildFeedbackUrl } from "@/app/lib/feedback";
 import { getDenInferenceUrl, readDenSettings, type DenSettings } from "@/app/lib/den";
 import { denDashboardUrl } from "@/app/lib/den-dashboard-links";
@@ -1237,6 +1238,8 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
     if (!workspaceId) { navigate("/session"); return; }
     openNewSessionDraft({ workspaceId }, navigate);
   }, [navigate, selectedWorkspaceId]);
+  // File > New Session works from Settings too (the session route owns it elsewhere).
+  useNativeMenuEvent(NATIVE_MENU_NEW_SESSION_EVENT, handleCreatePaletteSession, !props.embedded);
   // Settings refreshes provider auth whenever the picker opens (the session
   // route does not need this; its provider state is kept fresh elsewhere).
   useEffect(() => {

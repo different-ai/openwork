@@ -1,229 +1,68 @@
 // Native application menu: template installation, the macOS/system menu
-// actions that forward into the renderer (settings, updates, sidebar, zoom),
-// and Windows/Linux menu-bar visibility. Extracted from main.mjs as a
-// factory (createRuntimeManager pattern); the NATIVE_MENU_* channels are
-// consumed by the preload bridge.
-import { BrowserWindow, Menu, shell } from "electron";
+// actions that forward into the renderer (settings, updates, sessions,
+// sidebar, zoom), and Windows/Linux menu-bar visibility. The template itself
+// is built by app-menu-template.mjs; the NATIVE_MENU_* channels are consumed
+// by the preload bridge.
+import { app, BrowserWindow, Menu, shell } from "electron";
+import { buildApplicationMenuTemplate } from "./app-menu-template.mjs";
 import { runDetachedTask } from "./process-resilience.mjs";
 
 const NATIVE_MENU_OPEN_SETTINGS_EVENT = "openwork:native-menu:open-settings";
 const NATIVE_MENU_TOGGLE_SIDEBAR_EVENT = "openwork:native-menu:toggle-sidebar";
 const NATIVE_MENU_CHECK_UPDATES_EVENT = "openwork:native-menu:check-updates";
 const NATIVE_MENU_ZOOM_EVENT = "openwork:native-menu:zoom";
+const NATIVE_MENU_NEW_SESSION_EVENT = "openwork:native-menu:new-session";
+const NATIVE_MENU_SEARCH_SESSIONS_EVENT = "openwork:native-menu:search-sessions";
+const NATIVE_MENU_COMMAND_PALETTE_EVENT = "openwork:native-menu:command-palette";
 
 export function createApplicationMenu({ appName, docsUrl, getWindow, closeBrowserTab }) {
   let applicationMenuVisible = process.platform === "darwin";
   let currentAppName = appName;
 
-  async function openSettingsFromNativeMenu() {
+  // Bring the main window forward, then hand the action to the renderer.
+  async function sendToWindow(channel, payload, { reveal = true } = {}) {
     const win = await getWindow();
-    if (win.isMinimized()) win.restore();
-    win.show();
-    win.focus();
-    win.webContents.send(NATIVE_MENU_OPEN_SETTINGS_EVENT);
+    if (reveal) {
+      if (win.isMinimized()) win.restore();
+      win.show();
+      win.focus();
+    }
+    if (payload === undefined) win.webContents.send(channel);
+    else win.webContents.send(channel, payload);
   }
 
-  async function checkForUpdatesFromNativeMenu() {
-    const win = await getWindow();
-    if (win.isMinimized()) win.restore();
-    win.show();
-    win.focus();
-    win.webContents.send(NATIVE_MENU_CHECK_UPDATES_EVENT);
+  function forward(label, channel, payload, options) {
+    runDetachedTask(label, () => sendToWindow(channel, payload, options));
   }
 
-  async function toggleSidebarFromNativeMenu() {
-    const win = await getWindow();
-    win.webContents.send(NATIVE_MENU_TOGGLE_SIDEBAR_EVENT);
-  }
-
-  // Zoom must flow through the renderer's font-zoom pathway so the persisted
-  // preference and the applied webContents zoom factor never drift apart. The
-  // built-in resetZoom/zoomIn/zoomOut roles bypass that pathway (and zoom
-  // whichever webContents is focused, including the embedded browser view).
-  async function zoomFromNativeMenu(action) {
-    const win = await getWindow();
-    win.webContents.send(NATIVE_MENU_ZOOM_EVENT, action);
-  }
+  /** @type {import("./app-menu-template.mjs").AppMenuActions} */
+  const actions = {
+    openSettings: (tab) => forward("open settings from menu", NATIVE_MENU_OPEN_SETTINGS_EVENT, tab),
+    checkForUpdates: () => forward("check for updates from menu", NATIVE_MENU_CHECK_UPDATES_EVENT),
+    newSession: () => forward("new session from menu", NATIVE_MENU_NEW_SESSION_EVENT),
+    searchSessions: () => forward("search sessions from menu", NATIVE_MENU_SEARCH_SESSIONS_EVENT),
+    commandPalette: () => forward("command palette from menu", NATIVE_MENU_COMMAND_PALETTE_EVENT),
+    toggleSidebar: () =>
+      forward("toggle sidebar from menu", NATIVE_MENU_TOGGLE_SIDEBAR_EVENT, undefined, { reveal: false }),
+    // Zoom must flow through the renderer's font-zoom pathway so the persisted
+    // preference and the applied webContents zoom factor never drift apart. The
+    // built-in resetZoom/zoomIn/zoomOut roles bypass that pathway (and zoom
+    // whichever webContents is focused, including the embedded browser view).
+    zoom: (action) => forward(`zoom ${action} from menu`, NATIVE_MENU_ZOOM_EVENT, action, { reveal: false }),
+    close: (_item, focusedWindow) => {
+      const host = focusedWindow instanceof BrowserWindow ? focusedWindow : BrowserWindow.getFocusedWindow();
+      if (host && !closeBrowserTab?.(host)) host.close();
+    },
+    openDocs: () => runDetachedTask("open documentation from menu", () => shell.openExternal(docsUrl)),
+  };
 
   function install() {
-    const isMac = process.platform === "darwin";
-    const closeItem = {
-      label: "Close",
-      accelerator: "CommandOrControl+W",
-      click: (_item, focusedWindow) => {
-        const host = focusedWindow ?? BrowserWindow.getFocusedWindow();
-        if (host && !closeBrowserTab?.(host)) host.close();
-      },
-    };
-    const template = /** @type {import("electron").MenuItemConstructorOptions[]} */ ([
-      ...(isMac
-        ? [
-            {
-              label: currentAppName,
-              submenu: [
-                { role: "about" },
-                {
-                  label: "Check for Updates...",
-                  click: () => {
-                    runDetachedTask("check for updates from menu", checkForUpdatesFromNativeMenu);
-                  },
-                },
-                { type: "separator" },
-                {
-                  label: "Settings...",
-                  accelerator: "Command+,",
-                  click: () => {
-                    runDetachedTask("open settings from menu", openSettingsFromNativeMenu);
-                  },
-                },
-                { type: "separator" },
-                { role: "services" },
-                { type: "separator" },
-                { role: "hide" },
-                { role: "hideOthers" },
-                { role: "unhide" },
-                { type: "separator" },
-                { role: "quit" },
-              ],
-            },
-          ]
-        : []),
-      {
-        label: "File",
-        submenu: [
-          ...(isMac
-            ? []
-            : [
-                {
-                  label: "Settings",
-                  accelerator: "Control+,",
-                  click: () => {
-                    runDetachedTask("open settings from menu", openSettingsFromNativeMenu);
-                  },
-                },
-                { type: "separator" },
-              ]),
-          closeItem,
-        ],
-      },
-      {
-        label: "Edit",
-        submenu: [
-          { role: "undo" },
-          { role: "redo" },
-          { type: "separator" },
-          { role: "cut" },
-          { role: "copy" },
-          { role: "paste" },
-          ...(isMac
-            ? [
-                { role: "pasteAndMatchStyle" },
-                { role: "delete" },
-                { role: "selectAll" },
-                { type: "separator" },
-                {
-                  label: "Speech",
-                  submenu: [
-                    { role: "startSpeaking" },
-                    { role: "stopSpeaking" },
-                  ],
-                },
-                { type: "separator" },
-                {
-                  label: "Settings...",
-                  click: () => {
-                    runDetachedTask("open settings from menu", openSettingsFromNativeMenu);
-                  },
-                },
-              ]
-            : [
-                { role: "delete" },
-                { type: "separator" },
-                { role: "selectAll" },
-              ]),
-        ],
-      },
-      {
-        label: "View",
-        submenu: [
-          {
-            label: "Toggle Sidebar",
-            accelerator: "CommandOrControl+B",
-            click: () => {
-              runDetachedTask("toggle sidebar from menu", toggleSidebarFromNativeMenu);
-            },
-          },
-          { type: "separator" },
-          { role: "reload" },
-          { role: "forceReload" },
-          { role: "toggleDevTools" },
-          { type: "separator" },
-          {
-            label: "Actual Size",
-            accelerator: "CommandOrControl+0",
-            click: () => {
-              runDetachedTask("reset zoom from menu", () => zoomFromNativeMenu("reset"));
-            },
-          },
-          {
-            label: "Zoom In",
-            accelerator: "CommandOrControl+Plus",
-            click: () => {
-              runDetachedTask("zoom in from menu", () => zoomFromNativeMenu("in"));
-            },
-          },
-          {
-            label: "Zoom Out",
-            accelerator: "CommandOrControl+-",
-            click: () => {
-              runDetachedTask("zoom out from menu", () => zoomFromNativeMenu("out"));
-            },
-          },
-          { type: "separator" },
-          { role: "togglefullscreen" },
-        ],
-      },
-      {
-        label: "Window",
-        submenu: [
-          { role: "minimize" },
-          { role: "zoom" },
-          ...(isMac
-            ? [
-                { type: "separator" },
-                { role: "front" },
-                { type: "separator" },
-                { role: "window" },
-              ]
-            : [
-                closeItem,
-              ]),
-        ],
-      },
-      {
-        role: "help",
-        submenu: [
-          ...(isMac
-            ? []
-            : [
-                {
-                  label: "Check for Updates...",
-                  click: () => {
-                    runDetachedTask("check for updates from menu", checkForUpdatesFromNativeMenu);
-                  },
-                },
-                { type: "separator" },
-              ]),
-          {
-            label: "Docs",
-            click: () => {
-              runDetachedTask("open documentation from menu", () => shell.openExternal(docsUrl));
-            },
-          },
-        ],
-      },
-    ]);
-
+    const template = buildApplicationMenuTemplate({
+      isMac: process.platform === "darwin",
+      isPackaged: app.isPackaged,
+      appName: currentAppName,
+      actions,
+    });
     Menu.setApplicationMenu(Menu.buildFromTemplate(template));
   }
 

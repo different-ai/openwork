@@ -27,6 +27,12 @@ import { isCycleModelSourceShortcut } from "@/react-app/domains/models/model-cat
 import { isFastModeShortcut } from "./fast-mode-shortcut";
 import { isNewSessionShortcut } from "./new-session-shortcut";
 import { isSettleSessionShortcut } from "./settle-session-shortcut";
+import {
+  NATIVE_MENU_COMMAND_PALETTE_EVENT,
+  NATIVE_MENU_NEW_SESSION_EVENT,
+  NATIVE_MENU_SEARCH_SESSIONS_EVENT,
+  useNativeMenuEvent,
+} from "./native-menu-events";
 
 const NO_SESSION_NUMBER_TARGETS: readonly SessionNumberShortcutTarget[] = [];
 
@@ -59,6 +65,8 @@ export function useCommandPaletteShortcut(enabled = true) {
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
   }, []);
+  // View > Command Palette… in the native menu.
+  useNativeMenuEvent(NATIVE_MENU_COMMAND_PALETTE_EVENT, () => setCommandPaletteOpen(true), enabled);
 
   return { commandPaletteOpen, setCommandPaletteOpen };
 }
@@ -250,6 +258,10 @@ export function useShellShortcuts(input: UseShellShortcutsInput) {
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
   }, []);
+
+  // File > New Session and File > Search Sessions… in the native menu.
+  useNativeMenuEvent(NATIVE_MENU_NEW_SESSION_EVENT, () => onCreateNewSession());
+  useNativeMenuEvent(NATIVE_MENU_SEARCH_SESSIONS_EVENT, () => setSessionSearchOpen(true));
 
   useEffect(() => {
     const handler = (event: KeyboardEvent) => handleNewSessionKeyDown(event);

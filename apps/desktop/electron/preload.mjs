@@ -6,6 +6,9 @@ const NATIVE_MENU_OPEN_SETTINGS_EVENT = "openwork:native-menu:open-settings";
 const NATIVE_MENU_TOGGLE_SIDEBAR_EVENT = "openwork:native-menu:toggle-sidebar";
 const NATIVE_MENU_CHECK_UPDATES_EVENT = "openwork:native-menu:check-updates";
 const NATIVE_MENU_ZOOM_EVENT = "openwork:native-menu:zoom";
+const NATIVE_MENU_NEW_SESSION_EVENT = "openwork:native-menu:new-session";
+const NATIVE_MENU_SEARCH_SESSIONS_EVENT = "openwork:native-menu:search-sessions";
+const NATIVE_MENU_COMMAND_PALETTE_EVENT = "openwork:native-menu:command-palette";
 const AUTOMATION_RUNNER_CREDENTIAL_REJECTED_EVENT = "openwork:automation-runner:credential-rejected";
 const BROWSER_BOUNDS_INVALIDATED_EVENT = "openwork:browser:bounds-invalidated";
 
@@ -381,10 +384,23 @@ ipcRenderer.on(NATIVE_DEEP_LINK_EVENT, (_event, urls) => {
   window.dispatchEvent(new CustomEvent(NATIVE_DEEP_LINK_EVENT, { detail: urls }));
 });
 
-ipcRenderer.on(NATIVE_MENU_OPEN_SETTINGS_EVENT, () => {
+ipcRenderer.on(NATIVE_MENU_OPEN_SETTINGS_EVENT, (_event, tab) => {
   if (typeof window === "undefined") return;
-  window.dispatchEvent(new Event(NATIVE_MENU_OPEN_SETTINGS_EVENT));
+  window.dispatchEvent(new CustomEvent(NATIVE_MENU_OPEN_SETTINGS_EVENT, {
+    detail: typeof tab === "string" ? tab : null,
+  }));
 });
+
+for (const channel of [
+  NATIVE_MENU_NEW_SESSION_EVENT,
+  NATIVE_MENU_SEARCH_SESSIONS_EVENT,
+  NATIVE_MENU_COMMAND_PALETTE_EVENT,
+]) {
+  ipcRenderer.on(channel, () => {
+    if (typeof window === "undefined") return;
+    window.dispatchEvent(new Event(channel));
+  });
+}
 
 ipcRenderer.on(NATIVE_MENU_TOGGLE_SIDEBAR_EVENT, () => {
   if (typeof window === "undefined") return;
