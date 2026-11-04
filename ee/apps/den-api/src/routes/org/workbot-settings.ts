@@ -8,6 +8,8 @@ import {
   workbotProactiveHealthSchema,
   workbotProactiveViewSchema,
   AGENT_RESPONSIBILITIES,
+  DEFAULT_AGENT_BRIEF,
+  resolveAgentBrief,
   type WorkbotProactiveHealth,
   type WorkbotProactiveSettings,
   type WorkbotProactiveView,
@@ -17,7 +19,8 @@ import { describeRoute } from "hono-openapi"
 import { z } from "zod"
 import { requireFeature } from "../../features.js"
 import { jsonValidator, orgMemberRoute, requireOrgPermission, userSessionRoute } from "../../middleware/index.js"
-import { proactiveRunnerReady, readProactiveSettings } from "../../workbot-proactive/access.js"
+import { agentBriefAllowed, proactiveRunnerReady, readProactiveSettings } from "../../workbot-proactive/access.js"
+import { AGENT_RHYTHM_COUNTER } from "../../workbot-proactive/repository.js"
 import { workbotSlackAppReady } from "../../slack-assistant/direct-message.js"
 import { readAgentTemplate, saveAgentTemplate, type AgentTemplateVersion } from "../../workbot-proactive/template.js"
 import { readAgentChecks, readAgentMutes } from "../../workbot-proactive/repository.js"
@@ -67,10 +70,13 @@ const workbotProactiveInputDocumentSchema = workbotProactiveSettingsInputSchema.
 const invalidHoursSchema = z.object({ error: z.literal("invalid_working_hours"), message: z.string() }).meta({ ref: "WorkbotProactiveInvalidHoursError" })
 export const INVALID_WORKING_HOURS_MESSAGE = "The workday must end after it starts."
 
-async function proactiveView(organizationId: DenTypeId<"organization">, settings: WorkbotProactiveSettings, template: AgentTemplateVersion, canViewConnections: boolean): Promise<WorkbotProactiveView> {
+async function proactiveView(organizationId: DenTypeId<"organization">, settings: WorkbotProactiveSettings, template: AgentTemplateVersion, canViewConnections: boolean, briefOn: boolean): Promise<WorkbotProactiveView> {
   const { versionId, version, responsibilities, instructions } = template
+  // What admins saved under `brief` is shown resolved (`brief` below), never raw.
+  const { brief: _saved, ...policy } = settings
   return {
-    settings,
+    settings: policy,
+    ...(briefOn ? { brief: { ...resolveAgentBrief(settings, template), defaultText: DEFAULT_AGENT_BRIEF } } : {}),
     template: { versionId, version, responsibilities, instructions },
     slackReady: await workbotSlackAppReady(organizationId),
     runnerReady: proactiveRunnerReady(),
@@ -95,7 +101,7 @@ export function registerOrgWorkbotSettingsRoutes<T extends { Variables: OrgRoute
       tags: ["Organizations"],
       summary: "Get the settings for members' agents",
       description:
-        "Returns how members' agents work in this organization (Manage › Workbot): whether they are on, working hours, the daily limit per member, whether members start opted in, the default place messages go (a DM from the Workbot Slack app), what agents may read (`settings.sources`: calendar, email and team chat, and each other connection by id: `everyone` = on for everyone, `members` = members choose, `off` = not allowed; agents only ever read; `coreConnections` = the connections an admin allowed for calendar, email or chat: Den's own providers for what they serve, or an MCP whose read tools are reviewed; absent for every connection that serves it; `coreDefaults` = the admin's default connection per core source, absent for automatic; each member's agent reads exactly one allowed connection per core source: the one the member picked, else the default when their account on it is ready, else one they already connected, else the default for them to connect; `otherConnections` = the connections in Other context, absent for every connection with reviewed read tools) with the organization's connections behind each by default (each core one with `connectedMembers`, how many members connected their own account on it, null when unknown such as a shared credential), `sourceConnections.all`, every connection an admin can add with where it can go, and `sourceConnections.defaults`, the default each core source uses now (the admin's `coreDefaults` while still allowed, else the allowed connection most members connected) (`sourceConnections`, null without View connections; includes Google Workspace or Microsoft 365 set up before connections had their own entries), and the current \"Your agent\" template version (preset responsibilities and organization instructions). Also says whether the Workbot Slack app is installed to send those DMs and whether the headless runner the agents run on is configured. Requires the workbotProactive feature, Workbot on this deployment, and View OpenWork Models settings or Manage OpenWork Models.",
+        "Returns how members' agents work in this organization (Manage › Workbot): whether they are on, working hours, the daily limit per member, whether members start opted in, the default place messages go (a DM from the Workbot Slack app), what agents may read (`settings.sources`: calendar, email and team chat, and each other connection by id: `everyone` = on for everyone, `members` = members choose, `off` = not allowed; agents only ever read; `coreConnections` = the connections an admin allowed for calendar, email or chat: Den's own providers for what they serve, or an MCP whose read tools are reviewed; absent for every connection that serves it; `coreDefaults` = the admin's default connection per core source, absent for automatic; each member's agent reads exactly one allowed connection per core source: the one the member picked, else the default when their account on it is ready, else one they already connected, else the default for them to connect; `otherConnections` = the connections in Other context, absent for every connection with reviewed read tools) with the organization's connections behind each by default (each core one with `connectedMembers`, how many members connected their own account on it, null when unknown such as a shared credential), `sourceConnections.all`, every connection an admin can add with where it can go, and `sourceConnections.defaults`, the default each core source uses now (the admin's `coreDefaults` while still allowed, else the allowed connection most members connected) (`sourceConnections`, null without View connections; includes Google Workspace or Microsoft 365 set up before connections had their own entries), and the current \"Your agent\" template version (preset responsibilities and organization instructions). With Your agent's brief on (workbotAgentBrief), `brief` is what agents follow instead of the responsibilities: `checkEveryHours` (a check every 1, 2, 3 or 4 hours inside working hours), `dailyCap` (messages per member per day), `extraChecksPerDay` (extra checks an agent may ask for before something time-sensitive), `text` (what to tell people, in plain text; `defaultText` is the built-in default) and `carriedOver` (fields not saved yet, carried over from the responsibilities, organization instructions and daily limit). Also says whether the Workbot Slack app is installed to send those DMs and whether the headless runner the agents run on is configured. Requires the workbotProactive feature, Workbot on this deployment, and View OpenWork Models settings or Manage OpenWork Models.",
       responses: {
         200: jsonResponse("Agent settings returned.", workbotProactiveViewDocumentSchema),
         401: jsonResponse("Authentication required.", unauthorizedSchema),
@@ -111,7 +117,8 @@ export function registerOrgWorkbotSettingsRoutes<T extends { Variables: OrgRoute
       c.header("Cache-Control", "no-store")
       const organizationId = c.get("organizationContext").organization.id
       const canViewConnections = (await memberPermissionsForRequest(c))?.has("connections.view") ?? false
-      return c.json(await proactiveView(organizationId, await readProactiveSettings(organizationId), await readAgentTemplate(organizationId), canViewConnections))
+      const briefOn = await agentBriefAllowed(organizationId, c.get("organizationContext").currentMember.userId)
+      return c.json(await proactiveView(organizationId, await readProactiveSettings(organizationId), await readAgentTemplate(organizationId), canViewConnections, briefOn))
     },
   )
 
@@ -121,7 +128,7 @@ export function registerOrgWorkbotSettingsRoutes<T extends { Variables: OrgRoute
       tags: ["Organizations"],
       summary: "Get how members' agents are doing",
       description:
-        "For the last 7 days (UTC) and each responsibility: how many checks members' agents ran about it, how many of those stayed quiet, how many messages it produced, and how many members muted it, with the number of members who have an agent. Counts only: no member names, message text or email content. Requires the workbotProactive feature, Workbot on this deployment, and View OpenWork Models settings or Manage OpenWork Models.",
+        "For the last 7 days (UTC) and each responsibility (with Your agent's brief on, `rhythm` counts checks on its one rhythm instead): how many checks members' agents ran about it, how many of those stayed quiet, how many messages it produced, and how many members muted it, with the number of members who have an agent. Counts only: no member names, message text or email content. Requires the workbotProactive feature, Workbot on this deployment, and View OpenWork Models settings or Manage OpenWork Models.",
       responses: {
         200: jsonResponse("Agent health returned.", workbotProactiveHealthDocumentSchema),
         401: jsonResponse("Authentication required.", unauthorizedSchema),
@@ -139,7 +146,10 @@ export function registerOrgWorkbotSettingsRoutes<T extends { Variables: OrgRoute
       const days = 7
       const from = new Date(Date.now() - (days - 1) * 86_400_000).toISOString().slice(0, 10)
       const [checks, mutes] = [await readAgentChecks(organizationId, from), await readAgentMutes(organizationId)]
+      const briefOn = await agentBriefAllowed(organizationId, c.get("organizationContext").currentMember.userId)
+      const rhythm = checks.find((entry) => entry.responsibility === AGENT_RHYTHM_COUNTER)
       const health: WorkbotProactiveHealth = {
+        ...(briefOn ? { rhythm: { checks: rhythm?.checks ?? 0, quiet: rhythm?.quiet ?? 0, sent: rhythm?.sent ?? 0 } } : {}),
         days,
         members: mutes.members,
         responsibilities: AGENT_RESPONSIBILITIES.map((id) => {
@@ -157,7 +167,7 @@ export function registerOrgWorkbotSettingsRoutes<T extends { Variables: OrgRoute
       tags: ["Organizations"],
       summary: "Change the settings for members' agents",
       description:
-        "Changes any subset of how members' agents work. Policy fields (on/off, working hours, daily limit, members' starting choice, default destination: a Workbot DM or nowhere, never a channel) apply from the next pass; members' own choices (muted, snoozed, turned off, their own destination) are kept. `sources` sets what agents may read: `calendar`, `email`, `chat` and `connections` by connection id, each `everyone` (on for everyone), `members` (members choose; null also means this) or `off` (not allowed). `sources.coreConnections.{calendar,email,chat}` picks which of the organization's connections are allowed for that source (ids from `sourceConnections`; null goes back to every connection that serves it); an MCP connection whose read tools are reviewed (Slack, Linear, Notion, GitHub, Granola) can serve them too, and an empty list reads nothing. `sources.coreDefaults.{calendar,email,chat}` sets the default connection for that source (null goes back to automatic: the allowed one most members connected); it must be allowed after the change, and taking the current default out of the allowed connections is refused (400) unless the same change sets another default. Each member's agent reads exactly one allowed connection per core source (the member's pick, else the default when their account is ready, else one they already connected), so a member is never asked to connect an app they don't use. `sources.otherConnections` lists the connections in Other context (null goes back to every connection with reviewed read tools). An MCP without reviewed read tools can't be a source. Members can never read a source the admin didn't allow or turn off one that is on for everyone. A change to responsibilities or instructions saves a new version of the organization's \"Your agent\" template. Agents only read and never send, edit or delete anything for members. Requires the workbotProactive feature, Workbot on this deployment and Manage OpenWork Models.",
+        "Changes any subset of how members' agents work. Policy fields (on/off, working hours, daily limit, members' starting choice, default destination: a Workbot DM or nowhere, never a channel) apply from the next pass; members' own choices (muted, snoozed, turned off, their own destination) are kept. `sources` sets what agents may read: `calendar`, `email`, `chat` and `connections` by connection id, each `everyone` (on for everyone), `members` (members choose; null also means this) or `off` (not allowed). `sources.coreConnections.{calendar,email,chat}` picks which of the organization's connections are allowed for that source (ids from `sourceConnections`; null goes back to every connection that serves it); an MCP connection whose read tools are reviewed (Slack, Linear, Notion, GitHub, Granola) can serve them too, and an empty list reads nothing. `sources.coreDefaults.{calendar,email,chat}` sets the default connection for that source (null goes back to automatic: the allowed one most members connected); it must be allowed after the change, and taking the current default out of the allowed connections is refused (400) unless the same change sets another default. Each member's agent reads exactly one allowed connection per core source (the member's pick, else the default when their account is ready, else one they already connected), so a member is never asked to connect an app they don't use. `sources.otherConnections` lists the connections in Other context (null goes back to every connection with reviewed read tools). An MCP without reviewed read tools can't be a source. Members can never read a source the admin didn't allow or turn off one that is on for everyone. With Your agent's brief on (workbotAgentBrief), `brief` sets any of `checkEveryHours` (1, 2, 3 or 4), `dailyCap` (1–10), `extraChecksPerDay` (0–6) and `text` (what to tell people, up to 2,000 characters; members add their own lines); members can check less often or lower the limit, never more. Without it `brief` answers 400. A change to responsibilities or instructions saves a new version of the organization's \"Your agent\" template. Agents only read and never send, edit or delete anything for members. Requires the workbotProactive feature, Workbot on this deployment and Manage OpenWork Models.",
       responses: {
         200: jsonResponse("Agent settings saved.", workbotProactiveViewDocumentSchema),
         400: jsonResponse("The request was invalid, or the workday would end before it starts.", z.union([invalidHoursSchema, invalidRequestSchema])),
@@ -175,6 +185,8 @@ export function registerOrgWorkbotSettingsRoutes<T extends { Variables: OrgRoute
       c.header("Cache-Control", "no-store")
       const { organization, currentMember } = c.get("organizationContext")
       const requested = c.req.valid("json")
+      const briefOn = await agentBriefAllowed(organization.id, currentMember.userId)
+      if (requested.brief && !briefOn) return c.json({ error: "invalid_request" as const, message: "Your agent's brief isn't on for this organization.", details: [] }, 400)
       // Every id is one of the organization's connections, put where it can serve; an MCP only with reviewed read tools;
       // each core source's default stays one of its allowed connections.
       const invalid = checkSourcesChange({ change: requested.sources, connections: await listOrganizationSourceConnections(organization.id), current: (await readProactiveSettings(organization.id)).sources })
@@ -189,7 +201,7 @@ export function registerOrgWorkbotSettingsRoutes<T extends { Variables: OrgRoute
       const current = await readAgentTemplate(organization.id)
       const content = mergeAgentTemplate(current, change)
       const template = content ? await saveAgentTemplate({ organizationId: organization.id, memberId: currentMember.id, content }) : current
-      return c.json(await proactiveView(organization.id, result.settings, template, (await memberPermissionsForRequest(c))?.has("connections.view") ?? false))
+      return c.json(await proactiveView(organization.id, result.settings, template, (await memberPermissionsForRequest(c))?.has("connections.view") ?? false, briefOn))
     },
   )
 

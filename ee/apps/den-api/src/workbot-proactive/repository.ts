@@ -7,7 +7,8 @@ import {
   AgentMemberCheckTable as MemberCheck,
 } from "@openwork-ee/den-db/schema"
 import type { DenTypeId } from "@openwork-ee/utils/typeid"
-import { agentLedgerKey, type AgentItem } from "@openwork/automations/proactive"
+import { agentLedgerKey, parseAgentState, type AgentItem, type AgentState } from "@openwork/automations/proactive"
+import type { AgentCheckRequest } from "@openwork/automations/proactive-brief"
 import { db } from "../db.js"
 import { automationAffectedRows, automationUpdateChangedRows } from "../automations/update-result.js"
 import { memberCheckId, type AgentCheckRecord, type MemberCheckRow } from "./checks.js"
@@ -134,6 +135,8 @@ export async function reserveAgentDelivery(input: {
   memberId: DenTypeId<"member">
   item: AgentItem
   outcome?: DeliveryOutcome
+  /** `workbotAgentBrief`: "brief", since its items have no preset. */
+  kind?: string
   now?: Date
 }) {
   const id = deliveryId(input.memberId, input.item)
@@ -141,8 +144,8 @@ export async function reserveAgentDelivery(input: {
     id,
     organizationId: input.organizationId,
     memberId: input.memberId,
-    // The preset it fell under, or "anything_else" (a column name kept from before sources).
-    responsibility: input.item.preset ?? "anything_else",
+    // The preset it fell under, "anything_else", or "brief" (a column name kept from before sources).
+    responsibility: input.kind ?? input.item.preset ?? "anything_else",
     outcome: input.outcome ?? "pending",
     createdAt: input.now ?? new Date(),
   })
@@ -169,6 +172,12 @@ export async function pruneAgentDeliveries(before: Date) {
 }
 
 // ---- Health counters ----------------------------------------------------------------------------------------------
+
+/**
+ * The counter row a check on the one rhythm adds to (`workbotAgentBrief`), in place of a row per responsibility. Its
+ * `checks` and `sent` sum with the rest for /admin › Features; Manage › Workbot shows it as `rhythm`.
+ */
+export const AGENT_RHYTHM_COUNTER = "rhythm"
 
 export type AgentCheckCount = { responsibility: string; checks: number; quiet: number; sent: number }
 
@@ -323,4 +332,41 @@ export async function readAgentDailyLimitMembers(since: Date, until: Date): Prom
     .where(and(gte(MemberCheck.checkedAt, since), lt(MemberCheck.checkedAt, until), eq(MemberCheck.reason, "daily_limit")))
     .groupBy(MemberCheck.organizationId)
   return new Map(rows.map((row) => [row.organizationId, Number(row.members)]))
+}
+
+// ---- Extra checks the agent asks for (`workbotAgentBrief`) ----------------------------------------------------------
+
+/**
+ * The agent's extra-check requests as stored now. Read from the primary right after a check's turn, so the wake keeps
+ * the requests request_check wrote during it when it saves the agent's state.
+ */
+export async function readAgentCheckRequests(memberId: DenTypeId<"member">): Promise<AgentCheckRequest[]> {
+  // primary: request_check wrote moments ago.
+  const [row] = await db.$primary.select({ state: Instance.state }).from(Instance).where(eq(Instance.memberId, memberId)).limit(1)
+  return parseAgentState(row?.state).requests ?? []
+}
+
+/**
+ * request_check: decides against the agent's row under its lock and saves the requests. Only the `requests` part of
+ * the state changes; the wake that holds the agent's lease merges them back when it settles. `decide` returns the
+ * requests to save (null for none) and the caller's result.
+ */
+export async function changeAgentCheckRequests<Result>(
+  memberId: DenTypeId<"member">,
+  decide: (row: AgentInstanceRow | null, state: AgentState) => { requests: AgentCheckRequest[] | null; result: Result },
+  now = new Date(),
+): Promise<Result> {
+  return db.transaction(async (tx) => {
+    const [row] = await tx.select().from(Instance).where(eq(Instance.memberId, memberId)).limit(1).for("update")
+    const state = parseAgentState(row?.state)
+    const decided = decide(row ?? null, state)
+    if (row && decided.requests) {
+      const next: AgentState = { ...state, requests: decided.requests }
+      // The next wake comes no later than the soonest new request.
+      const soonest = decided.requests.filter((request) => !request.done).reduce((min, request) => Math.min(min, request.at), Number.POSITIVE_INFINITY)
+      const nextWakeAt = Number.isFinite(soonest) && soonest < row.nextWakeAt.getTime() ? new Date(soonest) : row.nextWakeAt
+      await tx.update(Instance).set({ state: JSON.stringify(next), nextWakeAt, updatedAt: now }).where(eq(Instance.memberId, memberId))
+    }
+    return decided.result
+  })
 }

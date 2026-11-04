@@ -74,6 +74,8 @@ export function describeAgentCheck(input: {
   /** What a message drew on, or what couldn't be read (with the connection to fix). */
   sources?: readonly AgentMemberCheckSource[]
   limits: { startHour: number; endHour: number; dailyCap: number; quietWindow: AgentHourWindow | null }
+  /** `workbotAgentBrief`: how many messages one check sent (it may send a few on the first check of the day). */
+  messages?: number
 }): AgentCheckDescription {
   const topic = about(input.responsibilities ?? [])
   const from = names(input.sources ?? [])
@@ -81,7 +83,7 @@ export function describeAgentCheck(input: {
   const held = subject ? ` Held a message${subject}.` : ""
   const unread = input.reason === "source_disconnected" ? from || "a source" : ""
   const summaries: Record<AgentCheckReason, string> = {
-    sent: `Sent you a message${subject}.`,
+    sent: `Sent you ${(input.messages ?? 1) > 1 ? `${input.messages} messages` : "a message"}${subject}.`,
     nothing_new: "Stayed quiet: nothing new.",
     already_told: "Stayed quiet: nothing you hadn't heard.",
     unreadable_reply: "Stayed quiet: nothing it could send.",

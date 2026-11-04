@@ -24,6 +24,7 @@ import { db } from "../db.js"
 import { getMcpResourceContext, isFirstPartyMcpPrincipal, mcpPrincipalCredentialId, verifyMcpRequest } from "./auth.js"
 import { AUDIT_UNAVAILABLE_TOOL_MESSAGE, AuditUnavailableError, auditUnavailableToolResult, mcpAuditPrincipal, runMcpServiceAction, serviceAuditResourceId, serviceErrorStatus, toolResultStatus } from "../audit/mcp-service-audit.js"
 import { DEN_MCP_APP_HOST_SCOPE, DEN_MCP_WRITE_SCOPE } from "./scopes.js"
+import { agentCheckRequestsAvailable, registerAgentCheckRequestTool } from "./agent-check-request.js"
 import { getCatalog, protectedResourceMetadata, protectedResourceMetadataRoute } from "./index.js"
 import { preflightMcpJsonRpcRequest } from "./json-rpc-preflight.js"
 import { createScopedAgentMcpHttpHandlers, type AgentMcpAudience } from "./agent-http.js"
@@ -765,12 +766,17 @@ export function registerAgentMcpRoutes<T extends { Variables: RequestIdVariables
       remoteSessionStatus: Boolean(memberIdentity),
       canSendSlackMessages: slackSendAsBotAvailable(capabilityContext),
       myAgent: Boolean(memberIdentity && organizationFeatures.workbotProactive && principal.scopes.has(DEN_MCP_WRITE_SCOPE)),
+      myAgentBrief: organizationFeatures.workbotAgentBrief,
       skillsExtension,
       skills: skillsExtension && advertisesInstructions && !listsSkillsNatively ? await loadRemoteSkills() : undefined,
       engine: engineTools,
       services: engineTools && advertisesInstructions ? await loadConnectServices(capabilityContext) : undefined,
     })
     if (skillsExtension) registerSkillsExtension(server, loadResolvedSkills)
+    // Your agent's own background check (workbotAgentBrief) may ask for one extra check; no other caller sees it.
+    if (memberIdentity && agentCheckRequestsAvailable({ scopes: principal.scopes, member: true, workbotProactive: organizationFeatures.workbotProactive, workbotAgentBrief: organizationFeatures.workbotAgentBrief })) {
+      registerAgentCheckRequestTool(server, { organizationId, memberId: memberIdentity.orgMembershipId, userId: normalizeDenTypeId("user", principal.userId), audit: auditPrincipal })
+    }
     registerAgentConnectionActionApp(server, { organizationId: principal.organizationId, member: memberIdentity })
     if (appServersEnabled) {
       const appActor = async (): Promise<PluginArchActorContext> => {

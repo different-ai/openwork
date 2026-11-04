@@ -1,5 +1,5 @@
 import { and, eq, isNull, sql } from "@openwork-ee/den-db/drizzle"
-import { MemberTable, OrganizationTable } from "@openwork-ee/den-db/schema"
+import { AuthUserTable, MemberTable, OrganizationTable } from "@openwork-ee/den-db/schema"
 import type { DenTypeId } from "@openwork-ee/utils/typeid"
 import { readWorkbotProactiveSettings, type WorkbotProactiveSettings } from "@openwork/types/den/workbot-proactive"
 import { db } from "../db.js"
@@ -16,6 +16,14 @@ import { workbotOrigin } from "../workbot/config.js"
 export async function proactiveAllowed(organizationId: string, userId?: string) {
   if (workbotOrigin() === null) return false
   return organizationFeatureEnabled(organizationId, "workbotProactive", userId ? { userId } : {})
+}
+
+/**
+ * Your agent's brief and rhythm (`workbotAgentBrief`) for this member: on top of `workbotProactive`, never instead.
+ * Off, the agent and every surface work exactly as before.
+ */
+export async function agentBriefAllowed(organizationId: string, userId?: string) {
+  return organizationFeatureEnabled(organizationId, "workbotAgentBrief", userId ? { userId } : {})
 }
 
 export async function readProactiveSettings(organizationId: DenTypeId<"organization">): Promise<WorkbotProactiveSettings> {
@@ -58,4 +66,16 @@ export async function activeMemberUser(organizationId: DenTypeId<"organization">
     .where(and(eq(MemberTable.id, memberId), eq(MemberTable.organizationId, organizationId), isNull(MemberTable.removedAt)))
     .limit(1)
   return member?.userId ?? null
+}
+
+/** The member's first name, as their agent's prompts call them ("Sam"); null without one. */
+export async function memberFirstName(organizationId: DenTypeId<"organization">, memberId: DenTypeId<"member">): Promise<string | null> {
+  const [member] = await db
+    .select({ name: AuthUserTable.name })
+    .from(MemberTable)
+    .innerJoin(AuthUserTable, eq(AuthUserTable.id, MemberTable.userId))
+    .where(and(eq(MemberTable.id, memberId), eq(MemberTable.organizationId, organizationId)))
+    .limit(1)
+  const first = member?.name?.trim().split(/\s+/)[0] ?? ""
+  return first ? first.slice(0, 40) : null
 }
