@@ -709,7 +709,7 @@ const sandboxGatewayProvider = optionalString(parsed.DEN_SANDBOX_GATEWAY_PROVIDE
 // One OpenRouter key per sandbox, capped, instead of one shared key: needs a management key and no shared key.
 const sandboxMintsOpenRouterKeys = !sandboxGatewayApiKey && sandboxGatewayProvider === "openrouter" && Boolean(optionalString(parsed.OPENROUTER_MANAGEMENT_API_KEY))
 const sandboxDefaultModels = sandboxGatewayProvider === "openrouter"
-  ? "anthropic/claude-sonnet-5.5,openai/gpt-5.5,google/gemini-3.8-flash"
+  ? "openai/gpt-6.1-sol,anthropic/claude-sonnet-5.5,deepseek/deepseek-v4.1-flash"
   : "gpt-6-luna"
 const sandboxCreditUsd = Number.parseInt(optionalString(parsed.DEN_SANDBOX_CREDIT_USD) ?? "50", 10)
 
