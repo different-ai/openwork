@@ -6,10 +6,12 @@ import { z } from "zod";
  * Den; each member's desktop app applies engine permissions on OpenCode v2,
  * refuses legacy v1 execution under restrictive external-folder rules,
  * applies website permissions in its built-in browser, and enforces computer
- * use and app scripting permissions at the desktop host on both engines.
+ * use permissions (using apps, moving files and copying between them, app
+ * scripting) at the desktop host on both engines.
  *
  * A permission is one family of agent actions (commands, file edits, folders
- * outside the workspace, computer use, app scripting, websites, web search,
+ * outside the workspace, computer use, files and the clipboard between apps,
+ * app scripting, websites, web search,
  * local skills, local MCP servers) with
  *
  *   - a decision: Allow, Ask first or Block (a picklist), or on/off for the
@@ -35,11 +37,14 @@ import { z } from "zod";
 export const AGENT_PERMISSION_DECISIONS = ["allow", "ask", "deny"] as const;
 export type AgentPermissionDecision = (typeof AGENT_PERMISSION_DECISIONS)[number];
 
-/** OpenCode permission actions, plus local MCP, computer use and app scripting enforced by OpenWork. */
-export const AGENT_PERMISSION_ACTIONS = ["shell", "edit", "webfetch", "websearch", "skill", "mcp", "external_directory", "computer", "script", "browser_upload"] as const;
+/** OpenCode permission actions, plus local MCP, computer use (with its files and clipboard) and app scripting enforced by OpenWork. */
+export const AGENT_PERMISSION_ACTIONS = ["shell", "edit", "webfetch", "websearch", "skill", "mcp", "external_directory", "computer", "computer_files", "computer_clipboard", "script", "browser_upload"] as const;
 
-export const AGENT_HARNESS_PERMISSION_KEYS = ["externalFolders", "computerUse", "appScripting"] as const;
-export const AGENT_HARNESS_PERMISSION_ACTIONS = ["external_directory", "computer", "script"] as const;
+export const AGENT_HARNESS_PERMISSION_KEYS = ["externalFolders", "computerUse", "computerFiles", "computerClipboard", "appScripting"] as const;
+export const AGENT_HARNESS_PERMISSION_ACTIONS = ["external_directory", "computer", "computer_files", "computer_clipboard", "script"] as const;
+
+/** What blocking computer use blocks too: everything else the agent does in apps. */
+export const AGENT_COMPUTER_USE_DEPENDENT_ACTIONS = ["computer_files", "computer_clipboard", "script"] as const;
 export type AgentPermissionAction = (typeof AGENT_PERMISSION_ACTIONS)[number];
 
 export type AgentPermissionPatternKind = "command" | "website";
@@ -105,9 +110,29 @@ export const agentPermissionDefinitions = [
     key: "computerUse",
     section: "computer",
     label: "Use apps on the computer",
-    description: "Seeing and controlling apps and remote computers through computer use. Ask first asks the member before the agent takes control in each chat. Blocking it also blocks app scripting.",
+    description: "Seeing and controlling apps and remote computers through computer use. Ask first asks the member before the agent takes control in each chat. Blocking it also blocks moving files, copying between apps and app scripting.",
     action: "computer",
     control: "choice",
+    patterns: null,
+    patternNoun: null,
+  },
+  {
+    key: "computerFiles",
+    section: "computer",
+    label: "Move files between apps and folders",
+    description: "Files the agent hands to an app (opening a file in it, or choosing files in its Open panel) and files it saves or exports from an app. Allow never asks. Ask first shows the member each file before it moves.",
+    action: "computer_files",
+    control: "choice",
+    patterns: null,
+    patternNoun: null,
+  },
+  {
+    key: "computerClipboard",
+    section: "computer",
+    label: "Copy and paste between apps",
+    description: "The agent's own clipboard for computer use: copying or cutting in one app and pasting into another. The member's clipboard is never pasted.",
+    action: "computer_clipboard",
+    control: "toggle",
     patterns: null,
     patternNoun: null,
   },
@@ -643,10 +668,10 @@ export function agentPermissionRules(resolved: readonly ResolvedAgentPermission[
   if (edits?.decision === "deny" && edits.decisionSource !== null) {
     rules.push({ action: "shell", resource: "*", effect: "deny", source: edits.decisionSource });
   }
-  // App scripts control apps too, so blocking computer use blocks scripts last.
+  // Files, the clipboard and app scripts all act in apps, so blocking computer use blocks them last.
   const computer = resolved.find((entry) => entry.definition.action === "computer");
   if (computer?.decision === "deny" && computer.decisionSource !== null) {
-    rules.push({ action: "script", resource: "*", effect: "deny", source: computer.decisionSource });
+    for (const action of AGENT_COMPUTER_USE_DEPENDENT_ACTIONS) rules.push({ action, resource: "*", effect: "deny", source: computer.decisionSource });
   }
   return rules;
 }
@@ -715,6 +740,8 @@ const BLOCKED_SUBJECT: Record<AgentPermissionAction, (resource: string) => strin
   edit: () => "editing files",
   external_directory: (resource) => resource === "*" ? "folders outside the workspace" : `the folder ${resource}`,
   computer: () => "using apps on this computer",
+  computer_files: () => "moving files between apps and folders",
+  computer_clipboard: () => "copying and pasting between apps",
   script: () => "running app scripts",
   webfetch: (resource) => resource === "*" ? "opening websites" : `opening ${resource}`,
   browser_upload: (resource) => resource === "*" ? "uploading files to websites" : `uploading files to ${resource}`,

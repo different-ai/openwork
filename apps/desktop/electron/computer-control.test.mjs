@@ -63,7 +63,7 @@ function fixture(options = {}) {
   };
   /** @type {import("@openwork/computer-use/computer-control").ComputerAdapter} */
   const remote = { ...adapter, id: "vm", label: "VM", placement: "remote" };
-  const control = createComputerControl({ adapters: options.remote ? [adapter, remote] : [adapter], readRemoteFeatureEnabled: options.authority, runProgram: options.runProgram, runScript: options.runScript, onTiming: options.onTiming, browserTask: options.browserTask, onRequest: (_sessionId, value) => { requests.push(value); }, idleMs: options.idleMs ?? 90_000, platform: options.platform });
+  const control = createComputerControl({ adapters: options.remote ? [adapter, remote] : [adapter], readRemoteFeatureEnabled: options.authority, runProgram: options.runProgram, runScript: options.runScript, onTiming: options.onTiming, browserTask: options.browserTask, onRequest: (_sessionId, value) => { requests.push(value); }, movePolicy: options.movePolicy, idleMs: options.idleMs ?? 90_000, platform: options.platform });
   return { control, calls, requests, selected, emit: value => emit(value), disconnect: () => disconnect() };
 }
 
@@ -1065,11 +1065,16 @@ test("background stays off on a computer that is not parallel", async (t) => {
   assert.deepEqual(connected, [{ background: false }]);
 });
 
-/** A native helper in a file panel: it asks before showing the panel, and confirms only the exact approved names. */
-function filePanelFixture({ files = ["launch.mp4"], browsing = false } = {}) {
+const askFirst = async () => ({ effect: "ask" });
+/**
+ * A native helper in a file panel: it asks before showing the panel, and confirms only the exact approved names.
+ * The cards it shows are the organization's Ask first; with no rule nothing asks.
+ */
+function filePanelFixture({ files = ["launch.mp4"], browsing = false, movePolicy = askFirst } = {}) {
   const seen = [];
   let allowed = !browsing;
-  const f = fixture({ seen, toolResult: (name) => {
+  // null: no policy given to the broker at all.
+  const f = fixture({ seen, movePolicy: movePolicy ?? undefined, toolResult: (name) => {
     const args = seen.at(-1).args;
     // The first look is the one opening the session makes; the panel opens after it.
     const looks = seen.filter((call) => call.name === "computer_observe").length;
@@ -1082,7 +1087,8 @@ function filePanelFixture({ files = ["launch.mp4"], browsing = false } = {}) {
       : text({ ok: false, code: "files_approval_required", files, app: "Safari", dispatched: false, next: "observe" });
   } });
   const acts = () => seen.filter((call) => call.name === "computer_act").map((call) => call.args.file_approval ?? null);
-  return { ...f, acts };
+  const looks = () => seen.filter((call) => call.name === "computer_observe").map((call) => call.args.file_panel_access ?? null);
+  return { ...f, acts, looks };
 }
 const confirmPanel = (control) => control.execute({ sessionId: "chat", name: "computer_act", args: { observation_id: "observation", action: { type: "press", ref: "e1" } } });
 async function answerFiles(f, answer) {
@@ -1114,15 +1120,74 @@ test("declined files are never handed over", async (t) => {
   assert.deepEqual(f.acts(), [null]);
 });
 
-test("always allowing files in a chat stops asking there", async (t) => {
+test("with no organization rule, files and file panels reach the app without a card", async (t) => {
+  const policy = [];
+  const f = filePanelFixture({ browsing: true, movePolicy: async (input) => { policy.push(input); return { effect: "allow" }; } }); t.after(() => f.control.reset(true));
+  await f.control.setFeatureEnabled(true);
+  await f.control.execute({ sessionId: "chat", name: "computer_open", args: { app_id: "editor", mode: "control", purpose: "Upload" } });
+  assert.equal(payload(await f.control.execute({ sessionId: "chat", name: "computer_observe", args: {} })).ok, true);
+  assert.equal(payload(await confirmPanel(f.control)).status, "dispatched");
+  assert.equal(f.requests.filter((request) => request?.reason === "files").length, 0, "nothing asked the person");
+  assert.ok(f.looks().includes(31), "the panel opens to the agent bound to its own window");
+  assert.deepEqual(f.acts(), [null, ["launch.mp4"]], "the handover carries exactly the helper's files");
+  assert.deepEqual(policy, [{ kind: "computer_files", sessionId: "chat" }, { kind: "computer_files", sessionId: "chat" }]);
+});
+
+test("the default broker, with no policy given, never asks about files", async (t) => {
+  const f = filePanelFixture({ movePolicy: null }); t.after(() => f.control.reset(true));
+  await f.control.setFeatureEnabled(true);
+  await f.control.execute({ sessionId: "chat", name: "computer_open", args: { app_id: "editor", mode: "control", purpose: "Upload" } });
+  assert.equal(payload(await confirmPanel(f.control)).status, "dispatched");
+  assert.equal(f.requests.filter((request) => request?.reason === "files").length, 0);
+});
+
+test("an organization that blocks moving files refuses the handover and the panel without a card", async (t) => {
+  const deny = async () => ({ effect: "deny", message: "Your organization's agent permissions block moving files between apps and folders (set for Contractors)." });
+  for (const browsing of [false, true]) {
+    const f = filePanelFixture({ browsing, movePolicy: deny }); t.after(() => f.control.reset(true));
+    await f.control.setFeatureEnabled(true);
+    await f.control.execute({ sessionId: "chat", name: "computer_open", args: { app_id: "editor", mode: "control", purpose: "Upload" } });
+    const refused = payload(browsing ? await f.control.execute({ sessionId: "chat", name: "computer_observe", args: {} }) : await confirmPanel(f.control));
+    assert.equal(refused.code, "organization_policy_denied");
+    assert.match(refused.message, /block moving files between apps and folders \(set for Contractors\)\./);
+    assert.equal(f.requests.filter((request) => request?.reason === "files").length, 0, "a block never becomes a question");
+    if (browsing) assert.equal(f.looks().includes(31), false, "the panel was never opened to the agent");
+    else assert.deepEqual(f.acts(), [null], "nothing was handed over");
+  }
+});
+
+test("a policy that cannot answer blocks moving files", async (t) => {
+  const f = filePanelFixture({ movePolicy: async () => { throw new Error("offline"); } }); t.after(() => f.control.reset(true));
+  await f.control.setFeatureEnabled(true);
+  await f.control.execute({ sessionId: "chat", name: "computer_open", args: { app_id: "editor", mode: "control", purpose: "Upload" } });
+  assert.equal(payload(await confirmPanel(f.control)).code, "organization_policy_denied");
+  assert.deepEqual(f.acts(), [null]);
+});
+
+test("Ask first asks about every handover and offers no standing approval", async (t) => {
   const f = filePanelFixture(); t.after(() => f.control.reset(true));
   await f.control.setFeatureEnabled(true);
   await f.control.execute({ sessionId: "chat", name: "computer_open", args: { app_id: "editor", mode: "control", purpose: "Upload" } });
   const first = confirmPanel(f.control);
   await answerFiles(f, "always");
-  await first;
+  assert.equal(payload(await first).status, "dispatched");
+  assert.equal(f.requests.filter((request) => request?.reason === "files").at(-1).standing, false);
   const asked = f.requests.filter((request) => request?.reason === "files").length;
-  assert.equal(payload(await confirmPanel(f.control)).status, "dispatched");
+  const second = confirmPanel(f.control);
+  await answerFiles(f, "allow");
+  assert.equal(payload(await second).status, "dispatched");
+  assert.equal(f.requests.filter((request) => request?.reason === "files").length, asked + 1, "the same files to the same app are asked about again");
+});
+
+test("browser uploads keep their own always-allow per recipient", async (t) => {
+  const f = filePanelFixture(); t.after(() => f.control.reset(true));
+  await f.control.setFeatureEnabled(true);
+  await f.control.execute({ sessionId: "chat", name: "computer_open", args: { app_id: "editor", mode: "control", purpose: "Upload" } });
+  const first = f.control.approveFiles({ sessionId: "chat", app: "Safari", files: ["launch.mp4"] });
+  await answerFiles(f, "always");
+  assert.equal(await first, true);
+  const asked = f.requests.filter((request) => request?.reason === "files").length;
+  assert.equal(await f.control.approveFiles({ sessionId: "chat", app: "Safari", files: ["launch.mp4"] }), true);
   assert.equal(f.requests.filter((request) => request?.reason === "files").length, asked);
   // Another recipient is asked again: "always" covered only Safari.
   const other = f.control.approveFiles({ sessionId: "chat", app: "example.com", files: ["/tmp/a.txt"] });
@@ -1397,4 +1462,36 @@ test("same-named selected files are each shown and each approved", async (t) => 
   await f.control.answerRequest({ sessionId: "chat", answer: "allow", id: card.id });
   assert.equal(payload(await press).status, "dispatched");
   assert.deepEqual(f.acts().at(-1), ["clip.mp4", "clip.mp4"]);
+});
+
+const copyStep = { type: "key", key: "c", modifiers: ["command"] };
+test("copy and paste between apps run without a card unless the organization blocks them", async (t) => {
+  for (const [effect, expected] of [["allow", "ok"], ["ask", "organization_policy_denied"], ["deny", "organization_policy_denied"]]) {
+    const seen = [];
+    const policy = [];
+    const f = fixture({ seen, movePolicy: async (input) => {
+      policy.push(input);
+      return effect === "deny" ? { effect, message: "Your organization's agent permissions block copying and pasting between apps (set for Everyone)." } : { effect };
+    } }); t.after(() => f.control.reset(true));
+    await f.control.setFeatureEnabled(true);
+    await f.control.execute({ sessionId: "chat", name: "computer_open", args: { app_id: "editor", mode: "control", purpose: "Copy" } });
+    for (const step of [copyStep, { ...copyStep, key: "v" }]) {
+      const result = payload(await f.control.execute({ sessionId: "chat", name: "computer_act", args: { observation_id: "observation", action: step } }));
+      assert.equal(expected === "ok" ? result.ok : result.code, expected === "ok" ? true : expected, `${effect} ${step.key}`);
+    }
+    assert.equal(seen.filter((call) => call.name === "computer_act").length, expected === "ok" ? 2 : 0, "a refused copy never reaches the app");
+    assert.equal(f.requests.filter(Boolean).length, 0, "copy and paste never ask the person");
+    assert.deepEqual(policy.map((input) => input.kind), ["computer_clipboard", "computer_clipboard"]);
+  }
+});
+
+test("other keys and shortcuts are not checked as copy and paste", async (t) => {
+  const policy = [];
+  const f = fixture({ movePolicy: async (input) => { policy.push(input); return { effect: "deny", message: "blocked" }; } }); t.after(() => f.control.reset(true));
+  await f.control.setFeatureEnabled(true);
+  await f.control.execute({ sessionId: "chat", name: "computer_open", args: { app_id: "editor", mode: "control", purpose: "Edit" } });
+  for (const action of [{ type: "key", key: "c" }, { type: "key", key: "a", modifiers: ["command"] }, { type: "type", text: "copy" }]) {
+    assert.equal(payload(await f.control.execute({ sessionId: "chat", name: "computer_act", args: { observation_id: "observation", action } })).ok, true);
+  }
+  assert.deepEqual(policy, []);
 });

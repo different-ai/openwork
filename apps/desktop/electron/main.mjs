@@ -294,6 +294,9 @@ const computerControl = createComputerControl({
     const entry = await readComputerPermissionEntry();
     return { name: entry.name, ours: entry.ours };
   },
+  // Files and the clipboard between apps follow the organization's Agent permissions:
+  // with no rule the agent goes ahead and nothing asks.
+  movePolicy: ({ kind, sessionId }) => computerAgentPermissions.check({ kind, sessionId }),
   // The chat asks the person when the agent needs computer use it does not have yet.
   onRequest: (sessionId, request) => {
     if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send("openwork:computer:request", { sessionId, request });

@@ -15,6 +15,8 @@ const everyonePath = "/v1/agent-permissions/everyone"
 const harness = {
   computerUse: { decision: "ask" },
   appScripting: { decision: "deny" },
+  computerFiles: { decision: "ask" },
+  computerClipboard: { decision: "deny" },
   externalFolders: { decision: "deny" },
 }
 
@@ -62,7 +64,7 @@ test("flag on saves and lists harness settings and delivers the member's rules",
   assert.deepEqual(field(policies.body, "everyone", "settings"), harness)
   assert.deepEqual(list(field(policies.body, "teams")).find(entry => entry.teamId === teamId)?.settings, { computerUse: { decision: "ask" } })
   const rules = await desktopRules()
-  for (const [action, effect] of [["computer", "ask"], ["script", "deny"], ["external_directory", "deny"]]) {
+  for (const [action, effect] of [["computer", "ask"], ["computer_files", "ask"], ["computer_clipboard", "deny"], ["script", "deny"], ["external_directory", "deny"]]) {
     assert.ok(rules.some(rule => rule.action === action && rule.resource === "*" && rule.effect === effect), JSON.stringify(rules))
   }
 })

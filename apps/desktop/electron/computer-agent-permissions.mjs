@@ -5,6 +5,10 @@ import {
 } from "@openwork/types/den/agent-permissions-runtime";
 
 /** @typedef {import("@openwork/types/den/agent-permissions-runtime").AgentPermissionRule} AgentPermissionRule */
+/** @typedef {"computer" | "computer_files" | "computer_clipboard" | "script"} ComputerPermissionKind */
+
+/** Using apps, moving files and copying between them, and app scripts. */
+const COMPUTER_ACTIONS = ["computer", "computer_files", "computer_clipboard", "script"];
 /** @typedef {{ effect: "allow" } | { effect: "ask", rule: AgentPermissionRule } | { effect: "deny", message: string }} ComputerDecision */
 
 /**
@@ -35,7 +39,7 @@ export function createComputerAgentPermissions({ readRules, confirm, now = Date.
       if (!Array.isArray(value)) throw new Error("Computer rules unavailable");
       const next = value.flatMap((entry) => {
         const parsed = agentPermissionRuleSchema.safeParse(entry);
-        return parsed.success && ["computer", "script"].includes(parsed.data.action) ? [parsed.data] : [];
+        return parsed.success && COMPUTER_ACTIONS.includes(parsed.data.action) ? [parsed.data] : [];
       });
       // Rule order is significant, but object property order is not.
       const nextSignature = JSON.stringify(next.map(({ action, resource, effect, source }) => [action, resource, effect, source]));
@@ -53,7 +57,7 @@ export function createComputerAgentPermissions({ readRules, confirm, now = Date.
 
   return {
     /**
-     * @param {{ kind: "computer" | "script", sessionId?: string }} input
+     * @param {{ kind: ComputerPermissionKind, sessionId?: string }} input
      * @returns {Promise<ComputerDecision>}
      */
     async check({ kind }) {

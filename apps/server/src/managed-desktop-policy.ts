@@ -440,7 +440,7 @@ class ManagedDesktopPolicy {
     return this.agentPermissionRulesFor(["webfetch"]);
   }
   computerRules(): Promise<AgentPermissionRule[]> {
-    return this.agentPermissionRulesFor(["computer", "script"]);
+    return this.agentPermissionRulesFor(["computer", "computer_files", "computer_clipboard", "script"]);
   }
   /** The desktop config verified for this sign-in, without waiting on Den. Null signed out or before Den first answered. */
   known(): DesktopConfig | null {
