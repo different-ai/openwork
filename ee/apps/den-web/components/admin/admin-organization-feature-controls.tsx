@@ -188,7 +188,7 @@ export function AdminOrganizationFeatureControls({ organizationId, memberId, ref
       {features ? groupFeatureKeys(visibleKeys(features), grouping).map(({ id: groupId, label, keys }) => {
         const sectionId = grouping === "category" ? `admin-feature-group-${groupId}` : `admin-feature-group-${grouping}-${groupId}`;
         return <section key={sectionId} className="mt-4 min-w-0" aria-labelledby={sectionId} data-testid={sectionId}>
-        <h3 id={sectionId} className="text-xs font-semibold uppercase tracking-wide text-slate-500">{label}{grouping === "category" ? null : ` · ${keys.length}`}</h3>
+        <h3 id={sectionId} className="text-xs font-semibold tracking-wide text-slate-500">{label}{grouping === "category" ? null : ` · ${keys.length}`}</h3>
         <ul className="mt-1 min-w-0 divide-y divide-slate-200">
         {keys.map((key) => {
           const state = features[key];
