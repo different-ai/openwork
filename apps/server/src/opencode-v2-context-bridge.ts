@@ -101,15 +101,19 @@ export async function askEngineApproval(engine: EngineConnection | undefined, ap
     watching.abort();
   }
 }
-// Only sidebar-group, session create/send and question-answer commands can
-// write through the generic affordance path. Automation proposals are inert:
-// the person explicitly creates one in the renderer.
+// Reuse the renderer's session guards, persistence and model readback rather
+// than adding direct engine writes that bypass the requesting conversation.
+const rendererSessionCommandIds = ["session.archive", "session.pin", "session.rename", "session.set_model"];
+// Keep discovery and execution closed to unrelated UI/extension writes.
+// Automation proposals are inert: the person creates one in the renderer.
 const commandIds: readonly string[] = [
-  ...SESSION_GROUP_COMMAND_IDS, "session.create", "session.send", "session.question.answer", "automation.propose",
+  ...SESSION_GROUP_COMMAND_IDS, ...rendererSessionCommandIds,
+  "session.create", "session.send", "session.question.answer", "automation.propose",
 ];
 const questionReplyRoute = /^\/workspace\/[^/]+\/opencode2\/api\/session\/[^/]+\/form\/[^/]+\/reply$/;
-// Best-effort window commands session.create and session.send follow up with.
-const windowCommandIds: readonly string[] = ["workspace.reload_sessions", "session.open"];
+// The restored session commands plus best-effort window follow-ups made by
+// session.create/send. Follow-ups are not standalone agent commands.
+const windowCommandIds: readonly string[] = [...rendererSessionCommandIds, "workspace.reload_sessions", "session.open"];
 const sessionWriteRoute = /^\/workspace\/([^/]+)\/opencode\/session(?:\/([^/]+)\/prompt_async)?$/;
 /** A v2 question-form reply as sent: a path the URL parser would normalize is refused. */
 export function isQuestionReplyPath(path: string): boolean {
@@ -385,7 +389,7 @@ export async function createV2ContextBridge(
         if (call.name === "openwork_query") return plugin.tool.openwork_query.execute(call.input);
         if (call.name === "openwork_execute") {
           const id = isRecord(call.input) ? String(call.input.id) : "";
-          if (!commandIds.includes(id)) throw new Error(`${id || "This command"} is not available here; only session group changes, session.create, session.send, session.question.answer and automation proposals are`);
+          if (!commandIds.includes(id)) throw new Error(`${id || "This command"} is not available here. Use openwork_context to find supported commands.`);
           const { sessionId, caller } = call;
           // Commands that ask first (answering another session's question)
           // ask in the calling chat through the engine's own prompt.
@@ -403,7 +407,7 @@ export async function createV2ContextBridge(
         const context: unknown = JSON.parse(await plugin.tool.openwork_context.execute());
         const filtered = bridgeAffordances(context);
         return JSON.stringify(isRecord(filtered) ? { ...filtered, instructions: {
-          context: "Use openwork_query for the discovered read-only affordances and openwork_execute for session.group commands, session.create, session.send, session.question.answer or automation.propose. An automation proposal only shows a review card; it does not create, activate, or run anything. When Code Mode exposes these tools, discover their exact paths with search and compose them there, preserving exceptions and verifying the resulting groups. For other conversations, use session.search then session.read. Session reads include current activity and background-agent counts."
+          context: "Use openwork_query for discovered read-only affordances and openwork_execute for session.archive (including unarchive), session.pin (pin/unpin), session.rename, session.set_model, session.group commands, session.create, session.send, session.question.answer or automation.propose. Follow the discovered arguments and safety requirements; working sessions cannot be archived or rebound. An automation proposal only shows a review card; it does not create, activate, or run anything. When Code Mode exposes these tools, discover their exact paths with search and compose them there, preserving exceptions and verifying the resulting groups. For other conversations, use session.search then session.read. Session reads include current activity and background-agent counts."
         } } : filtered);
       });
       return new Response(result, { headers: { "Content-Type": "application/json" } });
