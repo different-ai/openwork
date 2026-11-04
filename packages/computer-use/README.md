@@ -396,9 +396,17 @@ Native observations keep each control's ref across reads of the same window and
 never reuse a ref for another control. After the model's own `computer_act`, the
 returned observation lists only the elements that changed or appeared
 (`elements_listing: "changes"`, with `elements_unchanged` and
-`elements_removed`); programs always get the full list. In a batch, presses,
-`set_value` and menu commands can follow a press while nothing opens over the
-window and their controls read back unchanged.
+`elements_removed`); programs always get the full list. In a batch, a step
+that may change the view or focus (a click, press, menu command, Enter, Tab,
+Escape or app shortcut) is followed in the same call while nothing opens over
+the window and what the next step uses reads back as a new observation would
+show it: a press, `set_value` or menu command's control unchanged; for `key`
+and `type`, the control or text field that now has the keyboard (a text field
+for typing, or with no listed focus the app's own editor, as for canvas text);
+for a pointer step, the window image within 32 pixels of where it lands. A
+secure field, secure input anywhere, an unconfirmed password field on screen,
+or a window, dialog, menu or system prompt that opened stops the batch there,
+and the receipt comes with a fresh observation.
 
 `computer_act` takes a `pacing` for batches: `fast` (default) checks briefly
 after each press; `wait` lets the app stop changing after every step (at most

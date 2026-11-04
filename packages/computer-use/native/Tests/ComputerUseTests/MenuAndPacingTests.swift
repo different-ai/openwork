@@ -284,4 +284,41 @@ final class MenuAndPacingTests: XCTestCase {
         XCTAssertFalse(ElementRecord.sameControl(button("Next", y: 80, enabled: false), observed, allowMove: true), "a disabled control is waited for, not pressed")
         XCTAssertFalse(ElementRecord.sameControl(button("Finish", y: 80), observed, allowMove: true))
     }
+
+    /// (enabled, protected, text field) of whatever has the keyboard after the previous step.
+    private func keyboard(_ focused: (Bool, Bool, Bool)?, field: Bool = true, typing: Bool = true, secureInput: Bool = false,
+                          protectedOnScreen: Bool = false, confirmed: Bool = false, given: Bool = false) -> BatchContinuation.Keyboard {
+        BatchContinuation.keyboard(focused: focused.map { (enabled: $0.0, protected: $0.1, textField: $0.2) }, field: field, typing: typing,
+            entersText: typing, secureInput: secureInput, protectedOnScreen: protectedOnScreen, credentialConfirmed: confirmed, credentialGiven: given)
+    }
+
+    func testABatchKeepsGoingAfterAClickWhenTheNextStepReadsBack() {
+        // What each next step re-reads after a click, press or menu command.
+        XCTAssertEqual(BatchContinuation.need(.press("e4")), .control("e4"))
+        XCTAssertEqual(BatchContinuation.need(.setValue("e4", "12")), .control("e4"))
+        XCTAssertEqual(BatchContinuation.need(.menu(["Edit", "Select All"])), .menu)
+        XCTAssertEqual(BatchContinuation.need(.type("Hello")), .keyboard(field: true))
+        XCTAssertEqual(BatchContinuation.need(.key("a", .maskCommand)), .keyboard(field: false))
+        XCTAssertEqual(BatchContinuation.need(.key("delete", [])), .keyboard(field: true), "delete erases only in a text field")
+        XCTAssertEqual(BatchContinuation.need(.click(CGPoint(x: 5, y: 5), 1, [])), .pointer)
+        XCTAssertEqual(BatchContinuation.need(.drag([CGPoint(x: 1, y: 1), CGPoint(x: 9, y: 9)])), .pointer)
+        XCTAssertNil(BatchContinuation.need(.wait(200)))
+        // click, type: the click put the caret in a field the observation did not know was focused.
+        XCTAssertEqual(keyboard((true, false, true)), .focus)
+        // click, key(command+a): any enabled control that has the keyboard.
+        XCTAssertEqual(keyboard((true, false, false), field: false, typing: false), .focus)
+        // click, type on a canvas: no listed focus, so the app's own editor, checked before each character.
+        XCTAssertEqual(keyboard(nil), .editor)
+    }
+
+    func testABatchStillStopsAfterAClickWhenItWouldHaveToGuess() {
+        XCTAssertEqual(keyboard((true, true, true)), .stop, "a secure field is never typed into without a new look")
+        XCTAssertEqual(keyboard((true, false, true), secureInput: true), .stop, "macOS reports a password box somewhere")
+        XCTAssertEqual(keyboard((true, false, true), protectedOnScreen: true), .stop, "a secure field appeared that the person has not confirmed")
+        XCTAssertEqual(keyboard((true, false, true), protectedOnScreen: true, confirmed: true, given: true), .focus, "the person confirmed this app")
+        XCTAssertEqual(keyboard((true, false, false)), .stop, "typing needs a text field")
+        XCTAssertEqual(keyboard((false, false, true)), .stop, "a disabled field")
+        XCTAssertEqual(keyboard(nil, field: false, typing: false), .stop, "a key with nothing focused is not guessed")
+        XCTAssertEqual(keyboard(nil, given: true), .stop, "a password the person gave goes only into a named field")
+    }
 }
