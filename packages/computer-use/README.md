@@ -38,7 +38,18 @@ where it is, without taking the front unless the app or step needs it
 ([docs](../../docs/features/computer-use-background/README.md)). This is
 included in `computerUse`, not a separate rollout.
 A kernel-held lock allows one session per window, so chats in different windows
-work at once. Grants, element references,
+work at once. On a parallel Mac one chat keeps up to three apps open at once,
+each in its own window with its own helper session, so a task can move between
+Numbers and Mail without closing one and losing its observations. Every
+`computer_open` returns that app's `session_id`; `computer_observe`,
+`computer_act`, `computer_zoom`, `computer_status` and `computer_close` take it
+to pick one of the chat's apps and otherwise go to the app opened last. A
+`session_id` only selects among the chat's own apps. Opening a window the chat
+already holds returns `session_open` with its `session_id`; a fourth app returns
+`too_many_sessions` until one is closed. Every app keeps its window lock, its
+turn at the keyboard and pointer and its idle release; end of turn releases
+them all, Take over on any of them holds the whole chat until Continue, and Stop
+ends them all. Other computers keep one app per chat. Grants, element references,
 screenshots and receipts live in process memory and are discarded on close.
 
 | Tool | Purpose |
@@ -383,6 +394,18 @@ another app, so the cursor names the command (`File › New…`) instead. The Ap
 and app menus, the Window menu, recent-document lists and any command whose
 shortcut is a blocked chord (Quit, Close, Hide, Minimize, clipboard) are never
 listed or pressed. Commands go to the app's focused window only.
+
+`{ type: "arrange", layout }` moves and resizes the session's own window on the
+screen it is on, so two apps can sit side by side without the Window menu:
+`left_half`, `right_half`, `full` (the screen without the menu bar and Dock) or
+`beside_openwork` (the room the OpenWork window leaves, or the half away from
+it when that room is narrower than 480 points; the whole screen when OpenWork
+is on another one). It sets only that window's accessibility position and size,
+never another app's, and is sent on its own, not over a dialog and only in
+control mode. The new frame is read back: the step path is `window_arranged`,
+or `window_arranged_partly` when the app kept its own size. Every observed
+coordinate is stale after it, so the receipt carries a fresh observation. It is
+Mac only; Windows PCs and remote computers refuse it before anything is sent.
 
 `{ type: "open_file", path: "/Users/…/photo.png" }` hands a file to the
 session's app the way Finder's Open With does, instead of a drag between two

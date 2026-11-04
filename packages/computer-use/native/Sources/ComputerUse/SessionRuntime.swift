@@ -725,6 +725,12 @@ final class SessionRuntime {
                     "message": "Opening a file hands it to the app. The person is asked first; nothing was sent."])
             }
         }
+        // Moving the window makes every observed coordinate stale: it is its own step, and only
+        // for the session's own window, never a dialog over it.
+        if actions.contains(where: { if case .arrange = $0 { return true }; return false }) {
+            guard actions.count == 1 else { throw UseError("arrange_alone", "Arrange a window as its own step. Nothing was sent.", next: "observe") }
+            guard current.parents.isEmpty else { throw UseError("dialog_open", "Close the dialog before arranging the window. Nothing was sent.", next: "observe") }
+        }
         session?.observation = nil; session?.focus = nil; session?.lastUsed = now
         if let intent { controls.narrate(intent) }
         session?.receiptInputs[requestID] = fingerprint

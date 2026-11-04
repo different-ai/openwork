@@ -158,6 +158,12 @@ final class MacInput {
                 catch { throw UseError("open_failed", "The app did not accept the file. Observe before trying another way.", next: "observe") }
                 report(.dispatched)
                 path = "file_handed_over"
+            case .arrange(let layout):
+                // Only the session's own window moves, on the screen it is on.
+                let frame = try WindowArrangement.frame(layout, window: lease.frame, screens: WindowArrangement.visibleScreens(),
+                    host: layout == .besideOpenWork ? WindowArrangement.hostWindow() : nil)
+                path = try WindowArrangement.apply(frame, to: target.element, check: check)
+                report(.dispatched)
             case .menu(let names):
                 // Menu commands go to the app's focused window: never to another document.
                 guard access.isFocusedWindow(target, app: app) else {

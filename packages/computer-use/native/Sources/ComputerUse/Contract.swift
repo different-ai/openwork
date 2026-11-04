@@ -184,6 +184,8 @@ enum Action {
     case menu([String])
     /// A file on this Mac handed to the session's app, as Finder's Open With does.
     case openFile(URL)
+    /// The session's own window moved and resized on its screen, so apps sit side by side.
+    case arrange(WindowLayout)
 
     static let batchLimit = 8
     static func batch(_ values: [String: Any], policy: RuntimePolicy = .desktop) throws -> [Action] {
@@ -230,6 +232,12 @@ enum Action {
         case "open_file" where policy == .embedded:
             try a.only(["type", "path"])
             self = .openFile(try FileHandoff.file(try a.string("path", max: 1024)))
+        case "arrange" where policy == .embedded:
+            try a.only(["type", "layout"])
+            guard let layout = WindowLayout(rawValue: try a.string("layout")) else {
+                throw UseError("invalid_arguments", "layout must be left_half, right_half, full or beside_openwork.")
+            }
+            self = .arrange(layout)
         case "menu" where policy == .embedded:
             try a.only(["type", "path"])
             guard let path = values["path"] as? [String], (2...MenuRules.maxDepth + 1).contains(path.count),
@@ -289,6 +297,7 @@ enum Action {
         case .drag: return "drag"
         case .menu: return "menu"
         case .openFile: return "open_file"
+        case .arrange: return "arrange"
         case .rightClick: return "right_click"
         case .hold: return "press_and_hold"
         case .showMenu: return "show_menu"
