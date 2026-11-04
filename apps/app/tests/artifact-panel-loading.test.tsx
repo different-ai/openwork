@@ -36,7 +36,7 @@ function fakeClient(): Client {
   return Object.assign(Object.create(null), client);
 }
 
-async function open(path: string, size?: number) {
+async function open(path: string, size?: number, officePreview = true) {
   const target = openTargetFromWorkspaceFile(path, { size });
   if (!target) throw new Error(`no target for ${path}`);
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
@@ -49,6 +49,7 @@ async function open(path: string, size?: number) {
           client={fakeClient()}
           workspaceId="ws_test"
           workspaceRoot="/tmp/workspace"
+          officeDocumentPreview={officePreview}
           onClose={() => {}}
         />
       </QueryClientProvider>
@@ -90,6 +91,13 @@ test("Word files open as a readable document", async () => {
   expect(preview?.getAttribute("data-kind")).toBe("document");
   expect(preview?.textContent).toContain("Plan");
   expect(preview?.textContent).toContain("Ship it.");
+});
+
+test("with officeDocumentPreview off, Word files are not downloaded and open elsewhere", async () => {
+  await open("plan.docx", 2_000, false);
+  expect(downloads).toEqual([]);
+  expect(host.querySelector('[data-testid="artifact-office-preview"]')).toBeNull();
+  expect(host.textContent).toContain("This file can't be previewed here.");
 });
 
 test("oversized Word files skip the download", async () => {

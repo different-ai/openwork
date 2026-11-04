@@ -43,7 +43,7 @@ import {
   useSessionPanelState,
 } from "./panel-tab-store";
 import { useControlAction, type OpenworkControlAction } from "../../../shell/control/control-provider";
-import type { OpenTarget } from "../artifacts/open-target";
+import { openTargetFromWorkspaceFile, type OpenTarget } from "../artifacts/open-target";
 import type { OpenTargetOptions } from "@/lib/target-provider";
 import { useSidePanelTabs } from "./use-side-panel-tabs";
 import { handlePanelEscape, PanelEmpty } from "./panel-empty";
@@ -75,6 +75,8 @@ type SidePanelProps = {
   browserPresentation?: BrowserPresentationControls;
   /** The browser is shown full screen: keep its tab but not a second native view here. */
   browserShownElsewhere?: boolean;
+  /** `officeDocumentPreview`: read Word and PowerPoint files in the artifact panel. */
+  officeDocumentPreview?: boolean;
 };
 
 // HMR can remount this module without unmounting BrowserPanelContent, leaving
@@ -616,6 +618,7 @@ export function SidePanel({
   onOpenExtensions,
   browserPresentation,
   browserShownElsewhere = false,
+  officeDocumentPreview = false,
 }: SidePanelProps) {
   const { tabs } = useSessionPanelState(sessionId);
   const activeTab = useActivePanelTab(sessionId);
@@ -780,6 +783,28 @@ export function SidePanel({
   }, [client, sessionId, workspaceId]);
   useControlAction(seedPdfArtifactControlAction);
 
+  const openWorkspaceFileControlAction = React.useMemo<OpenworkControlAction | null>(() => {
+    if (!import.meta.env.DEV) return null;
+
+    return {
+      id: "eval.artifact_tabs.open_file",
+      label: "Open a workspace file as an artifact",
+      description: "Open an existing workspace file in the artifact panel, as clicking it in chat would.",
+      sideEffect: "none",
+      args: [{ name: "path", type: "string", description: "Workspace-relative file path." }],
+      execute: async (args) => {
+        const path = args && typeof args === "object" && "path" in args && typeof args.path === "string" ? args.path : "";
+        const target = path ? openTargetFromWorkspaceFile(path) : null;
+        if (!target) return { ok: false, error: "Give a workspace file path." };
+        const store = usePanelTabStore.getState();
+        store.openTab(sessionId, { id: target.id, type: "artifact", label: target.name, preview: target.preview, target });
+        store.selectTab(sessionId, target.id);
+        return { ok: true, activeTabId: target.id };
+      },
+    };
+  }, [sessionId]);
+  useControlAction(openWorkspaceFileControlAction);
+
   React.useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
       if (!event.ctrlKey || event.altKey || event.metaKey || event.key !== "Tab" || tabs.length < 2) {
@@ -888,6 +913,7 @@ export function SidePanel({
               workspaceRoot={workspaceRoot}
               onOpenTarget={onOpenTarget}
               isLocalWorkspace={isLocalWorkspace}
+              officeDocumentPreview={officeDocumentPreview}
               onClose={onClose}
             />
           </div>

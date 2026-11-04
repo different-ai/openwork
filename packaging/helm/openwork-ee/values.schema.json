@@ -321,6 +321,16 @@
               ],
               "description": "Desktop: computer session history: Computer and browser actions share one compact session card in chat, with captured views to browse or replay. Turning it off restores individual actions and screenshots. Renders DEN_FEATURE_COMPUTER_SESSION_HISTORY."
             },
+            "officeDocumentPreview": {
+              "enum": [
+                "",
+                "true",
+                "false",
+                true,
+                false
+              ],
+              "description": "Desktop: Word and PowerPoint previews: Word (.docx) and PowerPoint (.pptx) files open in the side panel as a readable document or slide list, with headings, lists, tables and speaker notes. Turning it off shows Open in default app instead. Renders DEN_FEATURE_OFFICE_DOCUMENT_PREVIEW."
+            },
             "browserUse": {
               "enum": [
                 "",

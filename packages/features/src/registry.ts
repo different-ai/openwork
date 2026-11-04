@@ -388,6 +388,18 @@ export const FEATURES = defineFeatures({
     default: false,
   },
 
+  officeDocumentPreview: {
+    label: "Desktop: Word and PowerPoint previews",
+    description: "Word (.docx) and PowerPoint (.pptx) files open in the side panel as a readable document or slide list, with headings, lists, tables and speaker notes. Turning it off shows Open in default app instead.",
+    category: "experience",
+    added: "2026-11-03",
+    since: "2026-11",
+    author: "benjaminshafii",
+    docs: "docs/features/office-document-preview/README.md",
+    deployments: everywhere,
+    default: false,
+  },
+
   browserUse: {
     label: "Workbot: browser use",
     description: "Workbot uses the browser on its cloud computer with a live Browser view people can watch and take over. It streams the page only when it changes, with Workbot tabs to switch and close; takeover controls the page without Chrome's toolbar. Needs remote computers. Computer use separately controls other desktop apps.",

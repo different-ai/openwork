@@ -42,6 +42,8 @@ type ArtifactPanelProps = {
   workspaceRoot: string;
   onOpenTarget?: (target: OpenTarget, options?: OpenTargetOptions) => void;
   isLocalWorkspace?: boolean;
+  /** `officeDocumentPreview`: read Word and PowerPoint files here instead of offering to open them elsewhere. */
+  officeDocumentPreview?: boolean;
   onClose: () => void;
 };
 
@@ -53,6 +55,7 @@ type ArtifactPanelViewProps = {
   onOpenTarget?: (target: OpenTarget, options?: OpenTargetOptions) => void;
   isLocalWorkspace?: boolean;
   target: OpenTarget;
+  officeDocumentPreview: boolean;
   onClose: () => void;
 };
 
@@ -72,15 +75,16 @@ function isTextContent(target: OpenTarget): boolean {
 }
 
 /** Word and PowerPoint files the panel can read as text. Other Office formats open externally. */
-function officePreviewKind(target: OpenTarget): "document" | "slides" | null {
+function officePreviewKind(target: OpenTarget, enabled: boolean): "document" | "slides" | null {
+  if (!enabled) return null;
   if (target.preview === "document" && /\.docx$/i.test(target.value)) return "document";
   if (target.preview === "slides" && /\.pptx$/i.test(target.value)) return "slides";
   return null;
 }
 
 /** Binary previews the panel renders itself. Anything else is never downloaded. */
-function hasBinaryRenderer(target: OpenTarget): boolean {
-  return ["image", "pdf", "sheet", "html"].includes(target.preview) || officePreviewKind(target) !== null;
+function hasBinaryRenderer(target: OpenTarget, officePreview: boolean): boolean {
+  return ["image", "pdf", "sheet", "html"].includes(target.preview) || officePreviewKind(target, officePreview) !== null;
 }
 
 function loadingShape(target: OpenTarget): PreviewLoadingShape {
@@ -89,7 +93,7 @@ function loadingShape(target: OpenTarget): PreviewLoadingShape {
   return "document";
 }
 
-export function ArtifactPanel({ sessionId, tab, client, workspaceId, workspaceRoot, onOpenTarget, isLocalWorkspace, onClose }: ArtifactPanelProps) {
+export function ArtifactPanel({ sessionId, tab, client, workspaceId, workspaceRoot, onOpenTarget, isLocalWorkspace, officeDocumentPreview = false, onClose }: ArtifactPanelProps) {
   const transcriptTargets = usePanelTabStore((state) => state.transcriptArtifactTargets[sessionId] ?? EMPTY_TRANSCRIPT_TARGETS);
   const artifactTargets = useMemo(() => transcriptTargets.filter(isCollectibleArtifactTarget), [transcriptTargets]);
   const target = tab.target ?? artifactTargets.find((item) => item.id === tab.id) ?? null;
@@ -107,12 +111,13 @@ export function ArtifactPanel({ sessionId, tab, client, workspaceId, workspaceRo
       onOpenTarget={onOpenTarget}
       isLocalWorkspace={isLocalWorkspace}
       target={target}
+      officeDocumentPreview={officeDocumentPreview}
       onClose={onClose}
     />
   );
 }
 
-function ArtifactPanelView({ sessionId, client, workspaceId, workspaceRoot, target, onOpenTarget, isLocalWorkspace, onClose }: ArtifactPanelViewProps) {
+function ArtifactPanelView({ sessionId, client, workspaceId, workspaceRoot, target, onOpenTarget, isLocalWorkspace, officeDocumentPreview, onClose }: ArtifactPanelViewProps) {
   const [failure, setFailure] = useState<{ owner: string; title: string; details: string } | null>(null);
   const owner = JSON.stringify([sessionId, workspaceId, target.id]);
   const reportFailure = (title: string, error: unknown) => setFailure({ owner, title, details: error instanceof Error ? error.message : String(error) });
@@ -144,7 +149,7 @@ function ArtifactPanelView({ sessionId, client, workspaceId, workspaceRoot, targ
     });
   };
 
-  const queryKey = ["artifact-panel", workspaceId, sessionId, target.fileScope ?? null, target.id, target.updatedAt ?? null];
+  const queryKey = ["artifact-panel", workspaceId, sessionId, target.fileScope ?? null, target.id, target.updatedAt ?? null, officeDocumentPreview];
   const { data, error, isError, isLoading } = useQuery<ArtifactQueryState>({
     queryKey,
     queryFn: async () => {
@@ -162,11 +167,11 @@ function ArtifactPanelView({ sessionId, client, workspaceId, workspaceRoot, targ
       }
 
       // Don't download a file only to say it can't be shown.
-      if (!hasBinaryRenderer(target)) {
+      if (!hasBinaryRenderer(target, officeDocumentPreview)) {
         return { kind: "unavailable", reason: "This file can't be previewed here.", updatedAt: target.updatedAt ?? null };
       }
 
-      const officeKind = officePreviewKind(target);
+      const officeKind = officePreviewKind(target, officeDocumentPreview);
       if (officeKind && typeof target.size === "number" && target.size > MAX_OFFICE_PREVIEW_BYTES) {
         return { kind: "unavailable", reason: "This file is too large to preview.", updatedAt: target.updatedAt ?? null };
       }

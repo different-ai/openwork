@@ -10,7 +10,7 @@ import { MarkdownBlock } from "../surface/markdown";
 import type { OfficeBlock, OfficePreview, OfficeSlide } from "./office-preview";
 
 /** Rendered documents read in one comfortable column, like a page. */
-const READING_COLUMN = "mx-auto w-full max-w-[72ch] px-6 py-6";
+const READING_COLUMN = "mx-auto w-full max-w-[72ch] px-6 py-6 [overflow-wrap:anywhere]";
 
 /** Wait this long before showing a skeleton, so fast local reads never flash. */
 const SKELETON_DELAY_MS = 150;

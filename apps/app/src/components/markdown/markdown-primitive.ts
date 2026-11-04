@@ -547,7 +547,8 @@ function createMarkedOptions(profile: MarkdownProfile, presentation: MarkdownPre
         const header = token.header.map((cell) => this.tablecell({ ...cell, header: true })).join("");
         const body = token.rows.map((row) => this.tablerow({ text: row.map((cell) => this.tablecell(cell)).join("") })).join("");
 
-        return `<table class="my-4 w-full border-collapse"><thead>${this.tablerow({ text: header })}</thead><tbody>${body}</tbody></table>`;
+        // Wide tables scroll inside their own box instead of widening the message or panel.
+        return `<div class="my-4 max-w-full overflow-x-auto"><table class="w-full border-collapse"><thead>${this.tablerow({ text: header })}</thead><tbody>${body}</tbody></table></div>`;
       },
       tablerow({ text }) {
         return `<tr>${text}</tr>`;
