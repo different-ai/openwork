@@ -56,7 +56,7 @@ enum InputDelivery: String {
         case .key(_, let flags): return flags.contains(.maskCommand) || route == .skyLight && !signedKeys
         case .type: return route == .skyLight && !signedKeys
         case .click(_, _, let flags): return !flags.isEmpty
-        case .move, .drag, .rightClick, .hold: return true
+        case .move, .drag, .rightClick, .hold, .saveAs: return true
         case .showMenu: return false
         case .press, .setValue, .scroll, .wait, .menu, .openFile, .arrange: return false
         }

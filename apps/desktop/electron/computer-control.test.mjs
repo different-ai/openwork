@@ -63,7 +63,7 @@ function fixture(options = {}) {
   };
   /** @type {import("@openwork/computer-use/computer-control").ComputerAdapter} */
   const remote = { ...adapter, id: "vm", label: "VM", placement: "remote" };
-  const control = createComputerControl({ adapters: options.remote ? [adapter, remote] : [adapter], readRemoteFeatureEnabled: options.authority, runProgram: options.runProgram, runScript: options.runScript, onTiming: options.onTiming, browserTask: options.browserTask, onRequest: (_sessionId, value) => { requests.push(value); }, movePolicy: options.movePolicy, idleMs: options.idleMs ?? 90_000, platform: options.platform });
+  const control = createComputerControl({ adapters: options.remote ? [adapter, remote] : [adapter], readRemoteFeatureEnabled: options.authority, runProgram: options.runProgram, runScript: options.runScript, onTiming: options.onTiming, browserTask: options.browserTask, onRequest: (_sessionId, value) => { requests.push(value); }, movePolicy: options.movePolicy, idleMs: options.idleMs ?? 90_000, platform: options.platform, saveFolder: options.saveFolder });
   return { control, calls, requests, selected, emit: value => emit(value), disconnect: () => disconnect() };
 }
 
@@ -1209,6 +1209,86 @@ test("only a Mac opens an app onto a file or keeps an agent clipboard", async (t
     await f.control.execute({ sessionId: "chat", name: "computer_open", args: { app_id: "editor", mode: "control", purpose: "Edit" } });
     assert.equal(f.opens().at(-1).clipboard, undefined, platform);
   }
+});
+
+test("a save the helper confirmed on disk is the only file the chat may open, and only in that chat", async (t) => {
+  const seen = [];
+  const f = fixture({ seen, toolResult: (name) => {
+    if (name !== "computer_act") return undefined;
+    const { observation_id: id } = seen.at(-1).args;
+    return text(id === "saved" ? { ok: true, status: "dispatched", path: "file_saved", saved_file: { path: "/Users/me/Desktop/report.pdf", bytes: 42 } }
+      : { ok: true, status: "dispatched", path: "file_save_unconfirmed" });
+  } });
+  t.after(() => f.control.reset(true));
+  await f.control.setFeatureEnabled(true);
+  await f.control.execute({ sessionId: "chat", name: "computer_open", args: { app_id: "editor", mode: "control", purpose: "Export" } });
+  const save = (id, path) => f.control.execute({ sessionId: "chat", name: "computer_act", args: { observation_id: id, action: { type: "save_as", path } } });
+  await save("unconfirmed", "/Users/me/Desktop/ghost.pdf");
+  assert.equal(f.control.savedFile({ sessionId: "chat", path: "/Users/me/Desktop/ghost.pdf" }), false, "pressed Save is not a saved file");
+  await save("saved", "/Users/me/Desktop/report.pdf");
+  assert.equal(f.control.savedFile({ sessionId: "chat", path: "/Users/me/Desktop/report.pdf" }), true);
+  assert.equal(f.control.savedFile({ sessionId: "other", path: "/Users/me/Desktop/report.pdf" }), false, "another chat cannot open it");
+  assert.equal(f.control.savedFile({ sessionId: "chat", path: "/Applications/Calculator.app" }), false);
+});
+
+/** A Mac helper that asks for the destination of each save_as, then saves once it is approved. */
+function saveFixture(options = {}) {
+  const seen = [];
+  const f = fixture({ seen, platform: "darwin", saveFolder: async (sessionId) => `/Users/me/Downloads/OpenWork/${sessionId}`, ...options, toolResult: (name) => {
+    if (name !== "computer_act") return undefined;
+    const { action, file_approval: approved } = seen.at(-1).args;
+    return text(JSON.stringify(approved) === JSON.stringify([action.path])
+      ? { ok: true, status: "dispatched", path: "file_saved", saved_file: { path: action.path, bytes: 42 } }
+      : { ok: false, code: "files_approval_required", files: [action.path], save: true, app: "Preview", dispatched: false, next: "observe" });
+  } });
+  const save = (path) => f.control.execute({ sessionId: "chat", name: "computer_act", args: { observation_id: "observation", action: { type: "save_as", path } } });
+  const cards = () => f.requests.filter((request) => request?.reason === "files");
+  const acts = () => seen.filter((call) => call.name === "computer_act").length;
+  return { ...f, save, cards, acts };
+}
+const openForSaving = (f) => f.control.setFeatureEnabled(true).then(() => f.control.execute({ sessionId: "chat", name: "computer_open", args: { app_id: "editor", mode: "control", purpose: "Make a PDF" } }));
+
+test("a save goes ahead without a card by default, and the chat learns its own folder", async (t) => {
+  const f = saveFixture(); t.after(() => f.control.reset(true));
+  const opened = await openForSaving(f);
+  assert.ok(opened.content.some((part) => part.type === "text" && JSON.parse(part.text).save_folder === "/Users/me/Downloads/OpenWork/chat"));
+  assert.equal(payload(await f.save("/Users/me/Desktop/report.pdf")).path, "file_saved");
+  assert.deepEqual(f.cards(), [], "the agent decides");
+  assert.ok(f.control.savedFile({ sessionId: "chat", path: "/Users/me/Desktop/report.pdf" }));
+});
+
+test("an organization that asks shows the save card each time, and one that blocks saves refuses them", async (t) => {
+  const asked = [];
+  const f = saveFixture({ movePolicy: async (input) => { asked.push(input); return { effect: "ask" }; } }); t.after(() => f.control.reset(true));
+  await openForSaving(f);
+  const card = async (count) => {
+    for (let waited = 0; f.cards().length < count && waited < 2_000; waited += 5) await new Promise((resolve) => setTimeout(resolve, 5));
+    return f.cards().at(-1);
+  };
+  const first = f.save("/Users/me/Desktop/report.pdf");
+  const request = await card(1);
+  assert.deepEqual(request.files, { app: "Preview", names: ["/Users/me/Desktop/report.pdf"], save: true });
+  assert.equal(request.standing, false, "no Always: nothing is remembered");
+  assert.deepEqual(asked, [{ kind: "computer_files", sessionId: "chat" }], "saves use the organization's rule for moving files");
+  await f.control.answerRequest({ sessionId: "chat", answer: "allow", id: request.id });
+  assert.equal(payload(await first).path, "file_saved");
+  const second = f.save("/Users/me/Desktop/report.pdf");
+  await f.control.answerRequest({ sessionId: "chat", answer: "dismiss", id: (await card(2)).id });
+  assert.equal(payload(await second).code, "save_declined", "asked again, and declined");
+
+  const b = saveFixture({ movePolicy: async () => ({ effect: "deny", message: "Your organization does not let agents move files between apps." }) }); t.after(() => b.control.reset(true));
+  await openForSaving(b);
+  const blocked = payload(await b.save("/Users/me/Desktop/report.pdf"));
+  assert.equal(blocked.code, "organization_policy_denied");
+  assert.match(blocked.message, /organization.*Nothing was saved/);
+  assert.deepEqual(b.cards(), []);
+  assert.equal(b.acts(), 1, "nothing was sent with an approval");
+
+  const broken = saveFixture({ movePolicy: async () => { throw new Error("policy unavailable"); } }); t.after(() => broken.control.reset(true));
+  await openForSaving(broken);
+  assert.equal(payload(await broken.save("/Users/me/Desktop/report.pdf")).code, "organization_policy_denied", "a rule that cannot be read refuses");
+  assert.deepEqual(broken.cards(), []);
+  assert.equal(broken.acts(), 1);
 });
 
 test("declined files are never handed over", async (t) => {

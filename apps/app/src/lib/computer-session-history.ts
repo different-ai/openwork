@@ -85,6 +85,18 @@ export function computerActionMarks(part: DynamicToolUIPart): ComputerActionMark
   })
 }
 
+export type ComputerSavedFile = { path: string; name: string; bytes: number }
+
+/** A file a computer_act step saved: only from a receipt that found it on disk (`file_saved`). */
+export function computerSavedFile(part: DynamicToolUIPart): ComputerSavedFile | null {
+  if (!/(?:^|_)computer_act$/.test(part.toolName)) return null
+  const receipt = result(part)
+  if (!record(receipt) || receipt.ok !== true || receipt.path !== "file_saved" || !record(receipt.saved_file)) return null
+  const { path, bytes } = receipt.saved_file
+  if (typeof path !== "string" || !path.startsWith("/") || path.length > 1024 || typeof bytes !== "number" || !Number.isFinite(bytes) || bytes < 0) return null
+  return { path, name: path.slice(path.lastIndexOf("/") + 1) || path, bytes }
+}
+
 export type ComputerSessionHistory = {
   id: string
   parts: DynamicToolUIPart[]
@@ -98,6 +110,8 @@ export type ComputerSessionHistory = {
   latest: string
   /** Every app the session worked in, in the order it opened them. */
   apps: string[]
+  /** Files this session saved for the person, each once, in the order of its latest save. */
+  savedFiles: ComputerSavedFile[]
 }
 
 const opensApp = (part: DynamicToolUIPart) => /(?:^|_)computer_open(?:_session)?$/.test(part.toolName)
@@ -190,8 +204,13 @@ export function collectComputerSessionHistory(messages: readonly UIMessage[], op
     ? Math.max(0, Math.max(...ends) - Math.min(...starts)) : null
   const opened = parts.find(part => /(?:^|_)computer_open(?:_session)?$/.test(part.toolName) && record(part.input) && typeof part.input.purpose === "string")
   const purpose = opened && record(opened.input) && typeof opened.input.purpose === "string" ? opened.input.purpose.trim() || null : null
+  const saved = new Map<string, ComputerSavedFile>()
+  for (const part of parts) {
+    const file = computerSavedFile(part)
+    if (file) { saved.delete(file.path); saved.set(file.path, file) }
+  }
   return { id: first.toolCallId, parts, frames, toolCallIds: new Set(tools.keys()), files, durationMs, purpose, latest: label(parts.at(-1)!),
-    apps: [...new Set(apps.values())] }
+    apps: [...new Set(apps.values())], savedFiles: [...saved.values()] }
 }
 
 export function withoutComputerHistory(parts: UIMessage["parts"], history: ComputerSessionHistory | null): UIMessage["parts"] {

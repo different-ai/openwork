@@ -3,9 +3,10 @@ import { DESKTOP_POLICY_ENFORCEMENT_ENABLED } from "@openwork/types/den/desktop-
 import { execFile, execFileSync, spawn } from "node:child_process";
 import { createServer } from "node:http";
 import net from "node:net";
-import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, lstatSync, readFileSync, writeFileSync } from "node:fs";
 import {
   cp,
+  lstat,
   mkdir,
   readFile,
   readdir,
@@ -239,6 +240,16 @@ const computerControl = createComputerControl({
     stateDir: path.join(app.getPath("userData"), "computer-scripting"),
     bridgeScript: path.join(__dirname, "computer-scripting", "openwork_blender.py").replace(`app.asar${path.sep}`, `app.asar.unpacked${path.sep}`),
   }) } : {}),
+  // A chat's own output folder: computer saves there need no approval, so it must be a real
+  // folder OpenWork made, never a link to somewhere else.
+  saveFolder: async (sessionId) => {
+    const name = String(sessionId).replace(/[^A-Za-z0-9._-]/g, "-").slice(0, 80);
+    if (/^\.*$/.test(name)) return null;
+    const folder = path.join(app.getPath("downloads"), "OpenWork", name);
+    await mkdir(folder, { recursive: true });
+    const real = await realpath(folder);
+    return real === folder && (await lstat(folder)).isDirectory() ? real : null;
+  },
   // Where computer steps spend their time: on this computer, or waiting for the model.
   onTiming: (_sessionId, step) => console.info(`[computer] ${step.name} computer ${Math.round(step.computerMs)} ms${step.modelMs === undefined ? "" : ` · model ${Math.round(step.modelMs)} ms`}${step.followed === undefined ? "" : step.followed ? " · in view" : " · background"}`),
   runProgram: async (request, host, signal, options) => (await import("@openwork/computer-use/runtime")).runComputerProgram(request, host, signal, options),
@@ -2195,6 +2206,19 @@ const desktopCommandHandlers = {
   "computerAnswerRequest": async (event, input) => {
       assertComputerSender(event);
       return computerControl.answerRequest({ sessionId: String(input?.sessionId ?? ""), answer: input?.answer, ...(typeof input?.id === "string" ? { id: input.id } : {}) });
+  },
+  "computerOpenSavedFile": async (event, input) => {
+      assertComputerSender(event);
+      // A path from the chat: only a file this chat's computer use saved here launches, and
+      // only while it is still a regular file, not a link. Anything else is at most shown in its folder.
+      const target = String(input?.path ?? "");
+      const file = await resolveChatFilePath(target);
+      if (!file) return { ok: true, action: "unavailable" };
+      const launch = input?.reveal !== true && computerControl.savedFile({ sessionId: String(input?.sessionId ?? ""), path: target })
+        && lstatSync(target).isFile();
+      if (!launch) { shell.showItemInFolder(file); return { ok: true, action: "revealed" }; }
+      const error = await shell.openPath(target);
+      return error?.trim() ? { ok: false, error } : { ok: true, action: "opened" };
   },
   "computerListFileGrants": async (event) => {
       assertComputerSender(event);

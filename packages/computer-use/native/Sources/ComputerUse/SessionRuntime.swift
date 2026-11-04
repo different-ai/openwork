@@ -828,6 +828,21 @@ final class SessionRuntime {
                 throw AgentClipboard.nothingCopied
             }
         }
+        // Saving writes a file for the app from its open Save sheet; the organization's file rule decides whether anyone is asked.
+        if let (file, replace) = actions.lazy.compactMap({ action -> (URL, Bool)? in if case .saveAs(let url, let replace) = action { return (url, replace) }; return nil }).first {
+            guard actions.count == 1 else {
+                throw UseError("save_as_alone", "Save as its own step. Nothing was sent.", next: "observe")
+            }
+            guard access.saveNameField(current.target) != nil else {
+                throw UseError("save_panel_required", "save_as fills the app's open Save or Export sheet. Open it from the app (such as File > Save or Export), observe it, then try again. Nothing was sent.", next: "observe")
+            }
+            try FileHandoff.refuseReplacing(file, replace: replace)
+            guard let fileApproval, fileApproval == [file.path] else {
+                return text(["ok": false, "code": "files_approval_required", "files": [file.path], "save": true,
+                    "app": current.frontApp.name, "dispatched": false, "next": "observe",
+                    "message": "Saving writes this file for the app once the organization's file rule allows it; nothing was sent."])
+            }
+        }
         session?.observation = nil; session?.focus = nil; session?.lastUsed = now
         if let intent { controls.narrate(intent) }
         session?.receiptInputs[requestID] = fingerprint
@@ -868,6 +883,7 @@ final class SessionRuntime {
         var records = current.records
         var failure: UseError?
         var uncertain = false
+        var savedFile: [String: Any]?
         var index = 0
         // Typing the person's input paused partway: the text still to type, the field's
         // selection before the step's first character, and what went in before the pause.
@@ -967,6 +983,10 @@ final class SessionRuntime {
                 case .copy?, .cut?: copiedBefore = clipboard.willCopy()
                 case nil: break
                 }
+                // What was at a save's path before Save, so only a file written by this step counts.
+                let saving: (file: URL, before: FileHandoff.Stamp?, since: Date)? = {
+                    if case .saveAs(let file, _) = action { return (file, FileHandoff.stamp(file), Date()) }; return nil
+                }()
                 var path = try await input.execute(action, app: current.app, target: current.target, lease: observation,
                     access: access, records: records, focus: focus, pointerTarget: pointerTarget,
                     check: checkInput, checkWindow: checkWindow, background: background || !current.parents.isEmpty, editorTyping: editorTyping && index == 0, feedback: { [weak self] feedback in
@@ -1007,6 +1027,17 @@ final class SessionRuntime {
                         if documentOpened || retitled || alert != nil {
                             path = FileOpenCheck.outcome(alert: alert, documentWindowOpened: documentOpened, retitled: retitled)
                             fileAlert = alert; break
+                        }
+                        try await Task.sleep(nanoseconds: 100_000_000)
+                    }
+                }
+                if let saving {
+                    // A pressed Save is not proof: the file counts as saved once it is on disk, written after Save.
+                    path = "file_save_unconfirmed"
+                    for _ in 0..<50 {
+                        try check()
+                        if let saved = FileHandoff.saved(saving.file, before: saving.before, since: saving.since) {
+                            path = "file_saved"; savedFile = ["path": saving.file.path, "bytes": saved.bytes]; break
                         }
                         try await Task.sleep(nanoseconds: 100_000_000)
                     }
@@ -1124,6 +1155,7 @@ final class SessionRuntime {
         }
         var receipt = progress.receipt(requestID: requestID, failure: failure, uncertain: uncertain, detailed: policy == .embedded)
         if let settled { receipt["settled"] = settled }
+        if let savedFile { receipt["saved_file"] = savedFile }
         let windowsAfter = access.windowChanges(current.app)
         if settled != nil, let changes = windowsBefore.diff(windowsAfter, target: current.target.id) {
             receipt["window_changes"] = changes

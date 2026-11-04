@@ -164,6 +164,67 @@ final class MacInput {
                     host: layout == .besideOpenWork ? WindowArrangement.hostWindow() : nil)
                 path = try WindowArrangement.apply(frame, to: target.element, check: check)
                 report(.dispatched)
+            case .saveAs(let file, let replace):
+                // A person's steps in the sheet: Go To the folder, name the file, Save. Each value is set
+                // through accessibility and read back, so no autocomplete or stray key changes it.
+                guard let field = access.saveNameField(target) else {
+                    throw UseError("save_panel_required", "The Save sheet is no longer open. Nothing was saved.", next: "observe")
+                }
+                func until<T>(_ seconds: Double, _ found: () -> T?) async throws -> T? {
+                    for _ in 0..<Int(seconds * 10) {
+                        try check()
+                        if let value = found() { return value }
+                        try await Task.sleep(nanoseconds: 100_000_000)
+                    }
+                    return nil
+                }
+                // The Go To field is the one that takes the keyboard after Command-Shift-G.
+                let earlier = access.focusedTextField(app.pid)
+                let goTo: CGEventFlags = [.maskCommand, .maskShift]
+                try modifiers(goTo, pid: app.pid, check: check)
+                try keyboard(try keyCode("g", flags: goTo), flags: goTo, text: nil, pid: app.pid, check: check)
+                releaseModifiers()
+                guard let folderField = try await until(2, { access.focusedTextField(app.pid).flatMap { live in
+                    CFEqual(live, field) || earlier.map { CFEqual(live, $0) } == true ? nil : live } }) else {
+                    throw UseError("save_folder_unavailable", "The sheet did not open its Go To field, so the folder could not be chosen. Nothing was saved.", next: "observe")
+                }
+                let folder = file.deletingLastPathComponent().path
+                guard AXUIElementSetAttributeValue(folderField, kAXValueAttribute as CFString, folder as CFString) == .success,
+                      (access.attribute(folderField, kAXValueAttribute) as? String) == folder else {
+                    throw UseError("save_folder_unavailable", "The Go To field did not take the folder. Nothing was saved.", next: "observe")
+                }
+                try keyboard(NativeKey.navigation["enter"]!, flags: [], text: nil, pid: app.pid, check: check)
+                _ = try await until(2, { access.focusedTextField(app.pid).map { CFEqual($0, folderField) } == true ? nil : true })
+                // After Go To, which can rename the file.
+                let name = file.lastPathComponent
+                guard AXUIElementSetAttributeValue(field, kAXValueAttribute as CFString, name as CFString) == .success,
+                      (access.attribute(field, kAXValueAttribute) as? String) == name else {
+                    throw UseError("save_name_not_applied", "The Save As field did not take the file name. Nothing was saved.", next: "observe")
+                }
+                guard let save = access.defaultButton(target) else {
+                    throw UseError("save_panel_required", "The sheet has no Save button. Nothing was saved.", next: "observe")
+                }
+                try check()
+                let pressed = AXUIElementPerformAction(save, kAXPressAction as CFString)
+                guard pressed == .success || pressed == .cannotComplete else {
+                    throw UseError("action_failed", "The sheet did not accept Save. Observe before retrying.", next: "observe")
+                }
+                report(.dispatched)
+                // "Replace the existing file?": answered as the step said, never by default.
+                if let prompt = try await until(1.5, { () -> [(title: String, button: AXUIElement)]? in
+                    let buttons = access.savePrompt(over: target, app: app)
+                    if SaveRules.replaceAnswer(buttons: buttons.map(\.title), replace: replace) != nil { return buttons }
+                    // The sheet closed without asking: nothing to answer.
+                    return access.dialogOpen(target, app: app) ? nil : []
+                }), let answer = SaveRules.replaceAnswer(buttons: prompt.map(\.title), replace: replace),
+                   let button = prompt.first(where: { $0.title == answer })?.button {
+                    try check()
+                    _ = AXUIElementPerformAction(button, kAXPressAction as CFString)
+                    guard replace else {
+                        throw UseError("file_exists", "A file with that name was already there, so the save was cancelled and nothing was replaced. Ask the person, then send replace: true, or choose another name.", next: "observe")
+                    }
+                }
+                path = "save_pressed"
             case .menu(let names):
                 // Menu commands go to the app's focused window: never to another document.
                 guard access.isFocusedWindow(target, app: app) else {
@@ -574,5 +635,57 @@ enum FileHandoff {
             throw UseError("file_unavailable", "No file exists at that path. Nothing was opened.", next: "correct_request")
         }
         return url
+    }
+
+    /// Where a save writes: an absolute path in an existing folder, with links resolved, so any
+    /// approval names the real destination. Never a folder; a document package is a file here.
+    static func destination(_ path: String) throws -> URL {
+        guard path.hasPrefix("/"), !path.hasSuffix("/"), !path.contains("\0") else {
+            throw UseError("invalid_arguments", "path must be an absolute path to a file on this Mac, such as /Users/…/Desktop/report.pdf.")
+        }
+        let given = URL(fileURLWithPath: path).standardizedFileURL
+        let name = given.lastPathComponent
+        guard !name.isEmpty, name != "/", name.utf8.count <= 255 else {
+            throw UseError("invalid_arguments", "path must end in a file name.")
+        }
+        let folder = given.deletingLastPathComponent().resolvingSymlinksInPath()
+        var isFolder: ObjCBool = false
+        guard FileManager.default.fileExists(atPath: folder.path, isDirectory: &isFolder), isFolder.boolValue else {
+            throw UseError("folder_unavailable", "No folder exists at that path. Nothing was saved.", next: "correct_request")
+        }
+        // An existing link saves over the file it points to: that is the destination.
+        let url = folder.appendingPathComponent(name).resolvingSymlinksInPath()
+        if FileManager.default.fileExists(atPath: url.path, isDirectory: &isFolder), isFolder.boolValue,
+           !NSWorkspace.shared.isFilePackage(atPath: url.path) {
+            throw UseError("invalid_arguments", "path names a folder. Name the file to save, inside that folder.", next: "correct_request")
+        }
+        return url
+    }
+
+    /// A save never replaces a file unless the step says `replace: true`.
+    static func refuseReplacing(_ url: URL, replace: Bool) throws {
+        guard replace || !FileManager.default.fileExists(atPath: url.path) else {
+            throw UseError("file_exists", "A file already exists at that path. Ask the person before replacing it, then send replace: true, or choose another name. Nothing was sent.", next: "correct_request")
+        }
+    }
+
+    /// What a file on disk was before a save, so an untouched file is never reported saved.
+    struct Stamp: Equatable { let modified: Date; let bytes: Int; let identity: Int }
+    static func stamp(_ url: URL) -> Stamp? {
+        guard let values = try? FileManager.default.attributesOfItem(atPath: url.path),
+              let modified = values[.modificationDate] as? Date else { return nil }
+        var bytes = (values[.size] as? NSNumber)?.intValue ?? 0
+        if (values[.type] as? FileAttributeType) == .typeDirectory {
+            // A document package: its size is its contents'.
+            bytes = (FileManager.default.enumerator(at: url, includingPropertiesForKeys: [.fileSizeKey])?.allObjects as? [URL] ?? [])
+                .reduce(0) { $0 + ((try? $1.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? 0) }
+        }
+        return Stamp(modified: modified, bytes: bytes, identity: (values[.systemFileNumber] as? NSNumber)?.intValue ?? 0)
+    }
+    /// The saved file, once it exists and was written after `since`, unlike what was there before.
+    /// Coarse file systems (FAT, network shares) round times down to two seconds.
+    static func saved(_ url: URL, before: Stamp?, since: Date) -> Stamp? {
+        guard let now = stamp(url), now != before, now.modified.timeIntervalSince(since) > -2 else { return nil }
+        return now
     }
 }

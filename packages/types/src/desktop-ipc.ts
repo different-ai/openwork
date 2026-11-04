@@ -369,7 +369,8 @@ export type ComputerRequest = {
   /** The exact script that runs if the person approves it. */
   script?: { app: "applescript" | "jxa" | "blender"; code: string };
   /** The files handed over if the person approves: names or full paths, and the app or site receiving them. */
-  files?: { app: string; names: string[]; site?: string; canRemember?: boolean };
+  /** `save`: the one name is where the app will save a file, not a file handed to it. */
+  files?: { app: string; names: string[]; site?: string; canRemember?: boolean; save?: boolean };
   /** Where the agent would type a password or one-time code: an exact site (origin) in the built-in browser, or a native app by name and id. */
   credential?: { site?: string; app?: string; appId?: string };
 };
@@ -496,6 +497,7 @@ export type DesktopCommandMap = {
   computerChoose: { args: [targetId: string]; result: ComputerStatus };
   computerHalt: { args: [sessionId: string]; result: ComputerSnapshot };
   computerAnswerRequest: { args: [input: { sessionId: string; answer: "dismiss" | "allow" | "always" | "remember"; id?: string }]; result: ComputerSnapshot };
+  computerOpenSavedFile: { args: [input: { sessionId: string; path: string; reveal?: boolean }]; result: DesktopWorkspaceFileOpenResult };
   computerListFileGrants: { args: []; result: { enabled: boolean; grants: Array<{ id: string; origin: string; folder: string; blocked?: boolean }> } };
   computerRemoveFileGrant: { args: [id: string]; result: { ok: boolean } };
   computerSetFeatureEnabled: { args: [enabled: boolean]; result: boolean };

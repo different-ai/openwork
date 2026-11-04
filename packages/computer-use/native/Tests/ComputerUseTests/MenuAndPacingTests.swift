@@ -123,6 +123,81 @@ final class MenuAndPacingTests: XCTestCase {
         XCTAssertThrowsError(try Action(["type": "open_file", "path": photo.path], policy: .desktop), "only the OpenWork host offers it")
     }
 
+    func testSaveAsNamesTheRealDestinationAndRefusesFolders() throws {
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: folder.appendingPathComponent("exports"), withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let real = folder.resolvingSymlinksInPath()
+        let linkedFolder = folder.appendingPathComponent("linked")
+        try FileManager.default.createSymbolicLink(at: linkedFolder, withDestinationURL: folder.appendingPathComponent("exports"))
+        let existing = folder.appendingPathComponent("exports/old.pdf")
+        try Data([1]).write(to: existing)
+        let linkedFile = folder.appendingPathComponent("shortcut.pdf")
+        try FileManager.default.createSymbolicLink(at: linkedFile, withDestinationURL: existing)
+
+        guard case .saveAs(let file, let replace) = try Action(["type": "save_as", "path": folder.appendingPathComponent("report.pdf").path], policy: .embedded) else { return XCTFail() }
+        XCTAssertEqual(file.path, real.appendingPathComponent("report.pdf").path, "a new file in an existing folder")
+        XCTAssertFalse(replace, "replacing is off unless the step says so")
+        guard case .saveAs(let viaLink, _) = try Action(["type": "save_as", "path": linkedFolder.appendingPathComponent("report.pdf").path], policy: .embedded) else { return XCTFail() }
+        XCTAssertEqual(viaLink.path, real.appendingPathComponent("exports/report.pdf").path, "the person approves the folder a link points to")
+        guard case .saveAs(let overLink, true) = try Action(["type": "save_as", "path": linkedFile.path, "replace": true], policy: .embedded) else { return XCTFail() }
+        XCTAssertEqual(overLink.path, real.appendingPathComponent("exports/old.pdf").path, "saving over a link writes the file it points to")
+        XCTAssertTrue(try Action(["type": "save_as", "path": existing.path], policy: .embedded).requiresControl)
+
+        for (path, code) in [("report.pdf", "invalid_arguments"), (folder.path + "/", "invalid_arguments"), (folder.appendingPathComponent("exports").path, "invalid_arguments"),
+                             (folder.appendingPathComponent("missing/report.pdf").path, "folder_unavailable")] {
+            XCTAssertThrowsError(try Action(["type": "save_as", "path": path], policy: .embedded), path) { error in
+                XCTAssertEqual((error as? UseError)?.code, code, path)
+            }
+        }
+        XCTAssertThrowsError(try Action(["type": "save_as", "path": existing.path, "replace": "yes"], policy: .embedded))
+        XCTAssertThrowsError(try Action(["type": "save_as", "path": existing.path, "replace": 1], policy: .embedded), "replace is a boolean, not a number")
+        XCTAssertThrowsError(try Action(["type": "save_as", "path": existing.path], policy: .desktop), "only the OpenWork host offers it")
+    }
+
+    func testSaveNeverReplacesAFileUnlessTheStepSaysSo() throws {
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let existing = folder.appendingPathComponent("report.pdf")
+        try Data([1]).write(to: existing)
+
+        XCTAssertThrowsError(try FileHandoff.refuseReplacing(existing, replace: false)) { error in
+            XCTAssertEqual((error as? UseError)?.code, "file_exists")
+            XCTAssertEqual((error as? UseError)?.payload["next"] as? String, "correct_request")
+        }
+        XCTAssertNoThrow(try FileHandoff.refuseReplacing(existing, replace: true))
+        XCTAssertNoThrow(try FileHandoff.refuseReplacing(folder.appendingPathComponent("new.pdf"), replace: false))
+
+        // The sheet's own "Replace?" prompt is answered the same way: Cancel unless replace is true.
+        XCTAssertEqual(SaveRules.replaceAnswer(buttons: ["Cancel", "Replace"], replace: false), "Cancel")
+        XCTAssertEqual(SaveRules.replaceAnswer(buttons: ["Cancel", "Replace"], replace: true), "Replace")
+        XCTAssertNil(SaveRules.replaceAnswer(buttons: ["Don't Save", "Cancel", "Save"], replace: true), "not a replace prompt")
+        XCTAssertNil(SaveRules.replaceAnswer(buttons: ["Replace"], replace: true), "a prompt without a way out is not answered")
+    }
+
+    func testASaveCountsOnlyOnceTheFileIsOnDiskAndWrittenAfterSave() throws {
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let file = folder.appendingPathComponent("report.pdf")
+        let since = Date()
+
+        XCTAssertNil(FileHandoff.saved(file, before: nil, since: since), "nothing on disk yet")
+        try Data(repeating: 7, count: 42).write(to: file)
+        XCTAssertEqual(FileHandoff.saved(file, before: nil, since: since)?.bytes, 42, "a new file, with its size")
+
+        // An older file left untouched by the step is not a save.
+        let old = Date(timeIntervalSinceNow: -3_600)
+        try FileManager.default.setAttributes([.modificationDate: old], ofItemAtPath: file.path)
+        XCTAssertNil(FileHandoff.saved(file, before: nil, since: since), "modified before Save")
+        let before = FileHandoff.stamp(file)
+        try FileManager.default.setAttributes([.modificationDate: Date()], ofItemAtPath: file.path)
+        XCTAssertNil(FileHandoff.saved(file, before: FileHandoff.stamp(file), since: since), "unchanged since the step began")
+        try Data(repeating: 1, count: 9).write(to: file)
+        XCTAssertEqual(FileHandoff.saved(file, before: before, since: since)?.bytes, 9, "a replaced file counts once it is rewritten")
+    }
+
     func testMenuTitlesMatchAsAPersonReadsThem() {
         XCTAssertTrue(MenuRules.same("\u{200E}Bold", "bold"))
         XCTAssertTrue(MenuRules.same("Find…", " Find… "))

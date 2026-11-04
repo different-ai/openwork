@@ -158,7 +158,7 @@ import { DevProfiler } from "@/react-app/shell/dev-profiler"
 import { groupMessages, isMessageGroup, getLastTextPart, getAggregateOnlyParts, getAssistantRenderGroups, getFileTitle, getMediaBadge, getMessageCompleted, getMessageCreated, getRunStartedAt, getWaitedMs, formatMessageTimestamp, splitTurnAtAnswer, type UIMessageWithIndex, getMessagesText, getSafeFileDownloadUrl, getSafeFileRevealPath } from "./utils"
 import type { AnyToolPart } from "@/lib/tool-aggregate"
 import { collectComputerSessionHistory, withoutComputerHistory, type ComputerSessionHistory as ComputerHistory } from "@/lib/computer-session-history"
-import { ComputerSessionHistory } from "./computer-session-history"
+import { ComputerSessionHistory, desktopSavedFileActions } from "./computer-session-history"
 import { useComputerSessionHistoryStore } from "./computer-session-history-store"
 import { useSteadyLiveTurnStore } from "./steady-live-turn-store"
 import { resolveConnectorToolIdentity } from "@/react-app/domains/connections/connector-tool-identity"
@@ -1860,7 +1860,8 @@ function MessageGroup({
       {renderItems(proseItems, stepItems.length, collapseSteps || panelLive)}
       {computerHistory ? <Message className="mx-auto flex w-full max-w-3xl flex-col px-2 md:px-10">
         <ComputerSessionHistory key={computerHistory.id} history={computerHistory} active={isLiveGroup && parentActive} renderAction={part => <ToolMessage part={part} />}
-          live={computerWorking && isLastGroup ? { watching: watchingComputer, onWatch: watching => useComputerSessionHistoryStore.getState().setWatching(sessionId, watching) } : undefined} />
+          live={computerWorking && isLastGroup ? { watching: watchingComputer, onWatch: watching => useComputerSessionHistoryStore.getState().setWatching(sessionId, watching) } : undefined}
+          fileActions={isElectronRuntime() && !readOnly ? desktopSavedFileActions(sessionId) : undefined} />
       </Message> : null}
       {groupSkillCards.length > 0 ? (
         <div data-created-skills="" className="mx-auto mt-1 flex w-full max-w-3xl flex-col gap-2 px-2 md:px-10">

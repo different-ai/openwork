@@ -19,6 +19,16 @@ still pop out into its own window), and **Hide live view** closes it again. The
 view still opens on its own when the person is needed, such as after a
 takeover. The next computer session starts in the card again.
 
+Files the session saved are listed on the card, under its header, without
+opening it: each file a Mac `save_as` step confirmed on disk (`file_saved`),
+named once with its latest size. In the desktop app each offers **Open** (its
+default app), **Show in Finder**, and **Attach to chat**, which adds it to the
+chat's message box as a file mention, as the message box's own file picker
+does. A save that was not confirmed on disk is not listed. Saves need no
+approval unless the organization's Agent permissions ask first. Open launches only a
+file this chat's computer use saved on this computer since the app started;
+any other path from the conversation is shown in Finder instead.
+
 ![Computer session history open in the chat](computer-session-history.webp)
 
 Enable the feature for a test organization or member in platform admin, then
