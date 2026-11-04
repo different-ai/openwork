@@ -24,3 +24,10 @@ test("Den's named schedule imports work without development conditions", () => {
   assert.equal(typeof previewAutomationSchedule, "function")
   assert.equal(typeof recoverableAutomationOccurrence, "function")
 })
+
+test("Your agent's brief pipeline loads from the production build, sharing proactive's module", async () => {
+  const brief = await import("@openwork/automations/proactive-brief")
+  assert.equal(typeof brief.decideBriefDelivery, "function")
+  assert.equal(typeof brief.agentCheckInstructions, "function")
+  assert.deepEqual(brief.parseAgentMessages("NO_REPLY"), { kind: "quiet" })
+})

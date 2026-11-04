@@ -22,6 +22,15 @@
       "development": "./src/proactive.ts",
       "default": "./dist/proactive.js"
     },
+    "./proactive-brief": {
+      "types": {
+        "openwork-build": "./dist/types/src/proactive-brief.d.ts",
+        "default": "./src/proactive-brief.ts"
+      },
+      "bun": "./src/proactive-brief.ts",
+      "development": "./src/proactive-brief.ts",
+      "default": "./dist/proactive-brief.js"
+    },
     "./testing": {
       "types": {
         "openwork-build": "./dist/types/src/testing.d.ts",

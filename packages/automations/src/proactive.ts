@@ -327,7 +327,8 @@ function formatClock(at: number, timeZone: string) {
   return new Intl.DateTimeFormat("en-US", { timeZone, hour: "numeric", minute: "2-digit" }).format(at)
 }
 
-function formatWhen(at: number, now: number, timeZone: string) {
+/** "today at 2:00 PM", "tomorrow at 8:00 AM", "Thu, Oct 22 at 3:00 PM". */
+export function formatWhen(at: number, now: number, timeZone: string) {
   const day = zonedDayStart(at, timeZone)
   const label = day === zonedDayStart(now, timeZone)
     ? "today"
@@ -422,7 +423,8 @@ function sinceHint(source: AgentPromptSource, at: number) {
   return ` (${new Date(at).toISOString()})`
 }
 
-function describeSource(source: AgentPromptSource, now: number, timeZone: string) {
+/** One source as a wake prompt lists it: what it reads, when it was last read (with an exact search hint), the member's instruction. */
+export function describeSource(source: AgentPromptSource, now: number, timeZone: string) {
   const via = source.via.length ? ` through ${source.via.join(" and ")}` : ""
   const scope = isCoreSource(source.id) ? `: ${SOURCE_SCOPE[source.id]}` : ""
   const read = source.lastReadAt === null
@@ -504,7 +506,7 @@ const agentReplySchema = z.object({
 export type AgentReply = { kind: "quiet" } | { kind: "message"; message: string; items: AgentItem[]; urgent?: true } | { kind: "invalid" }
 
 /** The JSON in an answer: inside the first ``` fence when there is one, from the first `{` to the last `}`. */
-function jsonCandidate(text: string): string | null {
+export function jsonCandidate(text: string): string | null {
   let body = text
   const open = text.indexOf("```")
   if (open >= 0) {
@@ -523,7 +525,7 @@ const LEADING_MARKS = new Set(["`", "*", "_", '"', "'"])
 const TRAILING_MARKS = new Set(["`", "*", "_", '"', "'", "."])
 
 /** A line without the Markdown or quote marks a model wraps NO_REPLY in. */
-function withoutMarks(line: string): string {
+export function withoutMarks(line: string): string {
   let start = 0
   let end = line.length
   while (start < end && LEADING_MARKS.has(line.charAt(start))) start += 1
@@ -917,6 +919,11 @@ const agentStateSchema = z.object({
    * forgotten once the connection works again so a later failure is told again.
    */
   notices: z.record(z.string(), z.number()).default({}),
+  /**
+   * `workbotAgentBrief`: extra checks the agent asked for with request_check, soonest first (proactive-brief.ts). Kept
+   * after they run, for two days, so the day's cap and "Already set" still count them.
+   */
+  requests: z.array(z.object({ at: z.number(), why: z.string().max(200), requestedAt: z.number(), done: z.boolean().optional() })).max(40).optional(),
 })
 export type AgentState = z.infer<typeof agentStateSchema>
 
