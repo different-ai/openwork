@@ -1863,7 +1863,8 @@ function MessageGroup({
         <ComputerSessionHistory key={computerHistory.id} history={computerHistory} active={isLiveGroup && parentActive} renderAction={part => <ToolMessage part={part} />}
           live={computerWorking && isLastGroup ? { watching: watchingComputer, onWatch: watching => useComputerSessionHistoryStore.getState().setWatching(sessionId, watching) } : undefined}
           fileActions={savedFileActions}
-          turnEndedAt={isLiveGroup && parentActive ? null : getMessageCompleted(lastItem.message)} />
+          turnEndedAt={isLiveGroup && parentActive ? null : getMessageCompleted(lastItem.message)}
+          turnStartedAt={getMessageCreated(items[0]!.message) ?? null} />
       </Message> : null}
       {groupSkillCards.length > 0 ? (
         <div data-created-skills="" className="mx-auto mt-1 flex w-full max-w-3xl flex-col gap-2 px-2 md:px-10">

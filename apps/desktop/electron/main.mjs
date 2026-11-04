@@ -350,6 +350,9 @@ function computerPolicyDenied(message) {
   return { ok: false, error: { code: "organization_policy_denied", message } };
 }
 
+/** The chat a call belongs to: a subagent's is the chat that started it, as the trusted bridge reports. */
+const computerChatOf = (args) => typeof args?.rootSessionId === "string" && args.rootSessionId ? args.rootSessionId : args?.sessionId;
+
 /** @param {string} sessionId */
 async function checkComputerPermission(sessionId) {
   const decision = await computerAgentPermissions.check({ kind: "computer", sessionId });
@@ -371,14 +374,14 @@ const uiControlServer = createUiControlServer({
   browserTask: (args, options) => browserPanel?.browserTask(args, options) ?? { ok: false, code: "browser_unavailable" },
   computerTask: async (args, options) => {
     if (!["computer_status", "computer_close"].includes(args?.name)) {
-      const denied = await checkComputerPermission(args?.sessionId);
+      const denied = await checkComputerPermission(computerChatOf(args));
       if (denied) return denied;
     }
     return computerControl.execute(args, options);
   },
   computerProgram: async (args, options) => {
     if (args?.surface === "computer") {
-      const denied = await checkComputerPermission(args?.sessionId);
+      const denied = await checkComputerPermission(computerChatOf(args));
       if (denied) return denied;
     }
     return computerControl.program(args, options);
@@ -2216,14 +2219,15 @@ const desktopCommandHandlers = {
       if (!file) return { ok: true, action: "unavailable" };
       // Also a file in the chat's own output folder, however the chat made it.
       const launch = input?.reveal !== true && ((computerControl.savedFile({ sessionId, path: target }) && lstatSync(target).isFile())
-        || await opensFromChatOutput(chatOutputFolder(app.getPath("downloads"), sessionId), target));
+        || await opensFromChatOutput(chatOutputFolder(app.getPath("downloads"), computerControl.chatOf({ sessionId })), target));
       if (!launch) { shell.showItemInFolder(file); return { ok: true, action: "revealed" }; }
       const error = await shell.openPath(target);
       return error?.trim() ? { ok: false, error } : { ok: true, action: "opened" };
   },
   "computerChatFiles": async (event, input) => {
       assertComputerSender(event);
-      const folder = chatOutputFolder(app.getPath("downloads"), String(input?.sessionId ?? ""));
+      // A subagent saves in the folder of the chat that started it.
+      const folder = chatOutputFolder(app.getPath("downloads"), computerControl.chatOf({ sessionId: String(input?.sessionId ?? "") }));
       return { files: folder ? await listChatOutputFiles(folder) : [] };
   },
   "computerListFileGrants": async (event) => {

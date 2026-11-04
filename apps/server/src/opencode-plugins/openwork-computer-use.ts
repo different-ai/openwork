@@ -34,7 +34,9 @@ const action = z.discriminatedUnion("type", [
   z.object({ type: z.literal("menu"), path: z.array(z.string().min(1).max(200)).min(2).max(4).describe("A menu-bar command by its titles, as listed in an observation's menus, such as [\"Format\", \"Font\", \"Bold\"].") }).strict(),
 ]);
 const intent = z.string().min(1).max(120).optional().describe("A few words the person watching sees on your cursor, such as 'opening the Export menu'.");
-const contextSchema = z.object({ sessionID: z.string().min(1), abort: z.instanceof(AbortSignal).optional() });
+// rootSessionID: a subagent's chat, set by the trusted bridge from the engine's session tree.
+const contextSchema = z.object({ sessionID: z.string().min(1), rootSessionID: z.string().min(1).max(256).optional(), abort: z.instanceof(AbortSignal).optional() });
+const chatOf = (context: z.infer<typeof contextSchema>) => context.rootSessionID ? { rootSessionId: context.rootSessionID } : {};
 const nativeResult = z.object({
   isError: z.boolean().optional(),
   content: z.array(z.union([
@@ -56,7 +58,7 @@ function computerTool<T extends z.ZodTypeAny>(name: string, description: string,
     const input = schema.safeParse(raw);
     if (!input.success) return JSON.stringify({ ok: false, code: "invalid_arguments", message: input.error.issues.map(issue => issue.message).join("; ") });
     // macOS system setup may wait; enabled app access needs no OpenWork approval.
-    const result = await uiBridgeRequest("/computer/task", { method: "POST", body: { name, args: input.data, sessionId: parsed.data.sessionID }, signal: parsed.data.abort, timeoutMs: 780_000 });
+    const result = await uiBridgeRequest("/computer/task", { method: "POST", body: { name, args: input.data, sessionId: parsed.data.sessionID, ...chatOf(parsed.data) }, signal: parsed.data.abort, timeoutMs: 780_000 });
     const native = nativeResult.safeParse(result);
     if (!native.success) {
       const unavailable = z.object({ code: z.literal("browser_unavailable") }).safeParse(result);
@@ -110,7 +112,7 @@ export const server = async () => ({ tool: {
     async execute(raw: unknown, context: unknown) {
       const caller = contextSchema.parse(context);
       const args = z.object({ surface: z.enum(["computer", "browser"]), code: z.string().min(1).max(32_000), tabId: z.string().optional(), input: z.json().optional(), timeoutMs: z.number().int().min(1000).max(60000).optional() }).strict().parse(raw);
-      const rawResult = await uiBridgeRequest("/computer/program", { method: "POST", body: { ...args, sessionId: caller.sessionID }, signal: caller.abort, timeoutMs: (args.timeoutMs ?? 30000) + 5000 });
+      const rawResult = await uiBridgeRequest("/computer/program", { method: "POST", body: { ...args, sessionId: caller.sessionID, ...chatOf(caller) }, signal: caller.abort, timeoutMs: (args.timeoutMs ?? 30000) + 5000 });
       const result = z.object({ images: z.array(z.object({ type: z.literal("image"), data: z.string(), mimeType: z.string() })).optional() }).passthrough().parse(rawResult);
       const { images = [], ...state } = result;
       return { title: "Computer program", output: JSON.stringify(state), metadata: { isError: state.ok !== true }, attachments: images.map(image => ({ type: "file" as const, mime: image.mimeType, url: `data:${image.mimeType};base64,${image.data}` })) };
@@ -124,7 +126,7 @@ export const server = async () => ({ tool: {
       const caller = contextSchema.parse(context);
       const args = z.object(scriptArgs).strict().parse(raw);
       // Up to ten minutes for the person's approval, then the script; opening Blender with its bridge can take most of a minute.
-      const result = scriptResult.parse(await uiBridgeRequest("/computer/script", { method: "POST", body: { ...args, sessionId: caller.sessionID }, signal: caller.abort, timeoutMs: 600_000 + (args.timeoutMs ?? 30_000) + 60_000 }));
+      const result = scriptResult.parse(await uiBridgeRequest("/computer/script", { method: "POST", body: { ...args, sessionId: caller.sessionID, ...chatOf(caller) }, signal: caller.abort, timeoutMs: 600_000 + (args.timeoutMs ?? 30_000) + 60_000 }));
       return { title: `Computer script: ${args.app}`, output: JSON.stringify(result), metadata: { isError: result.ok !== true }, attachments: [] };
     },
   } }),
