@@ -582,29 +582,23 @@ async function scriptRequest(f, code) {
   throw new Error("No script request was shown.");
 }
 
-test("scripts run under the computer use flag, the chat's access, the person's approval and this Mac only", async (t) => {
+test("scripts run under the computer use flag and the chat's access, on this Mac only, without a question", async (t) => {
   const ran = [];
   const f = fixture({ remote: true, authority: async () => true, runScript: async (request) => { ran.push(request); return { ok: true, stdout: "done" }; } });
   t.after(() => f.control.reset(true));
   assert.equal((await f.control.script({ sessionId: "chat", app: "applescript", code: "return 1" })).error.code, "computer_unavailable");
   await f.control.setFeatureEnabled(true);
   assert.equal((await f.control.script({ sessionId: "chat", app: "terminal", code: "ls" })).error.code, "invalid_arguments");
-  const pending = f.control.script({ sessionId: "chat", app: "applescript", code: "return 1" });
-  const request = await scriptRequest(f, "return 1");
-  assert.deepEqual(request.script, { app: "applescript", code: "return 1" }, "the person sees the exact full script");
-  assert.deepEqual(ran, [], "nothing runs before the answer");
-  await assert.rejects(f.control.answerRequest({ sessionId: "chat", answer: "allow", id: "another-request" }), /changed/);
-  await f.control.answerRequest({ sessionId: "chat", answer: "allow", id: request.id });
-  assert.deepEqual(await pending, { ok: true, stdout: "done" });
+  assert.deepEqual(await f.control.script({ sessionId: "chat", app: "applescript", code: "return 1" }), { ok: true, stdout: "done" });
   assert.deepEqual(ran, [{ app: "applescript", code: "return 1", timeoutMs: 30_000 }]);
-  assert.equal(f.requests.at(-1), null);
+  assert.equal(f.requests.filter((request) => request?.reason === "script").length, 0, "computer use being on is the person's yes");
   await f.control.setRemoteEnabled(true);
   await f.control.choose({ sessionId: "chat", targetId: "vm" });
   assert.equal((await f.control.script({ sessionId: "chat", app: "jxa", code: "1" })).error.code, "script_unavailable");
   assert.equal(ran.length, 1);
 });
 
-test("declined scripts never run, always-run skips the question for that app, and turning computer use off stops scripts", async (t) => {
+test("turning computer use off stops a running script and one waiting for the organization's question", async (t) => {
   const ran = [];
   let release = () => {};
   const f = fixture({ runScript: async (request, signal) => {
@@ -615,52 +609,39 @@ test("declined scripts never run, always-run skips the question for that app, an
   } });
   t.after(() => f.control.reset(true));
   await f.control.setFeatureEnabled(true);
-  const declined = f.control.script({ sessionId: "chat", app: "jxa", code: "first" });
-  await f.control.answerRequest({ sessionId: "chat", answer: "dismiss", id: (await scriptRequest(f, "first")).id });
-  assert.equal((await declined).error.code, "script_declined");
-  assert.deepEqual(ran, []);
-  const always = f.control.script({ sessionId: "chat", app: "jxa", code: "second" });
-  await f.control.answerRequest({ sessionId: "chat", answer: "always", id: (await scriptRequest(f, "second")).id });
-  assert.equal((await always).ok, true);
-  const shown = f.requests.length;
-  assert.equal((await f.control.script({ sessionId: "chat", app: "jxa", code: "third" })).ok, true);
-  assert.equal(f.requests.length, shown, "no new question for an always-run app");
-  const waiting = f.control.script({ sessionId: "chat", app: "blender", code: "result = 1" });
+  const waiting = f.control.script({ sessionId: "chat", app: "blender", code: "result = 1" }, { approveEachScript: true });
   await scriptRequest(f, "result = 1");
   const running = f.control.script({ sessionId: "other", app: "jxa", code: "slow" });
-  const other = await scriptRequest(f, "slow");
-  await f.control.answerRequest({ sessionId: "other", answer: "allow", id: other.id });
   for (let waited = 0; !ran.includes("slow") && waited < 2_000; waited += 5) await new Promise((resolve) => setTimeout(resolve, 5));
   await f.control.setFeatureEnabled(false);
   assert.equal((await waiting).error.code, "script_declined", "a pending approval ends when computer use is turned off");
   assert.equal((await running).error.code, "script_failed", "a running script is stopped");
   release();
-  assert.deepEqual(ran, ["second", "third", "slow"]);
+  assert.deepEqual(ran, ["slow"]);
 });
 
-test("organization ask requires every script, ignores standing grants and never remembers always", async (t) => {
+test("organization ask shows every exact script, runs only on Run and never remembers an answer", async (t) => {
   const ran = [];
   const f = fixture({ runScript: async input => { ran.push(input.code); return { ok: true }; } });
   t.after(() => f.control.reset(true));
   await f.control.setFeatureEnabled(true);
-  const standing = f.control.script({ sessionId: "chat", app: "jxa", code: "standing" });
-  await f.control.answerRequest({ sessionId: "chat", answer: "always", id: (await scriptRequest(f, "standing")).id });
-  assert.equal((await standing).ok, true);
-  for (const code of ["first", "second"]) {
+  const declined = f.control.script({ sessionId: "chat", app: "jxa", code: "first" }, { approveEachScript: true });
+  const asked = await scriptRequest(f, "first");
+  assert.deepEqual(asked.script, { app: "jxa", code: "first" }, "the person sees the exact full script");
+  assert.equal(asked.standing, false);
+  assert.deepEqual(ran, [], "nothing runs before the answer");
+  await assert.rejects(f.control.answerRequest({ sessionId: "chat", answer: "allow", id: "another-request" }), /changed/);
+  await f.control.answerRequest({ sessionId: "chat", answer: "dismiss", id: asked.id });
+  assert.equal((await declined).error.code, "script_declined");
+  for (const code of ["second", "third"]) {
     const pending = f.control.script({ sessionId: "chat", app: "jxa", code }, { approveEachScript: true });
     const request = await scriptRequest(f, code);
     assert.equal(request.standing, false);
-    await f.control.answerRequest({ sessionId: "chat", answer: "always", id: request.id });
+    await f.control.answerRequest({ sessionId: "chat", answer: "allow", id: request.id });
     assert.equal((await pending).ok, true);
   }
-  // A new app with no earlier grant must not remember an Always answer either.
-  const once = f.control.script({ sessionId: "chat", app: "applescript", code: "once" }, { approveEachScript: true });
-  await f.control.answerRequest({ sessionId: "chat", answer: "always", id: (await scriptRequest(f, "once")).id });
-  assert.equal((await once).ok, true);
-  const again = f.control.script({ sessionId: "chat", app: "applescript", code: "again" });
-  await f.control.answerRequest({ sessionId: "chat", answer: "dismiss", id: (await scriptRequest(f, "again")).id });
-  assert.equal((await again).error.code, "script_declined");
-  assert.deepEqual(ran, ["standing", "first", "second", "once"]);
+  assert.equal(f.requests.at(-1), null);
+  assert.deepEqual(ran, ["second", "third"]);
 });
 
 /** A fake osascript: records its arguments and stdin, then exits as told. */
@@ -1116,42 +1097,26 @@ function credentialFixture() {
 }
 const typeInto = (control, action) => control.execute({ sessionId: "chat", name: "computer_act", args: { observation_id: "observation", action } });
 
-test("typing into an app's own editor waits for the person to allow that app", async (t) => {
+test("typing on a canvas goes straight to the app, and a confirmed password never does", async (t) => {
   const seen = [];
   const f = fixture({ seen, toolResult: (name) => {
     if (name !== "computer_act") return undefined;
-    // Like the Mac helper with no observed text field focused: nothing is typed until the host sends the allowed app.
-    return seen.at(-1).args.typing_approval === "com.example.canvas" ? text({ ok: true, status: "dispatched" })
-      : text({ ok: false, code: "typing_approval_required", app: "Canvas", app_id: "com.example.canvas", dispatched: false, next: "observe" });
+    // Like the Mac helper with no observed text field focused: a password or code the person confirmed is refused there.
+    return seen.at(-1).args.credential_approval ? text({ ok: false, code: "protected_input", dispatched: false, next: "human_takeover" })
+      : text({ ok: true, status: "dispatched" });
   } });
   t.after(() => f.control.reset(true));
   await f.control.setFeatureEnabled(true);
   await f.control.execute({ sessionId: "chat", name: "computer_open", args: { app_id: "com.example.canvas", mode: "control", purpose: "Add a title" } });
   const acts = () => seen.filter((call) => call.name === "computer_act").map((call) => call.args);
-  const cards = () => f.requests.filter((request) => request?.reason === "typing");
-  const answer = async (reply) => {
-    const before = cards().length;
-    for (let waited = 0; cards().length === before && waited < 2_000; waited += 5) await new Promise((resolve) => setTimeout(resolve, 5));
-    assert.deepEqual(cards().at(-1).typing, { app: "Canvas", appId: "com.example.canvas" });
-    await f.control.answerRequest({ sessionId: "chat", answer: reply, id: cards().at(-1).id });
-  };
-  const declined = typeInto(f.control, { type: "type", text: "THE GEOMETRY PLAYGROUND" });
-  await answer("dismiss");
-  assert.equal(payload(await declined).code, "typing_declined");
-  assert.equal(acts().length, 1, "nothing is sent again without the person's yes");
-  const allowed = typeInto(f.control, { type: "type", text: "THE GEOMETRY PLAYGROUND" });
-  await answer("always");
-  assert.equal(payload(await allowed).status, "dispatched");
-  assert.equal(acts().at(-1).typing_approval, "com.example.canvas");
-  const asked = cards().length;
-  assert.equal(payload(await typeInto(f.control, { type: "type", text: "again" })).status, "dispatched");
-  assert.equal(cards().length, asked, "always covers the app for the rest of the chat");
-  // A secret first asks about the app as usual; even then it never goes into an unidentified editor.
+  assert.equal(payload(await typeInto(f.control, { type: "type", text: "THE GEOMETRY PLAYGROUND" })).status, "dispatched");
+  assert.equal(acts().length, 1, "one call, no second round trip");
+  assert.equal(f.requests.filter((request) => request && request.reason !== "credential").length, 0, "no question before canvas text");
+  // A secret first asks about the app as usual, then reaches the helper marked, which keeps it out of an unidentified editor.
   const secret = typeInto(f.control, { type: "type", text: "a code", secret: true });
   for (let waited = 0; !f.requests.some((request) => request?.reason === "credential") && waited < 2_000; waited += 5) await new Promise((resolve) => setTimeout(resolve, 5));
   await f.control.answerRequest({ sessionId: "chat", answer: "allow", id: f.requests.find((request) => request?.reason === "credential").id });
   assert.equal(payload(await secret).code, "protected_input", "a password never goes into an unidentified editor");
-  // The helper is told, so it refuses the editor itself instead of relying on this card.
   assert.equal(acts().at(-1).credential_approval, "com.example.canvas");
 });
 

@@ -160,7 +160,7 @@ final class SessionRuntime {
             return try await observe(try a.string("session_id"), image: options.image, elements: options.elements, menus: options.menus,
                 filePanelAccess: policy == .embedded ? (values["file_panel_access"] as? NSNumber)?.uint32Value : nil)
         case "computer_act":
-            try a.only(policy == .embedded ? ["session_id", "observation_id", "request_id", "action", "actions", "intent", "file_approval", "file_panel_access", "pacing", "retry_ms", "credential_approval", "typing_approval"] : ["session_id", "observation_id", "request_id", "action"])
+            try a.only(policy == .embedded ? ["session_id", "observation_id", "request_id", "action", "actions", "intent", "file_approval", "file_panel_access", "pacing", "retry_ms", "credential_approval"] : ["session_id", "observation_id", "request_id", "action"])
             let id = try a.string("session_id")
             let observationID = try a.string("observation_id")
             let requestID = try a.string("request_id", max: 100)
@@ -177,11 +177,9 @@ final class SessionRuntime {
             let panelAccess = policy == .embedded ? (values["file_panel_access"] as? NSNumber)?.uint32Value : nil
             // The app the person confirmed may receive a password or code they gave.
             let credentialApproval = policy == .embedded ? values["credential_approval"] as? String : nil
-            // The app the person let the agent type into without an observed text field.
-            let typingApproval = policy == .embedded ? values["typing_approval"] as? String : nil
             do {
                 return try await act(id: id, observationID: observationID, requestID: requestID, actions: actions, raw: raw, intent: intent,
-                    fileApproval: fileApproval, filePanelAccess: panelAccess, pacing: pacing, credentialApproval: credentialApproval, typingApproval: typingApproval)
+                    fileApproval: fileApproval, filePanelAccess: panelAccess, pacing: pacing, credentialApproval: credentialApproval)
             } catch let error as UseError {
                 // Refused before anything was sent: the cursor shakes it off and tries another way.
                 if error.next == "observe" || error.next == "correct_request" { controls.react(.refused) }
@@ -596,7 +594,7 @@ final class SessionRuntime {
     }
 
     private func act(id: String, observationID: String, requestID: String, actions: [Action], raw: Any, intent: String? = nil,
-                     fileApproval: [String]? = nil, filePanelAccess: CGWindowID? = nil, pacing: BatchPacing = .fast, credentialApproval: String? = nil, typingApproval: String? = nil) async throws -> [[String: Any]] {
+                     fileApproval: [String]? = nil, filePanelAccess: CGWindowID? = nil, pacing: BatchPacing = .fast, credentialApproval: String? = nil) async throws -> [[String: Any]] {
         let cached = try current(id, allowPaused: true)
         let fingerprint = try JSONSerialization.data(withJSONObject: ["observation_id": observationID, "action": raw], options: [.sortedKeys])
         if let receipt = cached.receipts[requestID] {
@@ -672,19 +670,11 @@ final class SessionRuntime {
                 "message": "This window has a password field. The person confirms this app before anything is typed; nothing was sent."])
         }
         // Typing with no observed text field goes to the app's own editor (text on a canvas),
-        // which accessibility cannot name. The editor is still checked before every character.
+        // which accessibility cannot name; the editor is checked before every character. A
+        // password or code the person confirmed goes only into a field that can be named.
         let editorTyping = current.focus == nil && actions.first.map { if case .type = $0 { return true }; return false } == true
-        if editorTyping {
-            switch InputDelivery.editorTyping(info: current.app.app.bundleURL.flatMap { Bundle(url: $0)?.infoDictionary } ?? [:],
-                appID: current.app.bundleID, approvedApp: typingApproval, carriesCredential: credentialApproval != nil) {
-            case .allowed: break
-            case .refused:
-                throw UseError("protected_input", "A password or code goes only into a field the computer can identify. Nothing was sent.", next: "human_takeover")
-            case .askPerson:
-                return text(["ok": false, "code": "typing_approval_required", "app": current.app.app.localizedName ?? current.app.bundleID,
-                    "app_id": current.app.bundleID, "dispatched": false, "next": "observe",
-                    "message": "No observed text field has the keyboard. The person allows typing into this app's own editor first; nothing was sent."])
-            }
+        if editorTyping, credentialApproval != nil {
+            throw UseError("protected_input", "A password or code goes only into a field the computer can identify. Nothing was sent.", next: "human_takeover")
         }
         // Confirming a file panel hands the chosen files to the app, which can upload them:
         // the person approves first. Nothing is sent and the observation stays valid.
