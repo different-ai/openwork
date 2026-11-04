@@ -138,8 +138,9 @@ async function memberAgentView(input: {
   const sources = await memberSources({ organizationId: input.organizationId, memberId: input.memberId, settings, row })
   const limits = memberLimits(settings, row?.overrides, brief)
   const state = parseAgentState(row?.state)
-  const nextChecks = brief && settings.enabled && on && row
-    ? memberNextChecks({ rhythm: memberRhythm(limits, brief), lastCheckAt: state.lastPassAt, requests: state.requests, now, timeZone, snoozedUntil: row.snoozedUntil?.getTime() ?? null })
+  // An agent that hasn't checked yet checks as soon as the member's hours open.
+  const nextChecks = brief && settings.enabled && on
+    ? memberNextChecks({ rhythm: memberRhythm(limits, brief), lastCheckAt: state.lastPassAt, requests: state.requests, now, timeZone, snoozedUntil: row?.snoozedUntil?.getTime() ?? null })
     : null
   return {
     ...view,
