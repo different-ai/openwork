@@ -738,6 +738,18 @@ describe("sources, not categories", () => {
     assert.ok(!off.state.turns[0]?.scopes.includes(scopeFor(NOTES.id)), "without a member choice, other connections stay off")
   })
 
+  test("the feature off: a connector nobody reviewed is never a source, and the token carries no per-tool list", async () => {
+    // A custom MCP (fictional) the member switched on: with workbotAgentBrief off, today's reviewed lists decide.
+    const DESK: MemberConnection = { id: "emc_01k8z5wq0s0000000000000009", name: "Lumen Support Desk", url: "https://mcp.lumen-desk.test/mcp", native: null, state: "connected" }
+    const h = harness({ connections: [GOOGLE, SLACK, NOTES, DESK], row: { preferences: withChoices({ [DESK.id]: { on: true }, [NOTES.id]: { on: true } }) } })
+    await h.run()
+    const scopes = h.state.turns[0]?.scopes ?? []
+    assert.ok(scopes.includes(scopeFor(NOTES.id)), "a reviewed service still reads")
+    assert.ok(!scopes.includes(scopeFor(DESK.id)), "a connector nobody reviewed isn't a source")
+    assert.ok(!scopes.some((scope) => scope.startsWith("openwork:agent-tool")), "no per-tool list: the reviewed lists decide at the gateway")
+    assert.doesNotMatch(h.state.turns[0]?.prompt ?? "", /Lumen Support Desk/)
+  })
+
   test("mutes still apply: a muted preset's item is dropped, anything else still goes out", async () => {
     const muted = { overrides: { muted: ["waiting_on_you"] } }
     const presetOnly = harness({ row: muted, replies: [message("Worth catching: x.", [{ source: "email", id: "t1", preset: "waiting_on_you" }])] })

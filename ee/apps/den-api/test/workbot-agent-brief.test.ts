@@ -6,6 +6,7 @@ import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js"
 import { createDenTypeId } from "@openwork-ee/utils/typeid"
 import { AGENT_INSTRUCTIONS, agentLedgerKey, agentWakePrompt, parseAgentReply, parseAgentState, type AgentState } from "@openwork/automations/proactive"
 import type { AgentCheckRequest, AgentConversationTurn } from "@openwork/automations/proactive-brief"
+import type { AgentReadToolInput } from "@openwork/automations/agent-read-tools"
 import {
   AGENT_BRIEF_OFF_LINES,
   AGENT_RESPONSIBILITIES,
@@ -47,7 +48,7 @@ const { agentSessionId, agentMessageSessionId } = await import("../src/workbot-p
 const preferences = await import("../src/workbot-proactive/preferences.js")
 const { memberNextChecks, memberRhythm, memberBriefLines } = await import("../src/workbot-proactive/brief.js")
 const { agentCheckRequestsAvailable, describeCheckRequest } = await import("../src/mcp/agent-check-request.js")
-const { agentReadAllowlist, agentReadScopes } = await import("../src/mcp/agent-read-sources.js")
+const { agentMayUseExternalTool, agentReadAllowlist, agentReadScopes } = await import("../src/mcp/agent-read-sources.js")
 const { createAgentMcpServer, MY_AGENT_BRIEF_INSTRUCTIONS, MY_AGENT_INSTRUCTIONS } = await import("../src/mcp/agent-server.js")
 
 const TZ = "America/New_York"
@@ -61,6 +62,13 @@ const settingsOn: WorkbotProactiveSettings = { ...DEFAULT_WORKBOT_PROACTIVE_SETT
 const GOOGLE: MemberConnection = { id: "google-workspace", name: "Google Workspace", url: "https://google.com", native: "google-workspace", state: "connected" }
 const SLACK: MemberConnection = { id: "emc_01k8z5wq0s0000000000000001", name: "Slack", url: "https://mcp.slack.com/mcp", native: null, state: "connected" }
 const SLACK_ASK = "https://acme.slack.com/archives/C0NORTH/p1792502520000100"
+/** What Slack's MCP lists for the member: reviewed reads, and writes the check must never get. */
+const SLACK_TOOLS: AgentReadToolInput[] = [
+  { name: "slack_search_public", annotations: { readOnlyHint: true } },
+  { name: "slack_read_thread", annotations: { readOnlyHint: true } },
+  { name: "slack_send_message", annotations: { readOnlyHint: false } },
+  { name: "slack_schedule_message" },
+]
 
 function agentRow(overrides: Partial<AgentInstanceRow> = {}): AgentInstanceRow {
   return {
@@ -87,6 +95,8 @@ type Harness = {
   settles: AgentSettle[]
   requests: AgentCheckRequest[]
   briefOn: boolean[]
+  /** Connections whose tools the wake listed. */
+  listed: string[]
 }
 
 function harness(input: {
@@ -99,8 +109,12 @@ function harness(input: {
   conversation?: AgentConversationTurn[] | null
   requestsDuringTurn?: AgentCheckRequest[]
   briefOn?: boolean[]
+  /** The member's usable connections; Google Workspace and Slack by default. */
+  connections?: MemberConnection[]
+  /** What each MCP connection lists, by connection id (null: its server didn't answer). Slack's by default. */
+  tools?: Record<string, readonly AgentReadToolInput[] | null>
 }) {
-  const h: Harness = { clock: MORNING, row: agentRow(input.row), checks: [], messageTurns: [], ended: [], delivered: [], ledger: new Map(), records: [], counters: [], settles: [], requests: [], briefOn: input.briefOn ?? [] }
+  const h: Harness = { clock: MORNING, row: agentRow(input.row), checks: [], messageTurns: [], ended: [], delivered: [], ledger: new Map(), records: [], counters: [], settles: [], requests: [], briefOn: input.briefOn ?? [], listed: [] }
   const checks = [...(input.checks ?? ["NO_FINDINGS"])]
   const replies = [...(input.replies ?? ["NO_REPLY"])]
   let briefCalls = 0
@@ -113,7 +127,7 @@ function harness(input: {
     calendar: async () => ({ kind: "ok", json: { timeZone: TZ, items: [] } }),
     model: async () => "openai/gpt-6-luna",
     turn: async () => parseAgentReply("NO_REPLY"),
-    connections: async () => [GOOGLE, SLACK],
+    connections: async () => input.connections ?? [GOOGLE, SLACK],
     connectLink: (connectionId) => `https://den.example/dashboard/library/connectors/${connectionId}`,
     sessionId: agentSessionId,
     messageId: (member, wakeAt) => `wa_${member}_${wakeAt}`,
@@ -166,6 +180,11 @@ function harness(input: {
     },
     conversation: async () => (input.conversation === undefined ? [] : input.conversation),
     requestedChecks: async () => [...(parseAgentState(h.row.state).requests ?? []), ...h.requests],
+    readTools: async ({ connection }) => {
+      h.listed.push(connection.id)
+      const tools = { [SLACK.id]: SLACK_TOOLS, ...input.tools }
+      return connection.id in tools ? tools[connection.id] ?? null : null
+    },
   }
   return { h, deps, run: () => wakeAgentBrief(h.row, deps) }
 }
@@ -366,6 +385,68 @@ describe("Your agent's brief: a check, then maybe a message (workbotAgentBrief)"
   test("the messenger's token reads nothing; the check's token carries its sources", () => {
     const messenger = agentReadAllowlist(new Set(AGENT_MESSAGE_SCOPES))
     assert.deepEqual([messenger?.kinds.size, messenger?.connectionIds.size], [0, 0])
+  })
+})
+
+describe("any connected connector as a source; the check only ever gets read tools (workbotAgentBrief)", () => {
+  // A custom MCP nobody reviewed (fictional), the member switched on.
+  const DESK: MemberConnection = { id: "emc_01k8z5wq0s0000000000000009", name: "Lumen Support Desk", url: "https://mcp.lumen-desk.test/mcp", native: null, state: "connected" }
+  const DESK_TOOLS: AgentReadToolInput[] = [
+    { name: "list_tickets", description: "List open tickets", annotations: { readOnlyHint: true } },
+    { name: "get_ticket", description: "Read one ticket" },
+    { name: "close_ticket", description: "Close a ticket", annotations: { readOnlyHint: true } },
+    { name: "purge_queue", annotations: { readOnlyHint: true, destructiveHint: true } },
+    { name: "reply_to_customer", annotations: { readOnlyHint: false } },
+    { name: "get_or_create_customer" },
+    { name: "run_query" },
+    { name: "send_digest" },
+  ]
+  const deskOn = JSON.stringify({ v: 1, words: EMPTY_AGENT_PREFERENCES, sources: { [DESK.id]: { on: true } }, log: [] })
+  const toolsOf = (scopes: readonly string[], connectionId: string) => [...(agentReadAllowlist(new Set(scopes))?.tools?.get(connectionId) ?? [])].sort()
+
+  test("the check's token carries only the custom connector's read tools, and Slack's reviewed reads", async () => {
+    const { h, run } = harness({ connections: [GOOGLE, SLACK, DESK], tools: { [DESK.id]: DESK_TOOLS }, row: { preferences: deskOn } })
+    await run()
+    const scopes = h.checks[0]?.scopes ?? []
+    assert.deepEqual(toolsOf(scopes, DESK.id), ["get_ticket", "list_tickets"])
+    assert.deepEqual(toolsOf(scopes, SLACK.id), ["slack_read_thread", "slack_search_public"])
+    const allowlist = agentReadAllowlist(new Set(scopes))
+    assert.ok(allowlist)
+    for (const tool of [...DESK_TOOLS, ...SLACK_TOOLS]) {
+      const connection = DESK_TOOLS.includes(tool) ? DESK : SLACK
+      const write = /close|purge|reply|create|run|send|schedule/.test(tool.name)
+      if (write) assert.equal(agentMayUseExternalTool(allowlist, connection, tool), false, `${tool.name} never reaches the check`)
+    }
+    assert.match(h.checks[0]?.prompt ?? "", /Lumen Support Desk/, "the source is in the check's prompt")
+    assert.deepEqual(h.listed.sort(), [DESK.id, SLACK.id].sort(), "tools are listed for MCP connections only")
+  })
+
+  test("an admin's tool choices win, and a provider's destructive mark beats even an admin", async () => {
+    const settings = mergeWorkbotProactiveSettings(settingsOn, { sources: { toolOverrides: { [DESK.id]: { get_ticket: "deny", run_query: "allow", purge_queue: "allow" } } } })
+    assert.ok(settings)
+    const { h, run } = harness({ settings, connections: [GOOGLE, SLACK, DESK], tools: { [DESK.id]: DESK_TOOLS }, row: { preferences: deskOn } })
+    await run()
+    assert.deepEqual(toolsOf(h.checks[0]?.scopes ?? [], DESK.id), ["list_tickets", "run_query"])
+  })
+
+  test("a connector with no read tools, or one whose tools can't be listed, sits the check out and the check is told why", async () => {
+    const none = harness({ connections: [GOOGLE, SLACK, DESK], tools: { [DESK.id]: [{ name: "close_ticket" }, { name: "send_digest" }] }, row: { preferences: deskOn } })
+    await none.run()
+    assert.match(none.h.checks[0]?.prompt ?? "", /Lumen Support Desk[^\n]*no read-only tools/)
+    assert.ok(!(agentReadAllowlist(new Set(none.h.checks[0]?.scopes ?? []))?.connectionIds.has(DESK.id)), "not on the token")
+    const down = harness({ connections: [GOOGLE, SLACK, DESK], tools: { [DESK.id]: null }, row: { preferences: deskOn } })
+    await down.run()
+    assert.match(down.h.checks[0]?.prompt ?? "", /Lumen Support Desk[^\n]*its tools couldn't be listed/)
+  })
+
+  test("a connector the admin doesn't allow is never read, whatever the member chose", async () => {
+    const settings = mergeWorkbotProactiveSettings(settingsOn, { sources: { connections: { [DESK.id]: "off" } } })
+    assert.ok(settings)
+    const { h, run } = harness({ settings, connections: [GOOGLE, SLACK, DESK], tools: { [DESK.id]: DESK_TOOLS }, row: { preferences: deskOn } })
+    await run()
+    assert.ok(!h.listed.includes(DESK.id))
+    assert.ok(!(agentReadAllowlist(new Set(h.checks[0]?.scopes ?? []))?.connectionIds.has(DESK.id)))
+    assert.doesNotMatch(h.checks[0]?.prompt ?? "", /Lumen Support Desk/)
   })
 })
 
