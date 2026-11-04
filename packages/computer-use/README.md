@@ -113,7 +113,7 @@ a hand: short hops are quick, long ones take up to about a third of a second,
 it eases in along a slight arc, and a click or a highlight lands when it
 arrives. During a drag the stroke follows the cursor's tip. A drag with
 `smooth: true` is drawn as a curve through its points (the broker turns it into
-32 points that keep every given one), for drawing strokes rather than
+32 points, so some supplied points may be omitted on paths longer than 32 points), for drawing strokes rather than
 selections. A highlight is
 drawn only where the control still is, so a button whose press closed its
 dialog gets none. A pill over the window's
