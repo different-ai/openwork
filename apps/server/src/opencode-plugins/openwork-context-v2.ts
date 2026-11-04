@@ -80,6 +80,8 @@ export default {
     };
     const browserDefinitions = browser ? (await browserTools()).tool : undefined;
     const computerDefinitions = browser ? (await computerTools()).tool : undefined;
+    // The same tools, with the guidance on app agents for `parallelComputerUse`.
+    const parallelDefinitions = browser ? (await computerTools({ parallel: true })).tool : undefined;
     // Browser and computer tools share one bridge but are offered separately.
     // Everything the model reads about a capability (tool descriptions and the
     // rules folded into them) arrives only with that capability's tools, so a
@@ -195,7 +197,7 @@ export default {
         options: { codemode: false },
         execute: (input, call) => driveCall(ASK_WITHOUT_WAITING, input, call, "Asking failed"),
       });
-      const bridged = { ...browserDefinitions, ...(computerOn ? computerDefinitions : undefined) };
+      const bridged = { ...browserDefinitions, ...(computerOn ? parallelOn ? parallelDefinitions : computerDefinitions : undefined) };
       if (browser) for (const [name, definition] of Object.entries(bridged)) {
         addProviderSafeTool(editor, {
           name, description: definition.description,
@@ -215,8 +217,9 @@ export default {
       }
     });
     const promptHook = browser && gated && context.session ? await context.session.hook("prompt", async () => {
+      const parallel = parallelOn;
       const [computer, questions] = await Promise.all([computerOffered(computerOn), questionsOffered(questionsOn)]);
-      if (computer === computerOn && questions === questionsOn) return;
+      if (computer === computerOn && questions === questionsOn && parallel === parallelOn) return;
       computerOn = computer;
       questionsOn = questions;
       await context.tool.reload?.();
