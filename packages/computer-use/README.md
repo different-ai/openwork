@@ -473,6 +473,23 @@ The helper reads the value back and reports only `value_applied`,
 `value_not_applied` or `value_unconfirmed`, never the value. The agent is told
 to use it when `set_value` returns `value_not_applied`.
 
+For edits of several steps, two steps make a batch deterministic without an
+observation between steps. `{ type: "focus", ref }` puts the keyboard on an
+observed control through accessibility, or with a click on its middle only in
+a control session, and reads it back (`focus_not_taken` when it did not land).
+The next keys and typing in the batch go to it, exactly when it is the listed
+text field itself and otherwise by the editor rule above. It never focuses a
+secure field. `{ type: "expect", ... }` sends no input and checks any of
+`focused` (a ref, or `text_input` for editable text inside the window),
+`front`, `enabled`, `exists`, `gone`, `dialog` (`open` or `closed`), `value:
+{ ref, equals }` and `title_contains`. A check that does not hold stops the
+batch with `expectation_failed`, naming it, before any later step. The
+receipt lists every check in `checks: [{ step, check, ok }]`. A value is
+compared inside the helper (the same text, or the same number) and never
+returned, and a secure field's value is never read. For example: `focus e12,
+expect { focused: e12 }, key command+a, type "120", key enter, expect { value:
+{ ref: e12, equals: "120" } }`.
+
 A key, typing or pointer step in an assist or observe session is refused with
 `scope_denied`, naming the session's mode and saying to open the app again in
 control mode, the default.

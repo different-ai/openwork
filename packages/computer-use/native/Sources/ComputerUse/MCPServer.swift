@@ -117,6 +117,12 @@ final class MCPServer {
         if policy == .embedded {
             variants += [action("triple_click", clickFields, optional: ["modifiers"]), action("wait", ["ms": ["type": "integer", "minimum": 50, "maximum": 3000]]),
                 action("enter_value", ["ref": string, "text": typingText, "commit": ["type": "string", "enum": ["enter", "tab", "none"], "default": "enter"]], optional: ["commit"]),
+                action("focus", ["ref": string]),
+                action("expect", ["focused": ["type": "string", "minLength": 1, "maxLength": 256, "description": "A ref, or text_input for any editable text."],
+                    "front": ["type": "boolean"], "enabled": string, "exists": string, "gone": string, "dialog": ["type": "string", "enum": ["open", "closed"]],
+                    "value": ["type": "object", "properties": ["ref": string, "equals": text], "required": ["ref", "equals"], "additionalProperties": false],
+                    "title_contains": ["type": "string", "minLength": 1, "maxLength": 200]],
+                    optional: ["focused", "front", "enabled", "exists", "gone", "dialog", "value", "title_contains"]),
                 action("menu", ["path": ["type": "array", "minItems": 2, "maxItems": MenuRules.maxDepth + 1, "items": ["type": "string", "minLength": 1, "maxLength": 200],
                     "description": "A menu-bar command by its titles, as listed in an observation's menus, such as [\"Format\", \"Font\", \"Bold\"]."]])]
             observeFields["elements"] = ["type": "string", "enum": ["interactive", "all", "none"], "default": "interactive"]

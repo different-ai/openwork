@@ -741,6 +741,10 @@ final class MacAccessibility {
         return (try? checkedString(element, kAXRoleAttribute, budget)).map { ElementRecord.textRoles.contains($0) } == true
             || (try? checkedBool(element, "AXEditable", budget)) == true
     }
+    /// Whether an element is still inside the selected window, with nothing protected around it.
+    func isInWindow(_ element: AXUIElement, target: WindowTarget) -> Bool {
+        (try? validateAncestry(element, target: target, budget: AXReadBudget())) != nil
+    }
     /// Whether `element` is `ancestor` or inside it, such as the field editor of a value field.
     func isWithin(_ element: AXUIElement, _ ancestor: AXUIElement) -> Bool {
         let budget = AXReadBudget()
