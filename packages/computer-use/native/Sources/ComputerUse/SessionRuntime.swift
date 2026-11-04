@@ -6,6 +6,7 @@ final class SessionRuntime {
     private let access = MacAccessibility()
     private let input = MacInput()
     private let controls = SessionControls()
+    private let clipboard = AgentClipboard()
     private let policy: RuntimePolicy
     private let clock: () -> TimeInterval
     private var session: Session?
@@ -114,9 +115,10 @@ final class SessionRuntime {
             try a.only([])
             return text(discover())
         case "computer_open_session":
-            // Set only by the trusted host: whether the person watches this chat, and whether
-            // the window may go beside OpenWork (not while the chat has several apps open).
-            try a.only(policy == .embedded ? ["app_id", "pid", "window_id", "mode", "purpose", "following", "beside"] : ["app_id", "pid", "window_id", "mode", "purpose"])
+            // Set only by the trusted host: whether the person watches this chat, whether the
+            // window may go beside OpenWork (not while the chat has several apps open), the
+            // chat's clipboard key, and the file approval for opening the app onto a file.
+            try a.only(policy == .embedded ? ["app_id", "pid", "window_id", "mode", "purpose", "following", "beside", "clipboard", "file", "file_approval"] : ["app_id", "pid", "window_id", "mode", "purpose"])
             guard session == nil else { throw UseError("session_exists", "Close this connection's session before opening another.", next: "close_session") }
             defer { if session == nil { controls.close() } }
             let appID = try a.string("app_id")
@@ -135,8 +137,59 @@ final class SessionRuntime {
             let followed = mode == .control && follow?.follows(frontmost: NSWorkspace.shared.frontmostApplication?.processIdentifier, host: Responsibility.hostPID,
                 target: pid ?? NSRunningApplication.runningApplications(withBundleIdentifier: appID).first?.processIdentifier) == true
             let background = delivery == .background && !followed
-            let identity = try await AppIdentity.open(appID, pid: pid, activates: !background)
+            // Set only by the trusted host: its key for this chat's own clipboard.
+            if policy == .embedded, values["clipboard"] != nil { try clipboard.use(chat: try a.string("clipboard", max: 64)) }
+            // Opening the app onto a file hands the file to it: the host confirms this exact file first.
+            let file = policy == .embedded && values["file"] != nil ? try FileHandoff.file(try a.string("file", max: 1024)) : nil
+            let approved = file.map { values["file_approval"] as? [String] == [$0.path] } ?? false
+            var typeNote: String?
+            if let file, AppIdentity.isAllowed(bundleID: appID) {
+                let name = NSRunningApplication.runningApplications(withBundleIdentifier: appID).first?.localizedName
+                    ?? installed.map { FileManager.default.displayName(atPath: $0.path) } ?? appID
+                switch FileTypeCheck.of(file, app: name, info: installed.flatMap { Bundle(url: $0)?.infoDictionary } ?? [:]) {
+                case .unsupported(let message): throw UseError("file_type_unsupported", message, next: "correct_request")
+                case .note(let note): typeNote = note
+                case .fits: break
+                }
+            }
+            if let file, !approved, AppIdentity.isAllowed(bundleID: appID) {
+                let name = NSRunningApplication.runningApplications(withBundleIdentifier: appID).first?.localizedName
+                    ?? installed.map { FileManager.default.displayName(atPath: $0.path) } ?? appID
+                return text(["ok": false, "code": "files_approval_required", "files": [file.path], "app": name, "dispatched": false,
+                    "next": "open_session", "message": "Opening the app onto a file hands the file to it. OpenWork checks the organization's rule first; nothing was opened."])
+            }
+            // An app that is not running starts on the document, instead of an empty window or an Open panel.
+            var launchedOnFile: pid_t?
+            if let file, approved, pid == nil, NSRunningApplication.runningApplications(withBundleIdentifier: appID).isEmpty,
+               AppIdentity.isAllowed(bundleID: appID), let installed, Bundle(url: installed)?.bundleIdentifier == appID {
+                launchedOnFile = try await FileHandoff.open(file, in: installed, activates: !background).processIdentifier
+                var tries = 0
+                while tries < 30, (try? AppIdentity.resolve(appID, pid: launchedOnFile)) == nil {
+                    tries += 1; try Task.checkCancellation(); try await Task.sleep(nanoseconds: 100_000_000)
+                }
+            }
+            let identity = try await AppIdentity.open(appID, pid: pid ?? launchedOnFile, activates: !background)
+            let windowsBefore = access.windowChanges(identity)
+            if let file, approved, launchedOnFile == nil {
+                guard let bundle = identity.app.bundleURL else { throw UseError("app_unavailable", "The app's location is unknown. Nothing was opened.", next: "discover") }
+                _ = try await FileHandoff.open(file, in: bundle, activates: !background)
+            }
             var windows = try await access.windows(identity)
+            // A success from Launch Services is not proof: the document counts as open once its window shows.
+            var fileWindow: Int?
+            var fileAlert: [String: Any]?
+            if let file, approved {
+                for _ in 0..<30 {
+                    try Task.checkCancellation()
+                    let opened = access.windowChanges(identity).windows.subtracting(windowsBefore.windows)
+                    fileWindow = FileHandoff.window(for: file, in: windows.map { (Int($0.id), $0.title) }, opened: Set(opened.map(Int.init)))
+                    if fileWindow != nil { break }
+                    // The app refused the file with an alert, such as "could not be opened".
+                    if let alert = access.frontAlert(identity) { fileAlert = alert; break }
+                    try await Task.sleep(nanoseconds: 100_000_000)
+                    windows = try await access.windows(identity)
+                }
+            }
             if windows.isEmpty {
                 // Reopen a running app's normal window through Launch Services.
                 // Resolve the opened app before reading or dispatching input.
@@ -149,7 +202,7 @@ final class SessionRuntime {
             guard !windows.isEmpty else { throw UseError("window_unavailable", "The app opened, but did not expose a usable window. Check for a sign-in or app dialog, then request a session again.", next: "human_takeover") }
             try Task.checkCancellation()
             let requested = values["window_id"] == nil ? nil : try a.integer("window_id", min: 1, max: Int(UInt32.max))
-            let focusedID = access.focusedWindowID(identity, windows: windows, requireActive: !background)
+            let focusedID = fileWindow ?? access.focusedWindowID(identity, windows: windows, requireActive: !background)
             let targetID = try WindowSelection.resolve(ids: windows.map { Int($0.id) }, requested: requested, focused: focusedID,
                 descriptions: windows.map { "\($0.id): \($0.title)" })
             guard let target = windows.first(where: { Int($0.id) == targetID }) else { throw UseError("window_unavailable", "The resolved window closed.", next: "open_session") }
@@ -175,10 +228,16 @@ final class SessionRuntime {
                 if followed { arrangeBeside(id) }
             }
             guard let opened = session, opened.id == id else { throw UseError("session_unavailable", "Access ended while starting. Stop work and wait for a new user request.", next: "human_takeover") }
-            return text(["ok": true, "session_id": id, "app_id": identity.bundleID, "app_name": identity.name, "pid": Int(identity.pid),
+            var result: [String: Any] = ["ok": true, "session_id": id, "app_id": identity.bundleID, "app_name": identity.name, "pid": Int(identity.pid),
                 "window_id": Int(target.id), "window_title": target.title, "mode": mode.rawValue, "delivery": delivery.rawValue, "followed": followed,
                 "state": opened.paused ? "paused" : "active", "expires_in_seconds": 900,
-                "next": next(opened)])
+                "next": next(opened)]
+            if file != nil {
+                result["file"] = FileOpenCheck.outcome(alert: fileAlert, documentWindowOpened: fileWindow != nil, retitled: false)
+                if let typeNote { result["type_note"] = typeNote }
+                if let fileAlert { result["file_alert"] = fileAlert }
+            }
+            return text(result)
         case "computer_observe":
             let options = try ObservationOptions(values, policy: policy)
             return try await observe(try a.string("session_id"), image: options.image, elements: options.elements, menus: options.menus,
@@ -246,8 +305,8 @@ final class SessionRuntime {
         if policy == .embedded {
             limits["batch_actions"] = Action.batchLimit
             result["modifiers"] = NativeKey.supportedModifiers
-            result["shortcuts"] = NativeKey.shortcuts.sorted()
-            result["blocked_shortcuts"] = NativeKey.blockedShortcuts
+            result["shortcuts"] = NativeKey.shortcuts.union(NativeKey.clipboard).sorted()
+            result["blocked_shortcuts"] = NativeKey.blockedShortcuts.filter { !NativeKey.clipboard.contains($0) }
         }
         result["limits"] = limits
         return result
@@ -513,7 +572,7 @@ final class SessionRuntime {
         // AX trees can retain virtualized or scrolled-out nodes. Keep those
         // internal for privacy/staleness scans, never expose their text or refs.
         let visible = state.records.filter { bounds.contains($0.frame) }
-        var shown = filter == "none" ? [] : filter == "all" ? visible : visible.filter(\.interactive)
+        var shown = ElementFilter.shown(visible, filter: filter, dialog: current.dialogKind)
         if png == nil || repeated != nil, shown.isEmpty, filter == "interactive" { shown = visible; effectiveFilter = "all" }
         guard png != nil || !shown.isEmpty else {
             throw imageFailure ?? UseError("observation_unavailable", "No image or useful accessible elements could be read.", next: "observe")
@@ -736,9 +795,16 @@ final class SessionRuntime {
             }
         }
         // Opening a file hands it to the app: the person approves the exact file first.
+        var typeNote: String?
         if let file = actions.lazy.compactMap({ action -> URL? in if case .openFile(let url) = action { return url }; return nil }).first {
             guard actions.count == 1 else {
                 throw UseError("open_file_alone", "Open a file as its own step. Nothing was sent.", next: "observe")
+            }
+            // A type the app does not declare is refused before anything is sent, so the agent converts it.
+            switch FileTypeCheck.of(file, app: current.app.name, info: current.app.app.bundleURL.flatMap { Bundle(url: $0)?.infoDictionary } ?? [:]) {
+            case .unsupported(let message): throw UseError("file_type_unsupported", message, next: "correct_request")
+            case .note(let note): typeNote = note
+            case .fits: break
             }
             guard let fileApproval, fileApproval == [file.path] else {
                 return text(["ok": false, "code": "files_approval_required", "files": [file.path],
@@ -751,6 +817,16 @@ final class SessionRuntime {
         if actions.contains(where: { if case .arrange = $0 { return true }; return false }) {
             guard actions.count == 1 else { throw UseError("arrange_alone", "Arrange a window as its own step. Nothing was sent.", next: "observe") }
             guard current.parents.isEmpty else { throw UseError("dialog_open", "Close the dialog before arranging the window. Nothing was sent.", next: "observe") }
+        }
+        // The agent's own clipboard: copy, cut and paste run as their own step, and a paste
+        // uses only what the agent copied in this chat, never the person's clipboard.
+        if let step = actions.lazy.compactMap(\.clipboard).first {
+            guard actions.count == 1 else {
+                throw UseError("clipboard_alone", "Copy, cut or paste as its own step. Nothing was sent.", next: "observe")
+            }
+            if step == .paste, !clipboard.canPaste {
+                throw AgentClipboard.nothingCopied
+            }
         }
         session?.observation = nil; session?.focus = nil; session?.lastUsed = now
         if let intent { controls.narrate(intent) }
@@ -777,6 +853,7 @@ final class SessionRuntime {
             }
         }
         var progress = BatchProgress(actions: actions.map(\.name))
+        var fileAlert: [String: Any]?
         // Watch for the app's reaction from the first event on, so the wait
         // after input ends when the app has finished changing.
         let activity = actions.contains(where: \.changesWindow) ? AXActivity(pid: current.app.pid, clock: clock) : nil
@@ -884,6 +961,12 @@ final class SessionRuntime {
                     typingStart = focus.flatMap { $0.protected ? nil : PersonPlace.selection($0.element) }
                 }
                 session?.actionCount += 1
+                var copiedBefore: Int?
+                switch action.clipboard {
+                case .paste?: try clipboard.preparePaste()
+                case .copy?, .cut?: copiedBefore = clipboard.willCopy()
+                case nil: break
+                }
                 var path = try await input.execute(action, app: current.app, target: current.target, lease: observation,
                     access: access, records: records, focus: focus, pointerTarget: pointerTarget,
                     check: checkInput, checkWindow: checkWindow, background: background || !current.parents.isEmpty, editorTyping: editorTyping && index == 0, feedback: { [weak self] feedback in
@@ -899,16 +982,31 @@ final class SessionRuntime {
                     // The agent's own layout stands: the window is not put beside OpenWork again.
                     session?.follow?.agentPlaced()
                 }
+                if let copiedBefore {
+                    // Copied once the app changed the clipboard; nothing of it is returned.
+                    path = "copy_unconfirmed"
+                    for _ in 0..<10 {
+                        if clipboard.didCopy(since: copiedBefore) { path = action.clipboard == .cut ? "cut" : "copied"; break }
+                        try check()
+                        try await Task.sleep(nanoseconds: 100_000_000)
+                    }
+                } else if action.clipboard == .paste {
+                    path = "pasted"
+                }
                 if case .openFile = action {
                     // A success from Launch Services is not proof: the file counts as opened once the
-                    // app shows it, in a new window or this one retitled for it, within a few seconds.
+                    // app shows it, in a new document window or this one retitled for it, within a few
+                    // seconds. An alert instead, such as "could not be opened", is a refusal.
                     let title = current.target.title
                     path = "file_open_unconfirmed"
                     for _ in 0..<30 {
                         try check()
-                        if access.windowChanges(current.app).opened(since: windowsBefore)
-                            || (access.attribute(current.target.element, kAXTitleAttribute) as? String).map({ $0 != title }) == true {
-                            path = "file_opened"; break
+                        let documentOpened = !access.windowChanges(current.app).windows.subtracting(windowsBefore.windows).isEmpty
+                        let retitled = (access.attribute(current.target.element, kAXTitleAttribute) as? String).map({ $0 != title }) == true
+                        let alert = access.frontAlert(current.app)
+                        if documentOpened || retitled || alert != nil {
+                            path = FileOpenCheck.outcome(alert: alert, documentWindowOpened: documentOpened, retitled: retitled)
+                            fileAlert = alert; break
                         }
                         try await Task.sleep(nanoseconds: 100_000_000)
                     }
@@ -1032,6 +1130,8 @@ final class SessionRuntime {
         }
         if progress.hasInput { session?.openedByLastAction = windowsAfter.windows.subtracting(windowsBefore.windows) }
         receipt["delivery"] = (background ? InputDelivery.background : .foreground).rawValue
+        if let typeNote { receipt["type_note"] = typeNote }
+        if let fileAlert { receipt["file_alert"] = fileAlert }
         var desktop = desktopBefore.changes(to: DesktopState.now())
         if current.follow != nil { desktop["followed"] = current.followed }
         receipt["desktop"] = desktop
@@ -1419,6 +1519,7 @@ final class SessionRuntime {
     func close(stoppedByPerson: Bool = false) {
         // Windows the session arranged go back, unless the person has placed them since.
         if let placement = session?.placement { WindowArrangement.restore(placement) }
+        clipboard.restore()
         giveBack(); handBack.reset()
         stopWatching()
         resumingSessionID = nil; session = nil
