@@ -16,10 +16,23 @@ function bindsDiscovery(value: unknown): boolean {
   return Object.values(value).some(entry => Array.isArray(entry) ? entry.some(bindsDiscovery) : bindsDiscovery(entry));
 }
 
+function propertyName(value: Record<string, unknown>): string | undefined {
+  const property = value.property;
+  if (!record(property)) return undefined;
+  if (value.computed === true) return property.type === "Literal" && typeof property.value === "string" ? property.value : undefined;
+  return property.type === "Identifier" && typeof property.name === "string" ? property.name : undefined;
+}
+
+function isTools(value: unknown): boolean {
+  return record(value) && value.type === "Identifier" && value.name === "tools";
+}
+
 /** The pinned engine has a bare search() intrinsic, but no tools.search alias.
+ * Models also write a server's spelling, tools["openwork-cloud"].search, which
+ * is rewritten only when that server has no tool of its own named search.
  * Rewrite syntax before execution, never retry a script that may have written.
  * Source ranges leave strings, comments, and unrelated tool paths unchanged. */
-export function nativeDiscoveryCode(code: string): string {
+export function nativeDiscoveryCode(code: string, serverHasSearch: (server: string) => boolean = () => false): string {
   if (!code.includes("search")) return code;
   let tree: unknown;
   try {
@@ -35,10 +48,10 @@ export function nativeDiscoveryCode(code: string): string {
     if ((value.type === "VariableDeclarator" || value.type === "FunctionDeclaration" || value.type === "FunctionExpression" || value.type === "ClassDeclaration" || value.type === "ClassExpression") && bindsDiscovery(value.id)
       || value.type === "CatchClause" && bindsDiscovery(value.param)
       || Array.isArray(value.params) && value.params.some(bindsDiscovery)) shadowed = true;
-    if (value.type === "MemberExpression" && record(value.object) && value.object.type === "Identifier" && value.object.name === "tools"
-      && record(value.property) && (value.computed === true ? value.property.type === "Literal" && value.property.value === "search"
-        : value.property.type === "Identifier" && value.property.name === "search")
-      && typeof value.start === "number" && typeof value.end === "number") ranges.push({ start: value.start, end: value.end });
+    if (value.type === "MemberExpression" && propertyName(value) === "search" && typeof value.start === "number" && typeof value.end === "number") {
+      const server = record(value.object) && value.object.type === "MemberExpression" && isTools(value.object.object) ? propertyName(value.object) : undefined;
+      if (isTools(value.object) || server !== undefined && !serverHasSearch(server)) ranges.push({ start: value.start, end: value.end });
+    }
     for (const entry of Object.values(value)) {
       if (Array.isArray(entry)) entry.forEach(visit);
       else visit(entry);
