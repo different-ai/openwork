@@ -184,6 +184,26 @@ export function decideMemberRemoval(input: {
   return { reason: "admin_removal_requires_admin", message: ADMIN_REMOVAL_REQUIRES_ADMIN_MESSAGE }
 }
 
+export const SCIM_SUPER_ADMIN_REMOVAL_MESSAGE = "SCIM can remove a super admin only when the SCIM connection was set up by the owner or a super admin. Ask the owner to remove them, or to set up SCIM again."
+
+/**
+ * A removal with no signed-in actor (SCIM deprovisioning) of a super-admin.
+ * The identity provider acts with the authority of whoever set up the SCIM
+ * connection, so it may remove a super-admin only while that person is the
+ * owner or a super-admin. `authority` is that person's current permissions,
+ * or null when unknown or no longer an active member: then it is refused.
+ * Pending invitations hold no access and are not affected. Null means allowed.
+ */
+export function decideActorlessSuperAdminRemoval(input: {
+  targetIsDirectSuperAdmin: boolean
+  targetIsPendingInvitation: boolean
+  authority: Pick<MemberPermissions, "isOwner" | "isSuperAdmin"> | null
+}): { reason: "scim_super_admin_removal_requires_super_admin"; message: string } | null {
+  if (!input.targetIsDirectSuperAdmin || input.targetIsPendingInvitation) return null
+  if (input.authority && hasOwnerAuthority(input.authority)) return null
+  return { reason: "scim_super_admin_removal_requires_super_admin", message: SCIM_SUPER_ADMIN_REMOVAL_MESSAGE }
+}
+
 export const ADMIN_TEAM_REQUIRES_ADMIN_MESSAGE = "Only the owner or an admin can make a team an Admin team or add people to one."
 export const ADMIN_TEAM_REMOVAL_REQUIRES_ADMIN_MESSAGE = "Only the owner or an admin can delete an Admin team, turn it off, or remove people from it."
 

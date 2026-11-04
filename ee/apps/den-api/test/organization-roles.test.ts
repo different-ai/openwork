@@ -13,6 +13,7 @@ import {
 } from "../src/organization-role-hierarchy.ts"
 import {
   adminGrantDenial,
+  decideActorlessSuperAdminRemoval,
   decideAdminTeamChange,
   decideMemberRemoval,
   decideRequiredPermission,
@@ -215,6 +216,20 @@ test("only the owner or an admin can remove a direct admin", () => {
   assert.equal(decideMemberRemoval({ actor: teamGranted, ...direct, targetIsDirectAdmin: false }), null)
   assert.equal(decideMemberRemoval({ actor: teamGranted, ...direct, targetIsPendingInvitation: true }), null)
 
+})
+
+test("SCIM removes a super-admin only when the owner or a super-admin set up the SCIM connection", () => {
+  const target = { targetIsDirectSuperAdmin: true, targetIsPendingInvitation: false }
+  const denial = decideActorlessSuperAdminRemoval({ ...target, authority: caller({ isAdmin: true, keys: ["scim.manage"] }) })
+  assert.equal(denial?.reason, "scim_super_admin_removal_requires_super_admin")
+  assert.match(denial?.message ?? "", /set up by the owner or a super admin/)
+  // Unknown or departed connection owner: refused.
+  assert.equal(decideActorlessSuperAdminRemoval({ ...target, authority: null })?.reason, "scim_super_admin_removal_requires_super_admin")
+  assert.equal(decideActorlessSuperAdminRemoval({ ...target, authority: caller({ isOwner: true }) }), null)
+  assert.equal(decideActorlessSuperAdminRemoval({ ...target, authority: caller({ isSuperAdmin: true }) }), null)
+  // Admins, members and pending invitations keep today's SCIM behavior.
+  assert.equal(decideActorlessSuperAdminRemoval({ targetIsDirectSuperAdmin: false, targetIsPendingInvitation: false, authority: null }), null)
+  assert.equal(decideActorlessSuperAdminRemoval({ targetIsDirectSuperAdmin: true, targetIsPendingInvitation: true, authority: null }), null)
 })
 
 test("removing someone who is admin through an Admin team needs the owner or an admin too", () => {

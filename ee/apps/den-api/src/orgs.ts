@@ -68,7 +68,7 @@ import {
   shouldRevokeSessionsForRoleChange,
 } from "./organization-role-hierarchy.js"
 import { resolvePermissionsForMember } from "./permissions/resolve.js"
-import { decideMemberRemoval, decideRequiredPermission, type RoleAssignmentDenial } from "./permissions/role-assignment.js"
+import { decideActorlessSuperAdminRemoval, decideMemberRemoval, decideRequiredPermission, type RoleAssignmentDenial } from "./permissions/role-assignment.js"
 import { permissionDeniedMessage } from "./permissions/effective.js"
 import type { PermissionDatabase } from "@openwork-ee/den-db/permissions"
 import type { PermissionKey } from "@openwork/types/den/permissions"
@@ -2038,6 +2038,12 @@ export async function removeOrganizationMember(input: {
    * Invitation cancellation and SCIM deprovisioning authorize separately and omit it.
    */
   requiredPermission?: PermissionKey
+  /**
+   * SCIM deprovisioning (no `removedByOrgMemberId`): the user who set up the SCIM connection.
+   * Removing a super-admin without an actor needs this person to be the owner or a super-admin
+   * now (decideActorlessSuperAdminRemoval); without it, a super-admin is never removed.
+   */
+  actorlessAuthorityUserId?: typeof AuthUserTable.$inferSelect["id"] | null
 }): Promise<MemberMutationResult> {
   let gatewayCredentials: Awaited<ReturnType<typeof revokeInferenceCredentialsForMembers>> = []
   // Every removal path (members DELETE, invitation cancel, SCIM deprovisioning)
@@ -2102,6 +2108,24 @@ export async function removeOrganizationMember(input: {
       })
       if (adminRemovalDenial) {
         return { ok: false, error: "forbidden", message: adminRemovalDenial.message }
+      }
+    } else if (organizationRoleValueIncludes(member.role, ORGANIZATION_SUPER_ADMIN_ROLE)) {
+      // Read through this transaction with share locks, like the actor above.
+      const [authorityMember] = input.actorlessAuthorityUserId
+        ? await tx.select({ id: MemberTable.id }).from(MemberTable)
+          .where(and(eq(MemberTable.organizationId, input.organizationId), eq(MemberTable.userId, input.actorlessAuthorityUserId), isNull(MemberTable.removedAt)))
+          .limit(1).for("share")
+        : []
+      const authority = authorityMember
+        ? await resolvePermissionsForMember({ organizationId: input.organizationId, memberId: authorityMember.id, database: tx })
+        : null
+      const superAdminRemovalDenial = decideActorlessSuperAdminRemoval({
+        targetIsDirectSuperAdmin: true,
+        targetIsPendingInvitation: member.userId === null,
+        authority,
+      })
+      if (superAdminRemovalDenial) {
+        return { ok: false, error: "forbidden", message: superAdminRemovalDenial.message }
       }
     }
 
