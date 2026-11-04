@@ -9,6 +9,8 @@ import {
   workbotProactiveViewSchema,
   AGENT_RESPONSIBILITIES,
   DEFAULT_AGENT_BRIEF,
+  agentConnectionToolsViewSchema,
+  agentToolOverrides,
   resolveAgentBrief,
   type WorkbotProactiveHealth,
   type WorkbotProactiveSettings,
@@ -18,14 +20,19 @@ import type { Hono } from "hono"
 import { describeRoute } from "hono-openapi"
 import { z } from "zod"
 import { requireFeature } from "../../features.js"
-import { jsonValidator, orgMemberRoute, requireOrgPermission, userSessionRoute } from "../../middleware/index.js"
+import { jsonValidator, orgMemberRoute, paramValidator, requireOrgPermission, userSessionRoute } from "../../middleware/index.js"
 import { agentBriefAllowed, proactiveRunnerReady, readProactiveSettings } from "../../workbot-proactive/access.js"
 import { AGENT_RHYTHM_COUNTER } from "../../workbot-proactive/repository.js"
 import { workbotSlackAppReady } from "../../slack-assistant/direct-message.js"
 import { readAgentTemplate, saveAgentTemplate, type AgentTemplateVersion } from "../../workbot-proactive/template.js"
 import { readAgentChecks, readAgentMutes } from "../../workbot-proactive/repository.js"
 import { checkSourcesChange, groupSourceConnections } from "../../workbot-proactive/sources.js"
-import { countConnectedMembers, listOrganizationSourceConnections } from "../../workbot-proactive/sources-repository.js"
+import { countConnectedMembers, listConnectionToolsForMember, listOrganizationSourceConnections } from "../../workbot-proactive/sources-repository.js"
+import { mcpConnectionToolsView, nativeConnectionToolsView, unlistedConnectionToolsView } from "../../workbot-proactive/agent-tools.js"
+import { getCatalog } from "../../mcp/index.js"
+import { nativeOperations } from "../../mcp/native-capabilities.js"
+import { probeExternalConnectionStatus } from "../../mcp/external-capabilities.js"
+import { listTeamsForMember } from "../../member-teams.js"
 import type { DenTypeId } from "@openwork-ee/utils/typeid"
 import { workbotOrigin } from "../../workbot/config.js"
 import { checkRateLimit } from "../../utils/rate-limit.js"
@@ -67,6 +74,9 @@ const requireWorkbotDeployed: ReturnType<typeof requireOrgPermission> = async (c
 const workbotProactiveViewDocumentSchema = workbotProactiveViewSchema.meta({ ref: "WorkbotProactiveSettings" })
 const workbotProactiveHealthDocumentSchema = workbotProactiveHealthSchema.meta({ ref: "WorkbotProactiveHealth" })
 const workbotProactiveInputDocumentSchema = workbotProactiveSettingsInputSchema.meta({ ref: "WorkbotProactiveSettingsInput" })
+const agentConnectionToolsDocumentSchema = agentConnectionToolsViewSchema.meta({ ref: "WorkbotAgentConnectionTools" })
+const connectionToolsParamsSchema = z.object({ connectionId: z.string().trim().min(1).max(64) })
+const connectionNotFoundSchema = z.object({ error: z.literal("connection_not_found"), message: z.string() }).meta({ ref: "WorkbotAgentConnectionNotFound" })
 const invalidHoursSchema = z.object({ error: z.literal("invalid_working_hours"), message: z.string() }).meta({ ref: "WorkbotProactiveInvalidHoursError" })
 export const INVALID_WORKING_HOURS_MESSAGE = "The workday must end after it starts."
 
@@ -81,13 +91,14 @@ async function proactiveView(organizationId: DenTypeId<"organization">, settings
     slackReady: await workbotSlackAppReady(organizationId),
     runnerReady: proactiveRunnerReady(),
     // Connection names, URLs and counts only for callers who may view the organization's connections.
-    sourceConnections: canViewConnections ? await sourceConnectionsView(organizationId, settings) : null,
+    sourceConnections: canViewConnections ? await sourceConnectionsView(organizationId, settings, briefOn) : null,
   }
 }
 
-async function sourceConnectionsView(organizationId: DenTypeId<"organization">, settings: WorkbotProactiveSettings) {
+async function sourceConnectionsView(organizationId: DenTypeId<"organization">, settings: WorkbotProactiveSettings, briefOn: boolean) {
   const [connections, connectedMembers] = await Promise.all([listOrganizationSourceConnections(organizationId), countConnectedMembers(organizationId)])
-  return groupSourceConnections(connections, { policy: settings.sources, connectedMembers })
+  // With the brief on, every connection is listed (`any`); otherwise only services with reviewed read tools.
+  return groupSourceConnections(connections, { policy: settings.sources, connectedMembers, mode: briefOn ? "any" : "reviewed" })
 }
 
 /**
@@ -101,7 +112,7 @@ export function registerOrgWorkbotSettingsRoutes<T extends { Variables: OrgRoute
       tags: ["Organizations"],
       summary: "Get the settings for members' agents",
       description:
-        "Returns how members' agents work in this organization (Manage › Workbot): whether they are on, working hours, the daily limit per member, whether members start opted in, the default place messages go (a DM from the Workbot Slack app), what agents may read (`settings.sources`: calendar, email and team chat, and each other connection by id: `everyone` = on for everyone, `members` = members choose, `off` = not allowed; agents only ever read; `coreConnections` = the connections an admin allowed for calendar, email or chat: Den's own providers for what they serve, or an MCP whose read tools are reviewed; absent for every connection that serves it; `coreDefaults` = the admin's default connection per core source, absent for automatic; each member's agent reads exactly one allowed connection per core source: the one the member picked, else the default when their account on it is ready, else one they already connected, else the default for them to connect; `otherConnections` = the connections in Other context, absent for every connection with reviewed read tools) with the organization's connections behind each by default (each core one with `connectedMembers`, how many members connected their own account on it, null when unknown such as a shared credential), `sourceConnections.all`, every connection an admin can add with where it can go, and `sourceConnections.defaults`, the default each core source uses now (the admin's `coreDefaults` while still allowed, else the allowed connection most members connected) (`sourceConnections`, null without View connections; includes Google Workspace or Microsoft 365 set up before connections had their own entries), and the current \"Your agent\" template version (preset responsibilities and organization instructions). With Your agent's brief on (workbotAgentBrief), `brief` is what agents follow instead of the responsibilities: `checkEveryHours` (a check every 1, 2, 3 or 4 hours inside working hours), `dailyCap` (messages per member per day), `extraChecksPerDay` (extra checks an agent may ask for before something time-sensitive), `text` (what to tell people, in plain text; `defaultText` is the built-in default) and `carriedOver` (fields not saved yet, carried over from the responsibilities, organization instructions and daily limit). Also says whether the Workbot Slack app is installed to send those DMs and whether the headless runner the agents run on is configured. Requires the workbotProactive feature, Workbot on this deployment, and View OpenWork Models settings or Manage OpenWork Models.",
+        "Returns how members' agents work in this organization (Manage › Workbot): whether they are on, working hours, the daily limit per member, whether members start opted in, the default place messages go (a DM from the Workbot Slack app), what agents may read (`settings.sources`: calendar, email and team chat, and each other connection by id: `everyone` = on for everyone, `members` = members choose, `off` = not allowed; agents only ever read; `coreConnections` = the connections an admin allowed for calendar, email or chat: Den's own providers for what they serve, or an MCP whose read tools are reviewed; absent for every connection that serves it; `coreDefaults` = the admin's default connection per core source, absent for automatic; each member's agent reads exactly one allowed connection per core source: the one the member picked, else the default when their account on it is ready, else one they already connected, else the default for them to connect; `otherConnections` = the connections in Other context, absent for every connection with reviewed read tools; with Your agent's brief on (workbotAgentBrief) every connection is offered instead, MCP and Den's own providers alike, each `sourceConnections.other` entry with the policy it has now, and `toolOverrides` = an admin's per-tool choices per connection id (`allow` or `deny`)) with the organization's connections behind each by default (each core one with `connectedMembers`, how many members connected their own account on it, null when unknown such as a shared credential), `sourceConnections.all`, every connection an admin can add with where it can go, and `sourceConnections.defaults`, the default each core source uses now (the admin's `coreDefaults` while still allowed, else the allowed connection most members connected) (`sourceConnections`, null without View connections; includes Google Workspace or Microsoft 365 set up before connections had their own entries), and the current \"Your agent\" template version (preset responsibilities and organization instructions). With Your agent's brief on (workbotAgentBrief), `brief` is what agents follow instead of the responsibilities: `checkEveryHours` (a check every 1, 2, 3 or 4 hours inside working hours), `dailyCap` (messages per member per day), `extraChecksPerDay` (extra checks an agent may ask for before something time-sensitive), `text` (what to tell people, in plain text; `defaultText` is the built-in default) and `carriedOver` (fields not saved yet, carried over from the responsibilities, organization instructions and daily limit). Also says whether the Workbot Slack app is installed to send those DMs and whether the headless runner the agents run on is configured. Requires the workbotProactive feature, Workbot on this deployment, and View OpenWork Models settings or Manage OpenWork Models.",
       responses: {
         200: jsonResponse("Agent settings returned.", workbotProactiveViewDocumentSchema),
         401: jsonResponse("Authentication required.", unauthorizedSchema),
@@ -161,13 +172,54 @@ export function registerOrgWorkbotSettingsRoutes<T extends { Variables: OrgRoute
     },
   )
 
+  app.get(
+    "/v1/org/workbot-settings/proactive/sources/:connectionId/tools",
+    describeRoute({
+      tags: ["Organizations"],
+      summary: "Get the tools members' agents may use on a connection",
+      description:
+        "With Your agent's brief on (workbotAgentBrief): every tool one of the organization's connections lists, and whether members' agents may call it (`allowed`), why (`reason`: `destructive` = its provider marks it destructive, never allowed; `admin_allowed` / `admin_denied` = an admin's choice; `reviewed` / `not_reviewed` = a reviewed list for that service; `marked_read` / `marked_write` = the provider's read-only annotation; `read_name` / `write_name` / `unclear` = its name and description; `native_read` / `native_write` = one of Den's own operations, a GET or not), the admin's choice (`override`) and whether no admin can allow it (`locked`). `readTools` counts the allowed ones. An MCP connection's tools are listed with the caller's own account (`status` `needs_connection` when they haven't connected it, `unavailable` when its server didn't answer); Den's own providers list their operations outside calendar, mail and chat (`coreSourcesElsewhere`), which are read under those sources. Agents only ever read. Requires the workbotProactive and workbotAgentBrief features, Workbot on this deployment, View OpenWork Models settings or Manage OpenWork Models, and View connections.",
+      responses: {
+        200: jsonResponse("The connection's tools returned.", agentConnectionToolsDocumentSchema),
+        401: jsonResponse("Authentication required.", unauthorizedSchema),
+        403: jsonResponse("The caller lacks View OpenWork Models settings, Manage OpenWork Models or View connections.", forbiddenSchema),
+        404: jsonResponse("The organization was not found, the feature is off, or the connection isn't the organization's.", z.union([featureDisabledSchema, connectionNotFoundSchema])),
+      },
+    }),
+    orgMemberRoute(),
+    requireFeature("workbotProactive"),
+    requireWorkbotDeployed,
+    requireWorkbotSettingsRead,
+    requireOrgPermission("connections.view"),
+    paramValidator(connectionToolsParamsSchema),
+    async (c) => {
+      c.header("Cache-Control", "no-store")
+      const { organization, currentMember } = c.get("organizationContext")
+      if (!(await agentBriefAllowed(organization.id, currentMember.userId))) return c.json({ error: "feature_disabled" as const, feature: "workbotAgentBrief" }, 404)
+      const { connectionId } = c.req.valid("param")
+      const connection = (await listOrganizationSourceConnections(organization.id)).find((entry) => entry.id === connectionId)
+      if (!connection) return c.json({ error: "connection_not_found" as const, message: "No such connection in this organization." }, 404)
+      const overrides = agentToolOverrides((await readProactiveSettings(organization.id)).sources, connection.id)
+      if (connection.native !== null) {
+        const catalog = await getCatalog(app as unknown as Hono, c.env)
+        const operations = nativeOperations(catalog, connection.native).map((operation) => ({ name: operation.name, method: operation.method, path: operation.path, summary: operation.operation.summary ?? null }))
+        return c.json(nativeConnectionToolsView({ connectionId: connection.id, operations, overrides }))
+      }
+      const tools = await listConnectionToolsForMember({ organizationId: organization.id, memberId: currentMember.id, connectionId: connection.id })
+      if (tools) return c.json(mcpConnectionToolsView({ connectionId: connection.id, url: connection.url, tools, overrides }))
+      const member = { orgMembershipId: currentMember.id, teamIds: (await listTeamsForMember({ organizationId: organization.id, memberId: currentMember.id })).map((team) => team.id) }
+      const probe = await probeExternalConnectionStatus({ organizationId: organization.id, member, connectionId: connection.id }).catch(() => null)
+      return c.json(unlistedConnectionToolsView(connection.id, probe?.ok && probe.connected ? "unavailable" : "needs_connection"))
+    },
+  )
+
   app.put(
     "/v1/org/workbot-settings/proactive",
     describeRoute({
       tags: ["Organizations"],
       summary: "Change the settings for members' agents",
       description:
-        "Changes any subset of how members' agents work. Policy fields (on/off, working hours, daily limit, members' starting choice, default destination: a Workbot DM or nowhere, never a channel) apply from the next pass; members' own choices (muted, snoozed, turned off, their own destination) are kept. `sources` sets what agents may read: `calendar`, `email`, `chat` and `connections` by connection id, each `everyone` (on for everyone), `members` (members choose; null also means this) or `off` (not allowed). `sources.coreConnections.{calendar,email,chat}` picks which of the organization's connections are allowed for that source (ids from `sourceConnections`; null goes back to every connection that serves it); an MCP connection whose read tools are reviewed (Slack, Linear, Notion, GitHub, Granola) can serve them too, and an empty list reads nothing. `sources.coreDefaults.{calendar,email,chat}` sets the default connection for that source (null goes back to automatic: the allowed one most members connected); it must be allowed after the change, and taking the current default out of the allowed connections is refused (400) unless the same change sets another default. Each member's agent reads exactly one allowed connection per core source (the member's pick, else the default when their account is ready, else one they already connected), so a member is never asked to connect an app they don't use. `sources.otherConnections` lists the connections in Other context (null goes back to every connection with reviewed read tools). An MCP without reviewed read tools can't be a source. Members can never read a source the admin didn't allow or turn off one that is on for everyone. With Your agent's brief on (workbotAgentBrief), `brief` sets any of `checkEveryHours` (1, 2, 3 or 4), `dailyCap` (1–10), `extraChecksPerDay` (0–6) and `text` (what to tell people, up to 2,000 characters; members add their own lines); members can check less often or lower the limit, never more. Without it `brief` answers 400. A change to responsibilities or instructions saves a new version of the organization's \"Your agent\" template. Agents only read and never send, edit or delete anything for members. Requires the workbotProactive feature, Workbot on this deployment and Manage OpenWork Models.",
+        "Changes any subset of how members' agents work. Policy fields (on/off, working hours, daily limit, members' starting choice, default destination: a Workbot DM or nowhere, never a channel) apply from the next pass; members' own choices (muted, snoozed, turned off, their own destination) are kept. `sources` sets what agents may read: `calendar`, `email`, `chat` and `connections` by connection id, each `everyone` (on for everyone), `members` (members choose; null also means this) or `off` (not allowed). `sources.coreConnections.{calendar,email,chat}` picks which of the organization's connections are allowed for that source (ids from `sourceConnections`; null goes back to every connection that serves it); an MCP connection whose read tools are reviewed (Slack, Linear, Notion, GitHub, Granola) can serve them too, and an empty list reads nothing. `sources.coreDefaults.{calendar,email,chat}` sets the default connection for that source (null goes back to automatic: the allowed one most members connected); it must be allowed after the change, and taking the current default out of the allowed connections is refused (400) unless the same change sets another default. Each member's agent reads exactly one allowed connection per core source (the member's pick, else the default when their account is ready, else one they already connected), so a member is never asked to connect an app they don't use. `sources.otherConnections` lists the connections in Other context (null goes back to every connection with reviewed read tools). An MCP without reviewed read tools can't be a source. With Your agent's brief on (workbotAgentBrief), any connection can be a source (Den's own providers in Other context for what isn't calendar, email or chat), and `sources.toolOverrides` sets, per connection id and tool name, `allow` or `deny` for members' agents (null on a tool goes back to its automatic decision: a reviewed list, the provider's read-only and destructive annotations, then the tool's name; null on a connection clears its choices); a tool its provider marks destructive is never allowed. Members can never read a source the admin didn't allow or turn off one that is on for everyone. With Your agent's brief on (workbotAgentBrief), `brief` sets any of `checkEveryHours` (1, 2, 3 or 4), `dailyCap` (1–10), `extraChecksPerDay` (0–6) and `text` (what to tell people, up to 2,000 characters; members add their own lines); members can check less often or lower the limit, never more. Without it `brief` answers 400. A change to responsibilities or instructions saves a new version of the organization's \"Your agent\" template. Agents only read and never send, edit or delete anything for members. Requires the workbotProactive feature, Workbot on this deployment and Manage OpenWork Models.",
       responses: {
         200: jsonResponse("Agent settings saved.", workbotProactiveViewDocumentSchema),
         400: jsonResponse("The request was invalid, or the workday would end before it starts.", z.union([invalidHoursSchema, invalidRequestSchema])),
@@ -189,7 +241,12 @@ export function registerOrgWorkbotSettingsRoutes<T extends { Variables: OrgRoute
       if (requested.brief && !briefOn) return c.json({ error: "invalid_request" as const, message: "Your agent's brief isn't on for this organization.", details: [] }, 400)
       // Every id is one of the organization's connections, put where it can serve; an MCP only with reviewed read tools;
       // each core source's default stays one of its allowed connections.
-      const invalid = checkSourcesChange({ change: requested.sources, connections: await listOrganizationSourceConnections(organization.id), current: (await readProactiveSettings(organization.id)).sources })
+      const invalid = checkSourcesChange({
+        change: requested.sources,
+        connections: await listOrganizationSourceConnections(organization.id),
+        current: (await readProactiveSettings(organization.id)).sources,
+        mode: briefOn ? "any" : "reviewed",
+      })
       if (invalid) return c.json({ error: "invalid_request" as const, message: invalid }, 400)
       const change = requested
       const result: { settings: WorkbotProactiveSettings | null } = { settings: null }

@@ -10,6 +10,7 @@ import {
   mergeAgentSourcesPolicy,
   type AgentCoreSource,
   type AgentCoreSourceConnection,
+  type AgentOtherSourceConnection,
   type AgentSourceChosenBy,
   type AgentSourceConnection,
   type AgentSourceOption,
@@ -33,9 +34,18 @@ import { agentReadableConnection, serviceLinkDomains } from "../mcp/agent-read-s
  * without reviewed read tools is never a source. The admin decides per source (on for everyone, members choose, not
  * allowed); the member turns the ones they may choose on or off and steers each with an instruction in their own words.
  *
+ * With `workbotAgentBrief` (`mode: "any"`), any connected connector is a source, with no hand-picked list: every MCP
+ * connection, custom ones included, and Den's own providers for what isn't calendar, email or chat (their Drive, Docs,
+ * OneDrive…). Each is in Other context under its own policy (members choose unless an admin decided); a reviewed
+ * connection an admin had taken out of Other context stays not allowed. Which tools each may use is decided per tool
+ * (@openwork/automations/agent-read-tools); a connection with none still shows.
+ *
  * Pure: the database reads live in sources-repository.ts. The wake builds the turn's read allowlist and its prompt from
  * `resolveMemberSources`; the member's page and chat read the same result.
  */
+
+/** `reviewed`: today, only services with reviewed read tools. `any` (`workbotAgentBrief`): every connection. */
+export type SourceMode = "reviewed" | "any"
 
 /** One of the member's usable connections and whether their own account on it is ready. */
 export type MemberConnection = {
@@ -86,22 +96,44 @@ export function connectionLinkDomains(connection: { url: string; native: string 
 }
 
 /**
- * Whether an MCP connection can be read at all: a service whose read tools we reviewed (agent-read-sources.ts). Den's
- * own providers are read through Den, per core source.
+ * Whether a connection can be a source of its own: today, an MCP whose service's read tools we reviewed
+ * (agent-read-sources.ts), with Den's own providers read through Den per core source only. `any`: every connection.
  */
-export function canBeSource(connection: { url: string; native: string | null }): boolean {
+export function canBeSource(connection: { url: string; native: string | null }, mode: SourceMode = "reviewed"): boolean {
+  if (mode === "any") return true
   return connection.native === null && agentReadableConnection(connection.url)
 }
 
-/** Other context before an admin picks: every connection whose read tools we reviewed and that isn't a core source. */
-function defaultOther(connection: { url: string; native: string | null }) {
+/**
+ * Other context before an admin picks: today, every connection whose read tools we reviewed and that isn't a core
+ * source. `any`: every connection except one whose whole service is a core source (Slack is team chat); Den's own
+ * providers are, for what isn't calendar, email or chat.
+ */
+export function defaultOther(connection: { url: string; native: string | null }, mode: SourceMode = "reviewed") {
+  if (mode === "any") return connection.native !== null || coreSourcesOf(connection).length === 0
   return connection.native === null && coreSourcesOf(connection).length === 0 && agentReadableConnection(connection.url)
 }
 
-/** Where an admin can add a connection: Den's own providers only for what they serve; a reviewed MCP anywhere. */
-export function sourceSlotsOf(connection: { url: string; native: string | null }): AgentSourceSlot[] {
-  if (connection.native !== null) return coreSourcesOf(connection)
-  return canBeSource(connection) ? [...AGENT_SOURCE_SLOTS] : []
+/**
+ * Where an admin can add a connection: Den's own providers for what they serve (and, `any`, Other context); a reviewed
+ * MCP anywhere (`any`: every MCP).
+ */
+export function sourceSlotsOf(connection: { url: string; native: string | null }, mode: SourceMode = "reviewed"): AgentSourceSlot[] {
+  if (connection.native !== null) return mode === "any" ? [...coreSourcesOf(connection), "other"] : coreSourcesOf(connection)
+  return canBeSource(connection, mode) ? [...AGENT_SOURCE_SLOTS] : []
+}
+
+/**
+ * `any`: the policy for a connection in Other context. An admin's choice; else "not allowed" for a reviewed connection
+ * they had taken out of Other context before every connection was listed (so turning the feature on never reopens it);
+ * else members choose.
+ */
+export function otherSourcePolicy(policy: AgentSourcesPolicy, connection: { id: string; url: string; native: string | null }): AgentSourcePolicy {
+  const chosen = policy.connections[connection.id]
+  if (chosen) return chosen
+  const picked = agentOtherConnections(policy)
+  if (picked !== null && defaultOther(connection, "reviewed") && !picked.includes(connection.id)) return "off"
+  return "members"
 }
 
 type SourceShape = { id: string; url: string; native: string | null }
@@ -110,11 +142,11 @@ type SourceShape = { id: string; url: string; native: string | null }
  * The connections allowed behind a core source: the admin's list (Den's own providers only for what they serve, an
  * MCP only when agents can read it), or every connection that serves it before they pick one. In the order given.
  */
-export function allowedConnections<T extends SourceShape>(connections: readonly T[], policy: AgentSourcesPolicy, kind: AgentCoreSource): T[] {
+export function allowedConnections<T extends SourceShape>(connections: readonly T[], policy: AgentSourcesPolicy, kind: AgentCoreSource, mode: SourceMode = "reviewed"): T[] {
   const picked = agentCoreConnections(policy, kind)
   return connections.filter((connection) => picked === null
     ? coreSourcesOf(connection).includes(kind)
-    : picked.includes(connection.id) && (connection.native === null ? canBeSource(connection) : coreSourcesOf(connection).includes(kind)))
+    : picked.includes(connection.id) && (connection.native === null ? canBeSource(connection, mode) : coreSourcesOf(connection).includes(kind)))
 }
 
 /** Den's provider set up before connections had rows (its id is the provider's key), then Den's own, then an MCP. */
@@ -149,19 +181,23 @@ export function effectiveDefault<T extends SourceShape>(allowed: readonly T[], p
  */
 export function groupSourceConnections(
   connections: readonly (AgentSourceConnection & { native: string | null })[],
-  context: { policy?: AgentSourcesPolicy; connectedMembers?: ReadonlyMap<string, number> } = {},
+  context: { policy?: AgentSourcesPolicy; connectedMembers?: ReadonlyMap<string, number>; mode?: SourceMode } = {},
 ): NonNullable<WorkbotProactiveView["sourceConnections"]> {
-  const groups: Record<AgentCoreSource, AgentCoreSourceConnection[]> & { other: AgentSourceConnection[]; all: AgentSourceOption[] } = { calendar: [], email: [], chat: [], other: [], all: [] }
+  const mode = context.mode ?? "reviewed"
+  const policy = context.policy ?? DEFAULT_AGENT_SOURCES_POLICY
+  const groups: Record<AgentCoreSource, AgentCoreSourceConnection[]> & { other: AgentOtherSourceConnection[]; all: AgentSourceOption[] } = { calendar: [], email: [], chat: [], other: [], all: [] }
   const counted = (id: string) => context.connectedMembers?.get(id) ?? null
   for (const connection of connections) {
     const entry = { id: connection.id, name: connection.name, url: connection.url }
-    if (defaultOther(connection)) groups.other.push(entry)
+    if (defaultOther(connection, mode)) {
+      // `any`: every connection, with the policy it has now (a removed reviewed one stays not allowed) and whether it is Den's own.
+      groups.other.push(mode === "any" ? { ...entry, native: connection.native !== null, policy: otherSourcePolicy(policy, connection) } : entry)
+    }
     for (const kind of coreSourcesOf(connection)) groups[kind].push({ ...entry, connectedMembers: counted(connection.id) })
-    const slots = sourceSlotsOf(connection)
+    const slots = sourceSlotsOf(connection, mode)
     if (slots.length) groups.all.push({ ...entry, native: connection.native !== null, slots, connectedMembers: counted(connection.id) })
   }
-  const policy = context.policy ?? DEFAULT_AGENT_SOURCES_POLICY
-  const defaultOf = (kind: AgentCoreSource) => effectiveDefault(allowedConnections(connections, policy, kind), policy, kind, context.connectedMembers)?.id ?? null
+  const defaultOf = (kind: AgentCoreSource) => effectiveDefault(allowedConnections(connections, policy, kind, mode), policy, kind, context.connectedMembers)?.id ?? null
   return { ...groups, defaults: { calendar: defaultOf("calendar"), email: defaultOf("email"), chat: defaultOf("chat") } }
 }
 
@@ -176,48 +212,53 @@ export function checkSourcesChange(input: {
   connections: readonly (AgentSourceConnection & { native: string | null })[]
   /** The saved policy the change applies to; the defaults when absent. */
   current?: AgentSourcesPolicy
+  mode?: SourceMode
 }): string | null {
   const { change } = input
+  const mode = input.mode ?? "reviewed"
   if (!change) return null
+  if (change.toolOverrides && mode !== "any") return "Choosing tools for agents isn't on for this organization."
   const byId = new Map(input.connections.map((connection) => [connection.id, connection]))
   const unknown = (id: string) => `No connection ${id} in this organization.`
   for (const kind of AGENT_CORE_SOURCES) {
     for (const id of change.coreConnections?.[kind] ?? []) {
       const connection = byId.get(id)
       if (!connection) return unknown(id)
-      if (!sourceSlotsOf(connection).includes(kind)) return `${connection.name} can't serve ${AGENT_CORE_SOURCE_COPY[kind].label.toLowerCase()}.`
+      if (!sourceSlotsOf(connection, mode).includes(kind)) return `${connection.name} can't serve ${AGENT_CORE_SOURCE_COPY[kind].label.toLowerCase()}.`
     }
   }
   for (const id of change.otherConnections ?? []) {
     const connection = byId.get(id)
     if (!connection) return unknown(id)
-    if (connection.native !== null) return `${connection.name} can't be other context.`
-    if (!canBeSource(connection)) return `Agents can't read ${connection.name} yet.`
+    if (!sourceSlotsOf(connection, mode).includes("other")) return connection.native !== null ? `${connection.name} can't be other context.` : `Agents can't read ${connection.name} yet.`
   }
   for (const [id, value] of Object.entries(change.connections ?? {})) {
     const connection = byId.get(id)
     if (!connection) return unknown(id)
-    if (value !== null && !canBeSource(connection)) return `Agents can't read ${connection.name} yet.`
+    if (value !== null && !canBeSource(connection, mode)) return `Agents can't read ${connection.name} yet.`
+  }
+  for (const id of Object.keys(change.toolOverrides ?? {})) {
+    if (!byId.has(id)) return unknown(id)
   }
   for (const kind of AGENT_CORE_SOURCES) {
     const id = change.coreDefaults?.[kind]
     if (!id) continue
     const connection = byId.get(id)
     if (!connection) return unknown(id)
-    if (!sourceSlotsOf(connection).includes(kind)) return `${connection.name} can't serve ${AGENT_CORE_SOURCE_COPY[kind].label.toLowerCase()}.`
+    if (!sourceSlotsOf(connection, mode).includes(kind)) return `${connection.name} can't serve ${AGENT_CORE_SOURCE_COPY[kind].label.toLowerCase()}.`
   }
   // After the change: each default is still one of its source's allowed connections.
   const current = input.current ?? DEFAULT_AGENT_SOURCES_POLICY
   const next = mergeAgentSourcesPolicy(current, change)
   for (const kind of AGENT_CORE_SOURCES) {
     const id = agentCoreDefault(next, kind)
-    if (!id || allowedConnections(input.connections, next, kind).some((connection) => connection.id === id)) continue
+    if (!id || allowedConnections(input.connections, next, kind, mode).some((connection) => connection.id === id)) continue
     const label = AGENT_CORE_SOURCE_COPY[kind].label.toLowerCase()
     const name = byId.get(id)?.name ?? id
     if (change.coreDefaults?.[kind]) return `${name} isn't allowed for ${label}. Allow it first.`
     // A default that stopped being allowed some other way (its connection removed) falls back to automatic on its own;
     // this change only may not be the one that takes it away.
-    const allowedBefore = allowedConnections(input.connections, current, kind).some((connection) => connection.id === id)
+    const allowedBefore = allowedConnections(input.connections, current, kind, mode).some((connection) => connection.id === id)
     if (allowedBefore) return `${name} is the default for ${label}. Choose another default first.`
   }
   return null
@@ -242,6 +283,11 @@ export type ResolvedSource = {
   on: boolean
   instruction: string
   lastReadAt: number | null
+  /**
+   * `any`, other sources: how many of its tools the agent may call, once known (0 still shows, with a line saying an
+   * admin can review them). Absent while unknown.
+   */
+  readTools?: number | null
 }
 
 /** Whether a source is on: the admin decides, unless members choose (core sources start on, the rest off). */
@@ -282,11 +328,13 @@ export function resolveMemberSources(input: {
   lastLook: Readonly<Record<string, number>>
   /** Members with their own account on each connection, by connection id, for the automatic default. */
   connectedMembers?: ReadonlyMap<string, number>
+  mode?: SourceMode
 }): ResolvedSource[] {
+  const mode = input.mode ?? "reviewed"
   const core = AGENT_CORE_SOURCES.map((kind): ResolvedSource => {
     const policy = input.policy[kind]
     const choice = input.choices[kind]
-    const options = allowedConnections(input.connections, input.policy, kind)
+    const options = allowedConnections(input.connections, input.policy, kind, mode)
     const chosen = chooseCoreConnection({ options, policy: input.policy, kind, choice, connectedMembers: input.connectedMembers })
     return {
       id: kind,
@@ -304,9 +352,9 @@ export function resolveMemberSources(input: {
   })
   const otherIds = agentOtherConnections(input.policy)
   const others = input.connections
-    .filter((connection) => otherIds === null ? defaultOther(connection) : otherIds.includes(connection.id) && canBeSource(connection))
+    .filter((connection) => mode === "any" ? defaultOther(connection, mode) : otherIds === null ? defaultOther(connection) : otherIds.includes(connection.id) && canBeSource(connection))
     .map((connection): ResolvedSource => {
-      const policy = agentSourcePolicy(input.policy, connection.id)
+      const policy = mode === "any" ? otherSourcePolicy(input.policy, connection) : agentSourcePolicy(input.policy, connection.id)
       const choice = input.choices[connection.id]
       return {
         id: connection.id,
