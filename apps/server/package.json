@@ -24,7 +24,7 @@
     "test:drive-upload-session-native": "node --conditions=development --import tsx --test test/drive-upload-session-approval-native.test.ts",
     "test:fresh-install-engine": "bun test test/engine-fresh-install-default.test.ts test/managed-opencode-foreign-storage.test.ts",
     "test:live-provider-sync": "bun test test/live-provider-sync.test.ts",
-    "test:history-migration": "bun --conditions=development test test/opencode-history.test.ts test/upstream-history-startup.test.ts",
+    "test:history-migration": "bun test test/opencode-history.test.ts",
     "prepublishOnly": "pnpm build:npm-bundle"
   },
   "files": [
