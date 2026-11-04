@@ -155,6 +155,7 @@ export function DenCommandPalette({ open, onOpenChange, interceptNavigation }: D
   const pageEntries = useMemo<PaletteEntry[]>(() => {
     const sections = buildDashboardNavSections({
       orgSlug: activeOrg?.slug ?? null,
+      organizationId: activeOrg?.id ?? null,
       access,
       capabilities,
       orgMode: runtimeConfig.orgMode,

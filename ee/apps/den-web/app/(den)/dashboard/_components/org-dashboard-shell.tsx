@@ -457,6 +457,7 @@ export function OrgDashboardShell({ children }: { children: React.ReactNode }) {
   const navSections = buildDashboardNavSections({
     libraryNeedsSignIn,
     orgSlug: activeOrg?.slug ?? null,
+    organizationId: activeOrg?.id ?? null,
     access,
     capabilities: orgContext?.capabilities ?? {
       auditLogs: false,

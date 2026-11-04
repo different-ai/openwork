@@ -5,6 +5,23 @@ import { canOpenGatewayArea } from "./gateway-dashboard-access";
 /** The dashboard's Workbot entry, which leaves Den for the Workbot app. */
 export const WORKBOT_ENTRY_HREF = "/workbot";
 
+/** The Workbot entry for the workspace on screen, so Workbot opens for that workspace rather than its last sign-in. */
+export function workbotEntryHref(organizationId: string | null | undefined): string {
+  return organizationId ? `${WORKBOT_ENTRY_HREF}?${new URLSearchParams({ organizationId })}` : WORKBOT_ENTRY_HREF;
+}
+
+export function isWorkbotEntryHref(href: string): boolean {
+  return href === WORKBOT_ENTRY_HREF || href.startsWith(`${WORKBOT_ENTRY_HREF}?`);
+}
+
+/** Where Den's /workbot sends the browser: Workbot, told which workspace it was opened from when that is known. */
+export function workbotDestination(base: string, organizationId: string | string[] | undefined): string {
+  if (typeof organizationId !== "string" || !/^[A-Za-z0-9_-]{1,128}$/.test(organizationId)) return base;
+  const url = new URL(base);
+  url.searchParams.set("organization", organizationId);
+  return url.toString();
+}
+
 /**
  * What clicking Workbot does.
  * - `open`: go to Workbot as always.

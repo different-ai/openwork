@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { getNewAiGatewayProviderRoute, getOrgAccessFlags, type DenOrgCapabilities } from "../../_lib/den-org";
 import { buildDashboardNavSections } from "./dashboard-navigation";
-import { decideWorkbotEntry, WORKBOT_ENTRY_COPY, WORKBOT_ENTRY_HREF, type WorkbotEntry } from "./workbot-entry";
+import { decideWorkbotEntry, isWorkbotEntryHref, WORKBOT_ENTRY_COPY, WORKBOT_ENTRY_HREF, workbotDestination, workbotEntryHref, type WorkbotEntry } from "./workbot-entry";
 
 const member = getOrgAccessFlags("member", false, []);
 const providerManager = getOrgAccessFlags("member", false, ["gateway_providers.view", "gateway_providers.manage"]);
@@ -65,4 +65,18 @@ test("a blocked Workbot entry stays in the navigation with a quiet marker (P4)",
   assert.equal(others?.href, WORKBOT_ENTRY_HREF);
   assert.equal(others?.locked, WORKBOT_ENTRY_COPY.askAdminTitle);
   assert.equal(others?.attention, undefined);
+});
+
+test("the Workbot entry names the workspace on screen, and Den passes only a well-formed id on to Workbot", () => {
+  const entry = buildDashboardNavSections({ orgSlug: "test-org", organizationId: "org_test", access: member, capabilities, orgMode: "multi_org", runtimeConfigLoaded: true })
+    .flatMap((section) => section.items).find((item) => item.testId === "dashboard-nav-workbot");
+  assert.equal(entry?.href, "/workbot?organizationId=org_test");
+  assert.equal(isWorkbotEntryHref(entry?.href ?? ""), true);
+  assert.equal(workbotEntryHref(null), WORKBOT_ENTRY_HREF);
+  assert.equal(isWorkbotEntryHref("/workbotx"), false);
+
+  assert.equal(workbotDestination("https://chat.example.test", "org_test"), "https://chat.example.test/?organization=org_test");
+  for (const bad of [undefined, "", "org test", ["org_a", "org_b"], "x".repeat(200)]) {
+    assert.equal(workbotDestination("https://chat.example.test", bad), "https://chat.example.test");
+  }
 });

@@ -17,7 +17,9 @@ export type Session = { id: string; userId: string; organizationId: string; toke
 export type Member = { session: Session; accessToken: string; den: DenSession }
 export type AppEnv = { Variables: { member: Member } }
 
-const loginSchema = z.object({ state: z.string(), verifier: z.string(), returnTo: z.string(), createdAt: z.number() })
+const loginSchema = z.object({ state: z.string(), verifier: z.string(), returnTo: z.string(), createdAt: z.number(), organizationId: z.string().optional() })
+/** An organization id from a link (Den's Workbot entry), never trusted beyond choosing whether to sign in again. */
+const organizationIdSchema = z.string().regex(/^[A-Za-z0-9_-]{1,128}$/)
 const SESSION_PURPOSE = "workbot-session-v1"
 const LOGIN_PURPOSE = "workbot-login-v1"
 
@@ -211,11 +213,30 @@ export function createAuth(input: { config: Pick<Config, "publicUrl" | "secureCo
   }
 
   const register = (app: Hono<AppEnv>) => {
+    // Den's Workbot entry names the workspace it was opened from. A page opened that way while this browser is
+    // signed in to another workspace signs in again (Den answers for its active workspace) instead of quietly
+    // showing the other workspace's Workbot. The hint only ever leads to sign-in; it never selects data.
+    app.use("*", async (c, next) => {
+      const wanted = c.req.query("organization")
+      const path = c.req.path
+      if (c.req.method !== "GET" || wanted === undefined || path.startsWith("/auth/") || path.startsWith("/v1/") || path.startsWith("/assets/")) return next()
+      const url = new URL(c.req.url)
+      url.searchParams.delete("organization")
+      const target = safeReturnPath(`${url.pathname}${url.search}`, config.publicUrl)
+      const organizationId = organizationIdSchema.safeParse(wanted)
+      if (!organizationId.success || readSession(c)?.organizationId === organizationId.data) return c.redirect(target, 302)
+      return c.redirect(`/auth/login?${new URLSearchParams({ organization: organizationId.data, return: target })}`, 302)
+    })
+
     app.get("/auth/login", async (c) => {
       const state = randomToken()
       const verifier = randomToken()
+      const organizationId = organizationIdSchema.safeParse(c.req.query("organization"))
       // Ties the sign-in to this browser, so a link someone else started can't sign it in as them.
-      const login = { state, verifier, returnTo: safeReturnPath(c.req.query("return"), config.publicUrl), createdAt: now() }
+      const login = {
+        state, verifier, returnTo: safeReturnPath(c.req.query("return"), config.publicUrl), createdAt: now(),
+        ...(organizationId.success ? { organizationId: organizationId.data } : {}),
+      }
       setCookie(c, loginCookie, sealer.seal(LOGIN_PURPOSE, login), { ...cookieOptions, maxAge: LOGIN_TTL_MS / 1000 })
       try {
         return c.redirect(await den.authorizeUrl({ state, verifier, chooseWorkspace: c.req.query("workspace") === "choose" }), 302)
@@ -237,6 +258,12 @@ export function createAuth(input: { config: Pick<Config, "publicUrl" | "secureCo
       try {
         const tokens = await den.exchangeCode(code, login.verifier)
         const who = await den.session(tokens.accessToken)
+        if (login.organizationId && who.organization.id !== login.organizationId) {
+          // Den signed in to a different workspace than the one Workbot was opened from: let the person choose
+          // rather than open the wrong workspace's Workbot. Never loops: the chooser sign-in names no workspace.
+          if (tokens.refreshToken) await den.revoke(tokens.refreshToken).catch(() => undefined)
+          return c.redirect(`/auth/login?${new URLSearchParams({ workspace: "choose", return: login.returnTo })}`, 302)
+        }
         const id = randomToken()
         writeSession(c, { id, userId: who.user.id, organizationId: who.organization.id, tokens, createdAt: now() })
         void den.recordSignIn?.(tokens.accessToken, id).catch(() => undefined)
