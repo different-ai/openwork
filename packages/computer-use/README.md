@@ -63,7 +63,11 @@ Continue, questions to the person and output folder are the chat's: Stop or Take
 over in the chat, or on any subagent's app, stops or holds every agent of the
 chat, a subagent started later in a stopped turn included, and the chat's next
 turn turns them all back on. The chat's Computer view shows its subagents' apps,
-and its session card lists what they saved in its folder. Grants, element references,
+and its session card lists what they saved in its folder. The `computer_open`
+guidance has the chat split a task across apps into app agents, in waves by
+which needs another's file: each gets one app, a done condition and the file
+names it reads and writes in the shared `save_folder`, they pass work as files
+by path, and the chat checks the final file. Grants, element references,
 screenshots and receipts live in process memory and are discarded on close; an
 image the agent saves with `save_image` is a file it wrote on purpose.
 
