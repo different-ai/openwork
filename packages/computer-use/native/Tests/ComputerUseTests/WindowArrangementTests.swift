@@ -89,4 +89,44 @@ final class WindowArrangementTests: XCTestCase {
         XCTAssertFalse(WindowArrangement.matches(CGRect(x: 0, y: 25, width: 900, height: 875), wanted), "an app that keeps a minimum width arranged only partly")
         XCTAssertFalse(WindowArrangement.matches(nil, wanted))
     }
+
+    func testAStageTilesTheAgentsWindowsBesideOpenWorksColumn() throws {
+        let window = CGRect(x: 100, y: 100, width: 600, height: 400)
+        // OpenWork in a narrow column on the left of the laptop: the agents share the rest.
+        let narrow = CGRect(x: 0, y: 25, width: 480, height: 875)
+        XCTAssertEqual(try WindowArrangement.stage(count: 1, window: window, screens: [laptop], host: narrow), [CGRect(x: 480, y: 25, width: 960, height: 875)])
+        XCTAssertEqual(try WindowArrangement.stage(count: 2, window: window, screens: [laptop], host: narrow),
+                       [CGRect(x: 480, y: 25, width: 480, height: 875), CGRect(x: 960, y: 25, width: 480, height: 875)])
+        XCTAssertEqual(try WindowArrangement.stage(count: 3, window: window, screens: [laptop], host: narrow),
+                       [CGRect(x: 480, y: 25, width: 480, height: 875), CGRect(x: 960, y: 25, width: 480, height: 437), CGRect(x: 960, y: 462, width: 480, height: 438)],
+                       "one large beside two stacked")
+        XCTAssertEqual(try WindowArrangement.stage(count: 4, window: window, screens: [laptop], host: narrow),
+                       [CGRect(x: 480, y: 25, width: 480, height: 437), CGRect(x: 960, y: 25, width: 480, height: 437),
+                        CGRect(x: 480, y: 462, width: 480, height: 438), CGRect(x: 960, y: 462, width: 480, height: 438)], "a grid")
+        // OpenWork wide on the right of the monitor: it keeps a third there, the agents take the rest.
+        let wide = CGRect(x: 2000, y: 0, width: 2000, height: 1415)
+        let onMonitor = try WindowArrangement.stage(count: 2, window: window, screens: [laptop, monitor], host: wide)
+        XCTAssertEqual(onMonitor, [CGRect(x: 1440, y: 0, width: 853, height: 1415), CGRect(x: 2293, y: 0, width: 854, height: 1415)],
+                       "on OpenWork's screen, not the window's")
+        // No OpenWork window: the window's own screen.
+        XCTAssertEqual(try WindowArrangement.stage(count: 2, window: window, screens: [laptop, monitor], host: nil).first, CGRect(x: 0, y: 25, width: 720, height: 875))
+        for count in 1...WindowArrangement.stageLimit {
+            let tiles = try WindowArrangement.stage(count: count, window: window, screens: [laptop], host: narrow)
+            XCTAssertEqual(tiles.count, count)
+            for (index, tile) in tiles.enumerated() {
+                XCTAssertTrue(CGRect(x: 480, y: 25, width: 960, height: 875).contains(tile), "\(count): inside the room")
+                for other in tiles[(index + 1)...] { XCTAssertTrue(tile.intersection(other).isEmpty || tile.intersection(other).width * tile.intersection(other).height == 0, "\(count): no overlap") }
+            }
+        }
+        XCTAssertThrowsError(try WindowArrangement.stage(count: 0, window: window, screens: [laptop], host: narrow))
+        XCTAssertThrowsError(try WindowArrangement.stage(count: 7, window: window, screens: [laptop], host: narrow))
+    }
+
+    func testTheHostSetsAStageTileOnlyWithinItsCount() throws {
+        XCTAssertEqual(try StageSlot.parse(Arguments(values: ["stage_slot": 1, "stage_count": 3])), StageSlot(slot: 1, count: 3))
+        XCTAssertNil(try StageSlot.parse(Arguments(values: ["stage_count": 0])), "a count of zero is no stage")
+        for values: [String: Any] in [["stage_slot": 3, "stage_count": 3], ["stage_count": 7, "stage_slot": 0], ["stage_count": 2]] {
+            XCTAssertThrowsError(try StageSlot.parse(Arguments(values: values)))
+        }
+    }
 }

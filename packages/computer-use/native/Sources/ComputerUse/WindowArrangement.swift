@@ -42,6 +42,51 @@ enum WindowArrangement {
         }
     }
 
+    /// The most windows a stage tiles; the host never sends more.
+    static let stageLimit = 6
+
+    /// Where each of `count` agents' windows goes while the person watches them all, on the
+    /// screen OpenWork is on (else the one holding most of `window`). OpenWork keeps its own
+    /// column: the room beside it when that is at least half the screen, otherwise a third of the
+    /// screen on its side. The windows tile the rest: one fills it, two sit side by side, three
+    /// are one large beside two stacked, four and more a grid of two rows.
+    static func stage(count: Int, window: CGRect, screens: [CGRect], host: CGRect?) throws -> [CGRect] {
+        guard (1...stageLimit).contains(count) else { throw UseError("invalid_arguments", "A stage holds 1 to \(stageLimit) windows.") }
+        let onHost = host.flatMap { host in screens.max(by: { area($0.intersection(host)) < area($1.intersection(host)) }).flatMap { area($0.intersection(host)) > 0 ? $0 : nil } }
+        let screen = try onHost ?? frame(.full, window: window, screens: screens, host: nil)
+        var room = screen
+        if let host, onHost != nil {
+            let shared = host.intersection(screen)
+            let roomLeft = CGRect(x: screen.minX, y: screen.minY, width: max(0, shared.minX - screen.minX), height: screen.height)
+            let roomRight = CGRect(x: shared.maxX, y: screen.minY, width: max(0, screen.maxX - shared.maxX), height: screen.height)
+            let beside = roomRight.width >= roomLeft.width ? roomRight : roomLeft
+            if beside.width >= screen.width / 2 { room = beside }
+            else {
+                let column = (screen.width / 3).rounded(.down)
+                room = shared.midX < screen.midX
+                    ? CGRect(x: screen.minX + column, y: screen.minY, width: screen.width - column, height: screen.height)
+                    : CGRect(x: screen.minX, y: screen.minY, width: screen.width - column, height: screen.height)
+            }
+        }
+        func cell(_ column: Int, of columns: Int, row: Int, of rows: Int, in area: CGRect) -> CGRect {
+            let x0 = (area.minX + area.width * CGFloat(column) / CGFloat(columns)).rounded(.down)
+            let x1 = column == columns - 1 ? area.maxX : (area.minX + area.width * CGFloat(column + 1) / CGFloat(columns)).rounded(.down)
+            let y0 = (area.minY + area.height * CGFloat(row) / CGFloat(rows)).rounded(.down)
+            let y1 = row == rows - 1 ? area.maxY : (area.minY + area.height * CGFloat(row + 1) / CGFloat(rows)).rounded(.down)
+            return CGRect(x: x0, y: y0, width: x1 - x0, height: y1 - y0)
+        }
+        switch count {
+        case 1: return [room]
+        case 2: return [cell(0, of: 2, row: 0, of: 1, in: room), cell(1, of: 2, row: 0, of: 1, in: room)]
+        case 3:
+            let right = cell(1, of: 2, row: 0, of: 1, in: room)
+            return [cell(0, of: 2, row: 0, of: 1, in: room), cell(0, of: 1, row: 0, of: 2, in: right), cell(0, of: 1, row: 1, of: 2, in: right)]
+        default:
+            let columns = (count + 1) / 2
+            return (0..<count).map { cell($0 % columns, of: columns, row: $0 / columns, of: 2, in: room) }
+        }
+    }
+
     /// Screens' visible frames in window-list coordinates. AppKit counts up from the bottom
     /// of the main display; Accessibility counts down from its top.
     static func visibleScreens() -> [CGRect] {

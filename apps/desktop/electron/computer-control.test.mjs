@@ -825,7 +825,7 @@ test("subagents follow along while the person watches their chat, taking turns a
   assert.deepEqual([opens[0].following, opens[0].beside], [true, true], "the watched chat's only app opens in view, beside OpenWork");
   await open("slides-agent", "powerpoint");
   assert.deepEqual([opens[1].following, opens[1].beside], [true, false], "with two agents' apps open, neither goes beside on its own");
-  assert.deepEqual(notes.find(([app]) => app === "maps")?.[1], { id: "view-maps", action: "watch", following: true, beside: false });
+  assert.deepEqual(notes.find(([app]) => app === "maps")?.[1], { id: "view-maps", action: "watch", following: true, beside: false, stage_slot: 0, stage_count: 2 });
   // In view, the agents take turns at the keyboard and pointer, one whole call at a time.
   hold = deferred();
   const first = act("maps-agent"); await settle();
@@ -851,6 +851,37 @@ test("with parallel computer use off, watching the chat leaves its subagents in 
   f.control.follow({ sessionId: "chat", watching: true });
   await f.control.execute({ sessionId: "maps-agent", rootSessionId: "chat", name: "computer_open", args: { app_id: "maps", mode: "control", purpose: "Find it" } });
   assert.deepEqual([opens[0].following, opens[0].beside], [false, true]);
+});
+
+test("while the person watches, the chat's agents' windows share one stage that re-tiles as apps open and close", async (t) => {
+  const opens = [];
+  const notes = [];
+  const f = parallelFixture({ onOpen: (args) => opens.push(args), onNotify: (app, value) => { if (value.action === "watch") notes.push([app, value]); } });
+  t.after(() => f.control.reset(true));
+  await f.control.setFeatureEnabled(true);
+  f.control.setParallelAgents(true);
+  const open = (sessionId, app) => f.control.execute({ sessionId, rootSessionId: "chat", name: "computer_open", args: { app_id: app, mode: "control", purpose: `Work in ${app}` } });
+  const stage = (value) => [value.stage_slot, value.stage_count];
+  const last = (app) => notes.filter(([name]) => name === app).at(-1)?.[1];
+  f.control.follow({ sessionId: "chat", watching: true });
+  await open("maps-agent", "maps");
+  assert.deepEqual([opens[0].beside, opens[0].stage_count], [true, 0], "one agent alone goes beside OpenWork");
+  await open("slides-agent", "powerpoint");
+  assert.deepEqual(stage(opens[1]), [1, 2]);
+  assert.deepEqual(stage(last("maps")), [0, 2], "the first agent's window moves to its tile");
+  await open("photo-agent", "photoshop");
+  assert.deepEqual(stage(opens[2]), [2, 3]);
+  assert.deepEqual([stage(last("maps")), stage(last("powerpoint"))], [[0, 3], [1, 3]]);
+  // An agent closes its app: the others re-tile.
+  await f.control.execute({ sessionId: "slides-agent", rootSessionId: "chat", name: "computer_close", args: {} });
+  assert.deepEqual([stage(last("maps")), stage(last("photoshop"))], [[0, 2], [1, 2]]);
+  // Out of view nothing is staged, so nothing moves.
+  f.control.follow({ sessionId: "chat", watching: false });
+  assert.deepEqual([last("maps").stage_count, last("photoshop").stage_count], [0, 0]);
+  // With parallel computer use off, no stage at all.
+  f.control.setParallelAgents(false);
+  f.control.follow({ sessionId: "maps-agent", watching: true });
+  assert.equal("stage_count" in last("maps"), false);
 });
 
 test("a computer that is not This Mac gets no follow-along arguments", async (t) => {

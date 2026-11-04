@@ -153,6 +153,20 @@ apps do. With apps of more than one agent open, none goes `beside_openwork` on
 its own. When the person moves to another thread, every agent's helper hears it
 and goes back to background delivery, where they act at the same time.
 
+With two or more agents of a watched chat working in apps, the chat owns one
+stage. The broker gives each agent's window a tile, in the order the apps
+opened, as `stage_slot` and `stage_count` on `computer_open_session` and `watch`
+(`stage_count: 0` clears it), and sends the new stage to every helper when an
+agent opens or closes an app. Each helper moves only its own window, at its next
+look, to its tile on the screen OpenWork is on (`WindowArrangement.stage`):
+OpenWork keeps its column (the room beside it when that is half the screen or
+more, otherwise a third on its side) and the windows tile the rest, two side by
+side, three as one large beside two stacked, four or more as a grid of two rows.
+As with `beside_openwork`, a window the person moved or resized, or the agent
+arranged itself, leaves the stage for the rest of its session, and closing the
+session puts the window back. Out of view nothing is staged; one agent alone
+keeps `beside_openwork`.
+
 ## Presence
 
 While a session runs the helper draws presence on the desktop: a frame around

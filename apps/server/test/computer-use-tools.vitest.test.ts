@@ -52,6 +52,7 @@ test("with parallel computer use on, a task across apps is split into app agents
   expect(description).toContain("start each wave's agents together in one message");
   expect(description).toContain("every agent of this chat gets the same one");
   expect(description).toContain("check the final file yourself");
+  expect(description).toContain("OpenWork places their windows");
 });
 
 test("a Windows PC is not offered app scripting", async () => {

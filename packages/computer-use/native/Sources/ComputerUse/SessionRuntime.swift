@@ -92,7 +92,7 @@ final class SessionRuntime {
         controls.onStop = { [weak self] in self?.close(stoppedByPerson: true) }
         controls.onTick = { [weak self] in self?.expire() }
         controls.onWatch = { [weak self] visible in self?.watchWindow(visible: visible) }
-        controls.onFollow = { [weak self] watching, beside in self?.session?.follow?.host(watching: watching, beside: beside) }
+        controls.onFollow = { [weak self] watching, beside, stage in self?.session?.follow?.host(watching: watching, beside: beside, stage: stage) }
     }
     private var now: TimeInterval { clock() }
 
@@ -118,7 +118,7 @@ final class SessionRuntime {
             // Set only by the trusted host: whether the person watches this chat, whether the
             // window may go beside OpenWork (not while the chat has several apps open), the
             // chat's clipboard key, and the file approval for opening the app onto a file.
-            try a.only(policy == .embedded ? ["app_id", "pid", "window_id", "mode", "purpose", "following", "beside", "clipboard", "file", "file_approval"] : ["app_id", "pid", "window_id", "mode", "purpose"])
+            try a.only(policy == .embedded ? ["app_id", "pid", "window_id", "mode", "purpose", "following", "beside", "stage_slot", "stage_count", "clipboard", "file", "file_approval"] : ["app_id", "pid", "window_id", "mode", "purpose"])
             guard session == nil else { throw UseError("session_exists", "Close this connection's session before opening another.", next: "close_session") }
             defer { if session == nil { controls.close() } }
             let appID = try a.string("app_id")
@@ -132,7 +132,8 @@ final class SessionRuntime {
             let frameworks = installed.map { (try? FileManager.default.contentsOfDirectory(atPath: $0.appendingPathComponent("Contents/Frameworks").path)) ?? [] } ?? []
             let delivery = InputDelivery.decide(enabled: backgroundDelivery, available: BackgroundFocus.available, mode: mode, bundleID: appID,
                 info: installed.flatMap { Bundle(url: $0)?.infoDictionary } ?? [:], frameworks: frameworks)
-            var follow = values["following"] == nil ? nil : FollowAlong(watching: try a.bool("following", default: false), beside: try a.bool("beside", default: true))
+            var follow = values["following"] == nil ? nil : FollowAlong(watching: try a.bool("following", default: false), beside: try a.bool("beside", default: true),
+                stage: values["stage_count"] == nil ? nil : try StageSlot.parse(a))
             // A person watching the chat sees the app come forward; otherwise it opens behind their work.
             let followed = mode == .control && follow?.follows(frontmost: NSWorkspace.shared.frontmostApplication?.processIdentifier, host: Responsibility.hostPID,
                 target: pid ?? NSRunningApplication.runningApplications(withBundleIdentifier: appID).first?.processIdentifier) == true
@@ -1632,15 +1633,20 @@ final class SessionRuntime {
         if followed != current.followed { controls.layer(background: !followed && current.delivery == .background) }
         return followed
     }
-    /// Puts the window beside OpenWork once per return to the chat, unless it was placed
-    /// since; closing the session puts it back, as after `arrange`.
+    /// Puts the window beside OpenWork once per return to the chat, or in its tile when several
+    /// agents work in view, unless it was placed since; closing the session puts it back, as
+    /// after `arrange`. Only this session's own window moves.
     private func arrangeBeside(_ id: String) {
         guard let current = session, current.id == id, current.followed, current.parents.isEmpty, var follow = current.follow else { return }
         let frame = WindowArrangement.frame(of: current.target.element)
         let due = follow.arrangeNow(current: frame, arranged: current.placement?.arranged)
         session?.follow = follow
-        guard due, let frame, let beside = try? WindowArrangement.frame(.besideOpenWork, window: frame,
-                  screens: WindowArrangement.visibleScreens(), host: WindowArrangement.hostWindow()),
+        let screens = WindowArrangement.visibleScreens(), host = WindowArrangement.hostWindow()
+        let place = { (frame: CGRect) throws -> CGRect in
+            guard let stage = follow.stage else { return try WindowArrangement.frame(.besideOpenWork, window: frame, screens: screens, host: host) }
+            return try WindowArrangement.stage(count: stage.count, window: frame, screens: screens, host: host)[stage.slot]
+        }
+        guard due, let frame, let beside = try? place(frame),
               (try? WindowArrangement.apply(beside, to: current.target.element, check: { try self.checkActive(current) })) != nil else { return }
         var placement = current.placement ?? WindowArrangement.Placement(window: current.target.element, original: frame)
         placement.arranged = WindowArrangement.frame(of: current.target.element)

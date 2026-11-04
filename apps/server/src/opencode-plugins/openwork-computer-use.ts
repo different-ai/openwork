@@ -110,7 +110,7 @@ export async function computerFeatures(): Promise<{ offered: boolean; parallel: 
 }
 
 // Said once, on open, only with `parallelComputerUse` on: how to split a task across apps.
-const parallelAgents = " When a task spans two or more apps, give each app to its own subagent, described by its app (such as \"Maps\"): plan them in waves by which needs another's file, start each wave's agents together in one message, and tell each its one app, its done condition, the file names it reads and writes in save_folder (every agent of this chat gets the same one) and, for two at once, left_half or right_half. Pass work between them as files by path, not the clipboard, and check the final file yourself before answering.";
+const parallelAgents = " When a task spans two or more apps, give each app to its own subagent, described by its app (such as \"Maps\"): plan them in waves by which needs another's file, start each wave's agents together in one message, and tell each its one app, its done condition, the file names it reads and writes in save_folder (every agent of this chat gets the same one); OpenWork places their windows while the person watches, so they need not arrange them. Pass work between them as files by path, not the clipboard, and check the final file yourself before answering.";
 
 /**
  * The desktop broker selects this Mac or Windows PC, or a configured remote computer.

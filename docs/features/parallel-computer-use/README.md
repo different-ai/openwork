@@ -16,6 +16,13 @@ screenshot" can run Maps and PowerPoint at once, then Photoshop, then PowerPoint
   path, and the chat's card lists what they saved.
 - Questions to the person (macOS setup, an organization's Ask first) show in the chat, not only
   in the agent's own thread.
+- Each agent's cursor shows its own name (its short description, such as "Maps") and color;
+  the chat's own apps keep "OpenWork".
+- While the person watches the chat, its agents work in view and take turns at the keyboard;
+  out of view they work in the background at the same time.
+- While the person watches the chat, the agents' windows share one stage on OpenWork's screen:
+  OpenWork keeps its column and the agents' windows tile the rest, re-tiling as agents open
+  and close apps. A window the person moved stays where they put it; closing puts each back.
 
 ## How it works
 
