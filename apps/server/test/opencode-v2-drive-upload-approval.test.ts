@@ -5,6 +5,7 @@ import { test } from "node:test";
 import { renderOpencodeV2Config } from "../src/managed-opencode-v2.js";
 import { createV2ContextBridge } from "../src/opencode-v2-context-bridge.js";
 import contextPlugin from "../src/opencode-plugins/openwork-context-v2.js";
+import type { PrepareDriveUpload } from "../src/extensions/approved-drive-upload.js";
 
 type Answer = { effect: "ask" | "allow" | "deny"; reply?: "once" | "always" | "reject" };
 
@@ -40,14 +41,14 @@ async function fakeEngine(answer: Answer) {
   };
 }
 
-async function uploadThroughBridge(answer: Answer, caller: Record<string, unknown> | null = { directory: "/work/acme", messageId: "msg_one", callId: "call_one", agent: "build" }) {
+async function uploadThroughBridge(answer: Answer, caller: Record<string, unknown> | null = { directory: "/work/acme", messageId: "msg_one", callId: "call_one", agent: "build" }, prepare?: PrepareDriveUpload) {
   const engine = await fakeEngine(answer);
   const uploads: unknown[] = [];
   const bridge = await createV2ContextBridge(async (path, init) => {
     assert.equal(path, "/experimental/extensions/call");
     uploads.push(JSON.parse(String(init?.body)));
     return { ok: true, fileId: "drive-file-1" };
-  }, () => engine.connection);
+  }, () => engine.connection, prepare);
   try {
     const response = await fetch(bridge.url, {
       method: "POST", headers: { Authorization: `Bearer ${bridge.token}`, "Content-Type": "application/json" },
@@ -72,8 +73,33 @@ test("a v2 Drive upload runs only after the person allows that file in the calli
     },
   }]);
   assert.deepEqual(result.uploads, [{
-    extensionId: "openwork-cloud-uploads", action: "drive_upload_file", args: { path: "proposal.docx", folderId: "folder-1" }, context: {},
+    extensionId: "openwork-cloud-uploads", action: "drive_upload_file", args: { path: "proposal.docx", folderId: "folder-1" }, context: { directory: "/work/acme" },
   }]);
+});
+
+test("preflight shows the canonical file, uses only its private upload capability and always closes it", async () => {
+  for (const answer of [{ effect: "ask", reply: "once" }, { effect: "ask", reply: "reject" }, { effect: "allow" }, { effect: "deny" }] as const) {
+    const steps: string[] = [];
+    const result = await uploadThroughBridge(answer, undefined, async (args, context, signal) => {
+      assert.deepEqual(args, { path: "proposal.docx", folderId: "folder-1" });
+      assert.deepEqual(context, { directory: "/work/acme" });
+      assert.equal(signal.aborted, false);
+      steps.push("preflight");
+      return { path: "/outside/proposal.docx", upload: async () => { steps.push("upload"); return { ok: true }; }, close: async () => { steps.push("close"); } };
+    });
+    const allowed = answer.effect === "ask" && "reply" in answer && answer.reply === "once";
+    assert.equal(result.status, allowed ? 200 : 400);
+    assert.deepEqual(steps, allowed ? ["preflight", "upload", "close"] : ["preflight", "close"]);
+    assert.deepEqual(result.uploads, []);
+    assert.deepEqual(result.asked[0]?.body.resources, ["/outside/proposal.docx"]);
+  }
+});
+
+test("failed file preflight does not ask for upload approval or dispatch", async () => {
+  const result = await uploadThroughBridge({ effect: "ask", reply: "once" }, undefined, async () => { throw new Error("The upload file is missing."); });
+  assert.equal(result.status, 400);
+  assert.match(String(result.body.error), /upload file is missing/);
+  assert.deepEqual([result.asked, result.uploads], [[], []]);
 });
 
 test("a declined, pre-allowed, blocked or unaskable v2 Drive upload sends nothing", async () => {

@@ -12,6 +12,7 @@ import { SESSION_GROUP_COMMAND_IDS } from "./opencode-plugins/openwork-session-g
 import { ASK_WITHOUT_WAITING, askArgs } from "./opencode-plugins/openwork-agent-questions.js";
 import { askWithoutWaiting } from "./opencode-v2-background-questions.js";
 import { loopbackFetch } from "./server-fetch.js";
+import type { PrepareDriveUpload } from "./extensions/approved-drive-upload.js";
 
 const requestSchema = z.object({
   name: z.enum(["openwork_context", "openwork_query", "openwork_execute", "openwork_skills", "openwork_skill_read", "openwork_drive_upload", "openwork_gmail_draft", "openwork_outlook_draft", ASK_WITHOUT_WAITING, ...DRIVE_FILE_ACTIONS]),
@@ -184,6 +185,7 @@ function bridgeAffordances(value: unknown): unknown {
 export async function createV2ContextBridge(
   hostRequest: (path: string, init?: RequestInit) => Promise<unknown>,
   engine?: () => EngineConnection | undefined,
+  prepareDriveUpload?: PrepareDriveUpload,
 ) {
   const token = randomBytes(32).toString("base64url");
   const plugin = await OpenWorkExtensionsPreview();
@@ -229,23 +231,30 @@ export async function createV2ContextBridge(
         void asked.settled.finally(() => { openQuestions -= 1; });
         return Response.json({ ok: true, id: asked.id, message: "Asked. Their answer arrives as a message in this chat; keep working on what does not depend on it." });
       }
-      // The Drive upload uses the same authorized-root file transport
-      // v1 reaches through extension.call, never arbitrary extension actions,
-      // and only after the person allows this file in the calling chat.
+      // Preflight one exact file before asking. The host retains its handle and
+      // can grant this upload access outside workspace roots only after approval;
+      // neither model args nor ordinary extension.call requests carry that grant.
       if (call.name === "openwork_drive_upload") {
         const args = driveUploadSchema.parse(call.input);
         if (!call.sessionId || !call.caller) throw new Error("This OpenWork engine cannot ask for your approval, so nothing was uploaded.");
-        await askEngineApproval(engine?.(), {
-          directory: call.caller.directory, sessionId: call.sessionId, messageId: call.caller.messageId, callId: call.caller.callId,
-          ...(call.caller.agent ? { agent: call.caller.agent } : {}), action: DRIVE_UPLOAD_PERMISSION, resources: [args.path],
-          metadata: { path: args.path, target: args.folderId ? `Google Drive folder ${args.folderId}` : "Google Drive", ...(args.connectionId ? { connectionId: args.connectionId } : {}) },
-          subject: "this upload", nothing: "nothing was uploaded",
-        }, AbortSignal.any([request.signal, AbortSignal.timeout(APPROVAL_WAIT_MS)]));
-        // The transfer gets the host extension call's own budget once approved.
-        deadline = AbortSignal.timeout(130_000);
-        return Response.json(await read("/experimental/extensions/call", { method: "POST", body: JSON.stringify({
-          extensionId: OPENWORK_CLOUD_UPLOADS_EXTENSION_ID, action: "drive_upload_file", args, context: {},
-        }) }));
+        const prepared = await prepareDriveUpload?.(args, { directory: call.caller.directory }, request.signal);
+        try {
+          const path = prepared?.path ?? args.path;
+          await askEngineApproval(engine?.(), {
+            directory: call.caller.directory, sessionId: call.sessionId, messageId: call.caller.messageId, callId: call.caller.callId,
+            ...(call.caller.agent ? { agent: call.caller.agent } : {}), action: DRIVE_UPLOAD_PERMISSION, resources: [path],
+            metadata: { path, target: args.folderId ? `Google Drive folder ${args.folderId}` : "Google Drive", ...(args.connectionId ? { connectionId: args.connectionId } : {}) },
+            subject: "this upload", nothing: "nothing was uploaded",
+          }, AbortSignal.any([request.signal, AbortSignal.timeout(APPROVAL_WAIT_MS)]));
+          // The transfer gets its own budget once approved. Older embeddings
+          // without preflight keep the existing root-bound extension transport.
+          deadline = AbortSignal.timeout(130_000);
+          return Response.json(prepared ? await prepared.upload() : await read("/experimental/extensions/call", { method: "POST", body: JSON.stringify({
+            extensionId: OPENWORK_CLOUD_UPLOADS_EXTENSION_ID, action: "drive_upload_file", args, context: { directory: call.caller.directory },
+          }) }));
+        } finally {
+          await prepared?.close();
+        }
       }
       // A Gmail draft with attachments uses the same authorized-root file
       // transport v1 fulfills, only after the person allows this draft in the calling chat.

@@ -14,6 +14,7 @@ import { resolveGlobalOpencodeConfigPath } from "@openwork/paths";
 import type { ApprovalRequest, Capabilities, ServerConfig, WorkspaceInfo, Actor, ReloadReason, ReloadTrigger, TokenScope } from "./types.js";
 import { agentContextDiagnosticsRequestSchema } from "./agent-context-diagnostics-schema.js";
 import { ApprovalService } from "./approvals.js";
+import { attachApprovedDriveUpload, prepareDriveUploadFile, type PreparedDriveUploadFile } from "./extensions/approved-drive-upload.js";
 import {
   BoundedSseFrameBuffer,
   EnginePool,
@@ -830,22 +831,40 @@ export async function startServer(
     logger,
   });
   setEngineInstanceReaperForConfig(config, engineInstanceReaper);
+  const hostReadRequest = async (path: string, init?: RequestInit, approvedDriveFile?: PreparedDriveUploadFile) => {
+    // Internal dispatch retains credentials and exact-file capabilities in this
+    // process. Neither is serialized to the native plugin or accepted over HTTP.
+    const request = new Request(`http://127.0.0.1${path}`, {
+      ...init, headers: { Authorization: `Bearer ${config.token}`, "Content-Type": "application/json" },
+    });
+    if (approvedDriveFile) attachApprovedDriveUpload(request, approvedDriveFile);
+    const response = await serverOptions.fetch(request);
+    const payload: unknown = await response.json();
+    if (!response.ok) {
+      const message = payload && typeof payload === "object" && "message" in payload && typeof payload.message === "string" ? `: ${payload.message}` : "";
+      throw new Error(`OpenWork request failed (${response.status})${message}`);
+    }
+    return payload;
+  };
   const engineV2Preview: EngineV2Preview = createEngineV2Preview({ config, env, deferStart: true,
     autoUpgradeIdle: async () => (await describeV1EngineActivity(config)).verdict === "idle",
     autoUpgradeError: (error) => logger.log("warn", "Automatic engine upgrade failed; keeping v1", { error }),
     providerSession: () => cloudProviderSync.providerBridgeSession(),
-    hostReadRequest: async (path, init) => {
-      // Internal dispatch retains the host credential in this process. The
-      // native plugin receives only the context bridge's restricted token.
-      const response = await serverOptions.fetch(new Request(`http://127.0.0.1${path}`, {
-        ...init, headers: { Authorization: `Bearer ${config.token}`, "Content-Type": "application/json" },
-      }));
-      const payload: unknown = await response.json();
-      if (!response.ok) {
-        const message = payload && typeof payload === "object" && "message" in payload && typeof payload.message === "string" ? `: ${payload.message}` : "";
-        throw new Error(`OpenWork request failed (${response.status})${message}`);
-      }
-      return payload;
+    hostReadRequest,
+    prepareDriveUpload: async (args, context, signal) => {
+      signal.throwIfAborted();
+      const prepared = await prepareDriveUploadFile(config, args, context);
+      return {
+        path: prepared.args.path,
+        close: () => prepared.close(),
+        upload: () => {
+          signal.throwIfAborted();
+          return hostReadRequest("/experimental/extensions/call", {
+            method: "POST", signal: AbortSignal.any([signal, AbortSignal.timeout(130_000)]),
+            body: JSON.stringify({ extensionId: "openwork-cloud-uploads", action: "drive_upload_file", args: prepared.args, context }),
+          }, prepared);
+        },
+      };
     },
   });
   const cloudProviderSync = new CloudProviderSync({

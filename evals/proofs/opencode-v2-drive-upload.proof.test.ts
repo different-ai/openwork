@@ -8,12 +8,13 @@ const test = spec.world(engineDriveUpload, { timeout: 480_000,
   needs: { placement: "local", env: ["OPENWORK_EVAL_ENGINE"] },
 });
 
-test("V2-DRIVE-UPLOAD: a member approves each workspace file the native model puts in their selected Drive account", async ({ world, user, probe, step, evidence }) => {
+test("V2-DRIVE-UPLOAD: a member approves a file outside the workspace and uploads it to their selected Drive account", async ({ world, user, probe, step, evidence }) => {
   expect(world.engine).toBe("v2");
   // A minimal .docx header; the witness compares bytes, not Office structure.
   const bytes = new Uint8Array([0x50, 0x4b, 0x03, 0x04, ...new TextEncoder().encode(randomUUID())]);
   const name = "proposal.docx";
-  await world.writeWorkspaceFile(name, bytes);
+  const path = await world.writeOutsideFile(name, bytes);
+  expect(path.startsWith(`${world.workspacePath}/`)).toBe(false);
   await probe.eventually(() => probe.composer(), { within: 60_000, label: "model ready", until: state => state.selectedModelLabel.includes("Big Pickle") && !state.modelUnavailable });
   const driveCopies = async () => ({
     selected: await world.google.driveUploadsFor(world.mailboxes.selected, { timeoutMs: 1_000 }),
@@ -21,14 +22,14 @@ test("V2-DRIVE-UPLOAD: a member approves each workspace file the native model pu
   });
   const ask = async (prompt: string, reply: string) => {
     await world.prepareTurn(prompt, reply, [
-      { tool: "openwork_drive_upload", arguments: { path: name, connectionId: world.selectedId } },
+      { tool: "openwork_drive_upload", arguments: { path, connectionId: world.selectedId } },
     ]);
     await user.type("composer", prompt);
     await user.click("Run task");
     await user.see("Allow once", { timeoutMs: 90_000 });
   };
 
-  await step("before: the file is only in the workspace and neither Drive account has it", async () => {
+  await step("before: the file is outside every workspace and neither Drive account has it", async () => {
     await user.see("composer", { editable: true });
     const copies = await driveCopies();
     evidence.recordAssertionEvidence("Neither Drive account has the file yet", `selected account: ${copies.selected.length} files; other account: ${copies.other.length} files`, copies.selected.length === 0 && copies.other.length === 0);
@@ -38,7 +39,7 @@ test("V2-DRIVE-UPLOAD: a member approves each workspace file the native model pu
 
   await step("the member is asked before the file leaves the workspace, and declining sends nothing", async () => {
     const reply = `Kept ${name} in the workspace ${randomUUID()}`;
-    await ask(`Put ${name} in my Drive Selected Google Drive ${randomUUID()}`, reply);
+    await ask(`Put the local file ${path} in my Drive Selected Google Drive ${randomUUID()}`, reply);
     await user.screenshot();
     await user.click("Deny");
     await user.see({ text: reply }, { timeoutMs: 90_000 });
@@ -50,7 +51,7 @@ test("V2-DRIVE-UPLOAD: a member approves each workspace file the native model pu
   });
 
   await step("after: allowing the upload puts the exact file in the chosen Drive account only", async () => {
-    const prompt = `Put ${name} in my Drive Selected Google Drive ${randomUUID()}`;
+    const prompt = `Put the local file ${path} in my Drive Selected Google Drive ${randomUUID()}`;
     const reply = `Uploaded ${name} to Drive ${randomUUID()}`;
     await ask(prompt, reply);
     await user.click("Allow once");
