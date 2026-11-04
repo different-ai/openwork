@@ -11,8 +11,12 @@ Browser use needs no permission prompt: there is no session, per-action or
 per-tool prompt and no operation time limit. Organization policy, the member's
 agent permissions and takeover are the gates.
 
-1. List the conversation's tabs and reuse a matching page, or open the requested
-   URL in a new owned tab, using the built-in browser's signed-in account.
+1. Open the requested URL: `browser_open` reuses the conversation's tab for
+   that exact URL or opens a new owned tab, using the built-in browser's
+   signed-in account. Its result (and `browser_navigate`'s) already includes
+   the page's interactive observation, so the agent acts next instead of
+   spending a turn observing. `browser_tabs` is only for "this tab" requests.
+   Websites always go through these tools, never computer use on a browser app.
 2. An observation reports `siteTools` when the page offers website tools.
    Discover them, and prefer a relevant structured integration or site tool;
    otherwise observe the page and use its visible controls. A fresh image
@@ -30,6 +34,12 @@ conversation, and browser operations work in them without selecting the tab.
 Ordinary popup windows stay in
 owned built-in tabs, using the same profile and opener. Non-HTTP(S) popups are
 refused. A closed tab is an explicit error, never silently replaced.
+
+The address bar works like a normal browser's: a full address opens as typed,
+a bare domain opens over https, `localhost` and loopback addresses open over
+http (local dev servers), and anything else is searched
+(`apps/desktop/electron/browser-address.mjs`). Agent navigation always passes a
+real URL and never goes through the address bar.
 
 ## Presentation modes
 

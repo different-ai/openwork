@@ -17,7 +17,7 @@ const test = spec.world(browserFloatingViewWorld, {
 
 const toggle: Target = { testId: "session-browser-toggle" };
 const browserWindowRoot: Target = { testId: "browser-window" };
-const addressBar: Target = { placeholder: "Enter URL..." };
+const addressBar: Target = { placeholder: "Search or enter address" };
 const fullscreen: Target = { testId: "browser-fullscreen-dialog" };
 const WITHIN = 15_000;
 

@@ -197,7 +197,7 @@ test("a contractor's agent asks before commands, runs the ones the team allows, 
   await step("the built-in browser opens the allowed briefing and shows the blocked-site page for the private report", async () => {
     const tab = await world.openTab(world.briefingUrl);
     expect(tab.label).toBe("Project briefing");
-    await user.type({ placeholder: "Enter URL..." }, world.reportUrl, { replace: true });
+    await user.type({ placeholder: "Search or enter address" }, world.reportUrl, { replace: true });
     await user.press("Enter");
     await user.see({ text: "Your organization doesn't allow you to view this site." }, { timeoutMs: 30_000 });
     expect(await world.servedPages()).not.toContain("/private-report");

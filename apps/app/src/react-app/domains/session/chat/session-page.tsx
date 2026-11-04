@@ -680,6 +680,7 @@ export function SessionPage(props: SessionPageProps) {
     useSteadyLiveTurnStore.getState().setEnabled(steadyLiveTurnFeature);
   }, [steadyLiveTurnFeature]);
   const remoteComputersFeature = useDesktopFeature("remoteComputers");
+  const officeDocumentPreviewFeature = useDesktopFeature("officeDocumentPreview");
   // The button hides itself when this computer can't run it and no VM is connected.
   const computerUse = computerUseFeature && isElectronRuntime();
   useComputerEndTurn(props.sidebar.sessionStatusById, computerUse);
@@ -1458,6 +1459,7 @@ export function SessionPage(props: SessionPageProps) {
       onOpenExtensions={props.settingsSlot ? () => setCurrentSidePanel("extensions") : undefined}
       browserPresentation={browserPresentation.enabled ? { onPresent: browserPresentation.present } : undefined}
       browserShownElsewhere={browserPresentation.mode === "fullscreen"}
+      officeDocumentPreview={officeDocumentPreviewFeature}
     />
   ) : null;
 

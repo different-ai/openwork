@@ -20,6 +20,7 @@ import {
   foregroundTabEmulationCommands,
 } from "@openwork/browser-tabs";
 import { runDetachedTask } from "./process-resilience.mjs";
+import { resolveAddressBarInput } from "./browser-address.mjs";
 import { openExternalUrl } from "./open-external.mjs";
 import { BrowserTaskError, createBrowserTaskHost } from "@openwork/computer-use/browser-task";
 import { agentPermissionDenialMessage, decideAgentPermission, stricterAgentPermissionDecision } from "@openwork/types/den/agent-permissions-runtime";
@@ -2131,7 +2132,8 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink, che
       getActiveWebContents(); // Reject navigation while suspension is pending.
       const view = getActiveBrowserView()
         ?? createBrowserTab("about:blank", { select: true, ownerSessionId: registry.visibleSessionId() }).view;
-      runDetachedTask("navigate browser tab", () => loadForPerson(view, normalizeBrowserUrl(url)));
+      // The address bar searches text that is not an address, like any browser.
+      runDetachedTask("navigate browser tab", () => loadForPerson(view, resolveAddressBarInput(url)));
     });
     ipcMain.handle("openwork:browser:back", (event) => {
       authorizeManualNavigation(event);
