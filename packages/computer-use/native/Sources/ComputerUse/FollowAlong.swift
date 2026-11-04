@@ -4,6 +4,19 @@ import AppKit
 /// on screen (`watching`); while it is, the session works in front with its window beside
 /// OpenWork, so both can use it. Otherwise it works in the background and never takes the
 /// front from the person's own work.
+/// A window's place on the chat's stage: `slot` of `count` agents' windows, set by the host.
+struct StageSlot: Equatable {
+    let slot: Int
+    let count: Int
+
+    /// From the host's `stage_slot` and `stage_count`; a count of zero is no stage.
+    static func parse(_ values: Arguments) throws -> StageSlot? {
+        let count = try values.integer("stage_count", min: 0, max: WindowArrangement.stageLimit)
+        guard count > 0 else { return nil }
+        return StageSlot(slot: try values.integer("stage_slot", min: 0, max: count - 1), count: count)
+    }
+}
+
 struct FollowAlong: Equatable {
     /// OpenWork shows this chat in a visible window.
     private(set) var watching: Bool
@@ -15,15 +28,20 @@ struct FollowAlong: Equatable {
     private(set) var arrangeDue: Bool
     /// The person, or the agent's own `arrange`, placed the window: it stays where it is.
     private(set) var placed = false
+    /// Several of the chat's agents work while the person watches: the window's tile on the
+    /// stage, used instead of beside OpenWork.
+    private(set) var stage: StageSlot?
 
-    init(watching: Bool, beside: Bool = true) {
-        self.watching = watching; self.beside = beside; arrangeDue = watching
+    init(watching: Bool, beside: Bool = true, stage: StageSlot? = nil) {
+        self.watching = watching; self.beside = beside; self.stage = stage; arrangeDue = watching
     }
 
     /// OpenWork's signal changed. Coming back to the chat follows again, and puts the window
-    /// beside OpenWork once more unless it was placed.
-    mutating func host(watching: Bool, beside: Bool? = nil) {
+    /// beside OpenWork once more unless it was placed. A new stage, as agents open or close
+    /// apps, re-tiles at the next look; nil leaves the stage as it was.
+    mutating func host(watching: Bool, beside: Bool? = nil, stage: StageSlot?? = nil) {
         if let beside { self.beside = beside }
+        if let stage, stage != self.stage { self.stage = stage; arrangeDue = !placed }
         if watching, !self.watching { pushedBehind = false; arrangeDue = !placed }
         self.watching = watching
     }
@@ -45,7 +63,7 @@ struct FollowAlong: Equatable {
     /// Whether to put the window beside OpenWork now. `current` is its frame and `arranged`
     /// where the session last put it: a window moved or resized since stays put for good.
     mutating func arrangeNow(current: CGRect?, arranged: CGRect?) -> Bool {
-        guard arrangeDue, beside, !placed else { return false }
+        guard arrangeDue, beside || stage != nil, !placed else { return false }
         arrangeDue = false
         if let arranged, !WindowArrangement.matches(current, arranged) { placed = true; return false }
         return true

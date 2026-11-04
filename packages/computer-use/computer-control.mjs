@@ -234,6 +234,8 @@ const WEB_BROWSER_PARTS = new Set(["chrome", "chromium", "edge", "msedge", "edge
 const isWebBrowser = (app) => String(app).toLowerCase().split(/[^a-z0-9]+/).some((part) => WEB_BROWSER_PARTS.has(part));
 /** Cursor colors for a chat's subagents, in the order they start; none is OpenWork's own blue. */
 const AGENT_COLORS = ["#30a46c", "#f76b15", "#8e4ec6", "#d6409f", "#12a594", "#e5484d"];
+/** The most agents' windows a stage tiles, as the Mac helper's WindowArrangement.stageLimit. */
+const STAGE_LIMIT = 6;
 
 /**
  * Adapters are trusted main-process dependencies, never renderer or model
@@ -364,7 +366,20 @@ export function createComputerControl({ adapters, runProgram, runScript, onTimin
    * the agent arranges those itself.
    */
   const followArgs = (grant, current) => current.adapter.parallel === true
-    ? { following: isWatched(grant), beside: [...grant.apps.values()].every((app) => app === current.app) && !othersOpen(grant) } : {};
+    ? { following: isWatched(grant), beside: [...grant.apps.values()].every((app) => app === current.app) && !othersOpen(grant), ...stageOf(grant, current) } : {};
+  /**
+   * While the person watches a chat with two or more agents working in apps, the chat owns one
+   * stage: each agent's window gets a tile, in the order the apps opened, and every helper
+   * moves only its own window there (see WindowArrangement.stage). A count of zero clears it.
+   */
+  function stageOf(grant, current) {
+    if (!parallelAgents) return {};
+    const members = crewLeases(grant).filter((other) => other.adapter.parallel === true && !other.closing && (other.app || other === current))
+      .sort((a, b) => (a.openedAt ?? 0) - (b.openedAt ?? 0));
+    const slot = members.indexOf(current);
+    const staged = watched.has(chatKey(grant)) && new Set(members.map((other) => other.grant)).size >= 2 && slot >= 0 && members.length <= STAGE_LIMIT;
+    return staged ? { stage_slot: slot, stage_count: members.length } : { stage_count: 0 };
+  }
   /** A subagent's work is in view while the person watches its chat, or its own thread. */
   const isWatched = (grant) => watched.has(grant.sessionId) || watched.has(chatKey(grant));
   /** Another of the chat's agents has an app open, so neither goes beside OpenWork on its own. */
@@ -849,6 +864,8 @@ export function createComputerControl({ adapters, runProgram, runScript, onTimin
         current.cleanupPending = false;
         if (current.grant.handoff) current.grant.handoff.canContinue = true;
         if (leased(current)) leases.delete(current.key);
+        // One agent fewer on the chat's stage: the others re-tile.
+        if (parallelAgents) tellFollowing(current.grant);
         return true;
       })().catch(() => false).finally(() => { current.cleanup = null; });
     }
@@ -996,7 +1013,7 @@ export function createComputerControl({ adapters, runProgram, runScript, onTimin
         forget(grant, call.app);
         return { content: [{ type: "text", text: JSON.stringify({ ok: true, state: "closed" }) }] };
       }
-      const current = own ?? { key: randomUUID(), grant, app: opening ? null : call.app, adapter: target, background: several, controller: new AbortController(), nativeId: null, session: null, busy: false, handoffGeneration: 0 };
+      const current = own ?? { key: randomUUID(), grant, app: opening ? null : call.app, adapter: target, background: several, controller: new AbortController(), nativeId: null, session: null, busy: false, handoffGeneration: 0, openedAt: ++uses };
       if (!own) leases.set(current.key, current);
       if (!opening) current.app ??= call.app;
       clearTimeout(current.idleTimer);
