@@ -1241,26 +1241,15 @@ export function createEngineV2Preview(options: {
     }
   }
 
-  let startFailureJob: Promise<void> | undefined;
   function recordStartError(error: unknown): void {
     running = false;
     lastError = engineStartErrorMessage(error);
     // One report per incident: retries of an engine that keeps failing stay local.
     if (restartAttempts === 0) reportEngineFailure("start", error);
-    // An organization that runs every chat on v2 never falls back to v1.
-    if (v1UnavailableReason || v2Only || !engineForced || engineOrigin !== "fresh") {
-      scheduleRestart();
-      return;
-    }
-    // Fresh selection is saved before startup, just like the desktop default.
-    // A failed forced start must not strand that profile on an unavailable v2.
-    chatRouting = false;
-    enabled = false;
-    engineForced = false;
-    engineChangedAt = new Date().toISOString();
-    autoUpgradeRetry = engineAutoUpgradeRetry(autoUpgradeRetry?.attempts ?? 0);
-    options.autoUpgradeError?.(lastError);
-    startFailureJob = persistState().catch(error => warn(`Automatic fresh upgrade state: ${errorMessage(error)}`));
+    // Never infer that v1 is safe from a failed executable/configuration read:
+    // upstream may already have adopted this store during an earlier boot.
+    // Keep the selected engine and retry it, including fresh/forced profiles.
+    scheduleRestart();
   }
 
   // An engine that serves chats and failed to start, or exited on its own,
@@ -1486,9 +1475,7 @@ export function createEngineV2Preview(options: {
     autoUpgradeAbort.abort(new Error("Automatic upgrade paused while OpenWork closes."));
     await autoUpgradeJob;
     await v2OnlyJob;
-    await startFailureJob;
     await stopRuntime();
-    await startFailureJob;
   }
 
   // Someone explicitly switched this install back to OpenCode v1. Installs that
