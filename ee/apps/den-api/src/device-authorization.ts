@@ -1,5 +1,5 @@
 import { and, eq, isNull } from "@openwork-ee/den-db/drizzle"
-import { DeviceCodeTable, MemberTable } from "@openwork-ee/den-db/schema"
+import { DeviceCodeTable, MemberTable, SessionSsoAuthenticationTable } from "@openwork-ee/den-db/schema"
 import { normalizeDenTypeId } from "@openwork-ee/utils/typeid"
 import { db } from "./db.js"
 
@@ -23,7 +23,7 @@ export function normalizeDeviceUserCode(userCode: string): string {
   return userCode.replace(/[\s-]/g, "").toUpperCase()
 }
 
-type PendingDeviceOrganization = { userId: string; organizationId: string }
+export type PendingDeviceOrganization = { userId: string; organizationId: string; ssoProviderId: string | null }
 
 // Filled by the `/device/token` before-hook when the code is approved and read
 // by the session-create hook in the same request; the after-hook always clears
@@ -37,6 +37,7 @@ export async function stageDeviceSessionOrganization(deviceCode: string): Promis
       status: DeviceCodeTable.status,
       userId: DeviceCodeTable.userId,
       organizationId: DeviceCodeTable.organizationId,
+      ssoProviderId: DeviceCodeTable.ssoProviderId,
     })
     .from(DeviceCodeTable)
     .where(eq(DeviceCodeTable.deviceCode, deviceCode))
@@ -44,7 +45,7 @@ export async function stageDeviceSessionOrganization(deviceCode: string): Promis
   if (!row || row.status !== "approved" || !row.userId || !row.organizationId) {
     return
   }
-  pendingDeviceOrganizations.set(deviceCode, { userId: row.userId, organizationId: row.organizationId })
+  pendingDeviceOrganizations.set(deviceCode, { userId: row.userId, organizationId: row.organizationId, ssoProviderId: row.ssoProviderId })
 }
 
 export function clearDeviceSessionOrganization(deviceCode: string): void {
@@ -74,13 +75,13 @@ async function activeMemberId(input: { userId: string; organizationId: string })
  * default. Membership is re-checked at token time so a person removed between
  * approval and the next poll never lands in that organization.
  */
-export async function takeDeviceSessionOrganization(input: { deviceCode: string; userId: string }): Promise<string | null> {
+export async function takeDeviceSessionOrganization(input: { deviceCode: string; userId: string }): Promise<PendingDeviceOrganization | null> {
   const pending = pendingDeviceOrganizations.get(input.deviceCode)
   pendingDeviceOrganizations.delete(input.deviceCode)
   if (!pending || pending.userId !== input.userId) {
     return null
   }
-  return await isActiveMember(pending) ? pending.organizationId : null
+  return await isActiveMember(pending) ? pending : null
 }
 
 export type DeviceCodeLookup =
@@ -116,6 +117,7 @@ export async function decideDeviceUserCode(input: {
   userCode: string
   userId: string
   decision: "approve" | "deny"
+  approvingSessionId?: string | null
   organizationId?: string | null
   now?: Date
   /** Runs once the chosen organization's active membership is verified, before any write; a Response refuses the decision. */
@@ -143,12 +145,23 @@ export async function decideDeviceUserCode(input: {
   if (row.status !== "pending") {
     return { ok: false, status: 409, error: "already_decided", message: "This code was already used. Start sign-in again from your terminal." }
   }
+  // Snapshot actual approval-time proof even when SSO is optional. A policy
+  // change between approval and polling must never turn a password into SSO.
+  const [proof] = organizationId && input.approvingSessionId
+    ? await db.$primary.select({ providerId: SessionSsoAuthenticationTable.ssoProviderId })
+      .from(SessionSsoAuthenticationTable)
+      .where(and(
+        eq(SessionSsoAuthenticationTable.sessionId, normalizeDenTypeId("session", input.approvingSessionId)),
+        eq(SessionSsoAuthenticationTable.userId, userId),
+        eq(SessionSsoAuthenticationTable.organizationId, organizationId),
+      )).limit(1)
+    : []
   const status = input.decision === "approve" ? "approved" : "denied"
   // Guarded write: only a still-pending code that is unbound or bound to this
   // person changes, so two tabs racing cannot both decide.
   const result = await db
     .update(DeviceCodeTable)
-    .set({ status, userId, organizationId })
+    .set({ status, userId, organizationId, ssoProviderId: proof?.providerId ?? null })
     .where(and(
       eq(DeviceCodeTable.id, row.id),
       eq(DeviceCodeTable.status, "pending"),

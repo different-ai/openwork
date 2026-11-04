@@ -2,7 +2,7 @@
 
 import { Check, Copy, Pencil, SlidersHorizontal, Trash2 } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
-import { getErrorMessage, requestJson } from "../../_lib/den-flow";
+import { getErrorMessage, requestJson, SsoSessionRequiredError } from "../../_lib/den-flow";
 import {
   getAllowedDesktopVersionsFromMetadata,
   getOrgAccessFlags,
@@ -190,6 +190,7 @@ export function OrgSettingsScreen() {
     string | null
   >(null);
   const [pageError, setPageError] = useState<string | null>(null);
+  const [ssoRecoveryPath, setSsoRecoveryPath] = useState<string | null>(null);
   const [copiedOrgId, setCopiedOrgId] = useState(false);
   const [denVersion, setDenVersion] = useState<string | null>(null);
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
@@ -403,6 +404,7 @@ export function OrgSettingsScreen() {
   async function handleSaveSettings(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setPageError(null);
+    setSsoRecoveryPath(null);
     clearOrgSettingsCompletion();
 
     if (!canManageSettings) {
@@ -435,6 +437,9 @@ export function OrgSettingsScreen() {
           ? error.message
           : "Could not update workspace settings.",
       );
+      if (error instanceof SsoSessionRequiredError) {
+        setSsoRecoveryPath(`${error.signInPath}?callbackURL=${encodeURIComponent(window.location.href)}`);
+      }
     }
   }
 
@@ -497,7 +502,16 @@ export function OrgSettingsScreen() {
         <EnterprisePlanNotice feature="Enforced SSO and desktop version control" />
       ) : null}
       {pageError ? (
-        <DenNotice message={pageError} className="mb-6" />
+        <DenNotice
+          message={pageError}
+          className="mb-6"
+          tone={ssoRecoveryPath ? "neutral" : "error"}
+          action={ssoRecoveryPath ? (
+            <DenButton href={ssoRecoveryPath} variant="secondary" size="sm">
+              Sign in with SSO
+            </DenButton>
+          ) : undefined}
+        />
       ) : null}
       {pageSuccess ? (
         <div className="mb-6 rounded-[24px] border border-emerald-200 bg-emerald-50 px-5 py-4 text-[14px] text-emerald-700">

@@ -21,7 +21,7 @@ import { cachedOrganizationServiceReadiness } from "../../service-readiness-runt
 import { canManageDeploymentServices } from "../../middleware/admin.js"
 import { findEnterpriseAuthRequirementForEmailDomain, resolveNonSsoSignInMethodForEmail } from "../../enterprise-auth-requirement.js"
 import { organizationFeatureEnabled } from "../../features.js"
-import { findDomainSsoRequirement, sessionCanRequireOrganizationSso } from "../../organization-sso-access.js"
+import { findDomainSsoRequirement, sessionCanRequireOrganizationSso, ssoSignInUrl } from "../../organization-sso-access.js"
 import { jsonValidator, memberPermissionsForOrganizationContext, orgMemberRoute, orgPermissionRoute, publicRoute, queryValidator, resolveMemberPermissionsMiddleware, resolveMemberTeamsMiddleware, userSessionRoute } from "../../middleware/index.js"
 import { sortedPermissionKeys } from "../../permissions/effective.js"
 import { denTypeIdSchema, enterprisePlanRequiredSchema, forbiddenSchema, invalidRequestSchema, jsonResponse, notFoundSchema, unauthorizedSchema } from "../../openapi.js"
@@ -496,7 +496,7 @@ export function registerOrgCoreRoutes<T extends { Variables: OrgRouteVariables }
         402: jsonResponse("Enabling enforced SSO or desktop version controls requires an Enterprise plan.", enterprisePlanRequiredSchema),
         403: jsonResponse("The caller does not have permission to update the requested organization fields.", forbiddenSchema),
         404: jsonResponse("The organization could not be found.", notFoundSchema),
-        409: jsonResponse("ssoPerOrganization: requiring SSO needs the caller's session to have signed in through this organization's SSO.", z.object({ error: z.literal("sso_session_required"), message: z.string() })),
+        409: jsonResponse("ssoPerOrganization: requiring SSO needs the caller's session to have signed in through this organization's SSO.", z.object({ error: z.literal("sso_session_required"), message: z.string(), signInPath: z.string(), signInUrl: z.string().url() })),
       },
     }),
     orgPermissionRoute("organization.update"),
@@ -531,9 +531,12 @@ export function registerOrgCoreRoutes<T extends { Variables: OrgRouteVariables }
         // themselves out of the organization by mistake.
         const session = c.get("session")
         if (!await sessionCanRequireOrganizationSso({ sessionId: session?.id ?? null, organizationId: payload.organization.id })) {
+          const signInPath = `/sso/${encodeURIComponent(payload.organization.slug)}`
           return c.json({
             error: "sso_session_required",
-            message: "Sign in with this organization's SSO first. Once it is required, everyone who did not sign in with it, you included, has to before opening this organization.",
+            message: "Sign in with this organization's SSO first, then return to Settings and save again. SSO has not been made required.",
+            signInPath,
+            signInUrl: ssoSignInUrl(signInPath),
           }, 409)
         }
       }
@@ -654,12 +657,14 @@ export function registerOrgCoreRoutes<T extends { Variables: OrgRouteVariables }
       }
 
       const requirement = await findEnterpriseAuthRequirementForEmailDomain(query.email)
-      // ssoPerOrganization: only an organization that requires SSO (or
-      // restricts its domain) sends this email to SSO here.
+      // This is the password/Google preflight, not organization access. With
+      // per-org SSO, Require SSO must not undo the alternative offered by login
+      // options: the person may still sign in for their other organizations.
+      // Only restricting the entire domain (or the legacy behavior) redirects.
       const domainPolicy = requirement ? await findDomainSsoRequirement(query.email) : null
-      const ssoOptional = Boolean(domainPolicy?.perOrganization && !domainPolicy.policy.requireSso && !domainPolicy.policy.restrictDomainToSso)
+      const permitsNonSsoSignIn = Boolean(domainPolicy?.perOrganization && !domainPolicy.policy.restrictDomainToSso)
 
-      if (requirement && !ssoOptional) {
+      if (requirement && !permitsNonSsoSignIn) {
         return c.json({
           requireSso: true,
           method: "sso",

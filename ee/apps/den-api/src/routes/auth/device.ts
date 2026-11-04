@@ -105,6 +105,7 @@ export function registerDeviceAuthRoutes<T extends { Variables: AuthContextVaria
       const result = await decideDeviceUserCode({
         userCode: input.userCode,
         userId: user.id,
+        approvingSessionId: c.get("session")?.id ?? null,
         decision: input.decision,
         organizationId: input.organizationId ?? null,
         // Approval binds the CLI session to this organization: attribute it to

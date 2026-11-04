@@ -37,6 +37,13 @@ On, the organization's settings decide (Organization settings › Authentication
   `session_sso_authentication` (one row per session, removed with the session,
   user or organization). That is how an SSO session is told apart from a
   password or Google one. Rows are written whether the flag is on or off.
+  A historical linked SSO account is never sufficient proof for a session.
+- Device approval captures the approving session's actual provider proof on the
+  device code, including while SSO is optional. Redemption copies that proof,
+  not whatever policy happens to be enabled when the terminal next polls.
+  Codes approved by password before enforcement cannot acquire SSO proof by
+  polling after enforcement. Existing pending approvals without proof fail
+  closed when opening an organization that now requires SSO.
 - Verified-domain auto-join (Google sign-in with a verified domain email joins
   the SSO organization on Team plans and up) no longer happens for an
   organization that requires SSO; people join it through SSO sign-up.
@@ -74,6 +81,34 @@ Recorded SSO sessions are harmless when off.
 Turning it **on** for an organization with **Require SSO** already set asks
 every member once to sign in through SSO: sessions from before this change
 have no SSO record.
+
+## Recovering an administrator's session safely
+
+If saving Require SSO returns `sso_session_required`, use **Sign in with SSO**
+in the notice. It opens the organization's `/sso/<slug>` page with Settings as
+the return destination. If Den asks you to select a workspace, select this
+organization and reopen Settings. Leave SSO optional until that fresh sign-in
+succeeds, then save again. A configuration test in another browser or an
+account link from an older session is not a substitute for this session's
+SSO authentication. Never backfill session proof from account history.
+
+If the identity provider rejects the sign-in before returning to OpenWork,
+check its application assignment and SAML configuration with its administrator.
+That rejection alone does not identify an OpenWork callback failure. Check the
+callback response and provenance-write logs separately. Do not enable required
+SSO until the fresh sign-in succeeds. No policy or rollout change is necessary
+to test this while SSO remains optional.
+
+`test/api/sso-callback.api.test.ts` exercises the real signed OIDC and SAML
+callbacks against a disposable database, including tampered SAML rejection,
+password-session credential denial and approval-to-redemption policy changes.
+Those callbacks also work on the original implementation: the device race and
+single-organization guard are independently reproduced regressions. The
+[headless browser matrix](./browser-proof.md) additionally exercises the real
+password preflight, SAML redirects, recovery action and invitation flow; it
+catches the older preflight incorrectly forcing SSO after an organization
+requires it, even though ordinary sign-in for other organizations remains
+permitted.
 
 ## What to watch
 

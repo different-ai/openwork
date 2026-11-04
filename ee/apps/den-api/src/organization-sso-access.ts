@@ -1,6 +1,5 @@
-import { and, desc, eq, inArray, isNull } from "@openwork-ee/den-db/drizzle"
+import { and, eq, inArray, isNull } from "@openwork-ee/den-db/drizzle"
 import {
-  AuthAccountTable,
   AuthUserTable,
   MemberTable,
   OrganizationTable,
@@ -215,6 +214,7 @@ export async function findSsoBlockedOrganizations(input: { sessionId: string | n
  */
 export async function sessionCanRequireOrganizationSso(input: { sessionId: string | null; organizationId: string }) {
   const organizationId = normalizeDenTypeId("organization", input.organizationId)
+  if (!(await readSsoPerOrganization([organizationId])).get(organizationId)) return true
   const rows = await readSsoOrganizations(eq(OrganizationTable.id, organizationId))
   if (rows.length === 0) return true
   if (!input.sessionId) return false
@@ -252,25 +252,15 @@ async function providerOrganization(providerId: string) {
   return provider ?? null
 }
 
-/** The SSO provider the user signed in with most recently, when the callback path does not name it. */
-async function latestSsoProviderForUser(userId: string) {
-  const [row] = await db
-    .select({ organizationId: SsoProviderTable.organizationId, providerId: SsoProviderTable.providerId })
-    .from(AuthAccountTable)
-    .innerJoin(SsoProviderTable, eq(AuthAccountTable.providerId, SsoProviderTable.providerId))
-    .where(eq(AuthAccountTable.userId, normalizeDenTypeId("user", userId)))
-    .orderBy(desc(AuthAccountTable.updatedAt))
-    .limit(1)
-  return row ?? null
-}
-
 /**
  * Remember that an SSO callback created this session, in the provider's
  * organization. Written for every SSO sign-in, whether or not the flag is on,
  * so turning it on does not send people who just used SSO through it again.
  */
 export async function recordSessionSsoAuthentication(input: { sessionId: string; userId: string; providerId: string | null }) {
-  const provider = input.providerId ? await providerOrganization(input.providerId) : await latestSsoProviderForUser(input.userId)
+  // A historical account link is not evidence for this session. A callback
+  // without an authenticated provider reference must fail closed.
+  const provider = input.providerId ? await providerOrganization(input.providerId) : null
   if (!provider) return
   await db.insert(SessionSsoAuthenticationTable).values({
     sessionId: normalizeDenTypeId("session", input.sessionId),
@@ -280,29 +270,11 @@ export async function recordSessionSsoAuthentication(input: { sessionId: string;
   }).onDuplicateKeyUpdate({ set: { organizationId: provider.organizationId, ssoProviderId: provider.providerId } })
 }
 
-/**
- * A command-line (device) session approved into an organization that
- * requires SSO: the approval itself was refused unless the approving session
- * signed in through that SSO (routes/auth/device.ts), so the device session
- * inherits it.
- */
-export async function recordDeviceSessionSsoAuthentication(input: { sessionId: string; userId: string; organizationId: OrgId | string | null }) {
-  if (!input.organizationId) return
-  const required = await findSsoRequiredOrganizations([input.organizationId])
-  const block = required.get(normalizeDenTypeId("organization", input.organizationId))
-  if (!block) return
-  const [connection] = await db
-    .select({ providerId: SsoConnectionTable.providerId })
-    .from(SsoConnectionTable)
-    .where(eq(SsoConnectionTable.organizationId, normalizeDenTypeId("organization", block.organizationId)))
-    .limit(1)
-  if (!connection) return
-  await db.insert(SessionSsoAuthenticationTable).values({
-    sessionId: normalizeDenTypeId("session", input.sessionId),
-    userId: normalizeDenTypeId("user", input.userId),
-    organizationId: normalizeDenTypeId("organization", block.organizationId),
-    ssoProviderId: connection.providerId,
-  }).onDuplicateKeyUpdate({ set: { ssoProviderId: connection.providerId } })
+/** Copy only the provider proof captured by the approving browser. */
+export async function recordDeviceSessionSsoAuthentication(input: { sessionId: string; userId: string; organizationId: OrgId | string; providerId: string }) {
+  const provider = await providerOrganization(input.providerId)
+  if (!provider || provider.organizationId !== normalizeDenTypeId("organization", input.organizationId)) return
+  await recordSessionSsoAuthentication(input)
 }
 
 export async function deleteSessionSsoAuthentication(sessionId: string) {

@@ -1240,6 +1240,13 @@
       "when": 1793806084389,
       "tag": "0177_session_sso_authentication",
       "breakpoints": true
+    },
+    {
+      "idx": 178,
+      "version": "5",
+      "when": 1793822622848,
+      "tag": "0178_device_sso_approval",
+      "breakpoints": true
     }
   ]
 }
