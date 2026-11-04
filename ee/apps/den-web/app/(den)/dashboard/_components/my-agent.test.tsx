@@ -281,3 +281,20 @@ test("without the brief: today's page, unchanged", () => {
   assert.match(html, /data-testid="my-agent-responsibilities"/);
   assert.doesNotMatch(html, /data-testid="my-agent-brief"|data-testid="my-agent-next-checks"/);
 });
+
+test("with the brief: any connector is a source; a custom one that is on reads, one with no read tools says so, one not allowed is locked", () => {
+  // Fictional custom connectors the member can use.
+  const desk: MemberAgentSource = { id: "emc_desk", kind: "other", name: "Lumen Support Desk", connections: [{ id: "emc_desk", name: "Lumen Support Desk", url: "https://mcp.lumen-desk.test/mcp", state: "connected" }], options: [], chosenBy: null, policy: "members", on: true, instruction: "Refund tickets waiting on me.", lastReadAt: at("2026-10-20T11:20:00"), readTools: 2 };
+  const ledger: MemberAgentSource = { ...desk, id: "emc_ledger", name: "Brightwater Ledger", connections: [{ id: "emc_ledger", name: "Brightwater Ledger", url: "https://mcp.ledger.test/mcp", state: "connected" }], on: false, instruction: "", lastReadAt: null, readTools: 0 };
+  const crm: MemberAgentSource = { ...ledger, id: "emc_crm", name: "Northwind CRM", connections: [{ id: "emc_crm", name: "Northwind CRM", url: "https://mcp.crm.test/mcp", state: "connected" }], policy: "off", readTools: 3 };
+  const html = page({ ...briefView, sources: [emailSource, desk, ledger, crm] });
+  const on = source(html, desk.id);
+  assert.match(on, /data-on="true"/);
+  assert.match(switchFor(on, "Lumen Support Desk") ?? "", /aria-checked="true"/);
+  assert.doesNotMatch(on, /No read-only tools/);
+  assert.match(text(source(html, ledger.id)), /Brightwater Ledger No read-only tools found\. An admin can review its tools\./);
+  const locked = source(html, crm.id);
+  assert.match(locked, /aria-label="Not allowed by your admin"/);
+  assert.doesNotMatch(locked, /No read-only tools/, "not allowed says that instead");
+  assert.match(text(html), /Locked sources are/);
+});

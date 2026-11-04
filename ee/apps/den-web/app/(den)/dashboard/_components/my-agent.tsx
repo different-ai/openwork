@@ -425,6 +425,9 @@ function SourceChangeNote({ view, sourceId, field, now }: { view: MemberAgentVie
  * Whether a source's row shows a lock: not allowed, or another source the admin turned on for everyone. Calendar,
  * email and team chat on for everyone show no lock: picking where they read from is the member's control there.
  */
+/** A source whose connector has no read-only tools: the agent can't read it until an admin allows one. */
+export const NO_READ_TOOLS = "No read-only tools found. An admin can review its tools.";
+
 function sourceLocked(source: MemberAgentSource) {
   return source.policy === "off" || (source.kind === "other" && source.policy === "everyone");
 }
@@ -537,6 +540,8 @@ function SourceRow({ view, source, now, saving, links, onChange }: { view: Membe
           ? null
           : source.lastReadAt ? `Last read ${whenPhrase(source.lastReadAt, view.timeZone, now)}` : "Not read yet";
   const instructionLabel = `${source.instruction ? "Edit the" : "Add an"} instruction for ${source.name}`;
+  // Your agent's brief: a connector with no read-only tools still shows, and says so.
+  const noReadTools = !core && source.policy !== "off" && source.readTools === 0;
   const connectAction = source.on && source.policy !== "off" && !ready ? (
     fix
       ? <Link href={links.connector(fix.id)} className="whitespace-nowrap text-[12px] font-medium text-gray-900 underline-offset-2 hover:underline">{`${fix.state === "reconnect" ? "Reconnect" : "Connect"} ${fix.name}`}</Link>
@@ -549,6 +554,9 @@ function SourceRow({ view, source, now, saving, links, onChange }: { view: Membe
           {core ? <SourceIcon kind={core} /> : logoFrom ? <ConnectorLogo name={logoFrom.name} url={logoFrom.url} size="xs" /> : <SourceIcon kind={source.kind} />}
           <span className="flex min-w-0 flex-col">
             <span className={`truncate text-[13px] font-medium ${source.on ? "text-gray-900" : "text-gray-500"}`}>{source.name}</span>
+            {noReadTools ? (
+              <span className="text-[12px] leading-4 text-gray-500" data-testid={`my-agent-no-read-tools-${source.id}`}>{NO_READ_TOOLS}</span>
+            ) : null}
             {core && (status || connectAction) ? (
               <span className="flex min-w-0 items-center gap-2 text-[12px] leading-4 text-gray-500" data-testid={`my-agent-state-${source.id}`}>
                 {status ? <span className="truncate">{status}</span> : null}

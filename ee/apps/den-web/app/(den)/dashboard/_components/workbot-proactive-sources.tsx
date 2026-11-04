@@ -12,6 +12,7 @@ import {
   agentOtherConnections,
   agentSourcePolicy,
   type AgentCoreSource,
+  type AgentOtherSourceConnection,
   type AgentSourceOption,
   type AgentSourcePolicy,
   type AgentSourceSlot,
@@ -28,12 +29,16 @@ import { DenSelect } from "../../_components/ui/select";
 import { DenSwitch } from "../../_components/ui/switch";
 import { ConnectorLogo } from "./item-logo";
 import { SourceIcon } from "./source-icon";
+import { AgentConnectionTools } from "./workbot-agent-tools";
 
 /**
  * Manage › Workbot › What agents read. The admin sets guardrails and each member picks within them: for calendar,
  * email and team chat, which apps are allowed (Den's own providers for what they serve, an MCP whose read tools are
  * reviewed once added) and which one is the default; each member's agent then reads one allowed app per category.
  * Other context is the connections added there, each with its own policy. The server enforces it for members' agents.
+ *
+ * With Your agent's brief on (`view.brief`), every connection is listed in Other context with no picking or count cap,
+ * each under its policy, and each MCP connection has "Tools agents may use" (workbot-agent-tools.tsx).
  */
 
 type SourcesView = Pick<WorkbotProactiveView, "settings" | "sourceConnections">;
@@ -126,6 +131,19 @@ export function makeDefaultChange(kind: AgentCoreSource, connectionId: string): 
   return { coreDefaults };
 }
 
+/**
+ * The policy a connection in Other context has now (every connection listed): the admin's saved choice, else the
+ * server's (a reviewed connection removed from Other context before stays not allowed), else members choose.
+ */
+export function otherPolicy(view: SourcesView, option: AgentOtherSourceConnection): AgentSourcePolicy {
+  return view.settings.sources.connections[option.id] ?? option.policy ?? "members";
+}
+
+/** "12 connections", "1 connection". */
+export function connectionCount(count: number): string {
+  return `${count} connection${count === 1 ? "" : "s"}`;
+}
+
 /** Connections that can still be added to a source: for calendar, email and team chat, those without a row there yet. */
 export function addableTo(view: SourcesView, slot: AgentSourceSlot): AgentSourceOption[] {
   const here = new Set(slot === "other" ? slotIds(view, slot) : coreAppRows(view, slot).map((row) => row.option.id));
@@ -209,48 +227,83 @@ function AddSource({ slot, options, disabled, onPick }: { slot: AgentSourceSlot;
   );
 }
 
-export function WorkbotProactiveSources({ view, canManage, saving, onChange }: {
+export function WorkbotProactiveSources({ view, canManage, saving, onChange, tools }: {
   view: WorkbotProactiveView;
   canManage: boolean;
   saving: boolean;
   onChange: (change: WorkbotProactiveSettingsInput) => void;
+  /** With the brief on: where to list each connection's tools and connect one. */
+  tools?: { orgId: string; connectorHref: (connectionId: string) => string };
 }) {
   const headingId = useId();
   const locked = !canManage || saving;
   const { sources } = view.settings;
   const connections = view.sourceConnections;
+  // Your agent's brief: any connected connector can be a source, each tool decided read or not.
+  const anyConnector = view.brief !== undefined;
 
   const save = (change: AgentSourcesPolicyInput) => onChange({ sources: change });
+  const toolsOf = (option: { id: string; name: string }) => tools && anyConnector ? (
+    <AgentConnectionTools orgId={tools.orgId} connectionId={option.id} name={option.name} connectHref={tools.connectorHref(option.id)} disabled={locked} onChange={save} />
+  ) : null;
 
   const coreRows = (kind: AgentCoreSource) => (
     <>
       {coreAppRows(view, kind).map(({ option, allowed, isDefault }) => {
         const state = kind === "calendar" && allowed && option.native === false ? "Read on checks; no early meeting alerts" : null;
         return (
-          <div key={option.id} className="flex min-h-[44px] flex-wrap items-center justify-between gap-3 py-2 pl-14 pr-6" data-testid={`workbot-source-${kind}-${option.id}`} data-allowed={allowed} data-default={isDefault}>
-            <span className="flex min-w-0 items-center gap-3">
-              <ConnectorLogo name={option.name} url={option.url} size="xs" />
-              <span className={`truncate text-[13px] ${allowed ? "text-gray-900" : "text-gray-500"}`}>{option.name}</span>
-              {isDefault ? <DenBadge size="sm">Default</DenBadge> : null}
-              {option.connectedMembers !== null ? <span className="whitespace-nowrap text-[12px] text-gray-500">{`${option.connectedMembers} connected`}</span> : null}
-              {state ? <span className="text-[12px] text-gray-500">{state}</span> : null}
-            </span>
-            <span className="flex min-w-0 items-center justify-end gap-3">
-              {allowed && !isDefault ? (
-                <DenButton variant="ghost" size="xs" disabled={locked} aria-label={`Make ${option.name} the default for ${SLOT_LABEL[kind]}`}
-                  onClick={() => save(makeDefaultChange(kind, option.id))}>
-                  Make default
-                </DenButton>
-              ) : null}
-              <DenSwitch size="sm" aria-label={`Allow ${option.name}`} checked={allowed} disabled={locked || isDefault}
-                onChange={(allow) => save(allowAppChange(view, kind, option.id, allow))} />
-            </span>
+          <div key={option.id}>
+            <div className="flex min-h-[44px] flex-wrap items-center justify-between gap-3 py-2 pl-14 pr-6" data-testid={`workbot-source-${kind}-${option.id}`} data-allowed={allowed} data-default={isDefault}>
+              <span className="flex min-w-0 items-center gap-3">
+                <ConnectorLogo name={option.name} url={option.url} size="xs" />
+                <span className={`truncate text-[13px] ${allowed ? "text-gray-900" : "text-gray-500"}`}>{option.name}</span>
+                {isDefault ? <DenBadge size="sm">Default</DenBadge> : null}
+                {option.connectedMembers !== null ? <span className="whitespace-nowrap text-[12px] text-gray-500">{`${option.connectedMembers} connected`}</span> : null}
+                {state ? <span className="text-[12px] text-gray-500">{state}</span> : null}
+              </span>
+              <span className="flex min-w-0 items-center justify-end gap-3">
+                {allowed && !isDefault ? (
+                  <DenButton variant="ghost" size="xs" disabled={locked} aria-label={`Make ${option.name} the default for ${SLOT_LABEL[kind]}`}
+                    onClick={() => save(makeDefaultChange(kind, option.id))}>
+                    Make default
+                  </DenButton>
+                ) : null}
+                <DenSwitch size="sm" aria-label={`Allow ${option.name}`} checked={allowed} disabled={locked || isDefault}
+                  onChange={(allow) => save(allowAppChange(view, kind, option.id, allow))} />
+              </span>
+            </div>
+            {allowed && !option.native ? toolsOf(option) : null}
           </div>
         );
       })}
       <AddSource slot={kind} options={addableTo(view, kind)} disabled={locked} onPick={(option) => save(addSourceChange(view, kind, option.id))} />
     </>
   );
+
+  // With the brief: every connection, each with its policy and its tools; nothing to add or remove.
+  const everyConnectionRows = () => {
+    const every = connections?.other ?? [];
+    return (
+      <>
+        {every.length === 0 ? <p className="py-2 pl-14 pr-6 text-[13px] text-gray-500" data-testid="workbot-source-other-empty">No connections</p> : null}
+        {every.map((option) => {
+          const policy = otherPolicy(view, option);
+          return (
+            <div key={option.id} data-testid={`workbot-source-other-${option.id}`} data-policy={policy}>
+              <div className="flex min-h-[44px] flex-wrap items-center justify-between gap-3 py-2 pl-14 pr-6">
+                <span className="flex min-w-0 items-center gap-3">
+                  <ConnectorLogo name={option.name} url={option.url} size="xs" />
+                  <span className={`truncate text-[13px] ${policy === "off" ? "text-gray-500" : "text-gray-900"}`}>{option.name}</span>
+                </span>
+                <PolicySelect label={option.name} value={policy} disabled={locked} onChange={(next) => save({ connections: { [option.id]: next } })} />
+              </div>
+              {policy !== "off" ? toolsOf(option) : null}
+            </div>
+          );
+        })}
+      </>
+    );
+  };
 
   // Other context: each connection added there, with its own policy, kept as it was.
   const otherRows = () => {
@@ -305,10 +358,11 @@ export function WorkbotProactiveSources({ view, canManage, saving, onChange }: {
         })}
         {connections ? (
           <div className="pb-1" data-testid="workbot-source-others">
-            <div className="flex min-h-[48px] items-center px-6 py-2">
+            <div className="flex min-h-[48px] items-center justify-between gap-3 px-6 py-2">
               <span className="text-[13px] font-medium text-gray-900">Other context</span>
+              {anyConnector ? <span className="text-[12px] text-gray-500" data-testid="workbot-source-others-count">{connectionCount(connections.other.length)}</span> : null}
             </div>
-            {otherRows()}
+            {anyConnector ? everyConnectionRows() : otherRows()}
           </div>
         ) : (
           <p className="flex items-center gap-2 px-6 py-3 text-[12px] text-gray-500" data-testid="workbot-source-others-locked">
