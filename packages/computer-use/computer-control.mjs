@@ -18,7 +18,7 @@ export const COMPUTER_TOOLS = Object.freeze({
 export const COMPUTER_PROTOCOL = "openwork.computer-use/1";
 export const COMPUTER_STOP_GUIDANCE = "Computer session revocation could not be confirmed. Use Stop on the agent's pill over the app window or in the OpenWork Computer Use menu before continuing.";
 const ARGUMENTS = Object.freeze({
-  computer_open: ["app_id", "pid", "window_id", "mode", "purpose", "screenshot"],
+  computer_open: ["app_id", "pid", "window_id", "mode", "purpose", "screenshot", "file"],
   computer_observe: ["session_id", "include_image", "elements", "menus"],
   computer_act: ["session_id", "observation_id", "action", "actions", "intent", "screenshot", "pacing", "retry_ms"],
   computer_zoom: ["session_id", "observation_id", "x", "y", "width", "height"],
@@ -342,6 +342,14 @@ export function createComputerControl({ adapters, runProgram, runScript, onTimin
     grant.apps.delete(app.id);
     if (grant.latest === app.id) grant.latest = [...grant.apps.keys()].at(-1) ?? null;
   }
+  /** Only the Mac's own helper opens an app onto a file and keeps an agent clipboard. */
+  const opensOnFiles = (target) => platform === "darwin" && target.placement === "local";
+  /**
+   * The open request with this chat's clipboard key: every helper of the chat keeps the
+   * agent's copy, and the person's clipboard, under it, so a paste in another app's
+   * session finds what one copied, and the person's clipboard comes back once.
+   */
+  const withClipboard = (current, args) => opensOnFiles(current.adapter) ? { ...args, clipboard: current.grant.clipboardKey ??= randomUUID() } : args;
   /** The person took over another chat's session on this chat's computer. */
   const takenOverElsewhere = (grant) => [...grants.values()].some(owner => owner !== grant && owner.handoff && owner.handoffTarget === targetFor(grant).id);
   /**
@@ -979,7 +987,7 @@ export function createComputerControl({ adapters, runProgram, runScript, onTimin
           // Input from its old observation is never replayed into the new session.
           const args = current.app.lastOpen;
           current.opening = { args, signal: active, assertActive: progress };
-          const opened = await current.transport.callTool("computer_open_session", { ...args, ...followArgs(grant, current) }, { signal: active });
+          const opened = await current.transport.callTool("computer_open_session", { ...withClipboard(current, args), ...followArgs(grant, current) }, { signal: active });
           progress();
           current.opening = null;
           const state = stateOf(opened);
@@ -997,7 +1005,7 @@ export function createComputerControl({ adapters, runProgram, runScript, onTimin
           current.opening = { args, signal: active, assertActive: progress,  };
         }
         current.expectedClose = name === "computer_close";
-        const nativeArgs = { ...args, ...(current.nativeId && name !== "computer_discover" ? { session_id: current.nativeId } : {}),
+        const nativeArgs = { ...(name === "computer_open" ? withClipboard(current, args) : args), ...(current.nativeId && name !== "computer_discover" ? { session_id: current.nativeId } : {}),
           ...(name === "computer_act" ? { request_id: randomUUID() } : {}), ...(name === "computer_open" ? followArgs(grant, current) : {}) };
         if (["computer_open", "computer_observe", "computer_act", "computer_close"].includes(name)) invalidateObservation(current);
         const generation = current.handoffGeneration;
@@ -1008,11 +1016,15 @@ export function createComputerControl({ adapters, runProgram, runScript, onTimin
           : (nativeResult = await current.transport.callTool(COMPUTER_TOOLS[name], nativeArgs, { signal: active }));
         const state = stateOf(result);
         if (name === "computer_open") current.opening = null;
+        // Nothing opened yet, such as while the person is asked about a file: no session to show.
+        if (name === "computer_open" && state?.ok === false && !result.isError && !current.nativeId) current.session = null;
         if (name === "computer_open" && state?.ok && typeof state.session_id === "string") {
           current.nativeId = state.session_id;
           if (Number.isSafeInteger(state.window_id)) current.windowId = state.window_id;
           if (["background", "foreground"].includes(state.delivery)) current.delivery = state.delivery;
-          const app = { id: state.session_id, lastTarget: current.adapter.id, lastOpen: { ...args, ...(Number.isSafeInteger(state.window_id) ? { window_id: state.window_id } : {}) } };
+          // A renewal reopens the window, never the file again.
+          const { file: _file, file_approval: _approval, ...reopen } = args;
+          const app = { id: state.session_id, lastTarget: current.adapter.id, lastOpen: { ...reopen, ...(Number.isSafeInteger(state.window_id) ? { window_id: state.window_id } : {}) } };
           // Elsewhere the new app replaces the chat's one; here it replaces only a released session in its window.
           for (const other of [...grant.apps.values()]) if (!several || other.lastOpen.window_id === app.lastOpen.window_id && !leaseOf(grant, other)) forget(grant, other);
           grant.apps.set(app.id, app); grant.latest = app.id; current.app = app;
@@ -1655,6 +1667,7 @@ export function createComputerControl({ adapters, runProgram, runScript, onTimin
         }
         if (!featureEnabled || generation !== featureGeneration || grant.adapter.placement === "remote" && remoteRevision !== remoteGeneration) return failure("computer_unavailable", "Computer use was turned off while this request was waiting. Nothing was dispatched.");
         if (args.screenshot !== undefined && typeof args.screenshot !== "boolean") return failure("invalid_arguments", "screenshot must be true or false.");
+        if (args.file !== undefined && !opensOnFiles(targetFor(grant))) return failure("file_unavailable", "Opening an app onto a file works on a Mac only. Open the app, then use its own Open command. Nothing was opened.");
         // screenshot:false returns the settled elements without an image and true always attaches one;
         // omitted, the computer adds one only when it helps. The native act never sees it.
         // The model picks among this chat's own apps by session_id, the one it was given on open or a
@@ -1728,22 +1741,25 @@ export function createComputerControl({ adapters, runProgram, runScript, onTimin
             result = await run(call, signal, limit);
           }
         }
-        // The helper stopped before a file panel: before showing its contents, and before
-        // handing over a selection. The organization's rule decides, so by default the agent
-        // goes ahead; when it asks, the person answers in the chat. The approval sent back is
-        // bound to exactly these files or this panel, and the helper checks it again.
+        // The helper stopped before a file panel, a selection being handed over, or a file being
+        // opened in an app. The organization's rule decides, so by default the agent goes ahead;
+        // when it asks, the person answers in the chat. The approval sent back is bound to
+        // exactly these files or this panel, and the helper checks it again.
         const panel = name === "computer_observe" && asked?.code === "file_panel_approval_required";
-        const handover = name === "computer_act" && asked?.code === "files_approval_required";
+        const handover = (name === "computer_act" || name === "computer_open") && asked?.code === "files_approval_required";
         if ((panel || handover) && asked.dispatched === false) {
           const names = handover && Array.isArray(asked.files) ? asked.files : [];
           const checked = handover && !names.length ? /** @type {const} */ ({ answer: "unreadable" })
             : await approveMove(grant, { kind: "files", app: typeof asked.app === "string" ? asked.app : "the app", names }, signal);
           const answer = checked.answer;
           if (checked.answer === "blocked") {
-            result = failure("organization_policy_denied", `${checked.message} ${panel ? "The agent cannot look through files here; cancel the panel" : "Nothing was sent; cancel the panel"} or ask the person to choose.`);
+            result = failure("organization_policy_denied", name === "computer_open" ? `${checked.message} Nothing was opened.`
+              : `${checked.message} ${panel ? "The agent cannot look through files here; cancel the panel" : "Nothing was sent; cancel the panel"} or ask the person to choose.`);
           } else if (answer !== "allow") {
             result = failure(panel ? "file_panel_declined" : "files_declined", answer === "dismiss"
-              ? panel ? "The person chose not to let the agent look through their files. Cancel the panel or ask what to choose." : "The person chose not to hand these files to the app. Nothing was sent; cancel the panel or ask what to choose."
+              ? panel ? "The person chose not to let the agent look through their files. Cancel the panel or ask what to choose."
+                : name === "computer_open" ? "The person chose not to hand this file to the app. Nothing was opened; ask what to use instead."
+                : "The person chose not to hand these files to the app. Nothing was sent; cancel the panel or ask what to choose."
               : answer === "too_many" ? "More files are selected than one approval can show. Select at most 20. Nothing was sent."
               : answer === "unreadable" ? "The panel's selection could not be read, so it cannot be approved. Type the file's path in the panel, or ask the person to choose it. Nothing was sent."
               : "The files were not approved in time, or computer use stopped. Nothing was sent.");

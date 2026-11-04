@@ -1110,6 +1110,107 @@ test("confirming a file panel asks the person, then sends the press with their a
   assert.deepEqual(f.acts(), [null, ["launch.mp4"]], "the second native act carries exactly the approved names");
 });
 
+/** A Mac helper that opens an app onto a file only when the broker sends back that exact file. */
+function openOnFileFixture(options = {}) {
+  const seen = [];
+  const report = "/Users/person/Desktop/report.pdf";
+  const f = fixture({ platform: "darwin", ...options, seen, toolResult: (name) => {
+    const args = seen.at(-1).args;
+    if (name !== "computer_open_session" || args.file === undefined || JSON.stringify(args.file_approval) === JSON.stringify([report])) return undefined;
+    return text({ ok: false, code: "files_approval_required", files: [report], app: "Preview", dispatched: false, next: "open_session" });
+  } });
+  const opens = () => seen.filter((call) => call.name === "computer_open_session").map((call) => call.args);
+  const openOnFile = (sessionId = "chat") => f.control.execute({ sessionId, name: "computer_open", args: { app_id: "com.apple.Preview", mode: "control", purpose: "Read the report", file: report } });
+  async function answer(reply) {
+    for (let waited = 0; !f.requests.some((request) => request?.reason === "files") && waited < 2_000; waited += 5) await new Promise((resolve) => setTimeout(resolve, 5));
+    const request = f.requests.find((value) => value?.reason === "files");
+    assert.deepEqual(request.files, { app: "Preview", names: [report] });
+    await f.control.answerRequest({ sessionId: "chat", answer: reply, id: request.id });
+  }
+  return { ...f, report, opens, openOnFile, answer };
+}
+
+test("by default an app opens onto a file with no card, once, and renewals never reopen it", async (t) => {
+  const asked = [];
+  const f = openOnFileFixture({ movePolicy: async (input) => { asked.push(input); return { effect: "allow" }; } }); t.after(() => f.control.reset(true));
+  await f.control.setFeatureEnabled(true);
+  assert.equal(payload(await f.openOnFile()).ok, true);
+  assert.ok(!f.requests.some((request) => request?.reason === "files"), "the person is not asked");
+  assert.deepEqual(asked, [{ kind: "computer_files", sessionId: "chat" }], "the organization's rule for moving files is looked up once");
+  assert.deepEqual(f.opens().map((args) => args.file_approval ?? null), [null, [f.report]], "the helper still checks the exact file");
+  // The turn ends and the session is released; the next look renews it without the file.
+  await f.control.endTurn({ sessionId: "chat" });
+  await f.control.execute({ sessionId: "chat", name: "computer_observe", args: {} });
+  const renewal = f.opens().at(-1);
+  assert.equal(f.opens().length, 3);
+  assert.equal(renewal.file, undefined);
+  assert.equal(renewal.file_approval, undefined);
+  assert.equal(renewal.clipboard, f.opens()[0].clipboard, "the chat keeps its clipboard key across its helpers");
+});
+
+test("with no rule given, files move between apps without a card", async (t) => {
+  const f = openOnFileFixture(); t.after(() => f.control.reset(true));
+  await f.control.setFeatureEnabled(true);
+  assert.equal(payload(await f.openOnFile()).ok, true);
+  assert.ok(!f.requests.some((request) => request?.reason === "files"));
+});
+
+test("an organization that asks shows the file every time, and a declined file is never opened", async (t) => {
+  const f = openOnFileFixture({ movePolicy: askFirst }); t.after(() => f.control.reset(true));
+  await f.control.setFeatureEnabled(true);
+  const pending = f.openOnFile();
+  await f.answer("dismiss");
+  const result = payload(await pending);
+  assert.equal(result.code, "files_declined");
+  assert.match(result.message, /Nothing was opened/);
+  assert.equal(f.requests.find((request) => request?.reason === "files").standing, false, "no Always: nothing is remembered");
+  assert.equal(f.opens().length, 1);
+  assert.equal((await f.control.snapshot({ sessionId: "chat" })).session ?? null, null, "no session shows as opening");
+});
+
+test("an organization that blocks moving files refuses opening an app onto a file", async (t) => {
+  const message = "Your organization does not let agents move files between apps.";
+  for (const movePolicy of [async () => ({ effect: "deny", message }), async () => { throw new Error("rules unavailable"); }]) {
+    const f = openOnFileFixture({ movePolicy }); t.after(() => f.control.reset(true));
+    await f.control.setFeatureEnabled(true);
+    const refused = payload(await f.openOnFile());
+    assert.equal(refused.code, "organization_policy_denied");
+    assert.match(refused.message, /organization.*Nothing was opened\./);
+    assert.ok(!f.requests.some((request) => request?.reason === "files"));
+    assert.equal(f.opens().length, 1, "the file never reached the helper with an approval");
+  }
+});
+
+test("each chat gets its own clipboard key, which the model can never set", async (t) => {
+  const f = openOnFileFixture(); t.after(() => f.control.reset(true));
+  await f.control.setFeatureEnabled(true);
+  const open = (sessionId) => f.control.execute({ sessionId, name: "computer_open", args: { app_id: "numbers", mode: "control", purpose: "Copy the table" } });
+  await open("chat");
+  await f.control.execute({ sessionId: "chat", name: "computer_close", args: {} });
+  await open("chat");
+  await open("other-chat");
+  const keys = f.opens().map((args) => args.clipboard);
+  assert.match(keys[0], /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/);
+  assert.equal(keys[1], keys[0], "the next app's session in the chat pastes what the last one copied");
+  assert.notEqual(keys[2], keys[0], "another chat never pastes this chat's copy");
+  for (const args of [{ clipboard: keys[0] }, { file_approval: ["/etc/hosts"] }]) {
+    const refused = await f.control.execute({ sessionId: "third", name: "computer_open", args: { app_id: "numbers", mode: "control", purpose: "Paste", ...args } });
+    assert.equal(payload(refused).code, "invalid_arguments");
+  }
+});
+
+test("only a Mac opens an app onto a file or keeps an agent clipboard", async (t) => {
+  for (const platform of ["win32", "linux"]) {
+    const f = openOnFileFixture({ platform }); t.after(() => f.control.reset(true));
+    await f.control.setFeatureEnabled(true);
+    const refused = payload(await f.openOnFile());
+    assert.equal(refused.code, "file_unavailable", platform);
+    assert.equal(f.opens().length, 0, "nothing reached the helper");
+    await f.control.execute({ sessionId: "chat", name: "computer_open", args: { app_id: "editor", mode: "control", purpose: "Edit" } });
+    assert.equal(f.opens().at(-1).clipboard, undefined, platform);
+  }
+});
+
 test("declined files are never handed over", async (t) => {
   const f = filePanelFixture(); t.after(() => f.control.reset(true));
   await f.control.setFeatureEnabled(true);

@@ -3,7 +3,9 @@
 A small macOS 14+ helper that lets OpenWork see and use the requested app window while computer use is enabled. It is a single Swift executable
 (`native/`) that the OpenWork desktop packages as **OpenWork Computer Use.app**
 (bundle id `com.differentai.openwork.computer-use`) and launches from its main
-process. It has no model, API key, network listener or clipboard access.
+process. It has no model, API key or network listener. It touches the
+clipboard only for the agent's own copy and paste (below) and never returns
+clipboard contents.
 
 On start the helper relaunches itself once with macOS responsibility
 disclaimed, so System Settings lists **OpenWork Computer Use** for
@@ -439,16 +441,55 @@ panel's contents or selection, and the broker answers with the organization's
 Agent permissions rule for moving files: with no rule it sends the step again
 bound to the exact file, without asking; Ask first shows the person a card for
 that file every time; Block refuses with `organization_policy_denied`. The step
-is sent on its own. Links are resolved first, so a card names the real file.
+is sent on its own. Links are resolved first, so the helper hands over and
+checks the real file: an absolute path to an existing file, never a folder.
 
 Every way content moves between apps goes through one broker check,
 `approveMove(grant, move, signal)`: `{ kind: "files", app, names, save? }` for
 file panels, `open_file`, opening an app onto a file and saving from one, and
 `{ kind: "clipboard" }` for Command-C, Command-X and Command-V. The desktop
 passes the rule in as `movePolicy` (`computer_files` and `computer_clipboard`
-in `/v1/me/desktop-config`). Copy and paste is on or off and never asks. A success from Launch Services is not taken as proof: the step
-path is `file_opened` once a new window appears or the session's window is
-retitled within three seconds, otherwise `file_open_unconfirmed`.
+in `/v1/me/desktop-config`). Copy and paste is on or off and never asks.
+
+A success from Launch Services is not taken as proof: the step path is
+`file_opened` once a new document window appears or the session's window is
+retitled within three seconds, `file_open_failed` when the app shows an alert
+or sheet instead (its title and text come back in `file_alert`, marked as
+untrusted app content), otherwise `file_open_unconfirmed`. Before anything is
+sent, the file's type and extension are checked against the app's
+`CFBundleDocumentTypes` and the extensions its imported and exported types
+tag: a type the app lists under its own identifier is still tried, with a
+`type_note`; a type and extension it never declares are refused as
+`file_type_unsupported`, listing what it opens. An app that declares no
+document types is left to try. While a session works in an alert, dialog or
+sheet, `elements: "interactive"` also lists its static text, so the agent
+reads why it appeared.
+`computer_open({ app_id, file })` does the same in one call, before the session
+starts: an app that is not running launches on the document, the document's
+window becomes the session's window (the only one titled with the file's
+name, or the only one that opened), and the result's `file` is `file_opened`,
+`file_open_failed` or `file_open_unconfirmed`, with the same rule, alert and
+type checks. A renewal reopens the window, never the file.
+
+With the OpenWork host on a Mac, `command+c`, `command+x` and `command+v` give
+the agent its own clipboard for moving a table, text or image between apps,
+each as its own step. Before the agent's copy first replaces the clipboard, the
+person's items are kept once for the chat; the step path is `copied` or `cut`
+once the clipboard's change count moves, otherwise `copy_unconfirmed`. A paste
+runs only while the clipboard holds what the agent copied in this chat: when it
+holds something else, that is kept as the person's and the agent's copy goes
+back first; with no copy of the agent's, the paste is refused
+(`nothing_copied`), so the person's clipboard never goes into an app. A chat
+can have several apps' sessions open, each with its own helper, so what they
+share lives in private pasteboards named by a random key the desktop sends per
+chat: the agent's last copy, the person's kept clipboard, and which clipboard
+change was the agent's. No helper can then keep the agent's copy as the
+person's. When a session closes, the person's clipboard comes back unless they
+changed it since; a later paste in another open session keeps theirs again and
+puts the agent's copy back first. Menus keep hiding Copy,
+Cut and Paste, and other chords with C, X or V stay blocked. The standalone
+helper, Windows and Linux refuse all three.
+
 
 A program defaults to 30 seconds, accepts a timeout up to 60 seconds, and is
 limited to 80 helper calls and 32 KB of returned program data. The desktop

@@ -139,12 +139,17 @@ final class BoundaryTests: XCTestCase {
         XCTAssertThrowsError(try Arguments(values: ["include_image": "false"]).bool("include_image", default: true))
     }
 
-    func testShortcutsAreFiniteAndExcludeClipboardAndSystemChords() throws {
+    func testShortcutsAreFiniteAndExcludeSystemChords() throws {
         for allowed in [("s", ["command"]), ("f", ["command"]), ("z", ["command", "shift"]), ("enter", ["command"]),
                         ("left", ["option", "shift"]), ("a", ["command"]), ("tab", []), ("tab", ["shift"])] {
             XCTAssertNoThrow(try Action(["type": "key", "key": allowed.0, "modifiers": allowed.1], policy: .embedded), allowed.0)
         }
-        for blocked in [("c", ["command"]), ("x", ["command"]), ("v", ["command", "shift", "option"]), ("y", ["control"]), ("k", ["control"]),
+        // The agent's own clipboard, on a Mac with the OpenWork host; never another chord with c, x or v.
+        for clipboard in ["c", "x", "v"] {
+            XCTAssertNoThrow(try Action(["type": "key", "key": clipboard, "modifiers": ["command"]], policy: .embedded), clipboard)
+            XCTAssertThrowsError(try Action(["type": "key", "key": clipboard, "modifiers": ["command"]]), "the standalone helper keeps refusing \(clipboard)")
+        }
+        for blocked in [("c", ["command", "shift"]), ("x", ["command", "option"]), ("v", ["command", "shift", "option"]), ("y", ["control"]), ("k", ["control"]),
                         ("q", ["command", "shift"]), ("w", ["command", "option"]), ("h", ["command"]), ("m", ["command"]),
                         ("tab", ["command"]), ("space", ["command"]), ("`", ["command"]), ("3", ["command", "shift"]),
                         ("4", ["command", "shift", "control"]), ("5", ["command", "shift"]), ("6", ["command", "shift"]),
