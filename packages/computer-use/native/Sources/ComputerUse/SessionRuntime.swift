@@ -986,7 +986,7 @@ final class SessionRuntime {
                         if let live, let at = records.firstIndex(where: { $0.ref == live.ref }) { records[at] = live }
                     case .keyboard(let live):
                         focus = live
-                        if live == nil { editorStep = index }
+                        if live == nil, case .type = action { editorStep = index }
                     case .pointer: break
                     }
                     needsObservation = false
@@ -1318,15 +1318,18 @@ final class SessionRuntime {
             if let live, case .keyboard(let field) = need, !live.truncated {
                 let focused = live.focusRecord
                 let typing: Bool = { if case .type = action { return true }; return false }()
+                let shortcut: Bool = { if case .key(let key, let flags) = action { return InputDelivery.sendsToKeyWindow(key, flags) }; return false }()
                 switch BatchContinuation.keyboard(focused: focused.map { ($0.enabled, $0.protected, $0.textField) }, field: field,
                     typing: typing, entersText: action.entersText, secureInput: IsSecureEventInputEnabled(),
                     protectedOnScreen: live.records.contains(where: \.protected) || !live.protectedFrames.isEmpty,
-                    credentialConfirmed: credentialApproval == current.app.bundleID, credentialGiven: credentialApproval != nil) {
+                    credentialConfirmed: credentialApproval == current.app.bundleID, credentialGiven: credentialApproval != nil, shortcut: shortcut) {
                 case .focus: return .keyboard(focused)
+                case .keyWindow where (try? access.checkKeyWindow(target: current.target, app: current.app, requireFront: !background)) != nil:
+                    return .keyboard(nil)
                 // The same editor check as typing with no observed field: whatever has the keyboard in this window.
                 case .editor where (try? access.focusedEditor(target: current.target, app: current.app, requireFront: !background)) != nil:
                     return .keyboard(nil)
-                case .editor, .stop: return .stop
+                case .editor, .keyWindow, .stop: return .stop
                 }
             }
             if let live, let observed {

@@ -37,6 +37,13 @@ enum InputDelivery: String {
         (info["LSApplicationCategoryType"] as? String).map { toolKeyCategories.contains($0.lowercased()) } ?? false
     }
 
+    /// A Command or Control shortcut the key list allows, sent to the app's key window when
+    /// no field or control was observed with the keyboard, such as Command-Shift-G on a
+    /// canvas. Bare letters are tool keys, and plain or Option keys still need a known field.
+    static func sendsToKeyWindow(_ key: String, _ flags: CGEventFlags) -> Bool {
+        !flags.isDisjoint(with: [.maskCommand, .maskControl]) && !NativeKey.isBlocked(key, flags) || NativeKey.clipboard.contains(NativeKey.chord(key, flags))
+    }
+
     /// The menu command an app offers for a Command shortcut, run in its place when no
     /// observed field or control has the keyboard. Only commands the catalog lists, so
     /// blocked chords never reach a menu either.

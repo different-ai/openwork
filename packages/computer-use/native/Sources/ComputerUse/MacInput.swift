@@ -306,9 +306,13 @@ final class MacInput {
                 try keyboard(code, flags: flags, text: nil, pid: app.pid, check: check)
                 releaseModifiers()
             case .key(let key, let flags):
-                try FocusRecovery.check(validate: {
-                    try access.checkFocus(focus, target: target, app: app, requireField: ["backspace", "delete"].contains(key), requireFront: !background)
-                }, refocus: { access.refocus(focus) })
+                if focus == nil, InputDelivery.sendsToKeyWindow(key, flags) {
+                    try access.checkKeyWindow(target: target, app: app, requireFront: !background)
+                } else {
+                    try FocusRecovery.check(validate: {
+                        try access.checkFocus(focus, target: target, app: app, requireField: ["backspace", "delete"].contains(key), requireFront: !background)
+                    }, refocus: { access.refocus(focus) })
+                }
                 let code = try keyCode(key, flags: flags)
                 try modifiers(flags, pid: app.pid, check: check)
                 try keyboard(code, flags: flags, text: nil, pid: app.pid, check: check)

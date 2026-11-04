@@ -81,6 +81,29 @@ final class MenuAndPacingTests: XCTestCase {
         XCTAssertNil(InputDelivery.menuForShortcut(try Action(["type": "key", "key": "enter"], policy: .embedded), in: entries), "only Command shortcuts")
     }
 
+    func testAnAppShortcutWithNoFocusedFieldGoesToTheKeyWindow() throws {
+        // Command-Shift-G in a design app: a chord, not a tool letter, and with no menu command for it.
+        let group = try Action(["type": "key", "key": "g", "modifiers": ["command", "shift"]], policy: .embedded)
+        guard case .key(let key, let flags) = group else { return XCTFail() }
+        XCTAssertFalse(NativeKey.isToolKey(key, flags), "a design app's category covers letters only")
+        XCTAssertTrue(InputDelivery.sendsToKeyWindow(key, flags))
+        XCTAssertTrue(InputDelivery.sendsToKeyWindow("s", .maskCommand))
+        XCTAssertTrue(InputDelivery.sendsToKeyWindow("left", [.maskCommand, .maskShift]))
+        XCTAssertTrue(InputDelivery.sendsToKeyWindow("v", .maskCommand), "a paste of the agent's own clipboard onto a canvas")
+        XCTAssertFalse(InputDelivery.sendsToKeyWindow("enter", []), "Enter still needs a known field or control")
+        XCTAssertFalse(InputDelivery.sendsToKeyWindow("delete", .maskAlternate), "Option-Delete erases text")
+        XCTAssertFalse(InputDelivery.sendsToKeyWindow("g", []), "a tool letter has its own check")
+        XCTAssertFalse(InputDelivery.sendsToKeyWindow("q", .maskCommand), "blocked chords never reach a window")
+        XCTAssertFalse(InputDelivery.sendsToKeyWindow("w", .maskCommand))
+        // After a click in the same batch, the same rule: the shortcut goes on, secure input still stops it.
+        XCTAssertEqual(BatchContinuation.keyboard(focused: nil, field: false, typing: false, entersText: false, secureInput: false,
+            protectedOnScreen: false, credentialConfirmed: false, credentialGiven: false, shortcut: true), .keyWindow)
+        XCTAssertEqual(BatchContinuation.keyboard(focused: nil, field: false, typing: false, entersText: false, secureInput: true,
+            protectedOnScreen: false, credentialConfirmed: false, credentialGiven: false, shortcut: true), .stop)
+        XCTAssertEqual(BatchContinuation.keyboard(focused: (enabled: true, protected: true, textField: true), field: false, typing: false,
+            entersText: false, secureInput: false, protectedOnScreen: true, credentialConfirmed: false, credentialGiven: false, shortcut: true), .stop)
+    }
+
     func testASetValueThatDidNotTakeIsReported() {
         XCTAssertTrue(ValueReadBack.took("72", before: "12" as CFString, after: "72" as CFString))
         XCTAssertTrue(ValueReadBack.took("72", before: "12" as CFString, after: "72 pt" as CFString), "a reformatted value still changed")
