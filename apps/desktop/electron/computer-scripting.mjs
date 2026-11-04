@@ -1,6 +1,7 @@
 // Scriptable Mac apps for computer use: AppleScript or JXA through osascript, and
 // Python inside Blender through a bridge Blender loads when OpenWork opens it. One
-// script call replaces many clicks. The engine asks the person before each new app.
+// script call replaces many clicks. Scripts run while computer use is on for the chat,
+// unless the organization asks before each one; macOS still asks once per controlled app.
 import { execFile, spawn as spawnProcess } from "node:child_process";
 import { randomBytes } from "node:crypto";
 import { existsSync } from "node:fs";
