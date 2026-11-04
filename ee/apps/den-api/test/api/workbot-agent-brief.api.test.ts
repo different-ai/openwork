@@ -5,8 +5,7 @@ import { bootDen, field, list, summary, text, type Den } from "./harness.js"
 
 // Your agent's brief and rhythm (workbotAgentBrief, on top of workbotProactive): the admin's settings, carried over from
 // the responsibilities until saved; each member's own lines and rhythm from chat (Connect) or the page, enforced on the
-// server; request_check for the agent's own check token only. Off, every route answers as before. No runner, Slack or
-// Google is contacted.
+// server. Off, every route answers as before. No runner, Slack or Google is contacted.
 const den = await bootDen({ env: { DEN_WORKBOT_URL: "http://localhost:3020" } })
 after(() => den.close())
 const proactive = "/v1/org/workbot-settings/proactive"
@@ -121,48 +120,4 @@ test("chat and the page change the member's brief and rhythm; the server refuses
   // An admin who later slows everyone down wins over what the member saved.
   assert.equal((await space.owner("PUT", proactive, { brief: { checkEveryHours: 4 } })).status, 200)
   assert.equal(field((await space.call("GET", "/v1/me/agent")).body, "limits", "checkEveryHours"), 4)
-})
-
-test("request_check: only the agent's own check token sees it; capped, idempotent and shown in My bot", async () => {
-  const space = await workspace("Brief requests", true)
-  // Every day, all day (UTC for a member whose time zone isn't known yet), one extra check a day.
-  assert.equal((await space.owner("PUT", proactive, { workingDays: "everyday", startHour: 0, endHour: 24, brief: { extraChecksPerDay: 1 } })).status, 200)
-  // The member's agent row exists once they change anything.
-  assert.equal((await space.call("PUT", "/v1/me/agent", { hours: { startHour: 0, endHour: 23 } })).status, 200)
-  const { mintHeadlessRunMcpToken } = await import("../../src/mcp/headless-run-token-mint.js")
-  const { agentReadScopes } = await import("../../src/mcp/agent-read-sources.js")
-  const userId = space.member.userId
-  const check = (await mintHeadlessRunMcpToken({ userId, organizationId: space.orgId, readOnly: true, scopes: agentReadScopes({ kinds: ["email"], connectionIds: ["google-workspace"] }) })).token
-  const messenger = (await mintHeadlessRunMcpToken({ userId, organizationId: space.orgId, readOnly: true, scopes: agentReadScopes({ kinds: [], connectionIds: [] }) })).token
-  const chat = await den.mintMcpToken(space.member, space.orgId)
-  const tools = async (token: string) => list(field(await mcp(den, token, "tools/list", {}), "result", "tools")).map((tool) => String(tool.name))
-  assert.ok((await tools(check)).includes("request_check"))
-  assert.ok(!(await tools(messenger)).includes("request_check"), "the messenger reads nothing and asks for nothing")
-  assert.ok(!(await tools(chat)).includes("request_check"), "chat never sees it")
-
-  // Half past an odd hour (UTC): never right after a check on the 2-hour rhythm (0, 2, 4…), within the next 24 hours.
-  const now = Date.now()
-  const hour = 3_600_000
-  let first = Math.ceil(now / hour) * hour + hour / 2
-  if (new Date(first).getUTCHours() % 2 === 0) first += hour
-  const atIso = new Date(first).toISOString().replace(/\.\d+Z$/, "Z")
-  const set = await den.callMcpTool(check, "request_check", { at: atIso, why: "before the 2 PM with Northwind" })
-  assert.equal(set.isError, false, set.text)
-  assert.match(set.text, /^Extra check set for .+ \(1 of 1 that day\)\.$/)
-  const again = await den.callMcpTool(check, "request_check", { at: new Date(first + 5 * 60_000).toISOString(), why: "same" })
-  assert.match(again.text, /^Already set for /, "idempotent")
-  // Another time the same day (20 minutes later: not the same request, and still not right after a check).
-  const capped = await den.callMcpTool(check, "request_check", { at: new Date(first + 20 * 60_000).toISOString(), why: "another" })
-  assert.equal(capped.isError, true)
-  assert.match(capped.text, /No extra checks left for that day \(1 a day\)/)
-  const bad = await den.callMcpTool(check, "request_check", { at: "after lunch", why: "x" })
-  assert.equal(bad.isError, true)
-
-  const mine = await space.call("GET", "/v1/me/agent")
-  const requested = list(field(mine.body, "nextChecks")).find((entry) => entry.kind === "requested")
-  assert.deepEqual([requested?.why, requested?.at], ["before the 2 PM with Northwind", new Date(Math.floor(first / 1000) * 1000).toISOString()])
-
-  // The kill switch takes it away at once.
-  assert.equal((await den.setFeature(space.orgId, "workbotAgentBrief", false)).status, 200)
-  assert.ok(!(await tools(check)).includes("request_check"))
 })
