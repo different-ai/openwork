@@ -14,7 +14,8 @@ export type DesktopNotificationEvent =
   | { type: "task.completed"; sessionId: string }
   | { type: "task.failed"; sessionId: string; errorText?: string }
   | { type: "permission.asked"; sessionId: string; detail?: string }
-  | { type: "question.asked"; sessionId: string; question?: string };
+  | { type: "question.asked"; sessionId: string; question?: string }
+  | { type: "automation.failed"; title: string; body: string };
 
 type NotificationCopy = {
   title: string;
@@ -85,6 +86,8 @@ function copyForEvent(event: DesktopNotificationEvent): NotificationCopy {
         body: event.question?.trim() || "A session is waiting for your answer.",
         importance: "important",
       };
+    case "automation.failed":
+      return { title: event.title, body: event.body, importance: "important" };
   }
 }
 
