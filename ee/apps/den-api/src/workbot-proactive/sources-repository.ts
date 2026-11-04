@@ -1,13 +1,17 @@
 import { and, count, eq, isNotNull, isNull } from "@openwork-ee/den-db/drizzle"
 import { ConnectedAccountTable, MemberTable } from "@openwork-ee/den-db/schema"
 import type { AgentSourceConnection } from "@openwork/types/den/workbot-proactive"
-import type { DenTypeId } from "@openwork-ee/utils/typeid"
+import { normalizeDenTypeId, type DenTypeId } from "@openwork-ee/utils/typeid"
+import type { AgentReadToolInput } from "@openwork/automations/agent-read-tools"
 import { db } from "../db.js"
-import { listExternalMcpConnections, listUsableExternalMcpConnections } from "../capability-sources/external-mcp-connections.js"
+import { env } from "../env.js"
+import { createExternalMcpLifecycleDeadline } from "../capability-sources/external-mcp-client.js"
+import { getExternalMcpConnection, listExternalMcpConnections, listUsableExternalMcpConnections } from "../capability-sources/external-mcp-connections.js"
+import { isToolDisabled } from "../capability-sources/external-mcp-tool-policy.js"
 import { listNativeProviderUsableEntries } from "../capability-sources/native-provider-connections.js"
 import { getOrgOAuthClient } from "../capability-sources/oauth-credentials.js"
 import { NATIVE_OAUTH_PROVIDERS } from "../capability-sources/provider-registry.js"
-import { probeExternalConnectionStatus } from "../mcp/external-capabilities.js"
+import { listExternalMcpToolsThroughSearchCache, probeExternalConnectionStatus } from "../mcp/external-capabilities.js"
 import { listTeamsForMember } from "../member-teams.js"
 import type { MemberConnection } from "./sources.js"
 
@@ -106,4 +110,48 @@ async function countConnectedAccounts(organizationId: DenTypeId<"organization">)
       isNotNull(ConnectedAccountTable.accessToken),
     ))
     .groupBy(ConnectedAccountTable.providerId)
+}
+
+/** How long listing one connection's tools may take for a check or a page; the tool cache answers most at once. */
+export const CONNECTION_TOOLS_DEADLINE_MS = 8_000
+
+/**
+ * `workbotAgentBrief`: an MCP connection's tools as this member's account sees them, through Den's tool cache (the
+ * same listing Connect's search uses), without the tools an admin turned off for the connection everywhere. Null when
+ * it isn't one of the organization's MCP connections or its server didn't answer in time.
+ */
+export async function listConnectionToolsForMember(input: {
+  organizationId: DenTypeId<"organization">
+  memberId: DenTypeId<"member">
+  connectionId: string
+  teamIds?: readonly DenTypeId<"team">[]
+  deadlineMs?: number
+}): Promise<AgentReadToolInput[] | null> {
+  let connectionId: DenTypeId<"externalMcpConnection">
+  try {
+    connectionId = normalizeDenTypeId("externalMcpConnection", input.connectionId)
+  } catch {
+    return null
+  }
+  const connection = await getExternalMcpConnection({ organizationId: input.organizationId, connectionId })
+  if (!connection || connection.kind !== "external_mcp" || connection.toolPolicy?.allDisabled) return null
+  const teamIds = input.teamIds ?? (await listTeamsForMember({ organizationId: input.organizationId, memberId: input.memberId })).map((team) => team.id)
+  try {
+    const tools = await listExternalMcpToolsThroughSearchCache({
+      connection,
+      member: { orgMembershipId: input.memberId, teamIds: [...teamIds] },
+      redirectUriBase: env.apiPublicUrl ?? "http://127.0.0.1",
+      deadline: createExternalMcpLifecycleDeadline(input.deadlineMs ?? CONNECTION_TOOLS_DEADLINE_MS),
+    })
+    return tools
+      .filter((tool) => !isToolDisabled(connection.toolPolicy, tool.name))
+      .map((tool) => ({
+        name: tool.name,
+        title: tool.title ?? tool.annotations?.title ?? null,
+        description: tool.description ?? null,
+        annotations: tool.annotations ? { readOnlyHint: tool.annotations.readOnlyHint, destructiveHint: tool.annotations.destructiveHint } : null,
+      }))
+  } catch {
+    return null
+  }
 }

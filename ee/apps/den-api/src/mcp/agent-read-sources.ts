@@ -1,4 +1,5 @@
 import { AGENT_CORE_SOURCES, type AgentCoreSource } from "@openwork/types/den/workbot-proactive"
+import { hasReviewedReadTools, reviewedReadTool } from "@openwork/automations/agent-read-tools"
 
 /**
  * What a member's background agent ("Your agent") may read through Connect. Its turn runs with a read-scoped token
@@ -12,6 +13,12 @@ import { AGENT_CORE_SOURCES, type AgentCoreSource } from "@openwork/types/den/wo
  * - Native Google Workspace and Microsoft 365 reads are limited to the core sources that are on: calendar events,
  *   mail, and Teams chats. Nothing else (files, drafts, sites) and never a non-GET.
  *
+ * With `workbotAgentBrief` (a check's token carries `openwork:agent-tools`), any connection can be a source and the
+ * token carries the exact tools its check may call per connection, decided when the check starts
+ * (`decideAgentReadTool` in @openwork/automations): an admin's choice, a reviewed list, the provider's annotations, then
+ * the tool's name. Never one its provider marks destructive, even if it was allowed when the check started. Den's own
+ * providers may also be read outside calendar, mail and chat: any GET, except operations an admin turned off.
+ *
  * These scopes are never requested through OAuth or shown to clients; Den adds them when it mints the turn's token.
  */
 
@@ -20,6 +27,14 @@ const SOURCE_SCOPE_PREFIX = "openwork:agent-source:"
 const CONNECTION_SCOPE_PREFIX = "openwork:agent-connection:"
 /** `openwork:agent-core:<kind>:<connectionId>`: one core source, read through one connection. */
 const CORE_SCOPE_PREFIX = "openwork:agent-core:"
+/** `workbotAgentBrief`: the token carries each connection's tools; without it, the reviewed lists decide. */
+export const AGENT_TOOLS_SCOPE = "openwork:agent-tools"
+/** `openwork:agent-tool:<connectionId>:<tool name, URI-encoded>`: one tool the check may call. */
+const TOOL_SCOPE_PREFIX = "openwork:agent-tool:"
+/** `openwork:agent-native:<connectionId>`: Den's own provider, read outside calendar, mail and chat. */
+const NATIVE_SCOPE_PREFIX = "openwork:agent-native:"
+/** `openwork:agent-native-deny:<connectionId>:<operation name>`: one of its reads an admin turned off. */
+const NATIVE_DENY_SCOPE_PREFIX = "openwork:agent-native-deny:"
 
 export type AgentReadAllowlist = {
   /** Core sources that are on. */
@@ -28,6 +43,13 @@ export type AgentReadAllowlist = {
   connectionIds: ReadonlySet<string>
   /** `<kind>:<connectionId>`: which core source each native connection may be read for. */
   pairs: ReadonlySet<string>
+  /**
+   * `workbotAgentBrief`: per connection, the tools the check may call. Null or absent on any other agent token: the
+   * reviewed lists decide.
+   */
+  tools?: ReadonlyMap<string, ReadonlySet<string>> | null
+  /** `workbotAgentBrief`: Den's own providers read outside calendar, mail and chat, with the operations turned off. */
+  nativeReads?: ReadonlyMap<string, ReadonlySet<string>>
 }
 
 function isCoreSource(value: string): value is AgentCoreSource {
@@ -38,14 +60,49 @@ function pairKey(kind: AgentCoreSource, connectionId: string) {
   return `${kind}:${connectionId}`
 }
 
-/** The extra token scopes for an agent turn that may read these sources through these connections. */
-export function agentReadScopes(input: { kinds: readonly AgentCoreSource[]; connectionIds: readonly string[]; pairs?: readonly { kind: AgentCoreSource; connectionId: string }[] }): string[] {
+/**
+ * The extra token scopes for an agent turn that may read these sources through these connections. `tools` (with
+ * `workbotAgentBrief`, even empty) carries the exact tools per connection; `nativeReads`, Den's own providers read
+ * outside calendar, mail and chat.
+ */
+export function agentReadScopes(input: {
+  kinds: readonly AgentCoreSource[]
+  connectionIds: readonly string[]
+  pairs?: readonly { kind: AgentCoreSource; connectionId: string }[]
+  tools?: readonly { connectionId: string; names: readonly string[] }[]
+  nativeReads?: readonly { connectionId: string; denied: readonly string[] }[]
+}): string[] {
+  const perTool = input.tools !== undefined || input.nativeReads !== undefined
   return [
     AGENT_READ_SCOPE,
     ...[...new Set(input.kinds)].map((kind) => `${SOURCE_SCOPE_PREFIX}${kind}`),
     ...[...new Set(input.connectionIds)].map((id) => `${CONNECTION_SCOPE_PREFIX}${id}`),
     ...[...new Set((input.pairs ?? []).map((pair) => pairKey(pair.kind, pair.connectionId)))].map((key) => `${CORE_SCOPE_PREFIX}${key}`),
+    ...(perTool ? [AGENT_TOOLS_SCOPE] : []),
+    ...[...new Set((input.tools ?? []).flatMap((entry) => entry.names.map((name) => `${TOOL_SCOPE_PREFIX}${entry.connectionId}:${encodeURIComponent(name)}`)))],
+    ...(input.nativeReads ?? []).flatMap((entry) => [
+      `${NATIVE_SCOPE_PREFIX}${entry.connectionId}`,
+      ...[...new Set(entry.denied)].map((name) => `${NATIVE_DENY_SCOPE_PREFIX}${entry.connectionId}:${encodeURIComponent(name)}`),
+    ]),
   ]
+}
+
+/** `<connectionId>:<encoded name>` back to its parts; null when malformed. */
+function splitToolScope(rest: string): { connectionId: string; name: string } | null {
+  const split = rest.indexOf(":")
+  if (split <= 0) return null
+  try {
+    const name = decodeURIComponent(rest.slice(split + 1))
+    return name ? { connectionId: rest.slice(0, split), name } : null
+  } catch {
+    return null
+  }
+}
+
+function addTo(map: Map<string, Set<string>>, key: string, value?: string) {
+  const set = map.get(key) ?? new Set<string>()
+  if (value !== undefined) set.add(value)
+  map.set(key, set)
 }
 
 /** The allowlist an agent token carries, or null for every other token (whose rules are unchanged). */
@@ -54,6 +111,9 @@ export function agentReadAllowlist(scopes: ReadonlySet<string>): AgentReadAllowl
   const kinds = new Set<AgentCoreSource>()
   const connectionIds = new Set<string>()
   const pairs = new Set<string>()
+  const tools = scopes.has(AGENT_TOOLS_SCOPE) ? new Map<string, Set<string>>() : null
+  const nativeReads = new Map<string, Set<string>>()
+  const nativeDenied = new Map<string, Set<string>>()
   for (const scope of scopes) {
     if (scope.startsWith(SOURCE_SCOPE_PREFIX)) {
       const kind = scope.slice(SOURCE_SCOPE_PREFIX.length)
@@ -67,9 +127,20 @@ export function agentReadAllowlist(scopes: ReadonlySet<string>): AgentReadAllowl
       const kind = split > 0 ? rest.slice(0, split) : ""
       const id = split > 0 ? rest.slice(split + 1) : ""
       if (isCoreSource(kind) && id) pairs.add(pairKey(kind, id))
+    } else if (tools && scope.startsWith(TOOL_SCOPE_PREFIX)) {
+      const tool = splitToolScope(scope.slice(TOOL_SCOPE_PREFIX.length))
+      if (tool) addTo(tools, tool.connectionId, tool.name)
+    } else if (tools && scope.startsWith(NATIVE_DENY_SCOPE_PREFIX)) {
+      const denied = splitToolScope(scope.slice(NATIVE_DENY_SCOPE_PREFIX.length))
+      if (denied) addTo(nativeDenied, denied.connectionId, denied.name)
+    } else if (tools && scope.startsWith(NATIVE_SCOPE_PREFIX)) {
+      const id = scope.slice(NATIVE_SCOPE_PREFIX.length)
+      if (id) addTo(nativeReads, id)
     }
   }
-  return { kinds, connectionIds, pairs }
+  // A denial only narrows a native read the token grants.
+  for (const [id, denied] of nativeDenied) if (nativeReads.has(id)) nativeReads.set(id, denied)
+  return { kinds, connectionIds, pairs, tools, nativeReads }
 }
 
 /** Which core source a native capability reads, from its route; null for anything else (files, drafts, sites…). */
@@ -81,38 +152,19 @@ export function nativeSourceKind(path: string): AgentCoreSource | null {
   return null
 }
 
-/** A native capability the agent may call: a GET on one of its connections, for a core source read through that connection. */
-export function agentMayUseNative(allowlist: AgentReadAllowlist, connectionId: string, operation: { method: string; path: string }): boolean {
+/**
+ * A native capability the agent may call: a GET on one of its connections, for a core source read through that
+ * connection, or (`workbotAgentBrief`) any other read on a provider it reads outside calendar, mail and chat that an
+ * admin didn't turn off.
+ */
+export function agentMayUseNative(allowlist: AgentReadAllowlist, connectionId: string, operation: { method: string; path: string; name?: string }): boolean {
   if (operation.method.toUpperCase() !== "GET" || !allowlist.connectionIds.has(connectionId)) return false
   const kind = nativeSourceKind(operation.path)
-  return kind !== null && allowlist.kinds.has(kind) && allowlist.pairs.has(pairKey(kind, connectionId))
+  if (kind !== null) return allowlist.kinds.has(kind) && allowlist.pairs.has(pairKey(kind, connectionId))
+  const denied = allowlist.nativeReads?.get(connectionId)
+  return denied !== undefined && !(operation.name !== undefined && denied.has(operation.name))
 }
 
-/**
- * Tools reviewed as reads, by the service's MCP host (the URL its preset connects to). Only these are callable, and
- * never one whose name says it writes, even if it is listed here by mistake.
- */
-const REVIEWED_READ_TOOLS: Record<string, ReadonlySet<string>> = {
-  "mcp.slack.com": new Set([
-    "slack_search_public", "slack_search_public_and_private", "slack_read_channel", "slack_read_thread", "slack_read_canvas",
-    "slack_read_file", "slack_read_user_profile", "slack_search_users", "slack_search_channels", "slack_get_reactions",
-    "slack_list_channel_members",
-  ]),
-  "mcp.linear.app": new Set([
-    "list_issues", "get_issue", "list_my_issues", "list_comments", "list_projects", "get_project", "list_teams", "get_team",
-    "list_users", "get_user", "list_cycles", "list_documents", "get_document", "list_issue_statuses", "list_issue_labels",
-    "search_documentation",
-  ]),
-  "mcp.notion.com": new Set(["notion-search", "notion-fetch", "notion-get-comments", "notion-get-users", "notion-get-user", "notion-get-self", "notion-get-teams"]),
-  "api.githubcopilot.com": new Set([
-    "get_me", "get_issue", "list_issues", "search_issues", "issue_read", "get_issue_comments", "get_pull_request", "list_pull_requests",
-    "search_pull_requests", "pull_request_read", "get_pull_request_comments", "list_notifications", "get_notification_details",
-    "get_file_contents", "search_code", "list_commits", "get_commit",
-  ]),
-  "mcp.granola.ai": new Set(["list_meetings", "get_meetings", "get_meeting", "get_meeting_transcript", "query_granola_meetings", "search_meetings"]),
-}
-
-const WRITE_WORDS = /(?:^|[_\-.\s]|[a-z](?=[A-Z]))(send|post|create|update|upsert|delete|remove|write|edit|modify|move|archive|add|set|schedule|reply|draft|upload|invite|share|assign|close|merge|comment|react|publish|trash|cancel|accept|decline|approve|mark|submit|execute|run|trigger)(?=$|[_\-.\s]|[A-Z])/i
 function hostOf(url: string): string | null {
   try {
     return new URL(url).hostname.toLowerCase()
@@ -121,17 +173,17 @@ function hostOf(url: string): string | null {
   }
 }
 
-/** Whether agents can read through a connection at all: its service has a reviewed list of read tools. */
+/**
+ * With the feature off, whether agents can read through a connection at all: its service has a reviewed list of read
+ * tools (@openwork/automations/agent-read-tools).
+ */
 export function agentReadableConnection(connectionUrl: string): boolean {
-  const host = hostOf(connectionUrl)
-  return host !== null && REVIEWED_READ_TOOLS[host] !== undefined
+  return hasReviewedReadTools(connectionUrl)
 }
 
-/** Whether a connection's tool is one we reviewed as a read. Provider hints are never enough. */
+/** With the feature off, whether a connection's tool is one we reviewed as a read. Provider hints are never enough. */
 export function agentReadTool(connectionUrl: string, tool: { name: string }): boolean {
-  if (WRITE_WORDS.test(tool.name)) return false
-  const host = hostOf(connectionUrl)
-  return host !== null && REVIEWED_READ_TOOLS[host]?.has(tool.name) === true
+  return reviewedReadTool(connectionUrl, tool)
 }
 
 /**
@@ -151,13 +203,18 @@ export function serviceLinkDomains(connectionUrl: string): readonly string[] {
   return host ? SERVICE_LINK_DOMAINS[host] ?? [] : []
 }
 
-/** An external tool the agent may call: one of its connections, and a tool that only reads. */
+/**
+ * An external tool the agent may call: one of its connections, and a tool that only reads: one of the tools its token
+ * carries for that connection (`workbotAgentBrief`), never one its provider now marks destructive; else a reviewed read.
+ */
 export function agentMayUseExternalTool(
   allowlist: AgentReadAllowlist,
   connection: { id: string; url: string },
-  tool: { name: string },
+  tool: { name: string; annotations?: { destructiveHint?: boolean } | null },
 ): boolean {
-  return allowlist.connectionIds.has(connection.id) && agentReadTool(connection.url, tool)
+  if (!allowlist.connectionIds.has(connection.id)) return false
+  if (!allowlist.tools) return agentReadTool(connection.url, tool)
+  return allowlist.tools.get(connection.id)?.has(tool.name) === true && tool.annotations?.destructiveHint !== true
 }
 
 export const AGENT_SOURCE_BLOCKED_MESSAGE = "Your agent may only read the sources its member turned on, and only tools that read."

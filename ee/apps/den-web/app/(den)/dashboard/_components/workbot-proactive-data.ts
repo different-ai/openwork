@@ -1,7 +1,10 @@
 "use client";
 
 import {
+  agentConnectionToolsViewSchema,
   mergeAgentSourcesPolicy,
+  type AgentConnectionToolsView,
+  type AgentSourcesPolicyInput,
   workbotProactiveHealthSchema,
   workbotProactiveViewSchema,
   type WorkbotProactiveHealth,
@@ -17,6 +20,43 @@ const proactivePath = "/v1/org/workbot-settings/proactive";
 
 export function workbotProactiveQueryKey(orgId: string): string[] {
   return ["org-workbot-proactive", orgId];
+}
+
+export function agentConnectionToolsQueryKey(orgId: string, connectionId: string): string[] {
+  return ["org-workbot-agent-tools", orgId, connectionId];
+}
+
+/** `workbotAgentBrief`: one connection's tools and whether members' agents may call each ("Tools agents may use"). */
+export function useAgentConnectionTools(orgId: string, connectionId: string, enabled = true) {
+  return useQuery({
+    queryKey: agentConnectionToolsQueryKey(orgId, connectionId),
+    enabled,
+    retry: false,
+    staleTime: 60_000,
+    queryFn: async ({ signal }): Promise<AgentConnectionToolsView> => {
+      const { response, payload } = await requestJson(
+        `${proactivePath}/sources/${encodeURIComponent(connectionId)}/tools`,
+        { method: "GET", headers: { [ORG_SCOPE_HEADER]: orgId }, cache: "no-store", signal },
+        20000,
+      );
+      if (!response.ok) throw new Error(getErrorMessage(payload, `Couldn't load its tools (${response.status}).`));
+      const parsed = agentConnectionToolsViewSchema.safeParse(payload);
+      if (!parsed.success) throw new Error("Its tools came back in an unexpected shape.");
+      return parsed.data;
+    },
+  });
+}
+
+/** A tool choice shown at once: the switch moves, the count follows; a locked tool never changes. */
+export function withToolOverrides(view: AgentConnectionToolsView, overrides: NonNullable<AgentSourcesPolicyInput["toolOverrides"]>[string]): AgentConnectionToolsView {
+  const tools = view.tools.map((tool) => {
+    if (overrides === null) return tool.override ? { ...tool, override: null } : tool;
+    const value = overrides[tool.name];
+    if (value === undefined || tool.locked) return tool;
+    if (value === null) return { ...tool, override: null };
+    return { ...tool, override: value, allowed: value === "allow", reason: value === "allow" ? "admin_allowed" as const : "admin_denied" as const };
+  });
+  return { ...view, tools, readTools: tools.filter((tool) => tool.allowed).length };
 }
 
 /** Manage › Workbot › Your agent: how members' agents work, the template version, and where messages can go. */
@@ -64,6 +104,11 @@ export function useSaveWorkbotProactive(orgId: string) {
     },
     onMutate: async (change) => {
       await queryClient.cancelQueries({ queryKey: key });
+      for (const [connectionId, overrides] of Object.entries(change.sources?.toolOverrides ?? {})) {
+        const toolsKey = agentConnectionToolsQueryKey(orgId, connectionId);
+        const tools = queryClient.getQueryData<AgentConnectionToolsView>(toolsKey);
+        if (tools) queryClient.setQueryData(toolsKey, withToolOverrides(tools, overrides));
+      }
       const previous = queryClient.getQueryData<WorkbotProactiveView>(key);
       if (previous) {
         const { responsibilities, instructions, sources, brief, ...policy } = change;
@@ -86,7 +131,11 @@ export function useSaveWorkbotProactive(orgId: string) {
     onSuccess: (saved) => {
       if (saved) queryClient.setQueryData(key, saved);
     },
-    onSettled: () => queryClient.invalidateQueries({ queryKey: key }),
+    onSettled: (_saved, _error, change) => {
+      // Tool choices: the server says again what each tool is now (a choice back to automatic needs its decision).
+      for (const connectionId of Object.keys(change.sources?.toolOverrides ?? {})) void queryClient.invalidateQueries({ queryKey: agentConnectionToolsQueryKey(orgId, connectionId) });
+      return queryClient.invalidateQueries({ queryKey: key });
+    },
   });
 }
 

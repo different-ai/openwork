@@ -23,7 +23,7 @@ import {
   toldAgentItems,
   type AgentInstanceRow,
 } from "./repository.js"
-import { countConnectedMembers, listMemberConnections } from "./sources-repository.js"
+import { countConnectedMembers, listConnectionToolsForMember, listMemberConnections } from "./sources-repository.js"
 import { readAgentTemplate } from "./template.js"
 import { agentMessageId, agentMessageSessionId, agentSessionId, defaultAgentTurnDeps, endAgentMessageSession, runAgentSessionTurn, runAgentTurn } from "./turn.js"
 import { wakeAgent, type AgentWakeOutcome } from "./wake.js"
@@ -74,6 +74,7 @@ export function defaultAgentWakeDeps(): AgentBriefWakeDeps {
     endMessageSession: (sessionId) => endAgentMessageSession(sessionId, turnDeps),
     conversation: (input) => readWorkbotDirectMessages({ organizationId: input.organizationId, userId: input.userId, since: input.since }),
     requestedChecks: readAgentCheckRequests,
+    readTools: (input) => listConnectionToolsForMember({ organizationId: input.organizationId, memberId: input.memberId, connectionId: input.connection.id }),
   }
 }
 

@@ -31,6 +31,15 @@
       "development": "./src/proactive-brief.ts",
       "default": "./dist/proactive-brief.js"
     },
+    "./agent-read-tools": {
+      "types": {
+        "openwork-build": "./dist/types/src/agent-read-tools.d.ts",
+        "default": "./src/agent-read-tools.ts"
+      },
+      "bun": "./src/agent-read-tools.ts",
+      "development": "./src/agent-read-tools.ts",
+      "default": "./dist/agent-read-tools.js"
+    },
     "./testing": {
       "types": {
         "openwork-build": "./dist/types/src/testing.d.ts",

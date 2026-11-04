@@ -50,6 +50,9 @@ import {
   readableConnections,
   resolveMemberSources,
 } from "./sources.js"
+import type { AgentReadToolInput } from "@openwork/automations/agent-read-tools"
+import { planAgentTools, sourceUsable, unusableWhy } from "./agent-tools.js"
+import type { MemberConnection } from "./sources.js"
 import type { AgentRawTurnResult } from "./turn.js"
 import type { AgentWakeDeps, AgentWakeOutcome } from "./wake.js"
 import { checkSources, noticeUnreadableSources, readMemberCalendar, type CheckRecordInput } from "./wake-shared.js"
@@ -86,6 +89,11 @@ export type AgentBriefWakeDeps = AgentWakeDeps & {
   conversation: (input: { organizationId: DenTypeId<"organization">; userId: DenTypeId<"user">; since: number }) => Promise<AgentConversationTurn[] | null>
   /** The extra checks as stored now (request_check writes them during step 1). */
   requestedChecks: (memberId: DenTypeId<"member">) => Promise<AgentCheckRequest[]>
+  /**
+   * An MCP connection's tools as the member's account sees them (name, description, annotations), for deciding which
+   * the check may call; null when its server didn't answer.
+   */
+  readTools: (input: { organizationId: DenTypeId<"organization">; memberId: DenTypeId<"member">; connection: MemberConnection }) => Promise<readonly AgentReadToolInput[] | null>
 }
 
 type Skip = "off" | "not_allowed" | "opted_out" | "snoozed" | "outside_hours" | "quiet_hours" | "no_destination" | "slack_app_not_installed" | "member_not_linked" | "no_sources" | "nothing_due"
@@ -185,7 +193,8 @@ export async function wakeAgentBrief(row: AgentInstanceRow, deps: AgentBriefWake
     deps.connectedMembers ? deps.connectedMembers(organizationId).catch(() => undefined) : Promise.resolve(undefined),
   ])
   const looked = await readMemberCalendar({
-    sources: resolveMemberSources({ connections: listed ?? [], policy: settings.sources, choices: stored.sources, lastLook: state.lastLook, connectedMembers }),
+    // Any connected connector, each under its own policy (`any`): no reviewed list decides what can be a source.
+    sources: resolveMemberSources({ connections: listed ?? [], policy: settings.sources, choices: stored.sources, lastLook: state.lastLook, connectedMembers, mode: "any" }),
     read: (connectionId) => deps.calendar({ organizationId, orgMembershipId: memberId, connectionId, timeMin: iso(now), timeMax: iso(now + HOUR_MS) }),
     memberId,
   })
@@ -210,10 +219,29 @@ export async function wakeAgentBrief(row: AgentInstanceRow, deps: AgentBriefWake
     return { status: "ran", reasons: ["scheduled"], reply: "unavailable", delivered: null }
   }
   if (!listed) return retry("sources_unavailable")
-  const readable = sources.filter((source) => readableConnections(source).length > 0)
+  const ready = sources.filter((source) => readableConnections(source).length > 0)
   const notices = await noticeUnreadableSources({
-    row, organizationId, userId, unreadable: blockedConnections(sources), othersReadable: readable.length > 0, told: state.notices, now, slot, kind, deps, record,
+    row, organizationId, userId, unreadable: blockedConnections(sources), othersReadable: ready.length > 0, told: state.notices, now, slot, kind, deps, record,
   })
+  // Which tools the check may call on each connection, decided now: an admin's choice, a reviewed list, the provider's
+  // annotations, then the tool's name. Only these ride in its token; a source left with none sits this check out.
+  const toolPlan = await planAgentTools({
+    sources: ready,
+    overrides: settings.sources.toolOverrides ?? {},
+    listTools: (connection) => deps.readTools({ organizationId, memberId, connection }),
+  })
+  for (const entry of toolPlan.connections) {
+    appLogger.info("workbot_agent_read_tools", {
+      member_id: memberId,
+      connection_id: entry.connection.id,
+      status: entry.status,
+      allowed: entry.allowed.join(","),
+      allowed_count: entry.allowed.length,
+      denied_count: entry.denied,
+    })
+  }
+  const readable = ready.filter((source) => sourceUsable(source, toolPlan))
+  const withoutTools = ready.filter((source) => !sourceUsable(source, toolPlan))
   if (!readable.length) {
     return skip("no_sources", now + Math.min(6, row.failures + 1) * HOUR_MS, { state: JSON.stringify({ ...state, notices }), timeZone, failures: row.failures + 1 })
   }
@@ -244,12 +272,15 @@ export async function wakeAgentBrief(row: AgentInstanceRow, deps: AgentBriefWake
         instruction: source.instruction,
         lastReadAt: source.lastReadAt,
       })),
-      unavailable: sources
-        .filter((source) => source.on && source.connections.length > 0 && !readableConnections(source).length)
-        .map((source) => ({ name: source.name, why: source.connections.some((connection) => connection.state === "reconnect") ? "needs reconnecting" : "not connected" })),
+      unavailable: [
+        ...sources
+          .filter((source) => source.on && source.connections.length > 0 && !readableConnections(source).length)
+          .map((source) => ({ name: source.name, why: source.connections.some((connection) => connection.state === "reconnect") ? "needs reconnecting" : "not connected" })),
+        ...withoutTools.map((source) => ({ name: source.name, why: unusableWhy(source, toolPlan) })),
+      ],
     }),
     messageId: deps.messageId(memberId, row.nextWakeAt.getTime()),
-    scopes: agentReadScopes(readAllowlist(sources)),
+    scopes: agentReadScopes({ ...readAllowlist(readable), tools: toolPlan.tools, nativeReads: toolPlan.nativeReads }),
   })
   if (check.kind === "unavailable") return retry(check.code)
   logUsage(memberId, "check", check)

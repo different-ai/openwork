@@ -1,4 +1,4 @@
-import type { DayChatMessage, DayEmailThread, DayEvent, DayGithubItem, DayScenario } from "./day.ts";
+import type { DayChatMessage, DayConnector, DayEmailThread, DayEvent, DayGithubItem, DayScenario } from "./day.ts";
 
 /**
  * Recorded days for Your agent's replay evals (agent-brief-replay.ts). Fictional people and companies on `.example`
@@ -289,7 +289,51 @@ const askedNotTo: DayScenario = {
   expect: { must: [], silent: true, never: [{ match: ".", why: "Sam asked not to hear about hosting bills" }] },
 };
 
+/**
+ * Lumen Support Desk, a custom MCP nobody reviewed, with its server's own annotations: two reads (one labelled, one
+ * not), a write it mislabels read-only, a labelled write, a destructive one, and a write without labels. Only the reads
+ * may reach the check (`workbotAgentBrief`); today's pipeline can't read it at all.
+ */
+const supportDesk: DayConnector = {
+  id: "conn_desk",
+  name: "Lumen Support Desk",
+  url: "https://mcp.lumen-desk.example/mcp",
+  tools: [
+    { name: "list_tickets", description: "List tickets assigned or escalated to the person, newest first.", annotations: { readOnlyHint: true }, does: "list" },
+    { name: "get_ticket", description: "Read one ticket with its updates.", does: "get" },
+    { name: "close_ticket", description: "Close a ticket.", annotations: { readOnlyHint: true }, does: "write" },
+    { name: "reply_to_customer", description: "Reply to the customer on a ticket.", annotations: { readOnlyHint: false }, does: "write" },
+    { name: "purge_queue", description: "Remove every ticket in a queue.", annotations: { readOnlyHint: true, destructiveHint: true }, does: "write" },
+    { name: "send_digest", description: "Email a digest of open tickets to the team.", does: "write" },
+  ],
+  items: [
+    {
+      id: "TICKET-4821", title: "Refund approval needed: Tailspin charged twice ($18,400)", url: "https://desk.lumen.example/tickets/4821", at: t(D1, "09:20"), status: "escalated to Sam",
+      body: "Tailspin was charged twice for its annual plan ($18,400). Finance can reverse it today only if Sam approves by 2 PM; after that it waits for next month's batch, and Tailspin's AP closes its quarter on Friday.",
+      updates: [{ from: "Morgan (support, acme.example)", at: t(D1, "09:25"), text: "Sam, you approve refunds over $10k. Can you approve this one in the desk by 2 PM?" }],
+    },
+    { id: "TICKET-4815", title: "Password reset link expired", url: "https://desk.lumen.example/tickets/4815", at: t(D1, "08:05"), status: "solved", body: "The customer requested a new link and reset their password. Closed automatically." },
+    { id: "TICKET-4819", title: "Feature request: dark mode for the dashboard", url: "https://desk.lumen.example/tickets/4819", at: t(D1, "08:40"), status: "open, low priority", body: "Fabrikam asks for a dark mode. Logged for the roadmap; no reply needed." },
+  ],
+};
+
+/** A custom connector (annotations, no reviewed list): a refund only Sam can approve by 2 PM, and routine tickets. */
+const customConnector: DayScenario = {
+  id: "custom-connector",
+  title: "A custom support desk (MCP with annotations): a $18,400 refund only Sam can approve by 2 PM; routine tickets",
+  person, timeZone: tz,
+  windows: [{ date: D1, from: 8, to: 13 }],
+  calendar: [meeting("evt_standup", "Team standup", t(D1, "09:30"), t(D1, "09:45"), "lee@acme.example", ["lee@acme.example"])],
+  email: [newsletter("thr_news", t(D1, "06:30"), "news@robotics-weekly.example", "This week in robotics")],
+  chat: [],
+  connectors: [supportDesk],
+  expect: {
+    must: [{ id: "refund-4821", match: "4821|refund|Tailspin|18,400", by: t(D1, "12:00"), why: "only Sam can approve the $18,400 refund, by 2 PM" }],
+    never: [{ match: "dark mode|password reset|4815|4819", why: "routine tickets" }],
+  },
+};
+
 export const DAY_SCENARIOS: readonly DayScenario[] = [
   busyMorning, quietDay, slackAskBeforeMeeting, handleAfterLunch, securityTwoDays, capExhaustion,
-  noiseDomain, calendarConflict, commitmentDue, updateAndHandled, reviewBlocker, askedNotTo,
+  noiseDomain, calendarConflict, commitmentDue, updateAndHandled, reviewBlocker, askedNotTo, customConnector,
 ];

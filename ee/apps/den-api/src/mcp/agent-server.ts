@@ -133,7 +133,7 @@ export const MY_AGENT_INSTRUCTIONS = "To change what Your agent tells the user, 
  * The same rule with Your agent's brief (`workbotAgentBrief`): what it tells them is lines in their words, and how often
  * it checks is theirs to slow down.
  */
-export const MY_AGENT_BRIEF_INSTRUCTIONS = "To change what Your agent tells the user (\"also watch our Render bill\", \"never tell me about newsletters\": lines added to their brief) or how often it checks, use putMeAgent; to explain why it was quiet or when it checks next, read the user's agent and its checks."
+export const MY_AGENT_BRIEF_INSTRUCTIONS = "To change what Your agent tells the user (\"also watch our Render bill\", \"never tell me about newsletters\": lines added to their brief), what it reads (\"also use Linear\", \"use my Granola for meeting context\": any connector they can use, by name in `sources`) or how often it checks, use putMeAgent; to explain why it was quiet or when it checks next, read the user's agent and its checks."
 
 /**
  * A full-view tools/list is the member's own, so clients may reuse it only for

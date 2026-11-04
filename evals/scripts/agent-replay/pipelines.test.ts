@@ -99,6 +99,38 @@ describe("brief replay harness", () => {
     expect(report).toContain("| busy-morning |");
   });
 
+  test("a custom connector: the brief's check is offered only its read tools; a write it tries is refused; today's can't read it", async () => {
+    const desk = scenario("custom-connector");
+    const seen: { offered: string[]; answers: Record<string, string> } = { offered: [], answers: {} };
+    const model: ReplayModel = async ({ messages, tools }) => {
+      const system = messages[0]?.role === "system" ? messages[0].content : "";
+      if (system.includes("You have no tools in this step")) return { content: "NO_REPLY" };
+      const last = messages.at(-1);
+      if (last?.role === "tool") {
+        for (const message of messages) if (message.role === "tool") seen.answers[message.tool_call_id] = message.content ?? "";
+        return { content: "NO_FINDINGS" };
+      }
+      seen.offered = (tools ?? []).map((tool) => tool.function.name);
+      return {
+        content: null,
+        tool_calls: [
+          { id: "list", type: "function", function: { name: "list_tickets", arguments: "{}" } },
+          { id: "close", type: "function", function: { name: "close_ticket", arguments: "{\"id\":\"TICKET-4821\"}" } },
+        ],
+      };
+    };
+    const run = await runNewPipeline(desk, model);
+    expect(run.connectorTools).toEqual(["list_tickets", "get_ticket"]);
+    expect(seen.offered).toEqual(expect.arrayContaining(["list_tickets", "get_ticket"]));
+    for (const write of ["close_ticket", "reply_to_customer", "purge_queue", "send_digest"]) expect(seen.offered).not.toContain(write);
+    expect(seen.answers.close).toContain("insufficient_mcp_scope");
+    expect(seen.answers.list).toContain("TICKET-4821");
+    expect(scoreDay(desk, run)).toMatchObject({ writeToolsOffered: 0, writeToolCalls: run.checks.length });
+    const legacy = await runOldPipeline(desk, model);
+    expect(legacy.connectorTools ?? []).toEqual([]);
+    expect(seen.offered).not.toContain("list_tickets");
+  });
+
   test("every scenario is fictional: example domains only", () => {
     for (const entry of DAY_SCENARIOS) {
       const text = JSON.stringify(entry);

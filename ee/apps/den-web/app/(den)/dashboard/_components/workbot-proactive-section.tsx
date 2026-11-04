@@ -24,6 +24,8 @@ import { useSaveWorkbotProactive, useWorkbotProactive } from "./workbot-proactiv
 import { PROACTIVE_PREVIEW_KINDS, WorkbotProactivePreview } from "./workbot-proactive-preview";
 import { WorkbotProactiveSources } from "./workbot-proactive-sources";
 import { WorkbotAgentBriefPanel } from "./workbot-agent-brief-panel";
+import { getLibraryConnectorRoute } from "../../_lib/den-org";
+import { useOrgDashboard } from "../_providers/org-dashboard-provider";
 
 /**
  * Manage › Workbot › Your agent: every member gets a background agent that reads their calendar, email, team chat and
@@ -257,6 +259,7 @@ function errorMessage(error: unknown, fallback: string): string {
 
 export function WorkbotProactiveSection({ orgId, canManage, connectorsHref }: { orgId: string; canManage: boolean; connectorsHref: string }) {
   const query = useWorkbotProactive(orgId, Boolean(orgId));
+  const { orgSlug } = useOrgDashboard();
   const save = useSaveWorkbotProactive(orgId);
   const headingId = useId();
 
@@ -282,7 +285,8 @@ export function WorkbotProactiveSection({ orgId, canManage, connectorsHref }: { 
             connectorsHref={connectorsHref}
             onChange={(change) => save.mutate(change)}
           />
-          <WorkbotProactiveSources view={query.data} canManage={canManage} saving={save.isPending} onChange={(change) => save.mutate(change)} />
+          <WorkbotProactiveSources view={query.data} canManage={canManage} saving={save.isPending} onChange={(change) => save.mutate(change)}
+            tools={{ orgId, connectorHref: (connectionId) => getLibraryConnectorRoute(orgSlug, connectionId) }} />
         </div>
       ) : (
         <PanelSkeleton />
