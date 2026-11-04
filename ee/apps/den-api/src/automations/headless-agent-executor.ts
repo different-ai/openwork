@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto"
+import { connectionBlockerFromToolCalls } from "@openwork/headless-threads"
 import { and, eq, isNull } from "@openwork-ee/den-db/drizzle"
 import { MemberTable } from "@openwork-ee/den-db/schema"
 import { normalizeDenTypeId } from "@openwork-ee/utils/typeid"
@@ -14,7 +15,7 @@ import {
   type RunnerTurn,
 } from "../headless-runner/client.js"
 import { DEN_MCP_HEADLESS_RUN_TOKEN_MAX_TTL_MS } from "../mcp/headless-run-token.js"
-import type { CloudAgentEvent, CloudAgentExecution, CloudAgentExecutorInput } from "./cloud-agent-executor.js"
+import { connectionBlockedExecution, type CloudAgentEvent, type CloudAgentExecution, type CloudAgentExecutorInput } from "./cloud-agent-executor.js"
 import { cloudAutomationRuntime } from "./headless-runtime.js"
 import { organizationCloudModel } from "../workbot/model.js"
 import { cloudAgentGatewayCatalog } from "../workbot/gateway-model.js"
@@ -330,6 +331,10 @@ export async function executeHeadlessAgent(
       const answer = read.value.messages.filter((message) => message.role === "assistant" && message.toolCalls.length === 0).at(-1)
       const resultSummary = (answer?.role === "assistant" ? answer.text : read.value.finalAssistantText).trim()
         || "The Automation run finished without a written result."
+      const blocker = connectionBlockerFromToolCalls(read.value.messages.flatMap((message) => message.role === "tool" ? [{ name: message.name, output: message.output }] : []))
+      if (blocker) {
+        return connectionBlockedExecution({ blocker, answer: answer?.role === "assistant" ? answer.text : read.value.finalAssistantText, usage, events: transcriptEvents(read.value.messages, usage) })
+      }
       return {
         ok: true,
         threadId: runSessionId,

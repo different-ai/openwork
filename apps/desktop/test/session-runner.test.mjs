@@ -57,6 +57,7 @@ function nativeFixture() {
   let pendingForm = false
   let routing = "v2"
   let autoReply = false
+  let replyContent = null
   let loseCreateResponse = false
   let localToken = "local-credential"
   const response = (body, status = 200) => new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json" } })
@@ -91,7 +92,9 @@ function nativeFixture() {
         messages.push({ id: body.id ?? `msg_legacy${messages.length}`, role: "user", text: body.text })
         active = true
         if (autoReply) {
-          messages.push({ id: `msg_reply${messages.length}`, role: "assistant", text: "fixture reply" })
+          messages.push(replyContent
+            ? { id: `msg_reply${messages.length}`, role: "assistant", content: replyContent }
+            : { id: `msg_reply${messages.length}`, role: "assistant", text: "fixture reply" })
           active = false
         }
       }
@@ -121,7 +124,7 @@ function nativeFixture() {
     calls, messages, fetchImpl, getLocalRuntime: async () => ({ baseUrl: "http://localhost:8787", token: localToken }),
     get created() { return created }, get sessionId() { return sessionId }, get interrupts() { return interrupts },
     set pendingPermission(value) { pendingPermission = value }, set pendingForm(value) { pendingForm = value }, set routing(value) { routing = value },
-    set active(value) { active = value }, set autoReply(value) { autoReply = value },
+    set active(value) { active = value }, set autoReply(value) { autoReply = value }, set replyContent(value) { replyContent = value },
     set loseCreateResponse(value) { loseCreateResponse = value }, set localToken(value) { localToken = value },
   }
 }
@@ -561,6 +564,45 @@ test("scheduled Automation execution stays independent with a recovery-capable t
   assert.equal(native.calls.find((call) => call.path.endsWith("/prompt")).body.id, undefined)
   const disk = JSON.parse(await readFile(join(root, desktopSessionRunnerPartition(denBaseUrl, account), "journal.json"), "utf8").catch(() => "{\"commands\":[],\"requests\":[]}"))
   assert.deepEqual(disk.commands, [])
+})
+
+test("a desktop Automation that could not use a connection fails and names it", async (t) => {
+  const root = await privateDirectory(t)
+  const native = nativeFixture()
+  native.autoReply = true
+  // What OpenWork Cloud returns when a capability call needs the owner to reconnect.
+  const connectionStatus = {
+    version: 1, kind: "connection_action", source: "openwork-cloud", layer: "mcp_connection",
+    connectionId: "mcp_gmail", connectionName: "Gmail", authType: "oauth", credentialMode: "per_member",
+    state: "reauth_required", errorCode: "invalid_grant", message: "Gmail rejected the saved sign-in.", actor: "member",
+    action: { type: "reconnect", label: "Reconnect Gmail", surface: "openwork_your_connections", retry: "search_capabilities", url: "https://den.invalid/dashboard/your-connections?connectionId=mcp_gmail" },
+  }
+  native.replyContent = [
+    { type: "tool", name: "openwork-cloud_execute_capability", callID: "call_gmail", state: { status: "error", input: {}, error: { type: "unknown", message: JSON.stringify({ error: "connection_required", connectionStatus }) } } },
+    { type: "text", text: "I could not send the summary because Gmail needs to be reconnected." },
+  ]
+  const den = runnerFixture(native, {
+    kind: "automation_run", runId: "run_fixture", automationName: "Fixture schedule", attempt: 1,
+    instructions: "scheduled turn", model: { providerId: "fixture", modelId: "fixture-model" }, timeoutMs: 10_000,
+    workspaceId: "workspace_fixture",
+  })
+  const originalFetch = den.fetchImpl
+  den.fetchImpl = async (input, init) => String(input).endsWith("/opencode2/api/model")
+    ? new Response(JSON.stringify({ data: [{ providerID: "fixture", id: "fixture-model" }] }), { status: 200 })
+    : originalFetch(input, init)
+  const runner = desktopRunner(native, den, root)
+  t.after(() => runner.stop())
+  configure(runner, recoveryCapabilities)
+  await eventually(() => den.calls.some((call) => call.path === "/v1/automation-runs/run_fixture/complete"))
+  const complete = den.calls.find((call) => call.path === "/v1/automation-runs/run_fixture/complete")
+  assert.equal(complete.body.status, "failed")
+  assert.equal(complete.body.error.code, "connection_action_required")
+  assert.match(complete.body.error.message, /Reconnect Gmail in OpenWork/)
+  assert.equal(complete.body.resultSummary, "I could not send the summary because Gmail needs to be reconnected.")
+  assert.equal("connectionBlocker" in complete.body, false)
+  const warning = den.calls.find((call) => call.path === "/v1/automation-runs/run_fixture/events" && call.body.type === "warning")
+  assert.equal(warning?.body.payload.connectionName, "Gmail")
+  assert.equal(warning?.body.payload.connectionId, "mcp_gmail")
 })
 
 test("an engine policy the local server cannot take yet never stops the runner from finding work", async (t) => {

@@ -25,6 +25,22 @@ export function denDashboardUrl(baseUrl: string, link: DenDashboardLink): string
   return new URL(DEN_DASHBOARD_LINKS[link], baseUrl).toString();
 }
 
+/** Your Connections, opened on one connection: where a member connects or reconnects it. */
+export const DEN_YOUR_CONNECTIONS_PATH = "/dashboard/your-connections";
+
+export function denYourConnectionUrl(baseUrl: string, connectionId: string): string | null {
+  const trimmed = baseUrl.trim();
+  if (!trimmed || !connectionId.trim()) return null;
+  try {
+    const url = new URL(DEN_YOUR_CONNECTIONS_PATH, trimmed);
+    if (url.protocol !== "https:" && url.protocol !== "http:") return null;
+    url.searchParams.set("connectionId", connectionId);
+    return url.toString();
+  } catch {
+    return null;
+  }
+}
+
 /** Den's admin setup for one catalog connector (Manage → Connectors → Add), where the organization's app is added. */
 export const DEN_CONNECTOR_SETUP_PATH = "/dashboard/mcp-connections/new/";
 

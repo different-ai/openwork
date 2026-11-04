@@ -1,4 +1,10 @@
 export { createHeadlessThreadClient } from "./client.js";
+export {
+  connectionBlockerFromToolCalls,
+  connectionBlockerFromToolResult,
+  connectionBlockerMessage,
+} from "./connection-blocker.js";
+export type { ConnectionBlocker, ConnectionBlockerToolCall } from "./connection-blocker.js";
 export { HeadlessThreadError, isHeadlessModelAccessError } from "./errors.js";
 export { hasAssistantReplySince, toTranscript, toTranscriptMessage } from "./transcript.js";
 export { isRunning } from "./wire.js";
