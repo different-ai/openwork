@@ -19,13 +19,13 @@ test("both flags on put outside folders with files and computer use immediately 
   assert.equal(groups[0]?.label, "Commands and files");
   assert.deepEqual(groups[0]?.definitions.map((definition) => definition.key), ["commands", "fileEdits", "externalFolders"]);
   assert.equal(groups[1]?.label, "Computer use");
-  assert.deepEqual(groups[1]?.definitions.map((definition) => definition.key), ["computerUse", "appScripting"]);
+  assert.deepEqual(groups[1]?.definitions.map((definition) => definition.key), ["computerUse", "computerFiles", "computerClipboard", "appScripting"]);
   assert.equal(visibleKeys("agents", true, true).includes("websites"), false);
 });
 
-test("computer use off hides only its row, preserving scripting, outside folders and general rows", () => {
+test("computer use off hides its rows, preserving scripting, outside folders and general rows", () => {
   for (const area of ["all", "agents", "browser"] satisfies ("all" | "agents" | "browser")[]) {
-    assert.deepEqual(visibleKeys(area, true, false), visibleKeys(area, true, true).filter((key) => key !== "computerUse"));
+    assert.deepEqual(visibleKeys(area, true, false), visibleKeys(area, true, true).filter((key) => !["computerUse", "computerFiles", "computerClipboard"].includes(key)));
     assert.deepEqual(visibleAgentPermissionTryKinds(area, true, false), visibleAgentPermissionTryKinds(area, true, true));
   }
   assert.deepEqual(visibleAgentPermissionGroups("agents", true, false)[1]?.definitions.map((definition) => definition.key), ["appScripting"]);
@@ -48,6 +48,16 @@ test("scripting reports both own and inherited computer blocks; explicit team al
   assert.equal(agentPermissionBlockedBy("appScripting", { computerUse: { decision: "allow" } }, { computerUse: { decision: "deny" } }), null);
   assert.equal(agentPermissionBlockedBy("appScripting", { computerUse: { decision: "ask" } }, null), null);
   assert.equal(agentPermissionBlockedBy("appScripting", {}, null), null);
+  for (const key of ["computerFiles", "computerClipboard"]) {
+    assert.equal(agentPermissionBlockedBy(key, {}, { computerUse: { decision: "deny" } })?.key, "computer-use");
+    assert.equal(agentPermissionBlockedBy(key, { computerUse: { decision: "ask" } }, null), null);
+  }
+});
+
+test("copy and paste is a switch, and moving files offers Ask first", () => {
+  const options = (key: string) => agentPermissionChoiceOptions(agentPermissionDefinitions.find((definition) => definition.key === key)!, null).map((option) => option.value);
+  assert.deepEqual(options("computerFiles"), ["allow", "ask", "deny"]);
+  assert.deepEqual(options("computerClipboard"), ["allow", "deny"]);
 });
 
 test("disabled computer use removes own and inherited scripting blocks from previews without losing saved settings", () => {

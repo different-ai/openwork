@@ -15,7 +15,7 @@ function fixture({ confirm = async () => true } = {}) {
   return { policy, setRules: value => { rules = value; }, fail: () => { failed = true; }, recover: () => { failed = false; }, tick: () => { clock += 30_000; }, reads: () => reads };
 }
 
-for (const kind of ["computer", "script"]) test(`${kind} allows by default and applies allow, ask and deny`, async () => {
+for (const kind of ["computer", "computer_files", "computer_clipboard", "script"]) test(`${kind} allows by default and applies allow, ask and deny`, async () => {
   const f = fixture();
   assert.deepEqual(await f.policy.check({ kind }), { effect: "allow" });
   for (const effect of ["allow", "ask", "deny"]) {
@@ -46,7 +46,7 @@ test("a successful refresh expires cached rules and an empty policy restores cur
   assert.equal(f.reads(), 2);
 });
 
-for (const kind of ["computer", "script"]) {
+for (const kind of ["computer", "computer_files", "computer_clipboard", "script"]) {
   test(`${kind} denies before the first successful read and retries on the next check`, async () => {
     const f = fixture(); f.fail();
     assert.deepEqual(await f.policy.check({ kind }), {

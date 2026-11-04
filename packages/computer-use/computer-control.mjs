@@ -43,6 +43,9 @@ const withPostObservation = (receipt, status, content = [], extra = {}) => ({ ..
     ...(!status.ok ? { next: status.next, fresh_observation_required: true } : {}), ...extra }) }, ...content] });
 const COORDINATE_ACTIONS = new Set(["move", "click", "double_click", "triple_click", "scroll", "drag"]);
 const actionEntries = (args) => [args.action, ...(Array.isArray(args.actions) ? args.actions : [])].filter((entry) => entry && typeof entry === "object");
+/** Command-C, Command-X or Command-V: a copy, cut or paste through the agent's clipboard. */
+const isClipboardStep = (entry) => entry.type === "key" && typeof entry.key === "string" && ["c", "x", "v"].includes(entry.key.toLowerCase())
+  && Array.isArray(entry.modifiers) && entry.modifiers.includes("command");
 const observationPart = (content) => {
   for (const [index, part] of content.entries()) {
     if (part.type !== "text") continue;
@@ -198,6 +201,9 @@ function deadline(ms) {
  * @typedef {{ ok?: boolean, error?: { code: string, message: string }, mayHaveActed?: boolean, [key: string]: unknown }} ScriptResult
  * @typedef {{ id: string, reason: "setup" | "script" | "files" | "credential", computer: string, placement: "local" | "remote", detail?: string, appId?: string, purpose?: string, standing?: boolean, script?: { app: string, code: string }, files?: { app: string, names: string[] }, credential?: { site?: string, app?: string, appId?: string } }} ComputerRequest
  * @typedef {{ targets?: Record<string, string>, computer?: string }} SavedChoices
+ * @typedef {{ effect: "allow" } | { effect: "ask" } | { effect: "deny", message: string }} MoveDecision
+ * @typedef {{ kind: "files", app: string, names: string[], save?: boolean } | { kind: "clipboard" }} ContentMove
+ * @typedef {{ answer: "allow" } | { answer: "blocked", message: string } | { answer: "dismiss" | "aborted" | "timeout" | "busy" | "too_many" }} MoveAnswer
  * @typedef {{
  *   callTool: (name: string, args: Record<string, unknown>, options?: { signal?: AbortSignal, timeoutMs?: number }) => Promise<ComputerResult>,
  *   notifyUi: (params: Record<string, unknown>) => Promise<void>,
@@ -247,6 +253,7 @@ const isWebBrowser = (app) => String(app).toLowerCase().split(/[^a-z0-9]+/).some
  *   presence?: { name: string, color: string } | null,
  *   permissionEntry?: () => Promise<{ name: string, ours: boolean }>,
  *   onRequest?: (sessionId: string, request: ComputerRequest | null) => void,
+ *   movePolicy?: (input: { kind: "computer_files" | "computer_clipboard", sessionId: string }) => Promise<MoveDecision>,
  *   requestMs?: number,
  *   runScript?: (request: { app: string, code: string, timeoutMs: number }, signal: AbortSignal) => Promise<ScriptResult>,
  *   onTiming?: (sessionId: string, step: { name: string, computerMs: number, modelMs?: number, followed?: boolean }) => void,
@@ -254,7 +261,7 @@ const isWebBrowser = (app) => String(app).toLowerCase().split(/[^a-z0-9]+/).some
  * }} options
  */
 export function createComputerControl({ adapters, runProgram, runScript, onTiming = () => {}, browserTask, readRemoteFeatureEnabled = async () => false, standing = { read: async () => ({ targets: {} }), write: async (_state) => {} }, presence = null, platform = process.platform,
-  permissionEntry = async () => ({ name: "OpenWork", ours: false }), onRequest = () => {},
+  permissionEntry = async () => ({ name: "OpenWork", ours: false }), onRequest = () => {}, movePolicy = async (_input) => ({ effect: "allow" }),
   cleanupMs = 3000, operationMs = 120_000, pollMs = 750, idleMs = 90_000, requestMs = 600_000, now = Date.now }) {
   const targets = new Map();
   for (const candidate of Array.isArray(adapters) ? adapters : []) {
@@ -400,9 +407,38 @@ export function createComputerControl({ adapters, runProgram, runScript, onTimin
       standing: false, script: { app, code } }, signal);
   }
   /**
+   * The one check for content the agent moves between apps: files it hands to an app (a
+   * file panel, `open_file`, `computer_open({ file })`), files it saves or exports
+   * (`save_as`), and its own clipboard. The organization decides in Agent permissions.
+   * With no rule the agent goes ahead and nothing asks; Ask first shows each file, every
+   * time; Block refuses. The clipboard is on or off.
+   * Callers: `approveMove(grant, { kind: "files" | "clipboard", app?, names?, save? }, signal)`.
+   * Saves (`save_as`, `save_image`) and Open-panel picks are kind `files`. A shortcut for
+   * the chat's own files may skip only the Ask first card, never a block. A policy that
+   * cannot be read refuses with a clear message; it never falls back to asking.
+   * @param {ContentMove} move
+   * @param {AbortSignal} signal
+   * @returns {Promise<MoveAnswer>}
+   */
+  async function approveMove(grant, move, signal) {
+    const files = move.kind === "files";
+    /** @type {MoveDecision} */
+    let decision;
+    try { decision = await movePolicy({ kind: files ? "computer_files" : "computer_clipboard", sessionId: grant.sessionId }); }
+    catch { decision = { effect: "deny", message: "Your organization's agent permissions could not be checked." }; }
+    if (decision?.effect === "allow") return { answer: "allow" };
+    // A switch cannot ask: copy and paste that asks is blocked, as Den stores it.
+    if (decision?.effect !== "ask" || !files) {
+      return { answer: "blocked", message: decision?.effect === "deny" && typeof decision.message === "string" ? decision.message : "Your organization's agent permissions block this." };
+    }
+    const answer = await approveFiles(grant, { app: move.app, names: move.names, ...(move.save ? { save: true } : {}), everyTime: true }, signal);
+    return answer === "always" || answer === "allow" ? { answer: "allow" } : { answer };
+  }
+  /**
    * Shows which files an app or page is about to receive and waits for Send, Always
    * allow in this chat, or Don't send. Files leave this computer only on that answer.
-   * @param {{ app: string, names: string[] }} files
+   * `everyTime`: the organization asks about each file, so nothing is remembered.
+   * @param {{ app: string, names: string[], save?: boolean, everyTime?: boolean }} files
    * @returns {Promise<"allow" | "always" | "dismiss" | "aborted" | "timeout" | "busy" | "too_many">}
    */
   async function approveFiles(grant, files, signal) {
@@ -411,13 +447,15 @@ export function createComputerControl({ adapters, runProgram, runScript, onTimin
     // The recipient is the approval's key: refused when too long to show, never shortened.
     const app = String(files.app);
     if (!app || app.length > 200) return "too_many";
+    const everyTime = files.everyTime === true;
     // "Always" covers only the recipient it was given for, and only handing over files.
-    if (files.names.length && grant.filesAlwaysFor?.has(app)) return "always";
+    if (files.names.length && !everyTime && grant.filesAlwaysFor?.has(app)) return "always";
     if (scriptRequests.has(grant.sessionId)) return "busy";
     const target = targetFor(grant);
     const names = [...files.names];
     const answer = await approve(grant, { id: randomUUID(), reason: /** @type {const} */ ("files"), computer: target.label, placement: target.placement,
-      files: { app, names } }, signal);
+      ...(everyTime ? { standing: false } : {}), files: { app, names } }, signal);
+    if (everyTime) return answer === "always" ? "allow" : answer;
     // Allowing a panel to be browsed lists no files, so it never becomes a standing approval.
     if (answer === "always" && !names.length) return "allow";
     if (answer === "always") (grant.filesAlwaysFor ??= new Set()).add(app);
@@ -1652,6 +1690,11 @@ export function createComputerControl({ adapters, runProgram, runScript, onTimin
             entry.path = fitDragPath(entry.path);
           }
         }
+        // Copy, cut and paste move content between apps: the organization's rule applies first.
+        if (entries.some(isClipboardStep)) {
+          const checked = await approveMove(grant, { kind: "clipboard" }, signal);
+          if (checked.answer === "blocked") return failure("organization_policy_denied", `${checked.message} Nothing was copied or pasted; type the text or use the app's own controls instead.`);
+        }
         let confirmedApp = null;
         if (secret) {
           const app = typeof call.app?.lastOpen?.app_id === "string" ? call.app.lastOpen.app_id : "";
@@ -1686,15 +1729,19 @@ export function createComputerControl({ adapters, runProgram, runScript, onTimin
           }
         }
         // The helper stopped before a file panel: before showing its contents, and before
-        // handing over a selection. The person answers in the chat; the approval sent back
-        // is bound to exactly what they saw, and the helper checks it again.
+        // handing over a selection. The organization's rule decides, so by default the agent
+        // goes ahead; when it asks, the person answers in the chat. The approval sent back is
+        // bound to exactly these files or this panel, and the helper checks it again.
         const panel = name === "computer_observe" && asked?.code === "file_panel_approval_required";
         const handover = name === "computer_act" && asked?.code === "files_approval_required";
         if ((panel || handover) && asked.dispatched === false) {
           const names = handover && Array.isArray(asked.files) ? asked.files : [];
-          const answer = handover && !names.length ? "unreadable"
-            : await approveFiles(grant, { app: typeof asked.app === "string" ? asked.app : "the app", names }, signal);
-          if (!["allow", "always"].includes(answer)) {
+          const checked = handover && !names.length ? /** @type {const} */ ({ answer: "unreadable" })
+            : await approveMove(grant, { kind: "files", app: typeof asked.app === "string" ? asked.app : "the app", names }, signal);
+          const answer = checked.answer;
+          if (checked.answer === "blocked") {
+            result = failure("organization_policy_denied", `${checked.message} ${panel ? "The agent cannot look through files here; cancel the panel" : "Nothing was sent; cancel the panel"} or ask the person to choose.`);
+          } else if (answer !== "allow") {
             result = failure(panel ? "file_panel_declined" : "files_declined", answer === "dismiss"
               ? panel ? "The person chose not to let the agent look through their files. Cancel the panel or ask what to choose." : "The person chose not to hand these files to the app. Nothing was sent; cancel the panel or ask what to choose."
               : answer === "too_many" ? "More files are selected than one approval can show. Select at most 20. Nothing was sent."

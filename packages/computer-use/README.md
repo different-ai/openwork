@@ -434,10 +434,19 @@ Windows PCs and remote computers refuse it before anything is sent.
 
 `{ type: "open_file", path: "/Users/…/photo.png" }` hands a file to the
 session's app the way Finder's Open With does, instead of a drag between two
-apps that a session cannot make. The person approves the exact file for that
-app first (the same card as handing files over in a file panel), and the step
-is sent on its own. Links are resolved before the approval, so the card names
-the real file. A success from Launch Services is not taken as proof: the step
+apps that a session cannot make. The helper stops before it, as before a file
+panel's contents or selection, and the broker answers with the organization's
+Agent permissions rule for moving files: with no rule it sends the step again
+bound to the exact file, without asking; Ask first shows the person a card for
+that file every time; Block refuses with `organization_policy_denied`. The step
+is sent on its own. Links are resolved first, so a card names the real file.
+
+Every way content moves between apps goes through one broker check,
+`approveMove(grant, move, signal)`: `{ kind: "files", app, names, save? }` for
+file panels, `open_file`, opening an app onto a file and saving from one, and
+`{ kind: "clipboard" }` for Command-C, Command-X and Command-V. The desktop
+passes the rule in as `movePolicy` (`computer_files` and `computer_clipboard`
+in `/v1/me/desktop-config`). Copy and paste is on or off and never asks. A success from Launch Services is not taken as proof: the step
 path is `file_opened` once a new window appears or the session's window is
 retitled within three seconds, otherwise `file_open_unconfirmed`.
 

@@ -382,6 +382,8 @@ const ROW_COPY: Record<string, string> = {
   fileEdits: "Create, change and delete files in the member's folders",
   externalFolders: "Read and change files outside the member's workspace folders",
   computerUse: "See and control apps on the member's computer",
+  computerFiles: "Open files in apps, choose them in Open panels, and save or export from apps",
+  computerClipboard: "Copy in one app and paste into another, with the agent's own clipboard",
   appScripting: "Run AppleScript and other scripts in Mac apps",
   websites: "Pages the agent fetches and the built-in browser opens",
   browserUploads: "Member decides asks unless remembered. Ask first asks every time.",

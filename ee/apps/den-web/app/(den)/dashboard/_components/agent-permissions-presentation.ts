@@ -16,6 +16,10 @@ export type AgentPermissionsArea = "all" | "agents" | "browser";
 
 const BROWSER_KEYS: readonly string[] = ["websites", "browserUploads"];
 const HARNESS_KEYS: readonly string[] = AGENT_HARNESS_PERMISSION_KEYS;
+/** Rows that only exist while computer use does: files and the clipboard move through it. */
+const COMPUTER_USE_KEYS: readonly string[] = ["computerUse", "computerFiles", "computerClipboard"];
+/** Rows that blocking computer use blocks too, shown with its lock. */
+const BLOCKED_WITH_COMPUTER_USE: readonly string[] = ["computerFiles", "computerClipboard", "appScripting"];
 
 function inArea(area: AgentPermissionsArea, key: string): boolean {
   if (area === "all") return true;
@@ -45,7 +49,7 @@ export function visibleAgentPermissionGroups(area: AgentPermissionsArea, harness
       group.sections.includes(definition.section)
       && inArea(area, definition.key)
       && (harnessEnabled || !HARNESS_KEYS.includes(definition.key))
-      && (computerUseEnabled || definition.key !== "computerUse")
+      && (computerUseEnabled || !COMPUTER_USE_KEYS.includes(definition.key))
       && (browserUploadsEnabled || definition.key !== "browserUploads")),
   })).filter((group) => group.definitions.length > 0);
 }
@@ -85,7 +89,7 @@ export function agentPermissionBlockedBy(key: string, settings: AgentPermissionS
   if (key === "commands" && (settings.fileEdits?.decision ?? everyone?.fileEdits?.decision) === "deny") {
     return { key: "edits", reason: "Blocked while Edit files is blocked, because any command can change files." };
   }
-  if (key === "appScripting" && (settings.computerUse?.decision ?? everyone?.computerUse?.decision) === "deny") {
+  if (BLOCKED_WITH_COMPUTER_USE.includes(key) && (settings.computerUse?.decision ?? everyone?.computerUse?.decision) === "deny") {
     return { key: "computer-use", reason: "Blocked while Use apps on the computer is blocked." };
   }
   return null;
