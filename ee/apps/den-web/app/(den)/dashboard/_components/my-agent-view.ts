@@ -81,3 +81,20 @@ export function hourLabel(hour: number): string {
 export function hoursLabel(hours: { startHour: number; endHour: number }): string {
   return `${hourLabel(hours.startHour)}–${hourLabel(hours.endHour)}`;
 }
+
+/**
+ * My bot's next checks with Your agent's brief: "Next check 1:45 PM: before your 2 PM with Northwind", then the one
+ * after ("Then 4:00 PM."). Today's are a clock time; another day's say which.
+ */
+export function nextChecksLine(view: MemberAgentView, now: number): string | null {
+  const [next, then] = view.nextChecks ?? [];
+  if (!next) return null;
+  const when = (iso: string) => (isSameDay(iso, now, view.timeZone) ? clockLabel(iso, view.timeZone) : whenPhrase(iso, view.timeZone, now));
+  const first = `Next check ${when(next.at)}${next.why ? `: ${next.why}` : ""}.`;
+  return then ? `${first} Then ${when(then.at)}${then.why ? `: ${then.why}` : ""}.` : first;
+}
+
+/** "Every 2 hours". */
+export function everyHoursLabel(hours: number): string {
+  return hours === 1 ? "Every hour" : `Every ${hours} hours`;
+}

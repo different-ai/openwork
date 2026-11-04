@@ -220,6 +220,89 @@ export function mergeAgentSourcesPolicy(current: AgentSourcesPolicy, change: Age
   }
 }
 
+// ---- Your agent's brief and check rhythm (`workbotAgentBrief`) -----------------------------------------------------
+//
+// With `workbotAgentBrief` on, the four responsibilities, their mutes and the meeting lead time give way to one rhythm
+// (a check every few hours inside working hours, plus extra checks the agent asks for) and a plain-text brief the
+// model reads: the organization's default plus each member's own lines. Den keeps only hard limits (messages per day,
+// hours, told-once, the sources an admin allows, read-only tools). Off, everything above works exactly as before; the
+// follow-up that retires the responsibilities deletes them and keeps this section.
+
+/** How often an agent checks, in hours, inside working hours. */
+export const AGENT_CHECK_EVERY_HOURS = [1, 2, 3, 4] as const
+export type AgentCheckEveryHours = (typeof AGENT_CHECK_EVERY_HOURS)[number]
+export const agentCheckEveryHoursSchema = z.union([z.literal(1), z.literal(2), z.literal(3), z.literal(4)])
+/** The organization's brief, in characters. */
+export const AGENT_BRIEF_MAX = 2_000
+/** A member's own lines, in characters. */
+export const AGENT_MEMBER_BRIEF_MAX = 1_000
+/** One line a member adds from chat ("Also watch our Render bill."). */
+export const AGENT_BRIEF_LINE_MAX = 300
+export const AGENT_BRIEF_DAILY_CAP_MAX = 10
+export const AGENT_EXTRA_CHECKS_MAX = 6
+/** Why the agent asked for an extra check, as My bot shows it ("before your 2 PM with Northwind"). */
+export const AGENT_CHECK_REQUEST_WHY_MAX = 120
+
+/**
+ * The default brief every organization starts from (docs/features/workbot-agent-brief, "Default brief"). Admins edit
+ * it in Manage › Workbot; members add their own lines. The model reads it as text: nothing in code depends on its words.
+ */
+export const DEFAULT_AGENT_BRIEF = [
+  "Tell me about things that need me soon:",
+  "- someone waiting on an answer or a decision from me",
+  "- a meeting I should prepare for, or a change to my day",
+  "- a deadline, a commitment someone made to me, or one I made",
+  "- a cost, security or reliability risk I'd want to know about",
+  "- something you told me about earlier that changed, or is still unresolved",
+  "",
+  "On the first check of the day, the three things today needs most.",
+  "Skip newsletters, routine automated notifications and anything routine, unless one carries a real cost, security or deadline risk.",
+].join("\n")
+
+/** The organization's rhythm, limits and brief under `workbotAgentBrief`. */
+export const agentBriefPolicySchema = z.object({
+  /** A check every this many hours inside working hours; a member may only check less often. */
+  checkEveryHours: agentCheckEveryHoursSchema,
+  /** Messages per member per day; a member may only lower it. */
+  dailyCap: z.number().int().min(1).max(AGENT_BRIEF_DAILY_CAP_MAX),
+  /** Extra checks the agent may ask for per member per day ("check again at 1:45 before the 2 PM"). */
+  extraChecksPerDay: z.number().int().min(0).max(AGENT_EXTRA_CHECKS_MAX),
+  /** What to tell people, in plain text. */
+  text: z.string().max(AGENT_BRIEF_MAX),
+})
+export type AgentBriefPolicy = z.infer<typeof agentBriefPolicySchema>
+
+export const DEFAULT_AGENT_BRIEF_POLICY: AgentBriefPolicy = { checkEveryHours: 2, dailyCap: 4, extraChecksPerDay: 3, text: DEFAULT_AGENT_BRIEF }
+
+/** What an admin saved under `workbot.proactive.brief`; a field not saved yet is carried over (`resolveAgentBrief`). */
+export const storedAgentBriefSchema = agentBriefPolicySchema.partial()
+export type StoredAgentBrief = z.infer<typeof storedAgentBriefSchema>
+
+/** An admin's change to the brief settings: any subset. */
+export const agentBriefPolicyInputSchema = z
+  .object({
+    checkEveryHours: agentCheckEveryHoursSchema,
+    dailyCap: z.number().int().min(1).max(AGENT_BRIEF_DAILY_CAP_MAX),
+    extraChecksPerDay: z.number().int().min(0).max(AGENT_EXTRA_CHECKS_MAX),
+    text: z.string().trim().max(AGENT_BRIEF_MAX),
+  })
+  .partial()
+  .strict()
+export type AgentBriefPolicyInput = z.infer<typeof agentBriefPolicyInputSchema>
+
+/** The fields of the brief settings, for `carriedOver`. */
+export const AGENT_BRIEF_FIELDS = ["checkEveryHours", "dailyCap", "extraChecksPerDay", "text"] as const
+export type AgentBriefField = (typeof AGENT_BRIEF_FIELDS)[number]
+
+/** The brief settings as Manage › Workbot shows them. */
+export const agentBriefViewSchema = agentBriefPolicySchema.extend({
+  /** The built-in default brief, for "Reset to default". */
+  defaultText: z.string(),
+  /** Fields the admin hasn't saved yet, carried over from the earlier settings (responsibilities, instructions, limit). */
+  carriedOver: z.array(z.enum(AGENT_BRIEF_FIELDS)),
+})
+export type AgentBriefView = z.infer<typeof agentBriefViewSchema>
+
 const workbotProactiveFieldsSchema = z.object({
   /** Your agent, for the whole organization. */
   enabled: z.boolean(),
@@ -240,6 +323,11 @@ const workbotProactiveFieldsSchema = z.object({
   destination: z.enum(["workbot_dm"]).nullable(),
   /** What agents may read, per source (Manage › Workbot › What agents read). */
   sources: agentSourcesPolicySchema,
+  /**
+   * The rhythm, limits and brief an admin saved under `workbotAgentBrief`; absent until they save one. Read field by
+   * field: a field not saved is carried over from the settings above and the template (`resolveAgentBrief`).
+   */
+  brief: storedAgentBriefSchema.optional(),
 })
 
 const hoursInOrder = (value: { startHour: number; endHour: number }) => value.endHour > value.startHour
@@ -288,6 +376,8 @@ export const workbotProactiveSettingsInputSchema = workbotProactiveFieldsSchema
     responsibilities: agentTemplateContentSchema.shape.responsibilities.partial().optional(),
     instructions: z.string().trim().max(AGENT_INSTRUCTIONS_MAX).optional(),
     sources: agentSourcesPolicyInputSchema.optional(),
+    /** `workbotAgentBrief`: the rhythm, limits and brief (any subset). Refused while the feature is off. */
+    brief: agentBriefPolicyInputSchema.optional(),
   })
   .strict()
 export type WorkbotProactiveSettingsInput = z.infer<typeof workbotProactiveSettingsInputSchema>
@@ -324,8 +414,14 @@ export const workbotProactiveViewSchema = z.object({
     defaults: z.object({ calendar: z.string().nullable(), email: z.string().nullable(), chat: z.string().nullable() })
       .default({ calendar: null, email: null, chat: null }),
   }).nullable(),
+  /**
+   * `workbotAgentBrief` only: the rhythm, limits and brief agents follow now. Absent while the feature is off, and from
+   * servers before it.
+   */
+  brief: agentBriefViewSchema.optional(),
 })
 export type WorkbotProactiveView = z.infer<typeof workbotProactiveViewSchema>
+
 
 /** `GET /v1/org/workbot-settings/proactive/health` (`workbotProactive`): counts only, no members or content. */
 export const workbotProactiveHealthSchema = z.object({
@@ -344,6 +440,11 @@ export const workbotProactiveHealthSchema = z.object({
     /** Members who muted it. */
     muted: z.number().int().min(0),
   })),
+  /**
+   * `workbotAgentBrief`: checks on the one rhythm, the share that stayed quiet and messages sent. Absent while the
+   * feature is off; `responsibilities` then counts only checks from before it.
+   */
+  rhythm: z.object({ checks: z.number().int().min(0), quiet: z.number().int().min(0), sent: z.number().int().min(0) }).optional(),
 })
 export type WorkbotProactiveHealth = z.infer<typeof workbotProactiveHealthSchema>
 
@@ -377,7 +478,11 @@ export type AgentHourWindow = z.infer<typeof agentHourWindowSchema>
  * source whether it is read (`source`), their instruction for it (`sourceInstruction`) and, for calendar, email and
  * team chat, which allowed connection it reads (`sourceConnection`).
  */
-export const AGENT_CHANGE_FIELDS = [...AGENT_PREFERENCE_FIELDS, "hours", "dailyCap", "quietWindow", ...AGENT_RESPONSIBILITIES, "source", "sourceInstruction", "sourceConnection"] as const
+export const AGENT_CHANGE_FIELDS = [
+  ...AGENT_PREFERENCE_FIELDS, "hours", "dailyCap", "quietWindow", ...AGENT_RESPONSIBILITIES, "source", "sourceInstruction", "sourceConnection",
+  // `workbotAgentBrief`: the member's own brief lines, and how often their agent checks.
+  "brief", "checkEveryHours",
+] as const
 export type AgentChangeField = (typeof AGENT_CHANGE_FIELDS)[number]
 export const agentChangeFieldSchema = z.enum(AGENT_CHANGE_FIELDS)
 /** Where a change came from: something the member said in chat (through Connect), or the Library page. */
@@ -420,10 +525,13 @@ export const AGENT_CHECK_REASONS = [
   "no_destination",
   "send_failed",
   "agent_unavailable",
+  // `workbotAgentBrief`: the check found nothing for the messenger, or found something that can wait.
+  "no_findings",
+  "findings_held",
 ] as const
 export type AgentCheckReason = (typeof AGENT_CHECK_REASONS)[number]
-/** What started the check. */
-export const AGENT_CHECK_KINDS = ["morning", "scheduled", "calendar"] as const
+/** What started the check: `morning` is the first check of the day; `requested` an extra check the agent asked for. */
+export const AGENT_CHECK_KINDS = ["morning", "scheduled", "calendar", "requested"] as const
 export type AgentCheckKind = (typeof AGENT_CHECK_KINDS)[number]
 /** What the member can do about a check that failed. */
 export const AGENT_CHECK_FIXES = ["reconnect_google", "reconnect", "link_slack", "ask_admin"] as const
@@ -462,8 +570,22 @@ export const memberAgentLimitsSchema = z.object({
   /** Inside these hours only messages the agent marks urgent go out. */
   quietWindow: agentHourWindowSchema.nullable(),
   /** The organization's limits (Manage › Workbot); a member can only narrow them. */
-  admin: z.object({ startHour: z.number().int(), endHour: z.number().int(), dailyCap: z.number().int() }),
-  narrowed: z.object({ hours: z.boolean(), dailyCap: z.boolean() }),
+  admin: z.object({
+    startHour: z.number().int(),
+    endHour: z.number().int(),
+    dailyCap: z.number().int(),
+    /** `workbotAgentBrief`: the organization's rhythm; a member may only check less often. */
+    checkEveryHours: z.number().int().optional(),
+    extraChecksPerDay: z.number().int().optional(),
+  }),
+  narrowed: z.object({ hours: z.boolean(), dailyCap: z.boolean(), checkEveryHours: z.boolean().optional() }),
+  /**
+   * `workbotAgentBrief`: a check every this many hours inside `startHour`–`endHour`, never inside `quietWindow`, which
+   * then means quiet hours: nothing is sent, and anything urgent goes first at the next check.
+   */
+  checkEveryHours: z.number().int().optional(),
+  /** `workbotAgentBrief`: extra checks the agent may ask for per day. */
+  extraChecksPerDay: z.number().int().optional(),
 })
 export type MemberAgentLimits = z.infer<typeof memberAgentLimitsSchema>
 
@@ -548,6 +670,17 @@ export const memberAgentViewSchema = z.object({
   sources: z.array(memberAgentSourceSchema).optional(),
   /** The member's agent in the Library. */
   link: z.string().optional(),
+  /**
+   * `workbotAgentBrief`: what the agent follows, as text. `lines` are the member's own (an empty string for none);
+   * `organization` is the admin's brief, read only. `carriedOver`: the lines came from the member's earlier settings
+   * (muted messages, Always / Never / When / How) and they haven't edited them since.
+   */
+  brief: z.object({ lines: z.string(), organization: z.string(), carriedOver: z.boolean() }).optional(),
+  /**
+   * `workbotAgentBrief`: the next checks, soonest first: the next one on the rhythm and any extra checks the agent
+   * asked for, each with why ("before your 2 PM with Northwind").
+   */
+  nextChecks: z.array(z.object({ at: z.iso.datetime(), kind: z.enum(["scheduled", "requested"]), why: z.string().nullable() })).optional(),
 })
 export type MemberAgentView = z.infer<typeof memberAgentViewSchema>
 
@@ -583,6 +716,24 @@ export const memberAgentInputSchema = z
     }).strict()).min(1).max(20).optional(),
     /** `last` reverts the member's last save (every field it changed); a change id reverts that one change. */
     undo: z.string().trim().min(1).max(64).optional(),
+    /**
+     * `workbotAgentBrief`: check less often than the organization does (1, 2, 3 or 4 hours, never more often than the
+     * admin's); null goes back to the organization's.
+     */
+    checkEveryHours: agentCheckEveryHoursSchema.nullable().optional(),
+    /**
+     * `workbotAgentBrief`: the member's own brief lines. `add`: lines in their words ("Also watch our Render bill.",
+     * "Never tell me about newsletters."); `remove`: lines to drop, matched without case; `set`: the whole text (the
+     * page sends this). An empty `set` clears them.
+     */
+    brief: z
+      .object({
+        add: z.array(z.string().trim().min(1).max(AGENT_BRIEF_LINE_MAX)).min(1).max(10).optional(),
+        remove: z.array(z.string().trim().min(1).max(AGENT_BRIEF_LINE_MAX)).min(1).max(10).optional(),
+        set: z.string().trim().max(AGENT_MEMBER_BRIEF_MAX).optional(),
+      })
+      .strict()
+      .optional(),
   })
   .strict()
 export type MemberAgentInput = z.infer<typeof memberAgentInputSchema>
@@ -622,8 +773,11 @@ export function readWorkbotProactiveSettings(metadata: unknown): WorkbotProactiv
   const stored = isRecord(workbot) && isRecord(workbot.proactive) ? workbot.proactive : {}
   const merged: Record<string, unknown> = { ...DEFAULT_WORKBOT_PROACTIVE_SETTINGS }
   for (const [key, schema] of Object.entries(workbotProactiveFieldsSchema.shape)) {
+    if (key === "brief") continue
     if (key in stored && schema.safeParse(stored[key]).success) merged[key] = stored[key]
   }
+  const brief = readStoredAgentBrief(stored.brief)
+  if (brief) merged.brief = brief
   const fields = workbotProactiveFieldsSchema.safeParse(merged)
   if (!fields.success) return { ...DEFAULT_WORKBOT_PROACTIVE_SETTINGS }
   if (hoursInOrder(fields.data)) return fields.data
@@ -633,9 +787,96 @@ export function readWorkbotProactiveSettings(metadata: unknown): WorkbotProactiv
 
 /** Applies a policy change; null when the result is invalid (for example a workday that ends before it starts). */
 export function mergeWorkbotProactiveSettings(current: WorkbotProactiveSettings, change: WorkbotProactiveSettingsInput): WorkbotProactiveSettings | null {
-  const { responsibilities: _responsibilities, instructions: _instructions, sources, ...policy } = change
-  const parsed = workbotProactiveSettingsSchema.safeParse({ ...current, ...policy, sources: mergeAgentSourcesPolicy(current.sources, sources) })
+  const { responsibilities: _responsibilities, instructions: _instructions, sources, brief, ...policy } = change
+  const savedBrief = brief ? { ...current.brief, ...brief } : current.brief
+  const parsed = workbotProactiveSettingsSchema.safeParse({
+    ...current,
+    ...policy,
+    sources: mergeAgentSourcesPolicy(current.sources, sources),
+    ...(savedBrief ? { brief: savedBrief } : {}),
+  })
   return parsed.success ? parsed.data : null
+}
+
+/** The brief settings an admin saved, field by field: an unreadable field is simply not saved. Null for none. */
+function readStoredAgentBrief(value: unknown): StoredAgentBrief | null {
+  if (!isRecord(value)) return null
+  const brief: Record<string, unknown> = {}
+  for (const [key, schema] of Object.entries(agentBriefPolicySchema.shape)) {
+    if (key in value && schema.safeParse(value[key]).success) brief[key] = value[key]
+  }
+  const parsed = storedAgentBriefSchema.safeParse(brief)
+  return parsed.success && Object.keys(parsed.data).length ? parsed.data : null
+}
+
+// ---- Carrying the earlier settings over to the brief (`workbotAgentBrief`) -------------------------------------------
+
+/**
+ * A responsibility an admin turned off, or a member muted, as a line of the brief. The default brief already covers
+ * all four; these say what not to send.
+ */
+export const AGENT_BRIEF_OFF_LINES: Record<AgentResponsibility, string> = {
+  morning_brief: "Don't send a summary of the day on the first check.",
+  meeting_prep: "Don't send meeting prep.",
+  calendar_changes: "Don't tell me about calendar changes.",
+  waiting_on_you: "Don't tell me who is waiting on a reply from me.",
+}
+
+/** A member's earlier words, as lines of their brief. */
+const AGENT_BRIEF_WORD_PREFIX: Record<AgentPreferenceField, string> = {
+  always: "Always tell me about",
+  never: "Never tell me about",
+  when: "When",
+  how: "How",
+}
+
+/** The old daily limit's default; an organization still on it gets the brief's default instead. */
+const LEGACY_DEFAULT_DAILY_CAP = 3
+
+/**
+ * The organization's brief before an admin saves one: the default brief, a line for each responsibility the template
+ * turned off ("Don't send meeting prep."), then the organization's instructions as written. The meeting lead time is
+ * not carried over: the agent asks for an extra check before a meeting instead.
+ */
+export function carriedOverAgentBrief(template: AgentTemplateContent): string {
+  const off = AGENT_RESPONSIBILITIES.filter((responsibility) => !template.responsibilities[responsibility]).map((responsibility) => AGENT_BRIEF_OFF_LINES[responsibility])
+  const instructions = template.instructions.trim()
+  return [DEFAULT_AGENT_BRIEF, off.join("\n"), instructions].filter(Boolean).join("\n\n").slice(0, AGENT_BRIEF_MAX)
+}
+
+/**
+ * What agents follow under `workbotAgentBrief`: each field the admin saved, else carried over. The brief from the
+ * template (above); the daily limit an admin chose, or the new default 4 when they never moved it from the old default
+ * 3; a check every 2 hours and 3 extra checks a day, which had no earlier setting.
+ */
+export function resolveAgentBrief(settings: Pick<WorkbotProactiveSettings, "brief" | "dailyCap">, template: AgentTemplateContent): AgentBriefPolicy & { carriedOver: AgentBriefField[] } {
+  const saved = settings.brief ?? {}
+  const carried: AgentBriefPolicy = {
+    checkEveryHours: DEFAULT_AGENT_BRIEF_POLICY.checkEveryHours,
+    dailyCap: settings.dailyCap === LEGACY_DEFAULT_DAILY_CAP ? DEFAULT_AGENT_BRIEF_POLICY.dailyCap : settings.dailyCap,
+    extraChecksPerDay: DEFAULT_AGENT_BRIEF_POLICY.extraChecksPerDay,
+    text: carriedOverAgentBrief(template),
+  }
+  return {
+    checkEveryHours: saved.checkEveryHours ?? carried.checkEveryHours,
+    dailyCap: saved.dailyCap ?? carried.dailyCap,
+    extraChecksPerDay: saved.extraChecksPerDay ?? carried.extraChecksPerDay,
+    text: saved.text ?? carried.text,
+    carriedOver: AGENT_BRIEF_FIELDS.filter((field) => saved[field] === undefined),
+  }
+}
+
+/**
+ * A member's own lines before they write any: a line per message type they muted, then their earlier words (Always /
+ * Never / When / How), labeled as they wrote them. Their quiet window becomes quiet hours, enforced by Den, not a line.
+ */
+export function carriedOverMemberBrief(input: { muted: readonly AgentResponsibility[]; words: AgentPreferences }): string {
+  const muted = AGENT_RESPONSIBILITIES.filter((responsibility) => input.muted.includes(responsibility)).map((responsibility) => AGENT_BRIEF_OFF_LINES[responsibility])
+  const words = AGENT_PREFERENCE_FIELDS.flatMap((field) => {
+    const text = input.words[field].trim()
+    return text ? [`${AGENT_BRIEF_WORD_PREFIX[field]}: ${text}`] : []
+  })
+  return [...muted, ...words].join("\n").slice(0, AGENT_MEMBER_BRIEF_MAX)
 }
 
 /** Applies a template change; null when nothing in it changes, so no empty version is saved. */

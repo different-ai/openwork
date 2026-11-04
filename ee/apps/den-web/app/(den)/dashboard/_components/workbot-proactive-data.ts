@@ -66,10 +66,11 @@ export function useSaveWorkbotProactive(orgId: string) {
       await queryClient.cancelQueries({ queryKey: key });
       const previous = queryClient.getQueryData<WorkbotProactiveView>(key);
       if (previous) {
-        const { responsibilities, instructions, sources, ...policy } = change;
+        const { responsibilities, instructions, sources, brief, ...policy } = change;
         queryClient.setQueryData<WorkbotProactiveView>(key, {
           ...previous,
           settings: { ...previous.settings, ...policy, sources: mergeAgentSourcesPolicy(previous.settings.sources, sources) },
+          ...(previous.brief && brief ? { brief: { ...previous.brief, ...brief, carriedOver: previous.brief.carriedOver.filter((field) => brief[field] === undefined) } } : {}),
           template: {
             ...previous.template,
             responsibilities: { ...previous.template.responsibilities, ...responsibilities },

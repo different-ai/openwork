@@ -116,6 +116,71 @@ export async function sendWorkbotDirectMessage(
   return sendWorkbotDirectMessageTo(target, input, deps)
 }
 
+/** One message of the member's DM with Workbot: theirs, or the app's (Workbot's replies and their agent's messages). */
+export type WorkbotDirectMessageTurn = { at: number; from: "agent" | "member"; text: string }
+
+const historyMessageSchema = z.object({
+  ts: z.string(),
+  text: z.string().optional(),
+  user: z.string().optional(),
+  bot_id: z.string().optional(),
+  subtype: z.string().optional(),
+  reply_count: z.number().optional(),
+})
+const historySchema = z.object({ messages: z.array(z.unknown()).default([]) })
+
+function turnsOf(raw: readonly unknown[], slackUserId: string, skipTs?: string): WorkbotDirectMessageTurn[] {
+  return raw.flatMap((entry) => {
+    const message = historyMessageSchema.safeParse(entry)
+    if (!message.success || message.data.ts === skipTs || !message.data.text?.trim()) return []
+    // Joins, edits announced as their own message and other housekeeping aren't conversation.
+    if (message.data.subtype && message.data.subtype !== "bot_message" && message.data.subtype !== "thread_broadcast") return []
+    const at = Math.round(Number(message.data.ts) * 1000)
+    if (!Number.isFinite(at)) return []
+    const from: WorkbotDirectMessageTurn["from"] = !message.data.bot_id && message.data.user === slackUserId ? "member" : "agent"
+    return [{ at, from, text: message.data.text }]
+  })
+}
+
+/**
+ * The member's recent conversation with Workbot in their DM with the app (`workbotAgentBrief`): the newest `limit`
+ * messages since `since`, including replies in the newest few threads, oldest first. Read with the app's bot token
+ * (`im:history`, already granted), from the DM the agent's messages go to, so "I'll handle it after lunch" is seen.
+ * Null when the DM can't be read (no app, not linked, Slack refused). Den keeps none of it.
+ */
+export async function readWorkbotDirectMessages(
+  input: { organizationId: string; userId: string; since: number; limit?: number; threads?: number },
+  deps: WorkbotDirectMessageDeps = defaultWorkbotDirectMessageDeps,
+): Promise<WorkbotDirectMessageTurn[] | null> {
+  const target = await resolveWorkbotDirectMessageTarget(input, deps)
+  if (!target.ok) return null
+  const token = await deps.botToken(target.connectionId)
+  if (!token) return null
+  const slack = deps.slack(token)
+  const limit = input.limit ?? 20
+  try {
+    const opened = z.object({ channel: z.object({ id: z.string() }) }).safeParse(await slack("conversations.open", { users: target.slackUserId }))
+    if (!opened.success) return null
+    const channel = opened.data.channel.id
+    const history = historySchema.parse(await slack("conversations.history", { channel, limit, oldest: String(Math.floor(input.since / 1000)) }))
+    const turns = turnsOf(history.messages, target.slackUserId)
+    const threaded = history.messages
+      .flatMap((entry) => {
+        const message = historyMessageSchema.safeParse(entry)
+        return message.success && (message.data.reply_count ?? 0) > 0 ? [message.data.ts] : []
+      })
+      .sort((left, right) => Number(right) - Number(left))
+      .slice(0, input.threads ?? 3)
+    for (const ts of threaded) {
+      const replies = historySchema.safeParse(await slack("conversations.replies", { channel, ts, limit: 10 }).catch(() => null))
+      if (replies.success) turns.push(...turnsOf(replies.data.messages, target.slackUserId, ts))
+    }
+    return turns.filter((turn) => turn.at >= input.since).sort((left, right) => left.at - right.at).slice(-limit)
+  } catch {
+    return null
+  }
+}
+
 /** A Slack message link Den may show the member: https on a Slack host only. */
 function slackPermalink(value: unknown): string | null {
   const parsed = z.object({ permalink: z.string() }).safeParse(value)

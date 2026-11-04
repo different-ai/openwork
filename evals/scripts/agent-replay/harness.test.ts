@@ -1,5 +1,5 @@
 import { describe, expect, test } from "vitest";
-import { answerTool, chatCompletionsModel, replayPrompt, runReplay, scoreReplay, type ReplayModel } from "./harness.ts";
+import { REPLAY_TOOLS, answerTool, chatCompletionsModel, replayPrompt, runReplay, scoreReplay, type ReplayModel } from "./harness.ts";
 import { REPLAY_TIMELINES } from "./timelines.ts";
 
 // The replay harness itself, with a scripted model: the timelines' tools answer like Connect, the real wake prompt and
@@ -90,7 +90,7 @@ describe("agent replay harness", () => {
       return new Response(JSON.stringify({ choices: [{ message: { content: null, tool_calls: [{ id: "c1", type: "function", function: { name: "gmail_search_threads", arguments: "{\"query\":\"after:1\"}" } }] } }] }), { status: 200 });
     };
     const model = chatCompletionsModel({ baseUrl: "https://models.example/v1/", apiKey: "test-key", model: "test-model", fetch: fake });
-    const answer = await model({ messages: [{ role: "user", content: "hi" }], tools: [] });
+    const answer = await model({ messages: [{ role: "user", content: "hi" }], tools: REPLAY_TOOLS.slice(0, 1) });
     expect(answer.tool_calls?.[0]?.function.name).toBe("gmail_search_threads");
     expect(requests[0]).toMatchObject({ model: "test-model", tool_choice: "auto" });
   });

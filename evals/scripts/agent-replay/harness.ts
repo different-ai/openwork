@@ -80,7 +80,9 @@ export type ReplayMessage =
   | { role: "assistant"; content: string | null; tool_calls?: ReplayToolCall[] }
   | { role: "tool"; tool_call_id: string; content: string };
 export type ReplayToolSpec = { type: "function"; function: { name: string; description: string; parameters: Record<string, unknown> } };
-export type ReplayModel = (input: { messages: readonly ReplayMessage[]; tools: readonly ReplayToolSpec[] }) => Promise<{ content: string | null; tool_calls?: ReplayToolCall[] }>;
+/** Tokens one model call used, as the endpoint reports them. */
+export type ReplayUsage = { input: number; cached: number; output: number };
+export type ReplayModel = (input: { messages: readonly ReplayMessage[]; tools: readonly ReplayToolSpec[] }) => Promise<{ content: string | null; tool_calls?: ReplayToolCall[]; usage?: ReplayUsage }>;
 
 const MAX_STEPS = 16;
 const SOURCES: AgentPromptSource[] = [
@@ -241,22 +243,37 @@ export function scoreReplay(timeline: ReplayTimeline, run: ReplayRun): ReplayVer
 const toolCallSchema = z.object({ id: z.string(), type: z.literal("function").default("function"), function: z.object({ name: z.string(), arguments: z.string().default("{}") }) });
 const completionSchema = z.object({
   choices: z.array(z.object({ message: z.object({ content: z.string().nullable().optional(), tool_calls: z.array(toolCallSchema).nullable().optional() }) })).min(1),
+  usage: z.object({
+    prompt_tokens: z.number().optional(),
+    completion_tokens: z.number().optional(),
+    prompt_tokens_details: z.object({ cached_tokens: z.number().optional() }).nullable().optional(),
+  }).nullable().optional(),
 });
 
 /** A model behind any OpenAI-compatible chat completions endpoint (OpenAI, Vercel AI Gateway, a local proxy). */
 export function chatCompletionsModel(input: { baseUrl: string; apiKey: string; model: string; fetch?: typeof fetch }): ReplayModel {
   const call = input.fetch ?? fetch;
   return async ({ messages, tools }) => {
-    const response = await call(`${input.baseUrl.replace(/\/$/, "")}/chat/completions`, {
-      method: "POST",
-      headers: { authorization: `Bearer ${input.apiKey}`, "content-type": "application/json" },
-      body: JSON.stringify({ model: input.model, messages, tools, tool_choice: "auto" }),
-      signal: AbortSignal.timeout(180_000),
-    });
-    if (!response.ok) throw new Error(`Model call failed: HTTP ${response.status} ${(await response.text()).slice(0, 300)}`);
-    const parsed = completionSchema.parse(await response.json());
-    const message = parsed.choices[0]?.message;
-    const toolCalls = message?.tool_calls ?? [];
-    return { content: message?.content ?? null, ...(toolCalls.length ? { tool_calls: toolCalls } : {}) };
+    // Rate limits and provider hiccups are retried with backoff; anything else fails the run.
+    for (let attempt = 1; ; attempt += 1) {
+      const response = await call(`${input.baseUrl.replace(/\/$/, "")}/chat/completions`, {
+        method: "POST",
+        headers: { authorization: `Bearer ${input.apiKey}`, "content-type": "application/json" },
+        body: JSON.stringify({ model: input.model, messages, ...(tools.length ? { tools, tool_choice: "auto" } : {}) }),
+        signal: AbortSignal.timeout(180_000),
+      });
+      if ((response.status === 429 || response.status >= 500) && attempt < 5) {
+        await new Promise((resolve) => setTimeout(resolve, 2_000 * 2 ** attempt));
+        continue;
+      }
+      if (!response.ok) throw new Error(`Model call failed: HTTP ${response.status} ${(await response.text()).slice(0, 300)}`);
+      const parsed = completionSchema.parse(await response.json());
+      const message = parsed.choices[0]?.message;
+      const toolCalls = message?.tool_calls ?? [];
+      const usage = parsed.usage
+        ? { input: parsed.usage.prompt_tokens ?? 0, cached: parsed.usage.prompt_tokens_details?.cached_tokens ?? 0, output: parsed.usage.completion_tokens ?? 0 }
+        : undefined;
+      return { content: message?.content ?? null, ...(toolCalls.length ? { tool_calls: toolCalls } : {}), ...(usage ? { usage } : {}) };
+    }
   };
 }

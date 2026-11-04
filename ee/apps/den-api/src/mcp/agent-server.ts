@@ -130,6 +130,12 @@ function slackSendAsBotInstructions(toolView: InstructionView = "search"): strin
 export const MY_AGENT_INSTRUCTIONS = "To change what Your agent tells the user, use putMeAgent; to explain why it was quiet, read the user's agent checks."
 
 /**
+ * The same rule with Your agent's brief (`workbotAgentBrief`): what it tells them is lines in their words, and how often
+ * it checks is theirs to slow down.
+ */
+export const MY_AGENT_BRIEF_INSTRUCTIONS = "To change what Your agent tells the user (\"also watch our Render bill\", \"never tell me about newsletters\": lines added to their brief) or how often it checks, use putMeAgent; to explain why it was quiet or when it checks next, read the user's agent and its checks."
+
+/**
  * A full-view tools/list is the member's own, so clients may reuse it only for
  * the same authorization, and briefly: tools/list_changed reaches streams on
  * this replica only, so other replicas' clients refetch after this.
@@ -143,6 +149,8 @@ export function createAgentMcpServer(options: {
   canSendSlackMessages?: boolean
   /** My agent is on for this member and they may change it (`workbotProactive`, a member, and the write scope). */
   myAgent?: boolean
+  /** With `myAgent`: Your agent's brief and rhythm (`workbotAgentBrief`) are on for them. */
+  myAgentBrief?: boolean
   /** Which tools/list this request gets; see connect-tool-view.ts. */
   toolView?: ConnectToolView
   /** Describe search matches as MCP tools (part of `connectStandardTools`). */
@@ -160,7 +168,7 @@ export function createAgentMcpServer(options: {
   const rules = [agentMcpInstructions(options.appServers !== false, view, options.toolShapes),
     ...(options.remoteSessionStatus ? [REMOTE_SESSION_STATUS_INSTRUCTIONS] : []),
     ...(options.canSendSlackMessages ? [slackSendAsBotInstructions(view)] : []),
-    ...(options.myAgent ? [MY_AGENT_INSTRUCTIONS] : [])].join("\n")
+    ...(options.myAgent ? [options.myAgentBrief ? MY_AGENT_BRIEF_INSTRUCTIONS : MY_AGENT_INSTRUCTIONS] : [])].join("\n")
   const directory = view === "engine" && options.services
     ? serviceDirectoryInstructions(options.services, AGENT_MCP_INSTRUCTIONS_MAX_CHARS - rules.length - 1)
     : ""

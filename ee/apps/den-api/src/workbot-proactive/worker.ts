@@ -3,7 +3,8 @@ import { markFeaturesUsed, type MarkFeaturesUsed } from "../feature-usage.js"
 import { appLogger } from "../observability/logger.js"
 import { readMemberGoogleCalendar } from "../routes/org/google-workspace.js"
 import { organizationCloudModel } from "../workbot/model.js"
-import { activeMemberUser, listAgentCandidates, proactiveAllowed, readProactiveSettings } from "./access.js"
+import { readWorkbotDirectMessages } from "../slack-assistant/direct-message.js"
+import { activeMemberUser, agentBriefAllowed, listAgentCandidates, memberFirstName, proactiveAllowed, readProactiveSettings } from "./access.js"
 import { deliverAgentMessage, destinationBlock } from "./deliver.js"
 import {
   agentSentSince,
@@ -15,6 +16,7 @@ import {
   MEMBER_CHECK_RETENTION_MS,
   pruneAgentDeliveries,
   pruneMemberChecks,
+  readAgentCheckRequests,
   recordMemberCheck,
   reserveAgentDelivery,
   settleAgent,
@@ -23,13 +25,14 @@ import {
 } from "./repository.js"
 import { countConnectedMembers, listMemberConnections } from "./sources-repository.js"
 import { readAgentTemplate } from "./template.js"
-import { agentMessageId, agentSessionId, defaultAgentTurnDeps, runAgentTurn } from "./turn.js"
-import { wakeAgent, type AgentWakeDeps, type AgentWakeOutcome } from "./wake.js"
+import { agentMessageId, agentMessageSessionId, agentSessionId, defaultAgentTurnDeps, endAgentMessageSession, runAgentSessionTurn, runAgentTurn } from "./turn.js"
+import { wakeAgent, type AgentWakeOutcome } from "./wake.js"
+import { AGENT_MESSAGE_SCOPES, wakeAgentBrief, type AgentBriefWakeDeps } from "./wake-brief.js"
 
 /**
- * The agents' loop: claims agents whose `next_wake_at` is due (a scheduled pass, or the next calendar look) and
- * wakes each one (wake.ts). Wake sources stay explicit: the schedule and calendar events. Nothing lets a model
- * schedule its own wake-up.
+ * The agents' loop: claims agents whose `next_wake_at` is due and wakes each one. Today's agent (wake.ts) wakes on
+ * its schedule and calendar events; with `workbotAgentBrief` (wake-brief.ts) on its one rhythm and the extra checks
+ * it asked for with request_check, which Den caps, keeps inside the member's hours and shows in My bot.
  */
 
 const TICK_MS = 15_000
@@ -37,7 +40,7 @@ const MAX_CONCURRENT_WAKES = 4
 const DISCOVERY_MS = 10 * 60_000
 const LEDGER_RETENTION_MS = 30 * 24 * 3_600_000
 
-export function defaultAgentWakeDeps(): AgentWakeDeps {
+export function defaultAgentWakeDeps(): AgentBriefWakeDeps {
   const turnDeps = defaultAgentTurnDeps()
   return {
     now: Date.now,
@@ -63,7 +66,25 @@ export function defaultAgentWakeDeps(): AgentWakeDeps {
     connections: listMemberConnections,
     connectedMembers: countConnectedMembers,
     connectLink: libraryConnectorLink,
+    briefOn: (organizationId, userId) => agentBriefAllowed(organizationId, userId),
+    person: memberFirstName,
+    check: (input) => runAgentSessionTurn(input, turnDeps),
+    message: (input) => runAgentSessionTurn({ ...input, title: "Your agent: message", readOnly: true, scopes: AGENT_MESSAGE_SCOPES }, turnDeps),
+    messageSessionId: agentMessageSessionId,
+    endMessageSession: (sessionId) => endAgentMessageSession(sessionId, turnDeps),
+    conversation: (input) => readWorkbotDirectMessages({ organizationId: input.organizationId, userId: input.userId, since: input.since }),
+    requestedChecks: readAgentCheckRequests,
   }
+}
+
+/**
+ * Which agent wakes: the brief's (`workbotAgentBrief`, on top of `workbotProactive`) or today's. Decided per wake, so
+ * turning the feature off falls back on the next tick, with the member's state, notes and ledger kept.
+ */
+export async function wakeMemberAgent(row: AgentInstanceRow, deps: AgentBriefWakeDeps): Promise<AgentWakeOutcome> {
+  const userId = await deps.user(row.organizationId, row.memberId).catch(() => null)
+  const brief = userId ? await deps.briefOn(row.organizationId, userId).catch(() => false) : false
+  return brief ? wakeAgentBrief(row, deps) : wakeAgent(row, deps)
 }
 
 /**
@@ -85,7 +106,7 @@ export async function discoverAgents() {
   for (const candidate of await listAgentCandidates()) await ensureAgentInstances(candidate.organizationId, candidate.memberIds)
 }
 
-export function startWorkbotProactiveWorker(deps: AgentWakeDeps = defaultAgentWakeDeps()) {
+export function startWorkbotProactiveWorker(deps: AgentBriefWakeDeps = defaultAgentWakeDeps()) {
   let stopped = false
   let running = 0
   let claiming = false
@@ -105,7 +126,7 @@ export function startWorkbotProactiveWorker(deps: AgentWakeDeps = defaultAgentWa
       if (capacity <= 0) return
       for (const row of await claimDueAgents(capacity, new Date(now))) {
         running += 1
-        void wakeAndMarkUse(row, (claimed) => wakeAgent(claimed, deps))
+        void wakeAndMarkUse(row, (claimed) => wakeMemberAgent(claimed, deps))
           .catch(async () => {
             appLogger.warn("workbot_agent_wake_failed", { member_id: row.memberId })
             await deps.settle(row, { nextWakeAt: new Date(deps.now() + 15 * 60_000), failures: row.failures + 1 }).catch(() => false)

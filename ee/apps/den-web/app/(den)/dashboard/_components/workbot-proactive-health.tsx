@@ -18,7 +18,26 @@ function share(part: number, whole: number) {
   return whole > 0 ? `${Math.round((part / whole) * 100)}%` : "—";
 }
 
+type RhythmRow = { id: "rhythm"; label: string; checks: number; quiet: number; sent: number };
+
+/** With Your agent's brief (`rhythm`): one row for every check on the one rhythm. */
+function RhythmHealthTable({ rhythm }: { rhythm: NonNullable<WorkbotProactiveHealth["rhythm"]> }) {
+  const columns: DenTableColumn<RhythmRow>[] = [
+    { key: "label", header: "Agents", render: (row) => <span className="font-medium text-gray-900">{row.label}</span> },
+    { key: "checks", header: "Checks", align: "right", width: "96px", render: (row) => row.checks.toLocaleString("en-US") },
+    { key: "quiet", header: "Stayed quiet", align: "right", width: "120px", render: (row) => share(row.quiet, row.checks) },
+    { key: "sent", header: "Messages", align: "right", width: "104px", render: (row) => row.sent.toLocaleString("en-US") },
+  ];
+  return (
+    <div className="overflow-hidden rounded-2xl border border-gray-100 bg-white" data-testid="workbot-proactive-health" data-mode="brief">
+      <DenTable columns={columns} rows={rhythm.checks ? [{ id: "rhythm", label: "All members", ...rhythm }] : []} getRowKey={(row) => row.id} density="compact" headerTone="plain"
+        emptyLabel="No checks in the last 7 days." />
+    </div>
+  );
+}
+
 export function WorkbotProactiveHealthTable({ health }: { health: WorkbotProactiveHealth }) {
+  if (health.rhythm) return <RhythmHealthTable rhythm={health.rhythm} />;
   const columns: DenTableColumn<Row>[] = [
     { key: "responsibility", header: "Responsibility", render: (row) => <span className="font-medium text-gray-900">{AGENT_RESPONSIBILITY_COPY[row.id].label}</span> },
     { key: "checks", header: "Checks", align: "right", width: "96px", render: (row) => row.checks.toLocaleString("en-US") },
