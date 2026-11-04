@@ -151,6 +151,16 @@
               ],
               "description": "Desktop: steady chat while a reply runs: While a reply runs, its steps and messages stay in the order they arrive and the chat keeps its place: nothing jumps and no empty gap opens between steps. The steps fold into “Worked for…” once the reply finishes. Turning this off restores the previous live layout. Renders DEN_FEATURE_STEADY_LIVE_TURN."
             },
+            "ssoPerOrganization": {
+              "enum": [
+                "",
+                "true",
+                "false",
+                true,
+                false
+              ],
+              "description": "SSO: optional unless required, enforced per organization: An organization with SSO set up offers \"Continue with SSO\" at sign-in but still lets people on its domain use their password or Google and join other organizations, for example from an invitation. Turning on \"Require SSO\" enforces it when someone opens that organization, and \"Restrict this domain to our SSO\" brings back sign-in-wide enforcement for the whole domain. Off: any email on the organization's verified domain must sign in with its SSO. Renders DEN_FEATURE_SSO_PER_ORGANIZATION."
+            },
             "administratorRecovery": {
               "enum": [
                 "",

@@ -383,6 +383,7 @@ export type DenOrgCapabilities = {
 export type DenOrganizationMetadata = {
   allowedDesktopVersions?: string[];
   requireSso?: boolean;
+  restrictDomainToSso?: boolean;
   brandAppName?: string;
   brandLogoUrl?: string;
   brandIconUrl?: string;
@@ -472,6 +473,12 @@ export function getAllowedDesktopVersionsFromMetadata(metadata: string | null): 
 export function getRequireSsoFromMetadata(metadata: string | null): boolean {
   const parsed = parseOrganizationMetadata(metadata);
   return parsed?.requireSso === true;
+}
+
+/** ssoPerOrganization: every email on the verified SSO domain must sign in with this organization's SSO. */
+export function getRestrictDomainToSsoFromMetadata(metadata: string | null): boolean {
+  const parsed = parseOrganizationMetadata(metadata);
+  return parsed?.restrictDomainToSso === true;
 }
 
 export function getManagedBrandAssetFromMetadata(

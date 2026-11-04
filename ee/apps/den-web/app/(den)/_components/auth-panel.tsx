@@ -22,10 +22,19 @@ type PanelContent = {
 type EmailFirstStep = "email" | "sso" | "google" | "github" | "password" | "new_account";
 type ResolvedLoginStep = Exclude<EmailFirstStep, "email">;
 
+type AlternativeLoginStep = Exclude<ResolvedLoginStep, "sso">;
+
 type LoginOption = {
   nextStep: ResolvedLoginStep;
   signInPath: string | null;
   signInUrl: string | null;
+  /**
+   * ssoPerOrganization: SSO is offered first and this is the usual step, one
+   * click away. Absent: SSO is the only way in.
+   */
+  alternativeStep: AlternativeLoginStep | null;
+  ssoRequired: boolean;
+  organizationName: string | null;
 };
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -34,6 +43,10 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 function isResolvedLoginStep(value: unknown): value is ResolvedLoginStep {
   return value === "sso" || value === "google" || value === "github" || value === "password" || value === "new_account";
+}
+
+function readAlternativeLoginStep(value: unknown): AlternativeLoginStep | null {
+  return value === "google" || value === "github" || value === "password" || value === "new_account" ? value : null;
 }
 
 function readLoginOption(payload: unknown): LoginOption | null {
@@ -45,6 +58,9 @@ function readLoginOption(payload: unknown): LoginOption | null {
     nextStep: payload.nextStep,
     signInPath: typeof payload.signInPath === "string" ? payload.signInPath : null,
     signInUrl: typeof payload.signInUrl === "string" ? payload.signInUrl : null,
+    alternativeStep: payload.nextStep === "sso" ? readAlternativeLoginStep(payload.alternativeStep) : null,
+    ssoRequired: payload.ssoRequired === true,
+    organizationName: typeof payload.organizationName === "string" && payload.organizationName.trim() ? payload.organizationName.trim() : null,
   };
 }
 
@@ -412,6 +428,8 @@ export function AuthPanel({
   const requestedEmailFirstStep = loginOption?.nextStep ?? "email";
   const emailFirstStep: EmailFirstStep = isSingleOrgPrivateSignup && !emailFirstInvite && requestedEmailFirstStep === "new_account" ? "password" : requestedEmailFirstStep;
   const emailFirstEmail = email.trim();
+  const ssoOrganizationName = loginOption?.organizationName ?? "Your organization";
+  const ssoContinueLabel = loginOption?.organizationName ? `Continue with ${loginOption.organizationName} SSO` : "Continue with SSO";
   const canRememberSignIn = emailFirstFlow && !prefilledEmail?.trim() && !lockEmail && !hideSocialAuth && !emailFirstInvite;
 
   useEffect(() => {
@@ -445,6 +463,14 @@ export function AuthPanel({
           copy: "Enter your email and we'll send you to the right sign-in step.",
           submitLabel: "Next",
           ...emailStepContent,
+        }
+      : emailFirstStep === "sso" && loginOption?.alternativeStep
+      ? {
+          title: "Sign in with SSO.",
+          copy: loginOption.ssoRequired
+            ? `${ssoOrganizationName} requires SSO. Use another method to reach a different organization.`
+            : `${ssoOrganizationName} uses single sign-on for this email.`,
+          submitLabel: ssoContinueLabel,
         }
       : emailFirstStep === "sso"
       ? {
@@ -611,6 +637,15 @@ export function AuthPanel({
       nextUrl.searchParams.set("loginHint", trimmedEmail);
     }
     window.location.assign(nextUrl.toString());
+  };
+
+  /** ssoPerOrganization: leave the suggested SSO for the usual step (password, Google, a new account). */
+  const chooseAlternativeLoginStep = () => {
+    const alternativeStep = loginOption?.alternativeStep;
+    if (!loginOption || !alternativeStep) return;
+    setLoginOptionError(null);
+    setAuthMode(alternativeStep === "new_account" ? "sign-up" : "sign-in");
+    setLoginOption({ ...loginOption, nextStep: alternativeStep, alternativeStep: null });
   };
 
   const resolveEmailFirstStep = async (event: FormEvent<HTMLFormElement>) => {
@@ -962,10 +997,28 @@ export function AuthPanel({
             className="den-button-primary w-full"
             onClick={startEmailFirstSso}
             disabled={!runtimeConfigLoaded || authBusy || desktopRedirectBusy}
+            data-testid="email-first-sso"
           >
-            Sign in with SSO
+            {loginOption?.alternativeStep ? ssoContinueLabel : "Sign in with SSO"}
             <ArrowRight className="h-4 w-4" />
           </button>
+        ) : null}
+
+        {!waitingForPrefilledLoginOption && emailFirstStep === "sso" && loginOption?.alternativeStep ? (
+          <>
+            <div className="den-divider" aria-hidden="true">
+              <span>or</span>
+            </div>
+            <button
+              type="button"
+              className="den-button-secondary w-full"
+              data-testid="email-first-sso-alternative"
+              onClick={chooseAlternativeLoginStep}
+              disabled={!runtimeConfigLoaded || authBusy || desktopRedirectBusy}
+            >
+              Use another sign-in method
+            </button>
+          </>
         ) : null}
 
         {!waitingForPrefilledLoginOption && emailFirstStep === "google" ? (
