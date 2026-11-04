@@ -16,11 +16,23 @@
  *   same person can still use other organizations.
  * - "Restrict this domain to our SSO" (`restrictDomainToSso`): the strict
  *   behavior again, for every email on the verified domain, invitation or not.
+ * - "Ask for SSO again" (`ssoSessionMaxAgeHours`): with SSO required, an SSO
+ *   sign-in opens the organization only for that long.
  */
 
 export type OrganizationSsoPolicy = {
   requireSso: boolean
   restrictDomainToSso: boolean
+  /** "Ask for SSO again after": how long an SSO sign-in opens the organization; null means as long as the session lasts. */
+  ssoSessionMaxAgeHours: SsoSessionMaxAgeHours | null
+}
+
+/** The choices offered for "Ask for SSO again after", in hours. */
+export const SSO_SESSION_MAX_AGE_HOURS = [8, 24, 24 * 7, 24 * 30] as const
+export type SsoSessionMaxAgeHours = (typeof SSO_SESSION_MAX_AGE_HOURS)[number]
+
+export function isSsoSessionMaxAgeHours(value: unknown): value is SsoSessionMaxAgeHours {
+  return SSO_SESSION_MAX_AGE_HOURS.some((hours) => hours === value)
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -43,12 +55,23 @@ export function readOrganizationSsoPolicy(metadata: unknown): OrganizationSsoPol
   return {
     requireSso: parsed.requireSso === true,
     restrictDomainToSso: parsed.restrictDomainToSso === true,
+    ssoSessionMaxAgeHours: isSsoSessionMaxAgeHours(parsed.ssoSessionMaxAgeHours) ? parsed.ssoSessionMaxAgeHours : null,
   }
 }
 
 /** Whether opening the organization needs a session signed in through its SSO (per-organization mode). */
 export function organizationRequiresSsoSession(policy: OrganizationSsoPolicy) {
   return policy.requireSso || policy.restrictDomainToSso
+}
+
+/**
+ * Whether an SSO sign-in still opens the organization: always, unless the
+ * organization asks for SSO again after a time and that time has passed since
+ * the identity provider authenticated the person.
+ */
+export function ssoProofIsCurrent(input: { authenticatedAt: Date; maxAgeHours: SsoSessionMaxAgeHours | null; now: Date }) {
+  if (input.maxAgeHours === null) return true
+  return input.now.getTime() - input.authenticatedAt.getTime() < input.maxAgeHours * 60 * 60 * 1000
 }
 
 /** The SSO organization that owns an email's verified domain, as login routing sees it. */

@@ -1,7 +1,8 @@
 import { and, eq, isNull } from "@openwork-ee/den-db/drizzle"
-import { DeviceCodeTable, MemberTable, SessionSsoAuthenticationTable } from "@openwork-ee/den-db/schema"
+import { DeviceCodeTable, MemberTable } from "@openwork-ee/den-db/schema"
 import { normalizeDenTypeId } from "@openwork-ee/utils/typeid"
 import { db } from "./db.js"
+import { readSessionSsoProof } from "./organization-sso-access.js"
 
 /**
  * OAuth 2.0 Device Authorization Grant (RFC 8628) for command-line sign-in.
@@ -23,7 +24,7 @@ export function normalizeDeviceUserCode(userCode: string): string {
   return userCode.replace(/[\s-]/g, "").toUpperCase()
 }
 
-export type PendingDeviceOrganization = { userId: string; organizationId: string; ssoProviderId: string | null }
+export type PendingDeviceOrganization = { userId: string; organizationId: string; ssoProviderId: string | null; ssoAuthenticatedAt: Date | null }
 
 // Filled by the `/device/token` before-hook when the code is approved and read
 // by the session-create hook in the same request; the after-hook always clears
@@ -38,6 +39,7 @@ export async function stageDeviceSessionOrganization(deviceCode: string): Promis
       userId: DeviceCodeTable.userId,
       organizationId: DeviceCodeTable.organizationId,
       ssoProviderId: DeviceCodeTable.ssoProviderId,
+      ssoAuthenticatedAt: DeviceCodeTable.ssoAuthenticatedAt,
     })
     .from(DeviceCodeTable)
     .where(eq(DeviceCodeTable.deviceCode, deviceCode))
@@ -45,7 +47,7 @@ export async function stageDeviceSessionOrganization(deviceCode: string): Promis
   if (!row || row.status !== "approved" || !row.userId || !row.organizationId) {
     return
   }
-  pendingDeviceOrganizations.set(deviceCode, { userId: row.userId, organizationId: row.organizationId, ssoProviderId: row.ssoProviderId })
+  pendingDeviceOrganizations.set(deviceCode, { userId: row.userId, organizationId: row.organizationId, ssoProviderId: row.ssoProviderId, ssoAuthenticatedAt: row.ssoAuthenticatedAt })
 }
 
 export function clearDeviceSessionOrganization(deviceCode: string): void {
@@ -147,21 +149,15 @@ export async function decideDeviceUserCode(input: {
   }
   // Snapshot actual approval-time proof even when SSO is optional. A policy
   // change between approval and polling must never turn a password into SSO.
-  const [proof] = organizationId && input.approvingSessionId
-    ? await db.$primary.select({ providerId: SessionSsoAuthenticationTable.ssoProviderId })
-      .from(SessionSsoAuthenticationTable)
-      .where(and(
-        eq(SessionSsoAuthenticationTable.sessionId, normalizeDenTypeId("session", input.approvingSessionId)),
-        eq(SessionSsoAuthenticationTable.userId, userId),
-        eq(SessionSsoAuthenticationTable.organizationId, organizationId),
-      )).limit(1)
-    : []
+  const proof = organizationId && input.approvingSessionId
+    ? await readSessionSsoProof({ sessionId: input.approvingSessionId, userId, organizationId })
+    : null
   const status = input.decision === "approve" ? "approved" : "denied"
   // Guarded write: only a still-pending code that is unbound or bound to this
   // person changes, so two tabs racing cannot both decide.
   const result = await db
     .update(DeviceCodeTable)
-    .set({ status, userId, organizationId, ssoProviderId: proof?.providerId ?? null })
+    .set({ status, userId, organizationId, ssoProviderId: proof?.providerId ?? null, ssoAuthenticatedAt: proof?.authenticatedAt ?? null })
     .where(and(
       eq(DeviceCodeTable.id, row.id),
       eq(DeviceCodeTable.status, "pending"),

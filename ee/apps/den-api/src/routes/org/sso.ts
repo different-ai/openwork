@@ -11,6 +11,7 @@ import { auditChangeCapture } from "../../audit/request-capture.js"
 import { db } from "../../db.js"
 import { checkEntitlement } from "../../entitlements.js"
 import { env } from "../../env.js"
+import { organizationFeatureEnabled } from "../../features.js"
 import { enterprisePlanRequiredSchema, xmlResponse } from "../../openapi.js"
 import {
   deleteOrganizationSsoConnection,
@@ -37,6 +38,7 @@ import {
   getSsoTestPresentation,
 } from "../../sso-test-lifecycle.js"
 import { orgPermissionRoute } from "../../middleware/index.js"
+import { updateOrganizationSettings } from "../../orgs.js"
 import type { OrgRouteVariables } from "./shared.js"
 
 const invalidRequestSchema = z.object({
@@ -611,6 +613,14 @@ export function registerOrgSsoRoutes<T extends { Variables: OrgRouteVariables }>
       const capture = auditChangeCapture(c)
       const enabled = await enableOrganizationSsoConnection(payload.organization.id, capture)
       if (!enabled.ok) return c.json({ error: "sso_lifecycle_error", message: enabled.message }, 409)
+      if (!await organizationFeatureEnabled(payload.organization.id, "ssoPerOrganization")) {
+        // Until ssoPerOrganization is on, enabled SSO is the only way in
+        // whatever "Require SSO" holds. Store that, so turning the flag on
+        // later keeps it required (migration 0180 did the same for
+        // organizations with SSO before). With the flag on, a new SSO
+        // connection starts optional until an admin requires it.
+        await updateOrganizationSettings({ organizationId: payload.organization.id, requireSso: true })
+      }
       await finishLegacyAuditAction(capture, {
         organizationId: payload.organization.id,
         actorUserId: payload.currentMember.userId,

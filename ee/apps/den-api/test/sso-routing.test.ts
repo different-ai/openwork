@@ -6,13 +6,14 @@ import {
   organizationRequiresSsoSession,
   readOrganizationSsoPolicy,
   resolveLoginSsoRouting,
+  ssoProofIsCurrent,
   type DomainSsoRequirement,
   type OrganizationSsoPolicy,
 } from "../src/sso-routing.js"
 
-const optional: OrganizationSsoPolicy = { requireSso: false, restrictDomainToSso: false }
-const required: OrganizationSsoPolicy = { requireSso: true, restrictDomainToSso: false }
-const restricted: OrganizationSsoPolicy = { requireSso: false, restrictDomainToSso: true }
+const optional: OrganizationSsoPolicy = { requireSso: false, restrictDomainToSso: false, ssoSessionMaxAgeHours: null }
+const required: OrganizationSsoPolicy = { requireSso: true, restrictDomainToSso: false, ssoSessionMaxAgeHours: null }
+const restricted: OrganizationSsoPolicy = { requireSso: false, restrictDomainToSso: true, ssoSessionMaxAgeHours: null }
 
 function requirement(policy: OrganizationSsoPolicy, perOrganization: boolean): DomainSsoRequirement {
   return {
@@ -76,4 +77,18 @@ test("verified-domain auto-join stays off for organizations that require SSO whe
   assert.equal(allowsVerifiedDomainAutoJoin({ policy: optional, perOrganization: true }), true)
   assert.equal(allowsVerifiedDomainAutoJoin({ policy: required, perOrganization: true }), false)
   assert.equal(allowsVerifiedDomainAutoJoin({ policy: restricted, perOrganization: true }), false)
+})
+
+test("policy reads only the offered \"Ask for SSO again\" choices", () => {
+  assert.equal(readOrganizationSsoPolicy({ requireSso: true, ssoSessionMaxAgeHours: 24 }).ssoSessionMaxAgeHours, 24)
+  assert.equal(readOrganizationSsoPolicy({ ssoSessionMaxAgeHours: 5 }).ssoSessionMaxAgeHours, null, "an unknown value is no limit")
+  assert.equal(readOrganizationSsoPolicy({ ssoSessionMaxAgeHours: "24" }).ssoSessionMaxAgeHours, null)
+})
+
+test("an SSO sign-in opens the organization until its \"Ask for SSO again\" time has passed", () => {
+  const authenticatedAt = new Date("2026-11-04T09:00:00Z")
+  assert.equal(ssoProofIsCurrent({ authenticatedAt, maxAgeHours: null, now: new Date("2027-11-04T09:00:00Z") }), true, "no limit: as long as the session lasts")
+  assert.equal(ssoProofIsCurrent({ authenticatedAt, maxAgeHours: 8, now: new Date("2026-11-04T16:59:59Z") }), true)
+  assert.equal(ssoProofIsCurrent({ authenticatedAt, maxAgeHours: 8, now: new Date("2026-11-04T17:00:00Z") }), false)
+  assert.equal(ssoProofIsCurrent({ authenticatedAt, maxAgeHours: 24, now: new Date("2026-11-05T08:00:00Z") }), true)
 })
