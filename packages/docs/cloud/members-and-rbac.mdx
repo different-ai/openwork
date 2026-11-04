@@ -1,20 +1,21 @@
 ---
 title: "Managing members and RBAC"
-description: "Manage owners, admins, members, and team-inherited Admin access, including SCIM groups"
-keywords: ["members", "roles", "RBAC", "invite member", "teams", "admin team", "permissions", "SCIM groups", "allowed email domains"]
+description: "Manage owners, super admins, admins, members, and team-inherited Admin access, including SCIM groups"
+keywords: ["members", "roles", "super admin", "RBAC", "invite member", "teams", "admin team", "permissions", "SCIM groups", "allowed email domains"]
 ---
 
 OpenWork Cloud separates org membership from team assignment. Teams are used for Collection and provider access; roles control what a person can manage across the org. An explicitly approved team can also grant organization-wide `Admin` access to its members.
 
 ## Roles
 
-OpenWork Cloud has three roles:
+OpenWork Cloud has four roles:
 
 - `Owner`: full org control. Only the owner can delete the organization or transfer ownership.
+- `Super Admin`: everything the owner can do except delete the organization or transfer ownership. A super admin holds every permission, including the owner-only actions listed below, and can make, change and remove other super admins. Only the owner or a super admin can give someone this role.
 - `Admin`: can invite `Member` users, manage ordinary teams, remove members subject to access safeguards, manage shared Cloud resources, connections, providers and usage limits, start a subscription, and view settings such as SSO, SCIM, API keys, approved web origins and desktop policies.
 - `Member`: can use resources shared with them but cannot manage org administration.
 
-`Super Admin` no longer exists as a built-in role. Ordinary admins keep their previous capabilities. The following actions default to the owner unless granted through Permissions:
+The following actions default to the owner and super admins unless granted through Permissions:
 
 - changing member roles and inviting someone as an `Admin`
 - designating Admin teams and changing who is in them
@@ -23,24 +24,26 @@ OpenWork Cloud has three roles:
 - opening the billing portal
 - editing or removing a connection someone else added
 
-### Upgrading from before Super Admin was removed
+### Organizations upgraded while Super Admin was removed
 
-When an upgrade first removes the old role, active people whose stored role includes `super-admin` become `Admin` and join a visible **Super Admins** team (with an organization-specific suffix). Its **Super Admins Permissions** set preserves the 14 comparable former capabilities, including managing permissions. The owner can review the team in **Members › Teams**, remove people, edit or unlink the permission set, or delete it through **Permissions**. Subsequent startups do not restore revoked access.
+Super Admin was removed for a while and has since been restored. When the upgrade that removed it ran, active people whose stored role includes `super-admin` become `Admin` and join a visible **Super Admins** team (with an organization-specific suffix). Its **Super Admins Permissions** set preserves the 14 comparable former capabilities, including managing permissions. The owner can review the team in **Members › Teams**, remove people, edit or unlink the permission set, or delete it through **Permissions**. Subsequent startups do not restore revoked access.
 
 The upgrade uses only the roles stored at that moment, not invitation or audit history. It excludes removed members, unaccepted invitations, pending workspace claims, and people already demoted. Owners keep their existing access without joining the team. Organizations without active super-admins and fresh installations get no extra team. Existing teams, including Admin teams, are unchanged.
+
+Restoring the role does not move anyone back: people who were super admins before are still `Admin`, plus the **Super Admins** team if they joined it. The owner can make them `Super Admin` again from **Members › Edit role**, then delete the **Super Admins** team if it is no longer needed.
 
 This preservation applies only if the database has **not yet run the Super Admin deprecation migration**. It does not repair databases that already ran it, including existing 0.18.58 and 0.18.59 installations. Those organizations need an owner-reviewed manual grant. Agent-permission and deployment management are not included: they were not comparable former super-admin capabilities.
 
 Custom roles have also been removed; members who had one are treated as `Member`. Enterprise organizations can use Permissions to give any of the owner-only actions to admins or to a team, and to change what members and admins can do.
 
-`Owner` cannot be assigned through an invitation or the role editor. Ownership can only be transferred to an active admin, and the previous owner becomes an admin.
+`Owner` cannot be assigned through an invitation or the role editor. Ownership can only be transferred to an active admin or super admin, and the previous owner becomes an admin.
 
 ## Invite members
 
 1. Open **Members**.
 2. On the **Members** tab, click **Add member**.
 3. Enter the teammate's **Email**.
-4. If you are the owner, choose the initial **Role**: `Member` or `Admin`. Admins can invite only `Member` users.
+4. If you can change member roles, choose the initial **Role**: `Member`, `Admin` or `Super Admin`. Only the owner and super admins can invite someone as `Super Admin`.
 5. Click **Send invite**.
 
 <Frame>
@@ -103,7 +106,7 @@ Only the owner can enable or clear this checkbox. Admins, including people who i
 
 - A **direct role** is assigned to the person in OpenWork. Team membership does not rewrite it.
 - **Inherited Admin** is added while the person is an active organization member of an approved Admin team. Their direct role and other grants still apply.
-- Teams never grant `Owner`. Inherited Admin gives the same access as a direct `Admin` role, and does not unlock owner-only actions.
+- Teams never grant `Owner` or `Super Admin`. Inherited Admin gives the same access as a direct `Admin` role, and does not unlock owner-only actions.
 - Removing someone from one Admin team, or clearing that team's checkbox, removes only that source of Admin access. A direct `Admin` role or another approved Admin team still grants Admin. Changing a direct role to `Member` does not remove an existing team grant.
 
 For access reviews, inspect both the person's direct role and every team named in **Admin via**. OpenWork checks current team authority on subsequent requests; the person does not need a new sign-in for team access changes to apply.

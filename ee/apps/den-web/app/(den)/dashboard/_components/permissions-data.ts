@@ -118,6 +118,8 @@ const memberPermissionsSchema = z.object({
   memberId: z.string(),
   featureEnabled: z.boolean(),
   isOwner: z.boolean(),
+  // Older servers don't send it.
+  isSuperAdmin: z.boolean().optional().default(false),
   isAdmin: z.boolean(),
   permissions: z.array(z.object({ key: z.string(), label: z.string(), sources: z.array(sourceSchema) })),
 });

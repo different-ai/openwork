@@ -91,7 +91,7 @@ export type DenInvitationPreview = {
 export type DenCanonicalRole = "owner" | "admin" | "member";
 
 /** Roles the member pickers offer. Owner moves only by ownership transfer. */
-export const ASSIGNABLE_ORG_ROLES = ["member", "admin"] as const;
+export const ASSIGNABLE_ORG_ROLES = ["member", "admin", "super-admin"] as const;
 
 /**
  * What the signed-in member can do in the dashboard. Each `can*` flag is the
@@ -102,8 +102,14 @@ export const ASSIGNABLE_ORG_ROLES = ["member", "admin"] as const;
 export type DenOrgAccessFlags = {
   canonicalRole: DenCanonicalRole;
   isOwner: boolean;
+  /**
+   * Super-admin role (never the owner): every permission the owner has, so
+   * they can also make, change and remove super-admins. Only deleting the
+   * organization and transferring ownership stay with the owner.
+   */
+  isSuperAdmin: boolean;
   isMember: boolean;
-  /** Owner, admin role, or member of an Admin team. Role-derived; prefer a permission flag for gating an action. */
+  /** Owner, admin or super-admin role, or member of an Admin team. Role-derived; prefer a permission flag for gating an action. */
   isAdmin: boolean;
   /**
    * Holds at least one organization permission, so some admin page has
@@ -535,10 +541,20 @@ export function splitRoleString(value: string): string[] {
     .filter(Boolean);
 }
 
+function normalizeRoleSlug(value: string): string {
+  return value.trim().toLowerCase().replace(/[\s_]+/g, "-");
+}
+
+/** The role value names super-admin and not owner. */
+export function isSuperAdminRole(roleValue: string): boolean {
+  const roles = splitRoleString(roleValue).map(normalizeRoleSlug);
+  return roles.includes("super-admin") && !roles.includes("owner");
+}
+
 function normalizeCanonicalRole(value: string): DenCanonicalRole | null {
-  const normalized = value.trim().toLowerCase().replace(/[\s_]+/g, "-");
+  const normalized = normalizeRoleSlug(value);
   if (normalized === "owner") return "owner";
-  // Super-admin was merged into admin; a stray value reads as admin.
+  // A super-admin is also an admin; isSuperAdminRole tells them apart.
   if (normalized === "admin" || normalized === "super-admin") return "admin";
   if (normalized === "member") return "member";
   return null;
@@ -566,8 +582,9 @@ export function getHighestCanonicalRole(roleValue: string, isOwner: boolean): De
   return "member";
 }
 
-/** The picker value for a stored role: admin when it names admin, else member. */
+/** The picker value for a stored role: super-admin or admin when it names one, else member. */
 export function assignableOrgRole(roleValue: string): (typeof ASSIGNABLE_ORG_ROLES)[number] {
+  if (isSuperAdminRole(roleValue)) return "super-admin";
   return getHighestCanonicalRole(roleValue, false) === "admin" ? "admin" : "member";
 }
 
@@ -584,9 +601,10 @@ export function canRefreshInvitationRole(role: string, access: Pick<DenOrgAccess
 export function getOrgAccessFlags(roleValue: string, isOwner: boolean, permissions?: readonly PermissionKey[] | null): DenOrgAccessFlags {
   const canonicalRole = getHighestCanonicalRole(roleValue, isOwner);
   const resolvedIsOwner = canonicalRole === "owner";
+  const isSuperAdmin = !resolvedIsOwner && isSuperAdminRole(roleValue);
   const isAdmin = resolvedIsOwner || canonicalRole === "admin";
   const held = new Set<PermissionKey>(
-    resolvedIsOwner
+    resolvedIsOwner || isSuperAdmin
       ? PERMISSION_KEYS
       : permissions ?? [...permissionDefaultKeys("member"), ...(isAdmin ? permissionDefaultKeys("admin") : [])],
   );
@@ -595,6 +613,7 @@ export function getOrgAccessFlags(roleValue: string, isOwner: boolean, permissio
   return {
     canonicalRole,
     isOwner: resolvedIsOwner,
+    isSuperAdmin,
     isMember: canonicalRole === "member",
     isAdmin,
     canViewSettings: isAdmin || held.size > 0,
@@ -666,6 +685,7 @@ export function permissionLockReason(key: PermissionKey): string {
 }
 
 export function formatRoleLabel(role: string): string {
+  if (normalizeRoleSlug(role) === "super-admin") return "Super admin";
   const canonicalRole = normalizeCanonicalRole(role);
   if (canonicalRole === "admin") return "Admin";
   return role

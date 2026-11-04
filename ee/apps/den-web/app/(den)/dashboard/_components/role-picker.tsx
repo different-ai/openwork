@@ -12,6 +12,8 @@ export type RolePickerOption = {
   lockReason?: string | null;
 };
 
+const BUILT_IN_ROLE_VALUES: ReadonlySet<string> = new Set(["member", "admin", "super-admin"]);
+
 /** One searchable, trigger-width role menu for people and teams. */
 export function RolePicker({ value, onChange, options, label, trigger, disabled, footer, open: controlledOpen, onOpenChange, testId = "member-role" }: {
   value: string;
@@ -36,6 +38,7 @@ export function RolePicker({ value, onChange, options, label, trigger, disabled,
   }
   const needle = query.trim().toLowerCase();
   const matches = options.filter((option) => `${option.label} ${option.caption ?? ""}`.toLowerCase().includes(needle));
+  const builtIn = (option: RolePickerOption) => BUILT_IN_ROLE_VALUES.has(option.value);
   const row = (option: RolePickerOption) => (
     <button key={option.value} type="button" role="option" aria-selected={value === option.value}
       aria-disabled={option.disabled} disabled={option.disabled} title={option.lockReason ?? option.label}
@@ -62,9 +65,9 @@ export function RolePicker({ value, onChange, options, label, trigger, disabled,
           <input autoFocus aria-label="Search roles" placeholder="Search roles" value={query} onChange={(event) => setQuery(event.target.value)} className="min-w-0 flex-1 bg-transparent text-[13px] outline-none" />
         </label>
         <div className="mt-1 min-h-0 overflow-y-auto overflow-x-hidden" role="listbox" aria-label={label}>
-          {matches.filter((option) => option.value === "member" || option.value === "admin").map(row)}
-          {matches.some((option) => option.value !== "member" && option.value !== "admin") ? <p className="px-3 pb-1 pt-2 text-[12px] font-medium text-gray-500">Custom roles</p> : null}
-          {matches.filter((option) => option.value !== "member" && option.value !== "admin").map(row)}
+          {matches.filter(builtIn).map(row)}
+          {matches.some((option) => !builtIn(option)) ? <p className="px-3 pb-1 pt-2 text-[12px] font-medium text-gray-500">Custom roles</p> : null}
+          {matches.filter((option) => !builtIn(option)).map(row)}
           {matches.length === 0 ? <p className="px-3 py-4 text-[12px] text-gray-500">No roles match “{query.trim()}”.</p> : null}
         </div>
         {footer ? <div className="mt-1 shrink-0 border-t border-gray-100 pt-2">{footer}</div> : null}

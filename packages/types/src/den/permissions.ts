@@ -11,9 +11,9 @@ import { z } from "zod"
  * - Baseline member actions (things every member can do today) are not here.
  * - `defaultOn` reproduces the role checks from before Permissions: a key is
  *   `["admin"]` only when every action it gates was open to plain admins.
- *   Actions that needed super-admin (now removed) are owner-only by default:
- *   `defaultOn: []`. The owner holds every key and can grant owner-only
- *   keys to Admin or team permissions.
+ *   Actions that need the owner or a super-admin are owner-only by default:
+ *   `defaultOn: []`. The owner and super-admins hold every key and can grant
+ *   owner-only keys to Admin or team permissions.
  * - `sensitive` matches the old recent sign-in requirement of what it gates.
  */
 
@@ -57,7 +57,7 @@ export type PermissionDefinition = {
 }
 
 const ADMIN = ["admin"] as const
-/** Owner-only by default: formerly super-admin (or owner) actions. */
+/** Owner-only by default: the owner and super-admins hold these; nobody else does until granted. */
 const OWNER_ONLY = [] as const
 
 export const PERMISSIONS = {

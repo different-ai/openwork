@@ -871,11 +871,11 @@ export function normalizeDesktopConfig(value: unknown): DesktopConfig {
 /**
  * Role assignments a member matches. Assignments include built-in parent
  * roles (an owner also matches `admin`), every member matches `member`, and
- * `admin` matches effective admins: a direct admin role or membership of a
- * team that grants organization admin (`adminViaTeam`).
+ * `admin` matches effective admins: a direct admin or super-admin role or
+ * membership of a team that grants organization admin (`adminViaTeam`).
  */
 export function matchingDesktopPolicyAssignmentRoles(memberRole: string, options: { adminViaTeam?: boolean } = {}) {
-  const levels = new Map<string, number>([["owner", 2], ["admin", 1], ["member", 0]]);
+  const levels = new Map<string, number>([["owner", 2], ["super-admin", 1], ["admin", 1], ["member", 0]]);
   const roles = memberRole.split(",").map((role) => role.trim()).filter(Boolean);
   if (options.adminViaTeam) roles.push("admin");
   return (["owner", "admin", "member"] as const).filter((required) => required === "member" || roles.some((role) =>

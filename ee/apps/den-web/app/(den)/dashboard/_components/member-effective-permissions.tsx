@@ -60,11 +60,13 @@ export function MemberEffectivePermissions({ memberId, memberName }: { memberId:
       <p className="text-[13px] text-gray-600">
         {data.isOwner
           ? `${memberName} is the owner and can always do everything.`
+          : data.isSuperAdmin
+            ? `${memberName} is a super admin and can do everything the owner can, except delete the organization or transfer ownership.`
           : byKey.size === 0
             ? `${memberName} has no organization permissions.`
             : `${memberName} has ${byKey.size} ${byKey.size === 1 ? "permission" : "permissions"}.`}
       </p>
-      {data.isOwner ? null : areas.map((area) => (
+      {data.isOwner || data.isSuperAdmin ? null : areas.map((area) => (
         <PermissionAreaSection key={area.key} label={area.label}>
           {area.keys.map((key) => {
             const entry = byKey.get(key);

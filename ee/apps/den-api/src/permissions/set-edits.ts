@@ -26,9 +26,10 @@ export type PermissionChange = {
   status: PermissionStatus
 }
 
-/** The editor's effective permissions. The owner holds every key. */
+/** The editor's effective permissions. The owner and super-admins hold every key. */
 export type PermissionEditor = {
   isOwner: boolean
+  isSuperAdmin?: boolean
   /** Effective admin: a direct admin role or a member of an Admin team. */
   isAdmin: boolean
   has(key: PermissionKey): boolean
@@ -70,7 +71,7 @@ function validateRequestedKeys(changes: readonly RequestedPermissionChange[]):
 }
 
 function notHeld(editor: PermissionEditor, keys: Iterable<PermissionKey>): PermissionKey[] {
-  if (editor.isOwner) return []
+  if (editor.isOwner || editor.isSuperAdmin === true) return []
   return sorted([...keys].filter((key) => !editor.has(key)))
 }
 
@@ -106,7 +107,7 @@ export function planPermissionSetEdit(input: {
   if (!validated.ok) return validated
 
   const { defaultKey } = input
-  if (defaultKey === "admin" && !input.editor.isOwner && !input.editor.isAdmin) {
+  if (defaultKey === "admin" && !input.editor.isOwner && input.editor.isSuperAdmin !== true && !input.editor.isAdmin) {
     return { ok: false, problem: { error: "admin_permissions_require_admin", keys: sorted(validated.changes.map((change) => change.key)) } }
   }
 
@@ -229,6 +230,8 @@ export function permissionSourceLabel(source: PermissionSource): string {
   switch (source.kind) {
     case "owner":
       return "Organization owner"
+    case "super_admin":
+      return "Super admin role"
     case "member_default":
       return source.setName
     case "admin_default":

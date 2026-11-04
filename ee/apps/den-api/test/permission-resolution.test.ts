@@ -23,6 +23,7 @@ import {
   memberPermissionsFromGrants,
   ownerPermissionGrants,
   permissionDeniedMessage,
+  superAdminPermissionGrants,
 } from "../src/permissions/effective.ts"
 import { isEffectiveOrganizationAdmin } from "../src/organization-role-hierarchy.ts"
 
@@ -136,7 +137,7 @@ test("reconcile against the real catalog seeds exactly the code defaults", () =>
   }
 })
 
-test("effective admin: direct admin, legacy super-admin, or an Admin team", () => {
+test("effective admin: direct admin, super-admin, or an Admin team", () => {
   assert.equal(isEffectiveOrganizationAdmin({ directRole: "member", adminTeamIds: [] }), false)
   assert.equal(isEffectiveOrganizationAdmin({ directRole: "admin", adminTeamIds: [] }), true)
   assert.equal(isEffectiveOrganizationAdmin({ directRole: "member, super-admin", adminTeamIds: [] }), true)
@@ -148,6 +149,23 @@ test("the owner holds every catalog key", () => {
   assert.equal(permissions.keys.size, PERMISSION_KEYS.length)
   for (const key of PERMISSION_KEYS) assert.ok(permissions.has(key))
   assert.deepEqual(allPermissionKeys(), [...PERMISSION_KEYS].sort())
+})
+
+test("a super-admin holds every catalog key, like the owner, and is an admin", () => {
+  const permissions = memberPermissionsFromGrants({ isOwner: false, isSuperAdmin: true, isAdmin: false, grants: superAdminPermissionGrants() })
+  assert.equal(permissions.isOwner, false)
+  assert.equal(permissions.isSuperAdmin, true)
+  assert.equal(permissions.isAdmin, true)
+  assert.equal(permissions.keys.size, PERMISSION_KEYS.length)
+  for (const key of PERMISSION_KEYS) assert.ok(permissions.has(key))
+  const empty = memberPermissionsFromGrants({ isOwner: false, isSuperAdmin: true, isAdmin: true, grants: [] })
+  assert.equal(empty.keys.size, PERMISSION_KEYS.length)
+  assert.deepEqual(explainPermissionGrants(superAdminPermissionGrants())[0]?.sources, [{ kind: "super_admin" }])
+})
+
+test("an owner is never also reported as a super-admin", () => {
+  const permissions = memberPermissionsFromGrants({ isOwner: true, isSuperAdmin: true, isAdmin: false, grants: [] })
+  assert.equal(permissions.isSuperAdmin, false)
 })
 
 test("the owner holds every key even when grants are empty", () => {

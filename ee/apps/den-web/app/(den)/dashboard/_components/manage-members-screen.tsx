@@ -50,7 +50,7 @@ import { formatAddedDate } from "./item-dates";
 import { TeamsListHeader, TeamsListLane, TeamsListLocked, TeamsListOpenLink, TeamsListRow, teamsListColumns } from "./teams-list-row";
 import { teamOverrideSummary, useAgentPermissions } from "./agent-permissions-data";
 import { useCustomRoleTeams, usePermissionSets, useRoleGrantLocks } from "./permissions-data";
-import { TEAM_ROLE_LABELS, memberRoleOptions, parseRoleChoice, teamRole, teamRoleLabels } from "./team-roles";
+import { SUPER_ADMIN_ROLE_LOCK_REASON, TEAM_ROLE_LABELS, memberRoleOptions, parseRoleChoice, teamRole, teamRoleLabels } from "./team-roles";
 import { MemberRoleEditor, MemberRoleSelect } from "./member-role-select";
 
 type MembersTab = "members" | "teams" | "roles";
@@ -181,7 +181,7 @@ export function ManageMembersScreen() {
     const teams = roleTeams(set.id);
     if (teams.length && teams.every((team) => team.managedByScim || team.grantsOrganizationAdmin && !access.canManageAdminTeams)) roleLocks.set(set.id, "This role’s teams are managed by your identity provider or need Manage Admin teams. Ask the organization owner.");
   }
-  const memberRoles = memberRoleOptions({ canManageTeams: access.canManageTeams, customRoles: customSets.map((set) => ({ ...set, teams: set.teams.length ? set.teams : set.team ? [set.team] : [] })), lockReasons: roleLocks, adminLockReason: !access.canManageRoles ? permissionLockReason("members.update") : grantLocks.get(roleSets.data?.find((set) => set.kind === "admin_default")?.id ?? "") });
+  const memberRoles = memberRoleOptions({ canManageTeams: access.canManageTeams, customRoles: customSets.map((set) => ({ ...set, teams: set.teams.length ? set.teams : set.team ? [set.team] : [] })), lockReasons: roleLocks, adminLockReason: !access.canManageRoles ? permissionLockReason("members.update") : grantLocks.get(roleSets.data?.find((set) => set.kind === "admin_default")?.id ?? ""), superAdminLockReason: !access.canManageRoles ? permissionLockReason("members.update") : access.isOwner || access.isSuperAdmin ? null : SUPER_ADMIN_ROLE_LOCK_REASON });
   const inviteTeamPicker = access.canManageTeams && (orgContext?.teams.length ?? 0) > 0;
   const [inviteTeamId, setInviteTeamId] = useState("");
   const [memberRoleTeamId, setMemberRoleTeamId] = useState("");
@@ -468,7 +468,7 @@ export function ManageMembersScreen() {
       if (editChoice.blocked) return;
       const choice = parseRoleChoice(memberRoleDraft);
       const team = editChoice.set ? editChoice.selected : choice.teamId ? orgContext?.teams.find((entry) => entry.id === choice.teamId) : null;
-      const demoteFirst = choice.role === "member" && assignableOrgRole(member.role) === "admin";
+      const demoteFirst = choice.role === "member" && assignableOrgRole(member.role) !== "member";
       if (demoteFirst) await updateMemberRole(member.id, "member");
       if (team && !team.memberIds.includes(member.id)) {
         await updateTeam(team.id, { memberIds: [...team.memberIds, member.id] });

@@ -249,7 +249,7 @@ export type DenOrgSummary = {
 function normalizeDenCanonicalOrgRole(role: string): DenCanonicalOrgRole | null {
   const normalized = role.trim().toLowerCase().replace(/[\s_]+/g, "-");
   if (normalized === "owner") return "owner";
-  // Super-admin was merged into admin; a stray value from an older server reads as admin.
+  // A super-admin is also an admin for every admin check; formatDenOrgRoleLabel names it.
   if (normalized === "admin" || normalized === "super-admin") return "admin";
   if (normalized === "member") return "member";
   return null;
@@ -282,6 +282,7 @@ export function formatDenOrgRoleLabel(roleValue: string) {
     .map((role) => role.trim())
     .filter(Boolean)
     .map((role) => {
+      if (role.toLowerCase().replace(/[\s_]+/g, "-") === "super-admin") return "Super admin";
       const canonicalRole = normalizeDenCanonicalOrgRole(role);
       if (canonicalRole === "owner") return "Owner";
       if (canonicalRole === "admin") return "Admin";
@@ -292,7 +293,7 @@ export function formatDenOrgRoleLabel(roleValue: string) {
         .map((part) => `${part.slice(0, 1).toUpperCase()}${part.slice(1)}`)
         .join(" ");
     });
-  // "admin,super-admin" from an older server must not read "Admin, Admin".
+  // Repeated names, e.g. "admin,Admin", must not read "Admin, Admin".
   return [...new Set(labels)].join(", ");
 }
 

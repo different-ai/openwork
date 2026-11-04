@@ -76,6 +76,7 @@ import { resolvePermissionsForMember } from "./permissions/resolve.js";
 import { roleAssignmentDenial } from "./permissions/team-grants.js";
 import {
   ORGANIZATION_ADMIN_ROLE,
+  ORGANIZATION_SUPER_ADMIN_ROLE,
   ORGANIZATION_MEMBER_ROLE,
   ORGANIZATION_OWNER_ROLE,
   normalizeOrganizationRoleName,
@@ -646,12 +647,12 @@ async function assertBetterAuthActorMayInvite(input: {
   const validation = await validateInvitationRoleAssignment({
     role: input.role,
     permissions: input.actor.permissions,
-    decideAdminAssignment: () => roleAssignmentDenial({
+    decideAdminAssignment: (role) => roleAssignmentDenial({
       organizationId: input.actor.organizationId,
       caller: input.actor.permissions,
       callerMemberId: input.actor.memberId,
       target: null,
-      nextRole: ORGANIZATION_ADMIN_ROLE,
+      nextRole: role,
     }),
   });
   if (!validation.ok) {
@@ -1882,7 +1883,7 @@ export const auth = betterAuth({
       // Group names are metadata, never organization role assignments.
       mapGroupToRoles: () => [],
       storeSCIMToken: SCIM_TOKEN_STORAGE_STRATEGY,
-      requiredRole: [ORGANIZATION_OWNER_ROLE, ORGANIZATION_ADMIN_ROLE],
+      requiredRole: [ORGANIZATION_OWNER_ROLE, ORGANIZATION_SUPER_ADMIN_ROLE, ORGANIZATION_ADMIN_ROLE],
       beforeSCIMTokenGenerated: async ({ member }) => {
         if (!member?.organizationId || !member.userId) {
           throw new APIError("FORBIDDEN", {

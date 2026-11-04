@@ -62,6 +62,7 @@ import {
   ASSIGNABLE_ORGANIZATION_ROLES,
   ORGANIZATION_ADMIN_ROLE,
   ORGANIZATION_MEMBER_ROLE,
+  ORGANIZATION_SUPER_ADMIN_ROLE,
   assignableOrganizationRole,
   organizationRoleValueIncludes,
   shouldRevokeSessionsForRoleChange,
@@ -2089,10 +2090,12 @@ export async function removeOrganizationMember(input: {
 
     if (actorPermissions) {
       const targetIsDirectAdmin = organizationRoleValueIncludes(member.role, ORGANIZATION_ADMIN_ROLE)
+      const targetIsDirectSuperAdmin = organizationRoleValueIncludes(member.role, ORGANIZATION_SUPER_ADMIN_ROLE)
       const targetIsAdminViaTeam = !targetIsDirectAdmin && !actorPermissions.isOwner && !actorPermissions.isAdmin
         && (await listAuthoritativeTeamMemberships(tx, { organizationId: input.organizationId, memberId: member.id, adminTeamsOnly: true, lock: "share" })).length > 0
       const adminRemovalDenial = decideMemberRemoval({
         actor: actorPermissions,
+        targetIsDirectSuperAdmin,
         targetIsDirectAdmin,
         targetIsAdminViaTeam,
         targetIsPendingInvitation: member.userId === null,
