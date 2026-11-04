@@ -593,6 +593,7 @@ export type DesktopCommandMap = {
   // Window / OS utilities (dunder commands)
   __showContextMenu: { args: [request: NativeContextMenuRequest]; result: string | null };
   __cancelContextMenu: { args: [requestId: string]; result: boolean };
+  __resolveChatFilePath: { args: [target: string]; result: string | null };
   __openPath: { args: [target: string]; result: unknown };
   __openWorkspaceFile: { args: [workspaceRoot: string, target: string, options?: { reveal?: boolean }]; result: DesktopWorkspaceFileOpenResult };
   __revealItemInDir: { args: [target: string]; result: unknown };

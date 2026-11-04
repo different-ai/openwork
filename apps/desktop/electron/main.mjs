@@ -59,7 +59,7 @@ import {
 } from "./connect-link-branding.mjs";
 import { resolveConnectLinkPublicKeys } from "./connect-link-keys.mjs";
 import { openExternalUrl } from "./open-external.mjs";
-import { openChatWorkspaceFile, resolveWorkspaceFileLaunch } from "./workspace-file-access.mjs";
+import { openChatWorkspaceFile, resolveChatFilePath, resolveWorkspaceFileLaunch } from "./workspace-file-access.mjs";
 import { createOpenWithApplications, installedApplicationCommand } from "./open-with-applications.mjs";
 const openWithApplications = createOpenWithApplications();
 import { resolveAppIdentifier, resolveUserDataPath } from "./dev-profile.mjs";
@@ -2454,6 +2454,9 @@ const desktopCommandHandlers = {
   },
   "opencodeMcpAuth": async (event, ...args) => {
       return runtimeManager.opencodeMcpAuth(String(args[0] ?? "").trim(), String(args[1] ?? "").trim());
+  },
+  "__resolveChatFilePath": async (event, ...args) => {
+      return resolveChatFilePath(args[0]);
   },
   "__openPath": async (event, ...args) => {
       const target = String(args[0] ?? "").trim();

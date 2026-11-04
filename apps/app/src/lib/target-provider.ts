@@ -8,6 +8,8 @@ export type OpenTargetOptions = {
   reveal?: boolean;
   /** A person-selected installed application; still uses the same resolver and native guards. */
   appPath?: string;
+  /** Owning session's file evidence; never borrowed from the currently selected session. */
+  sessionTargets?: OpenTarget[];
 };
 
 type OpenTargetHandler = (target: OpenTarget, options?: OpenTargetOptions) => void;
@@ -20,6 +22,7 @@ type OpenTargetContextValue = {
   sessionId?: string;
   isLocalWorkspace?: boolean;
   openTargets: OpenTarget[];
+  sessionFileEvidence?: OpenTarget[];
   onOpenTarget: OpenTargetHandler | undefined;
 };
 
@@ -31,6 +34,7 @@ type OpenTargetProviderProps = {
   sessionId?: string;
   isLocalWorkspace?: boolean;
   openTargets?: OpenTarget[] | undefined;
+  sessionFileEvidence?: OpenTarget[];
   onOpenTarget?: OpenTargetHandler | undefined;
 };
 
@@ -49,6 +53,7 @@ export function OpenTargetProvider({
   sessionId,
   isLocalWorkspace = false,
   openTargets = EMPTY_OPEN_TARGETS,
+  sessionFileEvidence,
   onOpenTarget,
 }: OpenTargetProviderProps) {
   const value = React.useMemo(
@@ -59,9 +64,10 @@ export function OpenTargetProvider({
       sessionId,
       isLocalWorkspace,
       openTargets,
+      sessionFileEvidence,
       onOpenTarget,
     }),
-    [client, workspaceId, workspaceRoot, sessionId, isLocalWorkspace, openTargets, onOpenTarget],
+    [client, workspaceId, workspaceRoot, sessionId, isLocalWorkspace, openTargets, sessionFileEvidence, onOpenTarget],
   );
 
   return React.createElement(OpenTargetContext.Provider, { value }, children);

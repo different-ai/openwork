@@ -17,7 +17,7 @@ import { useCloudSignIn } from "../../cloud/sign-in-return";
 import { type OpenworkServerClient, type OpenworkServerStatus } from "../../../../app/lib/openwork-server";
 import { getDisplaySessionTitle } from "../../../../app/lib/session-title";
 import type { BootPhase } from "../../../../app/lib/startup-boot";
-import { getCachedDesktopHomeDir, openDesktopUrl, openDesktopWithApp, openDesktopWorkspaceFile, type WorkspaceInfo } from "../../../../app/lib/desktop";
+import { getCachedDesktopHomeDir, resolveDesktopChatFilePath, openDesktopUrl, openDesktopWithApp, openDesktopWorkspaceFile, type WorkspaceInfo } from "../../../../app/lib/desktop";
 import type {
   ComposerAttachment,
   PendingPermission,
@@ -846,8 +846,10 @@ export function SessionPage(props: SessionPageProps) {
         homeDir: canOpenLocally ? await getCachedDesktopHomeDir() : null,
         canOpenLocally,
         reveal: options?.reveal,
+        sessionTargets: options?.sessionTargets,
+        findOnComputer: canOpenLocally ? resolveDesktopChatFilePath : undefined,
         findInWorkspace: client && runtimeWorkspaceId
-          ? (lookup) => resolveCollectibleOpenTarget(client, runtimeWorkspaceId, lookup, sessionId, { search: true })
+          ? (lookup, lookupOptions) => resolveCollectibleOpenTarget(client, runtimeWorkspaceId, lookup, sessionId, { search: lookupOptions?.search ?? true })
           : undefined,
       });
       if (plan.kind === "workspace") {
