@@ -380,6 +380,7 @@ export function OrgSettingsScreen() {
   const organizationId = orgContext.organization.id;
   const organizationName = orgContext.organization.name;
   const ssoPerOrganization = orgFeatureEnabled(orgContext, "ssoPerOrganization");
+  const ssoSettingsOnSsoPage = orgFeatureEnabled(orgContext, "ssoSettingsOnSsoPage");
 
   async function handleCopyOrgId() {
     await navigator.clipboard.writeText(organizationId);
@@ -418,8 +419,12 @@ export function OrgSettingsScreen() {
         allowedEmailDomains: domainRestrictionsEnabled
           ? draftAllowedDomains
           : null,
-        requireSso: requireSsoEnabled,
-        ...(ssoPerOrganization ? { restrictDomainToSso: restrictDomainToSsoEnabled } : {}),
+        ...(ssoSettingsOnSsoPage
+          ? {}
+          : {
+              requireSso: requireSsoEnabled,
+              ...(ssoPerOrganization ? { restrictDomainToSso: restrictDomainToSsoEnabled } : {}),
+            }),
         ...(supportedDesktopVersionOptions.length > 0
           ? {
               allowedDesktopVersions: allDesktopVersionsAllowed
@@ -499,7 +504,7 @@ export function OrgSettingsScreen() {
       )}
     >
       {orgContext && !orgContext.entitlements.orgControls ? (
-        <EnterprisePlanNotice feature="Enforced SSO and desktop version control" />
+        <EnterprisePlanNotice feature={ssoSettingsOnSsoPage ? "Desktop version control" : "Enforced SSO and desktop version control"} />
       ) : null}
       {pageError ? (
         <DenNotice
@@ -654,28 +659,59 @@ export function OrgSettingsScreen() {
           ) : null}
         </DenCard>
 
-        <DenCard size="spacious" className="grid gap-6">
-          <div className="grid gap-2">
-            <p className="text-[12px] font-semibold uppercase tracking-[0.16em] text-gray-400">
-              Authentication
-            </p>
-            <h2 className="text-[24px] font-semibold tracking-[-0.04em] text-gray-900">
-              Single sign-on requirement
-            </h2>
-            <p className="text-[14px] text-gray-500">
-              {ssoPerOrganization
-                ? "SSO is offered first at sign-in. Choose whether this organization, or your whole email domain, requires it."
-                : "Require members to use the workspace SSO entrypoint when their email domain matches this organization."}
-            </p>
-          </div>
+        {ssoSettingsOnSsoPage ? null : (
+          <DenCard size="spacious" className="grid gap-6">
+            <div className="grid gap-2">
+              <p className="text-[12px] font-semibold uppercase tracking-[0.16em] text-gray-400">
+                Authentication
+              </p>
+              <h2 className="text-[24px] font-semibold tracking-[-0.04em] text-gray-900">
+                Single sign-on requirement
+              </h2>
+              <p className="text-[14px] text-gray-500">
+                {ssoPerOrganization
+                  ? "SSO is offered first at sign-in. Choose whether this organization, or your whole email domain, requires it."
+                  : "Require members to use the workspace SSO entrypoint when their email domain matches this organization."}
+              </p>
+            </div>
 
-          {ssoPerOrganization ? (
-            <>
-              <div className="flex items-start justify-between gap-4 rounded-[24px] border border-gray-200 bg-white px-5 py-4" data-testid="require-sso-row">
+            {ssoPerOrganization ? (
+              <>
+                <div className="flex items-start justify-between gap-4 rounded-[24px] border border-gray-200 bg-white px-5 py-4" data-testid="require-sso-row">
+                  <div className="grid gap-1 pr-4">
+                    <p className="text-[15px] font-medium text-gray-900">Require SSO</p>
+                    <p className="text-[13px] text-gray-500">
+                      Members open this organization only after signing in with its SSO. They can still use their password or Google for other organizations.
+                    </p>
+                  </div>
+                  <SettingsToggle
+                    label="Require SSO for this organization"
+                    checked={requireSsoEnabled}
+                    disabled={!canManageSettings}
+                    onChange={setRequireSsoEnabled}
+                  />
+                </div>
+                <div className="flex items-start justify-between gap-4 rounded-[24px] border border-gray-200 bg-white px-5 py-4" data-testid="restrict-domain-sso-row">
+                  <div className="grid gap-1 pr-4">
+                    <p className="text-[15px] font-medium text-gray-900">Restrict this domain to our SSO</p>
+                    <p className="text-[13px] text-gray-500">
+                      Everyone with an email on your verified SSO domain must sign in with this organization's SSO, including people invited to other organizations.
+                    </p>
+                  </div>
+                  <SettingsToggle
+                    label="Restrict this domain to our SSO"
+                    checked={restrictDomainToSsoEnabled}
+                    disabled={!canManageSettings}
+                    onChange={setRestrictDomainToSsoEnabled}
+                  />
+                </div>
+              </>
+            ) : (
+              <div className="flex items-start justify-between gap-4 rounded-[24px] border border-gray-200 bg-white px-5 py-4">
                 <div className="grid gap-1 pr-4">
-                  <p className="text-[15px] font-medium text-gray-900">Require SSO</p>
+                  <p className="text-[15px] font-medium text-gray-900">Require SSO for matching domains</p>
                   <p className="text-[13px] text-gray-500">
-                    Members open this organization only after signing in with its SSO. They can still use their password or Google for other organizations.
+                    Email/password sign-in will redirect users to the org SSO flow when their email domain matches the configured SSO connection.
                   </p>
                 </div>
                 <SettingsToggle
@@ -685,38 +721,9 @@ export function OrgSettingsScreen() {
                   onChange={setRequireSsoEnabled}
                 />
               </div>
-              <div className="flex items-start justify-between gap-4 rounded-[24px] border border-gray-200 bg-white px-5 py-4" data-testid="restrict-domain-sso-row">
-                <div className="grid gap-1 pr-4">
-                  <p className="text-[15px] font-medium text-gray-900">Restrict this domain to our SSO</p>
-                  <p className="text-[13px] text-gray-500">
-                    Everyone with an email on your verified SSO domain must sign in with this organization's SSO, including people invited to other organizations.
-                  </p>
-                </div>
-                <SettingsToggle
-                  label="Restrict this domain to our SSO"
-                  checked={restrictDomainToSsoEnabled}
-                  disabled={!canManageSettings}
-                  onChange={setRestrictDomainToSsoEnabled}
-                />
-              </div>
-            </>
-          ) : (
-            <div className="flex items-start justify-between gap-4 rounded-[24px] border border-gray-200 bg-white px-5 py-4">
-              <div className="grid gap-1 pr-4">
-                <p className="text-[15px] font-medium text-gray-900">Require SSO for matching domains</p>
-                <p className="text-[13px] text-gray-500">
-                  Email/password sign-in will redirect users to the org SSO flow when their email domain matches the configured SSO connection.
-                </p>
-              </div>
-              <SettingsToggle
-                label="Require SSO for this organization"
-                checked={requireSsoEnabled}
-                disabled={!canManageSettings}
-                onChange={setRequireSsoEnabled}
-              />
-            </div>
-          )}
-        </DenCard>
+            )}
+          </DenCard>
+        )}
 
         <OrgAutomationSettingsSection canManage={canManageSettings} />
 

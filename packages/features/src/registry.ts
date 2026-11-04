@@ -214,6 +214,17 @@ export const FEATURES = defineFeatures({
     deployments: everywhere,
     default: false,
   },
+  ssoSettingsOnSsoPage: {
+    label: "SSO: sign-in requirement on the SSO page",
+    description: "The \"Require SSO\" and \"Restrict this domain to our SSO\" settings move from Org settings to the top of the SSO page, next to the SSO connection they depend on. Off: they stay in Org settings under Authentication.",
+    category: "administration",
+    added: "2026-11-04",
+    since: "2026-11",
+    author: "OmarMcAdam",
+    docs: "docs/features/sso-settings-on-sso-page/README.md",
+    deployments: everywhere,
+    default: false,
+  },
   administratorRecovery: {
     label: "Deploy-time administrator recovery",
     description: "Run a one-time, operator-selected Admin-team permission repair at deployment; disabling stops future repairs, not existing grants.",
