@@ -30,6 +30,32 @@ async function mcp(target: Den, token: string, method: string, params: Record<st
   return line ? JSON.parse(line.slice(5)) : response.body
 }
 
+// Leave room for the duplicate (+5 minutes) and capped (+20 minutes) requests, all on the same working day.
+function extraCheckTime(now: number): number {
+  const hour = 3_600_000
+  let first = Math.ceil(now / hour) * hour + hour / 2
+  if (new Date(first).getUTCHours() % 2 === 0) first += hour
+  if (new Date(first).getUTCHours() === 23) first += 2 * hour
+  return first
+}
+
+test("request_check fixture stays inside member hours at every UTC minute, including rollover", () => {
+  assert.equal(new Date(extraCheckTime(Date.parse("2026-11-04T22:47:00Z"))).toISOString(), "2026-11-05T01:30:00.000Z")
+  for (const day of ["2026-11-04", "2026-12-31"]) {
+    for (let minute = 0; minute < 24 * 60; minute++) {
+      const now = Date.parse(`${day}T00:00:00Z`) + minute * 60_000
+      const first = extraCheckTime(now)
+      const capped = first + 20 * 60_000
+      const label = new Date(now).toISOString()
+      assert.ok(first >= now + 5 * 60_000 && capped <= now + 24 * 3_600_000, label)
+      assert.equal(new Date(first).getUTCHours() % 2, 1, label)
+      assert.equal(new Date(first).getUTCMinutes(), 30, label)
+      assert.ok(new Date(capped).getUTCHours() < 23, label)
+      assert.equal(new Date(first).toISOString().slice(0, 10), new Date(capped).toISOString().slice(0, 10), label)
+    }
+  }
+})
+
 test("off: today's settings and member view, and the brief's fields are refused", async () => {
   const space = await workspace("Brief off", false)
   const view = await space.owner("GET", proactive)
@@ -125,7 +151,7 @@ test("chat and the page change the member's brief and rhythm; the server refuses
 
 test("request_check: only the agent's own check token sees it; capped, idempotent and shown in My bot", async () => {
   const space = await workspace("Brief requests", true)
-  // Every day, all day (UTC for a member whose time zone isn't known yet), one extra check a day.
+  // Every day, all day for the organization; the member narrows this to midnight–11 PM (UTC), one extra check a day.
   assert.equal((await space.owner("PUT", proactive, { workingDays: "everyday", startHour: 0, endHour: 24, brief: { extraChecksPerDay: 1 } })).status, 200)
   // The member's agent row exists once they change anything.
   assert.equal((await space.call("PUT", "/v1/me/agent", { hours: { startHour: 0, endHour: 23 } })).status, 200)
@@ -140,11 +166,8 @@ test("request_check: only the agent's own check token sees it; capped, idempoten
   assert.ok(!(await tools(messenger)).includes("request_check"), "the messenger reads nothing and asks for nothing")
   assert.ok(!(await tools(chat)).includes("request_check"), "chat never sees it")
 
-  // Half past an odd hour (UTC): never right after a check on the 2-hour rhythm (0, 2, 4…), within the next 24 hours.
-  const now = Date.now()
-  const hour = 3_600_000
-  let first = Math.ceil(now / hour) * hour + hour / 2
-  if (new Date(first).getUTCHours() % 2 === 0) first += hour
+  // Half past an odd hour (UTC), before 11 PM: never right after a check on the 2-hour rhythm (0, 2, 4…).
+  const first = extraCheckTime(Date.now())
   const atIso = new Date(first).toISOString().replace(/\.\d+Z$/, "Z")
   const set = await den.callMcpTool(check, "request_check", { at: atIso, why: "before the 2 PM with Northwind" })
   assert.equal(set.isError, false, set.text)

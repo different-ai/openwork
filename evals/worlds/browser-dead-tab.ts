@@ -1,4 +1,4 @@
-import { connect, debuggerUrlFor, listTargets } from "@openwork/cdp";
+import { connect, debuggerUrlFor, evaluate, listTargets } from "@openwork/cdp";
 import type { Place, Seed } from "@openwork/env";
 import { browserFastPath } from "./browser-fast-path.ts";
 
@@ -21,9 +21,7 @@ export async function browserDeadTab(seed: Seed, { place }: { place: Place }) {
       const client = await connect(debuggerUrlFor(cdpUrl, target), { connectTimeoutMs: 3_000, sendTimeoutMs: 3_000 }).catch(() => null);
       if (!client) return false;
       try {
-        const reply = await client.send("Runtime.evaluate", { expression: "1 + 1", returnByValue: true });
-        return typeof reply === "object" && reply !== null && "result" in reply
-          && typeof reply.result === "object" && reply.result !== null && "value" in reply.result && reply.result.value === 2;
+        return await evaluate(client, () => 1 + 1, { timeoutMs: 3_000 }) === 2;
       } catch {
         return false;
       } finally {

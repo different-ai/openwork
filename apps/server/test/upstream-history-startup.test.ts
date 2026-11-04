@@ -8,6 +8,11 @@ import { createEngineV2Preview, readEngineV2PreviewState } from "../src/engine-v
 import type { ServerConfig } from "../src/types.js";
 import { proxyOpencodeRequest } from "../src/server.js";
 
+test("source startup tests resolve workspace dependencies without a package build", () => {
+  const entry = import.meta.resolve("@openwork/enterprise-mcp-client");
+  assert.ok(entry.endsWith("/src/index.ts"), `expected the development source export, received ${entry}`);
+});
+
 // A stand-in only for the startup contract: report the exact database the
 // managed child received. Native conversion is covered by the real-engine proof.
 const engineSource = `#!${process.execPath}
