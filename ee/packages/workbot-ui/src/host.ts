@@ -55,6 +55,12 @@ export type WorkbotHost = {
   documentAuthorization?: "signin" | "blocked" | "disabled"
   /** The person can start side chats next to their main chat (on while Workbot is on). Off when unset. */
   sideChats?: boolean
+  /**
+   * The header avatar opens an account menu: who is signed in, Switch workspace, Your dashboard and Sign out.
+   * Omitted means the avatar only links to `homeHref`. `signOut` rejects, with a person-readable message, when the
+   * sign-in could not be ended.
+   */
+  account?: { email: string; organizationName: string; signOut(): Promise<void>; switchWorkspace(): void }
   /** Authenticated identity for permission-protected model-setting caches; absent on older hosts. */
   identity?: { principalId: string; organizationId: string }
 }

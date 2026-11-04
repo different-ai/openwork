@@ -32,7 +32,7 @@ import {
 import { AppMark, AttachButton, FileBadge, FilesButton, FilesPanel, ImageThumb, isImage, kindLabel, SentAttachments, UploadTray, useFileDrop, type Upload } from "./files";
 import { createComposerState, type ComposerState, type Pending } from "./composer-state";
 import { computerWork, type ComputerSurface } from "./computer-work";
-import { initials } from "./format";
+import { AccountAvatar } from "./account-menu";
 import { documentLinks, WorkbotMarkdown } from "./markdown";
 import { OpenFileContext } from "./open-file";
 import { PreviewPanel } from "./preview";
@@ -783,13 +783,7 @@ function WorkbotHeader(props: {
             <span className="hidden max-w-[220px] truncate pl-0.5 text-[12px] leading-4 text-[var(--wb-muted)] sm:inline">{names.join(", ")}</span>
           </span>
         ) : null}
-        <a
-          href={workbotHost().homeHref}
-          aria-label="Your dashboard"
-          className="grid size-8 shrink-0 place-items-center rounded-full bg-[var(--wb-ink)] text-[11px] font-semibold tracking-[0.02em] text-[var(--wb-on-ink)] transition-opacity duration-150 hover:opacity-85 focus-visible:outline-none focus-visible:shadow-[var(--wb-focus)]"
-        >
-          {initials(userName)}
-        </a>
+        <AccountAvatar userName={userName} />
       </div>
     </header>
   );

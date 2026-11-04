@@ -251,6 +251,16 @@
               ],
               "description": "Workbot: reading Drive files: Workbot reads PDFs, Office files and large files from Google Drive or OneDrive on its computer instead of saying they are too large. When it has no computer (and in Slack) it says plainly when a file is too large and asks the person to send the file instead. Renders DEN_FEATURE_WORKBOT_DRIVE_FILES."
             },
+            "workbotAccountMenu": {
+              "enum": [
+                "",
+                "true",
+                "false",
+                true,
+                false
+              ],
+              "description": "Workbot: account menu: The avatar in Workbot's header opens a menu with the signed-in account and workspace, Switch workspace, Your dashboard and Sign out, instead of only linking to the dashboard. Renders DEN_FEATURE_WORKBOT_ACCOUNT_MENU."
+            },
             "workbotProactive": {
               "enum": [
                 "",
