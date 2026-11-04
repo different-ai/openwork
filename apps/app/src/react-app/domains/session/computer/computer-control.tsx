@@ -78,6 +78,6 @@ export function ComputerControl({ sessionId }: { sessionId: string }) {
   }
 
   if (!slot || !snapshot || !working) return null
-  if (!showsLiveComputerView({ historyEnabled, watching, session: snapshot.session })) return null
+  if (!watching || !showsLiveComputerView({ historyEnabled, watching, session: snapshot.session })) return null
   return <ComputerPanel sessionId={sessionId} slot={slot} enabled={snapshot.enabled} canStop controlsBusy={stopping} stopping={stopping} cleanupPending={Boolean(snapshot.cleanupPending)} stopError={actionError} onStop={() => void halt()} />
 }
