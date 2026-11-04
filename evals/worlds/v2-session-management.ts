@@ -109,10 +109,16 @@ export async function v2SessionManagement(seed: Seed, { place }: { place: Place 
       }
       if (!messages.ok) throw new Error(`Could not read native session messages: ${messages.status}`);
       const model = isRecord(session.model) ? session.model : {};
+      const data = dataOf(messages.body);
+      const items = Array.isArray(data) ? data : isRecord(data) && Array.isArray(data.items) ? data.items : null;
+      if (!items) throw new Error("Invalid native message listing");
       return {
         id: session.id, title: session.title,
         archived: typeof session.time.archived === "number" && session.time.archived > 0,
-        model: { providerId: model.providerID, modelId: model.id }, messageCount: messages.data.length,
+        model: { providerId: model.providerID, modelId: model.id },
+        // Model changes can append bookkeeping markers without a prompt or
+        // inference. Count user/assistant messages, not model-switched markers.
+        messageCount: items.filter(item => isRecord(item) && (item.type === "user" || item.type === "assistant")).length,
       };
     },
   };
