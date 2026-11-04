@@ -19,15 +19,21 @@ still pop out into its own window), and **Hide live view** closes it again. The
 view still opens on its own when the person is needed, such as after a
 takeover. The next computer session starts in the card again.
 
-Files the session saved are listed on the card, under its header, without
-opening it: each file a Mac `save_as` step confirmed on disk (`file_saved`),
-named once with its latest size. In the desktop app each offers **Open** (its
-default app), **Show in Finder**, and **Attach to chat**, which adds it to the
+Files the session made are listed on the card, under its header, without
+opening it, newest first and each once with its latest size: each file a Mac
+`save_as` or `save_image` step confirmed on disk (`file_saved`), wherever it is, and each file in
+the chat's output folder (`~/Downloads/OpenWork/<chat>`, the `save_folder`
+`computer_open` returns) that changed between the session's first step and the
+end of its turn, whether an app, a `computer_script` export or a shell command
+wrote it. The agent is told to put every deliverable there, never only in a
+temporary folder, and to end by naming the files it delivered. In the desktop
+app each offers **Open** (its default app), **Show in Finder**, and **Attach to chat**, which adds it to the
 chat's message box as a file mention, as the message box's own file picker
 does. A save that was not confirmed on disk is not listed. Saves need no
 approval unless the organization's Agent permissions ask first. Open launches only a
-file this chat's computer use saved on this computer since the app started;
-any other path from the conversation is shown in Finder instead.
+file this chat made: one its computer use saved on this computer since the app
+started, or a regular, non-executable file in its output folder. Any other path
+from the conversation is shown in Finder instead.
 
 ![Computer session history open in the chat](computer-session-history.webp)
 

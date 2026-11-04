@@ -1,4 +1,4 @@
-import { useEffect, useState, type ReactNode } from "react"
+import { useEffect, useMemo, useState, type ReactNode } from "react"
 import type { DynamicToolUIPart } from "ai"
 import { ChevronRight, CodeXml, ExternalLink, FileText, FolderOpen, Monitor, Paperclip, Pause, PictureInPicture2, Play } from "lucide-react"
 
@@ -11,11 +11,17 @@ import { toast } from "@/components/ui/sonner"
 import { isToolPartInFlight } from "@/lib/tool-activity"
 import { formatToolCallDuration } from "@/lib/tool-call-duration"
 import { cn, formatFileSize } from "@/lib/utils"
-import { type ComputerActionMark, type ComputerSessionHistory as History } from "@/lib/computer-session-history"
+import { computerHandedBackFiles, type ComputerActionMark, type ComputerFolderFile, type ComputerSessionHistory as History } from "@/lib/computer-session-history"
 import { encodeComposerMentionValue } from "@/react-app/domains/session/surface/composer/mention-encoding"
 import { getComposerDraft, getComposerMentions, useComposerStateStore } from "@/react-app/domains/session/surface/composer-state-store"
 
-export type SavedFileActions = { open: (path: string) => void; reveal: (path: string) => void; attach: (path: string) => void }
+export type SavedFileActions = {
+  open: (path: string) => void
+  reveal: (path: string) => void
+  attach: (path: string) => void
+  /** The files in the chat's output folder, however they were made. */
+  list?: () => Promise<ComputerFolderFile[]>
+}
 
 /** Puts a saved file in the chat's composer as a file mention, as the composer's own file picker does. */
 export function attachFileToComposer(sessionId: string, path: string) {
@@ -31,16 +37,17 @@ export function attachFileToComposer(sessionId: string, path: string) {
 }
 
 /**
- * Open and Show in Finder go through the desktop, which launches only a file this chat's
- * computer use saved on this computer and otherwise shows it in its folder.
+ * Open and Show in Finder go through the desktop, which launches only a file this chat made
+ * (a save it confirmed, or a file in its output folder) and otherwise shows it in its folder.
  */
 export function desktopSavedFileActions(sessionId: string): SavedFileActions {
   const show = (path: string, reveal: boolean) => void desktopBridge.computerOpenSavedFile({ sessionId, path, ...(reveal ? { reveal } : {}) }).then(result => {
     if (!result.ok) toast.error(result.error || "Could not open this file.")
     else if (result.action === "unavailable") toast.error("This file is no longer on this computer.")
-    else if (result.action === "revealed" && !reveal) toast.info("Shown in Finder: only files the computer saved here in this run open directly.")
+    else if (result.action === "revealed" && !reveal) toast.info("Shown in Finder: only files this chat made open directly.")
   }, () => toast.error("Could not reach this file."))
-  return { open: path => show(path, false), reveal: path => show(path, true), attach: path => attachFileToComposer(sessionId, path) }
+  return { open: path => show(path, false), reveal: path => show(path, true), attach: path => attachFileToComposer(sessionId, path),
+    list: () => desktopBridge.computerChatFiles({ sessionId }).then(result => result.files) }
 }
 
 /**
@@ -50,14 +57,26 @@ export function desktopSavedFileActions(sessionId: string): SavedFileActions {
 /** Replay speeds, in turn: a capture every 1.5 s at 1×. */
 const SPEEDS = [1, 2, 4, 0.5] as const
 
-export function ComputerSessionHistory({ history, active, renderAction, live, fileActions }: {
+export function ComputerSessionHistory({ history, active, renderAction, live, fileActions, turnEndedAt = null }: {
   history: History
   active: boolean
   renderAction: (part: DynamicToolUIPart) => ReactNode
   live?: { watching: boolean; onWatch: (watching: boolean) => void }
   /** On the desktop: what the person can do with a file the session saved. */
   fileActions?: SavedFileActions
+  /** When this session's turn ended; null while it runs. Output-folder files after it belong to a later turn. */
+  turnEndedAt?: number | null
 }) {
+  // The output folder is read again as the session works and when its turn ends.
+  const [folder, setFolder] = useState<ComputerFolderFile[]>([])
+  const list = fileActions?.list
+  const steps = history.parts.length
+  useEffect(() => {
+    let current = true
+    void list?.().then(files => { if (current) setFolder(files) }, () => {})
+    return () => { current = false }
+  }, [list, steps, active, turnEndedAt])
+  const handedBack = useMemo(() => computerHandedBackFiles(history, folder, turnEndedAt), [history, folder, turnEndedAt])
   const [open, setOpen] = useState(false)
   const [playing, setPlaying] = useState(false)
   const [speed, setSpeed] = useState<(typeof SPEEDS)[number]>(1)
@@ -135,8 +154,8 @@ export function ComputerSessionHistory({ history, active, renderAction, live, fi
         </Button> : null}
       </div>
       {/* What the session made for the person, without opening the card. */}
-      {history.savedFiles.length > 0 ? <ul data-computer-saved-files="" aria-label="Saved files" className="space-y-1 border-t border-border px-3 py-2">
-        {history.savedFiles.map(file => <li key={file.path} data-computer-saved-file="" className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
+      {handedBack.length > 0 ? <ul data-computer-saved-files="" aria-label="Saved files" className="space-y-1 border-t border-border px-3 py-2">
+        {handedBack.map(file => <li key={file.path} data-computer-saved-file="" className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
           <FileText aria-hidden="true" className="size-4 shrink-0 text-muted-foreground" />
           <span className="min-w-0 flex-1 truncate text-sm" title={file.path}>{file.name}</span>
           <span className="shrink-0 text-xs tabular-nums text-muted-foreground">{formatFileSize(file.bytes)}</span>

@@ -60,7 +60,7 @@ import {
 } from "./connect-link-branding.mjs";
 import { resolveConnectLinkPublicKeys } from "./connect-link-keys.mjs";
 import { openExternalUrl } from "./open-external.mjs";
-import { openChatWorkspaceFile, resolveChatFilePath, resolveWorkspaceFileLaunch } from "./workspace-file-access.mjs";
+import { chatOutputFolder, listChatOutputFiles, openChatWorkspaceFile, opensFromChatOutput, resolveChatFilePath, resolveWorkspaceFileLaunch } from "./workspace-file-access.mjs";
 import { createOpenWithApplications, installedApplicationCommand } from "./open-with-applications.mjs";
 const openWithApplications = createOpenWithApplications();
 import { resolveAppIdentifier, resolveUserDataPath } from "./dev-profile.mjs";
@@ -243,9 +243,8 @@ const computerControl = createComputerControl({
   // A chat's own output folder: computer saves there need no approval, so it must be a real
   // folder OpenWork made, never a link to somewhere else.
   saveFolder: async (sessionId) => {
-    const name = String(sessionId).replace(/[^A-Za-z0-9._-]/g, "-").slice(0, 80);
-    if (/^\.*$/.test(name)) return null;
-    const folder = path.join(app.getPath("downloads"), "OpenWork", name);
+    const folder = chatOutputFolder(app.getPath("downloads"), sessionId);
+    if (!folder) return null;
     await mkdir(folder, { recursive: true });
     const real = await realpath(folder);
     return real === folder && (await lstat(folder)).isDirectory() ? real : null;
@@ -2212,13 +2211,20 @@ const desktopCommandHandlers = {
       // A path from the chat: only a file this chat's computer use saved here launches, and
       // only while it is still a regular file, not a link. Anything else is at most shown in its folder.
       const target = String(input?.path ?? "");
+      const sessionId = String(input?.sessionId ?? "");
       const file = await resolveChatFilePath(target);
       if (!file) return { ok: true, action: "unavailable" };
-      const launch = input?.reveal !== true && computerControl.savedFile({ sessionId: String(input?.sessionId ?? ""), path: target })
-        && lstatSync(target).isFile();
+      // Also a file in the chat's own output folder, however the chat made it.
+      const launch = input?.reveal !== true && ((computerControl.savedFile({ sessionId, path: target }) && lstatSync(target).isFile())
+        || await opensFromChatOutput(chatOutputFolder(app.getPath("downloads"), sessionId), target));
       if (!launch) { shell.showItemInFolder(file); return { ok: true, action: "revealed" }; }
       const error = await shell.openPath(target);
       return error?.trim() ? { ok: false, error } : { ok: true, action: "opened" };
+  },
+  "computerChatFiles": async (event, input) => {
+      assertComputerSender(event);
+      const folder = chatOutputFolder(app.getPath("downloads"), String(input?.sessionId ?? ""));
+      return { files: folder ? await listChatOutputFiles(folder) : [] };
   },
   "computerListFileGrants": async (event) => {
       assertComputerSender(event);

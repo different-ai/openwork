@@ -1613,6 +1613,7 @@ function MessageGroup({
   const computerHistoryEnabled = useComputerSessionHistoryStore(state => state.enabled)
   const computerHistory = React.useMemo(() => computerHistoryEnabled ? collectComputerSessionHistory(items.map(item => item.message), { thinking: showThinking }) : null, [computerHistoryEnabled, items, showThinking])
   const computerWorking = useComputerSessionHistoryStore(state => Boolean(state.working[sessionId]))
+  const savedFileActions = React.useMemo(() => isElectronRuntime() && !readOnly ? desktopSavedFileActions(sessionId) : undefined, [readOnly, sessionId])
   const watchingComputer = useComputerSessionHistoryStore(state => Boolean(state.watching[sessionId]))
   // steadyLiveTurn: a running turn keeps its parts in arrival order (no
   // steps/answer split until it finishes) and the list reserves room at its end
@@ -1861,7 +1862,8 @@ function MessageGroup({
       {computerHistory ? <Message className="mx-auto flex w-full max-w-3xl flex-col px-2 md:px-10">
         <ComputerSessionHistory key={computerHistory.id} history={computerHistory} active={isLiveGroup && parentActive} renderAction={part => <ToolMessage part={part} />}
           live={computerWorking && isLastGroup ? { watching: watchingComputer, onWatch: watching => useComputerSessionHistoryStore.getState().setWatching(sessionId, watching) } : undefined}
-          fileActions={isElectronRuntime() && !readOnly ? desktopSavedFileActions(sessionId) : undefined} />
+          fileActions={savedFileActions}
+          turnEndedAt={isLiveGroup && parentActive ? null : getMessageCompleted(lastItem.message)} />
       </Message> : null}
       {groupSkillCards.length > 0 ? (
         <div data-created-skills="" className="mx-auto mt-1 flex w-full max-w-3xl flex-col gap-2 px-2 md:px-10">
