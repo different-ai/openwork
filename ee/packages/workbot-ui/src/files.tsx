@@ -2,7 +2,7 @@
 
 import { Dialog } from "@base-ui/react/dialog";
 import { Tooltip } from "@base-ui/react/tooltip";
-import { Download, FileText, Paperclip, Trash2, X } from "lucide-react";
+import { Download, Paperclip, Trash2, X } from "lucide-react";
 import { useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { workbotHost, useRetainedSurface } from "./host";
 import {
@@ -296,7 +296,7 @@ export function FilesButton({ open, onOpen }: { open: boolean; onOpen: () => voi
       aria-pressed={open}
       className={`flex h-8 items-center gap-1.5 rounded-full px-3 text-[13px] font-medium leading-4 transition-colors duration-150 focus-visible:outline-none focus-visible:shadow-[var(--wb-focus)] ${open ? "bg-[var(--wb-chip)] text-[var(--wb-text)]" : "text-[var(--wb-muted)] hover:bg-[var(--wb-chip)] hover:text-[var(--wb-text)]"}`}
     >
-      <FileText size={15} strokeWidth={1.75} aria-hidden />
+      <Paperclip size={15} strokeWidth={1.75} aria-hidden />
       Files
     </button>
   );
