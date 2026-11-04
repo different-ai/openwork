@@ -16,8 +16,8 @@ function dataOf(value: unknown): unknown {
 
 /** Real server, renderer and native v2 tools; only model HTTP responses are scripted. */
 export async function v2SessionManagement(seed: Seed, { place }: { place: Place }) {
-  const providerId = "opencode";
-  const originalModelId = "big-pickle";
+  const providerId = "session-management";
+  const originalModelId = "primary";
   const replacementModelId = "session-management-alternate";
   const temporaryPath = seed.tmpPath("v2-session-management");
   // A Mac realpath starts /private/tmp, which is neither present nor writable
@@ -73,7 +73,14 @@ export async function v2SessionManagement(seed: Seed, { place }: { place: Place 
       }])),
     } },
   };
-  await configureProvider(seed, app, workspace.workspaceId, providerId, originalModelId, configuration, "v2");
+  try {
+    await configureProvider(seed, app, workspace.workspaceId, providerId, originalModelId, configuration, "v2");
+  } catch (error) {
+    const status = await read("/experimental/engine-v2-preview/status");
+    const catalog = dataOf(await read(`/workspace/${encodeURIComponent(workspace.workspaceId)}/opencode2/api/model`));
+    const modelIds = Array.isArray(catalog) ? catalog.filter(isRecord).map(model => `${String(model.providerID)}/${String(model.id)}`) : [];
+    throw new Error(`Provider fixture did not settle: ${error instanceof Error ? error.message : "unknown error"}; running=${isRecord(status) && status.running === true}; chatRouting=${isRecord(status) && status.chatRouting === true}; catalog=${modelIds.join(",")}`);
+  }
   const target = await seed.session(app, { title: "Planning notes" });
   const caller = await seed.session(app, { title: "Organize my conversations" });
   const mount = `/workspace/${encodeURIComponent(workspace.workspaceId)}/opencode2/api/session`;
