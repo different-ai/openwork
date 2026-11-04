@@ -126,6 +126,18 @@ cursor sit just above the selected window instead of above every window, so a
 window the person brings in front covers them too; the pill stays on top so
 Take over and Stop are always reachable.
 
+The Mac is shared with the person. A control session takes the front only for
+the moment it acts and waits for a gap in their typing first: 0.2 s without a
+key, for at most 0.5 s. When they are writing in a text field (or OpenWork's
+chat composer), it waits for a real pause of 1 s instead, for up to 8 s, and the
+receipt reports the wait as `waited_for_person_ms`. Background steps never wait:
+they leave the front alone. Before taking the front it notes their window,
+focused field and caret (the selection range, never the text), and gives all
+three back as soon as the step ends, falling back to activating the app when
+any of them has gone. Keys that still reach the agent's window stop the step
+and send the front back to their field; a click there means they chose it, so
+the front stays.
+
 The host may pass `OPENWORK_COMPUTER_USE_PRESENCE` as JSON
 `{"name": "…", "color": "#rrggbb"}`. The name falls back to "OpenWork" and the
 color to blue. Presence is display only and never grants access. Embedded mode

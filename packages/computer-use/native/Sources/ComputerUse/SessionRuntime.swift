@@ -19,6 +19,12 @@ final class SessionRuntime {
     private var lastWatchCaptureAt: TimeInterval = -.infinity
     private var handBack = SharedDesktop.HandBack()
     private var handBackTimer: Timer?
+    /// Where the person was when this moment took the front.
+    private var personPlace: SharedDesktop.Place<AXUIElement>?
+    /// The person was writing in a field when this call waited for a gap.
+    private var momentTyping = false
+    /// How long this call waited for the person to pause.
+    private var waitedForPerson: TimeInterval = 0
     private let backgroundDelivery = ProcessInfo.processInfo.environment[InputDelivery.hostVariable] == InputDelivery.background.rawValue
 
     private struct Session {
@@ -90,6 +96,7 @@ final class SessionRuntime {
         guard !busy else { throw UseError("busy", "A computer operation is still running. Calls must be sequential.", next: "wait") }
         watch.invalidate(); watchCapture?.cancel(); MCPOutput.shared.discardUnsentFrame()
         handBackTimer?.invalidate(); handBackTimer = nil
+        momentTyping = false; waitedForPerson = 0; handBack.beginMoment()
         busy = true; defer { busy = false; scheduleHandBack() }
         switch name {
         case "computer_discover":
@@ -895,12 +902,7 @@ final class SessionRuntime {
                 break
             }
         }
-        if failure?.code == SharedDesktop.interrupted.code {
-            // The person chose where to be: leave the front with them, and let the read
-            // that follows this step happen without taking it again.
-            handBack.forget()
-            session?.yielded = true
-        }
+        if failure?.code == SharedDesktop.interrupted.code { yieldToPerson(since: moment) }
         var settled: Bool?
         if progress.hasInput || uncertain {
             session?.baseline = ActionBaseline(generation: current.generation, stateDigest: observation.stateDigest, imageDigest: observation.imageDigest)
@@ -924,6 +926,8 @@ final class SessionRuntime {
         if progress.hasInput { session?.openedByLastAction = windowsAfter.windows.subtracting(windowsBefore.windows) }
         receipt["delivery"] = (background ? InputDelivery.background : .foreground).rawValue
         receipt["desktop"] = desktopBefore.changes(to: DesktopState.now())
+        let waited = Int((waitedForPerson * 1_000).rounded())
+        if waited > 0 { receipt["waited_for_person_ms"] = waited }
         if session?.id == id { session?.receipts[requestID] = receipt }
         return text(receipt)
     }
@@ -997,7 +1001,8 @@ final class SessionRuntime {
         input.releaseAll()
         if announce { controls.update(reason, paused: true) }
     }
-    private static let interruptions: [CGEventType] = [.leftMouseDown, .rightMouseDown, .otherMouseDown, .keyDown]
+    private static let clicks: [CGEventType] = [.leftMouseDown, .rightMouseDown, .otherMouseDown]
+    private static let interruptions: [CGEventType] = clicks + [.keyDown]
     /// When the person last produced physical input of this type, in uptime. The
     /// HID system state holds only device input, never the agent's process-targeted
     /// events. Reads only timing, with no permission beyond computer use's own.
@@ -1012,29 +1017,52 @@ final class SessionRuntime {
         [CGMouseButton.left, .right, .center].contains { CGEventSource.buttonState(.hidSystemState, button: $0) }
     }
     /// In foreground control, takes the next gap in the person's typing or a held button.
+    /// Someone writing in a field gets a real pause, for up to `typingDeferLimit`.
     private func takeGap(_ current: Session, deadline: TimeInterval? = nil, front: Bool? = nil) async throws {
         guard front ?? current.takesFront else { return }
-        try await SharedDesktop.takeGap(busy: {
+        let typing = personTyping()
+        if typing { momentTyping = true }
+        let waited = try await SharedDesktop.takeGap(busy: {
             SharedDesktop.personBusy(keyAt: self.lastPersonInput(.keyDown), buttonDown: self.personHoldsButton(),
-                now: ProcessInfo.processInfo.systemUptime)
-        }, now: { self.now }, check: {
+                now: ProcessInfo.processInfo.systemUptime, inField: typing)
+        }, limit: typing ? SharedDesktop.typingDeferLimit : SharedDesktop.deferLimit, now: { self.now }, check: {
             try self.checkActive(current, deadline: deadline)
         }, sleep: { try await Task.sleep(nanoseconds: UInt64($0 * 1_000_000_000)) })
+        waitedForPerson += waited
+    }
+    /// The person is writing in a text field of the front app, or in OpenWork's composer.
+    private func personTyping() -> Bool {
+        guard let front = NSWorkspace.shared.frontmostApplication?.processIdentifier else { return false }
+        return SharedDesktop.personTyping(keyAt: lastPersonInput(.keyDown), now: ProcessInfo.processInfo.systemUptime,
+            frontIsHost: front == Responsibility.hostPID, focusEditsText: { PersonPlace.focusEditsText(front) })
+    }
+    /// The person's click or key stopped the step, so the read that follows does not take
+    /// the front again. Keys alone, from someone who was writing in a field, were meant for
+    /// it: the front and their place go back as soon as the step ends.
+    private func yieldToPerson(since start: TimeInterval) {
+        session?.yielded = true
+        handBack.interrupted(clicked: Self.clicks.contains { lastPersonInput($0) > start })
     }
     /// Brings the selected window to the front, remembering which app had it. A click
     /// or key of the person's while it comes forward stops whatever was to follow.
     private func takeFront(_ current: Session) async throws {
-        handBack.record(frontmost: NSWorkspace.shared.frontmostApplication?.processIdentifier,
-            target: current.frontApp.pid, own: ProcessInfo.processInfo.processIdentifier, host: Responsibility.hostPID,
-            at: ProcessInfo.processInfo.systemUptime)
+        let frontmost = NSWorkspace.shared.frontmostApplication?.processIdentifier
+        let own = ProcessInfo.processInfo.processIdentifier
+        // Where the person was, read once per moment before the agent's window comes forward.
+        if handBack.takesAnew, let frontmost, frontmost != current.frontApp.pid, frontmost != own {
+            personPlace = PersonPlace.read(frontmost)
+        }
+        handBack.record(frontmost: frontmost, target: current.frontApp.pid, own: own, host: Responsibility.hostPID,
+            at: ProcessInfo.processInfo.systemUptime, typing: momentTyping,
+            inField: personPlace?.pid == frontmost && personPlace?.inField == true)
+        let started = ProcessInfo.processInfo.systemUptime
         do {
             try await SharedDesktop.acquire(now: { ProcessInfo.processInfo.systemUptime }, buttonDown: { self.personHoldsButton() },
                 focus: { try await self.focusTarget(current) }, interrupted: { self.personInterrupted(since: $0) })
         } catch let error as UseError where error.code == SharedDesktop.interrupted.code {
-            // Their input may have landed in the agent's window: the front stays there,
-            // and the read that follows does not take it again.
-            handBack.forget()
-            session?.yielded = true
+            // A click may have landed in the agent's window: the front stays there. Keys
+            // meant for the person's field send it back (`yieldToPerson`).
+            yieldToPerson(since: started)
             throw error
         }
     }
@@ -1057,11 +1085,11 @@ final class SessionRuntime {
     /// `handBackDelay`, so an action and the read after it count as one moment.
     /// Only once the person has shown they want it back (`HandBack.eachMoment`);
     /// until then the front stays with the agent's window and is handed back when
-    /// the session closes.
+    /// the session closes. Taken from someone writing in a field, it goes back at once.
     private func scheduleHandBack() {
         handBackTimer?.invalidate(); handBackTimer = nil
         guard handBack.pid != nil, handBack.eachMoment else { return }
-        let timer = Timer(timeInterval: SharedDesktop.handBackDelay, repeats: false) { [weak self] _ in
+        let timer = Timer(timeInterval: handBack.immediate ? 0 : SharedDesktop.handBackDelay, repeats: false) { [weak self] _ in
             MainActor.assumeIsolated { self?.giveBack() }
         }
         RunLoop.main.add(timer, forMode: .common)
@@ -1073,14 +1101,19 @@ final class SessionRuntime {
         // Another agent bringing its window forward keeps the front, and hands it back itself.
         guard let focus = FocusLease.attempt() else { handBack.forget(); return }
         defer { focus.release() }
-        // Any click or key since the front was taken, even one that might be the
-        // agent's own, means the person may be working in the agent's window.
-        let latest = Self.interruptions.map { lastPersonInput($0) }.max() ?? -.infinity
+        // A click since the front was taken, even one that might be the agent's own,
+        // means the person may be working in the agent's window; so do keys, unless
+        // they were writing in a field before (`HandBack.take`).
+        let immediate = handBack.immediate
         guard let pid = handBack.take(frontmost: NSWorkspace.shared.frontmostApplication?.processIdentifier,
-                  target: current.frontApp.pid, lastPersonInput: latest),
+                  target: current.frontApp.pid, lastKey: lastPersonInput(.keyDown),
+                  lastClick: Self.clicks.map { lastPersonInput($0) }.max() ?? -.infinity),
               let app = NSRunningApplication(processIdentifier: pid), !app.isTerminated else { return }
-        _ = AXUIElementSetAttributeValue(AXUIElementCreateApplication(pid), kAXFrontmostAttribute as CFString, kCFBooleanTrue)
-        app.activate(options: [])
+        let place = personPlace?.pid == pid ? personPlace : nil
+        personPlace = nil
+        PersonPlace.restore(place, app: app)
+        // They are writing: the read that follows looks without taking the front again.
+        if immediate { session?.yielded = true }
     }
     private func confirmsFilePanel(_ current: Session, observation: ObservationLease, actions: [Action]) -> Bool {
         let button = access.defaultButton(current.target)

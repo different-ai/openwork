@@ -105,7 +105,7 @@ final class SharedDesktopTests: XCTestCase {
         handBack.record(frontmost: 40, target: 7, own: 3, host: 1, at: 10)
         // A second raise in the same moment does not replace who had the front.
         handBack.record(frontmost: 50, target: 7, own: 3, host: 1, at: 11)
-        XCTAssertEqual(handBack.take(frontmost: 7, target: 7, lastPersonInput: 9), 40)
+        XCTAssertEqual(handBack.take(frontmost: 7, target: 7, lastKey: 9, lastClick: 9), 40)
         XCTAssertNil(handBack.pid)
         // The target itself and the helper are never handed the front.
         handBack.record(frontmost: 7, target: 7, own: 3, host: 1, at: 12)
@@ -116,11 +116,11 @@ final class SharedDesktopTests: XCTestCase {
     func testAPersonWhoAlreadyMovedOnIsLeftWhereTheyAre() {
         var handBack = SharedDesktop.HandBack()
         handBack.record(frontmost: 40, target: 7, own: 3, host: 1, at: 10)
-        XCTAssertNil(handBack.take(frontmost: 60, target: 7, lastPersonInput: 9))
+        XCTAssertNil(handBack.take(frontmost: 60, target: 7, lastKey: 9, lastClick: 9))
         XCTAssertNil(handBack.pid)
         handBack.record(frontmost: 40, target: 7, own: 3, host: 1, at: 10)
         handBack.forget()
-        XCTAssertNil(handBack.take(frontmost: 7, target: 7, lastPersonInput: 9))
+        XCTAssertNil(handBack.take(frontmost: 7, target: 7, lastKey: 9, lastClick: 9))
     }
 
     func testTakenFromOpenWorkTheFrontStaysUntilThePersonGoesBack() {
@@ -135,7 +135,7 @@ final class SharedDesktopTests: XCTestCase {
         // The person went back to the chat while the agent worked: from now on each step gives it back.
         handBack.record(frontmost: 5, target: 7, own: 3, host: 5, at: 12)
         XCTAssertTrue(handBack.eachMoment)
-        XCTAssertEqual(handBack.take(frontmost: 7, target: 7, lastPersonInput: 9), 5)
+        XCTAssertEqual(handBack.take(frontmost: 7, target: 7, lastKey: 9, lastClick: 9), 5)
         handBack.record(frontmost: 5, target: 7, own: 3, host: 5, at: 13)
         XCTAssertTrue(handBack.eachMoment, "once the person wants it back, it stays that way for the session")
         handBack.reset()
@@ -160,7 +160,7 @@ final class SharedDesktopTests: XCTestCase {
         handBack.record(frontmost: 40, target: 7, own: 3, host: 1, at: 10)
         // A key of the person's moments after the front was taken keeps it in the
         // agent's window, so their later keys stay there too.
-        XCTAssertNil(handBack.take(frontmost: 7, target: 7, lastPersonInput: 10.02))
+        XCTAssertNil(handBack.take(frontmost: 7, target: 7, lastKey: 10.02, lastClick: 9))
         XCTAssertNil(handBack.pid)
     }
 
@@ -239,5 +239,158 @@ final class SharedDesktopTests: XCTestCase {
         XCTAssertEqual(paused.next, "human_takeover")
         let other: Error = CancellationError()
         XCTAssertTrue(SharedDesktop.yielding(other) is CancellationError)
+    }
+    // MARK: Someone writing in a field
+
+    func testWritingInAFieldLastsUntilARealPause() {
+        // Half a second between words is still writing in a field, not elsewhere.
+        XCTAssertTrue(SharedDesktop.personBusy(keyAt: 99.5, buttonDown: false, now: 100, inField: true))
+        XCTAssertFalse(SharedDesktop.personBusy(keyAt: 99.5, buttonDown: false, now: 100))
+        XCTAssertFalse(SharedDesktop.personBusy(keyAt: 100 - SharedDesktop.typingPause - 0.01, buttonDown: false, now: 100, inField: true))
+        XCTAssertGreaterThan(SharedDesktop.typingPause, SharedDesktop.typingGap)
+    }
+
+    func testOnlyAFocusedTextFieldCountsAsWriting() {
+        for role in ["AXTextField", "AXTextArea", "AXComboBox"] {
+            XCTAssertTrue(SharedDesktop.editsText(role: role, editableAncestor: false), role)
+        }
+        // Web content inside a contenteditable editor.
+        XCTAssertTrue(SharedDesktop.editsText(role: "AXGroup", editableAncestor: true))
+        for role in ["AXButton", "AXWebArea", "AXList", nil] {
+            XCTAssertFalse(SharedDesktop.editsText(role: role, editableAncestor: false), role ?? "none")
+        }
+        var read = 0
+        XCTAssertTrue(SharedDesktop.personTyping(keyAt: 99.6, now: 100, frontIsHost: false, focusEditsText: { read += 1; return true }))
+        XCTAssertFalse(SharedDesktop.personTyping(keyAt: 99.6, now: 100, frontIsHost: false, focusEditsText: { read += 1; return false }))
+        XCTAssertEqual(read, 2)
+        // No recent key: the focused element is not even read.
+        XCTAssertFalse(SharedDesktop.personTyping(keyAt: 90, now: 100, frontIsHost: true, focusEditsText: { read += 1; return true }))
+        XCTAssertEqual(read, 2)
+    }
+
+    func testTypingInOpenWorksComposerCountsAsWriting() {
+        // OpenWork's web content may not name its focused field; a recent key there is the composer.
+        XCTAssertTrue(SharedDesktop.personTyping(keyAt: 99.6, now: 100, frontIsHost: true, focusEditsText: { false }))
+    }
+
+    @MainActor
+    func testWritingInAFieldDefersTheAgentUpToTheTypingLimit() async throws {
+        var clock: TimeInterval = 0
+        let waited = try await SharedDesktop.takeGap(busy: { true }, limit: SharedDesktop.typingDeferLimit, now: { clock }, check: {}, sleep: { clock += $0 })
+        XCTAssertGreaterThanOrEqual(waited, SharedDesktop.typingDeferLimit)
+        XCTAssertLessThan(waited, SharedDesktop.typingDeferLimit + SharedDesktop.poll * 2)
+        // A person who pauses after 1.3 s lets the agent go then, well before the limit.
+        clock = 0
+        let paused = try await SharedDesktop.takeGap(busy: { clock < 1.3 }, limit: SharedDesktop.typingDeferLimit, now: { clock }, check: {}, sleep: { clock += $0 })
+        XCTAssertEqual(paused, 1.3, accuracy: SharedDesktop.poll * 1.5)
+    }
+
+    @MainActor
+    func testWithNoFieldFocusedTheShortGapStays() async throws {
+        var clock: TimeInterval = 0
+        let waited = try await SharedDesktop.takeGap(busy: { true }, now: { clock }, check: {}, sleep: { clock += $0 })
+        XCTAssertLessThan(waited, SharedDesktop.deferLimit + SharedDesktop.poll * 2)
+        let none = try await SharedDesktop.takeGap(busy: { false }, now: { 5 }, check: {}, sleep: { _ in XCTFail("slept") })
+        XCTAssertEqual(none, 0, "no wait is reported when the person was not busy")
+    }
+
+    @MainActor
+    func testThePersonGetsTheirWindowFieldAndCaretBack() {
+        var events: [String] = []
+        let place = SharedDesktop.Place<String>(pid: 40, window: "window", field: "field", selection: CFRange(location: 12, length: 0), inField: true)
+        let returned = SharedDesktop.restore(place, activate: { events.append("activate") }, raise: { events.append("raise \($0)"); return true },
+            focus: { events.append("focus \($0)"); return true }, select: { events.append("select \($0) \($1.location)") })
+        XCTAssertEqual(returned, .field)
+        XCTAssertEqual(events, ["raise window", "activate", "focus field", "select field 12"])
+    }
+
+    @MainActor
+    func testWhatNoLongerExistsFallsBackToActivatingTheApp() {
+        var events: [String] = []
+        func restore(_ place: SharedDesktop.Place<String>?, window: Bool = true, field: Bool = true) -> SharedDesktop.Returned {
+            events = []
+            return SharedDesktop.restore(place, activate: { events.append("activate") }, raise: { _ in window },
+                focus: { _ in field }, select: { _, _ in events.append("select") })
+        }
+        let place = SharedDesktop.Place<String>(pid: 40, window: "window", field: "field", selection: CFRange(location: 3, length: 2), inField: true)
+        // The window closed: today's app activate, nothing else.
+        XCTAssertEqual(restore(place, window: false), .app)
+        XCTAssertEqual(events, ["activate"])
+        // The field is gone: the window comes back, the caret is not set anywhere.
+        XCTAssertEqual(restore(place, field: false), .window)
+        XCTAssertEqual(events, ["activate"])
+        // Nothing was read, as when the place could not be read at all.
+        XCTAssertEqual(restore(nil), .app)
+        XCTAssertEqual(restore(SharedDesktop.Place<String>(pid: 40)), .app)
+        XCTAssertEqual(events, ["activate"])
+    }
+
+    func testTakenWhileTheyWriteTheFrontGoesBackAtOnce() {
+        var handBack = SharedDesktop.HandBack()
+        handBack.record(frontmost: 40, target: 7, own: 3, host: 5, at: 10, typing: true, inField: true)
+        XCTAssertTrue(handBack.immediate, "no handBackDelay while they are writing")
+        XCTAssertEqual(handBack.take(frontmost: 7, target: 7, lastKey: 9, lastClick: 9), 40)
+        XCTAssertFalse(handBack.immediate, "only that moment")
+        XCTAssertTrue(handBack.eachMoment)
+    }
+
+    func testTakenWhileTheyWriteInOpenWorkTheFrontGoesBackEachStep() {
+        var handBack = SharedDesktop.HandBack()
+        // Typing in the composer while the agent works: not a person watching the agent.
+        handBack.record(frontmost: 5, target: 7, own: 3, host: 5, at: 10, typing: true)
+        XCTAssertTrue(handBack.eachMoment)
+        XCTAssertTrue(handBack.immediate)
+        XCTAssertEqual(handBack.take(frontmost: 7, target: 7, lastKey: 9, lastClick: 9), 5)
+    }
+
+    func testTypingInTheChatWhileTheAgentHeldTheFrontGetsItBack() {
+        var handBack = SharedDesktop.HandBack()
+        // Taken from OpenWork and held between steps while the person watched.
+        handBack.beginMoment()
+        handBack.record(frontmost: 5, target: 7, own: 3, host: 5, at: 10)
+        XCTAssertFalse(handBack.eachMoment)
+        // A later step finds them typing in the composer: a new take from there and then.
+        handBack.beginMoment()
+        handBack.record(frontmost: 5, target: 7, own: 3, host: 5, at: 20, typing: true)
+        XCTAssertEqual(handBack.takenAt, 20)
+        XCTAssertTrue(handBack.immediate)
+        // Their click into the chat and their typing came before this take, not after it.
+        XCTAssertEqual(handBack.take(frontmost: 7, target: 7, lastKey: 19.5, lastClick: 15), 5)
+        // Within one moment, the first app in front still wins.
+        handBack.beginMoment()
+        handBack.record(frontmost: 40, target: 7, own: 3, host: 5, at: 30)
+        handBack.record(frontmost: 50, target: 7, own: 3, host: 5, at: 31)
+        XCTAssertEqual(handBack.pid, 40)
+    }
+
+    func testKeysMeantForTheirFieldSendTheFrontBack() {
+        var handBack = SharedDesktop.HandBack()
+        handBack.record(frontmost: 40, target: 7, own: 3, host: 1, at: 10, inField: true)
+        // They kept typing and their keys reached the agent's window: back to their field,
+        // instead of the front staying with the agent for good.
+        XCTAssertEqual(handBack.take(frontmost: 7, target: 7, lastKey: 10.3, lastClick: 9), 40)
+        // A click in the agent's window still means they chose it.
+        handBack.record(frontmost: 40, target: 7, own: 3, host: 1, at: 10, inField: true)
+        XCTAssertNil(handBack.take(frontmost: 7, target: 7, lastKey: 10.3, lastClick: 10.2))
+    }
+
+    func testAStepStoppedByKeysForTheirFieldHandsBackImmediately() {
+        var handBack = SharedDesktop.HandBack()
+        handBack.record(frontmost: 40, target: 7, own: 3, host: 5, at: 10, inField: true)
+        handBack.interrupted(clicked: false)
+        XCTAssertEqual(handBack.pid, 40)
+        XCTAssertTrue(handBack.immediate)
+        XCTAssertTrue(handBack.eachMoment)
+        // A click stops the step and leaves the front where it is, as before.
+        var clicked = SharedDesktop.HandBack()
+        clicked.record(frontmost: 40, target: 7, own: 3, host: 5, at: 10, inField: true)
+        clicked.interrupted(clicked: true)
+        XCTAssertNil(clicked.pid)
+        // So do keys from someone who was not writing in a field.
+        var elsewhere = SharedDesktop.HandBack()
+        elsewhere.record(frontmost: 40, target: 7, own: 3, host: 5, at: 10)
+        elsewhere.interrupted(clicked: false)
+        XCTAssertNil(elsewhere.pid)
+        XCTAssertFalse(elsewhere.immediate)
     }
 }

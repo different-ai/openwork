@@ -15,7 +15,7 @@ test("the agent can discover computer tools on every desktop platform, including
 test("app scripts are offered on this Mac and approved in OpenWork, not by an engine prompt", async () => {
   const plugin = await server();
   expect(plugin.tool.computer_script).toBeDefined();
-  expect(plugin.tool.computer_script.description).toContain("full script");
+  expect(plugin.tool.computer_script.description).toContain("unless the person's organization asks before each script");
   expect(Object.keys(plugin.tool.computer_script.args)).toEqual(["app", "code", "timeoutMs"]);
 });
 
@@ -39,6 +39,8 @@ test("computer_open defaults to control and offers the narrower modes only when 
   expect(description).not.toContain("prefer assist");
   // The person answers in the chat; the turn does not end on a request to reply.
   expect(description).toContain("ask them in this chat with the question tool");
+  // Waiting for the person to finish typing is not a failure to work around.
+  expect(description).toContain("wait a few seconds while the person types in a field");
 });
 
 test("a Windows PC is not offered app scripting", async () => {
