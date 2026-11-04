@@ -38,6 +38,10 @@ export type Definition<R = never> = {
   readonly description: string
   readonly input: SchemaType
   readonly output: SchemaType | undefined
+  /** Host-owned, JSON-safe discovery metadata. Never inferred from provider hints. */
+  readonly metadata?: Readonly<Record<string, Schema.Json>>
+  /** A known tool rejected before input-schema validation, admission, or dispatch. */
+  readonly unavailableReason?: string
   readonly run: (input: unknown) => Effect.Effect<unknown, unknown, R>
 }
 
@@ -52,6 +56,8 @@ export type Options<I extends SchemaType, O extends SchemaType | undefined, R = 
   readonly description: string
   readonly input: I
   readonly output?: O
+  readonly metadata?: Readonly<Record<string, Schema.Json>>
+  readonly unavailableReason?: string
   readonly run: (input: InputType<I>) => Effect.Effect<ResultType<O>, unknown, R>
 }
 
@@ -92,5 +98,7 @@ export const make = <I extends SchemaType, const O extends SchemaType | undefine
   description: options.description,
   input: options.input,
   output: options.output,
+  ...(options.metadata ? { metadata: options.metadata } : {}),
+  ...(options.unavailableReason !== undefined ? { unavailableReason: options.unavailableReason } : {}),
   run: (input) => options.run(input as InputType<I>),
 })

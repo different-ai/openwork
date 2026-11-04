@@ -66,6 +66,7 @@ export const DiagnosticKind = Schema.Literals([
   "ParseError",
   "UnsupportedSyntax",
   "UnknownTool",
+  "ToolUnavailable",
   "InvalidToolInput",
   "InvalidToolOutput",
   "InvalidDataValue",
