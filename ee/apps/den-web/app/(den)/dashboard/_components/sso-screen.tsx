@@ -7,9 +7,10 @@ import { DenButton } from "../../_components/ui/button";
 import { DenSecretInput } from "../../_components/ui/secret-input";
 import { DenNotice } from "../../_components/ui/notice";
 import { getRequestError, isReauthRequiredError, requestJson } from "../../_lib/den-flow";
-import { getBillingRoute, getOrgAccessFlags, parseOrgSsoPayload, type DenOrgSsoConnection, permissionLockReason } from "../../_lib/den-org";
+import { getBillingRoute, getOrgAccessFlags, orgFeatureEnabled, parseOrgSsoPayload, type DenOrgSsoConnection, permissionLockReason } from "../../_lib/den-org";
 import { useOrgDashboard } from "../_providers/org-dashboard-provider";
 import { EnterprisePlanNotice } from "./enterprise-plan-notice";
+import { SsoRequirementSection } from "./sso-requirement-section";
 
 function formatDateTime(value: string | null) {
   if (!value) return "Not configured";
@@ -475,6 +476,7 @@ export function SsoScreen() {
   }
 
   const ssoFormDisabled = formReadOnly || saving || !orgContext.entitlements.sso;
+  const ssoSettingsOnSsoPage = orgFeatureEnabled(orgContext, "ssoSettingsOnSsoPage");
 
   return (
     <DashboardPageTemplate icon={Shield} title="SSO" description="Configure one enterprise SSO connection per workspace and share the generated sign-in URL with your team.">
@@ -491,6 +493,8 @@ export function SsoScreen() {
               {`Read only. ${permissionLockReason("sso.manage")}`}
             </div>
           ) : null}
+
+          {ssoSettingsOnSsoPage ? <SsoRequirementSection /> : null}
 
           {showConnectionForm ? (
             <div className="mb-6 rounded-[30px] border border-gray-200 bg-white p-6 shadow-[0_18px_48px_-34px_rgba(15,23,42,0.22)]">
