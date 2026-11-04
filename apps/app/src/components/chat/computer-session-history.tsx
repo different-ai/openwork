@@ -57,7 +57,7 @@ export function desktopSavedFileActions(sessionId: string): SavedFileActions {
 /** Replay speeds, in turn: a capture every 1.5 s at 1×. */
 const SPEEDS = [1, 2, 4, 0.5] as const
 
-export function ComputerSessionHistory({ history, active, renderAction, live, fileActions, turnEndedAt = null }: {
+export function ComputerSessionHistory({ history, active, renderAction, live, fileActions, turnEndedAt = null, turnStartedAt = null }: {
   history: History
   active: boolean
   renderAction: (part: DynamicToolUIPart) => ReactNode
@@ -66,6 +66,8 @@ export function ComputerSessionHistory({ history, active, renderAction, live, fi
   fileActions?: SavedFileActions
   /** When this session's turn ended; null while it runs. Output-folder files after it belong to a later turn. */
   turnEndedAt?: number | null
+  /** When the turn started: the chat's subagents may have saved files before its own first step. */
+  turnStartedAt?: number | null
 }) {
   // The output folder is read again as the session works and when its turn ends.
   const [folder, setFolder] = useState<ComputerFolderFile[]>([])
@@ -76,7 +78,7 @@ export function ComputerSessionHistory({ history, active, renderAction, live, fi
     void list?.().then(files => { if (current) setFolder(files) }, () => {})
     return () => { current = false }
   }, [list, steps, active, turnEndedAt])
-  const handedBack = useMemo(() => computerHandedBackFiles(history, folder, turnEndedAt), [history, folder, turnEndedAt])
+  const handedBack = useMemo(() => computerHandedBackFiles(history, folder, turnEndedAt, turnStartedAt), [history, folder, turnEndedAt, turnStartedAt])
   const [open, setOpen] = useState(false)
   const [playing, setPlaying] = useState(false)
   const [speed, setSpeed] = useState<(typeof SPEEDS)[number]>(1)

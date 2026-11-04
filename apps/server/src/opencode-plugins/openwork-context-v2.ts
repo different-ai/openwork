@@ -21,7 +21,8 @@ type Tool = {
   options: { codemode: boolean };
   execute(input: unknown, context: ToolCall): Promise<z.infer<typeof browserResult>>;
 };
-type Context = CloudSkillContext & {
+type Context = Omit<CloudSkillContext, "session"> & {
+  session?: CloudSkillContext["session"] & { get?(input: { sessionID: string }): Promise<{ readonly parentID?: string } | undefined> };
   location?: { directory?: string };
   options: { url: string; token: string; browser?: { url: string; token: string } };
   tool: {
@@ -51,6 +52,26 @@ export default {
       return { content: [{ type: "text" as const, text }] };
     };
     const browser = context.options.browser;
+    // A subagent's computer work belongs to the chat that started it: that chat's Stop, Take
+    // over, computer and output folder. The engine's session tree says which; model input never does.
+    // Only while the desktop has `parallelComputerUse` on; off, each session is its own chat.
+    let parallelOn = false;
+    const roots = new Map<string, string>();
+    const rootOf = async (sessionID: string): Promise<string | undefined> => {
+      if (!parallelOn) return undefined;
+      const known = roots.get(sessionID);
+      if (known) return known;
+      let id = sessionID;
+      for (let depth = 0; depth < 4; depth += 1) {
+        const parent = (await context.session?.get?.({ sessionID: id }).catch(() => undefined))?.parentID;
+        if (!parent) break;
+        id = parent;
+      }
+      if (id === sessionID) return undefined;
+      if (roots.size >= 500) roots.delete(roots.keys().next().value!);
+      roots.set(sessionID, id);
+      return id;
+    };
     const browserDefinitions = browser ? (await browserTools()).tool : undefined;
     const computerDefinitions = browser ? (await computerTools()).tool : undefined;
     // Browser and computer tools share one bridge but are offered separately.
@@ -70,6 +91,7 @@ export default {
           redirect: "error", signal: AbortSignal.timeout(5_000), headers: { Authorization: `Bearer ${browser.token}` },
         });
         const body: unknown = response.ok ? await response.json() : undefined;
+        if (body && typeof body === "object" && "parallel" in body) parallelOn = body.parallel === true;
         return body && typeof body === "object" && "offered" in body && typeof body.offered === "boolean" ? body.offered : current;
       } catch {
         return current;
@@ -174,10 +196,11 @@ export default {
           input: z.toJSONSchema(z.object(definition.args)),
           options: { codemode: false },
           async execute(input, call) {
+            const rootSessionId = name.startsWith("computer_") ? await rootOf(call.sessionID) : undefined;
             const response = await approvalLoopbackFetch(browser.url, {
               method: "POST", redirect: "error", signal: call.signal,
               headers: { Authorization: `Bearer ${browser.token}`, "Content-Type": "application/json" },
-              body: JSON.stringify({ name, input, sessionId: call.sessionID }),
+              body: JSON.stringify({ name, input, sessionId: call.sessionID, ...(rootSessionId ? { rootSessionId } : {}) }),
             });
             if (!response.ok) throw new Error(`${name.startsWith("computer_") ? "Computer" : "Browser"} request failed (${response.status})`);
             return browserResult.parse(await response.json());

@@ -341,6 +341,16 @@
               ],
               "description": "Desktop: computer session history: Computer actions share one compact session card in chat, with captured views to browse or replay. Turning it off restores individual actions and screenshots. Renders DEN_FEATURE_COMPUTER_SESSION_HISTORY."
             },
+            "parallelComputerUse": {
+              "enum": [
+                "",
+                "true",
+                "false",
+                true,
+                false
+              ],
+              "description": "Parallel computer use: On a Mac, agents a chat starts work in their own apps at the same time, as part of that chat: one Stop, Take over and output folder for all of them, a cursor name and color for each, and their windows in view while you watch the chat. Turning it off returns each agent to working on its own. Renders DEN_FEATURE_PARALLEL_COMPUTER_USE."
+            },
             "browserUse": {
               "enum": [
                 "",

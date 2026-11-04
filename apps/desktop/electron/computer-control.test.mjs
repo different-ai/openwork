@@ -713,7 +713,7 @@ function parallelFixture(options = {}) {
   let connections = 0;
   /** The connect options each helper started with. */
   const started = [];
-  const windows = { blender: 11, photoshop: 12, notes: 13 };
+  const windows = { blender: 11, photoshop: 12, notes: 13, maps: 14, powerpoint: 15 };
   /** Each app's helper's UI channel, to stand in for its pill. */
   const uis = {};
   /** @type {import("@openwork/computer-use/computer-control").ComputerAdapter} */
@@ -737,18 +737,19 @@ function parallelFixture(options = {}) {
               delivery: options.delivery?.(app) ?? "foreground" });
           }
           if (name === "computer_session_status") return text({ ok: true, state: "active" });
-          if (name === "computer_act") return text({ ok: true, status: "dispatched" });
+          if (name === "computer_act") return options.act?.(app, args) ?? text({ ok: true, status: "dispatched" });
           return text({ ok: true, ...(name === "computer_observe" ? { observation_id: `observation-${app}` } : {}) });
         },
         notifyUi: async (value) => {
           options.onNotify?.(app, value);
           if (value.action === "takeover") onUi({ kind: "state", id: `view-${app}`, phase: "paused", canContinue: true });
+          if (value.action === "resume") onUi({ kind: "state", id: `view-${app}`, phase: "working" });
         },
         close: async () => { events.push(`${app}:close`); onClose(); },
       };
     },
   };
-  const control = createComputerControl({ adapters: [adapter] });
+  const control = createComputerControl({ adapters: [adapter], ...options.control });
   return { control, events, started, connections: () => connections, ui: (app, value) => uis[app](value) };
 }
 const openApp = (control, sessionId, app, mode = "control", windowId) =>
@@ -882,6 +883,64 @@ test("end of turn, takeover and Stop cover every app in the chat", async (t) => 
   await settle();
   assert.equal(f.events.filter((event) => event === "photoshop:close").length, 2);
   assert.equal(payload(await look(f.control, "chat", "native-photoshop")).code, "not_allowed");
+});
+
+test("subagents work in their chat's computer: one folder, one Stop and Take over, their own apps", async (t) => {
+  const f = parallelFixture({
+    control: { platform: "darwin", saveFolder: async (sessionId) => `/Users/me/Downloads/OpenWork/${sessionId}` },
+    act: (app, args) => args.action?.type === "save_image" ? text({ ok: true, status: "dispatched", path: "file_saved", saved_file: { path: args.action.path, bytes: 42 } }) : undefined,
+  });
+  t.after(() => f.control.reset(true));
+  await f.control.setFeatureEnabled(true);
+  f.control.setParallelAgents(true);
+  // The bridge names each subagent's chat; the model never does.
+  const agent = (sessionId, name, args) => f.control.execute({ sessionId, rootSessionId: "chat", name, args });
+  const open = (sessionId, app) => agent(sessionId, "computer_open", { app_id: app, mode: "control", purpose: `Work in ${app}` });
+  const notes = (result) => Object.assign({}, ...result.content.map((part) => part.type === "text" ? JSON.parse(part.text) : {}));
+  const [maps, slides] = await Promise.all([open("maps-agent", "maps"), open("slides-agent", "powerpoint")]);
+  assert.equal(notes(maps).session_id, "native-maps");
+  assert.equal(notes(slides).session_id, "native-powerpoint");
+  assert.equal(f.connections(), 2, "each subagent has its own app session and helper");
+  for (const opened of [maps, slides]) assert.equal(notes(opened).save_folder, "/Users/me/Downloads/OpenWork/chat", "both save in the chat's folder");
+  assert.equal(payload(await agent("slides-agent", "computer_observe", { session_id: "native-maps" })).code, "session_unknown", "a subagent never drives another's app");
+  assert.equal(f.control.chatOf({ sessionId: "maps-agent" }), "chat");
+  // What a subagent saves, its chat can open from its own card.
+  const image = "/Users/me/Downloads/OpenWork/chat/place.png";
+  assert.equal(payload(await agent("maps-agent", "computer_act", { observation_id: "observation", action: { type: "save_image", path: image } })).path, "file_saved");
+  assert.ok(f.control.savedFile({ sessionId: "chat", path: image }) && f.control.savedFile({ sessionId: "maps-agent", path: image }));
+  assert.equal(f.control.savedFile({ sessionId: "slides-agent", path: image }), false);
+  // The chat's Computer view shows its subagents' apps, and Take over there pauses every agent.
+  assert.ok(["view-maps", "view-powerpoint"].includes((await f.control.presentation({ sessionId: "chat", visible: true })).id));
+  await f.control.interact({ sessionId: "chat", id: "view-maps", action: "takeover" });
+  assert.equal(payload(await agent("slides-agent", "computer_act", { observation_id: "observation", action: { type: "click", x: 1, y: 1 } })).code, "session_paused");
+  assert.equal(payload(await openApp(f.control, "chat", "notes")).code, "session_paused", "the chat itself waits too");
+  assert.equal((await f.control.presentation({ sessionId: "chat", visible: true })).id, "view-maps", "the chat's view shows the app the person took");
+  await f.control.interact({ sessionId: "chat", id: "view-maps", action: "resume" });
+  assert.equal(payload(await agent("slides-agent", "computer_act", { observation_id: "observation", action: { type: "click", x: 1, y: 1 } })).status, "dispatched");
+  // Stop in the chat ends every subagent's apps, and holds for subagents that start later in the turn.
+  await f.control.halt({ sessionId: "chat" });
+  assert.ok(f.events.includes("maps:close") && f.events.includes("powerpoint:close"));
+  assert.equal(payload(await agent("slides-agent", "computer_observe", {})).code, "not_allowed");
+  assert.equal(payload(await open("late-agent", "notes")).code, "not_allowed");
+  // The chat's next turn turns it back on for them.
+  await f.control.endTurn({ sessionId: "chat" });
+  assert.equal(notes(await open("maps-agent", "maps")).ok, true);
+});
+
+test("with parallel computer use off, a subagent is its own chat, as before", async (t) => {
+  const f = parallelFixture({ control: { platform: "darwin", saveFolder: async (sessionId) => `/Users/me/Downloads/OpenWork/${sessionId}` } });
+  t.after(() => f.control.reset(true));
+  await f.control.setFeatureEnabled(true);
+  const open = (sessionId, app) => f.control.execute({ sessionId, rootSessionId: "chat", name: "computer_open", args: { app_id: app, mode: "control", purpose: `Work in ${app}` } });
+  const folder = (result) => Object.assign({}, ...result.content.map((part) => part.type === "text" ? JSON.parse(part.text) : {})).save_folder;
+  assert.equal(folder(await open("maps-agent", "maps")), "/Users/me/Downloads/OpenWork/maps-agent", "its own folder");
+  assert.equal(f.control.chatOf({ sessionId: "maps-agent" }), "maps-agent");
+  await f.control.halt({ sessionId: "chat" });
+  assert.equal(payload(await f.control.execute({ sessionId: "maps-agent", rootSessionId: "chat", name: "computer_observe", args: {} })).observation_id, "observation-maps", "the chat's Stop does not reach it");
+  // Turned on later, the link counts from the next call (after the stopped chat's next turn).
+  await f.control.endTurn({ sessionId: "chat" });
+  f.control.setParallelAgents(true);
+  assert.equal(folder(await open("slides-agent", "powerpoint")), "/Users/me/Downloads/OpenWork/chat");
 });
 
 test("a computer that is not parallel keeps one app per chat", async (t) => {

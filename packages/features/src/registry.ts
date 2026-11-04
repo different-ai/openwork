@@ -410,6 +410,18 @@ export const FEATURES = defineFeatures({
     default: false,
   },
 
+  parallelComputerUse: {
+    label: "Parallel computer use",
+    description: "On a Mac, agents a chat starts work in their own apps at the same time, as part of that chat: one Stop, Take over and output folder for all of them, a cursor name and color for each, and their windows in view while you watch the chat. Turning it off returns each agent to working on its own.",
+    category: "computerUse",
+    added: "2026-11-04",
+    since: "2026-11",
+    author: "reachjalil",
+    docs: "docs/features/parallel-computer-use/README.md",
+    deployments: everywhere,
+    default: false,
+  },
+
   browserUse: {
     label: "Workbot: browser use",
     description: "Workbot uses the browser on its cloud computer with a live Browser view people can watch and take over. It streams the page only when it changes, with Workbot tabs to switch and close; takeover controls the page without Chrome's toolbar. Needs remote computers. Computer use separately controls other desktop apps.",

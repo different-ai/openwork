@@ -2,13 +2,15 @@ import { randomBytes } from "node:crypto";
 import { z } from "zod";
 import { serve } from "./serve-node.js";
 import { server as browserTools } from "./opencode-plugins/openwork-chrome-devtools.js";
-import { computerToolsOffered, server as computerTools } from "./opencode-plugins/openwork-computer-use.js";
+import { computerFeatures, server as computerTools } from "./opencode-plugins/openwork-computer-use.js";
 import { agentQuestionsOffered } from "./opencode-plugins/openwork-agent-questions.js";
 
 const requestSchema = z.object({
   name: z.string().min(1),
   input: z.unknown(),
   sessionId: z.string().min(1),
+  /** A subagent's chat, from the engine's session tree. */
+  rootSessionId: z.string().min(1).max(256).optional(),
 });
 
 /** Only the existing conversation-scoped browser and computer tools, with
@@ -20,7 +22,7 @@ export async function createV2BrowserBridge() {
   const server = await serve({ hostname: "127.0.0.1", port: 0, fetch: async request => {
     if (request.headers.get("authorization") !== `Bearer ${token}`) return new Response(null, { status: 401 });
     // The engine offers the computer tools only while the desktop has the feature on.
-    if (request.method === "GET" && new URL(request.url).pathname === "/computer") return Response.json({ offered: await computerToolsOffered() });
+    if (request.method === "GET" && new URL(request.url).pathname === "/computer") return Response.json(await computerFeatures());
     // And a question that does not stop the agent only while `agentQuestions` is on.
     if (request.method === "GET" && new URL(request.url).pathname === "/agent-questions") return Response.json({ offered: await agentQuestionsOffered() });
     if (request.method !== "POST" || new URL(request.url).pathname !== "/browser") return new Response(null, { status: 404 });
@@ -30,7 +32,7 @@ export async function createV2BrowserBridge() {
       const call = requestSchema.parse(JSON.parse(text));
       const tool = Object.hasOwn(tools, call.name) ? tools[call.name as keyof typeof tools] : undefined;
       if (!tool) return new Response(null, { status: 404 });
-      const result = await tool.execute(call.input, { sessionID: call.sessionId, abort: request.signal });
+      const result = await tool.execute(call.input, { sessionID: call.sessionId, ...(call.rootSessionId ? { rootSessionID: call.rootSessionId } : {}), abort: request.signal });
       if (typeof result === "string") return Response.json({ content: [{ type: "text", text: result }] });
       return Response.json({ content: [{ type: "text", text: result.output },
         ...result.attachments.map(file => ({ type: "file", uri: file.url, mime: file.mime }))], metadata: result.metadata });

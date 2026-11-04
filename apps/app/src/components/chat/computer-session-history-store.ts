@@ -13,6 +13,9 @@ function mark(chats: Chats, sessionId: string, value: boolean): Chats {
 export const useComputerSessionHistoryStore = create<{
   enabled: boolean
   setEnabled: (enabled: boolean) => void
+  /** `parallelComputerUse`: a chat's card also covers what its subagents did. */
+  parallel: boolean
+  setParallel: (parallel: boolean) => void
   /** Chats whose computer is working now: their card offers the live view. */
   working: Chats
   /** Chats where the person opened the live view from the card. */
@@ -22,6 +25,8 @@ export const useComputerSessionHistoryStore = create<{
 }>((set) => ({
   enabled: false,
   setEnabled: enabled => set(state => state.enabled === enabled ? state : { enabled }),
+  parallel: false,
+  setParallel: parallel => set(state => state.parallel === parallel ? state : { parallel }),
   working: {},
   watching: {},
   setWorking: (sessionId, working) => set(state => {

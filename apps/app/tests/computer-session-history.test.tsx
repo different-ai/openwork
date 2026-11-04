@@ -312,6 +312,9 @@ test("the card also lists what scripts and shell commands wrote to the chat's ou
   // While the turn runs everything since the first step counts; with no folder, only receipts.
   expect(computerHandedBackFiles(history, listed, null).map(file => file.name)).toEqual(["next-turn.png", "deck.pptx", "flyer.png", "map.png"])
   expect(computerHandedBackFiles(history, [], null)).toEqual(history.savedFiles)
+  // From the turn's start: what a subagent saved in the chat's folder before the chat's own first step.
+  const subagent = { path: `${folder}/place.png`, bytes: 2, modifiedAt: 8_000 }
+  expect(computerHandedBackFiles(history, [...listed, subagent], 100_000, 7_500).map(file => file.name)).toEqual(["deck.pptx", "flyer.png", "map.png", "place.png"])
 
   const container = document.createElement("div"); document.body.append(container)
   const root = createRoot(container); mounted = { root, container }
