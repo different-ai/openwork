@@ -427,6 +427,16 @@ and app menus, the Window menu, recent-document lists and any command whose
 shortcut is a blocked chord (Quit, Close, Hide, Minimize, clipboard) are never
 listed or pressed. Commands go to the app's focused window only.
 
+A Command shortcut with no observed field or control that has the keyboard,
+such as Command-Shift-G on a design app's canvas, runs as the app's menu
+command for it when the menus list one. Otherwise it goes to the app's key
+window, as a person's would: only a chord the key list allows (never a blocked
+one), only while the selected window is the app's focused window and whatever
+has the keyboard is inside it, and never while a secure field has it or macOS
+reports secure input. Plain keys, Option keys, Delete and Enter still need an
+observed field or control; single letters are tool keys in design, photo,
+video and music apps.
+
 `{ type: "arrange", layout }` moves and resizes the session's own window on the
 screen it is on, so two apps can sit side by side without the Window menu:
 `left_half`, `right_half`, `full` (the screen without the menu bar and Dock) or

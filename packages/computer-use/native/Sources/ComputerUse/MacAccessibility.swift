@@ -719,6 +719,22 @@ final class MacAccessibility {
         try validateAncestry(focused, target: target, budget: budget)
         return focused
     }
+    /// An app shortcut with no observed field goes to the app's key window, as a person's
+    /// would: the selected window must be the app's focused window, nothing secure may have
+    /// the keyboard, and whatever has it must be inside that window.
+    func checkKeyWindow(target: WindowTarget, app: AppIdentity, requireFront: Bool = true) throws {
+        let unsafe = UseError("protected_input", "A password field may have the keyboard, so the shortcut was not sent. Ask the person to take over.", next: "human_takeover")
+        guard !IsSecureEventInputEnabled() else { throw unsafe }
+        let budget = AXReadBudget()
+        let root = AXUIElementCreateApplication(app.pid)
+        guard !requireFront || NSWorkspace.shared.frontmostApplication?.processIdentifier == app.pid,
+              let window = try checkedElement(root, kAXFocusedWindowAttribute, budget), CFEqual(window, target.element) else {
+            throw UseError("focus_required", "The selected window is not the app's key window, so the shortcut was not sent. Observe again.", next: "observe")
+        }
+        guard let focused = try checkedElement(root, kAXFocusedUIElementAttribute, budget) else { return }
+        guard try !isProtected(focused, role: checkedString(focused, kAXRoleAttribute, budget) ?? "", budget) else { throw unsafe }
+        try validateAncestry(focused, target: target, budget: budget)
+    }
     /// The editor `focusedEditor` found still has the keyboard, in the same window.
     func checkEditor(_ editor: AXUIElement, target: WindowTarget, app: AppIdentity, requireFront: Bool = true) throws {
         guard try CFEqual(focusedEditor(target: target, app: app, requireFront: requireFront), editor) else {
