@@ -137,6 +137,45 @@ after Slack accepts a chunk but before its checkpoint commits can duplicate that
 chunk. A crash before an empty session is saved can leave an unused native
 session. Stable prompt IDs prevent duplicate agent turns once the session is saved.
 
+## Immediate invocation context
+
+Before checkpointing the prompt or sending a turn to the runner, `context.ts` reads
+with the **authenticated member's user token**, never the installation's bot token:
+
+- A thread mention reads `conversations.replies`, preserving the parent and a
+  rolling tail of recent replies before the invocation. At most four pages of
+  100 are read; threads beyond that budget are explicitly partial (`truncated`)
+  and log `page_limit`. The model may read more through the member's connection.
+- A top-level mention or DM reads the last 20 preceding messages with
+  `conversations.history`, not the new message's otherwise empty thread.
+- Both return chronological messages with timestamps, author IDs, optional
+  display names, workspace-independent Slack message links, and attached file
+  ID/name/filetype/MIME metadata only. There are no file downloads, previews,
+  email addresses, cross-channel reads or `chat.getPermalink` calls.
+- Context keeps at most 20 messages, 4,000 text characters and ten files per
+  message, twelve unique user lookups (batches of four), and 40,000 serialized
+  JSON characters. Size trimming retains the parent and newest fetched replies.
+  Names live in the untrusted context's `users` map, including mentions in the
+  invocation; raw IDs and `invocation.text` remain authoritative.
+
+History requires the relevant user scope (`channels:history`, `groups:history`,
+`im:history`, or `mpim:history`); optional names require `users:read`. These are
+already in the Slack connector's default user scopes. An older/custom grant can
+still lack them. Do not increase bot scopes or substitute another credential to
+work around a failed read. Fetch/scope/access/validation errors retain the
+existing `unavailable` instruction to read through the member's connection;
+`users.info` failures retain messages with IDs. Warnings named
+`slack_assistant_context_unavailable` contain only event ID, stage and safe reason
+(e.g. `missing_scope`, `channel_not_found`, `ratelimited`), never content or tokens.
+
+The previous worker made one unconditionally chosen `conversations.replies`
+request and silently swallowed its error, so top-level messages lacked preceding
+context and failed thread reads had no diagnosis. Raw response JSON could also
+be sliced mid-message. This is a restoration of the intended context envelope,
+not a new access grant or rollout; no feature flag is added. Existing saved
+prompts are unchanged. No production failure code can be inferred retrospectively
+from the previously swallowed exception.
+
 ## Audience and permissions
 
 The signed event user is the sole actor. The member's token reads thread context;

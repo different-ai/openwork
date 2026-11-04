@@ -1,6 +1,13 @@
 import { createHash, createHmac, timingSafeEqual } from "node:crypto"
 import { z } from "zod"
 
+export const slackFileSchema = z.object({
+  id: z.string(),
+  name: z.string().optional(),
+  filetype: z.string().optional(),
+  mimetype: z.string().optional(),
+})
+
 export const slackEventSchema = z.object({
   type: z.string(),
   user: z.string().optional(),
@@ -15,7 +22,7 @@ export const slackEventSchema = z.object({
   tab: z.string().optional(),
   title: z.string().optional(),
   app_context: z.unknown().optional(),
-  files: z.array(z.object({ id: z.string(), name: z.string().optional() })).optional(),
+  files: z.array(slackFileSchema).optional(),
   tokens: z.object({ oauth: z.array(z.string()).optional(), bot: z.array(z.string()).optional() }).optional(),
 })
 export type SlackEvent = z.infer<typeof slackEventSchema>
@@ -130,6 +137,13 @@ export function buildSlackEnvelope(input: {
     .replaceAll(`<@${input.botUserId}>`, "")
     .replace(/(^|\s)--private(?=\s|$)/g, " ")
     .trim()
+  const serializedContext = JSON.stringify(input.context) ?? "null"
+  // Never chop JSON mid-message. Older callers can still supply an unbounded raw Slack response.
+  const context = serializedContext.length <= 45_000 ? serializedContext : JSON.stringify({
+    unavailable: true,
+    truncated: true,
+    instruction: "Read the relevant thread using your Slack connection.",
+  })
   return JSON.stringify({
     source: "slack",
     asked_by: input.event.user,
@@ -138,7 +152,7 @@ export function buildSlackEnvelope(input: {
     team_id: input.teamId,
     channel_id: input.event.channel,
     thread_ts: input.event.thread_ts ?? input.event.ts,
-    untrusted_context: JSON.stringify(input.context).slice(0, 45_000),
+    untrusted_context: context,
     app_context: input.event.app_context,
     files: input.event.files,
   })

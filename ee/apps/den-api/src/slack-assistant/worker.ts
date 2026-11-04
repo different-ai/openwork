@@ -30,6 +30,7 @@ import {
   type SlackSessionSettings,
 } from "./headless.js"
 import { createLiveFeeds, type LiveFeedSource } from "./live.js"
+import { loadSlackContext } from "./context.js"
 import { createSlackEventLoop } from "./queue.js"
 import {
   admitSlackRun,
@@ -339,16 +340,12 @@ export async function processSlackEvent(event: EventRow, suppliedDeps: WorkerDep
     })
     await persistSlackCheckpoint(event, cp)
     // Fetch with the member's token: bot access must never widen what the actor sees.
-    let context: unknown = { unavailable: true, instruction: "Read the relevant thread using your Slack connection." }
-    try {
-      context = await deps.slack(actor.userToken)("conversations.replies", {
-        channel: event.channelId,
-        ts: event.threadTs,
-        limit: 30,
-      })
-    } catch {
-      /* Agent can use the member's MCP tools. */
-    }
+    const context = await loadSlackContext({
+      slack: deps.slack(actor.userToken),
+      event: payload,
+      channelId: event.channelId,
+      log: (fields) => appLogger.warn("slack_assistant_context_unavailable", { event_id: event.id, ...fields }),
+    })
     if (!payload.app_context) {
       const latest = await latestSlackContext(event)
       if (latest) payload.app_context = slackEventSchema.parse(JSON.parse(latest)).app_context
