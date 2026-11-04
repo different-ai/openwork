@@ -3,6 +3,7 @@ import { bodyLimit } from "hono/body-limit"
 import { describeRoute } from "hono-openapi"
 import { z } from "zod"
 import { env } from "../../env.js"
+import { nextCalendarDate, setWorkingLocationBodySchema, workingLocationPayload, workingLocationPropertiesSchema } from "../../capability-sources/google-calendar-working-location.js"
 import { organizationFeatureEnabled } from "../../features.js"
 import { markFeaturesUsed } from "../../feature-usage.js"
 import { calendarRecurrenceMatches, calendarRecurrenceFields, calendarRecurrenceSchema, calendarTimeZoneSchema, recurrenceToRrule, validateRecurrenceChoice, validateRecurrenceUntil } from "../../capability-sources/google-calendar-events.js"
@@ -86,6 +87,9 @@ const eventSchema = z.object({
   htmlLink: z.string().optional(), etag: z.string().optional(),
   recurringEventId: z.string().optional().describe("Series master ID when this event is one occurrence of a recurring meeting."),
   recurrence: z.array(z.string()).optional().describe("Google recurrence rules on a series master; absent for an occurrence or a one-time event."),
+  eventType: z.string().optional(),
+  workingLocationProperties: workingLocationPropertiesSchema.optional(),
+  visibility: z.string().optional(), transparency: z.string().optional(),
   attendeesOmitted: z.boolean().optional(),
   attendees: z.array(z.object({ email: z.string().optional(), displayName: z.string().optional(), responseStatus: z.string().optional(), optional: z.boolean().optional() })).max(100).optional(),
 })
@@ -205,6 +209,82 @@ function confirmsEventTime(requested: z.infer<typeof eventTimeSchema> | undefine
 
 export function registerGoogleProductivityManagementRoutes<T extends { Variables: OrgRouteVariables }>(routeApp: Hono<T>, deps: GoogleWorkspaceActionDependencies) {
   const app = new Hono<{ Variables: OrgRouteVariables }>()
+  app.post(`${base}/calendar-working-location`, routeDescription("setGoogleCalendarWorkingLocation", "Requires googleCalendarWorkingLocation. Set working location (home, office or custom) for an inclusive date range on the calling member's primary calendar. Creates one all-day event per day, or updates that day's existing instance, never its recurring series. No attendees or notifications. At most 31 days. Conflicting/timed locations are rejected before writes. A failed range may be partially applied: inspect before retrying.", z.object({ ok: z.literal(true), calendarId: z.literal("primary"), events: z.array(eventSchema) })), orgMemberRoute(), boundedBody(), jsonValidator(setWorkingLocationBodySchema), async (c) => {
+    const input = c.req.valid("json")
+    const context = c.get("organizationContext")
+    if (!context) return c.json({ error: "unauthorized", message: "Sign in to an organization first." }, 401)
+    if (!await organizationFeatureEnabled(context.organization.id, "googleCalendarWorkingLocation", { userId: context.currentMember.userId })) {
+      return c.json({ error: "invalid_request", message: "Setting working locations is disabled (googleCalendarWorkingLocation)." }, 400)
+    }
+    const end = nextCalendarDate(input.to)
+    const url = new URL(`${googleBase("https://www.googleapis.com")}/calendar/v3/calendars/primary/events`)
+    // Cover every possible calendar UTC offset without guessing the member's zone.
+    url.searchParams.set("timeMin", `${input.from}T00:00:00+14:00`)
+    url.searchParams.set("timeMax", `${end}T00:00:00-12:00`)
+    url.searchParams.set("eventTypes", "workingLocation")
+    url.searchParams.set("singleEvents", "true")
+    url.searchParams.set("showDeleted", "false")
+    url.searchParams.set("maxResults", "2500")
+    const existing = new Map<string, z.infer<typeof eventSchema>>()
+    const conflict = () => c.json({ error: "invalid_request", message: "There are overlapping, timed, or ambiguous working locations near this range. Resolve them in Calendar first; no locations were changed." }, 400)
+    // Finish the preflight, including every page, before mutating any day.
+    for (let page = 0; ; page++) {
+      const result = await requestGoogleAction(c, deps, calendarWriteScopes, url)
+      if (!result.ok) return result.reply
+      const body = await confirmedBody(result.response, z.object({ items: z.array(eventSchema).default([]), nextPageToken: z.string().optional() }))
+      if (!body) return unconfirmed(c, false)
+      for (const event of body.items) {
+        if (event.status === "cancelled" || event.eventType !== "workingLocation") continue
+        if (!event.start || !event.end || !("date" in event.start) || !("date" in event.end)) return conflict()
+        const date = event.start.date
+        if (event.end.date <= input.from || date > input.to) continue
+        if (date < input.from || event.end.date !== nextCalendarDate(date) || event.recurrence?.length || existing.has(date) || event.attendees?.length || event.attendeesOmitted) return conflict()
+        existing.set(date, event)
+      }
+      if (!body.nextPageToken) break
+      if (page >= 19) return conflict()
+      url.searchParams.set("pageToken", body.nextPageToken)
+    }
+    markFeaturesUsed({ organizationId: context.organization.id, memberId: context.currentMember.id, keys: ["googleCalendarWorkingLocation"] })
+    const events: z.infer<typeof eventSchema>[] = []
+    for (let date = input.from; date <= input.to; date = nextCalendarDate(date)) {
+      const current = existing.get(date)
+      const requested = workingLocationPayload(input, date)
+      const writeUrl = current ? calendarUrl("primary", current.id) : new URL(url.origin + url.pathname)
+      writeUrl.searchParams.set("sendUpdates", "none")
+      const headers: Record<string, string> = {}
+      if (current?.etag) headers["if-match"] = current.etag
+      // PATCH an expanded instance ID, never recurringEventId. Clear the old
+      // nested variant when changing type; do not alter recurrence or attendees.
+      const { eventType: _eventType, ...patch } = requested
+      const body = current ? { ...patch, workingLocationProperties: {
+        homeOffice: null, officeLocation: null, customLocation: null, ...requested.workingLocationProperties,
+        ...(input.type === "office" ? { officeLocation: {
+          label: input.officeLabel ?? null, buildingId: input.buildingId ?? null,
+          floorId: input.floorId ?? null, floorSectionId: input.floorSectionId ?? null, deskId: input.deskId ?? null,
+        } } : {}),
+      } } : requested
+      const result = await requestGoogleAction(c, deps, calendarWriteScopes, writeUrl, {
+        method: current ? "PATCH" : "POST", headers, body: JSON.stringify(body),
+      })
+      if (!result.ok) return result.reply
+      const event = await confirmedBody(result.response, eventSchema)
+      const properties = event?.workingLocationProperties
+      const expected = requested.workingLocationProperties
+      const confirmedProperties = properties?.type === expected.type
+        && (!expected.customLocation || properties.customLocation?.label === expected.customLocation.label)
+        && (!expected.officeLocation || Object.entries(expected.officeLocation).every(([key, value]) => Reflect.get(properties.officeLocation ?? {}, key) === value))
+      if (!event || (current && event.id !== current.id) || event.status === "cancelled"
+        || event.eventType !== "workingLocation" || !confirmedProperties
+        || !confirmsEventTime(requested.start, event.start) || !confirmsEventTime(requested.end, event.end)
+        || event.visibility !== "public" || event.transparency !== "transparent"
+        || event.recurrence?.length || event.attendees?.length || event.attendeesOmitted
+        || (current ? event.recurringEventId !== current.recurringEventId : event.recurringEventId !== undefined)) return unconfirmed(c, true)
+      events.push(event)
+    }
+    return c.json({ ok: true, calendarId: "primary", events })
+  })
+
   app.get(`${base}/calendar-events/:eventId`, routeDescription("getGoogleCalendarEvent", "Read an individual Google Calendar event on a selected calendar", eventReceiptSchema), orgMemberRoute(), paramValidator(eventParams), queryValidator(calendarQuery), async (c) => {
     const { eventId } = c.req.valid("param")
     const { calendarId } = c.req.valid("query")
