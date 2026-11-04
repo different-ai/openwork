@@ -249,7 +249,7 @@ const isWebBrowser = (app) => String(app).toLowerCase().split(/[^a-z0-9]+/).some
  *   onRequest?: (sessionId: string, request: ComputerRequest | null) => void,
  *   requestMs?: number,
  *   runScript?: (request: { app: string, code: string, timeoutMs: number }, signal: AbortSignal) => Promise<ScriptResult>,
- *   onTiming?: (sessionId: string, step: { name: string, computerMs: number, modelMs?: number }) => void,
+ *   onTiming?: (sessionId: string, step: { name: string, computerMs: number, modelMs?: number, followed?: boolean }) => void,
  *   cleanupMs?: number, operationMs?: number, pollMs?: number, idleMs?: number, now?: () => number, platform?: string,
  * }} options
  */
@@ -287,6 +287,8 @@ export function createComputerControl({ adapters, runProgram, runScript, onTimin
   const leases = new Map();
   /** Per computer: whose control call has the keyboard and pointer, and who waits. */
   const slots = new Map();
+  /** Chats on screen in a visible OpenWork window, as the desktop reports them (debounced there). */
+  const watched = new Set();
   let featureEnabled = false;
   let featureGeneration = 0;
   let remoteGeneration = 0;
@@ -309,6 +311,21 @@ export function createComputerControl({ adapters, runProgram, runScript, onTimin
   const shownLease = (grant) => { const own = mine(grant); return own.find((current) => current.presentation?.phase === "paused") ?? own.find((current) => current.busy)
     ?? own.reduce((shown, current) => !shown || (current.usedAt ?? 0) > (shown.usedAt ?? 0) ? current : shown, null); };
   const leased = (current) => leases.get(current.key) === current;
+  /**
+   * The person watches this chat, so This Mac's helper works in front, beside OpenWork, and
+   * otherwise in the background. `beside` is false while the chat has several apps open:
+   * the agent arranges those itself.
+   */
+  const followArgs = (grant, current) => current.adapter.parallel === true
+    ? { following: watched.has(grant.sessionId), beside: [...grant.apps.values()].every((app) => app === current.app) } : {};
+  /** Tells each of the chat's helpers whether the person watches. Their own close handling covers a lost helper. */
+  function tellFollowing(grant) {
+    for (const current of mine(grant)) {
+      const id = current.presentation?.id;
+      if (!id || !current.transport?.notifyUi || current.closing || current.adapter.parallel !== true) continue;
+      void current.transport.notifyUi({ id, action: "watch", ...followArgs(grant, current) }).catch(() => {});
+    }
+  }
   /** Orders the chat's apps by their last call. */
   let uses = 0;
   const listApps = (grant) => [...grant.apps.values()].map((app) => ({ session_id: app.id, app_id: app.lastOpen.app_id,
@@ -361,14 +378,14 @@ export function createComputerControl({ adapters, runProgram, runScript, onTimin
    * Per chat: how long the computer took for each step, and how long the model took
    * since the previous step returned. Both stay on this computer.
    */
-  function recordStep(grant, name, startedAt) {
+  function recordStep(grant, name, startedAt, followed) {
     const finished = now();
     const computerMs = Math.max(0, finished - startedAt);
     const modelMs = grant.lastStepAt === undefined ? undefined : Math.max(0, startedAt - grant.lastStepAt);
     grant.lastStepAt = finished;
     const timing = grant.timing ??= { steps: 0, computerMs: 0, modelMs: 0 };
     timing.steps++; timing.computerMs += computerMs; timing.modelMs += modelMs ?? 0;
-    timing.last = { name, computerMs, ...(modelMs === undefined ? {} : { modelMs }) };
+    timing.last = { name, computerMs, ...(modelMs === undefined ? {} : { modelMs }), ...(typeof followed === "boolean" ? { followed } : {}) };
     try { onTiming(grant.sessionId, timing.last); } catch { /* Reporting never affects the step. */ }
   }
   /**
@@ -891,7 +908,9 @@ export function createComputerControl({ adapters, runProgram, runScript, onTimin
         // selecting its window until its input is sent, so keys never land in another chat's window.
         const mode = name === "computer_open" ? args.mode : current.app?.lastOpen?.mode;
         const renewing = !current.nativeId && current.app?.lastTarget === current.adapter.id && !["computer_discover", "computer_close"].includes(name);
-        const delivery = current.delivery ?? (current.background ? "background" : "foreground");
+        // A chat the person watches works in front, so it takes turns at the keyboard too.
+        const delivery = current.adapter.parallel === true && watched.has(grant.sessionId) ? "foreground"
+          : current.delivery ?? (current.background ? "background" : "foreground");
         if (mode === "control" && delivery === "foreground" && (["computer_open", "computer_observe", "computer_act"].includes(name) || renewing)) {
           releaseFocus = await focusSlot(current.adapter.id, active);
           progress();
@@ -922,7 +941,7 @@ export function createComputerControl({ adapters, runProgram, runScript, onTimin
           // Input from its old observation is never replayed into the new session.
           const args = current.app.lastOpen;
           current.opening = { args, signal: active, assertActive: progress };
-          const opened = await current.transport.callTool("computer_open_session", args, { signal: active });
+          const opened = await current.transport.callTool("computer_open_session", { ...args, ...followArgs(grant, current) }, { signal: active });
           progress();
           current.opening = null;
           const state = stateOf(opened);
@@ -941,7 +960,7 @@ export function createComputerControl({ adapters, runProgram, runScript, onTimin
         }
         current.expectedClose = name === "computer_close";
         const nativeArgs = { ...args, ...(current.nativeId && name !== "computer_discover" ? { session_id: current.nativeId } : {}),
-          ...(name === "computer_act" ? { request_id: randomUUID() } : {}) };
+          ...(name === "computer_act" ? { request_id: randomUUID() } : {}), ...(name === "computer_open" ? followArgs(grant, current) : {}) };
         if (["computer_open", "computer_observe", "computer_act", "computer_close"].includes(name)) invalidateObservation(current);
         const generation = current.handoffGeneration;
         const observationGeneration = current.observationGeneration;
@@ -959,6 +978,8 @@ export function createComputerControl({ adapters, runProgram, runScript, onTimin
           // Elsewhere the new app replaces the chat's one; here it replaces only a released session in its window.
           for (const other of [...grant.apps.values()]) if (!several || other.lastOpen.window_id === app.lastOpen.window_id && !leaseOf(grant, other)) forget(grant, other);
           grant.apps.set(app.id, app); grant.latest = app.id; current.app = app;
+          // A second app open: the first no longer goes beside OpenWork on its own.
+          if (grant.apps.size > 1) tellFollowing(grant);
         }
         if (!state || typeof state.ok !== "boolean") throw new Error("The native computer response was unreadable; its outcome is uncertain.");
         if (name === "computer_open" && state.ok && !current.nativeId) throw new Error("The native helper returned no session identity.");
@@ -1190,6 +1211,22 @@ export function createComputerControl({ adapters, runProgram, runScript, onTimin
         return null;
       }
       return current.presentation?.id === id ? structuredClone(current.presentation) : null;
+    },
+    /**
+     * Whether the person watches this chat: it is on screen in a visible OpenWork window.
+     * The desktop debounces the signal, so quick thread switches do not flip it.
+     */
+    follow(input) {
+      if (!input || typeof input.watching !== "boolean" || typeof input.sessionId !== "string" || !input.sessionId
+        || Object.keys(input).some((key) => !["sessionId", "watching"].includes(key))) throw new Error("A chat and whether it is watched are required.");
+      if (input.watching === watched.has(input.sessionId)) return;
+      if (input.watching) {
+        // A few chats are on screen at once; an unbounded set would only grow from a broken renderer.
+        if (watched.size >= 16) watched.delete(watched.values().next().value);
+        watched.add(input.sessionId);
+      } else watched.delete(input.sessionId);
+      const grant = grants.get(input.sessionId);
+      if (grant) tellFollowing(grant);
     },
     async interact(input) {
       if (!input || !["takeover", "resume"].includes(input.action) || !uiText(input.id, 128) || !input.id
@@ -1674,7 +1711,7 @@ export function createComputerControl({ adapters, runProgram, runScript, onTimin
             }
           }
         }
-        recordStep(grant, name, started);
+        recordStep(grant, name, started, stateOf(result)?.desktop?.followed);
         if (result.isError && stateOf(result)?.code === "permissions_required" && targetFor(grant).placement === "local") return await recoverPermissions(grant, name, args, signal);
         let delivered = deliverResult(call, result);
         // With several apps open, the model gets every session_id it can pass.

@@ -5,10 +5,12 @@ import { desktopBridge } from "@/app/lib/desktop"
 import { useComputerSessionHistoryStore } from "@/components/chat/computer-session-history-store"
 import { showsLiveComputerView } from "@/lib/computer-session-history"
 import { useSessionFloatingSlot } from "../panel/floating-slot"
+import { createComputerFollow } from "./computer-follow"
 import { ComputerPanel } from "./computer-panel"
 import { useComputerRequest } from "./computer-store"
 
 const message = (cause: unknown) => cause instanceof Error ? cause.message : String(cause)
+const followComputer = createComputerFollow((sessionId, watching) => desktopBridge.computerFollow(sessionId, watching))
 
 /**
  * Shows this chat's live computer view while the agent works. Setup and the
@@ -35,6 +37,17 @@ export function ComputerControl({ sessionId }: { sessionId: string }) {
     finally { reading.current = false }
   }
   useEffect(() => () => { generation.current++ }, [])
+  // This chat is on screen: its computer work follows along in view while OpenWork is
+  // visible, and goes to the background when the person hides it or opens another chat.
+  useEffect(() => {
+    const update = () => followComputer(sessionId, document.visibilityState === "visible")
+    update()
+    document.addEventListener("visibilitychange", update)
+    return () => {
+      document.removeEventListener("visibilitychange", update)
+      followComputer(sessionId, false)
+    }
+  }, [sessionId])
   const readLatest = useEffectEvent(refresh)
   const working = Boolean(snapshot?.session || snapshot?.cleanupPending)
   const historyEnabled = useComputerSessionHistoryStore(state => state.enabled)

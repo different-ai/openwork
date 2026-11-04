@@ -142,13 +142,20 @@ final class SessionControls: NSObject {
         case "takeover":
             onPause?("You have control. Click Continue when you are ready.")
         case "watch":
-            guard let visible = try? Arguments(values: value).bool("visible", default: false) else { return }
-            onWatch?(visible)
+            // `visible`: the live view shows frames. `following`: this chat is on screen in
+            // OpenWork; `beside`: its window may go beside OpenWork. Each is optional.
+            let values = Arguments(values: value)
+            if value["visible"] != nil, let visible = try? values.bool("visible", default: false) { onWatch?(visible) }
+            if value["following"] != nil, let following = try? values.bool("following", default: false) {
+                onFollow?(following, value["beside"] == nil ? nil : try? values.bool("beside", default: true))
+            }
         case "stop": onStop?()
         // Embedded sessions show no native panel; "hide"/"show" are accepted and ignored.
         default: break
         }
     }
+    /// Background work draws presence just above its window; work the person follows, on top.
+    func layer(background: Bool) { AgentCursor.shared.layer(background) }
     func narrate(_ text: String?) { AgentCursor.shared.narrate(text) }
     func react(_ reaction: CursorReaction) { AgentCursor.shared.react(reaction) }
     /// `live` reads where a control is now, or nil once it is gone.
@@ -194,6 +201,7 @@ final class SessionControls: NSObject {
     var onStop: (() -> Void)?
     var onTick: (() -> Void)?
     var onWatch: ((Bool) -> Void)?
+    var onFollow: ((Bool, Bool?) -> Void)?
     var isPaused = false
 
     func show(app: AppIdentity, target: WindowTarget, mode: AccessMode, purpose: String, background: Bool = false) {

@@ -727,7 +727,7 @@ function parallelFixture(options = {}) {
       let app = "";
       return {
         callTool: async (name, args) => {
-          if (name === "computer_open_session") { app = String(args.app_id); uis[app] = onUi; }
+          if (name === "computer_open_session") { app = String(args.app_id); uis[app] = onUi; options.onOpen?.(args); }
           events.push(`${app}:${name}:start`);
           await options.beforeTool?.(name, app);
           events.push(`${app}:${name}:end`);
@@ -740,7 +740,10 @@ function parallelFixture(options = {}) {
           if (name === "computer_act") return text({ ok: true, status: "dispatched" });
           return text({ ok: true, ...(name === "computer_observe" ? { observation_id: `observation-${app}` } : {}) });
         },
-        notifyUi: async (value) => { if (value.action === "takeover") onUi({ kind: "state", id: `view-${app}`, phase: "paused", canContinue: true }); },
+        notifyUi: async (value) => {
+          options.onNotify?.(app, value);
+          if (value.action === "takeover") onUi({ kind: "state", id: `view-${app}`, phase: "paused", canContinue: true });
+        },
         close: async () => { events.push(`${app}:close`); onClose(); },
       };
     },
@@ -773,6 +776,41 @@ test("a window another chat holds is refused before any helper starts", async (t
   const result = payload(await openApp(f.control, "chat-other", "blender", "control", 11));
   assert.equal(result.code, "window_busy");
   assert.equal(f.connections(), 1);
+});
+
+test("the chat the person watches works in view, beside OpenWork, and other chats in the background", async (t) => {
+  const opens = [];
+  const notes = [];
+  const f = parallelFixture({ onOpen: (args) => opens.push(args), onNotify: (app, value) => { if (value.action === "watch") notes.push([app, value]); } });
+  t.after(() => f.control.reset(true));
+  await f.control.setFeatureEnabled(true);
+  f.control.follow({ sessionId: "chat", watching: true });
+  await openApp(f.control, "chat", "blender");
+  await openApp(f.control, "other-chat", "notes");
+  assert.deepEqual([opens[0].following, opens[0].beside], [true, true], "the watched chat's app opens in view, beside OpenWork");
+  assert.deepEqual([opens[1].following, opens[1].beside], [false, true], "a chat not on screen opens in the background");
+  // A second app in the watched chat follows too, and the agent arranges the two itself.
+  await openApp(f.control, "chat", "photoshop");
+  assert.deepEqual([opens[2].following, opens[2].beside], [true, false]);
+  assert.deepEqual(notes.find(([app]) => app === "blender"), ["blender", { id: "view-blender", action: "watch", following: true, beside: false }]);
+  // Another thread selected: each of the chat's helpers hears it once, and the other chat nothing.
+  notes.length = 0;
+  f.control.follow({ sessionId: "chat", watching: false });
+  f.control.follow({ sessionId: "chat", watching: false });
+  assert.deepEqual(notes.map(([app, value]) => [app, value.following]).sort(), [["blender", false], ["photoshop", false]]);
+  assert.throws(() => f.control.follow({ sessionId: "chat", watching: "yes" }), /required/);
+  assert.throws(() => f.control.follow({ sessionId: "chat", watching: true, beside: true }), /required/);
+});
+
+test("a computer that is not This Mac gets no follow-along arguments", async (t) => {
+  const seen = [];
+  const f = fixture({ seen }); t.after(() => f.control.reset(true));
+  await f.control.setFeatureEnabled(true);
+  f.control.follow({ sessionId: "chat", watching: true });
+  await f.control.execute({ sessionId: "chat", name: "computer_open", args: { app_id: "com.apple.TextEdit", mode: "control", purpose: "Write" } });
+  const open = seen.find((call) => call.name === "computer_open_session");
+  assert.ok(open && !("following" in open.args) && !("beside" in open.args));
+  assert.ok(!f.selected.some((value) => value.action === "watch"));
 });
 
 const look = (control, sessionId, session) =>

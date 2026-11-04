@@ -6,6 +6,7 @@ import "../src/app/index.css"
 
 // The isolated world serves the real broker and adapter behind this IPC boundary.
 async function invoke(command: string, ...args: unknown[]) {
+  if (command === "computerFollow") return null
   const input = command === "computerPresentation" ? { visible: args[1] } : args[0]
   const route = command === "computerPresentation" ? "presentation" : command === "computerInteract" ? "decision" : command === "computerSnapshot" ? "snapshot" : "stop"
   const response = await fetch(`/fixture/${route}`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(input) })

@@ -485,6 +485,8 @@ export type DesktopCommandMap = {
   computerSnapshot: { args: [sessionId: string]; result: ComputerSnapshot };
   computerStatus: { args: []; result: ComputerStatus };
   computerPresentation: { args: [sessionId: string, visible: boolean]; result: ComputerPresentation | null };
+  /** This chat is on screen in a visible OpenWork window: its computer work follows along in view. */
+  computerFollow: { args: [sessionId: string, watching: boolean]; result: void };
   computerInteract: {
     args: [input: { sessionId: string; id: string; action: "takeover" | "resume" }];
     result: void;

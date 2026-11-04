@@ -736,6 +736,12 @@ final class AgentCursor {
 
     // MARK: Window tracking
 
+    func layer(_ layered: Bool) {
+        guard enabled, self.layered != layered else { return }
+        self.layered = layered
+        order()
+    }
+
     private func order() {
         guard let window else { return }
         window.level = layered ? .normal : .statusBar
