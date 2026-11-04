@@ -263,7 +263,7 @@ describe("archiving a working session: the warning goes back through the request
         selectedWorkspaceRoot: directory, selectedSessionId: null, canCreateTask: false,
         openworkClient: endpoint.client, opencodeClient: createClient(engine.baseUrl),
         endpointForWorkspace: () => endpoint, navigateToSession: () => {}, navigateToSessionRoot: () => {},
-        createTaskInWorkspace: () => null, openModelPicker: () => {}, refreshRouteState: () => {},
+        createTaskInWorkspace: () => null, openModelPicker: () => {}, refreshRouteState: () => {}, reloadWorkspaceSessions: async () => {},
         archiveSession: archive.archiveSession,
       });
       useEffect(() => { archiveSession = archive.archiveSession; });

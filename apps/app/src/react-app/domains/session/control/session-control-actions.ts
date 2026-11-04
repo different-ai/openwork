@@ -42,6 +42,7 @@ type UseSessionControlActionsInput = {
   createTaskInWorkspace: (workspaceId: string) => Promise<string | null> | string | null;
   openModelPicker: () => void;
   refreshRouteState: () => Promise<unknown> | unknown;
+  reloadWorkspaceSessions: (workspaceId: string) => Promise<void>;
   archiveSession: (sessionId: string, archived: boolean, options?: ArchiveSessionOptions) => Promise<ArchiveSessionOutcome>;
 };
 
@@ -83,6 +84,7 @@ export function useSessionControlActions(input: UseSessionControlActionsInput) {
     opencodeClient,
     archiveDisabledReason,
     refreshRouteState,
+    reloadWorkspaceSessions,
     selectedSessionId,
     selectedWorkspaceId,
     sessionsByWorkspaceId,
@@ -250,10 +252,10 @@ export function useSessionControlActions(input: UseSessionControlActionsInput) {
         ? createClientV2(engine.opencodeBaseUrl, targetWorkspace.path, { token: engine.token })
         : createClient(engine.opencodeBaseUrl, targetWorkspace.path, { mode: "openwork", token: engine.token });
       unwrap(await client.session.update({ sessionID: sessionId, title, directory: targetWorkspace.path }));
-      await refreshRouteState();
+      await reloadWorkspaceSessions(targetWorkspace.id);
       return { ok: true, sessionId, title };
     },
-  }), [endpointForWorkspace, refreshRouteState, sessionsByWorkspaceId, workspaces]);
+  }), [endpointForWorkspace, reloadWorkspaceSessions, sessionsByWorkspaceId, workspaces]);
   useControlAction(renameSessionControlAction);
 
   const deleteSessionControlAction = useMemo<OpenworkControlAction>(() => ({

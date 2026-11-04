@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
-import { mkdir, realpath, writeFile } from "node:fs/promises";
-import { join } from "node:path";
-import { engineSessionProbe } from "@openwork/behaviors";
+import { mkdir, realpath } from "node:fs/promises";
+import { browserScript } from "@openwork/cdp";
+import { engineSessionProbe, evalIn } from "@openwork/behaviors";
 import { eventually, type Place, type Seed } from "@openwork/env";
 import type { MockAgentToolStep } from "@openwork/labs";
 import { configureProvider } from "./chat.ts";
@@ -16,20 +16,54 @@ function dataOf(value: unknown): unknown {
 
 /** Real server, renderer and native v2 tools; only model HTTP responses are scripted. */
 export async function v2SessionManagement(seed: Seed, { place }: { place: Place }) {
-  await using setup = new AsyncDisposableStack();
-  const mock = (await seed.mock({ isolatedProcessEnv: true }).boot(place)).handle;
-  setup.defer(() => mock.stop());
   const providerId = "opencode";
   const originalModelId = "big-pickle";
   const replacementModelId = "session-management-alternate";
+  const temporaryPath = seed.tmpPath("v2-session-management");
+  // A Mac realpath starts /private/tmp, which is neither present nor writable
+  // on the sandbox. The app-web fixture creates its own remote workspace.
+  let workspacePath = temporaryPath;
+  if (place.kind !== "daytona") {
+    await mkdir(temporaryPath, { recursive: true });
+    workspacePath = await realpath(temporaryPath);
+  }
+  const token = randomUUID();
+  const app = await seed.appWeb({
+    name: "v2-session-management", workspacePath, engine: "v2", headless: true, mouse: true,
+    mocks: { agent: seed.mock({ isolatedProcessEnv: true }) },
+    env: { OPENWORK_TOKEN: token },
+  });
+  const mock = app.mocks.agent;
+  if (!mock) throw new Error("The app-web fixture did not start its model witness");
+  // Reads execute on the browser's computer, not the runner's loopback. This
+  // witnesses actual native state on both local and co-located Daytona runs.
+  async function request(base: string, path: string, method = "GET", body: unknown = null): Promise<unknown> {
+    const result = await evalIn(app, browserScript(async (base, path, token, method, body) => {
+      const response = await fetch(base + path, {
+        method, headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+        ...(body === null ? {} : { body: JSON.stringify(body) }), signal: AbortSignal.timeout(30_000),
+      });
+      return { status: response.status, body: await response.json() };
+    }, [base, path, token, method, body]), { awaitPromise: true, timeoutMs: 35_000 });
+    if (!isRecord(result) || typeof result.status !== "number" || result.status < 200 || result.status >= 300) {
+      throw new Error(`Session management request failed: ${path} (HTTP ${isRecord(result) ? result.status : "unknown"})`);
+    }
+    return result.body;
+  }
+  const read = (path: string) => request(app.openworkUrl, path);
+  const engine = await eventually(async () => {
+    const value = await read("/experimental/engine-v2-preview/status");
+    return {
+      running: isRecord(value) && value.running === true,
+      version: isRecord(value) && typeof value.version === "string" ? value.version : "",
+    };
+  }, { within: 210_000, intervalMs: 1_000, label: "the native v2 engine is running", until: value => value.running && Boolean(value.version) });
+  const workspace = await seed.workspace(app, workspacePath);
   const configuration = {
-    permission: { "*": "allow" },
-    enabled_providers: [providerId],
-    model: `${providerId}/${originalModelId}`,
-    small_model: `${providerId}/${originalModelId}`,
+    permission: { "*": "allow" }, enabled_providers: [providerId],
+    model: `${providerId}/${originalModelId}`, small_model: `${providerId}/${originalModelId}`,
     provider: { [providerId]: {
-      npm: "@ai-sdk/openai-compatible",
-      options: { baseURL: `${mock.url}/v1`, apiKey: "session-management-synthetic-key" },
+      npm: "@ai-sdk/openai-compatible", options: { baseURL: `${mock.url}/v1`, apiKey: "session-management-synthetic-key" },
       whitelist: [originalModelId, replacementModelId],
       models: Object.fromEntries([
         [originalModelId, "Management caller"], [replacementModelId, "Management alternate"],
@@ -39,60 +73,23 @@ export async function v2SessionManagement(seed: Seed, { place }: { place: Place 
       }])),
     } },
   };
-  const temporaryPath = seed.tmpPath("v2-session-management");
-  await mkdir(temporaryPath, { recursive: true });
-  const workspacePath = await realpath(temporaryPath);
-  // Configure both default and utility models before startup: no real provider
-  // is needed, even for an automatic title or compaction request.
-  await writeFile(join(workspacePath, "opencode.json"), JSON.stringify(configuration));
-  const token = randomUUID();
-  const app = await seed.appWeb({
-    name: "v2-session-management", workspacePath, engine: "v2", headless: true, mouse: true,
-    env: {
-      OPENWORK_TOKEN: token,
-      ...(process.env.OPENWORK_OPENCODE_BIN ? { OPENWORK_OPENCODE_BIN: process.env.OPENWORK_OPENCODE_BIN } : {}),
-      ...(process.env.OPENWORK_OPENCODE2_BIN ? { OPENWORK_OPENCODE2_BIN: process.env.OPENWORK_OPENCODE2_BIN } : {}),
-    },
-  });
-  async function read(path: string): Promise<unknown> {
-    const response = await fetch(`${app.openworkUrl}${path}`, {
-      headers: { Authorization: `Bearer ${token}` }, signal: AbortSignal.timeout(10_000),
-    });
-    if (!response.ok) throw new Error(`Session management read failed: ${response.status} ${path}`);
-    return response.json();
-  }
-  // Native installation can take longer than the session control rail deadline.
-  const engine = await eventually(async () => {
-    const value = await read("/experimental/engine-v2-preview/status");
-    return {
-      running: isRecord(value) && value.running === true,
-      version: isRecord(value) && typeof value.version === "string" ? value.version : "",
-    };
-  }, { within: 210_000, intervalMs: 1_000, label: "the native v2 engine is running", until: value => value.running && Boolean(value.version) });
-  const workspace = await seed.workspace(app, workspacePath);
   await configureProvider(seed, app, workspace.workspaceId, providerId, originalModelId, configuration, "v2");
   const target = await seed.session(app, { title: "Planning notes" });
   const caller = await seed.session(app, { title: "Organize my conversations" });
   const mount = `/workspace/${encodeURIComponent(workspace.workspaceId)}/opencode2/api/session`;
-  // Bind an idle target without inference as fixture arrangement, not as the
-  // operation under test. Every subsequent mutation comes from native tools.
-  const bound = await fetch(`${app.openworkUrl}${mount}/${encodeURIComponent(target.sessionId)}/model`, {
-    method: "POST", headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
-    signal: AbortSignal.timeout(30_000),
-    body: JSON.stringify({ model: { providerID: providerId, id: originalModelId } }),
+  // Arrange an idle target without inference. The operations under test below
+  // all come from native agent tools, never direct renderer control commands.
+  await request(app.openworkUrl, `${mount}/${encodeURIComponent(target.sessionId)}/model`, "POST", {
+    model: { providerID: providerId, id: originalModelId },
   });
-  if (!bound.ok) throw new Error(`Could not arrange the target model: ${bound.status} ${await bound.text()}`);
-  const native = engineSessionProbe({ engine: "v2", serverUrl: app.openworkUrl, token, workspaceId: workspace.workspaceId });
-  const resources = setup.move();
+  const native = engineSessionProbe({ engine: "v2", surface: app, workspaceId: workspace.workspaceId });
   return {
     app, workspace, caller, target, engine,
     providerId, originalModelId, replacementModelId, renamedTitle: "Planning notes — ready",
     async prepareTurn(promptMarker: string, finalReply: string, steps: MockAgentToolStep[]) {
-      const response = await fetch(`${mock.url}/admin/agent-workloads`, {
-        method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ workloads: [{ promptMarker, latestUserTurn: true, finalReply, steps }] }),
+      await request(mock.url, "/admin/agent-workloads", "POST", {
+        workloads: [{ promptMarker, latestUserTurn: true, finalReply, steps }],
       });
-      if (!response.ok) throw new Error("Could not configure the session management model witness");
     },
     async modelCalls(promptMarker: string) {
       return mock.agentRequests({ promptMarker, atLeast: 1, timeoutMs: 30_000 });
@@ -108,17 +105,15 @@ export async function v2SessionManagement(seed: Seed, { place }: { place: Place 
       ]);
       const session = dataOf(raw);
       if (!isRecord(session) || typeof session.id !== "string" || typeof session.title !== "string" || !isRecord(session.time)) {
-        throw new Error(`Invalid native session readback: ${JSON.stringify(raw)}`);
+        throw new Error("Invalid native session readback");
       }
       if (!messages.ok) throw new Error(`Could not read native session messages: ${messages.status}`);
       const model = isRecord(session.model) ? session.model : {};
       return {
         id: session.id, title: session.title,
         archived: typeof session.time.archived === "number" && session.time.archived > 0,
-        model: { providerId: model.providerID, modelId: model.id },
-        messageCount: messages.data.length,
+        model: { providerId: model.providerID, modelId: model.id }, messageCount: messages.data.length,
       };
     },
-    [Symbol.asyncDispose]: () => resources[Symbol.asyncDispose](),
   };
 }

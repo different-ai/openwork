@@ -31,6 +31,7 @@ async function mount(options: { archived?: boolean; busy?: boolean; v1?: boolean
   useSessionManagementStore.setState({ pinnedIds: [] });
   const writes: unknown[] = [];
   const renames: Array<{ path: string; method: string; authorization: string | null; body: unknown }> = [];
+  const reloadedWorkspaces: string[] = [];
   let model = { providerID: "rebind", id: "model-a", variant: "default" };
   const server = Bun.serve({ hostname: "127.0.0.1", port: 0, async fetch(request) {
     const path = new URL(request.url).pathname;
@@ -72,7 +73,8 @@ async function mount(options: { archived?: boolean; busy?: boolean; v1?: boolean
     useSessionControlActions({ workspaces, selectedWorkspaceId: "one", selectedWorkspaceRoot: "/tmp/one", selectedSessionId: null,
       sessionsByWorkspaceId: { two: [{ id: "ses_target", time: { archived: options.archived ? 123 : 0 } }] }, canCreateTask: false, openworkClient: client, opencodeClient: null, endpointForWorkspace,
       navigateToSession: () => { throw new Error("Must not navigate"); }, navigateToSessionRoot: () => { throw new Error("Must not navigate"); },
-      createTaskInWorkspace: () => null, openModelPicker: () => { throw new Error("Must not open picker"); }, refreshRouteState: () => {}, archiveSession: async () => ({ kind: "done" }),
+      createTaskInWorkspace: () => null, openModelPicker: () => { throw new Error("Must not open picker"); }, refreshRouteState: () => {},
+      reloadWorkspaceSessions: async (workspaceId) => { reloadedWorkspaces.push(workspaceId); }, archiveSession: async () => ({ kind: "done" }),
     });
     return null;
   }
@@ -87,7 +89,7 @@ async function mount(options: { archived?: boolean; busy?: boolean; v1?: boolean
     await act(async () => { response = await api.command({ id, args, origin: { sessionId: "ses_requester" } }); });
     return response;
   };
-  return { writes, renames, command, run: (extra: Record<string, unknown> = {}) => command("session.set_model", {
+  return { writes, renames, reloadedWorkspaces, command, run: (extra: Record<string, unknown> = {}) => command("session.set_model", {
     sessionId: "ses_target", providerId: "rebind", modelId: "model-b", ...extra,
   }) };
 }
@@ -132,6 +134,7 @@ test("rename uses the nonselected workspace's native endpoint and token without 
   expect(fixture.renames).toEqual([{
     path: "/workspace/two/opencode2/api/session/ses_target", method: "PATCH", authorization: "Bearer fixture-two", body: { title: "Revised task" },
   }]);
+  expect(fixture.reloadedWorkspaces).toEqual(["two"]);
   expect(fixture.writes).toEqual([]);
 });
 
