@@ -38,6 +38,7 @@ test("a workflow whose last run failed is flagged with a reason a person can rea
   assert.equal(workflowFailureSummary("The calendar was empty."), "The calendar was empty");
   assert.equal(workflowFailureSummary('TypeError: Cannot read properties of undefined (reading "items") at {"stack": 1}'), "Open it to see what went wrong");
   assert.equal(workflowFailureSummary(null), "Open it to see what went wrong");
+  assert.equal(workflowFailureSummary("Cannot access a property on a non-object value. (line 4, col 24)"), "Open it to see what went wrong");
 });
 
 test("the plugin that only holds workflows is not listed next to them", () => {

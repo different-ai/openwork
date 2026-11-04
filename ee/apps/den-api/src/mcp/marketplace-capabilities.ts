@@ -42,6 +42,7 @@ import { executeWorkflow, type WorkflowExecutionResult } from "./workflow-servic
 import { artifactRunInputSchema, artifactRuntime } from "../artifact-runtime.js"
 import { listPluginMcpRequirementBindings, type PluginMcpRequirementBindingRow } from "./plugin-mcp-requirement-bindings.js"
 import { scoreText, tokenize, workflowSearchBoost } from "./search.js"
+import { workflowRunNeedsLiveRuntime } from "./workflow-live-inference.js"
 import type { McpMemberIdentity } from "./external-capabilities.js"
 import type { CapabilityMatch } from "./search.js"
 
@@ -1792,6 +1793,9 @@ export async function executeMarketplaceCapability(input: {
 
   if (canonicalConfigObjectType(row.configObject.objectType) === "workflow") {
     const orgMembershipId = input.member.orgMembershipId
+    const live = liveRuntime?.success === true
+      || (liveRuntime === undefined && workflowRunNeedsLiveRuntime(version.rawSourceText ?? "", input.body))
+    const runtimeTimeZone = liveRuntime?.success ? liveRuntime.data.timeZone : undefined
     const runWorkflow = () => executeWorkflow({
       database: db,
       organizationId,
@@ -1802,9 +1806,9 @@ export async function executeMarketplaceCapability(input: {
       automationRunId: input.automationRunId,
       normalizedPayloadJson: version.normalizedPayloadJson,
       code: version.rawSourceText ?? "",
-      scriptInput: liveRuntime?.success ? { runtime: artifactRuntime(liveRuntime.data.timeZone) } : input.body,
-      readOnly: liveRuntime?.success === true,
-      validateOutput: liveRuntime?.success === true || input.validateScriptOutput === true,
+      scriptInput: live ? { runtime: artifactRuntime(runtimeTimeZone) } : input.body,
+      readOnly: live,
+      validateOutput: live || input.validateScriptOutput === true,
       buildTools: input.buildTools ?? (async () => ({ tools: {}, manifest: [] })),
     })
     let execution: WorkflowExecutionResult

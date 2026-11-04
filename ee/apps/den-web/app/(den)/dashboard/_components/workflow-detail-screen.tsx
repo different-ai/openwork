@@ -144,7 +144,7 @@ export function WorkflowDetailScreen({ workflowId }: { workflowId: string }) {
         caption={`${freshnessLabel(workflow.resultState)} · Updated ${updatedDate(state.detail.currentVersion.createdAt)}`}
       />
 
-      {state.error ? <DenNotice tone="error" message={state.error} /> : null}
+      {state.error ? <DenNotice tone="error" message={workflowFailureSummary(state.error)} /> : null}
       {state.detail.freshness.state === "needs_attention" ? (
         <p className="flex flex-wrap items-center gap-x-2 gap-y-1 text-[13px] text-gray-600" data-testid="den-workflow-last-run-failed">
           <span className="size-1.5 rounded-full bg-red-500" aria-hidden="true" />

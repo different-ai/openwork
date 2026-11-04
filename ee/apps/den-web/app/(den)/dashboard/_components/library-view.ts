@@ -73,7 +73,7 @@ export function workflowFailureSummary(reason: string | null | undefined): strin
   if (/(rate.?limit|429|too many requests)/.test(lower)) return "A service asked it to slow down. Try again soon";
   if (/(output|schema).*(invalid|mismatch|did not match)|invalid.*(output|schema)/.test(lower)) return "Its result didn't have the expected shape";
   // A short plain sentence is shown as it is; anything that reads like code is not.
-  if (text.length <= 90 && !/[{}[\]<>_]|\b[a-z]+_[a-z_]+\b|error:|exception|stack/i.test(text)) return text.replace(/\.$/, "");
+  if (text.length <= 90 && !/[{}[\]<>_]|error:|exception|stack|uncaught|undefined|null\b|line \d+|col(?:umn)? \d+|property|is not a function|non-object/i.test(text)) return text.replace(/\.$/, "");
   return "Open it to see what went wrong";
 }
 
