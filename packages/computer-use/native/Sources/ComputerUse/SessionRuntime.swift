@@ -843,6 +843,21 @@ final class SessionRuntime {
                     "message": "Saving writes this file for the app once the organization's file rule allows it; nothing was sent."])
             }
         }
+        // Picking a file in an Open, Place or Insert panel hands it to the app: the organization's rule decides.
+        if let file = actions.lazy.compactMap({ action -> URL? in if case .openInPanel(let url) = action { return url }; return nil }).first {
+            guard actions.count == 1 else {
+                throw UseError("open_in_panel_alone", "Pick a file in a panel as its own step. Nothing was sent.", next: "observe")
+            }
+            guard OpenPanelRules.isOpenPanel(kind: current.dialogKind, saveField: access.saveNameField(current.target) != nil,
+                defaultButton: access.defaultButton(current.target).flatMap { access.attribute($0, kAXTitleAttribute) as? String }) else {
+                throw UseError("open_panel_required", "open_in_panel picks a file in the app's open Open, Place, Insert or Attach panel. Open it from the app (such as File > Place or Insert > Picture), observe it, then try again. Nothing was sent.", next: "observe")
+            }
+            guard let fileApproval, fileApproval == [file.path] else {
+                return text(["ok": false, "code": "files_approval_required", "files": [file.path], "open": true,
+                    "app": current.frontApp.name, "dispatched": false, "next": "observe",
+                    "message": "Choosing this file hands it to the app once its path is approved; nothing was sent."])
+            }
+        }
         session?.observation = nil; session?.focus = nil; session?.lastUsed = now
         if let intent { controls.narrate(intent) }
         session?.receiptInputs[requestID] = fingerprint
@@ -987,6 +1002,13 @@ final class SessionRuntime {
                 let saving: (file: URL, before: FileHandoff.Stamp?, since: Date)? = {
                     if case .saveAs(let file, _) = action { return (file, FileHandoff.stamp(file), Date()) }; return nil
                 }()
+                // The window under an Open panel before the press: a chosen file shows as a change in it.
+                var choosing: (window: WindowTarget, title: String?, content: Data?, windows: Set<UInt32>)?
+                if case .openInPanel = action, let window = current.parents.first?.target {
+                    let state = try? await access.read(window, budget: AXReadBudget(seconds: 0.5), check: check)
+                    choosing = (window, access.attribute(window.element, kAXTitleAttribute) as? String,
+                        state.flatMap { try? access.captureDigest($0, focus: false) }, access.windowChanges(current.frontApp).windows)
+                }
                 var path = try await input.execute(action, app: current.app, target: current.target, lease: observation,
                     access: access, records: records, focus: focus, pointerTarget: pointerTarget,
                     check: checkInput, checkWindow: checkWindow, background: background || !current.parents.isEmpty, editorTyping: editorTyping && index == 0, feedback: { [weak self] feedback in
@@ -1027,6 +1049,29 @@ final class SessionRuntime {
                         if documentOpened || retitled || alert != nil {
                             path = FileOpenCheck.outcome(alert: alert, documentWindowOpened: documentOpened, retitled: retitled)
                             fileAlert = alert; break
+                        }
+                        try await Task.sleep(nanoseconds: 100_000_000)
+                    }
+                }
+                if case .openInPanel = action {
+                    // A pressed Open is not proof: the file counts as chosen once the panel closed and the
+                    // app shows it, in a new window, a retitle or changed content. An alert refutes it.
+                    path = "file_choice_unconfirmed"
+                    for attempt in 0..<50 {
+                        try check()
+                        let alert = access.frontAlert(current.frontApp)
+                        let panelOpen = access.dialogOpen(current.target, app: current.app)
+                        // The window's content is read less often: it is the slowest sign to read.
+                        var changed = false
+                        if !panelOpen, attempt % 5 == 4, let choosing, let before = choosing.content,
+                           let state = try? await access.read(choosing.window, budget: AXReadBudget(seconds: 0.5), check: check) {
+                            changed = (try? access.captureDigest(state, focus: false)).map { $0 != before } == true
+                        }
+                        if let outcome = OpenPanelRules.outcome(panelOpen: panelOpen, alert: alert,
+                            windowOpened: choosing.map { !access.windowChanges(current.frontApp).windows.subtracting($0.windows).isEmpty } == true,
+                            retitled: choosing.map { (access.attribute($0.window.element, kAXTitleAttribute) as? String) != $0.title } == true,
+                            contentChanged: changed) {
+                            path = outcome; fileAlert = alert; break
                         }
                         try await Task.sleep(nanoseconds: 100_000_000)
                     }

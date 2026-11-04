@@ -513,6 +513,23 @@ step path is `file_saved`, with `saved_file: { path, bytes }` in the receipt,
 only once the file is on disk and written after Save; otherwise it is
 `file_save_unconfirmed`. Windows and Linux helpers refuse the step.
 
+`{ type: "open_in_panel", path: "/Users/…/Desktop/map.png" }` picks a file in
+the app's open Open, Place, Insert or Attach panel in one step: it opens the
+panel's Go To field, sets the file's path through accessibility and reads it
+back, checks that the panel selected exactly that file, then presses the
+panel's default button (Open, Place, Insert or Choose). The panel must be open
+and observed first, and the step is sent on its own. The path must be absolute
+and name an existing file; links are resolved and folders refused.
+
+As for saves, the agent decides without asking the person. Looking through the
+panel and the file this step picks both go through the same Agent permissions
+check (`movePolicy`, kind `computer_files`): with no rule it goes ahead; Ask
+first shows the file each time, with nothing remembered; Block, or a rule that
+cannot be read, refuses it. The step path is `file_chosen` once the panel closed and
+the app shows a change (a new window, a retitle, or new content in the session's
+window), `file_open_failed` with the app's `file_alert` when an alert appears,
+otherwise `file_choice_unconfirmed`. Windows and Linux helpers refuse the step.
+
 A program defaults to 30 seconds, accepts a timeout up to 60 seconds, and is
 limited to 80 helper calls and 32 KB of returned program data. The desktop
 session persists between programs; variables do not. Supply JSON through

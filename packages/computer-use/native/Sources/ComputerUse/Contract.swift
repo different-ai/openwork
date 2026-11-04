@@ -188,6 +188,8 @@ enum Action {
     case arrange(WindowLayout)
     /// The app's open Save or Export sheet writes to this file: its name and folder are set, then Save.
     case saveAs(URL, replace: Bool)
+    /// The app's open Open, Place, Insert or Attach panel picks this file: Go To it, then the default button.
+    case openInPanel(URL)
 
     static let batchLimit = 8
     static func batch(_ values: [String: Any], policy: RuntimePolicy = .desktop) throws -> [Action] {
@@ -244,6 +246,9 @@ enum Action {
             try a.only(["type", "path", "replace"])
             guard values["replace"] == nil || (values["replace"] as? NSNumber).map({ CFGetTypeID($0) == CFBooleanGetTypeID() }) == true else { throw UseError("invalid_arguments", "replace must be true or false.") }
             self = .saveAs(try FileHandoff.destination(try a.string("path", max: 1024)), replace: values["replace"] as? Bool == true)
+        case "open_in_panel" where policy == .embedded:
+            try a.only(["type", "path"])
+            self = .openInPanel(try FileHandoff.file(try a.string("path", max: 1024)))
         case "menu" where policy == .embedded:
             try a.only(["type", "path"])
             guard let path = values["path"] as? [String], (2...MenuRules.maxDepth + 1).contains(path.count),
@@ -305,6 +310,7 @@ enum Action {
         case .openFile: return "open_file"
         case .arrange: return "arrange"
         case .saveAs: return "save_as"
+        case .openInPanel: return "open_in_panel"
         case .rightClick: return "right_click"
         case .hold: return "press_and_hold"
         case .showMenu: return "show_menu"

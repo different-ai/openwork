@@ -135,6 +135,15 @@ test("invalid input preserves the observation for a corrected request", async (t
   assert.equal(f.inputs.length, 1);
 });
 
+test("Windows and Linux computers refuse the Mac's open_in_panel step", async (t) => {
+  for (const platform of ["linux", "win32"]) {
+    const f = await fixture(t, { platform });
+    const observation = await f.observe();
+    assert.equal(payload(await f.act(observation, [{ type: "open_in_panel", path: "/tmp/map.png" }], platform)).code, "invalid_arguments", platform);
+    assert.equal(f.inputs.length, 0, platform);
+  }
+});
+
 test("an invalid VM display reports readiness without crashing app construction or contacting the VM", async () => {
   let contacted = false;
   const driver = createX11Driver({ display: ":99; invalid", machine: {
