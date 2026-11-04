@@ -533,6 +533,17 @@ export const FEATURES = defineFeatures({
     deployments: everywhere,
     default: false,
   },
+  automationFailureNotifications: {
+    label: "Automations: notify when a run fails",
+    description: "When one of your Automations fails, including when a connection it needs must be reconnected, the OpenWork app tells you once: an entry in its notification center and, while the app is in the background, a system notification.",
+    category: "automations",
+    added: "2026-11-04",
+    since: "2026-11",
+    author: "reachjalil",
+    docs: "docs/features/automation-failure-notifications/README.md",
+    deployments: everywhere,
+    default: false,
+  },
 })
 
 export type FeatureKey = keyof typeof FEATURES

@@ -451,6 +451,16 @@
               ],
               "description": "Outlook attachments: Agents read the files attached to Outlook messages and create Outlook drafts and replies with workspace files attached, after the member approves each draft. Drafts are never sent. Renders DEN_FEATURE_OUTLOOK_ATTACHMENTS."
             },
+            "automationFailureNotifications": {
+              "enum": [
+                "",
+                "true",
+                "false",
+                true,
+                false
+              ],
+              "description": "Automations: notify when a run fails: When one of your Automations fails, including when a connection it needs must be reconnected, the OpenWork app tells you once: an entry in its notification center and, while the app is in the background, a system notification. Renders DEN_FEATURE_AUTOMATION_FAILURE_NOTIFICATIONS."
+            },
             "gatewayDashboard": {
               "enum": [
                 "",
