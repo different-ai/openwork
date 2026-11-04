@@ -11,6 +11,14 @@ whichever they connected) and any other connection they turned on. Calendar even
 short message when something needs the member, and stays quiet otherwise. It only reads: it never sends, accepts or
 edits anything for them.
 
+> **With `workbotAgentBrief` on** (cloud and self-hosted, off by default), Your agent drops the four responsibilities,
+> their mutes, the meeting lead time and calendar wakes for one rhythm (a check every 2 hours in working hours, plus
+> extra checks it asks for with `request_check`), a plain-text brief (the organization's default plus each member's
+> own lines), and two steps per check (a read-only check that reports findings, then a short tool-less message turn
+> that knows the member's recent Workbot DM). Den keeps only hard limits. See
+> [Your agent's brief and check rhythm](../workbot-agent-brief/README.md). Everything below describes the agent with
+> that feature off, which is unchanged.
+
 ## Architecture
 
 ```
@@ -253,7 +261,8 @@ The harness's own tests (`harness.test.ts`, a scripted model) run with the evals
 1. Replays against the headless runner itself (the evals call the model directly with the same tools' answers).
 2. Other services as sources (Plain, HubSpot…) once their read tools are reviewed, or an admin-approved list of read
    tools per connection.
-3. Follow-ups ("remind me", "tell me when"): no `schedule_wake` tool yet.
+3. Follow-ups ("remind me", "tell me when"): no `schedule_wake` tool yet. With `workbotAgentBrief`, the agent's own
+   check can ask for an extra check (`request_check`), capped and inside the member's hours.
 4. Copying delivered text into the member's Workbot conversation.
 5. Desktop notifications as a destination.
 6. Telling Slack from Workbot web in "Saved from chat".

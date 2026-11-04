@@ -21,6 +21,8 @@ import {
   parseAgentMessages,
   parseCheckReport,
   pendingCheckRequests,
+  rememberSent,
+  sentLead,
   settleCheckRequests,
   withinRhythm,
   nextRhythmOpening,
@@ -28,6 +30,7 @@ import {
   type AgentCheckRequest,
   type AgentConversationTurn,
   type AgentMessagesReply,
+  type AgentSentRecord,
 } from "@openwork/automations/proactive-brief"
 import type { DenTypeId } from "@openwork-ee/utils/typeid"
 import { resolveAgentBrief, type AgentCheckKind, type AgentCheckReason } from "@openwork/types/den/workbot-proactive"
@@ -232,6 +235,7 @@ export async function wakeAgentBrief(row: AgentInstanceRow, deps: AgentBriefWake
       timeZone,
       nextCheckAt: nextAfter,
       extraChecksLeft: extraChecksLeft(state.requests, brief.extraChecksPerDay, now, timeZone),
+      sent: state.sent,
       sources: readable.map((source) => ({
         id: source.id,
         name: source.name,
@@ -265,6 +269,7 @@ export async function wakeAgentBrief(row: AgentInstanceRow, deps: AgentBriefWake
   // Step 2 and Den's limits, only with something worth a message.
   let outcome: { reason: AgentCheckReason; sources?: AgentMemberCheckSource[]; message?: AgentMemberCheckMessage | null; messages?: number } | null = { reason: "no_findings" }
   let sent = 0
+  const sentRecords: AgentSentRecord[] = []
   let delivered: "sent" | "failed" | "nothing_new" | "daily_limit" | "quiet_hours" | "quiet_window" | "snoozed" | null = null
   if (report.kind === "findings") {
     const sentToday = await deps.sentSince(memberId, new Date(zonedDayStart(now, timeZone)))
@@ -324,6 +329,7 @@ export async function wakeAgentBrief(row: AgentInstanceRow, deps: AgentBriefWake
             await deps.finish(id, result.ok ? "sent" : "failed")
             if (result.ok) {
               sent += 1
+              sentRecords.push({ at: now, about: message.about.map((item) => `${item.source}:${item.id}`), lead: sentLead(message.text) })
               drew.push(...message.about)
               first ??= result.message ?? null
             } else {
@@ -334,10 +340,13 @@ export async function wakeAgentBrief(row: AgentInstanceRow, deps: AgentBriefWake
             }
           }
           const capped = decision.skipped.some((entry) => entry.reason === "daily_limit")
+          // Every message named only sources it didn't read: nothing it could send, not something already told.
+          const unreadable = decision.skipped.length > 0 && decision.skipped.every((entry) => entry.reason === "unknown_source")
+          if (unreadable) appLogger.warn("workbot_agent_message_unknown_sources", { member_id: memberId })
           delivered = sent ? "sent" : failed ? "failed" : capped ? "daily_limit" : "nothing_new"
           outcome = sent
             ? { reason: "sent", sources: checkSources(drew, sources), message: first, messages: sent }
-            : lost ? null : failed ? { reason: "send_failed" } : capped ? { reason: "daily_limit" } : { reason: "already_told" }
+            : lost ? null : failed ? { reason: "send_failed" } : capped ? { reason: "daily_limit" } : unreadable ? { reason: "unreadable_reply" } : { reason: "already_told" }
         }
       }
     }
@@ -349,7 +358,8 @@ export async function wakeAgentBrief(row: AgentInstanceRow, deps: AgentBriefWake
     counts: [{ responsibility: AGENT_RHYTHM_COUNTER, checks: 1, quiet: sent ? 0 : 1, sent }],
   }).catch(() => appLogger.warn("workbot_agent_checks_unrecorded", { member_id: memberId }))
   appLogger.info("workbot_agent_ran", { member_id: memberId, path: "brief", occasion: occasion.kind, report: report.kind, delivered: delivered ?? "none", sent })
-  await deps.settle(row, { state: JSON.stringify(nextState), timeZone, templateVersionId: template.versionId, failures: 0, nextWakeAt: nextWake(nextAfter, requests) })
+  const settled: AgentState = { ...nextState, sent: rememberSent(state.sent, sentRecords, now) }
+  await deps.settle(row, { state: JSON.stringify(settled), timeZone, templateVersionId: template.versionId, failures: 0, nextWakeAt: nextWake(nextAfter, requests) })
   return { status: "ran", reasons: ["scheduled"], reply: report.kind === "findings" ? "message" : "quiet", delivered }
 }
 

@@ -69,7 +69,7 @@ function BriefRow({ brief, locked, onSave }: { brief: AgentBriefView; locked: bo
         )}
       </div>
       <DenTextarea id={id} rows={Math.min(14, Math.max(6, draft.split("\n").length + 1))} maxLength={AGENT_BRIEF_MAX} value={draft} disabled={locked}
-        className="font-mono text-[13px] leading-5" onChange={(event) => setDraft(event.target.value)} />
+        className="text-[13px] leading-5" onChange={(event) => setDraft(event.target.value)} />
       {carried ? <p className="text-[12px] text-gray-500" data-testid="workbot-agent-brief-carried">From your earlier settings.</p> : null}
       {changed ? (
         <div className="flex justify-end gap-2">

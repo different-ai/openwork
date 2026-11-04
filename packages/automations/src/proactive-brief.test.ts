@@ -23,6 +23,8 @@ import {
   parseRequestedCheckTime,
   pendingCheckRequests,
   planCheckRequest,
+  rememberSent,
+  sentLead,
   settleCheckRequests,
   updateLedgerItem,
   withinRhythm,
@@ -36,6 +38,7 @@ const TZ = "America/New_York"
 // Tuesday 2026-10-20 in New York (UTC-4).
 const at = (local: string) => Date.parse(`${local}-04:00`)
 const rhythm = (overrides: Partial<AgentRhythm> = {}): AgentRhythm => ({ policy: { workingDays: "weekdays", startHour: 8, endHour: 19 }, everyHours: 2, quietWindow: null, ...overrides })
+const MORNING_8 = at("2026-10-20T08:00:00")
 const localHours = (slots: number[], timeZone = TZ) => slots.map((slot) => { const c = zonedClock(slot, timeZone); return `${c.hour}:${String(c.minute).padStart(2, "0")}` })
 const SOURCES: AgentPromptSource[] = [
   { id: "calendar", name: "Calendar", via: ["Google Calendar"], instruction: "", lastReadAt: at("2026-10-20T08:00:00") },
@@ -84,6 +87,17 @@ describe("the prompts, ported from the spec", () => {
     const requested = agentCheckPrompt({ occasion: { kind: "requested", at: at("2026-10-20T13:45:00"), why: "before your 2 PM with Northwind" }, now: at("2026-10-20T13:45:00"), timeZone: TZ, nextCheckAt: at("2026-10-20T14:00:00"), extraChecksLeft: 2, sources: SOURCES, unavailable: [{ name: "Granola", why: "not connected" }] })
     assert.match(requested, /^\[check\] The extra check you asked for at 1:45 PM: before your 2 PM with Northwind\./)
     assert.match(requested, /Turned on but not readable now, so don't try: Granola \(not connected\)\./)
+  })
+
+  test("the check knows what reached the member, not only what it reported; ids are <source>:<id>, the same every time", () => {
+    const sent = rememberSent([{ at: at("2026-10-18T20:00:00"), about: ["email:old"], lead: "Too old." }], [{ at: at("2026-10-20T08:00:00"), about: ["email:thr_sow"], lead: sentLead("The SOW is due by noon. I checked your sent mail. <https://mail.google.com/x|Email thread>") }], at("2026-10-20T10:00:00"))
+    assert.deepEqual(sent, [{ at: at("2026-10-20T08:00:00"), about: ["email:thr_sow"], lead: "The SOW is due by noon." }], "a day and a half kept, the lead only")
+    const prompt = agentCheckPrompt({ occasion: { kind: "scheduled" }, now: at("2026-10-20T10:00:00"), timeZone: TZ, nextCheckAt: at("2026-10-20T12:00:00"), extraChecksLeft: 3, sources: SOURCES, sent })
+    assert.match(prompt, /What you sent since yesterday \(OpenWork's record of what reached them\):\n- Tue 8:00 AM \[email:thr_sow\] The SOW is due by noon\./)
+    assert.match(agentCheckPrompt({ occasion: { kind: "first" }, now: MORNING_8, timeZone: TZ, nextCheckAt: null, extraChecksLeft: 3, sources: SOURCES }), /You haven't sent them anything since yesterday\./)
+    assert.match(instructions, /A finding you already told Sam about \(the check lists what you sent\) counts again only if it changed since/)
+    assert.match(instructions, /Write each id as <source>:<id>: the source as the wake lists it/)
+    assert.match(agentMessagePrompt({ name: "Sam", sentToday: 0, cap: 4, now: MORNING_8, timeZone: TZ, nextCheckAt: null, firstCheck: true, report: "P0", conversation: [] }), /Copy each finding's ids into "about" exactly as the report gives them\./)
   })
 
   test("step 2 gets what it needs to decide: sent today of the limit, the time, the next check, first check, the conversation", () => {

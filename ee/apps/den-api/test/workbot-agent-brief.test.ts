@@ -274,6 +274,19 @@ describe("Your agent's brief: a check, then maybe a message (workbotAgentBrief)"
     assert.equal(h.ledger.has("email:c"), false, "past the limit nothing is recorded: tomorrow's first check can raise it")
   })
 
+  test("the next check is told what reached the member; a message naming only sources it didn't read is nothing it could send", async () => {
+    const { h, run } = harness({ checks: ["P0 — SOW due at noon. ids: email:thr_sow", "NO_FINDINGS"], replies: [messages({ text: "The SOW is due by noon. I checked your sent mail. <https://mail.google.com/x|Email thread>", about: ["email:thr_sow"] })] })
+    await run()
+    assert.deepEqual(state(h).sent, [{ at: MORNING, about: ["email:thr_sow"], lead: "The SOW is due by noon." }])
+    h.clock = at("2026-10-20T10:00:00")
+    await run()
+    assert.match(h.checks[1]?.prompt ?? "", /What you sent since yesterday \(OpenWork's record of what reached them\):\n- Tue 8:00 AM \[email:thr_sow\] The SOW is due by noon\./)
+    const unknown = harness({ checks: ["P0 — x."], replies: [messages({ text: "x", about: ["monitoring alert:thr_errors"] })] })
+    await unknown.run()
+    assert.deepEqual(unknown.h.records.map((record) => record.reason), ["unreadable_reply"])
+    assert.equal(unknown.h.delivered.length, 0)
+  })
+
   test("a kill switch between writing and sending wins", async () => {
     const { h, run } = harness({ checks: ["P0 — x."], replies: [messages({ text: "x", about: ["email:t1"] })], briefOn: [false] })
     await run()

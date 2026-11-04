@@ -12,6 +12,12 @@ Undo next to every change. Nothing new runs: the existing wake writes the record
 
 ![Library › My agent after a change made in chat](./my-agent.png)
 
+With `workbotAgentBrief` on, My bot shows **Your brief** (the member's own lines in one text, with where each change
+came from and Undo, and the organization's brief behind a disclosure) in place of "What it tells you about" and "In
+your words", the next checks with the reason the agent gave for an extra one ("Next check 1:45 PM: before your 2 PM
+with Northwind"), how often it checks (never more often than the admin's), and quiet hours. See
+[Your agent's brief and check rhythm](../workbot-agent-brief/README.md).
+
 ## What a member gets
 
 | Where | What |

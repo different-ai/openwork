@@ -924,6 +924,11 @@ const agentStateSchema = z.object({
    * after they run, for two days, so the day's cap and "Already set" still count them.
    */
   requests: z.array(z.object({ at: z.number(), why: z.string().max(200), requestedAt: z.number(), done: z.boolean().optional() })).max(40).optional(),
+  /**
+   * `workbotAgentBrief`: what Den sent the member in the last day and a half (when, what about, the lead), so the next
+   * check knows what was told rather than only what it reported. Member content, encrypted with the rest of the state.
+   */
+  sent: z.array(z.object({ at: z.number(), about: z.array(z.string().max(400)).max(8), lead: z.string().max(240) })).max(40).optional(),
 })
 export type AgentState = z.infer<typeof agentStateSchema>
 
