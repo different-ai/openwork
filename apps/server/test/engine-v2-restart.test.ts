@@ -43,6 +43,8 @@ async function profile(failFirstStart: boolean, run: (config: ServerConfig, capt
     XDG_DATA_HOME: join(root, "data"),
     XDG_STATE_HOME: join(root, "state"),
     XDG_CACHE_HOME: join(root, "cache"),
+    OPENCODE_CONFIG_DIR: join(root, "config", "opencode"),
+    OPENCODE_DB: join(root, "data", "opencode", "opencode.db"),
     OPENWORK_RUNTIME_DB: join(root, "runtime.sqlite"),
     OPENWORK_OPENCODE2_BIN: binary,
     // Chats run on v2, the case where a missing engine strands the app.
