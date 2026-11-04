@@ -357,6 +357,10 @@ const ENGINE_INHERITED_ENV = [
   "LANG", "LC_ALL", "LC_CTYPE", "TZ", "TERM", "CI",
   "XDG_CACHE_HOME", "XDG_CONFIG_HOME", "XDG_DATA_HOME", "XDG_STATE_HOME", "XDG_RUNTIME_DIR",
   "SystemRoot", "WINDIR", "COMSPEC", "PATHEXT", "USERPROFILE", "APPDATA", "LOCALAPPDATA",
+  // Windows profile and install roots. Microsoft Win32-OpenSSH needs
+  // ProgramData at process start; without it ssh exits 255 with no message (#5538).
+  "SystemDrive", "ProgramData", "ProgramFiles", "ProgramFiles(x86)", "ProgramW6432",
+  "ALLUSERSPROFILE", "PUBLIC", "CommonProgramFiles", "CommonProgramFiles(x86)",
   "NODE_EXTRA_CA_CERTS", "SSL_CERT_FILE", "SSL_CERT_DIR",
 ];
 
