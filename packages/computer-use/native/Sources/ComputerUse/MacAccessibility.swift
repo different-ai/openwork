@@ -788,24 +788,9 @@ final class MacAccessibility {
         }
         try check()
         // Capture only the window; a failure never broadens into a display capture.
-        guard let context = CGContext(data: nil, width: image.width, height: image.height, bitsPerComponent: 8,
-            bytesPerRow: 0, space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else {
-            throw UseError("capture_failed", "Could not encode this window.", next: "observe")
-        }
-        context.draw(image, in: CGRect(x: 0, y: 0, width: image.width, height: image.height))
-        context.setFillColor(CGColor(gray: 0.15, alpha: 1))
         // Protected fields are masked in whatever part of the window was captured.
-        let captured = source.offsetBy(dx: bounds.minX, dy: bounds.minY)
-        for rect in state.protectedFrames {
-            let clipped = rect.intersection(captured)
-            guard !clipped.isNull, !clipped.isEmpty else { continue }
-            let xScale = CGFloat(image.width) / captured.width
-            let yScale = CGFloat(image.height) / captured.height
-            context.fill(CGRect(x: (clipped.minX - captured.minX) * xScale,
-                y: CGFloat(image.height) - (clipped.maxY - captured.minY) * yScale,
-                width: clipped.width * xScale, height: clipped.height * yScale).insetBy(dx: -2, dy: -2))
-        }
-        guard let redacted = context.makeImage(), let data = jpegQuality.map({ NSBitmapImageRep(cgImage: redacted).representation(using: .jpeg, properties: [.compressionFactor: $0]) })
+        guard let redacted = WindowImage.redacted(image, captured: source.offsetBy(dx: bounds.minX, dy: bounds.minY),
+                protectedFrames: state.protectedFrames), let data = jpegQuality.map({ NSBitmapImageRep(cgImage: redacted).representation(using: .jpeg, properties: [.compressionFactor: $0]) })
                 ?? NSBitmapImageRep(cgImage: redacted).representation(using: .png, properties: [:]) else {
             throw UseError("capture_failed", "Could not encode this window.", next: "observe")
         }

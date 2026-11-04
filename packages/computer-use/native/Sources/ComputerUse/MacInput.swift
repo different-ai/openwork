@@ -146,6 +146,9 @@ final class MacInput {
                 guard result == .success || unanswered else { throw UseError("action_failed", "The app did not confirm the accessible action. Observe before retrying.", next: "observe") }
                 report(.dispatched, point: CGPoint(x: record.frame.midX, y: record.frame.midY))
                 path = unanswered ? "accessibility_unconfirmed" : valueTook ? "accessibility" : "value_not_applied"
+            case .saveImage:
+                // Not input: the session saves the image before any step is sent.
+                throw UseError("save_image_alone", "Save an image as its own step. Nothing was sent.", next: "observe")
             case .openFile(let file):
                 // Not input to the window: Launch Services hands the app the file, as Finder's
                 // Open With does. The person approved this exact file for this app.

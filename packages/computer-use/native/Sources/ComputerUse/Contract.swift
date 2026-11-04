@@ -190,6 +190,8 @@ enum Action {
     case saveAs(URL, replace: Bool)
     /// The app's open Open, Place, Insert or Attach panel picks this file: Go To it, then the default button.
     case openInPanel(URL)
+    /// What the agent sees in the window (or a region of the observation image) saved as a PNG file.
+    case saveImage(URL, region: CGRect?, replace: Bool)
 
     static let batchLimit = 8
     static func batch(_ values: [String: Any], policy: RuntimePolicy = .desktop) throws -> [Action] {
@@ -249,6 +251,17 @@ enum Action {
         case "open_in_panel" where policy == .embedded:
             try a.only(["type", "path"])
             self = .openInPanel(try FileHandoff.file(try a.string("path", max: 1024)))
+        case "save_image" where policy == .embedded:
+            try a.only(["type", "path", "region", "replace"])
+            var region: CGRect?
+            if let raw = values["region"] {
+                guard let box = raw as? [String: Any] else { throw UseError("invalid_arguments", "region must be an object with x, y, width and height.") }
+                let r = Arguments(values: box)
+                try r.only(["x", "y", "width", "height"])
+                region = CGRect(x: try r.number("x", min: 0, max: 100_000), y: try r.number("y", min: 0, max: 100_000),
+                    width: try r.number("width", min: 1, max: 100_000), height: try r.number("height", min: 1, max: 100_000))
+            }
+            self = .saveImage(try WindowImage.destination(try a.string("path", max: 1024)), region: region, replace: try a.bool("replace", default: false))
         case "menu" where policy == .embedded:
             try a.only(["type", "path"])
             guard let path = values["path"] as? [String], (2...MenuRules.maxDepth + 1).contains(path.count),
@@ -311,13 +324,14 @@ enum Action {
         case .arrange: return "arrange"
         case .saveAs: return "save_as"
         case .openInPanel: return "open_in_panel"
+        case .saveImage: return "save_image"
         case .rightClick: return "right_click"
         case .hold: return "press_and_hold"
         case .showMenu: return "show_menu"
         }
     }
     var requiresControl: Bool {
-        switch self { case .press, .setValue, .wait, .menu: return false; default: return true }
+        switch self { case .press, .setValue, .wait, .menu, .saveImage: return false; default: return true }
     }
     var usesCoordinates: Bool {
         switch self { case .move, .click, .scroll, .drag, .rightClick, .hold: return true; default: return false }

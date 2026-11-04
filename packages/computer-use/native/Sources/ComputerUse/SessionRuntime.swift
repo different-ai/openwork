@@ -683,6 +683,51 @@ final class SessionRuntime {
         return [["type": "image", "data": png.base64EncodedString(), "mimeType": "image/png"]] + text(payload)
     }
 
+    /// The window as the agent sees it, at full resolution and with the same masks, written as a
+    /// PNG. Reported only once the file reads back from disk; an incomplete privacy scan saves nothing.
+    private func saveImage(_ current: Session, observationID: String, requestID: String, fingerprint: Data,
+                           file: URL, region pixels: CGRect?, replace: Bool, fileApproval: [String]?) async throws -> [[String: Any]] {
+        guard let observation = current.observation else { throw UseError("observation_required", "Observe this window before saving what it shows.", next: "observe") }
+        let bounds = try access.validate(current.target, app: current.app)
+        try observation.validate(id: observationID, generation: current.generation, frame: bounds, now: now)
+        let region = try pixels.map { try WindowImage.windowRegion($0,
+            image: CGSize(width: observation.imageWidth, height: observation.imageHeight), window: bounds.size) }
+        try FileHandoff.refuseReplacing(file, replace: replace)
+        // The organization's file rule decides, as for save_as: by default the agent goes ahead.
+        guard let fileApproval, fileApproval == [file.path] else {
+            return text(["ok": false, "code": "files_approval_required", "files": [file.path], "save": true,
+                "app": current.app.name, "dispatched": false, "next": "observe",
+                "message": "Saving writes this image once the organization's file rule allows it; nothing was saved."])
+        }
+        @MainActor func check() throws { try self.checkActive(current) }
+        let state = try await access.read(current.target, check: check)
+        try state.requireCapture()
+        let captured: (Data, Int, Int, Int64)
+        do {
+            captured = try await access.capture(target: current.target, app: current.app, bounds: bounds, state: state,
+                region: region, maxScale: WindowImage.scale(for: bounds), maxLongSide: WindowImage.maxLongSide, check: check)
+        } catch let error as UseError {
+            throw error
+        } catch {
+            try check()
+            throw UseError("capture_failed", "The window could not be captured. Nothing was saved; the observation is still valid.", next: "observe")
+        }
+        let (png, width, height, _) = captured
+        try check()
+        let saved = try WindowImage.write(png, to: file, replace: replace)
+        guard saved.width == width, saved.height == height else {
+            throw UseError("save_unconfirmed", "The file on disk does not match the captured image. Check it before using it.", next: "observe")
+        }
+        session?.lastUsed = now
+        let receipt: [String: Any] = ["ok": true, "status": "dispatched", "action": "save_image", "path": "file_saved",
+            "steps": [["index": 0, "action": "save_image", "status": "dispatched", "path": "file_saved"]], "completed": 1,
+            "saved_file": ["path": file.path, "bytes": saved.bytes, "width": saved.width, "height": saved.height],
+            "protected_fields": state.protectedFrames.count, "request_id": requestID, "outcome_verified": true,
+            "next": "The observation is still valid. To use the image in another app, open the file there."]
+        if session?.id == current.id { session?.receipts[requestID] = receipt; session?.receiptInputs[requestID] = fingerprint }
+        return text(receipt)
+    }
+
     private func act(id: String, observationID: String, requestID: String, actions: [Action], raw: Any, intent: String? = nil,
                      fileApproval: [String]? = nil, filePanelAccess: CGWindowID? = nil, pacing: BatchPacing = .fast, credentialApproval: String? = nil) async throws -> [[String: Any]] {
         let cached = try current(id, allowPaused: true)
@@ -698,6 +743,14 @@ final class SessionRuntime {
         if let prompt = access.personPrompt() { return personNeeded(prompt) }
         refreshFollow(id)
         let current = try current(id)
+        // Saving an image sends no input: any mode, no front, and the observation stays valid.
+        if actions.contains(where: { if case .saveImage = $0 { return true }; return false }) {
+            guard actions.count == 1, case .saveImage(let file, let region, let replace) = actions[0] else {
+                throw UseError("save_image_alone", "Save an image as its own step. Nothing was sent.", next: "observe")
+            }
+            return try await saveImage(current, observationID: observationID, requestID: requestID, fingerprint: fingerprint,
+                file: file, region: region, replace: replace, fileApproval: fileApproval)
+        }
         if current.dialogKind == .filePanel, current.filePanelAllowed != current.target.id {
             guard filePanelAccess == current.target.id else { return filePanelAccessRequired(current) }
             // Allowed for this panel until it closes; another panel asks again.

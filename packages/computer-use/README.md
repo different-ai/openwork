@@ -53,7 +53,8 @@ turn at the keyboard and pointer and its idle release; end of turn releases
 them all, Take over on any of them holds the whole chat until Continue, and Stop
 ends them all. Watch live shows the app being worked in, and the session card
 names the app of each step. Other computers keep one app per chat. Grants, element references,
-screenshots and receipts live in process memory and are discarded on close.
+screenshots and receipts live in process memory and are discarded on close; an
+image the agent saves with `save_image` is a file it wrote on purpose.
 
 | Tool | Purpose |
 | --- | --- |
@@ -529,6 +530,20 @@ cannot be read, refuses it. The step path is `file_chosen` once the panel closed
 the app shows a change (a new window, a retitle, or new content in the session's
 window), `file_open_failed` with the app's `file_alert` when an alert appears,
 otherwise `file_choice_unconfirmed`. Windows and Linux helpers refuse the step.
+
+`{ type: "save_image", path: "/Users/…/map.png", region?, replace? }` saves
+what the agent sees in the session's window as a PNG file, so another app can
+use it: save, then `open_file` there. It is the observation's capture at the
+display's full resolution, with the same privacy scan and masks, and nothing
+is saved when that scan is incomplete. `region` is in the observation image's
+pixels. The path is an absolute `.png` in an existing folder, links resolved,
+and an existing file is kept unless `replace: true`. It sends no input, so it
+works in every mode without taking the front, and the observation stays
+valid. The step path is `file_saved`, with `saved_file: { path, bytes, width,
+height }`, only once the file reads back from disk, so the session card lists
+it like a `save_as` file. The organization's rule for moving files decides, as
+for `save_as`: by default the agent goes ahead, Ask first shows the save card,
+and Block refuses. Mac only.
 
 A program defaults to 30 seconds, accepts a timeout up to 60 seconds, and is
 limited to 80 helper calls and 32 KB of returned program data. The desktop
