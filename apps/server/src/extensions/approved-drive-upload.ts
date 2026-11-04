@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import type { BigIntStats, Stats } from "node:fs";
 import { realpath, stat, type FileHandle } from "node:fs/promises";
 import { dirname, isAbsolute } from "node:path";
@@ -59,6 +60,10 @@ export class PreparedDriveUploadFile {
       throw new ApiError(409, "file_changed", "The file changed while awaiting upload approval. Nothing was uploaded; ask again for the current file.");
     }
   }
+  /** Content-version scope without reading bytes or exposing inode metadata. */
+  approvalIdentity() {
+    return createHash("sha256").update([this.baseline.dev, this.baseline.ino, this.baseline.size, this.baseline.mtimeNs, this.baseline.ctimeNs].join(":")).digest("hex");
+  }
   close() { return this.file.close(); }
 }
 
@@ -76,6 +81,8 @@ export function takeApprovedDriveUpload(request: Request) {
 
 export type PrepareDriveUpload = (args: DriveUploadArgs, context: Record<string, unknown>, signal: AbortSignal) => Promise<{
   path: string;
+  /** A verified file version; embeddings without one cannot remember consent. */
+  approvalIdentity?: string;
   upload(): Promise<unknown>;
   close(): Promise<void>;
 }>;

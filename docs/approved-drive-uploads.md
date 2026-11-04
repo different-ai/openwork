@@ -16,12 +16,26 @@ operation approval and the root-only file resolver were independent.
    resolve to a canonical regular file, whose path is shown for approval.
 2. Preflight opens and checks the file but does not read or send its bytes.
    Missing/empty/invalid files fail before the prompt. Read-only hosts refuse.
-3. A fresh engine prompt is required on every call. Denial, a policy block,
-   pre-allowed rules, cancellation or a missing approval surface send nothing.
+3. The first upload requires an engine prompt. “Allow once” is never saved.
+   “Allow for session” remembers only the same canonical file version, Drive
+   folder and account in the same chat and agent. A different file/version,
+   destination, account, chat or agent asks again. The host must have witnessed
+   that explicit session choice; a blanket pre-allowed rule cannot grant consent.
+   Remembering requires an explicit `connectionId`; an unresolved default account
+   remains single-request-only, since its identity can change between uploads.
+   The engine still evaluates every request, so a later policy deny blocks it.
+   Denial, a policy block, cancellation or a missing approval surface send nothing.
 4. After approval, the host attaches a single-use exact-file capability to its
    internal extension request. This is a process-local `WeakMap<Request, …>`;
    no JSON input, HTTP header, model tool argument or persisted config can
    grant file access. The destination/account is bound to the same capability.
+   Session rules retain the actual file path so path-scoped policy denies still
+   apply, and add an opaque exact-match digest binding consent to the destination
+   and file version. A saved path rule alone never grants upload consent. The
+   approval card shows the actual path and destination. The
+   host's consent witness lasts only for this bridge/engine lifetime. Approval
+   panels offer “Allow for session” only when the engine provides a saveable
+   scope, so one-request-only approvals no longer offer a non-working choice.
 5. Multipart and resumable transport read the retained file handle. Identity
    and size/timestamps are checked after the prompt; replacement, symlink
    redirection or edits while waiting require a new request. The handle closes
@@ -39,7 +53,15 @@ retry an uncertain upload.
   binding, replay/forgery rejection, invalid/read-only files, replacement and
   edits, canonical symlinks, multipart and resumable bytes.
 - `apps/server/test/opencode-v2-drive-upload-approval.test.ts`: canonical prompt,
-  preflight before approval, denial/policy behavior and handle cleanup.
+  preflight before approval, denial/policy behavior, handle cleanup and session
+  grant isolation by chat, agent, file version, destination and account,
+  plus fresh-consent recovery after transport failure or policy revocation.
+- `apps/server/test/drive-upload-session-approval-native.test.ts`: the real
+  native engine saves the explicit session choice, repeats the same upload
+  without prompting, and asks/denies another destination without sending bytes.
+  No paid model or real Google account is used.
+- `apps/app/tests/permission-approval-panel.test.tsx`: session approval appears
+  only for saveable scopes; actual file paths are shown instead of rule hashes.
 - `evals/proofs/opencode-v2-drive-upload.proof.test.ts`: real app/server/v2
   engine/Den, synthetic Google and model; declining sends nothing, approving a
   file outside every workspace puts the exact bytes in the selected account only.
@@ -49,9 +71,19 @@ root-only extension callers are not broadened.
 
 ## Local validation (2026-11-04)
 
-- Server typecheck: passed.
-- Bun readiness suite: 105 passed, zero failures (21 files).
-- Node 24 focused upload/approval suite: 35 passed, zero failures or skips.
+- Server and app typechecks: passed.
+- Bun readiness suite: 108 passed, zero failures (21 files).
+- Node 24 focused upload/approval suite, including the native engine: 39 passed,
+  zero failures or skips.
+- Approval panel tests: 4 passed (`pnpm --filter @openwork/app test:approval-panel`).
+- Native session test also runs independently with
+  `pnpm --filter openwork-server test:drive-upload-session-native`; it used the
+  installed OpenCode v2.2.0 binary. Set `OPENWORK_TEST_OPENCODE2` to test another
+  binary; an absent binary is a reported skip, never a pass.
+- Session-approval native regression: the same test failed on the initial
+  workspace-access fix (`5447eaa38f`) because its permission `save` scope was
+  empty, then passed with this follow-up. That control used the same Node,
+  native engine binary, dependency links, and synthetic file/transport fixture.
 - Spec lint: 141 files, zero errors.
 - **UI proof incomplete:** the command
   `pnpm evals:e2e opencode-v2-drive-upload --local --engine v2` failed during

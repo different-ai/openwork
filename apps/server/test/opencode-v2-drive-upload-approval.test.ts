@@ -7,16 +7,19 @@ import { createV2ContextBridge } from "../src/opencode-v2-context-bridge.js";
 import contextPlugin from "../src/opencode-plugins/openwork-context-v2.js";
 import type { PrepareDriveUpload } from "../src/extensions/approved-drive-upload.js";
 
-type Answer = { effect: "ask" | "allow" | "deny"; reply?: "once" | "always" | "reject" };
+type Answer = { effect: "ask" | "allow" | "deny"; reply?: "once" | "always" | "reject"; eventFailure?: boolean };
 
 /** The engine's permission and event routes, with the person answering each prompt. */
 async function fakeEngine(answer: Answer) {
   const asked: Array<{ query: string; body: Record<string, unknown> }> = [];
   const streams = new Set<ServerResponse>();
+  const remembered = new Set<string>();
+  const prompts: Record<string, unknown>[] = [];
   const server = createServer((request, response) => {
     const url = new URL(request.url ?? "/", "http://127.0.0.1");
     if (request.headers.authorization !== `Basic ${Buffer.from("opencode:secret").toString("base64")}`) return void response.writeHead(401).end();
     if (request.method === "GET" && url.pathname === "/api/event") {
+      if (answer.eventFailure) { response.writeHead(503).end(); return; }
       response.writeHead(200, { "content-type": "text/event-stream" });
       response.write(`data: ${JSON.stringify({ type: "server.connected", data: {} })}\n\n`);
       streams.add(response);
@@ -26,17 +29,23 @@ async function fakeEngine(answer: Answer) {
     let text = "";
     request.on("data", chunk => { text += chunk; });
     request.on("end", () => {
-      asked.push({ query: url.search, body: JSON.parse(text) });
-      response.writeHead(200, { "content-type": "application/json" }).end(JSON.stringify({ data: { id: "per_one", effect: answer.effect } }));
-      if (answer.reply) setTimeout(() => {
-        for (const stream of streams) stream.write(`data: ${JSON.stringify({ type: "permission.replied", data: { sessionID: "ses_one", requestID: "per_one", reply: answer.reply } })}\n\n`);
+      const body: Record<string, unknown> = JSON.parse(text);
+      asked.push({ query: url.search, body });
+      const id = `per_${asked.length}`;
+      const key = JSON.stringify([url.pathname, url.search, body.action, body.resources]);
+      const effect = answer.effect === "deny" ? "deny" : remembered.has(key) ? "allow" : answer.effect;
+      if (effect === "ask") prompts.push(body);
+      response.writeHead(200, { "content-type": "application/json" }).end(JSON.stringify({ data: { id, effect } }));
+      if (effect === "ask" && answer.reply) setTimeout(() => {
+        if (answer.reply === "always" && Array.isArray(body.save) && body.save.length) remembered.add(key);
+        for (const stream of streams) stream.write(`data: ${JSON.stringify({ type: "permission.replied", data: { sessionID: "ses_one", requestID: id, reply: answer.reply } })}\n\n`);
       }, 20);
     });
   });
   await new Promise<void>(resolve => server.listen(0, "127.0.0.1", resolve));
   const { port } = server.address() as AddressInfo;
   return {
-    asked, connection: { url: `http://127.0.0.1:${port}`, username: "opencode", password: "secret" },
+    asked, prompts, connection: { url: `http://127.0.0.1:${port}`, username: "opencode", password: "secret" },
     close: () => { for (const stream of streams) stream.end(); return new Promise<void>(resolve => server.close(() => resolve())); },
   };
 }
@@ -92,6 +101,81 @@ test("preflight shows the canonical file, uses only its private upload capabilit
     assert.deepEqual(steps, allowed ? ["preflight", "upload", "close"] : ["preflight", "close"]);
     assert.deepEqual(result.uploads, []);
     assert.deepEqual(result.asked[0]?.body.resources, ["/outside/proposal.docx"]);
+  }
+});
+
+test("Allow for session is reused only for the same chat, file version, destination, account and agent", async () => {
+  const answer: Answer = { effect: "ask", reply: "always" };
+  const engine = await fakeEngine(answer);
+  let version = "version-1";
+  let uploaded = 0;
+  let closed = 0;
+  const prepare: PrepareDriveUpload = async args => ({ path: args.path, approvalIdentity: version,
+    upload: async () => { uploaded++; return { ok: true }; }, close: async () => { closed++; },
+  });
+  const bridge = await createV2ContextBridge(async () => { throw new Error("must use exact file capability"); }, () => engine.connection, prepare);
+  const call = async (overrides: { sessionId?: string; path?: string; folderId?: string; connectionId?: string; directory?: string; agent?: string } = {}) => {
+    const response = await fetch(bridge.url, { method: "POST", headers: { Authorization: `Bearer ${bridge.token}`, "Content-Type": "application/json" },
+      body: JSON.stringify({ name: "openwork_drive_upload", sessionId: overrides.sessionId ?? "ses_one",
+        input: { path: overrides.path ?? "/outside/proposal.docx", folderId: overrides.folderId ?? "folder-1", connectionId: overrides.connectionId ?? "google-workspace" },
+        caller: { directory: overrides.directory ?? "/work/acme", messageId: "msg_one", callId: "call_one", agent: overrides.agent ?? "build" },
+      }),
+    });
+    return { status: response.status, body: await response.json() };
+  };
+  try {
+    assert.equal((await call()).status, 200);
+    assert.equal(engine.prompts.length, 1);
+    assert.deepEqual(engine.prompts[0]?.save, engine.prompts[0]?.resources);
+    const resources = engine.prompts[0]?.resources;
+    assert.ok(Array.isArray(resources));
+    assert.equal(resources[0], "/outside/proposal.docx", "path-scoped policy still sees the actual file");
+    assert.match(String(resources[1]), /^drive-upload:[a-f0-9]{64}$/);
+    assert.equal((await call()).status, 200);
+    assert.equal(engine.prompts.length, 1, "same approval is reused without showing another prompt");
+    for (const scope of [{ sessionId: "ses_other" }, { path: "/outside/other.docx" }, { folderId: "other-folder" }, { connectionId: "emc_OtherAccount" }, { directory: "/work/other" }, { agent: "other-agent" }]) {
+      const before = engine.prompts.length;
+      assert.equal((await call(scope)).status, 200);
+      assert.equal(engine.prompts.length, before + 1, "new scope asks again");
+    }
+    version = "version-2";
+    assert.equal((await call()).status, 200);
+    assert.equal(engine.prompts.length, 8, "changed file needs new consent");
+    answer.eventFailure = true;
+    assert.equal((await call()).status, 400, "failed approval transport never dispatches");
+    answer.eventFailure = false;
+    assert.equal((await call()).status, 200, "a fresh prompt can recover from a transient failure");
+    assert.equal(engine.prompts.length, 9, "old saved engine rule does not poison recovery");
+    answer.effect = "deny";
+    const blocked = await call();
+    assert.equal(blocked.status, 400);
+    assert.match(JSON.stringify(blocked.body), /permissions do not allow/);
+    assert.equal(uploaded, 10, "policy revocation still blocks remembered permission");
+    assert.equal(closed, 12, "every preflight handle closes, including transport failure and policy rejection");
+    answer.effect = "ask";
+    assert.equal((await call()).status, 200, "restored policy can request fresh consent");
+    assert.equal(engine.prompts.length, 10);
+  } finally { await bridge.close(); await engine.close(); }
+});
+
+test("Allow once does not become session consent, and a pre-allowed engine rule cannot grant upload consent", async () => {
+  for (const answer of [{ effect: "ask", reply: "once" }, { effect: "allow" }] as const) {
+    const engine = await fakeEngine(answer);
+    let uploads = 0;
+    const bridge = await createV2ContextBridge(async () => undefined, () => engine.connection, async () => ({
+      path: "/outside/proposal.docx", approvalIdentity: "version-1", upload: async () => { uploads++; return {}; }, close: async () => {},
+    }));
+    try {
+      for (let index = 0; index < 2; index++) {
+        const response = await fetch(bridge.url, { method: "POST", headers: { Authorization: `Bearer ${bridge.token}`, "Content-Type": "application/json" },
+          body: JSON.stringify({ name: "openwork_drive_upload", input: { path: "/outside/proposal.docx", connectionId: "google-workspace" }, sessionId: "ses_one", caller: { directory: "/work/acme", messageId: "msg_one", callId: "call_one" } }),
+        });
+        assert.equal(response.status, answer.effect === "ask" ? 200 : 400);
+        await response.json();
+      }
+      assert.equal(engine.prompts.length, answer.effect === "ask" ? 2 : 0);
+      assert.equal(uploads, answer.effect === "ask" ? 2 : 0);
+    } finally { await bridge.close(); await engine.close(); }
   }
 });
 

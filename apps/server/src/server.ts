@@ -856,6 +856,7 @@ export async function startServer(
       const prepared = await prepareDriveUploadFile(config, args, context);
       return {
         path: prepared.args.path,
+        approvalIdentity: prepared.approvalIdentity(),
         close: () => prepared.close(),
         upload: () => {
           signal.throwIfAborted();

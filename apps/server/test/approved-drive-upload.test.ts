@@ -48,6 +48,18 @@ test("an exact-file grant uploads outside roots without authorizing its folder, 
   } finally { await prepared.close(); }
 });
 
+test("session identity is stable for an unchanged file and changes after an edit", async () => {
+  await using f = await fixture();
+  const identities: string[] = [];
+  for (let index = 0; index < 3; index++) {
+    if (index === 2) await writeFile(f.path, Buffer.alloc(f.bytes.length + 1, 99));
+    const file = await prepareDriveUploadFile(f.config, { path: f.path }, {});
+    try { identities.push(file.approvalIdentity()); } finally { await file.close(); }
+  }
+  assert.equal(identities[0], identities[1]);
+  assert.notEqual(identities[1], identities[2]);
+});
+
 test("ordinary requests cannot forge file approval through JSON, even with a cloned request or an absolute path", async () => {
   await using f = await fixture();
   const prepared = await prepareDriveUploadFile(f.config, { path: f.path }, {});

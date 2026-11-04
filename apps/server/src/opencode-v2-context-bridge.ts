@@ -1,4 +1,4 @@
-import { randomBytes } from "node:crypto";
+import { createHash, randomBytes } from "node:crypto";
 import { z } from "zod";
 import { serve } from "./serve-node.js";
 import { OpenWorkExtensionsPreview } from "./opencode-plugins/openwork-extensions-preview.js";
@@ -45,15 +45,17 @@ export type EngineApproval = {
   action: string; resources: string[]; metadata: Record<string, unknown>;
   /** How refusals name the request ("this upload") and what did not happen ("nothing was uploaded"). */
   subject: string; nothing: string;
+  /** Only a host-witnessed session choice may reuse this exact scoped rule. */
+  sessionApproval?: { resource: string; remembered: boolean };
 };
 
 /**
  * Asks the person in the calling chat through the engine's own permission
- * prompt and returns only once they allow this request. A rule that would
- * allow it without asking is refused, so no workspace or engine setting can
- * pre-approve it, and nothing is saved for later requests.
+ * prompt. Broad pre-allowed rules never substitute for consent. Only a
+ * host-witnessed "Allow for session" can reuse an exact scoped engine rule;
+ * calls without sessionApproval still require a fresh prompt every time.
  */
-export async function askEngineApproval(engine: EngineConnection | undefined, approval: EngineApproval, signal: AbortSignal): Promise<void> {
+export async function askEngineApproval(engine: EngineConnection | undefined, approval: EngineApproval, signal: AbortSignal): Promise<"once" | "always" | "remembered"> {
   const { subject, nothing } = approval;
   if (!engine) throw new Error(`OpenWork cannot ask for your approval right now, so ${nothing}.`);
   const location = `location[directory]=${encodeURIComponent(approval.directory)}`;
@@ -67,13 +69,16 @@ export async function askEngineApproval(engine: EngineConnection | undefined, ap
     const response = await loopbackFetch(new URL(`/api/session/${encodeURIComponent(approval.sessionId)}/permission?${location}`, engine.url), {
       method: "POST", headers: { authorization, "content-type": "application/json" }, signal: stop,
       body: JSON.stringify({
-        action: approval.action, resources: approval.resources, save: [], metadata: approval.metadata,
+        action: approval.action,
+        resources: approval.sessionApproval ? [...approval.resources, approval.sessionApproval.resource] : approval.resources,
+        save: approval.sessionApproval ? [...approval.resources, approval.sessionApproval.resource] : [], metadata: approval.metadata,
         source: { type: "tool", messageID: approval.messageId, id: approval.callId }, ...(approval.agent ? { agent: approval.agent } : {}),
       }),
     });
     const created = createdPermission.safeParse(await response.json().catch(() => null));
     if (!response.ok || !created.success) throw new Error(`OpenWork could not ask for your approval, so ${nothing}.`);
     if (created.data.data.effect === "deny") throw new Error(`Your permissions do not allow ${subject}, so ${nothing}.`);
+    if (created.data.data.effect === "allow" && approval.sessionApproval?.remembered) return "remembered";
     if (created.data.data.effect !== "ask") throw new Error(`${subject[0]?.toUpperCase()}${subject.slice(1)} was not shown to you for approval, so ${nothing}.`);
     const reader = events.body.pipeThrough(new TextDecoderStream()).getReader();
     let buffered = "";
@@ -88,7 +93,7 @@ export async function askEngineApproval(engine: EngineConnection | undefined, ap
         try { event = JSON.parse(data); } catch { continue; }
         const replied = repliedPermission.safeParse(event);
         if (!replied.success || replied.data.data.requestID !== created.data.data.id) continue;
-        if (replied.data.data.reply === "once" || replied.data.data.reply === "always") return;
+        if (replied.data.data.reply === "once" || replied.data.data.reply === "always") return replied.data.data.reply;
         throw new Error(`You declined ${subject}, so ${nothing}.`);
       }
     }
@@ -193,6 +198,11 @@ export async function createV2ContextBridge(
   // engine. Each holds one event stream, so only so many stay open at once.
   const questions = new AbortController();
   let openQuestions = 0;
+  // Consent is scoped to this bridge/engine lifetime and the exact calling
+  // session, agent, canonical file version, destination and selected account.
+  const rememberedDriveUploads = new Set<string>();
+  const driveApprovalRevisions = new Map<string, number>();
+  const driveApprovalEpoch = randomBytes(16).toString("hex");
   const server = await serve({ hostname: "127.0.0.1", port: 0, fetch: async request => {
     if (request.headers.get("authorization") !== `Bearer ${token}`) return new Response(null, { status: 401 });
     if (request.method !== "POST" || new URL(request.url).pathname !== "/read") return new Response(null, { status: 404 });
@@ -240,12 +250,39 @@ export async function createV2ContextBridge(
         const prepared = await prepareDriveUpload?.(args, { directory: call.caller.directory }, request.signal);
         try {
           const path = prepared?.path ?? args.path;
-          await askEngineApproval(engine?.(), {
-            directory: call.caller.directory, sessionId: call.sessionId, messageId: call.caller.messageId, callId: call.caller.callId,
-            ...(call.caller.agent ? { agent: call.caller.agent } : {}), action: DRIVE_UPLOAD_PERMISSION, resources: [path],
-            metadata: { path, target: args.folderId ? `Google Drive folder ${args.folderId}` : "Google Drive", ...(args.connectionId ? { connectionId: args.connectionId } : {}) },
-            subject: "this upload", nothing: "nothing was uploaded",
-          }, AbortSignal.any([request.signal, AbortSignal.timeout(APPROVAL_WAIT_MS)]));
+          const currentEngine = engine?.();
+          // Keep the actual path in engine resources so path-scoped policy
+          // denies still apply. Add an exact digest to prevent a saved file
+          // rule authorizing another destination/account or file version. An
+          // unresolved default account cannot have remembered consent.
+          const scopeKey = prepared?.approvalIdentity && args.connectionId ? createHash("sha256").update(JSON.stringify([
+            driveApprovalEpoch, currentEngine?.url, call.caller.directory, call.sessionId, call.caller.agent ?? null,
+            path, prepared.approvalIdentity, args.folderId ?? null, args.connectionId ?? null,
+          ])).digest("hex") : undefined;
+          const revision = scopeKey ? driveApprovalRevisions.get(scopeKey) ?? 0 : 0;
+          const scope = scopeKey ? `drive-upload:${createHash("sha256").update(`${scopeKey}:${revision}`).digest("hex")}` : undefined;
+          let decision: Awaited<ReturnType<typeof askEngineApproval>>;
+          try {
+            decision = await askEngineApproval(currentEngine, {
+              directory: call.caller.directory, sessionId: call.sessionId, messageId: call.caller.messageId, callId: call.caller.callId,
+              ...(call.caller.agent ? { agent: call.caller.agent } : {}), action: DRIVE_UPLOAD_PERMISSION,
+              resources: !scope && prepared?.approvalIdentity ? [path, `drive-upload-request:${randomBytes(16).toString("hex")}`] : [path],
+              metadata: { path, target: args.folderId ? `Google Drive folder ${args.folderId}` : "Google Drive", ...(args.connectionId ? { connectionId: args.connectionId } : {}) },
+              subject: "this upload", nothing: "nothing was uploaded",
+              ...(scope ? { sessionApproval: { resource: scope, remembered: rememberedDriveUploads.has(scope) } } : {}),
+            }, AbortSignal.any([request.signal, AbortSignal.timeout(APPROVAL_WAIT_MS)]));
+          } catch (error) {
+            if (scope && scopeKey) {
+              rememberedDriveUploads.delete(scope);
+              // The engine may still hold the old saved rule after a network
+              // failure or revoke. Rotate so recovery can show a fresh prompt,
+              // rather than permanently refusing its now-unwitnessed allow.
+              driveApprovalRevisions.set(scopeKey, Math.max(driveApprovalRevisions.get(scopeKey) ?? 0, revision + 1));
+            }
+            throw error;
+          }
+          if (scope && decision === "always") rememberedDriveUploads.add(scope);
+          else if (scope && decision === "once") rememberedDriveUploads.delete(scope);
           // The transfer gets its own budget once approved. Older embeddings
           // without preflight keep the existing root-bound extension transport.
           deadline = AbortSignal.timeout(130_000);

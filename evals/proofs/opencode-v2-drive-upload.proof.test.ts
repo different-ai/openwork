@@ -54,7 +54,7 @@ test("V2-DRIVE-UPLOAD: a member approves a file outside the workspace and upload
     const prompt = `Put the local file ${path} in my Drive Selected Google Drive ${randomUUID()}`;
     const reply = `Uploaded ${name} to Drive ${randomUUID()}`;
     await ask(prompt, reply);
-    await user.click("Allow once");
+    await user.click("Allow for session");
     await user.see({ text: reply }, { timeoutMs: 90_000 });
     const requests = await world.mock.agentRequests({ promptMarker: prompt });
     expect(requests.some(request => request.kind === "error")).toBe(false);
@@ -66,6 +66,22 @@ test("V2-DRIVE-UPLOAD: a member approves a file outside the workspace and upload
     expect(uploads[0]).toMatchObject({ filename: name, mimeType: "application/vnd.openxmlformats-officedocument.wordprocessingml.document" });
     expect(exact).toBe(true);
     expect(other).toEqual([]);
+    await user.screenshot();
+  });
+
+  await step("session approval lets the same unchanged file reach the same account without another prompt", async () => {
+    const prompt = `Upload the same local file ${path} to Drive Selected again ${randomUUID()}`;
+    const reply = `Uploaded the approved file again ${randomUUID()}`;
+    await world.prepareTurn(prompt, reply, [{ tool: "openwork_drive_upload", arguments: { path, connectionId: world.selectedId } }]);
+    await user.type("composer", prompt);
+    await user.click("Run task");
+    await user.see({ text: reply }, { timeoutMs: 90_000 });
+    await user.notSee("Allow once");
+    const copies = await driveCopies();
+    const exact = copies.selected.length === 2 && copies.selected.every(upload => upload.content.equals(Buffer.from(bytes)));
+    evidence.recordAssertionEvidence("Session approval is honored without sending to another account", `selected: ${copies.selected.length} exact copies (${exact}); other account: ${copies.other.length}; the turn finished without another approval`, exact && copies.other.length === 0);
+    expect(exact).toBe(true);
+    expect(copies.other).toEqual([]);
     await user.screenshot();
   });
 });
