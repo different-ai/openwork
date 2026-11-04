@@ -44,8 +44,9 @@ test("computer_open defaults to control and offers the narrower modes only when 
   expect(description).toContain("never a reason to stop or ask them");
 });
 
-test("a task across apps is split into app agents that pass files by path", async () => {
-  const plugin = await server();
+test("with parallel computer use on, a task across apps is split into app agents that pass files by path", async () => {
+  expect((await server()).tool.computer_open.description).not.toContain("subagent");
+  const plugin = await server({ parallel: true });
   const description = plugin.tool.computer_open.description;
   expect(description).toContain("give each app to its own subagent");
   expect(description).toContain("start each wave's agents together in one message");
