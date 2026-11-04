@@ -14,6 +14,7 @@ import { modelRefKey, useModelCollectionsStore } from "@/react-app/domains/sessi
 import { PickerNotice } from "./picker-notice";
 import { resolveSearchIntent, searchIntentSummary, searchIntentTag, searchModels } from "./model-search";
 import { useModelShortcutsStore } from "@/react-app/domains/shortcuts/model-shortcuts-store";
+import { useDesktopFeature } from "@/react-app/domains/session/status/use-desktop-feature";
 import { formatChord, resolveShortcutOs } from "@/react-app/domains/shortcuts/shortcut-keys";
 
 export function ModelSourceIcon({ model }: { model: ModelRef & { source?: ModelOption["source"] } }) {
@@ -22,11 +23,11 @@ export function ModelSourceIcon({ model }: { model: ModelRef & { source?: ModelO
   return <Icon role="img" aria-label={MODEL_SOURCE_LABELS[source]} className="size-4 shrink-0 text-muted-foreground" strokeWidth={1.5} />;
 }
 
-function ProviderMark({ model, description, retained = false }: { model: ModelRef & { title?: string }; description?: string; retained?: boolean }) {
+function ProviderMark({ model, description, retained = false, plainFreeModel = false }: { model: ModelRef & { title?: string }; description?: string; retained?: boolean; plainFreeModel?: boolean }) {
   // The maker's logo when the name says who made it; the provider is named in text beside it.
   const maker = retained ? null : modelMakerId(model);
   return <div data-slot="model-provider-mark" className="flex size-4 shrink-0 items-center justify-center">
-    {isAutoModel(model) ? <OpenWorkMark className="size-4 text-dls-accent dark:text-foreground" />
+    {isAutoModel(model) && !plainFreeModel ? <OpenWorkMark className="size-4 text-dls-accent dark:text-foreground" />
       : isAutoRouterModel(model) ? <Sparkles aria-hidden="true" strokeWidth={1.5} className="size-4 text-dls-accent dark:text-foreground" />
       : <ProviderIcon providerId={maker ?? (retained ? undefined : model.providerID)} providerName={maker ? undefined : description} size={16} />}
   </div>;
@@ -86,7 +87,10 @@ function AutoStatusModelPickerList(props: ModelPickerListProps) {
   const state: AutoPickerState = props.openWorkModelsSyncing ? "sync" : snapshot?.status === "error" ? "unavailable" : matches ? (autoQuietlyUnavailable(status) ? "ready" : autoNotOffered(status) ? "not_offered" : status.state) : "ready";
   const switchedOff = freeAutoSwitchedOff(status);
   const blockedByPolicy = props.retainedSelection !== undefined && props.retainedSelection.reason !== "unavailable" && isAutoModel(props.current);
-  return <ModelPickerRows {...props} retainedSelection={switchedOff && isAutoModel(props.current) ? undefined : props.retainedSelection} options={withAutoDefaultPin(switchedOff ? props.options.filter((option) => !isAutoModel(option)) : props.options, status)} openWorkModelsSyncing={!switchedOff && !blockedByPolicy && props.openWorkModelsSyncing} autoRow={!switchedOff && !blockedByPolicy && auto ? { model: auto, state, code: status?.code, resetsAt: status?.allowance?.resetsAt } : undefined} />;
+  // `plainFreeModel`: the free model is a row like any other. Its limit is not checked here; a send that hits it
+  // is refused and the chat says so (autoWallCopy), the same way any provider's error is shown.
+  const plainFreeModel = useDesktopFeature("plainFreeModel");
+  return <ModelPickerRows {...props} plainFreeModel={plainFreeModel} retainedSelection={switchedOff && isAutoModel(props.current) ? undefined : props.retainedSelection} options={withAutoDefaultPin(switchedOff ? props.options.filter((option) => !isAutoModel(option)) : props.options, status)} openWorkModelsSyncing={!switchedOff && !blockedByPolicy && props.openWorkModelsSyncing} autoRow={!plainFreeModel && !switchedOff && !blockedByPolicy && auto ? { model: auto, state, code: status?.code, resetsAt: status?.allowance?.resetsAt } : undefined} />;
 }
 
 /** Context-menu rows show the chord that triggers the same command (DESIGN S6). */
@@ -95,8 +99,9 @@ function menuChord(label: string, chord: string) {
 }
 
 function ModelPickerRows({ options, current, query, onQueryChange, onSelect, focusAlternative = false, footer, leading, searchInputRef, autoFocusSearch = true,
-  catalogState, retainedSelection, onConnectProvider, onOpenProviderSettings, onSetWorkspaceDefault, currentBehaviorValue, openWorkModelsSyncing, onReloadWorkspace, onRetryAuto, autoRow,
-}: ModelPickerListProps & { autoRow?: AutoRowState }) {
+  catalogState, retainedSelection, onConnectProvider, onOpenProviderSettings, onSetWorkspaceDefault, currentBehaviorValue, openWorkModelsSyncing, onReloadWorkspace, onRetryAuto, autoRow, plainFreeModel = false,
+}: ModelPickerListProps & { autoRow?: AutoRowState; plainFreeModel?: boolean }) {
+  const display = { plainFreeModel };
   const favorites = useModelCollectionsStore((state) => state.favorites);
   const recent = useModelCollectionsStore((state) => state.recent);
   // A model bound to a saved shortcut in Settings shows its key on the row.
@@ -157,7 +162,7 @@ function ModelPickerRows({ options, current, query, onQueryChange, onSelect, foc
   const retained = retainedSelection && modelRefKey(retainedSelection.model) === modelRefKey(current)
     && !options.some((option) => modelRefKey(option) === modelRefKey(current) && !option.disabled) ? retainedSelection : undefined;
   const retainedCopy = retained ? retainedModelCopy(retained.reason) : null;
-  const retainedName = retained ? (fixedModelTitle(retained.model) ?? (retained.title ? modelTitle({ ...retained.model, title: retained.title, description: retained.description }) : "Saved model")) : "";
+  const retainedName = retained ? (fixedModelTitle(retained.model, display) ?? (retained.title ? modelTitle({ ...retained.model, title: retained.title, description: retained.description }, display) : "Saved model")) : "";
   const retainedVisible = retained && (!query.trim() || `${retainedName} ${retained.description ?? ""}`.toLowerCase().includes(query.trim().toLowerCase()));
   const retainedState = retained && isAutoModel(retained.model) && autoRow && autoRow.state !== "ready" ? autoPickerCopy(autoRow.state, false, undefined, autoRow.code, autoRow.resetsAt).subtitle : retainedCopy?.subtitle;
   const retainedSubtitle = [retained && !isAutoModel(retained.model) ? retained.description?.trim() : null, retainedState].filter(Boolean).join(" · ");
@@ -204,15 +209,15 @@ function ModelPickerRows({ options, current, query, onQueryChange, onSelect, foc
             {group.value === mergedLabel || UNLABELED_GROUPS.has(group.value) ? null : <CommandGroupLabel className="flex min-h-7 items-center">{group.value}</CommandGroupLabel>}
             <CommandCollection>{(option: ModelOption) => {
               const key = modelRefKey(option);
-              const name = modelTitle(option);
+              const name = modelTitle(option, display);
               const fixed = immutableModelPin(option);
               const active = modelRefKey(current) === key;
               const autoState = autoRow && modelRefKey(autoRow.model) === key ? autoRow.state : undefined;
               const blocked = !canSelect(option);
-              const subtitle = autoState ? autoPickerCopy(autoState, false, undefined, autoRow?.code, autoRow?.resetsAt).subtitle : active && failed ? `${modelSubtitle(option)}${modelSubtitle(option) ? " · " : ""}availability not verified` : modelSubtitle(option);
+              const subtitle = autoState ? autoPickerCopy(autoState, false, undefined, autoRow?.code, autoRow?.resetsAt).subtitle : active && failed ? `${modelSubtitle(option, false, display)}${modelSubtitle(option, false, display) ? " · " : ""}availability not verified` : modelSubtitle(option, false, display);
               // The name always wins the row. One quiet line under it carries where the model
               // comes from (only where a group mixes providers) and what is true about it now.
-              const meta = autoState || isAutoModel(option) || isAutoRouterModel(option) ? subtitle
+              const meta = autoState || (isAutoModel(option) && !plainFreeModel) || isAutoRouterModel(option) ? subtitle
                 : [MIXED_GROUPS.has(group.value) ? option.description?.trim() : null, modelStateLabel(option),
                   active && failed ? "Availability not verified" : null].filter(Boolean).join(" · ");
               // Options typed in the search show only where they apply; the line above the list says the rest.
@@ -232,7 +237,7 @@ function ModelPickerRows({ options, current, query, onQueryChange, onSelect, foc
                 onFocus={() => setHighlighted(option)} onClick={() => select(option)}
                 onKeyDown={(event) => { if (event.key === "Enter" && event.target === event.currentTarget) { event.preventDefault(); select(option); } }}
               />}>
-                <ProviderMark model={option} description={option.description} />
+                <ProviderMark model={option} description={option.description} plainFreeModel={plainFreeModel} />
                 <span data-slot="model-label" className="min-w-0 flex-1 leading-5">
                   <span className={`block truncate${active ? " font-medium" : ""}`} title={name}>{name}</span>
                   {meta ? <span className="block truncate text-xs text-muted-foreground" title={meta}>{meta}</span> : null}

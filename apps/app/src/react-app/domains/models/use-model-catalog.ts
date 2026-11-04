@@ -5,6 +5,7 @@ import type { Client, ModelOption, ModelRef } from "@/app/types";
 import { newProvidersEvent } from "@/app/lib/provider-events";
 import { useCheckDesktopRestriction } from "@/react-app/domains/cloud/desktop-config-provider";
 import { useDenAuth } from "@/react-app/domains/cloud/den-auth-provider";
+import { useDesktopFeature } from "@/react-app/domains/session/status/use-desktop-feature";
 import { useAutoAccess } from "@/react-app/domains/cloud/auto-access-ui";
 import { useGatewayModelSelection } from "@/react-app/domains/connections/provider-auth/gateway-model-access";
 import { useProviderListQuery } from "@/react-app/infra/provider-list-query";
@@ -80,6 +81,7 @@ export function useModelCatalog(input: UseModelCatalogInput): ModelCatalogView {
   const auth = useDenAuth();
   const signedIn = input.cloudProvidersEnabled ?? auth.isSignedIn;
   const checkRestriction = useCheckDesktopRestriction();
+  const plainFreeModel = useDesktopFeature("plainFreeModel");
   // Pickers show the providers last seen for this folder while the engine starts.
   const providers = useProviderListQuery({ client: input.client, baseUrl: input.baseUrl, directory: input.directory || undefined, enabled: input.enabled && Boolean(input.client), showSavedWhileLoading: true });
   const refetch = providers.refetch;
@@ -130,8 +132,9 @@ export function useModelCatalog(input: UseModelCatalogInput): ModelCatalogView {
   }) : undefined;
   const options = useMemo(() => withoutBlockedSelection(catalog.options, retainedSelection), [catalog.options, retainedSelection?.model.providerID, retainedSelection?.model.modelID, retainedSelection?.reason]);
   const auto = options.find(isAutoModel);
-  const autoBlocked = Boolean(input.openWorkModelsSyncing || autoQuery.isError
-    || (auto && autoStatus && modelRefKey(autoStatus) === modelRefKey(auto) && autoStatus.state !== "ready"));
+  // With `plainFreeModel` the free model is never blocked up front for its limit or status; a refused send says why in the chat.
+  const autoBlocked = Boolean(input.openWorkModelsSyncing || (!plainFreeModel && (autoQuery.isError
+    || (auto && autoStatus && modelRefKey(autoStatus) === modelRefKey(auto) && autoStatus.state !== "ready"))));
   const actionOptions = useMemo(() => withAutoActionState(options, { blocked: autoBlocked }), [options, autoBlocked]);
   const hiddenByChoice = retainedSelection?.reason === "policy" || retainedSelection?.reason === "disabled";
 

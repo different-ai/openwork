@@ -17,6 +17,7 @@ import { openProviderAuthEvent } from "@/react-app/shell/new-providers-listener"
 import { openComposerModelPickerEvent } from "@/app/lib/inference-access";
 import { fixedModelTitle, managesOwnBehavior, modelTitle, nonDefaultModelSummary, type RetainedModelSelection } from "@/react-app/domains/models/model-catalog";
 import { useModelPickerCatalogStore } from "@/react-app/domains/session/models/model-collections-store";
+import { useDesktopFeature } from "@/react-app/domains/session/status/use-desktop-feature";
 
 export { ModelPickerFooter } from "@/react-app/domains/models/model-picker-panel";
 
@@ -49,6 +50,7 @@ export function ModelSelect({ open, value, hideValue = false, onOpenChange, onCh
   const workspace = useWorkspace();
   const setWorkspaceDefault = useSetWorkspaceDefaultModel();
   const checkRestriction = useCheckDesktopRestriction();
+  const plainFreeModel = useDesktopFeature("plainFreeModel");
   const choice = useModelChoice(JSON.stringify([sessionId, value, behaviorValue, disabled]));
   const catalog = useModelCatalog({ client: workspace.client, baseUrl: workspace.opencodeBaseUrl, directory: workspace.selectedWorkspaceRoot,
     enabled: true, refreshWhen: open, fallbackOptions, pendingOptions: choice.pendingOptions, disabledProviders: choice.disabledProviders,
@@ -95,7 +97,7 @@ export function ModelSelect({ open, value, hideValue = false, onOpenChange, onCh
   }}>
     <PopoverTrigger type="button" disabled={disabled} aria-label="Change model"
       className="inline-flex h-9 min-w-0 items-center gap-1.5 px-2.5 text-sm text-muted-foreground hover:text-foreground focus-visible:rounded focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50">
-      <span className="max-w-56 truncate">{hideValue ? "Select model" : fixedModelTitle(value) ?? (catalog.currentOption ? modelTitle(catalog.currentOption) : "Select model")}{!hideValue && summary ? ` · ${summary}` : ""}{!hideValue && fastOn ? <span data-testid="model-fast-indicator" className="text-xs font-medium"> · Fast</span> : null}</span><ChevronDown className="size-3" />
+      <span className="max-w-56 truncate">{hideValue ? "Select model" : fixedModelTitle(value, { plainFreeModel }) ?? (catalog.currentOption ? modelTitle(catalog.currentOption, { plainFreeModel }) : "Select model")}{!hideValue && summary ? ` · ${summary}` : ""}{!hideValue && fastOn ? <span data-testid="model-fast-indicator" className="text-xs font-medium"> · Fast</span> : null}</span><ChevronDown className="size-3" />
     </PopoverTrigger>
     <PopoverContent ref={popupRef} tabIndex={-1} align="start" initialFocus={() => isMobile || focusAlternative ? popupRef.current : searchInputRef.current} data-testid="composer-model-picker" className="flex max-h-[min(var(--available-height),36rem)] w-90 max-w-[calc(100vw-2rem)] flex-col overflow-hidden rounded-2xl p-0">
       <ModelPickerPanel searchInputRef={searchInputRef} options={options} current={value} behaviorValue={behaviorValue} fallbackBehaviorOptions={behaviorOptions}
