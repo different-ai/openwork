@@ -32,7 +32,7 @@ const who: DenSession = {
 // About the size of Den's JWT access tokens, so the cookie-size limit is exercised realistically.
 const accessToken = (n: number) => `access-${n}-${"x".repeat(1_400)}`
 
-function world(options: { secret?: string; telemetryFails?: boolean; identity?: DenSession; identityForToken?(token: string): DenSession } = {}) {
+function world(options: { secret?: string; telemetryFails?: boolean; revokeFails?: boolean; identity?: DenSession; identityForToken?(token: string): DenSession } = {}) {
   const signIns: Array<{ token: string; id: string }> = []
   let clock = 1_000_000
   const calls = { refresh: [] as string[], revoke: [] as string[] }
@@ -67,7 +67,10 @@ function world(options: { secret?: string; telemetryFails?: boolean; identity?: 
       refreshes += 1
       return { accessToken: accessToken(refreshes), refreshToken: `refresh-${refreshes}`, expiresAt: clock + 45 * 60_000 }
     },
-    revoke: async (refreshToken) => { calls.revoke.push(refreshToken) },
+    revoke: async (refreshToken) => {
+      calls.revoke.push(refreshToken)
+      if (options.revokeFails) throw new Error("den unreachable")
+    },
   }
   const instance = () => {
     const auth = createAuth({ config: { ...config, sessionSecret: options.secret ?? SECRET }, den, now: () => clock })
@@ -423,4 +426,34 @@ test("OAuth discovery keeps separate Workbot, Den web and API deployment domains
   assert.equal(tokenRequests[0].get("redirect_uri"), `${publicUrl}/auth/callback`)
   assert.equal(tokenRequests[0].get("code_verifier"), "fixture-verifier")
   assert.equal(tokenRequests[0].get("resource"), resource)
+})
+
+test("signing out still ends the sign-in when Den can't revoke, and lands on a page that doesn't sign back in", async () => {
+  const w = world({ revokeFails: true })
+  const app = w.instance()
+  const { session } = await signIn(app)
+  const out = await app.request("/auth/logout", { method: "POST", headers: { cookie: `__Host-workbot=${session}`, origin: config.publicUrl } })
+  assert.equal(out.status, 200)
+  assert.deepEqual(w.calls.revoke, ["refresh-0"])
+  assert.ok(out.headers.getSetCookie().some((cookie) => cookie.startsWith("__Host-workbot=;") && /Max-Age=0/i.test(cookie)))
+
+  const signedOut = await app.request("/auth/signed-out")
+  assert.equal(signedOut.status, 200)
+  assert.equal(signedOut.headers.get("location"), null)
+  assert.equal(signedOut.headers.get("cache-control"), "no-store")
+  const html = await signedOut.text()
+  assert.match(html, /You&#39;re signed out of Workbot/)
+  assert.match(html, /href="\/auth\/login"/)
+})
+
+test("switching workspace asks Den to show its workspace chooser and returns to the same page", async () => {
+  const w = world()
+  const app = w.instance()
+  const login = await app.request("/auth/login?workspace=choose&return=%2Fdocuments")
+  assert.equal(login.status, 302)
+  assert.deepEqual(w.workspaceChoices, [true])
+  const loginCookie = cookieValue(login, "__Host-workbot-login")
+  const state = new URL(login.headers.get("location") ?? "").searchParams.get("state")
+  const callback = await app.request(`/auth/callback?state=${state}&code=test-code`, { headers: { cookie: `__Host-workbot-login=${loginCookie}` } })
+  assert.equal(callback.headers.get("location"), "/documents")
 })

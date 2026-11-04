@@ -251,9 +251,16 @@ export function createAuth(input: { config: Pick<Config, "publicUrl" | "secureCo
 
     app.post("/auth/logout", sameOrigin, async (c) => {
       const session = readSession(c)
-      if (session?.tokens.refreshToken) await den.revoke(session.tokens.refreshToken)
+      // Revoking is best effort: Den being unreachable must never keep the person signed in here.
+      if (session?.tokens.refreshToken) await den.revoke(session.tokens.refreshToken).catch(() => undefined)
       endSession(c, session?.id ?? null)
       return c.json({ ok: true })
+    })
+
+    // Where Sign out lands. Not /auth/login: that would sign the person straight back in with Den's own session.
+    app.get("/auth/signed-out", (c) => {
+      c.header("cache-control", "no-store")
+      return c.html(page("You're signed out of Workbot", "Sign in again to get back to your chat.", { href: "/auth/login", label: "Sign in" }))
     })
   }
 
