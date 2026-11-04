@@ -343,3 +343,46 @@ test("attaching a saved file puts it in that chat's composer once, as a file men
   expect(state.sessions.other).toBeUndefined()
   store.clearSession("chat"); useComposerStateStore.setState({ pendingFocusSessionId: null })
 })
+
+test("with subagents on the computer the card lists them as a crew, and a row opens that agent's live view", async () => {
+  const { ComputerCrewCard } = await import("../src/components/chat/computer-crew")
+  const history = collectComputerSessionHistory(computerHistoryMessages(images))!
+  const members = [
+    { sessionId: "maps-agent", name: "Maps", color: "#30a46c", app: "Maps", state: "working" as const, intent: "searching for the café",
+      frame: { mimeType: "image/png" as const, data: "iVBORw0KGgoAAAAA", width: 4, height: 3 } },
+    { sessionId: "slides-agent", name: "Slides", color: "#f76b15", app: "PowerPoint", state: "waiting" as const, intent: "typing the title" },
+    { sessionId: "photo-agent", name: "Photoshop", color: "#8e4ec6", app: null, state: "paused" as const, intent: null },
+    { sessionId: "done-agent", name: "Notes", color: "#d6409f", app: "Notes", state: "done" as const, intent: "saving" },
+  ]
+  const opened: string[] = []
+  const container = document.createElement("div"); document.body.append(container)
+  const root = createRoot(container); mounted = { root, container }
+  const render = async (crew?: { members: typeof members; onOpen: (member: { sessionId: string }) => void }) => act(async () => root.render(createElement(TooltipProvider, {
+    children: createElement(ComputerSessionHistory, { history, active: true, renderAction: part => createElement("p", {}, part.toolCallId), crew }) })))
+  // No subagents: the card is as before.
+  await render()
+  expect(container.querySelector("[data-computer-crew]")).toBeNull()
+  await render({ members, onOpen: member => opened.push(member.sessionId) })
+  const rows = [...container.querySelectorAll("[data-computer-crew-member]")]
+  expect(rows.map(row => row.getAttribute("aria-label"))).toEqual(["Watch Maps live", "Watch Slides live", "Watch Photoshop live", "Watch Notes live"])
+  expect([...container.querySelectorAll("[data-computer-crew-state]")].map(state => state.textContent)).toEqual(["Working", "Waiting for its turn", "Paused for you", "Done"])
+  expect(rows[0]!.textContent).toContain("Maps · Maps")
+  expect(rows[0]!.textContent).toContain("searching for the café")
+  expect(rows[3]!.textContent).not.toContain("saving")
+  expect(rows[0]!.querySelector("img")?.getAttribute("src")).toBe("data:image/png;base64,iVBORw0KGgoAAAAA")
+  expect(rows[1]!.querySelector("img")).toBeNull()
+  await act(async () => (rows[1] as HTMLElement).click())
+  expect(opened).toEqual(["slides-agent"])
+  // A chat whose own turn used no computer: the crew alone.
+  await act(async () => root.render(createElement(TooltipProvider, { children: createElement(ComputerCrewCard, { members, onOpen: () => {} }) })))
+  expect(container.querySelector("[data-computer-crew-card]")?.textContent).toContain("Agents using computer")
+  expect(container.querySelectorAll("[data-computer-crew-member]")).toHaveLength(4)
+})
+
+test("opening an agent from the crew points the chat's live view at it until the view is hidden", () => {
+  const store = useComputerSessionHistoryStore.getState()
+  store.setAgent("chat", "maps-agent")
+  expect(useComputerSessionHistoryStore.getState().agents).toEqual({ chat: "maps-agent" })
+  store.setAgent("chat", null)
+  expect(useComputerSessionHistoryStore.getState().agents).toEqual({})
+})

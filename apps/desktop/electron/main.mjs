@@ -2169,6 +2169,10 @@ const desktopCommandHandlers = {
       assertComputerSender(event);
       return computerControl.snapshot({ sessionId: String(sessionId ?? "") });
   },
+  "computerCrew": async (event, sessionId, thumbnails) => {
+      assertComputerSender(event);
+      return computerControl.crew({ sessionId: String(sessionId ?? ""), thumbnails: thumbnails === true });
+  },
   "computerStatus": async (event) => {
       assertComputerSender(event);
       return computerControl.status();

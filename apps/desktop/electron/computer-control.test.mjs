@@ -884,6 +884,48 @@ test("while the person watches, the chat's agents' windows share one stage that 
   assert.equal("stage_count" in last("maps"), false);
 });
 
+test("the chat's crew lists each subagent with its cursor, app, state, latest step and a live frame", async (t) => {
+  let hold = null;
+  const f = parallelFixture({ beforeTool: async (name, app) => { if (name === "computer_act" && app === "maps" && hold) await hold.promise; } });
+  t.after(() => f.control.reset(true));
+  await f.control.setFeatureEnabled(true);
+  const agent = (sessionId, agentName, name, args) => f.control.execute({ sessionId, rootSessionId: "chat", agentName, name, args });
+  const act = (sessionId, agentName, intent) => agent(sessionId, agentName, "computer_act", { observation_id: "observation", action: { type: "click", x: 1, y: 1 }, intent });
+  assert.deepEqual(await f.control.crew({ sessionId: "chat" }), [], "nothing before any agent works");
+  f.control.setParallelAgents(true);
+  await agent("maps-agent", "Maps", "computer_open", { app_id: "maps", mode: "control", purpose: "Find the place" });
+  await agent("slides-agent", "Slides", "computer_open", { app_id: "powerpoint", mode: "control", purpose: "Title slide" });
+  await act("maps-agent", "Maps", "searching for the café");
+  const rows = (list) => list.map(({ name, app, state, intent }) => [name, app, state, intent]);
+  assert.deepEqual(rows(await f.control.crew({ sessionId: "chat" })), [["Maps", "maps", "working", "searching for the café"], ["Slides", "powerpoint", "working", null]]);
+  const [maps, slides] = await f.control.crew({ sessionId: "chat" });
+  assert.notEqual(maps.color, slides.color);
+  // In view, one agent waits for its turn at the keyboard while the other acts.
+  f.control.follow({ sessionId: "chat", watching: true });
+  hold = deferred();
+  const first = act("maps-agent", "Maps", "zooming in"); await settle();
+  const second = act("slides-agent", "Slides", "typing the title"); await settle();
+  assert.deepEqual((await f.control.crew({ sessionId: "chat" })).map((row) => row.state), ["working", "waiting"]);
+  hold.resolve(); await Promise.all([first, second]);
+  hold = null;
+  // A thumbnail: asking streams frames, and the newest one comes back.
+  await f.control.crew({ sessionId: "chat", thumbnails: true });
+  f.ui("maps", { kind: "frame", id: "view-maps", sequence: 1, capturedAt: 1, width: 4, height: 3, mimeType: "image/png", data: "iVBORw0KGgoAAAAA" });
+  const watched = await f.control.crew({ sessionId: "chat", thumbnails: true });
+  assert.deepEqual(watched[0].frame, { mimeType: "image/png", data: "iVBORw0KGgoAAAAA", width: 4, height: 3 });
+  assert.equal(watched[1].frame, undefined);
+  // Take over in the chat pauses every agent for the person.
+  await f.control.interact({ sessionId: "chat", id: "view-maps", action: "takeover" });
+  assert.deepEqual((await f.control.crew({ sessionId: "chat" })).map((row) => row.state), ["paused", "paused"]);
+  await f.control.interact({ sessionId: "chat", id: "view-maps", action: "resume" });
+  // An agent whose turn ended is done.
+  await f.control.endTurn({ sessionId: "slides-agent" });
+  assert.deepEqual((await f.control.crew({ sessionId: "chat" })).map((row) => row.state), ["working", "done"]);
+  assert.deepEqual(await f.control.crew({ sessionId: "maps-agent" }), [], "a subagent's own thread has no crew");
+  f.control.setParallelAgents(false);
+  assert.deepEqual(await f.control.crew({ sessionId: "chat" }), [], "nothing with parallel computer use off");
+});
+
 test("a computer that is not This Mac gets no follow-along arguments", async (t) => {
   const seen = [];
   const f = fixture({ seen }); t.after(() => f.control.reset(true));

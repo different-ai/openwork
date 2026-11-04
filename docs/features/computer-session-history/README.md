@@ -35,6 +35,10 @@ file this chat made: one its computer use saved on this computer since the app
 started, or a regular, non-executable file in its output folder. Any other path
 from the conversation is shown in Finder instead.
 
+With [`parallelComputerUse`](../parallel-computer-use/README.md) on, the newest card also lists
+the chat's subagents that used its computer, one row each, with a small live view; a row opens
+that agent's live view. A turn whose own steps used no computer shows the crew alone.
+
 ![Computer session history open in the chat](computer-session-history.webp)
 
 Enable the feature for a test organization or member in platform admin, then
