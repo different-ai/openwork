@@ -15,7 +15,7 @@ const action = z.discriminatedUnion("type", [
   z.object({ type: z.literal("press"), ref: string }).strict(),
   z.object({ type: z.literal("set_value"), ref: string, text, secret }).strict(),
   z.object({ type: z.literal("move"), x: number, y: number }).strict(),
-  z.object({ type: z.literal("click"), x: number, y: number, modifiers, hold_ms: z.number().int().min(300).max(2000).optional().describe("Press and hold this long before releasing, to open a tool's flyout. Mac only.") }).strict(),
+  z.object({ type: z.literal("click"), x: number, y: number, modifiers, hold_ms: z.number().int().min(300).max(2000).optional().describe("Press and hold this long before releasing, to open a tool's flyout. Mac only.") }).strict().refine(({ hold_ms, modifiers }) => hold_ms === undefined || !modifiers?.length, "Held clicks cannot include modifiers."),
   z.object({ type: z.literal("right_click"), x: number, y: number }).strict(),
   z.object({ type: z.literal("show_menu"), ref: string }).strict(),
   z.object({ type: z.literal("double_click"), x: number, y: number, modifiers }).strict(),

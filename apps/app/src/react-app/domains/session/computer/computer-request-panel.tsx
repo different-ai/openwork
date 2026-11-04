@@ -248,8 +248,7 @@ function TypingRequest({ sessionId, request, typing }: { sessionId: string; requ
             <Monitor size={16} strokeWidth={1.9} />
           </div>
           <div className="min-w-0 flex-1">
-            <div className="text-[13px] font-medium leading-5 text-dls-text">Let the agent type in <span dir="ltr" style={{ unicodeBidi: "bidi-override" }} className="break-all font-mono" data-testid="session-computer-typing-app">{name ? <>{name.parts} (</> : null}{id.parts}{name ? ")" : null}</span>?</div>
-            <div className="mt-0.5 text-[12px] leading-5 text-dls-secondary">{`This app is editing text the computer can't identify as a text field, such as text on a canvas. The agent types into whatever has the keyboard in its window on ${request.computer}, and stops if that changes. Passwords never go this way.`}</div>
+            <div className="text-[12px] leading-5 text-dls-secondary">Type the agent's text into <span dir="ltr" style={{ unicodeBidi: "bidi-override" }} className="break-all font-mono" data-testid="session-computer-typing-app">{name ? <>{name.parts} (</> : null}{id.parts}{name ? ")" : null}</span> on {request.computer}; it goes to whatever has the keyboard in that window, may not be a text field, and may not be undoable. Passwords are never typed this way.</div>
             {id.hidden + (name?.hidden ?? 0) ? <div className="mt-2 text-[12px] font-medium leading-5 text-amber-11">This name has hidden characters, shown as &lt;U+…&gt;. Don't allow it unless you expected that.</div> : null}
             {error ? <div role="alert" className="mt-1 text-[12px] leading-5 text-red-11">{error}</div> : null}
           </div>
