@@ -23,6 +23,7 @@ import { DenTextarea } from "../../_components/ui/textarea";
 import { useSaveWorkbotProactive, useWorkbotProactive } from "./workbot-proactive-data";
 import { PROACTIVE_PREVIEW_KINDS, WorkbotProactivePreview } from "./workbot-proactive-preview";
 import { WorkbotProactiveSources } from "./workbot-proactive-sources";
+import { WorkbotAgentBriefPanel } from "./workbot-agent-brief-panel";
 
 /**
  * Manage › Workbot › Your agent: every member gets a background agent that reads their calendar, email, team chat and
@@ -97,6 +98,8 @@ export function WorkbotProactivePanel({
 }) {
   const ids = { destination: useId(), days: useId(), cap: useId(), members: useId() };
   const [preview, setPreview] = useState<AgentResponsibility>(initialPreview);
+  // With Your agent's brief on (the server sends `brief`), one rhythm and a text replace the message types.
+  if (view.brief) return <WorkbotAgentBriefPanel view={view} brief={view.brief} canManage={canManage} saving={saving} onChange={onChange} connectorsHref={connectorsHref} />;
   const { settings, template, slackReady, runnerReady } = view;
   const locked = !canManage || saving;
   const switchNote = !runnerReady

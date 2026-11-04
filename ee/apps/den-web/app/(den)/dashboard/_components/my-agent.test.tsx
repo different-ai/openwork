@@ -238,3 +238,46 @@ test("limits: their hours inside the admin's, the only-urgent window, and the ca
   assert.match(text(narrowed), /Daily limit 1 a day Saved here at 9:00 AM\. Undo Your admin allows 3 a day\./);
   assert.equal(whenPhrase(at("2026-10-21T08:00:00"), TZ, NOW), "tomorrow at 8:00 AM");
 });
+
+// ---- Your agent's brief (workbotAgentBrief) -------------------------------------------------------------------------
+
+const briefView: MemberAgentView = {
+  ...base,
+  responsibilities: [],
+  limits: { ...baseLimits, quietWindow: { startHour: 12, endHour: 13 }, dailyCap: 4, admin: { startHour: 8, endHour: 19, dailyCap: 4, checkEveryHours: 2, extraChecksPerDay: 3 }, narrowed: { hours: false, dailyCap: false, checkEveryHours: true }, checkEveryHours: 3, extraChecksPerDay: 3 },
+  brief: { lines: "Also watch our Render bill.\nNever tell me about newsletters.", organization: "Tell me about things that need me soon:\n- someone waiting on an answer or a decision from me", carriedOver: false },
+  nextChecks: [
+    { at: at("2026-10-20T13:45:00"), kind: "requested", why: "before your 2 PM with Northwind" },
+    { at: at("2026-10-20T16:00:00"), kind: "scheduled", why: null },
+  ],
+  changes: [
+    { id: "chg_b", field: "brief", summary: "Your brief: “Also watch our Render bill. Never tell me about newsletters.”", sourceId: null, source: "chat", at: at("2026-10-20T10:42:00"), undone: false },
+    { id: "chg_c", field: "checkEveryHours", summary: "Checks every 3 hours", sourceId: null, source: "page", at: at("2026-10-20T09:00:00"), undone: false },
+  ],
+};
+
+test("with the brief: the next checks with why, the member's lines with where they came from, no message-type switches", () => {
+  const html = page(briefView, {});
+  const view = text(html);
+  assert.match(view, /Next check 1:45 PM: before your 2 PM with Northwind\. Then 4:00 PM\./);
+  assert.match(html, /data-testid="my-agent-brief"/);
+  assert.match(html, />Also watch our Render bill\.\nNever tell me about newsletters\.<\/textarea>/);
+  assert.match(view, /Saved from chat at 10:42 AM\. Undo/);
+  assert.match(view, /Your organization's brief/);
+  assert.doesNotMatch(html, /data-testid="my-agent-responsibilities"|data-testid="my-agent-words"/, "no switches per message type, no Always/Never/When/How");
+  assert.match(view, /Checks Every 3 hours/);
+  assert.match(view, /Saved here at 9:00 AM\. Undo/, "slowing it down is undone like any change");
+  assert.match(view, /Quiet hours 12 PM–1 PM/);
+  assert.doesNotMatch(html, /<option value="1">Every hour<\/option>/, "never more often than the admin's");
+});
+
+test("with the brief: lines carried over from earlier settings say so until the member edits them", () => {
+  const view = text(page({ ...briefView, changes: [], brief: { lines: "Don't send meeting prep.", organization: "Org", carriedOver: true } }));
+  assert.match(view, /From your earlier settings\./);
+});
+
+test("without the brief: today's page, unchanged", () => {
+  const html = page(base, {});
+  assert.match(html, /data-testid="my-agent-responsibilities"/);
+  assert.doesNotMatch(html, /data-testid="my-agent-brief"|data-testid="my-agent-next-checks"/);
+});

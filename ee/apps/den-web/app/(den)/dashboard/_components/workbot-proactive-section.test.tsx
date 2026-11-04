@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { renderToStaticMarkup } from "react-dom/server";
-import { DEFAULT_AGENT_TEMPLATE, DEFAULT_WORKBOT_PROACTIVE_SETTINGS, type AgentResponsibility, type WorkbotProactiveView } from "@openwork/types/den/workbot-proactive";
+import { DEFAULT_AGENT_BRIEF, DEFAULT_AGENT_TEMPLATE, DEFAULT_WORKBOT_PROACTIVE_SETTINGS, type AgentResponsibility, type WorkbotProactiveView } from "@openwork/types/den/workbot-proactive";
 import { WorkbotProactivePanel } from "./workbot-proactive-section";
 import { previewTime } from "./workbot-proactive-preview";
 import { WorkbotProactiveHealthTable } from "./workbot-proactive-health";
@@ -229,4 +229,32 @@ test("what agents read: locked for people who can't manage it, and without View 
   assert.match(hidden, /Calendar Google Calendar or Outlook On for everyone/, "without View connections: what each source reads through, not the organization's connections");
   assert.match(hidden, /Sources: Needs the “.+” permission\./);
   assert.doesNotMatch(hidden, /Meeting notes|Issue tracker|Add source/);
+});
+
+// ---- Your agent's brief (workbotAgentBrief) -------------------------------------------------------------------------
+
+const briefSettings: NonNullable<WorkbotProactiveView["brief"]> = { checkEveryHours: 2, dailyCap: 4, extraChecksPerDay: 3, text: `${DEFAULT_AGENT_BRIEF}\n\nDon't send meeting prep.`, defaultText: DEFAULT_AGENT_BRIEF, carriedOver: ["text"] };
+const briefOn: WorkbotProactiveView = { ...ready, brief: briefSettings };
+
+test("with the brief: one rhythm, the daily limit, extra checks and what to tell people replace the message types", () => {
+  const html = render(briefOn);
+  const view = text(html);
+  for (const label of ["Agents for everyone", "Send messages to", "Check", "Messages per person per day", "Extra checks agents may ask for", "Members start", "What to tell people", "Preview"]) assert.ok(view.includes(label), label);
+  for (const value of ["Every 2 hours", "8 AM", "7 PM", "Weekdays", "3 a day", "Reset to default", "From your earlier settings."]) assert.ok(view.includes(value), value);
+  for (const gone of ["Morning brief", "Meeting prep", "Calendar changes", "Waiting on you", "15 min before", "Instructions for every agent", "Version 1"]) assert.ok(!view.includes(gone), gone);
+  assert.match(html, /Don&#x27;t send meeting prep\.<\/textarea>/);
+  assert.match(view, /Before your 2 PM with Northwind Labs: Dana asked in Slack for the updated pricing sheet/);
+});
+
+test("with the brief at its default, it says Default instead of offering a reset", () => {
+  const view = text(render({ ...briefOn, brief: { ...briefSettings, text: DEFAULT_AGENT_BRIEF, carriedOver: [] } }));
+  assert.ok(view.includes("Default"));
+  assert.ok(!view.includes("Reset to default"));
+  assert.ok(!view.includes("From your earlier settings."));
+});
+
+test("with the brief, health is one row of checks on the rhythm", () => {
+  const html = renderToStaticMarkup(<WorkbotProactiveHealthTable health={{ days: 7, members: 5, responsibilities: [], rhythm: { checks: 120, quiet: 96, sent: 31 } }} />);
+  assert.match(text(html), /All members 120 80% 31/);
+  assert.doesNotMatch(text(html), /Muted by/);
 });
