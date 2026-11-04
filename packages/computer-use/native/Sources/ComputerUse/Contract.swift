@@ -413,13 +413,23 @@ enum ObservationPreparation {
 /// Shares the Mac with the person using it. The agent takes the front only for
 /// the moment it needs to look or act; `HandBack` decides when it goes back.
 /// Moving the mouse never holds the agent up; a click or key press during its
-/// moment stops that step. Only Take over pauses the agent for Continue.
+/// moment pauses that step until the person is idle, and then it carries on.
+/// Only Take over pauses the agent for Continue, and only Stop stops it.
 enum SharedDesktop {
     static let refocusLimit = 2
-    /// Keys this recent mean the person is mid-typing.
+    /// Keys this recent mean the person is mid-keystroke (a shortcut, a game, a list).
     static let typingGap: TimeInterval = 0.2
-    /// The longest the agent defers to typing or a held button before it goes anyway.
+    /// The longest the agent defers to a key or a held button before it goes anyway.
     static let deferLimit: TimeInterval = 0.5
+    /// In a text field, a pause this long ends a burst of writing. Keys within a word
+    /// come 0.1–0.3 s apart and the pause between words or after a comma rarely
+    /// passes 0.7 s, so 0.2 s read every word break as "done"; a second without a key
+    /// is a person who stopped to think or read, not one between words.
+    static let typingPause: TimeInterval = 1.0
+    /// The longest the agent defers to someone writing in a field. Long enough to
+    /// finish a sentence or a short message, short enough that a person who types
+    /// without pause still sees the agent move within a few seconds.
+    static let typingDeferLimit: TimeInterval = 8.0
     /// Calls closer together than this are one moment, with no hand-back between them.
     static let handBackDelay: TimeInterval = 0.4
     static let poll: TimeInterval = 0.05
@@ -430,26 +440,139 @@ enum SharedDesktop {
 
     /// Mid-keystroke or holding a button: raising another window now would send the
     /// person's next key or drag into it.
-    static func personBusy(keyAt: TimeInterval, buttonDown: Bool, now: TimeInterval) -> Bool {
-        buttonDown || now - keyAt < typingGap
+    /// Writing in a text field (`inField`) lasts until a real pause, not a word break.
+    static func personBusy(keyAt: TimeInterval, buttonDown: Bool, now: TimeInterval, inField: Bool = false) -> Bool {
+        buttonDown || now - keyAt < (inField ? typingPause : typingGap)
+    }
+
+    /// Text roles a person writes in: fields, text areas, combo boxes (search fields and
+    /// secure fields are text fields), and web content inside an editable ancestor.
+    static func editsText(role: String?, editableAncestor: Bool) -> Bool {
+        editableAncestor || ["AXTextField", "AXTextArea", "AXComboBox"].contains(role ?? "")
+    }
+
+    /// Whether the person is writing in a text field of the front app: a key within
+    /// `typingPause` and an editable focused element. OpenWork itself counts as its chat
+    /// composer, where its web content may not name the focused field.
+    static func personTyping(keyAt: TimeInterval, now: TimeInterval, frontIsHost: Bool, focusEditsText: () -> Bool) -> Bool {
+        guard now - keyAt < typingPause else { return false }
+        return frontIsHost || focusEditsText()
     }
 
     /// A click or key press of the person's after the agent's moment began.
     static func personInterrupted(inputAt: TimeInterval, since start: TimeInterval) -> Bool {
         inputAt > start
     }
-    static let interrupted = UseError("person_interrupted", "The person clicked or typed, so this step stopped and the computer is theirs for now. Observe again to continue.", next: "observe")
+    /// Raised inside a step when the person clicks or types; the step pauses for them
+    /// (`waitForIdle`) and does not reach the model as a stop.
+    static let interrupted = UseError("person_interrupted", "The person clicked or typed during this step, so it paused for them. Observe again and carry on.", next: "observe")
+    static func isPersonInput(_ error: Error) -> Bool {
+        ((error as? InputFailure)?.cause ?? error as? UseError)?.code == interrupted.code
+    }
+
+    /// The longest one call waits for the person to be idle, across all its pauses.
+    /// A person busy for a whole minute is doing their own work; the model looks again
+    /// shortly rather than holding the call (the host allows a call 120 s).
+    static let busyLimit: TimeInterval = 60
+    static let busy = UseError("person_busy", "The person is using the computer right now, so this step is waiting for them. Observe again in a few seconds and carry on; do not stop or ask them.", next: "wait")
+    static func pausedStep(_ detail: String) -> UseError {
+        UseError("person_paused_step", "The person used the computer during this step, so it paused for them. \(detail) Look at the fresh observation and carry on; this is not a reason to stop or ask them.", next: "observe")
+    }
+
+    /// Waits until the person has been idle for `typingPause`: no key, no click, no held
+    /// button. Moving the mouse does not count. Returns false once `limit` has passed.
+    /// Take over and Stop end the wait through `check`.
+    @MainActor static func waitForIdle(lastInput: () -> TimeInterval, buttonDown: () -> Bool, limit: TimeInterval,
+        now: () -> TimeInterval, check: () throws -> Void, sleep: (TimeInterval) async throws -> Void) async throws -> Bool {
+        let started = now()
+        while buttonDown() || now() - lastInput() < typingPause {
+            try check()
+            guard now() - started < limit else { return false }
+            try await sleep(poll)
+        }
+        try check()
+        return true
+    }
+
+    /// What a step the person's input paused becomes once they are idle.
+    enum Resumption {
+        /// Nothing of it was sent: send it again, after its live checks.
+        case resend
+        /// Typing that stopped partway: the characters not yet sent, once the caret is
+        /// still where the agent left it.
+        case typeRest(sent: String, rest: String)
+        /// Every character went in before the pause: the step is done.
+        case done
+        /// It may have landed and cannot be continued: never sent again.
+        case stop(UseError)
+    }
+    /// `typed` counts the characters whose key went out, so none is typed twice.
+    static func resumption(of action: Action, mayHaveActed: Bool, typed: Int) -> Resumption {
+        guard mayHaveActed else { return .resend }
+        switch action {
+        case .type(let text):
+            let sent = String(text.prefix(typed))
+            return typed >= text.count ? .done : .typeRest(sent: sent, rest: String(text.dropFirst(typed)))
+        case .drag:
+            return .stop(pausedStep("The drag was cut short where it was and not repeated; check where it ended."))
+        default:
+            return .stop(pausedStep("The step may have landed, so it was not sent again."))
+        }
+    }
+    /// After a pause for the person, a refusal that only says the window changed while they
+    /// used it (`next` observe) is told calmly, with the fresh look the host appends. Take
+    /// over, Stop and another app fighting for the front (`focus_contested`) are unchanged.
+    static let changedWhilePaused: Set<String> = ["stale_observation", "focus_changed", "focus_lost", "observation_required", "outside_window"]
+    static func afterPause(_ error: UseError) -> UseError {
+        guard changedWhilePaused.contains(error.code) else { return error }
+        return pausedStep("The window changed while they used it, so the rest was not sent.")
+    }
+    /// Typing carries on only in the same field with the caret right after the agent's
+    /// own text: the person's click or keys elsewhere in it would interleave the text.
+    static func caretUnmoved(start: CFRange?, sent: String, now: CFRange?) -> Bool {
+        guard let start, let now else { return false }
+        return now.length == 0 && now.location == start.location + sent.utf16.count
+    }
 
     /// Takes the next gap in the person's typing or the release of a held button,
-    /// waiting `deferLimit` at most. Moving the mouse never delays the agent.
-    @MainActor static func takeGap(busy: () -> Bool, now: () -> TimeInterval, check: () throws -> Void,
-        sleep: (TimeInterval) async throws -> Void) async throws {
+    /// waiting `limit` at most: `typingDeferLimit` while they write in a field,
+    /// `deferLimit` otherwise. Moving the mouse never delays the agent. Returns how
+    /// long it waited.
+    @discardableResult
+    @MainActor static func takeGap(busy: () -> Bool, limit: TimeInterval = deferLimit, now: () -> TimeInterval, check: () throws -> Void,
+        sleep: (TimeInterval) async throws -> Void) async throws -> TimeInterval {
         let started = now()
-        while busy(), now() - started < deferLimit {
+        while busy(), now() - started < limit {
             try check()
             try await sleep(poll)
         }
         try check()
+        return now() - started
+    }
+
+    /// Where the person was when the agent took the front: their app, window and
+    /// focused element, and for text, the selection (caret) range. Never a value.
+    struct Place<Element> {
+        let pid: pid_t
+        var window: Element?
+        var field: Element?
+        var selection: CFRange?
+        /// The focused element was a text field the person writes in.
+        var inField = false
+    }
+    enum Returned: Equatable { case app, window, field }
+
+    /// Gives the person their place back: their window in front, their field focused
+    /// and the caret where they left it. Whatever no longer exists falls back a level,
+    /// down to activating the app as before. `raise` and `focus` fail for an element
+    /// that is gone.
+    @MainActor static func restore<Element>(_ place: Place<Element>?, activate: () -> Void, raise: (Element) -> Bool,
+        focus: (Element) -> Bool, select: (Element, CFRange) -> Void) -> Returned {
+        guard let place, let window = place.window, raise(window) else { activate(); return .app }
+        activate()
+        guard let field = place.field, focus(field) else { return .window }
+        if let selection = place.selection { select(field, selection) }
+        return .field
     }
 
     /// Brings the selected window forward, then stops if the person clicked or typed
@@ -486,31 +609,56 @@ enum SharedDesktop {
     /// handed over the task and is watching, so the screen does not flick back and forth.
     /// Taken from another app, or once something else came to the front while the agent
     /// worked (the person went back to the chat or to their work), each moment gives the
-    /// front back as soon as it ends, for the rest of the session.
+    /// front back as soon as it ends, for the rest of the session. Taken from someone
+    /// writing in a field, OpenWork's composer included, it goes back the moment the
+    /// step ends (`immediate`), and every later moment hands back too.
     struct HandBack {
         private(set) var pid: pid_t?
         private(set) var takenAt: TimeInterval?
         /// Whether each moment ends by giving the front back.
         private(set) var eachMoment = false
+        /// This moment ends by giving the front back at once, not after `handBackDelay`.
+        private(set) var immediate = false
+        /// The person's focus was in a text field when the front was taken.
+        private(set) var fromField = false
         private var held = false
+        private var newMoment = false
+        /// Each call is a new moment. A front held between moments that something else
+        /// took since (the person went back to the chat) is a new take, from where they are now.
+        mutating func beginMoment() { newMoment = true }
+        /// The next `record` notes a new take: who has the front now, and when.
+        var takesAnew: Bool { pid == nil || newMoment }
         /// The first app in front wins: one moment can raise the target more than once.
-        mutating func record(frontmost: pid_t?, target: pid_t, own: pid_t, host: pid_t, at now: TimeInterval) {
+        /// `typing`: the person was writing in a field (`personTyping`) during this moment's
+        /// wait. `inField`: their focus was in a text field, typing or not.
+        mutating func record(frontmost: pid_t?, target: pid_t, own: pid_t, host: pid_t, at now: TimeInterval,
+            typing: Bool = false, inField: Bool = false) {
             guard let frontmost, frontmost != target, frontmost != own else { return }
-            if held || frontmost != host { eachMoment = true }
+            if held || frontmost != host || typing { eachMoment = true }
+            if typing { immediate = true }
             held = true
-            guard pid == nil else { return }
-            pid = frontmost; takenAt = now
+            guard takesAnew else { return }
+            newMoment = false
+            pid = frontmost; takenAt = now; fromField = inField || typing
         }
         /// Returns the app to give the front back to, only while the agent's window
-        /// still has it and the person has not clicked or typed since it was taken.
-        /// `lastPersonInput` is unfiltered: input that might be the agent's own still
-        /// keeps the front where it is, so typing never moves to another app.
-        mutating func take(frontmost: pid_t?, target: pid_t, lastPersonInput: TimeInterval) -> pid_t? {
+        /// still has it. A click of the person's since it was taken chose the agent's
+        /// window, and the front stays. So do keys, unless the person had been writing
+        /// in a field: keys typed into the agent's window by mistake send them back there.
+        /// Input times are unfiltered: input that might be the agent's own still counts.
+        mutating func take(frontmost: pid_t?, target: pid_t, lastKey: TimeInterval, lastClick: TimeInterval) -> pid_t? {
             defer { forget() }
-            guard frontmost == target, let takenAt, lastPersonInput <= takenAt else { return nil }
+            guard frontmost == target, let takenAt, lastClick <= takenAt, lastKey <= takenAt || fromField else { return nil }
             return pid
         }
-        mutating func forget() { pid = nil; takenAt = nil }
+        /// The person's click or key stopped the step. A click, or keys from someone who
+        /// was not writing in a field, leaves the front with them where it is; keys meant
+        /// for their field hand it back at once.
+        mutating func interrupted(clicked: Bool) {
+            guard !clicked, fromField, pid != nil else { forget(); return }
+            immediate = true; eachMoment = true
+        }
+        mutating func forget() { pid = nil; takenAt = nil; immediate = false; fromField = false }
         /// A new session starts by keeping the front again.
         mutating func reset() { forget(); eachMoment = false; held = false }
     }

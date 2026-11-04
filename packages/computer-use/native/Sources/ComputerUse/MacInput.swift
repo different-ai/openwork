@@ -58,6 +58,8 @@ final class MacInput {
     private var feedback: DispatchFeedback?
     /// The last menu command pressed, for the on-desktop cursor to replay.
     private(set) var lastMenu: (titleFrame: CGRect?, path: [String], shortcut: String?)?
+    /// Characters of the last step whose key went out, so paused typing resumes after them.
+    private(set) var typedCharacters = 0
 
     func releaseAll(interrupted: Bool = true) {
         if let heldPointer { try? mouse(.leftMouseUp, heldPointer.point, heldPointer.pid, 1, heldPointer.windowID, heldPointer.frame, heldPointer.flags) }
@@ -94,6 +96,7 @@ final class MacInput {
                  check: () throws -> Void, checkWindow: () throws -> Void, background: Bool = false, editorTyping: Bool = false,
                  feedback send: @escaping (InputFeedback) -> Void = { _ in }) async throws -> String {
         feedback = DispatchFeedback(action: action.name, frame: lease.frame, send: send)
+        typedCharacters = 0
         gesture = Int64(UInt32.random(in: 1...UInt32.max))
         _ = route(for: app)
         signsKeys = background
@@ -522,6 +525,8 @@ final class MacInput {
         try InputDispatch.pair(check: check, down: {
             self.post(down, pid)
             self.feedback?.didDispatch = true
+            // Counted as it goes out: its key-up always follows, even if a check then stops the step.
+            if text != nil { self.typedCharacters += 1 }
             if text == nil { self.report(.down) }
         }, up: {
             self.post(up, pid)
