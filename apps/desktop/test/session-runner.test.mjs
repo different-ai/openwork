@@ -563,6 +563,31 @@ test("scheduled Automation execution stays independent with a recovery-capable t
   assert.deepEqual(disk.commands, [])
 })
 
+test("a scheduled Automation with no model variant never sends variant: null to the engine (#6973)", async (t) => {
+  const root = await privateDirectory(t)
+  const native = nativeFixture()
+  native.autoReply = true
+  // Den stores an unset variant as null.
+  const den = runnerFixture(native, {
+    kind: "automation_run", runId: "run_fixture", automationName: "Fixture schedule", attempt: 1,
+    instructions: "scheduled turn", model: { providerId: "fixture", modelId: "fixture-model", variant: null }, timeoutMs: 10_000,
+    workspaceId: "workspace_fixture",
+  })
+  const originalFetch = den.fetchImpl
+  den.fetchImpl = async (input, init) => String(input).endsWith("/opencode2/api/model")
+    ? new Response(JSON.stringify({ data: [{ providerID: "fixture", id: "fixture-model" }] }), { status: 200 })
+    : originalFetch(input, init)
+  const runner = desktopRunner(native, den, root)
+  t.after(() => runner.stop())
+  configure(runner, recoveryCapabilities)
+  await eventually(() => den.calls.some((call) => call.path === "/v1/automation-runs/run_fixture/complete"))
+  const bound = native.calls.find((call) => call.path.endsWith(`/session/${native.sessionId}/model`))
+  assert.ok(bound, "the session model was never bound")
+  assert.deepEqual(bound.body.model, { providerID: "fixture", id: "fixture-model" })
+  const complete = den.calls.find((call) => call.path === "/v1/automation-runs/run_fixture/complete")
+  assert.equal(complete.body.status, "succeeded")
+})
+
 test("an engine policy the local server cannot take yet never stops the runner from finding work", async (t) => {
   const root = await privateDirectory(t)
   const native = nativeFixture()
