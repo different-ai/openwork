@@ -30,7 +30,7 @@ export function toHeadlessModel(model: z.infer<typeof defaultModelSchema>["model
   return {
     providerId: model.providerID,
     modelId: model.modelID,
-    ...(model.variant === undefined ? {} : { variant: model.variant }),
+    ...(model.variant ? { variant: model.variant } : {}),
   };
 }
 
@@ -123,7 +123,7 @@ export function v2SessionModel(session: V2Session): HeadlessThreadModel | null {
   return {
     providerId: session.model.providerID,
     modelId: session.model.id,
-    ...(session.model.variant === undefined ? {} : { variant: session.model.variant }),
+    ...(session.model.variant ? { variant: session.model.variant } : {}),
   };
 }
 
