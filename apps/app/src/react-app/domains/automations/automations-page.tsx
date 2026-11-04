@@ -30,6 +30,7 @@ import type {
 } from "@openwork/types/automations"
 import { AUTOMATION_FREE_MODEL, automationScheduleSchema } from "@openwork/types/automations"
 
+import { readDenSettings } from "@/app/lib/den"
 import { isDesktopRuntime } from "@/app/lib/runtime-env"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Badge } from "@/components/ui/badge"
@@ -48,6 +49,7 @@ import { Skeleton } from "@/components/ui/skeleton"
 import { toast } from "@/components/ui/sonner"
 import { CloudSignInBanner, CloudSignInBannerIcon } from "@/react-app/domains/cloud/cloud-sign-in-banner"
 import { useDenAuth } from "@/react-app/domains/cloud/den-auth-provider"
+import { usePlatform } from "@/react-app/kernel/platform"
 import { t } from "../../../i18n"
 import { ConfirmModal } from "@/react-app/design-system/modals/confirm-modal"
 import { automationCreationPlacement } from "./automation-availability"
@@ -65,7 +67,7 @@ import {
   useAutomationsDenContext,
 } from "./use-automations"
 import { automationExecutionThreadRoute, automationExecutionIdentity, automationLocalSessionRoute } from "./automation-cloud-thread"
-import { automationRunNotice, formatAutomationSchedule, formatAutomationTime, runStatusLabel } from "./automation-format"
+import { automationRunConnectionFix, automationRunNotice, formatAutomationSchedule, formatAutomationTime, runStatusLabel } from "./automation-format"
 import type { AutomationModelOption, AutomationProviderCatalog } from "./automation-model-options"
 import { describeAutomationModel } from "./automation-model-options"
 
@@ -175,6 +177,7 @@ export function AutomationsPage(props: {
   onSignIn?: () => void
 } = {}) {
   const denAuth = useDenAuth()
+  const platform = usePlatform()
   const navigate = useNavigate()
   const openProviderSettings = () => navigate(props.workspaceId?.trim() ? workspaceSettingsRoute(props.workspaceId.trim(), "ai") : globalSettingsRoute("ai"))
   const [searchParams, setSearchParams] = useSearchParams()
@@ -398,6 +401,7 @@ export function AutomationsPage(props: {
     const runs = runsQuery.data?.items ?? []
     const selectedReceipt = receiptQuery.data?.run.id === selectedRunId ? receiptQuery.data : undefined
     const runNotice = selectedReceipt ? automationRunNotice(selectedReceipt.run) : null
+    const connectionFix = selectedReceipt ? automationRunConnectionFix(selectedReceipt.run, selectedReceipt.events, readDenSettings().baseUrl) : null
     const receiptIsLoading = receiptQuery.isLoading || (receiptQuery.isFetching && !selectedReceipt)
     const threadMatches = !selectedThreadId || selectedReceipt?.run.executionThread?.id === selectedThreadId
     const localSessionRoute = selectedReceipt?.run.executionThread
@@ -692,7 +696,19 @@ export function AutomationsPage(props: {
                     <Alert variant={runNotice.variant} data-automation-run-notice={selectedReceipt.run.id} data-variant={runNotice.variant}>
                       <AlertCircle />
                       <AlertTitle>{runNotice.title}</AlertTitle>
-                      <AlertDescription>{runNotice.message}</AlertDescription>
+                      <AlertDescription>
+                        <p>{runNotice.message}</p>
+                        {connectionFix ? (
+                          <Button
+                            type="button"
+                            size="sm"
+                            variant="outline"
+                            className="mt-2"
+                            data-automation-connection-fix={selectedReceipt.run.id}
+                            onClick={() => platform.openLink(connectionFix.url)}
+                          >{connectionFix.label}</Button>
+                        ) : null}
+                      </AlertDescription>
                     </Alert>
                   ) : null}
                   {selectedReceipt.run.resultSummary ? (

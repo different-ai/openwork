@@ -294,6 +294,8 @@ export const automationErrorSchema = z.object({
     "connect_access_unavailable",
     "openwork_web_access_required",
     "execution_runtime_unavailable",
+    /** The agent finished, but a connection it needed must be connected or reconnected first. */
+    "connection_action_required",
     "execution_failed",
     "execution_timed_out",
     "runner_unavailable",

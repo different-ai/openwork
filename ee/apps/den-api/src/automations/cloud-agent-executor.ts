@@ -1,5 +1,12 @@
 import { createHash } from "node:crypto"
-import { createHeadlessThreadClient, isHeadlessModelAccessError, type HeadlessThreadTranscript } from "@openwork/headless-threads"
+import {
+  connectionBlockerFromToolCalls,
+  connectionBlockerMessage,
+  createHeadlessThreadClient,
+  isHeadlessModelAccessError,
+  type ConnectionBlocker,
+  type HeadlessThreadTranscript,
+} from "@openwork/headless-threads"
 import { and, asc, eq, isNull } from "@openwork-ee/den-db/drizzle"
 import { MemberTable, WorkerTable } from "@openwork-ee/den-db/schema"
 import { normalizeDenTypeId } from "@openwork-ee/utils/typeid"
@@ -73,6 +80,8 @@ export type CloudAgentExecution =
       needsAttention?: boolean
       events?: CloudAgentEvent[]
       usage?: AutomationUsage
+      /** What the agent wrote, when it finished but could not do the work. */
+      resultSummary?: string
     }
 
 export type CloudAgentExecutorInput = OwnerScope & {
@@ -498,6 +507,40 @@ function terminalFailure(input: {
   }
 }
 
+/**
+ * The agent finished, but OpenWork Cloud told it a connection must be
+ * connected or reconnected first, so the run did not do its work. It fails
+ * with the connection named instead of reading as a success. Not retried: a
+ * retry hits the same connection until its owner fixes it.
+ */
+export function connectionBlockedExecution(input: {
+  blocker: ConnectionBlocker
+  /** The agent's own answer, when it wrote one. */
+  answer: string
+  usage: AutomationUsage
+  events: CloudAgentEvent[]
+}): CloudAgentExecution {
+  const { blocker } = input
+  const message = connectionBlockerMessage(blocker)
+  return {
+    ok: false,
+    status: "failed",
+    code: "connection_action_required",
+    message,
+    retryable: false,
+    ...(input.answer.trim() ? { resultSummary: input.answer.trim().slice(0, RESULT_SUMMARY_LIMIT) } : {}),
+    usage: input.usage,
+    events: [
+      ...input.events,
+      {
+        type: "warning",
+        payload: { code: "connection_action_required", ...blocker },
+      },
+      { type: "terminal", payload: { status: "failed", code: "connection_action_required", message } },
+    ],
+  }
+}
+
 async function abortAndObserve(
   client: ReturnType<typeof createHeadlessThreadClient>,
   nativeThreadId: string,
@@ -690,6 +733,10 @@ export async function executeCloudAgent(input: CloudAgentExecutorInput): Promise
     const usage = usageFromTranscript(transcript.usage)
     if (transcript.terminalError) return terminalFailure({ error: transcript.terminalError, transcript, usage })
     const resultSummary = transcript.finalAssistantText.trim() || "OpenWork Cloud completed the Automation run."
+    const blocker = connectionBlockerFromToolCalls(transcript.messages.flatMap((message) => message.parts.flatMap((part) => part.type === "tool" ? [part] : [])))
+    if (blocker) {
+      return connectionBlockedExecution({ blocker, answer: transcript.finalAssistantText, usage, events: transcriptEvents(transcript, usage) })
+    }
     return {
       ok: true,
       threadId: nativeThreadId,

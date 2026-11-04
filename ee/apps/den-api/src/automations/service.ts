@@ -1156,7 +1156,7 @@ export class AutomationService {
       runId: claimed.run.id,
       leaseOwner,
       status: result.ok ? "succeeded" : result.status,
-      resultSummary: result.ok ? result.resultSummary : result.message,
+      resultSummary: result.ok ? result.resultSummary : result.resultSummary ?? result.message,
       usage: result.usage,
       updateArtifactState: false,
       error: result.ok ? null : { code: result.code, message: result.message, retryable: result.retryable },

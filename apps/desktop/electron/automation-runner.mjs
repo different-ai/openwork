@@ -1,4 +1,9 @@
-import { createHeadlessThreadClient, isHeadlessModelAccessError } from "@openwork/headless-threads"
+import {
+  connectionBlockerFromToolCalls,
+  connectionBlockerMessage,
+  createHeadlessThreadClient,
+  isHeadlessModelAccessError,
+} from "@openwork/headless-threads"
 import { desktopEngineForcePolicy } from "./engine-force-policy.mjs"
 
 const EMPTY_USAGE = { inputTokens: null, outputTokens: null, costMicros: null }
@@ -736,9 +741,13 @@ function assistantResult(snapshot) {
       }
     }
   }
+  const toolCalls = assistants.flatMap((message) => (Array.isArray(message?.parts) ? message.parts : [])
+    .filter((part) => part?.type === "tool")
+    .map((part) => ({ name: String(part.tool ?? ""), output: part.toolOutput ?? null, error: part.toolError ?? null })))
   return {
     resultSummary,
     hasCompletedOutput: Boolean(resultSummary) || sawCompletedTool,
+    connectionBlocker: connectionBlockerFromToolCalls(toolCalls),
     usage: {
       inputTokens: sawInput ? inputTokens : null,
       outputTokens: sawOutput ? outputTokens : null,
@@ -874,6 +883,7 @@ export async function executeDesktopAutomation(assignment, options) {
           workspaceId,
           resultSummary: output.resultSummary,
           usage: output.usage,
+          connectionBlocker: output.connectionBlocker,
         }
       }
       if (snapshot?.status?.type === "idle" && Date.now() - startedAt > 10_000) {
@@ -1489,7 +1499,16 @@ export function createDesktopAutomationRunner(options) {
         workspaceId: output.workspaceId,
       })
       await event("usage", output.usage)
-      result = { status: "succeeded", ...output, error: null }
+      const { connectionBlocker, ...completed } = output
+      if (connectionBlocker) {
+        // The agent finished, but a connection it needed must be connected or
+        // reconnected first: the run did not do its work, so it fails and names the connection.
+        const message = connectionBlockerMessage(connectionBlocker)
+        await event("warning", { code: "connection_action_required", ...connectionBlocker })
+        result = { status: "failed", ...completed, error: { code: "connection_action_required", message, retryable: false } }
+      } else {
+        result = { status: "succeeded", ...completed, error: null }
+      }
     } catch (error) {
       const cancelled = controller.signal.aborted && String(controller.signal.reason).toLowerCase().includes("cancel")
       const classified = classifyAutomationExecutionError(error)
