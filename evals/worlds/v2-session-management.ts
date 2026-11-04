@@ -43,7 +43,8 @@ export async function v2SessionManagement(seed: Seed, { place }: { place: Place 
         method, headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
         ...(body === null ? {} : { body: JSON.stringify(body) }), signal: AbortSignal.timeout(30_000),
       });
-      return { status: response.status, body: await response.json() };
+      const text = await response.text();
+      return { status: response.status, body: text ? JSON.parse(text) : null };
     }, [base, path, token, method, body]), { awaitPromise: true, timeoutMs: 35_000 });
     if (!isRecord(result) || typeof result.status !== "number" || result.status < 200 || result.status >= 300) {
       throw new Error(`Session management request failed: ${path} (HTTP ${isRecord(result) ? result.status : "unknown"})`);
