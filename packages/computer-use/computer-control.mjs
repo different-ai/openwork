@@ -364,13 +364,17 @@ export function createComputerControl({ adapters, runProgram, runScript, onTimin
    * the agent arranges those itself.
    */
   const followArgs = (grant, current) => current.adapter.parallel === true
-    ? { following: watched.has(grant.sessionId), beside: [...grant.apps.values()].every((app) => app === current.app) } : {};
-  /** Tells each of the chat's helpers whether the person watches. Their own close handling covers a lost helper. */
+    ? { following: isWatched(grant), beside: [...grant.apps.values()].every((app) => app === current.app) && !othersOpen(grant) } : {};
+  /** A subagent's work is in view while the person watches its chat, or its own thread. */
+  const isWatched = (grant) => watched.has(grant.sessionId) || watched.has(chatKey(grant));
+  /** Another of the chat's agents has an app open, so neither goes beside OpenWork on its own. */
+  const othersOpen = (grant) => crewLeases(grant).some((other) => other.grant !== grant && !other.closing);
+  /** Tells each helper of the chat's agents whether the person watches. Their own close handling covers a lost helper. */
   function tellFollowing(grant) {
-    for (const current of mine(grant)) {
+    for (const current of crewLeases(grant)) {
       const id = current.presentation?.id;
       if (!id || !current.transport?.notifyUi || current.closing || current.adapter.parallel !== true) continue;
-      void current.transport.notifyUi({ id, action: "watch", ...followArgs(grant, current) }).catch(() => {});
+      void current.transport.notifyUi({ id, action: "watch", ...followArgs(current.grant, current) }).catch(() => {});
     }
   }
   /** Orders the chat's apps by their last call. */
@@ -1019,7 +1023,7 @@ export function createComputerControl({ adapters, runProgram, runScript, onTimin
         const mode = name === "computer_open" ? args.mode : current.app?.lastOpen?.mode;
         const renewing = !current.nativeId && current.app?.lastTarget === current.adapter.id && !["computer_discover", "computer_close"].includes(name);
         // A chat the person watches works in front, so it takes turns at the keyboard too.
-        const delivery = current.adapter.parallel === true && watched.has(grant.sessionId) ? "foreground"
+        const delivery = current.adapter.parallel === true && isWatched(grant) ? "foreground"
           : current.delivery ?? (current.background ? "background" : "foreground");
         if (mode === "control" && delivery === "foreground" && (["computer_open", "computer_observe", "computer_act"].includes(name) || renewing)) {
           releaseFocus = await focusSlot(current.adapter.id, active);
@@ -1092,8 +1096,8 @@ export function createComputerControl({ adapters, runProgram, runScript, onTimin
           // Elsewhere the new app replaces the chat's one; here it replaces only a released session in its window.
           for (const other of [...grant.apps.values()]) if (!several || other.lastOpen.window_id === app.lastOpen.window_id && !leaseOf(grant, other)) forget(grant, other);
           grant.apps.set(app.id, app); grant.latest = app.id; current.app = app;
-          // A second app open: the first no longer goes beside OpenWork on its own.
-          if (grant.apps.size > 1) tellFollowing(grant);
+          // A second app open, the chat's or another agent's: the first no longer goes beside OpenWork on its own.
+          if (grant.apps.size > 1 || othersOpen(grant)) tellFollowing(grant);
         }
         if (!state || typeof state.ok !== "boolean") throw new Error("The native computer response was unreadable; its outcome is uncertain.");
         if (name === "computer_open" && state.ok && !current.nativeId) throw new Error("The native helper returned no session identity.");

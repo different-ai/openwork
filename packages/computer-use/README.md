@@ -142,6 +142,13 @@ minimized, counts as not following until the person is back in OpenWork. Each
 receipt's `desktop.followed` says which mode the step ran in. Other computers
 get neither argument.
 
+With `parallelComputerUse` on, a subagent's helpers follow when the person watches its chat, or the
+subagent's own thread. Then every agent of the chat works in view and they take
+turns at the keyboard and pointer, one whole call at a time, as one chat's
+apps do. With apps of more than one agent open, none goes `beside_openwork` on
+its own. When the person moves to another thread, every agent's helper hears it
+and goes back to background delivery, where they act at the same time.
+
 ## Presence
 
 While a session runs the helper draws presence on the desktop: a frame around

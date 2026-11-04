@@ -806,6 +806,53 @@ test("the chat the person watches works in view, beside OpenWork, and other chat
   assert.throws(() => f.control.follow({ sessionId: "chat", watching: true, beside: true }), /required/);
 });
 
+test("subagents follow along while the person watches their chat, taking turns at the keyboard there", async (t) => {
+  const opens = [];
+  const notes = [];
+  let hold = null;
+  const f = parallelFixture({ delivery: () => "background", onOpen: (args) => opens.push(args),
+    onNotify: (app, value) => { if (value.action === "watch") notes.push([app, value]); },
+    beforeTool: async (name, app) => { if (name === "computer_act" && app === "maps" && hold) await hold.promise; } });
+  t.after(() => f.control.reset(true));
+  await f.control.setFeatureEnabled(true);
+  const agent = (sessionId, name, args) => f.control.execute({ sessionId, rootSessionId: "chat", name, args });
+  const open = (sessionId, app) => agent(sessionId, "computer_open", { app_id: app, mode: "control", purpose: `Work in ${app}` });
+  const act = (sessionId) => agent(sessionId, "computer_act", { observation_id: "observation", action: { type: "click", x: 1, y: 1 } });
+  const started = (app) => f.events.filter((event) => event === `${app}:computer_act:start`).length;
+  f.control.setParallelAgents(true);
+  f.control.follow({ sessionId: "chat", watching: true });
+  await open("maps-agent", "maps");
+  assert.deepEqual([opens[0].following, opens[0].beside], [true, true], "the watched chat's only app opens in view, beside OpenWork");
+  await open("slides-agent", "powerpoint");
+  assert.deepEqual([opens[1].following, opens[1].beside], [true, false], "with two agents' apps open, neither goes beside on its own");
+  assert.deepEqual(notes.find(([app]) => app === "maps")?.[1], { id: "view-maps", action: "watch", following: true, beside: false });
+  // In view, the agents take turns at the keyboard and pointer, one whole call at a time.
+  hold = deferred();
+  const first = act("maps-agent"); await settle();
+  const second = act("slides-agent"); await settle();
+  assert.equal(started("powerpoint"), 0, "the other agent waits for its turn");
+  hold.resolve(); await Promise.all([first, second]);
+  assert.ok(f.events.indexOf("maps:computer_act:end") < f.events.indexOf("powerpoint:computer_act:start"));
+  // Another thread selected: every agent's helper hears it, and they work in the background at the same time.
+  notes.length = 0;
+  f.control.follow({ sessionId: "chat", watching: false });
+  assert.deepEqual(notes.map(([app, value]) => [app, value.following]).sort(), [["maps", false], ["powerpoint", false]]);
+  hold = deferred();
+  const third = act("maps-agent"); await settle();
+  const fourth = act("slides-agent"); await settle();
+  assert.equal(started("powerpoint"), 2, "out of view, neither waits for the other");
+  hold.resolve(); await Promise.all([third, fourth]);
+});
+
+test("with parallel computer use off, watching the chat leaves its subagents in the background, as before", async (t) => {
+  const opens = [];
+  const f = parallelFixture({ onOpen: (args) => opens.push(args) }); t.after(() => f.control.reset(true));
+  await f.control.setFeatureEnabled(true);
+  f.control.follow({ sessionId: "chat", watching: true });
+  await f.control.execute({ sessionId: "maps-agent", rootSessionId: "chat", name: "computer_open", args: { app_id: "maps", mode: "control", purpose: "Find it" } });
+  assert.deepEqual([opens[0].following, opens[0].beside], [false, true]);
+});
+
 test("a computer that is not This Mac gets no follow-along arguments", async (t) => {
   const seen = [];
   const f = fixture({ seen }); t.after(() => f.control.reset(true));
