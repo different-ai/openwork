@@ -353,7 +353,7 @@ export function AdminOrganizationFeatureUsageView({ organizationId, refreshKey, 
             emptyLabel={filtering ? "No member used a feature that matches these filters." : "No member has used a feature yet."} /> : null}
           {grouping === "turnedOn" || grouping === "added" ? (filtered.length === 0 ? featureTable([]) : groupFeatureUsage(filtered, grouping).map((group) =>
             <section key={group.id} className="mt-4 min-w-0 first:mt-0" aria-labelledby={`admin-feature-usage-group-${grouping}-${group.id}`} data-testid={`admin-feature-usage-group-${grouping}-${group.id}`}>
-              <h3 id={`admin-feature-usage-group-${grouping}-${group.id}`} className="mb-1 text-xs font-semibold uppercase tracking-wide text-slate-500">{group.label} · {group.features.length}</h3>
+              <h3 id={`admin-feature-usage-group-${grouping}-${group.id}`} className="mb-1 text-xs font-semibold text-slate-500">{group.label} {group.features.length}</h3>
               {featureTable(group.features)}
             </section>)) : null}
         </div>
