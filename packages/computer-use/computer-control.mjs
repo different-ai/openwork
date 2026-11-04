@@ -728,7 +728,7 @@ export function createComputerControl({ adapters, runProgram, runScript, onTimin
       presentation.frame = { sequence: value.sequence, capturedAt: value.capturedAt, width: value.width, height: value.height, mimeType: "image/png", data: value.data };
     } else {
       if (value.sequence <= current.inputSequence || !uiNumber(value.at)
-        || !["move", "click", "double_click", "triple_click", "drag", "scroll", "key", "type", "press", "set_value", "right_click", "press_and_hold", "show_menu"].includes(value.action)
+        || !["move", "click", "double_click", "triple_click", "drag", "scroll", "key", "type", "press", "set_value", "enter_value", "right_click", "press_and_hold", "show_menu"].includes(value.action)
         || !["move", "down", "up", "dispatched", "uncertain"].includes(value.phase)
         || [value.x, value.y].some((position) => position !== undefined && (!Number.isFinite(position) || position < 0 || position > 1))) return;
       current.inputSequence = value.sequence;

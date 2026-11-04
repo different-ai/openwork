@@ -62,7 +62,8 @@ final class MenuAndPacingTests: XCTestCase {
     func testSingleLettersPickToolsOnlyInCreativeApps() throws {
         guard case .key("u", let flags) = try Action(["type": "key", "key": "u", "modifiers": ["shift"]], policy: .embedded) else { return XCTFail() }
         XCTAssertEqual(flags, .maskShift)
-        XCTAssertThrowsError(try Action(["type": "key", "key": "u", "modifiers": ["command"]], policy: .embedded), "Command shortcuts keep their own list")
+        guard case .key("u", let command) = try Action(["type": "key", "key": "u", "modifiers": ["command"]], policy: .embedded) else { return XCTFail() }
+        XCTAssertTrue(NativeKey.isMenuShortcut("u", command), "an unlisted Command shortcut runs only as the app's menu command")
         XCTAssertThrowsError(try Action(["type": "key", "key": "u"]), "the standalone helper still refuses bare letters")
         XCTAssertTrue(NativeKey.isToolKey("b", []))
         XCTAssertFalse(NativeKey.isToolKey("enter", []))

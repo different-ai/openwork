@@ -735,6 +735,31 @@ final class MacAccessibility {
         guard try !isProtected(focused, role: checkedString(focused, kAXRoleAttribute, budget) ?? "", budget) else { throw unsafe }
         try validateAncestry(focused, target: target, budget: budget)
     }
+    /// Whether an editor holds text Delete would erase: a text role, or marked editable.
+    func isTextEditor(_ element: AXUIElement) -> Bool {
+        let budget = AXReadBudget()
+        return (try? checkedString(element, kAXRoleAttribute, budget)).map { ElementRecord.textRoles.contains($0) } == true
+            || (try? checkedBool(element, "AXEditable", budget)) == true
+    }
+    /// Whether `element` is `ancestor` or inside it, such as the field editor of a value field.
+    func isWithin(_ element: AXUIElement, _ ancestor: AXUIElement) -> Bool {
+        let budget = AXReadBudget()
+        var current: AXUIElement? = element
+        for _ in 0..<12 {
+            guard let node = current else { return false }
+            if CFEqual(node, ancestor) { return true }
+            current = try? checkedElement(node, kAXParentAttribute, budget)
+        }
+        return false
+    }
+    /// Selects all of the text in the editor that has the keyboard, so typing replaces it.
+    /// false when the app does not let accessibility set its selection.
+    func selectAllText(_ editor: AXUIElement) -> Bool {
+        guard let count = attribute(editor, kAXNumberOfCharactersAttribute) as? Int else { return false }
+        var range = CFRange(location: 0, length: count)
+        guard let value = AXValueCreate(.cfRange, &range) else { return false }
+        return AXUIElementSetAttributeValue(editor, kAXSelectedTextRangeAttribute as CFString, value) == .success
+    }
     /// The editor `focusedEditor` found still has the keyboard, in the same window.
     func checkEditor(_ editor: AXUIElement, target: WindowTarget, app: AppIdentity, requireFront: Bool = true) throws {
         guard try CFEqual(focusedEditor(target: target, app: app, requireFront: requireFront), editor) else {
