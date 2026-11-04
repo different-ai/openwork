@@ -9,9 +9,27 @@ Your agent stops having four fixed message types (morning brief, meeting prep wi
 waiting on you) and gets the shape every proactive product we looked at shares: **one rhythm, a free-text brief the
 model reads, and the model deciding**. Den keeps only hard limits.
 
+Manage › Workbot › Members' agents, off (today) and on, with the brief carried over from meeting prep turned off and
+one organization instruction (`evals/proofs/workbot-agent-brief.proof.test.ts`):
+
+![Manage › Workbot with the feature off](./admin-before.png)
+
 ![Manage › Workbot with the brief](./admin-brief.png)
 
+My bot after "also watch our Render bill, never tell me about newsletters" in chat, with the extra check the agent asked
+for before a 2 PM meeting:
+
 ![My bot with the brief and the next checks](./my-bot-brief.png)
+
+The same recorded day through today's prompts and the brief's pipeline (replay evals, first run of each):
+
+![A busy morning](./slack-busy-morning.png)
+
+![A customer's Slack ask before the 11 AM call](./slack-slack-ask-before-meeting.png)
+
+![I'll handle it after lunch, then a nudge](./slack-handle-after-lunch.png)
+
+![An exposed key, still unresolved the next morning](./slack-security-two-days.png)
 
 ## What changes
 
@@ -136,7 +154,11 @@ The prompts are ported from the design spec as constants in `packages/automation
 
 Step 1 carries no chat history (only its own session and notes); step 2 runs only for P0/P1 findings and while
 today's limit has room. Den logs `workbot_agent_step_usage` (step, input, cached input and output tokens) for each
-turn. Typical numbers from the replay evals are in [Replay evals](#replay-evals).
+turn. In the replay evals (gpt-6-luna), a check averaged 5.7 model calls, about 24,900 input tokens (19,700 of them
+cached) and 2,100 output tokens for step 1, and step 2 ran in 40% of checks at about 1,050 input and 370 output tokens;
+today's single turn averaged 3.8 calls, 6,700 input (5,400 cached) and 680 output. Most of step 1's extra is the
+research it now does (sent mail, threads, the calendar) and the notes it keeps; the system prompt also carries every
+`memory/` file, so checkpoints are short and pruned after 14 days.
 
 ## API
 
@@ -193,8 +215,96 @@ boundaries, carrying settings over, members' changes, request_check's audience),
 
 ## Replay evals
 
-See the PR for the full table. Filled in below after the runs.
+`evals/scripts/agent-brief-replay.ts` (`pnpm --dir evals agent:brief-replay`) replays twelve recorded days
+(`evals/scripts/agent-replay/day-scenarios.ts`: fictional people on `.example` domains; calendar, Gmail, Slack,
+GitHub, a bandwidth bill, an exposed key over two days, cap exhaustion, newsletters and noise, "I'll handle it after
+lunch" with a later nudge, a quiet day, a line the member asked for) through today's prompts and the brief's
+pipeline, with the same model (`openai/gpt-6-luna`, Workbot's default), world and read-only tools, three runs each.
+Each item becomes visible when it happened, so each check reads only what existed then; both pipelines keep
+`memory/` across checks as the runner does. Scored deterministically (must-tell items told by their deadline,
+interruptions: messages about nothing required, about something never worth it, or a repeat; quiet days; the lead's
+length, length, a link, no formatting) and by an LLM judge (`anthropic/claude-sonnet-4.5`) for the rest.
+
+Final run (the prompts in this PR):
+
+| | Old prompts | New pipeline |
+| --- | --- | --- |
+| Missed important (of 42) | 23 | 2 |
+| Unwanted interruptions | 2 | 6 |
+| Correct silence (quiet days) | 6/6 | 6/6 |
+| Messages (per scenario day) | 34 (0.9) | 58 (1.5) |
+| Lead ≤ ~100 chars (≤ 120) | 41% | 97% |
+| Under ~350 chars (median) | 94% (269) | 100% (211) |
+| Has a source link | 100% | 98% |
+| No headings, bullets, bold, emoji | 100% | 100% |
+| Judge: lead stands alone | 88% | 100% |
+| Judge: one finding per message | 91% | 97% |
+| Judge: concrete fact | 100% | 100% |
+| Judge: says what was checked | 85% | 84% |
+| Judge: one next step | 82% | 86% |
+
+Per scenario (each cell over all runs: missed items, unwanted interruptions, messages):
+
+| Scenario | Old: missed / unwanted / msgs | New: missed / unwanted / msgs | Flips |
+| --- | --- | --- | --- |
+| busy-morning | 5 / 1 / 1·0·2 | 0 / 2 / 4·3·4 | sow told 2/3 → 3/3; priya-invite told 2/3 → 3/3; bandwidth told 0/3 → 3/3; interruptions 1 → 2 |
+| quiet-day | 0 / 0 / 0·0·0 | 0 / 0 / 0·0·0 | none |
+| slack-ask-before-meeting | 0 / 1 / 1·1·2 | 0 / 3 / 2·2·2 | interruptions 1 → 3 |
+| handle-after-lunch | 6 / 0 / 1·1·1 | 0 / 0 / 2·2·2 | redlines told 0/3 → 3/3; redlines+again told 0/3 → 3/3 |
+| security-two-days | 6 / 0 / 1·1·1 | 0 / 0 / 2·2·2 | key told 0/3 → 3/3; key+again told 0/3 → 3/3 |
+| cap-exhaustion | 3 / 0 / 2·2·2 | 0 / 0 / 4·4·4 | outage told 0/3 → 3/3 |
+| noise-and-one-risk | 0 / 0 / 1·1·1 | 0 / 0 / 1·1·1 | none |
+| calendar-change-conflict | 0 / 0 / 1·1·1 | 1 / 0 / 1·1·0 | moved told 3/3 → 2/3 |
+| commitment-due | 0 / 0 / 1·1·1 | 1 / 0 / 1·1·0 | deck told 3/3 → 2/3 |
+| update-and-handled | 0 / 0 / 1·1·1 | 0 / 0 / 1·1·1 | none |
+| review-blocks-release | 3 / 0 / 1·1·1 | 0 / 1 / 2·3·2 | pr812-blocker told 0/3 → 3/3; interruptions 0 → 1 |
+| asked-not-to | 0 / 0 / 0·0·0 | 0 / 0 / 0·0·0 | none |
+
+Tokens per check (average):
+
+| | Calls | Input | Cached input | Output |
+| --- | --- | --- | --- | --- |
+| Old: one turn | 3.8 | 6,666 | 5,412 | 684 |
+| New: step 1, the check | 5.7 | 24,894 | 19,672 | 2,093 |
+| New: step 2, the message (58 of 144 checks) | 1.0 | 1,055 | 0 | 373 |
+
+The remaining interruptions: two "Update: the SOW is still outstanding" messages after its noon deadline, three
+"Priya's promised seat counts haven't arrived before the call" on the first check (the default brief asks for
+commitments made to you, so arguably right; scored strictly), and one routine typo issue. The old prompts' misses are
+mostly a fixed rhythm that sees things late (a 3:05 PM outage before its next 5 PM pass), one message per pass, and no
+second day "still unresolved".
+
+How the new pipeline moved while the wording was tuned (3 runs each; the harness fixes noted were applied to both
+pipelines in the final run):
+
+| | Spec as written (v0) | v1 | v2 | Final (v3) |
+| --- | --- | --- | --- | --- |
+| Missed important (of 42) | 12 | 7 | 9 | 2 |
+| Unwanted interruptions | 31 | 12 | 6 | 6 |
+| Correct silence | 5/6 | 5/6 | 6/6 | 6/6 |
+| Messages | 64 | 56 | 51 | 58 |
+| Checks where step 2 ran | 124 of 175 | 60 of 147 | 58 of 142 | 58 of 144 |
+
+Harness fixes along the way: both pipelines start as an established agent that last read sources the evening before
+(v0 started as "never read yet", which hid yesterday evening's email); the commitment-due scenario's end-of-day
+deadline must be told by 2 PM, not 10 AM (v1); the PR #812 scenario requires the release-blocker escalation and lets
+the review request itself be mentioned (v2); Slack search returns thread replies as messages, as Slack does (v3).
 
 ## Prompt changes
 
-Filled in below after the runs.
+Every wording change from the spec, with the failure it fixed (v0 → final):
+
+| Where | Change | Why (what the evals showed) |
+| --- | --- | --- |
+| Step 1, Finish | Write each id as `<source>:<id>` (the source as the wake lists it, the id as the tool returned it), the same every time | Ids like `GitHub:41`, `GitHub alert:41`, `github:acme/robot-api#41` defeated told-once and the once-a-day update rule; some P0 messages were dropped for naming no source the check read |
+| Step 2, JSON | Copy each finding's ids into `about` exactly | Same |
+| Step 1, Decide | A finding you already *told* them about (the check lists what you sent) counts again only if it changed, or is still open on a later day or past a handle-by time; one you reported but couldn't send still counts | Step 1 re-reported unchanged findings every check (step 2 ran in 71% of checks) and chased them with extra checks |
+| Step 2, What to send | "Still unresolved" is for something you told them on an earlier day; earlier today goes again only if it changed | Most of the 26 repeats were same-day "Still unresolved" |
+| Step 1, request_check | Only when something they'd need to know could change by then; not to see whether they acted | Up to three extra checks a day spent re-checking whether the member acted |
+| Step 1, P1 | Something the brief asks about that they can still act on is at least P1 the first time, even if its date is weeks away | The spec's own example (a bandwidth allowance running out around Nov 10) was rated P2 in 9 of 9 runs |
+| Step 1, Decide | Something missing (no agenda, no prep notes) isn't a finding by itself | First checks sent "no agenda found" messages |
+| Step 1, Finish | The report has every finding still to tell, new ones and ones from the last report that weren't sent | A P1 the messenger held was dropped at the next check, which reads only what's new |
+| Step 2, P1 | The moment it matters is when they'd have to act, not when the event is | A 3 PM conflict found at 10 AM, or a deck promised for end of day, was held until early afternoon |
+
+Data Den adds to the check prompt (not wording of the spec): what it sent since yesterday (when, `about` ids, the
+lead) and the last report it handed the messenger. Without them step 1 can't know what reached the member.

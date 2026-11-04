@@ -12,9 +12,9 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-/** A fixed-offset zone where it is about 1 PM now, so the member's day has checks behind it and ahead of it. */
-function earlyAfternoonZone(now: number) {
-  let offset = 13 - new Date(now).getUTCHours();
+/** A fixed-offset zone where it is 12-something now, so the member's day has checks behind it and ahead of it. */
+function noonZone(now: number) {
+  let offset = 12 - new Date(now).getUTCHours();
   if (offset > 14) offset -= 24;
   if (offset < -12) offset += 24;
   return offset === 0 ? "Etc/GMT" : offset > 0 ? `Etc/GMT-${offset}` : `Etc/GMT+${-offset}`;
@@ -86,13 +86,12 @@ export async function workbotAgentBriefWorld(seed: Seed) {
 
     // The member's agent as this morning's checks left it, with an extra check it asked for at 1:45 PM.
     const now = Date.now();
-    const timeZone = earlyAfternoonZone(now);
+    const timeZone = noonZone(now);
+    // Noon, the 12 PM check; the agent asked for an extra one at 1:45 PM, before the 2 PM check.
     const hourStart = Math.floor(now / HOUR_MS) * HOUR_MS;
-    const lastCheck = hourStart - HOUR_MS;
-    // 1:45 PM before a 2 PM meeting, or 2:45 PM before a 3 PM one when the proof runs late in the hour.
-    const early = hourStart + 45 * 60_000 > now + 10 * 60_000;
-    const requested = early ? hourStart + 45 * 60_000 : hourStart + 105 * 60_000;
-    const why = `before your ${early ? "2" : "3"} PM with Northwind Labs`;
+    const lastCheck = hourStart;
+    const requested = hourStart + 105 * 60_000;
+    const why = "before your 2 PM with Northwind Labs";
     const state = {
       v: 1, calendar: null, lastLook: { calendar: lastCheck, email: lastCheck, chat: lastCheck }, lastPassAt: lastCheck, nextPassAt: lastCheck + 2 * HOUR_MS, woke: [], notices: {},
       requests: [{ at: requested, why, requestedAt: lastCheck }],
@@ -103,9 +102,9 @@ export async function workbotAgentBriefWorld(seed: Seed) {
       [memberId, organizationId, timeZone, encryptForDen(JSON.stringify(state)), sqlTime(now + 6 * HOUR_MS), sqlTime(now - 3 * 24 * HOUR_MS), sqlTime(now)],
     );
     const checks: [string, number, string, string, string, string, string | null][] = [
-      ["first", hourStart - 5 * HOUR_MS + 60_000, "morning", "sent", "sent", "Sent you 2 messages from Gmail and Slack.", JSON.stringify({ channelId: "D0FIXTURE", messageTs: "1700000000.000100", permalink: "https://example.slack.com/archives/D0FIXTURE/p1700000000000100" })],
-      ["ten", hourStart - 3 * HOUR_MS + 60_000, "scheduled", "quiet", "no_findings", "Stayed quiet: nothing needed you.", null],
-      ["noon", lastCheck + 60_000, "scheduled", "quiet", "findings_held", "Stayed quiet: found something that can wait for a later check.", null],
+      ["first", hourStart - 4 * HOUR_MS + 60_000, "morning", "sent", "sent", "Sent you 2 messages from Gmail and Slack.", JSON.stringify({ channelId: "D0FIXTURE", messageTs: "1700000000.000100", permalink: "https://example.slack.com/archives/D0FIXTURE/p1700000000000100" })],
+      ["ten", hourStart - 2 * HOUR_MS + 60_000, "scheduled", "quiet", "no_findings", "Stayed quiet: nothing needed you.", null],
+      ["noon", lastCheck, "scheduled", "quiet", "findings_held", "Stayed quiet: found something that can wait for a later check.", null],
     ];
     for (const [key, at, kind, outcome, reason, summary, message] of checks) {
       await queryDenDatabase(

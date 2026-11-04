@@ -24,9 +24,14 @@ function escape(text: string) {
 /** Slack mrkdwn as Slack shows it: `<url|label>` links, *bold*, line breaks. */
 function mrkdwn(text: string) {
   return escape(text)
-    .replace(/&lt;(https?:\/\/[^|&]+)\|([^&]+?)&gt;/g, '<a href="$1">$2</a>')
+    .replace(/&lt;(https?:\/\/[^|\s]+?)\|(.+?)&gt;/g, '<a href="$1">$2</a>')
     .replace(/(^|\s)\*([^*\n]+)\*(?=\s|$|[.,])/g, "$1<b>$2</b>")
     .replaceAll("\n", "<br>");
+}
+
+/** Characters a reader sees: links as their labels. */
+function visibleLength(text: string) {
+  return text.replace(/<(https?:\/\/[^|>\s]+)\|([^>]+)>/g, "$2").length;
 }
 
 function clock(at: number) {
@@ -61,7 +66,8 @@ for (const scenario of scenarios) {
   </style><header>Workbot DM <span>${escape(scenario)}, first run of each</span></header><main>${column("Old prompts", old)}${column("New pipeline", neu)}</main>`;
   const file = join(outDir, `${scenario}.html`);
   writeFileSync(file, html);
-  const height = 120 + Math.max(old.length, neu.length, 1) * 170;
+  const longest = Math.max(...[old, neu].map((list) => list.reduce((sum, message) => sum + 50 + Math.ceil(visibleLength(message.text) / 78) * 22, 0)), 60);
+  const height = 110 + longest;
   execFileSync(CHROME, ["--headless=new", "--disable-gpu", "--hide-scrollbars", `--window-size=1280,${height}`, `--screenshot=${join(outDir, `${scenario}.png`)}`, `file://${file}`], { stdio: "ignore" });
   console.log(`${scenario}: ${old.length} old, ${neu.length} new → ${join(outDir, `${scenario}.png`)}`);
 }
