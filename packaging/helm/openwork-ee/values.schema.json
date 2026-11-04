@@ -131,6 +131,16 @@
               ],
               "description": "Desktop: agents ask and keep working: Agents ask in chat instead of ending a turn to wait for your reply. A question that the rest of the work does not depend on stays open while the agent keeps going, and your answer reaches it even after its turn has ended. Renders DEN_FEATURE_AGENT_QUESTIONS."
             },
+            "steadyLiveTurn": {
+              "enum": [
+                "",
+                "true",
+                "false",
+                true,
+                false
+              ],
+              "description": "Desktop: steady chat while a reply runs: While a reply runs, its steps and messages stay in the order they arrive and the chat keeps its place: nothing jumps and no empty gap opens between steps. The steps fold into “Worked for…” once the reply finishes. Turning this off restores the previous live layout. Renders DEN_FEATURE_STEADY_LIVE_TURN."
+            },
             "administratorRecovery": {
               "enum": [
                 "",
