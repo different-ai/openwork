@@ -8,6 +8,7 @@ import type { DenTypeId } from "@openwork-ee/utils/typeid"
 import { env } from "../../env.js"
 import { organizationFeatureEnabled } from "../../features.js"
 import { markFeaturesUsed } from "../../feature-usage.js"
+import { workingLocationPropertiesSchema } from "../../capability-sources/google-calendar-working-location.js"
 import { buildCalendarEventPayload, calendarRecurrenceMatches, createCalendarEventBodySchema } from "../../capability-sources/google-calendar-events.js"
 import { cloudTransportRoute, jsonValidator, orgMemberRoute, paramValidator, queryValidator } from "../../middleware/index.js"
 import { invalidRequestSchema, jsonResponse, unauthorizedSchema } from "../../openapi.js"
@@ -232,6 +233,8 @@ const calendarEventParamSchema = z.object({
 })
 
 const calendarEventSchema = z.object({
+  eventType: z.string().nullable().describe("Google event type, e.g. default or workingLocation."),
+  workingLocationProperties: workingLocationPropertiesSchema.nullable(),
   id: z.string(),
   summary: z.string(),
   description: z.string(),

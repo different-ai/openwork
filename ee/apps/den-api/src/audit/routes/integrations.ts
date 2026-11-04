@@ -90,6 +90,7 @@ export const integrationsAuditRoutes: readonly AuditRouteDeclaration[] = [
   external("POST", `${GW}/gmail-message/:messageId/untrash`, "capability.gmail.message.untrash", GWK, res("gmail_message", "messageId"), GOOGLE, CAP),
   access("GET", `${GW}/calendar-events`, "capability.google_calendar.event.list", GWK, res("google_calendar_event"), CAP_CONTENT),
   access("GET", `${GW}/calendar-events/:eventId`, "capability.google_calendar.event.read", GWK, res("google_calendar_event", "eventId"), CAP_CONTENT),
+  external("POST", `${GW}/calendar-working-location`, "capability.google_calendar.working_location.set", GWK, res("google_calendar_event"), GOOGLE, `${CAP} Sets all-day working locations; updates only expanded instances, never the series. No attendees or notifications.`),
   external("POST", `${GW}/calendar-events`, "capability.google_calendar.event.create", GWK, res("google_calendar_event"), GOOGLE, `${CAP} Creates a one-time event or recurring meeting series; may send invitations to attendees.`),
   external("PATCH", `${GW}/calendar-events/:eventId`, "capability.google_calendar.event.update", GWK, res("google_calendar_event", "eventId"), GOOGLE, `${CAP} Edits one occurrence or the whole recurring series by ID, including recurrence; may notify attendees; response echoes event incl. attendees.`),
   external("PATCH", `${GW}/calendar-event/:eventId`, "capability.google_calendar.event.meet.add", GWK, res("google_calendar_event", "eventId"), GOOGLE, `${CAP} Adds a Google Meet conference.`),

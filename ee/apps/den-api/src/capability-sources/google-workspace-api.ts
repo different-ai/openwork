@@ -1,5 +1,7 @@
 import { truncateText } from "./binary-content.js"
 import { Parser } from "htmlparser2"
+import { workingLocationPropertiesSchema } from "./google-calendar-working-location.js"
+import type { z } from "zod"
 import { sanitizeGmailQuoteHtml, type GmailDraftQuote } from "./gmail.js"
 
 export { truncateText } from "./binary-content.js"
@@ -42,6 +44,8 @@ export type GoogleWorkspaceCalendarEvent = {
   meetLink: string | null
   recurringEventId: string | null
   recurrence: string[] | null
+  eventType: string | null
+  workingLocationProperties: z.infer<typeof workingLocationPropertiesSchema> | null
 }
 
 export type GoogleWorkspaceDriveFile = {
@@ -402,6 +406,9 @@ export function extractCalendarEvents(json: unknown): GoogleWorkspaceCalendarEve
       htmlLink: readString(item, "htmlLink"),
       attendees,
       meetLink: calendarEventMeetLink(item),
+      eventType: readString(item, "eventType") || null,
+      workingLocationProperties: readString(item, "eventType") === "workingLocation"
+        ? workingLocationPropertiesSchema.safeParse(item.workingLocationProperties).data ?? null : null,
       recurringEventId: readString(item, "recurringEventId") || null,
       recurrence: Array.isArray(item.recurrence) ? item.recurrence.filter((line): line is string => typeof line === "string") : null,
     })
