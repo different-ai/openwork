@@ -1962,8 +1962,7 @@ export async function proxyOpencodeRequest(input: Parameters<typeof forwardOpenc
     const path = decodeURIComponent(input.proxyPath ?? input.url.pathname);
     const chatMutation = /\/(?:session|experimental\/session)(?:\/|$)/.test(path)
       && !/\/session\/[^/]+\/abort\/?$/.test(path);
-    if (chatMutation && input.workspace?.workspaceType !== "remote" && !hasExternalOpencode(input.config)
-      && await originalHistoryUsesV2(input.config)) {
+    if (chatMutation && !hasExternalOpencode(input.config) && await originalHistoryUsesV2(input.config)) {
       throw new ApiError(409, "engine_v1_history_adopted", "This history is owned by OpenCode v2. Continue the chat on v2 so new messages stay readable.");
     }
     return await forwardOpencodeRequest(input);

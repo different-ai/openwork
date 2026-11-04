@@ -141,7 +141,7 @@ try {
   await until(models, rows => rows.some(model => model.name === "Live initial") && !rows.some(model => model.id === "gwm_legacy"), "managed Gateway is live on startup");
   assert.equal(engine?.status().liveProviderSync, true);
   assert.ok(!engine?.status().mirroredProviderIds.includes(gatewayID));
-  assert.ok(engine?.status().mirroredProviderIds.includes(legacyID));
+  await until(async () => engine?.status().mirroredProviderIds ?? [], ids => ids.includes(legacyID), "local-provider mirror settles independently of the live Gateway catalog");
   const beforeConfig = await generatedConfig();
   const parsed: unknown = JSON.parse(beforeConfig);
   assert.ok(record(parsed) && record(parsed.providers));
