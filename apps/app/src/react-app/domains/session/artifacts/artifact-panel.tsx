@@ -17,7 +17,8 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip
 import { usePlatform } from "@/react-app/kernel/platform";
 import { type ArtifactPanelTab, usePanelTabStore } from "../panel/panel-tab-store";
 import { isCollectibleArtifactTarget, openTargetFromWorkspaceFile, type BinaryData, type Data, type OpenTarget, type TextData } from "./open-target";
-import { HTMLPreview, ImagePreview, MarkdownPreview, PdfPreview, PlainText, PreviewError, PreviewLoading, PreviewUnavailable } from "./preview";
+import { MAX_OFFICE_PREVIEW_BYTES, readOfficePreview, type OfficePreview } from "./office-preview";
+import { HTMLPreview, ImagePreview, MarkdownPreview, OfficePreviewView, PdfPreview, PlainText, PreviewError, PreviewLoading, PreviewUnavailable, type PreviewLoadingShape } from "./preview";
 
 const ArtifactTextEditor = lazy(() =>
   import("./artifact-text-editor").then((module) => ({ default: module.ArtifactTextEditor })),
@@ -57,12 +58,35 @@ type ArtifactPanelViewProps = {
 
 type ArtifactQueryState =
   | (TextData & { updatedAt: number | null })
-  | (BinaryData & { contentType: string | null; updatedAt: number | null });
+  | (BinaryData & { contentType: string | null; updatedAt: number | null })
+  | { kind: "office"; preview: OfficePreview; updatedAt: number | null }
+  | { kind: "unavailable"; reason: string; updatedAt: number | null };
+
+/** Keep a closed tab's content for a few minutes so reopening it is instant. */
+const ARTIFACT_CACHE_MS = 5 * 60_000;
 
 type SaveArtifactInput = Data & { baseUpdatedAt: number | null };
 
 function isTextContent(target: OpenTarget): boolean {
   return ["markdown", "code", "text", "sheet", "html"].includes(target.preview) && !/\.(xlsx|xls|ods)$/i.test(target.value);
+}
+
+/** Word and PowerPoint files the panel can read as text. Other Office formats open externally. */
+function officePreviewKind(target: OpenTarget): "document" | "slides" | null {
+  if (target.preview === "document" && /\.docx$/i.test(target.value)) return "document";
+  if (target.preview === "slides" && /\.pptx$/i.test(target.value)) return "slides";
+  return null;
+}
+
+/** Binary previews the panel renders itself. Anything else is never downloaded. */
+function hasBinaryRenderer(target: OpenTarget): boolean {
+  return ["image", "pdf", "sheet", "html"].includes(target.preview) || officePreviewKind(target) !== null;
+}
+
+function loadingShape(target: OpenTarget): PreviewLoadingShape {
+  if (target.preview === "sheet") return "sheet";
+  if (target.preview === "image" || target.preview === "pdf") return "media";
+  return "document";
 }
 
 export function ArtifactPanel({ sessionId, tab, client, workspaceId, workspaceRoot, onOpenTarget, isLocalWorkspace, onClose }: ArtifactPanelProps) {
@@ -137,14 +161,32 @@ function ArtifactPanelView({ sessionId, client, workspaceId, workspaceRoot, targ
         return { kind: "text", data: result.content, updatedAt: result.updatedAt ?? null };
       }
 
+      // Don't download a file only to say it can't be shown.
+      if (!hasBinaryRenderer(target)) {
+        return { kind: "unavailable", reason: "This file can't be previewed here.", updatedAt: target.updatedAt ?? null };
+      }
+
+      const officeKind = officePreviewKind(target);
+      if (officeKind && typeof target.size === "number" && target.size > MAX_OFFICE_PREVIEW_BYTES) {
+        return { kind: "unavailable", reason: "This file is too large to preview.", updatedAt: target.updatedAt ?? null };
+      }
+
       const result = await client.downloadWorkspaceFile(workspaceId, target.value, { sessionId, fileScope: target.fileScope });
+
+      if (officeKind) {
+        try {
+          return { kind: "office", preview: await readOfficePreview(officeKind, result.data), updatedAt: target.updatedAt ?? null };
+        } catch {
+          return { kind: "unavailable", reason: "This file can't be previewed here.", updatedAt: target.updatedAt ?? null };
+        }
+      }
 
       return { kind: "binary", data: result.data, contentType: result.contentType, updatedAt: target.updatedAt ?? null };
     },
     refetchOnReconnect: false,
     refetchOnWindowFocus: false,
     staleTime: Infinity,
-    gcTime: 0,
+    gcTime: ARTIFACT_CACHE_MS,
   });
 
   const [binaryObjectUrl, setBinaryObjectUrl] = useState<string | null>(null);
@@ -394,7 +436,7 @@ function ArtifactPanelView({ sessionId, client, workspaceId, workspaceRoot, targ
         ) : null}
         <div className="min-w-0 flex-1 overflow-hidden">
           {isLoading || (data?.kind === "binary" && !binaryObjectUrl) ? (
-          <PreviewLoading />
+          <PreviewLoading shape={loadingShape(target)} />
         ) : isError ? (
           <PreviewError message={error instanceof Error ? error.message : "Failed to load artifact" } />
         ) : data?.kind === "text" && (editing || isDirectTextEdit) ? (
@@ -402,7 +444,7 @@ function ArtifactPanelView({ sessionId, client, workspaceId, workspaceRoot, targ
         ) : target.preview === "markdown" && data?.kind === "text" ? (
           <MarkdownPreview content={data.data} mermaidSource={isMermaidArtifact} />
         ) : target.preview === "code" && data?.kind === "text" ? (
-          <Suspense fallback={<PreviewLoading />}>
+          <Suspense fallback={<PreviewLoading shape="document" />}>
             <ArtifactCodeView
               name={target.name}
               path={target.value}
@@ -411,6 +453,10 @@ function ArtifactPanelView({ sessionId, client, workspaceId, workspaceRoot, targ
               onChange={setDraft}
             />
           </Suspense>
+        ) : data?.kind === "unavailable" ? (
+          <PreviewUnavailable reason={data.reason} onOpenExternally={canUseDesktopFileActions ? () => void openExternal() : undefined} />
+        ) : data?.kind === "office" ? (
+          <OfficePreviewView preview={data.preview} onOpenExternally={canUseDesktopFileActions ? () => void openExternal() : undefined} />
         ) : target.preview === "sheet" ? (
           <SheetEditor
             name={target.name}
@@ -429,7 +475,7 @@ function ArtifactPanelView({ sessionId, client, workspaceId, workspaceRoot, targ
         ) : data?.kind === "text" ? (
           <PlainText content={data.data} />
         ) : (
-          <PreviewUnavailable />
+          <PreviewUnavailable onOpenExternally={canUseDesktopFileActions ? () => void openExternal() : undefined} />
           )}
         </div>
       </div>
@@ -445,7 +491,7 @@ interface TextEditorProps extends React.ComponentProps<typeof ArtifactTextEditor
 
 function TextEditor({ value, language, onChange, ...props }: TextEditorProps) {
   return (
-    <Suspense fallback={<PreviewLoading />}>
+    <Suspense fallback={<PreviewLoading shape="document" />}>
       <ArtifactTextEditor value={value} language={language} onChange={onChange} {...props} />
     </Suspense>
   );
@@ -457,7 +503,7 @@ interface SheetEditorProps extends React.ComponentProps<typeof ArtifactSpreadshe
 
 function SheetEditor({ className, ...props }: SheetEditorProps) {
   return (
-    <Suspense fallback={<PreviewLoading />}>
+    <Suspense fallback={<PreviewLoading shape="sheet" />}>
       <ArtifactSpreadsheetEditor
         className={className}
         {...props}
