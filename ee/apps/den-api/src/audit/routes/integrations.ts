@@ -299,6 +299,9 @@ export const integrationsAuditRoutes: readonly AuditRouteDeclaration[] = [
 
   // MCP connections
   read("/v1/mcp-apps", "mcp_app.catalog.list", "mcp_app.catalog", res("mcp_app")),
+  read("/v1/public-apps", "public_app.list", "public_app.configuration", res("public_app")),
+  change("PUT", "/v1/public-apps/:appId", "public_app.publish", "public_app.configuration", res("public_app", "appId"), "Owner or admin who can edit the App; pins its current revision at a public MCP URL that needs no sign-in. Apps with tools are refused."),
+  change("DELETE", "/v1/public-apps/:appId", "public_app.unpublish", "public_app.configuration", res("public_app", "appId"), "Stops serving the public URL at once; the App is unchanged."),
   read("/v1/mcp-connections", "mcp_connection.list", MCP, res("mcp_connection")),
   read("/v1/mcp-connections/presets", "mcp_connection.preset.list", MCP, res("mcp_connection_preset")),
   read("/v1/mcp-connections/:connectionId", "mcp_connection.read", MCP, res("mcp_connection", "connectionId")),

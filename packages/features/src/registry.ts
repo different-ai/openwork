@@ -159,6 +159,17 @@ export const FEATURES = defineFeatures({
     deployments: everywhere,
     default: false,
   },
+  publicApps: {
+    label: "Apps: publish an App publicly",
+    description: "Organization owners and admins publish an App built in OpenWork at a public MCP URL that anyone can add to an MCP client without signing in to OpenWork. A published App shows the revision it was published with and runs no tools.",
+    category: "experience",
+    added: "2026-11-03",
+    since: "2026-11",
+    author: "reachjalil",
+    docs: "docs/features/public-apps/README.md",
+    deployments: everywhere,
+    default: false,
+  },
   composerBackgroundTasks: {
     label: "Desktop: background tasks on the composer",
     description: "Commands the agent leaves running in the background are listed on top of the composer, under the Agents list, with how long each has run, instead of a count in the chat.",

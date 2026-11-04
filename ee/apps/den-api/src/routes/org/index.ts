@@ -18,6 +18,7 @@ import type { OrgRouteVariables } from "./shared.js"
 import { registerOrgCoreRoutes } from "./core.js"
 import { registerOrgServiceReadinessRoutes } from "./service-readiness.js"
 import { registerOrgMcpAppCatalogRoutes } from "./mcp-app-catalog.js"
+import { registerOrgPublicAppRoutes } from "./public-apps.js"
 import { registerDeleteOrganizationRoutes } from "./delete-organization.js"
 import { registerOrgDiagnosticsRoutes } from "./diagnostics.js"
 import { registerOrgDesktopPolicyRoutes } from "./desktop-policies.js"
@@ -91,6 +92,7 @@ export function registerOrgRoutes<T extends { Variables: OrgRouteVariables & Req
   registerOrgWorkflowRunRoutes(app)
   registerOrgWorkflowRoutes(app)
   registerOrgMcpAppCatalogRoutes(app)
+  registerOrgPublicAppRoutes(app)
   registerOrgDesktopPolicyRoutes(app)
   registerOrgAgentPermissionRoutes(app)
   registerOrgEgressDiagnosticRoutes(app)
