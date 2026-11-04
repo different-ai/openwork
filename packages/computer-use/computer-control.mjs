@@ -191,7 +191,7 @@ function deadline(ms) {
  * @typedef {{ isError?: boolean, content: Array<{ type: string, text?: string, data?: string, mimeType?: string }> }} ComputerResult
  * @typedef {{ sessionId?: string }} ChatInput
  * @typedef {{ ok?: boolean, error?: { code: string, message: string }, mayHaveActed?: boolean, [key: string]: unknown }} ScriptResult
- * @typedef {{ id: string, reason: "setup" | "script" | "files" | "credential" | "typing", computer: string, placement: "local" | "remote", detail?: string, appId?: string, purpose?: string, standing?: boolean, script?: { app: string, code: string }, files?: { app: string, names: string[] }, credential?: { site?: string, app?: string, appId?: string }, typing?: { app: string, appId: string } }} ComputerRequest
+ * @typedef {{ id: string, reason: "setup" | "script" | "files" | "credential", computer: string, placement: "local" | "remote", detail?: string, appId?: string, purpose?: string, standing?: boolean, script?: { app: string, code: string }, files?: { app: string, names: string[] }, credential?: { site?: string, app?: string, appId?: string } }} ComputerRequest
  * @typedef {{ targets?: Record<string, string>, computer?: string }} SavedChoices
  * @typedef {{
  *   callTool: (name: string, args: Record<string, unknown>, options?: { signal?: AbortSignal, timeoutMs?: number }) => Promise<ComputerResult>,
@@ -349,14 +349,15 @@ export function createComputerControl({ adapters, runProgram, runScript, onTimin
     try { onTiming(grant.sessionId, timing.last); } catch { /* Reporting never affects the step. */ }
   }
   /**
-   * Shows the full script in the chat and waits for Run, Always run for this app, or
-   * Don't run. Stop, turning computer use off and the call's own cancellation answer no.
+   * Shows the full script in the chat and waits for Run or Don't run: only for an
+   * organization that asks before each script, so nothing is remembered. Stop, turning
+   * computer use off and the call's own cancellation answer no.
    * @returns {Promise<"allow" | "always" | "dismiss" | "aborted" | "timeout">}
    */
-  function approveScript(grant, app, code, signal, approveEachScript = false) {
+  function approveScript(grant, app, code, signal) {
     const target = targetFor(grant);
     return approve(grant, { id: randomUUID(), reason: /** @type {const} */ ("script"), computer: target.label, placement: target.placement,
-      ...(approveEachScript ? { standing: false } : {}), script: { app, code } }, signal);
+      standing: false, script: { app, code } }, signal);
   }
   /**
    * Shows which files an app or page is about to receive and waits for Send, Always
@@ -403,25 +404,6 @@ export function createComputerControl({ adapters, runProgram, runScript, onTimin
     const answer = await approve(grant, { id: randomUUID(), reason: /** @type {const} */ ("credential"), computer: target.label, placement: target.placement,
       ...(site ? { credential: { site } } : { standing: false, credential: { app: shown, appId: app } }) }, signal);
     if (site && answer === "always") (grant.credentialsAlwaysFor ??= new Set()).add(site);
-    return answer;
-  }
-  /**
-   * The agent is about to type into an app's own editor that accessibility cannot name
-   * as a text field. Design, photo, video and music apps take canvas text without asking;
-   * for any other app the person allows it here, and "Always" covers it for the rest of
-   * this chat. Passwords never go this way.
-   * @param {{ app: string, label: string }} recipient
-   * @returns {Promise<"allow" | "always" | "dismiss" | "aborted" | "timeout" | "busy" | "too_many">}
-   */
-  async function approveTyping(grant, recipient, signal) {
-    const { app, label } = recipient;
-    if (!app || app.length > 200 || !label || label.length > 200) return "too_many";
-    if (grant.typingAlwaysFor?.has(app)) return "always";
-    if (scriptRequests.has(grant.sessionId)) return "busy";
-    const target = targetFor(grant);
-    const answer = await approve(grant, { id: randomUUID(), reason: /** @type {const} */ ("typing"), computer: target.label, placement: target.placement,
-      typing: { app: label, appId: app } }, signal);
-    if (answer === "always") (grant.typingAlwaysFor ??= new Set()).add(app);
     return answer;
   }
   function canonicalBrowserSite(site) {
@@ -1457,12 +1439,13 @@ export function createComputerControl({ adapters, runProgram, runScript, onTimin
       if (scriptRequests.has(grant.sessionId) || [...scripts].some((script) => script.sessionId === grant.sessionId)) return { ok: false, error: { code: "script_busy", message: "A script is already waiting or running in this chat." } };
       const generation = featureGeneration;
       const revision = grant.revision;
-      // The person sees the whole script here, in OpenWork, before it runs; an engine-side
-      // prompt is not enough because anything holding the bridge token can reach this call.
-      if (approveEachScript || !grant.scriptApps?.has(input.app)) {
-        const answer = await approveScript(grant, input.app, input.code, signal, approveEachScript);
-        if (answer === "always" && !approveEachScript) (grant.scriptApps ??= new Set()).add(input.app);
-        else if (answer !== "allow" && answer !== "always") {
+      // Computer use on for this chat lets its agent run app scripts, as it lets it click and
+      // type. An organization that asks before each script gets the whole script here, in
+      // OpenWork: an engine-side prompt is not enough because anything holding the bridge
+      // token can reach this call.
+      if (approveEachScript) {
+        const answer = await approveScript(grant, input.app, input.code, signal);
+        if (answer !== "allow" && answer !== "always") {
           return { ok: false, error: { code: "script_declined", message: answer === "dismiss"
             ? "The person chose not to run this script. Nothing ran. Continue another way or ask what they want."
             : "The script was not approved in time, or computer use stopped. Nothing ran." } };
@@ -1604,21 +1587,6 @@ export function createComputerControl({ adapters, runProgram, runScript, onTimin
           else {
             limit.dispose(); limit = deadline(operationMs);
             call.args = { ...call.args, credential_approval: app };
-            result = await run(call, signal, limit);
-          }
-        }
-        // No observed text field has the keyboard: the person allows typing into this app's
-        // own editor, then the same step is sent once more with that approval.
-        if (name === "computer_act" && stateOf(result)?.code === "typing_approval_required" && stateOf(result)?.dispatched === false) {
-          const typing = stateOf(result);
-          const app = typeof typing.app_id === "string" ? typing.app_id : "";
-          const answer = secret ? "secret" : !app ? "too_many"
-            : await approveTyping(grant, { app, label: typeof typing.app === "string" ? typing.app : app }, signal);
-          if (answer === "secret") result = failure("protected_input", "A password or code goes only into a field the computer can identify. Nothing was sent.");
-          else if (!["allow", "always"].includes(answer)) result = failure("typing_declined", "The person did not allow typing into this app's editor. Nothing was sent; ask them, or use the app's controls.");
-          else {
-            limit.dispose(); limit = deadline(operationMs);
-            call.args = { ...call.args, typing_approval: app };
             result = await run(call, signal, limit);
           }
         }
