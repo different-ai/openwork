@@ -444,9 +444,38 @@ command for it when the menus list one. Otherwise it goes to the app's key
 window, as a person's would: only a chord the key list allows (never a blocked
 one), only while the selected window is the app's focused window and whatever
 has the keyboard is inside it, and never while a secure field has it or macOS
-reports secure input. Plain keys, Option keys, Delete and Enter still need an
-observed field or control; single letters are tool keys in design, photo,
-video and music apps.
+reports secure input. Single letters are tool keys in design, photo, video and
+music apps. A key may also be written as one chord (`"command+n"`,
+`"u+shift"`). Any other Command letter or digit shortcut, such as Command-N,
+runs only as the menu command the app lists for it, and is refused when the
+menus list none; blocked chords stay blocked however they are written.
+
+Editing a value is done as a person does it, with real key presses. In design,
+photo, video and music apps (by the category the app declares), an editing key
+(Return, Enter, Escape, Tab, Backspace, Delete, arrows, Home/End and Page
+Up/Down, with Shift, Option or Command) goes to whatever has the keyboard in
+the selected window when no observed text field has it: the value fields,
+steppers and canvases these apps draw themselves. It is the key-window check
+above: never a secure field or secure input, and the focus must be inside that
+window. In other apps Delete on a focused list row can delete a message or a
+file, so plain keys still need an observed field or control there. In any app,
+after the batch's own click, double-click or triple-click, `type` and editing
+keys go to what that click gave the keyboard (a field editor included), checked
+as canvas typing is: before every character, never a secure field, and Delete
+or Backspace only into editable text. So `click, key command+a, type "120",
+key enter` is one batch.
+
+`{ type: "enter_value", ref, text, commit }` (`commit` is `enter` by default,
+or `tab` or `none`) enters a value in one step: it gives the field the keyboard
+(accessibility focus, or a click on it when the app ignores that), selects all
+(accessibility, or Command-A), types and commits. It refuses a secure field.
+The helper reads the value back and reports only `value_applied`,
+`value_not_applied` or `value_unconfirmed`, never the value. The agent is told
+to use it when `set_value` returns `value_not_applied`.
+
+A key, typing or pointer step in an assist or observe session is refused with
+`scope_denied`, naming the session's mode and saying to open the app again in
+control mode, the default.
 
 `{ type: "arrange", layout }` moves and resizes the session's own window on the
 screen it is on, so two apps can sit side by side without the Window menu:

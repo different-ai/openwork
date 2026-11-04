@@ -763,7 +763,7 @@ final class SessionRuntime {
             session?.filePanelAllowed = current.target.id
         }
         guard current.mode != .observe, !actions.contains(where: \.requiresControl) || current.mode == .control else {
-            throw UseError("scope_denied", "This action is outside the selected mode. Close the session and open the needed mode.", next: "open_session")
+            throw current.mode.refusal(actions)
         }
         if current.actionCount + actions.count > 200 { session?.actionCount = 0 }
         if current.receipts.count >= 200, let oldest = current.receipts.keys.first {
@@ -951,6 +951,9 @@ final class SessionRuntime {
         defer { activity?.stop() }
         let windowsBefore = access.windowChanges(current.app)
         var focus = current.focus
+        // A click of this batch, or its typing into the app's editor, already chose what has the
+        // keyboard: typing and editing keys after it may go there (`BatchContinuation.goesToEditor`).
+        var clicked = false
         var activated = false
         var primed = false
         var needsObservation = false
@@ -971,7 +974,12 @@ final class SessionRuntime {
             do {
                 // A shortcut with no observed field or control to type into, such as Command-S on a
                 // canvas, runs as the app's own menu command for it when there is one.
-                let shortcutMenu = focus == nil ? InputDelivery.menuForShortcut(action, in: access.menuCatalog(current.app).entries) : nil
+                // A Command shortcut outside the key list, such as Command-N, runs only that way.
+                let menuOnly = NativeKey.isMenuShortcut(action)
+                let shortcutMenu = focus == nil || menuOnly ? InputDelivery.menuForShortcut(action, in: access.menuCatalog(current.app).entries) : nil
+                if menuOnly, shortcutMenu == nil, case .key(let key, let flags) = action {
+                    throw UseError("unsupported_key", "\(NativeKey.chord(key, flags)) is not a command in this app's menus, so it was not sent. Observe with menus true to see its shortcuts.", next: "observe")
+                }
                 let action = shortcutMenu.map { Action.menu($0) } ?? action
                 // Drawing: drags in a row are strokes on the same canvas, sent in one call while no
                 // window opens or closes. Each still lands only in the selected window.
@@ -984,14 +992,14 @@ final class SessionRuntime {
                 // when what it needs reads back as a fresh observation would show it.
                 if !followsStrokes, needsObservation || action.usesCoordinates && progress.hasInput {
                     switch try await readyToContinue(action, records: records, current: current, windowsBefore: windowsBefore,
-                        pacing: pacing, background: background, credentialApproval: credentialApproval, check: check) {
+                        pacing: pacing, background: background, credentialApproval: credentialApproval, afterClick: clicked, check: check) {
                     case .stop:
                         throw UseError("observation_required", "The preceding step may have changed the view or focus. Observe before executing the remaining steps.", next: "observe")
                     case .control(let live):
                         if let live, let at = records.firstIndex(where: { $0.ref == live.ref }) { records[at] = live }
                     case .keyboard(let live):
                         focus = live
-                        if live == nil, case .type = action { editorStep = index }
+                        if live == nil { editorStep = index }
                     case .pointer: break
                     }
                     needsObservation = false
@@ -1041,7 +1049,7 @@ final class SessionRuntime {
                     activated = BackgroundFocus.post(pid: current.app.pid, window: current.target.id, makeKey: false)
                     if activated { try await Task.sleep(nanoseconds: UInt64(BackgroundFocus.settle * 1_000_000_000)) }
                 }
-                if background, action.name == "key" || action.name == "type", !primed {
+                if background, ["key", "type", "enter_value"].contains(action.name), !primed {
                     // Keys go to the app's own key window: make it the selected one inside the
                     // app and read it back. Never type into another window of the app.
                     do {
@@ -1057,6 +1065,11 @@ final class SessionRuntime {
                 }
                 try check()
                 try observation.validate(id: observationID, generation: current.generation, frame: bounds, now: now)
+                // After this batch's own click, typing and editing keys with no listed text field go to the app's editor.
+                if editorStep != index, BatchContinuation.goesToEditor(action, afterClick: clicked,
+                    focus: focus.map { ($0.protected, $0.textField) }, credentialGiven: credentialApproval != nil) {
+                    editorStep = index; focus = nil
+                }
                 if resumeText == nil, case .type = action {
                     typedBefore = ""
                     typingStart = focus.flatMap { $0.protected ? nil : PersonPlace.selection($0.element) }
@@ -1086,6 +1099,7 @@ final class SessionRuntime {
                         self.controls.inputFeedback(feedback)
                     })
                 uncertain = path != "waited"
+                if editorStep == index, case .type = action { clicked = true }
                 if case .arrange = action {
                     // Remember the person's frame once, and where this arrange left the window.
                     var placement = session?.placement ?? WindowArrangement.Placement(window: current.target.element, original: bounds)
@@ -1170,6 +1184,10 @@ final class SessionRuntime {
                 case .click:
                     focus = current.records.first { record in record.textField && pointerTarget.map { CFEqual($0, record.element) } == true }
                     needsObservation = focus == nil
+                    clicked = true
+                case .enterValue:
+                    // The value was committed: what has the keyboard now is read again before more keys.
+                    focus = nil; needsObservation = true
                 case .press(let ref):
                     focus = records.first { $0.ref == ref && $0.textField }
                     needsObservation = focus == nil
@@ -1295,7 +1313,8 @@ final class SessionRuntime {
     /// window image where it lands). wait_retry also waits for a control that is briefly
     /// disabled, moving or gone, and returns it as it is now. Anything else needs an observation.
     private func readyToContinue(_ action: Action, records: [ElementRecord], current: Session, windowsBefore: WindowChanges,
-                                 pacing: BatchPacing, background: Bool, credentialApproval: String?, check: () throws -> Void) async throws -> Readiness {
+                                 pacing: BatchPacing, background: Bool, credentialApproval: String?, afterClick: Bool = false,
+                                 check: () throws -> Void) async throws -> Readiness {
         guard policy == .embedded, let need = BatchContinuation.need(action) else { return .stop }
         var observed: ElementRecord?
         if case .control(let ref) = need {
@@ -1324,15 +1343,24 @@ final class SessionRuntime {
                 let focused = live.focusRecord
                 let typing: Bool = { if case .type = action { return true }; return false }()
                 let shortcut: Bool = { if case .key(let key, let flags) = action { return InputDelivery.sendsToKeyWindow(key, flags) }; return false }()
+                // A design app's editing or tool key goes to what has the keyboard in the window, as on the first step.
+                let editingKey: Bool = { if case .key(let key, let flags) = action { return NativeKey.isEditingKey(key, flags) }; return false }()
+                let designKey: Bool = {
+                    guard case .key(let key, let flags) = action, editingKey || NativeKey.isToolKey(key, flags) else { return false }
+                    return InputDelivery.takesToolKeys(info: current.app.app.bundleURL.flatMap { Bundle(url: $0)?.infoDictionary } ?? [:])
+                }()
                 switch BatchContinuation.keyboard(focused: focused.map { ($0.enabled, $0.protected, $0.textField) }, field: field,
                     typing: typing, entersText: action.entersText, secureInput: IsSecureEventInputEnabled(),
                     protectedOnScreen: live.records.contains(where: \.protected) || !live.protectedFrames.isEmpty,
-                    credentialConfirmed: credentialApproval == current.app.bundleID, credentialGiven: credentialApproval != nil, shortcut: shortcut) {
+                    credentialConfirmed: credentialApproval == current.app.bundleID, credentialGiven: credentialApproval != nil, shortcut: shortcut,
+                    designKey: designKey, editingKey: editingKey, afterClick: afterClick) {
                 case .focus: return .keyboard(focused)
                 case .keyWindow where (try? access.checkKeyWindow(target: current.target, app: current.app, requireFront: !background)) != nil:
                     return .keyboard(nil)
-                // The same editor check as typing with no observed field: whatever has the keyboard in this window.
-                case .editor where (try? access.focusedEditor(target: current.target, app: current.app, requireFront: !background)) != nil:
+                // The same editor check as typing with no observed field: whatever has the keyboard in this
+                // window. Delete and Backspace erase only editable text there.
+                case .editor where (try? access.focusedEditor(target: current.target, app: current.app, requireFront: !background))
+                        .map { typing || !field || access.isTextEditor($0) } == true:
                     return .keyboard(nil)
                 case .editor, .keyWindow, .stop: return .stop
                 }

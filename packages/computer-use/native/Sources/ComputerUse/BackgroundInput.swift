@@ -44,6 +44,16 @@ enum InputDelivery: String {
         !flags.isDisjoint(with: [.maskCommand, .maskControl]) && !NativeKey.isBlocked(key, flags) || NativeKey.clipboard.contains(NativeKey.chord(key, flags))
     }
 
+    /// In design, photo, video and music apps an editing key (Return, Tab, Escape, Delete,
+    /// arrows, Home/End, Page Up/Down, with Shift, Option or Command) goes to whatever has the
+    /// keyboard in the selected window when no observed text field has it: the value fields,
+    /// steppers and canvases these apps draw themselves. The key-window check still applies:
+    /// never a secure field or secure input, and the focus must be inside that window.
+    /// Elsewhere Delete on a focused list can delete a message or file, so it needs a field.
+    static func editsInKeyWindow(_ key: String, _ flags: CGEventFlags, designApp: Bool, fieldFocused: Bool) -> Bool {
+        designApp && !fieldFocused && NativeKey.isEditingKey(key, flags)
+    }
+
     /// The menu command an app offers for a Command shortcut, run in its place when no
     /// observed field or control has the keyboard. Only commands the catalog lists, so
     /// blocked chords never reach a menu either.
@@ -60,8 +70,10 @@ enum InputDelivery: String {
     /// Electron and Catalyst apps when this macOS cannot sign them (`signedKeys`).
     static func stepNeedsFront(_ action: Action, route: PointerRoute, signedKeys: Bool = KeyAuthentication.available) -> Bool {
         switch action {
+        // A Command shortcut outside the key list runs only as its menu command, which needs no front.
+        case .key(let key, let flags) where NativeKey.isMenuShortcut(key, flags): return false
         case .key(_, let flags): return flags.contains(.maskCommand) || route == .skyLight && !signedKeys
-        case .type: return route == .skyLight && !signedKeys
+        case .type, .enterValue: return route == .skyLight && !signedKeys
         case .click(_, _, let flags): return !flags.isEmpty
         case .move, .drag, .rightClick, .hold, .saveAs, .openInPanel: return true
         case .showMenu: return false

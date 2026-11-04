@@ -15,7 +15,7 @@ type Observation = Omit<ComputerPresentation, "phase" | "frame"> & {
   frame?: NonNullable<ComputerPresentation["frame"]> & { key: string }
 }
 type Interaction = "takeover" | "resume"
-const inputLabels: Record<string, string> = { move: "Moving", click: "Click", double_click: "Double click", triple_click: "Triple click", drag: "Dragging", scroll: "Scrolling", key: "Key press", type: "Typing", press: "Press", set_value: "Editing" }
+const inputLabels: Record<string, string> = { move: "Moving", click: "Click", double_click: "Double click", triple_click: "Triple click", drag: "Dragging", scroll: "Scrolling", key: "Key press", type: "Typing", press: "Press", set_value: "Editing", enter_value: "Editing" }
 const pausedPhases = ["paused", "person_interacting", "ready_to_continue", "requery_required"]
 
 /** Full window, like the browser's full screen: Escape returns to the floating view. */
