@@ -25,17 +25,17 @@ export function buildAnAppSkillSource(language: CodemodeLanguage): string {
   return `---
 name: build-an-app
 description: |
-  Build or change an App: a small interactive view, such as a dashboard, tracker, lookup, form, or calculator, that opens beside the chat and in any MCP Apps host.
+  Build or change an App, which OpenWork also calls an artifact: a small interactive view, such as a dashboard, tracker, lookup, form, or calculator, that opens beside the chat and in any MCP Apps host.
 
   Triggers when the user asks to:
-  - build, make, or create an app, dashboard, tracker, calculator, form, or interactive view
+  - build, make, or create an artifact, live artifact, app, dashboard, tracker, calculator, form, or interactive view
   - turn connected data or a Workflow into something they can open again, filter, or click
   - change, fix, or restyle an App they already have
 ---
 
 # Build an App
 
-An App is a small React view that OpenWork compiles and publishes as its own MCP server. It runs as the person using it, with their own access and connections, and opens again with live data in chat, the side panel, and dashboards.
+An artifact in OpenWork is an App, never a local HTML file. An App is a small React view that OpenWork compiles and publishes as its own MCP server. It runs as the person using it, with their own access and connections, and opens again with live data in chat, the side panel, and dashboards.
 
 ## Decide first
 
