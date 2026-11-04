@@ -62,10 +62,15 @@ export function latestStatuses(combined) {
 }
 
 // Never approve another PR's runs even if its branch has the same commit.
-export function runsForPr(runs, pr) {
+// GitHub leaves `pull_requests` empty on runs from a fork, so a run without
+// attribution counts only when it comes from this PR's fork branch and that
+// branch has no other open PR here (`soleOpenPr`).
+export function runsForPr(runs, pr, { soleOpenPr = false } = {}) {
   return runs.filter((run) => run.event === "pull_request" && run.head_sha === pr.head.sha &&
     run.head_repository?.full_name === pr.head.repo?.full_name &&
-    run.pull_requests?.some((item) => item.number === pr.number));
+    (run.pull_requests?.length
+      ? run.pull_requests.some((item) => item.number === pr.number)
+      : soleOpenPr && run.head_branch === pr.head.ref));
 }
 
 function env(name) {
@@ -138,7 +143,12 @@ async function output(name, value) {
 }
 
 async function pullRequestRuns(repo, pr) {
-  return runsForPr(await paginate(`/repos/${repo}/actions/runs?head_sha=${pr.head.sha}&event=pull_request`, "workflow_runs"), pr);
+  const owner = pr.head.repo?.owner?.login;
+  const open = owner && pr.head.ref
+    ? await paginate(`/repos/${repo}/pulls?state=open&head=${encodeURIComponent(`${owner}:${pr.head.ref}`)}`)
+    : [];
+  const soleOpenPr = open.length === 1 && open[0].number === pr.number;
+  return runsForPr(await paginate(`/repos/${repo}/actions/runs?head_sha=${pr.head.sha}&event=pull_request`, "workflow_runs"), pr, { soleOpenPr });
 }
 
 async function backfill(repo) {
