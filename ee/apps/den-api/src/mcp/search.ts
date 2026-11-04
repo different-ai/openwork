@@ -234,3 +234,15 @@ export function searchCapabilities(
     .sort(compareCapabilityMatches)
     .slice(0, boundedLimit)
 }
+
+const WORKFLOW_WORDS = new Set(["workflow", "workflows"])
+
+/**
+ * "What workflows do I have" or "run my workflow" should find a person's saved
+ * Workflows even when the words do not repeat their names, and the ones they
+ * made come first.
+ */
+export function workflowSearchBoost(input: { isWorkflow: boolean; ownedByCaller: boolean; queryTokens: readonly string[] }): number {
+  if (!input.isWorkflow || !input.queryTokens.some((token) => WORKFLOW_WORDS.has(token))) return 0
+  return input.ownedByCaller ? 2 : 1
+}

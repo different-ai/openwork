@@ -2,8 +2,8 @@
 
 import type { ArtifactFreshness, WorkflowArtifactSnapshot } from "@openwork/types/workflows";
 import { DenChip } from "../../_components/ui/chip";
-import { DenNotice } from "../../_components/ui/notice";
 import { WorkflowFriendlyValue } from "./workflow-friendly-value";
+import { workflowFailureSummary } from "./library-view";
 
 function decode(value: string) {
   return value.replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&amp;/g, "&");
@@ -68,7 +68,13 @@ export function WorkflowArtifactResult(props: {
   return (
     <div className="space-y-3" data-testid="den-workflow-artifact-result">
       <p className="text-[12px] text-gray-500">{statusLine(snapshot, props.freshness, props.lastSuccessful)}</p>
-      {props.freshness?.state === "needs_attention" ? <DenNotice tone="warning" message={props.freshness.reason} /> : null}
+      {props.freshness?.state === "needs_attention" ? (
+        <p className="flex flex-wrap items-center gap-x-2 text-[13px] text-gray-600" data-testid="den-workflow-run-failed">
+          <span className="size-1.5 rounded-full bg-red-500" aria-hidden="true" />
+          <span className="font-medium text-red-600">This run failed</span>
+          <span>{workflowFailureSummary(props.freshness.reason)}</span>
+        </p>
+      ) : null}
       {snapshot.contentDeletedAt ? (
         <p className="rounded-xl border border-dashed border-gray-200 p-4 text-[13px] text-gray-400">This run&apos;s saved result was removed.</p>
       ) : snapshot.value === null && snapshot.markdown ? (
@@ -85,6 +91,7 @@ export function WorkflowArtifactResult(props: {
             {snapshot.markdown ? <WorkflowMarkdownPreview markdown={snapshot.markdown} /> : <p className="text-[13px] text-gray-400">No rendered preview is retained.</p>}
             <pre className="max-h-96 overflow-auto whitespace-pre-wrap rounded-xl bg-gray-950 p-4 font-mono text-[12px] text-gray-100">{JSON.stringify(snapshot.value, null, 2)}</pre>
             <dl className="grid gap-3 rounded-xl border border-gray-100 p-4 text-[11px] sm:grid-cols-2">
+              {snapshot.errorMessage ? <div className="sm:col-span-2"><dt className="text-gray-400">Error</dt><dd className="break-all font-mono text-gray-700">{snapshot.errorMessage}</dd></div> : null}
               <div><dt className="text-gray-400">Receipt</dt><dd className="break-all font-mono text-gray-700">{snapshot.receiptId}</dd></div>
               <div><dt className="text-gray-400">Workflow version</dt><dd className="break-all font-mono text-gray-700">{snapshot.configObjectVersionId}</dd></div>
               <div><dt className="text-gray-400">Code digest</dt><dd className="break-all font-mono">{snapshot.codeDigest}</dd></div>

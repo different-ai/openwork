@@ -36,6 +36,8 @@ import {
   parseLibraryFilter,
   parseNeedsSignIn,
   receivedStatus,
+  workflowFailureSummary,
+  workflowLastRunFailed,
 } from "./library-view";
 import { LibraryCompactRow, LibraryCompactSection, LibraryCompactSkeleton, LibraryCompactSurface, LibraryKindIcon } from "./library-compact";
 import { useDeleteMcpConnection, useMcpConnections } from "./mcp-connections-data";
@@ -57,6 +59,21 @@ function itemHref(orgSlug: string | null, item: LibraryItem): string {
   if (item.type === "connection") return getLibraryConnectorRoute(orgSlug, item.id);
   if (item.type === "plugin") return getLibraryPluginRoute(orgSlug, item.id);
   return `/dashboard/library/workflows/${encodeURIComponent(item.id)}`;
+}
+
+/**
+ * A saved workflow whose last run failed says so in its description slot: one
+ * red word and the reason, never a tinted panel (DESIGN V2, T2).
+ */
+function WorkflowFailedDescription({ reason }: { reason: string | null }) {
+  const summary = workflowFailureSummary(reason);
+  return (
+    <span className="flex min-w-0 items-center gap-1.5" data-workflow-last-run="failed">
+      <span className="size-1.5 shrink-0 rounded-full bg-red-500" aria-hidden="true" />
+      <span className="shrink-0 font-medium text-red-600">Last run failed</span>
+      <span className="min-w-0 truncate" title={summary}>{summary}</span>
+    </span>
+  );
 }
 
 function LibraryItemRow({ item, mine, signIn }: {
@@ -100,6 +117,7 @@ function LibraryItemRow({ item, mine, signIn }: {
       label={`More for ${item.name}`}
       entries={[
         { label: "Open", onSelect: () => router.push(href) },
+        ...(item.type === "workflow" ? [{ label: "See runs", onSelect: () => router.push(`${href}?tab=runs`) }] : []),
         ...(mine && item.type === "connection" ? [{ label: "Share", onSelect: () => router.push(getLibraryConnectorShareRoute(orgSlug, item.id)) }] : []),
         ...(mine && item.type === "plugin" ? [{ label: "Share", onSelect: () => router.push(getLibraryPluginShareRoute(orgSlug, item.id)) }] : []),
         ...(mine && item.type !== "workflow" ? [removeEntry(item.name, remove)] : []),
@@ -116,11 +134,27 @@ function LibraryItemRow({ item, mine, signIn }: {
         ? <ConnectorLogo name={item.name} url={item.url} size="xs" />
         : <LibraryKindIcon kind={item.type === "workflow" ? "workflow" : libraryFilterOf(item) === "skills" ? "skill" : "plugin"} />}
       name={item.name}
-      description={item.description ? libraryItemDescription(item) : undefined}
+      description={workflowLastRunFailed(item)
+        ? <WorkflowFailedDescription reason={item.failureReason} />
+        : item.description ? libraryItemDescription(item) : undefined}
       source={mine ? "You" : receivedStatus(item.edges)}
       action={needsSignIn ? action : ready || item.type === "plugin" ? action : <span className="text-[12px] text-[var(--dls-text-secondary)]">{status}</span>}
       revealAction={!needsSignIn && (ready || item.type === "plugin")}
     />
+  );
+}
+
+/** No saved workflows yet: say where they come from, in the person's words. */
+function WorkflowsEmpty() {
+  return (
+    <ItemPanel>
+      <div className="flex flex-col items-center gap-2 px-5 py-8 text-center" data-testid="library-workflows-empty">
+        <h2 className="text-sm font-medium text-[var(--dls-text-primary)]">No saved workflows yet</h2>
+        <p className="max-w-sm text-[13px] text-[var(--dls-text-secondary)]">
+          Ask OpenWork to do something in chat, like a morning brief from your email and calendar. When it works, say “save this” and it shows up here.
+        </p>
+      </div>
+    </ItemPanel>
   );
 }
 
@@ -212,7 +246,7 @@ function LibraryContent() {
     { key: "connectors", title: "Connectors", match: (item) => libraryFilterOf(item) === "connectors" },
     { key: "skills", title: "Skills", match: (item) => libraryFilterOf(item) === "skills" },
     { key: "plugins", title: "Plugins", match: (item) => libraryFilterOf(item) === "plugins" },
-    { key: "workflows", title: "Workflows", match: (item) => libraryFilterOf(item) === null },
+    { key: "workflows", title: "Workflows", match: (item) => libraryFilterOf(item) === "workflows" },
   ];
   const sections = [
     { key: "attention", title: "Needs your sign-in", items: visible.filter(needsViewerSignIn), models: modelRows.filter((provider) => provider.state === "needs_signin") },
@@ -283,7 +317,9 @@ function LibraryContent() {
             </p>
           ) : null}
 
-          {!library.isLoading && !models.isLoading && groups.mine.length === 0 && groups.received.length === 0 && modelRows.length === 0 && personalRows.length === 0 && !(filter === "models" && (models.error || !hasModels)) ? (
+          {filter === "workflows" && !library.isLoading && items.every((item) => item.type !== "workflow") ? <WorkflowsEmpty /> : null}
+
+          {(filter !== "workflows" || items.some((item) => item.type === "workflow")) && !library.isLoading && !models.isLoading && groups.mine.length === 0 && groups.received.length === 0 && modelRows.length === 0 && personalRows.length === 0 && !(filter === "models" && (models.error || !hasModels)) ? (
             <p className="rounded-2xl border border-gray-100 bg-white px-5 py-6 text-center text-[13px] text-gray-500">Nothing matches.</p>
           ) : null}
         </>

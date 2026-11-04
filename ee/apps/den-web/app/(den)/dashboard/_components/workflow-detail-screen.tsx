@@ -15,6 +15,7 @@ import { usePluginAccess } from "./plugin-access-data";
 import { PluginAccessSection } from "./plugin-access-section";
 import { usePlugin } from "./plugin-data";
 import { useWorkflowDetailState } from "./use-workflow-detail-state";
+import { workflowFailureSummary } from "./library-view";
 import { WorkflowEditTab } from "./workflow-edit-tab";
 import { WorkflowOverviewTab } from "./workflow-overview-tab";
 import { WorkflowRunsTab } from "./workflow-runs-tab";
@@ -116,7 +117,7 @@ export function WorkflowDetailScreen({ workflowId }: { workflowId: string }) {
         size="sm"
         icon={ArrowLeft}
         className="justify-self-start"
-        href="/dashboard/library"
+        href="/dashboard/library?show=workflows"
       >
         Back to Library
       </DenButton>
@@ -145,10 +146,15 @@ export function WorkflowDetailScreen({ workflowId }: { workflowId: string }) {
 
       {state.error ? <DenNotice tone="error" message={state.error} /> : null}
       {state.detail.freshness.state === "needs_attention" ? (
-        <DenNotice
-          tone="warning"
-          message={`${state.detail.freshness.reason} You can still open the last successful result.`}
-        />
+        <p className="flex flex-wrap items-center gap-x-2 gap-y-1 text-[13px] text-gray-600" data-testid="den-workflow-last-run-failed">
+          <span className="size-1.5 rounded-full bg-red-500" aria-hidden="true" />
+          <span className="font-medium text-red-600">Last run failed</span>
+          <span>{workflowFailureSummary(state.detail.freshness.reason)}.</span>
+          {state.detail.latestSuccessfulSnapshot ? <span className="text-gray-500">The last result that worked is still here.</span> : null}
+          {activeTab !== "runs" ? (
+            <button type="button" className="font-medium text-gray-900 underline-offset-2 hover:underline" onClick={() => changeTab("runs")}>See runs</button>
+          ) : null}
+        </p>
       ) : null}
 
       <div data-testid="den-workflow-tabs">

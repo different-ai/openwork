@@ -41,7 +41,7 @@ import { AUDIT_UNAVAILABLE_TOOL_MESSAGE, AuditUnavailableError } from "../audit/
 import { executeWorkflow, type WorkflowExecutionResult } from "./workflow-service.js"
 import { artifactRunInputSchema, artifactRuntime } from "../artifact-runtime.js"
 import { listPluginMcpRequirementBindings, type PluginMcpRequirementBindingRow } from "./plugin-mcp-requirement-bindings.js"
-import { scoreText, tokenize } from "./search.js"
+import { scoreText, tokenize, workflowSearchBoost } from "./search.js"
 import type { McpMemberIdentity } from "./external-capabilities.js"
 import type { CapabilityMatch } from "./search.js"
 
@@ -370,13 +370,20 @@ function summaryFor(row: MarketplaceCapabilityRow): string {
   return description ? `${prefix}: ${description}` : prefix
 }
 
-function scoreMarketplaceRow(row: MarketplaceCapabilityRow, queryTokens: string[]): number {
+function scoreMarketplaceRow(row: MarketplaceCapabilityRow, queryTokens: string[], callerMemberId?: string): number {
   const score = scoreText(
     tokenize(row.configObject.title),
     tokenize(row.configObject.description ?? ""),
     queryTokens,
     tokenize(row.configObject.searchText ?? ""),
   )
+  if (canonicalConfigObjectType(row.configObject.objectType) === "workflow") {
+    return score + workflowSearchBoost({
+      isWorkflow: true,
+      ownedByCaller: callerMemberId !== undefined && row.configObject.createdByOrgMembershipId === callerMemberId,
+      queryTokens,
+    })
+  }
   if (row.configObject.objectType !== "skill") return score
   return queryTokens.some((queryToken) => queryToken === "skill" || queryToken === "skills")
     ? score + 1
@@ -1617,7 +1624,7 @@ export async function searchMarketplaceCapabilities(input: {
   for (const row of rows) {
     const objectType = canonicalConfigObjectType(row.configObject.objectType)
     if (input.objectTypes && !input.objectTypes.includes(objectType)) continue
-    const score = scoreMarketplaceRow(row, queryTokens)
+    const score = scoreMarketplaceRow(row, queryTokens, input.member.orgMembershipId)
     if (score <= 0) continue
     // Authored Apps are exposed only by the rollout-gated App search, never
     // as generic Plugin capabilities (including after the rollout is disabled).

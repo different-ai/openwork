@@ -1,4 +1,4 @@
-import { createAgentMcpServer } from "./agent-server.js"
+import { createAgentMcpServer, WORKFLOW_SAVE_INSTRUCTIONS } from "./agent-server.js"
 export { createAgentMcpServer, AGENT_MCP_INSTRUCTIONS, LEGACY_AGENT_MCP_INSTRUCTIONS, AGENT_MCP_GUIDANCE_URI } from "./agent-server.js"
 import { appAuthoringStarter, registerAppStarterResources } from "./app-authoring-starter.js"
 import { startMcpAppTiming } from "@openwork/types/mcp-app-timing"
@@ -1366,6 +1366,7 @@ export function registerAgentMcpRoutes<T extends { Variables: RequestIdVariables
           toolShapes
             ? "Use exact scriptPath from search_capabilities, never guessed namespaces or operation names. Call a discovered path with the arguments its match's inputSchema describes; OpenWork API operations wrap them in path, query, and body, e.g. {query:{q:input.query}}."
             : "Use exact scriptPath from search_capabilities, never guessed namespaces or operation names. For a discovered Den/native path call it with {path:{...},query:{...},body:{...}} only as advertised; native query parameters must be wrapped in query, e.g. {query:{q:input.query}}. External MCP paths take their argumentsSchema object directly.",
+          WORKFLOW_SAVE_INSTRUCTIONS,
           "Example adhoc code: return 1 + 1. Example live code: return {today:input.runtime.today}. tools.$codemode.search({query}) is for adhoc exploration; saved Workflows must call discovered paths directly.",
           "Optional inputSchema is checked before dispatch and outputSchema after execution; inspect discovered outputSchema rather than guessing. Returns value and metadata: receiptId, mode, executionType, verification, executedAt/fetchedAt, optional timeZone, and retention (scope, ttlMs, available, canSaveByReceipt, and any error/message). Retention determines whether saveWorkflow can reuse the receipt. This is an authoring test, not a saved Workflow artifact snapshot. " + (appServersEnabled
             ? "To back an App with a reusable live procedure: test with mode:live and outputSchema, saveWorkflow with receiptId and the same schemas (omit code/currentInput), then bind that saved Workflow in create_app with mode live."
