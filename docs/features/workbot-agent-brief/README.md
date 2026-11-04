@@ -173,6 +173,106 @@ research it now does (sent mail, threads, the calendar) and the notes it keeps; 
 - Connect tells chat, with the flag on: "To change what Your agent tells the user ("also watch our Render bill", "never
   tell me about newsletters": lines added to their brief) or how often it checks, use putMeAgent…".
 
+## Any connected connector as a source
+
+Same flag. Before, Manage › Workbot › What agents read and My bot offered only Den's own providers for the core
+sources they serve and MCP connections whose service had a hand-reviewed list of read tools (Slack, Linear, Notion,
+GitHub, Granola; #6630). Every other connector the organization or member had connected was invisible. With the brief
+on, **every connection is offered**: each MCP connection (custom ones included) and Den's own providers for what isn't
+calendar, email or chat (Drive, Docs, OneDrive…), with no hand-picked list or count cap.
+
+| | Before (flag off) | With the brief |
+| --- | --- | --- |
+| What can be a source | Den's own providers for calendar, email, chat; MCPs on the reviewed list | Every connection the organization has (admin) or the member can use (My bot), MCP and Den's own |
+| Admin policy | Per connection in Other context; Add/Remove picks what is there | Per connection, every one listed: on for everyone, members choose (default), not allowed. A reviewed connection an admin had removed from Other context stays not allowed |
+| What the check may call | A reviewed service's reviewed read tools | A per-tool decision, made when the check starts and carried in its token (below) |
+| Admin review | None | "Tools agents may use: N read tools" per connection, one row per tool with why, a switch, and a lock where no one can allow it |
+| Member | Only reviewed services listed | Any allowed connector, from the page or chat ("also use Linear", "use my Granola for meeting context"); "Connect <name>" when their account isn't ready, a lock with the reason when the admin doesn't allow it, and "No read-only tools found. An admin can review its tools." when it has none |
+
+What agents read with ten custom connectors (`evals/proofs/workbot-agent-any-connector.proof.test.ts`, fictional
+names), then one connector's tools after the admin allowed `ticket_report`, then My bot after "also use Lumen Support
+Desk for refund tickets" in chat:
+
+![What agents read lists every connection with its read tools](./any-connector-admin.png)
+
+![Tools agents may use: one row per tool, a lock on the destructive one](./any-connector-tools.png)
+
+![My bot with a custom connector on, one with no read tools, one not allowed](./any-connector-my-bot.png)
+
+### Read-only, per tool
+
+`decideAgentReadTool` (`packages/automations/src/agent-read-tools.ts`), in this order:
+
+1. **Destructive**: a tool its provider marks `destructiveHint: true` is never allowed, whoever allows it (locked).
+2. **The admin's choice** for that tool on that connection (`sources.toolOverrides`).
+3. **A reviewed list**: a service with one (moved unchanged from den-api) allows exactly its reviewed read tools.
+4. **Annotations**: `readOnlyHint: true` allows, unless the tool's own name or description clearly says it changes
+   something (a provider labelling `close_ticket` read-only: conflicting signals are a no). `readOnlyHint: false`
+   denies. This veto is stricter than "trust the annotation" on purpose; an admin can still allow such a tool.
+5. **No annotations**: a classifier on the name and description. A read verb (get, list, search, read, fetch, query,
+   find, describe, view, show, lookup) must lead the name (its first word, or second after a namespace like
+   `notion-search`), and no word may change something: send, create, update, delete, write, archive, move, invite,
+   pay and 100 more anywhere in the name, plus 42 verbs that are also nouns (post, run, comment, email…) when they
+   lead it. A write verb at the start of the description, or after "and/or/then/also/will/to",
+   denies too. Unsure is no. So `get_or_create_customer`, `search_and_replace`, `mark_read`, `send_digest` and
+   `run_query` are all denied, while `get_email`, `list_runs` and `get_commit` are reads.
+
+Den's own providers have operations instead of tools: a GET outside calendar, mail and chat reads (an admin may turn
+one off); anything else never does (locked).
+
+### How the check gets only those tools
+
+When a check starts, the wake lists each readable MCP connection's tools with the member's account (through Den's
+tool cache), decides each, logs what it allowed per connection (`workbot_agent_read_tools`: connection, allowed names,
+counts) and mints the check's read-scoped token with exactly those names
+(`openwork:agent-tools` + `openwork:agent-tool:<connection>:<tool>`, at most 1,500). Den's gateway then lets that token
+search and call only those tools, and never one its provider has marked destructive since. Den's own providers get
+`openwork:agent-native:<connection>` plus the operations an admin turned off. A source left with no read tools, or
+whose server didn't answer, sits the check out and the check is told why ("no read-only tools", "its tools couldn't
+be listed"). `HEADLESS_MCP_TOOL_ALLOWLIST` stays as it is: it filters Connect's own tools (search_capabilities,
+execute_capability) for the whole runner, so it can't vary per member or per check; the per-check list rides in the
+token, which is per check by construction.
+
+### API
+
+- `GET /v1/org/workbot-settings/proactive/sources/{connectionId}/tools`: each tool with `allowed`, `reason`, the
+  admin's `override` and `locked`; `readTools`; `status` `needs_connection` when the admin's own account isn't connected
+  (per-member connectors), `unavailable` when the server didn't answer. Needs View connections.
+- `PUT /v1/org/workbot-settings/proactive`: `sources.toolOverrides` `{<connection id>: {<tool>: "allow" | "deny" | null} | null}`.
+  Off, 400. `sources.connections` takes any connection with the flag on.
+- `GET /v1/org/workbot-settings/proactive`: `sourceConnections.other` lists every connection, each with `native` and the
+  `policy` it has now.
+- `GET /v1/me/agent`: every connection the member can use is a source; other sources carry `readTools` (null while
+  unknown).
+- Input bounds only, far above real organizations: 2,000 connections per list and 2,000 tool choices per connection.
+
+### Replay eval
+
+New scenario `custom-connector`: Lumen Support Desk, a custom MCP nobody reviewed, lists two reads (one labelled, one
+not) and four writes (mislabelled read-only, labelled, destructive, unlabelled). The brief's pipeline offers exactly what
+`decideAgentReadTool` allows; today's can't read the connector, as in production with the flag off. 3 runs each,
+`openai/gpt-6-luna`, judge `anthropic/claude-sonnet-4.5`:
+
+| | Old prompts | New pipeline |
+| --- | --- | --- |
+| The $18,400 refund only Sam can approve by 2 PM, told by noon | 0/3 | 3/3 |
+| Unwanted interruptions (routine tickets) | 0 | 0 |
+| Custom connector: write tools offered / called | 0 / 0 | 0 / 0 |
+| Judge: lead stands alone, one finding, concrete fact, one next step | – | 100% |
+
+A message from one run: "Finance needs your approval by 2 PM today to reverse Tailspin's duplicate $18,400 charge;
+otherwise it slips to next month's batch, after AP's Friday quarter close. Morgan says you approve refunds over $10k;
+I checked the ticket updates and your sent mail and found no response. I can draft a short approval note if useful."
+
+### Limits and follow-ups
+
+- Messages link only to reviewed services' sites (`serviceLinkDomains`), so a custom connector's link is dropped and
+  the message goes out without it. Allowing a connection's own host needs care (public suffixes); a follow-up.
+- An admin reviews a per-member connector's tools with their own account; until they connect it, the disclosure says
+  "Connect <name> to see its tools".
+- The member's page waits up to 4 seconds for a connector's tools (Den's tool cache answers most at once) and shows
+  nothing about them if it can't.
+
 ## Turning it off
 
 The kill switch (or the organization override) sends every member back to today's agent on the next wake: the worker
@@ -199,6 +299,13 @@ Once the brief is on everywhere:
   health table, and My bot's "What it tells you about" and "In your words".
 - Routes: `mute`/`unmute`/`preferences` in `PUT /v1/me/agent`, `responsibilities`/`instructions`/`leadMinutes` in the
   organization settings, `responsibilities` in both views.
+- The reviewed-only sources path: `mode: "reviewed"` in `workbot-proactive/sources.ts` (`canBeSource`, `defaultOther`,
+  `sourceSlotsOf`, `allowedConnections`, `checkSourcesChange`, `resolveMemberSources`, `groupSourceConnections`),
+  `agentReadableConnection` and `agentReadTool` and the `!allowlist.tools` branch of `agentMayUseExternalTool` in
+  `mcp/agent-read-sources.ts` (tokens without `openwork:agent-tools`), `sources.otherConnections` (kept only so a removed
+  reviewed connection stays not allowed; `otherSourcePolicy` then reads `connections` alone), the Add source / Remove
+  rows of Other context in `workbot-proactive-sources.tsx`, and the reviewed-only paragraphs of the routes' descriptions.
+  The reviewed lists stay, as overrides inside `decideAgentReadTool`.
 
 ## Try it
 
@@ -211,7 +318,11 @@ pnpm dev:den:mysql && pnpm dev:workbot
 `pnpm --filter @openwork-ee/den-api test` (`workbot-agent-brief.test.ts`: the pipeline end to end with injected
 boundaries, carrying settings over, members' changes, request_check's audience),
 `workbot-agent-brief.api.test.ts` (routes, chat through Connect, request_check through MCP),
-`evals/proofs/workbot-agent-brief.proof.test.ts` (Manage › Workbot and My bot), and the replay evals below.
+`evals/proofs/workbot-agent-brief.proof.test.ts` (Manage › Workbot and My bot), and the replay evals below. Any
+connector as a source: `packages/automations/src/agent-read-tools.test.ts` (the decision and the classifier's fixture
+names), `workbot-agent-any-connector.test.ts` and `workbot-agent-any-connector.api.test.ts` in den-api,
+`workbot-agent-tools.test.tsx` in den-web, `evals/proofs/workbot-agent-any-connector.proof.test.ts`, and
+`--only custom-connector` in the replay evals.
 
 ## Replay evals
 
