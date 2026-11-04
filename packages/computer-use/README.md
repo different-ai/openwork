@@ -171,6 +171,17 @@ focused field and caret (the selection range, never the text), and gives all
 three back as soon as the step ends, falling back to activating the app when
 any of them has gone.
 
+Some apps ignore being activated from a background helper (on macOS 26
+`activate` can answer yes and do nothing) or refuse the accessibility raise.
+To bring the window forward the helper tries each way once, reading back after
+each whether the window is in front: raise and activate, the app's
+accessibility frontmost flag, the window as its app's main and focused window,
+then the make-key event records background delivery uses. When none works the
+step is refused before any input as `front_unavailable` (`next: observe`); an
+observation, or opening the session, reads the window where it is instead, and
+the next step tries again. Steps that run in the background never take the
+front, so they never wait on this.
+
 The person's clicks and keys never stop the agent. One during a step pauses it:
 input stops at once and anything held is released, the front goes back to them
 (keys that reached the agent's window send it back to their field; a click there
