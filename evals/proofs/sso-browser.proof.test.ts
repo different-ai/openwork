@@ -168,6 +168,18 @@ test("a signed SAML callback independently gives the owner a verified organizati
     expect(result.response.status).toBe(200);
     await user.screenshot();
   });
+  await step("the owner asks members for SSO again after a day", async () => {
+    await user.click({ role: "button", label: "Ask for SSO again" });
+    await user.click({ role: "option", label: "After 1 day" });
+    await user.click({ role: "button", label: "Save settings" });
+    const session = await world.sessionFor(world.web);
+    const result = await probe.eventually(() => world.request(session, "/v1/org", { headers: { "x-openwork-org-id": world.orgId } }), { within: 20_000, label: "SSO max age saved", until: (value) => value.text.includes('\\"ssoSessionMaxAgeHours\\":24') || value.text.includes('"ssoSessionMaxAgeHours":24') });
+    const kept = result.text.includes('\\"requireSso\\":true') || result.text.includes('"requireSso":true');
+    evidence.recordAssertionEvidence("the limit is saved and Require SSO is left as it was", `HTTP ${result.response.status}; ssoSessionMaxAgeHours=24; requireSso kept=${kept}`, result.response.ok && kept);
+    expect(kept).toBe(true);
+    await user.see({ role: "button", label: "Ask for SSO again" });
+    await user.screenshot();
+  });
   await step("Require SSO does not undo the password alternative for other organizations", async () => {
     const surface = await world.fresh();
     const actor = user.on(surface);

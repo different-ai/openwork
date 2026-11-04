@@ -12,6 +12,7 @@ import {
   HeadlessResumeRevocationTable,
   ExternalIdentityTable,
   SessionSsoAuthenticationTable,
+  SessionSsoProofTable,
   MemberTable,
   OAuthAccessTokenTable,
   OAuthClientTable,
@@ -63,6 +64,7 @@ export async function deleteGlobalAuthUser(userId: UserId) {
     await unlessResumeTableMissing("headless_resume_revocation", () => tx.delete(HeadlessResumeRevocationTable).where(eq(HeadlessResumeRevocationTable.userId, userId)))
     await tx.delete(ExternalIdentityTable).where(eq(ExternalIdentityTable.userId, userId))
     await tx.delete(SessionSsoAuthenticationTable).where(eq(SessionSsoAuthenticationTable.userId, userId))
+    await tx.delete(SessionSsoProofTable).where(eq(SessionSsoProofTable.userId, userId))
     await tx.delete(ScimSyncEventTable).where(eq(ScimSyncEventTable.userId, userId))
     await tx.update(MemberTable).set({ userId: null }).where(eq(MemberTable.userId, userId))
     await tx.update(WorkerTable).set({ created_by_user_id: null }).where(eq(WorkerTable.created_by_user_id, userId))

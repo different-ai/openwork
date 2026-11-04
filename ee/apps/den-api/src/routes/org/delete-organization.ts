@@ -35,6 +35,7 @@ import {
   DesktopStartupReportTable,
   ExternalIdentityTable,
   SessionSsoAuthenticationTable,
+  SessionSsoProofTable,
   ExternalMcpConnectionAccessGrantTable,
   ExternalMcpConnectionTable,
   InferenceKeyTable,
@@ -614,6 +615,7 @@ export function registerDeleteOrganizationRoutes<T extends { Variables: OrgRoute
         await tx.delete(SsoConnectionTable).where(eq(SsoConnectionTable.organizationId, organizationId))
         await tx.delete(ExternalIdentityTable).where(eq(ExternalIdentityTable.organizationId, organizationId))
         await tx.delete(SessionSsoAuthenticationTable).where(eq(SessionSsoAuthenticationTable.organizationId, organizationId))
+        await tx.delete(SessionSsoProofTable).where(eq(SessionSsoProofTable.organizationId, organizationId))
 
         // Explicit owner-authorized organization erasure, not resource cleanup.
         // No settlement is active for these pilot facts. Billing evidence needs

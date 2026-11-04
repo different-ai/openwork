@@ -104,6 +104,7 @@ import {
 import {
   deleteSessionSsoAuthentication,
   findNonSsoSignInBlock,
+  carrySessionSsoProofs,
   findSsoAccessBlock,
   recordDeviceSessionSsoAuthentication,
   recordSessionSsoAuthentication,
@@ -156,7 +157,7 @@ async function organizationIdForSlug(slug: string | null) {
 
 // A device session approved into an organization, from session.create.before
 // to its after-hook in the same request (keyed by the new session's token).
-const deviceApprovedSessionOrganizations = new Map<string, { organizationId: string; ssoProviderId: string | null }>();
+const deviceApprovedSessionOrganizations = new Map<string, { organizationId: string; ssoProviderId: string | null; ssoAuthenticatedAt: Date | null }>();
 
 function localMcpResourceAliases(resource: string) {
   if (!env.devMode) {
@@ -808,6 +809,46 @@ function removeSsoTestSessionCookie(ctx: Parameters<Parameters<typeof createAuth
   }
 }
 
+type AuthHookContext = Parameters<Parameters<typeof createAuthMiddleware>[0]>[0];
+
+// SSO started from a signed-in browser: the callback's new session keeps the
+// SSO proofs of the session it replaces (carrySessionSsoProofs). The cookie
+// names that session, signed, for ten minutes. SameSite=None on HTTPS so a
+// SAML identity provider's cross-site POST still carries it.
+const SSO_CARRY_COOKIE = "sso_carry";
+const SSO_CARRY_MAX_AGE_SECONDS = 10 * 60;
+
+function ssoCarryCookie(ctx: Pick<AuthHookContext, "context">) {
+  const cookie = ctx.context.createAuthCookie(SSO_CARRY_COOKIE, { maxAge: SSO_CARRY_MAX_AGE_SECONDS });
+  const secure = env.betterAuthUrl.startsWith("https:");
+  return { name: cookie.name, attributes: { ...cookie.attributes, secure, sameSite: secure ? "none" as const : "lax" as const } };
+}
+
+async function setSsoCarryCookie(ctx: AuthHookContext) {
+  // Only an SSO sign-in that actually started (it answers with the identity provider's URL).
+  if (!readStringProperty(ctx.context.returned, "url")) return;
+  const token = await ctx.getSignedCookie(ctx.context.authCookies.sessionToken.name, ctx.context.secret).catch(() => null);
+  const session = typeof token === "string" ? await cache.auth.session(token) : null;
+  if (!session) return;
+  const cookie = ssoCarryCookie(ctx);
+  await ctx.setSignedCookie(cookie.name, `${session.session.id}.${Date.now()}`, ctx.context.secret, cookie.attributes);
+}
+
+function clearSsoCarryCookie(ctx: AuthHookContext) {
+  const cookie = ssoCarryCookie(ctx);
+  ctx.setCookie(cookie.name, "", { ...cookie.attributes, maxAge: 0 });
+}
+
+/** The session the browser had when it started this SSO sign-in, from a fresh carry cookie. */
+async function readSsoCarrySessionId(ctx: Pick<AuthHookContext, "context" | "getSignedCookie">) {
+  const value = await ctx.getSignedCookie(ssoCarryCookie(ctx).name, ctx.context.secret).catch(() => null);
+  if (typeof value !== "string") return null;
+  const separator = value.lastIndexOf(".");
+  const issuedAt = Number(value.slice(separator + 1));
+  if (separator <= 0 || !Number.isFinite(issuedAt) || Date.now() - issuedAt > SSO_CARRY_MAX_AGE_SECONDS * 1000) return null;
+  return value.slice(0, separator);
+}
+
 export const auth = betterAuth({
   baseURL: env.betterAuthUrl,
   secret: env.betterAuthSecret,
@@ -1015,11 +1056,16 @@ export const auth = betterAuth({
               userId: session.userId,
               providerId: readStringProperty(context?.params, "providerId"),
             }).catch((error) => logger.error("session SSO provenance could not be recorded", { error }));
+            const fromSessionId = context ? await readSsoCarrySessionId(context) : null;
+            if (fromSessionId) {
+              await carrySessionSsoProofs({ fromSessionId, toSessionId: session.id, userId: session.userId })
+                .catch((error) => logger.error("earlier SSO sign-ins could not be carried to the new session", { error }));
+            }
           }
           const deviceApproval = typeof session.token === "string" ? deviceApprovedSessionOrganizations.get(session.token) : undefined;
           if (typeof session.token === "string") deviceApprovedSessionOrganizations.delete(session.token);
           if (deviceApproval?.ssoProviderId && typeof session.id === "string") {
-            await recordDeviceSessionSsoAuthentication({ sessionId: session.id, userId: session.userId, ...deviceApproval, providerId: deviceApproval.ssoProviderId })
+            await recordDeviceSessionSsoAuthentication({ sessionId: session.id, userId: session.userId, organizationId: deviceApproval.organizationId, providerId: deviceApproval.ssoProviderId, authenticatedAt: deviceApproval.ssoAuthenticatedAt })
               .catch((error) => logger.error("device session SSO provenance could not be recorded", { error }));
           }
           await recordFreeAutoSignIn(db, { userId: normalizeDenTypeId("user", session.userId), now: session.createdAt })
@@ -1328,6 +1374,15 @@ export const auth = betterAuth({
           clearDeviceSessionOrganization(deviceCode);
         }
         return;
+      }
+
+      if (ctx.path === "/sign-in/sso") {
+        await setSsoCarryCookie(ctx);
+        return;
+      }
+
+      if (SSO_SESSION_PATHS.has(ctx.path)) {
+        clearSsoCarryCookie(ctx);
       }
 
       // A SCIM-created member joins like any other: billing follows the new

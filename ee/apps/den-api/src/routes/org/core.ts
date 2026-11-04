@@ -22,6 +22,7 @@ import { canManageDeploymentServices } from "../../middleware/admin.js"
 import { findEnterpriseAuthRequirementForEmailDomain, resolveNonSsoSignInMethodForEmail } from "../../enterprise-auth-requirement.js"
 import { organizationFeatureEnabled } from "../../features.js"
 import { findDomainSsoRequirement, sessionCanRequireOrganizationSso, ssoSignInUrl } from "../../organization-sso-access.js"
+import { SSO_SESSION_MAX_AGE_HOURS } from "../../sso-routing.js"
 import { jsonValidator, memberPermissionsForOrganizationContext, orgMemberRoute, orgPermissionRoute, publicRoute, queryValidator, resolveMemberPermissionsMiddleware, resolveMemberTeamsMiddleware, userSessionRoute } from "../../middleware/index.js"
 import { sortedPermissionKeys } from "../../permissions/effective.js"
 import { denTypeIdSchema, enterprisePlanRequiredSchema, forbiddenSchema, invalidRequestSchema, jsonResponse, notFoundSchema, unauthorizedSchema } from "../../openapi.js"
@@ -59,11 +60,13 @@ const updateOrganizationSchema = z.object({
   requireSso: z.boolean().optional(),
   /** ssoPerOrganization: every email on the verified SSO domain must sign in with this organization's SSO. */
   restrictDomainToSso: z.boolean().optional(),
+  /** ssoPerOrganization: hours an SSO sign-in opens the organization before it asks for SSO again; null for as long as the session lasts. */
+  ssoSessionMaxAgeHours: z.literal(SSO_SESSION_MAX_AGE_HOURS).nullable().optional(),
   brandAppName: z.string().trim().min(1).max(64).nullable().optional(),
   brandLogoUrl: z.string().url().max(2048).nullable().optional(),
   brandIconUrl: z.string().url().max(2048).nullable().optional(),
   brandAccentColor: z.string().trim().min(1).max(32).nullable().optional(),
-}).strict().refine((value) => value.name !== undefined || value.allowedEmailDomains !== undefined || value.allowedDesktopVersions !== undefined || value.requireSso !== undefined || value.restrictDomainToSso !== undefined || value.brandAppName !== undefined || value.brandLogoUrl !== undefined || value.brandIconUrl !== undefined || value.brandAccentColor !== undefined, {
+}).strict().refine((value) => value.name !== undefined || value.allowedEmailDomains !== undefined || value.allowedDesktopVersions !== undefined || value.requireSso !== undefined || value.restrictDomainToSso !== undefined || value.ssoSessionMaxAgeHours !== undefined || value.brandAppName !== undefined || value.brandLogoUrl !== undefined || value.brandIconUrl !== undefined || value.brandAccentColor !== undefined, {
   message: "Provide at least one organization field to update.",
 })
 
@@ -517,8 +520,8 @@ export function registerOrgCoreRoutes<T extends { Variables: OrgRouteVariables }
         }, 400)
       }
 
-      if (input.restrictDomainToSso !== undefined && !await organizationFeatureEnabled(payload.organization.id, "ssoPerOrganization")) {
-        return c.json({ error: "feature_disabled", message: "Restricting a domain to SSO is not available for this organization." }, 404)
+      if ((input.restrictDomainToSso !== undefined || input.ssoSessionMaxAgeHours !== undefined) && !await organizationFeatureEnabled(payload.organization.id, "ssoPerOrganization")) {
+        return c.json({ error: "feature_disabled", message: "These SSO settings are not available for this organization." }, 404)
       }
 
       const currentMetadata = normalizeOrganizationMetadata(payload.organization.metadata).metadata
@@ -573,6 +576,7 @@ export function registerOrgCoreRoutes<T extends { Variables: OrgRouteVariables }
         allowedDesktopVersions: input.allowedDesktopVersions,
         requireSso: input.requireSso,
         restrictDomainToSso: input.restrictDomainToSso,
+        ssoSessionMaxAgeHours: input.ssoSessionMaxAgeHours,
         brandAppName: input.brandAppName,
         brandLogoUrl: input.brandLogoUrl,
         brandIconUrl: input.brandIconUrl,

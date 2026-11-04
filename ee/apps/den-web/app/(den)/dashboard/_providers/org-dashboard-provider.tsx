@@ -27,6 +27,7 @@ import {
   parseOrgListPayload,
   roleIncludesCanonicalRole,
   permissionLockReason,
+  type SsoSessionMaxAgeHours,
 } from "../../_lib/den-org";
 import { bootOrgContextFor, shouldStartOrgBootRequests } from "../../_lib/org-boot-requests";
 import { consumeOrgSelectionRequest, shouldOpenOrgSelection } from "../../_lib/org-selection";
@@ -50,7 +51,7 @@ type OrgDashboardContextValue = {
   refreshOrgData: () => Promise<void>;
   createOrganization: (name: string) => Promise<void>;
   updateOrganizationName: (name: string) => Promise<void>;
-  updateOrganizationSettings: (input: { name?: string; allowedEmailDomains?: string[] | null; allowedDesktopVersions?: string[] | null; requireSso?: boolean; restrictDomainToSso?: boolean; brandAppName?: string | null; brandLogoUrl?: string | null; brandIconUrl?: string | null; brandAccentColor?: string | null }) => Promise<void>;
+  updateOrganizationSettings: (input: { name?: string; allowedEmailDomains?: string[] | null; allowedDesktopVersions?: string[] | null; requireSso?: boolean; restrictDomainToSso?: boolean; ssoSessionMaxAgeHours?: SsoSessionMaxAgeHours | null; brandAppName?: string | null; brandLogoUrl?: string | null; brandIconUrl?: string | null; brandAccentColor?: string | null }) => Promise<void>;
   deleteOrganization: () => Promise<void>;
   switchOrganization: (slug: string) => void;
   /** teamId (teamRoles): invite into a custom role by adding the pending member to its team. */
@@ -705,10 +706,10 @@ export function OrgDashboardProvider({
     await updateOrganizationSettings({ name: trimmed });
   }
 
-  async function updateOrganizationSettings(input: { name?: string; allowedEmailDomains?: string[] | null; allowedDesktopVersions?: string[] | null; requireSso?: boolean; restrictDomainToSso?: boolean; brandAppName?: string | null; brandLogoUrl?: string | null; brandIconUrl?: string | null; brandAccentColor?: string | null }) {
+  async function updateOrganizationSettings(input: { name?: string; allowedEmailDomains?: string[] | null; allowedDesktopVersions?: string[] | null; requireSso?: boolean; restrictDomainToSso?: boolean; ssoSessionMaxAgeHours?: SsoSessionMaxAgeHours | null; brandAppName?: string | null; brandLogoUrl?: string | null; brandIconUrl?: string | null; brandAccentColor?: string | null }) {
     ensureCanManageSettings();
     const shouldPublishOrgSettingsCompletion = pathnameRef.current === ORG_SETTINGS_PATH;
-    const body: { name?: string; allowedEmailDomains?: string[] | null; allowedDesktopVersions?: string[] | null; requireSso?: boolean; restrictDomainToSso?: boolean; brandAppName?: string | null; brandLogoUrl?: string | null; brandIconUrl?: string | null; brandAccentColor?: string | null } = {};
+    const body: { name?: string; allowedEmailDomains?: string[] | null; allowedDesktopVersions?: string[] | null; requireSso?: boolean; restrictDomainToSso?: boolean; ssoSessionMaxAgeHours?: SsoSessionMaxAgeHours | null; brandAppName?: string | null; brandLogoUrl?: string | null; brandIconUrl?: string | null; brandAccentColor?: string | null } = {};
     if (typeof input.name === "string") {
       const trimmed = input.name.trim();
       if (!trimmed) {
@@ -727,6 +728,9 @@ export function OrgDashboardProvider({
     }
     if (input.restrictDomainToSso !== undefined) {
       body.restrictDomainToSso = input.restrictDomainToSso;
+    }
+    if (input.ssoSessionMaxAgeHours !== undefined) {
+      body.ssoSessionMaxAgeHours = input.ssoSessionMaxAgeHours;
     }
     if (input.brandAppName !== undefined) {
       body.brandAppName = input.brandAppName;

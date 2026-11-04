@@ -1,6 +1,6 @@
 import * as crypto from "node:crypto"
 import { sql } from "drizzle-orm"
-import { bigint, boolean, index, int, json, mysqlTable, text, timestamp, uniqueIndex, varchar } from "drizzle-orm/mysql-core"
+import { bigint, boolean, index, int, json, mysqlTable, primaryKey, text, timestamp, uniqueIndex, varchar } from "drizzle-orm/mysql-core"
 import { denTypeIdColumn, encryptedTextColumn } from "../columns"
 
 export const AuthUserTable = mysqlTable(
@@ -322,6 +322,8 @@ export const DeviceCodeTable = mysqlTable(
     deviceCode: varchar("device_code", { length: 128 }).notNull(),
     // Exact SSO proof held by the approving browser, never inferred at redemption.
     ssoProviderId: varchar("sso_provider_id", { length: 255 }),
+    // When that proof was earned, so the device session inherits its age.
+    ssoAuthenticatedAt: timestamp("sso_authenticated_at", { fsp: 3 }),
     userCode: varchar("user_code", { length: 32 }).notNull(),
     userId: denTypeIdColumn("user", "user_id"),
     organizationId: denTypeIdColumn("organization", "organization_id"),
@@ -452,6 +454,10 @@ export const SsoConnectionTable = mysqlTable(
  * SSO callback creates the session (or a device session approved by one), so
  * an organization that requires SSO can tell an SSO session from a password
  * or Google one. One row per session; removed with the session.
+ *
+ * Superseded by `session_sso_proof`. Still written (the newest proof) so
+ * den-api replicas from before it keep working during a rolling deploy; drop
+ * it in a release after the one that added `session_sso_proof`.
  */
 export const SessionSsoAuthenticationTable = mysqlTable(
   "session_sso_authentication",
@@ -463,6 +469,33 @@ export const SessionSsoAuthenticationTable = mysqlTable(
     createdAt: timestamp("created_at", { fsp: 3 }).notNull().defaultNow(),
   },
   (table) => [index("session_sso_authentication_org").on(table.organizationId), index("session_sso_authentication_user").on(table.userId)],
+)
+
+/**
+ * Every organization whose SSO a session has proven, and when. Replaces
+ * `session_sso_authentication` (one row per session): a session keeps the
+ * proofs of the session it replaced when the same browser signs in through
+ * another organization's SSO, so a member of several organizations that
+ * require SSO is not sent through each of them again. `authenticated_at` is
+ * when the identity provider actually authenticated the person; copies keep
+ * it, so an organization's "Ask for SSO again after" is never reset by one.
+ * Removed with the session, user or organization.
+ */
+export const SessionSsoProofTable = mysqlTable(
+  "session_sso_proof",
+  {
+    sessionId: denTypeIdColumn("session", "session_id").notNull(),
+    organizationId: denTypeIdColumn("organization", "organization_id").notNull(),
+    userId: denTypeIdColumn("user", "user_id").notNull(),
+    ssoProviderId: varchar("sso_provider_id", { length: 255 }).notNull(),
+    authenticatedAt: timestamp("authenticated_at", { fsp: 3 }).notNull(),
+    createdAt: timestamp("created_at", { fsp: 3 }).notNull().defaultNow(),
+  },
+  (table) => [
+    primaryKey({ name: "session_sso_proof_pk", columns: [table.sessionId, table.organizationId] }),
+    index("session_sso_proof_org").on(table.organizationId),
+    index("session_sso_proof_user").on(table.userId),
+  ],
 )
 
 export const ExternalIdentityTable = mysqlTable(

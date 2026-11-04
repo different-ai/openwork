@@ -69,7 +69,7 @@ async function newestSessionId(session: Session) {
 /** ARRANGE ONLY: this session came back from the organization's SSO (what the SSO callback records). */
 async function arrangeSsoSession(session: Session, orgId: string, providerId: string) {
   await sql(
-    "INSERT INTO session_sso_authentication (session_id, user_id, organization_id, sso_provider_id) VALUES (?, ?, ?, ?)",
+    "INSERT INTO session_sso_proof (session_id, user_id, organization_id, sso_provider_id, authenticated_at) VALUES (?, ?, ?, ?, NOW(3))",
     [await newestSessionId(session), session.userId, orgId, providerId],
   )
 }
