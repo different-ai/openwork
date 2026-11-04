@@ -91,6 +91,16 @@
               ],
               "description": "AI Gateway: Smart Model Router: Admins create Smart Routers for everyone, teams or people, listing AI Gateway models and the tasks each handles. Members pick \"Smart: <name>\": each prompt goes to the model whose tasks fit it best, at the thinking level it needs. Renders DEN_FEATURE_AUTO_ROUTER."
             },
+            "plainFreeModel": {
+              "enum": [
+                "",
+                "true",
+                "false",
+                true,
+                false
+              ],
+              "description": "Desktop: OpenWork Free listed like any other model: The free model shows in the model picker under its own name (GPT-6 Luna) with the same row as every other model, stays selectable when its usage limit is used up, and the limit message appears in the chat after sending. Renders DEN_FEATURE_PLAIN_FREE_MODEL."
+            },
             "settledSessions": {
               "enum": [
                 "",

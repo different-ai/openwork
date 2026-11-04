@@ -137,6 +137,17 @@ export const FEATURES = defineFeatures({
     deployments: ["cloud"],
     default: false,
   },
+  plainFreeModel: {
+    label: "Desktop: OpenWork Free listed like any other model",
+    description: "The free model shows in the model picker under its own name (GPT-6 Luna) with the same row as every other model, stays selectable when its usage limit is used up, and the limit message appears in the chat after sending.",
+    category: "models",
+    added: "2026-11-03",
+    since: "2026-11",
+    author: "benjaminshafii",
+    docs: "docs/features/plain-free-model/README.md",
+    deployments: everywhere,
+    default: false,
+  },
   settledSessions: {
     label: "Desktop: settle finished sessions",
     description: "Finished sessions can be settled into a collapsed Settled row at the end of their workspace, by hand or after a few idle days, and come back on new activity.",
