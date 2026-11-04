@@ -1015,6 +1015,8 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink, che
       deferBackground,
       operation: false, suspending: false, mediaPlaying: false, downloads: new Set(),
       domReady: false, emulation: Promise.resolve(),
+      // Set from render-process-gone until the next document is ready.
+      rendererGone: false,
       // AGENT_VIEWPORTS key while the agent controls the tab, the size it was
       // locked at, and the scale its emulation currently draws at inside the
       // panel (1 when not scaled).
@@ -1048,10 +1050,27 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink, che
     view.webContents.on("context-menu", (_event, params) => {
       runDetachedTask("show browser page menu", () => showPageContextMenu(tab, params));
     });
-    view.webContents.once("dom-ready", () => {
+    const onDomReady = () => {
       tab.domReady = true;
+      tab.rendererGone = false;
+      // A viewport update skipped while the renderer was gone left this set.
+      tab.agentViewportQueued = false;
       if (tab.background) emulateBackgroundTab(tab);
       else if (tab.agentViewport) emulateAgentViewport(tab);
+      // Updates skipped while the renderer was gone may have left emulation
+      // from the background or the agent on this foreground tab.
+      else if (view.webContents.debugger.isAttached()) clearLeftoverEmulation(tab);
+    };
+    view.webContents.once("dom-ready", onDomReady);
+    // A dead renderer leaves the contents alive (not destroyed) but without a
+    // page view, and Chromium dereferences that missing view when a viewport
+    // emulation arrives, crashing the whole app. Stop emulating until a reload
+    // brings a new document, then emulate it as on first load.
+    view.webContents.on("render-process-gone", () => {
+      tab.rendererGone = true;
+      if (!tab.domReady) return;
+      tab.domReady = false;
+      view.webContents.once("dom-ready", onDomReady);
     });
     view.webContents.on("media-started-playing", () => { tab.mediaPlaying = true; });
     view.webContents.on("media-paused", () => { tab.mediaPlaying = false; });
@@ -1321,8 +1340,12 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink, che
   }
 
   function queueBrowserTabEmulation(tab, label, operation) {
-    const isCurrent = () => browserTabs.get(tab.tabId) === tab && !tab.view.webContents.isDestroyed();
-    const execute = () => { if (isCurrent()) return operation(isCurrent); };
+    const isOwned = () => browserTabs.get(tab.tabId) === tab && !tab.view.webContents.isDestroyed();
+    // Emulating a tab whose renderer is gone crashes Electron's main process
+    // (see render-process-gone in createBrowserTab), so a dead tab is not
+    // current. Detaching the debugger is still safe: use `isOwned` for that.
+    const isCurrent = () => isOwned() && !tab.rendererGone && !tab.view.webContents.isCrashed();
+    const execute = () => { if (isCurrent()) return operation(isCurrent, isOwned); };
     const emulation = tab.emulation.then(execute, execute);
     tab.emulation = emulation;
     runDetachedTask(label, () => emulation);
@@ -1352,7 +1375,7 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink, che
     detachBrowserView(tab.view);
     if (webContents.isDestroyed()) return;
     const cdp = webContents.debugger;
-    queueBrowserTabEmulation(tab, "restore foreground browser tab", async (isCurrent) => {
+    queueBrowserTabEmulation(tab, "restore foreground browser tab", async (isCurrent, isOwned) => {
       if (tab.background || !cdp.isAttached()) return;
       try {
         for (const { method, params } of foregroundTabEmulationCommands()) {
@@ -1360,7 +1383,7 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink, che
           await cdp.sendCommand(method, params);
         }
       } finally {
-        if (isCurrent() && !tab.background && !tab.agentViewport && cdp.isAttached()) cdp.detach();
+        if (isOwned() && !tab.background && !tab.agentViewport && cdp.isAttached()) cdp.detach();
       }
     });
     if (tab.agentViewport) emulateAgentViewport(tab);
@@ -1428,7 +1451,7 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink, che
     else if (!tab.view.webContents.isDestroyed()) {
       placeOnScreenView(tab);
       const cdp = tab.view.webContents.debugger;
-      queueBrowserTabEmulation(tab, "release agent browser viewport", async (isCurrent) => {
+      queueBrowserTabEmulation(tab, "release agent browser viewport", async (isCurrent, isOwned) => {
         if (tab.background || tab.agentViewport || !cdp.isAttached()) return;
         try {
           for (const { method, params } of [
@@ -1440,11 +1463,34 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink, che
             await cdp.sendCommand(method, params);
           }
         } finally {
-          if (isCurrent() && !tab.background && !tab.agentViewport && cdp.isAttached()) cdp.detach();
+          if (isOwned() && !tab.background && !tab.agentViewport && cdp.isAttached()) cdp.detach();
         }
       });
     }
     sendBrowserState();
+  }
+
+  /**
+   * Undo every emulation the background or the agent sets, then detach, for a
+   * foreground tab whose renderer came back after updates were skipped.
+   */
+  function clearLeftoverEmulation(tab) {
+    const cdp = tab.view.webContents.debugger;
+    queueBrowserTabEmulation(tab, "clear leftover browser tab emulation", async (isCurrent, isOwned) => {
+      if (tab.background || tab.agentViewport || !cdp.isAttached()) return;
+      try {
+        for (const { method, params } of [
+          { method: "Emulation.setTouchEmulationEnabled", params: { enabled: false } },
+          { method: "Emulation.setUserAgentOverride", params: { userAgent: "" } },
+          ...foregroundTabEmulationCommands(),
+        ]) {
+          if (!isCurrent() || tab.background || tab.agentViewport) return;
+          await cdp.sendCommand(method, params);
+        }
+      } finally {
+        if (isOwned() && !tab.background && !tab.agentViewport && cdp.isAttached()) cdp.detach();
+      }
+    });
   }
 
   /** A background tab's view and emulation follow its current viewport. */
@@ -1603,7 +1649,7 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink, che
     const tab = tabForView(view);
     if (!tab?.domReady || tab.background || tab.suspending) return;
     const cdp = webContents.debugger;
-    queueBrowserTabEmulation(tab, "reset browser viewport emulation", async (isCurrent) => {
+    queueBrowserTabEmulation(tab, "reset browser viewport emulation", async (isCurrent, isOwned) => {
       if (tab.background || tab.suspending || cdp.isAttached()) return;
       cdp.attach("1.3");
       try {
@@ -1616,7 +1662,7 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink, che
         if (!isCurrent() || tab.background || tab.suspending) return;
         await cdp.sendCommand("Emulation.clearDeviceMetricsOverride");
       } finally {
-        if (isCurrent() && !tab.background && cdp.isAttached()) cdp.detach();
+        if (isOwned() && !tab.background && cdp.isAttached()) cdp.detach();
       }
     });
   }
