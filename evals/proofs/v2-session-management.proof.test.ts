@@ -15,7 +15,8 @@ function object(value: unknown): value is Record<string, unknown> {
 }
 
 function parse(output: string): Record<string, unknown> {
-  const value: unknown = JSON.parse(output);
+  const decoded: unknown = JSON.parse(output);
+  const value: unknown = typeof decoded === "string" ? JSON.parse(decoded) : decoded;
   if (!object(value)) throw new Error("The native tool did not return an object");
   return value;
 }
@@ -29,8 +30,10 @@ function affordanceIds(value: unknown): string[] {
   ];
 }
 
+// V2 offers app tools through its Code Mode catalog, rather than listing each
+// native function directly to the model. Exercise that shipping path.
 const command = (id: string, args: Record<string, unknown>): MockAgentToolStep => ({
-  tool: "openwork_execute", arguments: { id, args },
+  tool: "execute", arguments: { code: `const result = await tools.openwork_execute(${JSON.stringify({ id, args })}); return typeof result === "string" ? JSON.parse(result) : result;` },
 });
 
 test("a member's agent organizes another v2 conversation without opening it or starting work there", async ({ world, user, probe, step, evidence }) => {
@@ -41,7 +44,7 @@ test("a member's agent organizes another v2 conversation without opening it or s
   let callerRoute = "";
   const turn = (label: string, steps: MockAgentToolStep[]) => runToolTurn({ user }, world, label, steps);
   const receipt = async (id: string) => {
-    const call = (await world.calls()).findLast(call => call.tool === "openwork_execute" && call.input.id === id);
+    const call = (await world.calls()).findLast(call => call.tool === "execute" && typeof call.input.code === "string" && call.input.code.includes(JSON.stringify(id)));
     expect(call, `The native engine recorded ${id}`).toBeDefined();
     expect(call?.status).toBe("completed");
     expect(call?.error).toBe("");
@@ -73,14 +76,14 @@ test("a member's agent organizes another v2 conversation without opening it or s
 
   await step("after: the agent discovers chat management, renames the notes and changes their model", async () => {
     const prompt = await turn("Rename my planning notes and switch their model without opening them.", [
-      { tool: "openwork_context", arguments: {} },
+      { tool: "execute", arguments: { code: 'const result = await tools.openwork_context(); return typeof result === "string" ? JSON.parse(result) : result;' } },
       command("session.rename", { ...target, title: world.renamedTitle }),
       command("session.set_model", { ...target, providerId: world.providerId, modelId: world.replacementModelId }),
     ]);
     await user.see("Run task", { timeoutMs: 30_000 });
     await user.see({ text: world.renamedTitle });
     const calls = await world.calls();
-    const discovery = calls.find(call => call.tool === "openwork_context");
+    const discovery = calls.find(call => call.tool === "execute" && typeof call.input.code === "string" && call.input.code.includes("tools.openwork_context()"));
     expect(discovery?.status).toBe("completed");
     const available = affordanceIds(parse(discovery?.output ?? ""));
     expect(available).toEqual(expect.arrayContaining(requiredCommands));
@@ -91,7 +94,7 @@ test("a member's agent organizes another v2 conversation without opening it or s
     expect(state).toMatchObject({ title: world.renamedTitle, model: { providerId: world.providerId, modelId: world.replacementModelId }, archived: false });
     const requests = await world.modelCalls(prompt);
     const emitted = requests.filter(request => request.kind === "tool").map(request => request.toolName);
-    expect(emitted).toEqual(["openwork_context", "openwork_execute", "openwork_execute"]);
+    expect(emitted).toEqual(["execute", "execute", "execute"]);
     expect(requests.some(request => request.kind === "final")).toBe(true);
     evidence.recordAssertionEvidence("Native agent tools discover and perform the edits, not the renderer's direct automation rail", `model emitted=${emitted.join(", ")}; discovered=${requiredCommands.filter(id => available.includes(id)).join(", ")}; persisted title=${state.title}; model=${String(state.model.providerId)}/${String(state.model.modelId)}; target messages=${state.messageCount}`, emitted.length === 3 && requiredCommands.every(id => available.includes(id)) && state.model.modelId === world.replacementModelId && state.messageCount === 0);
     await user.screenshot();
@@ -143,21 +146,20 @@ test("a member's agent organizes another v2 conversation without opening it or s
   await step("the running agent cannot archive itself or use an unrelated delete command", async () => {
     await turn("Try archiving this running conversation and deleting the planning notes.", [
       command("session.archive", { sessionId: world.caller.sessionId, archived: true }),
-      command("session.delete", { ...target, confirmed: true }),
+      { tool: "execute", arguments: { code: `try { await tools.openwork_execute(${JSON.stringify({ id: "session.delete", args: { ...target, confirmed: true } })}); return { rejected: false }; } catch (error) { return { rejected: true, error: String(error) }; }` } },
     ]);
     await user.see("Run task", { timeoutMs: 30_000 });
     const refused = await receipt("session.archive");
     expect(refused).toMatchObject({ ok: false, code: "self_archive_while_working" });
-    const deletion = (await world.calls()).findLast(call => call.tool === "openwork_execute" && call.input.id === "session.delete");
-    expect(deletion?.input.args).toMatchObject({ sessionId: world.target.sessionId, confirmed: true });
-    expect(deletion?.status).toBe("error");
-    expect(deletion?.error).toContain("OpenWork command failed (400)");
+    const deletion = await receipt("session.delete");
+    expect(deletion.rejected).toBe(true);
+    expect(deletion.error).toContain("OpenWork command failed (400)");
     const state = await staysInCaller();
     const caller = await world.inspect(world.caller.sessionId);
     expect(caller.archived).toBe(false);
     expect(state).toMatchObject({ id: world.target.sessionId, title: world.renamedTitle, archived: false, model: { modelId: world.replacementModelId }, messageCount: 0 });
     await user.see({ text: world.renamedTitle });
-    evidence.recordAssertionEvidence("The working caller stays open and the attempted delete leaves the target untouched", `self-archive code=${String(refused.code)}; delete status=${deletion?.status}, error=${deletion?.error}; caller archived=${caller.archived}; target still exists, messages=${state.messageCount}`, refused.code === "self_archive_while_working" && deletion?.status === "error" && !caller.archived && state.id === world.target.sessionId && state.messageCount === 0);
+    evidence.recordAssertionEvidence("The working caller stays open and the attempted delete leaves the target untouched", `self-archive code=${String(refused.code)}; delete rejected=${String(deletion.rejected)}, error=${String(deletion.error)}; caller archived=${caller.archived}; target still exists, messages=${state.messageCount}`, refused.code === "self_archive_while_working" && deletion.rejected === true && !caller.archived && state.id === world.target.sessionId && state.messageCount === 0);
     await user.screenshot();
   });
 });
