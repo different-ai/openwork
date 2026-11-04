@@ -14,7 +14,7 @@ import { resolveGlobalOpencodeConfigPath } from "@openwork/paths";
 import type { ApprovalRequest, Capabilities, ServerConfig, WorkspaceInfo, Actor, ReloadReason, ReloadTrigger, TokenScope } from "./types.js";
 import { agentContextDiagnosticsRequestSchema } from "./agent-context-diagnostics-schema.js";
 import { ApprovalService } from "./approvals.js";
-import { attachApprovedDriveUpload, prepareDriveUploadFile, type PreparedDriveUploadFile } from "./extensions/approved-drive-upload.js";
+import { attachApprovedDriveUpload, createDriveUploadPreflight, type PreparedDriveUploadFile } from "./extensions/approved-drive-upload.js";
 import {
   BoundedSseFrameBuffer,
   EnginePool,
@@ -851,22 +851,7 @@ export async function startServer(
     autoUpgradeError: (error) => logger.log("warn", "Automatic engine upgrade failed; keeping v1", { error }),
     providerSession: () => cloudProviderSync.providerBridgeSession(),
     hostReadRequest,
-    prepareDriveUpload: async (args, context, signal) => {
-      signal.throwIfAborted();
-      const prepared = await prepareDriveUploadFile(config, args, context);
-      return {
-        path: prepared.args.path,
-        approvalIdentity: prepared.approvalIdentity(),
-        close: () => prepared.close(),
-        upload: () => {
-          signal.throwIfAborted();
-          return hostReadRequest("/experimental/extensions/call", {
-            method: "POST", signal: AbortSignal.any([signal, AbortSignal.timeout(130_000)]),
-            body: JSON.stringify({ extensionId: "openwork-cloud-uploads", action: "drive_upload_file", args: prepared.args, context }),
-          }, prepared);
-        },
-      };
-    },
+    prepareDriveUpload: createDriveUploadPreflight(config, hostReadRequest),
   });
   const cloudProviderSync = new CloudProviderSync({
     config,

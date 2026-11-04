@@ -283,10 +283,10 @@ export async function createV2ContextBridge(
           }
           if (scope && decision === "always") rememberedDriveUploads.add(scope);
           else if (scope && decision === "once") rememberedDriveUploads.delete(scope);
-          // The transfer gets its own budget once approved. Older embeddings
-          // without preflight keep the existing root-bound extension transport.
-          deadline = AbortSignal.timeout(130_000);
-          return Response.json(prepared ? await prepared.upload() : await read("/experimental/extensions/call", { method: "POST", body: JSON.stringify({
+          // Healthy resumable uploads may take hours. Each network request is
+          // bounded by the transport; do not add a 130-second total deadline.
+          // Older embeddings stay root-bound and keep the caller's Stop signal.
+          return Response.json(prepared ? await prepared.upload() : await hostRequest("/experimental/extensions/call", { method: "POST", signal: request.signal, body: JSON.stringify({
             extensionId: OPENWORK_CLOUD_UPLOADS_EXTENSION_ID, action: "drive_upload_file", args, context: { directory: call.caller.directory },
           }) }));
         } finally {

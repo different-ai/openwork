@@ -7,6 +7,7 @@ import { ApiError } from "../errors.js";
 import type { ServerConfig } from "../types.js";
 import { openWorkspaceFileForReading, proveHandleInPlace } from "../workspace-file-identity.js";
 import { resolveAuthorizedFile } from "./cloud-uploads.js";
+import { OPENWORK_CLOUD_UPLOADS_EXTENSION_ID } from "./cloud-upload-constants.js";
 
 export type DriveUploadArgs = { path: string; folderId?: string; connectionId?: string };
 
@@ -86,3 +87,28 @@ export type PrepareDriveUpload = (args: DriveUploadArgs, context: Record<string,
   upload(): Promise<unknown>;
   close(): Promise<void>;
 }>;
+
+/** The native host's preflight/dispatch contract. Approval has its own bound;
+ * transfer duration is governed by bounded chunk requests, not a total timer
+ * that would cancel a healthy large upload. The caller's Stop signal remains.
+ */
+export function createDriveUploadPreflight(config: ServerConfig, hostRequest: (
+  path: string, init: RequestInit, file: PreparedDriveUploadFile,
+) => Promise<unknown>): PrepareDriveUpload {
+  return async (args, context, signal) => {
+    signal.throwIfAborted();
+    const prepared = await prepareDriveUploadFile(config, args, context);
+    return {
+      path: prepared.args.path,
+      approvalIdentity: prepared.approvalIdentity(),
+      close: () => prepared.close(),
+      upload: () => {
+        signal.throwIfAborted();
+        return hostRequest("/experimental/extensions/call", {
+          method: "POST", signal,
+          body: JSON.stringify({ extensionId: OPENWORK_CLOUD_UPLOADS_EXTENSION_ID, action: "drive_upload_file", args: prepared.args, context }),
+        }, prepared);
+      },
+    };
+  };
+}

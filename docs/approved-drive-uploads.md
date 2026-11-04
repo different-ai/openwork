@@ -47,6 +47,23 @@ The normal server authentication, viewer rejection and managed-policy dispatch
 remain in place. This fix does not send email, change sharing permissions, or
 retry an uncertain upload.
 
+## Long uploads and cancellation
+
+The native upload bridge previously applied a **130-second total transfer
+budget** after approval. This cancelled healthy large/resumable uploads and
+surfaced as HTTP 499 “Request was canceled,” even though the person had not
+pressed Stop. The prepared host dispatch had the same fixed budget.
+
+Both Drive-specific total deadlines are removed. Each preparation/multipart
+request and each resumable chunk/probe still has its existing two-minute
+network bound. Progress stays within the **same** Google session; uncertain
+writes are probed, not restarted as another file. The original caller's Stop
+signal is preserved through both prepared and older root-bound dispatch.
+Gmail/Outlook's small-attachment budgets and other app-read timeouts are unchanged.
+
+Native activity now says “Couldn't upload … to Google Drive” instead of
+“Couldn't drive upload.” No upload is automatically retried after cancellation.
+
 ## Verification
 
 - `apps/server/test/approved-drive-upload.test.ts`: exact-file scope, destination
@@ -62,6 +79,16 @@ retry an uncertain upload.
   No paid model or real Google account is used.
 - `apps/app/tests/permission-approval-panel.test.tsx`: session approval appears
   only for saveable scopes; actual file paths are shown instead of rule hashes.
+- `apps/server/test/drive-upload-duration.test.ts`: three real 45-second chunks
+  complete after the old cutoff; the production preflight retains the exact
+  caller signal without wrapping it in another total timer. Run separately:
+  `pnpm --filter openwork-server test:drive-upload-duration` (about 135 seconds).
+- `apps/server/test/drive-upload-stop.test.ts`: caller cancellation still reaches
+  an active transfer on the shipping Node HTTP runtime. This Node check is part
+  of `test:readiness`; Bun's in-process Node HTTP shim does not reproduce client
+  disconnect cancellation, including on the clean previous-commit control.
+- `apps/app/tests/engine-tool-sentences.test.ts`: Drive activity uses upload
+  wording and a basename, never the noun “drive” as a verb or a full local path.
 - `evals/proofs/opencode-v2-drive-upload.proof.test.ts`: real app/server/v2
   engine/Den, synthetic Google and model; declining sends nothing, approving a
   file outside every workspace puts the exact bytes in the selected account only.
@@ -72,9 +99,12 @@ root-only extension callers are not broadened.
 ## Local validation (2026-11-04)
 
 - Server and app typechecks: passed.
-- Bun readiness suite: 108 passed, zero failures (21 files).
+- Readiness: 108 Bun checks passed (21 files), plus the Node Stop check passed.
 - Node 24 focused upload/approval suite, including the native engine: 39 passed,
   zero failures or skips.
+- Wall-clock transfer regression: previous commit `95ca342129` cancelled at
+  130,065 ms; the fixed branch confirmed all bytes after 135,054 ms, using one
+  upload session and three progressing chunks. Both duration tests passed.
 - Approval panel tests: 4 passed (`pnpm --filter @openwork/app test:approval-panel`).
 - Native session test also runs independently with
   `pnpm --filter openwork-server test:drive-upload-session-native`; it used the

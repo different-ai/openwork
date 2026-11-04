@@ -241,6 +241,17 @@ export function getCapabilityCallSentence(
   options?: { includeQuery?: boolean; connectionName?: string | null },
 ): CapabilityCallSentence {
   const toolName = part.toolName
+  if (toolName === "openwork_drive_upload") {
+    const input = parseRecord(part.input)
+    const name = typeof input?.path === "string" ? input.path.split(/[\\/]/).filter(Boolean).at(-1) : null
+    const file = name ? `“${name}”` : "a file"
+    return {
+      service: "Google Drive",
+      present: `Uploading ${file} to Google Drive`,
+      past: `Uploaded ${file} to Google Drive`,
+      failure: `Couldn't upload ${file} to Google Drive`,
+    }
+  }
   if (getConnectionStatusProbeId(part)) {
     const service = options?.connectionName?.trim() || null
     const target = service ? `${service} connection` : "connection"

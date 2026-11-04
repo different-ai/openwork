@@ -7,7 +7,7 @@ import { test } from "node:test";
 import { z } from "zod";
 import { createManagedOpencodeV2Server } from "../src/managed-opencode-v2.js";
 import { createV2ContextBridge } from "../src/opencode-v2-context-bridge.js";
-import { prepareDriveUploadFile } from "../src/extensions/approved-drive-upload.js";
+import { createDriveUploadPreflight } from "../src/extensions/approved-drive-upload.js";
 import { callOpenWorkCloudUploadAction } from "../src/extensions/cloud-uploads.js";
 import type { ServerConfig } from "../src/types.js";
 
@@ -26,10 +26,10 @@ test("the real native engine remembers a Drive file scope only after Allow for s
   const config: ServerConfig = { host: "127.0.0.1", port: 0, token: "client", hostToken: "host", approval: { mode: "auto", timeoutMs: 1000 }, corsOrigins: [], workspaces: [], authorizedRoots: [directory], readOnly: false, startedAt: 0, tokenSource: "generated", hostTokenSource: "generated", logFormat: "json", logRequests: false };
   let engine: Awaited<ReturnType<typeof createManagedOpencodeV2Server>> | undefined;
   let sent = 0;
-  const bridge = await createV2ContextBridge(async () => { throw new Error("must use the exact-file capability"); }, () => engine, async (args, context, signal) => {
-    const file = await prepareDriveUploadFile(config, args, context);
-    return { path: file.args.path, approvalIdentity: "unchanged-native-fixture-version", close: () => file.close(), upload: () => callOpenWorkCloudUploadAction(config, "drive_upload_file", file.args, context, {
-      approvedDriveFile: file, signal,
+  const prepare = createDriveUploadPreflight(config, async (_path, request, file) => {
+    const context = z.object({ context: z.record(z.string(), z.unknown()) }).parse(JSON.parse(String(request.body))).context;
+    return callOpenWorkCloudUploadAction(config, "drive_upload_file", file.args, context, {
+      approvedDriveFile: file, signal: request.signal ?? undefined,
       readCloudMcp: async () => ({ type: "remote", url: "https://cloud.test/mcp/agent", enabled: true, oauth: false, headers: { Authorization: "Bearer synthetic" } }),
       fetchImpl: async (_url, init) => {
         assert.ok(init?.body instanceof FormData);
@@ -38,8 +38,9 @@ test("the real native engine remembers a Drive file scope only after Allow for s
         sent++;
         return Response.json({ ok: true, file: { id: `uploaded-${sent}` } });
       },
-    }) };
+    });
   });
+  const bridge = await createV2ContextBridge(async () => { throw new Error("must use the exact-file capability"); }, () => engine, prepare);
   try {
     engine = await createManagedOpencodeV2Server({ bin: binary, rootDir: join(root, "engine"), contextTools: bridge,
       env: { HOME: home, XDG_CONFIG_HOME: join(home, "config"), XDG_DATA_HOME: join(home, "data"), XDG_CACHE_HOME: join(home, "cache"), XDG_STATE_HOME: join(home, "state"), OPENCODE_DISABLE_MODELS_FETCH: "true" },
