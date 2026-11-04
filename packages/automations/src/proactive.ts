@@ -929,6 +929,11 @@ const agentStateSchema = z.object({
    * check knows what was told rather than only what it reported. Member content, encrypted with the rest of the state.
    */
   sent: z.array(z.object({ at: z.number(), about: z.array(z.string().max(400)).max(8), lead: z.string().max(240) })).max(40).optional(),
+  /**
+   * `workbotAgentBrief`: the last findings report the check handed the messenger, so a finding the messenger held for
+   * later is reported again instead of lost (the next check reads only what's new). Member content, encrypted.
+   */
+  lastReport: z.object({ at: z.number(), text: z.string().max(4_000) }).nullable().optional(),
 })
 export type AgentState = z.infer<typeof agentStateSchema>
 

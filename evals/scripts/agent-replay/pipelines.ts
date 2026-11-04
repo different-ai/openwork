@@ -31,11 +31,14 @@ import {
   parseRequestedCheckTime,
   pendingCheckRequests,
   planCheckRequest,
+  rememberSent,
+  sentLead,
   settleCheckRequests,
   type AgentCheckOccasion,
   type AgentCheckRequest,
   type AgentConversationTurn,
   type AgentRhythm,
+  type AgentSentRecord,
 } from "../../../packages/automations/src/proactive-brief.ts";
 import { DEFAULT_AGENT_BRIEF, EMPTY_AGENT_PREFERENCES } from "../../../packages/types/src/den/workbot-proactive.ts";
 import { answerDayTool, calendarAt, dayTools, memorySection, type DayScenario } from "./day.ts";
@@ -114,11 +117,15 @@ function sourcesFor(scenario: DayScenario, lastReadAt: number | null): AgentProm
   ];
 }
 
-/** "github" is how the model names the GitHub connection; the other sources go by their ids. */
+/**
+ * What Den's findSource does with a source as step 2 wrote it: its id, its name ("Team chat", "GitHub"), the names
+ * people use ("slack", "gmail", "my email"), or the start of another source's name.
+ */
 function resolveSource(source: string): string | null {
-  const needle = source.trim().toLowerCase();
-  const aliases: Record<string, string> = { slack: "chat", gmail: "email", mail: "email", "google calendar": "calendar", github: "conn_github" };
-  return aliases[needle] ?? (["calendar", "email", "chat", "conn_github"].includes(needle) ? needle : null);
+  const needle = source.trim().toLowerCase().replace(/^my\s+/, "");
+  const sources: Record<string, string> = { calendar: "calendar", email: "email", chat: "chat", conn_github: "conn_github", "team chat": "chat", github: "conn_github" };
+  const aliases: Record<string, string> = { slack: "chat", teams: "chat", gmail: "email", outlook: "email", mail: "email", inbox: "email", "outlook mail": "email", "google calendar": "calendar", "outlook calendar": "calendar" };
+  return sources[needle] ?? aliases[needle] ?? ("github".startsWith(needle) && needle.length > 0 ? "conn_github" : null);
 }
 
 function conversationAt(scenario: DayScenario, sent: readonly DeliveredMessage[], now: number): AgentConversationTurn[] {
@@ -147,6 +154,8 @@ export async function runNewPipeline(scenario: DayScenario, model: ReplayModel):
   const files = new Map<string, string>(scenario.notes ? [["memory/notes.md", scenario.notes]] : []);
   const told = new Set<string>();
   let requests: AgentCheckRequest[] = [];
+  let sent: AgentSentRecord[] = [];
+  let lastReport: { at: number; text: string } | null = null;
   let lastCheckAt: number | null = null;
   const name = scenario.person.first;
   const instructions = agentCheckInstructions({ name, brief: agentBriefForCheck({ name, organization: DEFAULT_AGENT_BRIEF, member: scenario.memberLines ?? "" }) });
@@ -177,7 +186,7 @@ export async function runNewPipeline(scenario: DayScenario, model: ReplayModel):
         const step1 = await toolLoop({
           model,
           system: [instructions, memorySection(files)].filter(Boolean).join("\n\n"),
-          user: agentCheckPrompt({ occasion, now, timeZone: tz, nextCheckAt: nextScheduled, extraChecksLeft: extraChecksLeft(requests, 3, now, tz), sources: sourcesFor(scenario, lastCheckAt ?? previousEvening(scenario)) }),
+          user: agentCheckPrompt({ occasion, now, timeZone: tz, nextCheckAt: nextScheduled, extraChecksLeft: extraChecksLeft(requests, 3, now, tz), sent, lastReport, sources: sourcesFor(scenario, lastCheckAt ?? previousEvening(scenario)) }),
           tools: dayTools(scenario, [requestTool]),
           usage: log.usage.check,
           answer: (call) => {
@@ -198,6 +207,7 @@ export async function runNewPipeline(scenario: DayScenario, model: ReplayModel):
         requests = settleCheckRequests(requests, now);
         lastCheckAt = now;
         const report = parseCheckReport(step1.text);
+        if (report.kind === "findings") lastReport = { at: now, text: report.report.slice(0, 4_000) };
         if (report.kind === "none") log.outcome = "no_findings";
         else {
           const sentToday = run.messages.filter((message) => dayOf(message.at, tz) === dayOf(now, tz)).length;
@@ -227,7 +237,9 @@ export async function runNewPipeline(scenario: DayScenario, model: ReplayModel):
                   run.messages.push({ at: now, text: message.text });
                   log.delivered.push(message.text);
                 }
-                log.outcome = decision.deliver.length ? "sent" : decision.skipped.some((entry) => entry.reason === "daily_limit") ? "daily_limit" : "already_told";
+                sent = rememberSent(sent, decision.deliver.map((message) => ({ at: now, about: message.about.map((item) => `${item.source}:${item.id}`), lead: sentLead(message.text) })), now);
+                const unreadable = decision.skipped.length > 0 && decision.skipped.every((entry) => entry.reason === "unknown_source");
+                log.outcome = decision.deliver.length ? "sent" : decision.skipped.some((entry) => entry.reason === "daily_limit") ? "daily_limit" : unreadable ? "unknown_source" : "already_told";
               }
             }
           }

@@ -213,7 +213,8 @@ const commitmentDue: DayScenario = {
   id: "commitment-due",
   title: "Sam promised the updated deck by today; Dana presents it tomorrow at 9",
   person, timeZone: tz,
-  windows: [{ date: D1, from: 8, to: 13 }],
+  // An end-of-day deadline: telling it by early afternoon still leaves time to do the work.
+  windows: [{ date: D1, from: 8, to: 15 }],
   calendar: [],
   email: [
     thread("thr_deck", "Updated deck", [
@@ -225,7 +226,7 @@ const commitmentDue: DayScenario = {
   ],
   chat: [],
   expect: {
-    must: [{ id: "deck", match: "deck", by: t(D1, "10:00"), why: "Sam promised the deck today and hasn't sent it" }],
+    must: [{ id: "deck", match: "deck", by: t(D1, "14:00"), why: "Sam promised the deck by the end of today and hasn't sent it" }],
     never: [{ match: "SaaS news|newsletter", why: "noise" }],
   },
 };
@@ -267,7 +268,9 @@ const reviewBlocker: DayScenario = {
     github({ repo: "acme/docs", type: "Issue", number: 77, title: "Typo in the setup guide", reason: "assign", at: t(D1, "09:15"), state: "open", body: "\"recieve\" should be \"receive\"." }),
   ],
   expect: {
-    must: [{ id: "pr812", match: "#?812|order sync|release", by: t(D1, "12:00"), why: "Lee is blocked on Sam's review before the 2 PM cut" }],
+    // The review request alone is fine to mention; what must reach Sam is that it now blocks the release cut.
+    must: [{ id: "pr812-blocker", match: "blocker|release cut|before 1", by: t(D1, "12:00"), why: "Lee is blocked on Sam's review before the 2 PM cut" }],
+    ok: [{ match: "#?812|order sync", why: "the review request itself" }],
     never: [{ match: "axios|dependabot|#813|typo|#77", why: "routine" }],
   },
 };

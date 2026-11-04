@@ -236,6 +236,7 @@ export async function wakeAgentBrief(row: AgentInstanceRow, deps: AgentBriefWake
       nextCheckAt: nextAfter,
       extraChecksLeft: extraChecksLeft(state.requests, brief.extraChecksPerDay, now, timeZone),
       sent: state.sent,
+      lastReport: state.lastReport ?? null,
       sources: readable.map((source) => ({
         id: source.id,
         name: source.name,
@@ -358,7 +359,12 @@ export async function wakeAgentBrief(row: AgentInstanceRow, deps: AgentBriefWake
     counts: [{ responsibility: AGENT_RHYTHM_COUNTER, checks: 1, quiet: sent ? 0 : 1, sent }],
   }).catch(() => appLogger.warn("workbot_agent_checks_unrecorded", { member_id: memberId }))
   appLogger.info("workbot_agent_ran", { member_id: memberId, path: "brief", occasion: occasion.kind, report: report.kind, delivered: delivered ?? "none", sent })
-  const settled: AgentState = { ...nextState, sent: rememberSent(state.sent, sentRecords, now) }
+  const settled: AgentState = {
+    ...nextState,
+    sent: rememberSent(state.sent, sentRecords, now),
+    // The report the messenger saw, for the next check; a check with nothing to report keeps the last one.
+    lastReport: report.kind === "findings" ? { at: now, text: report.report.slice(0, 4_000) } : state.lastReport ?? null,
+  }
   await deps.settle(row, { state: JSON.stringify(settled), timeZone, templateVersionId: template.versionId, failures: 0, nextWakeAt: nextWake(nextAfter, requests) })
   return { status: "ran", reasons: ["scheduled"], reply: report.kind === "findings" ? "message" : "quiet", delivered }
 }

@@ -216,6 +216,16 @@ describe("Your agent's brief: a check, then maybe a message (workbotAgentBrief)"
     assert.equal(h.delivered.length, 0)
   })
 
+  test("a finding the messenger held is handed to the next check, so it isn't lost", async () => {
+    const { h, run } = harness({ checks: ["P1 — the deck for Northwind is due today.", "NO_FINDINGS"], replies: ["NO_REPLY"] })
+    await run()
+    assert.deepEqual(state(h).lastReport, { at: MORNING, text: "P1 — the deck for Northwind is due today." })
+    h.clock = at("2026-10-20T10:00:00")
+    await run()
+    assert.match(h.checks[1]?.prompt ?? "", /Your last report to the messenger \(today at 8:00 AM\)[^\n]*\n"""\nP1 — the deck for Northwind is due today\.\n"""/)
+    assert.equal(state(h).lastReport?.at, MORNING, "a quiet check keeps it")
+  })
+
   test("today's limit reached: no message turn at all, and the check says so", async () => {
     const { h, run } = harness({ checks: ["P0 — the build is broken."], sentToday: 4 })
     assert.equal((await run()).status, "ran")

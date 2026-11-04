@@ -170,7 +170,11 @@ export function answerDayTool(scenario: DayScenario, now: number, files: Map<str
         return match ? Date.parse(`${match}T00:00:00Z`) : 0;
       })();
       const messages = scenario.chat.filter((message) => visible(message.at, now) && parsed(message.at) >= after);
-      return JSON.stringify({ messages: messages.map(({ replies, ...message }) => ({ ...message, reply_count: (replies ?? []).filter((reply) => visible(reply.at, now)).length })) });
+      // Slack search returns thread replies as messages of their own, pointing at their thread.
+      const replies = scenario.chat.flatMap((message) => (message.replies ?? [])
+        .filter((reply) => visible(reply.at, now) && parsed(reply.at) >= after)
+        .map((reply) => ({ channel: message.channel, channelName: message.channelName, kind: "thread", from: reply.from, at: reply.at, text: reply.text, thread_ts: message.ts, permalink: `${message.permalink}?thread_ts=${message.ts}&reply=${Date.parse(reply.at)}` })));
+      return JSON.stringify({ messages: [...messages.map(({ replies: threaded, ...message }) => ({ ...message, reply_count: (threaded ?? []).filter((reply) => visible(reply.at, now)).length })), ...replies] });
     }
     case "slack_read_thread": {
       const parent = scenario.chat.find((message) => message.channel === str(args.channel_id) && message.ts === str(args.message_ts) && visible(message.at, now));

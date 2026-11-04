@@ -89,9 +89,9 @@ export function agentCheckInstructions(input: { name: string; brief: string }): 
     "Decide what matters",
     `For each finding, write down: what changed or what you learned, why it matters to ${name} now, what you checked and what you couldn't, the strongest source link, and a priority:`,
     `- P0: needs ${name} before your next check (a deadline today, someone blocked on them, a risk growing).`,
-    "- P1: worth telling today, can wait a few hours. Something the brief asks about that they can still act on is at least P1 the first time you see it.",
+    "- P1: worth telling today, can wait a few hours. Something the brief asks about that they can still act on is at least P1 the first time you see it, even if its date is weeks away.",
     "- P2: worth remembering, nothing to do now. Notes only.",
-    `A finding you already told ${name} about (the check lists what you sent) counts again only if it changed since, or if it's still open on a later day or past a time they said they'd handle it by ("still unresolved"). One you reported but weren't able to send yet still counts.`,
+    `A finding you already told ${name} about (the check lists what you sent) counts again only if it changed since, or if it's still open on a later day or past a time they said they'd handle it by ("still unresolved"). One you reported but weren't able to send yet still counts. Something missing (no agenda, no prep notes) isn't a finding by itself.`,
     "",
     `If timing matters before your next check (a meeting at 2 PM, a deadline at 5) and something ${name} would need to know could change by then, ask for one extra check with request_check(at, why). Don't ask for one only to see whether they acted on something you already told them.`,
     "",
@@ -99,6 +99,7 @@ export function agentCheckInstructions(input: { name: string; brief: string }): 
     "- Update memory/notes.md and memory/open.md (add, change or close items).",
     `- Write a checkpoint to ${AGENT_CHECKPOINT_DIR}{date}/{time}.md: what you checked, what you couldn't read, where to resume.`,
     `- If you have P0 or P1 findings, end with a report for the messenger: each finding as a short paragraph, most time-sensitive first, with its priority, source link and the ids of what it's about. Real names, numbers, dates and times. Otherwise end with exactly ${AGENT_NO_FINDINGS}.`,
+    "- Your report has every finding still to tell: new ones, and ones from your last report that weren't sent and still hold.",
     "- Write each id as <source>:<id>: the source as the wake lists it (calendar, email, chat or a connection id) and the id exactly as the tool returned it (a Slack permalink, a Gmail thread id, a calendar event id, an issue or pull request URL). Use the same ids every time you report the same thing.",
     "",
     `${name}'s brief:`,
@@ -133,6 +134,8 @@ export function agentCheckPrompt(input: {
   unavailable?: readonly AgentPromptUnavailable[]
   /** What Den sent the member recently (the messenger's messages), so the check knows what was told. */
   sent?: readonly AgentSentRecord[]
+  /** The last findings report this agent handed the messenger, so what it held isn't lost. */
+  lastReport?: { at: number; text: string } | null
 }): string {
   const { now, timeZone, occasion } = input
   const local = zonedClock(now, timeZone)
@@ -156,6 +159,9 @@ export function agentCheckPrompt(input: {
     sent.length
       ? `What you sent since yesterday (OpenWork's record of what reached them):\n${sent.map((record) => `- ${day.format(record.at)} [${record.about.join(", ")}] ${quoted(record.lead)}`).join("\n")}`
       : "You haven't sent them anything since yesterday.",
+    input.lastReport && input.lastReport.at > now - 36 * 3_600_000
+      ? `Your last report to the messenger (${formatWhen(input.lastReport.at, now, timeZone)}); what isn't in what you sent above wasn't sent and still counts if it still holds:\n"""\n${quoted(input.lastReport.text)}\n"""`
+      : "",
     `End with your report for the messenger, or exactly ${AGENT_NO_FINDINGS}.`,
   ].filter(Boolean).join("\n\n")
 }
@@ -225,7 +231,7 @@ export function agentMessagePrompt(input: {
     "What to send",
     `- If you've already sent ${cap} today, reply ${AGENT_QUIET_REPLY}.`,
     "- P0 findings: send now, one message each.",
-    `- P1 findings: send now only if it's the first check of the day, or if the moment it matters comes before your next check (${nextCheck}) plus about an hour. Otherwise leave them; the next check will see them again.`,
+    `- P1 findings: send now only if it's the first check of the day, or if the moment it matters comes before your next check (${nextCheck}) plus about an hour. The moment it matters is when they'd have to act, not when the event is: rearranging a conflict or doing promised work takes time. Otherwise leave them; the next check will see them again.`,
     "- Keep the last message of the day for a P0: don't spend it on a P1.",
     "- Nothing they already know from the conversation. A \"Still unresolved\" note is for something you told them on an earlier day; something you told them earlier today goes again only if it changed (\"Update to…\"). Exception: they said they'd handle something by a time, that time has passed, and the other person is still waiting or asked again. Send that now, whatever its priority.",
     `- Nothing they asked you not to tell them. Fewer is better. If nothing clears the bar, reply ${AGENT_QUIET_REPLY}.`,
