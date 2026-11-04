@@ -41,7 +41,7 @@ import {
   type AgentSentRecord,
 } from "../../../packages/automations/src/proactive-brief.ts";
 import { DEFAULT_AGENT_BRIEF, EMPTY_AGENT_PREFERENCES } from "../../../packages/types/src/den/workbot-proactive.ts";
-import { answerDayTool, calendarAt, dayTools, memorySection, type DayScenario } from "./day.ts";
+import { answerDayTool, calendarAt, connectorReadTools, connectorToolSpecs, dayTools, memorySection, type DayScenario } from "./day.ts";
 import type { ReplayMessage, ReplayModel, ReplayToolCall, ReplayToolSpec, ReplayUsage } from "./harness.ts";
 
 /**
@@ -71,7 +71,15 @@ export type CheckLog = {
   tools: string[];
   usage: { check: StepUsage; message: StepUsage };
 };
-export type DayRun = { scenario: string; pipeline: Pipeline; messages: DeliveredMessage[]; checks: CheckLog[]; error: string | null };
+export type DayRun = {
+  scenario: string;
+  pipeline: Pipeline;
+  messages: DeliveredMessage[];
+  checks: CheckLog[];
+  error: string | null;
+  /** The custom connectors' tools the check was offered (the brief's pipeline; none for today's). */
+  connectorTools?: string[];
+};
 
 const MAX_STEPS = 20;
 const HOUR = 3_600_000;
@@ -108,12 +116,23 @@ async function toolLoop(input: {
   return { text: "", tools: called };
 }
 
-function sourcesFor(scenario: DayScenario, lastReadAt: number | null): AgentPromptSource[] {
+/**
+ * Den's gateway refuses a connector tool the check's token doesn't carry: a call to one that wasn't offered (an invented
+ * name, or any connector tool in today's pipeline) gets no data.
+ */
+function guardConnectorTools(scenario: DayScenario, offered: ReadonlySet<string>, answer: (call: ReplayToolCall) => string): (call: ReplayToolCall) => string {
+  const listed = new Set((scenario.connectors ?? []).flatMap((connector) => connector.tools.map((tool) => tool.name)));
+  return (call) => (listed.has(call.function.name) && !offered.has(call.function.name) ? JSON.stringify({ error: "insufficient_mcp_scope" }) : answer(call));
+}
+
+/** The sources a check reads; `anyConnector` (the brief's pipeline) adds the custom connectors the member switched on. */
+function sourcesFor(scenario: DayScenario, lastReadAt: number | null, anyConnector = false): AgentPromptSource[] {
   return [
     { id: "calendar", name: "Calendar", via: ["Google Calendar"], instruction: "", lastReadAt },
     { id: "email", name: "Email", via: ["Gmail"], instruction: "", lastReadAt },
     { id: "chat", name: "Team chat", via: ["Slack"], instruction: "", lastReadAt },
     ...(scenario.github?.length ? [{ id: "conn_github", name: "GitHub", via: [], instruction: "", lastReadAt }] : []),
+    ...(anyConnector ? (scenario.connectors ?? []).map((connector) => ({ id: connector.id, name: connector.name, via: [], instruction: "", lastReadAt })) : []),
   ];
 }
 
@@ -121,8 +140,10 @@ function sourcesFor(scenario: DayScenario, lastReadAt: number | null): AgentProm
  * What Den's findSource does with a source as step 2 wrote it: its id, its name ("Team chat", "GitHub"), the names
  * people use ("slack", "gmail", "my email"), or the start of another source's name.
  */
-function resolveSource(source: string): string | null {
+function resolveSource(source: string, scenario?: DayScenario): string | null {
   const needle = source.trim().toLowerCase().replace(/^my\s+/, "");
+  const connector = (scenario?.connectors ?? []).find((entry) => entry.id === needle || entry.name.toLowerCase() === needle || (needle.length > 2 && entry.name.toLowerCase().startsWith(needle)));
+  if (connector) return connector.id;
   const sources: Record<string, string> = { calendar: "calendar", email: "email", chat: "chat", conn_github: "conn_github", "team chat": "chat", github: "conn_github" };
   const aliases: Record<string, string> = { slack: "chat", teams: "chat", gmail: "email", outlook: "email", mail: "email", inbox: "email", "outlook mail": "email", "google calendar": "calendar", "outlook calendar": "calendar" };
   return sources[needle] ?? aliases[needle] ?? ("github".startsWith(needle) && needle.length > 0 ? "conn_github" : null);
@@ -159,6 +180,9 @@ export async function runNewPipeline(scenario: DayScenario, model: ReplayModel):
   let lastCheckAt: number | null = null;
   const name = scenario.person.first;
   const instructions = agentCheckInstructions({ name, brief: agentBriefForCheck({ name, organization: DEFAULT_AGENT_BRIEF, member: scenario.memberLines ?? "" }) });
+  // Any connected connector: its read tools only, decided per tool as Den does when the check starts.
+  const connectorTools = connectorReadTools(scenario);
+  run.connectorTools = connectorTools.map((tool) => tool.name);
   const requestTool: ReplayToolSpec = {
     type: "function",
     function: {
@@ -186,10 +210,10 @@ export async function runNewPipeline(scenario: DayScenario, model: ReplayModel):
         const step1 = await toolLoop({
           model,
           system: [instructions, memorySection(files)].filter(Boolean).join("\n\n"),
-          user: agentCheckPrompt({ occasion, now, timeZone: tz, nextCheckAt: nextScheduled, extraChecksLeft: extraChecksLeft(requests, 3, now, tz), sent, lastReport, sources: sourcesFor(scenario, lastCheckAt ?? previousEvening(scenario)) }),
-          tools: dayTools(scenario, [requestTool]),
+          user: agentCheckPrompt({ occasion, now, timeZone: tz, nextCheckAt: nextScheduled, extraChecksLeft: extraChecksLeft(requests, 3, now, tz), sent, lastReport, sources: sourcesFor(scenario, lastCheckAt ?? previousEvening(scenario), true) }),
+          tools: dayTools(scenario, [requestTool, ...connectorToolSpecs(connectorTools)]),
           usage: log.usage.check,
-          answer: (call) => {
+          answer: guardConnectorTools(scenario, new Set(run.connectorTools), (call) => {
             if (call.function.name !== "request_check") return answerDayTool(scenario, now, files, call) ?? JSON.stringify({ error: "unknown_tool" });
             const args = JSON.parse(call.function.arguments || "{}");
             const at = parseRequestedCheckTime(String(args.at ?? ""), now, tz);
@@ -200,7 +224,7 @@ export async function runNewPipeline(scenario: DayScenario, model: ReplayModel):
             return decision.kind === "accepted" ? `Extra check set for ${clock(decision.request.at)} (${decision.usedThatDay} of 3 that day).`
               : decision.kind === "duplicate" ? `Already set for ${clock(decision.request.at)}.`
                 : decision.kind === "covered" ? `Your scheduled check at ${clock(decision.slot)} already covers that.` : decision.message;
-          },
+          }),
         });
         log.tools = step1.tools;
         log.answer = step1.text;
@@ -229,7 +253,7 @@ export async function runNewPipeline(scenario: DayScenario, model: ReplayModel):
             log.answer += `\n\n--- step 2 ---\n${reply.content ?? ""}`;
             if (parsed.kind !== "messages") log.outcome = parsed.kind === "quiet" ? "findings_held" : "unreadable_reply";
             else {
-              const decision = decideBriefDelivery({ messages: parsed.messages, sources: new Set(sourcesFor(scenario, null).map((source) => source.id)), resolveSource, told, sentToday, dailyCap: cap, rhythm, snoozedUntil: null, at: now, timeZone: tz });
+              const decision = decideBriefDelivery({ messages: parsed.messages, sources: new Set(sourcesFor(scenario, null, true).map((source) => source.id)), resolveSource: (source) => resolveSource(source, scenario), told, sentToday, dailyCap: cap, rhythm, snoozedUntil: null, at: now, timeZone: tz });
               if (decision.kind === "held") log.outcome = decision.reason;
               else {
                 for (const message of decision.deliver) {
@@ -324,7 +348,7 @@ export async function runOldPipeline(scenario: DayScenario, model: ReplayModel):
           user: agentWakePrompt({ reasons, sources: sourcesFor(scenario, lastPassAt ?? previousEvening(scenario)), responsibilities: [...AGENT_RESPONSIBILITIES], instructions: "", now, timeZone: tz, wishes: { preferences: words, quietWindow: null } }),
           tools: dayTools(scenario),
           usage: log.usage.check,
-          answer: (call) => answerDayTool(scenario, now, files, call) ?? JSON.stringify({ error: "unknown_tool" }),
+          answer: guardConnectorTools(scenario, new Set(), (call) => answerDayTool(scenario, now, files, call) ?? JSON.stringify({ error: "unknown_tool" })),
         });
         log.tools = step.tools;
         log.answer = step.text;

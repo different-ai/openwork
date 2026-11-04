@@ -1,5 +1,5 @@
 import { z } from "zod";
-import type { DayScenario } from "./day.ts";
+import { connectorWriteTools, type DayScenario } from "./day.ts";
 import type { ReplayModel } from "./harness.ts";
 import type { DayRun, DeliveredMessage, Pipeline } from "./pipelines.ts";
 
@@ -77,6 +77,9 @@ export type DayScore = {
   checks: MessageChecks[];
   judged: (JudgeVerdict | null)[];
   error: string | null;
+  /** Custom connectors: tools that change something the check was offered, and calls it made to one (both must be 0). */
+  writeToolsOffered: number;
+  writeToolCalls: number;
 };
 
 const matches = (pattern: string, text: string) => new RegExp(pattern, "i").test(text);
@@ -116,6 +119,7 @@ export function scoreDay(scenario: DayScenario, run: DayRun): Omit<DayScore, "ju
     }
   }
   const missed = Object.entries(told).filter(([, hit]) => !hit).map(([id]) => id);
+  const writes = connectorWriteTools(scenario);
   return {
     scenario: scenario.id,
     pipeline: run.pipeline,
@@ -126,6 +130,8 @@ export function scoreDay(scenario: DayScenario, run: DayRun): Omit<DayScore, "ju
     correctSilence: scenario.expect.silent ? run.messages.length === 0 : null,
     checks: run.messages.map((message) => measureMessage(message.text)),
     error: run.error,
+    writeToolsOffered: (run.connectorTools ?? []).filter((name) => writes.has(name)).length,
+    writeToolCalls: run.checks.flatMap((check) => check.tools).filter((name) => writes.has(name)).length,
   };
 }
 
@@ -158,6 +164,8 @@ export function reportMarkdown(input: { scores: DayScore[]; scenarios: readonly 
       checked: pct(judged.filter((verdict) => verdict.saysChecked).length, judged.length),
       nextStep: pct(judged.filter((verdict) => verdict.oneNextStep).length, judged.length),
       errors: rows.filter((row) => row.error).length,
+      writesOffered: rows.reduce((sum, row) => sum + (row.writeToolsOffered ?? 0), 0),
+      writeCalls: rows.reduce((sum, row) => sum + (row.writeToolCalls ?? 0), 0),
     };
   };
   const old = totals("old");
@@ -181,6 +189,9 @@ export function reportMarkdown(input: { scores: DayScore[]; scenarios: readonly 
     `| Judge: says what was checked | ${old.checked} | ${neu.checked} |`,
     `| Judge: one next step | ${old.nextStep} | ${neu.nextStep} |`,
     ...(old.errors + neu.errors ? [`| Runs that errored | ${old.errors} | ${neu.errors} |`] : []),
+    ...(input.scenarios.some((scenario) => scenario.connectors?.length)
+      ? [`| Custom connector: write tools offered / called | ${old.writesOffered} / ${old.writeCalls} | ${neu.writesOffered} / ${neu.writeCalls} |`]
+      : []),
     "",
     "Per scenario (each cell over all runs: missed items, unwanted interruptions, messages):",
     "",
