@@ -203,6 +203,17 @@ export const FEATURES = defineFeatures({
     deployments: everywhere,
     default: false,
   },
+  ssoPerOrganization: {
+    label: "SSO: optional unless required, enforced per organization",
+    description: "An organization with SSO set up offers \"Continue with SSO\" at sign-in but still lets people on its domain use their password or Google and join other organizations, for example from an invitation. Turning on \"Require SSO\" enforces it when someone opens that organization, and \"Restrict this domain to our SSO\" brings back sign-in-wide enforcement for the whole domain. Off: any email on the organization's verified domain must sign in with its SSO.",
+    category: "administration",
+    added: "2026-11-04",
+    since: "2026-11",
+    author: "benjaminshafii",
+    docs: "docs/features/sso-per-organization/README.md",
+    deployments: everywhere,
+    default: false,
+  },
   administratorRecovery: {
     label: "Deploy-time administrator recovery",
     description: "Run a one-time, operator-selected Admin-team permission repair at deployment; disabling stops future repairs, not existing grants.",
