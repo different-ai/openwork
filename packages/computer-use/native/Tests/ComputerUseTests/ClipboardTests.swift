@@ -102,6 +102,59 @@ final class ClipboardTests: XCTestCase {
         XCTAssertFalse(otherChat.canPaste, "another chat never pastes this chat's copy")
     }
 
+    /// Two apps open in one chat: each session has its own helper and its own AgentClipboard.
+    func testAnotherOpenSessionsPasteNeverKeepsTheAgentsCopyAsThePersons() throws {
+        general.replace(with: item("theirs"))
+        let numbers = try clipboard(for: chat)
+        let keynote = try clipboard(for: chat)
+        let before = numbers.willCopy()
+        appCopies("table")
+        XCTAssertTrue(numbers.didCopy(since: before))
+        XCTAssertTrue(keynote.holdsAgentCopy, "every helper of the chat knows the clipboard holds the agent's copy")
+        try keynote.preparePaste()
+        XCTAssertEqual(general.contents, item("table"))
+        keynote.restore()
+        XCTAssertEqual(general.contents, item("theirs"), "the person's clipboard, never the agent's copy, comes back")
+        numbers.restore()
+        XCTAssertEqual(general.contents, item("theirs"), "closing the last session leaves it intact")
+    }
+
+    func testPastingAgainAfterAnotherSessionClosedStillGivesThePersonsBack() throws {
+        general.replace(with: item("theirs"))
+        let numbers = try clipboard(for: chat)
+        let keynote = try clipboard(for: chat)
+        let before = numbers.willCopy()
+        appCopies("table")
+        XCTAssertTrue(numbers.didCopy(since: before))
+        try keynote.preparePaste()
+        keynote.restore()
+        try numbers.preparePaste()
+        XCTAssertEqual(general.contents, item("table"), "the agent's copy goes back for the paste")
+        numbers.restore()
+        XCTAssertEqual(general.contents, item("theirs"))
+    }
+
+    func testThePersonChangingTheClipboardBetweenSessionsWins() throws {
+        general.replace(with: item("theirs"))
+        let numbers = try clipboard(for: chat)
+        let keynote = try clipboard(for: chat)
+        let before = numbers.willCopy()
+        appCopies("table")
+        XCTAssertTrue(numbers.didCopy(since: before))
+        try keynote.preparePaste()
+        general.replace(with: item("their newer copy"))
+        keynote.restore()
+        XCTAssertEqual(general.contents, item("their newer copy"))
+        numbers.restore()
+        XCTAssertEqual(general.contents, item("their newer copy"), "nothing older is put back over it")
+        // A later paste in the chat keeps their newer copy, then gives it back.
+        let preview = try clipboard(for: chat)
+        try preview.preparePaste()
+        XCTAssertEqual(general.contents, item("table"))
+        preview.restore()
+        XCTAssertEqual(general.contents, item("their newer copy"))
+    }
+
     func testACopyThatCopiedNothingChangesNothing() throws {
         general.replace(with: item("theirs"))
         let clipboard = try clipboard(for: chat)

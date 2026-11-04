@@ -480,11 +480,13 @@ runs only while the clipboard holds what the agent copied in this chat: when it
 holds something else, that is kept as the person's and the agent's copy goes
 back first; with no copy of the agent's, the paste is refused
 (`nothing_copied`), so the person's clipboard never goes into an app. A chat
-can have several apps' sessions open, each with its own helper, so the
-agent's last copy and the person's kept clipboard live in two private
-pasteboards named by a random key the desktop sends per chat, with a count of
-the chat's open sessions. When the chat's last session closes, the person's
-clipboard comes back unless they changed it since. Menus keep hiding Copy,
+can have several apps' sessions open, each with its own helper, so what they
+share lives in private pasteboards named by a random key the desktop sends per
+chat: the agent's last copy, the person's kept clipboard, and which clipboard
+change was the agent's. No helper can then keep the agent's copy as the
+person's. When a session closes, the person's clipboard comes back unless they
+changed it since; a later paste in another open session keeps theirs again and
+puts the agent's copy back first. Menus keep hiding Copy,
 Cut and Paste, and other chords with C, X or V stay blocked. The standalone
 helper, Windows and Linux refuse all three.
 

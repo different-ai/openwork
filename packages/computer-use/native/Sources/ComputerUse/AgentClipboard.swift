@@ -36,22 +36,34 @@ extension NSPasteboard: ClipboardStore {
 /// The agent's own clipboard in a chat. Command-C and Command-X lend the system clipboard
 /// to the agent; Command-V runs only while it holds what the agent itself copied, so a
 /// paste never carries the person's clipboard into an app. The person's clipboard comes
-/// back when the session closes, unless they changed it since. Contents never reach the model.
+/// back when a session closes, unless they changed it since. Contents never reach the model.
 ///
-/// A chat's helper ends with each session, so the agent's last copy is also kept in a
-/// private pasteboard named for the chat: the next app's session pastes it from there.
+/// A chat can have several apps' sessions open, each in its own helper process, and each
+/// helper ends with its session. So what the chat shares lives in private pasteboards named
+/// for it: the agent's last copy, the person's kept clipboard, and which clipboard change
+/// was the agent's. Every helper then knows whether the clipboard holds the agent's copy,
+/// so none keeps the agent's copy as the person's. A close that finds the agent's copy puts
+/// the person's back; a later paste in another open session puts the agent's copy back
+/// first and keeps the person's again, so the clipboard is the person's whenever no step
+/// of the agent's needs it.
 final class AgentClipboard {
     static let prefix = "ai.openwork.computer-use.clipboard."
+    static let stateType = "ai.openwork.computer-use.clipboard-state"
     /// No copy of the agent's to paste. Nothing was sent and nothing of the person's was touched.
     static let nothingCopied = UseError("nothing_copied", "There is nothing to paste yet: select the content in the app it comes from and copy it with command+c there, then paste here. Nothing was sent.", next: "observe")
     private let general: ClipboardStore
     private let named: (String) -> ClipboardStore
-    /// The chat's last copy, kept across its helpers. Set by the trusted host only.
-    private var store: ClipboardStore?
-    /// The system clipboard's change count right after the agent's copy reached it.
-    private(set) var produced: Int?
-    /// The person's clipboard while the agent holds it.
-    private var saved: [[ClipboardEntry]]?
+    /// The chat's boards, set by the trusted host's key: its last copy, the person's kept
+    /// clipboard, and the shared state. Without a key the helper keeps them itself.
+    private var chat: (copy: ClipboardStore, person: ClipboardStore, state: ClipboardStore)?
+    private struct Shared: Codable, Equatable {
+        /// The system clipboard's change count right after the agent's copy reached it.
+        var produced: Int?
+        /// The person's clipboard is kept, possibly empty, to put back.
+        var saved = false
+    }
+    private var local = Shared()
+    private var localSaved: [[ClipboardEntry]] = []
 
     init(general: ClipboardStore = NSPasteboard.general,
          named: @escaping (String) -> ClipboardStore = { NSPasteboard(name: NSPasteboard.Name(AgentClipboard.prefix + $0)) }) {
@@ -63,39 +75,61 @@ final class AgentClipboard {
         guard key.count == 36, key.allSatisfy({ $0.isHexDigit || $0 == "-" }) else {
             throw UseError("invalid_arguments", "clipboard must be the host's key for this chat.")
         }
-        store = named(key.lowercased())
+        let key = key.lowercased()
+        chat = (named(key), named(key + ".person"), named(key + ".state"))
     }
-    var holdsAgentCopy: Bool { produced != nil && general.changeCount == produced }
+    private var shared: Shared {
+        get {
+            guard let state = chat?.state else { return local }
+            let data = state.items().first?.first { $0.type == Self.stateType }?.data
+            return data.flatMap { try? JSONDecoder().decode(Shared.self, from: $0) } ?? Shared()
+        }
+        set {
+            guard let state = chat?.state else { local = newValue; return }
+            state.replace(with: [[ClipboardEntry(type: Self.stateType, data: (try? JSONEncoder().encode(newValue)) ?? Data())]])
+        }
+    }
+    private func keepPersons(_ items: [[ClipboardEntry]]) {
+        if let person = chat?.person { person.replace(with: items) } else { localSaved = items }
+        shared.saved = true
+    }
+    /// The system clipboard's change count right after the agent's copy reached it.
+    var produced: Int? { shared.produced }
+    var holdsAgentCopy: Bool { produced.map { general.changeCount == $0 } == true }
     /// Whether a paste has anything of the agent's to use.
-    var canPaste: Bool { holdsAgentCopy || store.map { !$0.items().isEmpty } == true }
+    var canPaste: Bool { holdsAgentCopy || chat.map { !$0.copy.items().isEmpty } == true }
 
     /// Before a copy or cut: keep the person's clipboard, as it is now, to put back later.
     func willCopy() -> Int {
-        if !holdsAgentCopy { saved = general.items() }
+        if !holdsAgentCopy { keepPersons(general.items()) }
         return general.changeCount
     }
     /// After the shortcut: whether the app put something on the clipboard. It becomes the chat's copy.
     func didCopy(since before: Int) -> Bool {
         let count = general.changeCount
         guard count != before else { return false }
-        produced = count
-        store?.replace(with: general.items())
+        shared.produced = count
+        chat?.copy.replace(with: general.items())
         return true
     }
     /// Right before a paste: the clipboard holds the agent's copy, put back from the chat's
     /// store (keeping the person's clipboard first) when it holds something else.
     func preparePaste() throws {
         if holdsAgentCopy { return }
-        guard let copy = store?.items(), !copy.isEmpty else {
+        guard let copy = chat?.copy.items(), !copy.isEmpty else {
             throw Self.nothingCopied
         }
-        saved = general.items()
-        produced = general.replace(with: copy)
+        keepPersons(general.items())
+        shared.produced = general.replace(with: copy)
     }
-    /// The session closed: the person's clipboard comes back, unless they changed it since.
+    /// A session closed: the person's clipboard comes back, unless they changed it since.
     func restore() {
-        defer { produced = nil; saved = nil }
-        guard holdsAgentCopy, let saved else { return }
-        general.replace(with: saved)
+        let state = shared
+        if state.saved, let produced = state.produced, general.changeCount == produced {
+            general.replace(with: chat?.person.items() ?? localSaved)
+        }
+        // Theirs either way now: nothing of the person's is kept any longer.
+        shared = Shared(); localSaved = []
+        if let person = chat?.person, state.saved { person.replace(with: []) }
     }
 }
