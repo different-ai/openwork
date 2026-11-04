@@ -2,7 +2,7 @@ import { CalendarClock } from "lucide-react";
 import { getAutomationsRoute } from "../../../../_lib/den-org";
 import { defineFeatureIntro } from "../types";
 import { OPENWORK_INSTALL_ROUTE } from "./analytics";
-import { OPENWORK_DOCS_URL } from "./docs";
+import { docsPage } from "./docs";
 import { AutomationsExample } from "./examples/automations/automations-example";
 
 /**
@@ -15,13 +15,10 @@ export type AutomationsFacts = {
 };
 
 /*
- * Docs: there is no Automations page in packages/docs yet, so "Read the docs"
- * opens the docs home.
- *
  * Den only monitors Automations: Desktop ones are created and edited in the
  * OpenWork app, Cloud ones in OpenWork Web (behind `openworkWeb`). Schedules
- * here are the ones every organization has (once, daily, weekly); interval and
- * calendar triggers sit behind their own flags, so the copy doesn't promise them.
+ * here are the ones every Automation can use (once, daily, weekly): meeting
+ * triggers are Cloud-only and need Google Calendar, so the copy doesn't promise them.
  */
 export const automationsIntros = [
   defineFeatureIntro<AutomationsFacts>({
@@ -41,7 +38,7 @@ export const automationsIntros = [
       Component: AutomationsExample,
       alt: "Example: Invoice follow-up running now in the cloud; Weekly sales digest every Monday at 9:00 AM in the cloud, last run succeeded; and Morning inbox triage every day at 8:30 AM on the desktop.",
     },
-    docsUrl: OPENWORK_DOCS_URL,
+    docsUrl: docsPage("start-here/do-work-with-it/automations"),
     ctas: [
       // OpenWork Web's address comes from runtime config, which an intro can't link to, so the note points there instead.
       {

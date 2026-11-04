@@ -43,8 +43,9 @@ type Ctx = FeatureIntroContext<PluginsFacts>;
 const PATH = getPluginsRoute();
 const IMPORT_LOCK = permissionLockReason("plugins.import");
 const SOURCES_LOCK = permissionLockReason("connectors.manage");
-/* Docs: "Connectors, skills, and plugins" explains what a plugin is; there is no page yet for agents, commands or hooks. */
-const DOCS_PLUGINS = "start-here/do-work-with-it/skills-plugins-and-mcp";
+const DOCS_PLUGINS = "cloud/share-with-your-team/plugins";
+const DOCS_PARTS = "cloud/share-with-your-team/plugin-agents-commands-hooks";
+const DOCS_SOURCES = "cloud/share-with-your-team/github-sources";
 const DOCS_PUBLISH = "start-here/do-work-with-it/publish-and-copy-a-skill";
 
 function pluginsSetUp(ctx: Ctx): boolean {
@@ -114,7 +115,7 @@ export const pluginsIntros = [
       { title: "Shared with the plugin.", text: "Whoever can use the plugin gets its agents too." },
     ],
     example: { Component: PluginAgentsExample, alt: "Example: Deal reviewer from Sales playbook, Changelog writer from Release notes and Copy editor from Brand voice." },
-    docsUrl: docsPage(DOCS_PLUGINS),
+    docsUrl: docsPage(`${DOCS_PARTS}#agents`),
     ctas: githubSourceCtas,
     setupState: (ctx) => tabState(ctx.facts.agents),
   }),
@@ -133,7 +134,7 @@ export const pluginsIntros = [
       { title: "All in one list.", text: "Every command across your plugins, with the plugin it came with." },
     ],
     example: { Component: PluginCommandsExample, alt: "Example: /deal-summary, /release-notes and /brand-check, each from its plugin." },
-    docsUrl: docsPage(DOCS_PLUGINS),
+    docsUrl: docsPage(`${DOCS_PARTS}#commands`),
     ctas: createPluginCtas,
     setupState: (ctx) => tabState(ctx.facts.commands),
   }),
@@ -151,7 +152,7 @@ export const pluginsIntros = [
       { title: "See when each runs.", text: "Every hook across your plugins, the moment it runs and the plugin it came with." },
     ],
     example: { Component: PluginHooksExample, alt: "Example: load the brand guide when a session starts, check before sending email, and save a summary when a session ends." },
-    docsUrl: docsPage(DOCS_PLUGINS),
+    docsUrl: docsPage(`${DOCS_PARTS}#hooks`),
     ctas: githubSourceCtas,
     setupState: (ctx) => tabState(ctx.facts.hooks),
   }),
@@ -170,7 +171,7 @@ export const pluginsIntros = [
       { title: "All in one list.", text: "Every app across your plugins, with the plugin it came with." },
     ],
     example: { Component: PluginMcpsExample, alt: "Example: HubSpot in Sales playbook, Linear in Release notes and Notion in Brand voice, with how many things the AI can do in each." },
-    docsUrl: docsPage("cloud/share-with-your-team/shared-mcp-connections"),
+    docsUrl: docsPage("cloud/share-with-your-team/connectors"),
     ctas: createPluginCtas,
     setupState: (ctx) => tabState(ctx.facts.mcps),
   }),
@@ -189,8 +190,7 @@ export const pluginsIntros = [
       { title: "Or import once.", text: "Paste a public plugin's GitHub link to copy its skills and MCP servers in." },
     ],
     example: { Component: PluginSourcesExample, alt: "Example: the @acme GitHub account with two repositories bringing in three plugins, and Sales playbook updating after a new version on main." },
-    // No user guide for Sources yet; the Helm page explains what the GitHub connector does.
-    docsUrl: docsPage("start-here/github-connector-helm"),
+    docsUrl: docsPage(DOCS_SOURCES),
     ctas: [
       { when: (ctx) => ctx.can("canImportPlugins"), label: "Import from GitHub", href: getImportPluginRoute() },
       { when: () => true, label: "Import from GitHub", href: getImportPluginRoute(), locked: { reason: IMPORT_LOCK } },
@@ -216,7 +216,7 @@ export const pluginsIntros = [
       { title: "In their Library.", text: "Teammates find it in OpenWork, and the AI picks it up when a request matches." },
     ],
     example: { Component: PluginAccessExample, alt: "Example: Sales playbook shared with Sales, Customer Success and Sam Lee." },
-    docsUrl: docsPage(`${DOCS_PUBLISH}#2-choose-who-can-use-it`),
+    docsUrl: docsPage(`${DOCS_PLUGINS}#choose-who-can-use-it`),
     ctas: [
       { when: (ctx) => ctx.facts.canEditAccess === true, label: "Choose who can use it", href: "#who-can-use-it" },
       { when: () => true, label: "Choose who can use it", href: "#who-can-use-it", locked: { reason: permissionLockReason("sharing.manage_all") } },
@@ -239,7 +239,7 @@ export const pluginsIntros = [
       { title: "Connectors.", text: "An app the skills need, from the connectors you already added." },
     ],
     example: { Component: PluginCreateExample, alt: "Example: Sales playbook with a skill to prep a sales call, a /follow-up command and HubSpot." },
-    docsUrl: docsPage(`${DOCS_PUBLISH}#1-create-the-skill`),
+    docsUrl: docsPage(`${DOCS_PLUGINS}#create-a-plugin`),
     ctas: createPluginCtas,
     setupState: () => "done",
   }),
@@ -258,7 +258,7 @@ export const pluginsIntros = [
       { title: "Then share it.", text: "Finish it like any plugin you make here, and choose who can use it." },
     ],
     example: { Component: PluginImportExample, alt: "Example: a public sales plugin with two skills and HubSpot ready to import, and a desktop-only server that can't be imported." },
-    docsUrl: docsPage("model-context-protocol/agent-plugins#import-agent-plugins-into-openwork-library"),
+    docsUrl: docsPage(`${DOCS_PLUGINS}#import-a-plugin-from-github`),
     ctas: [
       { when: (ctx) => ctx.can("canImportPlugins"), label: "Import from GitHub", href: getImportPluginRoute() },
       { when: () => true, label: "Import from GitHub", href: getImportPluginRoute(), locked: { reason: IMPORT_LOCK } },

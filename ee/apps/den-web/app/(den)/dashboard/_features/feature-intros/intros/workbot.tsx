@@ -50,8 +50,7 @@ export const workbotIntros = [
       Component: WorkbotExample,
       alt: "Example: someone asks Workbot what's on their plate today. It reads their Google Calendar, searches Linear and reads #launch in Slack, then answers. Below, the team's setup: GPT-6 Luna as the default model, and Google Workspace, Linear and Slack for everyone.",
     },
-    // No Workbot page in the docs yet: the AI Gateway guide covers adding the provider it needs.
-    docsUrl: docsPage("ai-gateway/overview"),
+    docsUrl: docsPage("workbot/overview"),
     ctas: [
       { when: (ctx) => workbotUnusable(ctx) && ctx.can("canManageGatewayProviders"), label: "Add an AI provider", href: getNewAiGatewayProviderRoute() },
       {

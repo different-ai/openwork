@@ -99,10 +99,10 @@ export const aiGatewayIntros = [
     highlights: [
       { title: "Spend over time.", text: "Daily usage and estimated cost for the last 31 days." },
       { title: "Who uses what.", text: "The people, teams and models with the most spend." },
-      { title: "Your providers only.", text: "OpenWork Models usage is tracked on its own tab." },
+      { title: "Every provider.", text: "Your own providers and OpenWork Models, in one place." },
     ],
     example: { Component: OverviewExample, alt: "Example: $391 of spend over the last 14 days, with the three people who used the most." },
-    docsUrl: docsPage("ai-gateway/counting-usage"),
+    docsUrl: docsPage("ai-gateway/usage-dashboard"),
     ctas: [
       { when: (ctx) => ctx.can("canManageGatewayProviders"), label: "Add an AI provider", href: getNewAiGatewayProviderRoute() },
       { when: () => true, label: "Add an AI provider", href: getNewAiGatewayProviderRoute(), locked: { reason: MANAGE_PROVIDERS_LOCK } },
@@ -207,7 +207,7 @@ export const aiGatewayIntros = [
       Component: UsersTeamsExample,
       alt: "Example: everyone, Engineering and two people, each with the providers they can use, their limit and their spend.",
     },
-    docsUrl: docsPage("ai-gateway/overview"),
+    docsUrl: docsPage("ai-gateway/users-and-teams"),
     ctas: [
       { when: (ctx) => ctx.can("canManageGatewayProviders"), label: "Choose who can use your providers", href: getAiGatewayProvidersRoute() },
       { when: () => true, label: "Choose who can use your providers", href: getAiGatewayProvidersRoute(), locked: { reason: MANAGE_PROVIDERS_LOCK } },
@@ -237,8 +237,7 @@ export const aiGatewayIntros = [
       Component: OpenWorkModelsExample,
       alt: "Example: OpenWork Models on for everyone, four models with what each is best for, and 68% of this week's included usage left.",
     },
-    // No dedicated OpenWork Models page yet; the overview's FAQ compares it with your own providers.
-    docsUrl: docsPage("ai-gateway/overview"),
+    docsUrl: docsPage("ai-gateway/openwork-models"),
     ctas: [
       { when: (ctx) => ctx.facts.openworkModels === true, label: "See OpenWork Models", href: getInferenceRoute() },
       { when: (ctx) => ctx.can("canManageBilling") || ctx.can("canManageModelsSettings"), label: "Turn on OpenWork Models", href: getInferenceRoute() },

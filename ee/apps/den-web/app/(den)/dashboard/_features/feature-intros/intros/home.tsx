@@ -83,8 +83,7 @@ export const homeIntros = [
       Component: MyBotExample,
       alt: "Example: last check 9:30 AM found two things that need you. Today's checks at 9:30, 11:30 and 1:30, two sent in Slack. It reads Gmail, Google Calendar and Slack.",
     },
-    // No My bot page in the docs yet: linking Slack is what makes its messages arrive.
-    docsUrl: docsPage("slack/connect-your-account"),
+    docsUrl: docsPage("workbot/my-bot"),
     // The switch at the top of the page is the action.
     ctas: [],
     setupState: () => "done",

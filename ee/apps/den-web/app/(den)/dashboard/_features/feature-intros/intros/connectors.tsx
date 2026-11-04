@@ -26,7 +26,9 @@ type Ctx = FeatureIntroContext<ConnectorsFacts>;
 
 const PATH = getMcpConnectionsRoute();
 const MANAGE_CONNECTIONS_LOCK = permissionLockReason("connections.manage");
-const DOCS = "cloud/share-with-your-team/shared-mcp-connections";
+const DOCS = "cloud/share-with-your-team/connectors";
+/** The full step-by-step guide behind the overview. */
+const DOCS_GUIDE = "cloud/share-with-your-team/shared-mcp-connections";
 
 function connectorsSetUp(ctx: Ctx): boolean {
   return (ctx.facts.connectors ?? 0) > 0;
@@ -86,7 +88,7 @@ export const connectorsIntros = [
       Component: ConnectorAddExample,
       alt: "Example: adding Linear, with its four checks done: finds Linear, knows how you sign in, signed in, and 24 things the AI can do.",
     },
-    docsUrl: docsPage(`${DOCS}#add-a-connector`),
+    docsUrl: docsPage(`${DOCS_GUIDE}#add-a-connector`),
     ctas: [
       { when: (ctx) => ctx.can("canManageConnections"), label: "Add a connector", href: getAddConnectorRoute() },
       { when: () => true, label: "Add a connector", href: getAddConnectorRoute(), locked: { reason: MANAGE_CONNECTIONS_LOCK } },
@@ -112,7 +114,7 @@ export const connectorsIntros = [
       Component: ConnectorAccessExample,
       alt: "Example: Linear shared with Engineering, Product and Sam Lee, each signing in with their own account, and three of the 24 things their AI can do.",
     },
-    docsUrl: docsPage(`${DOCS}#change-a-connector`),
+    docsUrl: docsPage(`${DOCS}#who-can-use-it`),
     ctas: [
       { when: (ctx) => ctx.facts.canEditAccess === true || ctx.can("canManageConnections"), label: "Choose who can use it", href: "#who-can-use-it" },
       { when: () => true, label: "Choose who can use it", href: "#who-can-use-it", locked: { reason: MANAGE_CONNECTIONS_LOCK } },

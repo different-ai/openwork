@@ -35,8 +35,7 @@ export const toolTesterIntros = [
       Component: ToolTesterExample,
       alt: "Example: running list_issues on Linear as you, returning 12 issues in 318 ms, with delete_issue turned off for the organization.",
     },
-    // No Tool Tester page in the docs yet; the connectors guide covers connecting.
-    docsUrl: docsPage("cloud/share-with-your-team/shared-mcp-connections"),
+    docsUrl: docsPage("cloud/share-with-your-team/tool-tester"),
     ctas: [
       { when: (ctx: Ctx) => ctx.can("canManageConnections"), label: "Connect a connector", href: getMcpConnectionsRoute() },
       { when: () => true, label: "Connect a connector", href: getMcpConnectionsRoute(), locked: { reason: permissionLockReason("connections.manage") } },

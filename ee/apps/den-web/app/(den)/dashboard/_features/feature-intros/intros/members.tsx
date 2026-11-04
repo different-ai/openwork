@@ -116,8 +116,7 @@ export const membersIntros = [
       Component: CustomRoleExample,
       alt: "Example: a Team lead role on Engineering and Sales that adds Invite people, Share with everyone and View usage analytics.",
     },
-    // No user guide for custom roles yet; this page covers roles and teams.
-    docsUrl: docsPage(`${DOCS}#roles`),
+    docsUrl: docsPage(`${DOCS}#custom-roles`),
     ctas: createRoleCtas,
     // Box in place of the empty Custom roles list. Unknown (or no permission to view roles) shows nothing.
     setupState: (ctx) => {
@@ -143,7 +142,7 @@ export const membersIntros = [
       Component: RolesExample,
       alt: "Example: a Team lead role on Engineering and Sales that adds Invite people, Share with everyone and View usage analytics.",
     },
-    docsUrl: docsPage(`${DOCS}#roles`),
+    docsUrl: docsPage(`${DOCS}#custom-roles`),
     ctas: createRoleCtas,
     setupState: () => "done",
   }),

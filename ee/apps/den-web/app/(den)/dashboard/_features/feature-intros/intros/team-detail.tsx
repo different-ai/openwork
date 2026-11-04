@@ -61,7 +61,7 @@ export const teamDetailIntros = [
       Component: RolesExample,
       alt: "Example: a Team lead role on Engineering and Sales that adds Invite people, Share with everyone and View usage analytics, next to the built-in Owner, Admin and Member roles.",
     },
-    docsUrl: docsPage(`${DOCS}#team-admin-access`),
+    docsUrl: docsPage(`${DOCS}#roles`),
     ctas: [
       { when: (ctx) => ctx.can("canManagePermissions") && ctx.can("canManageTeams"), label: "Create a custom role", href: getNewRoleRoute() },
       { when: () => true, label: "Create a custom role", href: getNewRoleRoute(), locked: { reason: permissionLockReason("permissions.manage") } },
@@ -223,8 +223,7 @@ export const teamDetailIntros = [
       Component: TeamPromptExample,
       alt: "Example: a prompt for everyone about writing for customers and pricing, then Support's prompt about linking help articles and escalating refunds.",
     },
-    // No user guide for prompts yet; agent permissions explains Everyone and teams the same way.
-    docsUrl: docsPage(`${AGENT_DOCS}#everyone-and-teams`),
+    docsUrl: docsPage("cloud/share-with-your-team/prompts"),
     ctas: [
       { when: (ctx) => ctx.facts.canEditPrompts === true, label: "Add a prompt", href: WRITE_PROMPT },
       { when: () => true, label: "Add a prompt", href: WRITE_PROMPT, locked: { reason: permissionLockReason("prompts.manage") } },

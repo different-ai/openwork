@@ -37,8 +37,7 @@ export const apiKeysIntros = [
       Component: ApiKeysExample,
       alt: "Example: three keys, CI deploy and Team provisioning owned by Ada Lovelace and Usage export owned by Grace Hopper, with when each was last used, and a script calling the OpenWork API with the x-api-key header.",
     },
-    // No API keys guide yet: provisioning by script is the documented use.
-    docsUrl: docsPage("self-host/declarative-configuration"),
+    docsUrl: docsPage("cloud/api-keys"),
     ctas: [
       { when: (ctx: Ctx) => ctx.can("canManageApiKeys"), label: "Create an API key", href: API_KEYS_NEW_ROUTE },
       { when: () => true, label: "Create an API key", href: API_KEYS_NEW_ROUTE, locked: { reason: permissionLockReason("api_keys.manage") } },

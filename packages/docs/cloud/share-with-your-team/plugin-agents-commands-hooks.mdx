@@ -1,0 +1,94 @@
+---
+title: "Agents, commands, and hooks"
+description: "What agents, commands and hooks are in an OpenWork plugin, where they come from, and where to see them all."
+keywords: ["agents", "commands", "slash commands", "hooks", "plugin components", "Claude-compatible plugins", "GitHub", "plugin directory", "MCPs"]
+---
+
+Besides skills and connectors, a plugin can include **agents**, **commands**,
+and **hooks**. Whoever can use the plugin gets all of them; there's nothing
+separate to share.
+
+| Part | What it is | Where it comes from |
+| --- | --- | --- |
+| **Command** | A shortcut like `/follow-up` that runs a set task the same way every time. | Write one when you [create a plugin](/cloud/share-with-your-team/plugins#create-a-plugin), or bring it in from GitHub. |
+| **Agent** | A helper set up for one kind of task, like reviewing a deal or editing copy. | Claude-compatible plugins in a connected GitHub repository. |
+| **Hook** | A step that runs on its own at a set moment, like when a session starts or before a tool is used. | Claude-compatible plugins in a connected GitHub repository. |
+
+You can't write agents or hooks in OpenWork Cloud. They arrive with plugins from
+[GitHub Sources](/cloud/share-with-your-team/github-sources).
+
+## Commands
+
+A command saves people from typing the same request again and again. Someone
+runs `/release-notes`, and the AI does exactly what the command says.
+
+To write one, add a **Command** under **What's inside** when you create a plugin:
+give it a name like `/follow-up` and write what should happen when someone runs
+it. Commands in a plugin from a connected GitHub repository come in with that
+plugin.
+
+## Agents
+
+An agent is a helper with its own instructions for one kind of task, for
+example a *Deal reviewer* in a sales plugin or a *Copy editor* in a brand plugin.
+Claude-compatible plugins can define agents, and they come in when OpenWork
+imports the plugin from a connected repository.
+
+## Hooks
+
+A hook runs by itself at a set moment, without anyone asking. For example, a
+hook can load the brand guide when a session starts, run a check before an email
+is sent, or save a summary when a session ends. The **Hooks** list shows when
+each one runs.
+
+Because hooks run without a prompt, review what a plugin's hooks do before you
+share it widely.
+
+## See them all
+
+The plugin directory lists every part across all your plugins, each with the
+plugin it came with. It has these tabs:
+
+- **Plugins**
+- **Agents**
+- **Commands**
+- **Hooks**
+- **MCPs**: the apps inside your plugins, from your connectors or from remote
+  MCP servers in imported plugins.
+- **Sources**: your connected GitHub accounts and repositories.
+
+To open it, go to **Manage › Plugins** in OpenWork Cloud and add `?view=agents`
+(or `commands`, `hooks`, `mcps`, `sources`) to the address.
+
+## Get agents and hooks into OpenWork
+
+<Steps>
+  <Step title="Connect GitHub">
+    Connect the GitHub account that holds your plugins. See
+    [GitHub Sources](/cloud/share-with-your-team/github-sources#connect-github).
+  </Step>
+  <Step title="Add the repository">
+    Add a repository with a Claude-compatible plugin (`.claude-plugin/plugin.json`)
+    or marketplace (`.claude-plugin/marketplace.json`), and pick the plugins to
+    import.
+  </Step>
+  <Step title="Share the plugins">
+    Choose who can use each plugin on its page, or through a
+    [Collection](/cloud/share-with-your-team/collections). Its agents, commands
+    and hooks go with it.
+  </Step>
+</Steps>
+
+When the repository changes, the plugins update on their own.
+
+<Note>
+Importing a single public plugin with **Import from GitHub** brings in its
+skills and MCP servers only. For agents and hooks, connect the repository as a
+source.
+</Note>
+
+## Related
+
+- [Manage plugins](/cloud/share-with-your-team/plugins)
+- [GitHub Sources](/cloud/share-with-your-team/github-sources)
+- [Connectors, skills, and plugins](/start-here/do-work-with-it/skills-plugins-and-mcp)

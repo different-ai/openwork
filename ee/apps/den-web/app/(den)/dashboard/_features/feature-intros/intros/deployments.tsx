@@ -39,8 +39,7 @@ export const deploymentsIntros = [
       Component: DeploymentsExample,
       alt: "Example: Production at openwork.acme.com on AWS in us-east-1, version 0.18.4, operational, with API, database, backups and HTTPS certificate checks passing.",
     },
-    // No guide for the managed installer yet; this covers running OpenWork in your own cloud.
-    docsUrl: docsPage("self-host/deploy-to-your-cloud/overview"),
+    docsUrl: docsPage("self-host/deploy-to-your-cloud/managed-installer"),
     ctas: [
       { when: (ctx: Ctx) => ctx.can("canManageDeployments") && ctx.facts.cloudReady === true, label: "Create a deployment", href: DEPLOYMENTS_NEW_ROUTE },
       {

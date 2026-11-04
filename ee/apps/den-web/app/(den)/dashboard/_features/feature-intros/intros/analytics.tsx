@@ -50,14 +50,10 @@ type Cta = FeatureIntroCta<AnalyticsFacts>;
 /** Usage only shows up once someone uses the OpenWork app, so the install page is the action that creates data. */
 export const OPENWORK_INSTALL_ROUTE = "/install";
 
-/*
- * Docs: there is no Analytics page in packages/docs yet. "Get started with
- * OpenWork Cloud" covers signing in from the desktop app, which is what makes
- * usage show up.
- */
-const DOCS_ANALYTICS = "cloud/get-started#sign-in-from-the-desktop-app";
-const DOCS_LIBRARY = "start-here/do-work-with-it/skills-plugins-and-mcp";
-const DOCS_WORKFLOWS = "start-here/connect-openwork-mcp";
+/* Docs: one Analytics page, a section per tab. */
+const DOCS_ANALYTICS = "cloud/analytics#usage-and-adoption";
+const DOCS_LIBRARY = "cloud/analytics#plugins-and-connectors";
+const DOCS_WORKFLOWS = "cloud/analytics#workflow-runs";
 
 /** Only the person in the organization so far: inviting people comes before usage. */
 function alone(ctx: Ctx): boolean {

@@ -54,14 +54,15 @@ const ADD_KEY_ROUTE = `${PATH}/model-providers/new`;
 const PRIVATE_NOTE = "Only you can use it until you share it.";
 
 /*
- * Docs: "Connect your services" covers the Library's connectors from a
- * member's side. There is no page yet for My Library as a whole, for adding
- * your own model key in My Library, or for sharing from My Library.
+ * Docs: My Library has its own pages (overview, models and keys, sharing);
+ * "Connect your services" covers the Library's connectors from a member's side.
  */
+const DOCS_LIBRARY = "my-library/overview";
+const DOCS_MODELS = "my-library/models-and-keys";
 const DOCS_CONNECT = "start-here/connect-your-stack/connect-services";
 const DOCS_SKILLS = "start-here/do-work-with-it/publish-and-copy-a-skill";
 const DOCS_PLUGINS = "start-here/do-work-with-it/skills-plugins-and-mcp";
-const DOCS_SHARE = "start-here/do-work-with-it/share-your-setup";
+const DOCS_SHARE = "my-library/share";
 
 /** A tab with nothing of its kind while the Library has other things shows its box; unknown shows nothing. */
 function tabState(count: number | undefined) {
@@ -101,7 +102,7 @@ export const libraryIntros = [
       Component: LibraryExample,
       alt: "Example: Linear from Product waiting for your sign-in, then Google Workspace, Slack, the Release notes skill and Claude Sonnet 5 from everyone, the Sales playbook plugin from Sales, and your own Weekly report skill.",
     },
-    docsUrl: docsPage(DOCS_CONNECT),
+    docsUrl: docsPage(DOCS_LIBRARY),
     ctas: addConnectorCtas,
     // Full screen only once everything has loaded and the viewer has nothing at all.
     setupState: (ctx) => {
@@ -193,8 +194,7 @@ export const libraryIntros = [
       Component: LibraryModelsExample,
       alt: "Example: Claude Sonnet 5 and GPT-6 Luna from everyone, Gemini 3 Pro waiting for your sign-in, and your own Anthropic key.",
     },
-    // No page yet for models in My Library; the AI Gateway guide explains where team models come from.
-    docsUrl: docsPage("ai-gateway/overview"),
+    docsUrl: docsPage(DOCS_MODELS),
     ctas: [
       { when: (ctx) => ctx.can("canManageGatewayProviders"), label: "Add an AI provider for your team", href: getNewAiGatewayProviderRoute() },
       // Any member can add a provider key for themselves (`POST /v1/llm-providers` needs no permission).
@@ -265,7 +265,7 @@ export const libraryIntros = [
       Component: LibraryModelKeyExample,
       alt: "Example: your Anthropic key, used by you only, giving you Claude Sonnet 5 and Claude Haiku 5.",
     },
-    docsUrl: docsPage("ai-gateway/provider-support"),
+    docsUrl: docsPage(`${DOCS_MODELS}#add-your-own-key`),
     ctas: [],
     setupState: () => "done",
   }),
@@ -287,7 +287,7 @@ export const libraryIntros = [
       Component: LibraryShareExample,
       alt: "Example: your Weekly report skill shared with the Product team and Sam Lee.",
     },
-    docsUrl: docsPage(`${DOCS_SHARE}#share-skills`),
+    docsUrl: docsPage(DOCS_SHARE),
     ctas: [],
     setupState: () => "done",
   }),

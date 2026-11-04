@@ -82,7 +82,7 @@ export const settingsIntros = [
       { title: "Team.", text: "$10 per person a month, paid by card." },
       { title: "Enterprise.", text: "SCIM, audit logs, required single sign-on and desktop policies, invoiced by OpenWork." },
     ],
-    docsUrl: docsPage("start-here/pricing-and-licensing"),
+    docsUrl: docsPage("cloud/billing"),
     // Plans are bought on this page itself; Enterprise is invoiced, not bought here.
     ctas: [],
     setupState: () => "done",

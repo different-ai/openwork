@@ -23,8 +23,7 @@ export type AuditLogsFacts = {
 
 type Ctx = FeatureIntroContext<AuditLogsFacts>;
 
-/* Docs: no Audit logs page yet; "Security and operations" lists what is recorded. */
-const DOCS = "cloud/security-and-operations#audit-events";
+const DOCS = "cloud/audit-logs";
 
 function notIncluded(ctx: Ctx): boolean {
   return ctx.facts.included === false;
