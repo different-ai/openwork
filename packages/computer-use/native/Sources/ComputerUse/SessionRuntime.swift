@@ -37,6 +37,12 @@ final class SessionRuntime {
         let mode: AccessMode
         /// Background until the app shows it needs the front for keys or pointer steps.
         var delivery: InputDelivery
+        /// Whether the person follows along in OpenWork; nil when the host does not say.
+        var follow: FollowAlong?
+        /// The person watches this chat: the session works in front, beside OpenWork.
+        var followed = false
+        /// How control input reaches the window now.
+        var working: InputDelivery { followed ? .foreground : delivery }
         /// The windows under the dialogs being worked in, the session's own first.
         var parents: [(app: AppIdentity, target: WindowTarget, kind: DialogTarget.Kind?)] = []
         /// Windows the last action opened: the only new windows a session follows.
@@ -47,7 +53,7 @@ final class SessionRuntime {
         /// The file panel the person let the agent look through.
         var filePanelAllowed: CGWindowID?
         /// Control input that brings the window to the front first. Dialogs always take it.
-        var takesFront: Bool { mode == .control && (delivery == .foreground || !parents.isEmpty) }
+        var takesFront: Bool { mode == .control && (working == .foreground || !parents.isEmpty) }
         /// The window that comes forward, and whose app must be in front: a dialog's parent.
         var frontApp: AppIdentity { parents.first?.app ?? app }
         var frontTarget: WindowTarget { parents.first?.target ?? target }
@@ -85,6 +91,7 @@ final class SessionRuntime {
         controls.onStop = { [weak self] in self?.close(stoppedByPerson: true) }
         controls.onTick = { [weak self] in self?.expire() }
         controls.onWatch = { [weak self] visible in self?.watchWindow(visible: visible) }
+        controls.onFollow = { [weak self] watching, beside in self?.session?.follow?.host(watching: watching, beside: beside) }
     }
     private var now: TimeInterval { clock() }
 
@@ -107,7 +114,9 @@ final class SessionRuntime {
             try a.only([])
             return text(discover())
         case "computer_open_session":
-            try a.only(["app_id", "pid", "window_id", "mode", "purpose"])
+            // Set only by the trusted host: whether the person watches this chat, and whether
+            // the window may go beside OpenWork (not while the chat has several apps open).
+            try a.only(policy == .embedded ? ["app_id", "pid", "window_id", "mode", "purpose", "following", "beside"] : ["app_id", "pid", "window_id", "mode", "purpose"])
             guard session == nil else { throw UseError("session_exists", "Close this connection's session before opening another.", next: "close_session") }
             defer { if session == nil { controls.close() } }
             let appID = try a.string("app_id")
@@ -121,7 +130,11 @@ final class SessionRuntime {
             let frameworks = installed.map { (try? FileManager.default.contentsOfDirectory(atPath: $0.appendingPathComponent("Contents/Frameworks").path)) ?? [] } ?? []
             let delivery = InputDelivery.decide(enabled: backgroundDelivery, available: BackgroundFocus.available, mode: mode, bundleID: appID,
                 info: installed.flatMap { Bundle(url: $0)?.infoDictionary } ?? [:], frameworks: frameworks)
-            let background = delivery == .background
+            var follow = values["following"] == nil ? nil : FollowAlong(watching: try a.bool("following", default: false), beside: try a.bool("beside", default: true))
+            // A person watching the chat sees the app come forward; otherwise it opens behind their work.
+            let followed = mode == .control && follow?.follows(frontmost: NSWorkspace.shared.frontmostApplication?.processIdentifier, host: Responsibility.hostPID,
+                target: pid ?? NSRunningApplication.runningApplications(withBundleIdentifier: appID).first?.processIdentifier) == true
+            let background = delivery == .background && !followed
             let identity = try await AppIdentity.open(appID, pid: pid, activates: !background)
             var windows = try await access.windows(identity)
             if windows.isEmpty {
@@ -144,7 +157,7 @@ final class SessionRuntime {
             _ = try access.validate(target, app: identity)
             let reservation = try ControlLease(pid: identity.pid, window: target.id)
             let id = UUID().uuidString.lowercased()
-            session = Session(id: id, app: identity, target: target, mode: mode, delivery: delivery, started: now, lastUsed: now, purpose: purpose)
+            session = Session(id: id, app: identity, target: target, mode: mode, delivery: delivery, follow: follow, followed: followed, started: now, lastUsed: now, purpose: purpose)
             lease = reservation
             controls.show(app: identity, target: target, mode: mode, purpose: purpose, background: background)
             if mode == .control, !background, let current = session {
@@ -159,10 +172,11 @@ final class SessionRuntime {
                     close()
                     throw error
                 }
+                if followed { arrangeBeside(id) }
             }
             guard let opened = session, opened.id == id else { throw UseError("session_unavailable", "Access ended while starting. Stop work and wait for a new user request.", next: "human_takeover") }
             return text(["ok": true, "session_id": id, "app_id": identity.bundleID, "app_name": identity.name, "pid": Int(identity.pid),
-                "window_id": Int(target.id), "window_title": target.title, "mode": mode.rawValue, "delivery": delivery.rawValue,
+                "window_id": Int(target.id), "window_title": target.title, "mode": mode.rawValue, "delivery": delivery.rawValue, "followed": followed,
                 "state": opened.paused ? "paused" : "active", "expires_in_seconds": 900,
                 "next": next(opened)])
         case "computer_observe":
@@ -371,6 +385,8 @@ final class SessionRuntime {
             }
             try await followDialog(id)
         }
+        // A look is where the window goes beside OpenWork: the next action then sees it there.
+        if refreshFollow(id) { arrangeBeside(id) }
         let current = try current(id)
         if current.dialogKind == .filePanel, current.filePanelAllowed != current.target.id {
             guard filePanelAccess == current.target.id else { return filePanelAccessRequired(current) }
@@ -389,7 +405,7 @@ final class SessionRuntime {
         defer { keys?.release() }
         // In the background, another focused window of the app is the same signal as
         // another window in front: usually a dialog the last action opened.
-        var otherWindowFocused = current.mode == .control && current.delivery == .background && current.parents.isEmpty
+        var otherWindowFocused = current.mode == .control && current.working == .background && current.parents.isEmpty
             && access.focusesAnotherWindow(than: current.target, app: current.app)
         var returns = 0
         // Something else in front is the person or another app, not a takeover:
@@ -457,7 +473,7 @@ final class SessionRuntime {
         let interactive = state.records.filter { bounds.contains($0.frame) && $0.interactive }
         let namedControls = interactive.filter { !$0.label.isEmpty }.count
         let image = ImagePolicy.include(requested: requested,
-            automatic: ImagePolicy.automatic(delivery: current.delivery, mode: current.mode, policy: policy),
+            automatic: ImagePolicy.automatic(delivery: current.working, mode: current.mode, policy: policy),
             namedControls: namedControls, interactiveControls: interactive.count)
         if image {
             // A window that just opened is often still settling: one more look
@@ -621,6 +637,7 @@ final class SessionRuntime {
             throw UseError("observation_required", "A dialog opened or closed since the last observation. Observe again; nothing was sent.", next: "observe")
         }
         if let prompt = access.personPrompt() { return personNeeded(prompt) }
+        refreshFollow(id)
         let current = try current(id)
         if current.dialogKind == .filePanel, current.filePanelAllowed != current.target.id {
             guard filePanelAccess == current.target.id else { return filePanelAccessRequired(current) }
@@ -637,9 +654,11 @@ final class SessionRuntime {
         guard let observation = current.observation else { throw UseError("observation_required", "Observe this window before acting. Each observation authorizes one act call.", next: "observe") }
         let desktopBefore = DesktopState.now()
         // In the background the person keeps the front, unless a step in this batch
-        // only works while the app is active or follows the real pointer.
+        // only works while the app is active or follows the real pointer. That step waits
+        // until the person is idle (`takeGap`, `aroundPerson`), takes the front for the step,
+        // and gives back their app, window, field and caret (`scheduleHandBack`, `PersonPlace`).
         let route = input.route(for: current.app)
-        let inBackground = current.mode == .control && current.delivery == .background && current.parents.isEmpty
+        let inBackground = current.mode == .control && current.working == .background && current.parents.isEmpty
         let front = current.takesFront || inBackground && actions.contains { InputDelivery.stepNeedsFront($0, route: route) }
         // Whether `target` itself must be the front window: never for a dialog.
         let frontCheck = front && current.parents.isEmpty
@@ -877,6 +896,8 @@ final class SessionRuntime {
                     var placement = session?.placement ?? WindowArrangement.Placement(window: current.target.element, original: bounds)
                     placement.arranged = WindowArrangement.frame(of: current.target.element)
                     session?.placement = placement
+                    // The agent's own layout stands: the window is not put beside OpenWork again.
+                    session?.follow?.agentPlaced()
                 }
                 if case .openFile = action {
                     // A success from Launch Services is not proof: the file counts as opened once the
@@ -1011,7 +1032,9 @@ final class SessionRuntime {
         }
         if progress.hasInput { session?.openedByLastAction = windowsAfter.windows.subtracting(windowsBefore.windows) }
         receipt["delivery"] = (background ? InputDelivery.background : .foreground).rawValue
-        receipt["desktop"] = desktopBefore.changes(to: DesktopState.now())
+        var desktop = desktopBefore.changes(to: DesktopState.now())
+        if current.follow != nil { desktop["followed"] = current.followed }
+        receipt["desktop"] = desktop
         let waited = Int((waitedForPerson * 1_000).rounded())
         if waited > 0 { receipt["waited_for_person_ms"] = waited }
         if session?.id == id { session?.receipts[requestID] = receipt }
@@ -1138,7 +1161,12 @@ final class SessionRuntime {
         if handBack.takesAnew, let frontmost, frontmost != current.frontApp.pid, frontmost != own {
             personPlace = PersonPlace.read(frontmost)
         }
-        handBack.record(frontmost: frontmost, target: current.frontApp.pid, own: own, host: Responsibility.hostPID,
+        // Taken from OpenWork, the front stays with the agent only while the person follows
+        // this chat there; from another chat it goes back after the step, like from any app.
+        // Following while typing in the composer, the window stays beside OpenWork and the
+        // keys go back to the composer after each step (`typing`, `HandBack.immediate`).
+        handBack.record(frontmost: frontmost, target: current.frontApp.pid, own: own,
+            host: current.follow == nil || current.followed ? Responsibility.hostPID : 0,
             at: ProcessInfo.processInfo.systemUptime, typing: momentTyping,
             inField: personPlace?.pid == frontmost && personPlace?.inField == true)
         let started = ProcessInfo.processInfo.systemUptime
@@ -1334,7 +1362,7 @@ final class SessionRuntime {
             }) : nil
             defer { keys?.release() }
             // A background session stays behind the person's work; each step readies its window.
-            if current.delivery != .background { try await focusTarget(current) }
+            if current.working != .background { try await focusTarget(current) }
             guard session?.id == current.id, session?.generation == current.generation else { return }
             _ = try access.validate(current.target, app: current.app, requireFrontmost: current.takesFront)
             expire(); guard session != nil else { return }
@@ -1361,6 +1389,32 @@ final class SessionRuntime {
         // Renew technical accounting silently. Preserve paused state, generation,
         // target validation, observation freshness and at-most-once receipts.
         if now - current.started >= 900 { session?.started = now }
+    }
+    /// Whether the person follows this session now (`FollowAlong`); presence moves with it.
+    @discardableResult
+    private func refreshFollow(_ id: String) -> Bool {
+        guard let current = session, current.id == id, current.mode == .control, var follow = current.follow else { return false }
+        // A dialog is the agent's own doing: the session keeps following, or not, as it was.
+        guard current.parents.isEmpty else { return current.followed }
+        let followed = follow.follows(frontmost: NSWorkspace.shared.frontmostApplication?.processIdentifier, host: Responsibility.hostPID,
+            target: current.app.pid, shown: FollowAlong.onScreen(current.target.id))
+        session?.follow = follow; session?.followed = followed
+        if followed != current.followed { controls.layer(background: !followed && current.delivery == .background) }
+        return followed
+    }
+    /// Puts the window beside OpenWork once per return to the chat, unless it was placed
+    /// since; closing the session puts it back, as after `arrange`.
+    private func arrangeBeside(_ id: String) {
+        guard let current = session, current.id == id, current.followed, current.parents.isEmpty, var follow = current.follow else { return }
+        let frame = WindowArrangement.frame(of: current.target.element)
+        let due = follow.arrangeNow(current: frame, arranged: current.placement?.arranged)
+        session?.follow = follow
+        guard due, let frame, let beside = try? WindowArrangement.frame(.besideOpenWork, window: frame,
+                  screens: WindowArrangement.visibleScreens(), host: WindowArrangement.hostWindow()),
+              (try? WindowArrangement.apply(beside, to: current.target.element, check: { try self.checkActive(current) })) != nil else { return }
+        var placement = current.placement ?? WindowArrangement.Placement(window: current.target.element, original: frame)
+        placement.arranged = WindowArrangement.frame(of: current.target.element)
+        session?.placement = placement
     }
     func close(stoppedByPerson: Bool = false) {
         // Windows the session arranged go back, unless the person has placed them since.

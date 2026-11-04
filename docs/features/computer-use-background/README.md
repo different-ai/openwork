@@ -12,6 +12,11 @@ it is. The window is not brought to the front, the person's cursor does not
 move and their Space does not change, so they keep working in their own apps.
 Several chats can each work in their own window at the same time.
 
+While the person watches the chat in OpenWork, the agent works in view
+instead: its app comes forward beside the OpenWork window. Selecting another
+chat, hiding OpenWork or bringing another app in front sends it back to the
+background, and returning to the chat brings it into view again.
+
 Agents also read the window's accessibility tree first. An observation skips
 the screenshot when the tree names at least eight controls to act on, and the
 agent asks for an image (`include_image: true`) when it needs coordinates.

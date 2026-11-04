@@ -105,8 +105,28 @@ notifications with method `openwork/ui`:
   the agent is working); `{kind: "input", id, sequence, action, phase, at, x?, y?}`
   for each dispatched input.
 - Host → helper: `{id, action}` with `action` one of `takeover`, `resume`, `stop`, or `watch` (plus
-  `visible`). Messages for another `id` are ignored. `resume` only works while
+  `visible` for watch frames, and `following` and `beside`, below). Messages for another `id` are ignored. `resume` only works while
   the session is paused and Continue is allowed.
+
+## Following the person's attention
+
+On This Mac a session follows the person's attention, so neither interrupts the
+other. The desktop reports each chat that is on screen in a visible OpenWork
+window (`computerFollow`, held for a second so quick thread switches do not
+flip it); the broker passes it to that chat's helpers as `following` on
+`computer_open_session` and on later `watch` messages. While the person
+follows, control steps work in front: the app comes forward, and on the first
+look and each time they come back to the chat the window is put
+`beside_openwork` once, then put back when the session closes, as after
+`arrange`. A window the person moved or resized, or the agent arranged itself,
+stays where it is for the rest of the session, and with several of the chat's
+apps open (`beside: false`) the agent arranges them. Otherwise the session
+uses background delivery and never raises its window; a step that needs the
+front waits for a gap in the person's input and hands the front back, also when
+it took it from OpenWork. Another app brought in front, or the agent's window
+minimized, counts as not following until the person is back in OpenWork. Each
+receipt's `desktop.followed` says which mode the step ran in. Other computers
+get neither argument.
 
 ## Presence
 
