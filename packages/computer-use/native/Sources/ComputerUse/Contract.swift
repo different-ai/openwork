@@ -411,7 +411,7 @@ enum ObservationPreparation {
 }
 
 /// Shares the Mac with the person using it. The agent takes the front only for
-/// the moment it needs to look or act, then gives it back to the app that had it.
+/// the moment it needs to look or act; `HandBack` decides when it goes back.
 /// Moving the mouse never holds the agent up; a click or key press during its
 /// moment stops that step. Only Take over pauses the agent for Continue.
 enum SharedDesktop {
@@ -481,13 +481,24 @@ enum SharedDesktop {
     }
     static let contested = UseError("focus_contested", "Another window keeps coming to the front, so nothing more was sent. Observe again in a few seconds.", next: "observe")
 
-    /// The app the agent took the front from, given back once its moment ends.
+    /// The app the agent took the front from, and when it gets it back. Taken from OpenWork
+    /// itself (`host`), the front stays with the agent's window between steps: the person
+    /// handed over the task and is watching, so the screen does not flick back and forth.
+    /// Taken from another app, or once something else came to the front while the agent
+    /// worked (the person went back to the chat or to their work), each moment gives the
+    /// front back as soon as it ends, for the rest of the session.
     struct HandBack {
         private(set) var pid: pid_t?
         private(set) var takenAt: TimeInterval?
+        /// Whether each moment ends by giving the front back.
+        private(set) var eachMoment = false
+        private var held = false
         /// The first app in front wins: one moment can raise the target more than once.
-        mutating func record(frontmost: pid_t?, target: pid_t, own: pid_t, at now: TimeInterval) {
-            guard pid == nil, let frontmost, frontmost != target, frontmost != own else { return }
+        mutating func record(frontmost: pid_t?, target: pid_t, own: pid_t, host: pid_t, at now: TimeInterval) {
+            guard let frontmost, frontmost != target, frontmost != own else { return }
+            if held || frontmost != host { eachMoment = true }
+            held = true
+            guard pid == nil else { return }
             pid = frontmost; takenAt = now
         }
         /// Returns the app to give the front back to, only while the agent's window
@@ -500,6 +511,8 @@ enum SharedDesktop {
             return pid
         }
         mutating func forget() { pid = nil; takenAt = nil }
+        /// A new session starts by keeping the front again.
+        mutating func reset() { forget(); eachMoment = false; held = false }
     }
 
     /// A window in front of the selected one is the person or another app at work,

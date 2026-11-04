@@ -73,6 +73,17 @@ final class MenuAndPacingTests: XCTestCase {
         XCTAssertFalse(InputDelivery.takesToolKeys(info: [:]))
     }
 
+    func testCanvasTextNeedsNoExtraQuestionInCreativeApps() {
+        let design: [String: Any] = ["LSApplicationCategoryType": "public.app-category.graphics-design"]
+        XCTAssertEqual(InputDelivery.editorTyping(info: design, appID: "com.example.paint", approvedApp: nil, carriesCredential: false), .allowed)
+        XCTAssertEqual(InputDelivery.editorTyping(info: [:], appID: "com.example.notes", approvedApp: nil, carriesCredential: false), .askPerson,
+            "elsewhere a letter can act, so the person allows the app first")
+        XCTAssertEqual(InputDelivery.editorTyping(info: [:], appID: "com.example.notes", approvedApp: "com.example.notes", carriesCredential: false), .allowed)
+        XCTAssertEqual(InputDelivery.editorTyping(info: [:], appID: "com.example.notes", approvedApp: "com.example.other", carriesCredential: false), .askPerson)
+        XCTAssertEqual(InputDelivery.editorTyping(info: design, appID: "com.example.paint", approvedApp: "com.example.paint", carriesCredential: true), .refused,
+            "a password or code never goes to an editor accessibility cannot name")
+    }
+
     func testAShortcutWithNothingToTypeIntoRunsItsMenuCommand() throws {
         let entries = [MenuEntry(path: ["File", "Save"], shortcut: "command+s"), MenuEntry(path: ["Edit", "Fill…"], shortcut: "shift+f5")]
         let save = try Action(["type": "key", "key": "s", "modifiers": ["command"]], policy: .embedded)

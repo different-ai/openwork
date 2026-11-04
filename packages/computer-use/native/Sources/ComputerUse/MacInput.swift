@@ -243,8 +243,9 @@ final class MacInput {
                 try keyboard(code, flags: flags, text: nil, pid: app.pid, check: check)
                 releaseModifiers()
             case .type(let text) where editorTyping && focus == nil:
-                // The person allowed typing into this app's own editor, such as text on a canvas:
-                // whatever has the keyboard in the selected window, checked before every character.
+                // Typing into this app's own editor, such as text on a canvas (a creative app, or
+                // one the person allowed): whatever has the keyboard in the selected window,
+                // checked before every character.
                 let editor = try access.focusedEditor(target: target, app: app, requireFront: !background)
                 try await InputDispatch.type(text, check: check, validate: {
                     try checkWindow()
