@@ -18,7 +18,7 @@ test("browser work keeps its own steps instead of the computer session card", as
   await step("after: grouping computer history leaves browser steps and their pages in the conversation", async () => {
     await user.click("Group computer history")
     await user.see({ text: "The landscape is on the canvas." })
-    await user.click({ label: "10 steps. Show steps" })
+    await user.see({ label: "10 steps. Hide steps" })
     const cards = (await probe.dom("[data-computer-session-history]")).elements.length
     const images = (await probe.dom('[data-message-role="assistant"] img')).elements.length
     expect(cards).toBe(0); expect(images).toBe(3)
