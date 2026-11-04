@@ -573,8 +573,18 @@ final class SessionRuntime {
         let region = CGRect(x: pixels.minX * xScale, y: pixels.minY * yScale, width: pixels.width * xScale, height: pixels.height * yScale)
         @MainActor func check() throws { try self.checkActive(current) }
         let state = try await access.read(current.target, check: check)
-        let (png, width, height, capturedAt) = try await access.capture(target: current.target, app: current.app, bounds: bounds, state: state,
-            region: region, maxScale: NSScreen.screens.map(\.backingScaleFactor).max() ?? 2, check: check)
+        let captured: (Data, Int, Int, Int64)
+        do {
+            captured = try await access.capture(target: current.target, app: current.app, bounds: bounds, state: state,
+                region: region, maxScale: NSScreen.screens.map(\.backingScaleFactor).max() ?? 2, check: check)
+        } catch let error as UseError {
+            throw error
+        } catch {
+            // A screen capture error is not a takeover: the zoom only reads, and the observation is untouched.
+            try check()
+            throw UseError("capture_failed", "The zoomed image could not be captured. The observation is still valid; act on it or observe again.", next: "observe")
+        }
+        let (png, width, height, capturedAt) = captured
         try check()
         session?.lastUsed = now
         let payload: [String: Any] = ["ok": true, "session_id": id, "observation_id": observationID, "state": "active",
@@ -662,12 +672,19 @@ final class SessionRuntime {
                 "message": "This window has a password field. The person confirms this app before anything is typed; nothing was sent."])
         }
         // Typing with no observed text field goes to the app's own editor (text on a canvas),
-        // which accessibility cannot name: the person allows that app first. Nothing is sent.
+        // which accessibility cannot name. The editor is still checked before every character.
         let editorTyping = current.focus == nil && actions.first.map { if case .type = $0 { return true }; return false } == true
-        if editorTyping, typingApproval != current.app.bundleID {
-            return text(["ok": false, "code": "typing_approval_required", "app": current.app.app.localizedName ?? current.app.bundleID,
-                "app_id": current.app.bundleID, "dispatched": false, "next": "observe",
-                "message": "No observed text field has the keyboard. The person allows typing into this app's own editor first; nothing was sent."])
+        if editorTyping {
+            switch InputDelivery.editorTyping(info: current.app.app.bundleURL.flatMap { Bundle(url: $0)?.infoDictionary } ?? [:],
+                appID: current.app.bundleID, approvedApp: typingApproval, carriesCredential: credentialApproval != nil) {
+            case .allowed: break
+            case .refused:
+                throw UseError("protected_input", "A password or code goes only into a field the computer can identify. Nothing was sent.", next: "human_takeover")
+            case .askPerson:
+                return text(["ok": false, "code": "typing_approval_required", "app": current.app.app.localizedName ?? current.app.bundleID,
+                    "app_id": current.app.bundleID, "dispatched": false, "next": "observe",
+                    "message": "No observed text field has the keyboard. The person allows typing into this app's own editor first; nothing was sent."])
+            }
         }
         // Confirming a file panel hands the chosen files to the app, which can upload them:
         // the person approves first. Nothing is sent and the observation stays valid.
@@ -1018,7 +1035,8 @@ final class SessionRuntime {
     /// or key of the person's while it comes forward stops whatever was to follow.
     private func takeFront(_ current: Session) async throws {
         handBack.record(frontmost: NSWorkspace.shared.frontmostApplication?.processIdentifier,
-            target: current.frontApp.pid, own: ProcessInfo.processInfo.processIdentifier, at: ProcessInfo.processInfo.systemUptime)
+            target: current.frontApp.pid, own: ProcessInfo.processInfo.processIdentifier, host: Responsibility.hostPID,
+            at: ProcessInfo.processInfo.systemUptime)
         do {
             try await SharedDesktop.acquire(now: { ProcessInfo.processInfo.systemUptime }, buttonDown: { self.personHoldsButton() },
                 focus: { try await self.focusTarget(current) }, interrupted: { self.personInterrupted(since: $0) })
@@ -1047,9 +1065,12 @@ final class SessionRuntime {
     }
     /// Gives the front back once the agent's moment is over: no call within
     /// `handBackDelay`, so an action and the read after it count as one moment.
+    /// Only once the person has shown they want it back (`HandBack.eachMoment`);
+    /// until then the front stays with the agent's window and is handed back when
+    /// the session closes.
     private func scheduleHandBack() {
         handBackTimer?.invalidate(); handBackTimer = nil
-        guard handBack.pid != nil else { return }
+        guard handBack.pid != nil, handBack.eachMoment else { return }
         let timer = Timer(timeInterval: SharedDesktop.handBackDelay, repeats: false) { [weak self] _ in
             MainActor.assumeIsolated { self?.giveBack() }
         }
@@ -1207,7 +1228,7 @@ final class SessionRuntime {
         if now - current.started >= 900 { session?.started = now }
     }
     func close(stoppedByPerson: Bool = false) {
-        giveBack(); handBack.forget()
+        giveBack(); handBack.reset()
         stopWatching()
         resumingSessionID = nil; session = nil
         input.releaseAll(); lease = nil; controls.close(stoppedByPerson: stoppedByPerson)

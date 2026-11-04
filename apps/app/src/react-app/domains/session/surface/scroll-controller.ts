@@ -409,8 +409,12 @@ export function useSessionScrollController(options: SessionScrollControllerOptio
           scrollToBottom();
         }
       } else if (!cancelledWhileLoading) {
-        if (saved.mode === "stickyBottom") {
-          if (!hasScrollGesture() && !isExactlyAtBottom(container)) scrollToBottom();
+        if (saved.mode === "stickyBottom" && !hasScrollGesture()) {
+          if (!isExactlyAtBottom(container)) scrollToBottom();
+          // The transcript shrank and the browser already clamped the view to its end. That
+          // clamp's scroll event can arrive after a card grew again (a computer step swapping
+          // its picture or prompt), and must not read as the reader leaving the latest message.
+          else lastKnownScrollTop = container.scrollTop;
         }
       }
       refreshTopClippedMessage();

@@ -102,30 +102,62 @@ final class SharedDesktopTests: XCTestCase {
 
     func testTheFrontGoesBackToTheAppThatHadIt() {
         var handBack = SharedDesktop.HandBack()
-        handBack.record(frontmost: 40, target: 7, own: 3, at: 10)
+        handBack.record(frontmost: 40, target: 7, own: 3, host: 1, at: 10)
         // A second raise in the same moment does not replace who had the front.
-        handBack.record(frontmost: 50, target: 7, own: 3, at: 11)
+        handBack.record(frontmost: 50, target: 7, own: 3, host: 1, at: 11)
         XCTAssertEqual(handBack.take(frontmost: 7, target: 7, lastPersonInput: 9), 40)
         XCTAssertNil(handBack.pid)
         // The target itself and the helper are never handed the front.
-        handBack.record(frontmost: 7, target: 7, own: 3, at: 12)
-        handBack.record(frontmost: 3, target: 7, own: 3, at: 12)
+        handBack.record(frontmost: 7, target: 7, own: 3, host: 1, at: 12)
+        handBack.record(frontmost: 3, target: 7, own: 3, host: 1, at: 12)
         XCTAssertNil(handBack.pid)
     }
 
     func testAPersonWhoAlreadyMovedOnIsLeftWhereTheyAre() {
         var handBack = SharedDesktop.HandBack()
-        handBack.record(frontmost: 40, target: 7, own: 3, at: 10)
+        handBack.record(frontmost: 40, target: 7, own: 3, host: 1, at: 10)
         XCTAssertNil(handBack.take(frontmost: 60, target: 7, lastPersonInput: 9))
         XCTAssertNil(handBack.pid)
-        handBack.record(frontmost: 40, target: 7, own: 3, at: 10)
+        handBack.record(frontmost: 40, target: 7, own: 3, host: 1, at: 10)
         handBack.forget()
         XCTAssertNil(handBack.take(frontmost: 7, target: 7, lastPersonInput: 9))
     }
 
+    func testTakenFromOpenWorkTheFrontStaysUntilThePersonGoesBack() {
+        var handBack = SharedDesktop.HandBack()
+        // The person asked from the chat and is watching: no hand-back after each step.
+        handBack.record(frontmost: 5, target: 7, own: 3, host: 5, at: 10)
+        XCTAssertFalse(handBack.eachMoment)
+        XCTAssertEqual(handBack.pid, 5, "the chat still gets the front back when the session ends")
+        // Later steps find the agent's window still in front.
+        handBack.record(frontmost: 7, target: 7, own: 3, host: 5, at: 11)
+        XCTAssertFalse(handBack.eachMoment)
+        // The person went back to the chat while the agent worked: from now on each step gives it back.
+        handBack.record(frontmost: 5, target: 7, own: 3, host: 5, at: 12)
+        XCTAssertTrue(handBack.eachMoment)
+        XCTAssertEqual(handBack.take(frontmost: 7, target: 7, lastPersonInput: 9), 5)
+        handBack.record(frontmost: 5, target: 7, own: 3, host: 5, at: 13)
+        XCTAssertTrue(handBack.eachMoment, "once the person wants it back, it stays that way for the session")
+        handBack.reset()
+        XCTAssertFalse(handBack.eachMoment)
+        XCTAssertNil(handBack.pid)
+    }
+
+    func testTakenFromThePersonsOtherWorkTheFrontGoesBackEachStep() {
+        var handBack = SharedDesktop.HandBack()
+        handBack.record(frontmost: 40, target: 7, own: 3, host: 5, at: 10)
+        XCTAssertTrue(handBack.eachMoment, "their keys must not land in the agent's window between steps")
+        var interrupted = SharedDesktop.HandBack()
+        interrupted.record(frontmost: 5, target: 7, own: 3, host: 5, at: 10)
+        // A step the person interrupted forgets who had the front, but not that something moved it.
+        interrupted.forget()
+        interrupted.record(frontmost: 40, target: 7, own: 3, host: 5, at: 11)
+        XCTAssertTrue(interrupted.eachMoment)
+    }
+
     func testTypingInTheAgentsWindowKeepsTheFrontThere() {
         var handBack = SharedDesktop.HandBack()
-        handBack.record(frontmost: 40, target: 7, own: 3, at: 10)
+        handBack.record(frontmost: 40, target: 7, own: 3, host: 1, at: 10)
         // A key of the person's moments after the front was taken keeps it in the
         // agent's window, so their later keys stay there too.
         XCTAssertNil(handBack.take(frontmost: 7, target: 7, lastPersonInput: 10.02))

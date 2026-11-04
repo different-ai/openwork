@@ -1160,6 +1160,36 @@ describe("session reading position", () => {
     expect(view.container.scrollTop).toBe(325);
   });
 
+  test("a card that shrinks and grows again before its clamp's scroll event arrives keeps following the latest message", async () => {
+    const view = fixture(undefined, {}, true);
+    await view.render();
+    runFrames();
+    expect(view.container.scrollTop).toBe(800);
+    // A computer step swaps its picture: the transcript shrinks, the browser clamps the
+    // view to the new end and the resize observer sees it, but the clamp's scroll event
+    // is only delivered on the next frame.
+    view.layout.height -= 100;
+    view.container.scrollTop = 800;
+    expect(view.container.scrollTop).toBe(700);
+    view.resize();
+    // The new picture (or a permission prompt) grows the transcript before that event.
+    view.layout.height += 140;
+    await act(async () => { view.container.dispatchEvent(new Event("scroll")); });
+    expect(state().mode).toBe("stickyBottom");
+    expect(view.container.textContent).not.toContain("Jump to latest");
+    view.resize();
+    runFrames();
+    expect(view.container.scrollTop).toBe(840);
+    // A reader who moves away from the end still keeps their place.
+    await act(async () => { view.wheel(400); });
+    expect(state()).toMatchObject({ mode: "manual", scrollTop: 400 });
+    view.layout.height += 60;
+    view.resize();
+    runFrames();
+    expect(view.container.scrollTop).toBe(400);
+    expect(view.container.textContent).toContain("Jump to latest");
+  });
+
   test("uses legacy pixels or a missing anchor once without persisting clamps or locking manual mode", async () => {
     for (const anchor of [undefined, { messageId: "evicted", offset: -25 }]) {
       useSessionScrollStore.getState().setManualScroll("a", 900, null, anchor);

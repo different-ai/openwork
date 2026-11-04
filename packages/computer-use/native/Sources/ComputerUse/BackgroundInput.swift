@@ -37,6 +37,16 @@ enum InputDelivery: String {
         (info["LSApplicationCategoryType"] as? String).map { toolKeyCategories.contains($0.lowercased()) } ?? false
     }
 
+    /// Typing with no observed text field goes to whatever has the keyboard in the selected
+    /// window, such as text on a canvas. A creative app's control session covers it as it covers
+    /// tool letters; elsewhere a letter can act, so the person allows the app first. Text sent
+    /// with a confirmed password or code never goes to an editor accessibility cannot name.
+    enum EditorTyping: Equatable { case allowed, askPerson, refused }
+    static func editorTyping(info: [String: Any], appID: String, approvedApp: String?, carriesCredential: Bool) -> EditorTyping {
+        if carriesCredential { return .refused }
+        return approvedApp == appID || takesToolKeys(info: info) ? .allowed : .askPerson
+    }
+
     /// The menu command an app offers for a Command shortcut, run in its place when no
     /// observed field or control has the keyboard. Only commands the catalog lists, so
     /// blocked chords never reach a menu either.

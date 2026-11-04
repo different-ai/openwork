@@ -407,8 +407,9 @@ export function createComputerControl({ adapters, runProgram, runScript, onTimin
   }
   /**
    * The agent is about to type into an app's own editor that accessibility cannot name
-   * as a text field, such as text on a design app's canvas. The person allows that app;
-   * "Always" covers it for the rest of this chat. Passwords never go this way.
+   * as a text field. Design, photo, video and music apps take canvas text without asking;
+   * for any other app the person allows it here, and "Always" covers it for the rest of
+   * this chat. Passwords never go this way.
    * @param {{ app: string, label: string }} recipient
    * @returns {Promise<"allow" | "always" | "dismiss" | "aborted" | "timeout" | "busy" | "too_many">}
    */
@@ -1584,6 +1585,9 @@ export function createComputerControl({ adapters, runProgram, runScript, onTimin
             ? "The person did not confirm entering a password or code in this app. Nothing was sent."
             : "Open the app first: a password or code goes only to an app the person confirms. Nothing was sent.");
           confirmedApp = app;
+          // Sent with the step, so the helper skips asking again for this app and never types
+          // the text into an editor it cannot name as a field.
+          call.args = { ...call.args, credential_approval: app };
         }
         // The operation budget starts once the person has answered.
         limit = deadline(operationMs);

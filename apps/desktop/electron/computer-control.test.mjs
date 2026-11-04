@@ -1151,6 +1151,8 @@ test("typing into an app's own editor waits for the person to allow that app", a
   for (let waited = 0; !f.requests.some((request) => request?.reason === "credential") && waited < 2_000; waited += 5) await new Promise((resolve) => setTimeout(resolve, 5));
   await f.control.answerRequest({ sessionId: "chat", answer: "allow", id: f.requests.find((request) => request?.reason === "credential").id });
   assert.equal(payload(await secret).code, "protected_input", "a password never goes into an unidentified editor");
+  // The helper is told, so it refuses the editor itself instead of relying on this card.
+  assert.equal(acts().at(-1).credential_approval, "com.example.canvas");
 });
 
 test("typing next to a password field waits for the person to confirm the app", async (t) => {
@@ -1178,8 +1180,10 @@ test("text marked secret goes only to an app the person confirmed, where no fiel
   const allowed = typeInto(f.control, { type: "type", text: "given-password", secret: true });
   await f.answer("com.example.editor", "allow");
   assert.equal(payload(await allowed).status, "dispatched");
-  // One question covered both the mark and the helper's own check, and the mark never reaches it.
+  // One question covered both the mark and the helper's own check, in one call, and the mark never reaches it.
   assert.equal(f.cards().length, 2);
+  assert.equal(f.acts().length, 1);
+  assert.equal(f.acts()[0].credential_approval, "com.example.editor");
   assert.ok(f.acts().every((args) => !("secret" in args.action)));
   // Another program can carry the same id, so an app never gets a standing approval.
   assert.equal(f.cards().at(-1).standing, false);
