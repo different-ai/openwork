@@ -19,7 +19,7 @@ legacy("with the rollout off, domain sign-in stays SSO-only and settings keep th
     evidence.recordAssertionEvidence("legacy domain sign-in goes directly to the SAML provider", "no ordinary password alternative; local IdP reached", new URL(await probe.url()).origin === world.idp.origin);
     await user.screenshot();
   });
-  await step("a pre-existing password administrator changes the legacy setting without a new 409", async () => {
+  await step("with the rollout off, settings show that SSO is required and a save leaves it alone", async () => {
     const surface = await world.fresh("/dashboard/org-settings", world.den.admin);
     const admin = user.on(surface);
     const browser = probe.on(surface);
@@ -30,12 +30,18 @@ legacy("with the rollout off, domain sign-in stays SSO-only and settings keep th
       await admin.navigate(`${world.den.ref.webUrl}/dashboard/org-settings`);
     }
     await admin.see({ text: "Single sign-on requirement" }, { timeoutMs: 90_000 });
-    await admin.click({ role: "switch", label: "Require SSO for this organization" });
+    // Off, an enabled SSO connection is the only way in: the screen says so
+    // instead of offering a switch that changes nothing.
+    await admin.see({ text: "Required: with SSO on, everyone on your verified domain signs in with it" });
+    await admin.notSee({ role: "switch", label: "Require SSO for this organization" });
+    const before = await world.request(world.den.admin, "/v1/org", { headers: { "x-openwork-org-id": world.orgId } });
     await admin.click({ role: "button", label: "Save settings" });
     await admin.notSee({ text: "Sign in with this organization's SSO first" });
-    const result = await probe.eventually(() => world.request(world.den.admin, "/v1/org", { headers: { "x-openwork-org-id": world.orgId } }), { within: 20_000, label: "legacy requirement saved", until: (value) => value.text.includes('\\"requireSso\\":true') || value.text.includes('"requireSso":true') });
-    evidence.recordAssertionEvidence("the legacy setting saves without session provenance", `HTTP ${result.response.status}; requireSso=true`, result.response.ok);
-    expect(result.response.ok).toBe(true);
+    const after = await world.request(world.den.admin, "/v1/org", { headers: { "x-openwork-org-id": world.orgId } });
+    const requireSso = (text: string) => text.includes('\\"requireSso\\":true') || text.includes('"requireSso":true');
+    evidence.recordAssertionEvidence("a flag-off save does not rewrite the SSO requirement", `HTTP ${after.response.status}; requireSso before=${requireSso(before.text)} after=${requireSso(after.text)}`, after.response.ok && requireSso(before.text) === requireSso(after.text));
+    expect(after.response.ok).toBe(true);
+    expect(requireSso(after.text)).toBe(requireSso(before.text));
     await admin.screenshot();
   });
   await step("the legacy browser completes the real signed SAML callback", async () => {

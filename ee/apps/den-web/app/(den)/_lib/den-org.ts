@@ -1,4 +1,5 @@
 import type { BillingPlanTier } from "@openwork/types/den/billing-plans";
+import type { SsoSettings } from "./sso-settings";
 import { parseDeploymentCapabilities, type DeploymentCapabilities } from "@openwork/types/den/deployment-capabilities";
 import { mapFeatures, type FeatureMap } from "@openwork/features";
 import { PERMISSION_KEYS, getPermissionDefinition, isPermissionKey, isPermissionOwnerOnlyByDefault, permissionDefaultKeys, type PermissionKey } from "@openwork/types/den/permissions";
@@ -390,6 +391,7 @@ export type DenOrganizationMetadata = {
   allowedDesktopVersions?: string[];
   requireSso?: boolean;
   restrictDomainToSso?: boolean;
+  ssoSessionMaxAgeHours?: number;
   brandAppName?: string;
   brandLogoUrl?: string;
   brandIconUrl?: string;
@@ -485,6 +487,29 @@ export function getRequireSsoFromMetadata(metadata: string | null): boolean {
 export function getRestrictDomainToSsoFromMetadata(metadata: string | null): boolean {
   const parsed = parseOrganizationMetadata(metadata);
   return parsed?.restrictDomainToSso === true;
+}
+
+/** ssoPerOrganization: "Ask for SSO again after" choices, in hours (matches den-api SSO_SESSION_MAX_AGE_HOURS). */
+export const SSO_SESSION_MAX_AGE_HOURS = [8, 24, 168, 720] as const;
+export type SsoSessionMaxAgeHours = (typeof SSO_SESSION_MAX_AGE_HOURS)[number];
+
+export function isSsoSessionMaxAgeHours(value: unknown): value is SsoSessionMaxAgeHours {
+  return SSO_SESSION_MAX_AGE_HOURS.some((hours) => hours === value);
+}
+
+/** The organization's stored SSO requirement settings. */
+export function getSsoSettingsFromMetadata(metadata: string | null): SsoSettings {
+  return {
+    requireSso: getRequireSsoFromMetadata(metadata),
+    restrictDomainToSso: getRestrictDomainToSsoFromMetadata(metadata),
+    ssoSessionMaxAgeHours: getSsoSessionMaxAgeHoursFromMetadata(metadata),
+  };
+}
+
+/** ssoPerOrganization: how long an SSO sign-in opens the organization; null while the session lasts. */
+export function getSsoSessionMaxAgeHoursFromMetadata(metadata: string | null): SsoSessionMaxAgeHours | null {
+  const value = parseOrganizationMetadata(metadata)?.ssoSessionMaxAgeHours;
+  return isSsoSessionMaxAgeHours(value) ? value : null;
 }
 
 export function getManagedBrandAssetFromMetadata(
