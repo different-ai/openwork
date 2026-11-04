@@ -38,11 +38,16 @@ enum PersonPlace {
         place.field = field
         place.inField = editsText(field)
         // A secure field's selection would tell how long its password is.
-        guard place.inField, attribute(field, kAXSubroleAttribute) as? String != kAXSecureTextFieldSubrole,
-              let value = attribute(field, kAXSelectedTextRangeAttribute), CFGetTypeID(value) == AXValueGetTypeID() else { return place }
-        var range = CFRange()
-        if AXValueGetValue(unsafeBitCast(value, to: AXValue.self), .cfRange, &range) { place.selection = range }
+        guard place.inField, attribute(field, kAXSubroleAttribute) as? String != kAXSecureTextFieldSubrole else { return place }
+        place.selection = selection(field)
         return place
+    }
+
+    /// A text element's selection (caret) range, never its value.
+    static func selection(_ element: AXUIElement) -> CFRange? {
+        guard let value = attribute(element, kAXSelectedTextRangeAttribute), CFGetTypeID(value) == AXValueGetTypeID() else { return nil }
+        var range = CFRange()
+        return AXValueGetValue(unsafeBitCast(value, to: AXValue.self), .cfRange, &range) ? range : nil
     }
 
     /// Their window back in front, their field focused and the caret where it was;

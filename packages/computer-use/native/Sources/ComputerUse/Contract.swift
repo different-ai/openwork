@@ -413,7 +413,8 @@ enum ObservationPreparation {
 /// Shares the Mac with the person using it. The agent takes the front only for
 /// the moment it needs to look or act; `HandBack` decides when it goes back.
 /// Moving the mouse never holds the agent up; a click or key press during its
-/// moment stops that step. Only Take over pauses the agent for Continue.
+/// moment pauses that step until the person is idle, and then it carries on.
+/// Only Take over pauses the agent for Continue, and only Stop stops it.
 enum SharedDesktop {
     static let refocusLimit = 2
     /// Keys this recent mean the person is mid-keystroke (a shortcut, a game, a list).
@@ -462,7 +463,76 @@ enum SharedDesktop {
     static func personInterrupted(inputAt: TimeInterval, since start: TimeInterval) -> Bool {
         inputAt > start
     }
-    static let interrupted = UseError("person_interrupted", "The person clicked or typed, so this step stopped and the computer is theirs for now. Observe again to continue.", next: "observe")
+    /// Raised inside a step when the person clicks or types; the step pauses for them
+    /// (`waitForIdle`) and does not reach the model as a stop.
+    static let interrupted = UseError("person_interrupted", "The person clicked or typed during this step, so it paused for them. Observe again and carry on.", next: "observe")
+    static func isPersonInput(_ error: Error) -> Bool {
+        ((error as? InputFailure)?.cause ?? error as? UseError)?.code == interrupted.code
+    }
+
+    /// The longest one call waits for the person to be idle, across all its pauses.
+    /// A person busy for a whole minute is doing their own work; the model looks again
+    /// shortly rather than holding the call (the host allows a call 120 s).
+    static let busyLimit: TimeInterval = 60
+    static let busy = UseError("person_busy", "The person is using the computer right now, so this step is waiting for them. Observe again in a few seconds and carry on; do not stop or ask them.", next: "wait")
+    static func pausedStep(_ detail: String) -> UseError {
+        UseError("person_paused_step", "The person used the computer during this step, so it paused for them. \(detail) Look at the fresh observation and carry on; this is not a reason to stop or ask them.", next: "observe")
+    }
+
+    /// Waits until the person has been idle for `typingPause`: no key, no click, no held
+    /// button. Moving the mouse does not count. Returns false once `limit` has passed.
+    /// Take over and Stop end the wait through `check`.
+    @MainActor static func waitForIdle(lastInput: () -> TimeInterval, buttonDown: () -> Bool, limit: TimeInterval,
+        now: () -> TimeInterval, check: () throws -> Void, sleep: (TimeInterval) async throws -> Void) async throws -> Bool {
+        let started = now()
+        while buttonDown() || now() - lastInput() < typingPause {
+            try check()
+            guard now() - started < limit else { return false }
+            try await sleep(poll)
+        }
+        try check()
+        return true
+    }
+
+    /// What a step the person's input paused becomes once they are idle.
+    enum Resumption {
+        /// Nothing of it was sent: send it again, after its live checks.
+        case resend
+        /// Typing that stopped partway: the characters not yet sent, once the caret is
+        /// still where the agent left it.
+        case typeRest(sent: String, rest: String)
+        /// Every character went in before the pause: the step is done.
+        case done
+        /// It may have landed and cannot be continued: never sent again.
+        case stop(UseError)
+    }
+    /// `typed` counts the characters whose key went out, so none is typed twice.
+    static func resumption(of action: Action, mayHaveActed: Bool, typed: Int) -> Resumption {
+        guard mayHaveActed else { return .resend }
+        switch action {
+        case .type(let text):
+            let sent = String(text.prefix(typed))
+            return typed >= text.count ? .done : .typeRest(sent: sent, rest: String(text.dropFirst(typed)))
+        case .drag:
+            return .stop(pausedStep("The drag was cut short where it was and not repeated; check where it ended."))
+        default:
+            return .stop(pausedStep("The step may have landed, so it was not sent again."))
+        }
+    }
+    /// After a pause for the person, a refusal that only says the window changed while they
+    /// used it (`next` observe) is told calmly, with the fresh look the host appends. Take
+    /// over, Stop and another app fighting for the front (`focus_contested`) are unchanged.
+    static let changedWhilePaused: Set<String> = ["stale_observation", "focus_changed", "focus_lost", "observation_required", "outside_window"]
+    static func afterPause(_ error: UseError) -> UseError {
+        guard changedWhilePaused.contains(error.code) else { return error }
+        return pausedStep("The window changed while they used it, so the rest was not sent.")
+    }
+    /// Typing carries on only in the same field with the caret right after the agent's
+    /// own text: the person's click or keys elsewhere in it would interleave the text.
+    static func caretUnmoved(start: CFRange?, sent: String, now: CFRange?) -> Bool {
+        guard let start, let now else { return false }
+        return now.length == 0 && now.location == start.location + sent.utf16.count
+    }
 
     /// Takes the next gap in the person's typing or the release of a held button,
     /// waiting `limit` at most: `typingDeferLimit` while they write in a field,

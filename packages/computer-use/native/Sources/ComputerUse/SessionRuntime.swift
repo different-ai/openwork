@@ -25,6 +25,8 @@ final class SessionRuntime {
     private var momentTyping = false
     /// How long this call waited for the person to pause.
     private var waitedForPerson: TimeInterval = 0
+    /// What is left of this call's `SharedDesktop.busyLimit` for waiting on the person.
+    private var personWaitLeft = SharedDesktop.busyLimit
     private let backgroundDelivery = ProcessInfo.processInfo.environment[InputDelivery.hostVariable] == InputDelivery.background.rawValue
 
     private struct Session {
@@ -96,7 +98,7 @@ final class SessionRuntime {
         guard !busy else { throw UseError("busy", "A computer operation is still running. Calls must be sequential.", next: "wait") }
         watch.invalidate(); watchCapture?.cancel(); MCPOutput.shared.discardUnsentFrame()
         handBackTimer?.invalidate(); handBackTimer = nil
-        momentTyping = false; waitedForPerson = 0; handBack.beginMoment()
+        momentTyping = false; waitedForPerson = 0; personWaitLeft = SharedDesktop.busyLimit; handBack.beginMoment()
         busy = true; defer { busy = false; scheduleHandBack() }
         switch name {
         case "computer_discover":
@@ -149,9 +151,8 @@ final class SessionRuntime {
                 defer { focus.release() }
                 let keys = try await FocusLease.acquire(app: current.app.pid, check: { try self.checkActive(current) })
                 defer { keys.release() }
-                try await takeGap(current)
-                do { try await takeFront(current) }
-                catch let error as UseError where error.code == SharedDesktop.interrupted.code {
+                do { try await aroundPerson(current) { try await self.takeGap(current); try await self.takeFront(current) } }
+                catch let error as UseError where error.code == SharedDesktop.busy.code {
                     // Nothing stays half open: the host opens the session again later.
                     close()
                     throw error
@@ -409,7 +410,12 @@ final class SessionRuntime {
                 otherWindowFocused = true
                 return
             }
-            _ = try await SharedDesktop.returnFocus(used: &returns, inFront: { false }, focus: { try await self.takeFront(current) })
+            do { _ = try await SharedDesktop.returnFocus(used: &returns, inFront: { false }, focus: { try await self.takeFront(current) }) }
+            catch let error where SharedDesktop.isPersonInput(error) {
+                // The person clicked or typed first: look without the front, which stays with them.
+                self.handFrontBack(current)
+                otherWindowFocused = true
+            }
         }
         return try await ObservationPreparation.capture(mode: current.mode, check: {
             try self.checkActive(current)
@@ -645,11 +651,14 @@ final class SessionRuntime {
         defer { keyLease?.release() }
         // The person may be using another app meanwhile; bring the selected window back
         // for this step instead of pausing when they switched away. A click or key of
-        // theirs from here on stops the step and leaves the computer to them.
-        try await takeGap(current, front: front)
-        let moment = ProcessInfo.processInfo.systemUptime
+        // theirs from here on pauses the step until they are idle, then it carries on.
+        var moment = ProcessInfo.processInfo.systemUptime
         var returns = 0
-        var disturbed = try await shareDesktop(current, returns: &returns, since: moment, front: front)
+        var disturbed = try await aroundPerson(current) {
+            try await self.takeGap(current, front: front)
+            moment = ProcessInfo.processInfo.systemUptime; returns = 0
+            return try await self.shareDesktop(current, returns: &returns, since: moment, front: front)
+        }
         // The person had other work in front, and the window was just brought back for this
         // step. Coordinate steps still check the live window against the observation, where
         // each one lands, before any input; this app's later steps take the front too, so a
@@ -720,7 +729,7 @@ final class SessionRuntime {
         if let intent { controls.narrate(intent) }
         session?.receiptInputs[requestID] = fingerprint
         session?.receipts[requestID] = ["ok": false, "code": "action_interrupted", "request_id": requestID, "next": "observe"]
-        let deadline = now + 30
+        var deadline = now + 30
         @MainActor func check() throws { try self.checkActive(current, deadline: deadline) }
         @MainActor func checkWindow() throws {
             try check()
@@ -735,7 +744,7 @@ final class SessionRuntime {
             try check()
             guard current.mode == .control, self.personInterrupted(since: moment) else { return }
             // In the background the person's input goes to their own front app; it
-            // stops the step only once they are working in the agent's app.
+            // pauses the step only once they are working in the agent's app.
             if front || NSWorkspace.shared.frontmostApplication?.processIdentifier == current.frontApp.pid {
                 throw SharedDesktop.interrupted
             }
@@ -755,7 +764,15 @@ final class SessionRuntime {
         var records = current.records
         var failure: UseError?
         var uncertain = false
-        for (index, action) in actions.enumerated() {
+        var index = 0
+        // Typing the person's input paused partway: the text still to type, the field's
+        // selection before the step's first character, and what went in before the pause.
+        var resumeText: String?
+        var typingStart: CFRange?
+        var typedBefore = ""
+        var pausedForPerson = false
+        steps: while index < actions.count {
+            let action = resumeText.map(Action.type) ?? actions[index]
             do {
                 // A shortcut with no observed field or control to type into, such as Command-S on a
                 // canvas, runs as the app's own menu command for it when there is one.
@@ -835,6 +852,10 @@ final class SessionRuntime {
                 }
                 try check()
                 try observation.validate(id: observationID, generation: current.generation, frame: bounds, now: now)
+                if resumeText == nil, case .type = action {
+                    typedBefore = ""
+                    typingStart = focus.flatMap { $0.protected ? nil : PersonPlace.selection($0.element) }
+                }
                 session?.actionCount += 1
                 var path = try await input.execute(action, app: current.app, target: current.target, lease: observation,
                     access: access, records: records, focus: focus, pointerTarget: pointerTarget,
@@ -894,15 +915,66 @@ final class SessionRuntime {
                         try check()
                     }
                 }
+                resumeText = nil; index += 1
+            } catch let error where SharedDesktop.isPersonInput(error) {
+                // The person clicked or typed: nothing more goes out until they are idle, and a
+                // step that may have landed is never sent again.
+                let landed = (error as? InputFailure)?.mayHaveActed == true
+                var resumption = SharedDesktop.resumption(of: action, mayHaveActed: landed, typed: input.typedCharacters)
+                if case .typeRest(let sent, _) = resumption, focus?.protected != false {
+                    // A password, or text on a canvas with no field to check the caret in.
+                    resumption = .stop(SharedDesktop.pausedStep("Typing stopped after \(typedBefore.count + sent.count) characters; the rest was not typed."))
+                }
+                if case .stop(let calm) = resumption {
+                    failure = calm; uncertain = landed || resumeText != nil
+                    yieldToPerson(since: moment)
+                    break steps
+                }
+                do {
+                    let waitedBefore = waitedForPerson
+                    try await waitForPerson(current, since: moment)
+                    _ = try await aroundPerson(current) {
+                        moment = ProcessInfo.processInfo.systemUptime; returns = 0
+                        return try await self.shareDesktop(current, returns: &returns, since: moment, front: front)
+                    }
+                    // Before any further input the live window is read again and must still
+                    // match the observation (focus aside, which the person may have moved).
+                    disturbed = true
+                    // The pause does not count against the step's own time.
+                    deadline += waitedForPerson - waitedBefore
+                } catch {
+                    failure = (error as? UseError) ?? SharedDesktop.busy; uncertain = landed || resumeText != nil
+                    break steps
+                }
+                pausedForPerson = true
+                switch resumption {
+                case .typeRest(let sent, let rest):
+                    let typed = typedBefore + sent
+                    // Only in the same field, with the caret right after the agent's own text.
+                    guard let field = focus,
+                          (try? access.checkFocus(field, target: current.target, app: current.app, requireField: true, requireFront: !background)) != nil,
+                          SharedDesktop.caretUnmoved(start: typingStart, sent: typed, now: PersonPlace.selection(field.element)) else {
+                        failure = SharedDesktop.pausedStep("Typing stopped after \(typed.count) characters; the field or its caret changed, so the rest was not typed.")
+                        uncertain = true
+                        break steps
+                    }
+                    typedBefore = typed; resumeText = rest
+                case .done:
+                    progress.dispatched(path: "targeted_input"); uncertain = false
+                    resumeText = nil; index += 1
+                case .resend, .stop: break
+                }
             } catch let interrupted as InputFailure {
-                failure = SharedDesktop.yielding(interrupted.cause); uncertain = interrupted.mayHaveActed
+                failure = SharedDesktop.yielding(interrupted.cause); uncertain = interrupted.mayHaveActed || resumeText != nil
+                if pausedForPerson, let calm = failure { failure = SharedDesktop.afterPause(calm) }
                 break
             } catch {
                 failure = (SharedDesktop.yielding(error) as? UseError) ?? UseError("action_interrupted", "Input was interrupted. Inspect the receipt; do not repeat it.", next: "human_takeover")
+                if pausedForPerson, let calm = failure { failure = SharedDesktop.afterPause(calm) }
+                if resumeText != nil { uncertain = true }
                 break
             }
         }
-        if failure?.code == SharedDesktop.interrupted.code { yieldToPerson(since: moment) }
         var settled: Bool?
         if progress.hasInput || uncertain {
             session?.baseline = ActionBaseline(generation: current.generation, stateDigest: observation.stateDigest, imageDigest: observation.imageDigest)
@@ -1101,6 +1173,32 @@ final class SessionRuntime {
         // Another agent bringing its window forward keeps the front, and hands it back itself.
         guard let focus = FocusLease.attempt() else { handBack.forget(); return }
         defer { focus.release() }
+        handFrontBack(current)
+    }
+    /// The person clicked or typed during the agent's moment: give them the front (keys meant
+    /// for their field send it back there) and wait until they are idle, within what is left
+    /// of this call's `busyLimit`. Take over and Stop end the wait as they end any step.
+    private func waitForPerson(_ current: Session, since start: TimeInterval) async throws {
+        yieldToPerson(since: start)
+        handFrontBack(current)
+        let started = ProcessInfo.processInfo.systemUptime
+        let idle = try await SharedDesktop.waitForIdle(lastInput: { Self.interruptions.map { self.lastPersonInput($0) }.max() ?? -.infinity },
+            buttonDown: { self.personHoldsButton() }, limit: personWaitLeft, now: { ProcessInfo.processInfo.systemUptime },
+            check: { try self.checkActive(current) }, sleep: { try await Task.sleep(nanoseconds: UInt64($0 * 1_000_000_000)) })
+        let waited = ProcessInfo.processInfo.systemUptime - started
+        personWaitLeft -= waited; waitedForPerson += waited
+        guard idle else { throw SharedDesktop.busy }
+    }
+    /// Runs `attempt` again each time the person's click or key pauses it, once they are idle.
+    private func aroundPerson<Value>(_ current: Session, _ attempt: () async throws -> Value) async throws -> Value {
+        while true {
+            let start = ProcessInfo.processInfo.systemUptime
+            do { return try await attempt() }
+            catch let error where SharedDesktop.isPersonInput(error) { try await waitForPerson(current, since: start) }
+        }
+    }
+    /// Gives the front back to the person, from the end of a moment or during a pause.
+    private func handFrontBack(_ current: Session) {
         // A click since the front was taken, even one that might be the agent's own,
         // means the person may be working in the agent's window; so do keys, unless
         // they were writing in a field before (`HandBack.take`).

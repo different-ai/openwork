@@ -134,9 +134,21 @@ receipt reports the wait as `waited_for_person_ms`. Background steps never wait:
 they leave the front alone. Before taking the front it notes their window,
 focused field and caret (the selection range, never the text), and gives all
 three back as soon as the step ends, falling back to activating the app when
-any of them has gone. Keys that still reach the agent's window stop the step
-and send the front back to their field; a click there means they chose it, so
-the front stays.
+any of them has gone.
+
+The person's clicks and keys never stop the agent. One during a step pauses it:
+input stops at once and anything held is released, the front goes back to them
+(keys that reached the agent's window send it back to their field; a click there
+means they chose it, so it stays), and the call waits until they have been idle
+for 1 s (keys, clicks and held buttons count; moving the mouse does not). The
+window then comes back, the step's live checks run again and the batch carries
+on with the steps not yet sent. Typing resumes from the first character not
+sent, only in the same field with the caret where the agent left it. A step that
+may have landed is never sent again: an interrupted drag or click, or typing
+whose field changed, ends the call as `person_paused_step` with a fresh
+observation. Waits share a 60 s budget per call, after which it returns
+`person_busy` (`next: wait`). Take over still waits for Continue, Stop still
+stops, and a password is never resumed.
 
 The host may pass `OPENWORK_COMPUTER_USE_PRESENCE` as JSON
 `{"name": "…", "color": "#rrggbb"}`. The name falls back to "OpenWork" and the

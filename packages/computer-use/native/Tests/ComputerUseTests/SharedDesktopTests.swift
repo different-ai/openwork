@@ -393,4 +393,138 @@ final class SharedDesktopTests: XCTestCase {
         XCTAssertNil(elsewhere.pid)
         XCTAssertFalse(elsewhere.immediate)
     }
+    // MARK: The person's input pauses a step; it never stops the agent
+
+    @MainActor
+    func testAClickMidBatchPausesAndFinishesTheUnsentSteps() async throws {
+        // Three steps; the person clicks just before the second one goes out.
+        let batch: [Action] = [.press("a"), .press("b"), .press("c")]
+        var sent: [String] = []
+        var clicked = false
+        var index = 0
+        var pauses = 0
+        while index < batch.count {
+            do {
+                if index == 1, !clicked { clicked = true; throw SharedDesktop.interrupted }
+                if case .press(let ref) = batch[index] { sent.append(ref) }
+                index += 1
+            } catch where SharedDesktop.isPersonInput(error) {
+                guard case .resend = SharedDesktop.resumption(of: batch[index], mayHaveActed: false, typed: 0) else {
+                    return XCTFail("a step that sent nothing is sent again")
+                }
+                var clock: TimeInterval = 0
+                // They stop clicking at 0.4 s; the step goes again a second later.
+                let idle = try await SharedDesktop.waitForIdle(lastInput: { 0.4 }, buttonDown: { false }, limit: SharedDesktop.busyLimit,
+                    now: { clock }, check: {}, sleep: { clock += $0 })
+                XCTAssertTrue(idle)
+                XCTAssertEqual(clock, 0.4 + SharedDesktop.typingPause, accuracy: SharedDesktop.poll * 1.5)
+                pauses += 1
+            }
+        }
+        XCTAssertEqual(sent, ["a", "b", "c"])
+        XCTAssertEqual(pauses, 1)
+        // Raised as an input failure too, the same way.
+        XCTAssertTrue(SharedDesktop.isPersonInput(InputFailure(cause: SharedDesktop.interrupted, mayHaveActed: false)))
+        XCTAssertFalse(SharedDesktop.isPersonInput(SharedDesktop.contested))
+    }
+
+    func testAStepThatMayHaveActedIsNeverSentAgain() {
+        for action: Action in [.click(.zero, 1, []), .press("a"), .key("return", []), .drag([.zero, CGPoint(x: 5, y: 5)])] {
+            guard case .stop(let calm) = SharedDesktop.resumption(of: action, mayHaveActed: true, typed: 0) else {
+                XCTFail("\(action.name) would be sent again"); continue
+            }
+            XCTAssertEqual(calm.code, "person_paused_step")
+            XCTAssertEqual(calm.next, "observe", "the host appends a fresh observation")
+        }
+        guard case .stop(let drag) = SharedDesktop.resumption(of: .drag([.zero]), mayHaveActed: true, typed: 0) else { return XCTFail() }
+        XCTAssertTrue(drag.message.contains("drag"))
+    }
+
+    @MainActor
+    func testInterruptedTypingResumesWithoutDuplicateCharacters() async throws {
+        let text = "Hello, world"
+        var field = ""
+        var typed = 0
+        var interruptAfter: Int? = 4
+        func send(_ character: String) {
+            // As MacInput counts: the moment the key goes out, before any check that follows.
+            field += character; typed += 1
+        }
+        func check() throws { if let limit = interruptAfter, typed >= limit { interruptAfter = nil; throw SharedDesktop.interrupted } }
+        do {
+            try await InputDispatch.type(text, check: check, validate: {}, send: send, pace: {})
+            XCTFail("the person's keys did not pause typing")
+        } catch where SharedDesktop.isPersonInput(error) {}
+        let start = CFRange(location: 10, length: 0)
+        guard case .typeRest(let sent, let rest) = SharedDesktop.resumption(of: .type(text), mayHaveActed: true, typed: typed) else {
+            return XCTFail("typing that stopped partway resumes")
+        }
+        XCTAssertEqual(sent, "Hell")
+        // The caret is still right after the agent's own text.
+        XCTAssertTrue(SharedDesktop.caretUnmoved(start: start, sent: sent, now: CFRange(location: 14, length: 0)))
+        typed = 0
+        try await InputDispatch.type(rest, check: check, validate: {}, send: send, pace: {})
+        XCTAssertEqual(field, text)
+        // Every character went out before the pause: nothing is typed again.
+        guard case .done = SharedDesktop.resumption(of: .type("ab"), mayHaveActed: true, typed: 2) else { return XCTFail() }
+    }
+
+    func testTypingResumesOnlyWhereTheAgentLeftTheCaret() {
+        let start = CFRange(location: 3, length: 2)
+        // Replacing a selection: the caret lands after the agent's text, whatever was selected.
+        XCTAssertTrue(SharedDesktop.caretUnmoved(start: start, sent: "é😀", now: CFRange(location: 3 + 3, length: 0)))
+        // The person clicked elsewhere in the field, selected text or typed into it.
+        XCTAssertFalse(SharedDesktop.caretUnmoved(start: start, sent: "ab", now: CFRange(location: 0, length: 0)))
+        XCTAssertFalse(SharedDesktop.caretUnmoved(start: start, sent: "ab", now: CFRange(location: 5, length: 3)))
+        XCTAssertFalse(SharedDesktop.caretUnmoved(start: start, sent: "ab", now: CFRange(location: 7, length: 0)))
+        // A field whose caret cannot be read is not typed into blind.
+        XCTAssertFalse(SharedDesktop.caretUnmoved(start: nil, sent: "ab", now: CFRange(location: 5, length: 0)))
+        XCTAssertFalse(SharedDesktop.caretUnmoved(start: start, sent: "ab", now: nil))
+    }
+
+    @MainActor
+    func testAPersonBusyPastTheCapGetsPersonBusyNotAHandover() async throws {
+        var clock: TimeInterval = 0
+        // Typing nonstop, then a button held down: mouse moves alone would not count.
+        let idle = try await SharedDesktop.waitForIdle(lastInput: { clock }, buttonDown: { clock > 30 }, limit: SharedDesktop.busyLimit,
+            now: { clock }, check: {}, sleep: { clock += $0 })
+        XCTAssertFalse(idle)
+        XCTAssertGreaterThanOrEqual(clock, SharedDesktop.busyLimit)
+        XCTAssertLessThan(clock, SharedDesktop.busyLimit + SharedDesktop.poll * 2)
+        XCTAssertEqual(SharedDesktop.busy.code, "person_busy")
+        XCTAssertEqual(SharedDesktop.busy.next, "wait")
+        for message in [SharedDesktop.busy.message, SharedDesktop.interrupted.message, SharedDesktop.pausedStep("x").message] {
+            XCTAssertFalse(message.contains("theirs"), message)
+        }
+        // Idle already: no wait at all.
+        clock = 100
+        let already = try await SharedDesktop.waitForIdle(lastInput: { 90 }, buttonDown: { false }, limit: 60, now: { clock }, check: {},
+            sleep: { _ in XCTFail("slept") })
+        XCTAssertTrue(already)
+    }
+
+    @MainActor
+    func testTakeOverDuringAPauseStillWaitsForContinue() async throws {
+        var clock: TimeInterval = 0
+        do {
+            _ = try await SharedDesktop.waitForIdle(lastInput: { clock }, buttonDown: { false }, limit: SharedDesktop.busyLimit, now: { clock }, check: {
+                if clock > 2 { throw UseError("session_paused", "The person took over", next: "human_takeover") }
+            }, sleep: { clock += $0 })
+            XCTFail("the pause outlived Take over")
+        } catch let error as UseError {
+            XCTAssertEqual(error.code, "session_paused")
+            XCTAssertEqual(error.next, "human_takeover")
+        }
+    }
+
+    func testAfterAPauseAChangedWindowIsToldCalmly() {
+        for code in ["stale_observation", "focus_changed", "focus_lost"] {
+            XCTAssertEqual(SharedDesktop.afterPause(UseError(code, "Changed", next: "observe")).code, "person_paused_step", code)
+        }
+        // Take over, Stop and another app fighting for the front keep their meaning.
+        for error in [UseError("session_paused", "Paused", next: "human_takeover"), SharedDesktop.contested,
+                      UseError("session_changed", "Stopped", next: "human_takeover"), UseError("protected_input", "No", next: "human_takeover")] {
+            XCTAssertEqual(SharedDesktop.afterPause(error).code, error.code)
+        }
+    }
 }

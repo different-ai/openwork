@@ -39,8 +39,9 @@ test("computer_open defaults to control and offers the narrower modes only when 
   expect(description).not.toContain("prefer assist");
   // The person answers in the chat; the turn does not end on a request to reply.
   expect(description).toContain("ask them in this chat with the question tool");
-  // Waiting for the person to finish typing is not a failure to work around.
-  expect(description).toContain("wait a few seconds while the person types in a field");
+  // The person's own input pauses a step; it is never a reason to hand the task back.
+  expect(description).toContain("only pause a step until they are idle");
+  expect(description).toContain("never a reason to stop or ask them");
 });
 
 test("a Windows PC is not offered app scripting", async () => {
