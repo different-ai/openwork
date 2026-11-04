@@ -405,6 +405,20 @@ export type ComputerSnapshot = {
   timing?: { steps: number; computerMs: number; modelMs: number; last?: { name: string; computerMs: number; modelMs?: number } };
 };
 
+/** One of a chat's subagents on its computer, for the chat's crew view (`parallelComputerUse`). */
+export type ComputerCrewMember = {
+  sessionId: string;
+  /** Its cursor's name and color. */
+  name: string;
+  color: string;
+  app: string | null;
+  state: "working" | "waiting" | "paused" | "done";
+  /** Its latest step's intent, as its cursor shows it. */
+  intent: string | null;
+  /** Its app's newest frame while the crew view watches. */
+  frame?: { mimeType: "image/png"; data: string; width: number; height: number };
+};
+
 /** Settings: the computer every chat uses and whether it is set up. */
 export type ComputerStatus = Pick<ComputerSnapshot, "enabled" | "entry" | "targetId" | "targets" | "placement" | "readiness" | "permissions" | "detail">;
 
@@ -484,6 +498,8 @@ export type DesktopCommandMap = {
 
   // Computer use (macOS): chat ownership, the watch view and permission setup
   computerSnapshot: { args: [sessionId: string]; result: ComputerSnapshot };
+  /** The chat's subagents on its computer; `thumbnails` streams each app's newest frame. */
+  computerCrew: { args: [sessionId: string, thumbnails: boolean]; result: ComputerCrewMember[] };
   computerStatus: { args: []; result: ComputerStatus };
   computerPresentation: { args: [sessionId: string, visible: boolean]; result: ComputerPresentation | null };
   /** This chat is on screen in a visible OpenWork window: its computer work follows along in view. */

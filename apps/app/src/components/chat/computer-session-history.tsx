@@ -1,4 +1,6 @@
 import { useEffect, useMemo, useState, type ReactNode } from "react"
+import type { ComputerCrewMember } from "@openwork/types/desktop-ipc"
+import { ComputerCrew } from "./computer-crew"
 import type { DynamicToolUIPart } from "ai"
 import { ChevronRight, CodeXml, ExternalLink, FileText, FolderOpen, Monitor, Paperclip, Pause, PictureInPicture2, Play } from "lucide-react"
 
@@ -57,7 +59,7 @@ export function desktopSavedFileActions(sessionId: string): SavedFileActions {
 /** Replay speeds, in turn: a capture every 1.5 s at 1×. */
 const SPEEDS = [1, 2, 4, 0.5] as const
 
-export function ComputerSessionHistory({ history, active, renderAction, live, fileActions, turnEndedAt = null, turnStartedAt = null }: {
+export function ComputerSessionHistory({ history, active, renderAction, live, fileActions, turnEndedAt = null, turnStartedAt = null, crew }: {
   history: History
   active: boolean
   renderAction: (part: DynamicToolUIPart) => ReactNode
@@ -68,6 +70,8 @@ export function ComputerSessionHistory({ history, active, renderAction, live, fi
   turnEndedAt?: number | null
   /** When the turn started: the chat's subagents may have saved files before its own first step. */
   turnStartedAt?: number | null
+  /** `parallelComputerUse`: the chat's subagents on its computer, one row each. */
+  crew?: { members: readonly ComputerCrewMember[]; onOpen: (member: ComputerCrewMember) => void }
 }) {
   // The output folder is read again as the session works and when its turn ends.
   const [folder, setFolder] = useState<ComputerFolderFile[]>([])
@@ -155,6 +159,7 @@ export function ComputerSessionHistory({ history, active, renderAction, live, fi
           <PictureInPicture2 aria-hidden="true" />{live.watching ? "Hide live view" : "Watch live"}
         </Button> : null}
       </div>
+      {crew ? <ComputerCrew members={crew.members} onOpen={crew.onOpen} /> : null}
       {/* What the session made for the person, without opening the card. */}
       {handedBack.length > 0 ? <ul data-computer-saved-files="" aria-label="Saved files" className="space-y-1 border-t border-border px-3 py-2">
         {handedBack.map(file => <li key={file.path} data-computer-saved-file="" className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">

@@ -951,6 +951,22 @@ export function createComputerControl({ adapters, runProgram, runScript, onTimin
       ...(current?.cleanupPending ? { cleanupPending: true } : {}),
     };
   }
+  /**
+   * The newest frame of one agent's app for the crew view's thumbnail. Asking keeps the
+   * helper streaming frames for a moment, as Watch live does; nothing here acts or disables.
+   */
+  async function thumbnail(current, visible) {
+    const id = current.presentation?.id;
+    if (!id || !current.transport?.notifyUi || current.closing || !leased(current)) return null;
+    if (!visible) {
+      if (current.watchUntil > 0) { current.watchUntil = 0; await current.transport.notifyUi({ id, action: "watch", visible: false }).catch(() => {}); }
+      return null;
+    }
+    current.watchUntil = now() + 1500;
+    try { await current.transport.notifyUi({ id, action: "watch", visible: true }); } catch { return null; }
+    const frame = current.presentation?.id === id ? current.presentation.frame : null;
+    return frame ? { mimeType: frame.mimeType, data: frame.data, width: frame.width, height: frame.height } : null;
+  }
   /** The computer every chat uses and whether it is set up, with no chat involved. */
   async function computerStatus() {
     if (closed || resetting) throw new Error("Computer use is stopping.");
@@ -1043,7 +1059,9 @@ export function createComputerControl({ adapters, runProgram, runScript, onTimin
         const delivery = current.adapter.parallel === true && isWatched(grant) ? "foreground"
           : current.delivery ?? (current.background ? "background" : "foreground");
         if (mode === "control" && delivery === "foreground" && (["computer_open", "computer_observe", "computer_act"].includes(name) || renewing)) {
-          releaseFocus = await focusSlot(current.adapter.id, active);
+          // Waiting for its turn shows on the chat's crew view.
+          current.waitingTurn = true;
+          try { releaseFocus = await focusSlot(current.adapter.id, active); } finally { current.waitingTurn = false; }
           progress();
           if (takenOverElsewhere(grant)) return takenOver();
         }
@@ -1431,6 +1449,33 @@ export function createComputerControl({ adapters, runProgram, runScript, onTimin
     },
     /** @param {ChatInput} input */
     async snapshot({ sessionId } = {}) { return view(await grantFor(sessionId), true); },
+    /**
+     * The chat's crew: one row per subagent that worked on its computer, in the order they
+     * started, with its cursor name and color, app, state and latest step, and with
+     * `thumbnails` its app's newest frame. Empty with `parallelComputerUse` off, for a
+     * subagent's own thread, and for a chat whose agents never used the computer.
+     * @param {{ sessionId?: string, thumbnails?: boolean }} input
+     */
+    async crew({ sessionId, thumbnails = false } = {}) {
+      const chat = typeof sessionId === "string" ? grants.get(sessionId) : undefined;
+      if (!parallelAgents || !featureEnabled || !chat || rootOf(chat)) return [];
+      const paused = Boolean(handoffOf(chat));
+      const rows = [];
+      for (const id of chat.agents?.keys() ?? []) {
+        const agent = grants.get(id);
+        if (!agent || rootOf(agent) !== chat) continue;
+        const own = mine(agent).filter((current) => !current.closing);
+        const shown = shownLease(agent);
+        const { name, color } = presenceFor(agent);
+        /** @type {"working" | "waiting" | "paused" | "done"} */
+        const state = own.length && (paused || own.some((current) => current.presentation?.phase === "paused")) ? "paused"
+          : own.some((current) => current.waitingTurn) ? "waiting" : own.length ? "working" : "done";
+        const frame = shown ? await thumbnail(shown, thumbnails && state !== "done") : null;
+        const app = shown?.presentation?.appName ?? shown?.session?.appName ?? appOf(agent)?.lastOpen?.app_id ?? null;
+        rows.push({ sessionId: id, name, color, app, state, intent: agent.lastIntent ?? null, ...(frame ? { frame } : {}) });
+      }
+      return rows;
+    },
     /** Settings: the computer chats use and its setup, without a chat. */
     async status() { return computerStatus(); },
     /** Whether the renderer reported the `computerUse` feature on. */
@@ -1769,6 +1814,8 @@ export function createComputerControl({ adapters, runProgram, runScript, onTimin
         // The model picks among this chat's own apps by session_id, the one it was given on open or a
         // renewed one; omitted, the call goes to the app it opened last.
         const { screenshot, session_id: chosen, ...nativeArgs } = args;
+        // The agent's latest step, as the person watching sees it on the cursor and the crew view.
+        if (typeof args.intent === "string" && args.intent.trim()) grant.lastIntent = args.intent.trim().slice(0, 120);
         if (chosen !== undefined && (typeof chosen !== "string" || !chosen)) return failure("invalid_arguments", "session_id must be a session_id from computer_open.");
         const app = name === "computer_open" || name === "computer_discover" ? null
           : chosen === undefined ? appOf(grant)

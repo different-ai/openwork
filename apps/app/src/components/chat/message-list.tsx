@@ -159,6 +159,7 @@ import { groupMessages, isMessageGroup, getLastTextPart, getAggregateOnlyParts, 
 import type { AnyToolPart } from "@/lib/tool-aggregate"
 import { collectComputerSessionHistory, withoutComputerHistory, type ComputerSessionHistory as ComputerHistory } from "@/lib/computer-session-history"
 import { ComputerSessionHistory, desktopSavedFileActions } from "./computer-session-history"
+import { ComputerCrewCard, useComputerCrew } from "./computer-crew"
 import { useComputerSessionHistoryStore } from "./computer-session-history-store"
 import { useSteadyLiveTurnStore } from "./steady-live-turn-store"
 import { resolveConnectorToolIdentity } from "@/react-app/domains/connections/connector-tool-identity"
@@ -1614,6 +1615,13 @@ function MessageGroup({
   const computerHistory = React.useMemo(() => computerHistoryEnabled ? collectComputerSessionHistory(items.map(item => item.message), { thinking: showThinking }) : null, [computerHistoryEnabled, items, showThinking])
   const computerWorking = useComputerSessionHistoryStore(state => Boolean(state.working[sessionId]))
   const parallelComputer = useComputerSessionHistoryStore(state => state.parallel)
+  // The newest turn's card lists the chat's agents on its computer; a row opens that agent's live view.
+  const crewMembers = useComputerCrew(sessionId, parallelComputer && isLastGroup && isElectronRuntime() && !readOnly)
+  const crew = React.useMemo(() => crewMembers.length ? { members: crewMembers, onOpen: (member: { sessionId: string }) => {
+    const history = useComputerSessionHistoryStore.getState()
+    history.setAgent(sessionId, member.sessionId)
+    history.setWatching(sessionId, true)
+  } } : undefined, [crewMembers, sessionId])
   const savedFileActions = React.useMemo(() => isElectronRuntime() && !readOnly ? desktopSavedFileActions(sessionId) : undefined, [readOnly, sessionId])
   const watchingComputer = useComputerSessionHistoryStore(state => Boolean(state.watching[sessionId]))
   // steadyLiveTurn: a running turn keeps its parts in arrival order (no
@@ -1865,7 +1873,10 @@ function MessageGroup({
           live={computerWorking && isLastGroup ? { watching: watchingComputer, onWatch: watching => useComputerSessionHistoryStore.getState().setWatching(sessionId, watching) } : undefined}
           fileActions={savedFileActions}
           turnEndedAt={isLiveGroup && parentActive ? null : getMessageCompleted(lastItem.message)}
-          turnStartedAt={parallelComputer ? getMessageCreated(items[0]!.message) ?? null : null} />
+          turnStartedAt={parallelComputer ? getMessageCreated(items[0]!.message) ?? null : null}
+          crew={crew} />
+      </Message> : crew ? <Message className="mx-auto flex w-full max-w-3xl flex-col px-2 md:px-10">
+        <ComputerCrewCard members={crew.members} onOpen={crew.onOpen} />
       </Message> : null}
       {groupSkillCards.length > 0 ? (
         <div data-created-skills="" className="mx-auto mt-1 flex w-full max-w-3xl flex-col gap-2 px-2 md:px-10">

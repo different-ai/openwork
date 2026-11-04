@@ -24,6 +24,11 @@ screenshot" can run Maps and PowerPoint at once, then Photoshop, then PowerPoint
   OpenWork keeps its column and the agents' windows tile the rest, re-tiling as agents open
   and close apps. A window the person moved stays where they put it; closing puts each back.
 
+- The chat's newest computer card lists its agents as a crew: one row per agent with its cursor
+  name and color, app, state (Working, Waiting for its turn, Paused for you, Done), latest step
+  and a small live view of its app. A row opens that agent's live view. Without subagents the
+  card is as before.
+
 ## How it works
 
 - The OpenWork server's engine plugin reads a subagent's root chat from the engine's session
