@@ -1,5 +1,6 @@
 import AppKit
 import ApplicationServices
+import Carbon.HIToolbox
 
 @MainActor
 final class SessionRuntime {
@@ -822,6 +823,8 @@ final class SessionRuntime {
         // which accessibility cannot name; the editor is checked before every character. A
         // password or code the person confirmed goes only into a field that can be named.
         let editorTyping = current.focus == nil && actions.first.map { if case .type = $0 { return true }; return false } == true
+        // The step that types into the editor: the first, or one whose re-read after a click found no listed focus.
+        var editorStep = editorTyping ? 0 : -1
         if editorTyping, credentialApproval != nil {
             throw UseError("protected_input", "A password or code goes only into a field the computer can identify. Nothing was sent.", next: "human_takeover")
         }
@@ -946,7 +949,6 @@ final class SessionRuntime {
         var activated = false
         var primed = false
         var needsObservation = false
-        var lastPressed = false
         // The observed controls, refreshed when pacing confirms one that moved.
         var records = current.records
         var failure: UseError?
@@ -970,16 +972,24 @@ final class SessionRuntime {
                 // window opens or closes. Each still lands only in the selected window.
                 let followsStrokes = Action.isStroke(action) && index > 0 && actions[..<index].allSatisfy(Action.isStroke)
                 try checkInput()
-                if needsObservation, lastPressed,
-                   case .ready(let live) = try await readyAfterPress(action, records: records, current: current, windowsBefore: windowsBefore, pacing: pacing, check: check) {
-                    needsObservation = false
-                    if let live, let at = records.firstIndex(where: { $0.ref == live.ref }) { records[at] = live }
-                }
                 if followsStrokes, access.windowChanges(current.app).opened(since: windowsBefore) {
                     throw UseError("observation_required", "A window opened or closed after the last stroke. Observe before drawing more.", next: "observe")
                 }
-                guard !needsObservation || followsStrokes, !action.usesCoordinates || !progress.hasInput || followsStrokes else {
-                    throw UseError("observation_required", "The preceding step may have changed the view or focus. Observe before executing the remaining steps.", next: "observe")
+                // After a step that may have changed the view or focus, the next step runs only
+                // when what it needs reads back as a fresh observation would show it.
+                if !followsStrokes, needsObservation || action.usesCoordinates && progress.hasInput {
+                    switch try await readyToContinue(action, records: records, current: current, windowsBefore: windowsBefore,
+                        pacing: pacing, background: background, credentialApproval: credentialApproval, check: check) {
+                    case .stop:
+                        throw UseError("observation_required", "The preceding step may have changed the view or focus. Observe before executing the remaining steps.", next: "observe")
+                    case .control(let live):
+                        if let live, let at = records.firstIndex(where: { $0.ref == live.ref }) { records[at] = live }
+                    case .keyboard(let live):
+                        focus = live
+                        if live == nil { editorStep = index }
+                    case .pointer: break
+                    }
+                    needsObservation = false
                 }
                 // Between steps, bring the window back if something else came to the front.
                 // Before any input, the window must still match the observation; after it,
@@ -992,8 +1002,10 @@ final class SessionRuntime {
                     let live = try await access.read(current.target, check: check)
                     // The helper bringing the window forward moves keyboard focus by itself: after
                     // its own raise only the content must match. Keys still check focus before they send.
+                    // After this batch's own input, a pointer step checks the image where it lands instead.
                     guard try access.captureDigest(live) == observation.stateDigest
-                            || disturbed && (try access.captureDigest(live, focus: false)) == observation.contentDigest else {
+                            || disturbed && (try access.captureDigest(live, focus: false)) == observation.contentDigest
+                            || action.usesCoordinates && progress.hasInput else {
                         throw UseError("stale_observation", "The observed window content or focus changed.", next: "observe")
                     }
                     if action.usesCoordinates {
@@ -1064,7 +1076,7 @@ final class SessionRuntime {
                 }
                 var path = try await input.execute(action, app: current.app, target: current.target, lease: observation,
                     access: access, records: records, focus: focus, pointerTarget: pointerTarget,
-                    check: checkInput, checkWindow: checkWindow, background: background || !current.parents.isEmpty, editorTyping: editorTyping && index == 0, feedback: { [weak self] feedback in
+                    check: checkInput, checkWindow: checkWindow, background: background || !current.parents.isEmpty, editorTyping: editorStep == index, feedback: { [weak self] feedback in
                         guard let self, self.session?.id == id else { return }
                         self.controls.inputFeedback(feedback)
                     })
@@ -1166,7 +1178,6 @@ final class SessionRuntime {
                 case .key: needsObservation = action.endsFocusSequence
                 default: break
                 }
-                switch action { case .press, .menu: lastPressed = true; default: lastPressed = false }
                 if policy == .embedded, action.changesWindow, index + 1 < actions.count {
                     if pacing.mode != .fast {
                         // Let the app finish reacting before the next step looks at it.
@@ -1270,22 +1281,21 @@ final class SessionRuntime {
         if session?.id == id { session?.receipts[requestID] = receipt }
         return text(receipt)
     }
-    private enum Readiness { case stop, ready(ElementRecord?) }
-    /// After a press or menu command, the batch's next press, set_value or menu command
-    /// still runs when nothing opened over the window and its exact control reads back
-    /// as observed: the check a fresh observation would make, without a model round trip.
-    /// wait_retry also waits for a control that is briefly disabled, moving or gone,
-    /// and returns it as it is now. Anything else needs an observation.
-    private func readyAfterPress(_ action: Action, records: [ElementRecord], current: Session, windowsBefore: WindowChanges,
-                                 pacing: BatchPacing, check: () throws -> Void) async throws -> Readiness {
-        guard policy == .embedded else { return .stop }
-        let observed: ElementRecord?
-        switch action {
-        case .press(let ref), .setValue(let ref, _):
+    private enum Readiness { case stop, control(ElementRecord?), keyboard(ElementRecord?), pointer }
+    /// After a step that may have changed the view or focus, the batch's next step still runs
+    /// in the same call when nothing opened over the window and what it needs reads back as a
+    /// fresh observation would show it (`BatchContinuation`): a press, set_value or menu
+    /// command's exact control unchanged; for keys and typing, a focused control or text field
+    /// in the window, never a secure one; for a pointer step, nothing here (it compares the
+    /// window image where it lands). wait_retry also waits for a control that is briefly
+    /// disabled, moving or gone, and returns it as it is now. Anything else needs an observation.
+    private func readyToContinue(_ action: Action, records: [ElementRecord], current: Session, windowsBefore: WindowChanges,
+                                 pacing: BatchPacing, background: Bool, credentialApproval: String?, check: () throws -> Void) async throws -> Readiness {
+        guard policy == .embedded, let need = BatchContinuation.need(action) else { return .stop }
+        var observed: ElementRecord?
+        if case .control(let ref) = need {
             guard let record = records.first(where: { $0.ref == ref }) else { return .stop }
             observed = record
-        case .menu: observed = nil
-        default: return .stop
         }
         // The wait modes already let the app settle after the previous step.
         if pacing.mode == .fast { try await Task.sleep(nanoseconds: 50_000_000); try check() }
@@ -1296,15 +1306,33 @@ final class SessionRuntime {
                   access.personPrompt() == nil else { return .stop }
             if await access.openMenu(of: current.app) != nil { return .stop }
             if await access.dialog(over: current.target, app: current.app) != nil { return .stop }
-            guard let observed else { return .ready(nil) }
+            switch need {
+            case .menu: return .control(nil)
+            case .pointer: return .pointer
+            case .control, .keyboard: break
+            }
             var live: WindowState?
             do { live = try await access.read(current.target, check: check) }
             catch is CancellationError { throw CancellationError() }
             catch { try check() }
-            if let live {
-                if let same = live.records.first(where: { ElementRecord.sameControl($0, observed) }) { return .ready(same.with(ref: observed.ref)) }
+            if let live, case .keyboard(let field) = need, !live.truncated {
+                let focused = live.focusRecord
+                let typing: Bool = { if case .type = action { return true }; return false }()
+                switch BatchContinuation.keyboard(focused: focused.map { ($0.enabled, $0.protected, $0.textField) }, field: field,
+                    typing: typing, entersText: action.entersText, secureInput: IsSecureEventInputEnabled(),
+                    protectedOnScreen: live.records.contains(where: \.protected) || !live.protectedFrames.isEmpty,
+                    credentialConfirmed: credentialApproval == current.app.bundleID, credentialGiven: credentialApproval != nil) {
+                case .focus: return .keyboard(focused)
+                // The same editor check as typing with no observed field: whatever has the keyboard in this window.
+                case .editor where (try? access.focusedEditor(target: current.target, app: current.app, requireFront: !background)) != nil:
+                    return .keyboard(nil)
+                case .editor, .stop: return .stop
+                }
+            }
+            if let live, let observed {
+                if let same = live.records.first(where: { ElementRecord.sameControl($0, observed) }) { return .control(same.with(ref: observed.ref)) }
                 if pacing.mode == .waitRetry, let moved = live.records.first(where: { ElementRecord.sameControl($0, observed, allowMove: true) }) {
-                    return .ready(moved.with(ref: observed.ref))
+                    return .control(moved.with(ref: observed.ref))
                 }
             }
             guard pacing.mode == .waitRetry, now < deadline else { return .stop }
