@@ -11,6 +11,8 @@ const requestSchema = z.object({
   sessionId: z.string().min(1),
   /** A subagent's chat, from the engine's session tree. */
   rootSessionId: z.string().min(1).max(256).optional(),
+  /** That subagent's short description or agent name, for its cursor. */
+  agentName: z.string().min(1).max(200).optional(),
 });
 
 /** Only the existing conversation-scoped browser and computer tools, with
@@ -32,7 +34,7 @@ export async function createV2BrowserBridge() {
       const call = requestSchema.parse(JSON.parse(text));
       const tool = Object.hasOwn(tools, call.name) ? tools[call.name as keyof typeof tools] : undefined;
       if (!tool) return new Response(null, { status: 404 });
-      const result = await tool.execute(call.input, { sessionID: call.sessionId, ...(call.rootSessionId ? { rootSessionID: call.rootSessionId } : {}), abort: request.signal });
+      const result = await tool.execute(call.input, { sessionID: call.sessionId, ...(call.rootSessionId ? { rootSessionID: call.rootSessionId, ...(call.agentName ? { agentName: call.agentName } : {}) } : {}), abort: request.signal });
       if (typeof result === "string") return Response.json({ content: [{ type: "text", text: result }] });
       return Response.json({ content: [{ type: "text", text: result.output },
         ...result.attachments.map(file => ({ type: "file", uri: file.url, mime: file.mime }))], metadata: result.metadata });

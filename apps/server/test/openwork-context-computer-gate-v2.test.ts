@@ -88,7 +88,7 @@ test("only an explicit desktop answer of off hides computer tools", async () => 
   }
 });
 
-test("a subagent's computer calls name the chat that started it, from the engine's session tree", async () => {
+test("a subagent's computer calls name the chat that started it and the subagent, from the engine's session tree", async () => {
   const bodies: Array<Record<string, unknown>> = [];
   let parallel = true;
   const server: Server = createServer((request, response) => {
@@ -103,26 +103,29 @@ test("a subagent's computer calls name the chat that started it, from the engine
   await new Promise<void>(resolve => server.listen(0, "127.0.0.1", resolve));
   const address = server.address();
   assert.ok(address && typeof address === "object");
-  type Bridged = { name: string; execute(input: unknown, call: { sessionID: string; signal: AbortSignal }): Promise<unknown> };
+  type Bridged = { name: string; execute(input: unknown, call: { sessionID: string; signal: AbortSignal; agent?: string }): Promise<unknown> };
   const tools = new Map<string, Bridged>();
-  const parents: Record<string, string | undefined> = { "maps-agent": "chat", nested: "maps-agent", "fresh-agent": "chat" };
+  const parents: Record<string, string | undefined> = { "maps-agent": "chat", nested: "maps-agent", untitled: "chat", "fresh-agent": "chat" };
+  const titles: Record<string, string | undefined> = { "maps-agent": "Maps", nested: "Place the photo" };
   let prompt: (() => Promise<void>) | undefined;
   const stop = await nativeContext.setup({
     options: { url: "http://127.0.0.1:9/read", token: "read", browser: { url: `http://127.0.0.1:${address.port}/browser`, token: "browser" } },
     tool: { async transform(next) { next({ add: tool => tools.set(tool.name, tool as unknown as Bridged) }); return { async dispose() {} }; }, async reload() {} },
-    session: { async hook(_name: string, next: () => Promise<void>) { prompt = next; return { async dispose() {} }; }, async get({ sessionID }: { sessionID: string }) { return { parentID: parents[sessionID] }; } },
+    session: { async hook(_name: string, next: () => Promise<void>) { prompt = next; return { async dispose() {} }; }, async get({ sessionID }: { sessionID: string }) { return { parentID: parents[sessionID], title: titles[sessionID] }; } },
     skill: { async transform() { return { async dispose() {} }; }, async reload() {} },
   } as unknown as Parameters<typeof nativeContext.setup>[0]);
   try {
     const status = tools.get("computer_status");
     assert.ok(status);
-    for (const sessionID of ["nested", "maps-agent", "chat"]) await status.execute({}, { sessionID, signal: new AbortController().signal });
-    assert.deepEqual(bodies.map(body => [body.sessionId, body.rootSessionId]), [["nested", "chat"], ["maps-agent", "chat"], ["chat", undefined]]);
+    for (const sessionID of ["nested", "maps-agent", "untitled", "chat"]) await status.execute({}, { sessionID, agent: "general", signal: new AbortController().signal });
+    assert.deepEqual(bodies.map(body => [body.sessionId, body.rootSessionId, body.agentName]),
+      [["nested", "chat", "Place the photo"], ["maps-agent", "chat", "Maps"], ["untitled", "chat", "general"], ["chat", undefined, undefined]],
+      "a subagent's cursor name is its description, else its agent's name; the chat's own calls name none");
     // With parallel computer use off, nothing is looked up or sent: each session is its own chat.
     parallel = false;
     await prompt?.();
     bodies.length = 0;
-    await status.execute({}, { sessionID: "fresh-agent", signal: new AbortController().signal });
-    assert.equal(bodies[0]?.rootSessionId, undefined);
+    await status.execute({}, { sessionID: "fresh-agent", agent: "general", signal: new AbortController().signal });
+    assert.deepEqual([bodies[0]?.rootSessionId, bodies[0]?.agentName], [undefined, undefined]);
   } finally { await stop(); await new Promise<void>(resolve => server.close(() => resolve())); }
 });

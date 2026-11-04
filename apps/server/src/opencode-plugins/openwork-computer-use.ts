@@ -37,9 +37,10 @@ const action = z.discriminatedUnion("type", [
   z.object({ type: z.literal("menu"), path: z.array(z.string().min(1).max(200)).min(2).max(4).describe("A menu-bar command by its titles, as listed in an observation's menus, such as [\"Format\", \"Font\", \"Bold\"].") }).strict(),
 ]);
 const intent = z.string().min(1).max(120).optional().describe("A few words the person watching sees on your cursor, such as 'opening the Export menu'.");
-// rootSessionID: a subagent's chat, set by the trusted bridge from the engine's session tree.
-const contextSchema = z.object({ sessionID: z.string().min(1), rootSessionID: z.string().min(1).max(256).optional(), abort: z.instanceof(AbortSignal).optional() });
-const chatOf = (context: z.infer<typeof contextSchema>) => context.rootSessionID ? { rootSessionId: context.rootSessionID } : {};
+// rootSessionID: a subagent's chat, set by the trusted bridge from the engine's session tree; agentName its cursor's name.
+const contextSchema = z.object({ sessionID: z.string().min(1), rootSessionID: z.string().min(1).max(256).optional(), agentName: z.string().min(1).max(200).optional(), abort: z.instanceof(AbortSignal).optional() });
+const chatOf = (context: z.infer<typeof contextSchema>) => context.rootSessionID
+  ? { rootSessionId: context.rootSessionID, ...(context.agentName ? { agentName: context.agentName } : {}) } : {};
 const nativeResult = z.object({
   isError: z.boolean().optional(),
   content: z.array(z.union([
