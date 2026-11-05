@@ -100,6 +100,7 @@ export async function startLocalRuntime(worldName: string, workspaceRoot: string
       state: "isolated",
       workspace: workspaceRoot,
       emptyWorkspace: options.emptyWorkspace,
+      v2Only: (options.engine ?? resolveEvalEngine()) === "v2",
       browserHostSuffix: options.browserHostSuffix,
       env: { ...executableEnvironment(process.env), ...isolatedRuntimeEnvironment(fixtureRoot, options.engine), ...options.env, ...(options.webPort ? { OPENWORK_WEB_PORT: String(options.webPort) } : {}), ...appWebDenEnvironment(options.den), ...bootstrapEnv },
     });
@@ -165,7 +166,7 @@ for (const tool of ["bun", "opencode"]) {
 executable.PATH = [toolBin, executable.PATH].filter(Boolean).join(":");
 const bootstrapEnv = await seedSyntheticPreactivatedDen(input.fixtureRoot, input.syntheticPreactivatedDenOrigin);
 const handle = await launchHeadlessWeb({
-  repoRoot: input.repoRoot, name: input.name, state: "isolated", workspace: input.workspace, emptyWorkspace: input.emptyWorkspace,
+  repoRoot: input.repoRoot, name: input.name, state: "isolated", workspace: input.workspace, emptyWorkspace: input.emptyWorkspace, v2Only: input.v2Only,
   browserHostSuffix: input.browserHostSuffix, env: { ...executable, ...input.env, ...bootstrapEnv },
 });
 await handle.detach();
@@ -191,6 +192,7 @@ export async function startRemoteRuntime(sandbox: string, worldName: string, wor
   const output = await runRemoteModule(sandbox, launchModulePath, REMOTE_LAUNCH_SOURCE, {
     syntheticPreactivatedDenOrigin: options.syntheticPreactivatedDenOrigin,
     emptyWorkspace: options.emptyWorkspace,
+    v2Only: (options.engine ?? resolveEvalEngine()) === "v2",
     directories: [workspaceRoot, ...runtimeDirectories(fixtureRoot)],
     env: { ...isolatedRuntimeEnvironment(fixtureRoot, options.engine), ...options.env, ...(options.webPort ? { OPENWORK_WEB_PORT: String(options.webPort) } : {}), ...appWebDenEnvironment(options.den) },
     executableEnvKeys: EXECUTABLE_ENV_KEYS,
