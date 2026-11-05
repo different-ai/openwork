@@ -1148,6 +1148,8 @@ export function createComputerControl({ adapters, runProgram, runScript, onTimin
             observationGeneration: name === "computer_open" ? current.observationGeneration : observationGeneration };
           // Coordinates are read off the image, so a refused pointer step gets one unless the model declined it.
           if (refusedUnsent && call.postImage === undefined && actionEntries(call.args).some((entry) => COORDINATE_ACTIONS.has(entry.type))) call.postImage = true;
+          // Input the app gave no read-back for (target focused) is checked by eye: the look carries the image.
+          if (inputLanded && call.postImage === undefined && Array.isArray(state.steps) && state.steps.some((step) => step?.path === "raw_input_unverified")) call.postImage = true;
         }
         progress();
         if (nativeStopped(current, result)) return result;

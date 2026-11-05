@@ -466,6 +466,24 @@ test("without a screenshot choice the computer decides whether the settled view 
   assert.equal(postRead().include_image, false, "programs never receive a post-action image");
 });
 
+test("input the app gave no read-back for comes back with an image to check it by", async (t) => {
+  const seen = [];
+  let receipt = { ok: true, status: "dispatched", next: "observe", steps: [{ index: 0, action: "type", status: "dispatched", path: "raw_input_unverified" }] };
+  const f = fixture({ seen, toolResult: (name) => name === "computer_act" ? text(receipt) : undefined });
+  t.after(() => f.control.reset(true));
+  await f.control.setFeatureEnabled(true);
+  assert.equal(payload(await f.control.execute({ sessionId: "chat", name: "computer_open", args: { app_id: "editor", mode: "control", purpose: "Edit the flyer" } })).ok, true);
+  const act = (args, options) => { seen.length = 0; return f.control.execute({ sessionId: "chat", name: "computer_act", args: { observation_id: "observation", ...args } }, options); };
+  const postRead = () => seen.find((call) => call.name === "computer_observe")?.args;
+  await act({ action: { type: "type", text: "Come have coffee", target: "focused" } });
+  assert.equal(postRead().include_image, true, "raw_input_unverified asks for an image");
+  await act({ action: { type: "type", text: "Come have coffee", target: "focused" }, screenshot: false });
+  assert.equal(postRead().include_image, false, "the model's screenshot choice still holds");
+  receipt = { ...receipt, steps: [{ index: 0, action: "type", status: "dispatched", path: "targeted_input" }] };
+  await act({ action: { type: "type", text: "Come have coffee" } });
+  assert.equal(Object.hasOwn(postRead(), "include_image"), false, "verified input leaves the image to the computer");
+});
+
 test("an act refused before anything was sent returns a fresh observation instead of a retry", async (t) => {
   const seen = [];
   const unsent = { ok: false, status: "failed", completed: 0, may_have_acted: false, next: "observe" };

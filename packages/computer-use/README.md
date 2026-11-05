@@ -560,6 +560,27 @@ to select the Type tool, double-click the text and type in the same batch. A
 focused incrementor, as design apps draw number fields such as width or font
 size, takes typing and editing keys after a click like a text field does.
 
+`type`, `key` and `enter_value` take `target: "focused"` (with no `ref`) for a
+field or canvas text the observation does not list: raw key events go to
+whatever has the keyboard in the app's key window. The session's window must be
+the app's key window, in front in foreground (key-routed in the background), with
+no secure input and nothing secure holding the keyboard, checked again before
+every character along with the keyboard staying where it was. It never carries a
+password or code. Where accessibility names no text editor or incrementor, only a
+design app takes it, and typing or a value only during a text edit session the
+agent's own click opened (`text_edit_not_active` otherwise), with the session read
+before the click and after the step in `edit_session`; other apps refuse with
+`focus_required`, since Delete on a list row can delete a file. A key goes alone,
+never a clipboard or menu-only shortcut. With nothing to read back the step path is
+`raw_input_unverified`, and the host attaches a screenshot so the agent checks it
+(or zooms in). An `enter_value` on a design app's incrementor that takes the click
+but reports no keyboard is sent the same way and read back from the field.
+`double_click` is always two real clicks with click counts 1 and 2, never an
+accessibility press. A hidden or minimized session window is brought back without
+activating its app before a look or an act; one on another Space is refused with
+`window_off_space`, since macOS gives no public way to move it here without taking
+the front.
+
 `{ type: "enter_value", ref, text, commit }` (`commit` is `enter` by default,
 or `tab` or `none`) enters a value in one step: it gives the field the keyboard
 (accessibility focus, or a click on it when the app ignores that), selects all
