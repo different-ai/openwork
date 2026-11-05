@@ -168,7 +168,7 @@ final class SessionRuntime {
             }
             // An app that is not running starts on the document, instead of an empty window or an Open panel.
             var launchedOnFile: pid_t?
-            if let file, approved, pid == nil, NSRunningApplication.runningApplications(withBundleIdentifier: appID).isEmpty,
+            if let file, approved, pid == nil, !NSRunningApplication.runningApplications(withBundleIdentifier: appID).contains(where: AppIdentity.isLive),
                AppIdentity.isAllowed(bundleID: appID), let installed, Bundle(url: installed)?.bundleIdentifier == appID {
                 launchedOnFile = try await FileHandoff.open(file, in: installed, activates: !background).processIdentifier
                 var tries = 0
@@ -299,7 +299,8 @@ final class SessionRuntime {
     }
 
     private func discover() -> [String: Any] {
-        let running = NSWorkspace.shared.runningApplications.filter { $0.activationPolicy == .regular && AppIdentity.isAllowed($0) }
+        // An app macOS quit while it had no windows is listed as installed, with no pid to pin.
+        let running = NSWorkspace.shared.runningApplications.filter { $0.activationPolicy == .regular && AppIdentity.isAllowed($0) && AppIdentity.isLive($0) }
             .compactMap { app -> [String: Any]? in
                 guard let id = app.bundleIdentifier else { return nil }
                 return ["app_id": id, "name": app.localizedName ?? id, "pid": Int(app.processIdentifier)]
