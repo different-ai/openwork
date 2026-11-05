@@ -1916,6 +1916,9 @@ final class SessionRuntime {
         guard desktopAvailable else { throw UseError("desktop_unavailable", "The desktop is temporarily unavailable. Observe again when available.", next: "observe") }
         // A dialog comes forward with its parent window and app.
         let window = current.frontTarget, owner = current.frontApp
+        // In a dialog, only the app comes forward and the dialog keeps the keyboard: raising or
+        // focusing its parent window takes the keyboard from a Save panel, whose keys then go nowhere.
+        let inDialog = !current.parents.isEmpty
         if current.mode == .control {
             _ = try access.validate(window, app: owner)
             // Each way once, read back after each; never keep stealing the front if a person intervenes.
@@ -1923,16 +1926,19 @@ final class SessionRuntime {
             _ = try await WindowFront.bring(attempt: { way in
                 switch way {
                 case .raise:
-                    _ = AXUIElementPerformAction(window.element, kAXRaiseAction as CFString)
+                    if !inDialog { _ = AXUIElementPerformAction(window.element, kAXRaiseAction as CFString) }
                     _ = owner.app.activate(options: [])
                 case .frontmost:
                     _ = AXUIElementSetAttributeValue(app, kAXFrontmostAttribute as CFString, kCFBooleanTrue)
                 case .mainWindow:
-                    _ = AXUIElementSetAttributeValue(window.element, kAXMainAttribute as CFString, kCFBooleanTrue)
-                    _ = AXUIElementSetAttributeValue(window.element, kAXFocusedAttribute as CFString, kCFBooleanTrue)
+                    if !inDialog {
+                        _ = AXUIElementSetAttributeValue(window.element, kAXMainAttribute as CFString, kCFBooleanTrue)
+                        _ = AXUIElementSetAttributeValue(window.element, kAXFocusedAttribute as CFString, kCFBooleanTrue)
+                    }
                     _ = AXUIElementSetAttributeValue(app, kAXFrontmostAttribute as CFString, kCFBooleanTrue)
                 case .keyRecords:
-                    _ = BackgroundFocus.post(pid: owner.pid, window: window.id, makeKey: true)
+                    // The dialog's own window takes the keyboard, never its parent's.
+                    _ = BackgroundFocus.post(pid: owner.pid, window: inDialog ? current.target.id : window.id, makeKey: true)
                     _ = AXUIElementSetAttributeValue(app, kAXFrontmostAttribute as CFString, kCFBooleanTrue)
                     _ = owner.app.activate(options: [])
                 }
