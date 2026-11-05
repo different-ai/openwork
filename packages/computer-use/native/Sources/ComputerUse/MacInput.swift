@@ -41,6 +41,11 @@ final class MacInput {
     private var heldModifiers: (pid: pid_t, flags: CGEventFlags)?
     private var lastPointer: (pid: pid_t, windowID: CGWindowID, point: CGPoint)?
     private var routes: [pid_t: PointerRoute] = [:]
+    /// Set for one action in an app that takes only hardware input: events go
+    /// through the system input stream and move the real pointer, as a person's do.
+    private var realInput = false
+    /// Where the person's pointer was before the agent moved it.
+    private var personPointer: CGPoint?
     /// The current step runs in the background, so keys to Chromium-class apps are signed.
     private var signsKeys = false
     // One gesture's events share a group so the app coalesces them as one.
@@ -66,6 +71,13 @@ final class MacInput {
         heldPointer = nil
         releaseModifiers()
         if interrupted { report(.uncertain) }
+    }
+    /// Puts the person's pointer back after real input, unless they moved it meanwhile.
+    func restorePointer() {
+        defer { personPointer = nil }
+        guard let point = RealInput.restore(to: personPointer, current: CGEvent(source: nil)?.location, agentLast: lastPointer?.point) else { return }
+        CGWarpMouseCursorPosition(point)
+        CGAssociateMouseAndMouseCursorPosition(1)
     }
     private func report(_ phase: InputFeedback.Phase, point: CGPoint? = nil, force: Bool = false) {
         guard var context = feedback else { return }
@@ -94,17 +106,19 @@ final class MacInput {
     func execute(_ action: Action, app: AppIdentity, target: WindowTarget, lease: ObservationLease,
                  access: MacAccessibility, records: [ElementRecord], focus: ElementRecord?, pointerTarget: AXUIElement?,
                  check: () throws -> Void, checkWindow: () throws -> Void, background: Bool = false, editorTyping: Bool = false,
-                 clickToFocus: Bool = true, canvasText: Bool = false, feedback send: @escaping (InputFeedback) -> Void = { _ in }) async throws -> String {
+                 clickToFocus: Bool = true, canvasText: Bool = false, realInput: Bool = false, feedback send: @escaping (InputFeedback) -> Void = { _ in }) async throws -> String {
         feedback = DispatchFeedback(action: action.name, frame: lease.frame, send: send)
         typedCharacters = 0
         gesture = Int64(UInt32.random(in: 1...UInt32.max))
         _ = route(for: app)
         signsKeys = background
+        self.realInput = realInput && !background
         var finished = false
         defer {
             if !finished { releaseAll() }
             feedback = nil
             signsKeys = false
+            self.realInput = false
         }
         do {
             try check(); try checkWindow(); try check()
@@ -348,6 +362,18 @@ final class MacInput {
                     try scroll(screen, dx: step.dx, dy: step.dy, pid: app.pid, windowID: target.id, frame: lease.frame)
                 }
                 report(.dispatched, point: screen)
+            case .key(let key, let flags) where self.realInput && focus == nil:
+                // An app that takes only real input and draws its own UI (Blender) lists no field to
+                // hold the keyboard: its keys and chords go to its key window, as a person's do, never
+                // under secure input or into a password field, and the gate binds them to its window.
+                try access.checkKeyWindow(target: target, app: app, requireFront: true)
+                let code = try keyCode(key, flags: flags)
+                try modifiers(flags, pid: app.pid, check: check)
+                try keyboard(code, flags: flags, text: nil, pid: app.pid, check: check)
+                releaseModifiers()
+            case .key(let key, let flags) where NativeKey.isAppChord(key, flags):
+                // Only apps that take real input and draw their own menus get these chords.
+                throw NativeKey.appChordUnavailable
             case .key(let key, let flags) where NativeKey.isToolKey(key, flags):
                 // A letter picks a tool only where no text field would take it as text.
                 guard InputDelivery.takesToolKeys(info: app.app.bundleURL.flatMap { Bundle(url: $0)?.infoDictionary } ?? [:]) else {
@@ -381,6 +407,23 @@ final class MacInput {
                 try modifiers(flags, pid: app.pid, check: check)
                 try keyboard(code, flags: flags, text: nil, pid: app.pid, check: check)
                 releaseModifiers()
+            case .type(let text) where self.realInput && focus == nil:
+                // Typing into an app that draws its own fields (a Blender number field after a
+                // double-click, a value during a transform): its key window, checked before every character.
+                try await InputDispatch.type(text, check: check, validate: {
+                    try checkWindow()
+                    try access.checkKeyWindow(target: target, app: app, requireFront: true)
+                }, send: { character in
+                    // These apps read key codes, not only text: each character goes out as its
+                    // own key on this layout (with Shift where it needs it), else as text.
+                    if let key = self.realKey(for: character) {
+                        try self.modifiers(key.flags, pid: app.pid, check: check)
+                        try self.keyboard(key.code, flags: key.flags, text: character, pid: app.pid, check: check)
+                        self.releaseModifiers()
+                    } else {
+                        try self.keyboard(0, flags: [], text: character, pid: app.pid, check: check)
+                    }
+                })
             case .type(let text) where editorTyping && focus == nil:
                 // Typing into the app's own editor, such as text on a canvas: whatever has the
                 // keyboard in the selected window, checked before every character.
@@ -483,7 +526,7 @@ final class MacInput {
             }
             try check()
             finished = true
-            return path
+            return self.realInput && path == "targeted_input" ? "real_input" : path
         } catch {
             let cause = (error as? UseError) ?? UseError("action_interrupted", "Input was interrupted. Do not repeat it without inspecting the result.", next: "human_takeover")
             throw InputFailure(cause: cause, mayHaveActed: feedback?.didDispatch == true)
@@ -503,8 +546,18 @@ final class MacInput {
         try mouse(.leftMouseDown, outside, pid, 1, windowID, frame, check: check, quiet: true)
         try mouse(.leftMouseUp, outside, pid, 1, windowID, frame, quiet: true)
     }
-    private func post(_ event: CGEvent, _ pid: pid_t, pointer: Bool = false) {
+    private func post(_ event: CGEvent, _ pid: pid_t, pointer: Bool = false, release: Bool = false) {
         event.setIntegerValueField(.eventSourceUnixProcessID, value: Int64(ProcessInfo.processInfo.processIdentifier))
+        if realInput {
+            // Presses, moves, scrolls and keys passed `checkRealTarget` just before this, and
+            // `RealInputGate` drops any the window server would still hand elsewhere.
+            // Releases always go out so nothing stays held. The window server sets the
+            // target process, which the gate reads.
+            if pointer, personPointer == nil { personPointer = CGEvent(source: nil)?.location }
+            RealInputGate.shared.tag(event, release: release || [.leftMouseUp, .rightMouseUp, .otherMouseUp, .keyUp].contains(event.type))
+            event.post(tap: .cghidEventTap)
+            return
+        }
         event.setIntegerValueField(.eventTargetUnixProcessID, value: Int64(pid))
         if pointer, routes[pid] == .skyLight, let skyLightPost = Self.skyLightPost {
             skyLightPost(pid, event)
@@ -525,7 +578,7 @@ final class MacInput {
             event.setIntegerValueField(.mouseEventDeltaY, value: Int64((point.y - last.point.y).rounded()))
         }
         try Self.verifyTargeted(event, point, windowID: windowID, frame: frame)
-        if type != .leftMouseUp, type != .rightMouseUp { try Task.checkCancellation(); try check() }
+        if type != .leftMouseUp, type != .rightMouseUp { try Task.checkCancellation(); try check(); try checkRealTarget(pid, window: windowID, at: point) }
         post(event, pid, pointer: true)
         guard !quiet else { return }
         lastPointer = (pid, windowID, point)
@@ -573,6 +626,7 @@ final class MacInput {
         let event = try Self.scrollEvent(point, dx: dx, dy: dy, windowID: windowID, frame: frame)
         if let gestureField = Self.gestureField { event.setIntegerValueField(gestureField, value: gesture) }
         try Self.verifyTargeted(event, point, windowID: windowID, frame: frame)
+        try checkRealTarget(pid, window: windowID, at: point)
         post(event, pid, pointer: true)
         feedback?.didDispatch = true
     }
@@ -721,16 +775,33 @@ final class MacInput {
         var remaining = held.flags
         for key in Self.modifierKeys.reversed() where remaining.contains(key.flag) {
             remaining.remove(key.flag)
-            try? modifier(key.code, flags: remaining, pid: held.pid)
+            try? modifier(key.code, flags: remaining, pid: held.pid, release: true)
         }
     }
-    private func modifier(_ code: CGKeyCode, flags: CGEventFlags, pid: pid_t) throws {
+    private func modifier(_ code: CGKeyCode, flags: CGEventFlags, pid: pid_t, release: Bool = false) throws {
         guard let event = CGEvent(keyboardEventSource: nil, virtualKey: code, keyDown: true) else {
             throw UseError("input_failed", "Could not create a modifier key event.")
         }
         event.type = .flagsChanged
         event.flags = flags
-        post(event, pid)
+        if !release { try checkRealTarget(pid, at: nil) }
+        post(event, pid, release: release)
+    }
+    /// Refuses a real press, move, scroll or key unless it still lands in the selected window.
+    private func checkRealTarget(_ pid: pid_t, window: CGWindowID = 0, at point: CGPoint?) throws {
+        guard realInput else { return }
+        try RealInputGate.shared.check()
+        let windows = ((CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID) as? [[String: Any]]) ?? [])
+            .compactMap { value -> (id: CGWindowID, pid: pid_t, bounds: CGRect)? in
+                guard let number = value[kCGWindowNumber as String] as? NSNumber,
+                      let owner = value[kCGWindowOwnerPID as String] as? NSNumber,
+                      (value[kCGWindowAlpha as String] as? NSNumber)?.doubleValue ?? 1 > 0,
+                      let bounds = value[kCGWindowBounds as String] as? [String: Any],
+                      let rect = CGRect(dictionaryRepresentation: bounds as CFDictionary) else { return nil }
+                return (number.uint32Value, owner.int32Value, rect)
+            }
+        guard RealInput.reachesTarget(pid, window: window, front: NSWorkspace.shared.frontmostApplication?.processIdentifier, at: point,
+            windows: windows, passThrough: AgentCursor.shared.passThroughWindows) else { throw RealInput.targetChanged }
     }
     /// Puts the keyboard on an observed control, as `focus` and `enter_value` do: accessibility
     /// focus first, then (only when `click` is allowed) a click on its middle, as a person would.
@@ -772,6 +843,16 @@ final class MacInput {
         })
         try await Task.sleep(nanoseconds: 80_000_000); try check()
         return editor()
+    }
+    /// The key and Shift state that type `character` on the current layout, if one does.
+    private func realKey(for character: String) -> (code: CGKeyCode, flags: CGEventFlags)? {
+        guard character.count == 1 else { return nil }
+        if character == " " { return (49, []) }
+        let lower = character.lowercased()
+        let shifted = lower != character
+        if !shifted, let code = try? keyCode(lower, flags: []) { return (code, []) }
+        if let code = try? keyCode(shifted ? lower : character, flags: .maskShift) { return (code, .maskShift) }
+        return nil
     }
     private func keyCode(_ key: String, flags: CGEventFlags) throws -> CGKeyCode {
         if let code = NativeKey.navigation[key] { return code }
@@ -816,7 +897,7 @@ final class MacInput {
                 }
             }
         }
-        try InputDispatch.pair(check: check, down: {
+        try InputDispatch.pair(check: { try check(); try self.checkRealTarget(pid, at: nil) }, down: {
             self.post(down, pid)
             self.feedback?.didDispatch = true
             // Counted as it goes out: its key-up always follows, even if a check then stops the step.

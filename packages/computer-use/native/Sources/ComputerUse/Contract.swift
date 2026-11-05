@@ -791,6 +791,9 @@ enum NativeKey {
         guard !isBlocked(key, flags) else { throw UseError("blocked_shortcut", "Clipboard and system/window escape shortcuts are unavailable. Use type, set_value or observed app controls.", next: "observe") }
         // Another Command shortcut runs only as the app's own menu command for it (`isMenuShortcut`).
         if policy == .embedded, isMenuShortcut(key, flags) { return (key, flags) }
+        // A Control, Option or Shift chord outside the key list goes only to an app that takes
+        // real input and draws its own menus, such as Blender's Control-R (`isAppChord`).
+        if policy == .embedded, isAppChord(key, flags) { return (key, flags) }
         guard codes[key] != nil, (flags.isEmpty ? navigation[key] != nil : shortcuts.contains(chord(key, flags))) else {
             throw UseError("unsupported_key", "Use a listed base key and supported shortcut; type handles ordinary text.")
         }
@@ -808,6 +811,15 @@ enum NativeKey {
             && key.count == 1 && key.unicodeScalars.allSatisfy { ("a"..."z").contains($0) || ("0"..."9").contains($0) }
             && !isBlocked(key, flags) && !clipboard.contains(chord) && !(codes[key] != nil && shortcuts.contains(chord))
     }
+    /// A modified letter or digit that no other rule allows, such as Blender's Control-R or
+    /// Option-G: sent only to an app that takes real input and has no menu command for it
+    /// (`InputDelivery.sendsOwnShortcut`); everywhere else it is refused before anything is sent.
+    static func isAppChord(_ key: String, _ flags: CGEventFlags) -> Bool {
+        !flags.isEmpty && key.count == 1 && key.unicodeScalars.allSatisfy { ("a"..."z").contains($0) || ("0"..."9").contains($0) }
+            && !isBlocked(key, flags) && !clipboard.contains(chord(key, flags)) && !isMenuShortcut(key, flags) && !isToolKey(key, flags)
+            && !(codes[key] != nil && shortcuts.contains(chord(key, flags)))
+    }
+    static let appChordUnavailable = UseError("unsupported_key", "This chord goes only to apps that take real input and draw their own menus, such as Blender. Use the app's menu command or controls.", next: "observe")
     static func isMenuShortcut(_ action: Action) -> Bool {
         if case .key(let key, let flags) = action { return isMenuShortcut(key, flags) }; return false
     }

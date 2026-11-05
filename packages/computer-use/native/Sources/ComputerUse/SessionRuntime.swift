@@ -39,6 +39,8 @@ final class SessionRuntime {
         let mode: AccessMode
         /// Background until the app shows it needs the front for keys or pointer steps.
         var delivery: InputDelivery
+        /// The app acts only on hardware-origin input, so its own window gets real input.
+        var realInput = false
         /// Whether the person follows along in OpenWork; nil when the host does not say.
         var follow: FollowAlong?
         /// The person watches this chat: the session works in front, beside OpenWork.
@@ -219,6 +221,8 @@ final class SessionRuntime {
             let reservation = try ControlLease(pid: identity.pid, window: target.id)
             let id = UUID().uuidString.lowercased()
             session = Session(id: id, app: identity, target: target, mode: mode, delivery: delivery, follow: follow, followed: followed, started: now, lastUsed: now, purpose: purpose)
+            session?.realInput = mode == .control && InputDelivery.needsRealInput(bundleID: appID,
+                info: installed.flatMap { Bundle(url: $0)?.infoDictionary } ?? [:], frameworks: frameworks)
             lease = reservation
             controls.show(app: identity, target: target, mode: mode, purpose: purpose, background: background)
             if mode == .control, !background, let current = session {
@@ -1071,6 +1075,11 @@ final class SessionRuntime {
         // selection before the step's first character, and what went in before the pause.
         var resumeText: String?
         var typingStart: CFRange?
+        // Its own window in front, never a dialog of another process over it: real input,
+        // bound to that window by the gate for the whole batch.
+        let realInput = front && current.realInput && current.parents.isEmpty
+        if realInput { try RealInputGate.shared.arm(pid: current.app.pid, window: current.target.id) }
+        defer { if realInput { RealInputGate.shared.abandon() } }
         var typedBefore = ""
         var pausedForPerson = false
         steps: while index < actions.count {
@@ -1080,8 +1089,11 @@ final class SessionRuntime {
                 // canvas, runs as the app's own menu command for it when there is one.
                 // A Command shortcut outside the key list, such as Command-N, runs only that way.
                 let menuOnly = NativeKey.isMenuShortcut(action)
-                let shortcutMenu = focus == nil || menuOnly ? InputDelivery.menuForShortcut(action, in: access.menuCatalog(current.app).entries) : nil
-                if menuOnly, shortcutMenu == nil, case .key(let key, let flags) = action {
+                let catalog = focus == nil || menuOnly ? access.menuCatalog(current.app).entries : []
+                let shortcutMenu = focus == nil || menuOnly ? InputDelivery.menuForShortcut(action, in: catalog) : nil
+                // An app that draws its own menus (Blender) has none to run in its place: the chord goes as a key.
+                if menuOnly, shortcutMenu == nil, case .key(let key, let flags) = action,
+                   !InputDelivery.sendsOwnShortcut(key, flags, realInput: realInput, menuCommands: catalog.count) {
                     throw UseError("unsupported_key", "\(NativeKey.chord(key, flags)) is not a command in this app's menus, so it was not sent. Observe with menus true to see its shortcuts.", next: "observe")
                 }
                 let action = shortcutMenu.map { Action.menu($0) } ?? action
@@ -1215,7 +1227,7 @@ final class SessionRuntime {
                 var path = try await input.execute(action, app: current.app, target: current.target, lease: observation,
                     access: access, records: records, focus: focus, pointerTarget: pointerTarget,
                     check: checkInput, checkWindow: checkWindow, background: background || !current.parents.isEmpty, editorTyping: editorStep == index,
-                    clickToFocus: FocusStep.clicks(in: current.mode), canvasText: canvasText(), feedback: { [weak self] feedback in
+                    clickToFocus: FocusStep.clicks(in: current.mode), canvasText: canvasText(), realInput: realInput, feedback: { [weak self] feedback in
                         guard let self, self.session?.id == id else { return }
                         self.controls.inputFeedback(feedback)
                     })
@@ -1404,6 +1416,12 @@ final class SessionRuntime {
                 break
             }
         }
+        // After the app has taken the input in, the person's pointer goes back. Anything
+        // held back or unconfirmed at the window server ends the step as uncertain.
+        if realInput {
+            if let error = await RealInputGate.shared.finish(), failure == nil { failure = error; uncertain = true }
+            input.restorePointer()
+        }
         var settled: Bool?
         if progress.hasInput || uncertain {
             session?.baseline = ActionBaseline(generation: current.generation, stateDigest: observation.stateDigest, imageDigest: observation.imageDigest,
@@ -1500,6 +1518,13 @@ final class SessionRuntime {
                                  pacing: BatchPacing, background: Bool, credentialApproval: String?, afterClick: Bool = false,
                                  canvasText: Bool = false, check: () throws -> Void) async throws -> Readiness {
         guard policy == .embedded, let need = BatchContinuation.need(action), need != .later else { return .stop }
+        // An app that takes real input lists no focused field: its keys and typing go to its key
+        // window, as on the first step, once nothing opened over it and no secure input is on.
+        if current.realInput, case .keyboard = need {
+            guard windowsBefore.diff(access.windowChanges(current.app), target: current.target.id) == nil, access.personPrompt() == nil,
+                  (try? access.checkKeyWindow(target: current.target, app: current.app, requireFront: true)) != nil else { return .stop }
+            return .keyboard(nil)
+        }
         var observed: ElementRecord?
         if case .control(let ref) = need {
             guard let record = records.first(where: { $0.ref == ref }) else { return .stop }
@@ -1601,7 +1626,12 @@ final class SessionRuntime {
     /// HID system state holds only device input, never the agent's process-targeted
     /// events. Reads only timing, with no permission beyond computer use's own.
     private func lastPersonInput(_ type: CGEventType) -> TimeInterval {
-        ProcessInfo.processInfo.systemUptime - CGEventSource.secondsSinceLastEventType(.hidSystemState, eventType: type)
+        // While a batch sends real input, the agent's own events reach the HID state too:
+        // the gate tells the person's events from the agent's tagged ones.
+        let gate = RealInputGate.shared
+        let armed = gate.isArmed
+        return RealInput.personInput(hid: ProcessInfo.processInfo.systemUptime - CGEventSource.secondsSinceLastEventType(.hidSystemState, eventType: type),
+            untagged: armed ? gate.personInput(type) : nil, armed: armed)
     }
     private func personInterrupted(since start: TimeInterval) -> Bool {
         Self.interruptions.contains { SharedDesktop.personInterrupted(inputAt: lastPersonInput($0), since: start) }
