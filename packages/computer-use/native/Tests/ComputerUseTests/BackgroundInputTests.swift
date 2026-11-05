@@ -90,19 +90,44 @@ final class BackgroundInputTests: XCTestCase {
         let app: pid_t = 42, other: pid_t = 7, helper: pid_t = 99
         let selected: CGWindowID = 10, sibling: CGWindowID = 11, overlay: CGWindowID = 90, pill: CGWindowID = 91
         let bounds = CGRect(x: 0, y: 0, width: 800, height: 600)
-        func reaches(front: pid_t? = 42, at point: CGPoint? = CGPoint(x: 400, y: 300), _ windows: [(id: CGWindowID, pid: pid_t, bounds: CGRect)]) -> Bool {
-            RealInput.reachesTarget(app, window: selected, front: front, at: point, windows: windows, passThrough: [overlay])
+        func reaches(front: pid_t? = 42, at point: CGPoint? = CGPoint(x: 400, y: 300), hit: pid_t? = nil,
+                     _ windows: [(id: CGWindowID, pid: pid_t, bounds: CGRect, layer: Int)]) -> Bool {
+            RealInput.reachesTarget(app, window: selected, front: front, at: point, windows: windows, passThrough: [overlay], hit: hit, own: helper)
         }
         XCTAssertTrue(reaches(at: nil, []))
         XCTAssertFalse(reaches(front: other, at: nil, []), "keys go to whatever app is in front")
-        XCTAssertTrue(reaches([(overlay, helper, bounds), (selected, app, bounds)]), "the agent's see-through overlay is not in the way")
-        XCTAssertFalse(reaches([(pill, helper, CGRect(x: 350, y: 250, width: 100, height: 100)), (selected, app, bounds)]),
+        XCTAssertTrue(reaches([(overlay, helper, bounds, 3), (selected, app, bounds, 0)]), "the agent's see-through overlay is not in the way")
+        XCTAssertFalse(reaches([(pill, helper, CGRect(x: 350, y: 250, width: 100, height: 100), 3), (selected, app, bounds, 0)]),
             "the Take over pill takes clicks, so it is in the way")
-        XCTAssertFalse(reaches([(sibling, app, CGRect(x: 300, y: 200, width: 200, height: 200)), (selected, app, bounds)]),
+        XCTAssertFalse(reaches([(sibling, app, CGRect(x: 300, y: 200, width: 200, height: 200), 0), (selected, app, bounds, 0)]),
             "another window of the same app over the point")
-        XCTAssertFalse(reaches([(5, other, CGRect(x: 300, y: 200, width: 200, height: 200)), (selected, app, bounds)]), "another app's window over the point")
-        XCTAssertFalse(reaches(front: other, [(selected, app, bounds)]))
-        XCTAssertFalse(reaches(at: CGPoint(x: 900, y: 300), [(selected, app, bounds)]))
+        XCTAssertFalse(reaches([(5, other, CGRect(x: 300, y: 200, width: 200, height: 200), 0), (selected, app, bounds, 0)]), "another app's window over the point")
+        XCTAssertFalse(reaches(front: other, [(selected, app, bounds, 0)]))
+        XCTAssertFalse(reaches(at: CGPoint(x: 900, y: 300), [(selected, app, bounds, 0)]))
+    }
+
+    /// Blender refused every click with focus_lost while in front: the Dock's window spans the
+    /// whole display it sits on, above every app, and lets clicks through where it draws nothing.
+    func testTheDockAndMenuBarLayersAreNotInTheWayWhereTheyLetClicksThrough() {
+        let app: pid_t = 42, dock: pid_t = 3, menuBar: pid_t = 4, other: pid_t = 7
+        let selected: CGWindowID = 10
+        let display = CGRect(x: 0, y: 0, width: 1728, height: 1117)
+        let windows: [(id: CGWindowID, pid: pid_t, bounds: CGRect, layer: Int)] = [
+            (50, menuBar, CGRect(x: 0, y: 0, width: 1728, height: 33), 24), (8, dock, display, 20), (selected, app, display, 0)]
+        func reaches(hit: pid_t?) -> Bool {
+            RealInput.reachesTarget(app, window: selected, front: app, at: CGPoint(x: 800, y: 500), windows: windows, passThrough: [], hit: hit, own: 99)
+        }
+        XCTAssertTrue(reaches(hit: app), "macOS finds Blender at the point, through the Dock's empty space")
+        XCTAssertTrue(reaches(hit: nil), "no answer from macOS: the window order decides, and the gate still checks the route")
+        XCTAssertFalse(reaches(hit: dock), "the Dock's own bar is at the point")
+        XCTAssertFalse(reaches(hit: other), "another app's floating panel is at the point")
+    }
+
+    func testAnAppsOwnFilePanelProcessTakesThatPanelsRealKeys() {
+        let app: pid_t = 42, panel: pid_t = 55, other: pid_t = 7, selected: CGWindowID = 10
+        XCTAssertTrue(RealInput.admits(release: false, target: app, window: selected, to: panel, under: 0, panel: panel), "Go To in TextEdit's Save sheet")
+        XCTAssertFalse(RealInput.admits(release: false, target: app, window: selected, to: panel, under: 0), "no panel open for the app")
+        XCTAssertFalse(RealInput.admits(release: false, target: app, window: selected, to: other, under: 0, panel: panel))
     }
 
     func testThePersonsInputStillPausesAStepWhileTheAgentSendsRealInput() {

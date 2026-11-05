@@ -13,8 +13,16 @@ final class WindowReplacementTests: XCTestCase {
         XCTAssertNil(WindowReplacement.replacement(before: [19365], after: [19365, 19377], target: 19365), "the window is still open: a new window is followed only as one the action opened")
         XCTAssertNil(WindowReplacement.replacement(before: [19365], after: [], target: 19365), "the app shows no window")
         XCTAssertNil(WindowReplacement.replacement(before: [19365], after: [19377, 19378], target: 19365), "two new windows")
+        XCTAssertNil(WindowReplacement.replacement(before: [19365], after: [19377, 19378], target: 19365, focused: 12), "the app focuses neither new window")
         XCTAssertNil(WindowReplacement.replacement(before: [19365, 12], after: [12], target: 19365), "only an older window is left")
         XCTAssertNil(WindowReplacement.replacement(before: [12], after: [19377], target: 19365), "the session's window was not there before the input")
         XCTAssertGreaterThan(WindowReplacement.within, 0)
+    }
+
+    /// Keynote's theme chooser closes as its new presentation and an inspector appear: the
+    /// session follows the window the app put in front.
+    func testOfSeveralNewWindowsTheSessionFollowsTheOneTheAppFocused() {
+        XCTAssertEqual(WindowReplacement.replacement(before: [24480], after: [24504, 24505], target: 24480, focused: 24504), 24504)
+        XCTAssertGreaterThan(WindowReplacement.settle, 0)
     }
 }
