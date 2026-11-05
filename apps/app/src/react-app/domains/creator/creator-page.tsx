@@ -33,8 +33,10 @@ import type { RouteWorkspace } from "@/react-app/shell/route-workspaces";
 import {
   deletePreset,
   describePreset,
+  INTENT_TEMPLATES,
   listPresets,
   savePreset,
+  validatePreset,
   type CreatorPreset,
 } from "@/react-app/domains/creator/presets";
 
@@ -148,16 +150,25 @@ export function CreatorPage({ workspace, openworkServerClient: client, onSend, o
     staleTime: 60_000,
   });
 
-  const applyPresetToWorkspace = useCallback(async (preset: CreatorPreset, targetWorkspaceId: string): Promise<{ applied: number; failures: string[] }> => {
-    if (!client) return { applied: 0, failures: [] };
+  const applyPresetToWorkspace = useCallback(async (preset: CreatorPreset, targetWorkspaceId: string): Promise<{ applied: number; failures: string[]; skippedMcp: string[] }> => {
+    if (!client) return { applied: 0, failures: [], skippedMcp: [] };
     let applied = 0;
     const failures: string[] = [];
-    for (const skill of preset.skills) {
+    const skippedMcp: string[] = [];
+    // Mount order: servers and plugins first, then the skills and commands
+    // that may reference them. Unconfigured MCP slots are skipped, never
+    // written empty.
+    for (const server of preset.mcp) {
+      const empty = !server.config || Object.keys(server.config).length === 0;
+      if (server.needsConfig || empty) {
+        skippedMcp.push(server.name);
+        continue;
+      }
       try {
-        await client.upsertSkill(targetWorkspaceId, { name: skill.name, content: skill.content, description: skill.description });
+        await client.addMcp(targetWorkspaceId, { name: server.name, config: server.config });
         applied += 1;
       } catch {
-        failures.push(`skill ${skill.name}`);
+        failures.push(`MCP ${server.name}`);
       }
     }
     for (const plugin of preset.plugins) {
@@ -168,15 +179,23 @@ export function CreatorPage({ workspace, openworkServerClient: client, onSend, o
         failures.push(`plugin ${plugin.spec}`);
       }
     }
-    for (const server of preset.mcp) {
+    for (const skill of preset.skills) {
+      if (!skill.content.trim()) {
+        failures.push(`skill ${skill.name} (vacía)`);
+        continue;
+      }
       try {
-        await client.addMcp(targetWorkspaceId, { name: server.name, config: server.config });
+        await client.upsertSkill(targetWorkspaceId, { name: skill.name, content: skill.content, description: skill.description });
         applied += 1;
       } catch {
-        failures.push(`MCP ${server.name}`);
+        failures.push(`skill ${skill.name}`);
       }
     }
     for (const command of preset.commands) {
+      if (!command.template.trim()) {
+        failures.push(`comando /${command.name} (vacío)`);
+        continue;
+      }
       try {
         await client.upsertCommand(targetWorkspaceId, {
           name: command.name,
@@ -191,7 +210,7 @@ export function CreatorPage({ workspace, openworkServerClient: client, onSend, o
         failures.push(`comando /${command.name}`);
       }
     }
-    return { applied, failures };
+    return { applied, failures, skippedMcp };
   }, [client]);
 
   const launchPreset = async (preset: CreatorPreset) => {
@@ -207,10 +226,11 @@ export function CreatorPage({ workspace, openworkServerClient: client, onSend, o
       const created = list.workspaces.find((item) => item.path === folder) ?? list.workspaces.at(-1);
       if (!created) throw new Error("El workspace creado no apareció en la lista.");
       await client.activateWorkspace(created.id, { persist: true });
-      const { applied, failures } = await applyPresetToWorkspace(preset, created.id);
+      const { applied, failures, skippedMcp } = await applyPresetToWorkspace(preset, created.id);
       await client.reloadEngine(created.id).catch(() => undefined);
+      const skippedNote = skippedMcp.length > 0 ? ` MCP omitidos sin configurar: ${skippedMcp.join(", ")}.` : "";
       toast.success(
-        `Entorno lanzado con el preset "${preset.name}" (${applied} escrituras${failures.length > 0 ? `, fallos: ${failures.join(", ")}` : ""}).`,
+        `Entorno lanzado con el preset "${preset.name}" (${applied} escrituras${failures.length > 0 ? `, fallos: ${failures.join(", ")}` : ""}).${skippedNote}`,
       );
       setLaunchingPresetId(null);
       setLaunchFolder("");
@@ -325,12 +345,13 @@ export function CreatorPage({ workspace, openworkServerClient: client, onSend, o
 
   const applyPreset = async (preset: CreatorPreset) => {
     if (!client) return;
-    const { applied, failures } = await applyPresetToWorkspace(preset, workspaceId);
+    const { applied, failures, skippedMcp } = await applyPresetToWorkspace(preset, workspaceId);
     await invalidate();
+    const skippedNote = skippedMcp.length > 0 ? ` MCP omitidos sin configurar: ${skippedMcp.join(", ")}.` : "";
     if (failures.length > 0) {
-      toast.warning(`Preset aplicado con ${applied} escrituras ok y fallos en: ${failures.join(", ")}`);
+      toast.warning(`Preset aplicado con ${applied} escrituras ok y fallos en: ${failures.join(", ")}.${skippedNote}`);
     } else {
-      toast.success(`Preset aplicado: ${describePreset(preset)}. Recarga el motor para activarlo.`);
+      toast.success(`Preset aplicado: ${describePreset(preset)}.${skippedNote} Recarga el motor para activarlo.`);
     }
   };
 
@@ -603,13 +624,41 @@ export function CreatorPage({ workspace, openworkServerClient: client, onSend, o
             Importar preset (.json)
           </Button>
 
+          <details className="mb-3 rounded-lg border border-border p-3">
+            <summary className="cursor-pointer text-xs font-medium text-muted-foreground">
+              Plantillas por intención
+            </summary>
+            <ul className="mt-2 flex flex-col gap-2">
+              {INTENT_TEMPLATES.map((template) => (
+                <li key={template.id} className="rounded-lg border border-border/60 p-2">
+                  <p className="text-xs font-medium text-foreground">{template.label}</p>
+                  <p className="mt-0.5 text-[11px] text-muted-foreground">{template.description}</p>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="mt-1.5 h-6 w-full text-[11px]"
+                    onClick={() => {
+                      const draft = template.build();
+                      setPresets(savePreset(draft));
+                      toast.success(`Plantilla añadida como borrador: ${draft.name}. Configura sus MCP antes de aplicarla.`);
+                    }}
+                  >
+                    Usar plantilla
+                  </Button>
+                </li>
+              ))}
+            </ul>
+          </details>
+
           {presets.length === 0 ? (
             <p className="rounded-lg border border-dashed border-border p-3 text-xs text-muted-foreground">
               AÃºn no hay presets. Ajusta la composiciÃ³n y guÃ¡rdala para lanzar este tipo de entorno de nuevo.
             </p>
           ) : (
             <ul className="flex flex-col gap-2">
-              {presets.map((preset) => (
+              {presets.map((preset) => {
+                const validation = validatePreset(preset);
+                return (
                 <li key={preset.id} className="rounded-lg border border-border p-3">
                   <div className="flex items-center gap-2">
                     <p className="min-w-0 flex-1 truncate text-sm font-medium text-foreground">{preset.name}</p>
@@ -624,6 +673,35 @@ export function CreatorPage({ workspace, openworkServerClient: client, onSend, o
                     </Button>
                   </div>
                   <p className="mt-0.5 text-xs text-muted-foreground">{describePreset(preset)}</p>
+                  {validation.unconfiguredMcp.length > 0 ? (
+                    <p className="mt-1 text-[11px] text-amber-600">
+                      Sin configurar (se omitirán al aplicar): {validation.unconfiguredMcp.join(", ")}
+                    </p>
+                  ) : null}
+                  {validation.problems.length > 0 ? (
+                    <p className="mt-1 text-[11px] text-red-600">Problemas: {validation.problems.join("; ")}</p>
+                  ) : null}
+                  {preset.mcp.filter((server) => server.needsConfig || !server.config || Object.keys(server.config).length === 0).length > 0 ? (
+                    <details className="mt-2">
+                      <summary className="cursor-pointer text-[11px] text-muted-foreground">Configurar MCP</summary>
+                      {preset.mcp.filter((server) => server.needsConfig || !server.config || Object.keys(server.config).length === 0).map((server) => (
+                        <McpConfigEditor
+                          key={server.name}
+                          name={server.name}
+                          initialConfig={server.config}
+                          onSave={(config) => {
+                            setPresets(savePreset({
+                              ...preset,
+                              mcp: preset.mcp.map((entry) => entry.name === server.name
+                                ? { ...entry, config, needsConfig: false }
+                                : entry),
+                            }));
+                            toast.success(`Configuración de ${server.name} guardada.`);
+                          }}
+                        />
+                      ))}
+                    </details>
+                  ) : null}
                   <div className="mt-2 flex gap-2">
                     <Button size="sm" className="h-7 flex-1 text-xs" onClick={() => void applyPreset(preset)}>
                       Aplicar aquí
@@ -681,7 +759,8 @@ export function CreatorPage({ workspace, openworkServerClient: client, onSend, o
                     </div>
                   ) : null}
                 </li>
-              ))}
+                );
+              })}
             </ul>
           )}
         </div>
@@ -715,6 +794,45 @@ function CompositionSection({ icon: Icon, title, count, pending, emptyLabel, chi
       ) : (
         <ul>{children}</ul>
       )}
+    </div>
+  );
+}
+
+/** Inline JSON editor for an unconfigured MCP slot of a preset draft. */
+function McpConfigEditor({ name, initialConfig, onSave }: {
+  name: string;
+  initialConfig: Record<string, unknown>;
+  onSave: (config: Record<string, unknown>) => void;
+}) {
+  const [draft, setDraft] = useState(() => JSON.stringify(initialConfig, null, 2));
+  const [error, setError] = useState<string | null>(null);
+
+  const save = () => {
+    try {
+      const parsed = JSON.parse(draft) as unknown;
+      if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) throw new Error("Se esperaba un objeto JSON");
+      setError(null);
+      onSave(parsed as Record<string, unknown>);
+    } catch (parseError) {
+      setError(parseError instanceof Error ? parseError.message : "JSON no válido");
+    }
+  };
+
+  return (
+    <div className="mt-2 rounded-md border border-border/60 p-2">
+      <p className="mb-1 text-[11px] text-muted-foreground">
+        Config JSON de <span className="font-medium text-foreground">{name}</span> (puede incluir credenciales)
+      </p>
+      <Textarea
+        value={draft}
+        onChange={(event) => setDraft(event.target.value)}
+        className="min-h-20 resize-y bg-background font-mono text-[11px]"
+        aria-label={`Configuración JSON del conector ${name}`}
+      />
+      {error ? <p className="mt-1 text-[11px] text-red-600">{error}</p> : null}
+      <Button size="sm" className="mt-1.5 h-6 w-full text-[11px]" onClick={save}>
+        Guardar configuración
+      </Button>
     </div>
   );
 }
