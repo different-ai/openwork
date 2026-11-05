@@ -986,6 +986,9 @@ final class SessionRuntime {
         let clickedBefore = current.lastClick.map { !personInterrupted(since: $0) } == true
         session?.lastClick = nil
         var lastWasClick = false
+        // Whether the design app showed a text edit session before the agent's click, and once typing began.
+        var editBefore: Bool?
+        var editSession: [String: Any]?
         func canvasText() -> Bool {
             designApp && credentialApproval == nil && (clicked || clickedBefore && !progress.hasInput)
         }
@@ -1142,6 +1145,9 @@ final class SessionRuntime {
                     choosing = (window, access.attribute(window.element, kAXTitleAttribute) as? String,
                         state.flatMap { try? access.captureDigest($0, focus: false) }, access.windowChanges(current.frontApp).windows)
                 }
+                if designApp, case .click = action, actions[(index + 1)...].contains(where: { if case .type = $0 { return true }; return false }) {
+                    editBefore = access.editSession(in: current.target) != nil
+                }
                 var path = try await input.execute(action, app: current.app, target: current.target, lease: observation,
                     access: access, records: records, focus: focus, pointerTarget: pointerTarget,
                     check: checkInput, checkWindow: checkWindow, background: background || !current.parents.isEmpty, editorTyping: editorStep == index,
@@ -1150,6 +1156,7 @@ final class SessionRuntime {
                         self.controls.inputFeedback(feedback)
                     })
                 uncertain = path != "waited"
+                if path == "canvas_text" { editSession = ["before_click": editBefore.map { $0 as Any } ?? NSNull(), "while_typing": true] }
                 if editorStep == index, case .type = action { clicked = true }
                 if case .arrange = action {
                     // Remember the person's frame once, and where this arrange left the window.
@@ -1348,6 +1355,7 @@ final class SessionRuntime {
         var receipt = progress.receipt(requestID: requestID, failure: failure, uncertain: uncertain, detailed: policy == .embedded)
         if let settled { receipt["settled"] = settled }
         if let savedFile { receipt["saved_file"] = savedFile }
+        if let editSession { receipt["edit_session"] = editSession }
         let windowsAfter = access.windowChanges(current.app)
         if settled != nil, let changes = windowsBefore.diff(windowsAfter, target: current.target.id) {
             receipt["window_changes"] = changes
@@ -1455,7 +1463,7 @@ final class SessionRuntime {
                     guard case .key(let key, let flags) = action, editingKey || NativeKey.isToolKey(key, flags) else { return false }
                     return InputDelivery.takesToolKeys(info: current.app.app.bundleURL.flatMap { Bundle(url: $0)?.infoDictionary } ?? [:])
                 }()
-                switch BatchContinuation.keyboard(focused: focused.map { ($0.enabled, $0.protected, $0.textField) }, field: field,
+                switch BatchContinuation.keyboard(focused: focused.map { ($0.enabled, $0.protected, $0.takesTyping) }, field: field,
                     typing: typing, entersText: action.entersText, secureInput: IsSecureEventInputEnabled(),
                     protectedOnScreen: live.records.contains(where: \.protected) || !live.protectedFrames.isEmpty,
                     credentialConfirmed: credentialApproval == current.app.bundleID, credentialGiven: credentialApproval != nil, shortcut: shortcut,
@@ -1471,8 +1479,8 @@ final class SessionRuntime {
                 // A design app's canvas text after this batch's click, where the app reports no focus.
                 case .editor where typing && canvasText && BatchContinuation.canvasText(designApp: true, afterOwnClick: true, credentialGiven: false,
                         reported: access.reportedFocus(target: current.target, app: current.app))
-                        && (try? access.checkCanvasText(target: current.target, app: current.app, requireFront: !background,
-                            reported: access.reportedFocus(target: current.target, app: current.app))) != nil:
+                        && access.editSession(in: current.target).map({ session in (try? access.checkCanvasText(target: current.target, app: current.app,
+                            requireFront: !background, reported: access.reportedFocus(target: current.target, app: current.app), session: session)) != nil }) == true:
                     return .keyboard(nil)
                 case .editor, .keyWindow, .stop: break
                 }

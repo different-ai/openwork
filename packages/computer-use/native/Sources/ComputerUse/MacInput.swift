@@ -374,9 +374,13 @@ final class MacInput {
                 // keyboard in the selected window, checked before every character.
                 let reported = access.reportedFocus(target: target, app: app)
                 var editor: AXUIElement?
+                var session: AXUIElement?
                 if canvasText, BatchContinuation.canvasText(designApp: true, afterOwnClick: true, credentialGiven: false, reported: reported) {
-                    // A design app that draws its own text editor reports nothing: the key window, as a shortcut goes.
-                    try access.checkCanvasText(target: target, app: app, requireFront: !background, reported: reported)
+                    // A design app that draws its own text editor reports nothing: the key window, as a shortcut
+                    // goes, and only while its text edit session is open, so no letter picks a tool.
+                    guard let open = access.editSession(in: target) else { throw MacAccessibility.textEditNotActive }
+                    session = open
+                    try access.checkCanvasText(target: target, app: app, requireFront: !background, reported: reported, session: open)
                     path = "canvas_text"
                 } else {
                     do { editor = try access.focusedEditor(target: target, app: app, requireFront: !background) }
@@ -388,7 +392,7 @@ final class MacInput {
                 try await InputDispatch.type(text, check: check, validate: {
                     try checkWindow()
                     if let editor { try access.checkEditor(editor, target: target, app: app, requireFront: !background) }
-                    else { try access.checkCanvasText(target: target, app: app, requireFront: !background, reported: reported) }
+                    else if let session { try access.checkCanvasText(target: target, app: app, requireFront: !background, reported: reported, session: session) }
                 }, send: { character in
                     try self.keyboard(0, flags: [], text: character, pid: app.pid, check: check)
                 })

@@ -38,5 +38,34 @@ final class CanvasTextTests: XCTestCase {
         XCTAssertTrue(refusal.message.contains("double-click"))
         XCTAssertTrue(refusal.message.contains("Type tool"))
         XCTAssertTrue(refusal.message.contains("same batch"))
+        let inactive = MacAccessibility.textEditNotActive
+        XCTAssertEqual(inactive.code, "text_edit_not_active")
+        XCTAssertTrue(inactive.message.contains("Double-click the text with the Type tool first"))
+        XCTAssertTrue(inactive.message.contains("Nothing was typed"))
+    }
+
+    func testOnlyAnEditSessionsOwnControlsLetLettersThrough() {
+        // Typed before PhotoCraft entered text editing, "Come have coffee" picked tools ("F" is Cycle Screen Mode).
+        XCTAssertTrue(BatchContinuation.marksEditSession("Cancel any current edits (Esc)"))
+        XCTAssertTrue(BatchContinuation.marksEditSession("Commit any current edits"))
+        XCTAssertTrue(BatchContinuation.marksEditSession("Commit"))
+        for label in ["Cancel", "Type Tool", "Edit", "Character", "Text", "Layers", "Cycle Screen Mode", ""] {
+            XCTAssertFalse(BatchContinuation.marksEditSession(label), label)
+        }
+        XCTAssertEqual(BatchContinuation.editSessionRoles, ["AXButton", "AXCheckBox"])
+    }
+
+    func testValueFieldsTakeTypingLikeTextFields() {
+        let element = AXUIElementCreateApplication(getpid())
+        func record(_ role: String, enabled: Bool = true, protected: Bool = false) -> ElementRecord {
+            ElementRecord(ref: "e1", element: element, role: role, label: "Font size", value: "48", frame: .zero, actions: [],
+                settable: false, enabled: enabled, protected: protected)
+        }
+        XCTAssertTrue(record("AXIncrementor").takesTyping, "PhotoCraft's width, Y and font size fields")
+        XCTAssertFalse(record("AXIncrementor").textField, "still not a text field: secure and password rules are unchanged")
+        XCTAssertFalse(record("AXIncrementor", enabled: false).takesTyping)
+        XCTAssertFalse(record("AXIncrementor", protected: true).takesTyping)
+        XCTAssertFalse(record("AXButton").takesTyping)
+        XCTAssertTrue(record("AXTextField").takesTyping)
     }
 }
