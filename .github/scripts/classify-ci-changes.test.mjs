@@ -327,7 +327,8 @@ test("cheap source guards need no install, build or classification", () => {
   for (const file of [
     ".github/scripts/contributor-pr.test.mjs", ".github/scripts/warden-check.test.mjs", ".github/scripts/pr-proof-selection.test.mjs",
     ".github/scripts/build-inputs.test.mjs", ".github/scripts/classify-ci-changes.test.mjs", ".github/scripts/typecheck-shipped.test.mjs",
-    ".github/scripts/build-boundaries-codeql.test.mjs", "scripts/ci/codeql-config.test.mjs", "scripts/ci/check-codeql-results.test.mjs",
+    ".github/scripts/build-boundaries-codeql.test.mjs", ".github/scripts/managed-stable-release.test.mjs",
+    "scripts/ci/codeql-config.test.mjs", "scripts/ci/check-codeql-results.test.mjs",
   ]) assert.ok(staticJob.includes(`          ${file}\n`), file);
   for (const command of ["node scripts/check-outbound-access.mjs", "pnpm --filter @openwork/features test", "pnpm features:check"]) {
     assert.ok(staticJob.includes(`run: ${command}`), command);
