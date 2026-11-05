@@ -20,7 +20,7 @@ export const COMPUTER_STOP_GUIDANCE = "Computer session revocation could not be 
 const ARGUMENTS = Object.freeze({
   computer_open: ["app_id", "pid", "window_id", "mode", "purpose", "screenshot", "file"],
   computer_observe: ["session_id", "include_image", "elements", "menus"],
-  computer_act: ["session_id", "observation_id", "action", "actions", "intent", "screenshot", "pacing", "retry_ms"],
+  computer_act: ["session_id", "observation_id", "action", "actions", "intent", "screenshot", "pacing", "retry_ms", "input"],
   computer_zoom: ["session_id", "observation_id", "x", "y", "width", "height"],
   computer_status: ["session_id"],
   computer_close: ["session_id"],

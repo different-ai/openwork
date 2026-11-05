@@ -372,13 +372,22 @@ final class MacInput {
                 try keyboard(code, flags: flags, text: nil, pid: app.pid, check: check)
                 releaseModifiers()
             case .key(let key, let flags) where NativeKey.isAppChord(key, flags):
-                // Only apps that take real input and draw their own menus get these chords.
-                throw NativeKey.appChordUnavailable
-            case .key(let key, let flags) where NativeKey.isToolKey(key, flags):
-                // A letter picks a tool only where no text field would take it as text.
-                guard InputDelivery.takesToolKeys(info: app.app.bundleURL.flatMap { Bundle(url: $0)?.infoDictionary } ?? [:]) else {
-                    throw UseError("tool_keys_unavailable", "Single letters pick tools only in design, photo, video and music apps. Use the app's controls, or type in a text field.", next: "observe")
+                // An app's own Control, Option or Shift chord, such as Control-R: to the observed
+                // field or control, or with none to the app's key window, never under secure input.
+                if focus == nil {
+                    try access.checkKeyWindow(target: target, app: app, requireFront: !background)
+                } else {
+                    try FocusRecovery.check(validate: {
+                        try access.checkFocus(focus, target: target, app: app, requireField: false, requireFront: !background)
+                    }, refocus: { access.refocus(focus) })
                 }
+                let code = try keyCode(key, flags: flags)
+                try modifiers(flags, pid: app.pid, check: check)
+                try keyboard(code, flags: flags, text: nil, pid: app.pid, check: check)
+                releaseModifiers()
+            case .key(let key, let flags) where NativeKey.isToolKey(key, flags):
+                // A letter is the app's own shortcut (a tool, a command) only where no text field
+                // would take it as text; any app may have them, so the agent may try them anywhere.
                 guard !access.textInputFocused(app) else {
                     throw UseError("focus_required", "A text field has the keyboard, so the letter would be typed. Click the canvas first, or use type.", next: "observe")
                 }

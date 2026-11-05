@@ -48,12 +48,6 @@ enum InputDelivery: String {
         return (info["LSApplicationCategoryType"] as? String).map { toolKeyCategories.contains($0.lowercased()) } ?? false
     }
 
-    /// A Command, Control or Option chord for an app with real input whose own menus are
-    /// drawn in its window, not in the menu bar, so no menu command can stand in for it
-    /// (Blender lists none). It goes to the app as a key, never a blocked chord.
-    static func sendsOwnShortcut(_ key: String, _ flags: CGEventFlags, realInput: Bool, menuCommands: Int) -> Bool {
-        realInput && menuCommands == 0 && !NativeKey.isBlocked(key, flags)
-    }
 
     /// A Command or Control shortcut the key list allows, sent to the app's key window when
     /// no field or control was observed with the keyboard, such as Command-Shift-G on a
@@ -187,6 +181,36 @@ enum RealInput {
     /// agent did not tag, which are the person's own mouse and keyboard.
     static func personInput(hid: TimeInterval, untagged: TimeInterval?, armed: Bool) -> TimeInterval {
         armed ? (untagged ?? -.infinity) : hid
+    }
+}
+
+/// Real input is open to every app, not only the ones known to need it. The agent asks for
+/// it with `input: "real"` on an act; once a real-input step visibly changes the window, the
+/// session keeps it. Input addressed to the app that changed nothing gets a hint to try the
+/// step once as real input. Nothing is ever resent by the computer itself: the first input
+/// may have landed in a way the window does not show.
+enum RealInputUse {
+    enum Sent: Equatable { case targeted, real }
+
+    static let suggestion = "The window looks exactly as before. If the app ignored that input, as apps that draw their own interface do, repeat the step once with input: \"real\"."
+
+    static func requested(_ raw: Any?) throws -> Bool {
+        guard let raw else { return false }
+        guard let value = raw as? String, ["auto", "real"].contains(value) else {
+            throw UseError("invalid_arguments", "input must be auto or real.")
+        }
+        return value == "real"
+    }
+
+    /// After the observation that follows an act: keep real input when it worked,
+    /// suggest it when addressed input changed nothing.
+    static func after(_ sent: Sent?, changes: [String: Any]?, alreadyReal: Bool) -> (keepReal: Bool, suggest: Bool) {
+        guard let sent, let changes else { return (false, false) }
+        let unchanged = changes["no_visible_change"] as? Bool == true
+        switch sent {
+        case .real: return (!alreadyReal && !unchanged, false)
+        case .targeted: return (false, unchanged && !alreadyReal)
+        }
     }
 }
 

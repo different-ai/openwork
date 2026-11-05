@@ -136,12 +136,20 @@ the person's own events from the agent's tagged ones, so the person's click or
 key still pauses the step. After the batch the person's pointer goes back where
 it was, unless they moved it.
 
-These apps list no focused control, so their keys and typing go to their key
-window, never under secure input or into a password field, and each typed
-character goes out as its own key on the current layout. Their own shortcuts are
-sent as keys: single letters and Shift letters (Blender's G, R, S, Shift-A),
-Command, Control and Option chords when the app has no menu-bar command for them,
-never a blocked chord. Blender sends keys to the editor under the pointer, so a
+Real input is not limited to the apps known to need it. Any control session can
+ask for it with `computer_act`'s `input: "real"`; when a step sent the usual way
+left the window exactly as it was, the next observation's
+`after_action.real_input` suggests repeating it once that way, and once a
+real-input step visibly changes the window the session keeps real input. Nothing
+is resent by the computer itself, since the first input may have landed unseen.
+
+Apps with real input list no focused control, so their keys and typing go to their
+key window, never under secure input or into a password field, and each typed
+character goes out as its own key on the current layout. Every app's own shortcuts
+are sent as keys: single letters and Shift letters while no text field has the
+keyboard (Blender's G, R, S, Shift-A), Control and Option chords, and Command
+chords its menu bar does not list. Blocked chords (quit, close, hide, app
+switching) never are. Blender sends keys to the editor under the pointer, so a
 `move` over the viewport or a panel comes first.
 
 Person input in the selected app or a deliberate app switch pauses
