@@ -213,10 +213,14 @@ final class SessionRuntime {
                 }
             }
             var movedHere: String?
-            if windows.isEmpty, let window = access.windowsOnOtherSpaces(identity).first,
-               let way = await Spaces.bringHere(window, here: { self.access.isOnScreen(window) }) {
-                // Its window is on another Space: brought over without activating the app.
-                movedHere = way.rawValue
+            let requestedID = values["window_id"] == nil ? nil : try a.integer("window_id", min: 1, max: Int(UInt32.max))
+            let elsewhere = access.windowsOnOtherSpaces(identity)
+            // The window asked for (a dialog the app opened out of sight), or the app's only windows,
+            // are on another Space: brought over without activating the app.
+            let wanted = requestedID.flatMap { id in elsewhere.contains(CGWindowID(id)) ? [CGWindowID(id)] : nil }
+                ?? (windows.isEmpty ? Array(elsewhere.prefix(1)) : [])
+            if !wanted.isEmpty, let way = await access.bringOver(wanted).first {
+                movedHere = way
                 windows = try await access.windows(identity)
             }
             if windows.isEmpty, let elsewhere = access.windowsElsewhere(identity).first {
@@ -1118,6 +1122,8 @@ final class SessionRuntime {
         let activity = actions.contains(where: \.changesWindow) ? AXActivity(pid: current.app.pid, clock: clock) : nil
         defer { activity?.stop() }
         let windowsBefore = access.windowChanges(current.app)
+        // Windows of the app already on another Space; any new one after the input was opened by it.
+        let elsewhereBefore = Set(access.windowsOnOtherSpaces(current.frontApp))
         var focus = current.focus
         // A click or focus step of this batch, or its typing into the app's editor, already chose what
         // has the keyboard: typing and editing keys after it may go there (`BatchContinuation.goesToEditor`).
@@ -1534,6 +1540,13 @@ final class SessionRuntime {
         if let settled { receipt["settled"] = settled }
         if let savedFile { receipt["saved_file"] = savedFile }
         if let editSession { receipt["edit_session"] = editSession }
+        // A dialog or window this step opened on another Space (Live's "Collect All and Save") comes
+        // over to the person's, so the session can follow it and nobody is asked to fetch it.
+        if progress.hasInput {
+            let opened = access.windowsOnOtherSpaces(current.frontApp).filter { !elsewhereBefore.contains($0) }
+            let ways = opened.isEmpty ? [] : await access.bringOver(opened)
+            if !ways.isEmpty { receipt["moved_here"] = ways }
+        }
         let windowsAfter = access.windowChanges(current.app)
         if settled != nil, let changes = windowsBefore.diff(windowsAfter, target: current.target.id) {
             receipt["window_changes"] = changes

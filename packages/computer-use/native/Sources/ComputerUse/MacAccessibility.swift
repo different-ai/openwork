@@ -864,20 +864,32 @@ final class MacAccessibility {
         return read(element, &id) == .success && id != 0 ? id : nil
     }
     /// The app's normal windows on another Space, by the window list, largest first.
+    /// Dialogs and panels count too (up to the modal panel layer): Live opens "Collect All and
+    /// Save" on the Space it last used, out of the person's sight.
     func windowsOnOtherSpaces(_ app: AppIdentity) -> [CGWindowID] {
         let info = CGWindowListCopyWindowInfo([.optionAll, .excludeDesktopElements], kCGNullWindowID) as? [[String: Any]] ?? []
-        let current = Spaces.current()
+        let visible = Spaces.visible()
         return info.compactMap { entry -> (CGWindowID, CGFloat)? in
-            guard (entry[kCGWindowOwnerPID as String] as? Int32) == app.pid, (entry[kCGWindowLayer as String] as? Int) == 0,
+            guard (entry[kCGWindowOwnerPID as String] as? Int32) == app.pid,
+                  ((entry[kCGWindowLayer as String] as? Int) ?? -1) >= 0, ((entry[kCGWindowLayer as String] as? Int) ?? 99) <= 8,
                   (entry[kCGWindowIsOnscreen as String] as? Bool) != true,
                   let number = (entry[kCGWindowNumber as String] as? NSNumber)?.uint32Value,
                   let bounds = entry[kCGWindowBounds as String] as? [String: Any],
                   let rect = CGRect(dictionaryRepresentation: bounds as CFDictionary), rect.width > 100, rect.height > 100,
-                  Spaces.isElsewhere(spaces: Spaces.of(number), current: current) else { return nil }
+                  Spaces.isElsewhere(spaces: Spaces.of(number), visible: visible) else { return nil }
             return (number, rect.width * rect.height)
         }.sorted { $0.1 > $1.1 }.map(\.0)
     }
     func isOnScreen(_ id: CGWindowID) -> Bool { onScreen(id) }
+    /// Brings the app's windows that are on another Space over to the person's, without
+    /// activating the app; at most `limit`, largest first. Returns how each one came over.
+    func bringOver(_ ids: [CGWindowID], limit: Int = 2) async -> [String] {
+        var ways: [String] = []
+        for id in ids.prefix(limit) {
+            if let way = await Spaces.bringHere(id, here: { onScreen(id) }) { ways.append(way.rawValue) }
+        }
+        return ways
+    }
     /// Whether the app has a normal window on another Space, by the window list.
     func hasWindowsOnOtherSpaces(_ app: AppIdentity) -> Bool {
         let info = CGWindowListCopyWindowInfo([.optionAll, .excludeDesktopElements], kCGNullWindowID) as? [[String: Any]] ?? []

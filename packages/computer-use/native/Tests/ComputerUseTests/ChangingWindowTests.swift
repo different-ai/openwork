@@ -40,12 +40,12 @@ final class ChangingWindowTests: XCTestCase {
     }
 
     /// Live's window was on another Space and the app opened as having no usable window.
-    func testAWindowIsElsewhereOnlyWhenItIsOnSomeSpaceButNotThePersons() {
-        XCTAssertTrue(Spaces.isElsewhere(spaces: [5], current: 6))
-        XCTAssertFalse(Spaces.isElsewhere(spaces: [6], current: 6))
-        XCTAssertFalse(Spaces.isElsewhere(spaces: [5, 6], current: 6), "on every Space, so here too")
-        XCTAssertFalse(Spaces.isElsewhere(spaces: [], current: 6), "on no Space: minimized or closing")
-        XCTAssertFalse(Spaces.isElsewhere(spaces: [5], current: nil), "unknown: never moved on a guess")
+    func testAWindowIsElsewhereOnlyWhenNoDisplayShowsItsSpace() {
+        XCTAssertTrue(Spaces.isElsewhere(spaces: [565], visible: [5, 6]), "Live's dialog on the LG display's other desktop")
+        XCTAssertFalse(Spaces.isElsewhere(spaces: [6], visible: [5, 6]), "shown on the LG display while the laptop's Space is active")
+        XCTAssertFalse(Spaces.isElsewhere(spaces: [565, 6], visible: [5, 6]), "on every Space, so in view")
+        XCTAssertFalse(Spaces.isElsewhere(spaces: [], visible: [6]), "on no Space: an invisible helper window, never moved")
+        XCTAssertFalse(Spaces.isElsewhere(spaces: [565], visible: []), "unknown: never moved on a guess")
         XCTAssertEqual(Spaces.Way.allCases.map(\.rawValue), ["move_to_space", "window_manager", "window_manager_fallback"])
     }
 }
