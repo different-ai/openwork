@@ -18,6 +18,16 @@ test("recovery uses the workflow's smoke script while package sources stay pinne
   assert.match(preparation, /ref: \$\{\{ env\.RELEASE_TAG \}\}/);
 });
 
+test("snapshot recovery has its own concurrency namespace, not the caller's workflow name", async () => {
+  const snapshot = await readFile(new URL("../../../.github/workflows/release-daytona-snapshot.yml", import.meta.url), "utf8");
+  const concurrency = snapshot.slice(snapshot.indexOf("\nconcurrency:"), snapshot.indexOf("\njobs:"));
+  assert.match(concurrency, /group: release-daytona-snapshot-\$\{\{ inputs\.tag \|\| github\.ref_name \}\}/);
+  assert.match(concurrency, /cancel-in-progress: false/);
+  // github.workflow is "Release App" inside a workflow_call too. In recovery,
+  // both inputs.tag values are v0.18.65; using github.workflow would deadlock.
+  assert.doesNotMatch(concurrency, /group:.*github\.workflow/);
+});
+
 // Run the release smoke itself, not a copy of its request logic. This launcher
 // replaces only the installed package and its engine, without downloading either.
 const launcherSource = String.raw`
