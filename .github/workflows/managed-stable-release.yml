@@ -133,11 +133,13 @@ jobs:
     concurrency:
       group: den-api-env
       cancel-in-progress: false
+    # Dedicated gate: do not assume the general den-production environment has
+    # reviewer protection, and do not bypass deployment protection rules.
     environment:
-      name: den-production
-      deployment: false
+      name: managed-installer-production
     permissions:
       contents: read
+      actions: read
       id-token: write
     env:
       RELEASE_DIRECTORY: dist/managed-stable
@@ -171,6 +173,8 @@ jobs:
         with:
           name: managed-stable-aws
           path: dist/managed-stable/
+      - name: Fail closed unless the dedicated approval policy is protected
+        run: node .github/scripts/managed-stable-release.mjs check-promotion-policy
       - name: Assume the explicitly configured release-account role
         uses: aws-actions/configure-aws-credentials@a03048d87541d1d9fcf2ecf528a4a65ba9bd7838 # v5.0.0
         with:

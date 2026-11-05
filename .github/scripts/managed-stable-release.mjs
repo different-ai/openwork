@@ -7,6 +7,7 @@ import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { GCP_REPOSITORIES, resolveImage } from "../../infra/managed-deployments/tools/build-release.mjs";
 
+export const PROMOTION_ENVIRONMENT = "managed-installer-production";
 const SHA = /^[a-f0-9]{40}$/;
 const HASH = /^[a-f0-9]{64}$/;
 const VERSION = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/;
@@ -49,6 +50,22 @@ async function jsonRequest(url, token, fetchImpl, options = {}) {
   if (response.status === 404 && options.allowMissing) return null;
   if (!response.ok) throw new Error(`Release provider returned HTTP ${response.status}.`);
   try { return await response.json(); } catch { throw new Error("Release provider returned invalid JSON."); }
+}
+export function assertPromotionPolicy(environment) {
+  const reviewers = environment?.protection_rules?.find((rule) => rule.type === "required_reviewers");
+  if (environment?.name !== PROMOTION_ENVIRONMENT || reviewers?.prevent_self_review !== true
+    || !Array.isArray(reviewers.reviewers) || reviewers.reviewers.length === 0
+    || !reviewers.reviewers.every((entry) => ["User", "Team"].includes(entry?.type)
+      && Number.isSafeInteger(entry.reviewer?.id) && entry.reviewer.id > 0)) {
+    throw new Error("Managed installer promotion requires its dedicated environment with nonempty required reviewers and prevent_self_review enabled.");
+  }
+}
+export async function checkPromotionPolicy(repository, token, fetchImpl = fetch) {
+  if (!/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(repository)) throw new Error("Invalid GitHub repository.");
+  // A named environment is not evidence of approval protection. A missing,
+  // unprotected or unreadable policy must fail before release credentials/mutations.
+  const environment = await jsonRequest(`https://api.github.com/repos/${repository}/environments/${PROMOTION_ENVIRONMENT}`, token, fetchImpl);
+  assertPromotionPolicy(environment);
 }
 export async function latestStable(repository, token, fetchImpl = fetch) {
   if (!/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(repository)) throw new Error("Invalid GitHub repository.");
@@ -208,6 +225,11 @@ export async function main(command = process.argv[2], env = process.env) {
   assertTrustedEvent(event, env.GITHUB_EVENT_NAME, repository, env.GITHUB_REF);
   const directory = resolve(env.RELEASE_DIRECTORY ?? "dist/managed-stable");
   const githubLatest = () => latestStable(repository, env.GH_TOKEN);
+  if (command === "check-promotion-policy") {
+    if (env.GITHUB_EVENT_NAME !== "workflow_dispatch") throw new Error("Promotion policy check requires explicit dispatch.");
+    await checkPromotionPolicy(repository, env.GH_TOKEN);
+    return;
+  }
   if (command === "plan") {
     const candidate = await githubLatest();
     const prepare = shouldPrepare(event, env.GITHUB_EVENT_NAME, candidate);
@@ -237,7 +259,7 @@ export async function main(command = process.argv[2], env = process.env) {
     summary(`### Prepared ${provider} stable installer ${candidate.version}\nRelease source: \`${candidate.commit}\`\n\nReviewed manifest SHA-256: \`${hash(manifestBytes)}\`\n\nNative checks and exact-digest OCI/platform verification are **not** real-cloud fresh-install/Update qualification. No publication, customer update or production activation occurred.`);
     return;
   }
-  if (command !== "promote") throw new Error("Use plan, prepare or promote.");
+  if (command !== "promote") throw new Error("Use plan, prepare, check-promotion-policy or promote.");
   if (env.GITHUB_EVENT_NAME !== "workflow_dispatch" || env.PROMOTION_ENABLED !== "true"
     || !HASH.test(env.REVIEWED_MANIFEST_SHA256 ?? "")) throw new Error("Promotion requires explicit dispatch, provider opt-in and reviewed manifest digest.");
   let evidence;
@@ -249,6 +271,9 @@ export async function main(command = process.argv[2], env = process.env) {
   if (candidate.provider !== "aws" || candidate.manifestSha256 !== env.REVIEWED_MANIFEST_SHA256
     || hash(readFileSync(resolve(directory, "manifest.json"))) !== candidate.manifestSha256
     || hash(readFileSync(resolve(directory, "bundle.tar.gz"))) !== candidate.bundleSha256) throw new Error("Candidate bytes differ from the reviewed real-cloud qualification.");
+  // Re-read after environment approval/OIDC setup as well, so accidentally
+  // removing the policy while the job was waiting cannot authorize publication.
+  await checkPromotionPolicy(repository, env.GH_TOKEN);
   const client = renderClient(env.RENDER_SERVICE_ID, env.RENDER_API_KEY);
   const expected = await client.snapshot("aws");
   const result = await promote({ candidate, expected, client, latest: githubLatest, qualified: true, publish: async () => {

@@ -169,8 +169,12 @@ an isolated account, including a fresh install and version-increasing Update,
 and retain the manifest SHA-256 and review URL. Dispatch the workflow from the
 trusted default branch with `promote=true`, that manifest hash, and the trusted
 repository qualification review URL. The URL is the operator's attestation,
-not an automated assertion that its contents passed. The `den-production`
-environment and its required reviewers are an additional approval boundary.
+not an automated assertion that its contents passed. The dedicated
+`managed-installer-production` environment must have nonempty required
+reviewers and prevent self-review. The workflow verifies that policy before
+assuming the release role or publishing; an absent/unprotected environment
+fails closed. Do not assume an existing production environment has reviewers,
+or change other deployment environments as part of installer setup.
 A newer release or changed candidate invalidates the earlier review.
 
 Before enabling promotion, deploy the atomic configuration reader below and
@@ -184,7 +188,8 @@ or create public access as a workaround):
 
 - `MANAGED_DEPLOYMENT_AWS_PROMOTION_ENABLED=true`.
 - `MANAGED_DEPLOYMENT_AWS_RELEASE_ROLE_ARN`: a narrowly scoped GitHub OIDC role
-  in the release account, trusted only for the repository's production environment.
+  in the release account, trusted only for the repository's
+  `managed-installer-production` environment.
 - `MANAGED_DEPLOYMENT_AWS_RELEASE_ACCOUNT_ID`,
   `MANAGED_DEPLOYMENT_AWS_RELEASE_BUCKET`, and
   `MANAGED_DEPLOYMENT_AWS_RELEASE_REGION`.

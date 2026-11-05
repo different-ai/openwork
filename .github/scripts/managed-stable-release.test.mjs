@@ -4,7 +4,7 @@ import { createServer } from "node:http";
 import { once } from "node:events";
 import test from "node:test";
 import {
-  assertForward, assertSameLatest, assertTrustedEvent, compareVersions, latestStable,
+  assertForward, assertPromotionPolicy, assertSameLatest, assertTrustedEvent, checkPromotionPolicy, compareVersions, latestStable, PROMOTION_ENVIRONMENT,
   promote, publisherConfig, releaseConfig, releaseImages, renderClient, shouldPrepare, stableVersion, verifyRuntimeImage,
 } from "./managed-stable-release.mjs";
 
@@ -36,6 +36,26 @@ function fixture(options = {}) {
   };
   return { calls, args };
 }
+
+test("promotion requires the dedicated environment's real required-reviewer policy", async () => {
+  const rule = { type: "required_reviewers", prevent_self_review: true, reviewers: [{ type: "Team", reviewer: { id: 123 } }] };
+  const protectedEnvironment = { name: PROMOTION_ENVIRONMENT, protection_rules: [rule] };
+  assert.doesNotThrow(() => assertPromotionPolicy(protectedEnvironment));
+  for (const environment of [
+    null, {}, { name: PROMOTION_ENVIRONMENT, protection_rules: [] },
+    { ...protectedEnvironment, name: "den-production" },
+    { ...protectedEnvironment, protection_rules: [{ ...rule, prevent_self_review: false }] },
+    { ...protectedEnvironment, protection_rules: [{ ...rule, prevent_self_review: undefined }] },
+    { ...protectedEnvironment, protection_rules: [{ ...rule, reviewers: [] }] },
+    { ...protectedEnvironment, protection_rules: [{ ...rule, reviewers: undefined }] },
+    { ...protectedEnvironment, protection_rules: [{ ...rule, reviewers: [{}] }] },
+    { ...protectedEnvironment, protection_rules: [{ type: "wait_timer" }] },
+  ]) assert.throws(() => assertPromotionPolicy(environment));
+  const urls = [];
+  await checkPromotionPolicy(repository, "local-token", async (url) => { urls.push(url); return response(protectedEnvironment); });
+  assert.deepEqual(urls, ["https://api.github.com/repos/example/project/environments/managed-installer-production"]);
+  for (const status of [403, 404]) await assert.rejects(checkPromotionPolicy(repository, "local-token", async () => response({}, status)), new RegExp(`HTTP ${status}`));
+});
 
 test("strict stable numeric versions, not alpha/dev/prerelease/draft or semver coercion", async () => {
   for (const version of ["1.2.3", "v1.2.3", "0.0.0"]) assert.equal(stableVersion(version), version.replace(/^v/, ""));
@@ -301,7 +321,13 @@ test("workflow keeps cheap checks independent; trusted code, review and serializ
   assert.match(workflow, /ref: \$\{\{ github.event.repository.default_branch \}\}/);
   assert.doesNotMatch(workflow, /ref:.*workflow_run\./);
   assert.match(workflow, /group: den-api-env/);
-  assert.match(workflow, /name: den-production/);
+  const promotionJob = workflow.split("\n  promote:\n")[1];
+  assert.match(promotionJob, /name: managed-installer-production/);
+  assert.ok(promotionJob.includes(`name: ${PROMOTION_ENVIRONMENT}`));
+  assert.doesNotMatch(promotionJob, /deployment: false|name: den-production/);
+  assert.match(promotionJob, /actions: read/);
+  assert.ok(promotionJob.indexOf("managed-stable-release.mjs check-promotion-policy") < promotionJob.indexOf("uses: aws-actions/configure-aws-credentials@"));
+  assert.ok(promotionJob.indexOf("managed-stable-release.mjs check-promotion-policy") < promotionJob.indexOf("managed-stable-release.mjs promote"));
   assert.match(workflow, /MANAGED_DEPLOYMENT_AWS_PROMOTION_ENABLED/);
   assert.doesNotMatch(workflow, /AUTO_RELEASE/);
   assert.match(workflow, /test "\$PROMOTION_ENABLED" = true/);
