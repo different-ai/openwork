@@ -3826,6 +3826,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
         <div
           ref={scrollRef}
           data-thread-scroll
+          tabIndex={0}
           onWheel={(event) => {
             sessionScroll.markScrollGesture(event.target);
           }}
