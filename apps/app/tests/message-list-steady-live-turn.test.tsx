@@ -1,4 +1,4 @@
-import { afterAll, afterEach, expect, test } from "bun:test"
+import { afterAll, afterEach, expect, spyOn, test } from "bun:test"
 import { GlobalRegistrator } from "@happy-dom/global-registrator"
 import { act, createElement } from "react"
 import { createRoot, type Root } from "react-dom/client"
@@ -73,10 +73,25 @@ async function renderLiveTurn(steady: boolean, status: "streaming" | "ready" = "
   return container
 }
 
-test("off: a running turn is split at its latest text and its steps area holds its height", async () => {
-  const container = await renderLiveTurn(false)
-  expect(container.querySelector("[data-live-steps]")).not.toBeNull()
-  expect(container.querySelector("[data-live-turn-reserve]")).toBeNull()
+test("off: a running turn splits at its latest text without holding a blank steps panel open", async () => {
+  // A tall live tool detail can disappear when the tool settles or the latest
+  // answer moves. Simulate real layout: happy-dom does not measure content.
+  const measure = spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(function (this: HTMLElement) {
+    return new DOMRect(0, 0, 600, this.hasAttribute("data-live-steps") ? 900 : 0)
+  })
+  try {
+    const container = await renderLiveTurn(false)
+    const steps = container.querySelector<HTMLElement>("[data-live-steps]")
+    expect(steps).not.toBeNull()
+    expect(steps?.style.minHeight).toBe("")
+    expect(container.querySelector("[data-live-turn-reserve]")).toBeNull()
+    // Toggling the rollout must not leave a reserved height on the off path.
+    await act(async () => useSteadyLiveTurnStore.getState().setEnabled(true))
+    await act(async () => useSteadyLiveTurnStore.getState().setEnabled(false))
+    expect(container.querySelector<HTMLElement>("[data-live-steps]")?.style.minHeight).toBe("")
+  } finally {
+    measure.mockRestore()
+  }
 })
 
 test("on: a running turn keeps its parts in arrival order, with no steps area to hold open", async () => {
