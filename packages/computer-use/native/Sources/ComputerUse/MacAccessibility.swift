@@ -181,6 +181,10 @@ struct ElementRecord {
         "AXIncrementor", "AXPopUpButton", "AXDisclosureTriangle", "AXProgressIndicator", "AXLevelIndicator", "AXValueIndicator"]
     /// A protected record is a secure text field: it takes typed input, but its value is never read.
     var textField: Bool { Self.textRoles.contains(role) && enabled }
+    /// Design apps draw number fields (width, font size, opacity) as incrementors that take typed digits.
+    static let valueFieldRole = "AXIncrementor"
+    /// A field that takes typing once it has the keyboard: a text field, or an enabled value field.
+    var takesTyping: Bool { textField || role == Self.valueFieldRole && enabled && !protected }
     /// An app can mirror what was typed into a secure field's title, so the model gets this
     /// fixed label; only a hash of the real one stays here, for stale-state checks.
     static let secureLabel = "Secure field"
@@ -737,10 +741,58 @@ final class MacAccessibility {
         guard try !isProtected(focused, role: checkedString(focused, kAXRoleAttribute, budget) ?? "", budget) else { throw unsafe }
         try validateAncestry(focused, target: target, budget: budget)
     }
+    /// What the app reports has the keyboard: nothing, its window itself, or an element.
+    func reportedFocus(target: WindowTarget, app: AppIdentity) -> BatchContinuation.ReportedFocus {
+        guard let focused = elementAttribute(AXUIElementCreateApplication(app.pid), kAXFocusedUIElementAttribute) else { return .nothing }
+        return CFEqual(focused, target.element) ? .window : .element
+    }
+    /// Canvas text in a design app that reports no focused element (`BatchContinuation.canvasText`):
+    /// the key-window check (the selected window is the app's focused window, in front when input is,
+    /// no secure input, nothing secure with the keyboard), and the app still reporting what it did
+    /// when typing began, so a field that takes the keyboard midway stops the step.
+    /// It also needs the app's text edit session (`editSession`) still open, so a letter is never
+    /// sent once editing ends and it would pick a tool instead.
+    func checkCanvasText(target: WindowTarget, app: AppIdentity, requireFront: Bool = true, reported: BatchContinuation.ReportedFocus,
+                         session: AXUIElement) throws {
+        try checkKeyWindow(target: target, app: app, requireFront: requireFront)
+        guard reported != .element, reportedFocus(target: target, app: app) == reported else {
+            throw UseError("focus_changed", "The keyboard moved while typing on the canvas. Observe again.", next: "observe")
+        }
+        guard (attribute(session, kAXEnabledAttribute) as? Bool) != false, isInWindow(session, target: target) else {
+            throw UseError("text_edit_ended", "The text edit ended while typing on the canvas, so the rest was not typed. Observe again.", next: "observe")
+        }
+    }
+    /// The control showing that the app is editing text in the window (`BatchContinuation.marksEditSession`),
+    /// enabled; nil when there is none. Reads labels only, never values.
+    func editSession(in target: WindowTarget) -> AXUIElement? {
+        var pending: [(AXUIElement, Int)] = [(target.element, 0)]
+        var visited = 0
+        while !pending.isEmpty, visited < 1_500 {
+            let (element, depth) = pending.removeFirst()
+            visited += 1
+            if let role = attribute(element, kAXRoleAttribute) as? String, BatchContinuation.editSessionRoles.contains(role),
+               (attribute(element, kAXEnabledAttribute) as? Bool) != false,
+               [kAXTitleAttribute, kAXDescriptionAttribute, kAXHelpAttribute].contains(where: { (attribute(element, $0) as? String).map(BatchContinuation.marksEditSession) == true }) {
+                return element
+            }
+            guard depth < 14, let children = attribute(element, kAXChildrenAttribute) as? [AXUIElement] else { continue }
+            pending += children.map { ($0, depth + 1) }
+        }
+        return nil
+    }
+    /// The refusal when typing has nowhere to go in a design app: canvas text needs an edit session first.
+    static let canvasTextRequired = UseError("focus_required",
+        "Nothing in the selected window has the keyboard. To type on a canvas, select the Type tool, double-click the text, then type in the same batch.",
+        next: "observe")
+    /// Typing with no edit session open would send letters to the app as tool shortcuts.
+    static let textEditNotActive = UseError("text_edit_not_active",
+        "The app is not editing text, so the letters would pick tools. Double-click the text with the Type tool first, then type. Nothing was typed.",
+        next: "observe")
+
     /// Whether an editor holds text Delete would erase: a text role, or marked editable.
     func isTextEditor(_ element: AXUIElement) -> Bool {
         let budget = AXReadBudget()
-        return (try? checkedString(element, kAXRoleAttribute, budget)).map { ElementRecord.textRoles.contains($0) } == true
+        return (try? checkedString(element, kAXRoleAttribute, budget)).map { ElementRecord.textRoles.contains($0) || $0 == ElementRecord.valueFieldRole } == true
             || (try? checkedBool(element, "AXEditable", budget)) == true
     }
     /// Whether an element is still inside the selected window, with nothing protected around it.

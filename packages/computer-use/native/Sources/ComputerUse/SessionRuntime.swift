@@ -84,6 +84,9 @@ final class SessionRuntime {
         var yielded = false
         /// Where the window was before the session first arranged it; put back on close.
         var placement: WindowArrangement.Placement?
+        /// When the last act's last input was the agent's own click (or focus step) in this window, in
+        /// uptime: canvas text typed in the next act may go where it put the keyboard.
+        var lastClick: TimeInterval?
     }
     init(policy: RuntimePolicy = .desktop, clock: @escaping () -> TimeInterval = { ProcessInfo.processInfo.systemUptime }) {
         self.policy = policy; self.clock = clock
@@ -976,6 +979,19 @@ final class SessionRuntime {
         // A click or focus step of this batch, or its typing into the app's editor, already chose what
         // has the keyboard: typing and editing keys after it may go there (`BatchContinuation.goesToEditor`).
         var clicked = false
+        // A design app that draws its own text editor reports no focus: after the agent's own click,
+        // here or as the last input of the previous act with no input of the person's since, typing
+        // goes to its key window (`BatchContinuation.canvasText`).
+        let designApp = InputDelivery.takesToolKeys(info: current.app.app.bundleURL.flatMap { Bundle(url: $0)?.infoDictionary } ?? [:])
+        let clickedBefore = current.lastClick.map { !personInterrupted(since: $0) } == true
+        session?.lastClick = nil
+        var lastWasClick = false
+        // Whether the design app showed a text edit session before the agent's click, and once typing began.
+        var editBefore: Bool?
+        var editSession: [String: Any]?
+        func canvasText() -> Bool {
+            designApp && credentialApproval == nil && (clicked || clickedBefore && !progress.hasInput)
+        }
         // What each expect step checked, and whether it held; never a value.
         var checks: [[String: Any]] = []
         var activated = false
@@ -1028,7 +1044,8 @@ final class SessionRuntime {
                 // A wait sends nothing: the step after it reads back instead, with the app given that time.
                 if !followsStrokes, BatchContinuation.need(action) != .later, needsObservation || action.usesCoordinates && progress.hasInput {
                     switch try await readyToContinue(action, records: records, current: current, windowsBefore: windowsBefore, bounds: bounds,
-                        pacing: pacing, background: background, credentialApproval: credentialApproval, afterClick: clicked, check: check) {
+                        pacing: pacing, background: background, credentialApproval: credentialApproval, afterClick: clicked,
+                        canvasText: canvasText(), check: check) {
                     case .stop:
                         throw UseError("observation_required", "The preceding step may have changed the view or focus. Observe before executing the remaining steps.", next: "observe")
                     case .control(let live):
@@ -1128,14 +1145,18 @@ final class SessionRuntime {
                     choosing = (window, access.attribute(window.element, kAXTitleAttribute) as? String,
                         state.flatMap { try? access.captureDigest($0, focus: false) }, access.windowChanges(current.frontApp).windows)
                 }
+                if designApp, case .click = action, actions[(index + 1)...].contains(where: { if case .type = $0 { return true }; return false }) {
+                    editBefore = access.editSession(in: current.target) != nil
+                }
                 var path = try await input.execute(action, app: current.app, target: current.target, lease: observation,
                     access: access, records: records, focus: focus, pointerTarget: pointerTarget,
                     check: checkInput, checkWindow: checkWindow, background: background || !current.parents.isEmpty, editorTyping: editorStep == index,
-                    clickToFocus: FocusStep.clicks(in: current.mode), feedback: { [weak self] feedback in
+                    clickToFocus: FocusStep.clicks(in: current.mode), canvasText: canvasText(), feedback: { [weak self] feedback in
                         guard let self, self.session?.id == id else { return }
                         self.controls.inputFeedback(feedback)
                     })
                 uncertain = path != "waited"
+                if path == "canvas_text" { editSession = ["before_click": editBefore.map { $0 as Any } ?? NSNull(), "while_typing": true] }
                 if editorStep == index, case .type = action { clicked = true }
                 if case .arrange = action {
                     // Remember the person's frame once, and where this arrange left the window.
@@ -1210,6 +1231,7 @@ final class SessionRuntime {
                 }
                 try check()
                 progress.dispatched(path: shortcutMenu == nil ? path : "menu_for_shortcut"); uncertain = false
+                lastWasClick = { switch action { case .click, .focus: return true; default: return false } }()
                 let dispatchedAt = now
                 // The press already ran: outline the control only where it still is.
                 controls.showAction(action, records: records, live: { [access] record in access.frame(record.element, within: 0.05) })
@@ -1329,9 +1351,11 @@ final class SessionRuntime {
             do { try check() }
             catch { failure = (error as? UseError) ?? UseError("action_interrupted", "Control ended after dispatch.", next: "human_takeover") }
         }
+        if lastWasClick, session?.id == id { session?.lastClick = ProcessInfo.processInfo.systemUptime }
         var receipt = progress.receipt(requestID: requestID, failure: failure, uncertain: uncertain, detailed: policy == .embedded)
         if let settled { receipt["settled"] = settled }
         if let savedFile { receipt["saved_file"] = savedFile }
+        if let editSession { receipt["edit_session"] = editSession }
         let windowsAfter = access.windowChanges(current.app)
         if settled != nil, let changes = windowsBefore.diff(windowsAfter, target: current.target.id) {
             receipt["window_changes"] = changes
@@ -1402,7 +1426,7 @@ final class SessionRuntime {
     /// or until retry_ms with wait_retry. Anything else needs an observation.
     private func readyToContinue(_ action: Action, records: [ElementRecord], current: Session, windowsBefore: WindowChanges, bounds: CGRect,
                                  pacing: BatchPacing, background: Bool, credentialApproval: String?, afterClick: Bool = false,
-                                 check: () throws -> Void) async throws -> Readiness {
+                                 canvasText: Bool = false, check: () throws -> Void) async throws -> Readiness {
         guard policy == .embedded, let need = BatchContinuation.need(action), need != .later else { return .stop }
         var observed: ElementRecord?
         if case .control(let ref) = need {
@@ -1439,7 +1463,7 @@ final class SessionRuntime {
                     guard case .key(let key, let flags) = action, editingKey || NativeKey.isToolKey(key, flags) else { return false }
                     return InputDelivery.takesToolKeys(info: current.app.app.bundleURL.flatMap { Bundle(url: $0)?.infoDictionary } ?? [:])
                 }()
-                switch BatchContinuation.keyboard(focused: focused.map { ($0.enabled, $0.protected, $0.textField) }, field: field,
+                switch BatchContinuation.keyboard(focused: focused.map { ($0.enabled, $0.protected, $0.takesTyping) }, field: field,
                     typing: typing, entersText: action.entersText, secureInput: IsSecureEventInputEnabled(),
                     protectedOnScreen: live.records.contains(where: \.protected) || !live.protectedFrames.isEmpty,
                     credentialConfirmed: credentialApproval == current.app.bundleID, credentialGiven: credentialApproval != nil, shortcut: shortcut,
@@ -1451,6 +1475,12 @@ final class SessionRuntime {
                 // window. Delete and Backspace erase only editable text there.
                 case .editor where (try? access.focusedEditor(target: current.target, app: current.app, requireFront: !background))
                         .map { typing || !field || access.isTextEditor($0) } == true:
+                    return .keyboard(nil)
+                // A design app's canvas text after this batch's click, where the app reports no focus.
+                case .editor where typing && canvasText && BatchContinuation.canvasText(designApp: true, afterOwnClick: true, credentialGiven: false,
+                        reported: access.reportedFocus(target: current.target, app: current.app))
+                        && access.editSession(in: current.target).map({ session in (try? access.checkCanvasText(target: current.target, app: current.app,
+                            requireFront: !background, reported: access.reportedFocus(target: current.target, app: current.app), session: session)) != nil }) == true:
                     return .keyboard(nil)
                 case .editor, .keyWindow, .stop: break
                 }
