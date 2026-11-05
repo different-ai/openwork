@@ -29,6 +29,11 @@ With the feature on, the reply works the way a colleague would answer:
   lands as a new reply, so it writes it as coming back with the result
   ("Alright, booked it…") and doesn't open with "Done:". It still decides
   whether to say anything before working; a quick answer is a single reply.
+- **One acknowledgment for background jobs.** Without the feature, a job handed
+  to a background task often gets two: "I'll check your calendar…" before
+  starting it, then "I'm on it…" after. With it, the sentence before the task
+  is the acknowledgment ("I'll match your calendar with your meeting notes and
+  post what I find here.") and the turn ends silently once the task starts.
 - A last message that started work ("Sure, I've started on it, I'll update
   you here") stays in the notes message; the background task's report posts
   later as before.
