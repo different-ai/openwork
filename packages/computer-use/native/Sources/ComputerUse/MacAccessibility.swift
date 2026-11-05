@@ -223,12 +223,14 @@ struct ElementRecord {
     }
 
     /// The exact control, reading back as it was observed.
-    /// `allowMove` accepts the control at a new position, for a batch that waits for layout.
-    static func sameControl(_ live: ElementRecord, _ observed: ElementRecord, allowMove: Bool = false) -> Bool {
+    /// `allowMove` accepts the control at a new position, and `value` false a new value,
+    /// for a step that does not depend on either (`BatchContinuation.sameControl`).
+    static func sameControl(_ live: ElementRecord, _ observed: ElementRecord, allowMove: Bool = false, value: Bool = true) -> Bool {
         CFEqual(live.element, observed.element) && live.role == observed.role && (allowMove || live.frame == observed.frame)
             && live.enabled == observed.enabled && live.actions == observed.actions && live.settable == observed.settable
             && live.label == observed.label && live.labelHash == observed.labelHash
-            && live.value == observed.value && live.valueHash == observed.valueHash
+            && live.protected == observed.protected
+            && (!value || live.value == observed.value && live.valueHash == observed.valueHash)
     }
 
     static let wrapperRoles: Set<String> = ["AXGroup", "AXScrollArea", "AXSplitGroup", "AXLayoutArea", "AXUnknown"]

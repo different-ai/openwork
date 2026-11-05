@@ -326,7 +326,7 @@ final class MenuAndPacingTests: XCTestCase {
         XCTAssertEqual(BatchContinuation.need(.key("delete", [])), .keyboard(field: true), "delete erases only in a text field")
         XCTAssertEqual(BatchContinuation.need(.click(CGPoint(x: 5, y: 5), 1, [])), .pointer)
         XCTAssertEqual(BatchContinuation.need(.drag([CGPoint(x: 1, y: 1), CGPoint(x: 9, y: 9)])), .pointer)
-        XCTAssertNil(BatchContinuation.need(.wait(200)))
+        XCTAssertEqual(BatchContinuation.need(.wait(200)), .later, "a wait sends nothing; the step after it checks")
         // click, type: the click put the caret in a field the observation did not know was focused.
         XCTAssertEqual(keyboard((true, false, true)), .focus)
         // click, key(command+a): any enabled control that has the keyboard.
@@ -344,5 +344,70 @@ final class MenuAndPacingTests: XCTestCase {
         XCTAssertEqual(keyboard((false, false, true)), .stop, "a disabled field")
         XCTAssertEqual(keyboard(nil, field: false, typing: false), .stop, "a key with nothing focused is not guessed")
         XCTAssertEqual(keyboard(nil, given: true), .stop, "a password the person gave goes only into a named field")
+    }
+
+    private func field(_ role: String, value: String?, frame: CGRect = CGRect(x: 10, y: 10, width: 80, height: 24),
+                       label: String = "Width", enabled: Bool = true, protected: Bool = false,
+                       element: AXUIElement = AXUIElementCreateApplication(getpid())) -> ElementRecord {
+        var record = ElementRecord(ref: "e2", element: element, role: role, label: label, value: value, frame: frame,
+            actions: [kAXPressAction], settable: true, enabled: enabled, protected: protected)
+        record.labelHash = Data(label.utf8); record.valueHash = value.map { Data($0.utf8) }
+        return record
+    }
+
+    func testLinkedFieldsKeepABatchGoing() {
+        let window = CGRect(x: 0, y: 0, width: 800, height: 600)
+        let element = AXUIElementCreateApplication(getpid())
+        let height = field("AXTextField", value: "1080", label: "Height", element: element)
+        // set_value width, enter_value height: the app rewrote the linked height.
+        let rewritten = field("AXTextField", value: "1350", label: "Height", element: element)
+        for step in [Action.setValue("e2", "2400"), .enterValue("e2", "2400", .enter), .focus("e2")] {
+            XCTAssertTrue(BatchContinuation.sameControl(rewritten, height, for: step, window: window), "\(step.name) replaces the value")
+        }
+        // The inspector reflowed around the field after the image was resized.
+        let moved = field("AXTextField", value: "1350", frame: CGRect(x: 10, y: 60, width: 80, height: 24), label: "Height", element: element)
+        XCTAssertTrue(BatchContinuation.sameControl(moved, height, for: .enterValue("e2", "80", .enter), window: window))
+        // A plain button's press does not depend on a value it shows.
+        let button = field("AXButton", value: "3", label: "Look Around", element: element)
+        XCTAssertTrue(BatchContinuation.sameControl(field("AXButton", value: "4", label: "Look Around", element: element), button, for: .press("e2"), window: window))
+    }
+
+    func testABatchStillStopsWhenTheControlItselfChanged() {
+        let window = CGRect(x: 0, y: 0, width: 800, height: 600)
+        let element = AXUIElementCreateApplication(getpid())
+        // A checkbox that already turned on would be turned off again by the press.
+        let box = field("AXCheckBox", value: "0", label: "Constrain", element: element)
+        XCTAssertFalse(BatchContinuation.sameControl(field("AXCheckBox", value: "1", label: "Constrain", element: element), box, for: .press("e2"), window: window))
+        XCTAssertTrue(BatchContinuation.sameControl(field("AXCheckBox", value: "0", label: "Constrain", element: element), box, for: .press("e2"), window: window))
+        for role in ["AXRadioButton", "AXSwitch", "AXDisclosureTriangle"] {
+            XCTAssertFalse(BatchContinuation.sameControl(field(role, value: "1", element: element), field(role, value: "0", element: element), for: .press("e2"), window: window), role)
+        }
+        let height = field("AXTextField", value: "1080", label: "Height", element: element)
+        let step = Action.enterValue("e2", "2400", .enter)
+        XCTAssertFalse(BatchContinuation.sameControl(field("AXTextField", value: "1080", label: "Depth", element: element), height, for: step, window: window), "another control under the same element")
+        XCTAssertFalse(BatchContinuation.sameControl(field("AXTextField", value: "1080", label: "Height", enabled: false, element: element), height, for: step, window: window))
+        XCTAssertFalse(BatchContinuation.sameControl(field("AXTextField", value: "1080", label: "Height", protected: true, element: element), height, for: step, window: window),
+            "a field that turned secure is never typed into without a new look")
+        XCTAssertFalse(BatchContinuation.sameControl(field("AXTextField", value: "1080", label: "Height", element: AXUIElementCreateSystemWide()), height, for: step, window: window), "another element")
+        XCTAssertFalse(BatchContinuation.sameControl(field("AXTextField", value: "1080", frame: CGRect(x: 10, y: 590, width: 80, height: 24), label: "Height", element: element),
+            height, for: step, window: window), "scrolled out of the window")
+    }
+
+    func testKeysRunPastOnlyAPanelThatLeftTheKeyboardAlone() {
+        let keys = BatchContinuation.Need.keyboard(field: true)
+        XCTAssertTrue(BatchContinuation.runsPast(nil, need: .control("e1"), sessionHasKeyboard: false), "nothing changed")
+        // Edit > Find, type: a suggestions panel opened beside the window, which kept the keyboard.
+        XCTAssertTrue(BatchContinuation.runsPast(["panel_opened": true], need: keys, sessionHasKeyboard: true))
+        XCTAssertTrue(BatchContinuation.runsPast(["opened": [["window_id": 9]]], need: keys, sessionHasKeyboard: true))
+        XCTAssertFalse(BatchContinuation.runsPast(["opened": [["window_id": 9]]], need: keys, sessionHasKeyboard: false), "the new window took the keyboard")
+        XCTAssertFalse(BatchContinuation.runsPast(["panel_opened": true], need: .control("e1"), sessionHasKeyboard: true), "a press still stops at a new window")
+        XCTAssertFalse(BatchContinuation.runsPast(["panel_opened": true], need: .pointer, sessionHasKeyboard: true))
+        XCTAssertFalse(BatchContinuation.runsPast(["target_closed": true], need: keys, sessionHasKeyboard: true))
+        XCTAssertFalse(BatchContinuation.runsPast(["another_app_in_front": true, "panel_opened": true], need: keys, sessionHasKeyboard: true))
+    }
+
+    func testEveryModeRereadsBrieflyBeforeStopping() {
+        XCTAssertEqual(BatchContinuation.reread, 0.3)
+        XCTAssertLessThanOrEqual(BatchContinuation.reread, BatchPacing(mode: .waitRetry, retry: 1.5).retry)
     }
 }

@@ -1004,8 +1004,9 @@ final class SessionRuntime {
                 }
                 // After a step that may have changed the view or focus, the next step runs only
                 // when what it needs reads back as a fresh observation would show it.
-                if !followsStrokes, needsObservation || action.usesCoordinates && progress.hasInput {
-                    switch try await readyToContinue(action, records: records, current: current, windowsBefore: windowsBefore,
+                // A wait sends nothing: the step after it reads back instead, with the app given that time.
+                if !followsStrokes, BatchContinuation.need(action) != .later, needsObservation || action.usesCoordinates && progress.hasInput {
+                    switch try await readyToContinue(action, records: records, current: current, windowsBefore: windowsBefore, bounds: bounds,
                         pacing: pacing, background: background, credentialApproval: credentialApproval, afterClick: clicked, check: check) {
                     case .stop:
                         throw UseError("observation_required", "The preceding step may have changed the view or focus. Observe before executing the remaining steps.", next: "observe")
@@ -1372,14 +1373,15 @@ final class SessionRuntime {
     /// After a step that may have changed the view or focus, the batch's next step still runs
     /// in the same call when nothing opened over the window and what it needs reads back as a
     /// fresh observation would show it (`BatchContinuation`): a press, set_value or menu
-    /// command's exact control unchanged; for keys and typing, a focused control or text field
-    /// in the window, never a secure one; for a pointer step, nothing here (it compares the
-    /// window image where it lands). wait_retry also waits for a control that is briefly
-    /// disabled, moving or gone, and returns it as it is now. Anything else needs an observation.
-    private func readyToContinue(_ action: Action, records: [ElementRecord], current: Session, windowsBefore: WindowChanges,
+    /// command's control (`BatchContinuation.sameControl`); for keys and typing, a focused
+    /// control or text field in the window, never a secure one; for a pointer step, nothing
+    /// here (it compares the window image where it lands). What is not ready yet, such as a
+    /// field a menu command is still focusing, is read again for `BatchContinuation.reread`,
+    /// or until retry_ms with wait_retry. Anything else needs an observation.
+    private func readyToContinue(_ action: Action, records: [ElementRecord], current: Session, windowsBefore: WindowChanges, bounds: CGRect,
                                  pacing: BatchPacing, background: Bool, credentialApproval: String?, afterClick: Bool = false,
                                  check: () throws -> Void) async throws -> Readiness {
-        guard policy == .embedded, let need = BatchContinuation.need(action) else { return .stop }
+        guard policy == .embedded, let need = BatchContinuation.need(action), need != .later else { return .stop }
         var observed: ElementRecord?
         if case .control(let ref) = need {
             guard let record = records.first(where: { $0.ref == ref }) else { return .stop }
@@ -1387,17 +1389,19 @@ final class SessionRuntime {
         }
         // The wait modes already let the app settle after the previous step.
         if pacing.mode == .fast { try await Task.sleep(nanoseconds: 50_000_000); try check() }
-        let deadline = now + pacing.retry
+        let deadline = now + max(pacing.retry, BatchContinuation.reread)
         while true {
-            // Nothing waits past a window, dialog, menu or system prompt that opened.
-            guard windowsBefore.diff(access.windowChanges(current.app), target: current.target.id) == nil,
+            // Nothing waits past a window, dialog, menu or system prompt that opened. Keys and typing
+            // may run past a window that opened beside the session's while it keeps the keyboard.
+            let changes = windowsBefore.diff(access.windowChanges(current.app), target: current.target.id)
+            guard BatchContinuation.runsPast(changes, need: need, sessionHasKeyboard: changes != nil && access.isFocusedWindow(current.target, app: current.app)),
                   access.personPrompt() == nil else { return .stop }
             if await access.openMenu(of: current.app) != nil { return .stop }
             if await access.dialog(over: current.target, app: current.app) != nil { return .stop }
             switch need {
             case .menu: return .control(nil)
             case .pointer: return .pointer
-            case .control, .keyboard: break
+            case .control, .keyboard, .later: break
             }
             var live: WindowState?
             do { live = try await access.read(current.target, check: check) }
@@ -1426,17 +1430,15 @@ final class SessionRuntime {
                 case .editor where (try? access.focusedEditor(target: current.target, app: current.app, requireFront: !background))
                         .map { typing || !field || access.isTextEditor($0) } == true:
                     return .keyboard(nil)
-                case .editor, .keyWindow, .stop: return .stop
+                case .editor, .keyWindow, .stop: break
                 }
+            } else if let live, let observed,
+                      let same = live.records.first(where: { BatchContinuation.sameControl($0, observed, for: action, window: bounds) }) {
+                return .control(same.with(ref: observed.ref))
             }
-            if let live, let observed {
-                if let same = live.records.first(where: { ElementRecord.sameControl($0, observed) }) { return .control(same.with(ref: observed.ref)) }
-                if pacing.mode == .waitRetry, let moved = live.records.first(where: { ElementRecord.sameControl($0, observed, allowMove: true) }) {
-                    return .control(moved.with(ref: observed.ref))
-                }
-            }
-            guard pacing.mode == .waitRetry, now < deadline else { return .stop }
-            try await Task.sleep(nanoseconds: 100_000_000); try check()
+            // Not ready yet: the keyboard is still moving, or the control is briefly disabled or gone.
+            guard now < deadline else { return .stop }
+            try await Task.sleep(nanoseconds: pacing.mode == .waitRetry ? 100_000_000 : 50_000_000); try check()
         }
     }
     private func next(_ current: Session) -> String {
