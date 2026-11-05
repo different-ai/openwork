@@ -16,6 +16,7 @@ enum Spaces {
     private typealias SpacesForWindows = @convention(c) (Int32, Int32, CFArray) -> Unmanaged<CFArray>?
     private typealias MoveWindows = @convention(c) (Int32, CFArray, UInt64) -> Void
     private typealias InitOperation = @convention(c) (AnyObject, Selector, NSArray, UInt64) -> AnyObject?
+    private typealias DisplaySpaces = @convention(c) (Int32) -> Unmanaged<CFArray>?
     private static func symbol<T>(_ name: String, as type: T.Type) -> T? {
         guard let skyLight, let found = dlsym(skyLight, name) else { return nil }
         return unsafeBitCast(found, to: type)
@@ -24,6 +25,7 @@ enum Spaces {
     private static let activeSpace = symbol("SLSGetActiveSpace", as: ActiveSpace.self)
     private static let spacesForWindows = symbol("CGSCopySpacesForWindows", as: SpacesForWindows.self)
     private static let moveWindows = symbol("SLSMoveWindowsToManagedSpace", as: MoveWindows.self)
+    private static let displaySpaces = symbol("SLSCopyManagedDisplaySpaces", as: DisplaySpaces.self)
     /// kCGSAllSpacesMask: every Space a window is on.
     private static let allSpaces: Int32 = 7
 
@@ -39,10 +41,20 @@ enum Spaces {
               let spaces = spacesForWindows(connection(), allSpaces, [NSNumber(value: window)] as CFArray)?.takeRetainedValue() as? [NSNumber] else { return [] }
         return spaces.map(\.uint64Value)
     }
-    /// On some Space, but not the person's.
-    static func isElsewhere(spaces: [UInt64], current: UInt64?) -> Bool {
-        guard let current else { return false }
-        return !spaces.isEmpty && !spaces.contains(current)
+    /// The Space each display shows now: with two displays, two Spaces are in view at once.
+    static func visible() -> Set<UInt64> {
+        var shown: Set<UInt64> = current().map { [$0] } ?? []
+        guard let connection, let displaySpaces,
+              let displays = displaySpaces(connection())?.takeRetainedValue() as? [[String: Any]] else { return shown }
+        for display in displays {
+            if let id = ((display["Current Space"] as? [String: Any])?["ManagedSpaceID"] as? NSNumber)?.uint64Value { shown.insert(id) }
+        }
+        return shown
+    }
+    /// On some Space, but on none that a display shows now.
+    static func isElsewhere(spaces: [UInt64], visible: Set<UInt64>) -> Bool {
+        guard !visible.isEmpty, !spaces.isEmpty else { return false }
+        return spaces.allSatisfy { !visible.contains($0) }
     }
 
     /// Tries each way in turn, reading back after each, until `here()` says the window shows.
