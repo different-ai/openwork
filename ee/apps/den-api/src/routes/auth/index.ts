@@ -20,7 +20,7 @@ import {
 } from "../../auth-protection.js"
 import { db } from "../../db.js"
 import { env } from "../../env.js"
-import { findDomainSsoRequirement, ssoSignInUrl } from "../../organization-sso-access.js"
+import { findDomainSsoRequirement, listOrganizationSsoSignInOptions, ssoSignInUrl } from "../../organization-sso-access.js"
 import { resolveLoginSsoRouting } from "../../sso-routing.js"
 import {
   authorizeInitialAdminBootstrapSignup,
@@ -516,6 +516,12 @@ const loginOptionKindSchema = z.union([
   z.literal("new_account"),
 ])
 
+const ssoSignInOptionSchema = z.object({
+  providerId: z.string(),
+  name: z.string(),
+  kind: z.enum(["oidc", "saml"]),
+}).meta({ ref: "AuthSsoSignInOption" })
+
 const loginOptionsResponseSchema = z.object({
   email: z.string().email(),
   nextStep: loginOptionKindSchema,
@@ -530,7 +536,25 @@ const loginOptionsResponseSchema = z.object({
   ssoRequired: z.boolean().optional(),
   /** ssoPerOrganization: the usual step when the person does not use SSO. Absent: SSO is the only way in. */
   alternativeStep: z.union([z.literal("google"), z.literal("github"), z.literal("password"), z.literal("new_account")]).optional(),
+  /**
+   * The SSO step's identity providers that sign in this email, oldest first.
+   * Several (multipleSsoConnections): one button each, each starting sign-in
+   * at signInPath with `providerId`.
+   */
+  ssoProviders: z.array(ssoSignInOptionSchema).optional(),
 }).meta({ ref: "AuthLoginOptionsResponse" })
+
+const ssoOptionsQuerySchema = z.object({
+  organizationSlug: z.string().trim().min(1).max(255),
+})
+
+const ssoOptionsResponseSchema = z.object({
+  organizationName: z.string(),
+  providers: z.array(ssoSignInOptionSchema),
+}).meta({ ref: "AuthSsoOptionsResponse" })
+
+const SSO_OPTIONS_RATE_LIMIT_MAX = 120
+const SSO_OPTIONS_RATE_LIMIT_WINDOW_MS = 60_000
 
 const loginOptionsBotVerificationFailedSchema = z.object({
   error: z.literal("bot_verification_failed"),
@@ -1036,6 +1060,40 @@ export function registerAuthRoutes<T extends { Variables: AuthContextVariables }
   )
 
   app.get(
+    "/v1/auth/sso-options",
+    describeRoute({
+      tags: ["Authentication"],
+      security: [],
+      summary: "List an organization's SSO sign-in options",
+      description: "Returns the identity providers people can sign in with on the organization's SSO page (/sso/<slug>): its enabled SSO connections on a verified domain, oldest first. Start sign-in with one by passing its providerId to Better Auth's /sign-in/sso.",
+      responses: {
+        200: jsonResponse("SSO sign-in options returned successfully.", ssoOptionsResponseSchema),
+        400: jsonResponse("The query parameters were invalid.", z.object({ error: z.literal("invalid_request") })),
+        404: jsonResponse("No organization has this slug.", z.object({ error: z.literal("organization_not_found") })),
+        429: jsonResponse("Too many attempts.", loginOptionsRateLimitedSchema),
+      },
+    }),
+    publicRoute,
+    queryValidator(ssoOptionsQuerySchema),
+    async (c) => {
+      const { organizationSlug } = c.req.valid("query")
+      const retryAfter = await checkRateLimit(
+        `auth-sso-options:ip:${sha256Hex(requestClientIpKey(c.req.raw.headers))}`,
+        SSO_OPTIONS_RATE_LIMIT_MAX,
+        SSO_OPTIONS_RATE_LIMIT_WINDOW_MS,
+        Date.now(),
+      )
+      if (retryAfter !== null) {
+        c.header("Retry-After", String(retryAfter))
+        return c.json({ error: "rate_limited", message: "Too many sign-in attempts. Try again later." }, 429)
+      }
+      const result = await listOrganizationSsoSignInOptions({ organizationSlug })
+      if (!result) return c.json({ error: "organization_not_found" }, 404)
+      return c.json({ organizationName: result.organizationName, providers: result.options })
+    },
+  )
+
+  app.get(
     "/v1/auth/login-options",
     describeRoute({
       tags: ["Authentication"],
@@ -1112,6 +1170,10 @@ export function registerAuthRoutes<T extends { Variables: AuthContextVariables }
       const nextStep = resolveLoginOptionKind({ requireSso: routing.kind !== "none", accounts, allowNewAccount: allowPublicSignup || allowInvitationSignup })
 
       if (nextStep === "sso" && ssoTarget) {
+        const signInOptions = await listOrganizationSsoSignInOptions({
+          organizationSlug: ssoTarget.organizationSlug,
+          emailDomain: email.slice(email.lastIndexOf("@") + 1),
+        })
         const ssoStep = {
           email,
           nextStep,
@@ -1120,6 +1182,7 @@ export function registerAuthRoutes<T extends { Variables: AuthContextVariables }
           organizationSlug: ssoTarget.organizationSlug,
           signInPath: ssoTarget.signInPath,
           signInUrl: ssoSignInUrl(ssoTarget.signInPath),
+          ...(signInOptions && signInOptions.options.length > 0 ? { ssoProviders: signInOptions.options } : {}),
         }
         if (routing.kind === "sso_preferred" && domainRequirement && otherStep !== "sso") {
           // ssoPerOrganization: SSO first, the usual step one click away.

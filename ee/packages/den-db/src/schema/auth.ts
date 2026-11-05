@@ -414,12 +414,20 @@ export const SsoProviderTable = mysqlTable(
   ],
 )
 
+/**
+ * An organization's SSO connections (several with `multipleSsoConnections`),
+ * one per Better Auth `sso_provider`. `domain` holds every email domain the
+ * connection covers, lower case and comma separated without spaces (the same
+ * value as its provider's `domain`), so match it with FIND_IN_SET.
+ */
 export const SsoConnectionTable = mysqlTable(
   "sso_connection",
   {
     id: denTypeIdColumn("ssoConnection", "id").notNull().primaryKey(),
     organizationId: denTypeIdColumn("organization", "organization_id").notNull(),
     providerId: varchar("provider_id", { length: 255 }).notNull(),
+    /** What sign-in buttons and the SSO page call it ("Okta"); null shows a name derived from the issuer. */
+    name: varchar("name", { length: 120 }),
     kind: varchar("kind", { length: 16 }).notNull(),
     issuer: varchar("issuer", { length: 2048 }).notNull(),
     domain: varchar("domain", { length: 255 }).notNull(),
@@ -443,7 +451,7 @@ export const SsoConnectionTable = mysqlTable(
       .default(sql`CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3)`),
   },
   (table) => [
-    uniqueIndex("sso_connection_organization_id").on(table.organizationId),
+    index("sso_connection_organization").on(table.organizationId, table.createdAt),
     uniqueIndex("sso_connection_provider_id").on(table.providerId),
     index("sso_connection_domain").on(table.domain),
   ],

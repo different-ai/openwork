@@ -1,4 +1,4 @@
-import { and, eq, inArray, isNull } from "@openwork-ee/den-db/drizzle"
+import { and, asc, eq, inArray, isNull } from "@openwork-ee/den-db/drizzle"
 import {
   AuthSessionTable,
   AuthUserTable,
@@ -13,6 +13,7 @@ import { normalizeDenTypeId } from "@openwork-ee/utils/typeid"
 import { db } from "./db.js"
 import { env } from "./env.js"
 import { organizationFeatureEnabled } from "./features.js"
+import { ssoConnectionDisplayName, ssoDomainColumnCovers, ssoDomainsCover } from "./sso-domains.js"
 import {
   blocksNonSsoSignIn,
   organizationRequiresSsoSession,
@@ -99,7 +100,7 @@ async function readSsoOrganizations(where: ReturnType<typeof and>) {
 export async function findDomainSsoRequirement(email: string): Promise<DomainSsoRequirement | null> {
   const domain = emailDomain(email)
   if (!domain) return null
-  const rows = await readSsoOrganizations(and(eq(SsoConnectionTable.domain, domain), eq(SsoProviderTable.domain, domain)))
+  const rows = await readSsoOrganizations(and(ssoDomainColumnCovers(SsoConnectionTable.domain, domain), ssoDomainColumnCovers(SsoProviderTable.domain, domain)))
   const row = rows[0]
   if (!row) return null
   const perOrganization = (await readSsoPerOrganization([row.organizationId])).get(row.organizationId) === true
@@ -110,6 +111,44 @@ export async function findDomainSsoRequirement(email: string): Promise<DomainSso
     signInPath: row.signInPath || defaultSignInPath(row.organizationSlug),
     policy: readOrganizationSsoPolicy(row.metadata),
     perOrganization,
+  }
+}
+
+/** One identity provider a person can sign in with: a ready connection (enabled, domain verified). */
+export type SsoSignInOption = {
+  providerId: string
+  name: string
+  kind: "oidc" | "saml"
+}
+
+/**
+ * The organization's ready SSO connections, oldest first, for sign-in to
+ * show one button each. With an email domain, only those covering it: a
+ * provider only signs in people on its own domains.
+ */
+export async function listOrganizationSsoSignInOptions(input: { organizationSlug: string; emailDomain?: string | null }): Promise<{ organizationName: string; options: SsoSignInOption[] } | null> {
+  const [organization] = await db
+    .select({ id: OrganizationTable.id, name: OrganizationTable.name })
+    .from(OrganizationTable)
+    .where(eq(OrganizationTable.slug, input.organizationSlug))
+    .limit(1)
+  if (!organization) return null
+  const rows = await db
+    .select({ providerId: SsoConnectionTable.providerId, name: SsoConnectionTable.name, issuer: SsoConnectionTable.issuer, kind: SsoConnectionTable.kind, domain: SsoConnectionTable.domain })
+    .from(SsoConnectionTable)
+    .innerJoin(SsoProviderTable, and(
+      eq(SsoConnectionTable.providerId, SsoProviderTable.providerId),
+      eq(SsoConnectionTable.organizationId, SsoProviderTable.organizationId),
+      eq(SsoProviderTable.domainVerified, true),
+    ))
+    .where(and(eq(SsoConnectionTable.organizationId, organization.id), eq(SsoConnectionTable.status, "enabled")))
+    .orderBy(asc(SsoConnectionTable.createdAt), asc(SsoConnectionTable.id))
+  const emailDomain = input.emailDomain?.trim().toLowerCase() || null
+  return {
+    organizationName: organization.name,
+    options: rows
+      .filter((row) => !emailDomain || ssoDomainsCover(row.domain, emailDomain))
+      .map((row) => ({ providerId: row.providerId, name: ssoConnectionDisplayName(row), kind: row.kind === "saml" ? "saml" : "oidc" })),
   }
 }
 
@@ -140,7 +179,7 @@ export async function findNonSsoSignInBlock(input: { email: string | null; userI
     ? await readSsoOrganizations(inArray(OrganizationTable.id, memberOrganizationIds))
     : []
   const domainRows = domain
-    ? await readSsoOrganizations(and(eq(SsoConnectionTable.domain, domain), eq(SsoProviderTable.domain, domain)))
+    ? await readSsoOrganizations(and(ssoDomainColumnCovers(SsoConnectionTable.domain, domain), ssoDomainColumnCovers(SsoProviderTable.domain, domain)))
     : []
   const rows = [...memberRows, ...domainRows.filter((row) => !memberRows.some((member) => member.organizationId === row.organizationId))]
   if (rows.length === 0) return null
@@ -151,7 +190,7 @@ export async function findNonSsoSignInBlock(input: { email: string | null; userI
       organizationId: row.organizationId,
       policy: readOrganizationSsoPolicy(row.metadata),
       perOrganization: perOrganization.get(row.organizationId) === true,
-      emailOnVerifiedDomain: domain !== null && row.domain === domain,
+      emailOnVerifiedDomain: domain !== null && ssoDomainsCover(row.domain, domain),
       member: memberOrganizationIds.includes(row.organizationId),
     }
     if (blocksNonSsoSignIn(candidate)) {

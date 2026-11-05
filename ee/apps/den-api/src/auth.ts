@@ -445,6 +445,10 @@ async function denyBetterAuthTeamMutation() {
   throw new APIError("FORBIDDEN", { message: "Use the Den teams API to manage teams and their membership." });
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
 function readStringProperty(value: unknown, propertyName: string) {
   if (!value || typeof value !== "object") {
     return null;
@@ -1309,6 +1313,12 @@ export const auth = betterAuth({
           });
           if (!authorization.ok) {
             throw new APIError("FORBIDDEN", { message: authorization.message });
+          }
+          // An organization or domain can match several connections
+          // (multipleSsoConnections). Better Auth would take any one of them,
+          // so name the provider Den chose: the ready one.
+          if (authorization.providerId && !readStringProperty(ctx.body, "providerId") && isRecord(ctx.body)) {
+            return { context: { body: { ...ctx.body, providerId: authorization.providerId } } };
           }
         }
       }

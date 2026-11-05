@@ -1,33 +1,38 @@
-import type { Hono } from "hono"
+import type { Hono, MiddlewareHandler } from "hono"
 import { describeRoute, resolver } from "hono-openapi"
 import { z } from "zod"
-import { eq } from "@openwork-ee/den-db/drizzle"
+import { and, eq } from "@openwork-ee/den-db/drizzle"
 import { SsoConnectionTable } from "@openwork-ee/den-db/schema"
 import { auth } from "../../auth.js"
 import { ORGANIZATION_AUDIT_ACTIONS } from "../../audit-events.js"
 import { appendDomainChangesAfterCommit, finishLegacyAuditAction } from "../../audit/domain/legacy.js"
 import { ssoConnectionRegisteredEvent } from "../../audit/domain/sso.js"
-import { auditChangeCapture } from "../../audit/request-capture.js"
+import { auditChangeCapture, type AuditChangeCapture } from "../../audit/request-capture.js"
 import { db } from "../../db.js"
 import { checkEntitlement } from "../../entitlements.js"
 import { env } from "../../env.js"
-import { organizationFeatureEnabled } from "../../features.js"
+import { organizationFeatureEnabled, requireFeature } from "../../features.js"
 import { enterprisePlanRequiredSchema, xmlResponse } from "../../openapi.js"
 import {
   deleteOrganizationSsoConnection,
-  getOrganizationSsoAuditState,
   getOrganizationSsoConnection,
+  getOrganizationSsoConnectionById,
   getOrganizationSsoSignInPath,
   getSsoAcsUrl,
+  getSsoConnectionAuditState,
   getSsoMetadataUrl,
   getSsoOidcRedirectUrl,
   getSsoProviderForConnection,
+  listOrganizationSsoConnections,
   registerOrganizationSsoConnection,
+  renameOrganizationSsoConnection,
+  type SsoRegistrationTarget,
 } from "../../sso.js"
 import {
   getSsoDomainVerificationDnsName,
   getSsoDomainVerificationHost,
 } from "../../sso-domain-verification.js"
+import { defaultSsoConnectionName, normalizeSsoDomains, parseSsoDomains, serializeSsoDomains } from "../../sso-domains.js"
 import {
   beginOrganizationSsoTestIntent,
   buildSsoTestCompletionUrl,
@@ -37,9 +42,25 @@ import {
   failOrganizationSsoTestIntent,
   getSsoTestPresentation,
 } from "../../sso-test-lifecycle.js"
-import { orgPermissionRoute } from "../../middleware/index.js"
+import { orgMemberRoute, orgPermissionRoute, requireOrgPermission } from "../../middleware/index.js"
 import { updateOrganizationSettings } from "../../orgs.js"
 import type { OrgRouteVariables } from "./shared.js"
+
+/**
+ * Organization SSO. `/v1/sso/*` manages the organization's oldest connection
+ * (the only one without multipleSsoConnections). `/v1/sso/connections/*`
+ * (multipleSsoConnections) lists them, adds more, and runs every action on
+ * one connection by id. Tests start and cancel by their own intent id.
+ */
+
+type SsoConnection = typeof SsoConnectionTable.$inferSelect
+type OrganizationPayload = NonNullable<OrgRouteVariables["organizationContext"]>
+
+const MULTIPLE_SSO_CONNECTIONS = "multipleSsoConnections"
+
+const passThrough: MiddlewareHandler = async (_c, next) => {
+  await next()
+}
 
 const invalidRequestSchema = z.object({
   error: z.literal("invalid_request"),
@@ -57,24 +78,44 @@ const organizationNotFoundSchema = z.object({
   error: z.literal("organization_not_found"),
 }).meta({ ref: "SsoOrganizationNotFoundError" })
 
+const connectionNotFoundSchema = z.object({
+  error: z.enum(["organization_not_found", "sso_connection_not_found", "feature_disabled"]),
+  feature: z.string().optional(),
+}).meta({ ref: "SsoConnectionNotFoundError" })
+
 const forbiddenSchema = z.object({
   error: z.enum(["forbidden", "reauth"]),
   reason: z.string().optional(),
   message: z.string(),
 }).meta({ ref: "SsoForbiddenError" })
 
-const baseRegistrationSchema = z.object({
-  issuer: z.string().url(),
-  domain: z.string().min(1),
-})
+const connectionNameSchema = z.string().trim().max(120).nullable().optional()
+  .describe("What sign-in buttons and the SSO page call this connection, e.g. \"Okta\". Empty or null shows a name derived from the issuer. Saved only with multipleSsoConnections.")
 
-const samlRegistrationSchema = baseRegistrationSchema.extend({
+const baseRegistrationShape = {
+  issuer: z.string().url(),
+  domain: z.string().min(1).optional()
+    .describe("The email domain this connection signs in. With multipleSsoConnections, several domains separated by commas."),
+  domains: z.array(z.string().min(1)).min(1).max(20).optional()
+    .describe("multipleSsoConnections: every email domain this connection signs in. Takes precedence over domain."),
+  name: connectionNameSchema,
+}
+
+function hasDomain(value: { domain?: string; domains?: string[] }) {
+  return Boolean(value.domain || (value.domains && value.domains.length > 0))
+}
+
+const domainRequired = { message: "Enter the email domain this connection signs in.", path: ["domain"] }
+
+const samlRegistrationSchema = z.object({
+  ...baseRegistrationShape,
   entryPoint: z.string().url(),
   cert: z.string().min(1),
   audience: z.string().url().optional(),
-}).meta({ ref: "RegisterOrganizationSamlSsoBody" })
+}).refine(hasDomain, domainRequired).meta({ ref: "RegisterOrganizationSamlSsoBody" })
 
-const oidcRegistrationSchema = baseRegistrationSchema.extend({
+const oidcRegistrationSchema = z.object({
+  ...baseRegistrationShape,
   clientId: z.string().min(1),
   clientSecret: z.string().min(1),
   scopes: z.array(z.string()).optional(),
@@ -84,7 +125,11 @@ const oidcRegistrationSchema = baseRegistrationSchema.extend({
   jwksEndpoint: z.string().url().optional(),
   userInfoEndpoint: z.string().url().optional(),
   tokenEndpointAuthentication: z.enum(["client_secret_basic", "client_secret_post"]).optional(),
-}).meta({ ref: "RegisterOrganizationOidcSsoBody" })
+}).refine(hasDomain, domainRequired).meta({ ref: "RegisterOrganizationOidcSsoBody" })
+
+const renameConnectionSchema = z.object({
+  name: z.string().trim().max(120).nullable(),
+}).meta({ ref: "RenameOrganizationSsoConnectionBody" })
 
 const oidcConnectionConfigSchema = z.object({
   clientId: z.string().nullable(),
@@ -106,9 +151,15 @@ const samlConnectionConfigSchema = z.object({
 const ssoConnectionSchema = z.object({
   id: z.string(),
   providerId: z.string(),
+  /** The saved name, or null. */
+  name: z.string().nullable(),
+  /** The name sign-in shows: the saved name, else one derived from the issuer. */
+  displayName: z.string(),
   kind: z.enum(["oidc", "saml"]),
   issuer: z.string().url(),
+  /** Every domain, comma separated (domains holds them as a list). */
   domain: z.string(),
+  domains: z.array(z.string()),
   status: z.enum(["disabled", "enabled"]),
   testStatus: z.enum(["untested", "testing", "succeeded", "failed"]),
   testExpiresAt: z.string().datetime().nullable(),
@@ -119,7 +170,9 @@ const ssoConnectionSchema = z.object({
   metadataUrl: z.string().url().nullable(),
   domainVerified: z.boolean(),
   domainVerificationHost: z.string(),
+  /** The TXT record name for the first domain (domainVerificationDnsNames lists one per domain). */
   domainVerificationDnsName: z.string(),
+  domainVerificationDnsNames: z.array(z.object({ domain: z.string(), dnsName: z.string() })),
   oidc: oidcConnectionConfigSchema.nullable(),
   saml: samlConnectionConfigSchema.nullable(),
   lastTestedAt: z.string().datetime().nullable(),
@@ -132,6 +185,10 @@ const ssoConnectionResponseSchema = z.object({
   connection: ssoConnectionSchema.nullable(),
   domainVerificationToken: z.string().min(1).nullable().optional(),
 }).meta({ ref: "OrganizationSsoConnectionResponse" })
+
+const ssoConnectionListResponseSchema = z.object({
+  connections: z.array(ssoConnectionSchema),
+}).meta({ ref: "OrganizationSsoConnectionListResponse" })
 
 const metadataQuerySchema = z.object({
   format: z.enum(["xml", "json"]).default("xml"),
@@ -189,6 +246,10 @@ function getWebOrigin() {
   return env.betterAuthUrl
 }
 
+function invalidRequest(message: string, path?: Array<string | number>) {
+  return { error: "invalid_request" as const, details: [{ message, ...(path ? { path } : {}) }] }
+}
+
 async function requestDomainVerificationToken(providerId: string, headers: Headers) {
   const body = await auth.api.requestDomainVerification({
     body: { providerId },
@@ -206,7 +267,7 @@ async function requestDomainVerificationToken(providerId: string, headers: Heade
 }
 
 function serializeConnection(input: {
-  connection: NonNullable<Awaited<ReturnType<typeof getOrganizationSsoConnection>>>
+  connection: SsoConnection
   signInUrl: string
   redirectUrl: string
   acsUrl: string | null
@@ -217,12 +278,17 @@ function serializeConnection(input: {
 }) {
   const { connection, signInUrl, redirectUrl, acsUrl, metadataUrl, domainVerified, oidc, saml } = input
   const test = getSsoTestPresentation(connection)
+  const domains = parseSsoDomains(connection.domain)
+  const dnsNames = domains.map((domain) => ({ domain, dnsName: getSsoDomainVerificationDnsName(connection.providerId, domain) }))
   return {
     id: connection.id,
     providerId: connection.providerId,
+    name: connection.name,
+    displayName: connection.name?.trim() || defaultSsoConnectionName(connection.issuer),
     kind: connection.kind === "saml" ? "saml" : "oidc",
     issuer: connection.issuer,
     domain: connection.domain,
+    domains,
     status: domainVerified && connection.status === "enabled" ? "enabled" : "disabled",
     testStatus: test.testStatus,
     testExpiresAt: test.testExpiresAt?.toISOString() ?? null,
@@ -233,7 +299,8 @@ function serializeConnection(input: {
     metadataUrl,
     domainVerified,
     domainVerificationHost: getSsoDomainVerificationHost(connection.providerId),
-    domainVerificationDnsName: getSsoDomainVerificationDnsName(connection.providerId, connection.domain),
+    domainVerificationDnsName: dnsNames[0]?.dnsName ?? getSsoDomainVerificationDnsName(connection.providerId, connection.domain),
+    domainVerificationDnsNames: dnsNames,
     oidc,
     saml,
     lastTestedAt: connection.lastTestedAt ? connection.lastTestedAt.toISOString() : null,
@@ -243,7 +310,7 @@ function serializeConnection(input: {
   }
 }
 
-async function buildConnectionPayload(connection: NonNullable<Awaited<ReturnType<typeof getOrganizationSsoConnection>>>, origin: string, reader: Parameters<typeof getSsoProviderForConnection>[1] = db) {
+async function buildConnectionPayload(connection: SsoConnection, reader: Parameters<typeof getSsoProviderForConnection>[1] = db) {
   const provider = await getSsoProviderForConnection(connection, reader)
   const oidcConfig = parseConfig(provider?.oidcConfig ?? null)
   const samlConfig = parseConfig(provider?.samlConfig ?? null)
@@ -276,20 +343,215 @@ async function buildConnectionPayload(connection: NonNullable<Awaited<ReturnType
   })
 }
 
+/** Where a `/v1/sso*` request acts: the oldest connection, or the one named in the path. */
+type ConnectionScope = "primary" | "connection"
+
+async function resolveConnection(scope: ConnectionScope, organizationId: SsoConnection["organizationId"], connectionId: string | undefined) {
+  if (scope === "primary") return getOrganizationSsoConnection(organizationId)
+  return connectionId ? getOrganizationSsoConnectionById(organizationId, connectionId) : null
+}
+
+function notFoundBody(scope: ConnectionScope) {
+  return scope === "primary" ? { error: "organization_not_found" as const } : { error: "sso_connection_not_found" as const }
+}
+
+type RegistrationRequest = {
+  kind: "saml" | "oidc"
+  payload: OrganizationPayload
+  headers: Headers
+  capture: AuditChangeCapture | null
+  body: unknown
+  target: SsoRegistrationTarget
+}
+
+type RegistrationOutcome =
+  | { ok: true; connection: SsoConnection; domainVerificationToken: string | null }
+  | { ok: false; status: 400; body: ReturnType<typeof invalidRequest> | { error: "invalid_request"; details: Array<{ message: string; path: Array<string | number> }> } }
+  | { ok: false; status: 402; body: Extract<ReturnType<typeof checkEntitlement>, { ok: false }>["response"] }
+
+/** Registers a new connection or replaces one's configuration, with its audit trail. */
+async function registerConnection(request: RegistrationRequest): Promise<RegistrationOutcome> {
+  const { payload } = request
+  const entitlement = checkEntitlement(payload.organization.metadata, "sso")
+  if (!entitlement.ok) return { ok: false, status: 402, body: entitlement.response }
+
+  const parsed = request.kind === "saml" ? samlRegistrationSchema.safeParse(request.body) : oidcRegistrationSchema.safeParse(request.body)
+  if (!parsed.success) {
+    return {
+      ok: false,
+      status: 400,
+      body: { error: "invalid_request", details: parsed.error.issues.map((issue) => ({ message: issue.message, path: issue.path.filter((segment): segment is string | number => typeof segment !== "symbol") })) },
+    }
+  }
+
+  const multiple = await organizationFeatureEnabled(payload.organization.id, MULTIPLE_SSO_CONNECTIONS, { userId: payload.currentMember.userId })
+  const domains = normalizeSsoDomains(parsed.data.domains ?? parsed.data.domain ?? "")
+  if (!domains.ok) return { ok: false, status: 400, body: invalidRequest(domains.message, ["domain"]) }
+  if (domains.domains.length > 1 && !multiple) {
+    return { ok: false, status: 400, body: invalidRequest("Enter one email domain.", ["domain"]) }
+  }
+  const name = multiple ? (parsed.data.name?.trim() || null) : undefined
+
+  const previous = request.capture ? await getSsoConnectionAuditState(request.target === undefined ? await getOrganizationSsoConnection(payload.organization.id) : request.target) : null
+  const { domains: _domains, domain: _domain, name: _name, ...config } = parsed.data
+  const common = {
+    organizationId: payload.organization.id,
+    organizationSlug: payload.organization.slug,
+    headers: request.headers,
+    domain: serializeSsoDomains(domains.domains),
+    target: request.target,
+    name,
+    reuseVerifiedDomains: multiple,
+  }
+  const connection = "entryPoint" in config
+    ? await registerOrganizationSsoConnection({ ...common, ...config, kind: "saml" })
+    : await registerOrganizationSsoConnection({ ...common, ...config, kind: "oidc" })
+  // Registration runs through better-auth's adapter and several short
+  // transactions: the after-snapshot is appended in a fresh transaction.
+  const auditEventIds = await appendDomainChangesAfterCommit(request.capture, "sso_connection.registered", async () => {
+    // primary: the registration above just wrote it.
+    const current = await getSsoConnectionAuditState(connection, db.$primary)
+    return current ? [ssoConnectionRegisteredEvent(payload.organization.id, previous, current)] : []
+  })
+  const domainVerificationToken = await requestDomainVerificationToken(connection.providerId, request.headers).catch(() => null)
+
+  await finishLegacyAuditAction(request.capture, {
+    organizationId: payload.organization.id,
+    actorUserId: payload.currentMember.userId,
+    action: ORGANIZATION_AUDIT_ACTIONS.ssoConnectionRegistered,
+    payload: {
+      ssoConnectionId: connection.id,
+      providerId: connection.providerId,
+      kind: connection.kind,
+      issuer: connection.issuer,
+      domain: connection.domain,
+    },
+  }, auditEventIds)
+
+  return { ok: true, connection, domainVerificationToken }
+}
+
+async function deleteConnection(payload: OrganizationPayload, connection: SsoConnection, capture: AuditChangeCapture | null) {
+  const deleted = await deleteOrganizationSsoConnection(payload.organization.id, capture, connection)
+  if (!deleted) return
+  await finishLegacyAuditAction(capture, {
+    organizationId: payload.organization.id,
+    actorUserId: payload.currentMember.userId,
+    action: ORGANIZATION_AUDIT_ACTIONS.ssoConnectionDeleted,
+    payload: {
+      ssoConnectionId: connection.id,
+      providerId: connection.providerId,
+      kind: connection.kind,
+      issuer: connection.issuer,
+      domain: connection.domain,
+    },
+  }, deleted.auditEventIds)
+}
+
+async function createTest(payload: OrganizationPayload, connection: SsoConnection) {
+  const intent = await createOrganizationSsoTestIntent({
+    connection,
+    userId: payload.currentMember.userId,
+  })
+  if (!intent.ok) return intent
+  const testUrl = new URL("/sso/test", getWebOrigin())
+  testUrl.searchParams.set("intentId", intent.intentId)
+  testUrl.searchParams.set("organizationId", payload.organization.id)
+  return { ok: true as const, intentId: intent.intentId, expiresAt: intent.expiresAt.toISOString(), testUrl: testUrl.toString() }
+}
+
+async function enableConnection(payload: OrganizationPayload, connection: SsoConnection | null, capture: AuditChangeCapture | null) {
+  const enabled = await enableOrganizationSsoConnection(connection, capture)
+  if (!enabled.ok) return enabled
+  if (!await organizationFeatureEnabled(payload.organization.id, "ssoPerOrganization")) {
+    // Until ssoPerOrganization is on, enabled SSO is the only way in
+    // whatever "Require SSO" holds. Store that, so turning the flag on
+    // later keeps it required (migration 0180 did the same for
+    // organizations with SSO before). With the flag on, a new SSO
+    // connection starts optional until an admin requires it.
+    await updateOrganizationSettings({ organizationId: payload.organization.id, requireSso: true })
+  }
+  await finishLegacyAuditAction(capture, {
+    organizationId: payload.organization.id,
+    actorUserId: payload.currentMember.userId,
+    action: ORGANIZATION_AUDIT_ACTIONS.ssoConnectionEnabled,
+    payload: { ssoConnectionId: enabled.connectionId, providerId: enabled.providerId },
+  }, enabled.auditEventIds)
+  return enabled
+}
+
+async function disableConnection(payload: OrganizationPayload, connection: SsoConnection | null, capture: AuditChangeCapture | null) {
+  const disabled = await disableOrganizationSsoConnection(connection, capture)
+  if (!disabled.ok) return disabled
+  await finishLegacyAuditAction(capture, {
+    organizationId: payload.organization.id,
+    actorUserId: payload.currentMember.userId,
+    action: ORGANIZATION_AUDIT_ACTIONS.ssoConnectionDisabled,
+    payload: { ssoConnectionId: disabled.connectionId, providerId: disabled.providerId },
+  }, disabled.auditEventIds)
+  return disabled
+}
+
+type DomainTokenOutcome =
+  | { ok: true; domainVerificationToken: string }
+  | { ok: false; message: string }
+
+async function domainVerificationTokenFor(connection: SsoConnection, headers: Headers): Promise<DomainTokenOutcome> {
+  if (connection.domainVerificationToken) {
+    return { ok: true, domainVerificationToken: connection.domainVerificationToken }
+  }
+
+  let body: { domainVerificationToken?: string } | null = null
+  try {
+    body = await auth.api.requestDomainVerification({
+      body: { providerId: connection.providerId },
+      headers,
+    })
+  } catch (error) {
+    return { ok: false, message: error instanceof Error ? error.message : "Could not request a domain verification token." }
+  }
+
+  return body?.domainVerificationToken
+    ? { ok: true, domainVerificationToken: body.domainVerificationToken }
+    : { ok: false, message: "Could not request a domain verification token." }
+}
+
+async function verifyConnectionDomain(connection: SsoConnection, headers: Headers): Promise<{ ok: true } | { ok: false; message: string }> {
+  try {
+    await auth.api.verifyDomain({
+      body: { providerId: connection.providerId },
+      headers,
+    })
+    return { ok: true }
+  } catch (error) {
+    return { ok: false, message: error instanceof Error ? error.message : "Could not verify the SSO domain." }
+  }
+}
+
+const sharedErrorResponses = {
+  400: { description: "Invalid request", content: { "application/json": { schema: resolver(invalidRequestSchema) } } },
+  401: { description: "Unauthorized", content: { "application/json": { schema: resolver(unauthorizedSchema) } } },
+}
+
+const manageForbidden = { description: "The caller needs the Manage single sign-on permission and a recent sign-in.", content: { "application/json": { schema: resolver(forbiddenSchema) } } }
+const viewForbidden = { description: "The caller needs the View single sign-on permission.", content: { "application/json": { schema: resolver(forbiddenSchema) } } }
+const planRequired = { description: "SSO management requires a Team or Enterprise plan.", content: { "application/json": { schema: resolver(enterprisePlanRequiredSchema) } } }
+const organizationNotFound = { description: "Organization not found", content: { "application/json": { schema: resolver(organizationNotFoundSchema) } } }
+const connectionNotFound = { description: "The connection does not exist in this organization, or multipleSsoConnections is off.", content: { "application/json": { schema: resolver(connectionNotFoundSchema) } } }
+
 export function registerOrgSsoRoutes<T extends { Variables: OrgRouteVariables }>(app: Hono<T>) {
   app.get(
     "/v1/sso",
     describeRoute({
       tags: ["SSO"],
       summary: "Get organization SSO connection",
-      description: "Returns the current organization SSO connection and setup URLs.",
+      description: "Returns the organization's SSO connection and setup URLs. With several connections (multipleSsoConnections) this is the oldest; GET /v1/sso/connections lists them all.",
       security: [{ bearerAuth: [] }],
       responses: {
         200: { description: "Organization SSO configuration", content: { "application/json": { schema: resolver(ssoConnectionResponseSchema) } } },
-        400: { description: "Invalid request", content: { "application/json": { schema: resolver(invalidRequestSchema) } } },
-        401: { description: "Unauthorized", content: { "application/json": { schema: resolver(unauthorizedSchema) } } },
-        403: { description: "The caller needs the View single sign-on permission.", content: { "application/json": { schema: resolver(forbiddenSchema) } } },
-        404: { description: "Organization not found", content: { "application/json": { schema: resolver(organizationNotFoundSchema) } } },
+        ...sharedErrorResponses,
+        403: viewForbidden,
+        404: organizationNotFound,
       },
     }),
     orgPermissionRoute("sso.view"),
@@ -301,226 +563,411 @@ export function registerOrgSsoRoutes<T extends { Variables: OrgRouteVariables }>
       }
 
       return c.json({
-        connection: await buildConnectionPayload(connection, c.req.url),
+        connection: await buildConnectionPayload(connection),
       })
     },
   )
 
-  app.post(
-    "/v1/sso/saml",
+  app.get(
+    "/v1/sso/connections",
     describeRoute({
       tags: ["SSO"],
-      summary: "Register organization SAML SSO",
-      description: "Registers or replaces the active organization SAML SSO provider.",
+      summary: "List organization SSO connections",
+      description: "Returns every SSO connection of the organization, oldest first, each with its setup URLs, domains, verification, test and enabled state. Requires multipleSsoConnections.",
       security: [{ bearerAuth: [] }],
       responses: {
-        201: { description: "Organization SSO connection created", content: { "application/json": { schema: resolver(ssoConnectionResponseSchema) } } },
-        400: { description: "Invalid request", content: { "application/json": { schema: resolver(invalidRequestSchema) } } },
-        401: { description: "Unauthorized", content: { "application/json": { schema: resolver(unauthorizedSchema) } } },
-        402: { description: "SSO management requires a Team or Enterprise plan.", content: { "application/json": { schema: resolver(enterprisePlanRequiredSchema) } } },
-        403: { description: "The caller needs the Manage single sign-on permission and a recent sign-in.", content: { "application/json": { schema: resolver(forbiddenSchema) } } },
-        404: { description: "Organization not found", content: { "application/json": { schema: resolver(organizationNotFoundSchema) } } },
+        200: { description: "Organization SSO connections", content: { "application/json": { schema: resolver(ssoConnectionListResponseSchema) } } },
+        ...sharedErrorResponses,
+        403: viewForbidden,
+        404: connectionNotFound,
       },
     }),
-    orgPermissionRoute("sso.manage"),
+    orgMemberRoute(),
+    requireFeature(MULTIPLE_SSO_CONNECTIONS),
+    requireOrgPermission("sso.view"),
     async (c) => {
-      const entitlement = checkEntitlement(c.get("organizationContext").organization.metadata, "sso")
-      if (!entitlement.ok) {
-        return c.json(entitlement.response, entitlement.status)
-      }
-
-      const parsed = samlRegistrationSchema.safeParse(await c.req.json())
-      if (!parsed.success) {
-        return c.json({
-          error: "invalid_request",
-          details: parsed.error.issues.map((issue) => ({ message: issue.message, path: issue.path })),
-        }, 400)
-      }
-
       const payload = c.get("organizationContext")
-      const capture = auditChangeCapture(c)
-      const previous = capture ? await getOrganizationSsoAuditState(payload.organization.id) : null
-      const connection = await registerOrganizationSsoConnection({
-        kind: "saml",
-        organizationId: payload.organization.id,
-        organizationSlug: payload.organization.slug,
-        headers: c.req.raw.headers,
-        ...parsed.data,
-      })
-      // Registration runs through better-auth's adapter and several short
-      // transactions: the after-snapshot is appended in a fresh transaction.
-      const auditEventIds = await appendDomainChangesAfterCommit(capture, "sso_connection.registered", async () => {
-        // primary: the registration above just wrote it.
-        const current = await getOrganizationSsoAuditState(payload.organization.id, db.$primary)
-        return current ? [ssoConnectionRegisteredEvent(payload.organization.id, previous, current)] : []
-      })
-      const domainVerificationToken = await requestDomainVerificationToken(connection.providerId, c.req.raw.headers).catch(() => null)
+      const connections = await listOrganizationSsoConnections(payload.organization.id)
+      return c.json({ connections: await Promise.all(connections.map((connection) => buildConnectionPayload(connection))) })
+    },
+  )
 
-      await finishLegacyAuditAction(capture, {
-        organizationId: payload.organization.id,
-        actorUserId: payload.currentMember.userId,
-        action: ORGANIZATION_AUDIT_ACTIONS.ssoConnectionRegistered,
-        payload: {
-          ssoConnectionId: connection.id,
-          providerId: connection.providerId,
-          kind: connection.kind,
-          issuer: connection.issuer,
-          domain: connection.domain,
+  app.get(
+    "/v1/sso/connections/:connectionId",
+    describeRoute({
+      tags: ["SSO"],
+      summary: "Get an SSO connection",
+      description: "Returns one SSO connection of the organization with its setup URLs, domains, verification, test and enabled state. Requires multipleSsoConnections.",
+      security: [{ bearerAuth: [] }],
+      responses: {
+        200: { description: "Organization SSO connection", content: { "application/json": { schema: resolver(ssoConnectionResponseSchema) } } },
+        ...sharedErrorResponses,
+        403: viewForbidden,
+        404: connectionNotFound,
+      },
+    }),
+    orgMemberRoute(),
+    requireFeature(MULTIPLE_SSO_CONNECTIONS),
+    requireOrgPermission("sso.view"),
+    async (c) => {
+      const payload = c.get("organizationContext")
+      const connection = await resolveConnection("connection", payload.organization.id, c.req.param("connectionId"))
+      if (!connection) return c.json(notFoundBody("connection"), 404)
+      return c.json({ connection: await buildConnectionPayload(connection) })
+    },
+  )
+
+  for (const kind of ["saml", "oidc"] as const) {
+    const label = kind === "saml" ? "SAML" : "OIDC"
+
+    app.post(
+      `/v1/sso/${kind}`,
+      describeRoute({
+        tags: ["SSO"],
+        summary: `Register organization ${label} SSO`,
+        description: `Registers or replaces the organization's ${label} SSO provider (with several connections, the oldest one). The connection is disabled until its domain is verified and it is tested and enabled.`,
+        security: [{ bearerAuth: [] }],
+        responses: {
+          201: { description: "Organization SSO connection created", content: { "application/json": { schema: resolver(ssoConnectionResponseSchema) } } },
+          ...sharedErrorResponses,
+          402: planRequired,
+          403: manageForbidden,
+          404: organizationNotFound,
         },
-      }, auditEventIds)
-
-      return c.json({ connection: await buildConnectionPayload(connection, c.req.url, db.$primary), domainVerificationToken }, 201)
-    },
-  )
-
-  app.post(
-    "/v1/sso/oidc",
-    describeRoute({
-      tags: ["SSO"],
-      summary: "Register organization OIDC SSO",
-      description: "Registers or replaces the active organization OIDC SSO provider.",
-      security: [{ bearerAuth: [] }],
-      responses: {
-        201: { description: "Organization SSO connection created", content: { "application/json": { schema: resolver(ssoConnectionResponseSchema) } } },
-        400: { description: "Invalid request", content: { "application/json": { schema: resolver(invalidRequestSchema) } } },
-        401: { description: "Unauthorized", content: { "application/json": { schema: resolver(unauthorizedSchema) } } },
-        402: { description: "SSO management requires a Team or Enterprise plan.", content: { "application/json": { schema: resolver(enterprisePlanRequiredSchema) } } },
-        403: { description: "The caller needs the Manage single sign-on permission and a recent sign-in.", content: { "application/json": { schema: resolver(forbiddenSchema) } } },
-        404: { description: "Organization not found", content: { "application/json": { schema: resolver(organizationNotFoundSchema) } } },
+      }),
+      orgPermissionRoute("sso.manage"),
+      async (c) => {
+        const payload = c.get("organizationContext")
+        const outcome = await registerConnection({ kind, payload, headers: c.req.raw.headers, capture: auditChangeCapture(c), body: await c.req.json().catch(() => null), target: undefined })
+        if (!outcome.ok) return outcome.status === 402 ? c.json(outcome.body, 402) : c.json(outcome.body, 400)
+        return c.json({ connection: await buildConnectionPayload(outcome.connection, db.$primary), domainVerificationToken: outcome.domainVerificationToken }, 201)
       },
-    }),
-    orgPermissionRoute("sso.manage"),
-    async (c) => {
-      const entitlement = checkEntitlement(c.get("organizationContext").organization.metadata, "sso")
-      if (!entitlement.ok) {
-        return c.json(entitlement.response, entitlement.status)
-      }
+    )
 
-      const parsed = oidcRegistrationSchema.safeParse(await c.req.json())
-      if (!parsed.success) {
-        return c.json({
-          error: "invalid_request",
-          details: parsed.error.issues.map((issue) => ({ message: issue.message, path: issue.path })),
-        }, 400)
-      }
-
-      const payload = c.get("organizationContext")
-      const capture = auditChangeCapture(c)
-      const previous = capture ? await getOrganizationSsoAuditState(payload.organization.id) : null
-      const connection = await registerOrganizationSsoConnection({
-        kind: "oidc",
-        organizationId: payload.organization.id,
-        organizationSlug: payload.organization.slug,
-        headers: c.req.raw.headers,
-        ...parsed.data,
-      })
-      // Registration runs through better-auth's adapter and several short
-      // transactions: the after-snapshot is appended in a fresh transaction.
-      const auditEventIds = await appendDomainChangesAfterCommit(capture, "sso_connection.registered", async () => {
-        // primary: the registration above just wrote it.
-        const current = await getOrganizationSsoAuditState(payload.organization.id, db.$primary)
-        return current ? [ssoConnectionRegisteredEvent(payload.organization.id, previous, current)] : []
-      })
-      const domainVerificationToken = await requestDomainVerificationToken(connection.providerId, c.req.raw.headers).catch(() => null)
-
-      await finishLegacyAuditAction(capture, {
-        organizationId: payload.organization.id,
-        actorUserId: payload.currentMember.userId,
-        action: ORGANIZATION_AUDIT_ACTIONS.ssoConnectionRegistered,
-        payload: {
-          ssoConnectionId: connection.id,
-          providerId: connection.providerId,
-          kind: connection.kind,
-          issuer: connection.issuer,
-          domain: connection.domain,
+    app.post(
+      `/v1/sso/connections/${kind}`,
+      describeRoute({
+        tags: ["SSO"],
+        summary: `Add an organization ${label} SSO connection`,
+        description: `Adds a ${label} SSO connection next to the organization's existing ones, for another identity provider or other email domains. It starts disabled: verify its domains (or reuse domains another connection already verified), test it and enable it. Requires multipleSsoConnections.`,
+        security: [{ bearerAuth: [] }],
+        responses: {
+          201: { description: "Organization SSO connection created", content: { "application/json": { schema: resolver(ssoConnectionResponseSchema) } } },
+          ...sharedErrorResponses,
+          402: planRequired,
+          403: manageForbidden,
+          404: connectionNotFound,
         },
-      }, auditEventIds)
+      }),
+      orgMemberRoute(),
+      requireFeature(MULTIPLE_SSO_CONNECTIONS),
+      requireOrgPermission("sso.manage"),
+      async (c) => {
+        const payload = c.get("organizationContext")
+        const outcome = await registerConnection({ kind, payload, headers: c.req.raw.headers, capture: auditChangeCapture(c), body: await c.req.json().catch(() => null), target: null })
+        if (!outcome.ok) return outcome.status === 402 ? c.json(outcome.body, 402) : c.json(outcome.body, 400)
+        return c.json({ connection: await buildConnectionPayload(outcome.connection, db.$primary), domainVerificationToken: outcome.domainVerificationToken }, 201)
+      },
+    )
 
-      return c.json({ connection: await buildConnectionPayload(connection, c.req.url, db.$primary), domainVerificationToken }, 201)
+    app.post(
+      `/v1/sso/connections/:connectionId/${kind}`,
+      describeRoute({
+        tags: ["SSO"],
+        summary: `Replace an SSO connection's configuration with ${label}`,
+        description: "Replaces one connection's identity provider configuration and domains. It is disabled until its domains are verified and the new configuration is tested and enabled again. Requires multipleSsoConnections.",
+        security: [{ bearerAuth: [] }],
+        responses: {
+          201: { description: "Organization SSO connection updated", content: { "application/json": { schema: resolver(ssoConnectionResponseSchema) } } },
+          ...sharedErrorResponses,
+          402: planRequired,
+          403: manageForbidden,
+          404: connectionNotFound,
+        },
+      }),
+      orgMemberRoute(),
+      requireFeature(MULTIPLE_SSO_CONNECTIONS),
+      requireOrgPermission("sso.manage"),
+      async (c) => {
+        const payload = c.get("organizationContext")
+        const target = await resolveConnection("connection", payload.organization.id, c.req.param("connectionId"))
+        if (!target) return c.json(notFoundBody("connection"), 404)
+        const outcome = await registerConnection({ kind, payload, headers: c.req.raw.headers, capture: auditChangeCapture(c), body: await c.req.json().catch(() => null), target })
+        if (!outcome.ok) return outcome.status === 402 ? c.json(outcome.body, 402) : c.json(outcome.body, 400)
+        return c.json({ connection: await buildConnectionPayload(outcome.connection, db.$primary), domainVerificationToken: outcome.domainVerificationToken }, 201)
+      },
+    )
+  }
+
+  app.patch(
+    "/v1/sso/connections/:connectionId",
+    describeRoute({
+      tags: ["SSO"],
+      summary: "Rename an SSO connection",
+      description: "Changes the name sign-in buttons and the SSO page show for a connection. Its provider configuration, verification, test and enabled state stay as they are. Requires multipleSsoConnections.",
+      security: [{ bearerAuth: [] }],
+      responses: {
+        200: { description: "Organization SSO connection renamed", content: { "application/json": { schema: resolver(ssoConnectionResponseSchema) } } },
+        ...sharedErrorResponses,
+        403: manageForbidden,
+        404: connectionNotFound,
+      },
+    }),
+    orgMemberRoute(),
+    requireFeature(MULTIPLE_SSO_CONNECTIONS),
+    requireOrgPermission("sso.manage"),
+    async (c) => {
+      const payload = c.get("organizationContext")
+      const parsed = renameConnectionSchema.safeParse(await c.req.json().catch(() => null))
+      if (!parsed.success) return c.json(invalidRequest(parsed.error.issues[0]?.message ?? "Enter a name of up to 120 characters.", ["name"]), 400)
+      const connection = await resolveConnection("connection", payload.organization.id, c.req.param("connectionId"))
+      if (!connection) return c.json(notFoundBody("connection"), 404)
+      const renamed = await renameOrganizationSsoConnection(connection, parsed.data.name?.trim() || null, auditChangeCapture(c))
+      if (!renamed) return c.json(notFoundBody("connection"), 404)
+      return c.json({ connection: await buildConnectionPayload(renamed.connection, db.$primary) })
     },
   )
 
-  app.delete(
-    "/v1/sso",
-    describeRoute({
-      tags: ["SSO"],
-      summary: "Delete organization SSO connection",
-      description: "Deletes the active organization SSO connection.",
-      security: [{ bearerAuth: [] }],
-      responses: {
-        204: { description: "Organization SSO connection deleted" },
-        400: { description: "Invalid request", content: { "application/json": { schema: resolver(invalidRequestSchema) } } },
-        401: { description: "Unauthorized", content: { "application/json": { schema: resolver(unauthorizedSchema) } } },
-        403: { description: "The caller needs the Manage single sign-on permission and a recent sign-in.", content: { "application/json": { schema: resolver(forbiddenSchema) } } },
-        404: { description: "Organization not found", content: { "application/json": { schema: resolver(organizationNotFoundSchema) } } },
+  for (const scope of ["primary", "connection"] as const) {
+    const base = scope === "primary" ? "/v1/sso" : "/v1/sso/connections/:connectionId"
+    const which = scope === "primary" ? "the organization's SSO connection (the oldest, with several)" : "one SSO connection (multipleSsoConnections)"
+    const notFound = scope === "primary" ? organizationNotFound : connectionNotFound
+    // Connection routes answer 404 feature_disabled before any permission
+    // check; orgMemberRoute + requireOrgPermission is orgPermissionRoute.
+    const featureGate = scope === "primary" ? passThrough : requireFeature(MULTIPLE_SSO_CONNECTIONS)
+
+    app.delete(
+      base,
+      describeRoute({
+        tags: ["SSO"],
+        summary: scope === "primary" ? "Delete organization SSO connection" : "Delete an SSO connection",
+        description: `Deletes ${which}, its provider and the SSO identities it created. The organization's other connections are unchanged.`,
+        security: [{ bearerAuth: [] }],
+        responses: {
+          204: { description: "Organization SSO connection deleted" },
+          ...sharedErrorResponses,
+          403: manageForbidden,
+          404: notFound,
+        },
+      }),
+      orgMemberRoute(),
+      featureGate,
+      requireOrgPermission("sso.manage"),
+      async (c) => {
+        const payload = c.get("organizationContext")
+        const connection = await resolveConnection(scope, payload.organization.id, c.req.param("connectionId"))
+        if (connection) {
+          await deleteConnection(payload, connection, auditChangeCapture(c))
+        } else if (scope === "connection") {
+          return c.json(notFoundBody(scope), 404)
+        }
+        return c.body(null, 204)
       },
-    }),
-    orgPermissionRoute("sso.manage"),
-    async (c) => {
-      const payload = c.get("organizationContext")
-      const connection = await getOrganizationSsoConnection(payload.organization.id)
-      const capture = auditChangeCapture(c)
-      const deleted = await deleteOrganizationSsoConnection(payload.organization.id, capture)
-      if (deleted && connection) {
-        await finishLegacyAuditAction(capture, {
-          organizationId: payload.organization.id,
-          actorUserId: payload.currentMember.userId,
-          action: ORGANIZATION_AUDIT_ACTIONS.ssoConnectionDeleted,
-          payload: {
-            ssoConnectionId: connection.id,
+    )
+
+    app.post(
+      `${base}/test`,
+      describeRoute({
+        tags: ["SSO"],
+        summary: scope === "primary" ? "Create an organization SSO authentication test" : "Create an SSO connection authentication test",
+        description: `Creates a short-lived test of ${which}, bound to its current saved configuration and the initiating administrator.`,
+        security: [{ bearerAuth: [] }],
+        responses: {
+          201: { description: "SSO test created", content: { "application/json": { schema: resolver(ssoTestIntentResponseSchema) } } },
+          402: planRequired,
+          404: notFound,
+          409: { description: "SSO configuration cannot be tested", content: { "application/json": { schema: resolver(ssoLifecycleErrorSchema) } } },
+        },
+      }),
+      orgMemberRoute(),
+      featureGate,
+      requireOrgPermission("sso.manage"),
+      async (c) => {
+        const payload = c.get("organizationContext")
+        const entitlement = checkEntitlement(payload.organization.metadata, "sso")
+        if (!entitlement.ok) return c.json(entitlement.response, entitlement.status)
+        const connection = await resolveConnection(scope, payload.organization.id, c.req.param("connectionId"))
+        if (!connection) return c.json(notFoundBody(scope), 404)
+        const test = await createTest(payload, connection)
+        if (!test.ok) return c.json({ error: "sso_lifecycle_error", message: test.message }, 409)
+        return c.json({ intentId: test.intentId, expiresAt: test.expiresAt, testUrl: test.testUrl }, 201)
+      },
+    )
+
+    app.post(
+      `${base}/enable`,
+      describeRoute({
+        tags: ["SSO"],
+        summary: scope === "primary" ? "Enable the tested organization SSO configuration" : "Enable a tested SSO connection",
+        description: `Switches ${which} to enabled once its domains are verified and its current configuration revision has a successful test. Any other state, including a configuration edited after its last test, answers 409 with an explanatory message. Requires a Team or Enterprise plan; the change is recorded in the organization audit log.`,
+        security: [{ bearerAuth: [] }],
+        responses: {
+          204: { description: "SSO enabled" },
+          402: planRequired,
+          404: notFound,
+          409: { description: "SSO configuration cannot be enabled", content: { "application/json": { schema: resolver(ssoLifecycleErrorSchema) } } },
+        },
+      }),
+      orgMemberRoute(),
+      featureGate,
+      requireOrgPermission("sso.manage"),
+      async (c) => {
+        const payload = c.get("organizationContext")
+        const entitlement = checkEntitlement(payload.organization.metadata, "sso")
+        if (!entitlement.ok) return c.json(entitlement.response, entitlement.status)
+        const connection = await resolveConnection(scope, payload.organization.id, c.req.param("connectionId"))
+        if (!connection && scope === "connection") return c.json(notFoundBody(scope), 404)
+        const enabled = await enableConnection(payload, connection ?? null, auditChangeCapture(c))
+        if (!enabled.ok) return c.json({ error: "sso_lifecycle_error", message: enabled.message }, 409)
+        return c.body(null, 204)
+      },
+    )
+
+    app.post(
+      `${base}/disable`,
+      describeRoute({
+        tags: ["SSO"],
+        summary: scope === "primary" ? "Disable organization SSO" : "Disable an SSO connection",
+        description: `Switches ${which} to disabled while keeping its provider configuration, so it can be tested and enabled again later. The organization's other connections keep signing people in. Answers 404 when there is no such connection; the change is recorded in the organization audit log.`,
+        security: [{ bearerAuth: [] }],
+        responses: {
+          204: { description: "SSO disabled" },
+          ...sharedErrorResponses,
+          403: manageForbidden,
+          404: notFound,
+        },
+      }),
+      orgMemberRoute(),
+      featureGate,
+      requireOrgPermission("sso.manage"),
+      async (c) => {
+        const payload = c.get("organizationContext")
+        const connection = await resolveConnection(scope, payload.organization.id, c.req.param("connectionId"))
+        const disabled = await disableConnection(payload, connection ?? null, auditChangeCapture(c))
+        if (!disabled.ok) return c.json(notFoundBody(scope), 404)
+        return c.body(null, 204)
+      },
+    )
+
+    app.get(
+      `${base}/metadata`,
+      describeRoute({
+        tags: ["SSO"],
+        summary: scope === "primary" ? "Get organization SAML SP metadata" : "Get an SSO connection's SAML SP metadata",
+        description: `Returns the generated Service Provider metadata for ${which}, when it uses SAML.`,
+        security: [{ bearerAuth: [] }],
+        responses: {
+          200: xmlResponse("SAML Service Provider metadata (an `EntityDescriptor` XML document) served as `application/xml`."),
+          ...sharedErrorResponses,
+          403: viewForbidden,
+          404: notFound,
+        },
+      }),
+      orgMemberRoute(),
+      featureGate,
+      requireOrgPermission("sso.view"),
+      async (c) => {
+        const parsed = metadataQuerySchema.safeParse(c.req.query())
+        if (!parsed.success) {
+          return c.json({
+            error: "invalid_request",
+            details: parsed.error.issues.map((issue) => ({ message: issue.message, path: issue.path })),
+          }, 400)
+        }
+
+        const payload = c.get("organizationContext")
+        const connection = await resolveConnection(scope, payload.organization.id, c.req.param("connectionId"))
+        if (!connection || connection.kind !== "saml") {
+          return c.json(notFoundBody(scope), 404)
+        }
+
+        return auth.api.spMetadata({
+          query: {
             providerId: connection.providerId,
-            kind: connection.kind,
-            issuer: connection.issuer,
-            domain: connection.domain,
           },
-        }, deleted.auditEventIds)
-      }
-      return c.body(null, 204)
-    },
-  )
-
-  app.post(
-    "/v1/sso/test",
-    describeRoute({
-      tags: ["SSO"],
-      summary: "Create an organization SSO authentication test",
-      description: "Creates a short-lived test bound to the current saved configuration and initiating administrator.",
-      security: [{ bearerAuth: [] }],
-      responses: {
-        201: { description: "SSO test created", content: { "application/json": { schema: resolver(ssoTestIntentResponseSchema) } } },
-        409: { description: "SSO configuration cannot be tested", content: { "application/json": { schema: resolver(ssoLifecycleErrorSchema) } } },
+        })
       },
-    }),
-    orgPermissionRoute("sso.manage"),
-    async (c) => {
-      const payload = c.get("organizationContext")
-      const entitlement = checkEntitlement(payload.organization.metadata, "sso")
-      if (!entitlement.ok) return c.json(entitlement.response, entitlement.status)
-      const connection = await getOrganizationSsoConnection(payload.organization.id)
-      if (!connection) return c.json({ error: "organization_not_found" }, 404)
+    )
 
-      const intent = await createOrganizationSsoTestIntent({
-        connection,
-        userId: payload.currentMember.userId,
-      })
-      if (!intent.ok) return c.json({ error: "sso_lifecycle_error", message: intent.message }, 409)
-      const testUrl = new URL("/sso/test", getWebOrigin())
-      testUrl.searchParams.set("intentId", intent.intentId)
-      testUrl.searchParams.set("organizationId", payload.organization.id)
-      return c.json({
-        intentId: intent.intentId,
-        expiresAt: intent.expiresAt.toISOString(),
-        testUrl: testUrl.toString(),
-      }, 201)
-    },
-  )
+    app.post(
+      `${base}/request-domain-verification`,
+      describeRoute({
+        tags: ["SSO"],
+        summary: scope === "primary" ? "Request an SSO domain verification token" : "Request an SSO connection's domain verification token",
+        description: `Returns the DNS TXT verification token for ${which}. One token verifies every domain the connection lists: publish it at each domain's record name.`,
+        security: [{ bearerAuth: [] }],
+        responses: {
+          201: { description: "Domain verification token returned", content: { "application/json": { schema: resolver(domainVerificationResponseSchema) } } },
+          ...sharedErrorResponses,
+          402: planRequired,
+          403: manageForbidden,
+          404: notFound,
+        },
+      }),
+      orgMemberRoute(),
+      featureGate,
+      requireOrgPermission("sso.manage"),
+      async (c) => {
+        const payload = c.get("organizationContext")
+        const entitlement = checkEntitlement(payload.organization.metadata, "sso")
+        if (!entitlement.ok) {
+          return c.json(entitlement.response, entitlement.status)
+        }
+
+        const connection = await resolveConnection(scope, payload.organization.id, c.req.param("connectionId"))
+        if (!connection) {
+          return c.json(notFoundBody(scope), 404)
+        }
+
+        const token = await domainVerificationTokenFor(connection, c.req.raw.headers)
+        if (!token.ok) return c.json(invalidRequest(token.message), 400)
+        return c.json({ domainVerificationToken: token.domainVerificationToken }, 201)
+      },
+    )
+
+    app.post(
+      `${base}/verify-domain`,
+      describeRoute({
+        tags: ["SSO"],
+        summary: scope === "primary" ? "Verify the organization SSO domain" : "Verify an SSO connection's domains",
+        description: `Checks the DNS TXT record of every domain ${which} lists and marks them verified when all are present.`,
+        security: [{ bearerAuth: [] }],
+        responses: {
+          204: { description: "Organization SSO domain verified" },
+          ...sharedErrorResponses,
+          402: planRequired,
+          403: manageForbidden,
+          404: notFound,
+        },
+      }),
+      orgMemberRoute(),
+      featureGate,
+      requireOrgPermission("sso.manage"),
+      async (c) => {
+        const payload = c.get("organizationContext")
+        const entitlement = checkEntitlement(payload.organization.metadata, "sso")
+        if (!entitlement.ok) {
+          return c.json(entitlement.response, entitlement.status)
+        }
+
+        const connection = await resolveConnection(scope, payload.organization.id, c.req.param("connectionId"))
+        if (!connection) {
+          return c.json(notFoundBody(scope), 404)
+        }
+
+        const verified = await verifyConnectionDomain(connection, c.req.raw.headers)
+        if (!verified.ok) return c.json(invalidRequest(verified.message), 400)
+        return c.body(null, 204)
+      },
+    )
+  }
 
   app.post(
     "/v1/sso/test/:intentId/start",
     describeRoute({
       tags: ["SSO"],
       summary: "Start an organization SSO authentication test",
-      description: "Uses a short-lived single-use test intent to start real provider authentication.",
+      description: "Uses a short-lived single-use test intent to start real provider authentication with the connection it tests.",
       security: [{ bearerAuth: [] }],
       responses: {
         200: { description: "Provider authentication URL", content: { "application/json": { schema: resolver(ssoTestStartResponseSchema) } } },
@@ -577,229 +1024,22 @@ export function registerOrgSsoRoutes<T extends { Variables: OrgRouteVariables }>
       responses: {
         204: { description: "SSO test cancelled" },
         401: { description: "Unauthorized", content: { "application/json": { schema: resolver(unauthorizedSchema) } } },
-        403: { description: "The caller needs the Manage single sign-on permission and a recent sign-in.", content: { "application/json": { schema: resolver(forbiddenSchema) } } },
-        404: { description: "Organization not found", content: { "application/json": { schema: resolver(organizationNotFoundSchema) } } },
+        403: manageForbidden,
+        404: organizationNotFound,
       },
     }),
     orgPermissionRoute("sso.manage"),
     async (c) => {
       const payload = c.get("organizationContext")
-      const connection = await getOrganizationSsoConnection(payload.organization.id)
       const intentId = c.req.param("intentId")
-      if (connection?.activeTestIntentId === intentId && connection.activeTestUserId === payload.currentMember.userId) {
+      const [connection] = await db.$primary
+        .select({ activeTestUserId: SsoConnectionTable.activeTestUserId })
+        .from(SsoConnectionTable)
+        .where(and(eq(SsoConnectionTable.organizationId, payload.organization.id), eq(SsoConnectionTable.activeTestIntentId, intentId)))
+        .limit(1)
+      if (connection?.activeTestUserId === payload.currentMember.userId) {
         await failOrganizationSsoTestIntent(intentId, "cancelled")
       }
-      return c.body(null, 204)
-    },
-  )
-
-  app.post(
-    "/v1/sso/enable",
-    describeRoute({
-      tags: ["SSO"],
-      summary: "Enable the tested organization SSO configuration",
-      description: "Switches the organization's SSO connection to enabled once its domain is verified and the current configuration revision has a successful test. Any other state, including a configuration edited after its last test, answers 409 with an explanatory message. Requires a Team or Enterprise plan; the change is recorded in the organization audit log.",
-      security: [{ bearerAuth: [] }],
-      responses: {
-        204: { description: "SSO enabled" },
-        409: { description: "SSO configuration cannot be enabled", content: { "application/json": { schema: resolver(ssoLifecycleErrorSchema) } } },
-      },
-    }),
-    orgPermissionRoute("sso.manage"),
-    async (c) => {
-      const payload = c.get("organizationContext")
-      const entitlement = checkEntitlement(payload.organization.metadata, "sso")
-      if (!entitlement.ok) return c.json(entitlement.response, entitlement.status)
-      const capture = auditChangeCapture(c)
-      const enabled = await enableOrganizationSsoConnection(payload.organization.id, capture)
-      if (!enabled.ok) return c.json({ error: "sso_lifecycle_error", message: enabled.message }, 409)
-      if (!await organizationFeatureEnabled(payload.organization.id, "ssoPerOrganization")) {
-        // Until ssoPerOrganization is on, enabled SSO is the only way in
-        // whatever "Require SSO" holds. Store that, so turning the flag on
-        // later keeps it required (migration 0180 did the same for
-        // organizations with SSO before). With the flag on, a new SSO
-        // connection starts optional until an admin requires it.
-        await updateOrganizationSettings({ organizationId: payload.organization.id, requireSso: true })
-      }
-      await finishLegacyAuditAction(capture, {
-        organizationId: payload.organization.id,
-        actorUserId: payload.currentMember.userId,
-        action: ORGANIZATION_AUDIT_ACTIONS.ssoConnectionEnabled,
-        payload: { ssoConnectionId: enabled.connectionId, providerId: enabled.providerId },
-      }, enabled.auditEventIds)
-      return c.body(null, 204)
-    },
-  )
-
-  app.post(
-    "/v1/sso/disable",
-    describeRoute({
-      tags: ["SSO"],
-      summary: "Disable organization SSO",
-      description: "Switches the organization's SSO connection to disabled while keeping its provider configuration, so it can be tested and enabled again later. Answers 404 when the organization has no SSO connection; the change is recorded in the organization audit log.",
-      security: [{ bearerAuth: [] }],
-      responses: {
-        204: { description: "SSO disabled" },
-        401: { description: "Unauthorized", content: { "application/json": { schema: resolver(unauthorizedSchema) } } },
-        403: { description: "The caller needs the Manage single sign-on permission and a recent sign-in.", content: { "application/json": { schema: resolver(forbiddenSchema) } } },
-        404: { description: "Organization not found", content: { "application/json": { schema: resolver(organizationNotFoundSchema) } } },
-      },
-    }),
-    orgPermissionRoute("sso.manage"),
-    async (c) => {
-      const payload = c.get("organizationContext")
-      const capture = auditChangeCapture(c)
-      const disabled = await disableOrganizationSsoConnection(payload.organization.id, capture)
-      if (!disabled.ok) return c.json({ error: "organization_not_found" }, 404)
-      await finishLegacyAuditAction(capture, {
-        organizationId: payload.organization.id,
-        actorUserId: payload.currentMember.userId,
-        action: ORGANIZATION_AUDIT_ACTIONS.ssoConnectionDisabled,
-        payload: { ssoConnectionId: disabled.connectionId, providerId: disabled.providerId },
-      }, disabled.auditEventIds)
-      return c.body(null, 204)
-    },
-  )
-
-  app.get(
-    "/v1/sso/metadata",
-    describeRoute({
-      tags: ["SSO"],
-      summary: "Get organization SAML SP metadata",
-      description: "Returns the generated Service Provider metadata for the current organization's SAML connection.",
-      security: [{ bearerAuth: [] }],
-      responses: {
-        200: xmlResponse("SAML Service Provider metadata (an `EntityDescriptor` XML document) served as `application/xml`."),
-        400: { description: "Invalid request", content: { "application/json": { schema: resolver(invalidRequestSchema) } } },
-        401: { description: "Unauthorized", content: { "application/json": { schema: resolver(unauthorizedSchema) } } },
-        403: { description: "The caller needs the View single sign-on permission.", content: { "application/json": { schema: resolver(forbiddenSchema) } } },
-        404: { description: "Organization not found", content: { "application/json": { schema: resolver(organizationNotFoundSchema) } } },
-      },
-    }),
-    orgPermissionRoute("sso.view"),
-    async (c) => {
-      const parsed = metadataQuerySchema.safeParse(c.req.query())
-      if (!parsed.success) {
-        return c.json({
-          error: "invalid_request",
-          details: parsed.error.issues.map((issue) => ({ message: issue.message, path: issue.path })),
-        }, 400)
-      }
-
-      const payload = c.get("organizationContext")
-      const connection = await getOrganizationSsoConnection(payload.organization.id)
-      if (!connection || connection.kind !== "saml") {
-        return c.json({ error: "organization_not_found" }, 404)
-      }
-
-      const response = await auth.api.spMetadata({
-        query: {
-          providerId: connection.providerId,
-        },
-      })
-
-      return response
-    },
-  )
-
-  app.post(
-    "/v1/sso/request-domain-verification",
-    describeRoute({
-      tags: ["SSO"],
-      summary: "Request an SSO domain verification token",
-      description: "Returns the DNS TXT verification token for the current organization's SSO provider.",
-      security: [{ bearerAuth: [] }],
-      responses: {
-        201: { description: "Domain verification token returned", content: { "application/json": { schema: resolver(domainVerificationResponseSchema) } } },
-        400: { description: "Invalid request", content: { "application/json": { schema: resolver(invalidRequestSchema) } } },
-        401: { description: "Unauthorized", content: { "application/json": { schema: resolver(unauthorizedSchema) } } },
-        402: { description: "SSO management requires a Team or Enterprise plan.", content: { "application/json": { schema: resolver(enterprisePlanRequiredSchema) } } },
-        403: { description: "The caller needs the Manage single sign-on permission and a recent sign-in.", content: { "application/json": { schema: resolver(forbiddenSchema) } } },
-        404: { description: "Organization not found", content: { "application/json": { schema: resolver(organizationNotFoundSchema) } } },
-      },
-    }),
-    orgPermissionRoute("sso.manage"),
-    async (c) => {
-      const payload = c.get("organizationContext")
-      const entitlement = checkEntitlement(payload.organization.metadata, "sso")
-      if (!entitlement.ok) {
-        return c.json(entitlement.response, entitlement.status)
-      }
-
-      const connection = await getOrganizationSsoConnection(payload.organization.id)
-      if (!connection) {
-        return c.json({ error: "organization_not_found" }, 404)
-      }
-
-      if (connection.domainVerificationToken) {
-        return c.json({ domainVerificationToken: connection.domainVerificationToken }, 201)
-      }
-
-      let body: { domainVerificationToken?: string } | null = null
-      try {
-        body = await auth.api.requestDomainVerification({
-          body: { providerId: connection.providerId },
-          headers: c.req.raw.headers,
-        })
-      } catch (error) {
-        return c.json({
-          error: "invalid_request",
-          details: [{ message: error instanceof Error ? error.message : "Could not request a domain verification token." }],
-        }, 400)
-      }
-
-      if (!body?.domainVerificationToken) {
-        return c.json({
-          error: "invalid_request",
-          details: [{ message: "Could not request a domain verification token." }],
-        }, 400)
-      }
-
-      return c.json({ domainVerificationToken: body.domainVerificationToken }, 201)
-    },
-  )
-
-  app.post(
-    "/v1/sso/verify-domain",
-    describeRoute({
-      tags: ["SSO"],
-      summary: "Verify the organization SSO domain",
-      description: "Checks the provider's DNS TXT record and marks the domain as verified when present.",
-      security: [{ bearerAuth: [] }],
-      responses: {
-        204: { description: "Organization SSO domain verified" },
-        400: { description: "Invalid request", content: { "application/json": { schema: resolver(invalidRequestSchema) } } },
-        401: { description: "Unauthorized", content: { "application/json": { schema: resolver(unauthorizedSchema) } } },
-        402: { description: "SSO management requires a Team or Enterprise plan.", content: { "application/json": { schema: resolver(enterprisePlanRequiredSchema) } } },
-        403: { description: "The caller needs the Manage single sign-on permission and a recent sign-in.", content: { "application/json": { schema: resolver(forbiddenSchema) } } },
-        404: { description: "Organization not found", content: { "application/json": { schema: resolver(organizationNotFoundSchema) } } },
-      },
-    }),
-    orgPermissionRoute("sso.manage"),
-    async (c) => {
-      const payload = c.get("organizationContext")
-      const entitlement = checkEntitlement(payload.organization.metadata, "sso")
-      if (!entitlement.ok) {
-        return c.json(entitlement.response, entitlement.status)
-      }
-
-      const connection = await getOrganizationSsoConnection(payload.organization.id)
-      if (!connection) {
-        return c.json({ error: "organization_not_found" }, 404)
-      }
-
-      try {
-        await auth.api.verifyDomain({
-          body: { providerId: connection.providerId },
-          headers: c.req.raw.headers,
-        })
-      } catch (error) {
-        return c.json({
-          error: "invalid_request",
-          details: [{ message: error instanceof Error ? error.message : "Could not verify the SSO domain." }],
-        }, 400)
-      }
-
       return c.body(null, 204)
     },
   )

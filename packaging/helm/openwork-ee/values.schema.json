@@ -181,6 +181,16 @@
               ],
               "description": "SSO: sign-in requirement on the SSO page: The \"Require SSO\" and \"Restrict this domain to our SSO\" settings move from Org settings to the top of the SSO page, next to the SSO connection they depend on. Off: they stay in Org settings under Authentication. Renders DEN_FEATURE_SSO_SETTINGS_ON_SSO_PAGE."
             },
+            "multipleSsoConnections": {
+              "enum": [
+                "",
+                "true",
+                "false",
+                true,
+                false
+              ],
+              "description": "SSO: several connections per organization: An organization can set up more than one SSO connection: several identity providers, and each one covering one or more email domains. Each connection is verified, tested and turned on by itself, and sign-in shows one button per identity provider. Off: the SSO page manages a single connection. Renders DEN_FEATURE_MULTIPLE_SSO_CONNECTIONS."
+            },
             "featureIntros": {
               "enum": [
                 "",

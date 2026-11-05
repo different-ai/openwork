@@ -171,6 +171,21 @@ export const orgAuditRoutes: readonly AuditRouteDeclaration[] = [
   member("POST", "/v1/sso/test", "tenant_change", "sso_test.create", "sso.configuration", "sso_test_intent", null),
   member("POST", "/v1/sso/test/:intentId/start", "tenant_external", "sso_test.start", "sso.configuration", "sso_test_intent", "intentId", { external: "sso_idp (better-auth signInSSO; OIDC discovery)" }),
   member("POST", "/v1/sso/test/:intentId/cancel", "tenant_change", "sso_test.cancel", "sso.configuration", "sso_test_intent", "intentId"),
+  // multipleSsoConnections: the same actions on one connection by id.
+  member("GET", "/v1/sso/connections", "tenant_read", "sso_connection.list", "sso.configuration", "sso_connection", null),
+  member("GET", "/v1/sso/connections/:connectionId", "tenant_read", "sso_connection.read_one", "sso.configuration", "sso_connection", "connectionId"),
+  member("POST", "/v1/sso/connections/saml", "tenant_change", "sso_connection.saml.add", "sso.configuration", "sso_connection", null, { changeEvidence: DOMAIN("sso"), notes: "Legacy organization.sso.connection_registered (kind saml); better-auth registerSSOProvider write for a new connection." }),
+  member("POST", "/v1/sso/connections/oidc", "tenant_external", "sso_connection.oidc.add", "sso.configuration", "sso_connection", null, { changeEvidence: DOMAIN("sso"), external: "oidc_idp (issuer discovery)", notes: "Legacy organization.sso.connection_registered (kind oidc); better-auth registerSSOProvider write for a new connection." }),
+  member("POST", "/v1/sso/connections/:connectionId/saml", "tenant_change", "sso_connection.saml.replace", "sso.configuration", "sso_connection", "connectionId", { changeEvidence: DOMAIN("sso"), notes: "Legacy organization.sso.connection_registered (kind saml)." }),
+  member("POST", "/v1/sso/connections/:connectionId/oidc", "tenant_external", "sso_connection.oidc.replace", "sso.configuration", "sso_connection", "connectionId", { changeEvidence: DOMAIN("sso"), external: "oidc_idp (issuer discovery)", notes: "Legacy organization.sso.connection_registered (kind oidc)." }),
+  member("PATCH", "/v1/sso/connections/:connectionId", "tenant_change", "sso_connection.rename", "sso.configuration", "sso_connection", "connectionId", { changeEvidence: DOMAIN("sso"), notes: "sso_connection.renamed; no legacy action." }),
+  member("DELETE", "/v1/sso/connections/:connectionId", "tenant_change", "sso_connection.delete_one", "sso.configuration", "sso_connection", "connectionId", { changeEvidence: DOMAIN("sso"), notes: "Legacy organization.sso.connection_deleted." }),
+  member("POST", "/v1/sso/connections/:connectionId/test", "tenant_change", "sso_test.create_one", "sso.configuration", "sso_test_intent", null),
+  member("POST", "/v1/sso/connections/:connectionId/enable", "tenant_change", "sso_connection.enable_one", "sso.configuration", "sso_connection", "connectionId", { changeEvidence: DOMAIN("sso"), notes: "Legacy organization.sso.connection_enabled." }),
+  member("POST", "/v1/sso/connections/:connectionId/disable", "tenant_change", "sso_connection.disable_one", "sso.configuration", "sso_connection", "connectionId", { changeEvidence: DOMAIN("sso"), notes: "Legacy organization.sso.connection_disabled." }),
+  member("GET", "/v1/sso/connections/:connectionId/metadata", "tenant_read", "sso_connection.metadata.read_one", "sso.configuration", "sso_connection", "connectionId"),
+  member("POST", "/v1/sso/connections/:connectionId/request-domain-verification", "tenant_change", "sso_domain.verification.request_one", "sso.configuration", "sso_connection", "connectionId", { notes: "Returns the DNS TXT verification value (not a credential)." }),
+  member("POST", "/v1/sso/connections/:connectionId/verify-domain", "tenant_external", "sso_domain.verify_one", "sso.configuration", "sso_connection", "connectionId", { external: "dns (TXT lookup)" }),
 
   // Billing
   member("GET", "/v1/billing", "tenant_access", "billing.read", "billing.management", "billing", null, { notes: "includePortalUrl creates a Stripe billing portal session and returns its URL (billing.manage)." }),

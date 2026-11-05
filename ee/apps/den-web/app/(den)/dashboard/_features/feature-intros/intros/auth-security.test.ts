@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { getOrgAccessFlags, parseOrgContextPayload, type DenOrgAccessFlags, type DenOrgSsoConnection } from "../../../../_lib/den-org";
-import { scimIntroState, ssoIntroState } from "../../../_components/auth-security-intro-facts";
+import { scimIntroState, ssoIntroState, ssoIntroStateForConnections } from "../../../_components/auth-security-intro-facts";
 import { matchFeatureIntro, pickIntroCta, selectIntroSize } from "../model";
 import type { FeatureIntroContext, FeatureIntroPermission } from "../types";
 import { type AuthSecurityFacts, authSecurityIntros } from "./auth-security";
@@ -42,6 +42,11 @@ test("setup states come from the SSO connection and SCIM connector", () => {
   assert.equal(ssoIntroState(fakeSso()), "verify-domain");
   assert.equal(ssoIntroState({ ...fakeSso(), status: "disabled", domainVerified: true }), "turn-on");
   assert.equal(ssoIntroState({ ...fakeSso(), status: "enabled", domainVerified: true }), "on");
+  // multipleSsoConnections: the furthest-along connection decides.
+  assert.equal(ssoIntroStateForConnections([]), "none");
+  assert.equal(ssoIntroStateForConnections([fakeSso(), fakeSso()]), "verify-domain");
+  assert.equal(ssoIntroStateForConnections([fakeSso(), { ...fakeSso(), domainVerified: true }]), "turn-on");
+  assert.equal(ssoIntroStateForConnections([fakeSso(), { ...fakeSso(), status: "enabled", domainVerified: true }]), "on");
   assert.equal(scimIntroState(null, { lastSuccessfulSyncAt: null }), "none");
   const connector = { id: "scim_1", providerId: "p", organizationId: "org_1", groupMappingMode: "metadata_only", createdAt: null, updatedAt: null } as const;
   assert.equal(scimIntroState(connector, { lastSuccessfulSyncAt: null }), "waiting");
@@ -91,9 +96,12 @@ function fakeSso(): DenOrgSsoConnection {
   return {
     id: "sso_1",
     providerId: "openwork-sso-org_1",
+    name: null,
+    displayName: "idp.example.com",
     kind: "saml",
     issuer: "https://idp.example.com",
     domain: "acme.com",
+    domains: ["acme.com"],
     status: "disabled",
     testStatus: "untested",
     testExpiresAt: null,
@@ -105,6 +113,7 @@ function fakeSso(): DenOrgSsoConnection {
     domainVerified: false,
     domainVerificationHost: "_openwork",
     domainVerificationDnsName: "_openwork.acme.com",
+    domainVerificationDnsNames: [{ domain: "acme.com", dnsName: "_openwork.acme.com" }],
     oidc: null,
     saml: null,
     lastTestedAt: null,
