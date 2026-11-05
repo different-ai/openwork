@@ -77,7 +77,7 @@ export function registerAgentCheckRequestTool(server: McpServer, input: { organi
       annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
       inputSchema: z.object({
         at: z.string().min(1).max(40).describe("When: ISO 8601 with an offset (2026-10-20T13:45:00-04:00), or a local time today in the member's zone (13:45 or 1:45 PM)."),
-        why: z.string().min(1).max(AGENT_CHECK_REQUEST_WHY_MAX).describe("Why, as the member will read it in My bot: \"before your 2 PM with Northwind\"."),
+        why: z.string().min(1).max(AGENT_CHECK_REQUEST_WHY_MAX).refine((value) => value.trim().length > 0, "Why must not be blank").describe("Why, as the member will read it in My bot: \"before your 2 PM with Northwind\"."),
       }),
     },
     async ({ at, why }) => {
