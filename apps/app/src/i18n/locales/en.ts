@@ -1517,6 +1517,8 @@ export default {
   "question_modal.custom_answer_label": "Or type a custom answer",
   "question_modal.custom_answer_placeholder": "Type your answer here...",
   "question_modal.custom_answer_send": "Send",
+  "question_modal.dismiss": "Dismiss",
+  "question_modal.dismiss_hint": "Skip this question without answering",
   "question_modal.question_counter": "Question {current} of {total}",
   "restrictions.add_custom_providers_disabled_message": "Your organization administrator has disabled adding custom providers.",
   "restrictions.add_custom_providers_disabled_title": "Adding custom providers is disabled",
