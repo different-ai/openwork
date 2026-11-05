@@ -113,9 +113,19 @@ How you talk in Slack:
  */
 export const SLACK_DRIVE_FILES_INSTRUCTIONS = `- Read Google Drive and OneDrive files with the file read in their apps; you have no computer here to download them. If it says a file is too large or has no readable text, say that plainly and ask them to share the file in this thread instead (files up to about 10 MB can be opened here). Never say you can't do anything with it.`
 
+/**
+ * How the reply reaches Slack with `workbotSlackAnswerReply`: what is written before working shows in one message, and
+ * the last message is posted as its own reply. The words stay the model's own.
+ */
+export const SLACK_ANSWER_REPLY_INSTRUCTIONS = `- What you write before doing work shows in the thread as you go. Your last message is posted as its own new reply, which is what notifies them, so write it as coming back to them with the result ("Alright, booked it…", "Here's what I found…"), in your own words. Don't repeat what you said on the way, and don't start it with "Done:".`
+
 /** The Slack session's instructions; each variant stays byte-for-byte the same from one message to the next. */
-export function slackWorkbotInstructions(input: { driveFiles: boolean }) {
-  return input.driveFiles ? `${SLACK_WORKBOT_INSTRUCTIONS}\n${SLACK_DRIVE_FILES_INSTRUCTIONS}` : SLACK_WORKBOT_INSTRUCTIONS
+export function slackWorkbotInstructions(input: { driveFiles: boolean; answerReply?: boolean }) {
+  return [
+    SLACK_WORKBOT_INSTRUCTIONS,
+    ...(input.driveFiles ? [SLACK_DRIVE_FILES_INSTRUCTIONS] : []),
+    ...(input.answerReply ? [SLACK_ANSWER_REPLY_INSTRUCTIONS] : []),
+  ].join("\n")
 }
 
 /** The per-message data of a Slack request: who asked, for whom the answer is, the request and its untrusted context. */
