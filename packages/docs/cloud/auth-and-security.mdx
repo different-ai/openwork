@@ -80,3 +80,10 @@ In **Settings → Auth & Security → User provisioning (SCIM)**, create the
 connector, then give your identity provider the **SCIM base URL** and the
 bearer token shown once after you create or rotate it. Failed syncs are retried
 and listed on the same tab until they are resolved.
+
+Before broadening scope, test profile updates, group membership, deactivation,
+and same-ID reactivation on your deployment. The **SCIM connected** badge only
+means a connector exists; it does not prove your provider completed those
+operations. See [SCIM provisioning](/cloud/scim-provisioning) for the lifecycle
+checklist, token rotation, and the difference between provider jobs and OpenWork
+reconciliation.

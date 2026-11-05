@@ -138,7 +138,7 @@ To connect an identity provider, follow
 [Okta SCIM provisioning](/cloud/scim-okta) or
 [Microsoft Entra SCIM provisioning](/cloud/scim-microsoft-entra).
 
-When SCIM deprovisions a user, OpenWork retains a disconnected member record for organization history. The global user is deleted only when they have no other active organization memberships. Reactivate the user through SCIM before they can regain SAML access.
+When SCIM removes organization access, a disconnected member record can remain for history. It is not proof that the SCIM resource is still queryable or that reactivation will restore the same ID. Test disable, restore, and permanent deletion separately on your deployed version; see the [SCIM lifecycle checklist](/cloud/scim-provisioning#validate-the-complete-lifecycle). Reactivation must come through the identity provider rather than bypassing its lifecycle with a new sign-up.
 
 ## Team Admin access
 
