@@ -1,0 +1,33 @@
+name: npm release smoke check
+
+on:
+  pull_request:
+    branches: [dev]
+    paths:
+      - .github/workflows/npm-release-smoke-check.yml
+      - .github/workflows/release-macos-aarch64.yml
+      - apps/server/scripts/npm-web-smoke.mjs
+      - apps/server/scripts/npm-web-smoke.test.mjs
+  push:
+    branches: [dev]
+    paths:
+      - .github/workflows/npm-release-smoke-check.yml
+      - .github/workflows/release-macos-aarch64.yml
+      - apps/server/scripts/npm-web-smoke.mjs
+      - apps/server/scripts/npm-web-smoke.test.mjs
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  smoke-script:
+    name: Test npm release verification
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24.22.1
+      - run: node --test apps/server/scripts/npm-web-smoke.test.mjs

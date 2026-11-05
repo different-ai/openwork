@@ -1216,10 +1216,12 @@ jobs:
             node: "24.22.1"
     runs-on: ${{ matrix.os }}
     steps:
+      # Keep verification with this workflow revision, including recovery runs.
+      # The package under test is still built from the immutable release tag.
       - name: Checkout smoke script
         uses: actions/checkout@v6
         with:
-          ref: ${{ needs.resolve-release.outputs.release_tag }}
+          ref: ${{ github.sha }}
           sparse-checkout: apps/server/scripts/npm-web-smoke.mjs
           sparse-checkout-cone-mode: false
       - name: Setup Node
