@@ -24,10 +24,34 @@ struct AppIdentity {
     var pid: pid_t { app.processIdentifier }
     var name: String { app.localizedName ?? bundleID }
 
+    /// Whether the process Launch Services lists for an app still runs. macOS quits an app that
+    /// supports sudden termination, such as TextEdit, once it has no windows, yet keeps listing it
+    /// as running under its old pid: that pid then names no process, or later another program.
+    /// When the process cannot be read but exists, it counts as running, as before.
+    static func isLive(_ app: NSRunningApplication) -> Bool {
+        guard !app.isTerminated else { return false }
+        return processState(app.processIdentifier, executable: app.executableURL) != .gone
+    }
+    enum ProcessState: Equatable { case running, gone, unknown }
+    static func processState(_ pid: pid_t, executable: URL?) -> ProcessState {
+        var buffer = [CChar](repeating: 0, count: 4 * Int(MAXPATHLEN))
+        if proc_pidpath(pid, &buffer, UInt32(buffer.count)) > 0 {
+            guard let executable else { return .unknown }
+            // A recycled pid runs another program. By name: a translocated or moved app runs its executable from another folder.
+            return URL(fileURLWithPath: String(cString: buffer)).lastPathComponent == executable.lastPathComponent ? .running : .gone
+        }
+        return kill(pid, 0) == -1 && errno == ESRCH ? .gone : .unknown
+    }
+    static let quitByMacOS = UseError("app_not_running",
+        "macOS quit this app while it had no windows open, though it still shows as open. Open it with computer_open without a pid: that starts it again.",
+        next: "open_session")
+
     static func resolve(_ bundleID: String, pid: pid_t?) throws -> AppIdentity {
-        let matches = NSWorkspace.shared.runningApplications.filter {
+        let listed = NSWorkspace.shared.runningApplications.filter {
             $0.bundleIdentifier == bundleID && $0.activationPolicy == .regular && (pid == nil || $0.processIdentifier == pid)
         }
+        let matches = listed.filter(isLive)
+        if matches.isEmpty, !listed.isEmpty { throw quitByMacOS }
         guard matches.count == 1, let app = matches.first, let executable = app.executableURL, let launched = ProcessStart(pid: app.processIdentifier) else {
             throw UseError("app_unavailable", "Choose an exact running app from computer_discover; supply its pid if several copies are open.", next: "discover")
         }
@@ -38,7 +62,8 @@ struct AppIdentity {
     @MainActor static func open(_ bundleID: String, pid: pid_t?, activates: Bool = true) async throws -> AppIdentity {
         guard isAllowed(bundleID: bundleID) else { throw UseError("protected_app", "This app cannot be operated through Computer Use.", next: "use_structured_tool") }
         // A PID pins a running instance. Never replace it with a newly launched app.
-        if pid != nil || NSRunningApplication.runningApplications(withBundleIdentifier: bundleID).count > 0 {
+        // An app macOS quit while it had no windows is still listed: it is started again, as clicking it in the Dock does.
+        if pid != nil || NSRunningApplication.runningApplications(withBundleIdentifier: bundleID).contains(where: isLive) {
             let identity = try resolve(bundleID, pid: pid)
             identity.app.unhide()
             return identity

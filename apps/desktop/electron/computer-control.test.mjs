@@ -675,6 +675,21 @@ test("AppleScript and JXA run through osascript, and a missing Automation grant 
   assert.equal((await createComputerScripting({ platform: "linux", stateDir: "/tmp/unused", bridgeScript: "/bridge.py" })({ app: "applescript", code: "1", timeoutMs: 5_000 }, signal)).error.code, "script_unavailable");
 });
 
+test("A failed script always says why, and an app macOS quit says how to start it again", async () => {
+  const signal = new AbortController().signal;
+  const run = (stderr, status = 1) => createComputerScripting({ platform: "darwin", stateDir: "/tmp/unused", bridgeScript: "/bridge.py", spawn: fakeOsascript({ status, stderr }).spawn })
+    ({ app: "applescript", code: "tell application \"TextEdit\" to make new document", timeoutMs: 5_000 }, signal);
+  const quit = await run("30:105: execution error: TextEdit got an error: Application isn’t running. (-600)");
+  assert.equal(quit.ok, false);
+  assert.equal(quit.error.code, "app_not_running");
+  assert.match(quit.error.message, /Application isn’t running/, "macOS's own words stay");
+  assert.match(quit.error.message, /computer_open/);
+  const other = await run("12:20: syntax error: Expected end of line. (-2741)");
+  assert.equal(other.error.code, "script_error");
+  assert.match(other.error.message, /Expected end of line/);
+  assert.match((await run("", 2)).error.message, /status 2/, "even with nothing on stderr");
+});
+
 test("Blender scripts reach the bridge with its token, and an open Blender without the bridge is not relaunched", async (t) => {
   const stateDir = await mkdtemp(join(tmpdir(), "ow-script-"));
   t.after(() => rm(stateDir, { recursive: true, force: true }));

@@ -91,6 +91,16 @@ permission, credential and host apps (`com.differentai.openwork*`,
 `com.differentai.opencoworker*`) can never be targeted. Failures are MCP
 `isError: true` results with machine-readable `code` and `next` fields.
 
+macOS quits an app that supports sudden termination, such as TextEdit, once it
+has no windows, yet keeps listing it as open under its old pid. The helper
+checks that the listed process still runs that app: `computer_discover` lists
+such an app as installed, with no pid; `computer_open` without a pid starts it
+again, as clicking it in the Dock does; and `computer_open` with the dead pid
+returns `app_not_running`, saying to open it without one. An AppleScript or JXA
+`computer_script` that macOS answers with "Application isn't running" (-600)
+returns `app_not_running` with that message and the same advice; any other
+failed script returns macOS's own message as `script_error`.
+
 On this Mac an observation carries a screenshot only when it adds something,
 unless `include_image` (or `computer_act`'s `screenshot`) says otherwise.
 Observe and assist sessions, and background delivery, read the elements first
