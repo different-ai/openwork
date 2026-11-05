@@ -108,6 +108,18 @@ enum RealInput {
     }
 
     static let targetChanged = UseError("window_not_frontmost", "Another app or window came in front of the selected window, so nothing more was sent. Observe again; the selected window is brought back first.", next: "observe")
+    static let stoppedPrefix = "Real input stopped:"
+    /// Real input refused before an event, with what was in the way.
+    static func stopped(_ reason: String) -> UseError {
+        UseError("window_not_frontmost", "\(stoppedPrefix) \(reason), so nothing more was sent. Observe again; the selected window is brought back first.", next: "observe")
+    }
+    /// What kept real input from the selected window, for the receipt.
+    static func blockedReason(front: pid_t?, frontName: String?, pid: pid_t, point: CGPoint?, hit: pid_t?) -> String {
+        if front != pid { return "\(frontName ?? "another app") was in front" }
+        if point == nil { return "the app was not taking keys" }
+        if let hit, hit != pid { return "another app's window or the Dock was at that point" }
+        return "another window was over that point"
+    }
 
     /// The system stream delivers to whatever is in front, so each real press,
     /// move, scroll and key is re-checked just before it is posted: keys only while
@@ -179,10 +191,10 @@ enum RealInput {
     /// pointer, the window) the window server is about to hand it to. Releases
     /// always go, so nothing stays held; every press, move, scroll and key only
     /// to the selected app, and pointer events only to the selected window.
-    /// `panel` is the process macOS draws the selected app's open Save or Open panel in,
-    /// which takes that panel's keys.
-    static func admits(release: Bool, target: pid_t, window: CGWindowID, to pid: pid_t, under: CGWindowID, panel: pid_t? = nil) -> Bool {
-        release || (pid == target || panel.map { $0 == pid } == true) && (under == 0 || under == window)
+    /// `panels` are the processes macOS draws the selected app's open Save or Open panel in,
+    /// which take that panel's keys.
+    static func admits(release: Bool, target: pid_t, window: CGWindowID, to pid: pid_t, under: CGWindowID, panels: Set<pid_t> = []) -> Bool {
+        release || (pid == target || panels.contains(pid)) && (under == 0 || under == window)
     }
 
     /// The agent's real input reaches the HID state the person-input checks read, so
@@ -237,7 +249,7 @@ final class RealInputGate: @unchecked Sendable {
     private let lock = NSLock()
     private var tap: CFMachPort?
     private var generation: UInt32 = 0
-    private var armed: (pid: pid_t, window: CGWindowID, panel: pid_t?)?
+    private var armed: (pid: pid_t, window: CGWindowID, panels: Set<pid_t>)?
     private var posted = 0, seen = 0, diverted = false
     /// The real events whose stand-ins are on their way, by sequence.
     private var held: [UInt32: CGEvent] = [:]
@@ -248,12 +260,12 @@ final class RealInputGate: @unchecked Sendable {
     var isArmed: Bool { lock.withLock { armed != nil } }
 
     /// Starts a step's real input for `window` of `pid`; throws before anything is sent.
-    /// `panel` is the process drawing that window's open Save or Open panel, if any.
-    func arm(pid: pid_t, window: CGWindowID, panel: pid_t? = nil) throws {
+    /// `panels` are the processes drawing that window's open Save or Open panel, if any.
+    func arm(pid: pid_t, window: CGWindowID, panels: Set<pid_t> = []) throws {
         guard let tap = start() else { throw Self.unavailable }
         lock.withLock {
             generation &+= 1
-            armed = (pid, window, panel); posted = 0; seen = 0; diverted = false; personAt = [:]; held = [:]
+            armed = (pid, window, panels); posted = 0; seen = 0; diverted = false; personAt = [:]; held = [:]
         }
         CGEvent.tapEnable(tap: tap, enable: true)
         guard CGEvent.tapIsEnabled(tap: tap) else {
@@ -344,7 +356,7 @@ final class RealInputGate: @unchecked Sendable {
             let currentStep = armed != nil && tag.generation == generation & RealInput.generationMask
             if currentStep { seen += 1 }
             let real = tag.release ? nil : held.removeValue(forKey: tag.sequence)
-            let admitted = armed.map { RealInput.admits(release: tag.release, target: $0.pid, window: $0.window, to: pid, under: under, panel: $0.panel) } ?? false
+            let admitted = armed.map { RealInput.admits(release: tag.release, target: $0.pid, window: $0.window, to: pid, under: under, panels: $0.panels) } ?? false
             let delivery = RealInput.delivery(release: tag.release, currentStep: currentStep, held: real != nil, admitted: admitted)
             if currentStep, delivery == .drop { diverted = true }
             return (delivery, real)

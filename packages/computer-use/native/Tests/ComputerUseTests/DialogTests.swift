@@ -216,4 +216,11 @@ final class DialogTests: XCTestCase {
         XCTAssertFalse(PanelGoTo.candidate(identifier: "saveAsNameTextField", subrole: nil), "the Save As name field")
         XCTAssertFalse(PanelGoTo.candidate(identifier: nil, subrole: "AXSearchField"))
     }
+
+    /// TextEdit's "Keep this new document?" is a Save sheet shown collapsed: no file list, a name field.
+    func testACollapsedSaveSheetIsAFilePanel() {
+        XCTAssertTrue(DialogRules.isFilePanel(bundleID: "com.apple.TextEdit", roles: ["AXButton", "AXTextField", "AXStaticText"], defaultButton: "Save", saveField: true))
+        XCTAssertFalse(DialogRules.isFilePanel(bundleID: "com.apple.TextEdit", roles: ["AXButton", "AXTextField", "AXStaticText"], defaultButton: "Save"),
+            "a sheet with no Save name field and no file list is not one")
+    }
 }

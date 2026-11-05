@@ -296,11 +296,20 @@ final class MacInput {
                 report(.dispatched)
                 path = "open_pressed"
             case .menu(let names):
+                // An app in the background keeps its menus from when it was last active: make the
+                // selected window its key window first, without bringing it forward.
+                if !app.app.isActive, !access.isFocusedWindow(target, app: app) { await MenuFocus.prime(app: app, window: target.id) }
                 // Menu commands go to the app's focused window: never to another document.
                 guard access.isFocusedWindow(target, app: app) else {
                     throw UseError("menu_needs_focus", "This app's menus act on another of its windows. Bring the selected window forward, then try again.", next: "observe")
                 }
-                let menu = try access.menuTarget(names, app: app)
+                let menu: MenuTarget
+                do { menu = try access.menuTarget(names, app: app) }
+                catch let error as UseError where MenuFocus.stale(error.code) && !app.app.isActive {
+                    // Disabled or missing only because the app has not refreshed its menus since it was active.
+                    await MenuFocus.prime(app: app, window: target.id)
+                    menu = try access.menuTarget(names, app: app)
+                }
                 try check()
                 let result = AXUIElementPerformAction(menu.item, kAXPressAction as CFString)
                 let aim = menu.titleFrame.map { CGPoint(x: $0.midX, y: $0.midY) }
@@ -424,10 +433,12 @@ final class MacInput {
                     try access.checkKeyWindow(target: target, app: app, requireFront: true)
                 }, send: { character in
                     // These apps read key codes, not only text: each character goes out as its
-                    // own key on this layout (with Shift where it needs it), else as text.
+                    // own key on this layout (with Shift where it needs it), as a physical keyboard
+                    // sends it, with no text attached, which an app such as Blender reads as text
+                    // entry rather than a key (a number typed during a transform). Else as text.
                     if let key = self.realKey(for: character) {
                         try self.modifiers(key.flags, pid: app.pid, check: check)
-                        try self.keyboard(key.code, flags: key.flags, text: character, pid: app.pid, check: check)
+                        try self.keyboard(key.code, flags: key.flags, text: nil, typed: true, pid: app.pid, check: check)
                         self.releaseModifiers()
                     } else {
                         try self.keyboard(0, flags: [], text: character, pid: app.pid, check: check)
@@ -829,8 +840,11 @@ final class MacInput {
                 if AXUIElementGetPid(element, &owner) == .success, owner != ProcessInfo.processInfo.processIdentifier { hit = owner }
             }
         }
-        guard RealInput.reachesTarget(pid, window: window, front: NSWorkspace.shared.frontmostApplication?.processIdentifier, at: point,
-            windows: windows, passThrough: AgentCursor.shared.passThroughWindows, hit: hit) else { throw RealInput.targetChanged }
+        let front = NSWorkspace.shared.frontmostApplication
+        guard RealInput.reachesTarget(pid, window: window, front: front?.processIdentifier, at: point,
+            windows: windows, passThrough: AgentCursor.shared.passThroughWindows, hit: hit) else {
+            throw RealInput.stopped(RealInput.blockedReason(front: front?.processIdentifier, frontName: front?.localizedName, pid: pid, point: point, hit: hit))
+        }
     }
     /// Puts the keyboard on an observed control, as `focus` and `enter_value` do: accessibility
     /// focus first, then (only when `click` is allowed) a click on its middle, as a person would.
@@ -911,7 +925,9 @@ final class MacInput {
         }
         throw UseError("unsupported_keyboard_layout", "The named shortcut is unavailable in this keyboard layout.", next: "observe")
     }
-    private func keyboard(_ code: CGKeyCode, flags: CGEventFlags, text: String?, pid: pid_t, check: () throws -> Void) throws {
+    /// `typed`: a character sent as its bare key, counted and reported as typing.
+    private func keyboard(_ code: CGKeyCode, flags: CGEventFlags, text: String?, typed: Bool = false, pid: pid_t, check: () throws -> Void) throws {
+        let typing = text != nil || typed
         guard let down = CGEvent(keyboardEventSource: nil, virtualKey: code, keyDown: true),
               let up = CGEvent(keyboardEventSource: nil, virtualKey: code, keyDown: false) else {
             throw UseError("input_failed", "Could not create a keyboard event.")
@@ -930,11 +946,11 @@ final class MacInput {
             self.post(down, pid)
             self.feedback?.didDispatch = true
             // Counted as it goes out: its key-up always follows, even if a check then stops the step.
-            if text != nil { self.typedCharacters += 1 }
-            if text == nil { self.report(.down) }
+            if typing { self.typedCharacters += 1 }
+            if !typing { self.report(.down) }
         }, up: {
             self.post(up, pid)
-            self.report(text == nil ? .up : .dispatched)
+            self.report(typing ? .dispatched : .up)
         })
     }
 }
