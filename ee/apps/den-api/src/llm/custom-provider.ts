@@ -143,6 +143,25 @@ export function normalizeCustomProviderConfig(input: {
 
   const { models, ...providerConfig } = customProvider.data
 
+  // llm_provider_model has a unique (llm_provider_id, model_id) index and MySQL
+  // compares model ids case-insensitively, so duplicate ids would fail the insert.
+  const seenModelIds = new Map<string, string>()
+  const duplicateModelIds = new Set<string>()
+  for (const model of models) {
+    const key = model.id.trim().toLowerCase()
+    const existing = seenModelIds.get(key)
+    if (existing !== undefined) {
+      duplicateModelIds.add(existing === model.id ? model.id : `${existing} / ${model.id}`)
+    } else {
+      seenModelIds.set(key, model.id)
+    }
+  }
+  if (duplicateModelIds.size > 0) {
+    throw new CustomProviderConfigError(
+      `models: duplicate model id ${[...duplicateModelIds].join(", ")}. Each model id must be unique.`,
+    )
+  }
+
   return {
     providerId: customProvider.data.id,
     providerConfig,
