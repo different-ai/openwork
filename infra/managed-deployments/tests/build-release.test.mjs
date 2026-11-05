@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { execFileSync, spawnSync } from "node:child_process";
-import { mkdtempSync, readFileSync, readdirSync, rmSync } from "node:fs";
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, symlinkSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -74,15 +74,15 @@ test("registry re-verification and approved manifest identity must match", () =>
   assert.throws(() => resolveGcpImages("0.18.0", { ...pins, den_api: GCP_REPOSITORIES.den_api + "@" + digest("e") }, inspect), /Approved pin/);
 });
 
-test("AWS release architecture does not invoke Docker or add GCP image inventory", () => {
+test("default AWS release resolves current image tags without adding GCP inventory", () => {
   const output = mkdtempSync(join(tmpdir(), "openwork-aws-build-test-"));
   try {
-    buildRelease(["aws", "0.18.0", output]);
+    buildRelease(["aws", "0.18.65", output], inspect);
     const manifest = JSON.parse(readFileSync(join(output, "manifest.json"), "utf8"));
     assert.equal(manifest.provider, "aws");
     const release = JSON.parse(execFileSync("tar", ["-xOf", join(output, "bundle.tar.gz"), "release.json"], { encoding: "utf8" }));
     assert.equal(release.provider, "aws");
-    assert.equal(release.images, undefined);
+    assert.deepEqual(release.images, pins);
     assert.ok(release.files["infra/managed-deployments/aws/runner/runner.py"]);
     assert.equal(Object.keys(release.files).some((file) => file.includes("/gcp/")), false);
   } finally {
@@ -117,6 +117,55 @@ test("new AWS installer versions use independently approved immutable applicatio
   }
   assert.throws(() => resolveAwsImages(pins, () => { throw new Error("missing image"); }), /missing image/);
 });
+test("AWS tag resolution verifies both unique Linux/amd64 manifests", () => {
+  const calls = [];
+  assert.deepEqual(resolveAwsImages("0.18.65", undefined, (ref) => {
+    calls.push(ref);
+    return [metadata("e", "linux", "arm64"), inspect(ref)];
+  }), pins);
+  assert.deepEqual(calls, [GCP_REPOSITORIES.den_api + ":0.18.65", pins.den_api,
+    GCP_REPOSITORIES.den_web + ":0.18.65", pins.den_web]);
+  for (const response of [[], metadata("a", "linux", "arm64"), [metadata("a"), metadata("b")]]) {
+    assert.throws(() => resolveAwsImages("0.18.65", undefined, () => response), /Linux\/amd64/);
+  }
+  assert.deepEqual(resolveAwsImages("0.18.65", pins, inspect), pins);
+});
+
+for (const provider of ["aws", "gcp"]) {
+  test(`${provider} repeated builds produce identical archives and manifests`, () => {
+    const output = mkdtempSync(join(tmpdir(), "openwork-reproducible-build-"));
+    try {
+      buildRelease([provider, "0.18.65-test.1", output], inspect);
+      const before = ["bundle.tar.gz", "manifest.json"].map((name) => readFileSync(join(output, name)));
+      buildRelease([provider, "0.18.65-test.1", output], inspect);
+      for (const [index, name] of ["bundle.tar.gz", "manifest.json"].entries()) {
+        assert.deepEqual(readFileSync(join(output, name)), before[index]);
+      }
+    } finally { rmSync(output, { recursive: true, force: true }); }
+  });
+}
+
+test("portable archive ignores source timestamps, modes and output filename, refuses symlinks", () => {
+  const directory = mkdtempSync(join(tmpdir(), "openwork-archive-test-"));
+  const source = join(directory, "source");
+  const helper = fileURLToPath(new URL("../tools/deterministic-archive.py", import.meta.url));
+  try {
+    // Keep outputs outside the archived source tree.
+    mkdirSync(source);
+    const file = join(source, "runner.py");
+    writeFileSync(file, "print('fixture')\n");
+    execFileSync("python3", [helper, source, join(directory, "first.tar.gz")]);
+    chmodSync(file, 0o755);
+    utimesSync(file, 100, 200);
+    execFileSync("python3", [helper, source, join(directory, "second.tar.gz")]);
+    assert.deepEqual(readFileSync(join(directory, "first.tar.gz")), readFileSync(join(directory, "second.tar.gz")));
+    symlinkSync(file, join(source, "link"));
+    const result = spawnSync("python3", [helper, source, join(directory, "third.tar.gz")], { encoding: "utf8" });
+    assert.notEqual(result.status, 0);
+    assert.match(result.stderr, /Refusing symlink/);
+  } finally { rmSync(directory, { recursive: true, force: true }); }
+});
+
 const sha256 = (bytes) => createHash("sha256").update(bytes).digest("hex");
 test("missing module-local file references fail the release before packaging", () => {
   const definition = `${modulePath}/migration.tf`;
@@ -140,7 +189,7 @@ test("managed AWS explicitly preserves legacy keys while adopting the shared mod
 test("installer archive contains every shared operational dependency with identical file bytes", () => {
   const output = mkdtempSync(join(tmpdir(), "openwork-shared-installer-test-"));
   try {
-    buildRelease(["aws", "0.18.58", output]);
+    buildRelease(["aws", "0.18.58", output], inspect);
     const bundle = join(output, "bundle.tar.gz");
     const manifest = JSON.parse(readFileSync(join(output, "manifest.json"), "utf8"));
     assert.equal(manifest.bundleSha256, sha256(readFileSync(bundle)));

@@ -1,0 +1,182 @@
+name: Managed Stable Installer
+
+# GITHUB_TOKEN-created releases do not trigger child release workflows. Both
+# publisher completions and a bounded reconciliation fallback cover that case.
+on:
+  release:
+    types: [published]
+  workflow_run:
+    workflows: [Publish EE Artifacts, Release App]
+    types: [completed]
+  schedule:
+    - cron: "23 */6 * * *"
+  pull_request:
+    paths:
+      - .github/workflows/managed-stable-release.yml
+      - .github/scripts/managed-stable-release*
+      - infra/managed-deployments/**
+      - infra/terraform/modules/openwork-aws-ecs/**
+      - infra/terraform/modules/openwork-gcp-cloud-run/**
+      - packages/managed-deployments/**
+      - .github/scripts/ee-image-inputs.mjs
+      - .github/scripts/build-inputs.mjs
+  workflow_dispatch:
+    inputs:
+      provider:
+        description: Prepare latest stable (GCP is candidate-only; never silently enabled)
+        type: choice
+        options: [aws, gcp]
+        default: aws
+      promote:
+        description: Publish AWS and change new-install default after real-cloud qualification review
+        type: boolean
+        default: false
+      reviewed_manifest_sha256:
+        description: Exact manifest SHA-256 from the previously qualified candidate (required to promote)
+        type: string
+        default: ""
+      qualification_url:
+        description: Trusted repository review attesting successful real-cloud fresh install AND approved Update of those exact bytes
+        type: string
+        default: ""
+
+permissions:
+  contents: read
+
+jobs:
+  # Cheap tests have no dependencies on production config, Docker or Terraform.
+  helper-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          ref: ${{ github.event_name == 'pull_request' && github.ref || github.event.repository.default_branch }}
+          persist-credentials: false
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: 24.22.1
+      - run: node --test .github/scripts/managed-stable-release.test.mjs
+
+  prepare:
+    if: >-
+      github.event_name != 'pull_request' &&
+      (github.event_name != 'workflow_run' ||
+        (github.event.workflow_run.conclusion == 'success' &&
+         github.event.workflow_run.head_repository.full_name == github.repository))
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: read
+    outputs:
+      trusted_source: ${{ steps.source.outputs.sha }}
+    env:
+      RELEASE_PROVIDER: ${{ inputs.provider || 'aws' }}
+      RELEASE_DIRECTORY: dist/managed-stable
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      # Never checkout workflow_run.head_sha/head_branch or a release event ref.
+      # Event payloads are discovery signals, not executable source selection.
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          persist-credentials: false
+      - id: source
+        run: echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: 24.22.1
+      - name: Cheap latest-stable/tag-commit plan (skip unrelated dev publishers)
+        id: plan
+        run: node .github/scripts/managed-stable-release.mjs plan
+      - name: Install verified Terraform
+        if: steps.plan.outputs.prepare == 'true'
+        run: |
+          curl -fsSLo /tmp/terraform.zip https://releases.hashicorp.com/terraform/1.16.5/terraform_1.16.5_linux_amd64.zip
+          echo '2bc2fcfff033265c9e02ca0351f01794eb122f62a9b2a49a3294b9e49eaab5e4  /tmp/terraform.zip' | sha256sum -c -
+          unzip -q /tmp/terraform.zip -d /tmp/terraform-bin
+          echo /tmp/terraform-bin >> "$GITHUB_PATH"
+      - name: Native installer checks (not cloud qualification)
+        if: steps.plan.outputs.prepare == 'true'
+        run: |
+          terraform fmt -check -recursive infra/managed-deployments
+          (cd infra/managed-deployments/contract && terraform init -backend=false -input=false && terraform test)
+          (cd infra/managed-deployments/aws/terraform && terraform init -backend=false -input=false -lockfile=readonly && terraform validate && terraform test)
+          (cd infra/managed-deployments/gcp/terraform && terraform init -backend=false -input=false -lockfile=readonly && terraform validate && terraform test)
+          python3 -m pip install --disable-pip-version-check boto3==1.43.110 botocore==1.43.110
+          node infra/managed-deployments/aws/bootstrap/template.mjs /tmp/cloudformation.json
+          diff -u infra/managed-deployments/aws/bootstrap/cloudformation.json /tmp/cloudformation.json
+          python3 -m unittest discover -s infra/managed-deployments/tests -v
+          node --test .github/scripts/managed-stable-release.test.mjs infra/managed-deployments/tests/test_publish_*_release.mjs infra/managed-deployments/tests/build-release.test.mjs
+      - name: Resolve latest stable and package verified Linux/amd64 release images
+        if: steps.plan.outputs.prepare == 'true'
+        run: node .github/scripts/managed-stable-release.mjs prepare
+      - name: Exact-digest image bootstrap and health smoke (not cloud qualification)
+        if: steps.plan.outputs.prepare == 'true'
+        run: node .github/scripts/managed-stable-release-smoke.mjs
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: steps.plan.outputs.prepare == 'true'
+        with:
+          name: managed-stable-${{ inputs.provider || 'aws' }}
+          path: dist/managed-stable/
+          retention-days: 30
+          if-no-files-found: error
+
+  # No automatic production promotion until a real fresh-install/Update gate
+  # exists. Opt-in alone does NOT turn offline native checks into qualification.
+  # The reviewer must qualify the exact manifest retained above, then dispatch
+  # with its hash and review URL. Environment approval is a second trust gate.
+  promote:
+    if: github.event_name == 'workflow_dispatch' && inputs.promote
+    needs: [prepare, helper-tests]
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    concurrency:
+      group: den-api-env
+      cancel-in-progress: false
+    environment:
+      name: den-production
+      deployment: false
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      RELEASE_DIRECTORY: dist/managed-stable
+      PROMOTION_ENABLED: ${{ vars.MANAGED_DEPLOYMENT_AWS_PROMOTION_ENABLED }}
+      RELEASE_BUCKET: ${{ vars.MANAGED_DEPLOYMENT_AWS_RELEASE_BUCKET }}
+      RELEASE_ACCOUNT_ID: ${{ vars.MANAGED_DEPLOYMENT_AWS_RELEASE_ACCOUNT_ID }}
+      AWS_REGION: ${{ vars.MANAGED_DEPLOYMENT_AWS_RELEASE_REGION }}
+      RELEASE_ROLE: ${{ vars.MANAGED_DEPLOYMENT_AWS_RELEASE_ROLE_ARN }}
+      RENDER_SERVICE_ID: ${{ secrets.RENDER_DEN_CONTROL_PLANE_SERVICE_ID }}
+      RENDER_API_KEY: ${{ secrets.RENDER_API_KEY }}
+      GH_TOKEN: ${{ github.token }}
+      REVIEWED_MANIFEST_SHA256: ${{ inputs.reviewed_manifest_sha256 }}
+      QUALIFICATION_URL: ${{ inputs.qualification_url }}
+      RELEASE_PROVIDER: ${{ inputs.provider }}
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          ref: ${{ needs.prepare.outputs.trusted_source }}
+          persist-credentials: false
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: 24.22.1
+      - name: Require explicit operator setup and exact-candidate qualification review
+        run: |
+          test "$RELEASE_PROVIDER" = aws || { echo 'GCP is candidate-only; no provider activation.'; exit 1; }
+          test "$PROMOTION_ENABLED" = true || { echo 'AWS promotion opt-in is off; no publication.'; exit 1; }
+          for key in RELEASE_BUCKET RELEASE_ACCOUNT_ID AWS_REGION RELEASE_ROLE RENDER_SERVICE_ID RENDER_API_KEY REVIEWED_MANIFEST_SHA256 QUALIFICATION_URL; do
+            test -n "${!key}" || { echo "Missing required operator configuration: $key"; exit 1; }
+          done
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: managed-stable-aws
+          path: dist/managed-stable/
+      - name: Assume the explicitly configured release-account role
+        uses: aws-actions/configure-aws-credentials@a03048d87541d1d9fcf2ecf528a4a65ba9bd7838 # v5.0.0
+        with:
+          role-to-assume: ${{ vars.MANAGED_DEPLOYMENT_AWS_RELEASE_ROLE_ARN }}
+          allowed-account-ids: ${{ vars.MANAGED_DEPLOYMENT_AWS_RELEASE_ACCOUNT_ID }}
+          aws-region: ${{ vars.MANAGED_DEPLOYMENT_AWS_RELEASE_REGION }}
+          role-session-name: managed-installer-${{ github.run_id }}
+      - name: Recheck latest/current, publish idempotently, update ONE Render key, deploy once
+        run: node .github/scripts/managed-stable-release.mjs promote
