@@ -158,6 +158,7 @@ export function WorkbotTeaching({ open, onOpenChange, onTakeControl, onTeachingC
   useEffect(() => {
     if (!open) return;
     setCollapsed(false);
+    setGuideHidden(guideDismissed());
     if (!demo && enabled) void command({ action: "tabs" });
   }, [open]);
   useEffect(() => {
