@@ -737,6 +737,26 @@ final class MacAccessibility {
         guard try !isProtected(focused, role: checkedString(focused, kAXRoleAttribute, budget) ?? "", budget) else { throw unsafe }
         try validateAncestry(focused, target: target, budget: budget)
     }
+    /// What the app reports has the keyboard: nothing, its window itself, or an element.
+    func reportedFocus(target: WindowTarget, app: AppIdentity) -> BatchContinuation.ReportedFocus {
+        guard let focused = elementAttribute(AXUIElementCreateApplication(app.pid), kAXFocusedUIElementAttribute) else { return .nothing }
+        return CFEqual(focused, target.element) ? .window : .element
+    }
+    /// Canvas text in a design app that reports no focused element (`BatchContinuation.canvasText`):
+    /// the key-window check (the selected window is the app's focused window, in front when input is,
+    /// no secure input, nothing secure with the keyboard), and the app still reporting what it did
+    /// when typing began, so a field that takes the keyboard midway stops the step.
+    func checkCanvasText(target: WindowTarget, app: AppIdentity, requireFront: Bool = true, reported: BatchContinuation.ReportedFocus) throws {
+        try checkKeyWindow(target: target, app: app, requireFront: requireFront)
+        guard reported != .element, reportedFocus(target: target, app: app) == reported else {
+            throw UseError("focus_changed", "The keyboard moved while typing on the canvas. Observe again.", next: "observe")
+        }
+    }
+    /// The refusal when typing has nowhere to go in a design app: canvas text needs to be in editing first.
+    static let canvasTextRequired = UseError("focus_required",
+        "Nothing in the selected window has the keyboard. To type on a canvas, click the text layer (double-click it, or click with the Type tool, when one click only selects it) and type in the same batch.",
+        next: "observe")
+
     /// Whether an editor holds text Delete would erase: a text role, or marked editable.
     func isTextEditor(_ element: AXUIElement) -> Bool {
         let budget = AXReadBudget()

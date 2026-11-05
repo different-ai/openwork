@@ -528,6 +528,21 @@ as canvas typing is: before every character, never a secure field, and Delete
 or Backspace only into editable text. So `click, key command+a, type "120",
 key enter` is one batch.
 
+Some design apps draw their own text editor and report no focused element while
+a text layer is being edited (PhotoCraft is built on egui, so accessibility sees
+neither its canvas text nor where the keyboard is). In a design, photo, video or
+music app, typing after the agent's own click, double-click or `focus` in the
+session's window, in the same batch or as the first steps of the next act with
+no input of the person's in between, then goes to the app's key window
+(`path: "canvas_text"`). It is checked before every character as an app
+shortcut is: the session's window is the app's focused window and in front when
+input is, macOS reports no secure input, nothing secure has the keyboard, and
+the app still reports what it did when typing began. It is never used for a
+password or code, or when the app reports a focused element (the editor rule
+above applies then). When typing still has nowhere to go, `focus_required` says
+to double-click the text layer or click it with the Type tool, then type in the
+same batch.
+
 `{ type: "enter_value", ref, text, commit }` (`commit` is `enter` by default,
 or `tab` or `none`) enters a value in one step: it gives the field the keyboard
 (accessibility focus, or a click on it when the app ignores that), selects all

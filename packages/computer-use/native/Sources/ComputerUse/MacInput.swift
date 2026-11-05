@@ -94,7 +94,7 @@ final class MacInput {
     func execute(_ action: Action, app: AppIdentity, target: WindowTarget, lease: ObservationLease,
                  access: MacAccessibility, records: [ElementRecord], focus: ElementRecord?, pointerTarget: AXUIElement?,
                  check: () throws -> Void, checkWindow: () throws -> Void, background: Bool = false, editorTyping: Bool = false,
-                 clickToFocus: Bool = true, feedback send: @escaping (InputFeedback) -> Void = { _ in }) async throws -> String {
+                 clickToFocus: Bool = true, canvasText: Bool = false, feedback send: @escaping (InputFeedback) -> Void = { _ in }) async throws -> String {
         feedback = DispatchFeedback(action: action.name, frame: lease.frame, send: send)
         typedCharacters = 0
         gesture = Int64(UInt32.random(in: 1...UInt32.max))
@@ -372,10 +372,23 @@ final class MacInput {
             case .type(let text) where editorTyping && focus == nil:
                 // Typing into the app's own editor, such as text on a canvas: whatever has the
                 // keyboard in the selected window, checked before every character.
-                let editor = try access.focusedEditor(target: target, app: app, requireFront: !background)
+                let reported = access.reportedFocus(target: target, app: app)
+                var editor: AXUIElement?
+                if canvasText, BatchContinuation.canvasText(designApp: true, afterOwnClick: true, credentialGiven: false, reported: reported) {
+                    // A design app that draws its own text editor reports nothing: the key window, as a shortcut goes.
+                    try access.checkCanvasText(target: target, app: app, requireFront: !background, reported: reported)
+                    path = "canvas_text"
+                } else {
+                    do { editor = try access.focusedEditor(target: target, app: app, requireFront: !background) }
+                    catch let error as UseError where error.code == "focus_required"
+                            && InputDelivery.takesToolKeys(info: app.app.bundleURL.flatMap { Bundle(url: $0)?.infoDictionary } ?? [:]) {
+                        throw MacAccessibility.canvasTextRequired
+                    }
+                }
                 try await InputDispatch.type(text, check: check, validate: {
                     try checkWindow()
-                    try access.checkEditor(editor, target: target, app: app, requireFront: !background)
+                    if let editor { try access.checkEditor(editor, target: target, app: app, requireFront: !background) }
+                    else { try access.checkCanvasText(target: target, app: app, requireFront: !background, reported: reported) }
                 }, send: { character in
                     try self.keyboard(0, flags: [], text: character, pid: app.pid, check: check)
                 })
