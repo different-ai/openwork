@@ -143,9 +143,6 @@ export function ComputerSessionHistory({ history, active, renderAction, live, fi
           <Monitor aria-hidden="true" className="size-4 shrink-0 text-muted-foreground" />
           <span className="min-w-0 flex-1">
             <span className={cn("block text-sm font-medium", unfinished && active && "animate-text-shimmer motion-reduce:animate-none")}>{title}</span>
-            {/* While it works, what it is doing now; afterwards, what it was for. */}
-            {(unfinished && active ? history.latest : history.purpose ?? history.latest)
-              ? <span data-computer-session-description="" className="mt-0.5 block truncate text-xs font-normal text-muted-foreground">{unfinished && active ? history.latest : history.purpose ?? history.latest}</span> : null}
             <span className="mt-0.5 flex flex-wrap gap-x-3 text-xs font-normal text-muted-foreground">
               <span>{parts.length} {parts.length === 1 ? "action" : "actions"}</span>
               {several ? <span data-computer-session-apps="">{history.apps.join(", ")}</span> : null}
