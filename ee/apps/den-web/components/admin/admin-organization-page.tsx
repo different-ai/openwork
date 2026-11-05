@@ -248,7 +248,9 @@ function OrganizationFeatures({ organizationId, refreshKey, fail }: { organizati
     {opened.has("usage") ? <div hidden={view !== "usage"}>
       <AdminOrganizationFeatureUsageView key={`usage:${organizationId}`} organizationId={organizationId} refreshKey={refreshKey} onAccessFailure={fail} />
     </div> : null}
-    {view === "settings" ? <AdminOrganizationFeatureControls key={organizationId} organizationId={organizationId} refreshKey={refreshKey} onAccessFailure={fail} /> : null}
+    {opened.has("settings") ? <div hidden={view !== "settings"}>
+      <AdminOrganizationFeatureControls key={organizationId} organizationId={organizationId} refreshKey={refreshKey} onAccessFailure={fail} />
+    </div> : null}
   </>;
 }
 
