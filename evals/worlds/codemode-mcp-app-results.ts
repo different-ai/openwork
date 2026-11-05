@@ -80,7 +80,8 @@ export async function codemodeMcpAppResults(seed: Seed) {
     method: "POST", headers: { "x-openwork-org-id": orgId }, body: JSON.stringify({ scopes: ["mcp:read", "mcp:write"] }),
   });
   const token = stringField(issued.body, "token");
-  if (!issued.response.ok || !token) throw new Error("Missing recipient review MCP token");
+  const appHostToken = stringField(issued.body, "appHostToken");
+  if (!issued.response.ok || !token || !appHostToken || token === appHostToken) throw new Error("Missing distinct recipient review model and App-host tokens");
   const call = { name: `mcp:${connection.id}:review_recipient`, body: {} };
   // Deliberately discard the script's return value: the UI must get the inner
   // MCP envelope from the collector, not rediscover it in the outer output.
@@ -113,7 +114,7 @@ export async function codemodeMcpAppResults(seed: Seed) {
   if (ownerResponse.status !== 201 || !ownerToken) throw new Error("Missing fixture owner token");
   const reconciled = await fetch(`${app.openworkUrl}/workspace/${workspace.workspaceId}/mcp/openwork-cloud/reconcile`, {
     method: "POST", headers: { Authorization: `Bearer ${ownerToken}`, "Content-Type": "application/json" },
-    body: JSON.stringify({ config: { type: "remote", url: `${den.ref.apiUrl}/mcp/agent`, enabled: true, oauth: false, headers: { Authorization: `Bearer ${token}` } }, trigger: "recipient-review-fixture" }),
+    body: JSON.stringify({ config: { type: "remote", url: `${den.ref.apiUrl}/mcp/agent`, enabled: true, oauth: false, headers: { Authorization: `Bearer ${token}` } }, appHostAuthorization: `Bearer ${appHostToken}`, trigger: "recipient-review-fixture" }),
     signal: AbortSignal.timeout(120_000),
   });
   if (!reconciled.ok) throw new Error(`Recipient review reconciliation failed: HTTP ${reconciled.status} ${(await reconciled.text()).slice(0, 500)}`);
