@@ -44,14 +44,39 @@ final class BackgroundInputTests: XCTestCase {
         XCTAssertTrue(admits(release: true, to: other, under: 99), "releases go out so nothing stays held")
     }
 
-    func testRealInputTagsCarryTheirStepAndWhetherTheyRelease() {
-        let tag = RealInput.tag(generation: 7, release: true)
+    func testRealInputTagsCarryTheirStepTheirRealEventAndWhetherTheyRelease() {
+        let tag = RealInput.tag(generation: 7, sequence: 42, release: true)
         XCTAssertEqual(RealInput.untag(tag)?.generation, 7)
+        XCTAssertEqual(RealInput.untag(tag)?.sequence, 42)
         XCTAssertEqual(RealInput.untag(tag)?.release, true)
-        XCTAssertEqual(RealInput.untag(RealInput.tag(generation: .max, release: false))?.generation, .max)
-        XCTAssertEqual(RealInput.untag(RealInput.tag(generation: .max, release: false))?.release, false)
+        let last = RealInput.untag(RealInput.tag(generation: .max, sequence: .max, release: false))
+        XCTAssertEqual(last?.generation, RealInput.generationMask, "steps are told apart by their low bits")
+        XCTAssertEqual(last?.sequence, .max)
+        XCTAssertEqual(last?.release, false)
         XCTAssertNil(RealInput.untag(0), "the person's own input is never the agent's")
         XCTAssertNil(RealInput.untag(12345))
+    }
+
+    func testAStandInDoesNothingIfItArrivesAsItIs() throws {
+        let key = try XCTUnwrap(CGEvent(keyboardEventSource: nil, virtualKey: 0, keyDown: true))
+        key.flags = [.maskCommand, .maskShift]
+        let keyStandIn = try XCTUnwrap(RealInput.standIn(for: key))
+        XCTAssertEqual(keyStandIn.type, .keyUp, "a key-up of an unused key types and triggers nothing")
+        XCTAssertEqual(keyStandIn.getIntegerValueField(.keyboardEventKeycode), Int64(RealInput.unusedKey))
+        XCTAssertTrue(keyStandIn.flags.intersection([.maskCommand, .maskShift, .maskAlternate, .maskControl]).isEmpty, "no modifier is held")
+        let point = CGPoint(x: 320, y: 240)
+        let press = try XCTUnwrap(CGEvent(mouseEventSource: nil, mouseType: .leftMouseDown, mouseCursorPosition: point, mouseButton: .left))
+        let pressStandIn = try XCTUnwrap(RealInput.standIn(for: press))
+        XCTAssertEqual(pressStandIn.type, .mouseMoved, "a move presses nothing")
+        XCTAssertEqual(pressStandIn.location, point, "routed where the press would land")
+    }
+
+    func testOnlyTheGateTurnsAStandInIntoRealInput() {
+        XCTAssertEqual(RealInput.delivery(release: false, currentStep: true, held: true, admitted: true), .replace)
+        XCTAssertEqual(RealInput.delivery(release: false, currentStep: true, held: true, admitted: false), .drop, "routed to another app or window")
+        XCTAssertEqual(RealInput.delivery(release: false, currentStep: false, held: true, admitted: true), .drop, "a stand-in from an earlier step")
+        XCTAssertEqual(RealInput.delivery(release: false, currentStep: true, held: false, admitted: true), .drop, "no real event left for it")
+        XCTAssertEqual(RealInput.delivery(release: true, currentStep: false, held: false, admitted: false), .pass, "releases go out so nothing stays held")
     }
 
     func testThePointerGoesBackOnlyIfThePersonLeftItWhereTheAgentPutIt() {

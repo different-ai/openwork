@@ -122,12 +122,16 @@ clicks, double-clicks, drags, scrolls, keys and typing through the system input
 stream with the real pointer, as a person's mouse and keyboard would (step path
 `real_input`). Every press, move, scroll and key is checked just before it is
 posted: the app must be frontmost, and for the pointer the selected window must
-be the topmost one under the point (the agent's see-through overlay aside). An
-annotated session event tap then sees each event with the process and window the
-window server is about to deliver it to, and drops any of the agent's events
-bound elsewhere; releases always go out so nothing stays held, and a drag whose
-window stops being the target is released at its last point inside that window.
-Without the tap nothing is sent (`real_input_unavailable`). The tap also tells
+be the topmost one under the point (the agent's see-through overlay aside). What
+goes into the input stream is then a stand-in that does nothing as it is: a key-up
+of an unused key, or a pointer move to the same point. An annotated session event
+tap sees it with the process and window the window server is about to deliver it
+to, and only there turns it into the real event, when that is the selected app and
+window; otherwise it is dropped and the step stops. While the tap is disabled or
+recovering only stand-ins arrive, so no agent input can escape it. Releases go out
+as themselves so nothing stays held, and a drag whose window stops being the target
+is released at its last point inside that window. Without the tap nothing is sent
+(`real_input_unavailable`). The tap also tells
 the person's own events from the agent's tagged ones, so the person's click or
 key still pauses the step. After the batch the person's pointer goes back where
 it was, unless they moved it.

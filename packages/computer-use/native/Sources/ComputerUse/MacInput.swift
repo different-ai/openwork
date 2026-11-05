@@ -554,8 +554,9 @@ final class MacInput {
             // Releases always go out so nothing stays held. The window server sets the
             // target process, which the gate reads.
             if pointer, personPointer == nil { personPointer = CGEvent(source: nil)?.location }
-            RealInputGate.shared.tag(event, release: release || [.leftMouseUp, .rightMouseUp, .otherMouseUp, .keyUp].contains(event.type))
-            event.post(tap: .cghidEventTap)
+            // Through the gate: a stand-in goes out, and only the gate's tap turns it into this
+            // event, so nothing reaches another app even while the tap is off.
+            try? RealInputGate.shared.post(event, release: release || [.leftMouseUp, .rightMouseUp, .otherMouseUp, .keyUp].contains(event.type))
             return
         }
         event.setIntegerValueField(.eventTargetUnixProcessID, value: Int64(pid))

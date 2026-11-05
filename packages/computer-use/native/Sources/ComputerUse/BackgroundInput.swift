@@ -129,16 +129,50 @@ enum RealInput {
         return top.id == target && top.pid == pid
     }
 
-    /// Marks the agent's real events in `eventSourceUserData`: the step they belong
-    /// to, and whether the event only releases a press.
-    static func tag(generation: UInt32, release: Bool) -> Int64 {
-        tagMarker << 48 | Int64(generation) << 1 | (release ? 1 : 0)
+    /// Marks the agent's events in `eventSourceUserData`: the step they belong to (its low
+    /// 15 bits), which held real event a stand-in carries, and whether the event only
+    /// releases a press.
+    static func tag(generation: UInt32, sequence: UInt32 = 0, release: Bool) -> Int64 {
+        tagMarker << 48 | Int64(generation & generationMask) << 33 | Int64(sequence) << 1 | (release ? 1 : 0)
     }
-    static func untag(_ value: Int64) -> (generation: UInt32, release: Bool)? {
+    static func untag(_ value: Int64) -> (generation: UInt32, sequence: UInt32, release: Bool)? {
         guard value >> 48 == tagMarker else { return nil }
-        return (UInt32(truncatingIfNeeded: value >> 1), value & 1 == 1)
+        return (UInt32(truncatingIfNeeded: value >> 33) & generationMask, UInt32(truncatingIfNeeded: value >> 1), value & 1 == 1)
     }
+    static let generationMask: UInt32 = 0x7FFF
     private static let tagMarker: Int64 = 0x4F57
+
+    /// What goes into the system input stream in place of a press, move, scroll or key:
+    /// a stand-in that does nothing if it is delivered as it is. Only the gate's tap turns
+    /// it into the real event, and only once the window server routes it to the selected
+    /// window. While the tap is disabled or recovering, the stand-in is all that arrives,
+    /// so no agent input can escape the gate. A key becomes a key-up of an unused function
+    /// key (F20) with no modifiers; a pointer event becomes a move to the point it lands on,
+    /// which the window server routes like the real event.
+    static func standIn(for real: CGEvent) -> CGEvent? {
+        switch real.type {
+        case .keyDown, .keyUp, .flagsChanged:
+            guard let event = CGEvent(keyboardEventSource: nil, virtualKey: unusedKey, keyDown: false) else { return nil }
+            event.flags = []
+            return event
+        default:
+            guard let event = CGEvent(mouseEventSource: nil, mouseType: .mouseMoved, mouseCursorPosition: real.location, mouseButton: .left) else { return nil }
+            event.flags = []
+            return event
+        }
+    }
+    /// kVK_F20: on no Mac keyboard and bound to nothing by default.
+    static let unusedKey: CGKeyCode = 0x5A
+
+    enum Delivery: Equatable { case pass, drop, replace }
+    /// What the gate's tap does with one of the agent's events. A release always passes, so
+    /// nothing stays held. A stand-in becomes its real event only for the armed step, with
+    /// its real event still held, where the window server routes it to the selected app and
+    /// window; anything else is dropped.
+    static func delivery(release: Bool, currentStep: Bool, held: Bool, admitted: Bool) -> Delivery {
+        if release { return .pass }
+        return currentStep && held && admitted ? .replace : .drop
+    }
 
     /// Whether one of the agent's events may reach the process (and, for the
     /// pointer, the window) the window server is about to hand it to. Releases
@@ -172,6 +206,9 @@ final class RealInputGate: @unchecked Sendable {
     private var generation: UInt32 = 0
     private var armed: (pid: pid_t, window: CGWindowID)?
     private var posted = 0, seen = 0, diverted = false
+    /// The real events whose stand-ins are on their way, by sequence.
+    private var held: [UInt32: CGEvent] = [:]
+    private var sequence: UInt32 = 0
     /// When the person's own clicks, keys and moves last passed, by event type, while armed.
     private var personAt: [CGEventType.RawValue: TimeInterval] = [:]
 
@@ -182,7 +219,7 @@ final class RealInputGate: @unchecked Sendable {
         guard let tap = start() else { throw Self.unavailable }
         lock.withLock {
             generation &+= 1
-            armed = (pid, window); posted = 0; seen = 0; diverted = false; personAt = [:]
+            armed = (pid, window); posted = 0; seen = 0; diverted = false; personAt = [:]; held = [:]
         }
         CGEvent.tapEnable(tap: tap, enable: true)
         guard CGEvent.tapIsEnabled(tap: tap) else {
@@ -190,13 +227,28 @@ final class RealInputGate: @unchecked Sendable {
             throw Self.unavailable
         }
     }
-    /// Marks an event of the armed step, just before it is posted.
-    func tag(_ event: CGEvent, release: Bool) {
+    /// Posts one of the armed step's events through the system input stream. A release goes
+    /// as itself so nothing stays held; anything else goes as its stand-in, which only the
+    /// tap turns back into this event once it is routed to the selected window.
+    func post(_ event: CGEvent, release: Bool) throws {
+        if release {
+            let value = lock.withLock { () -> Int64 in
+                posted += 1
+                return RealInput.tag(generation: generation, release: true)
+            }
+            event.setIntegerValueField(.eventSourceUserData, value: value)
+            event.post(tap: .cghidEventTap)
+            return
+        }
+        guard let standIn = RealInput.standIn(for: event) else { throw UseError("input_failed", "Could not create an input event.") }
         let value = lock.withLock { () -> Int64 in
             posted += 1
-            return RealInput.tag(generation: generation, release: release)
+            sequence &+= 1
+            held[sequence] = event
+            return RealInput.tag(generation: generation, sequence: sequence, release: false)
         }
-        event.setIntegerValueField(.eventSourceUserData, value: value)
+        standIn.setIntegerValueField(.eventSourceUserData, value: value)
+        standIn.post(tap: .cghidEventTap)
     }
     /// Stops the step once anything was held back or the tap stopped watching.
     func check() throws {
@@ -216,7 +268,7 @@ final class RealInputGate: @unchecked Sendable {
         }
         let (drained, wasDiverted, tap) = lock.withLock { () -> (Bool, Bool, CFMachPort?) in
             let drained = seen >= posted
-            if drained { armed = nil }
+            if drained { armed = nil; held = [:] }
             return (drained, diverted, self.tap)
         }
         if drained, let tap { CGEvent.tapEnable(tap: tap, enable: false) }
@@ -228,38 +280,54 @@ final class RealInputGate: @unchecked Sendable {
     func abandon() {
         let tap = lock.withLock { () -> CFMachPort? in
             guard armed != nil, seen >= posted else { return nil }
-            armed = nil
+            armed = nil; held = [:]
             return self.tap
         }
         if let tap { CGEvent.tapEnable(tap: tap, enable: false) }
     }
 
-    private func filter(_ type: CGEventType, _ event: CGEvent) -> Bool {
+    /// Returns the event to deliver: this one, its real event, or nil to drop it.
+    private func filter(_ type: CGEventType, _ event: CGEvent) -> (CGEvent?, replaced: Bool) {
         if type == .tapDisabledByTimeout || type == .tapDisabledByUserInput {
-            // Events may have passed unchecked: the step stops, and the tap comes back.
+            // While the tap was off, only stand-ins and releases went out. The step stops,
+            // and the tap comes back.
             let tap = lock.withLock { () -> CFMachPort? in
                 guard armed != nil else { return nil }
                 diverted = true
                 return self.tap
             }
             if let tap { CGEvent.tapEnable(tap: tap, enable: true) }
-            return true
+            return (event, false)
         }
         guard let tag = RealInput.untag(event.getIntegerValueField(.eventSourceUserData)) else {
             // The person's own mouse or keyboard: it always passes, and is noted.
             lock.withLock { if armed != nil { personAt[type.rawValue] = ProcessInfo.processInfo.systemUptime } }
-            return true
+            return (event, false)
         }
         let pid = pid_t(truncatingIfNeeded: event.getIntegerValueField(.eventTargetUnixProcessID))
         let under = CGWindowID(truncatingIfNeeded: event.getIntegerValueField(Self.windowUnderPointer))
-        return lock.withLock {
-            guard let armed, tag.generation == generation else { return tag.release }
-            seen += 1
-            let admitted = RealInput.admits(release: tag.release, target: armed.pid, window: armed.window, to: pid, under: under)
-            if !admitted { diverted = true }
-            return admitted
+        let (delivery, real) = lock.withLock { () -> (RealInput.Delivery, CGEvent?) in
+            let currentStep = armed != nil && tag.generation == generation & RealInput.generationMask
+            if currentStep { seen += 1 }
+            let real = tag.release ? nil : held.removeValue(forKey: tag.sequence)
+            let admitted = armed.map { RealInput.admits(release: tag.release, target: $0.pid, window: $0.window, to: pid, under: under) } ?? false
+            let delivery = RealInput.delivery(release: tag.release, currentStep: currentStep, held: real != nil, admitted: admitted)
+            if currentStep, delivery == .drop { diverted = true }
+            return (delivery, real)
+        }
+        switch delivery {
+        case .pass: return (event, false)
+        case .drop: return (nil, false)
+        case .replace:
+            guard let real else { return (nil, false) }
+            // The real event takes the stand-in's place and the route the window server gave it.
+            for field in Self.routeFields { real.setIntegerValueField(field, value: event.getIntegerValueField(field)) }
+            real.setIntegerValueField(.eventSourceUserData, value: event.getIntegerValueField(.eventSourceUserData))
+            return (real, true)
         }
     }
+    private static let routeFields: [CGEventField] = [.eventTargetUnixProcessID, .eventTargetProcessSerialNumber,
+        .mouseEventWindowUnderMousePointer, .mouseEventWindowUnderMousePointerThatCanHandleThisEvent]
     // kCGMouseEventWindowUnderMousePointerThatCanHandleThisEvent: 0 for keys.
     private static let windowUnderPointer = CGEventField(rawValue: 92)!
     private static let types: [CGEventType] = [.mouseMoved, .leftMouseDown, .leftMouseUp, .leftMouseDragged,
@@ -267,7 +335,10 @@ final class RealInputGate: @unchecked Sendable {
         .scrollWheel, .keyDown, .keyUp, .flagsChanged]
     private static let callback: CGEventTapCallBack = { _, type, event, info in
         guard let info else { return Unmanaged.passUnretained(event) }
-        return Unmanaged<RealInputGate>.fromOpaque(info).takeUnretainedValue().filter(type, event) ? Unmanaged.passUnretained(event) : nil
+        let (deliver, replaced) = Unmanaged<RealInputGate>.fromOpaque(info).takeUnretainedValue().filter(type, event)
+        guard let deliver else { return nil }
+        // A replacement is handed over with its own reference; the stand-in stays with the system.
+        return replaced ? Unmanaged.passRetained(deliver) : Unmanaged.passUnretained(deliver)
     }
     /// The tap runs on its own thread, so a busy main thread never holds input up.
     private func start() -> CFMachPort? {
