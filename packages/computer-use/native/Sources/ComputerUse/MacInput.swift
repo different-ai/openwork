@@ -675,10 +675,17 @@ final class MacInput {
                       check: () throws -> Void) async throws -> PanelGoTo.Failure? {
         let name = field.flatMap { access.attribute($0, kAXValueAttribute) as? String }
         var typedSlash = false
+        // A sandboxed app's panel is drawn by macOS's panel process, which may report its Go To field itself.
+        let service = AppIdentity.filePanelService(for: app.pid)
+        func focusedField() -> AXUIElement? {
+            guard let live = access.focusedTextField(app.pid) ?? service.flatMap(access.focusedTextField) else { return nil }
+            // Never the panel's name or search field, whichever process reports it.
+            return access.isGoToCandidate(live) ? live : nil
+        }
         return try await PanelGoTo.enter(path, open: { () async throws -> AXUIElement? in
-            let earlier = access.focusedTextField(app.pid)
+            let earlier = focusedField()
             @MainActor func opened() async throws -> AXUIElement? {
-                try await until(2, check: check, { access.focusedTextField(app.pid).flatMap { live in
+                try await until(2, check: check, { focusedField().flatMap { live in
                     field.map { CFEqual(live, $0) } == true || earlier.map { CFEqual(live, $0) } == true ? nil : live } })
             }
             let goTo: CGEventFlags = [.maskCommand, .maskShift]
@@ -709,7 +716,7 @@ final class MacInput {
         value: { access.attribute($0, kAXValueAttribute) as? String },
         submit: { goToField in
             try keyboard(NativeKey.navigation["enter"]!, flags: [], text: nil, pid: app.pid, check: check)
-            _ = try await until(2, check: check, { access.focusedTextField(app.pid).map { CFEqual($0, goToField) } == true ? nil : true })
+            _ = try await until(2, check: check, { focusedField().map { CFEqual($0, goToField) } == true ? nil : true })
         })
     }
     /// `target: "focused"` (`FocusedTarget`): raw keys to the app's key window, checked before each one.
@@ -802,16 +809,28 @@ final class MacInput {
         guard realInput else { return }
         try RealInputGate.shared.check()
         let windows = ((CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID) as? [[String: Any]]) ?? [])
-            .compactMap { value -> (id: CGWindowID, pid: pid_t, bounds: CGRect)? in
+            .compactMap { value -> (id: CGWindowID, pid: pid_t, bounds: CGRect, layer: Int)? in
                 guard let number = value[kCGWindowNumber as String] as? NSNumber,
                       let owner = value[kCGWindowOwnerPID as String] as? NSNumber,
                       (value[kCGWindowAlpha as String] as? NSNumber)?.doubleValue ?? 1 > 0,
                       let bounds = value[kCGWindowBounds as String] as? [String: Any],
                       let rect = CGRect(dictionaryRepresentation: bounds as CFDictionary) else { return nil }
-                return (number.uint32Value, owner.int32Value, rect)
+                return (number.uint32Value, owner.int32Value, rect, (value[kCGWindowLayer as String] as? NSNumber)?.intValue ?? 0)
             }
+        // What macOS finds at the point, through the Dock's and menu bar's empty space.
+        var hit: pid_t?
+        if let point {
+            var element: AXUIElement?
+            let systemWide = AXUIElementCreateSystemWide()
+            AXUIElementSetMessagingTimeout(systemWide, 0.2)
+            if AXUIElementCopyElementAtPosition(systemWide, Float(point.x), Float(point.y), &element) == .success, let element {
+                var owner: pid_t = 0
+                // The agent's own cursor overlay lets the pointer through: it never decides.
+                if AXUIElementGetPid(element, &owner) == .success, owner != ProcessInfo.processInfo.processIdentifier { hit = owner }
+            }
+        }
         guard RealInput.reachesTarget(pid, window: window, front: NSWorkspace.shared.frontmostApplication?.processIdentifier, at: point,
-            windows: windows, passThrough: AgentCursor.shared.passThroughWindows) else { throw RealInput.targetChanged }
+            windows: windows, passThrough: AgentCursor.shared.passThroughWindows, hit: hit) else { throw RealInput.targetChanged }
     }
     /// Puts the keyboard on an observed control, as `focus` and `enter_value` do: accessibility
     /// focus first, then (only when `click` is allowed) a click on its middle, as a person would.

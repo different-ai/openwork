@@ -893,6 +893,10 @@ final class MacAccessibility {
         var visited: Set<AXUIElement> = []
         var owner: pid_t = 0
         guard AXUIElementGetPid(target.element, &owner) == .success else { throw UseError("window_unavailable", "The selected window exited.", next: "observe") }
+        // A sheet's controls name the window it is attached to as their window. They still
+        // belong to the sheet only when the walk below reaches the sheet itself.
+        let host = try checkedString(target.element, kAXRoleAttribute, budget) == "AXSheet"
+            ? try checkedElement(target.element, kAXWindowAttribute, budget) : nil
         while let node = current, visited.count < 24, visited.insert(node).inserted {
             try budget.check()
             var pid: pid_t = 0
@@ -905,7 +909,8 @@ final class MacAccessibility {
                 throw UseError("protected_input", "This control or an ancestor contains protected content. Take over for this step.", next: "human_takeover")
             }
             if CFEqual(node, target.element) { return }
-            if let window = try checkedElement(node, kAXWindowAttribute, budget), !CFEqual(window, target.element) {
+            if let window = try checkedElement(node, kAXWindowAttribute, budget), !CFEqual(window, target.element),
+               host.map({ CFEqual(window, $0) }) != true {
                 throw UseError("outside_window", "The target belongs to another window.", next: "human_takeover")
             }
             current = try checkedElement(node, kAXParentAttribute, budget)
@@ -944,15 +949,15 @@ final class MacAccessibility {
         try Task.checkCancellation(); try check()
         let after = try await read(target, check: check)
         try after.requireCapture()
-        guard try captureDigest(state) == captureDigest(after),
-              try validate(target, app: app, requireFrontmost: requireFrontmost) == bounds else {
-            throw UseError("stale_observation", "The window's content, focus or privacy masks changed during capture.", next: "observe")
+        guard try validate(target, app: app, requireFrontmost: requireFrontmost) == bounds else {
+            throw UseError("stale_observation", "The window moved during capture.", next: "observe")
         }
         try check()
         // Capture only the window; a failure never broadens into a display capture.
-        // Protected fields are masked in whatever part of the window was captured.
+        // Its content may change while it is captured, as a file panel's list or a live preview
+        // does: every protected field either read found is masked in what was captured.
         guard let redacted = WindowImage.redacted(image, captured: source.offsetBy(dx: bounds.minX, dy: bounds.minY),
-                protectedFrames: state.protectedFrames), let data = jpegQuality.map({ NSBitmapImageRep(cgImage: redacted).representation(using: .jpeg, properties: [.compressionFactor: $0]) })
+                protectedFrames: CaptureMasks.during(before: state.protectedFrames, after: after.protectedFrames)), let data = jpegQuality.map({ NSBitmapImageRep(cgImage: redacted).representation(using: .jpeg, properties: [.compressionFactor: $0]) })
                 ?? NSBitmapImageRep(cgImage: redacted).representation(using: .png, properties: [:]) else {
             throw UseError("capture_failed", "Could not encode this window.", next: "observe")
         }

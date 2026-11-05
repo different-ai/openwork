@@ -114,13 +114,20 @@ enum RealInput {
     /// the app is frontmost, pointer events only where the selected window itself is
     /// the topmost one under the point, not another window of the app. `windows`
     /// are on-screen, front to back; only windows the pointer passes through
-    /// (`passThrough`, the agent's presence overlay) are skipped.
+    /// (`passThrough`, the agent's presence overlay) are skipped. The Dock, menu bar
+    /// and other system layers above apps span whole displays but let clicks through
+    /// where they draw nothing, so app windows (layer 0) decide which is on top, and
+    /// `hit`, the process macOS finds at the point, decides whether one of those
+    /// layers (the Dock's bar, a menu, another app's floating panel) takes the click.
+    /// The helper's own windows (`own`), such as the Take over pill, always count.
     static func reachesTarget(_ pid: pid_t, window target: CGWindowID, front: pid_t?, at point: CGPoint?,
-        windows: [(id: CGWindowID, pid: pid_t, bounds: CGRect)], passThrough: Set<CGWindowID>) -> Bool {
+        windows: [(id: CGWindowID, pid: pid_t, bounds: CGRect, layer: Int)], passThrough: Set<CGWindowID>, hit: pid_t? = nil,
+        own: pid_t = ProcessInfo.processInfo.processIdentifier) -> Bool {
         guard front == pid else { return false }
         guard let point else { return true }
-        guard let top = windows.first(where: { !passThrough.contains($0.id) && $0.bounds.contains(point) }) else { return false }
-        return top.id == target && top.pid == pid
+        guard let top = windows.first(where: { ($0.layer == 0 || $0.pid == own) && !passThrough.contains($0.id) && $0.bounds.contains(point) }) else { return false }
+        guard top.id == target, top.pid == pid else { return false }
+        return hit.map { $0 == pid } ?? true
     }
 
     /// Marks the agent's events in `eventSourceUserData`: the step they belong to (its low
@@ -172,8 +179,10 @@ enum RealInput {
     /// pointer, the window) the window server is about to hand it to. Releases
     /// always go, so nothing stays held; every press, move, scroll and key only
     /// to the selected app, and pointer events only to the selected window.
-    static func admits(release: Bool, target: pid_t, window: CGWindowID, to pid: pid_t, under: CGWindowID) -> Bool {
-        release || pid == target && (under == 0 || under == window)
+    /// `panel` is the process macOS draws the selected app's open Save or Open panel in,
+    /// which takes that panel's keys.
+    static func admits(release: Bool, target: pid_t, window: CGWindowID, to pid: pid_t, under: CGWindowID, panel: pid_t? = nil) -> Bool {
+        release || (pid == target || panel.map { $0 == pid } == true) && (under == 0 || under == window)
     }
 
     /// The agent's real input reaches the HID state the person-input checks read, so
@@ -228,7 +237,7 @@ final class RealInputGate: @unchecked Sendable {
     private let lock = NSLock()
     private var tap: CFMachPort?
     private var generation: UInt32 = 0
-    private var armed: (pid: pid_t, window: CGWindowID)?
+    private var armed: (pid: pid_t, window: CGWindowID, panel: pid_t?)?
     private var posted = 0, seen = 0, diverted = false
     /// The real events whose stand-ins are on their way, by sequence.
     private var held: [UInt32: CGEvent] = [:]
@@ -239,11 +248,12 @@ final class RealInputGate: @unchecked Sendable {
     var isArmed: Bool { lock.withLock { armed != nil } }
 
     /// Starts a step's real input for `window` of `pid`; throws before anything is sent.
-    func arm(pid: pid_t, window: CGWindowID) throws {
+    /// `panel` is the process drawing that window's open Save or Open panel, if any.
+    func arm(pid: pid_t, window: CGWindowID, panel: pid_t? = nil) throws {
         guard let tap = start() else { throw Self.unavailable }
         lock.withLock {
             generation &+= 1
-            armed = (pid, window); posted = 0; seen = 0; diverted = false; personAt = [:]; held = [:]
+            armed = (pid, window, panel); posted = 0; seen = 0; diverted = false; personAt = [:]; held = [:]
         }
         CGEvent.tapEnable(tap: tap, enable: true)
         guard CGEvent.tapIsEnabled(tap: tap) else {
@@ -334,7 +344,7 @@ final class RealInputGate: @unchecked Sendable {
             let currentStep = armed != nil && tag.generation == generation & RealInput.generationMask
             if currentStep { seen += 1 }
             let real = tag.release ? nil : held.removeValue(forKey: tag.sequence)
-            let admitted = armed.map { RealInput.admits(release: tag.release, target: $0.pid, window: $0.window, to: pid, under: under) } ?? false
+            let admitted = armed.map { RealInput.admits(release: tag.release, target: $0.pid, window: $0.window, to: pid, under: under, panel: $0.panel) } ?? false
             let delivery = RealInput.delivery(release: tag.release, currentStep: currentStep, held: real != nil, admitted: admitted)
             if currentStep, delivery == .drop { diverted = true }
             return (delivery, real)

@@ -197,6 +197,14 @@ struct ObservationOptions {
 /// After a step that may have changed the view or focus, what the batch's next step
 /// reads back before it runs in the same call: the check a fresh observation would make.
 enum BatchContinuation {
+    /// A scroll that follows only this batch's own scrolls, drags and waits: it carries on moving
+    /// the same view, so the image changing under the point is the batch's own doing.
+    static func continuesScroll(_ action: Action, after earlier: ArraySlice<Action>) -> Bool {
+        guard case .scroll = action, !earlier.isEmpty else { return false }
+        return earlier.allSatisfy { step in
+            switch step { case .scroll, .drag, .wait: return true; default: return false }
+        }
+    }
     enum Need: Equatable {
         /// Its exact observed control, unchanged.
         case control(String)
@@ -594,6 +602,16 @@ enum Action {
     }
     var usesCoordinates: Bool {
         switch self { case .move, .click, .scroll, .drag, .rightClick, .hold: return true; default: return false }
+    }
+    /// Steps that re-check exactly what they act on right before input: an observed control
+    /// (`validateRecord`) or the open file panel. They need that to match, not the whole window,
+    /// whose file list or preview can keep changing on its own.
+    var checksOwnTarget: Bool {
+        switch self { case .press, .setValue, .showMenu, .enterValue, .focus, .saveAs, .openInPanel: return true; default: return false }
+    }
+    /// A file step in an open Save or Open panel.
+    var usesFilePanel: Bool {
+        switch self { case .saveAs, .openInPanel: return true; default: return false }
     }
     static func isStroke(_ action: Action) -> Bool {
         if case .drag = action { return true }; return false
@@ -1240,11 +1258,16 @@ enum WebBrowser {
 enum WindowReplacement {
     /// Only shortly after that input: a window the person swaps in later is not followed.
     static let within: TimeInterval = 15
-    static func replacement(before: Set<UInt32>, after: Set<UInt32>, target: UInt32) -> UInt32? {
+    static func replacement(before: Set<UInt32>, after: Set<UInt32>, target: UInt32, focused: UInt32? = nil) -> UInt32? {
         guard before.contains(target), !after.contains(target) else { return nil }
         let new = after.subtracting(before)
-        return new.count == 1 ? new.first : nil
+        if new.count == 1 { return new.first }
+        // Several new windows (Keynote's document and its theme chooser closing): the one the app focused.
+        return focused.flatMap { new.contains($0) ? $0 : nil }
     }
+    /// How long a step's own window may take to close and its replacement to appear before the
+    /// receipt is written: a new document window takes a moment.
+    static let settle: TimeInterval = 1.5
 }
 
 struct WindowChanges {

@@ -189,4 +189,31 @@ final class DialogTests: XCTestCase {
         XCTAssertEqual(OpenPanelRules.outcome(panelOpen: false, alert: nil, windowOpened: false, retitled: false, contentChanged: true), "file_chosen")
         XCTAssertNil(OpenPanelRules.outcome(panelOpen: false, alert: nil, windowOpened: false, retitled: false, contentChanged: false), "nothing to show yet")
     }
+
+    /// Keynote's Insert panel named no default button while nothing was selected, so it was read as
+    /// a plain sheet and open_in_panel refused it with open_panel_required.
+    func testAFilePanelIsKnownByItsButtonsOrByMacOSDrawingItForTheApp() {
+        XCTAssertTrue(DialogRules.isFilePanel(bundleID: "com.apple.iWork.Keynote", roles: ["AXOutline", "AXButton"], defaultButton: nil,
+            buttons: ["Cancel", "Insert"]), "the Insert button, though macOS names no default button")
+        XCTAssertTrue(DialogRules.isFilePanel(bundleID: "com.apple.iWork.Keynote", roles: ["AXOutline"], defaultButton: nil, remote: true),
+            "a sandboxed app's own panel, drawn by macOS's panel process")
+        XCTAssertFalse(DialogRules.isFilePanel(bundleID: "com.apple.TextEdit", roles: ["AXButton", "AXStaticText"], defaultButton: nil,
+            buttons: ["Cancel", "Save As…"], remote: true), "an alert has no file list")
+        XCTAssertFalse(DialogRules.isFilePanel(bundleID: "com.example.app", roles: ["AXOutline"], defaultButton: nil, buttons: ["Done", "Cancel"]))
+    }
+
+    func testThePanelsConfirmButtonIsFoundByItsTitleWhenMacOSNamesNone() {
+        XCTAssertEqual(DialogRules.confirmButton(["Cancel", "Insert"], save: false), 1)
+        XCTAssertEqual(DialogRules.confirmButton(["New Folder", "Cancel", "Save"], save: true), 2)
+        XCTAssertEqual(DialogRules.confirmButton(["Cancel", "Export"], save: true), 1)
+        XCTAssertNil(DialogRules.confirmButton(["Cancel", "Insert"], save: true), "a save sheet is confirmed only by Save or Export")
+        XCTAssertNil(DialogRules.confirmButton(["Cancel", "Done"], save: false))
+    }
+
+    func testAPathGoesOnlyIntoAFieldThatCanBeTheGoToField() {
+        XCTAssertTrue(PanelGoTo.candidate(identifier: nil, subrole: nil))
+        XCTAssertTrue(PanelGoTo.candidate(identifier: "goToField", subrole: nil))
+        XCTAssertFalse(PanelGoTo.candidate(identifier: "saveAsNameTextField", subrole: nil), "the Save As name field")
+        XCTAssertFalse(PanelGoTo.candidate(identifier: nil, subrole: "AXSearchField"))
+    }
 }

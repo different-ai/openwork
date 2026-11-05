@@ -449,11 +449,25 @@ final class SessionRuntime {
     /// window: the session works there from now on, as `computer_open` onto a file opens in the
     /// window the file shows in. Its controls and refs are new, so the next act needs an observation.
     /// Only for the session's own window, never a dialog's, and only into a window no other agent holds.
-    private func followReplacement(_ id: String) async -> [String: Any]? {
+    /// `settle` waits that long for the app to close the window and show its replacement.
+    private func followReplacement(_ id: String, settle: TimeInterval = 0) async -> [String: Any]? {
         guard let current = session, current.id == id, current.parents.isEmpty, !current.paused,
-              let before = current.windowsBeforeInput, now - before.at < WindowReplacement.within,
-              let replacement = WindowReplacement.replacement(before: before.windows, after: access.windowChanges(current.app).windows, target: current.target.id),
-              let target = (try? await access.windows(current.app))?.first(where: { $0.id == replacement }),
+              let before = current.windowsBeforeInput, now - before.at < WindowReplacement.within else { return nil }
+        let until = now + settle
+        var found: (id: UInt32, windows: [WindowTarget])?
+        while found == nil {
+            let after = access.windowChanges(current.app).windows
+            if !after.contains(current.target.id), after.subtracting(before.windows).count > 0 {
+                let windows = (try? await access.windows(current.app)) ?? []
+                let focused = access.focusedWindowID(current.app, windows: windows, requireActive: false).map(UInt32.init)
+                if let replacement = WindowReplacement.replacement(before: before.windows, after: after, target: current.target.id, focused: focused) {
+                    found = (replacement, windows)
+                    break
+                }
+            }
+            guard now < until, (try? await Task.sleep(nanoseconds: 100_000_000)) != nil, session?.id == id else { break }
+        }
+        guard let found, let target = found.windows.first(where: { $0.id == found.id }),
               (try? access.validate(target, app: current.app)) != nil,
               let reservation = try? ControlLease(pid: current.app.pid, window: target.id),
               session?.id == id else { return nil }
@@ -569,6 +583,12 @@ final class SessionRuntime {
                 catch let error as UseError {
                     if error.code == "window_not_frontmost", current.checksFront, attempt < 2 {
                         try await bringBack()
+                        continue
+                    }
+                    // The window is going away under the read, as one a step just replaced does: once
+                    // the app shows the new one, the read is of that window.
+                    if ["accessibility_unavailable", "window_unavailable"].contains(error.code), attempt < 2,
+                       await self.followReplacement(id, settle: WindowReplacement.settle) != nil {
                         continue
                     }
                     guard error.code == "stale_observation", attempt < 2 else { throw SharedDesktop.yielding(error) }
@@ -882,7 +902,10 @@ final class SessionRuntime {
         let inBackground = current.mode == .control && current.working == .background && current.parents.isEmpty
         // Real input the agent asks for works only with the window in front, like a person's.
         let asksReal = requestedReal && current.mode == .control && current.parents.isEmpty
-        let front = asksReal || current.takesFront || inBackground && actions.contains { InputDelivery.stepNeedsFront($0, route: route) }
+        // A sandboxed app's Save or Open panel is drawn by a macOS process of its own, which takes
+        // keys (Go To's Command-Shift-G, Return) only as a person's: real input with the window in front.
+        let panelKeys = current.mode == .control && current.dialogKind == .filePanel && actions.contains(where: \.usesFilePanel)
+        let front = asksReal || panelKeys || current.takesFront || inBackground && actions.contains { InputDelivery.stepNeedsFront($0, route: route) }
         // Whether `target` itself must be the front window: never for a dialog.
         let frontCheck = front && current.parents.isEmpty
         let background = inBackground && !front
@@ -1092,9 +1115,13 @@ final class SessionRuntime {
         var resumeText: String?
         var typingStart: CFRange?
         // Its own window in front, never a dialog of another process over it: real input,
-        // bound to that window by the gate for the whole batch.
-        let realInput = front && (current.realInput || asksReal) && current.parents.isEmpty && current.mode == .control
-        if realInput { try RealInputGate.shared.arm(pid: current.app.pid, window: current.target.id) }
+        // bound to that window by the gate for the whole batch. The one dialog it reaches is
+        // the app's own file panel, for a save_as or open_in_panel step.
+        let realInput = front && current.mode == .control && ((current.realInput || asksReal) && current.parents.isEmpty || panelKeys)
+        if realInput {
+            try RealInputGate.shared.arm(pid: current.app.pid, window: current.target.id,
+                panel: panelKeys ? AppIdentity.filePanelService(for: current.app.pid) : nil)
+        }
         defer { if realInput { RealInputGate.shared.abandon() } }
         var typedBefore = ""
         var pausedForPerson = false
@@ -1151,14 +1178,16 @@ final class SessionRuntime {
                 try checkWindow()
                 try observation.validate(id: observationID, generation: current.generation, frame: bounds, now: now)
                 var pointerTarget: AXUIElement?
-                if !followsStrokes, action.usesCoordinates || (policy == .desktop && index == 0) || (disturbed && !progress.hasInput) {
+                // A step on an observed control or the open file panel re-checks exactly that right
+                // before input: the rest of the window, such as a panel's file list, may change.
+                if !followsStrokes, !action.checksOwnTarget, action.usesCoordinates || (policy == .desktop && index == 0) || (disturbed && !progress.hasInput) {
                     let live = try await access.read(current.target, check: check)
                     // The helper bringing the window forward moves keyboard focus by itself: after
                     // its own raise only the content must match. Keys still check focus before they send.
-                    // After this batch's own input, a pointer step checks the image where it lands instead.
+                    // A pointer step checks the image where it lands instead, and what is under the point.
                     guard try access.captureDigest(live) == observation.stateDigest
                             || disturbed && (try access.captureDigest(live, focus: false)) == observation.contentDigest
-                            || action.usesCoordinates && progress.hasInput else {
+                            || action.usesCoordinates else {
                         throw UseError("stale_observation", "The observed window content or focus changed.", next: "observe")
                     }
                     if action.usesCoordinates {
@@ -1170,8 +1199,11 @@ final class SessionRuntime {
                         case .drag(let path): points = path
                         default: throw UseError("invalid_arguments", "This action has no coordinates.")
                         }
+                        // Scrolling again after this batch's own scroll or drag moves the same view on:
+                        // what changed under the point is the agent's own doing (a map panned, a list scrolled).
                         guard access.imageDigest(captured.0) == observation.imageDigest
-                                || ImageRegions.unchanged(observation.image, captured.0, around: points) else {
+                                || ImageRegions.unchanged(observation.image, captured.0, around: points)
+                                || BatchContinuation.continuesScroll(action, after: actions[..<index]) && progress.hasInput else {
                             throw UseError("stale_observation", "The window image changed where this step lands. Observe before coordinate input.", next: "observe")
                         }
                         pointerTarget = try access.checkHit(observation.screenPoint(points[0]), target: current.target, app: current.app, background: background || !current.parents.isEmpty)
@@ -1461,7 +1493,9 @@ final class SessionRuntime {
         if progress.hasInput {
             session?.openedByLastAction = windowsAfter.windows.subtracting(windowsBefore.windows)
             session?.windowsBeforeInput = (windowsBefore.windows, now)
-            if let replaced = await followReplacement(id) { receipt["window_replaced"] = replaced }
+            // A step that closed its own window waits a moment for the app's new one.
+            let closedOwn = !windowsAfter.windows.contains(current.target.id) && current.parents.isEmpty
+            if let replaced = await followReplacement(id, settle: closedOwn ? WindowReplacement.settle : 0) { receipt["window_replaced"] = replaced }
         }
         receipt["delivery"] = (background ? InputDelivery.background : .foreground).rawValue
         if let typeNote { receipt["type_note"] = typeNote }
