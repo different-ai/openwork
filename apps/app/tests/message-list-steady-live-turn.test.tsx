@@ -51,13 +51,8 @@ const messages: UIMessage[] = [{
   metadata: { opencode: { created: 2 } },
 }]
 
-async function renderLiveTurn(steady: boolean, status: "streaming" | "ready" = "streaming") {
-  useSteadyLiveTurnStore.getState().setEnabled(steady)
-  const container = document.createElement("div")
-  document.body.append(container)
-  const root = createRoot(container)
-  mounted = { root, container }
-  await act(async () => root.render(createElement(QueryClientProvider, { client: queryClient,
+function liveTurnView(status: "streaming" | "ready", content: UIMessage[] = messages) {
+  return createElement(QueryClientProvider, { client: queryClient,
     children: createElement(DenAuthProvider, { children: createElement(PlatformProvider, {
       value: createDefaultPlatform(),
       children: createElement(MessageListProvider, {
@@ -67,9 +62,18 @@ async function renderLiveTurn(steady: boolean, status: "streaming" | "ready" = "
         onForkAtMessage: () => {}, onEditUserMessage: () => {},
         onMcpReconnect: async () => { throw new Error("Unexpected reconnect") },
         onMcpReopenAuthorization: async () => {},
-        children: createElement(MessageList, { messages, status, activityStatus: status === "streaming" ? "responding" : "idle" }),
+        children: createElement(MessageList, { messages: content, status, activityStatus: status === "streaming" ? "responding" : "idle" }),
       }),
-    }) }) })))
+    }) }) })
+}
+
+async function renderLiveTurn(steady: boolean, status: "streaming" | "ready" = "streaming") {
+  useSteadyLiveTurnStore.getState().setEnabled(steady)
+  const container = document.createElement("div")
+  document.body.append(container)
+  const root = createRoot(container)
+  mounted = { root, container }
+  await act(async () => root.render(liveTurnView(status)))
   return container
 }
 
@@ -89,6 +93,36 @@ test("off: a running turn splits at its latest text without holding a blank step
     await act(async () => useSteadyLiveTurnStore.getState().setEnabled(true))
     await act(async () => useSteadyLiveTurnStore.getState().setEnabled(false))
     expect(container.querySelector<HTMLElement>("[data-live-steps]")?.style.minHeight).toBe("")
+  } finally {
+    measure.mockRestore()
+  }
+})
+
+test("off: settling a tool and advancing the answer releases its old height before the turn ends", async () => {
+  let height = 900
+  const measure = spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(function (this: HTMLElement) {
+    return new DOMRect(0, 0, 600, this.hasAttribute("data-live-steps") ? height : 0)
+  })
+  try {
+    const container = await renderLiveTurn(false)
+    const root = mounted?.root
+    if (!root) throw new Error("Missing live turn root")
+    // The same call settles, then the next text changes the steps/answer split.
+    // Neither transition is a pointer/key event that could release a height hold.
+    const next: UIMessage[] = messages.map(message => message.role !== "assistant" ? message : {
+      ...message,
+      parts: message.parts.map(part => part.type === "dynamic-tool" && part.toolCallId === "call_after"
+        ? { ...part, state: "output-available", output: "No conflicts." } : part).concat({ type: "text", text: "Available times are ready." }),
+    })
+    height = 40
+    await act(async () => root.render(liveTurnView("streaming", next)))
+    expect(container.textContent).toContain("Available times are ready.")
+    expect(container.querySelector<HTMLElement>("[data-live-steps]")?.style.minHeight).toBe("")
+    expect(container.querySelector("[data-live-turn-reserve]")).toBeNull()
+    await act(async () => root.render(liveTurnView("ready", next)))
+    expect(container.textContent).toContain("Available times are ready.")
+    expect(container.querySelector("[data-live-steps]")).toBeNull()
+    expect(container.querySelector("[data-live-turn-reserve]")).toBeNull()
   } finally {
     measure.mockRestore()
   }
