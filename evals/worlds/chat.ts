@@ -78,7 +78,7 @@ export async function configureProvider(
   engine = resolveEvalEngine(),
 ): Promise<void> {
   // TODO(primitive): configure a workspace provider and select its model.
-  const result = await seed.evalIn(app, browserScript(async (workspaceId, providerId, modelId, defaultModel, opencodeJson, engine) => {
+  const result = await seed.evalIn(app, browserScript(async (workspaceId, providerId, modelId, defaultModel, opencodeJson) => {
     const port = localStorage.getItem("openwork.server.port");
     const token = localStorage.getItem("openwork.server.token");
     if (!port || !token) return "missing local server credentials";
@@ -111,11 +111,8 @@ export async function configureProvider(
       body: JSON.stringify({ opencode }),
     });
     if (patched !== "ok") return patched;
-    // V2 observes runtime config writes itself; this route reloads only the legacy engine.
-    if (engine !== "v2") {
-      const reloaded = await request("/workspace/" + encodeURIComponent(workspaceId) + "/engine/reload", { method: "POST" });
-      if (reloaded !== "ok") return reloaded;
-    }
+    const reloaded = await request("/workspace/" + encodeURIComponent(workspaceId) + "/engine/reload", { method: "POST" });
+    if (reloaded !== "ok") return reloaded;
     const raw = localStorage.getItem("openwork.preferences");
     let preferences: Record<string, unknown> = {};
     try { preferences = raw ? JSON.parse(raw) : {}; } catch { preferences = {}; }
@@ -129,7 +126,7 @@ export async function configureProvider(
     localStorage.setItem("openwork.defaultModel", defaultModel);
     localStorage.removeItem("openwork.sessionModels." + workspaceId);
     return "ok";
-  }, [workspaceId, providerId, modelId, `${providerId}/${modelId}`, JSON.stringify(opencode), engine]), { awaitPromise: true, timeoutMs: 120_000 });
+  }, [workspaceId, providerId, modelId, `${providerId}/${modelId}`, JSON.stringify(opencode)]), { awaitPromise: true, timeoutMs: 120_000 });
   if (result !== "ok") throw new Error(`Provider configuration failed: ${String(result)}`);
   // Wait for navigation before starting the model-readiness evaluation;
   // scheduling location.reload() can run that evaluation in the old document.

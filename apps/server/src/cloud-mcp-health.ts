@@ -2571,16 +2571,6 @@ export async function reconcileOpenworkCloudMcp(input: {
   const persisted = await persistDesiredConfig(input.config, desiredConfig);
   cloudMcpDeliveryState.markDesired(input.workspace, input.directory, desiredRevision, metadata);
 
-  // App-host authorization is private provisioning, not proof of engine readiness.
-  // A V2-only workspace has no legacy base URL, but must still retain this token.
-  const appHostAuthorization = readString(input.body.appHostAuthorization);
-  if (appHostAuthorization) {
-    const { trustedAppHostCloudEndpoint, writeOpenWorkConnectMcpAppHostAuthorization } = await import("./connect-mcp-server-catalog.js");
-    if (await trustedAppHostCloudEndpoint(desiredConfig)) {
-      await writeOpenWorkConnectMcpAppHostAuthorization(input.config, input.workspace.id, appHostAuthorization, String(desiredConfig.url));
-    }
-  }
-
   // Re-deliver to other workspaces only when the global desired config actually
   // changed: an unchanged reconcile must not bounce healthy connections elsewhere.
   if (persisted.changed && input.fanoutGlobalDesired !== false) {
