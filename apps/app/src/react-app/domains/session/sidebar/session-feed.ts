@@ -74,8 +74,10 @@ export function buildSessionFeed(groups: readonly WorkspaceSessionGroup[], conte
       folder.entries.push({ group, session });
       return false;
     });
+    // Workspace groups are sticky even when they are not pinned as Feed folders.
+    const ungrouped = roots.filter((session) => !context.groupsByWorkspace[group.workspace.id]?.assignments[session.id]);
     const settledIds = context.settleWorkspaceIds?.has(group.workspace.id)
-      ? new Set(filterSettledSessions(roots, {
+      ? new Set(filterSettledSessions(ungrouped, {
         settledById: context.settledById,
         statusById: context.statusById,
         pinnedIds: context.pinnedIds,

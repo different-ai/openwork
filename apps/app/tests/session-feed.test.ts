@@ -103,6 +103,35 @@ describe("sidebar feed", () => {
     expect(ids(result.sections.find((section) => section.section === "earlier")?.entries ?? [])).toContain("idle-week");
   });
 
+  test("workspace-grouped chats never settle, even without a pinned Feed folder", () => {
+    const result = feed(groups, {
+      groupsByWorkspace: {
+        lounge: {
+          groups: [{ id: "project", label: "Project" }],
+          assignments: { "idle-week": "project", approval: "project" },
+        },
+      },
+      // A previous manual settle must not hide a chat that now belongs to a group.
+      settledById: { approval: { settledThrough: NOW } },
+    });
+    expect(result.folders).toEqual([]);
+    expect(result.settled).toEqual([]);
+    expect(sections(result)).toEqual([
+      "today:today-new,today-old",
+      "yesterday:yesterday",
+      "earlier:approval,earlier,idle-week",
+    ]);
+  });
+
+  test("group exemptions are scoped to their workspace; ungrouped Feed chats still settle", () => {
+    const result = feed(groups, {
+      groupsByWorkspace: {
+        flow: { groups: [{ id: "project", label: "Project" }], assignments: { "idle-week": "project" } },
+      },
+    });
+    expect(ids(result.settled)).toEqual(["idle-week"]);
+  });
+
   test("pinned folders keep their sessions, even with new activity, and flag what needs you", () => {
     const result = feed(groups, {
       feedFolders: [{ workspaceId: "flow", groupId: "later" }, { workspaceId: "lounge", groupId: "removed" }],

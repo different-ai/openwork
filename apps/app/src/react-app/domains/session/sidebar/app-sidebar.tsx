@@ -153,7 +153,7 @@ import {
   type SessionGroupDefinition,
   type SidebarView,
 } from "./session-management-store";
-import { filterSettledSessions, useSessionSettleState, useSettleNow, type SessionSettleState } from "./session-settle";
+import { useSessionSettleState, useSettleNow, type SessionSettleState } from "./session-settle";
 import { buildSessionFeed, type FeedEntry, type FeedSection, type SessionFeed } from "./session-feed";
 import { cn } from "@/lib/utils";
 import { getSessionActivityStatusLabel, useSessionActivityStore, type SessionActivityStatus, type SessionWaitingKind } from "../status/session-activity-store";
@@ -442,7 +442,7 @@ function useSessionMenuActions({
     icon: isPinned ? <PinOff className="size-4" /> : <Pin className="size-4" />,
     onSelect: () => store.getState().togglePin(sessionId),
   }];
-  if (settle && !isArchived) actions.push({
+  if (settle?.enabled && !isArchived) actions.push({
     type: "item", id: "settle",
     label: settle.settled ? t("session_management.unsettle_session") : t("session_management.settle_session"),
     icon: settle.settled ? <Undo2 className="size-4" /> : <CheckCheck className="size-4" />,
@@ -1599,11 +1599,7 @@ function WorkspaceSidebarGroup({
 
   const pinnedIdList = useSessionManagementStore((state) => state.pinnedIds);
   const pinnedIds = React.useMemo(() => new Set(pinnedIdList), [pinnedIdList]);
-  const unreadIdList = useSessionManagementStore((state) => state.unreadIds);
-  const unreadIds = React.useMemo(() => new Set(unreadIdList), [unreadIdList]);
-  const settledById = useSessionManagementStore((state) => state.settledById);
-  const autoSettleDays = useSessionManagementStore((state) => state.autoSettleDays);
-  const settleNow = useSettleNow();
+  // Workspaces preserve their groups and order; settling is a Feed-only concept.
   const orderIds = useSessionOrder(workspace.id);
   const fullOrderIds = React.useMemo(() => getSessionOrder(getRootSessions(group.sessions), orderIds), [group.sessions, orderIds]);
   const { groups: wsGroups, assignments } = useWorkspaceGroups(workspace.id);
@@ -1616,21 +1612,8 @@ function WorkspaceSidebarGroup({
     () => partitionArchivedSessions(group.sessions),
     [group.sessions],
   );
-  const settleEnabled = ctx.settleWorkspaceIds?.has(workspace.id) ?? false;
-  const settledSessions = React.useMemo(() => settleEnabled ? filterSettledSessions(getRootSessions(activeSessions), {
-    settledById,
-    statusById: ctx.sessionStatusById,
-    pinnedIds,
-    unreadIds,
-    autoSettleDays,
-    now: settleNow,
-  }) : [], [activeSessions, autoSettleDays, ctx.sessionStatusById, pinnedIds, settleEnabled, settleNow, settledById, unreadIds]);
-  // Pinned sessions live in the global Pinned section and settled ones at the
-  // end of the workspace, so neither appears in the group lists.
-  const hiddenRootIds = React.useMemo(
-    () => new Set([...pinnedIds, ...settledSessions.map((session) => session.id)]),
-    [pinnedIds, settledSessions],
-  );
+  // Pinned sessions live in the global Pinned section, not the group lists.
+  const hiddenRootIds = pinnedIds;
   const sessionRows = React.useMemo(() => flattenSessionRows(
     group.sessions,
     wsGroups.length > 0 ? Number.MAX_SAFE_INTEGER : previewCount,
@@ -1779,9 +1762,6 @@ function WorkspaceSidebarGroup({
                     workspaceId={workspace.id}
                     store={store}
                   /> : <NewSessionDraftRow workspaceId={workspace.id} />
-                ) : null}
-                {group.status !== "error" ? (
-                  <WorkspaceSettledSessions workspaceId={workspace.id} sessions={settledSessions} />
                 ) : null}
               </SidebarMenuSub>
             </CollapsibleContent>
@@ -2265,28 +2245,6 @@ export function GroupedSessionList({ sessionRows, groups, assignments, pinnedIds
   );
 }
 
-/** Settled sessions collapse into one row at the end of their workspace. */
-function WorkspaceSettledSessions({ workspaceId, sessions }: { workspaceId: string; sessions: SessionListItem[] }) {
-  const [expanded, setExpanded] = React.useState(false);
-  if (sessions.length === 0) return null;
-
-  return (
-    <Collapsible open={expanded} onOpenChange={setExpanded} data-workspace-settled-sessions={workspaceId}>
-      <SessionGroupSeparator
-        label={t("session_management.settled_label")}
-        count={sessions.length}
-        expanded={expanded}
-        onToggle={() => setExpanded((value) => !value)}
-      />
-      <CollapsibleContent className="flex flex-col gap-0.5">
-        {sessions.map((session) => (
-          <SessionMenuItem key={session.id} session={session} workspaceId={workspaceId} />
-        ))}
-      </CollapsibleContent>
-    </Collapsible>
-  );
-}
-
 function SessionGroupSection({ group, rows, expanded, workspaceId, store, renderRow, previewCount, onShowMore, orderIds, onReorder }: {
   group: SessionGroupDefinition;
   rows: FlattenedSessionRow[];
@@ -2443,6 +2401,7 @@ export function SessionMenuItem({
   const isUnread = unreadIds.has(session.id) && !isSelected;
   const isArchived = isSessionArchived(session);
   const settle = useSessionSettleState(
+    workspaceId,
     session,
     sessionActivityStatus,
     displayTitle,
