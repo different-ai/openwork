@@ -3,7 +3,7 @@ import { spec } from "@openwork/testkit";
 import { record } from "../worlds/org-invite.ts";
 import { ssoMultipleConnections } from "../worlds/sso-multiple-connections.ts";
 
-const test = spec.world(ssoMultipleConnections, { timeout: 900_000, needs: { placement: "local", commands: ["pnpm"] }, resources: { surfaces: ["web"], services: ["den"] } });
+const test = spec.world(ssoMultipleConnections, { timeout: 900_000, resources: { surfaces: ["web"], services: ["den"] } });
 
 test("an owner runs several SSO connections and people choose their identity provider at sign-in", async ({ world, user, probe, step, evidence }) => {
   await step("the SSO page lists every connection with what it needs next", async () => {
