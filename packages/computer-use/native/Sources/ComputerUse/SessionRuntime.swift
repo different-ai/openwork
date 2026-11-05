@@ -559,7 +559,26 @@ final class SessionRuntime {
                     state = try await readState()
                 }
             }
-        } else if policy == .desktop {
+        }
+        // Right after the agent's input, an animating window is observed once it holds still.
+        var stillChanging = false
+        if let first = png, policy == .embedded,
+           ObservationSettle.applies(info: current.app.app.bundleURL.flatMap { Bundle(url: $0)?.infoDictionary } ?? [:], baseline: current.baseline) {
+            let (settled, still) = try await ObservationSettle.settle(first: (state, first, width, height), digest: { self.access.imageDigest($0.1) + ((try? self.access.captureDigest($0.0)) ?? Data()) },
+                capture: { () async throws -> (WindowState, Data, Int, Int)? in
+                    do {
+                        let next = try await readState()
+                        let captured = try await self.observationImage(current, bounds: bounds, state: next, requireFrontmost: frontmost, check: check)
+                        return (next, captured.0, captured.1, captured.2)
+                    } catch let error as UseError where error.code == "stale_observation" {
+                        // Still changing mid-capture: keep the last complete look.
+                        return nil
+                    }
+                }, now: { self.now }, sleep: { try await Task.sleep(nanoseconds: UInt64($0 * 1_000_000_000)); try check() })
+            state = settled.0; png = settled.1; width = settled.2; height = settled.3
+            stillChanging = !still
+        }
+        if !image, policy == .desktop {
             let after = try await access.read(current.target, check: check)
             guard try access.captureDigest(state) == access.captureDigest(after) else {
                 throw UseError("stale_observation", "The window changed during the read. Observe again.", next: "observe")
@@ -604,6 +623,8 @@ final class SessionRuntime {
         let sent = repeated == nil ? png : nil
         var imageInfo: [String: Any] = ["width": width, "height": height, "included": sent != nil, "coordinate_space": "image_pixels"]
         if let imageFailure { imageInfo["unavailable"] = imageFailure.payload }
+        // The window was still animating when the look was taken: coordinates may need another look.
+        if stillChanging { imageInfo["still_changing"] = true }
         if !image { imageInfo["omitted"] = requested == false ? "requested" : "accessible_controls_suffice" }
         if let repeated {
             imageInfo["omitted"] = "unchanged"
@@ -1295,7 +1316,8 @@ final class SessionRuntime {
         }
         var settled: Bool?
         if progress.hasInput || uncertain {
-            session?.baseline = ActionBaseline(generation: current.generation, stateDigest: observation.stateDigest, imageDigest: observation.imageDigest)
+            session?.baseline = ActionBaseline(generation: current.generation, stateDigest: observation.stateDigest, imageDigest: observation.imageDigest,
+                moved: actions.contains { switch $0 { case .drag, .scroll: return true; default: return false } })
             do {
                 settled = try await InputSettle.wait(since: now, lastActivity: { activity?.last ?? 0 }, now: { self.now },
                     check: check, sleep: { try await Task.sleep(nanoseconds: UInt64($0 * 1_000_000_000)) })

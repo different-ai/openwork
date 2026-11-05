@@ -468,6 +468,17 @@ The one exception is keys and typing while the session's window keeps the
 app's keyboard, past a window or panel that opened beside it without taking
 the keyboard, such as a search field's suggestions.
 
+A coordinate step is refused with `stale_observation` when the live window image
+differs from the observation within 32 pixels of where it lands. A text caret
+blinking there is not a difference: one thin, solid, upright strip (at most 4
+pixels wide, at least 6 and three times as tall) with nothing else changed
+beyond its JPEG block. A letter, an underline, a highlight or any other change
+near it still refuses the step. Right after the agent's own input in a map,
+travel, design, photo, video, music or game app, or after a drag or scroll in
+any app, the observation waits until two window captures in a row match (at
+most 1.2 s) so it shows where an animation such as Look Around ended, not a
+frame of it; `image.still_changing` says it was still moving at the limit.
+
 `computer_act` takes a `pacing` for batches: `fast` (default) checks briefly
 after each press; `wait` lets the app stop changing after every step (at most
 1.5 s); `wait_retry` also re-checks a control that is briefly disabled, moving
