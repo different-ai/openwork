@@ -3,6 +3,18 @@ title: "Changelog"
 description: "OpenWork release notes: new features, improvements, and bug fixes."
 "og:description": "OpenWork release notes: new features, improvements, and bug fixes."
 ---
+<Update label="November 5th" tags={["🚀 New Features", "🐛 Bug Fixes"]}>
+
+  ## [v0.18.65](https://github.com/different-ai/openwork/compare/v0.18.64...v0.18.65): Mac computer use can work across apps and hand files back
+
+  - **Mac computer use can work across apps and return your files.** Agents can use real mouse and keyboard input in more apps, keep several apps open, move or copy files between them, and save exports or screenshots. The computer session card lists the files made for you. File moves and copy/paste are allowed without a prompt by default; admins can require approval or block them.
+  - **Computer work is easier to follow and recover.** The live computer view is now a compact picture-in-picture with controls on hover. Mac computer use handles more app shortcuts, fields, dialogs, changing windows, and interruptions, and can wait while you answer a macOS prompt. Once computer use is on in a chat, canvas typing and app scripts no longer need repeated approval unless organization rules require it. Browser activity appears as simple “Used browser” steps instead of a computer session card, and the developer-only “Reset notifications” button is gone.
+  - **Apps and Workflows load and recover more smoothly.** Reopened Apps can show saved data right away, slow reads are not needlessly repeated, and reads from several sources can run together. Stored App data clears when you lose access to a connection or plugin. Asking for an artifact now creates a reusable App instead of a local HTML page. You can save Workflows with a name, find them in My Library, and see failures explained in plain language.
+  - **Chat and connected work are more dependable.** Agent-created conversations with a chosen model start correctly, organization models appear before you create a workspace, chat file links find files using their surrounding context, and pinned conversations survive desktop crashes. OpenCode v2 now migrates chat history at startup; the old history-copy progress controls are gone.
+  - **For admins: clearer organization controls.** Owners can assign a Super admin, SSO sign-in works across organizations more reliably, the Control Center shows skill and connector sharing numbers, and newly created sandbox organizations get the current included model choices.
+
+</Update>
+
 <Update label="November 3rd" tags={["🚀 New Features", "🐛 Bug Fixes", "🏗️ Refactoring"]}>
 
   ## [v0.18.64](https://github.com/different-ai/openwork/compare/v0.18.63...v0.18.64): Make agent work smoother across chat, browser, and Apps
