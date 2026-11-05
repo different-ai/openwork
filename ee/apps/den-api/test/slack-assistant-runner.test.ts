@@ -14,7 +14,7 @@ import { Store } from "../../headless-runner/src/store.js"
 import { createSlackRunner, openSlackRunnerEvents, type HeadlessDeps } from "../src/slack-assistant/headless.js"
 import { createLiveFeeds } from "../src/slack-assistant/live.js"
 import { buildSlackEnvelope, SLACK_WORKBOT_INSTRUCTIONS } from "../src/slack-assistant/protocol.js"
-import { advanceSlackRun, advanceSlackWatch, checkpointSchema } from "../src/slack-assistant/run.js"
+import { advanceSlackRun, advanceSlackWatch, checkpointSchema, notesAndAnswer } from "../src/slack-assistant/run.js"
 import { fakeSlack } from "./slack-fakes.js"
 
 const usage = { inputTokens: 1, cachedInputTokens: 0, outputTokens: 1 }
@@ -105,6 +105,11 @@ test("a Slack message runs on the real runner: session instructions, live text, 
     assert.equal(text(), `${firstSentence}\n\nI'm on it and will post the deck here.`)
     assert.deepEqual(calls.find((call) => call.method === "reactions.add")?.body, { channel: "C1", timestamp: "1.0", name: "thumbsup" })
     assert.deepEqual(cp.taskIds, [`${messageId}.t1`])
+    // The first message went on to work (react and start_task), so with workbotSlackAnswerReply it is a note; the last is the answer.
+    const stored = await slackRunner.read({ sessionId: cp.sessionId ?? "", messageId })
+    assert.ok(stored.ok)
+    assert.deepEqual(stored.snapshot.assistantWorked, [true, false])
+    assert.deepEqual(notesAndAnswer(stored.snapshot, true), { notes: firstSentence, answer: "I'm on it and will post the deck here." })
 
     // The task runs, reports back, and the report is posted once in the thread.
     let watched = false

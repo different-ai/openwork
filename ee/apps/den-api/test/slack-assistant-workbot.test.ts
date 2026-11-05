@@ -8,6 +8,7 @@ import {
   REQUIRED_BOT_SCOPES,
   SLACK_ASSISTANT_INSTRUCTIONS,
   SLACK_RUN_INSTRUCTIONS,
+  SLACK_ANSWER_REPLY_INSTRUCTIONS,
   SLACK_DRIVE_FILES_INSTRUCTIONS,
   SLACK_WORKBOT_INSTRUCTIONS,
   slackManifest,
@@ -20,6 +21,7 @@ import {
   advanceSlackWatch,
   catchUpText,
   checkpointSchema,
+  notesAndAnswer,
   STREAM_CONTINUED_LINE,
   STREAM_ROTATE_AFTER_MS,
   WATCH_MAX_MS,
@@ -187,6 +189,87 @@ test("a streaming window hands the event back after about 20 seconds, and the ne
   assert.ok(renewals.length >= 1, "the lease is renewed while streaming")
   assert.deepEqual(live.tokens, [1])
   assert.equal(cp.liveWindow, 1)
+})
+
+// --- Answer as its own reply (workbotSlackAnswerReply) ---------------------------------------------------------------
+
+test("with workbotSlackAnswerReply, the session is told its last message is posted as its own reply", () => {
+  assert.equal(slackWorkbotInstructions({ driveFiles: false, answerReply: false }), SLACK_WORKBOT_INSTRUCTIONS, "off: unchanged")
+  const on = slackWorkbotInstructions({ driveFiles: true, answerReply: true })
+  assert.equal(on, `${SLACK_WORKBOT_INSTRUCTIONS}\n${SLACK_DRIVE_FILES_INSTRUCTIONS}\n${SLACK_ANSWER_REPLY_INSTRUCTIONS}`)
+  assert.equal(slackWorkbotInstructions({ driveFiles: true, answerReply: true }), on, "the same text every message, for the prompt cache")
+  // A job handed to the background is acknowledged once, not "I'll check…" and then "I'm on it…".
+  for (const phrase of ["Acknowledge once", "end your turn with nothing more", "only if it couldn't start"]) assert.ok(on.includes(phrase), phrase)
+  assert.ok(!/\d{4}-\d{2}-\d{2}|\d{1,2}:\d{2}/.test(on))
+  assert.equal(workbotCp().answerReply, false, "in-flight checkpoints from before the feature keep the old reply")
+})
+
+test("notes are the messages that went on to work; the answer is the last one that didn't", () => {
+  const worked = snapshot({ assistantTexts: ["Let me check.", "", "Found it, booking."], assistantWorked: [true, true, true] })
+  assert.deepEqual(notesAndAnswer(worked, false), { notes: "Let me check.\n\nFound it, booking.", answer: "" })
+  const done = idle("x", { assistantTexts: ["Let me check.", "Booked it."], assistantWorked: [true, false] })
+  assert.deepEqual(notesAndAnswer(done, true), { notes: "Let me check.", answer: "Booked it." })
+  // Still running: a message that hasn't worked yet may be the answer, so it is held back.
+  assert.deepEqual(notesAndAnswer({ ...done, status: "busy" }, false), { notes: "Let me check.", answer: "" })
+  const startedTask = idle("On it, I've started that.", { assistantWorked: [true] })
+  assert.deepEqual(notesAndAnswer(startedTask, true), { notes: "On it, I've started that.", answer: "" })
+  // Handed to the background and ended silently: the one acknowledgment is the whole reply.
+  const silentEnd = idle("I'll match them and post what I find here.", { assistantTexts: ["I'll match them and post what I find here.", ""], assistantWorked: [true, false] })
+  assert.deepEqual(notesAndAnswer(silentEnd, true), { notes: "I'll match them and post what I find here.", answer: "" })
+  assert.deepEqual(notesAndAnswer(idle("", { reaction: { emoji: "👍", final: true } }), true), { notes: "", answer: "" })
+})
+
+test("a long run keeps its notes in one message and posts the answer as a new reply, with no Done ping", async () => {
+  const { slack, calls, methods, text } = fakeSlack()
+  const { runner } = fakeRunner([
+    snapshot({ finalAssistantText: "Let me check the thread first.", assistantTexts: ["Let me check the thread first."], assistantWorked: [true] }),
+    idle("Let me check the thread first.\n\nAlright, booked it in the same slot.", {
+      lastAssistantText: "Alright, booked it in the same slot.",
+      assistantTexts: ["Let me check the thread first.", "Alright, booked it in the same slot."],
+      assistantWorked: [true, false],
+    }),
+  ])
+  const cp = workbotCp({ phase: "read", sessionId: "hs_1", answerReply: true, startedAt: 0 })
+  await runToEnd({ checkpoint: cp, runner, slack, now: () => 120_000 })
+  assert.deepEqual(methods(), ["chat.startStream", "chat.postMessage", "chat.stopStream"], "notes, then the answer, then the notes close")
+  assert.equal(text(), "Let me check the thread first.", "the answer is not repeated in the notes message")
+  const answer = calls[1]?.body
+  assert.equal(answer?.thread_ts, "1.0")
+  assert.equal(answer?.text, "Alright, booked it in the same slot.")
+  assert.deepEqual(Array.isArray(answer?.blocks) ? answer.blocks.map((block: { type: string }) => block.type) : [], ["markdown", "context_actions"])
+  assert.equal(calls[2]?.body.blocks, undefined, "the feedback buttons are on the answer")
+  assert.ok(!calls.some((call) => String(call.body.text ?? "").includes("Done:")))
+})
+
+test("a quick answer is a single reply and opens no stream", async () => {
+  const { slack, methods, calls } = fakeSlack()
+  const { runner } = fakeRunner([idle("Today at 9:30 ET, same as usual.")])
+  const cp = workbotCp({ phase: "read", sessionId: "hs_1", answerReply: true })
+  await runToEnd({ checkpoint: cp, runner, slack })
+  assert.deepEqual(methods(), ["chat.postMessage", "agents.sessions.setStatus"])
+  assert.equal(calls[0]?.body.text, "Today at 9:30 ET, same as usual.")
+})
+
+test("a turn whose last message started work keeps it as the reply, with the feedback buttons", async () => {
+  const { slack, methods, calls, text } = fakeSlack()
+  const { runner } = fakeRunner([
+    idle("Sure, that'll take a bit. I've started on it.", { assistantWorked: [true], tasks: [{ id: "msg_1.t1", title: "Research", status: "running" }] }),
+  ])
+  const cp = workbotCp({ phase: "read", sessionId: "hs_1", answerReply: true })
+  await runToEnd({ checkpoint: cp, runner, slack })
+  assert.deepEqual(methods(), ["chat.startStream", "chat.stopStream"])
+  assert.equal(text(), "Sure, that'll take a bit. I've started on it.")
+  assert.ok(Array.isArray(calls[1]?.body.blocks))
+})
+
+test("an answer already posted is not posted again when finishing is retried", async () => {
+  const { slack, methods } = fakeSlack({ "chat.stopStream": "internal_error" })
+  const { runner } = fakeRunner()
+  const cp = workbotCp({ phase: "finish", sessionId: "hs_1", answerReply: true, answerText: "Booked it.", streamTs: "1.1" })
+  await assert.rejects(runToEnd({ checkpoint: cp, runner, slack }))
+  assert.equal(cp.answerPartsPosted, 1)
+  await assert.rejects(runToEnd({ checkpoint: cp, runner, slack }))
+  assert.equal(methods().filter((method) => method === "chat.postMessage").length, 1)
 })
 
 // --- Reactions -------------------------------------------------------------------------------------------------------

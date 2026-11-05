@@ -113,6 +113,11 @@ export type SlackRunSnapshot = {
   steps: SlackRunStep[]
   /** Text of each of the turn's assistant messages in order, empty ones included: index = the runner's step. */
   assistantTexts: string[]
+  /**
+   * For each of `assistantTexts`, whether that message went on to do work (a tool call other than a reaction): its
+   * text is a note on the way, not the answer. Missing entries count as false.
+   */
+  assistantWorked: boolean[]
   /** The emoji the model reacted to the person's message with, if it did. */
   reaction?: { emoji: string; final: boolean }
   /** Background tasks this turn started. */
@@ -348,6 +353,7 @@ export function createSlackRunner(
             }),
           ),
           assistantTexts: assistant.map((message) => message.text),
+          assistantWorked: assistant.map((message) => message.toolCalls.some((tool) => tool.name !== "react")),
           ...(reaction ? { reaction } : {}),
           tasks,
         },

@@ -2,6 +2,7 @@ import { cloudComputerCall, cloudComputerFor, cloudComputerJson, startCloudCompu
 import { createV2SessionHomes, nativeSession, nativeSessionDirectory } from "./opencode-v2-session-home.js";
 import { createNativeCloudMcpResolver, createRoutedCloudMcpRegistrar } from "./cloud-mcp-v2.js";
 import { managedDesktopPolicy } from "./managed-desktop-policy.js";
+import { readHostResponse } from "./host-response.js";
 import { createTaskRecovery, setTaskRecovery } from "./task-recovery.js";
 import { managedPolicyActionSchema } from "./managed-policy-rules.js";
 import { enterEngineMutation, withEngineSwitchFence } from "./engine-switch-fence.js";
@@ -840,12 +841,7 @@ export async function startServer(
     });
     if (approvedDriveFile) attachApprovedDriveUpload(request, approvedDriveFile);
     const response = await serverOptions.fetch(request);
-    const payload: unknown = await response.json();
-    if (!response.ok) {
-      const message = payload && typeof payload === "object" && "message" in payload && typeof payload.message === "string" ? `: ${payload.message}` : "";
-      throw new Error(`OpenWork request failed (${response.status})${message}`);
-    }
-    return payload;
+    return readHostResponse(response);
   };
   const engineV2Preview: EngineV2Preview = createEngineV2Preview({ config, env, deferStart: true,
     autoUpgradeIdle: async () => (await describeV1EngineActivity(config)).verdict === "idle",

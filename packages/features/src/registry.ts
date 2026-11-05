@@ -386,6 +386,17 @@ export const FEATURES = defineFeatures({
     deployments: everywhere,
     default: false,
   },
+  workbotSlackAnswerReply: {
+    label: "Workbot: Slack answers as their own reply",
+    description: "In Slack, Workbot's notes while it works (\"Let me check your calendar.\") stay in one message that updates in place, and its final answer is posted as a new reply that notifies the person, written in its own words. Replaces the fixed \"Done:\" ping that quoted the first line of the reply.",
+    category: "workbot",
+    added: "2026-11-04",
+    since: "2026-11",
+    author: "benjaminshafii",
+    docs: "docs/features/workbot-slack-answer-reply/README.md",
+    deployments: everywhere,
+    default: false,
+  },
   browserUploadPermissions: {
     label: "Browser: managed and remembered file-sharing permissions",
     description: "Admins set Allow, Ask first or Block for browser uploads, with website exceptions. Members can remember permission for one website and a folder on this computer across chats and Slack-started tasks, and revoke it in Settings.",

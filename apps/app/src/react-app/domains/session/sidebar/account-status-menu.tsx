@@ -464,7 +464,9 @@ export function AccountStatusMenu(props: AccountStatusMenuProps) {
         ) : null}
 
         {connectNeedsAttention && !controlSettingsBlocked ? (
-          <DropdownMenuItem onClick={() => navigate("/settings/debug")}>
+          <DropdownMenuItem
+            onClick={() => navigate(props.developerMode ? "/settings/debug" : "/settings/advanced/agent-access")}
+          >
             <Stethoscope className="size-3.5" />
             Run diagnostics
           </DropdownMenuItem>
