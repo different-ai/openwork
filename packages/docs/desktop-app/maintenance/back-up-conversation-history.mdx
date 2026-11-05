@@ -1,109 +1,136 @@
 ---
 title: "Back up conversation history"
 sidebarTitle: "Back up conversation history"
-description: "Save your local OpenWork conversation history and the app state needed to find it on Windows, macOS and Linux."
+description: "Save your local OpenWork conversation history and the app state needed to find it on Windows, macOS, and Linux."
 ---
 
 OpenWork keeps local conversation history and the app state that points to it in
-several folders. To make a file backup, fully quit the apps that use those stores,
-then copy the complete folder set for your operating system.
+several folders. This guide shows you how to copy that folder set after you quit
+the apps that use it.
 
-This guide covers standard **local desktop installations**. It does not back up
+This guide covers standard **local desktop installations**. It doesn't back up
 OpenWork Cloud, a remote engine, or your organization's server database.
 
-## Before copying
+## Before you begin
 
-1. Finish running tasks and fully quit OpenWork. On macOS, use **OpenWork → Quit**
-   or **Command-Q**, not just the window's close button. Close other OpenWork or
-   OpenCode instances using the same data. If an app does not close normally,
-   ask IT or support for help before copying.
-2. Create a dated backup folder outside the folders you are saving. Use an
-   encrypted or IT-approved protected location. Record the app version and each
-   source folder's original path.
-3. Copy **every folder listed for your OS**, including hidden files and any
-   database sidecar files present. Do not copy only a `.db` file: recent writes
-   may still be in its write-ahead log (`-wal`). Copying a live database and its
-   sidecars separately does not make a consistent backup.
-4. Wait for all copies to finish and resolve any copy errors before reopening
-   OpenWork. Leave the original folders unchanged.
+Use the tables for your operating system to locate the source folders before you
+start copying. If your installation uses custom storage, any listed folder is
+missing, or you aren't sure which folders hold your history, stop before copying.
+Ask your administrator or OpenWork support to confirm the desktop profile, runtime folder,
+and history database paths. Share paths only, not configuration files or
+credentials. See [Custom storage and other installations](#custom-storage-and-other-installations).
 
-<Note>
-  The folder set includes the desktop profile, OpenWork runtime state and original
-  OpenCode data. History may be in the original data folder or a separate engine
-  store inside the runtime folder. Save the complete set, not whichever database
-  filename looks newest. If an expected folder is missing, confirm the active
-  storage paths rather than creating an empty replacement.
-</Note>
+The folder set includes the desktop profile, OpenWork runtime state, and original
+OpenCode data. History may be in the original data folder or a separate engine
+store inside the runtime folder. Save the complete set, not whichever database
+filename looks newest.
+
+## Prepare the backup
+
+1. Finish running tasks and fully quit OpenWork. On macOS, use **Quit** from the
+   app menu, not just the window's close button. Close other OpenWork or
+   OpenCode instances using the same data. If an app doesn't close normally, ask
+   your administrator or support for help before copying.
+2. Create a dated backup folder outside the folders you are saving. These folders
+   can contain private conversations and credentials. Store the backup in an
+   encrypted or IT-approved protected location. Don't upload it to a public issue,
+   support chat, or Slack.
+3. Record the app version and each source folder's full original path. If two
+   source folders have the same name, create distinct destination folders and
+   record which source belongs in each. Don't merge or replace copies from
+   different sources.
+
+Copy the **named source folder itself**, not just its visible contents. This
+includes hidden files and any database sidecar files present. Don't copy only a
+`.db` file: recent writes may still be in its write-ahead log. That file has a
+`-wal` suffix. A live copy of the database and its sidecars doesn't establish a
+consistent capture.
 
 ## Windows
 
-Paste each path into the **File Explorer address bar**, then copy the whole
-folder. These are navigation paths, not PowerShell commands.
+Use these parent folders and source names in File Explorer. These are navigation
+paths, not PowerShell commands.
 
-```text
-%APPDATA%\com.differentai.openwork
-%APPDATA%\openwork
-%USERPROFILE%\.local\share\opencode
-```
+| Open this parent folder | Select this folder |
+| --- | --- |
+| `%APPDATA%` | `com.differentai.openwork` |
+| `%APPDATA%` | `openwork` |
+| `%USERPROFILE%\.local\share` | `opencode` |
 
-- The first folder keeps the desktop profile and workspace/history navigation state.
-- The second keeps runtime state and any separate engine history or recovery material.
-- The third keeps the default original OpenCode data, which can also hold current history.
+1. In the **File Explorer address bar**, enter the parent path for one row and
+   press **Enter**.
+2. Select the named source folder itself, then use **Copy**, not **Cut**.
+3. Open the dated backup destination and use **Paste**. Repeat for every source
+   folder, keeping each copy paired with its original path.
 
 ## macOS
 
-In Finder, choose **Go → Go to Folder** or press **Shift-Command-G**. Open each
-path and copy its entire folder.
+Use these parent folders and source names in Finder.
 
-```text
-~/Library/Application Support/com.differentai.openwork
-~/.config/openwork
-~/.local/share/opencode
-```
+| Open this parent folder | Select this folder |
+| --- | --- |
+| `~/Library/Application Support` | `com.differentai.openwork` |
+| `~/.config` | `openwork` |
+| `~/.local/share` | `opencode` |
 
-These are the desktop profile, OpenWork runtime and original OpenCode data folders,
-respectively.
+1. In Finder, choose **Go** > **Go to Folder**. Enter the parent path for one row
+   and press **Return**.
+2. Select the named source folder itself, then choose **Edit** > **Copy**.
+3. Open the dated backup destination and choose **Edit** > **Paste Item**. Repeat
+   for every source folder, keeping each copy paired with its original path.
 
 ## Linux
 
-Open your home folder in the file manager and enable **Show Hidden Files**
-(often **Ctrl-H**). Copy each whole folder.
+In these paths, `~` means your home folder. Show hidden files in your file manager
+if needed to find `.config` or `.local`.
 
-```text
-~/.config/com.differentai.openwork
-~/.config/openwork
-~/.local/share/opencode
-```
+| Open this parent folder | Select this folder |
+| --- | --- |
+| `~/.config` | `com.differentai.openwork` |
+| `~/.config` | `openwork` |
+| `~/.local/share` | `opencode` |
 
-These are the desktop profile, OpenWork runtime and original OpenCode data folders,
-respectively. If `XDG_CONFIG_HOME` or `XDG_DATA_HOME` is set, use the configured
-locations instead of assuming these defaults.
+1. In the file manager, open the parent folder for one row.
+2. Select the named source folder itself and use **Copy**. Don't use **Cut** or **Move**.
+3. Open the dated backup destination and use **Paste**. Repeat for every source
+   folder, keeping each copy paired with its original path.
+
+If you set `XDG_CONFIG_HOME` or `XDG_DATA_HOME`, use the configured locations
+instead of assuming these defaults.
+
+## Check the file capture
+
+Wait for all transfers to finish. The file capture is complete when every required
+folder has copied without errors and you have recorded each original path. If a
+copy fails or a required folder is missing, resolve the issue before treating the
+capture as complete. Leave the originals unchanged. Reopen OpenWork only after
+all copying has finished.
+
+Recovery remains unverified until tested in a separate environment. Contact your
+administrator or OpenWork support before attempting recovery. Don't overwrite
+your current profile to test the backup.
 
 ## Custom storage and other installations
 
-The default list is not enough if storage has been redirected. Confirm the resolved
-paths with IT if your setup uses overrides such as `OPENWORK_ELECTRON_USERDATA`,
-`OPENWORK_SERVER_CONFIG`, `OPENWORK_RUNTIME_DB`, `OPENCODE_DB`, `XDG_CONFIG_HOME`
-or `XDG_DATA_HOME`. A saved engine selection may point at another history database.
-Use paths only for this check; do not share configuration contents or credentials.
+If you redirected storage, confirm the resolved paths with your administrator
+before copying. Relevant overrides include `OPENWORK_ELECTRON_USERDATA`,
+`OPENWORK_SERVER_CONFIG`, `OPENWORK_RUNTIME_DB`, `OPENCODE_DB`, `XDG_CONFIG_HOME`,
+and `XDG_DATA_HOME`. A saved engine selection may point at another history
+database.
 
 A populated `~/Library/Application Support/opencode` on macOS or
-`%APPDATA%\opencode` on Windows may be another OpenCode data store. Keep it
-separately until its role is confirmed. A local copy cannot capture history held
-by an external or remote engine.
+`%APPDATA%\opencode` on Windows may be another OpenCode data store. Keep it in a
+distinct backup location until your administrator confirms its role. A local copy
+can't capture history held by an external or remote engine.
 
 ## What this backup includes
 
 This folder capture is for **conversation records and the app/runtime state needed
-to find them**. It is not a complete backup of workspace documents, global skills
-or OS-protected credentials. You do not need to copy every project folder just to
+to find them**. It isn't a complete backup of workspace documents, global skills,
+or OS-protected credentials. You don't need to copy every project folder just to
 save the standard chat stores. If a conversation links to an original local file
-outside these folders, save that file separately if you need its original bytes.
+outside these folders, save that file in its own backup location if you need its
+original bytes.
 
-The copied folders can contain chats and credentials. Keep the backup private;
-do not upload it to a public issue, support chat or Slack. File copies do not export
-the OS keychain/keyring or make sign-in credentials portable between computers,
-users or operating systems.
-
-Before relying on a backup for recovery, have IT validate it in a separate test
-environment. A completed folder copy alone is not proof of a successful restore.
+File copies don't export the OS keychain or keyring or make sign-in credentials
+portable between computers, users, or operating systems.
