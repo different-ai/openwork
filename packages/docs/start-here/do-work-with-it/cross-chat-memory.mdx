@@ -35,7 +35,7 @@ Agents address other sessions by id, and by default nothing on your screen chang
 - **Read**: `session.search` and `session.read` return transcripts without opening anything.
 - **Talk**: `session.send { sessionId, text }` appends a prompt to an existing session by id. The message is written immediately; if that session is in the middle of a turn, its run handles the new message at its next step (nothing is rejected or lost). `session.create` starts new sessions the same way.
 - **Show**: `session.open` and `workbench.session.focus` are the only actions that move your pane. `session.send { reveal: true }` sends first and then opens that session for you.
-- **File**: `session.rename`, `session.pin`, and `session.archive` act by id and do not open the session (archiving the session you are looking at closes its tab).
+- **File**: `session.rename`, `session.pin`, `session.settle`, and `session.archive` act by id and do not open the session (archiving the session you are looking at closes its tab). Settle moves a finished session to its workspace's Settled row on this device; any new activity brings it back.
 
 `composer.set_text`, `composer.send`, and `composer.stop` are different: they type into, send from, or stop whichever composer *you* currently have focused. They are for "type this for me here", never for reaching another session — if you switch panes while the agent is typing, the text goes to the pane you switched to. Agents are told to use `session.send` instead.
 

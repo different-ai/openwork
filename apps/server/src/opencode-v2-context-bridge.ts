@@ -103,7 +103,7 @@ export async function askEngineApproval(engine: EngineConnection | undefined, ap
 }
 // Reuse the renderer's session guards, persistence and model readback rather
 // than adding direct engine writes that bypass the requesting conversation.
-const rendererSessionCommandIds = ["session.archive", "session.pin", "session.rename", "session.set_model"];
+const rendererSessionCommandIds = ["session.archive", "session.pin", "session.settle", "session.rename", "session.set_model"];
 // Keep discovery and execution closed to unrelated UI/extension writes.
 // Automation proposals are inert: the person creates one in the renderer.
 const commandIds: readonly string[] = [
@@ -407,7 +407,7 @@ export async function createV2ContextBridge(
         const context: unknown = JSON.parse(await plugin.tool.openwork_context.execute());
         const filtered = bridgeAffordances(context);
         return JSON.stringify(isRecord(filtered) ? { ...filtered, instructions: {
-          context: "Use openwork_query for discovered read-only affordances and openwork_execute for session.archive (including unarchive), session.pin (pin/unpin), session.rename, session.set_model, session.group commands, session.create, session.send, session.question.answer or automation.propose. Follow the discovered arguments and safety requirements; working sessions cannot be archived or rebound. An automation proposal only shows a review card; it does not create, activate, or run anything. When Code Mode exposes these tools, discover their exact paths with search and compose them there, preserving exceptions and verifying the resulting groups. For other conversations, use session.search then session.read. Session reads include current activity and background-agent counts."
+          context: "Use openwork_query for discovered read-only affordances and openwork_execute for session.archive (including unarchive), session.pin (pin/unpin), session.settle (settle/un-settle), session.rename, session.set_model, session.group commands, session.create, session.send, session.question.answer or automation.propose. Follow the discovered arguments and safety requirements; working sessions cannot be archived, settled or rebound. An automation proposal only shows a review card; it does not create, activate, or run anything. When Code Mode exposes these tools, discover their exact paths with search and compose them there, preserving exceptions and verifying the resulting groups. For other conversations, use session.search then session.read. Session reads include current activity and background-agent counts."
         } } : filtered);
       });
       return new Response(result, { headers: { "Content-Type": "application/json" } });
