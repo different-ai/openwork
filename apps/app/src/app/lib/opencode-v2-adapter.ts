@@ -3192,6 +3192,8 @@ export function createClientV2(
     listSessionQuestions: (parameters: SessionParameters, options?: RequestOptions) => listQuestions(parameters, options),
     replySessionQuestion: (parameters: SessionParameters & { requestID: string; answers: string[][] }, options?: RequestOptions) =>
       settleQuestion(parameters, options),
+    rejectSessionQuestion: (parameters: SessionParameters & { requestID: string }, options?: RequestOptions) =>
+      settleQuestion(parameters, options),
   });
   // The SDK exposes session through a getter; its object is augmented above,
   // not reassigned. Reflect that runtime augmentation in the returned type.

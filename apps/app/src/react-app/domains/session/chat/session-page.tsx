@@ -298,7 +298,7 @@ export type SessionPageProps = {
   safeStringify?: (value: unknown) => string;
   activeQuestion?: PendingQuestion | null;
   questionReplyBusy?: boolean;
-  respondQuestion?: (requestID: string, answers: string[][]) => void;
+  respondQuestion?: (requestID: string, answers: string[][] | null) => void;
   statusBar?: Partial<StatusBarOverrides>;
   notFoundMessage?: string | null;
   mainContentTakeover?: React.ReactNode;

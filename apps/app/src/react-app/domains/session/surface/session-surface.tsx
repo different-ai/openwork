@@ -798,7 +798,7 @@ export type SessionSurfaceProps = {
   respondPermission?: (requestID: string, reply: "once" | "always" | "reject") => void;
   activeQuestion?: PendingQuestion | null;
   questionReplyBusy?: boolean;
-  respondQuestion?: (requestID: string, answers: string[][]) => void | Promise<void>;
+  respondQuestion?: (requestID: string, answers: string[][] | null) => void | Promise<void>;
   safeStringify?: (value: unknown) => string;
   onChangeModel?: (model: { providerID: string; modelID: string }) => void;
   providerConnectedCount?: number;
@@ -4168,6 +4168,11 @@ export function SessionSurface(props: SessionSurfaceProps) {
                         void Promise.resolve(props.respondQuestion?.(composerQuestion.id, answers)).catch(() => {});
                       }
                     }}
+                    onDismiss={props.respondQuestion ? () => {
+                      if (composerQuestion) {
+                        void Promise.resolve(props.respondQuestion?.(composerQuestion.id, null)).catch(() => {});
+                      }
+                    } : undefined}
                   />
                   </div>
                 ) : (props.todos ?? []).some((todo) => todo.content.trim()) ? (
