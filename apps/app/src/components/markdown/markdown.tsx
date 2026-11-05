@@ -76,7 +76,7 @@ function MarkdownBlockInner({
   const targetAt = useCallback((value: string, node: Element, decode = true) => {
     const literal = openTargetFromLocalPath(value, { decode });
     const root = rootRef.current;
-    const contextual = literal && root ? contextualizeFileTarget(literal, precedingDirectory(root, node)) : literal;
+    const contextual = literal && root && !/[\\/]/.test(literal.value) ? contextualizeFileTarget(literal, precedingDirectory(root, node)) : literal;
     // Context belongs to this occurrence, not another same-named link or artifact.
     if (contextual?.pathHints?.length || !decode) return contextual;
     return openTargetForHref(value, openTargets, workspaceRoot);
