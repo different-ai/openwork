@@ -68,7 +68,7 @@ export function BrowserWindow({ slot, sessionId, tab, tabs, onPresent }: Browser
                 </div>
               ))}
             </div>
-            <Button variant="ghost" size="icon-sm" className="titlebar-no-drag" title="New tab" aria-label="New tab" data-testid="browser-window-new-tab" onClick={() => void createTab()}>
+            <Button variant="ghost" size="icon-sm" className="titlebar-no-drag" title="Open new tab" aria-label="Open new tab" data-testid="browser-window-new-tab" onClick={() => void createTab()}>
               <Plus />
             </Button>
           </header>
