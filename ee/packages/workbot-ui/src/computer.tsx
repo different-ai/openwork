@@ -9,7 +9,7 @@ import type { BrowserTeachingContext } from "@openwork/types/browser-demonstrati
 import type { WorkbotViewContext } from "@openwork/types/workbot-context";
 import { TEACHING_WINDOW_PLACEMENT, TeachButton, WorkbotTeaching } from "./teaching";
 import { addressFor, ScreencastViewer, type ScreencastPage } from "./screencast";
-import { computerViews, errorMessage, workbotHost } from "./host";
+import { computerTabLabel, computerViews, errorMessage, workbotHost } from "./host";
 import { inChat, useWorkbotChat } from "./data";
 
 const viewerSchema = z.union([z.object({ state: z.literal("paused") }), z.object({ state: z.literal("connected"), url: z.string().url(), expiresAt: z.number(), paused: z.boolean() })]);
@@ -113,7 +113,7 @@ export function WorkbotComputer({ onTeachingChange, onRun, canTeach = true, onVi
     finally { setChanging(false); setRebuilding(false); }
   };
 
-  return <section ref={container} className="flex min-h-0 min-w-0 flex-1 flex-col" aria-label="Computer">
+  return <section ref={container} className="flex min-h-0 min-w-0 flex-1 flex-col" aria-label={computerTabLabel(host)}>
     <div className="flex min-h-12 shrink-0 flex-wrap items-center justify-between gap-2 border-b border-[var(--wb-hairline)] px-3 py-2 sm:px-6">
       <div className="flex items-center gap-1" role="group" aria-label="Computer view">
         {views.length > 1 && views.map(value => <button key={value} type="button" aria-pressed={view === value} disabled={recording} onClick={() => setView(value)} className={`${button} ${view === value ? "bg-[var(--wb-chip)]" : ""}`}>{value === "browser" ? "Browser" : "Computer"}</button>)}
@@ -137,8 +137,8 @@ export function WorkbotComputer({ onTeachingChange, onRun, canTeach = true, onVi
         <span className="workbot-shimmer text-[13px]">{rebuilding ? "Rebuilding your computer" : updating ? "Updating your computer" : reconnecting ? "Reconnecting" : view === "browser" ? "Connecting to the browser" : "Connecting to your computer"}</span>
       </div> : null}
       {paused || error ? <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 px-6 text-center">
-        <Monitor size={24} strokeWidth={1.5} className="text-[var(--wb-muted)]" aria-hidden />
-        <p className="text-[14px] text-[var(--wb-text)]">{error ?? "Your computer is paused."}</p>
+        {view === "browser" ? <Globe size={24} strokeWidth={1.5} className="text-[var(--wb-muted)]" aria-hidden /> : <Monitor size={24} strokeWidth={1.5} className="text-[var(--wb-muted)]" aria-hidden />}
+        <p className="text-[14px] text-[var(--wb-text)]">{error ?? (computerTabLabel(host) === "Browser" ? "Workbot's browser is paused." : "Your computer is paused.")}</p>
         <div className="flex flex-wrap items-center justify-center gap-1">
           <button type="button" className={button} disabled={changing} onClick={() => paused ? void action("resume") : setRevision(current => current + 1)}>{paused ? <Play size={14} aria-hidden /> : <RotateCw size={14} aria-hidden />}{paused ? "Resume" : "Reconnect"}</button>
           {paused ? null : <RebuildComputer disabled={changing} onRebuild={() => void action("rebuild")} />}

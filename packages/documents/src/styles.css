@@ -43,6 +43,11 @@
 .ow-documents th:last-child { width: 12%; }
 .ow-documents td { padding: 0 8px; height: 48px; border-bottom: 1px solid var(--doc-line); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--doc-muted); }
 .ow-documents td:first-child { color: var(--doc-text); }
+/* A row reads as one target: it highlights as a whole, and clicking anywhere on it opens the item. */
+.ow-documents tbody tr { cursor: pointer; transition: background-color 120ms ease-out; }
+.ow-documents tbody tr:hover { background: var(--doc-chip); }
+.ow-documents tbody tr:hover .ow-documents-file, .ow-documents tbody .ow-documents-file:hover { background: transparent; }
+@media (prefers-reduced-motion: reduce) { .ow-documents tbody tr { transition: none; } }
 .ow-documents-file { display: flex; align-items: center; gap: 12px; width: 100%; text-align: left; }
 .ow-documents-file svg { flex-shrink: 0; }
 .ow-documents-file span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -136,8 +141,11 @@
 .ow-editor-paper p { white-space: pre-wrap; margin: 0 0 12px; min-height: 1.7em; }
 .ow-editor-paper p.ow-editor-heading { font-size: 22px; font-weight: 600; margin-top: 24px; }
 .ow-editor-paper [contenteditable=true]:focus { outline: 1px solid var(--doc-line); border-radius: 2px; }
-.ow-editor-plain { flex: 1; min-height: 300px; resize: none; padding: 24px; background: var(--doc-bg); border: 0; font: 13px/1.7 monospace !important; }
-.ow-editor-plain:focus-visible { outline-offset: -2px; }
+/* Plain text reads like a page: a centred column at a reading size, not a code box filling the window. */
+.ow-editor-plain { flex: 1; min-height: 300px; resize: none; padding: 40px max(24px, calc((100% - 720px) / 2)) 64px; background: var(--doc-surface); color: var(--doc-text); border: 0; font: 15px/1.7 system-ui, sans-serif !important; tab-size: 4; }
+.ow-editor-plain:read-only { cursor: default; }
+/* The whole surface is the field: a hairline under the tabs marks focus instead of a dark frame around the window. */
+.ow-documents .ow-editor-plain:focus-visible { outline: none; box-shadow: inset 0 2px 0 var(--doc-focus); }
 .ow-editor-preview { border: 0; width: 100%; height: 100%; min-height: 500px; }
 .ow-editor-image { flex: 1; overflow: auto; display: grid; place-items: center; padding: 24px; }
 .ow-editor-image img { max-width: 100%; height: auto; }

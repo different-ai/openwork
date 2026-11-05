@@ -1,13 +1,15 @@
 "use client"
 
-import { useInfiniteQuery, useQuery } from "@tanstack/react-query"
-import { Clock, ChevronRight, ExternalLink, FileText, FileSpreadsheet, Image, Presentation, Folder, Grid2X2, Info, List, Lock, RefreshCw, Search, X } from "lucide-react"
+import { useInfiniteQuery, useQuery, useQueryClient } from "@tanstack/react-query"
+import { Clock, ChevronRight, ExternalLink, Folder, Grid2X2, Info, List, Lock, RefreshCw, Search, X } from "lucide-react"
 import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent, type ReactNode } from "react"
 import { DocumentEditorTab } from "./editor"
 import { documentsAccessFailure, expiredDocumentRecovery, lockDocumentRecovery } from "./access"
 import { DocumentTabs, type DocumentTabControls, type DocumentTabControlsChange } from "./document-tabs"
 import type { DocumentsEditor } from "./model"
 import { documentType, type DocumentItem, type DocumentsProvider, type DocumentsViewContext, type DocumentOpenRequest, type DocumentOpenOutcome } from "./index"
+import { ItemIcon } from "./item-icon"
+import { DOCUMENT_INTENT_MS, DOCUMENTS_LIST_GC_MS, documentEditorPrefix, documentsListKey, prefetchDocumentEditor } from "./queries"
 
 export type DocumentsBrowserProps = {
   provider: DocumentsProvider
@@ -42,11 +44,6 @@ function size(value: number | null) {
   if (value < 1024) return `${value} B`
   if (value < 1024 ** 2) return `${(value / 1024).toFixed(1)} KB`
   return `${(value / 1024 ** 2).toFixed(1)} MB`
-}
-function ItemIcon({ item }: { item: DocumentItem }) {
-  const type = documentType(item)
-  const Icon = item.kind === "folder" ? Folder : /Sheets|Excel|CSV|spreadsheet/.test(type) ? FileSpreadsheet : /Slides|PowerPoint|presentation/.test(type) ? Presentation : type === "Image" ? Image : FileText
-  return <Icon className="ow-documents-item-icon" data-kind={type} size={20} strokeWidth={1.5} aria-hidden />
 }
 
 /** A host-independent browser; providers own metadata reads and safe file-opening URLs. */
@@ -96,20 +93,22 @@ function ScopedDocumentsBrowser({ provider, editor, scope, enabled, editingEnabl
   const [order, setOrder] = useState<"recent" | "name" | "modified">("recent")
   const folder = view === "recent" ? { id: "recent", name: "Recent" } : folders[folders.length - 1]!
   const query = useInfiniteQuery({
-    queryKey: ["documents", ...scope, provider.id, folder.id, search],
+    queryKey: documentsListKey(scope, provider.id, folder.id, search),
     queryFn: ({ pageParam, signal }) => provider.list({ view, folderId: view === "recent" ? "root" : folder.id, query: search, cursor: pageParam || undefined, signal }),
     initialPageParam: "",
     getNextPageParam: page => page.nextCursor ?? undefined,
     enabled: enabled && !authorization,
     retry: false,
-    staleTime: 0,
+    // Refreshed whenever it is shown again, but a folder the person comes back to shows its files at once instead
+    // of a skeleton. A listing read in the last few seconds (on hovering the Documents tab) is not read twice.
+    staleTime: 5_000,
     refetchOnWindowFocus: true,
-    gcTime: 0,
+    gcTime: DOCUMENTS_LIST_GC_MS,
   })
   const recent = useQuery({
     queryKey: ["documents", ...scope, provider.id, "recent-sidebar"],
     queryFn: ({ signal }) => provider.list({ view: "recent", folderId: "root", query: "", signal }),
-    enabled: enabled && !authorization && (view !== "recent" || !!search), retry: false, gcTime: 0, staleTime: 60_000,
+    enabled: enabled && !authorization && (view !== "recent" || !!search), retry: false, gcTime: DOCUMENTS_LIST_GC_MS, staleTime: 60_000,
     refetchOnWindowFocus: true,
   })
   const recentItems = view === "recent" && !search
@@ -125,6 +124,27 @@ function ScopedDocumentsBrowser({ provider, editor, scope, enabled, editingEnabl
       return a.name.localeCompare(b.name, undefined, { numeric: true })
     })
   }, [query.data, order])
+  // A file the pointer rests on, or the keyboard reaches, is read ahead of the click so its tab opens with content.
+  const queryClient = useQueryClient()
+  const intentTimer = useRef<ReturnType<typeof setTimeout>>(undefined)
+  useEffect(() => () => clearTimeout(intentTimer.current), [])
+  const warm = (item: DocumentItem) => {
+    if (!editor || item.kind !== "file" || !enabled || authorization || opened.some(file => file.id === item.id)) return
+    void prefetchDocumentEditor(queryClient, { editor, scope, item, editingEnabled })
+  }
+  // Resting on a row, not passing over it (or tabbing past it), is the intent: only then is the file read.
+  const rest = (item: DocumentItem) => { clearTimeout(intentTimer.current); intentTimer.current = setTimeout(() => warm(item), DOCUMENT_INTENT_MS) }
+  const intent = (item: DocumentItem) => ({
+    onPointerEnter: () => rest(item),
+    onPointerLeave: () => clearTimeout(intentTimer.current),
+    onPointerDown: () => { clearTimeout(intentTimer.current); warm(item) },
+    onFocus: () => rest(item),
+    onBlur: () => clearTimeout(intentTimer.current),
+  })
+  // A closed or discarded tab's content leaves memory with it; opening the file again reads it again.
+  const scopeRef = useRef(scope)
+  scopeRef.current = scope
+  const release = useCallback((id: string) => queryClient.removeQueries({ queryKey: documentEditorPrefix(scopeRef.current, id) }), [queryClient])
   const navigate = (index: number) => { supersede(); setView("folder"); setActiveTab("files"); setOrder("name"); setFolders(current => current.slice(0, index + 1)); setSelected(null); setSearch(""); setDraft("") }
   const open = (item: DocumentItem) => {
     if (item.kind === "folder") { setView("folder"); setActiveTab("files"); setOrder("name"); setFolders(current => [...(view === "recent" ? [{ id: "root", name: provider.rootLabel }] : current), { id: item.id, name: item.name }]); setSearch(""); setDraft(""); setSelected(null) }
@@ -215,6 +235,7 @@ function ScopedDocumentsBrowser({ provider, editor, scope, enabled, editingEnabl
     setResources(current => { const next = new Map(current); next.delete(id); return next })
     setTabOrder(current => current.filter(tab => tab !== id))
     updateLocks(current => { const next = new Map(current); next.delete(id); return next })
+    release(id)
     if (restoreFocus) requestAnimationFrame(() => tabsRow.current?.querySelector<HTMLButtonElement>(neighbor === "files" ? ".ow-document-tab-files" : `[data-document-id="${CSS.escape(neighbor)}"] .ow-document-tab-open`)?.focus())
     void query.refetch(); void recent.refetch()
   }
@@ -225,14 +246,14 @@ function ScopedDocumentsBrowser({ provider, editor, scope, enabled, editingEnabl
     setResources(current => new Map([...current].filter(([key]) => !discarded.has(key))))
     setTabOrder(current => current.filter(key => !discarded.has(key)))
     setActiveTab(current => discarded.has(current) ? "files" : current)
-    for (const key of discarded) { dirtyTabs.current.delete(key); closeControls.current.delete(key) }
+    for (const key of discarded) { dirtyTabs.current.delete(key); closeControls.current.delete(key); release(key) }
     setDirtyIds(new Set(dirtyTabs.current)); onDirtyChange?.(dirtyTabs.current.size > 0)
     setBusyIds(current => new Set([...current].filter(key => !discarded.has(key))))
     updateLocks(current => new Map([...current].filter(([key]) => !discarded.has(key))))
     setRecoveryError(undefined)
-    // Unmounting only the discarded editors releases their gcTime:0 queries.
+    // release() drops only the discarded files' editor reads.
     // Never clear the directory denial or another restored editor's cache here.
-  }, [updateLocks, onDirtyChange])
+  }, [updateLocks, onDirtyChange, release])
   useEffect(() => {
     if (!accessFailure || failureToken === observedFailure) return
     setObservedFailure(failureToken); setDenial(accessFailure); setSelected(null)
@@ -286,7 +307,7 @@ function ScopedDocumentsBrowser({ provider, editor, scope, enabled, editingEnabl
       <button type="button" className="ow-documents-location" aria-current={activeTab === "files" && view === "recent" ? "page" : undefined} onClick={() => { supersede(); setView("recent"); setActiveTab("files"); setSearch(""); setDraft(""); setOrder("recent") }}><Clock size={16} strokeWidth={1.5} aria-hidden />Recent</button>
       <button type="button" className="ow-documents-location" aria-current={activeTab === "files" && view === "folder" ? "page" : undefined} onClick={() => navigate(0)}><Folder size={16} strokeWidth={1.5} aria-hidden />{provider.rootLabel}</button>
       <h2 className="ow-documents-recent-heading">Recent documents</h2>
-      {visible && recentItems.filter(item => !lockedResources.has(item.id)).slice(0, 8).map(item => <button type="button" className="ow-documents-recent-file" key={item.id} onClick={() => pick(item)}><ItemIcon item={item} /><span>{item.name}</span></button>)}
+      {visible && recentItems.filter(item => !lockedResources.has(item.id)).slice(0, 8).map(item => <button type="button" className="ow-documents-recent-file" key={item.id} {...intent(item)} onClick={() => pick(item)}><ItemIcon item={item} /><span>{item.name}</span></button>)}
     </aside>
     <div className="ow-documents-workspace">
       <div className="ow-document-tabs-row" ref={tabsRow}><DocumentTabs items={editorEnabled ? orderedTabs.filter(item => !locks.has(item.id)) : []} activeId={activeTab} dirtyIds={dirtyIds} busyIds={busyIds} onSelect={selectTab} onClose={requestClose} onReorder={setTabOrder}/><div className="ow-document-actions" ref={setActionsHost}/></div>
@@ -308,8 +329,8 @@ function ScopedDocumentsBrowser({ provider, editor, scope, enabled, editingEnabl
         : query.isPending ? <div className="ow-documents-skeleton" aria-label="Loading documents" aria-busy="true">{Array.from({ length: 8 }, (_, index) => <div key={index} />)}</div>
         : <><div className="ow-documents-content">
           <div className="ow-documents-listing">
-            {layout === "list" ? <table><thead><tr><th scope="col">Name</th><th scope="col">Type</th><th scope="col">Last modified</th><th scope="col">Size</th></tr></thead><tbody>{listedItems.map(item => <tr key={item.id} data-selected={selected?.id === item.id}><td><button type="button" className="ow-documents-file" onClick={() => pick(item)}><ItemIcon item={item} /><span>{item.name}</span></button></td><td>{documentType(item)}</td><td>{date(item.modifiedTime)}</td><td>{size(item.size)}</td></tr>)}</tbody></table>
-              : <div className="ow-documents-grid">{listedItems.map(item => <button type="button" key={item.id} className="ow-documents-tile" data-selected={selected?.id === item.id} onClick={() => pick(item)}><ItemIcon item={item} /><strong>{item.name}</strong><span>{documentType(item)}</span></button>)}</div>}
+            {layout === "list" ? <table><thead><tr><th scope="col">Name</th><th scope="col">Type</th><th scope="col">Last modified</th><th scope="col">Size</th></tr></thead><tbody>{listedItems.map(item => <tr key={item.id} data-selected={selected?.id === item.id} onPointerEnter={intent(item).onPointerEnter} onPointerLeave={intent(item).onPointerLeave} onPointerDown={intent(item).onPointerDown} onClick={event => { if (!(event.target instanceof Element && event.target.closest("button, a"))) pick(item) }}><td><button type="button" className="ow-documents-file" onFocus={intent(item).onFocus} onBlur={intent(item).onBlur} onClick={() => pick(item)}><ItemIcon item={item} /><span>{item.name}</span></button></td><td>{documentType(item)}</td><td>{date(item.modifiedTime)}</td><td>{size(item.size)}</td></tr>)}</tbody></table>
+              : <div className="ow-documents-grid">{listedItems.map(item => <button type="button" key={item.id} className="ow-documents-tile" data-selected={selected?.id === item.id} {...intent(item)} onClick={() => pick(item)}><ItemIcon item={item} /><strong>{item.name}</strong><span>{documentType(item)}</span></button>)}</div>}
             {listedItems.length === 0 && <div className="ow-documents-state"><Folder size={24} strokeWidth={1.5} /><p>{lockedResources.size > 0 ? "Some documents are locked." : search ? "No documents match your search." : view === "recent" ? "No recent documents in Drive." : "This folder is empty."}</p></div>}
             {query.hasNextPage && <button type="button" className="ow-documents-more" disabled={query.isFetchingNextPage} onClick={() => void query.fetchNextPage()}>Load more</button>}
             {query.data?.pages.some(page => page.incomplete) && <p className="ow-documents-notice" role="status">Google couldn't search every drive. Some files may be missing.</p>}
@@ -326,3 +347,5 @@ function ScopedDocumentsBrowser({ provider, editor, scope, enabled, editingEnabl
 export { OfficeEditorTab } from "./office-editor"
 export { DocumentToolbar, EditorToolbarButton, EditorToolbarMenu } from "./document-toolbar"
 export type { EditorAction, EditorCommand, EditorController, EditorSelection } from "./editor-controller"
+export { DOCUMENTS_LIST_GC_MS, documentEditorKey, documentsListKey, prefetchDocumentEditor, prefetchRecentDocuments } from "./queries"
+export { ItemIcon } from "./item-icon"

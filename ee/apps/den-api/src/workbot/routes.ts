@@ -83,6 +83,8 @@ const sessionSchema = z.object({
   sideChats: z.boolean(),
   /** The header avatar opens the account menu with Sign out (`workbotAccountMenu`); older Dens omit it: off. */
   accountMenu: z.boolean().optional(),
+  /** The conversation stays docked beside the Browser and Computer views (`workbotBrowserChat`); older Dens omit it: off. */
+  browserChat: z.boolean().optional(),
   /** Always true for older Workbot clients; the command palette is available by default. */
   commandPalette: z.boolean().optional(),
   /**
@@ -409,6 +411,7 @@ export function registerWorkbotRoutes<T extends { Variables: object }>(app: Hono
         activationChecklist: true,
         sideChats: true,
         accountMenu: features.workbotAccountMenu,
+        browserChat: features.workbotBrowserChat && features.browserUse && features.remoteComputers,
         commandPalette: true,
         model,
         gatewayModels: true,
