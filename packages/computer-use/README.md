@@ -112,6 +112,38 @@ apply. Observe and assist images, used only for reading, are 1024 pixels on
 the long side; control keeps 1280 for coordinate accuracy, and `computer_zoom`
 shows detail at full resolution.
 
+### Apps that take only real input
+
+Blender, game engines (Unity, Unreal), games and apps built on Qt, wxWidgets or
+Tk draw their own interface and act only on hardware-origin input: they drop
+events addressed to their process, in front or not (Blender ignores such a
+double-click, typing and Shift). Their control sessions work in front and send
+clicks, double-clicks, drags, scrolls, keys and typing through the system input
+stream with the real pointer, as a person's mouse and keyboard would (step path
+`real_input`). Every press, move, scroll and key is checked just before it is
+posted: the app must be frontmost, and for the pointer the selected window must
+be the topmost one under the point (the agent's see-through overlay aside). What
+goes into the input stream is then a stand-in that does nothing as it is: a key-up
+of an unused key, or a pointer move to the same point. An annotated session event
+tap sees it with the process and window the window server is about to deliver it
+to, and only there turns it into the real event, when that is the selected app and
+window; otherwise it is dropped and the step stops. While the tap is disabled or
+recovering only stand-ins arrive, so no agent input can escape it. Releases go out
+as themselves so nothing stays held, and a drag whose window stops being the target
+is released at its last point inside that window. Without the tap nothing is sent
+(`real_input_unavailable`). The tap also tells
+the person's own events from the agent's tagged ones, so the person's click or
+key still pauses the step. After the batch the person's pointer goes back where
+it was, unless they moved it.
+
+These apps list no focused control, so their keys and typing go to their key
+window, never under secure input or into a password field, and each typed
+character goes out as its own key on the current layout. Their own shortcuts are
+sent as keys: single letters and Shift letters (Blender's G, R, S, Shift-A),
+Command, Control and Option chords when the app has no menu-bar command for them,
+never a blocked chord. Blender sends keys to the editor under the pointer, so a
+`move` over the viewport or a panel comes first.
+
 Person input in the selected app or a deliberate app switch pauses
 the session and releases held input. Only the person's Continue resumes it;
 neither time nor the agent can. Sleep or temporary desktop unavailability

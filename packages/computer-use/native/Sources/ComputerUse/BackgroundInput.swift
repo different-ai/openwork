@@ -10,7 +10,8 @@ enum InputDelivery: String {
     case background, foreground
 
     /// Canvas apps, game engines and games read only HID-tap input that follows
-    /// a real pointer move, so routed events silently do nothing there.
+    /// a real pointer move, so routed events silently do nothing there. They get
+    /// real input in the foreground (`needsRealInput`).
     static let foregroundBundlePrefixes = ["org.blenderfoundation.", "com.unity3d.unityeditor", "com.epicgames."]
     /// Bundled toolkits whose surfaces take only hardware-origin input (Qt, wxWidgets, Tk).
     static let foregroundFrameworkPrefixes = ["qtcore", "qtgui", "libwx_", "tk.framework", "tcl.framework", "libtk", "_tkinter"]
@@ -22,19 +23,36 @@ enum InputDelivery: String {
     static func decide(enabled: Bool, available: Bool, mode: AccessMode, bundleID: String,
         info: [String: Any] = [:], frameworks: [String] = []) -> InputDelivery {
         guard enabled, available, mode == .control else { return .foreground }
+        return needsRealInput(bundleID: bundleID, info: info, frameworks: frameworks) ? .foreground : .background
+    }
+
+    /// Apps whose surfaces act only on hardware-origin input: events addressed to
+    /// the app are dropped, in front or not (Blender ignores a process-targeted
+    /// double-click, typing and Shift). Their clicks, drags, keys and scrolls go
+    /// through the system input stream with the real pointer instead, as a person's do.
+    static func needsRealInput(bundleID: String, info: [String: Any] = [:], frameworks: [String] = []) -> Bool {
         let id = bundleID.lowercased()
-        if foregroundBundlePrefixes.contains(where: id.hasPrefix) { return .foreground }
-        if (info["LSApplicationCategoryType"] as? String)?.lowercased().hasSuffix("games") == true { return .foreground }
-        if frameworks.contains(where: { name in foregroundFrameworkPrefixes.contains { name.lowercased().hasPrefix($0) } }) { return .foreground }
-        return .background
+        if foregroundBundlePrefixes.contains(where: id.hasPrefix) { return true }
+        if (info["LSApplicationCategoryType"] as? String)?.lowercased().hasSuffix("games") == true { return true }
+        return frameworks.contains(where: { name in foregroundFrameworkPrefixes.contains { name.lowercased().hasPrefix($0) } })
     }
 
     /// Apps whose single letters pick tools: design, photo, video and music apps, by
-    /// the category they declare. Elsewhere a bare letter can act (archive, delete).
+    /// the category they declare, and the canvas apps that take only real input
+    /// (Blender's G, R, S, Tab and Shift-A declare no category). Elsewhere a bare
+    /// letter can act (archive, delete).
     static let toolKeyCategories: Set<String> = ["public.app-category.graphics-design", "public.app-category.photography",
         "public.app-category.video", "public.app-category.music"]
     static func takesToolKeys(info: [String: Any]) -> Bool {
-        (info["LSApplicationCategoryType"] as? String).map { toolKeyCategories.contains($0.lowercased()) } ?? false
+        if let id = (info["CFBundleIdentifier"] as? String)?.lowercased(), foregroundBundlePrefixes.contains(where: id.hasPrefix) { return true }
+        return (info["LSApplicationCategoryType"] as? String).map { toolKeyCategories.contains($0.lowercased()) } ?? false
+    }
+
+    /// A Command, Control or Option chord for an app with real input whose own menus are
+    /// drawn in its window, not in the menu bar, so no menu command can stand in for it
+    /// (Blender lists none). It goes to the app as a key, never a blocked chord.
+    static func sendsOwnShortcut(_ key: String, _ flags: CGEventFlags, realInput: Bool, menuCommands: Int) -> Bool {
+        realInput && menuCommands == 0 && !NativeKey.isBlocked(key, flags)
     }
 
     /// A Command or Control shortcut the key list allows, sent to the app's key window when
@@ -82,6 +100,269 @@ enum InputDelivery: String {
         case .saveImage: return false
         case .press, .setValue, .scroll, .wait, .menu, .openFile, .arrange, .focus, .expect: return false
         }
+    }
+}
+
+/// Input posted through the system input stream for apps that take only real
+/// mouse and keyboard input, the way a person's own mouse and keyboard reach them.
+enum RealInput {
+    /// Hands the pointer back only if it is still where the agent left it;
+    /// a pointer the person moved since stays with them.
+    static func restore(to person: CGPoint?, current: CGPoint?, agentLast: CGPoint?) -> CGPoint? {
+        guard let person, let current, let agentLast, hypot(current.x - agentLast.x, current.y - agentLast.y) < 2 else { return nil }
+        return person
+    }
+
+    static let targetChanged = UseError("window_not_frontmost", "Another app or window came in front of the selected window, so nothing more was sent. Observe again; the selected window is brought back first.", next: "observe")
+
+    /// The system stream delivers to whatever is in front, so each real press,
+    /// move, scroll and key is re-checked just before it is posted: keys only while
+    /// the app is frontmost, pointer events only where the selected window itself is
+    /// the topmost one under the point, not another window of the app. `windows`
+    /// are on-screen, front to back; only windows the pointer passes through
+    /// (`passThrough`, the agent's presence overlay) are skipped.
+    static func reachesTarget(_ pid: pid_t, window target: CGWindowID, front: pid_t?, at point: CGPoint?,
+        windows: [(id: CGWindowID, pid: pid_t, bounds: CGRect)], passThrough: Set<CGWindowID>) -> Bool {
+        guard front == pid else { return false }
+        guard let point else { return true }
+        guard let top = windows.first(where: { !passThrough.contains($0.id) && $0.bounds.contains(point) }) else { return false }
+        return top.id == target && top.pid == pid
+    }
+
+    /// Marks the agent's events in `eventSourceUserData`: the step they belong to (its low
+    /// 15 bits), which held real event a stand-in carries, and whether the event only
+    /// releases a press.
+    static func tag(generation: UInt32, sequence: UInt32 = 0, release: Bool) -> Int64 {
+        tagMarker << 48 | Int64(generation & generationMask) << 33 | Int64(sequence) << 1 | (release ? 1 : 0)
+    }
+    static func untag(_ value: Int64) -> (generation: UInt32, sequence: UInt32, release: Bool)? {
+        guard value >> 48 == tagMarker else { return nil }
+        return (UInt32(truncatingIfNeeded: value >> 33) & generationMask, UInt32(truncatingIfNeeded: value >> 1), value & 1 == 1)
+    }
+    static let generationMask: UInt32 = 0x7FFF
+    private static let tagMarker: Int64 = 0x4F57
+
+    /// What goes into the system input stream in place of a press, move, scroll or key:
+    /// a stand-in that does nothing if it is delivered as it is. Only the gate's tap turns
+    /// it into the real event, and only once the window server routes it to the selected
+    /// window. While the tap is disabled or recovering, the stand-in is all that arrives,
+    /// so no agent input can escape the gate. A key becomes a key-up of an unused function
+    /// key (F20) with no modifiers; a pointer event becomes a move to the point it lands on,
+    /// which the window server routes like the real event.
+    static func standIn(for real: CGEvent) -> CGEvent? {
+        switch real.type {
+        case .keyDown, .keyUp, .flagsChanged:
+            guard let event = CGEvent(keyboardEventSource: nil, virtualKey: unusedKey, keyDown: false) else { return nil }
+            event.flags = []
+            return event
+        default:
+            guard let event = CGEvent(mouseEventSource: nil, mouseType: .mouseMoved, mouseCursorPosition: real.location, mouseButton: .left) else { return nil }
+            event.flags = []
+            return event
+        }
+    }
+    /// kVK_F20: on no Mac keyboard and bound to nothing by default.
+    static let unusedKey: CGKeyCode = 0x5A
+
+    enum Delivery: Equatable { case pass, drop, replace }
+    /// What the gate's tap does with one of the agent's events. A release always passes, so
+    /// nothing stays held. A stand-in becomes its real event only for the armed step, with
+    /// its real event still held, where the window server routes it to the selected app and
+    /// window; anything else is dropped.
+    static func delivery(release: Bool, currentStep: Bool, held: Bool, admitted: Bool) -> Delivery {
+        if release { return .pass }
+        return currentStep && held && admitted ? .replace : .drop
+    }
+
+    /// Whether one of the agent's events may reach the process (and, for the
+    /// pointer, the window) the window server is about to hand it to. Releases
+    /// always go, so nothing stays held; every press, move, scroll and key only
+    /// to the selected app, and pointer events only to the selected window.
+    static func admits(release: Bool, target: pid_t, window: CGWindowID, to pid: pid_t, under: CGWindowID) -> Bool {
+        release || pid == target && (under == 0 || under == window)
+    }
+
+    /// The agent's real input reaches the HID state the person-input checks read, so
+    /// while a step sends it those checks read the gate instead: only events the
+    /// agent did not tag, which are the person's own mouse and keyboard.
+    static func personInput(hid: TimeInterval, untagged: TimeInterval?, armed: Bool) -> TimeInterval {
+        armed ? (untagged ?? -.infinity) : hid
+    }
+}
+
+/// Binds real input to the selected window where the window server routes it.
+/// The check before each post can race an app that comes forward; an annotated
+/// session tap sees every event with the process it is about to be delivered to,
+/// and drops any of the agent's events bound for another app or window. It fails
+/// closed: without the tap, while the tap is off, or outside the armed step, the
+/// agent's events are not delivered. It also notes when the person's own events
+/// pass, so their input still pauses the step while the agent's does not.
+final class RealInputGate: @unchecked Sendable {
+    static let shared = RealInputGate()
+    static let unavailable = UseError("real_input_unavailable", "Input for this app could not be limited to the selected window, so nothing was sent. Observe again, or ask the person to take over.", next: "observe")
+    static let unconfirmed = UseError("input_unconfirmed", "The system did not confirm where the last input went. Observe before continuing.", next: "observe")
+    private let lock = NSLock()
+    private var tap: CFMachPort?
+    private var generation: UInt32 = 0
+    private var armed: (pid: pid_t, window: CGWindowID)?
+    private var posted = 0, seen = 0, diverted = false
+    /// The real events whose stand-ins are on their way, by sequence.
+    private var held: [UInt32: CGEvent] = [:]
+    private var sequence: UInt32 = 0
+    /// When the person's own clicks, keys and moves last passed, by event type, while armed.
+    private var personAt: [CGEventType.RawValue: TimeInterval] = [:]
+
+    var isArmed: Bool { lock.withLock { armed != nil } }
+
+    /// Starts a step's real input for `window` of `pid`; throws before anything is sent.
+    func arm(pid: pid_t, window: CGWindowID) throws {
+        guard let tap = start() else { throw Self.unavailable }
+        lock.withLock {
+            generation &+= 1
+            armed = (pid, window); posted = 0; seen = 0; diverted = false; personAt = [:]; held = [:]
+        }
+        CGEvent.tapEnable(tap: tap, enable: true)
+        guard CGEvent.tapIsEnabled(tap: tap) else {
+            lock.withLock { armed = nil }
+            throw Self.unavailable
+        }
+    }
+    /// Posts one of the armed step's events through the system input stream. A release goes
+    /// as itself so nothing stays held; anything else goes as its stand-in, which only the
+    /// tap turns back into this event once it is routed to the selected window.
+    func post(_ event: CGEvent, release: Bool) throws {
+        if release {
+            let value = lock.withLock { () -> Int64 in
+                posted += 1
+                return RealInput.tag(generation: generation, release: true)
+            }
+            event.setIntegerValueField(.eventSourceUserData, value: value)
+            event.post(tap: .cghidEventTap)
+            return
+        }
+        guard let standIn = RealInput.standIn(for: event) else { throw UseError("input_failed", "Could not create an input event.") }
+        let value = lock.withLock { () -> Int64 in
+            posted += 1
+            sequence &+= 1
+            held[sequence] = event
+            return RealInput.tag(generation: generation, sequence: sequence, release: false)
+        }
+        standIn.setIntegerValueField(.eventSourceUserData, value: value)
+        standIn.post(tap: .cghidEventTap)
+    }
+    /// Stops the step once anything was held back or the tap stopped watching.
+    func check() throws {
+        guard let tap = lock.withLock({ diverted ? nil : self.tap }), CGEvent.tapIsEnabled(tap: tap) else { throw RealInput.targetChanged }
+    }
+    /// When the person's own event of `type` last passed during this step, if it did.
+    func personInput(_ type: CGEventType) -> TimeInterval? {
+        lock.withLock { personAt[type.rawValue] }
+    }
+    /// Waits for the window server to route every posted event, then stops watching.
+    /// Events still in flight stay under the armed check.
+    func finish() async -> UseError? {
+        var waits = 0
+        while waits < 30, lock.withLock({ seen < posted }) {
+            try? await Task.sleep(nanoseconds: 10_000_000)
+            waits += 1
+        }
+        let (drained, wasDiverted, tap) = lock.withLock { () -> (Bool, Bool, CFMachPort?) in
+            let drained = seen >= posted
+            if drained { armed = nil; held = [:] }
+            return (drained, diverted, self.tap)
+        }
+        if drained, let tap { CGEvent.tapEnable(tap: tap, enable: false) }
+        return wasDiverted ? RealInput.targetChanged : drained ? nil : Self.unconfirmed
+    }
+
+    /// Ends a step that stopped before `finish`: once every posted event was routed the
+    /// gate stops watching; events still in flight stay under the armed check.
+    func abandon() {
+        let tap = lock.withLock { () -> CFMachPort? in
+            guard armed != nil, seen >= posted else { return nil }
+            armed = nil; held = [:]
+            return self.tap
+        }
+        if let tap { CGEvent.tapEnable(tap: tap, enable: false) }
+    }
+
+    /// Returns the event to deliver: this one, its real event, or nil to drop it.
+    private func filter(_ type: CGEventType, _ event: CGEvent) -> (CGEvent?, replaced: Bool) {
+        if type == .tapDisabledByTimeout || type == .tapDisabledByUserInput {
+            // While the tap was off, only stand-ins and releases went out. The step stops,
+            // and the tap comes back.
+            let tap = lock.withLock { () -> CFMachPort? in
+                guard armed != nil else { return nil }
+                diverted = true
+                return self.tap
+            }
+            if let tap { CGEvent.tapEnable(tap: tap, enable: true) }
+            return (event, false)
+        }
+        guard let tag = RealInput.untag(event.getIntegerValueField(.eventSourceUserData)) else {
+            // The person's own mouse or keyboard: it always passes, and is noted.
+            lock.withLock { if armed != nil { personAt[type.rawValue] = ProcessInfo.processInfo.systemUptime } }
+            return (event, false)
+        }
+        let pid = pid_t(truncatingIfNeeded: event.getIntegerValueField(.eventTargetUnixProcessID))
+        let under = CGWindowID(truncatingIfNeeded: event.getIntegerValueField(Self.windowUnderPointer))
+        let (delivery, real) = lock.withLock { () -> (RealInput.Delivery, CGEvent?) in
+            let currentStep = armed != nil && tag.generation == generation & RealInput.generationMask
+            if currentStep { seen += 1 }
+            let real = tag.release ? nil : held.removeValue(forKey: tag.sequence)
+            let admitted = armed.map { RealInput.admits(release: tag.release, target: $0.pid, window: $0.window, to: pid, under: under) } ?? false
+            let delivery = RealInput.delivery(release: tag.release, currentStep: currentStep, held: real != nil, admitted: admitted)
+            if currentStep, delivery == .drop { diverted = true }
+            return (delivery, real)
+        }
+        switch delivery {
+        case .pass: return (event, false)
+        case .drop: return (nil, false)
+        case .replace:
+            guard let real else { return (nil, false) }
+            // The real event takes the stand-in's place and the route the window server gave it.
+            for field in Self.routeFields { real.setIntegerValueField(field, value: event.getIntegerValueField(field)) }
+            real.setIntegerValueField(.eventSourceUserData, value: event.getIntegerValueField(.eventSourceUserData))
+            return (real, true)
+        }
+    }
+    private static let routeFields: [CGEventField] = [.eventTargetUnixProcessID, .eventTargetProcessSerialNumber,
+        .mouseEventWindowUnderMousePointer, .mouseEventWindowUnderMousePointerThatCanHandleThisEvent]
+    // kCGMouseEventWindowUnderMousePointerThatCanHandleThisEvent: 0 for keys.
+    private static let windowUnderPointer = CGEventField(rawValue: 92)!
+    private static let types: [CGEventType] = [.mouseMoved, .leftMouseDown, .leftMouseUp, .leftMouseDragged,
+        .rightMouseDown, .rightMouseUp, .rightMouseDragged, .otherMouseDown, .otherMouseUp, .otherMouseDragged,
+        .scrollWheel, .keyDown, .keyUp, .flagsChanged]
+    private static let callback: CGEventTapCallBack = { _, type, event, info in
+        guard let info else { return Unmanaged.passUnretained(event) }
+        let (deliver, replaced) = Unmanaged<RealInputGate>.fromOpaque(info).takeUnretainedValue().filter(type, event)
+        guard let deliver else { return nil }
+        // A replacement is handed over with its own reference; the stand-in stays with the system.
+        return replaced ? Unmanaged.passRetained(deliver) : Unmanaged.passUnretained(deliver)
+    }
+    /// The tap runs on its own thread, so a busy main thread never holds input up.
+    private func start() -> CFMachPort? {
+        if let tap = lock.withLock({ tap }) { return tap }
+        let ready = DispatchSemaphore(value: 0)
+        let info = Unmanaged.passUnretained(self).toOpaque()
+        var made: CFMachPort?
+        let thread = Thread {
+            let mask = Self.types.reduce(CGEventMask(0)) { $0 | CGEventMask(1) << $1.rawValue }
+            made = CGEvent.tapCreate(tap: .cgAnnotatedSessionEventTap, place: .tailAppendEventTap, options: .defaultTap,
+                eventsOfInterest: mask, callback: Self.callback, userInfo: info)
+            if let made {
+                CGEvent.tapEnable(tap: made, enable: false)
+                CFRunLoopAddSource(CFRunLoopGetCurrent(), CFMachPortCreateRunLoopSource(nil, made, 0), .commonModes)
+            }
+            ready.signal()
+            if made != nil { CFRunLoopRun() }
+        }
+        thread.name = "computer-use.real-input"
+        thread.qualityOfService = .userInteractive
+        thread.start()
+        ready.wait()
+        lock.withLock { tap = made }
+        return made
     }
 }
 

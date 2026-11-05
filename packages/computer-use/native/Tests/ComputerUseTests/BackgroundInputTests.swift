@@ -21,6 +21,126 @@ final class BackgroundInputTests: XCTestCase {
         XCTAssertEqual(decide("com.google.Chrome", frameworks: ["Google Chrome Framework.framework"]), .background)
     }
 
+    func testAppsThatTakeOnlyHardwareInputGetRealInputWhetherOrNotBackgroundIsOn() {
+        XCTAssertTrue(InputDelivery.needsRealInput(bundleID: "org.blenderfoundation.blender"))
+        XCTAssertTrue(InputDelivery.needsRealInput(bundleID: "com.epicgames.UnrealEditor"))
+        XCTAssertTrue(InputDelivery.needsRealInput(bundleID: "com.example.game", info: ["LSApplicationCategoryType": "public.app-category.games"]))
+        XCTAssertTrue(InputDelivery.needsRealInput(bundleID: "com.example.tk", frameworks: ["Tk.framework"]))
+        for id in ["com.apple.TextEdit", "com.apple.finder", "com.google.Chrome", "com.apple.Music", "ai.storyteller.photocraft"] {
+            XCTAssertFalse(InputDelivery.needsRealInput(bundleID: id, frameworks: ["Sparkle.framework"]), id)
+        }
+    }
+
+    func testTheWindowServerHandsRealInputOnlyToTheSelectedWindow() {
+        let app: pid_t = 42, other: pid_t = 7, selected: CGWindowID = 10, sibling: CGWindowID = 11
+        func admits(release: Bool = false, to pid: pid_t, under: CGWindowID = 0) -> Bool {
+            RealInput.admits(release: release, target: app, window: selected, to: pid, under: under)
+        }
+        XCTAssertTrue(admits(to: app), "a key to the selected app")
+        XCTAssertFalse(admits(to: other), "a key to an app that came forward")
+        XCTAssertTrue(admits(to: app, under: selected))
+        XCTAssertFalse(admits(to: app, under: sibling), "a press in another window of the app")
+        XCTAssertFalse(admits(to: other, under: 99))
+        XCTAssertTrue(admits(release: true, to: other, under: 99), "releases go out so nothing stays held")
+    }
+
+    func testRealInputTagsCarryTheirStepTheirRealEventAndWhetherTheyRelease() {
+        let tag = RealInput.tag(generation: 7, sequence: 42, release: true)
+        XCTAssertEqual(RealInput.untag(tag)?.generation, 7)
+        XCTAssertEqual(RealInput.untag(tag)?.sequence, 42)
+        XCTAssertEqual(RealInput.untag(tag)?.release, true)
+        let last = RealInput.untag(RealInput.tag(generation: .max, sequence: .max, release: false))
+        XCTAssertEqual(last?.generation, RealInput.generationMask, "steps are told apart by their low bits")
+        XCTAssertEqual(last?.sequence, .max)
+        XCTAssertEqual(last?.release, false)
+        XCTAssertNil(RealInput.untag(0), "the person's own input is never the agent's")
+        XCTAssertNil(RealInput.untag(12345))
+    }
+
+    func testAStandInDoesNothingIfItArrivesAsItIs() throws {
+        let key = try XCTUnwrap(CGEvent(keyboardEventSource: nil, virtualKey: 0, keyDown: true))
+        key.flags = [.maskCommand, .maskShift]
+        let keyStandIn = try XCTUnwrap(RealInput.standIn(for: key))
+        XCTAssertEqual(keyStandIn.type, .keyUp, "a key-up of an unused key types and triggers nothing")
+        XCTAssertEqual(keyStandIn.getIntegerValueField(.keyboardEventKeycode), Int64(RealInput.unusedKey))
+        XCTAssertTrue(keyStandIn.flags.intersection([.maskCommand, .maskShift, .maskAlternate, .maskControl]).isEmpty, "no modifier is held")
+        let point = CGPoint(x: 320, y: 240)
+        let press = try XCTUnwrap(CGEvent(mouseEventSource: nil, mouseType: .leftMouseDown, mouseCursorPosition: point, mouseButton: .left))
+        let pressStandIn = try XCTUnwrap(RealInput.standIn(for: press))
+        XCTAssertEqual(pressStandIn.type, .mouseMoved, "a move presses nothing")
+        XCTAssertEqual(pressStandIn.location, point, "routed where the press would land")
+    }
+
+    func testOnlyTheGateTurnsAStandInIntoRealInput() {
+        XCTAssertEqual(RealInput.delivery(release: false, currentStep: true, held: true, admitted: true), .replace)
+        XCTAssertEqual(RealInput.delivery(release: false, currentStep: true, held: true, admitted: false), .drop, "routed to another app or window")
+        XCTAssertEqual(RealInput.delivery(release: false, currentStep: false, held: true, admitted: true), .drop, "a stand-in from an earlier step")
+        XCTAssertEqual(RealInput.delivery(release: false, currentStep: true, held: false, admitted: true), .drop, "no real event left for it")
+        XCTAssertEqual(RealInput.delivery(release: true, currentStep: false, held: false, admitted: false), .pass, "releases go out so nothing stays held")
+    }
+
+    func testThePointerGoesBackOnlyIfThePersonLeftItWhereTheAgentPutIt() {
+        let person = CGPoint(x: 100, y: 100), agent = CGPoint(x: 500, y: 400)
+        XCTAssertEqual(RealInput.restore(to: person, current: agent, agentLast: agent), person)
+        XCTAssertNil(RealInput.restore(to: person, current: CGPoint(x: 700, y: 20), agentLast: agent), "the person moved it")
+        XCTAssertNil(RealInput.restore(to: nil, current: agent, agentLast: agent), "the pointer never moved")
+    }
+
+    func testRealInputIsSentOnlyWhileItStillLandsInTheSelectedApp() {
+        let app: pid_t = 42, other: pid_t = 7, helper: pid_t = 99
+        let selected: CGWindowID = 10, sibling: CGWindowID = 11, overlay: CGWindowID = 90, pill: CGWindowID = 91
+        let bounds = CGRect(x: 0, y: 0, width: 800, height: 600)
+        func reaches(front: pid_t? = 42, at point: CGPoint? = CGPoint(x: 400, y: 300), _ windows: [(id: CGWindowID, pid: pid_t, bounds: CGRect)]) -> Bool {
+            RealInput.reachesTarget(app, window: selected, front: front, at: point, windows: windows, passThrough: [overlay])
+        }
+        XCTAssertTrue(reaches(at: nil, []))
+        XCTAssertFalse(reaches(front: other, at: nil, []), "keys go to whatever app is in front")
+        XCTAssertTrue(reaches([(overlay, helper, bounds), (selected, app, bounds)]), "the agent's see-through overlay is not in the way")
+        XCTAssertFalse(reaches([(pill, helper, CGRect(x: 350, y: 250, width: 100, height: 100)), (selected, app, bounds)]),
+            "the Take over pill takes clicks, so it is in the way")
+        XCTAssertFalse(reaches([(sibling, app, CGRect(x: 300, y: 200, width: 200, height: 200)), (selected, app, bounds)]),
+            "another window of the same app over the point")
+        XCTAssertFalse(reaches([(5, other, CGRect(x: 300, y: 200, width: 200, height: 200)), (selected, app, bounds)]), "another app's window over the point")
+        XCTAssertFalse(reaches(front: other, [(selected, app, bounds)]))
+        XCTAssertFalse(reaches(at: CGPoint(x: 900, y: 300), [(selected, app, bounds)]))
+    }
+
+    func testThePersonsInputStillPausesAStepWhileTheAgentSendsRealInput() {
+        // Armed, the HID state also holds the agent's own events: only the gate's untagged ones count.
+        XCTAssertEqual(RealInput.personInput(hid: 50, untagged: nil, armed: true), -.infinity, "the agent's own click is not the person's")
+        XCTAssertEqual(RealInput.personInput(hid: 50, untagged: 49, armed: true), 49, "the person's own click still counts")
+        XCTAssertEqual(RealInput.personInput(hid: 50, untagged: nil, armed: false), 50, "between steps the HID state is the person's")
+    }
+
+    func testBlenderTakesItsOwnSingleLetterAndShiftShortcuts() {
+        XCTAssertTrue(InputDelivery.takesToolKeys(info: ["CFBundleIdentifier": "org.blenderfoundation.blender"]), "Blender declares no category")
+        XCTAssertTrue(InputDelivery.takesToolKeys(info: ["LSApplicationCategoryType": "public.app-category.graphics-design"]))
+        XCTAssertFalse(InputDelivery.takesToolKeys(info: ["CFBundleIdentifier": "com.apple.mail"]))
+    }
+
+    func testChordsGoAsKeysOnlyToRealInputAppsThatDrawTheirOwnMenus() {
+        XCTAssertTrue(InputDelivery.sendsOwnShortcut("r", .maskControl, realInput: true, menuCommands: 0), "Blender's Control-R")
+        XCTAssertTrue(InputDelivery.sendsOwnShortcut("n", .maskCommand, realInput: true, menuCommands: 0))
+        XCTAssertFalse(InputDelivery.sendsOwnShortcut("n", .maskCommand, realInput: true, menuCommands: 12), "a menu command runs in its place")
+        XCTAssertFalse(InputDelivery.sendsOwnShortcut("r", .maskControl, realInput: false, menuCommands: 0))
+        XCTAssertFalse(InputDelivery.sendsOwnShortcut("q", .maskCommand, realInput: true, menuCommands: 0), "Quit stays blocked")
+    }
+
+    func testAppChordsAreOnlyTheModifiedKeysNoOtherRuleAllows() throws {
+        XCTAssertTrue(NativeKey.isAppChord("r", .maskControl))
+        XCTAssertTrue(NativeKey.isAppChord("g", .maskAlternate))
+        XCTAssertTrue(NativeKey.isAppChord("1", [.maskControl, .maskAlternate]))
+        XCTAssertFalse(NativeKey.isAppChord("a", .maskShift), "Shift-A is a tool key")
+        XCTAssertFalse(NativeKey.isAppChord("n", .maskCommand), "Command-N runs as a menu command")
+        XCTAssertFalse(NativeKey.isAppChord("c", .maskCommand), "the agent's clipboard")
+        XCTAssertFalse(NativeKey.isAppChord("q", .maskCommand), "blocked")
+        XCTAssertFalse(NativeKey.isAppChord("a", []))
+        let (key, flags) = try NativeKey.resolve("control+r", modifiers: nil, policy: .embedded)
+        XCTAssertEqual(key, "r")
+        XCTAssertEqual(flags, .maskControl)
+        XCTAssertThrowsError(try NativeKey.resolve("control+r", modifiers: nil, policy: .desktop))
+    }
+
     func testBackgroundSessionsTakeTheFrontOnlyForStepsThatNeedIt() {
         let point = CGPoint(x: 10, y: 10)
         XCTAssertFalse(InputDelivery.stepNeedsFront(.click(point, 1, []), route: .appKit))
