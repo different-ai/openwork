@@ -1406,6 +1406,11 @@ function getRenderableMessage(message: UIMessage) {
  * Measured from the last turn's top, so history placeholders swapping above
  * do not count. A shrink the person causes (collapsing a row) is not held.
  * Released when the turn ends, where the steps fold anyway.
+ *
+ * The reserve never empties the screen. A message the person sends starts a
+ * new last group with nothing held below it: inheriting the earlier turn's
+ * room pushed the new message up out of sight over blank space. And at most
+ * half the view is held, so the turn's latest row always stays on screen.
  */
 function LiveTurnReserve({ active }: { active: boolean }) {
   const ref = React.useRef<HTMLDivElement>(null)
@@ -1415,7 +1420,7 @@ function LiveTurnReserve({ active }: { active: boolean }) {
     if (!spacer || !list) return
     spacer.style.height = ""
     if (!active || typeof ResizeObserver === "undefined") return
-    let anchor: Element | null = null
+    let anchor: string | null = null
     let tallest = 0
     let releaseUntil = 0
     const measure = () => {
@@ -1425,13 +1430,17 @@ function LiveTurnReserve({ active }: { active: boolean }) {
       if (!last || last.hasAttribute("data-thread-placeholder")) return
       const box = spacer.getBoundingClientRect()
       const span = box.top - last.getBoundingClientRect().top
-      // A new last group (a follow-up mid-run) keeps the room already reserved.
-      if (last !== anchor) {
-        tallest = anchor ? span + box.height : span
-        anchor = last
+      // A new last group (a message just sent) starts with nothing held below
+      // it, so it lands at the bottom instead of rising over blank space. The
+      // same group remounting keeps its room.
+      const group = last.getAttribute("data-thread-group")
+      if (group !== anchor) {
+        tallest = span
+        anchor = group
       }
       tallest = performance.now() < releaseUntil ? span : Math.max(tallest, span)
-      const reserve = Math.max(0, tallest - span)
+      const view = list.closest("[data-thread-scroll]")?.clientHeight || window.innerHeight
+      const reserve = Math.min(Math.max(0, tallest - span), view / 2)
       if (Math.abs(reserve - box.height) > 0.5) spacer.style.height = reserve > 0 ? `${reserve}px` : ""
     }
     const release = () => { releaseUntil = performance.now() + 500 }
