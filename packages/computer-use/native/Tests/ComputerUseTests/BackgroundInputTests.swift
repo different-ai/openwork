@@ -348,4 +348,56 @@ final class BackgroundInputTests: XCTestCase {
         XCTAssertTrue(MenuFocus.stale("menu_item_unavailable"))
         XCTAssertFalse(MenuFocus.stale("blocked_menu_item"), "a blocked command stays blocked")
     }
+
+    /// A Save panel's process ignored keys swapped in for the stand-in; Blender missed a click's
+    /// release that went another way than its press. Both now become the stand-in macOS routed.
+    func testKeysPressesAndReleasesBecomeTheStandInMacOSRouted() throws {
+        let g = try XCTUnwrap(CGEvent(keyboardEventSource: nil, virtualKey: 5, keyDown: true))
+        g.flags = [.maskCommand, .maskShift]
+        let keyStandIn = try XCTUnwrap(RealInput.standIn(for: g))
+        keyStandIn.setIntegerValueField(.eventSourceUserData, value: 1234)
+        XCTAssertTrue(RealInput.becomes(keyStandIn, g))
+        XCTAssertEqual(keyStandIn.type, .keyDown)
+        XCTAssertEqual(keyStandIn.getIntegerValueField(.keyboardEventKeycode), 5)
+        XCTAssertTrue(keyStandIn.flags.contains(.maskCommand) && keyStandIn.flags.contains(.maskShift))
+        XCTAssertEqual(keyStandIn.getIntegerValueField(.eventSourceUserData), 1234, "it stays the agent's tagged event")
+
+        let point = CGPoint(x: 300, y: 600)
+        let up = try XCTUnwrap(CGEvent(mouseEventSource: nil, mouseType: .leftMouseUp, mouseCursorPosition: point, mouseButton: .left))
+        up.setIntegerValueField(.mouseEventClickState, value: 1)
+        let upStandIn = try XCTUnwrap(RealInput.standIn(for: up))
+        XCTAssertTrue(RealInput.becomes(upStandIn, up))
+        XCTAssertEqual(upStandIn.type, .leftMouseUp)
+        XCTAssertEqual(upStandIn.getIntegerValueField(.mouseEventClickState), 1)
+        XCTAssertEqual(upStandIn.location, point)
+
+        let elsewhere = try XCTUnwrap(CGEvent(mouseEventSource: nil, mouseType: .mouseMoved, mouseCursorPosition: CGPoint(x: 1, y: 1), mouseButton: .left))
+        XCTAssertFalse(RealInput.becomes(elsewhere, up), "a press goes only where its stand-in was routed")
+        let move = try XCTUnwrap(CGEvent(mouseEventSource: nil, mouseType: .mouseMoved, mouseCursorPosition: point, mouseButton: .left))
+        XCTAssertFalse(RealInput.becomes(try XCTUnwrap(RealInput.standIn(for: move)), move), "moves, drags and scrolls are swapped as before")
+    }
+
+    func testAReleaseAlwaysGoesTheWayItsPressWent() {
+        XCTAssertEqual(RealInput.delivery(release: true, currentStep: true, held: true, admitted: false), .replace, "routed elsewhere, it still goes")
+        XCTAssertEqual(RealInput.delivery(release: true, currentStep: false, held: true, admitted: false), .replace, "from the step before")
+        XCTAssertEqual(RealInput.delivery(release: true, currentStep: false, held: false, admitted: false), .pass)
+    }
+
+    func testTheReceiptSaysWhereEachRealEventWentButNeverWhatWasTyped() {
+        let route = RealInputRoute.describe([(.keyDown, .replace, 42), (.keyUp, .replace, 55), (.leftMouseDown, .drop, 7), (.mouseMoved, .pass, 0)], app: 42,
+            bundle: { $0 == 55 ? "com.apple.appkit.xpc.openAndSavePanelService" : nil })
+        XCTAssertEqual(route.map { $0["event"] as? String }, ["key_down", "key_up", "press", "move"])
+        XCTAssertEqual(route.map { $0["gate"] as? String }, ["replace", "replace", "drop", "pass"])
+        XCTAssertEqual(route.map { $0["to"] as? String }, ["app", "com.apple.appkit.xpc.openAndSavePanelService", "another process", "none"])
+    }
+
+    /// Live's first click was refused while Blender's window still covered it after Live came forward.
+    func testAWindowIsOnTopOnlyOnceNoOtherAppWindowCoversItsMiddle() {
+        let live: (id: CGWindowID, pid: pid_t, bounds: CGRect, layer: Int) = (25317, 7031, CGRect(x: 0, y: 33, width: 1200, height: 778), 0)
+        let blender: (id: CGWindowID, pid: pid_t, bounds: CGRect, layer: Int) = (25487, 21662, CGRect(x: 0, y: 33, width: 1728, height: 1084), 0)
+        let dock: (id: CGWindowID, pid: pid_t, bounds: CGRect, layer: Int) = (8, 3, CGRect(x: 0, y: 0, width: 1728, height: 1117), 20)
+        XCTAssertFalse(FrontReport.onTop(live.id, pid: live.pid, windows: [dock, blender, live]))
+        XCTAssertTrue(FrontReport.onTop(live.id, pid: live.pid, windows: [dock, live, blender]), "the Dock's layer is not in the way")
+        XCTAssertTrue(FrontReport.onTop(99, pid: 1, windows: [live]), "a window not on screen is not waited for")
+    }
 }
