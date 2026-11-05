@@ -819,7 +819,8 @@ final class MacAccessibility {
         switch presence(target, app: app) {
         case .here, .gone: return
         case .otherSpace:
-            // Restoring a minimized window puts it on the current Space, as a person does it.
+            // Brought over from the other Space, or, failing that, minimized and restored here.
+            if await Spaces.bringHere(target.id, here: { presence(target, app: app) == .here }) != nil { return }
             guard await moveToThisSpace(target.element), presence(target, app: app) == .here else { throw WindowPresence.offSpace }
             return
         case .hidden: app.app.unhide()
@@ -862,6 +863,21 @@ final class MacAccessibility {
         var id: CGWindowID = 0
         return read(element, &id) == .success && id != 0 ? id : nil
     }
+    /// The app's normal windows on another Space, by the window list, largest first.
+    func windowsOnOtherSpaces(_ app: AppIdentity) -> [CGWindowID] {
+        let info = CGWindowListCopyWindowInfo([.optionAll, .excludeDesktopElements], kCGNullWindowID) as? [[String: Any]] ?? []
+        let current = Spaces.current()
+        return info.compactMap { entry -> (CGWindowID, CGFloat)? in
+            guard (entry[kCGWindowOwnerPID as String] as? Int32) == app.pid, (entry[kCGWindowLayer as String] as? Int) == 0,
+                  (entry[kCGWindowIsOnscreen as String] as? Bool) != true,
+                  let number = (entry[kCGWindowNumber as String] as? NSNumber)?.uint32Value,
+                  let bounds = entry[kCGWindowBounds as String] as? [String: Any],
+                  let rect = CGRect(dictionaryRepresentation: bounds as CFDictionary), rect.width > 100, rect.height > 100,
+                  Spaces.isElsewhere(spaces: Spaces.of(number), current: current) else { return nil }
+            return (number, rect.width * rect.height)
+        }.sorted { $0.1 > $1.1 }.map(\.0)
+    }
+    func isOnScreen(_ id: CGWindowID) -> Bool { onScreen(id) }
     /// Whether the app has a normal window on another Space, by the window list.
     func hasWindowsOnOtherSpaces(_ app: AppIdentity) -> Bool {
         let info = CGWindowListCopyWindowInfo([.optionAll, .excludeDesktopElements], kCGNullWindowID) as? [[String: Any]] ?? []

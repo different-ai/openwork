@@ -197,10 +197,12 @@ struct ObservationOptions {
 /// After a step that may have changed the view or focus, what the batch's next step
 /// reads back before it runs in the same call: the check a fresh observation would make.
 enum BatchContinuation {
-    /// A scroll that follows only this batch's own scrolls, drags and waits: it carries on moving
-    /// the same view, so the image changing under the point is the batch's own doing.
-    static func continuesScroll(_ action: Action, after earlier: ArraySlice<Action>) -> Bool {
-        guard case .scroll = action, !earlier.isEmpty else { return false }
+    /// A scroll or drag that follows only this batch's own scrolls, drags and waits: it carries on
+    /// moving the same view (a map panned, a list scrolled), so the image changing under the point
+    /// is the batch's own doing. What is under the point is still checked.
+    static func continuesPan(_ action: Action, after earlier: ArraySlice<Action>) -> Bool {
+        switch action { case .scroll, .drag: break; default: return false }
+        guard !earlier.isEmpty else { return false }
         return earlier.allSatisfy { step in
             switch step { case .scroll, .drag, .wait: return true; default: return false }
         }

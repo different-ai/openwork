@@ -27,10 +27,25 @@ final class ChangingWindowTests: XCTestCase {
     func testAScrollAfterTheBatchsOwnScrollsCarriesOnMovingTheSameView() {
         let point = CGPoint(x: 400, y: 300)
         let scroll = Action.scroll(point, 0, -3)
-        XCTAssertTrue(BatchContinuation.continuesScroll(scroll, after: [scroll][...]))
-        XCTAssertTrue(BatchContinuation.continuesScroll(scroll, after: [scroll, .wait(200), .drag([point, CGPoint(x: 500, y: 300)])][...]))
-        XCTAssertFalse(BatchContinuation.continuesScroll(scroll, after: [][...]), "the first step checks the image as observed")
-        XCTAssertFalse(BatchContinuation.continuesScroll(scroll, after: [.click(point, 1, [])][...]), "a click may have opened something there")
-        XCTAssertFalse(BatchContinuation.continuesScroll(.click(point, 1, []), after: [scroll][...]), "a click checks the image where it lands")
+        XCTAssertTrue(BatchContinuation.continuesPan(scroll, after: [scroll][...]))
+        XCTAssertTrue(BatchContinuation.continuesPan(scroll, after: [scroll, .wait(200), .drag([point, CGPoint(x: 500, y: 300)])][...]))
+        XCTAssertFalse(BatchContinuation.continuesPan(scroll, after: [][...]), "the first step checks the image as observed")
+        XCTAssertFalse(BatchContinuation.continuesPan(scroll, after: [.click(point, 1, [])][...]), "a click may have opened something there")
+        XCTAssertFalse(BatchContinuation.continuesPan(.click(point, 1, []), after: [scroll][...]), "a click checks the image where it lands")
+        // Maps: scroll, scroll, then a drag that pans on.
+        let pan = Action.drag([point, CGPoint(x: 460, y: 330)])
+        XCTAssertTrue(BatchContinuation.continuesPan(pan, after: [scroll, scroll][...]))
+        XCTAssertFalse(BatchContinuation.continuesPan(pan, after: [][...]), "a first drag checks the image as observed")
+        XCTAssertFalse(BatchContinuation.continuesPan(pan, after: [scroll, .key("enter", [])][...]))
+    }
+
+    /// Live's window was on another Space and the app opened as having no usable window.
+    func testAWindowIsElsewhereOnlyWhenItIsOnSomeSpaceButNotThePersons() {
+        XCTAssertTrue(Spaces.isElsewhere(spaces: [5], current: 6))
+        XCTAssertFalse(Spaces.isElsewhere(spaces: [6], current: 6))
+        XCTAssertFalse(Spaces.isElsewhere(spaces: [5, 6], current: 6), "on every Space, so here too")
+        XCTAssertFalse(Spaces.isElsewhere(spaces: [], current: 6), "on no Space: minimized or closing")
+        XCTAssertFalse(Spaces.isElsewhere(spaces: [5], current: nil), "unknown: never moved on a guess")
+        XCTAssertEqual(Spaces.Way.allCases.map(\.rawValue), ["move_to_space", "window_manager", "window_manager_fallback"])
     }
 }
