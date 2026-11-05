@@ -151,6 +151,17 @@ describe("sidebar feed", () => {
     ]);
   });
 
+  test("a session worked on today shows in Today even when the engine kept its old time", () => {
+    // OpenCode v2 does not move time.updated when a message is sent; the
+    // sidebar records work starting on this device instead.
+    const result = feed(groups, { settledById: { yesterday: { unsettledAt: NOW - 30_000 }, earlier: { unsettledAt: MIDNIGHT - 120_000 } } });
+    expect(sections(result)).toEqual([
+      "today:yesterday,today-new,today-old",
+      "yesterday:earlier",
+      "earlier:approval",
+    ]);
+  });
+
   test("sorts and groups by creation time", () => {
     const created = [
       group("lounge", [
