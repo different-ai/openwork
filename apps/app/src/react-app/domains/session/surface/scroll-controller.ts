@@ -128,6 +128,7 @@ export function useSessionScrollController(options: SessionScrollControllerOptio
     let pagePending = false;
     let viewportFillVersion: { version: unknown } | null = null;
     let pendingHistoryDemand: "older" | "newer" | null = null;
+    let visibleGapDemand: { version: unknown; direction: "older" | "newer" } | undefined;
     let pendingTop: ((completed: boolean) => void) | null = null;
     let topLoadReady = false;
     const cancelTop = () => { pendingTop?.(false); pendingTop = null; };
@@ -292,6 +293,25 @@ export function useSessionScrollController(options: SessionScrollControllerOptio
         pagePending = false;
         if (active) scheduleFrame(reconcile);
       });
+      return true;
+    };
+    const demandVisibleHistory = () => {
+      const pages = optionsRef.current.historyPages;
+      if (!pages || !transcriptMeasurable()) return;
+      const viewport = container.getBoundingClientRect();
+      // Native keyboard/focus scrolling need not pass through this container's
+      // input listeners. Missing history on screen still needs data, not another
+      // gesture. Recheck after each page, without claiming navigation or follow.
+      for (const direction of ["older", "newer"] as const) {
+        if (!(direction === "older" ? pages.hasOlder : pages.hasNewer)) continue;
+        const gap = content.querySelector<HTMLElement>(`[data-thread-placeholder="history-${direction === "older" ? "prefix" : "suffix"}"]`);
+        const rect = gap?.getBoundingClientRect();
+        if (!rect || rect.height <= 0 || rect.bottom <= viewport.top || rect.top >= viewport.bottom) continue;
+        // A successful no-op must not turn reconciliation into an endless read.
+        if (visibleGapDemand && visibleGapDemand.version === pages.version && visibleGapDemand.direction === direction) return;
+        if (demandHistory(direction)) visibleGapDemand = { version: pages.version, direction };
+        return;
+      }
     };
     const reconcile = () => {
       if (!active) return;
@@ -426,6 +446,7 @@ export function useSessionScrollController(options: SessionScrollControllerOptio
         }
       }
       rememberGeometry();
+      demandVisibleHistory();
       const pages = optionsRef.current.historyPages;
       if (pages?.hasOlder && !pages.hasNewer && !pages.loading && !pages.failed && !pagePending
         && !pendingRestore && optionsRef.current.windowReady && readState().mode === "stickyBottom"
@@ -559,6 +580,7 @@ export function useSessionScrollController(options: SessionScrollControllerOptio
       }
       lastKnownScrollTop = container.scrollTop;
       rememberGeometry();
+      demandVisibleHistory();
     };
     const jumpToStartOfMessage = (behavior: ScrollBehavior = "smooth") => {
       if (!active) return;
@@ -677,7 +699,7 @@ export function useSessionScrollController(options: SessionScrollControllerOptio
 
   useLayoutEffect(() => {
     controllerRef.current?.update(options.historyReady, options.submittedMessageId);
-  }, [scrollKey, viewOwner, containerRef, contentRef, options.historyReady, options.submittedMessageId, options.renderedMessages, options.historyComplete, options.historyPages?.version]);
+  }, [scrollKey, viewOwner, containerRef, contentRef, options.historyReady, options.submittedMessageId, options.renderedMessages, options.historyComplete, options.historyPages?.version, options.historyPages?.loading]);
 
   const handleScroll = useCallback<UIEventHandler<HTMLDivElement>>((event) => {
     if (controllerRef.current?.sessionId === scrollKey) controllerRef.current.handleScroll(event);
