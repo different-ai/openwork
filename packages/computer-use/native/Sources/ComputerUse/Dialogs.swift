@@ -122,6 +122,10 @@ enum DialogRules {
         let titles = (defaultButton.map { [$0] } ?? []) + buttons
         return titles.contains { fileConfirmTitles.contains($0.trimmingCharacters(in: .whitespaces).lowercased()) }
     }
+    /// The source list down a file panel's side, whose selection is a place, not a file.
+    static func isSidebar(description: String?, identifier: String?) -> Bool {
+        [description, identifier].contains { $0?.lowercased().contains("sidebar") == true || $0?.lowercased().contains("source list") == true }
+    }
     /// The button that hands a file panel's choice over or saves, for a panel whose default
     /// button macOS does not name: the one titled as a file panel's confirmation.
     static func confirmButton(_ titles: [String], save: Bool) -> Int? {
@@ -385,7 +389,10 @@ extension MacAccessibility {
         while let (element, depth) = pending.popLast(), visited < 400 {
             visited += 1
             let role = attribute(element, kAXRoleAttribute) as? String
+            // The panel's sidebar (Recents, Downloads) keeps a selection of its own: never a file.
             if ["AXOutline", "AXTable", "AXList", "AXBrowser"].contains(role ?? ""),
+               !DialogRules.isSidebar(description: attribute(element, kAXDescriptionAttribute) as? String,
+                                      identifier: attribute(element, kAXIdentifierAttribute) as? String),
                let rows = attribute(element, kAXSelectedRowsAttribute) as? [AXUIElement] {
                 names += rows.prefix(DialogRules.maxApprovedFiles + 1).compactMap(rowName)
             }
@@ -400,10 +407,12 @@ extension MacAccessibility {
         return Array(names.prefix(DialogRules.maxApprovedFiles + 1))
     }
 
+    /// The row's first text in column order: its name, never its date or size column.
     private func rowName(_ row: AXUIElement) -> String? {
         var pending = [row]
         var visited = 0
-        while let element = pending.popLast(), visited < 40 {
+        while !pending.isEmpty, visited < 40 {
+            let element = pending.removeFirst()
             visited += 1
             for name in [kAXValueAttribute, kAXTitleAttribute] {
                 if let text = attribute(element, name) as? String, !text.isEmpty { return String(text.prefix(255)) }

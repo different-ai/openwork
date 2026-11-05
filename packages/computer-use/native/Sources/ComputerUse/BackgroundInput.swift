@@ -109,6 +109,8 @@ enum RealInput {
 
     static let targetChanged = UseError("window_not_frontmost", "Another app or window came in front of the selected window, so nothing more was sent. Observe again; the selected window is brought back first.", next: "observe")
     static let stoppedPrefix = "Real input stopped:"
+    /// A tap macOS turned off is watched again only when the batch has sent nothing yet.
+    static func rearms(sentBefore posted: Int) -> Bool { posted == 0 }
     /// Real input refused before an event, with what was in the way.
     static func stopped(_ reason: String) -> UseError {
         UseError("window_not_frontmost", "\(stoppedPrefix) \(reason), so nothing more was sent. Observe again; the selected window is brought back first.", next: "observe")
@@ -339,7 +341,17 @@ final class RealInputGate: @unchecked Sendable {
     }
     /// Stops the step once anything was held back or the tap stopped watching.
     func check() throws {
-        guard let tap = lock.withLock({ diverted ? nil : self.tap }), CGEvent.tapIsEnabled(tap: tap) else { throw RealInput.targetChanged }
+        let (tap, stopped, sent) = lock.withLock { (self.tap, diverted, posted) }
+        guard let tap else { throw RealInput.targetChanged }
+        guard stopped || !CGEvent.tapIsEnabled(tap: tap) else { return }
+        // macOS turns the tap off for a moment as a Save panel takes the keyboard. Before this
+        // batch sent anything, nothing went out unchecked: watch again and carry on.
+        guard RealInput.rearms(sentBefore: sent) else { throw RealInput.stopped("macOS stopped checking input during this step") }
+        CGEvent.tapEnable(tap: tap, enable: true)
+        guard CGEvent.tapIsEnabled(tap: tap) else {
+            throw RealInput.stopped("macOS turned off input checking, as it does while a password field takes keys")
+        }
+        lock.withLock { diverted = false }
     }
     /// When the person's own event of `type` last passed during this step, if it did.
     func personInput(_ type: CGEventType) -> TimeInterval? {

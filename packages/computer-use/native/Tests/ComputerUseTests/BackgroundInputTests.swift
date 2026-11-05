@@ -400,4 +400,19 @@ final class BackgroundInputTests: XCTestCase {
         XCTAssertTrue(FrontReport.onTop(live.id, pid: live.pid, windows: [dock, live, blender]), "the Dock's layer is not in the way")
         XCTAssertTrue(FrontReport.onTop(99, pid: 1, windows: [live]), "a window not on screen is not waited for")
     }
+
+    /// The first save_as after a Save panel opened stopped with focus_lost before sending anything:
+    /// macOS turned the tap off for a moment as the panel took the keyboard.
+    func testATapMacOSPausedIsWatchedAgainOnlyBeforeAnythingWasSent() {
+        XCTAssertTrue(RealInput.rearms(sentBefore: 0), "nothing went out unchecked")
+        XCTAssertFalse(RealInput.rearms(sentBefore: 1), "an event may have gone out while the tap was off: the step stops")
+    }
+
+    /// Live's first click waited for its window while the helper's overlay rode right above it.
+    func testTheHelpersOwnOverlayNeverCoversTheWindowItRidesAbove() {
+        let live: (id: CGWindowID, pid: pid_t, bounds: CGRect, layer: Int) = (25317, 7031, CGRect(x: 0, y: 33, width: 1200, height: 778), 0)
+        let overlay: (id: CGWindowID, pid: pid_t, bounds: CGRect, layer: Int) = (25941, 99, CGRect(x: 0, y: 0, width: 1728, height: 1117), 0)
+        XCTAssertTrue(FrontReport.onTop(live.id, pid: live.pid, windows: [overlay, live], helper: 99))
+        XCTAssertFalse(FrontReport.onTop(live.id, pid: live.pid, windows: [overlay, live], helper: 1), "another app's window there still covers it")
+    }
 }

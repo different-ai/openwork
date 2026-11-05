@@ -1281,10 +1281,12 @@ enum FrontReport {
             await sleep(step)
         }
     }
-    static func onTop(_ window: CGWindowID, pid: pid_t, windows: [(id: CGWindowID, pid: pid_t, bounds: CGRect, layer: Int)]) -> Bool {
+    /// The helper's own see-through overlay (`helper`), which rides right above the window, never covers it.
+    static func onTop(_ window: CGWindowID, pid: pid_t, windows: [(id: CGWindowID, pid: pid_t, bounds: CGRect, layer: Int)],
+                      helper: pid_t = ProcessInfo.processInfo.processIdentifier) -> Bool {
         guard let own = windows.first(where: { $0.id == window }) else { return true }
         let middle = CGPoint(x: own.bounds.midX, y: own.bounds.midY)
-        return windows.first(where: { $0.layer == 0 && $0.bounds.contains(middle) })?.id == window
+        return windows.first(where: { $0.layer == 0 && $0.pid != helper && $0.bounds.contains(middle) })?.id == window
     }
     static func onScreen() -> [(id: CGWindowID, pid: pid_t, bounds: CGRect, layer: Int)] {
         ((CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID) as? [[String: Any]]) ?? []).compactMap { value in
