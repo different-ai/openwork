@@ -49,6 +49,9 @@ final class SessionRuntime {
         var parents: [(app: AppIdentity, target: WindowTarget, kind: DialogTarget.Kind?)] = []
         /// Windows the last action opened: the only new windows a session follows.
         var openedByLastAction: Set<CGWindowID> = []
+        /// The app's windows before the last act that sent input: what a window the app put in place
+        /// of the closed session window is new against (`WindowReplacement`).
+        var windowsBeforeInput: (windows: Set<CGWindowID>, at: TimeInterval)?
         var dialogKind: DialogTarget.Kind?
         /// A dialog closed since the last observation and the session is back in its window.
         var returnedFromDialog = false
@@ -432,6 +435,24 @@ final class SessionRuntime {
               "next": waited ? "human_takeover" : "observe", "message": HandoverRules.message(prompt.reason, waited: waited)])
     }
     /// A file panel lists the person's files: nothing of it reaches the agent until they allow it.
+    /// The session's window closed after the agent's own input and the app showed exactly one new
+    /// window: the session works there from now on, as `computer_open` onto a file opens in the
+    /// window the file shows in. Its controls and refs are new, so the next act needs an observation.
+    /// Only for the session's own window, never a dialog's, and only into a window no other agent holds.
+    private func followReplacement(_ id: String) async -> [String: Any]? {
+        guard let current = session, current.id == id, current.parents.isEmpty, !current.paused,
+              let before = current.windowsBeforeInput, now - before.at < WindowReplacement.within,
+              let replacement = WindowReplacement.replacement(before: before.windows, after: access.windowChanges(current.app).windows, target: current.target.id),
+              let target = (try? await access.windows(current.app))?.first(where: { $0.id == replacement }),
+              (try? access.validate(target, app: current.app)) != nil,
+              let reservation = try? ControlLease(pid: current.app.pid, window: target.id),
+              session?.id == id else { return nil }
+        lease = reservation
+        session?.target = target; session?.windowsBeforeInput = nil; session?.dialogKind = nil
+        session?.generation += 1; session?.observation = nil; session?.records = []; session?.focus = nil; session?.needsRefresh = true
+        controls.update("Working in the app's new window…", paused: false)
+        return ["window_id": Int(target.id), "window_title": target.title]
+    }
     private enum PanelWait { case unchanged, observed(String), approval([[String: Any]]) }
     /// An Open or Place panel the app is still opening when open_in_panel arrives (a menu command's
     /// panel can take seconds): wait for it (`OpenPanelRules.wait`), follow it, sheet or window of its
@@ -461,6 +482,8 @@ final class SessionRuntime {
     private func observe(_ id: String, image: Bool?, elements: String, menus: Bool = false, filePanelAccess: CGWindowID? = nil) async throws -> [[String: Any]] {
         // A paused session never resumes from an observation: only the person's Continue does.
         // Retry only read-only capture races. Never repeat an action or cross takeover.
+        // The app put a new window in place of the one the last action closed, after its receipt.
+        let replaced = await followReplacement(id)
         try await followDialog(id)
         if access.personPrompt() != nil {
             // Only the person can answer it: wait here, so the agent carries on once they
@@ -531,7 +554,7 @@ final class SessionRuntime {
         }, focus: bringBack, read: {
             for attempt in 0..<3 {
                 try self.checkActive(current)
-                do { return try await self.observeAttempt(id, image: image, elements: elements, menus: menus, otherWindowFocused: otherWindowFocused) }
+                do { return try await self.observeAttempt(id, image: image, elements: elements, menus: menus, otherWindowFocused: otherWindowFocused, replaced: replaced) }
                 catch let error as UseError {
                     if error.code == "window_not_frontmost", current.checksFront, attempt < 2 {
                         try await bringBack()
@@ -544,7 +567,8 @@ final class SessionRuntime {
             throw UseError("stale_observation", "The window is still changing. Observe again.", next: "observe")
         })
     }
-    private func observeAttempt(_ id: String, image requested: Bool?, elements filter: String, menus: Bool = false, otherWindowFocused: Bool = false) async throws -> [[String: Any]] {
+    private func observeAttempt(_ id: String, image requested: Bool?, elements filter: String, menus: Bool = false, otherWindowFocused: Bool = false,
+                                replaced: [String: Any]? = nil) async throws -> [[String: Any]] {
         let current = try current(id)
         session?.observation = nil; session?.records = []; session?.focus = nil
         let frontmost = current.checksFront && !otherWindowFocused
@@ -662,6 +686,7 @@ final class SessionRuntime {
         if let afterAction { payload["after_action"] = afterAction }
         if let reaction = CursorReaction.after(afterAction) { controls.react(reaction) }
         if otherWindowFocused { payload["other_window_focused"] = true }
+        if let replaced { payload["window_replaced"] = replaced }
         if let kind = current.dialogKind {
             // Elements and coordinates are the dialog's; it is worked in until it closes.
             payload["dialog"] = ["kind": kind.rawValue, "title": current.target.title, "depth": current.parents.count]
@@ -1391,7 +1416,11 @@ final class SessionRuntime {
         if settled != nil, let changes = windowsBefore.diff(windowsAfter, target: current.target.id) {
             receipt["window_changes"] = changes
         }
-        if progress.hasInput { session?.openedByLastAction = windowsAfter.windows.subtracting(windowsBefore.windows) }
+        if progress.hasInput {
+            session?.openedByLastAction = windowsAfter.windows.subtracting(windowsBefore.windows)
+            session?.windowsBeforeInput = (windowsBefore.windows, now)
+            if let replaced = await followReplacement(id) { receipt["window_replaced"] = replaced }
+        }
         receipt["delivery"] = (background ? InputDelivery.background : .foreground).rawValue
         if let typeNote { receipt["type_note"] = typeNote }
         if let fileAlert { receipt["file_alert"] = fileAlert }

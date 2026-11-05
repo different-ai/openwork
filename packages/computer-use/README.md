@@ -632,6 +632,17 @@ name, or the only one that opened), and the result's `file` is `file_opened`,
 `file_open_failed` or `file_open_unconfirmed`, with the same rule, alert and
 type checks. A renewal reopens the window, never the file.
 
+When the agent's own step closes the session's window and the app shows
+exactly one new window in its place (QuickTime replaces its Open panel with an
+Audio Recording window after File › New Audio Recording), the session follows
+that window, as `computer_open` with a file does, within 15 s of the input:
+at the end of the act, or at the next observation when the window swaps after
+the receipt. The receipt or observation says so in `window_replaced: {
+window_id, window_title }`; the new window's controls have new refs, so the
+next act needs an observation of it. It is never followed when the session's
+window is still open, when no window or several appeared, inside a dialog, or
+into a window another agent holds.
+
 With the OpenWork host on a Mac, `command+c`, `command+x` and `command+v` give
 the agent its own clipboard for moving a table, text or image between apps,
 each as its own step. Before the agent's copy first replaces the clipboard, the
