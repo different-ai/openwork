@@ -117,7 +117,8 @@ export const SLACK_DRIVE_FILES_INSTRUCTIONS = `- Read Google Drive and OneDrive 
  * How the reply reaches Slack with `workbotSlackAnswerReply`: what is written before working shows in one message, and
  * the last message is posted as its own reply. The words stay the model's own.
  */
-export const SLACK_ANSWER_REPLY_INSTRUCTIONS = `- What you write before doing work shows in the thread as you go. Your last message is posted as its own new reply, which is what notifies them, so write it as coming back to them with the result ("Alright, booked it…", "Here's what I found…"), in your own words. Don't repeat what you said on the way, and don't start it with "Done:".`
+export const SLACK_ANSWER_REPLY_INSTRUCTIONS = `- What you write before doing work shows in the thread as you go. Your last message is posted as its own new reply, which is what notifies them, so write it as coming back to them with the result ("Alright, booked it…", "Here's what I found…"), in your own words. Don't repeat what you said on the way, and don't start it with "Done:".
+- Acknowledge once. When you hand a job to start_task, your one sentence before it is the acknowledgment: say what you'll do and that you'll post it here ("I'll match your calendar with your meeting notes and post what I find here."), then end your turn with nothing more once the task starts. Write again only if it couldn't start.`
 
 /** The Slack session's instructions; each variant stays byte-for-byte the same from one message to the next. */
 export function slackWorkbotInstructions(input: { driveFiles: boolean; answerReply?: boolean }) {

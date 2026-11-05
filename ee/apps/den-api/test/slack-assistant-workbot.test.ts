@@ -198,6 +198,8 @@ test("with workbotSlackAnswerReply, the session is told its last message is post
   const on = slackWorkbotInstructions({ driveFiles: true, answerReply: true })
   assert.equal(on, `${SLACK_WORKBOT_INSTRUCTIONS}\n${SLACK_DRIVE_FILES_INSTRUCTIONS}\n${SLACK_ANSWER_REPLY_INSTRUCTIONS}`)
   assert.equal(slackWorkbotInstructions({ driveFiles: true, answerReply: true }), on, "the same text every message, for the prompt cache")
+  // A job handed to the background is acknowledged once, not "I'll check…" and then "I'm on it…".
+  for (const phrase of ["Acknowledge once", "end your turn with nothing more", "only if it couldn't start"]) assert.ok(on.includes(phrase), phrase)
   assert.ok(!/\d{4}-\d{2}-\d{2}|\d{1,2}:\d{2}/.test(on))
   assert.equal(workbotCp().answerReply, false, "in-flight checkpoints from before the feature keep the old reply")
 })
@@ -211,6 +213,9 @@ test("notes are the messages that went on to work; the answer is the last one th
   assert.deepEqual(notesAndAnswer({ ...done, status: "busy" }, false), { notes: "Let me check.", answer: "" })
   const startedTask = idle("On it, I've started that.", { assistantWorked: [true] })
   assert.deepEqual(notesAndAnswer(startedTask, true), { notes: "On it, I've started that.", answer: "" })
+  // Handed to the background and ended silently: the one acknowledgment is the whole reply.
+  const silentEnd = idle("I'll match them and post what I find here.", { assistantTexts: ["I'll match them and post what I find here.", ""], assistantWorked: [true, false] })
+  assert.deepEqual(notesAndAnswer(silentEnd, true), { notes: "I'll match them and post what I find here.", answer: "" })
   assert.deepEqual(notesAndAnswer(idle("", { reaction: { emoji: "👍", final: true } }), true), { notes: "", answer: "" })
 })
 
