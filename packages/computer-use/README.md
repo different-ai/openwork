@@ -452,19 +452,30 @@ returned observation lists only the elements that changed or appeared
 that may change the view or focus (a click, press, menu command, Enter, Tab,
 Escape or app shortcut) is followed in the same call while nothing opens over
 the window and what the next step uses reads back as a new observation would
-show it: a press, `set_value` or menu command's control unchanged; for `key`
-and `type`, the control or text field that now has the keyboard (a text field
-for typing, or with no listed focus the app's own editor, as for canvas text);
-for a pointer step, the window image within 32 pixels of where it lands. A
-secure field, secure input anywhere, an unconfirmed password field on screen,
-or a window, dialog, menu or system prompt that opened stops the batch there,
-and the receipt comes with a fresh observation.
+show it: a press, `set_value`, `enter_value` or `focus` step's control (the
+same element, role, label, actions and enabled state, still inside the window);
+for `key` and `type`, the control or text field that now has the keyboard (a
+text field for typing, or with no listed focus the app's own editor, as for
+canvas text); for a pointer step, the window image within 32 pixels of where it
+lands. A control's value counts only for a press on a checkbox, radio button,
+switch or disclosure triangle, whose state the press flips: entering a width
+that changes a linked height, or a press that moves the controls around it,
+does not stop the next step. A `wait` step never stops a batch; the step after
+it makes the check. A secure field, secure input anywhere, an unconfirmed
+password field on screen, or a window, dialog, menu or system prompt that
+opened stops the batch there, and the receipt comes with a fresh observation.
+The one exception is keys and typing while the session's window keeps the
+app's keyboard, past a window or panel that opened beside it without taking
+the keyboard, such as a search field's suggestions.
 
 `computer_act` takes a `pacing` for batches: `fast` (default) checks briefly
 after each press; `wait` lets the app stop changing after every step (at most
 1.5 s); `wait_retry` also re-checks a control that is briefly disabled, moving
 or gone, until `retry_ms` (100–5000, default 1500), and presses it where it is
-now. Nothing waits past a window, dialog, menu or system prompt that opened.
+now. In every mode, what the next step needs is read again for up to 300 ms
+before the batch stops, so a field that Edit › Find is still focusing takes
+the typing that follows. Nothing waits past a window, dialog, menu or system
+prompt that opened.
 
 On a Mac, `computer_open` lists the app's enabled menu-bar commands in
 `menus` (`"Format › Font › Bold (command+b)"`), read in one accessibility call
