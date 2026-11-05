@@ -31,6 +31,15 @@ export function sessionActivityAt(session: SessionTimes): number {
   return toMs(session.time?.updated ?? session.time?.created ?? 0);
 }
 
+/**
+ * Last activity including work started on this device. OpenCode v2 does not
+ * move a session's `time.updated` when a message is sent, so the sidebar's own
+ * record of work starting (`unsettledAt`) counts too.
+ */
+export function sessionLastActivityAt(session: SessionTimes, entry: SessionSettleEntry | undefined): number {
+  return Math.max(sessionActivityAt(session), entry?.unsettledAt ?? 0);
+}
+
 /** When the session was created, in milliseconds. */
 export function sessionCreatedAt(session: SessionTimes): number {
   return toMs(session.time?.created ?? session.time?.updated ?? 0);

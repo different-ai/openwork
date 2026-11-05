@@ -153,7 +153,7 @@ import {
   type SessionGroupDefinition,
   type SidebarView,
 } from "./session-management-store";
-import { filterSettledSessions, useSessionSettleState, useSettleNow, type SessionSettleState } from "./session-settle";
+import { filterSettledSessions, sessionLastActivityAt, useSessionSettleState, useSettleNow, type SessionSettleState } from "./session-settle";
 import { buildSessionFeed, type FeedEntry, type FeedSection, type SessionFeed } from "./session-feed";
 import { cn } from "@/lib/utils";
 import { getSessionActivityStatusLabel, useSessionActivityStore, type SessionActivityStatus, type SessionWaitingKind } from "../status/session-activity-store";
@@ -2448,7 +2448,8 @@ export function SessionMenuItem({
     displayTitle,
     ctx.settleWorkspaceIds?.has(workspaceId) ?? false,
   );
-  const relativeTime = formatSessionRelativeTime(session.time?.updated ?? session.time?.created);
+  const workedAt = useSessionManagementStore((state) => state.settledById[session.id]?.unsettledAt);
+  const relativeTime = formatSessionRelativeTime(sessionLastActivityAt(session, { unsettledAt: workedAt }));
   const shortcutDigit = ctx.sessionNumberShortcutByTarget.get(
     sessionNumberShortcutTargetKey(workspaceId, session.id),
   );

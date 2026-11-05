@@ -4,7 +4,7 @@
 // never settle.
 import type { WorkspaceSessionGroup } from "../../../../app/types";
 import type { FeedFolder, FeedGroupBy, FeedSortBy, SessionSettleEntry, WorkspaceGroupState } from "./session-management-store";
-import { filterSettledSessions, sessionActivityAt, sessionCreatedAt } from "./session-settle";
+import { filterSettledSessions, sessionCreatedAt, sessionLastActivityAt } from "./session-settle";
 import {
   getRootSessions,
   isActiveWorkSessionStatus,
@@ -86,7 +86,9 @@ export function buildSessionFeed(groups: readonly WorkspaceSessionGroup[], conte
       : new Set<string>();
     for (const session of roots) (settledIds.has(session.id) ? settled : active).push({ group, session });
   }
-  const timeOf = context.sortBy === "created" ? sessionCreatedAt : sessionActivityAt;
+  const timeOf = context.sortBy === "created"
+    ? sessionCreatedAt
+    : (session: SessionListItem) => sessionLastActivityAt(session, context.settledById[session.id]);
   const newestFirst = (a: FeedEntry, b: FeedEntry) => timeOf(b.session) - timeOf(a.session);
   active.sort(newestFirst);
   settled.sort(newestFirst);
