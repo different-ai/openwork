@@ -36,8 +36,5 @@ up while it runs. The `measure-chat-flicker` skill counts upward jumps.
 
 ## Turning it off
 
-Takes effect on the next render: the live turn again splits at its latest text.
-The steps area no longer retains its tallest height with either setting, so
-folded tool details cannot leave an empty panel between steps and the answer.
-Only the feature-on path reserves released room below the Working line.
-Nothing is stored; history is unaffected.
+Takes effect on the next render: the previous live layout returns. Nothing is
+stored; history is unaffected.

@@ -1398,6 +1398,56 @@ function getRenderableMessage(message: UIMessage) {
 }
 
 /**
+ * Running steps only ever grow. When a finished step folds its live detail
+ * before the next step's row arrives, the area briefly got shorter and the
+ * chat jumped; holding the tallest height seen during the run keeps it still.
+ * The hold ends when the turn folds or the App panel replaces these steps.
+ */
+function LiveSteps({ children, active }: { children: React.ReactNode; active: boolean }) {
+  const ref = React.useRef<HTMLDivElement>(null)
+  React.useLayoutEffect(() => {
+    const element = ref.current
+    if (!element) return
+    // The hold only protects a running turn from the engine's own shrinks.
+    // A finished turn, or a group the person collapsed, may get shorter.
+    if (!active || typeof ResizeObserver === "undefined") {
+      element.style.minHeight = ""
+      return
+    }
+    let tallest = 0
+    const hold = () => {
+      element.style.minHeight = ""
+      const height = element.getBoundingClientRect().height
+      if (height > tallest) tallest = height
+      element.style.minHeight = `${tallest}px`
+    }
+    const release = () => {
+      tallest = 0
+      element.style.minHeight = ""
+    }
+    hold()
+    const observer = new ResizeObserver(hold)
+    for (const child of element.children) observer.observe(child)
+    const mutations = new MutationObserver(() => {
+      observer.disconnect()
+      for (const child of element.children) observer.observe(child)
+      hold()
+    })
+    mutations.observe(element, { childList: true })
+    element.addEventListener("pointerdown", release)
+    element.addEventListener("keydown", release)
+    return () => {
+      observer.disconnect()
+      mutations.disconnect()
+      element.removeEventListener("pointerdown", release)
+      element.removeEventListener("keydown", release)
+      element.style.minHeight = ""
+    }
+  }, [active])
+  return <div ref={ref} data-live-steps="" className="flex flex-col gap-2">{children}</div>
+}
+
+/**
  * steadyLiveTurn: while a turn runs, the chat never gets shorter. When the
  * live turn shrinks (a step folds its detail before the next row arrives) the
  * room it gave up moves here, to the very end of the list, below the Working
@@ -1575,8 +1625,8 @@ function MessageGroup({
   const savedFileActions = React.useMemo(() => isElectronRuntime() && !readOnly ? desktopSavedFileActions(sessionId) : undefined, [readOnly, sessionId])
   const watchingComputer = useComputerSessionHistoryStore(state => Boolean(state.watching[sessionId]))
   // steadyLiveTurn: a running turn keeps its parts in arrival order (no
-  // steps/answer split until it finishes) and reserves room only at the list's
-  // end (LiveTurnReserve). With the flag off, neither area reserves height.
+  // steps/answer split until it finishes) and the list reserves room at its end
+  // (LiveTurnReserve) instead of holding the steps area open.
   const steadyLiveTurn = useSteadyLiveTurnStore(state => state.enabled)
   // The skill this turn produced stays in view as its result, even when the
   // steps fold; later updates and shares change this card, not add another.
@@ -1803,11 +1853,11 @@ function MessageGroup({
             </div>
           </CompletedStepRun>
         ) : (
-          <div data-live-steps="" className="flex flex-col gap-2">
-            {/* Do not hold folded tool content open. Scroll stabilization belongs
-                to LiveTurnReserve, behind steadyLiveTurn, below the Working line. */}
+          <LiveSteps active={isLiveGroup && !panelLive && !steadyLiveTurn}>
+            {/* The App panel replaces ordinary steps. Release their held height
+                as they fold away, otherwise an empty rail pushes the panel down. */}
             {renderItems(stepItems, 0, panelLive)}
-          </div>
+          </LiveSteps>
         )
       ) : null}
       {creationRuns.map(run => <Message key={`creation-${run.id}`} className="mx-auto flex w-full max-w-3xl flex-col px-2 md:px-10"><AppBuilderStep run={run} startedAt={getMessageCreated(items[0]!.message)} completedAt={getMessageCompleted(lastItem.message)} activity={run === creationRuns.at(-1) ? panelActivity : null} active={creationLive && (run === creationRuns.at(-1) || Boolean(run.preparation && isToolPartInFlight(run.preparation)) || run.builds.some(isToolPartInFlight))} /></Message>)}
