@@ -39,8 +39,11 @@ final class SessionRuntime {
         let mode: AccessMode
         /// Background until the app shows it needs the front for keys or pointer steps.
         var delivery: InputDelivery
-        /// The app acts only on hardware-origin input, so its own window gets real input.
+        /// The app takes real input: a known app that drops input addressed to its process,
+        /// or one where a real-input step the agent asked for visibly worked (`RealInputUse`).
         var realInput = false
+        /// How the last act's input went, read by the next observation (`RealInputUse`).
+        var lastInput: RealInputUse.Sent?
         /// Whether the person follows along in OpenWork; nil when the host does not say.
         var follow: FollowAlong?
         /// The person watches this chat: the session works in front, beside OpenWork.
@@ -257,14 +260,16 @@ final class SessionRuntime {
             return try await observe(try a.string("session_id"), image: options.image, elements: options.elements, menus: options.menus,
                 filePanelAccess: policy == .embedded ? (values["file_panel_access"] as? NSNumber)?.uint32Value : nil)
         case "computer_act":
-            try a.only(policy == .embedded ? ["session_id", "observation_id", "request_id", "action", "actions", "intent", "file_approval", "file_panel_access", "pacing", "retry_ms", "credential_approval"] : ["session_id", "observation_id", "request_id", "action"])
+            try a.only(policy == .embedded ? ["session_id", "observation_id", "request_id", "action", "actions", "intent", "file_approval", "file_panel_access", "pacing", "retry_ms", "credential_approval", "input"] : ["session_id", "observation_id", "request_id", "action"])
             let id = try a.string("session_id")
             let observationID = try a.string("observation_id")
             let requestID = try a.string("request_id", max: 100)
             let actions = try Action.batch(values, policy: policy)
             let pacing = policy == .embedded ? try BatchPacing(values) : .fast
-            // Pacing changes how the batch runs, so a reused request_id must name it too.
-            let raw: Any = ["steps": values["actions"] ?? values["action"] ?? NSNull(), "pacing": pacing.mode.rawValue, "retry_ms": Int(pacing.retry * 1_000)]
+            let requestedReal = policy == .embedded ? try RealInputUse.requested(values["input"]) : false
+            // Pacing and input change how the batch runs, so a reused request_id must name them too.
+            let raw: Any = ["steps": values["actions"] ?? values["action"] ?? NSNull(), "pacing": pacing.mode.rawValue, "retry_ms": Int(pacing.retry * 1_000),
+                "input": requestedReal ? "real" : "auto"]
             // Display only: shown on the person's desktop cursor, never part of the receipt identity.
             let intent = values["intent"] == nil ? nil : try a.string("intent", max: 120)
             // Set only by the trusted host: the exact names the person approved handing over,
@@ -276,7 +281,7 @@ final class SessionRuntime {
             let credentialApproval = policy == .embedded ? values["credential_approval"] as? String : nil
             do {
                 return try await act(id: id, observationID: observationID, requestID: requestID, actions: actions, raw: raw, intent: intent,
-                    fileApproval: fileApproval, filePanelAccess: panelAccess, pacing: pacing, credentialApproval: credentialApproval)
+                    fileApproval: fileApproval, filePanelAccess: panelAccess, pacing: pacing, credentialApproval: credentialApproval, requestedReal: requestedReal)
             } catch let error as UseError {
                 // Refused before anything was sent: the cursor shakes it off and tries another way.
                 if error.next == "observe" || error.next == "correct_request" { controls.react(.refused) }
@@ -668,8 +673,12 @@ final class SessionRuntime {
         let afterAction = current.baseline.flatMap { baseline in
             baseline.generation == current.generation ? baseline.changes(stateDigest: observation.stateDigest, imageDigest: observation.imageDigest) : nil
         }
+        // Whether the app took the last input: real input that visibly worked stays on for this
+        // session; input that changed nothing gets the hint to try it once as real input.
+        let inputUse = RealInputUse.after(current.lastInput, changes: afterAction, alreadyReal: current.realInput)
         session?.observation = observation; session?.records = shown; session?.focus = observedFocus
-        session?.lastUsed = now; session?.needsRefresh = false; session?.baseline = nil
+        session?.lastUsed = now; session?.needsRefresh = false; session?.baseline = nil; session?.lastInput = nil
+        if inputUse.keepReal { session?.realInput = true }
         if repeated == nil, let digest = observation.imageDigest {
             session?.lastImage = ImagePolicy.Sent(observationID: observation.id, generation: current.generation,
                 window: current.target.id, width: width, height: height, digest: digest)
@@ -689,7 +698,11 @@ final class SessionRuntime {
             "window_title": current.target.title, "mode": current.mode.rawValue, "image": imageInfo, "elements": elements,
             "truncated": state.truncated || state.listCapped, "protected_fields": state.protectedFrames.count,
             "content_trust": "untrusted_app_content", "next": "act_once_then_observe"]
-        if let afterAction { payload["after_action"] = afterAction }
+        if var afterAction {
+            if inputUse.suggest { afterAction["real_input"] = RealInputUse.suggestion }
+            if inputUse.keepReal { afterAction["real_input"] = "on" }
+            payload["after_action"] = afterAction
+        }
         if let reaction = CursorReaction.after(afterAction) { controls.react(reaction) }
         if otherWindowFocused { payload["other_window_focused"] = true }
         if let replaced { payload["window_replaced"] = replaced }
@@ -813,7 +826,8 @@ final class SessionRuntime {
     }
 
     private func act(id: String, observationID: String, requestID: String, actions: [Action], raw: Any, intent: String? = nil,
-                     fileApproval: [String]? = nil, filePanelAccess: CGWindowID? = nil, pacing: BatchPacing = .fast, credentialApproval: String? = nil) async throws -> [[String: Any]] {
+                     fileApproval: [String]? = nil, filePanelAccess: CGWindowID? = nil, pacing: BatchPacing = .fast, credentialApproval: String? = nil,
+                     requestedReal: Bool = false) async throws -> [[String: Any]] {
         let cached = try current(id, allowPaused: true)
         let fingerprint = try JSONSerialization.data(withJSONObject: ["observation_id": observationID, "action": raw], options: [.sortedKeys])
         if let receipt = cached.receipts[requestID] {
@@ -866,7 +880,9 @@ final class SessionRuntime {
         // and gives back their app, window, field and caret (`scheduleHandBack`, `PersonPlace`).
         let route = input.route(for: current.app)
         let inBackground = current.mode == .control && current.working == .background && current.parents.isEmpty
-        let front = current.takesFront || inBackground && actions.contains { InputDelivery.stepNeedsFront($0, route: route) }
+        // Real input the agent asks for works only with the window in front, like a person's.
+        let asksReal = requestedReal && current.mode == .control && current.parents.isEmpty
+        let front = asksReal || current.takesFront || inBackground && actions.contains { InputDelivery.stepNeedsFront($0, route: route) }
         // Whether `target` itself must be the front window: never for a dialog.
         let frontCheck = front && current.parents.isEmpty
         let background = inBackground && !front
@@ -1077,7 +1093,7 @@ final class SessionRuntime {
         var typingStart: CFRange?
         // Its own window in front, never a dialog of another process over it: real input,
         // bound to that window by the gate for the whole batch.
-        let realInput = front && current.realInput && current.parents.isEmpty
+        let realInput = front && (current.realInput || asksReal) && current.parents.isEmpty && current.mode == .control
         if realInput { try RealInputGate.shared.arm(pid: current.app.pid, window: current.target.id) }
         defer { if realInput { RealInputGate.shared.abandon() } }
         var typedBefore = ""
@@ -1086,16 +1102,11 @@ final class SessionRuntime {
             let action = resumeText.map(Action.type) ?? actions[index]
             do {
                 // A shortcut with no observed field or control to type into, such as Command-S on a
-                // canvas, runs as the app's own menu command for it when there is one.
-                // A Command shortcut outside the key list, such as Command-N, runs only that way.
+                // canvas, runs as the app's own menu command for it when there is one. A Command
+                // shortcut the menus do not list, such as one Blender draws in its own menus, goes
+                // to the app as a key; blocked chords never get this far.
                 let menuOnly = NativeKey.isMenuShortcut(action)
-                let catalog = focus == nil || menuOnly ? access.menuCatalog(current.app).entries : []
-                let shortcutMenu = focus == nil || menuOnly ? InputDelivery.menuForShortcut(action, in: catalog) : nil
-                // An app that draws its own menus (Blender) has none to run in its place: the chord goes as a key.
-                if menuOnly, shortcutMenu == nil, case .key(let key, let flags) = action,
-                   !InputDelivery.sendsOwnShortcut(key, flags, realInput: realInput, menuCommands: catalog.count) {
-                    throw UseError("unsupported_key", "\(NativeKey.chord(key, flags)) is not a command in this app's menus, so it was not sent. Observe with menus true to see its shortcuts.", next: "observe")
-                }
+                let shortcutMenu = focus == nil || menuOnly ? InputDelivery.menuForShortcut(action, in: access.menuCatalog(current.app).entries) : nil
                 let action = shortcutMenu.map { Action.menu($0) } ?? action
                 // An expect step sends nothing: it reads the live state and stops the batch when a check
                 // does not hold. What the next step needs is still read back before that step runs.
@@ -1416,6 +1427,7 @@ final class SessionRuntime {
                 break
             }
         }
+        if progress.hasInput, current.mode == .control { session?.lastInput = realInput ? .real : .targeted }
         // After the app has taken the input in, the person's pointer goes back. Anything
         // held back or unconfirmed at the window server ends the step as uncertain.
         if realInput {

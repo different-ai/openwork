@@ -118,15 +118,23 @@ final class BackgroundInputTests: XCTestCase {
         XCTAssertFalse(InputDelivery.takesToolKeys(info: ["CFBundleIdentifier": "com.apple.mail"]))
     }
 
-    func testChordsGoAsKeysOnlyToRealInputAppsThatDrawTheirOwnMenus() {
-        XCTAssertTrue(InputDelivery.sendsOwnShortcut("r", .maskControl, realInput: true, menuCommands: 0), "Blender's Control-R")
-        XCTAssertTrue(InputDelivery.sendsOwnShortcut("n", .maskCommand, realInput: true, menuCommands: 0))
-        XCTAssertFalse(InputDelivery.sendsOwnShortcut("n", .maskCommand, realInput: true, menuCommands: 12), "a menu command runs in its place")
-        XCTAssertFalse(InputDelivery.sendsOwnShortcut("r", .maskControl, realInput: false, menuCommands: 0))
-        XCTAssertFalse(InputDelivery.sendsOwnShortcut("q", .maskCommand, realInput: true, menuCommands: 0), "Quit stays blocked")
+    func testRealInputIsOpenToAnyAppAndStaysOnOnceItWorks() throws {
+        XCTAssertTrue(try RealInputUse.requested("real"))
+        XCTAssertFalse(try RealInputUse.requested("auto"))
+        XCTAssertFalse(try RealInputUse.requested(nil))
+        XCTAssertThrowsError(try RealInputUse.requested("hid"))
+        let changed: [String: Any] = ["elements_changed": false, "image_changed": true]
+        let unchanged: [String: Any] = ["elements_changed": false, "image_changed": false, "no_visible_change": true]
+        XCTAssertEqual(RealInputUse.after(.real, changes: changed, alreadyReal: false).keepReal, true, "real input worked: keep it")
+        XCTAssertEqual(RealInputUse.after(.real, changes: unchanged, alreadyReal: false).keepReal, false, "it changed nothing either")
+        XCTAssertEqual(RealInputUse.after(.targeted, changes: unchanged, alreadyReal: false).suggest, true, "addressed input was ignored: suggest real")
+        XCTAssertEqual(RealInputUse.after(.targeted, changes: changed, alreadyReal: false).suggest, false)
+        XCTAssertEqual(RealInputUse.after(.targeted, changes: unchanged, alreadyReal: true).suggest, false, "already on")
+        XCTAssertEqual(RealInputUse.after(nil, changes: unchanged, alreadyReal: false).suggest, false, "no input was sent")
+        XCTAssertEqual(RealInputUse.after(.targeted, changes: nil, alreadyReal: false).suggest, false)
     }
 
-    func testAppChordsAreOnlyTheModifiedKeysNoOtherRuleAllows() throws {
+    func testAppChordsAreTheModifiedKeysNoOtherRuleAllowsAndNeverBlockedOnes() throws {
         XCTAssertTrue(NativeKey.isAppChord("r", .maskControl))
         XCTAssertTrue(NativeKey.isAppChord("g", .maskAlternate))
         XCTAssertTrue(NativeKey.isAppChord("1", [.maskControl, .maskAlternate]))
