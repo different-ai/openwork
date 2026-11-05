@@ -6740,6 +6740,7 @@ async function buildConnectorAutomationContext(input: { connectorInstance: Conne
         directRole: member.directRole,
         adminTeams: member.adminTeams,
         userId: member.userId,
+        openworkWeb: member.openworkWeb,
       },
       organization: {
         allowedEmailDomains: organization.allowedEmailDomains ?? null,

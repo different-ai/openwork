@@ -452,6 +452,12 @@ export type DenOpenWorkWebAccessSource = "subscription" | "complimentary" | null
 export type DenOpenWorkWebAccess = {
   hasAccess: boolean;
   accessSource: DenOpenWorkWebAccessSource;
+  /**
+   * Whether the signed-in member may use the organization's Web. False when
+   * an admin chose who gets Web and left this member out. Older Den
+   * deployments omit it, which means the same as hasAccess.
+   */
+  memberHasAccess: boolean;
 };
 
 type DenAuthResult = {
@@ -2864,6 +2870,7 @@ export function parseDenOpenWorkWebAccess(payload: unknown): DenOpenWorkWebAcces
   return {
     hasAccess: web.hasAccess,
     accessSource,
+    memberHasAccess: web.hasAccess && web.memberHasAccess !== false,
   };
 }
 
@@ -3398,7 +3405,7 @@ export function createDenClient(options: {
       // negotiation pattern so a newer hosted client never calls the Web billing
       // route on an older Den deployment that does not advertise the contract.
       if (capabilities?.openworkWeb !== true) {
-        return { hasAccess: false, accessSource: null };
+        return { hasAccess: false, accessSource: null, memberHasAccess: false };
       }
 
       const payload = await requestJson<unknown>(baseUrls, "/v1/billing/web", {

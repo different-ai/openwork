@@ -224,6 +224,8 @@ export type OrganizationContext = {
     createdAt: Date
     joinedAt: Date | null
     isOwner: boolean
+    /** Whether this member has OpenWork Web (see MemberTable.openworkWeb). */
+    openworkWeb: boolean
   }
 }
 
@@ -243,6 +245,7 @@ export type OrganizationDirectory = {
     createdAt: Date
     joinedAt: Date | null
     isOwner: boolean
+    openworkWeb: boolean
     user: {
       id: UserId | MemberId
       email: string
@@ -1631,6 +1634,7 @@ export async function getOrganizationContextForUser(input: {
       createdAt: currentMember.createdAt,
       joinedAt: currentMember.joinedAt,
       isOwner: roleIncludesOwner(currentMember.role),
+      openworkWeb: currentMember.openworkWeb,
     },
   } satisfies OrganizationContext
 }

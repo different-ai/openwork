@@ -32,6 +32,8 @@ export type DenOrgMember = {
   createdAt: string | null;
   joinedAt: string | null;
   isOwner: boolean;
+  /** Whether this member has OpenWork Web (the webPerMember feature lets admins choose). */
+  openworkWeb: boolean;
   user: {
     id: string;
     email: string;
@@ -1207,6 +1209,8 @@ export function parseOrgContextPayload(payload: unknown): DenOrgContext | null {
             createdAt: asIsoString(entry.createdAt),
             joinedAt: asIsoString(entry.joinedAt),
             isOwner: asBoolean(entry.isOwner),
+            // Older Den deployments omit it: every member had Web then.
+            openworkWeb: entry.openworkWeb !== false,
             user: {
               id: userIdentity,
               email: userEmail,

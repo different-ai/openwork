@@ -61,6 +61,16 @@
           "type": "object",
           "additionalProperties": false,
           "properties": {
+            "webPerMember": {
+              "enum": [
+                "",
+                "true",
+                "false",
+                true,
+                false
+              ],
+              "description": "OpenWork Web per member: Admins choose which members get OpenWork Web from the Members page, and the organization pays for Web only for them. Members without it can't open a Web computer. Off: every member and pending invitation has Web and is billed for it. Renders DEN_FEATURE_WEB_PER_MEMBER."
+            },
             "googleCalendarRecurrence": {
               "enum": [
                 "",

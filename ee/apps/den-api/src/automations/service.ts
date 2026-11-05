@@ -213,14 +213,14 @@ export class AutomationService {
    * Cloud placement needs somewhere to run: the headless runner (included in
    * Team, no Web seat) or, as before, the owner's OpenWork Web computer.
    */
-  private async requireCloudRuntimeAccess(organizationId: string) {
-    if (await this.cloudRuntime(organizationId) === "headless") return
-    await requireOpenWorkWebRuntimeAccess(organizationId, this.getOpenWorkWebAccess)
+  private async requireCloudRuntimeAccess(scope: OwnerScope) {
+    if (await this.cloudRuntime(scope.organizationId) === "headless") return
+    await requireOpenWorkWebRuntimeAccess(scope.organizationId, this.getOpenWorkWebAccess, { memberId: scope.ownerMemberId })
   }
 
   /** Whether the owner has an OpenWork Web computer that can run agent Automations, with its files. */
   private async cloudComputerAvailable(scope: OwnerScope) {
-    return (await this.getOpenWorkWebAccess(scope.organizationId)).hasAccess
+    return (await this.getOpenWorkWebAccess(scope.organizationId, { memberId: scope.ownerMemberId })).hasAccess
       && cloudAgentRuntimeAvailable !== null
       && await cloudAgentRuntimeAvailable(scope)
   }
@@ -266,7 +266,7 @@ export class AutomationService {
       }
       return
     }
-    await this.requireCloudRuntimeAccess(scope.organizationId)
+    await this.requireCloudRuntimeAccess(scope)
     if (action?.kind === "agent" && !await this.cloudAgentAvailable(scope, action.model)) {
       throw new Error("automation_cloud_worker_required")
     }
@@ -377,7 +377,7 @@ export class AutomationService {
       if (definition.executionTarget !== "cloud") {
         throw new Error("automation_action_target_mismatch")
       }
-      await this.requireCloudRuntimeAccess(scope.organizationId)
+      await this.requireCloudRuntimeAccess(scope)
       if (definition.action.kind === "agent") {
         // Action-based creation is Cloud placement. The legacy Zen exception
         // exists only for already-published Desktop clients.
@@ -410,7 +410,7 @@ export class AutomationService {
     }
     // Moving off the cloud needs no cloud access; moving onto it needs what creation needs.
     if (moved) await this.requireTargetMove(scope, nextAction, nextTarget, options)
-    else if (currentTarget === "cloud") await this.requireCloudRuntimeAccess(scope.organizationId)
+    else if (currentTarget === "cloud") await this.requireCloudRuntimeAccess(scope)
     if (nextAction?.kind === "saved_script") {
       await validateWorkflowAutomationAction({ ...scope, action: nextAction })
     } else if (nextAction?.kind === "agent") {
@@ -438,7 +438,7 @@ export class AutomationService {
     const current = await this.get(scope, automationId)
     if (!current) return null
     if ((current.revision.executionTarget ?? "desktop") === "cloud") {
-      await this.requireCloudRuntimeAccess(scope.organizationId)
+      await this.requireCloudRuntimeAccess(scope)
     }
     if (current.revision.action?.kind === "saved_script") {
       if (!await isActiveAutomationOwner(scope)) throw new Error("automation_owner_inactive")
@@ -480,7 +480,7 @@ export class AutomationService {
     if (target !== savedTarget) await this.requireTargetMove(scope, current.revision.action, target, options)
     else {
       await this.requireTargetAllowed(scope.organizationId, target)
-      if (target === "cloud") await this.requireCloudRuntimeAccess(scope.organizationId)
+      if (target === "cloud") await this.requireCloudRuntimeAccess(scope)
     }
     // This one occurrence runs on `target`; the Automation keeps its own.
     const revision = { ...current.revision, executionTarget: target }
@@ -942,7 +942,7 @@ export class AutomationService {
     // Web seat gates only work that executes on one.
     const webAccess = headlessEngine || (runtime === "headless" && claimed.revision.action?.kind === "saved_script")
       ? { hasAccess: true }
-      : await this.getOpenWorkWebAccess(claimed.automation.organizationId)
+      : await this.getOpenWorkWebAccess(claimed.automation.organizationId, { memberId: claimed.automation.ownerMemberId })
     if (!webAccess.hasAccess) {
       const now = Date.now()
       await this.skipRun({

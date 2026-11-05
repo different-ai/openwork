@@ -80,6 +80,8 @@ export type CachedOrgMember = {
   createdAt: Date
   joinedAt: Date | null
   isOwner: boolean
+  /** Whether this member has OpenWork Web (see MemberTable.openworkWeb). */
+  openworkWeb: boolean
   user: {
     id: UserId | MemberId
     email: string
@@ -269,7 +271,8 @@ function parseCachedOrgMember(value: unknown): CachedOrgMember | null {
   const userIdValue = readDenId("user", value.user.id) ?? readDenId("member", value.user.id)
   const email = readString(value.user.email)
   const name = readString(value.user.name)
-  if (!id || !role || !createdAt || joinedAt === undefined || !userIdValue || !email || !name) {
+  // Entries cached before openworkWeb existed are refused, so they reload.
+  if (!id || !role || !createdAt || joinedAt === undefined || typeof value.openworkWeb !== "boolean" || !userIdValue || !email || !name) {
     return null
   }
 
@@ -281,6 +284,7 @@ function parseCachedOrgMember(value: unknown): CachedOrgMember | null {
     createdAt,
     joinedAt,
     isOwner: typeof value.isOwner === "boolean" ? value.isOwner : roleIncludesOwner(role),
+    openworkWeb: value.openworkWeb,
     user: {
       id: userIdValue,
       email,
@@ -527,6 +531,7 @@ async function loadOrgMembers(organizationId: OrgId): Promise<CachedOrgMember[]>
       role: MemberTable.role,
       createdAt: MemberTable.createdAt,
       joinedAt: MemberTable.joinedAt,
+      openworkWeb: MemberTable.openworkWeb,
       user: {
         id: AuthUserTable.id,
         email: AuthUserTable.email,
@@ -554,6 +559,7 @@ async function loadOrgMembers(organizationId: OrgId): Promise<CachedOrgMember[]>
       createdAt: member.createdAt,
       joinedAt: member.joinedAt,
       isOwner: roleIncludesOwner(member.role),
+      openworkWeb: member.openworkWeb,
       user: {
         id: member.user?.id ?? member.id,
         email,

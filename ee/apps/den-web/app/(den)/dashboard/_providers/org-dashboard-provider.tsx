@@ -62,6 +62,8 @@ type OrgDashboardContextValue = {
   getInvitationLink: (invitationId: string) => Promise<string>;
   updateMemberRole: (memberId: string, role: string) => Promise<void>;
   removeMember: (memberId: string) => Promise<void>;
+  /** Turns OpenWork Web on or off for a member or pending invitation (webPerMember). */
+  setMemberOpenWorkWeb: (memberId: string, enabled: boolean) => Promise<void>;
   transferOwnership: (memberId: string) => Promise<void>;
   createTeam: (input: { name: string; memberIds: string[] }) => Promise<void>;
   updateTeam: (teamId: string, input: { name?: string; memberIds?: string[]; grantsOrganizationAdmin?: boolean }) => Promise<void>;
@@ -950,6 +952,25 @@ export function OrgDashboardProvider({
     });
   }
 
+  async function setMemberOpenWorkWeb(memberId: string, enabled: boolean) {
+    if (!getCurrentAccess().canStartSeatCheckout) {
+      throw new Error(permissionLockReason("billing.manage"));
+    }
+
+    await runMutation("member-openwork-web", async () => {
+      ensureActiveOrganizationSelected();
+      const { response, payload } = await requestJson(
+        `/v1/members/${encodeURIComponent(memberId)}/openwork-web`,
+        { method: "POST", body: JSON.stringify({ enabled }) },
+        12000,
+      );
+
+      if (!response.ok) {
+        throw getRequestError(payload, response, `Failed to update OpenWork Web (${response.status}).`);
+      }
+    });
+  }
+
   async function transferOwnership(memberId: string) {
     if (!getCurrentAccess().canTransferOwnership) {
       throw new Error("Only the workspace owner can transfer ownership.");
@@ -1121,6 +1142,7 @@ export function OrgDashboardProvider({
     getInvitationLink,
     updateMemberRole,
     removeMember,
+    setMemberOpenWorkWeb,
     transferOwnership,
     createTeam,
     updateTeam,
