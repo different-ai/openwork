@@ -343,6 +343,8 @@ export function denExtractGoogleEvents(json) {
       start: time("start"), end: time("end"), status: str(item, "status"), htmlLink: str(item, "htmlLink"),
       attendees: arr(item, "attendees").flatMap((attendee) => (attendee && str(attendee, "email") ? [str(attendee, "email")] : [])),
       meetLink: str(item, "hangoutLink") || (video ? str(video, "uri") : null) || null,
+      recurringEventId: str(item, "recurringEventId") || null,
+      recurrence: Array.isArray(item.recurrence) ? item.recurrence.filter((line) => typeof line === "string") : null,
     };
   });
 }
