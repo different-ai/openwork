@@ -100,11 +100,17 @@ test("follow-ups and idle cleanup renew without approvals or replaying old input
   await f.control.endTurn({ sessionId: "chat" });
   assert.equal(payload(await f.control.execute({ sessionId: "chat", name: "computer_observe", args: {} })).ok, true);
   await new Promise(resolve => setTimeout(resolve, 35));
+  const looks = f.calls.filter(name => name === "computer_observe").length;
   const result = await f.control.execute({ sessionId: "chat", name: "computer_act", args: { observation_id: "old", action: { type: "click", x: 1, y: 1 } } });
   assert.equal(payload(result).code, "observation_required");
   assert.equal(f.calls.filter(name => name === "computer_open_session").length, 3);
   assert.ok(!f.calls.includes("computer_act"));
   assert.deepEqual(f.selected, []);
+  // The refusal carries a look at the renewed window, so the next call can act on it.
+  const [, post, view] = result.content.map(part => JSON.parse(part.text));
+  assert.deepEqual(post, { post_observation: { ok: true }, actions_replayed: false, next: "act", note: "Nothing was sent. Act on this fresh observation." });
+  assert.equal(view.observation_id, "observation");
+  assert.equal(f.calls.filter(name => name === "computer_observe").length, looks + 1);
 });
 
 test("human takeover survives end-of-turn and idle cleanup until Continue", async t => {
@@ -506,6 +512,14 @@ test("an act refused before anything was sent returns a fresh observation instea
   refusal = { ...unsent, code: "focus_required", message: "Observe a focused normal text field or control before using the keyboard." };
   await act({ action: { type: "key", key: "return" }, screenshot: false });
   assert.equal(seen[1]?.args.include_image, false, "the model's screenshot choice still holds");
+
+  // A refusal the helper gives before any step starts carries no step status: it gets a look too.
+  refusal = { ok: false, code: "observation_required", message: "A dialog opened or closed since the last observation. Observe again; nothing was sent.", next: "observe" };
+  await act({ action: { type: "press", ref: "e2" } });
+  assert.deepEqual(seen.map((call) => call.name), ["computer_act", "computer_observe"], "a dialog the last step opened is looked at in this call");
+  refusal = { ok: false, code: "protected_input", message: "Take over for this step.", next: "human_takeover" };
+  await act({ action: { type: "type", text: "x" } });
+  assert.deepEqual(seen.map((call) => call.name), ["computer_act"], "a refusal that hands over gets no look");
 
   refusal = { ...unsent, code: "scope_denied", next: "open_session" };
   await act({ action: { type: "click", x: 1, y: 1 } });
@@ -1567,18 +1581,22 @@ test("the agent saves what it sees as an image under the same file rule as save_
 /** A Mac helper with an Open panel in front: it asks before showing the panel, and picks the file once its path is approved. */
 function openPanelFixture(options = {}) {
   const seen = [];
+  // As the helper does, a panel once allowed stays allowed until it closes; picking a file closes it.
+  let open = false, allowed = false;
   const f = fixture({ seen, platform: "darwin", ...options, toolResult: (name) => {
     const args = seen.at(-1).args;
-    const looks = seen.filter((call) => call.name === "computer_observe").length;
-    if (name === "computer_observe" && looks > 1 && args.file_panel_access !== 31) {
-      return text({ ok: false, code: "file_panel_approval_required", app: "Photoshop", panel_id: 31, dispatched: false, next: "observe" });
+    if (name === "computer_observe" && open && !allowed) {
+      if (args.file_panel_access !== 31) return text({ ok: false, code: "file_panel_approval_required", app: "Photoshop", panel_id: 31, dispatched: false, next: "observe" });
+      allowed = true;
     }
     if (name !== "computer_act") return undefined;
-    return text(JSON.stringify(args.file_approval) === JSON.stringify([args.action.path])
-      ? { ok: true, status: "dispatched", path: "file_chosen" }
+    const chosen = JSON.stringify(args.file_approval) === JSON.stringify([args.action.path]);
+    if (chosen) open = false;
+    return text(chosen ? { ok: true, status: "dispatched", path: "file_chosen" }
       : { ok: false, code: "files_approval_required", files: [args.action.path], open: true, app: "Photoshop", dispatched: false, next: "observe" });
   } });
-  const look = () => f.control.execute({ sessionId: "chat", name: "computer_observe", args: {} });
+  // Each explicit look is at a panel the app has just opened.
+  const look = () => { open = true; allowed = false; return f.control.execute({ sessionId: "chat", name: "computer_observe", args: {} }); };
   const pick = (path) => f.control.execute({ sessionId: "chat", name: "computer_act", args: { observation_id: "observation", action: { type: "open_in_panel", path } } });
   const cards = () => f.requests.filter((request) => request?.reason === "files");
   const acts = () => seen.filter((call) => call.name === "computer_act").map((call) => call.args.file_approval ?? null);
@@ -1589,6 +1607,46 @@ function openPanelFixture(options = {}) {
   const answer = async (count, reply) => f.control.answerRequest({ sessionId: "chat", answer: reply, id: (await card(count)).id });
   return { ...f, look, pick, cards, acts, card, answer };
 }
+/** A Mac helper whose next act opens a Save panel: looks after it ask first, as the helper does for any file panel. */
+function savePanelFixture(movePolicy) {
+  const seen = [];
+  let opened = false;
+  const f = fixture({ seen, platform: "darwin", movePolicy, toolResult: (name) => {
+    const args = seen.at(-1).args;
+    if (name === "computer_act") { opened = true; return text({ ok: true, status: "dispatched", completed: 1, next: "observe", steps: [{ index: 0, action: "key", status: "dispatched", path: "menu_for_shortcut" }] }); }
+    if (name === "computer_observe" && opened && args.file_panel_access !== 31) {
+      return text({ ok: false, code: "file_panel_approval_required", app: "TextEdit", panel_id: 31, dispatched: false, next: "observe" });
+    }
+    return undefined;
+  } });
+  const looks = () => seen.filter((call) => call.name === "computer_observe").map((call) => call.args.file_panel_access ?? null);
+  const save = () => f.control.execute({ sessionId: "chat", name: "computer_act", args: { observation_id: "observation", action: { type: "key", key: "s", modifiers: ["command"] } } });
+  const open = () => f.control.setFeatureEnabled(true).then(() => f.control.execute({ sessionId: "chat", name: "computer_open", args: { app_id: "editor", mode: "control", purpose: "Save the letter" } }));
+  return { ...f, looks, save, open };
+}
+
+test("a Save panel the agent's own step opened is shown in that step's receipt, with no second look", async (t) => {
+  const asked = [];
+  const f = savePanelFixture(async (input) => { asked.push(input); return { effect: "allow" }; }); t.after(() => f.control.reset(true));
+  await f.open();
+  const before = f.looks().length;
+  const parts = (await f.save()).content.map((part) => JSON.parse(part.text));
+  assert.deepEqual(parts[1], { post_observation: { ok: true }, actions_replayed: false }, "the panel is looked at in the same call");
+  assert.deepEqual(f.looks().slice(before), [null, 31], "the second look carries the panel the organization's rule allowed");
+  assert.deepEqual(asked, [{ kind: "computer_files", sessionId: "chat" }]);
+  assert.deepEqual(f.requests.filter((request) => request?.reason === "files"), [], "by default nothing asks");
+});
+
+test("an organization that blocks file panels still keeps the agent out of one its step opened", async (t) => {
+  const f = savePanelFixture(async () => ({ effect: "deny", message: "Blocked here." })); t.after(() => f.control.reset(true));
+  await f.open();
+  const before = f.looks().length;
+  const parts = (await f.save()).content.map((part) => JSON.parse(part.text));
+  assert.equal(parts[1].post_observation.code, "file_panel_approval_required");
+  assert.equal(parts.length, 2, "no view of the panel");
+  assert.deepEqual(f.looks().slice(before), [null], "never looked at with access");
+});
+
 const openForPlacing = (f) => f.control.setFeatureEnabled(true).then(() => f.control.execute({ sessionId: "chat", name: "computer_open", args: { app_id: "editor", mode: "control", purpose: "Place the map" } }));
 
 test("an Open panel is looked through and a file picked in it without a card by default", async (t) => {
