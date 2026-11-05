@@ -43,6 +43,8 @@ type CreatorPageProps = {
   openworkServerClient: OpenworkServerClient | null;
   /** Starts an agent session in this workspace with the given build request. */
   onSend: (prompt: string) => void;
+  /** Called after a preset launches a brand-new workspace. */
+  onWorkspaceLaunched?: (workspaceId: string) => void;
 };
 
 /** The DSH-style creator loop in one prompt: the agent (which IS the OpenCode
@@ -62,13 +64,18 @@ function buildRequestPrompt(request: string): string {
   ].join("\n");
 }
 
-export function CreatorPage({ workspace, openworkServerClient: client, onSend }: CreatorPageProps) {
+export function CreatorPage({ workspace, openworkServerClient: client, onSend, onWorkspaceLaunched }: CreatorPageProps) {
   const queryClient = useQueryClient();
   const workspaceId = workspace.id;
   const [buildRequest, setBuildRequest] = useState("");
   const [presetName, setPresetName] = useState("");
   const [presets, setPresets] = useState<CreatorPreset[]>(() => listPresets());
   const importInputRef = useRef<HTMLInputElement | null>(null);
+  const [launchingPresetId, setLaunchingPresetId] = useState<string | null>(null);
+  const [launchFolder, setLaunchFolder] = useState("");
+  const [launchName, setLaunchName] = useState("");
+  const [launchBusy, setLaunchBusy] = useState(false);
+  const [showRuntime, setShowRuntime] = useState(false);
 
   const compositionKey = ["creator-composition", workspaceId];
 
@@ -105,6 +112,116 @@ export function CreatorPage({ workspace, openworkServerClient: client, onSend }:
   const commands = compositionQuery.data?.commands ?? [];
   const reloadEvents = compositionQuery.data?.reloadEvents ?? [];
   const recentToolFiles = compositionQuery.data?.recentToolFiles ?? [];
+
+  // Deep runtime inspection: what the engine actually runs with, not just what
+  // is declared on disk.
+  const runtimeQuery = useQuery({
+    queryKey: ["creator-runtime", workspaceId],
+    queryFn: async () => {
+      if (!client) throw new Error("not connected");
+      const [runMode, disabledProviders, config] = await Promise.all([
+        client.getWorkspaceRunMode(workspaceId),
+        client.getRuntimeDisabledProviders(workspaceId),
+        client.readOpencodeConfigFile(workspaceId, "project"),
+      ]);
+      return {
+        runMode: runMode.mode,
+        catchAll: runMode.catchAll,
+        runModeSupported: runMode.supported,
+        disabledProviders: disabledProviders.disabledProviders,
+        configPath: config.path,
+        configExists: config.exists,
+        configContent: config.content,
+      };
+    },
+    enabled: Boolean(client && workspaceId && showRuntime),
+    staleTime: 15_000,
+  });
+
+  const foldersQuery = useQuery({
+    queryKey: ["creator-folders", workspaceId],
+    queryFn: async () => {
+      if (!client) throw new Error("not connected");
+      return client.listAuthorizedFolders(workspaceId);
+    },
+    enabled: Boolean(client && workspaceId && launchingPresetId !== null),
+    staleTime: 60_000,
+  });
+
+  const applyPresetToWorkspace = useCallback(async (preset: CreatorPreset, targetWorkspaceId: string): Promise<{ applied: number; failures: string[] }> => {
+    if (!client) return { applied: 0, failures: [] };
+    let applied = 0;
+    const failures: string[] = [];
+    for (const skill of preset.skills) {
+      try {
+        await client.upsertSkill(targetWorkspaceId, { name: skill.name, content: skill.content, description: skill.description });
+        applied += 1;
+      } catch {
+        failures.push(`skill ${skill.name}`);
+      }
+    }
+    for (const plugin of preset.plugins) {
+      try {
+        await client.addPlugin(targetWorkspaceId, plugin.spec);
+        applied += 1;
+      } catch {
+        failures.push(`plugin ${plugin.spec}`);
+      }
+    }
+    for (const server of preset.mcp) {
+      try {
+        await client.addMcp(targetWorkspaceId, { name: server.name, config: server.config });
+        applied += 1;
+      } catch {
+        failures.push(`MCP ${server.name}`);
+      }
+    }
+    for (const command of preset.commands) {
+      try {
+        await client.upsertCommand(targetWorkspaceId, {
+          name: command.name,
+          template: command.template,
+          description: command.description,
+          agent: command.agent,
+          model: command.model ?? null,
+          subtask: command.subtask,
+        });
+        applied += 1;
+      } catch {
+        failures.push(`comando /${command.name}`);
+      }
+    }
+    return { applied, failures };
+  }, [client]);
+
+  const launchPreset = async (preset: CreatorPreset) => {
+    if (!client || !launchFolder.trim()) return;
+    setLaunchBusy(true);
+    try {
+      const folder = launchFolder.trim();
+      const list = await client.createLocalWorkspace({
+        folderPath: folder,
+        name: (launchName.trim() || preset.name || folder.split(/[\\/]/).pop() || "preset").slice(0, 80),
+        preset: "starter",
+      });
+      const created = list.workspaces.find((item) => item.path === folder) ?? list.workspaces.at(-1);
+      if (!created) throw new Error("El workspace creado no apareció en la lista.");
+      await client.activateWorkspace(created.id, { persist: true });
+      const { applied, failures } = await applyPresetToWorkspace(preset, created.id);
+      await client.reloadEngine(created.id).catch(() => undefined);
+      toast.success(
+        `Entorno lanzado con el preset "${preset.name}" (${applied} escrituras${failures.length > 0 ? `, fallos: ${failures.join(", ")}` : ""}).`,
+      );
+      setLaunchingPresetId(null);
+      setLaunchFolder("");
+      setLaunchName("");
+      onWorkspaceLaunched?.(created.id);
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "No se pudo lanzar el entorno.");
+    } finally {
+      setLaunchBusy(false);
+    }
+  };
 
   const startBuild = () => {
     const request = buildRequest.trim();
@@ -208,47 +325,7 @@ export function CreatorPage({ workspace, openworkServerClient: client, onSend }:
 
   const applyPreset = async (preset: CreatorPreset) => {
     if (!client) return;
-    let applied = 0;
-    const failures: string[] = [];
-    for (const skill of preset.skills) {
-      try {
-        await client.upsertSkill(workspaceId, { name: skill.name, content: skill.content, description: skill.description });
-        applied += 1;
-      } catch {
-        failures.push(`skill ${skill.name}`);
-      }
-    }
-    for (const plugin of preset.plugins) {
-      try {
-        await client.addPlugin(workspaceId, plugin.spec);
-        applied += 1;
-      } catch {
-        failures.push(`plugin ${plugin.spec}`);
-      }
-    }
-    for (const server of preset.mcp) {
-      try {
-        await client.addMcp(workspaceId, { name: server.name, config: server.config });
-        applied += 1;
-      } catch {
-        failures.push(`MCP ${server.name}`);
-      }
-    }
-    for (const command of preset.commands) {
-      try {
-        await client.upsertCommand(workspaceId, {
-          name: command.name,
-          template: command.template,
-          description: command.description,
-          agent: command.agent,
-          model: command.model ?? null,
-          subtask: command.subtask,
-        });
-        applied += 1;
-      } catch {
-        failures.push(`comando /${command.name}`);
-      }
-    }
+    const { applied, failures } = await applyPresetToWorkspace(preset, workspaceId);
     await invalidate();
     if (failures.length > 0) {
       toast.warning(`Preset aplicado con ${applied} escrituras ok y fallos en: ${failures.join(", ")}`);
@@ -295,12 +372,17 @@ export function CreatorPage({ workspace, openworkServerClient: client, onSend }:
 
   return (
     <div className="flex h-full flex-col overflow-y-auto">
-      <div className="flex items-center justify-between gap-4 px-10 pt-10">
+      <div className="flex items-center justify-between gap-4 px-10 pt-6">
         <h1 className="text-3xl font-semibold tracking-tight text-foreground">Creador</h1>
-        <Button size="sm" variant="outline" onClick={() => void reloadEngine()}>
-          <RefreshCw className="size-4" aria-hidden />
-          Recargar motor
-        </Button>
+        <div className="flex items-center gap-2">
+          <Button size="sm" variant="outline" onClick={() => setShowRuntime((value) => !value)}>
+            Runtime
+          </Button>
+          <Button size="sm" variant="outline" onClick={() => void reloadEngine()}>
+            <RefreshCw className="size-4" aria-hidden />
+            Recargar motor
+          </Button>
+        </div>
       </div>
       <p className="px-10 pt-1 text-xs text-muted-foreground">
         Describe una herramienta en lenguaje natural y el agente la diseña, escribe, prueba e instala en este workspace.
@@ -331,6 +413,42 @@ export function CreatorPage({ workspace, openworkServerClient: client, onSend }:
           </div>
         </div>
       </div>
+
+      {showRuntime ? (
+        <div className="mx-10 mt-4 rounded-xl border border-border p-4">
+          <p className="mb-2 text-xs font-medium text-muted-foreground">Runtime del motor — lo que realmente ejecuta</p>
+          {runtimeQuery.isPending ? (
+            <Skeleton className="h-20 w-full" />
+          ) : runtimeQuery.isError ? (
+            <p className="text-xs text-muted-foreground">El runtime no se pudo leer.</p>
+          ) : (
+            <div className="flex flex-col gap-1 text-xs">
+              <p>
+                <span className="text-muted-foreground">Modo de permisos:</span>{" "}
+                {runtimeQuery.data?.runModeSupported
+                  ? `${runtimeQuery.data?.runMode ?? "—"} (catch-all: ${runtimeQuery.data?.catchAll ?? "—"})`
+                  : "no soportado por este runtime"}
+              </p>
+              <p>
+                <span className="text-muted-foreground">Proveedores deshabilitados:</span>{" "}
+                {(runtimeQuery.data?.disabledProviders ?? []).length > 0
+                  ? (runtimeQuery.data?.disabledProviders ?? []).join(", ")
+                  : "ninguno"}
+              </p>
+              <p>
+                <span className="text-muted-foreground">Config del motor:</span>{" "}
+                <code className="rounded bg-muted px-1">{runtimeQuery.data?.configPath}</code>
+                {runtimeQuery.data?.configExists ? "" : " (sin crear aún)"}
+              </p>
+              {runtimeQuery.data?.configContent ? (
+                <pre className="mt-2 max-h-40 overflow-auto rounded bg-muted/60 p-2 font-mono text-[11px] text-foreground">
+                  {runtimeQuery.data?.configContent}
+                </pre>
+              ) : null}
+            </div>
+          )}
+        </div>
+      ) : null}
 
       <div className="flex flex-1 gap-8 px-10 pt-6 pb-10">
         {/* Composition column */}
@@ -508,12 +626,60 @@ export function CreatorPage({ workspace, openworkServerClient: client, onSend }:
                   <p className="mt-0.5 text-xs text-muted-foreground">{describePreset(preset)}</p>
                   <div className="mt-2 flex gap-2">
                     <Button size="sm" className="h-7 flex-1 text-xs" onClick={() => void applyPreset(preset)}>
-                      Aplicar aquÃ­
+                      Aplicar aquí
+                    </Button>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="h-7 text-xs"
+                      onClick={() => {
+                        setLaunchingPresetId((current) => (current === preset.id ? null : preset.id));
+                        setLaunchName(preset.name);
+                        setLaunchFolder("");
+                      }}
+                    >
+                      Lanzar en nuevo
                     </Button>
                     <Button variant="outline" size="sm" className="h-7 text-xs" onClick={() => exportPreset(preset)}>
                       Exportar
                     </Button>
                   </div>
+                  {launchingPresetId === preset.id ? (
+                    <div className="mt-2 flex flex-col gap-2 rounded-lg border border-border/60 bg-muted/30 p-2">
+                      {foldersQuery.isPending ? (
+                        <Skeleton className="h-7 w-full" />
+                      ) : (foldersQuery.data?.folders ?? []).length === 0 ? (
+                        <p className="text-xs text-muted-foreground">No hay carpetas autorizadas para crear el workspace.</p>
+                      ) : (
+                        <select
+                          value={launchFolder}
+                          onChange={(event) => setLaunchFolder(event.target.value)}
+                          aria-label="Carpeta para el nuevo workspace"
+                          className="h-7 rounded-md border border-border bg-background px-2 text-xs text-foreground"
+                        >
+                          <option value="">Carpeta…</option>
+                          {(foldersQuery.data?.folders ?? []).map((folder) => (
+                            <option key={folder} value={folder}>{folder}</option>
+                          ))}
+                        </select>
+                      )}
+                      <Input
+                        value={launchName}
+                        onChange={(event) => setLaunchName(event.target.value)}
+                        placeholder="Nombre del proyecto"
+                        aria-label="Nombre del proyecto"
+                        className="h-7 text-xs"
+                      />
+                      <Button
+                        size="sm"
+                        className="h-7 text-xs"
+                        disabled={launchBusy || !launchFolder.trim()}
+                        onClick={() => void launchPreset(preset)}
+                      >
+                        {launchBusy ? "Lanzando…" : "Crear workspace y aplicar preset"}
+                      </Button>
+                    </div>
+                  ) : null}
                 </li>
               ))}
             </ul>

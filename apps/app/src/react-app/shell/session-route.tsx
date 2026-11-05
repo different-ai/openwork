@@ -4089,6 +4089,10 @@ export function SessionRoute() {
               workspace={selectedWorkspace}
               openworkServerClient={selectedWorkspaceEndpoint?.client ?? null}
               onSend={(buildPrompt) => handleCreateTaskWithPrompt(selectedWorkspace.id, buildPrompt)}
+              onWorkspaceLaunched={(launchedWorkspaceId) => {
+                void refreshRouteState();
+                navigateToWorkspaceSession(launchedWorkspaceId);
+              }}
             />
           ) : (
             <Empty variant="ghost" className="h-full">
