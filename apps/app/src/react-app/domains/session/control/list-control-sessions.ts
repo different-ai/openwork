@@ -41,6 +41,8 @@ export type ListedControlSession = OpenworkSessionActivityInventory & {
   workspace: string;
   updatedAt: number;
   pinned: boolean;
+  /** On the sidebar's Settled row (OpenCode v2 workspaces only); false elsewhere. */
+  settled: boolean;
   /** Live activity, the same source as the sidebar indicator. */
   status: SessionActivityStatus;
   /** Model and reasoning effort the session is bound to; null before any model is bound. */
@@ -54,6 +56,7 @@ export type ListControlSessionsState = {
   modelCatalogByWorkspaceId?: Record<string, readonly OpenworkCatalogModel[]>;
   statusFor: (workspaceId: string, sessionId: string) => SessionActivityStatus;
   attentionFor?: (workspaceId: string, sessionId: string) => SessionAttention | undefined;
+  settledFor?: (workspaceId: string, session: ControlSessionLike & { id: string }) => boolean;
 };
 
 /** Anything but a finished or failed turn still needs Stop before archive. */
@@ -119,6 +122,7 @@ export function listControlSessions(args: unknown, state: ListControlSessionsSta
         workspace: controlWorkspaceLabel(workspace),
         updatedAt: session.time?.updated ?? session.time?.created ?? 0,
         pinned: state.pinnedIds.includes(sessionId),
+        settled: state.settledFor?.(workspace.id, { ...session, id: sessionId }) ?? false,
         status: activity.status,
         working: activity.working,
         descendantActivity: activity.descendantActivity,

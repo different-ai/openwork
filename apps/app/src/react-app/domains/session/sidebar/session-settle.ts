@@ -90,7 +90,25 @@ export function settleWorkspaceIds<T extends { id: string }>(
     .map((workspace) => workspace.id));
 }
 
-export type SettledSessionContext = Omit<SessionSettleInput, "activityAt" | "entry" | "status" | "pinned" | "unread"> & {
+/**
+ * Whether a session is settled right now, read outside React for agent
+ * commands. Same rules as the sidebar row; the caller applies the v2 gate.
+ */
+export function readSessionSettled(session: SessionTimes, status: string | undefined, now = Date.now()): boolean {
+  if ((session.time?.archived ?? 0) > 0 || session.parentID?.trim()) return false;
+  const state = useSessionManagementStore.getState();
+  return isSessionSettled({
+    activityAt: sessionActivityAt(session),
+    entry: state.settledById[session.id],
+    status,
+    pinned: state.pinnedIds.includes(session.id),
+    unread: state.unreadIds.includes(session.id),
+    autoSettleDays: state.autoSettleDays,
+    now,
+  });
+}
+
+export type SettledSessionContext =Omit<SessionSettleInput, "activityAt" | "entry" | "status" | "pinned" | "unread"> & {
   settledById: Record<string, SessionSettleEntry>;
   statusById: Record<string, string> | undefined;
   pinnedIds: ReadonlySet<string>;

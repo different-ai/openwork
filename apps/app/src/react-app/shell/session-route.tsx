@@ -3094,6 +3094,8 @@ export function SessionRoute() {
     canCreateTask,
     openworkClient: client,
     opencodeClient,
+    settleWorkspaceIds: settleWorkspaceIdSet,
+    sessionStatusById: sidebarSessionStatusById,
     endpointForWorkspace,
     navigateToSession: navigateToSessionForControl,
     navigateToSessionRoot: navigateToSessionRootForControl,
