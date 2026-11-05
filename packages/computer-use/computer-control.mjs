@@ -42,6 +42,8 @@ const withPostObservation = (receipt, status, content = [], extra = {}) => ({ ..
   { type: "text", text: JSON.stringify({ post_observation: status, actions_replayed: false,
     ...(!status.ok ? { next: status.next, fresh_observation_required: true } : {}), ...extra }) }, ...content] });
 const COORDINATE_ACTIONS = new Set(["move", "click", "double_click", "triple_click", "scroll", "drag"]);
+/** Refusals before any input that a fresh look answers: the receipt carries that look, so the next call can act. */
+const LOOK_AGAIN = new Set(["observation_required", "stale_observation", "focus_lost", "window_not_frontmost"]);
 const actionEntries = (args) => [args.action, ...(Array.isArray(args.actions) ? args.actions : [])].filter((entry) => entry && typeof entry === "object");
 /** Command-C, Command-X or Command-V: a copy, cut or paste through the agent's clipboard. */
 const isClipboardStep = (entry) => entry.type === "key" && typeof entry.key === "string" && ["c", "x", "v"].includes(entry.key.toLowerCase())
@@ -1100,7 +1102,19 @@ export function createComputerControl({ adapters, runProgram, runScript, onTimin
           if (["background", "foreground"].includes(state.delivery)) current.delivery = state.delivery;
           invalidateObservation(current); current.needsObservation = true;
           updateSession(current, opened, args.purpose);
-          if (["computer_act", "computer_zoom"].includes(name)) return failure("observation_required", "The internal session was renewed. Observe the current window before input; nothing was dispatched.", { next: "observe", actions_replayed: false });
+          if (["computer_act", "computer_zoom"].includes(name)) {
+            const refused = failure("observation_required", "The internal session was renewed. Observe the current window before input; nothing was dispatched.", { next: "observe", actions_replayed: false });
+            // The model would observe next: it gets that look now, in this call, as after any refusal before input.
+            const look = await current.transport.callTool("computer_observe", { session_id: current.nativeId }, { signal: active });
+            progress();
+            const seen = stateOf(look);
+            if (look.isError || seen?.ok !== true || typeof seen.observation_id !== "string" || needsPerson(look)) return refused;
+            updateSession(current, look);
+            current.needsObservation = false;
+            const listed = listChanges(null, look.content);
+            current.listing = listed.listing;
+            return withPostObservation(refused, { ok: true }, listed.content, { next: "act", note: "Nothing was sent. Act on this fresh observation." });
+          }
         }
         if (!["computer_discover", "computer_open"].includes(name) && !current.nativeId) return failure("session_required", "No session is open. Call computer_open first. Nothing was dispatched.");
         if (name === "computer_open") {
@@ -1141,8 +1155,11 @@ export function createComputerControl({ adapters, runProgram, runScript, onTimin
         // The helper refused before sending anything and asks for a new look, such as when
         // the window image changed: the model would observe next, so it gets that look now.
         // The refused input is never retried; the model decides again from the fresh view.
-        const refusedUnsent = name === "computer_act" && !call.program && nativeResult !== undefined && state.ok === false
-          && state.status === "failed" && state.completed === 0 && state.may_have_acted === false && state.next === "observe";
+        // So does a refusal the helper gives before any step starts (it carries no step status):
+        // a dialog opened, the window changed, or another window came to the front.
+        const refusedUnsent = name === "computer_act" && !call.program && nativeResult !== undefined && state.ok === false && state.next === "observe"
+          && (state.status === "failed" && state.completed === 0 && state.may_have_acted === false
+            || state.status === undefined && state.may_have_acted === undefined && LOOK_AGAIN.has(state.code));
         if (current.nativeId && (inputLanded || refusedUnsent || name === "computer_open" && !result.isError && state.ok && state.state === "active")) {
           call.post = { current, generation, nativeId: current.nativeId, receipt: result, captured: false, refused: refusedUnsent,
             observationGeneration: name === "computer_open" ? current.observationGeneration : observationGeneration };
@@ -1175,12 +1192,26 @@ export function createComputerControl({ adapters, runProgram, runScript, onTimin
               // continuation across a person takeover. Watch frames are unrelated.
               // Unless the model chose, the computer decides whether an image adds anything.
               // Opening an app also lists its menu-bar commands, so the agent can run one at once.
-              const observation = await current.transport.callTool("computer_observe", { session_id: current.nativeId,
+              const look = { session_id: current.nativeId,
                 ...(call.postImage === undefined ? {} : { include_image: call.postImage }),
-                ...(name === "computer_open" && platform === "darwin" && current.adapter?.placement === "local" && !call.program ? { menus: true } : {}) }, { signal: active });
+                ...(name === "computer_open" && platform === "darwin" && current.adapter?.placement === "local" && !call.program ? { menus: true } : {}) };
+              let observation = await current.transport.callTool("computer_observe", look, { signal: active });
               progress(); assertUiActive(current);
               if (!postStillOwned(call)) return postWarning(result, "observation_withheld", "human_takeover");
-              const observed = stateOf(observation);
+              let observed = stateOf(observation);
+              // The action opened a file panel: the organization's rule decides here, as it does for the
+              // model's own look, so the agent sees the panel in this same call. By default nothing asks.
+              if (observed?.code === "file_panel_approval_required" && observed.dispatched === false && Number.isSafeInteger(observed.panel_id)) {
+                const checked = await approveMove(grant, { kind: "files", app: typeof observed.app === "string" ? observed.app : "the app", names: [] }, signal);
+                progress(); assertUiActive(current);
+                if (!postStillOwned(call)) return postWarning(result, "observation_withheld", "human_takeover");
+                if (checked.answer === "allow") {
+                  observation = await current.transport.callTool("computer_observe", { ...look, file_panel_access: observed.panel_id }, { signal: active });
+                  progress(); assertUiActive(current);
+                  if (!postStillOwned(call)) return postWarning(result, "observation_withheld", "human_takeover");
+                  observed = stateOf(observation);
+                }
+              }
               if (observation.isError || observed?.ok !== true || typeof observed.observation_id !== "string" || !observed.observation_id || needsPerson(observation)) {
                 current.needsObservation = true;
                 nativeStopped(current, observation); updateSession(current, observation);
