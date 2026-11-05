@@ -2043,7 +2043,6 @@ final class SessionRuntime {
         let followed = follow.follows(frontmost: NSWorkspace.shared.frontmostApplication?.processIdentifier, host: Responsibility.hostPID,
             target: current.app.pid, shown: FollowAlong.onScreen(current.target.id))
         session?.follow = follow; session?.followed = followed
-        if followed != current.followed { controls.layer(background: !followed && current.delivery == .background) }
         return followed
     }
     /// Puts the window beside OpenWork once per return to the chat, or in its tile when several

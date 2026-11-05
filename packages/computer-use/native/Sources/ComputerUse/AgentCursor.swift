@@ -146,7 +146,6 @@ final class AgentCursor {
     private var windowID: CGWindowID = 0
     /// Background sessions: presence sits just above the selected window, so a
     /// window the person brings in front of it also covers the agent's cursor.
-    private var layered = false
     private var appName = ""
     private var paused = false
     private var canContinue = false
@@ -179,12 +178,12 @@ final class AgentCursor {
 
     // MARK: Session lifecycle
 
-    func begin(windowFrame frame: CGRect, windowID id: CGWindowID, appName name: String, layered: Bool = false, purpose: String? = nil) {
+    func begin(windowFrame frame: CGRect, windowID id: CGWindowID, appName name: String, purpose: String? = nil) {
         guard enabled else { return }
         generation += 1
         let fresh = window == nil
         paused = false; canContinue = false; narration = nil; hidden = false; strokeLag = nil; acted = false; lastReaction = nil
-        windowID = id; appName = name; self.layered = layered
+        windowID = id; appName = name
         goal = purpose.flatMap(Self.goalLabel)
         if fresh { build() }
         window?.alphaValue = 1; badge?.alphaValue = 1
@@ -740,23 +739,20 @@ final class AgentCursor {
 
     // MARK: Window tracking
 
-    func layer(_ layered: Bool) {
-        guard enabled, self.layered != layered else { return }
-        self.layered = layered
-        order()
-    }
-
+    /// The outline, trail and cursor ride right above the selected window, among the app windows:
+    /// a window in front of it, OpenWork's included, covers them as it covers the window itself.
+    /// The Take over pill stays above everything, so the person can always reach it.
     private func order() {
         guard let window else { return }
-        window.level = layered ? .normal : .statusBar
-        if layered { window.order(.above, relativeTo: Int(windowID)) } else { window.orderFrontRegardless() }
+        window.level = .normal
+        window.order(.above, relativeTo: Int(windowID))
     }
 
     /// Follows the window when the person moves it, and hides with it.
     private func track() {
         guard window != nil, windowID != 0 else { return }
         // Windows the person raises go above presence; keep it right above the selected one.
-        if layered { order() }
+        order()
         let info = (CGWindowListCopyWindowInfo([.optionIncludingWindow], windowID) as? [[String: Any]])?.first
         let onScreen = info?[kCGWindowIsOnscreen as String] as? Bool ?? false
         let bounds = (info?[kCGWindowBounds as String] as? [String: Any]).flatMap { CGRect(dictionaryRepresentation: $0 as CFDictionary) }
