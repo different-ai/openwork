@@ -19,7 +19,7 @@ const NEEDS_REPAIR = "Your OpenWork Cloud workspace needs repair before it can e
 
 export type OfficeEditorPlacementDeps = {
   hostingAvailable(): boolean
-  webAccess(organizationId: string): Promise<{ hasAccess: boolean }>
+  webAccess(organizationId: string, member: { userId: string }): Promise<{ hasAccess: boolean }>
   resolveAccess: typeof resolveCloudRuntimeAccess
   ensureWorker(input: { organizationId: string; userId: string }): Promise<unknown>
   editorEndpoint(workerId: string): Promise<{ url: string } | null>
@@ -57,7 +57,7 @@ export async function placeOfficeEditor(
   if (config.mode !== "cloud-worker") return { status: "unavailable", message: NOT_SET_UP }
   const deps = { ...defaults, ...overrides }
   if (!deps.hostingAvailable()) return { status: "unavailable", message: NOT_SET_UP }
-  if (!(await deps.webAccess(input.organizationId)).hasAccess) return { status: "unavailable", message: NO_CLOUD }
+  if (!(await deps.webAccess(input.organizationId, { userId: input.userId })).hasAccess) return { status: "unavailable", message: NO_CLOUD }
 
   const deadline = deps.now() + budgetMs
   let created = false

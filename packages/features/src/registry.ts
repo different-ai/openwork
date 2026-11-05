@@ -104,6 +104,17 @@ function defineFeatures<const T extends Record<string, FeatureDefinition>>(featu
 const everywhere = ["cloud", "self_hosted"] as const
 
 export const FEATURES = defineFeatures({
+  webPerMember: {
+    label: "OpenWork Web per member",
+    description: "Admins choose which members get OpenWork Web from the Members page, and the organization pays for Web only for them. Members without it can't open a Web computer. Off: every member and pending invitation has Web and is billed for it.",
+    category: "administration",
+    added: "2026-11-05",
+    since: "2026-11",
+    author: "reachjalil",
+    docs: "docs/features/web-per-member/README.md",
+    deployments: everywhere,
+    default: false,
+  },
   googleCalendarRecurrence: {
     label: "Google Calendar recurring meetings",
     description: "Create and change recurring meeting series through the native Google Calendar capabilities.",

@@ -1145,7 +1145,7 @@ function remoteSessionStatusSources(input: RemoteSessionExecuteInput, deps: Remo
     },
     async cloud() {
       if (!(deps.cloudAvailable ?? cloudRemoteSessionsAvailable)()) return { error: { code: "cloud_not_available", message: CLOUD_NOT_AVAILABLE_MESSAGE } }
-      if (!(await deps.getOpenWorkWebAccess(input.organizationId)).hasAccess) {
+      if (!(await deps.getOpenWorkWebAccess(input.organizationId, { userId: input.userId })).hasAccess) {
         return { error: { code: OPENWORK_WEB_ACCESS_REQUIRED_CODE, message: OPENWORK_WEB_ACCESS_REQUIRED_MESSAGE } }
       }
       // A status read never waits for a waking workspace: the caller asks again.
@@ -1261,7 +1261,7 @@ async function executeRemoteSession(
   if (input.action === "targets") {
     const body = targetsBodySchema.parse(parsedBody.data)
     const [webAccess, targets] = await Promise.all([
-      deps.getOpenWorkWebAccess(input.organizationId),
+      deps.getOpenWorkWebAccess(input.organizationId, { userId: input.userId }),
       (deps.desktopTargets ?? defaultDesktopTargets)({ organizationId: input.organizationId, userId: input.userId }),
     ])
     return jsonResult(targetsPayload(targets, {
@@ -1287,7 +1287,7 @@ async function executeRemoteSession(
       }
     }
   }
-  const webAccess = registeredCreate ? { hasAccess: false } : await deps.getOpenWorkWebAccess(input.organizationId)
+  const webAccess = registeredCreate ? { hasAccess: false } : await deps.getOpenWorkWebAccess(input.organizationId, { userId: input.userId })
   if (!registeredCreate && !webAccess.hasAccess) {
     return errorResult({
       error: OPENWORK_WEB_ACCESS_REQUIRED_CODE,

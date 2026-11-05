@@ -184,7 +184,7 @@ export async function cloudAgentRuntimeAvailable(scope: OwnerScope): Promise<boo
   )).limit(1)
   if (!members[0]) return false
   if (!cloudHostingAvailable({ orgMode: env.orgMode, openworkWebEnabled: env.openworkWebEnabled })) return false
-  const webAccess = await getOpenWorkWebRuntimeAccess(organizationId)
+  const webAccess = await getOpenWorkWebRuntimeAccess(organizationId, { memberId: scope.ownerMemberId })
   if (!webAccess.hasAccess) return false
   const worker = await ownerCloudWorker(scope)
   return worker !== null && worker.status !== "failed"
@@ -567,7 +567,7 @@ async function currentAgentAuthority(input: OwnerScope & { action: AgentAction }
       needsAttention: true,
     }
   }
-  const webAccess = await getOpenWorkWebRuntimeAccess(input.organizationId)
+  const webAccess = await getOpenWorkWebRuntimeAccess(input.organizationId, { memberId: input.ownerMemberId })
   if (!webAccess.hasAccess) {
     return {
       ok: false,

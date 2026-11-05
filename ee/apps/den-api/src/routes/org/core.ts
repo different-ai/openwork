@@ -725,6 +725,8 @@ export function registerOrgCoreRoutes<T extends { Variables: OrgRouteVariables }
       // separate per-organization Cloud rollout flag.
       const cloudEnabled = cloudHostingAvailable({ orgMode: env.orgMode, openworkWebEnabled: env.openworkWebEnabled })
         && (await getOpenWorkWebAccess(payload.organization.id)).hasAccess
+        // With webPerMember, only members an admin gave Web get Cloud.
+        && (!payload.features.webPerMember || payload.currentMember.openworkWeb)
       // The directory is only loaded here, not with every org request's context.
       const [directory, ssoRows, scimRows] = await Promise.all([
         loadOrganizationDirectory(payload.organization.id),

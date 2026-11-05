@@ -1,9 +1,17 @@
+import { and, eq, isNull } from "@openwork-ee/den-db/drizzle"
 import { MemberTable } from "@openwork-ee/den-db/schema"
 import { normalizeDenTypeId } from "@openwork-ee/utils/typeid"
 import type { Hono } from "hono"
 import { describeRoute } from "hono-openapi"
 import { z } from "zod"
 import { ORGANIZATION_AUDIT_ACTIONS } from "../../audit-events.js"
+import { getOrganizationBillingQuantities } from "../../billing-users.js"
+import { cache } from "../../cache.js"
+import { db } from "../../db.js"
+import { requireFeature } from "../../features.js"
+import { appLogger } from "../../observability/logger.js"
+import { peopleMemberCondition } from "../../setup-agent-members.js"
+import { organizationHasEligibleOpenWorkWebSubscription, syncOrganizationBillingQuantities } from "../../stripe-billing.js"
 import { finishLegacyAuditAction } from "../../audit/domain/legacy.js"
 import { auditChangeCapture } from "../../audit/request-capture.js"
 import { jsonValidator, orgPermissionRoute, orgRoleRoute, paramValidator } from "../../middleware/index.js"
@@ -17,10 +25,91 @@ const updateMemberRoleSchema = z.object({
   role: z.string().trim().min(1).max(64),
 })
 
+const updateMemberOpenWorkWebSchema = z.object({
+  enabled: z.boolean(),
+})
+
+const memberOpenWorkWebResponseSchema = z.object({
+  memberId: z.string(),
+  openworkWeb: z.boolean(),
+  /** Members and pending invitations with OpenWork Web after the change: the Web quantity. */
+  webUsers: z.number().int(),
+}).meta({ ref: "MemberOpenWorkWebResponse" })
+
 type MemberId = typeof MemberTable.$inferSelect.id
 const orgMemberParamsSchema = idParamSchema("memberId", "member")
 
 export function registerOrgMemberRoutes<T extends { Variables: OrgRouteVariables }>(app: Hono<T>) {
+  app.post(
+    "/v1/members/:memberId/openwork-web",
+    describeRoute({
+      tags: ["Members"],
+      summary: "Turn OpenWork Web on or off for a member",
+      description: "Chooses whether a member or pending invitation has OpenWork Web. The organization's OpenWork Web subscription bills only the people who have it, so the Stripe quantity follows each change, prorated on the next invoice. Needs the webPerMember feature.",
+      responses: {
+        200: jsonResponse("OpenWork Web was turned on or off for the member.", memberOpenWorkWebResponseSchema),
+        400: jsonResponse("The request was invalid.", invalidRequestSchema),
+        401: jsonResponse("The caller must be signed in.", unauthorizedSchema),
+        403: jsonResponse("The caller needs the Manage billing permission and a recent sign-in.", forbiddenSchema),
+        404: jsonResponse("The member, the organization or the feature could not be found.", notFoundSchema),
+        409: jsonResponse("This is the last person with OpenWork Web while the subscription is active. Cancel OpenWork Web from Billing instead.", invalidRequestSchema),
+      },
+    }),
+    orgPermissionRoute("billing.manage"),
+    requireFeature("webPerMember"),
+    paramValidator(orgMemberParamsSchema),
+    jsonValidator(updateMemberOpenWorkWebSchema),
+    async (c) => {
+      const payload = c.get("organizationContext")
+      const { enabled } = c.req.valid("json")
+      let memberId: MemberId
+      try {
+        memberId = normalizeDenTypeId("member", c.req.valid("param").memberId)
+      } catch {
+        return c.json({ error: "member_not_found" }, 404)
+      }
+      const organizationId = payload.organization.id
+      const memberCondition = and(
+        eq(MemberTable.id, memberId),
+        eq(MemberTable.organizationId, organizationId),
+        isNull(MemberTable.removedAt),
+        peopleMemberCondition(),
+      )
+      const [target] = await db.$primary
+        .select({ id: MemberTable.id, openworkWeb: MemberTable.openworkWeb })
+        .from(MemberTable)
+        .where(memberCondition)
+        .limit(1)
+      if (!target) return c.json({ error: "member_not_found", message: "The organization member could not be found." }, 404)
+
+      if (target.openworkWeb !== enabled) {
+        // Stripe can't bill zero people for Web, so the last one stays until
+        // the subscription is cancelled.
+        if (!enabled && await organizationHasEligibleOpenWorkWebSubscription(organizationId)) {
+          const { web } = await getOrganizationBillingQuantities(organizationId)
+          if (web.quantity <= 1) {
+            return c.json({
+              error: "openwork_web_last_member",
+              message: "This is the last person with OpenWork Web. To stop paying for Web, cancel it from Billing.",
+            }, 409)
+          }
+        }
+        await db.update(MemberTable).set({ openworkWeb: enabled }).where(memberCondition)
+        // The members list carries openworkWeb; clear it so the change shows at once.
+        await cache.org.deleteMemberList(organizationId)
+        try {
+          await syncOrganizationBillingQuantities({ organizationId })
+        } catch (error) {
+          // The change is saved; the next member change or the hourly job retries the quantity.
+          appLogger.warn("openwork web quantity sync failed after member change", { organization_id: organizationId, member_id: memberId, error })
+        }
+      }
+
+      const { web } = await getOrganizationBillingQuantities(organizationId)
+      return c.json({ memberId, openworkWeb: enabled, webUsers: web.quantity })
+    },
+  )
+
   app.post(
     "/v1/members/:memberId/role",
     describeRoute({

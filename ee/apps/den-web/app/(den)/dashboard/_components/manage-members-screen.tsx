@@ -25,6 +25,7 @@ import {
   getTeamRoute,
   splitRoleString,
   type DenOrgMember,
+  orgFeatureEnabled,
   permissionLockReason,
 } from "../../_lib/den-org";
 import { type OrgLimitError, type OrgPaymentRequiredError, getOrgLimitError, getOrgPaymentRequiredError } from "../../_lib/den-flow";
@@ -42,6 +43,7 @@ import { DenInput } from "../../_components/ui/input";
 import { DenNotice } from "../../_components/ui/notice";
 import { DenSelect } from "../../_components/ui/select";
 import { DenSkeleton } from "../../_components/ui/skeleton";
+import { DenSwitch } from "../../_components/ui/switch";
 import { installPageUrl } from "../../_lib/install-download";
 import { OrgMemberIdentity } from "./org-member-identity";
 import { MemberEffectivePermissions, canViewMemberPermissions } from "./member-effective-permissions";
@@ -116,6 +118,7 @@ export function ManageMembersScreen() {
     getInvitationLink,
     updateMemberRole,
     removeMember,
+    setMemberOpenWorkWeb,
     transferOwnership,
     createTeam,
     updateTeam,
@@ -125,6 +128,10 @@ export function ManageMembersScreen() {
   const [memberFilter, setMemberFilter] = useState("");
   const [teamFilter, setTeamFilter] = useState("");
 
+  // Admins choose who gets OpenWork Web (and is billed for it) where the organization has Web.
+  const webPerMember = orgFeatureEnabled(orgContext, "webPerMember") && (orgContext?.capabilities.openworkWeb ?? false);
+  const webMemberCount = (orgContext?.members ?? []).filter((member) => member.openworkWeb).length;
+  const memberGridColumns = webPerMember ? "lg:grid-cols-[minmax(0,1fr)_180px_140px_112px_28px]" : "lg:grid-cols-[minmax(0,1fr)_180px_140px_28px]";
   const visibleMembers = (orgContext?.members ?? []).filter((member) => `${member.user.name} ${member.user.email}`.toLocaleLowerCase().includes(memberFilter.trim().toLocaleLowerCase()));
   const visibleTeams = (orgContext?.teams ?? []).filter((team) => team.name.toLocaleLowerCase().includes(teamFilter.trim().toLocaleLowerCase()));
   const [pageError, setPageError] = useState<string | null>(null);
@@ -791,11 +798,18 @@ export function ManageMembersScreen() {
             </div>
           ) : null}
 
+          {webPerMember ? (
+            <p data-testid="members-openwork-web-summary" className="text-[13px] text-gray-500">
+              {`${webMemberCount} of ${orgContext.members.length} ${orgContext.members.length === 1 ? "person has" : "people have"} OpenWork Web. Web is billed only for them; turning it on or off changes your next invoice.`}
+            </p>
+          ) : null}
+
           <div className="overflow-visible rounded-2xl border border-gray-100 bg-white">
-            <div data-testid="members-column-header" className={`grid grid-cols-[minmax(0,1fr)_auto] gap-4 border-b border-gray-100 py-3 text-[12px] font-medium text-gray-500 px-5 lg:grid-cols-[minmax(0,1fr)_180px_140px_28px]`}>
+            <div data-testid="members-column-header" className={`grid grid-cols-[minmax(0,1fr)_auto] gap-4 border-b border-gray-100 py-3 text-[12px] font-medium text-gray-500 px-5 ${memberGridColumns}`}>
               <span>Member</span>
               <span className="hidden lg:block">Role</span>
               <span className="hidden lg:block">Joined</span>
+              {webPerMember ? <span className="hidden lg:block">OpenWork Web</span> : null}
               <span />
             </div>
 
@@ -833,7 +847,7 @@ export function ManageMembersScreen() {
                 <div key={member.id}>
                 <div
                   data-testid="member-row"
-                  className={`grid grid-cols-[minmax(0,1fr)_auto] items-center gap-x-3 gap-y-1 border-b border-gray-100 transition hover:bg-gray-50/60 last:border-b-0 lg:gap-4 min-h-16 px-5 py-3 lg:grid-cols-[minmax(0,1fr)_180px_140px_28px]`}
+                  className={`grid grid-cols-[minmax(0,1fr)_auto] items-center gap-x-3 gap-y-1 border-b border-gray-100 transition hover:bg-gray-50/60 last:border-b-0 lg:gap-4 min-h-16 px-5 py-3 ${memberGridColumns}`}
                 >
                   <OrgMemberIdentity member={member} compact />
                   <span title={roleLabel} className={`col-start-1 row-start-2 min-w-0 pl-11 text-[13px] text-gray-500 lg:col-auto lg:row-auto lg:pl-0 truncate`} data-testid="member-role">
@@ -846,6 +860,28 @@ export function ManageMembersScreen() {
                       ? formatAddedDate(member.joinedAt)
                       : "Pending"}
                   </span>
+                  {webPerMember ? (
+                    <span
+                      data-testid="member-openwork-web"
+                      title={access.canStartSeatCheckout ? undefined : permissionLockReason("billing.manage")}
+                      className="col-start-1 row-start-4 flex items-center gap-2 pl-11 text-[13px] text-gray-500 lg:col-auto lg:row-auto lg:pl-0"
+                    >
+                      <span className="lg:hidden">OpenWork Web</span>
+                      <DenSwitch
+                        size="sm"
+                        checked={member.openworkWeb}
+                        disabled={!access.canStartSeatCheckout || mutationBusy === "member-openwork-web"}
+                        aria-label={`OpenWork Web for ${member.user.name || member.user.email}`}
+                        testId="member-openwork-web-switch"
+                        onChange={(enabled) => {
+                          setPageError(null);
+                          void setMemberOpenWorkWeb(member.id, enabled).catch((error) => {
+                            setPageError(error instanceof Error ? error.message : "Could not update OpenWork Web.");
+                          });
+                        }}
+                      />
+                    </span>
+                  ) : null}
                   <div data-testid="member-actions" className="relative col-start-2 row-span-3 row-start-1 flex items-center justify-end gap-2 lg:col-auto lg:row-span-1 lg:row-auto">
                     {(
                       member.isOwner ? <span data-testid="member-owner-locked"><TeamsListLocked reason="The owner cannot be edited here. Only the owner can transfer ownership to an admin." /></span> : canOpenActions ? <ItemMenu label={`Open actions for ${member.user.name || member.user.email}`} entries={memberActions} /> : <TeamsListLocked reason="You cannot change this member. Ask an organization admin for access." />

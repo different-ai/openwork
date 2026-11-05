@@ -1279,7 +1279,7 @@ async function loadOpenWorkWebBillingSummary(organizationId: OrgId, loadedQuanti
       currency: OPENWORK_WEB_CURRENCY,
       interval: OPENWORK_WEB_INTERVAL,
       quantityDefinition: OPENWORK_WEB_QUANTITY_DEFINITION,
-      quantityDescription: "Every organization member and every pending invitation that has not expired.",
+      quantityDescription: "Every organization member and pending invitation that has not expired and has OpenWork Web (everyone, unless an admin chooses who gets Web).",
       quantity,
       expectedMonthlyTotal: quantity * OPENWORK_WEB_UNIT_AMOUNT,
       hasEligibleSubscription,

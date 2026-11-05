@@ -482,6 +482,12 @@ export async function bootDen(options: { env?: Record<string, string> } = {}) {
     })
   }
 
+  /** A request made by the deployment's platform administrator (/v1/admin). */
+  async function asPlatformAdmin(method: Method, pathname: string, body?: unknown): Promise<Call> {
+    platformAdmin ??= await signUp("Platform Admin", platformAdminEmail)
+    return request(platformAdmin.token, method, pathname, { body })
+  }
+
   /** Request helper bound to one person and one organization, sending what Den Web sends: bearer and session cookie. */
   function as(session: Session, orgId: string) {
     return (method: Method, pathname: string, body?: unknown, headers?: Record<string, string>) =>
@@ -563,6 +569,7 @@ export async function bootDen(options: { env?: Record<string, string> } = {}) {
     memberIdOf,
     createTeam,
     setFeature,
+    asPlatformAdmin,
     as,
     async close() {
       const { client } = await import("../../src/db.js")
