@@ -1162,6 +1162,8 @@ enum SharedDesktop {
     /// not a takeover, so the model looks again instead of waiting for Continue.
     static func yielding(_ error: UseError) -> UseError {
         guard error.code == "window_not_frontmost" else { return error }
+        // Real input says what was in the way, which the model and a test report both need.
+        if error.message.hasPrefix(RealInput.stoppedPrefix) { return UseError("focus_lost", error.message, next: "observe") }
         return UseError("focus_lost", "Another window came to the front, so input stopped there. Observe again; the selected window is brought back first.", next: "observe")
     }
     static func yielding(_ error: Error) -> Error {
@@ -1255,6 +1257,22 @@ enum WebBrowser {
 /// place, as QuickTime replaces its Open panel with an Audio Recording window: the session follows
 /// that window instead of failing on the closed one. Nothing when the window is still open, when
 /// no new window or several appeared, or when the session is in a dialog (which closes into its parent).
+/// macOS reports a new front app a moment after its window comes forward. A batch that took
+/// the front waits for that report (at most `limit`), so its first real event is not refused.
+enum FrontReport {
+    static let limit: TimeInterval = 1
+    static let step: TimeInterval = 0.05
+    @discardableResult
+    static func wait(for pid: pid_t, frontmost: () -> pid_t?,
+                     sleep: (TimeInterval) async -> Void = { try? await Task.sleep(nanoseconds: UInt64($0 * 1_000_000_000)) }) async -> Bool {
+        for _ in 0..<Int(limit / step) {
+            if frontmost() == pid { return true }
+            await sleep(step)
+        }
+        return frontmost() == pid
+    }
+}
+
 enum WindowReplacement {
     /// Only shortly after that input: a window the person swaps in later is not followed.
     static let within: TimeInterval = 15

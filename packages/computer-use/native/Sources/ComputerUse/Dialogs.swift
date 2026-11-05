@@ -33,6 +33,13 @@ extension AppIdentity {
         NSRunningApplication.runningApplications(withBundleIdentifier: filePanelService)
             .map(\.processIdentifier).first { responsible(for: $0) == pid }
     }
+    /// The panel processes that may take the keys of `pid`'s open panel: the one macOS names as
+    /// working for it, or, when it names none, every one running. Keys reach one only while the
+    /// app is in front, which real input checks before each event.
+    static func filePanelServices(for pid: pid_t) -> Set<pid_t> {
+        if let service = filePanelService(for: pid) { return [service] }
+        return Set(NSRunningApplication.runningApplications(withBundleIdentifier: filePanelService).map(\.processIdentifier))
+    }
 
     /// The panel process is not a regular app, so `resolve` never returns it.
     /// It is reachable only as a dialog over a window a session already controls.
@@ -105,8 +112,10 @@ enum DialogRules {
     /// `buttons` are the dialog's button titles, for a panel whose default button macOS does not
     /// name (Keynote's Insert panel, while nothing is selected). `remote` says macOS's panel process
     /// runs for the app: a sandboxed app's own Open and Save panels are drawn there.
-    static func isFilePanel(bundleID: String, roles: Set<String>, defaultButton: String?, buttons: Set<String> = [], remote: Bool = false) -> Bool {
-        if bundleID == AppIdentity.filePanelService { return true }
+    /// `saveField`: the dialog has a Save sheet's name field, as a Save sheet shown collapsed (no file
+    /// list, such as TextEdit's "Keep this new document?") does.
+    static func isFilePanel(bundleID: String, roles: Set<String>, defaultButton: String?, buttons: Set<String> = [], remote: Bool = false, saveField: Bool = false) -> Bool {
+        if bundleID == AppIdentity.filePanelService || saveField { return true }
         if roles.contains("AXBrowser") { return true }
         guard roles.contains("AXOutline") else { return false }
         if remote { return true }
@@ -420,7 +429,7 @@ extension MacAccessibility {
         }
         let title = elementAttribute(dialog.element, kAXDefaultButtonAttribute).flatMap { attribute($0, kAXTitleAttribute) as? String }
         return DialogRules.isFilePanel(bundleID: app.bundleID, roles: roles, defaultButton: title, buttons: buttons,
-            remote: AppIdentity.filePanelService(for: app.pid) != nil)
+            remote: AppIdentity.filePanelService(for: app.pid) != nil, saveField: saveNameField(dialog) != nil)
     }
 
     /// The on-screen window of `element`, matched by frame as `windows` does.

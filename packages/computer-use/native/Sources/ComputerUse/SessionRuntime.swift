@@ -456,7 +456,8 @@ final class SessionRuntime {
         let until = now + settle
         var found: (id: UInt32, windows: [WindowTarget])?
         while found == nil {
-            let after = access.windowChanges(current.app).windows
+            let changes = access.windowChanges(current.app)
+            let after = changes.windows.union(changes.panels)
             if !after.contains(current.target.id), after.subtracting(before.windows).count > 0 {
                 let windows = (try? await access.windows(current.app)) ?? []
                 let focused = access.focusedWindowID(current.app, windows: windows, requireActive: false).map(UInt32.init)
@@ -739,7 +740,9 @@ final class SessionRuntime {
             if let focus = observedFocus { payload["focused_ref"] = focus.ref }
             if let issue = state.privacyIssue { payload["privacy_issue"] = issue }
             if menus {
-                // Read without opening a menu, so the agent can run a command in one step.
+                // Read without opening a menu, so the agent can run a command in one step. An app in
+                // the background lists its document commands once its window is its key window.
+                if current.parents.isEmpty, !current.app.app.isActive { await MenuFocus.prime(app: current.app, window: current.target.id) }
                 let catalog = access.menuCatalog(current.app)
                 payload["menus"] = catalog.entries.map(\.display)
                 if catalog.truncated { payload["menus_truncated"] = true }
@@ -926,6 +929,9 @@ final class SessionRuntime {
             moment = ProcessInfo.processInfo.systemUptime; returns = 0
             return try await self.shareDesktop(current, returns: &returns, since: moment, front: front)
         }
+        // macOS reports the new front app a moment after the window comes forward; real input
+        // checks the front app before each event, so the first one waits for that report.
+        if front { await FrontReport.wait(for: current.frontApp.pid, frontmost: { NSWorkspace.shared.frontmostApplication?.processIdentifier }) }
         // The person had other work in front, and the window was just brought back for this
         // step. Coordinate steps still check the live window against the observation, where
         // each one lands, before any input; this app's later steps take the front too, so a
@@ -1120,7 +1126,7 @@ final class SessionRuntime {
         let realInput = front && current.mode == .control && ((current.realInput || asksReal) && current.parents.isEmpty || panelKeys)
         if realInput {
             try RealInputGate.shared.arm(pid: current.app.pid, window: current.target.id,
-                panel: panelKeys ? AppIdentity.filePanelService(for: current.app.pid) : nil)
+                panels: panelKeys ? AppIdentity.filePanelServices(for: current.app.pid) : [])
         }
         defer { if realInput { RealInputGate.shared.abandon() } }
         var typedBefore = ""
@@ -1191,8 +1197,6 @@ final class SessionRuntime {
                         throw UseError("stale_observation", "The observed window content or focus changed.", next: "observe")
                     }
                     if action.usesCoordinates {
-                        let captured = try await observationImage(current, bounds: bounds, state: live,
-                            requireFrontmost: frontCheck, check: check)
                         let points: [CGPoint]
                         switch action {
                         case .move(let p), .click(let p, _, _), .scroll(let p, _, _), .rightClick(let p), .hold(let p, _): points = [p]
@@ -1200,11 +1204,15 @@ final class SessionRuntime {
                         default: throw UseError("invalid_arguments", "This action has no coordinates.")
                         }
                         // Scrolling again after this batch's own scroll or drag moves the same view on:
-                        // what changed under the point is the agent's own doing (a map panned, a list scrolled).
-                        guard access.imageDigest(captured.0) == observation.imageDigest
-                                || ImageRegions.unchanged(observation.image, captured.0, around: points)
-                                || BatchContinuation.continuesScroll(action, after: actions[..<index]) && progress.hasInput else {
-                            throw UseError("stale_observation", "The window image changed where this step lands. Observe before coordinate input.", next: "observe")
+                        // what changed under the point is the agent's own doing (a map panned, a list
+                        // scrolled), so no new image is taken. What is at the point is still checked below.
+                        if !(BatchContinuation.continuesScroll(action, after: actions[..<index]) && progress.hasInput) {
+                            let captured = try await observationImage(current, bounds: bounds, state: live,
+                                requireFrontmost: frontCheck, check: check)
+                            guard access.imageDigest(captured.0) == observation.imageDigest
+                                    || ImageRegions.unchanged(observation.image, captured.0, around: points) else {
+                                throw UseError("stale_observation", "The window image changed where this step lands. Observe before coordinate input.", next: "observe")
+                            }
                         }
                         pointerTarget = try access.checkHit(observation.screenPoint(points[0]), target: current.target, app: current.app, background: background || !current.parents.isEmpty)
                     }
@@ -1269,7 +1277,9 @@ final class SessionRuntime {
                 }
                 var path = try await input.execute(action, app: current.app, target: current.target, lease: observation,
                     access: access, records: records, focus: focus, pointerTarget: pointerTarget,
-                    check: checkInput, checkWindow: checkWindow, background: background || !current.parents.isEmpty, editorTyping: editorStep == index,
+                    // A dialog's input is addressed to its app in the background, except a file panel's real
+                    // input: macOS's panel process takes only that, with the window in front.
+                    check: checkInput, checkWindow: checkWindow, background: (background || !current.parents.isEmpty) && !(realInput && panelKeys), editorTyping: editorStep == index,
                     clickToFocus: FocusStep.clicks(in: current.mode), canvasText: canvasText(), realInput: realInput, feedback: { [weak self] feedback in
                         guard let self, self.session?.id == id else { return }
                         self.controls.inputFeedback(feedback)
@@ -1492,7 +1502,8 @@ final class SessionRuntime {
         }
         if progress.hasInput {
             session?.openedByLastAction = windowsAfter.windows.subtracting(windowsBefore.windows)
-            session?.windowsBeforeInput = (windowsBefore.windows, now)
+            // An app's own panel window (QuickTime's launch Open window) can be the session's window too.
+            session?.windowsBeforeInput = (windowsBefore.windows.union(windowsBefore.panels), now)
             // A step that closed its own window waits a moment for the app's new one.
             let closedOwn = !windowsAfter.windows.contains(current.target.id) && current.parents.isEmpty
             if let replaced = await followReplacement(id, settle: closedOwn ? WindowReplacement.settle : 0) { receipt["window_replaced"] = replaced }

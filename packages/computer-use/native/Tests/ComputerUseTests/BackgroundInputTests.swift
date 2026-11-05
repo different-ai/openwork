@@ -125,9 +125,9 @@ final class BackgroundInputTests: XCTestCase {
 
     func testAnAppsOwnFilePanelProcessTakesThatPanelsRealKeys() {
         let app: pid_t = 42, panel: pid_t = 55, other: pid_t = 7, selected: CGWindowID = 10
-        XCTAssertTrue(RealInput.admits(release: false, target: app, window: selected, to: panel, under: 0, panel: panel), "Go To in TextEdit's Save sheet")
+        XCTAssertTrue(RealInput.admits(release: false, target: app, window: selected, to: panel, under: 0, panels: [panel]), "Go To in TextEdit's Save sheet")
         XCTAssertFalse(RealInput.admits(release: false, target: app, window: selected, to: panel, under: 0), "no panel open for the app")
-        XCTAssertFalse(RealInput.admits(release: false, target: app, window: selected, to: other, under: 0, panel: panel))
+        XCTAssertFalse(RealInput.admits(release: false, target: app, window: selected, to: other, under: 0, panels: [panel]))
     }
 
     func testThePersonsInputStillPausesAStepWhileTheAgentSendsRealInput() {
@@ -319,5 +319,33 @@ final class BackgroundInputTests: XCTestCase {
         XCTAssertEqual(moved["front_app_changed"] as? Bool, true)
         XCTAssertEqual(moved["cursor_moved"] as? Bool, true)
         XCTAssertEqual(moved["space_changed"] as? Bool, true)
+    }
+
+    /// The first real click after taking the front was refused: macOS had not reported the new front app yet.
+    func testABatchThatTookTheFrontWaitsForMacOSToReportIt() async {
+        var reads = 0
+        let reported = await FrontReport.wait(for: 42, frontmost: { reads += 1; return reads < 4 ? 7 : 42 }, sleep: { _ in })
+        XCTAssertTrue(reported)
+        XCTAssertEqual(reads, 4, "it stops waiting as soon as the app is reported in front")
+        var slept = 0.0
+        let never = await FrontReport.wait(for: 42, frontmost: { 7 }, sleep: { slept += $0 })
+        XCTAssertFalse(never)
+        XCTAssertLessThanOrEqual(slept, FrontReport.limit + 0.001, "the wait is bounded; real input then says what was in front")
+    }
+
+    func testRealInputSaysWhatWasInTheWay() {
+        XCTAssertEqual(RealInput.blockedReason(front: 7, frontName: "Claude", pid: 42, point: nil, hit: nil), "Claude was in front")
+        XCTAssertEqual(RealInput.blockedReason(front: 42, frontName: "Live", pid: 42, point: CGPoint(x: 1, y: 1), hit: 3), "another app's window or the Dock was at that point")
+        XCTAssertEqual(RealInput.blockedReason(front: 42, frontName: "Live", pid: 42, point: CGPoint(x: 1, y: 1), hit: 42), "another window was over that point")
+        let lost = SharedDesktop.yielding(RealInput.stopped("Claude was in front"))
+        XCTAssertEqual(lost.code, "focus_lost")
+        XCTAssertTrue(lost.message.contains("Claude was in front"), "the receipt keeps the reason")
+        XCTAssertEqual(SharedDesktop.yielding(RealInput.targetChanged).code, "focus_lost")
+    }
+
+    func testMenusReadStaleOnlyForDisabledOrMissingCommands() {
+        XCTAssertTrue(MenuFocus.stale("menu_item_disabled"))
+        XCTAssertTrue(MenuFocus.stale("menu_item_unavailable"))
+        XCTAssertFalse(MenuFocus.stale("blocked_menu_item"), "a blocked command stays blocked")
     }
 }

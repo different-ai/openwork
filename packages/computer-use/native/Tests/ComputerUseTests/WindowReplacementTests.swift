@@ -25,4 +25,11 @@ final class WindowReplacementTests: XCTestCase {
         XCTAssertEqual(WindowReplacement.replacement(before: [24480], after: [24504, 24505], target: 24480, focused: 24504), 24504)
         XCTAssertGreaterThan(WindowReplacement.settle, 0)
     }
+
+    /// QuickTime starts in its Open window, a panel-layer window: after File › New Audio Recording
+    /// the recording window replaced it and the session failed every read.
+    func testAPanelWindowTheSessionWorkedInIsReplacedLikeAnyOther() {
+        let openPanel: UInt32 = 25498, recording: UInt32 = 25504
+        XCTAssertEqual(WindowReplacement.replacement(before: [openPanel], after: [recording], target: openPanel), recording)
+    }
 }

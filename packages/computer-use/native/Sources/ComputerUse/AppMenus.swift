@@ -206,3 +206,16 @@ extension MacAccessibility {
         return MenuTarget(item: current, titleFrame: screenFrame(top.item), shortcut: menuShortcut(current).map { NativeKey.chord($0.key, $0.flags) })
     }
 }
+
+/// An app in the background keeps its menus as they were when it was last active: document
+/// commands (Preview's Export, Keynote's Insert items) read disabled or are missing. Making the
+/// session's window the app's key window, without bringing it forward, has the app bring its
+/// menus up to date, as a person's click in that window would.
+enum MenuFocus {
+    static let settle: UInt64 = 150_000_000
+    static func stale(_ code: String) -> Bool { code == "menu_item_disabled" || code == "menu_item_unavailable" }
+    @MainActor static func prime(app: AppIdentity, window: CGWindowID) async {
+        guard BackgroundFocus.post(pid: app.pid, window: window, makeKey: true) else { return }
+        try? await Task.sleep(nanoseconds: settle)
+    }
+}
