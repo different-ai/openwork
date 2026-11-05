@@ -818,13 +818,65 @@ final class MacAccessibility {
     func bringHere(_ target: WindowTarget, app: AppIdentity) async throws {
         switch presence(target, app: app) {
         case .here, .gone: return
-        case .otherSpace: throw WindowPresence.offSpace
+        case .otherSpace:
+            // Restoring a minimized window puts it on the current Space, as a person does it.
+            guard await moveToThisSpace(target.element), presence(target, app: app) == .here else { throw WindowPresence.offSpace }
+            return
         case .hidden: app.app.unhide()
         case .minimized: _ = AXUIElementSetAttributeValue(target.element, kAXMinimizedAttribute as CFString, kCFBooleanFalse)
         }
         for _ in 0..<10 where presence(target, app: app) != .here { try await Task.sleep(nanoseconds: 100_000_000) }
         if presence(target, app: app) == .otherSpace { throw WindowPresence.offSpace }
     }
+    /// Moves a window from another Space (or the Dock) to the current one without activating its
+    /// app: minimized, then restored, which macOS does on the Space the person is on. True once
+    /// the window shows here.
+    func moveToThisSpace(_ window: AXUIElement) async -> Bool {
+        AXUIElementSetMessagingTimeout(window, 0.5)
+        if (attribute(window, kAXMinimizedAttribute) as? Bool) != true {
+            guard AXUIElementSetAttributeValue(window, kAXMinimizedAttribute as CFString, kCFBooleanTrue) == .success else { return false }
+            for _ in 0..<10 where (attribute(window, kAXMinimizedAttribute) as? Bool) != true { try? await Task.sleep(nanoseconds: 100_000_000) }
+        }
+        guard AXUIElementSetAttributeValue(window, kAXMinimizedAttribute as CFString, kCFBooleanFalse) == .success else { return false }
+        for _ in 0..<15 {
+            if (attribute(window, kAXMinimizedAttribute) as? Bool) == false, windowID(of: window).map(onScreen) ?? true { return true }
+            try? await Task.sleep(nanoseconds: 100_000_000)
+        }
+        return false
+    }
+    /// The app's standard windows that are not on screen here: on another Space or in the Dock.
+    func windowsElsewhere(_ app: AppIdentity) -> [AXUIElement] {
+        let root = AXUIElementCreateApplication(app.pid)
+        AXUIElementSetMessagingTimeout(root, 0.2)
+        return (attribute(root, kAXWindowsAttribute) as? [AXUIElement] ?? []).filter { window in
+            (attribute(window, kAXSubroleAttribute) as? String) == (kAXStandardWindowSubrole as String)
+                && windowID(of: window).map { !onScreen($0) } == true
+        }
+    }
+    private typealias AXWindowNumber = @convention(c) (AXUIElement, UnsafeMutablePointer<CGWindowID>) -> AXError
+    private static let axWindowNumber: AXWindowNumber? = dlsym(UnsafeMutableRawPointer(bitPattern: -2), "_AXUIElementGetWindow")
+        .map { unsafeBitCast($0, to: AXWindowNumber.self) }
+    /// The window number of an accessibility window, as the window list knows it; nil when macOS gives none.
+    func windowID(of element: AXUIElement) -> CGWindowID? {
+        guard let read = Self.axWindowNumber else { return nil }
+        var id: CGWindowID = 0
+        return read(element, &id) == .success && id != 0 ? id : nil
+    }
+    /// Whether the app has a normal window on another Space, by the window list.
+    func hasWindowsOnOtherSpaces(_ app: AppIdentity) -> Bool {
+        let info = CGWindowListCopyWindowInfo([.optionAll, .excludeDesktopElements], kCGNullWindowID) as? [[String: Any]] ?? []
+        return info.contains { entry in
+            guard (entry[kCGWindowOwnerPID as String] as? Int32) == app.pid, (entry[kCGWindowLayer as String] as? Int) == 0,
+                  (entry[kCGWindowIsOnscreen as String] as? Bool) != true,
+                  let bounds = entry[kCGWindowBounds as String] as? [String: Any],
+                  let rect = CGRect(dictionaryRepresentation: bounds as CFDictionary) else { return false }
+            return rect.width > 100 && rect.height > 100
+        }
+    }
+    private func onScreen(_ id: CGWindowID) -> Bool {
+        ((CGWindowListCopyWindowInfo(.optionIncludingWindow, id) as? [[String: Any]])?.first?[kCGWindowIsOnscreen as String] as? Bool) == true
+    }
+
     /// The control showing that the app is editing text in the window (`BatchContinuation.marksEditSession`),
     /// enabled; nil when there is none. Reads labels only, never values.
     func editSession(in target: WindowTarget) -> AXUIElement? {
@@ -920,10 +972,12 @@ final class MacAccessibility {
 
     /// `region` is window-local points (top-left origin); nil captures the whole window.
     /// `jpegQuality` encodes JPEG instead of PNG; `maxLongSide` caps the image's longer edge.
+    /// `comparisonOnly`: the image is compared with the observation's inside the helper and never
+    /// leaves it, so the privacy scan need not be complete; masks are still applied.
     func capture(target: WindowTarget, app: AppIdentity, bounds: CGRect, state: WindowState, region: CGRect? = nil, maxScale: CGFloat = 1,
-                 maxLongSide: CGFloat = 1600, jpegQuality: CGFloat? = nil, requireFrontmost: Bool = false,
+                 maxLongSide: CGFloat = 1600, jpegQuality: CGFloat? = nil, requireFrontmost: Bool = false, comparisonOnly: Bool = false,
                  check: () throws -> Void = {}) async throws -> (Data, Int, Int, Int64) {
-        try state.requireCapture()
+        if !comparisonOnly { try state.requireCapture() }
         guard Geometry.valid(bounds) else { throw UseError("invalid_geometry", "The window has invalid capture bounds.", next: "observe") }
         try Task.checkCancellation(); try check()
         let content = try await SCShareableContent.excludingDesktopWindows(true, onScreenWindowsOnly: true)
@@ -948,7 +1002,7 @@ final class MacAccessibility {
         let capturedAt = Int64(Date().timeIntervalSince1970 * 1000)
         try Task.checkCancellation(); try check()
         let after = try await read(target, check: check)
-        try after.requireCapture()
+        if !comparisonOnly { try after.requireCapture() }
         guard try validate(target, app: app, requireFrontmost: requireFrontmost) == bounds else {
             throw UseError("stale_observation", "The window moved during capture.", next: "observe")
         }

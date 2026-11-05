@@ -212,6 +212,11 @@ final class SessionRuntime {
                     windows = try await access.windows(identity)
                 }
             }
+            if windows.isEmpty, let elsewhere = access.windowsElsewhere(identity).first {
+                // Its window is on another Space or in the Dock: bring it here, as a person would.
+                if await access.moveToThisSpace(elsewhere) { windows = try await access.windows(identity) }
+            }
+            if windows.isEmpty, access.hasWindowsOnOtherSpaces(identity) { throw WindowPresence.offSpace }
             guard !windows.isEmpty else { throw UseError("window_unavailable", "The app opened, but did not expose a usable window. Check for a sign-in or app dialog, then request a session again.", next: "human_takeover") }
             try Task.checkCancellation()
             let requested = values["window_id"] == nil ? nil : try a.integer("window_id", min: 1, max: Int(UInt32.max))
@@ -768,11 +773,12 @@ final class SessionRuntime {
     /// The re-capture that guards coordinate input uses the same encoding, so digests compare;
     /// a session's mode never changes, so neither does its profile.
     static let observationMimeType = "image/jpeg"
-    private func observationImage(_ current: Session, bounds: CGRect, state: WindowState, requireFrontmost: Bool,
+    private func observationImage(_ current: Session, bounds: CGRect, state: WindowState, requireFrontmost: Bool, comparisonOnly: Bool = false,
                                   check: () throws -> Void) async throws -> (Data, Int, Int, Int64) {
         let profile = ImagePolicy.profile(mode: current.mode, policy: policy)
         return try await access.capture(target: current.target, app: current.app, bounds: bounds, state: state,
-            maxLongSide: profile.maxLongSide, jpegQuality: profile.jpegQuality, requireFrontmost: requireFrontmost, check: check)
+            maxLongSide: profile.maxLongSide, jpegQuality: profile.jpegQuality, requireFrontmost: requireFrontmost,
+            comparisonOnly: comparisonOnly, check: check)
     }
 
     /// A sharper look at part of the current observation, for reading only. It
@@ -1222,8 +1228,10 @@ final class SessionRuntime {
                         // what changed under the point is the agent's own doing (a map panned, a list
                         // scrolled), so no new image is taken. What is at the point is still checked below.
                         if !(BatchContinuation.continuesScroll(action, after: actions[..<index]) && progress.hasInput) {
+                            // Compared where the step lands, never shown: a window whose privacy scan cannot
+                            // finish (Maps' map pins) still gets its pointer steps.
                             let captured = try await observationImage(current, bounds: bounds, state: live,
-                                requireFrontmost: frontCheck, check: check)
+                                requireFrontmost: frontCheck, comparisonOnly: true, check: check)
                             guard access.imageDigest(captured.0) == observation.imageDigest
                                     || ImageRegions.unchanged(observation.image, captured.0, around: points) else {
                                 throw UseError("stale_observation", "The window image changed where this step lands. Observe before coordinate input.", next: "observe")

@@ -223,4 +223,12 @@ final class DialogTests: XCTestCase {
         XCTAssertFalse(DialogRules.isFilePanel(bundleID: "com.apple.TextEdit", roles: ["AXButton", "AXTextField", "AXStaticText"], defaultButton: "Save"),
             "a sheet with no Save name field and no file list is not one")
     }
+
+    /// Keynote's Insert panel read its sidebar's place as a second selected file.
+    func testAFilePanelsSidebarSelectionIsAPlaceNotAFile() {
+        XCTAssertTrue(DialogRules.isSidebar(description: "sidebar", identifier: nil))
+        XCTAssertTrue(DialogRules.isSidebar(description: nil, identifier: "NSSidebarOutlineView"))
+        XCTAssertFalse(DialogRules.isSidebar(description: "list view", identifier: "FI_TListView"))
+        XCTAssertFalse(DialogRules.isSidebar(description: nil, identifier: nil))
+    }
 }
