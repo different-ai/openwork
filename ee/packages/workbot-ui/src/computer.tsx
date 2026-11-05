@@ -138,7 +138,7 @@ export function WorkbotComputer({ onTeachingChange, onRun, canTeach = true, onVi
       </div> : null}
       {paused || error ? <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 px-6 text-center">
         {view === "browser" ? <Globe size={24} strokeWidth={1.5} className="text-[var(--wb-muted)]" aria-hidden /> : <Monitor size={24} strokeWidth={1.5} className="text-[var(--wb-muted)]" aria-hidden />}
-        <p className="text-[14px] text-[var(--wb-text)]">{error ?? "Your computer is paused."}</p>
+        <p className="text-[14px] text-[var(--wb-text)]">{error ?? (computerTabLabel(host) === "Browser" ? "Workbot's browser is paused." : "Your computer is paused.")}</p>
         <div className="flex flex-wrap items-center justify-center gap-1">
           <button type="button" className={button} disabled={changing} onClick={() => paused ? void action("resume") : setRevision(current => current + 1)}>{paused ? <Play size={14} aria-hidden /> : <RotateCw size={14} aria-hidden />}{paused ? "Resume" : "Reconnect"}</button>
           {paused ? null : <RebuildComputer disabled={changing} onRebuild={() => void action("rebuild")} />}

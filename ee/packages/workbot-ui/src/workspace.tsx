@@ -189,20 +189,20 @@ export function useWideScreen(minWidth = 1024) {
  * Browser-heavy work: the conversation docked beside Workbot's live browser (or computer) instead of floating over
  * it, so the person can watch the page and direct Workbot at the same time. The open tab is shared with each message
  * unless they turn it off for this tab; the chip names it. On narrow windows the floating chat is used instead.
+ * Document offers follow the page's own rules (workspace assistant and Documents on), so nothing is offered here
+ * that the page itself can't open.
  */
-export function DockedChat({ name, context, includeContext, onIncludeContext, composer, conversation, unavailable, onDocument }: { name: string; context: WorkbotViewContext | null; includeContext: boolean; onIncludeContext(value: boolean): void; composer: ReactNode; conversation: ReactNode; unavailable: boolean; onDocument(fileId: string): void }) {
+export function DockedChat({ name, context, includeContext, onIncludeContext, composer, conversation, unavailable }: { name: string; context: WorkbotViewContext | null; includeContext: boolean; onIncludeContext(value: boolean): void; composer: ReactNode; conversation: ReactNode; unavailable: boolean }) {
   return <aside aria-label={`Chat with ${name}`} className="workbot flex min-h-0 w-[min(400px,36vw)] shrink-0 flex-col border-l border-[var(--wb-hairline)] bg-[var(--wb-bg)]" data-workbot-docked-chat data-testid="workbot-docked-chat">
     <div className="flex h-12 shrink-0 items-center justify-between gap-2 px-4">
       <h2 className="truncate text-[13px] font-semibold text-[var(--wb-text)]">{name}</h2>
       {context && <button type="button" aria-pressed={includeContext} onClick={() => onIncludeContext(!includeContext)}
-        title={includeContext ? "Your next message tells Workbot which tab you're on. Click to leave it out." : "Tell Workbot which tab you're on"}
+        title={includeContext ? `Your next message tells ${name} which tab you're on. Click to leave it out.` : `Tell ${name} which tab you're on`}
         className={`min-w-0 max-w-[60%] truncate rounded-full px-2.5 py-1 text-[11px] transition-colors duration-150 hover:bg-[var(--wb-chip)] focus-visible:outline-none focus-visible:shadow-[var(--wb-focus)] ${includeContext ? "bg-[var(--wb-chip)] text-[var(--wb-text)]" : "text-[var(--wb-muted)] line-through"}`}
         data-testid="workbot-docked-context">{workbotContextLabel(context)}{includeContext ? " · This tab" : ""}</button>}
     </div>
-    <WorkspaceNavigationContext.Provider value={onDocument}>
-      {unavailable ? <p className="flex-1 p-4 text-[13px] text-[var(--wb-muted)]" role="status">Chat is unavailable. Open Home to try again.</p>
-        : <div className="flex min-h-0 flex-1 flex-col">{conversation}</div>}
-    </WorkspaceNavigationContext.Provider>
+    {unavailable ? <p className="flex-1 p-4 text-[13px] text-[var(--wb-muted)]" role="status">Chat is unavailable. Open Home to try again.</p>
+      : <div className="flex min-h-0 flex-1 flex-col">{conversation}</div>}
     <div className="shrink-0 px-3 pb-3 pt-2">{composer}</div>
   </aside>;
 }

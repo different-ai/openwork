@@ -251,7 +251,7 @@ function ScopedDocumentsBrowser({ provider, editor, scope, enabled, editingEnabl
     setBusyIds(current => new Set([...current].filter(key => !discarded.has(key))))
     updateLocks(current => new Map([...current].filter(([key]) => !discarded.has(key))))
     setRecoveryError(undefined)
-    // Unmounting only the discarded editors releases their gcTime:0 queries.
+    // release() drops only the discarded files' editor reads.
     // Never clear the directory denial or another restored editor's cache here.
   }, [updateLocks, onDirtyChange, release])
   useEffect(() => {
@@ -329,7 +329,7 @@ function ScopedDocumentsBrowser({ provider, editor, scope, enabled, editingEnabl
         : query.isPending ? <div className="ow-documents-skeleton" aria-label="Loading documents" aria-busy="true">{Array.from({ length: 8 }, (_, index) => <div key={index} />)}</div>
         : <><div className="ow-documents-content">
           <div className="ow-documents-listing">
-            {layout === "list" ? <table><thead><tr><th scope="col">Name</th><th scope="col">Type</th><th scope="col">Last modified</th><th scope="col">Size</th></tr></thead><tbody>{listedItems.map(item => <tr key={item.id} data-selected={selected?.id === item.id} onPointerEnter={intent(item).onPointerEnter} onPointerLeave={intent(item).onPointerLeave} onClick={event => { if (!(event.target instanceof Element && event.target.closest("button, a"))) pick(item) }}><td><button type="button" className="ow-documents-file" {...intent(item)} onClick={() => pick(item)}><ItemIcon item={item} /><span>{item.name}</span></button></td><td>{documentType(item)}</td><td>{date(item.modifiedTime)}</td><td>{size(item.size)}</td></tr>)}</tbody></table>
+            {layout === "list" ? <table><thead><tr><th scope="col">Name</th><th scope="col">Type</th><th scope="col">Last modified</th><th scope="col">Size</th></tr></thead><tbody>{listedItems.map(item => <tr key={item.id} data-selected={selected?.id === item.id} onPointerEnter={intent(item).onPointerEnter} onPointerLeave={intent(item).onPointerLeave} onPointerDown={intent(item).onPointerDown} onClick={event => { if (!(event.target instanceof Element && event.target.closest("button, a"))) pick(item) }}><td><button type="button" className="ow-documents-file" onFocus={intent(item).onFocus} onBlur={intent(item).onBlur} onClick={() => pick(item)}><ItemIcon item={item} /><span>{item.name}</span></button></td><td>{documentType(item)}</td><td>{date(item.modifiedTime)}</td><td>{size(item.size)}</td></tr>)}</tbody></table>
               : <div className="ow-documents-grid">{listedItems.map(item => <button type="button" key={item.id} className="ow-documents-tile" data-selected={selected?.id === item.id} {...intent(item)} onClick={() => pick(item)}><ItemIcon item={item} /><strong>{item.name}</strong><span>{documentType(item)}</span></button>)}</div>}
             {listedItems.length === 0 && <div className="ow-documents-state"><Folder size={24} strokeWidth={1.5} /><p>{lockedResources.size > 0 ? "Some documents are locked." : search ? "No documents match your search." : view === "recent" ? "No recent documents in Drive." : "This folder is empty."}</p></div>}
             {query.hasNextPage && <button type="button" className="ow-documents-more" disabled={query.isFetchingNextPage} onClick={() => void query.fetchNextPage()}>Load more</button>}

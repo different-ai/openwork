@@ -20,7 +20,7 @@ test("Workbot's menus name the computer page for what the person has", async ({ 
     await user.screenshot();
     await user.click({ role: "button", label: "Browser" });
     expect(await probe.url()).toContain("/browser");
-    await user.see({ text: "Your computer is paused." });
+    await user.see({ text: "Workbot's browser is paused." });
     expect((await probe.dom('section[aria-label="Browser"]')).elements.length).toBe(1);
     await user.navigate(`${world.url}?browser=on`);
     await user.click({ role: "button", label: "Open workspace navigation" });
@@ -42,7 +42,7 @@ test("the conversation docks beside the browser for browser-heavy work", async (
   await user.resizeViewport({ width: 1440, height: 1000, deviceScaleFactor: 1 });
   await step("before: with workbotBrowserChat off, the Browser page has no way to talk to Workbot", async () => {
     await user.navigate(`${world.url}browser?assistant=off&browser=on`);
-    await user.see({ text: "Your computer is paused." });
+    await user.see({ text: "Workbot's browser is paused." });
     expect((await probe.dom('section[aria-label="Browser"]')).elements.length).toBe(1);
     await user.notSee({ testId: "workbot-docked-chat" });
     expect((await probe.dom("[data-workbot-composer] textarea")).elements.filter(element => element.rect.width > 0).length).toBe(0);
@@ -50,7 +50,7 @@ test("the conversation docks beside the browser for browser-heavy work", async (
   });
   await step("after: the same conversation sits beside the browser, and a message sent there reaches Workbot", async () => {
     await user.navigate(`${world.url}browser?assistant=off&browser=on&browserChat=on`);
-    await user.see({ text: "Your computer is paused." });
+    await user.see({ text: "Workbot's browser is paused." });
     expect((await probe.dom('section[aria-label="Browser"]')).elements.length).toBe(1);
     await user.see({ testId: "workbot-docked-chat" });
     await user.see({ text: "Hi Workbot" });
@@ -65,7 +65,7 @@ test("the conversation docks beside the browser for browser-heavy work", async (
   await step("after: on a narrow window the chat floats over the browser instead of squeezing it", async () => {
     await user.resizeViewport({ width: 900, height: 900, deviceScaleFactor: 1 });
     await user.navigate(`${world.url}browser?assistant=off&browser=on&browserChat=on`);
-    await user.see({ text: "Your computer is paused." });
+    await user.see({ text: "Workbot's browser is paused." });
     expect((await probe.dom('section[aria-label="Browser"]')).elements.length).toBe(1);
     await user.notSee({ testId: "workbot-docked-chat" });
     await user.see({ role: "button", label: /workspace chat/ });

@@ -8,7 +8,7 @@ import type { DocumentsEditor } from "./model"
  * identities.
  */
 
-/** A listing the person left stays on screen when they come back, while it refreshes behind it (it is never fresh). */
+/** A listing the person left stays on screen when they come back, while it refreshes behind it. */
 export const DOCUMENTS_LIST_GC_MS = 5 * 60_000
 /** A file read started on hover is kept this long for the click that usually follows; then it is dropped. */
 export const DOCUMENT_PREFETCH_GC_MS = 20_000
@@ -30,7 +30,8 @@ export function documentEditorKey(scope: readonly string[], fileId: string, shee
 
 /**
  * Reads the Recent listing ahead of the person opening Documents (on hovering its tab), into the exact entry the
- * browser reads first, so it opens with files instead of a skeleton. A listing already cached is left alone.
+ * browser reads first, so it opens with files instead of a skeleton. A listing read in the last few seconds is not
+ * read again.
  */
 export function prefetchRecentDocuments(client: QueryClient, input: { provider: DocumentsProvider; scope: readonly string[] }) {
   return client.prefetchInfiniteQuery({

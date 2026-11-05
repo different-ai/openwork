@@ -414,7 +414,7 @@ function ChatScreen({ host, composerState, navigation, onDraftsChange }: { host:
           </div>
           <div className="flex min-h-0 min-w-0 flex-1" style={{ display: tab === "computer" ? undefined : "none" }} hidden={tab !== "computer"}>
             {computerVisited && computerViews(host).length > 0 && <WorkbotComputer key={`${host.identity?.organizationId}:${host.identity?.principalId}`} onTeachingChange={setTeaching} onRun={text => submit(text, undefined, true)} canTeach={!side} onViewChange={setComputerView} onContextChange={setBrowserContext} />}
-            {docked && <DockedChat name={name} context={currentContext} includeContext={includeContext} onIncludeContext={setIncludeContext} composer={composer} conversation={conversation} unavailable={!data && !loading} onDocument={navigateFromChat} />}
+            {docked && <DockedChat name={name} context={currentContext} includeContext={includeContext} onIncludeContext={setIncludeContext} composer={composer} conversation={conversation} unavailable={!data && !loading} />}
           </div>
           </div>
           {previewFile && <PreviewPanel file={previewFile} onClose={() => setPreview(null)} />}

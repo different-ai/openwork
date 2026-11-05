@@ -28,4 +28,4 @@ The next page load shows the Browser page without the conversation beside it, as
 
 ## Proof
 
-`evals/proofs/workbot-streamline.proof.test.ts` ("the conversation docks beside the browser for browser-heavy work") renders the real Workbot page against a fixture Den, with the feature off and on, and on a narrow window. It does not start a cloud computer: the browser shows its paused state.
+`evals/proofs/workbot-streamline.proof.test.ts` ("the conversation docks beside the browser for browser-heavy work") renders the real Workbot page against a fixture Den, with the feature off and on, and on a narrow window. It does not start a cloud computer: the browser shows its paused state ("Workbot's browser is paused.").

@@ -45,7 +45,6 @@ export async function workbotWorkspace(seed: Seed, { place }: { place: Place }) 
   let pendingIdentities = 0;
   const releaseIdentities: (() => void)[] = [];
   let listingFailure = false;
-  let viewerReads = 0;
   let recentStatus = 200;
   let folderStatus = 200;
   let holdFolder = false;
@@ -117,7 +116,7 @@ export async function workbotWorkspace(seed: Seed, { place }: { place: Place }) 
             return json({ available: true, name: "Workbot", organizationName: "Example", status: "idle", turns: thread(actor), hasEarlier: false, filesEnabled: false });
           }
           // No cloud computer in this fixture: its viewer always answers that the computer is paused.
-          if (url.pathname === "/v1/workbot/computer/viewer") { viewerReads++; return json({ state: "paused" }); }
+          if (url.pathname === "/v1/workbot/computer/viewer") return json({ state: "paused" });
           // A spreadsheet Workbot wrote in the conversation (seedOwnerSpreadsheet): its bytes, and no rendered preview.
           if (url.pathname === "/v1/workbot/files/out_budget/preview") return json({ error: "not_found" }, 404);
           if (url.pathname === "/v1/workbot/files/out_budget") {
@@ -228,7 +227,7 @@ export async function workbotWorkspace(seed: Seed, { place }: { place: Place }) 
     resources.defer(releaseContent);
     resources.defer(releaseMetadata);
     return {
-      web, url, messages: () => [...messages], viewerReads: () => viewerReads, opened: () => [...opened], editorReads: () => [...editorReads], editorConnections: () => [...editorConnections], documentWrites: () => [...documentWrites],
+      web, url, messages: () => [...messages], opened: () => [...opened], editorReads: () => [...editorReads], editorConnections: () => [...editorConnections], documentWrites: () => [...documentWrites],
       holdDocumentMetadata: () => { holdMetadata = true; }, releaseDocumentMetadata: releaseMetadata,
       holdPreviewContent: () => { holdContent = true; }, releasePreviewContent: releaseContent, contentReads: () => [...contentReads],
       identityReads: () => [...identityReads], identityScopes: () => [...identityScopes], listingReads: () => [...listingReads], pendingFolders: () => pendingFolders,

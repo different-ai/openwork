@@ -110,7 +110,7 @@ const TAB_KEYWORDS: Record<WorkbotPaletteTab, string> = {
   documents: "drive files docs sheets",
   computer: "browser desktop screen web page",
 };
-/** The computer page goes by "Browser" where the browser is its only view; it keeps the same keywords either way. */
+/** The computer page's icon where it goes by "Browser" (the browser is its only view); "computer" stays a keyword. */
 const BROWSER_ICON = <Globe size={16} strokeWidth={1.5} aria-hidden />;
 
 function isMac() {
