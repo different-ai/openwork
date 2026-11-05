@@ -13,6 +13,7 @@ import {
 } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Textarea } from "@/components/ui/textarea";
 import { toast } from "@/components/ui/sonner";
@@ -211,46 +212,42 @@ export function ProjectDetailPage({
               </div>
             ) : null}
             <div className="flex items-center justify-between gap-3 pt-1">
-              <div className="relative">
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  className="text-muted-foreground"
-                  onClick={() => setFolderPickerOpen((value) => !value)}
-                  aria-expanded={folderPickerOpen}
+              <Popover open={folderPickerOpen} onOpenChange={setFolderPickerOpen}>
+                <PopoverTrigger
+                  type="button"
+                  aria-label="Agregar carpeta"
+                  className="inline-flex h-8 items-center gap-1.5 rounded-md px-2 text-xs text-muted-foreground hover:bg-muted/60 hover:text-foreground focus-visible:rounded focus-visible:ring-2 focus-visible:ring-ring"
                 >
                   <Paperclip className="size-4" aria-hidden />
                   Agregar carpeta
-                </Button>
-                {folderPickerOpen ? (
-                  <div className="absolute bottom-9 left-0 z-20 max-h-56 w-72 overflow-y-auto rounded-lg border border-border bg-background p-2 shadow-lg">
-                    {foldersQuery.isPending ? (
-                      <Skeleton className="h-16 w-full" />
-                    ) : (foldersQuery.data ?? []).length === 0 ? (
-                      <p className="px-1 py-2 text-xs text-muted-foreground">Sin carpetas en el proyecto.</p>
-                    ) : (
-                      <ul>
-                        {(foldersQuery.data ?? []).map((folder) => (
-                          <li key={folder}>
-                            <button
-                              type="button"
-                              disabled={attachedFolders.includes(folder)}
-                              onClick={() => {
-                                setAttachedFolders((current) => [...current, folder]);
-                                setFolderPickerOpen(false);
-                              }}
-                              className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-xs text-foreground hover:bg-muted/60 disabled:opacity-40"
-                            >
-                              <Folder className="size-3.5 shrink-0 text-muted-foreground" aria-hidden />
-                              <span className="truncate">{folder}</span>
-                            </button>
-                          </li>
-                        ))}
-                      </ul>
-                    )}
-                  </div>
-                ) : null}
-              </div>
+                </PopoverTrigger>
+                <PopoverContent align="start" className="max-h-56 w-72 overflow-y-auto p-2">
+                  {foldersQuery.isPending ? (
+                    <Skeleton className="h-16 w-full" />
+                  ) : (foldersQuery.data ?? []).length === 0 ? (
+                    <p className="px-1 py-2 text-xs text-muted-foreground">Sin carpetas en el proyecto.</p>
+                  ) : (
+                    <ul>
+                      {(foldersQuery.data ?? []).map((folder) => (
+                        <li key={folder}>
+                          <button
+                            type="button"
+                            disabled={attachedFolders.includes(folder)}
+                            onClick={() => {
+                              setAttachedFolders((current) => [...current, folder]);
+                              setFolderPickerOpen(false);
+                            }}
+                            className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-xs text-foreground hover:bg-muted/60 disabled:opacity-40"
+                          >
+                            <Folder className="size-3.5 shrink-0 text-muted-foreground" aria-hidden />
+                            <span className="truncate">{folder}</span>
+                          </button>
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                </PopoverContent>
+              </Popover>
               <div className="flex items-center gap-2">
                 <TaskSelectionSelects
                   modelGroups={selection.modelGroups}
