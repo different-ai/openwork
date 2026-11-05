@@ -432,6 +432,28 @@ final class SessionRuntime {
               "next": waited ? "human_takeover" : "observe", "message": HandoverRules.message(prompt.reason, waited: waited)])
     }
     /// A file panel lists the person's files: nothing of it reaches the agent until they allow it.
+    private enum PanelWait { case unchanged, observed(String), approval([[String: Any]]) }
+    /// An Open or Place panel the app is still opening when open_in_panel arrives (a menu command's
+    /// panel can take seconds): wait for it (`OpenPanelRules.wait`), follow it, sheet or window of its
+    /// own, and look at it here. The step uses only the panel, never an observed element or point, so
+    /// the model need not see it first. A panel the person has not let the agent see asks them first.
+    private func awaitOpenPanel(_ id: String, filePanelAccess: CGWindowID?) async throws -> PanelWait {
+        let until = now + OpenPanelRules.wait
+        var followed = false
+        while true {
+            if try await followDialog(id) { followed = true }
+            let current = try current(id)
+            if OpenPanelRules.isOpenPanel(kind: current.dialogKind, saveField: access.saveNameField(current.target) != nil,
+                defaultButton: access.defaultButton(current.target).flatMap { access.attribute($0, kAXTitleAttribute) as? String }) {
+                guard followed || current.observation == nil else { return .unchanged }
+                if current.filePanelAllowed != current.target.id, filePanelAccess != current.target.id { return .approval(filePanelAccessRequired(current)) }
+                _ = try await observe(id, image: false, elements: "interactive", filePanelAccess: filePanelAccess)
+                return session?.observation.map { .observed($0.id) } ?? .unchanged
+            }
+            guard now < until else { return .unchanged }
+            try await Task.sleep(nanoseconds: 100_000_000); try checkActive(current)
+        }
+    }
     private func filePanelAccessRequired(_ current: Session) -> [[String: Any]] {
         text(["ok": false, "code": "file_panel_approval_required", "app": current.frontApp.name, "panel_id": Int(current.target.id), "dispatched": false, "next": "observe",
               "message": "A file panel opened. The person is asked before the agent sees their files; nothing was read."])
@@ -766,6 +788,15 @@ final class SessionRuntime {
         if let receipt = cached.receipts[requestID] {
             guard cached.receiptInputs[requestID] == fingerprint else { throw UseError("request_id_reused", "A request_id cannot name a different action.") }
             return text(receipt)
+        }
+        // open_in_panel sent right after the command that opens the panel: wait for the panel and look at it here.
+        var observationID = observationID
+        if actions.count == 1, case .openInPanel = actions[0] {
+            switch try await awaitOpenPanel(id, filePanelAccess: filePanelAccess) {
+            case .observed(let looked): observationID = looked
+            case .approval(let prompt): return prompt
+            case .unchanged: break
+            }
         }
         // A dialog opened or closed since the last look: its controls are not the observed ones.
         if try await followDialog(id) {
@@ -1715,6 +1746,8 @@ final class SessionRuntime {
             var next = await access.openMenu(of: scope.app)
             if next == nil { next = await access.dialog(over: scope.target, app: scope.app) }
             if next == nil, scope.dialogKind != .menu { next = await access.openedWindow(by: opened, over: scope.target, app: scope.app) }
+            // An Open or Place panel that is a window of its own, which the app focused after the action returned.
+            if next == nil, scope.dialogKind != .menu, scope.dialogKind != .filePanel { next = await access.focusedFilePanel(than: scope.target, app: scope.app) }
             if let dialog = next, session?.id == id, !scope.parents.contains(where: { $0.target.id == dialog.target.id }) {
             session?.parents.append((scope.app, scope.target, scope.dialogKind))
             session?.app = dialog.app; session?.target = dialog.target; session?.dialogKind = dialog.kind

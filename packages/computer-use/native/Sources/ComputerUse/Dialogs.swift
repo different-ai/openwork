@@ -127,6 +127,15 @@ enum SaveRules {
 /// through accessibility and read it back, then Return. Save and Open steps both use it.
 enum PanelGoTo {
     enum Failure: Equatable { case noField, notTaken }
+    /// How the Go To field is opened, in order until one does. Command-Shift-G first; a save sheet
+    /// shown collapsed (QuickTime's) may ignore it, so it is expanded and its name field focused
+    /// before trying again; last, a "/" typed into the name field opens Go To as it does for a person.
+    enum Way: Equatable { case shortcut, expanded, slashInName }
+    static func ways(save: Bool) -> [Way] { save ? [.shortcut, .expanded, .slashInName] : [.shortcut, .shortcut] }
+    static func open<Field>(_ ways: [Way], attempt: (Way) async throws -> Field?) async throws -> Field? {
+        for way in ways { if let field = try await attempt(way) { return field } }
+        return nil
+    }
     static func enter<Field>(_ path: String, open: () async throws -> Field?, set: (Field, String) -> Bool,
                              value: (Field) -> String?, submit: (Field) async throws -> Void) async throws -> Failure? {
         guard let field = try await open() else { return .noField }
@@ -139,6 +148,8 @@ enum PanelGoTo {
 /// Open-style panels (Open, Place, Insert, Attach): the step that picks a file reads back what
 /// it chose and what the app did with it.
 enum OpenPanelRules {
+    /// How long open_in_panel waits for a panel that is still opening.
+    static let wait: TimeInterval = 2
     /// A panel that hands a file to the app: a file panel with no Save name field, whose
     /// default button opens or places what is selected.
     static func isOpenPanel(kind: DialogTarget.Kind?, saveField: Bool, defaultButton: String?) -> Bool {
@@ -190,6 +201,22 @@ extension MacAccessibility {
             (attribute(element, kAXRoleAttribute) as? String) == "AXTextField"
                 && (attribute(element, kAXIdentifierAttribute) as? String)?.lowercased().contains("save") == true
         }
+    }
+
+    /// Expands a save sheet shown collapsed (no file browser), by its disclosure button; false when
+    /// there is none or it is already expanded.
+    func expandSavePanel(_ dialog: WindowTarget) -> Bool {
+        guard let button = firstElement(in: dialog.element, where: { (attribute($0, kAXRoleAttribute) as? String) == "AXDisclosureTriangle" }),
+              (attribute(button, kAXValueAttribute) as? NSNumber)?.intValue == 0 else { return false }
+        return AXUIElementPerformAction(button, kAXPressAction as CFString) == .success
+    }
+
+    /// The app's focused window when it is a file panel that is a window of its own rather than a
+    /// sheet: apps that run an Open or Place panel modally give it a standard window's subrole.
+    func focusedFilePanel(than target: WindowTarget, app: AppIdentity) async -> DialogTarget? {
+        guard let focused = elementAttribute(AXUIElementCreateApplication(app.pid), kAXFocusedWindowAttribute), !CFEqual(focused, target.element),
+              let found = await windowTarget(for: focused, pid: app.pid), isFilePanel(found, app: app) else { return nil }
+        return DialogTarget(target: found, app: app, kind: .filePanel)
     }
 
     /// The text field that has the keyboard in `pid`: after Command-Shift-G, the panel's Go To field.

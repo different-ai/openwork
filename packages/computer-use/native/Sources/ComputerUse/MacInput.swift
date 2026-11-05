@@ -219,7 +219,7 @@ final class MacInput {
                 func until<T>(_ seconds: Double, _ found: () -> T?) async throws -> T? {
                     try await self.until(seconds, check: check, found)
                 }
-                if let failure = try await goTo(file.deletingLastPathComponent().path, besides: field, app: app, access: access, check: check) {
+                if let failure = try await goTo(file.deletingLastPathComponent().path, besides: field, in: target, app: app, access: access, check: check) {
                     throw UseError("save_folder_unavailable", failure == .noField
                         ? "The sheet did not open its Go To field, so the folder could not be chosen. Nothing was saved."
                         : "The Go To field did not take the folder. Nothing was saved.", next: "observe")
@@ -257,7 +257,7 @@ final class MacInput {
             case .openInPanel(let file):
                 // A person's steps in an Open panel: Go To the file, which selects it, then the
                 // panel's default button. The path and the selection are read back before the press.
-                try await OpenPanelRules.pick(file, goTo: { try await goTo($0, besides: nil, app: app, access: access, check: check) },
+                try await OpenPanelRules.pick(file, goTo: { try await goTo($0, besides: nil, in: target, app: app, access: access, check: check) },
                     selection: { access.selectedFileNames(target) },
                     until: { selected in try await until(2, check: check, { selected() ? true : nil }) == true },
                     button: { access.defaultButton(target).map { (access.attribute($0, kAXTitleAttribute) as? String, access.attribute($0, kAXEnabledAttribute) as? Bool != false) } },
@@ -594,15 +594,41 @@ final class MacInput {
     }
     /// A file panel's Go To field (`PanelGoTo`), live: the field is the one that takes the keyboard
     /// after Command-Shift-G, never `besides` (a Save sheet's name field). Nil once it was entered.
-    private func goTo(_ path: String, besides field: AXUIElement?, app: AppIdentity, access: MacAccessibility, check: () throws -> Void) async throws -> PanelGoTo.Failure? {
-        try await PanelGoTo.enter(path, open: { () async throws -> AXUIElement? in
+    /// `field` is a save sheet's name field; nil for an Open panel (`PanelGoTo.ways`).
+    private func goTo(_ path: String, besides field: AXUIElement?, in panel: WindowTarget, app: AppIdentity, access: MacAccessibility,
+                      check: () throws -> Void) async throws -> PanelGoTo.Failure? {
+        let name = field.flatMap { access.attribute($0, kAXValueAttribute) as? String }
+        var typedSlash = false
+        return try await PanelGoTo.enter(path, open: { () async throws -> AXUIElement? in
             let earlier = access.focusedTextField(app.pid)
+            @MainActor func opened() async throws -> AXUIElement? {
+                try await until(2, check: check, { access.focusedTextField(app.pid).flatMap { live in
+                    field.map { CFEqual(live, $0) } == true || earlier.map { CFEqual(live, $0) } == true ? nil : live } })
+            }
             let goTo: CGEventFlags = [.maskCommand, .maskShift]
-            try modifiers(goTo, pid: app.pid, check: check)
-            try keyboard(try keyCode("g", flags: goTo), flags: goTo, text: nil, pid: app.pid, check: check)
-            releaseModifiers()
-            return try await until(2, check: check, { access.focusedTextField(app.pid).flatMap { live in
-                field.map { CFEqual(live, $0) } == true || earlier.map { CFEqual(live, $0) } == true ? nil : live } })
+            let found = try await PanelGoTo.open(PanelGoTo.ways(save: field != nil)) { way -> AXUIElement? in
+                switch way {
+                case .shortcut: break
+                case .expanded:
+                    // A collapsed sheet: show its file browser, and put the keyboard in its name field as a person would.
+                    if access.expandSavePanel(panel) { try await Task.sleep(nanoseconds: 400_000_000); try check() }
+                    if let field { _ = AXUIElementSetAttributeValue(field, kAXFocusedAttribute as CFString, kCFBooleanTrue) }
+                case .slashInName:
+                    // "/" typed into the name field opens Go To with it, which the path then replaces.
+                    guard let field, AXUIElementSetAttributeValue(field, kAXFocusedAttribute as CFString, kCFBooleanTrue) == .success,
+                          access.focusedTextField(app.pid).map({ CFEqual($0, field) }) == true else { return nil }
+                    try keyboard(0, flags: [], text: "/", pid: app.pid, check: check)
+                    typedSlash = true
+                    return try await opened()
+                }
+                try modifiers(goTo, pid: app.pid, check: check)
+                try keyboard(try keyCode("g", flags: goTo), flags: goTo, text: nil, pid: app.pid, check: check)
+                releaseModifiers()
+                return try await opened()
+            }
+            // The "/" stayed in the name field: put the name back as it was.
+            if found == nil, typedSlash, let field, let name { _ = AXUIElementSetAttributeValue(field, kAXValueAttribute as CFString, name as CFString) }
+            return found
         }, set: { AXUIElementSetAttributeValue($0, kAXValueAttribute as CFString, $1 as CFString) == .success },
         value: { access.attribute($0, kAXValueAttribute) as? String },
         submit: { goToField in

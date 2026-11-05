@@ -654,8 +654,11 @@ helper, Windows and Linux refuse all three.
 `{ type: "save_as", path: "/Users/…/Desktop/report.pdf", replace?: true }`
 fills the app's open Save or Export sheet in one step: it opens the sheet's
 Go To field for the folder, sets the name and presses Save, setting each value
-through accessibility and reading it back. The sheet must be open and observed
-first, and the step is sent on its own. The path must be absolute and name a
+through accessibility and reading it back. When a sheet ignores Command-Shift-G
+(QuickTime's collapsed Save sheet does), it expands the sheet, puts the keyboard
+in its name field and tries again, then types "/" in the name field, which opens
+Go To as it does for a person; the name is put back if none of these opens it.
+The sheet must be open and observed first, and the step is sent on its own. The path must be absolute and name a
 file in an existing folder; links are resolved and folders refused.
 
 The agent decides where to save without asking the person. A save is a file
@@ -680,8 +683,11 @@ only once the file is on disk and written after Save; otherwise it is
 the app's open Open, Place, Insert or Attach panel in one step: it opens the
 panel's Go To field, sets the file's path through accessibility and reads it
 back, checks that the panel selected exactly that file, then presses the
-panel's default button (Open, Place, Insert or Choose). The panel must be open
-and observed first, and the step is sent on its own. The path must be absolute
+panel's default button (Open, Place, Insert or Choose). The step is sent on
+its own. A panel that is still opening when it arrives (a menu command's panel
+can take seconds) is waited for, up to 2 s, followed whether it is a sheet or a
+window of its own, and read before the step; one the person has not let the
+agent look into asks them first, as observing it would. The path must be absolute
 and name an existing file; links are resolved and folders refused.
 
 As for saves, the agent decides without asking the person. Looking through the
