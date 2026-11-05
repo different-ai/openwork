@@ -6,6 +6,7 @@ import { formatAutomationSchedule } from "@openwork/types/automation-schedule";
 import type { AutomationList } from "@openwork/types/automations";
 import { DenButton } from "../../_components/ui/button";
 import { useDenFlow } from "../../_providers/den-flow-provider";
+import { FeatureIntroGate } from "../_features/feature-intros";
 import { WorkflowArtifactResult } from "./workflow-artifact-result";
 import {
   useAutomation,
@@ -91,40 +92,44 @@ export function AutomationsScreen() {
   if (!automationId) {
     const items = listQuery.data?.items.filter((item) => item.automation.state !== "archived") ?? [];
     const groups = groupItems(items);
+    // With feature intros on, the My Automations intro replaces the list while there are none (DESIGN.md I1, I2);
+    // with the flag off, the page and its empty line render as before.
     return (
-      <div className="mx-auto max-w-[980px] px-6 py-8 md:px-8" data-automations-monitor>
-        <div className="flex flex-wrap items-start justify-between gap-4">
-          <div>
-            <h1 className="text-[20px] font-semibold tracking-[-0.02em] text-gray-950">My Automations</h1>
-            <p className="mt-1 text-[13px] text-gray-400">What Den is running and has scheduled for you. Create and edit Cloud Automations in OpenWork Web; Desktop Automations are managed in the desktop app.</p>
-          </div>
-        </div>
-        {items.length === 0 ? (
-          <div className="mt-6 rounded-2xl border border-gray-100 bg-white p-8 text-center text-[13px] text-gray-400">No Automations yet. Create one in OpenWork Web or in the desktop app; it will show up here once Den is scheduling it.</div>
-        ) : groups.map((group) => (
-          <section key={group.title} className="mt-6">
-            <h2 className="text-[12px] font-semibold uppercase tracking-[0.06em] text-gray-400">{group.title}</h2>
-            <div className="mt-3 grid gap-3 md:grid-cols-2">
-              {group.items.map((item) => (
-                <button key={item.automation.id} type="button" onClick={() => setQuery(item.automation.id)} className="rounded-2xl border border-gray-100 bg-white p-4 text-left transition hover:border-gray-200 hover:bg-gray-50">
-                  <div className="flex items-start justify-between gap-3">
-                    <div>
-                      <h3 className="text-[14px] font-semibold text-gray-900">{item.automation.name}</h3>
-                      <p className="mt-1 line-clamp-2 text-[12px] text-gray-400">{item.revision.action?.kind === "saved_script" ? `Exact Workflow version ${item.revision.action.script.configObjectVersionId.slice(0, 8)}` : item.revision.instructions}</p>
-                    </div>
-                    <span className={`rounded-full px-2 py-0.5 text-[10px] ${statusTone(item.automation.state)}`}>{item.automation.state.replace("_", " ")}</span>
-                  </div>
-                  <p className="mt-3 text-[11px] text-gray-400">{formatAutomationSchedule(item.revision.schedule)}</p>
-                  <div className="mt-2 flex items-center justify-between text-[11px] text-gray-400">
-                    <span>{item.latestRun ? `Last run ${item.latestRun.status}` : item.automation.nextDueAt ? `Next ${new Date(item.automation.nextDueAt).toLocaleString()}` : "Not run yet"}</span>
-                    <span className="flex items-center gap-1"><PlacementIcon executionTarget={item.revision.executionTarget} />{placementLabel(item.revision.executionTarget)}</span>
-                  </div>
-                </button>
-              ))}
+      <FeatureIntroGate introKey="automations" facts={listQuery.data ? { automations: items.length } : null}>
+        <div className="mx-auto max-w-[980px] px-6 py-8 md:px-8" data-automations-monitor>
+          <div className="flex flex-wrap items-start justify-between gap-4">
+            <div>
+              <h1 className="text-[20px] font-semibold tracking-[-0.02em] text-gray-950">My Automations</h1>
+              <p className="mt-1 text-[13px] text-gray-400">What Den is running and has scheduled for you. Create and edit Cloud Automations in OpenWork Web; Desktop Automations are managed in the desktop app.</p>
             </div>
-          </section>
-        ))}
-      </div>
+          </div>
+          {items.length === 0 ? (
+            <div className="mt-6 rounded-2xl border border-gray-100 bg-white p-8 text-center text-[13px] text-gray-400">No Automations yet. Create one in OpenWork Web or in the desktop app; it will show up here once Den is scheduling it.</div>
+          ) : groups.map((group) => (
+            <section key={group.title} className="mt-6">
+              <h2 className="text-[12px] font-semibold uppercase tracking-[0.06em] text-gray-400">{group.title}</h2>
+              <div className="mt-3 grid gap-3 md:grid-cols-2">
+                {group.items.map((item) => (
+                  <button key={item.automation.id} type="button" onClick={() => setQuery(item.automation.id)} className="rounded-2xl border border-gray-100 bg-white p-4 text-left transition hover:border-gray-200 hover:bg-gray-50">
+                    <div className="flex items-start justify-between gap-3">
+                      <div>
+                        <h3 className="text-[14px] font-semibold text-gray-900">{item.automation.name}</h3>
+                        <p className="mt-1 line-clamp-2 text-[12px] text-gray-400">{item.revision.action?.kind === "saved_script" ? `Exact Workflow version ${item.revision.action.script.configObjectVersionId.slice(0, 8)}` : item.revision.instructions}</p>
+                      </div>
+                      <span className={`rounded-full px-2 py-0.5 text-[10px] ${statusTone(item.automation.state)}`}>{item.automation.state.replace("_", " ")}</span>
+                    </div>
+                    <p className="mt-3 text-[11px] text-gray-400">{formatAutomationSchedule(item.revision.schedule)}</p>
+                    <div className="mt-2 flex items-center justify-between text-[11px] text-gray-400">
+                      <span>{item.latestRun ? `Last run ${item.latestRun.status}` : item.automation.nextDueAt ? `Next ${new Date(item.automation.nextDueAt).toLocaleString()}` : "Not run yet"}</span>
+                      <span className="flex items-center gap-1"><PlacementIcon executionTarget={item.revision.executionTarget} />{placementLabel(item.revision.executionTarget)}</span>
+                    </div>
+                  </button>
+                ))}
+              </div>
+            </section>
+          ))}
+        </div>
+      </FeatureIntroGate>
     );
   }
 

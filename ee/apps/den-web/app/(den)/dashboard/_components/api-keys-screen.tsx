@@ -1,6 +1,7 @@
 "use client";
 
 import { type FormEvent, useEffect, useMemo, useState } from "react";
+import { useSearchParams } from "next/navigation";
 import { Copy, KeyRound, Trash2 } from "lucide-react";
 import { DashboardPageTemplate } from "../../_components/ui/dashboard-page-template";
 import { DenButton } from "../../_components/ui/button";
@@ -15,6 +16,7 @@ import {
     permissionLockReason,
 } from "../../_lib/den-org";
 import { useOrgDashboard } from "../_providers/org-dashboard-provider";
+import { useFeatureIntro } from "../_features/feature-intros";
 
 function formatDateTime(value: string | null) {
     if (!value) {
@@ -65,6 +67,9 @@ export function ApiKeysScreen() {
     const [createdKey, setCreatedKey] = useState<string | null>(null);
     const [createdKeyName, setCreatedKeyName] = useState<string | null>(null);
     const [copied, setCopied] = useState(false);
+    /** The list for this organization has loaded at least once (feature intro facts). */
+    const [loadedOrgId, setLoadedOrgId] = useState<string | null>(null);
+    const searchParams = useSearchParams();
 
     const access = useMemo(
         () =>
@@ -100,6 +105,7 @@ export function ApiKeysScreen() {
 
             if (isCurrent()) {
                 setApiKeys(parseOrgApiKeysPayload(payload));
+                setLoadedOrgId(orgId);
             }
         } catch (nextError) {
             if (isReauthRequiredError(nextError)) {
@@ -288,6 +294,29 @@ export function ApiKeysScreen() {
         }
     }
 
+    // With `featureIntros` on: full screen while the organization has no keys, until the
+    // Issue a new key form is open or a new key is on screen (DESIGN.md I1, I2).
+    const intro = useFeatureIntro(
+        "api-keys",
+        access.canViewApiKeys && loadedOrgId === orgId && orgId && !error ? { apiKeys: apiKeys.length } : null,
+    );
+
+    // Feature intro action (DESIGN.md I5): ?new=1 opens the Issue a new key form once, then leaves the address.
+    const newRequested = searchParams.get("new") === "1";
+    useEffect(() => {
+        if (!orgContext || !newRequested) return;
+        if (access.canManageApiKeys) {
+            setError(null);
+            setCreatedKey(null);
+            setCreatedKeyName(null);
+            setName("");
+            setShowCreateForm(true);
+        }
+        const url = new URL(window.location.href);
+        url.searchParams.delete("new");
+        window.history.replaceState(null, "", url);
+    }, [orgContext, newRequested, access.canManageApiKeys]);
+
     if (!orgContext) {
         return (
             <DashboardPageTemplate
@@ -301,6 +330,8 @@ export function ApiKeysScreen() {
             </DashboardPageTemplate>
         );
     }
+
+    if (intro.size === "fullscreen" && !showCreateForm && !createdKey) return intro.element;
 
     return (
         <DashboardPageTemplate

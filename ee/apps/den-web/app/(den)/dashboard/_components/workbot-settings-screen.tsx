@@ -24,6 +24,8 @@ import { providerIconSlug } from "./library-models";
 import { useSaveWorkbotModel, useTestWorkbotDefaultModel, useWorkbotSettings } from "./workbot-settings-data";
 import { WorkbotProactiveSection } from "./workbot-proactive-section";
 import { WorkbotProactiveHealthSection } from "./workbot-proactive-health";
+import { FeatureIntroGate, useFeatureIntroRuntime } from "../_features/feature-intros";
+import { useWorkbotIntroFacts } from "./workbot-intro-facts";
 
 /** The name Workbot introduces itself with: the organization's brand name, unless it is unset or OpenWork. */
 function workbotName(metadata: string | null): string {
@@ -132,6 +134,7 @@ export function WorkbotSettingsScreen() {
 
   const settings = query.data;
   const current = settings ? effectiveModel(settings) : null;
+  const introFacts = useWorkbotIntroFacts(useFeatureIntroRuntime().enabled, settings);
   useEffect(() => {
     setDraft(current ?? "");
   }, [current]);
@@ -158,7 +161,7 @@ export function WorkbotSettingsScreen() {
     }
   }
 
-  return (
+  const page = (
     <div data-testid="workbot-settings-screen">
       <DashboardPageTemplate
         title="Workbot"
@@ -195,7 +198,7 @@ export function WorkbotSettingsScreen() {
               )}
             />
           ) : (
-            <div className="divide-y divide-gray-100 overflow-hidden rounded-2xl border border-gray-100 bg-white" data-section="workbot-default-model">
+            <div id="workbot-default-model" className="scroll-mt-6 divide-y divide-gray-100 overflow-hidden rounded-2xl border border-gray-100 bg-white" data-section="workbot-default-model">
               <SettingsRow label="Default model" labelId={labelId}>
                 {!settings ? (
                   <DenSkeleton className="h-10 w-80 max-w-full" data-testid="workbot-model-skeleton" />
@@ -306,4 +309,8 @@ export function WorkbotSettingsScreen() {
       </DashboardPageTemplate>
     </div>
   );
+
+  // With feature intros on, the Workbot intro replaces the page while Workbot has nothing to answer with
+  // (DESIGN.md I1, I2); with the flag off, the page renders as before.
+  return <FeatureIntroGate introKey="workbot" facts={introFacts}>{page}</FeatureIntroGate>;
 }

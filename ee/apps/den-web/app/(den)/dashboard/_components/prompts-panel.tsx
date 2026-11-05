@@ -1,7 +1,8 @@
 "use client";
 
 import Link from "next/link";
-import { useState, type KeyboardEvent, type ReactNode } from "react";
+import { useSearchParams } from "next/navigation";
+import { useEffect, useState, type KeyboardEvent, type ReactNode } from "react";
 import { Lock, Pencil, Plus } from "lucide-react";
 import { ORG_PROMPT_MAX_LENGTH, type OrgPrompt } from "@openwork/types/den/prompts";
 import { DenButton, buttonVariants } from "../../_components/ui/button";
@@ -9,6 +10,7 @@ import { DenNotice } from "../../_components/ui/notice";
 import { DenSkeleton } from "../../_components/ui/skeleton";
 import { DenTextarea } from "../../_components/ui/textarea";
 import { getEveryoneRoute, getOrgAccessFlags, permissionLockReason, type DenOrgContext } from "../../_lib/den-org";
+import { FeatureIntroGate } from "../_features/feature-intros";
 import { useOrgDashboard } from "../_providers/org-dashboard-provider";
 import { useDenToast } from "./den-toast";
 import { formatAddedDate } from "./item-dates";
@@ -38,6 +40,16 @@ export function promptsTabVisible(orgContext: DenOrgContext | null): boolean {
 export function PromptsPanel({ team }: { team: { id: string; name: string } | null }) {
   const { orgId, orgSlug } = useOrgDashboard();
   const settings = usePromptSettings(orgId ?? "", Boolean(orgId));
+  const searchParams = useSearchParams();
+  // "Add a prompt" from the Prompts intro arrives as ?write=1 and opens the editor (DESIGN.md I5).
+  const [writing, setWriting] = useState(false);
+  useEffect(() => {
+    if (searchParams.get("write") !== "1") return;
+    setWriting(true);
+    const url = new URL(window.location.href);
+    url.searchParams.delete("write");
+    window.history.replaceState(null, "", url);
+  }, [searchParams]);
 
   if (!orgId || settings.isPending) return <PromptsSkeleton />;
   if (settings.isError) {
@@ -52,7 +64,10 @@ export function PromptsPanel({ team }: { team: { id: string; name: string } | nu
 
   const prompt = team ? settings.data.teams.find((entry) => entry.teamId === team.id)?.prompt ?? null : settings.data.everyone;
   const everyonePrompt = team ? settings.data.everyone : null;
+  // With feature intros on, the Prompts intro replaces the empty editor while no prompt applies here (DESIGN.md I1).
+  const introFacts = writing ? null : { hasPrompt: Boolean(prompt ?? everyonePrompt), canEditPrompts: settings.data.canEdit };
   return (
+    <FeatureIntroGate introKey="team-detail.prompts" facts={introFacts}>
     <section className="flex flex-col gap-8" data-testid="prompts-panel">
       {everyonePrompt ? (
         <div className="flex flex-col gap-2">
@@ -75,21 +90,27 @@ export function PromptsPanel({ team }: { team: { id: string; name: string } | nu
         team={team}
         prompt={prompt}
         canEdit={settings.data.canEdit}
+        startEditing={writing && settings.data.canEdit}
+        onEditingDone={() => setWriting(false)}
       />
     </section>
+    </FeatureIntroGate>
   );
 }
 
-function PromptEditor({ orgId, team, prompt, canEdit }: {
+function PromptEditor({ orgId, team, prompt, canEdit, startEditing = false, onEditingDone }: {
   orgId: string;
   team: { id: string; name: string } | null;
   prompt: OrgPrompt | null;
   canEdit: boolean;
+  /** Open with the editor showing, e.g. from the Prompts intro's action. */
+  startEditing?: boolean;
+  onEditingDone?: () => void;
 }) {
   const save = useSavePrompt(orgId);
   const remove = useRemovePrompt(orgId);
   const toast = useDenToast();
-  const [draft, setDraft] = useState<string | null>(null);
+  const [draft, setDraft] = useState<string | null>(startEditing ? prompt?.content ?? "" : null);
   const [error, setError] = useState<string | null>(null);
   const [confirmingRemove, setConfirmingRemove] = useState(false);
   const teamId = team?.id ?? null;
@@ -99,12 +120,17 @@ function PromptEditor({ orgId, team, prompt, canEdit }: {
   const dirty = editing && draft !== saved;
   const title = team ? `${team.name}'s prompt` : "Prompt for everyone";
 
+  useEffect(() => {
+    if (startEditing) setDraft((current) => current ?? saved);
+  }, [startEditing, saved]);
+
   async function submit() {
     if (draft === null || empty || !dirty) return;
     setError(null);
     try {
       await save.mutateAsync({ teamId, content: draft });
       setDraft(null);
+      onEditingDone?.();
       toast({ title: "Prompt saved" });
     } catch (cause) {
       setError(cause instanceof Error && cause.message ? cause.message : "Couldn't save the prompt. Try again.");
@@ -114,6 +140,7 @@ function PromptEditor({ orgId, team, prompt, canEdit }: {
   function cancel() {
     setDraft(null);
     setError(null);
+    onEditingDone?.();
   }
 
   function onKeyDown(event: KeyboardEvent<HTMLTextAreaElement>) {
@@ -201,6 +228,7 @@ function PromptEditor({ orgId, team, prompt, canEdit }: {
         onConfirm={async () => {
           await remove.mutateAsync(teamId);
           setDraft(null);
+          onEditingDone?.();
           toast({ title: "Prompt removed" });
         }}
         onClose={() => setConfirmingRemove(false)}

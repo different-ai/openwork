@@ -141,6 +141,7 @@ export const idTypesMapNameToPrefix = {
   sandboxOrganization: "sbx",
   mcpRegistrationStatus: "mrs",
   mcpRegistrationEvent: "mre",
+  featureIntroState: "fis",
 } as const
 
 export const denTypeIdPrefixes = idTypesMapNameToPrefix

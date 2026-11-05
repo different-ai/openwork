@@ -1,0 +1,82 @@
+---
+title: "Auth & Security"
+description: "Let your team sign in with your identity provider and add or remove people automatically"
+keywords: ["SSO", "single sign-on", "SAML", "OIDC", "SCIM", "user provisioning", "Okta", "Microsoft Entra ID", "Google Workspace", "identity provider"]
+---
+
+**Settings → Auth & Security** is where an organization connects OpenWork to
+its identity provider. It has two tabs:
+
+- **Single sign-on (SSO)**: people sign in with your company account instead of
+  a separate OpenWork password.
+- **User provisioning (SCIM)**: people and groups are added to and removed from
+  OpenWork when they change in your identity provider.
+
+<Note>
+Older OpenWork versions, and organizations where Auth & Security is not turned
+on yet, show these as two separate pages: **Settings → SSO** and
+**Settings → SCIM**. Everything else on this page is the same. Links to the old
+pages open the matching Auth & Security tab.
+</Note>
+
+## Who can use it
+
+| | Plan | Who can change it |
+| --- | --- | --- |
+| Single sign-on | Team and Enterprise | The organization owner, or anyone granted **Manage single sign-on** |
+| User provisioning | Enterprise | The organization owner, or anyone granted **Manage SCIM provisioning** |
+
+On a plan without the feature, the tab says which plan includes it. People who
+can manage billing see **Upgrade to Team** (single sign-on) or **Talk to us
+about Enterprise** (user provisioning). See
+[Pricing and licensing](/start-here/pricing-and-licensing).
+
+## Single sign-on
+
+Single sign-on works with any SAML or OIDC identity provider. Follow the guide
+for yours:
+
+- [Okta SAML SSO](/cloud/sso-okta)
+- [Microsoft Entra SAML SSO](/cloud/sso-microsoft-entra)
+- [Google Workspace SAML SSO](/cloud/sso-google-workspace)
+
+Every connection goes through the same steps before anyone can use it:
+
+1. Open **Settings → Auth & Security → Single sign-on (SSO)** and save your
+   identity provider's details.
+2. Verify your email domain with a DNS TXT record.
+3. Run a real test sign-in.
+4. Turn SSO on.
+
+Until all four are done, the connection stays off and people keep signing in
+the way they do today. Someone from your verified domain who signs in with SSO
+for the first time joins the organization as a **Member**.
+
+Once SSO is on, people at your verified domain see **Continue with SSO** first
+when they sign in. To make SSO the only way into your organization, turn on
+**Require SSO** (Enterprise plan). Depending on your organization's settings,
+this switch is at the top of the **Single sign-on (SSO)** tab or under
+**Authentication** in **Settings → General**. Where available, **Restrict this
+domain to our SSO** also stops people at your domain from using a password or
+Google anywhere in OpenWork, and **Ask for SSO again** sets how often people
+must sign in with SSO again.
+
+## User provisioning
+
+User provisioning (SCIM) keeps OpenWork in step with your identity provider:
+people you assign get access, and people you remove or deactivate lose it.
+You can also create OpenWork teams from your identity provider's groups.
+
+User provisioning needs single sign-on turned on first. Then follow the guide
+for your identity provider:
+
+- [Okta SCIM provisioning](/cloud/scim-okta)
+- [Microsoft Entra SCIM provisioning](/cloud/scim-microsoft-entra)
+
+Google Workspace can be used for single sign-on but not for user provisioning;
+see [Google Workspace SCIM provisioning](/cloud/scim-google-workspace).
+
+In **Settings → Auth & Security → User provisioning (SCIM)**, create the
+connector, then give your identity provider the **SCIM base URL** and the
+bearer token shown once after you create or rotate it. Failed syncs are retried
+and listed on the same tab until they are resolved.

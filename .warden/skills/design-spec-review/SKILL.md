@@ -93,6 +93,22 @@ Visual system (V1–V7):
 - Purple/blue gradients, glassmorphism, identical card grids, uniform
   `rounded-*` applied to every element in a new surface — V7.
 
+Feature intros (I1–I10, Den web):
+
+- Do not report P1, P2 or P11 on a registered feature intro; I1–I10 apply
+  there instead.
+- A new Den page, sub-page or tab whose empty state is a page-local "No items
+  yet" message or hand-written intro markup instead of a registered feature
+  intro — I1, I10.
+- Intro primary action that leads to another info page, says "Learn more",
+  or is offered to someone without permission to complete it — I5, I6.
+- Intro graphic that is a static illustration, mascot, screenshot, video or
+  gradient instead of a live sample-data example built from Den primitives
+  and labelled "Example" — I7.
+- Intro without "Read the docs", or that opens itself over another page or
+  auto-navigates — I8, S5.
+- Amber/red unseen dots on tabs or sidebar items — I9, V2.
+
 Chat, tool calls and MCP Apps (T1–T5):
 
 - New tool-activity rows that show JSON/arguments by default instead of a

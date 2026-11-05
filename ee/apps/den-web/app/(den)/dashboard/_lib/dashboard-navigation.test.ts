@@ -46,3 +46,26 @@ test("managed deployments remain off unless explicitly enabled", () => {
   }).flatMap((section) => section.items);
   assert.ok(!items.some((item) => item.label === "Deployments"));
 });
+
+function settingsChildren(permissions: Parameters<typeof getOrgAccessFlags>[2], authSecuritySettings: boolean) {
+  return buildDashboardNavSections({
+    orgSlug: "workspace", access: getOrgAccessFlags("member", false, permissions),
+    capabilities, orgMode: "multi_org", runtimeConfigLoaded: true, authSecuritySettings,
+  }).flatMap((section) => section.items).flatMap((item) => item.children ?? []);
+}
+
+test("SSO and SCIM keep their own Settings entries with authSecuritySettings off", () => {
+  const labels = settingsChildren(["sso.view", "scim.view"], false).map((item) => item.label);
+  assert.ok(labels.includes("SSO") && labels.includes("SCIM"));
+  assert.ok(!labels.includes("Auth & Security"));
+});
+
+test("authSecuritySettings shows one Auth & Security entry when either SSO or SCIM is visible", () => {
+  for (const permissions of [["sso.view", "scim.view"], ["sso.view"], ["scim.view"]] as const) {
+    const children = settingsChildren([...permissions], true);
+    assert.deepEqual(children.filter((item) => ["SSO", "SCIM", "Auth & Security"].includes(item.label)), [
+      { href: "/dashboard/auth-security", label: "Auth & Security" },
+    ]);
+  }
+  assert.ok(!settingsChildren([], true).some((item) => item.label === "Auth & Security"));
+});

@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { getLibraryAddConnectorRoute, getLibraryConnectorRoute, getLibraryMyAgentRoute, getLibraryRoute } from "../../_lib/den-org";
+import { useFeatureIntro } from "../_features/feature-intros";
 import { useOrgDashboard } from "../_providers/org-dashboard-provider";
 import { ItemHeader, ItemPage } from "./item-header";
 import { useLibrary, type LibraryConnectionItem, type LibraryItem } from "./library-data";
@@ -41,6 +42,8 @@ export function MyAgentScreen() {
   const { orgSlug, orgContext } = useOrgDashboard();
   const orgId = orgContext?.organization.id ?? "";
   const available = myAgentAvailable(orgContext);
+  // Feature intros (flag `featureIntros`): My bot answers `?` only; its switch and settings are the setup.
+  useFeatureIntro("my-bot", orgContext ? {} : null);
   const agent = useMyAgent(orgId, available);
   const library = useLibrary();
   const save = useSaveMyAgent(orgId);

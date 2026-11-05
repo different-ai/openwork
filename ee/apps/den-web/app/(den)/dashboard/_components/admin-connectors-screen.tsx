@@ -19,6 +19,8 @@ import { DenButton } from "../../_components/ui/button";
 import { connectorNeedsFirstCheck, connectorReadinessState, connectorReadinessNote } from "./connector-readiness";
 import { useCheckMcpConnection, useRefreshUncheckedConnections } from "./mcp-connections-data";
 import { getOrgAccessFlags } from "../../_lib/den-org";
+import { FeatureIntroGate, useFeatureIntroRuntime } from "../_features/feature-intros";
+import { useConnectorsIntroFacts } from "./connectors-intro-facts";
 import { connectorSetupUnfinished, finishSetupHref } from "./admin-connectors";
 import { type ExternalMcpConnection, isNativeProviderConnectionId, useDeleteMcpConnection, useMcpConnections } from "./mcp-connections-data";
 
@@ -61,6 +63,7 @@ export function AdminConnectorsScreen() {
   const needle = query.trim().toLowerCase();
   const visible = needle ? all.filter((connection) => connection.name.toLowerCase().includes(needle)) : all;
   const empty = !connections.isLoading && !connections.error && all.length === 0;
+  const introFacts = useConnectorsIntroFacts(useFeatureIntroRuntime().enabled);
 
   // Connectors with no stored status are brought up to date once per visit:
   // a member's Ready check is copied, or the connector is checked now.
@@ -163,7 +166,7 @@ export function AdminConnectorsScreen() {
     );
   }
 
-  return (
+  const page = (
     <ItemPage testId="admin-connectors" wide>
       <div className="flex flex-wrap items-center justify-between gap-x-6 gap-y-3" data-testid="connectors-compact-toolbar">
         <h1 className="text-xl font-semibold tracking-tight text-[var(--dls-text-primary)]">Connectors</h1>
@@ -210,4 +213,8 @@ export function AdminConnectorsScreen() {
       ) : null}
     </ItemPage>
   );
+
+  // With feature intros on, the Connectors intro replaces the whole page while there are none (DESIGN.md I1, I2);
+  // with the flag off, the page and ConnectorsEmpty render as before.
+  return <FeatureIntroGate introKey="connectors" facts={introFacts}>{page}</FeatureIntroGate>;
 }

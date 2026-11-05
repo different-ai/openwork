@@ -1,7 +1,7 @@
 "use client";
 
 import { Copy, RefreshCw, Shield, Trash2 } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { DashboardPageTemplate } from "../../_components/ui/dashboard-page-template";
 import { DenButton } from "../../_components/ui/button";
 import { DenNotice } from "../../_components/ui/notice";
@@ -13,7 +13,10 @@ import {
   parseOrgScimPayload,
   permissionLockReason,
 } from "../../_lib/den-org";
+import { FeatureIntroGate } from "../_features/feature-intros";
+import type { AuthSecurityFacts } from "../_features/feature-intros/intros/auth-security";
 import { useOrgDashboard } from "../_providers/org-dashboard-provider";
+import { scimIntroState } from "./auth-security-intro-facts";
 import { EnterprisePlanNotice } from "./enterprise-plan-notice";
 
 function formatDateTime(value: string | null) {
@@ -29,8 +32,24 @@ function formatDateTime(value: string | null) {
   return date.toLocaleString();
 }
 
-export function ScimScreen() {
+/** The page shell on its own route; inside Auth & Security the tab names it, so no second title (P2). */
+function ScimFrame({ embedded, description, children }: { embedded: boolean; description: string; children: ReactNode }) {
+  if (embedded) return <div data-testid="scim-tab-content">{children}</div>;
+  return <DashboardPageTemplate icon={Shield} title="SCIM" description={description}>{children}</DashboardPageTemplate>;
+}
+
+export type ScimScreenProps = {
+  /** Shown as the User provisioning tab of Settings › Auth & Security. */
+  embedded?: boolean;
+  /** `?setup=1` from an intro's action: open the connector settings instead of the intro (DESIGN.md I5). */
+  setupMode?: boolean;
+  /** Latest setup facts, so the Auth & Security section intro follows changes made here. */
+  onIntroFacts?: (facts: AuthSecurityFacts) => void;
+};
+
+export function ScimScreen({ embedded = false, setupMode = false, onIntroFacts }: ScimScreenProps = {}) {
   const { orgId, orgContext, runReauthableAction } = useOrgDashboard();
+  const [loaded, setLoaded] = useState(false);
   const [baseUrl, setBaseUrl] = useState<string | null>(null);
   const [ssoReady, setSsoReady] = useState(false);
   const [connection, setConnection] = useState<DenOrgScimConnection | null>(null);
@@ -98,6 +117,7 @@ export function ScimScreen() {
         setSsoReady(parsed.ssoReady);
         setConnection(parsed.connection);
         setHealth(parsed.health);
+        setLoaded(true);
       }
     } catch (nextError) {
       if (isReauthRequiredError(nextError)) {
@@ -320,24 +340,34 @@ export function ScimScreen() {
     }
   }
 
+  // Feature intro facts (DESIGN.md I2) once the connector has loaded; embedded in Auth & Security only.
+  const introState = loaded ? scimIntroState(connection, health) : null;
+  const scimIncluded = orgContext?.entitlements.scim;
+  useEffect(() => {
+    if (!embedded || !introState || scimIncluded === undefined) return;
+    onIntroFacts?.({ scim: introState, scimIncluded, ssoReady });
+  }, [embedded, introState, scimIncluded, ssoReady, onIntroFacts]);
+  // `?setup=1` skips the intro that stands in for an empty connector; a created one still gets its banner.
+  const introFacts = embedded && introState && scimIncluded !== undefined && !(setupMode && introState === "none")
+    ? { scim: introState, scimIncluded, ssoReady }
+    : null;
+
   if (!orgContext) {
     return (
-      <DashboardPageTemplate
-        icon={Shield}
-        title="SCIM"
+      <ScimFrame
+        embedded={embedded}
         description="Provision organization members from your identity provider with an org-scoped SCIM connector."
       >
         <div className="rounded-[28px] border border-gray-200 bg-white px-6 py-10 text-[15px] text-gray-500">
           Loading organization details...
         </div>
-      </DashboardPageTemplate>
+      </ScimFrame>
     );
   }
 
   return (
-    <DashboardPageTemplate
-      icon={Shield}
-      title="SCIM"
+    <ScimFrame
+      embedded={embedded}
       description="Create one SCIM connector per workspace, then give your identity provider the base URL and bearer token shown here."
     >
       {!access.canViewScim ? (
@@ -345,7 +375,7 @@ export function ScimScreen() {
           {permissionLockReason("scim.view")}
         </div>
       ) : (
-        <>
+        <FeatureIntroGate introKey="auth-security.scim" facts={introFacts}>
           {!orgContext.entitlements.scim ? (
             <EnterprisePlanNotice feature="SCIM provisioning" />
           ) : null}
@@ -400,7 +430,7 @@ export function ScimScreen() {
             </div>
           ) : null}
 
-          <div className="mb-6 rounded-[30px] border border-gray-200 bg-white p-6 shadow-[0_18px_48px_-34px_rgba(15,23,42,0.22)]">
+          <div id="scim-base-url" className="mb-6 scroll-mt-6 rounded-[30px] border border-gray-200 bg-white p-6 shadow-[0_18px_48px_-34px_rgba(15,23,42,0.22)]">
             <div className="flex flex-wrap items-start justify-between gap-4">
               <div>
                 <p className="text-[16px] font-semibold tracking-[-0.03em] text-gray-900">
@@ -550,8 +580,8 @@ export function ScimScreen() {
               </div>
             ) : null}
           </div>
-        </>
+        </FeatureIntroGate>
       )}
-    </DashboardPageTemplate>
+    </ScimFrame>
   );
 }

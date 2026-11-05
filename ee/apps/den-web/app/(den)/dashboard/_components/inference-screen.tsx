@@ -19,6 +19,7 @@ import { useDenFlow } from "../../_providers/den-flow-provider";
 import { useOrgDashboard } from "../_providers/org-dashboard-provider";
 import { getGatewayDashboardAccess } from "../_lib/gateway-dashboard-access";
 import { UsageLimitsCard } from "../_features/analytics/usage-limits-card";
+import { useFeatureIntro } from "../_features/feature-intros";
 
 /**
  * Editorial detail per model: what a knowledge worker should reach for it for,
@@ -254,6 +255,9 @@ function InferenceContent({ embedded }: { embedded: boolean }) {
   }
 
   const enabled = status?.enabled === true;
+  // Feature intros (flag `featureIntros`): this tab already is the setup step (Subscribe / Enable),
+  // so its intro only reports setup and stays reachable from `?`; nothing replaces the page.
+  useFeatureIntro("ai-gateway.openwork-models", embedded && status ? { openworkModels: status.enabled } : null);
   const subscribed = status?.subscribed === true;
   // Not sold here: no Subscribe, no price, a neutral lock with the alternative (DESIGN P4, C5).
   const notSold = !subscribed && (status?.billingConfigured === false || checkoutNotSold);

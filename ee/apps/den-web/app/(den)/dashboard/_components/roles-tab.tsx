@@ -12,6 +12,7 @@ import {
   isSuperAdminRole,
   permissionLockReason,
 } from "../../_lib/den-org";
+import { useFeatureIntro } from "../_features/feature-intros";
 import { useOrgDashboard } from "../_providers/org-dashboard-provider";
 import { IconTile } from "./access-rows";
 import { ItemMenu, ItemPanel, ItemRow, ItemRowsSkeleton, ItemSection } from "./item-list";
@@ -22,13 +23,16 @@ function peopleLabel(count: number): string {
   return `${count} ${count === 1 ? "person" : "people"}`;
 }
 
-/** Built-in roles and named custom roles, which can apply to several teams. */
-export function RolesTab({ action }: { action?: ReactNode }) {
+/**
+ * Built-in roles and named custom roles, which can apply to several teams.
+ * `showIntro` (Members › Roles) lets the custom roles intro take the empty list's place.
+ */
+export function RolesTab({ action, showIntro = false }: { action?: ReactNode; showIntro?: boolean }) {
   const { orgContext, orgId, orgSlug } = useOrgDashboard();
   if (!orgContext) return null;
   const access = getOrgAccessFlags(orgContext.currentMember.role, orgContext.currentMember.isOwner, orgContext.currentMember.permissions);
 
-  return <RolesTabContent orgId={orgId} orgSlug={orgSlug} canViewSets={access.canViewPermissions} action={action} />;
+  return <RolesTabContent orgId={orgId} orgSlug={orgSlug} canViewSets={access.canViewPermissions} action={action} showIntro={showIntro} />;
 }
 
 /** Whether the signed-in person can create a role (a team and its permission set). */
@@ -36,11 +40,12 @@ export function canCreateRole(input: { canManageTeams: boolean; canManagePermiss
   return input.canManageTeams && input.canManagePermissions;
 }
 
-function RolesTabContent({ orgId, orgSlug, canViewSets, action }: {
+function RolesTabContent({ orgId, orgSlug, canViewSets, action, showIntro }: {
   orgId: string | null;
   orgSlug: string | null;
   canViewSets: boolean;
   action?: ReactNode;
+  showIntro: boolean;
 }) {
   const { orgContext } = useOrgDashboard();
   const setsQuery = usePermissionSets(orgId, canViewSets);
@@ -52,6 +57,8 @@ function RolesTabContent({ orgId, orgSlug, canViewSets, action }: {
   const memberSet = sets.find((set) => set.kind === "member_default");
   const adminSet = sets.find((set) => set.kind === "admin_default");
   const teamSets = sets.filter((set) => set.kind === "team" && matches(set.name));
+  // Known, unfiltered count of custom roles for the intro; null while loading, filtering or not allowed.
+  const customRoleCount = canViewSets && setsQuery.data && !filter.trim() ? sets.filter((set) => set.kind === "team").length : null;
 
   const owner = orgContext.members.find((member) => member.isOwner);
   const directAdmins = orgContext.members.filter((member) => !member.isOwner && member.userId !== null && member.role === "admin").length;
@@ -110,6 +117,8 @@ function RolesTabContent({ orgId, orgSlug, canViewSets, action }: {
         </ItemPanel>
       </ItemSection>
 
+      {/* With feature intros on and no custom roles yet, the intro replaces "No custom roles yet" (DESIGN.md I1). */}
+      <RolesIntroGate enabled={showIntro} customRoles={customRoleCount}>
       <ItemSection title="Custom roles" testId="roles-custom">
         {!canViewSets ? (
           <DenNotice tone="neutral" icon={LockKeyhole} message={permissionLockReason("permissions.view")} />
@@ -140,7 +149,20 @@ function RolesTabContent({ orgId, orgSlug, canViewSets, action }: {
           </ItemPanel>
         )}
       </ItemSection>
+      </RolesIntroGate>
       </div>
     </div>
   );
+}
+
+function RolesIntroGate({ enabled, customRoles, children }: { enabled: boolean; customRoles: number | null; children: ReactNode }) {
+  if (!enabled) return <>{children}</>;
+  return <RolesIntro customRoles={customRoles}>{children}</RolesIntro>;
+}
+
+/** The box sits in the section list's gap, so it drops its own top margin. */
+function RolesIntro({ customRoles, children }: { customRoles: number | null; children: ReactNode }) {
+  const intro = useFeatureIntro("members.roles", customRoles === null ? null : { customRoles });
+  if (intro.size === "box") return <div className="-mt-6">{intro.element}</div>;
+  return <>{children}</>;
 }

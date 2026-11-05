@@ -573,7 +573,7 @@ export function OrgSettingsScreen() {
           </div>
         </DenCard>
 
-        <DenCard size="spacious" className="grid gap-6">
+        <DenCard id="allowed-email-domains" size="spacious" className="grid scroll-mt-6 gap-6">
           <div className="flex items-start justify-between gap-4">
             <div className="grid gap-2">
               <p className="text-[12px] font-semibold uppercase tracking-[0.16em] text-gray-400">

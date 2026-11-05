@@ -29,6 +29,7 @@ import { DenEmailSendError, sendEmail } from "../../utils/email/send-email.js"
 import { findSsoAccessBlock, ssoRequiredErrorBody } from "../../organization-sso-access.js"
 import { registerMeActivationRoutes } from "./activation.js"
 import { registerMeAgentRoutes } from "./agent.js"
+import { registerMeFeatureIntroRoutes } from "./feature-intros.js"
 
 const DOWNLOAD_LINK_RATE_LIMIT_WINDOW_MS = 60 * 60 * 1000
 const DOWNLOAD_LINK_RATE_LIMIT_MAX = 5
@@ -173,6 +174,7 @@ async function checkDownloadLinkRateLimit(userId: string, now: number) {
 export function registerMeRoutes<T extends { Variables: AuthContextVariables & Partial<UserOrganizationsContext> & Partial<OrganizationContextVariables> }>(app: Hono<T>) {
   registerMeActivationRoutes(app)
   registerMeAgentRoutes(app)
+  registerMeFeatureIntroRoutes(app)
 
   app.get(
     "/v1/me",

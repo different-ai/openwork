@@ -9,6 +9,7 @@ import { DenInput } from "../../_components/ui/input";
 import { DenTextarea } from "../../_components/ui/textarea";
 import { getPluginRoute, getPluginSkillRoute } from "../../_lib/den-org";
 import { useOrgDashboard } from "../_providers/org-dashboard-provider";
+import { PluginsSetupIntro } from "./plugins-intro-facts";
 import { useCreateSkill, useSkill, useUpdateSkill } from "./skill-data";
 
 const SKILL_NAME_PATTERN = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
@@ -84,6 +85,7 @@ export function SkillEditorScreen({ pluginId, skillId }: { pluginId: string; ski
 
   return (
     <div className="mx-auto max-w-[820px] px-6 py-8 md:px-8">
+      <PluginsSetupIntro introKey="plugins.skill" />
       <Link
         href={isEditing && skillId ? getPluginSkillRoute(orgSlug, pluginId, skillId) : getPluginRoute(orgSlug, pluginId)}
         className="inline-flex items-center gap-1.5 text-[13px] text-gray-500 transition hover:text-gray-900"

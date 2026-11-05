@@ -1,0 +1,117 @@
+---
+title: "Analytics"
+description: "See who on your team uses OpenWork, which skills, plugins and connectors they use, and how your workflow runs went, from Observability › Analytics."
+keywords: ["analytics", "usage", "adoption", "active users", "sessions", "tasks", "success rate", "models", "plugins", "skills", "connectors", "workflow runs", "Observability"]
+---
+
+**Observability › Analytics** in OpenWork Cloud shows how your team uses
+OpenWork. It has three tabs:
+
+| Tab | What it shows | Plan |
+| --- | --- | --- |
+| **Usage & adoption** | Active people, sessions, tasks and the models people pick | Enterprise |
+| **Plugins & connectors** | How often each plugin, skill and connector is used, by whom, and what fails | Every plan |
+| **Workflow Runs** | Your saved workflow and one-off task runs, and whether each one worked | Enterprise |
+
+Analytics only counts things. It never includes prompts, code, file contents,
+diffs, secrets or terminal output.
+
+## Who can see it
+
+You need the **View usage analytics** permission. Admins have it by default.
+Without it, **Analytics** doesn't appear in the sidebar. See
+[Members and roles](/cloud/members-and-rbac).
+
+On OpenWork Cloud, **Usage & adoption** and **Workflow Runs** are part of the
+Enterprise plan. On other plans, **Usage & adoption** shows an Enterprise notice
+instead of numbers, and the **Workflow Runs** tab doesn't appear. Usage is
+still recorded, so it shows up as soon as the plan includes it. See
+[Pricing and licensing](/start-here/pricing-and-licensing).
+
+<Note>
+  Numbers appear once members sign in to the OpenWork app with your
+  organization and run tasks. Until then, the page shows **No activity yet**.
+  See [Sign in from the desktop app](/cloud/get-started#sign-in-from-the-desktop-app).
+</Note>
+
+## Usage and adoption
+
+The **Usage & adoption** tab answers "is my team using OpenWork, and does it
+work for them?"
+
+- **OpenWork users**: people in the organization, and how many invitations are
+  still pending.
+- **Active this week**: people with at least one event in the last 7 days, and
+  how many were active in the last 30 days.
+- **Sessions this week**: sessions in the last 7 days, and in the last 30 days.
+- **Tasks this week**: tasks in the last 7 days, and their success rate.
+
+Below the totals, charts show active users, sessions and tasks (completed and
+failed) over time. Choose **Daily** for the last 30 days or **Weekly** for the
+last 12 weeks. Days are counted in UTC.
+
+The **Models** section lists which models people used in the last 30 days, and
+how many sessions used the **Default model** versus a **Manually selected** one.
+The last row shows **Avg task duration**, **Tasks completed** and **Tasks
+failed** over 30 days.
+
+### Look at one project
+
+Use the project filter (**All projects** by default) to narrow the numbers to
+one project, for example to follow a rollout. **OpenWork users** stays the
+organization total.
+
+Click **Refresh analytics** to load the latest numbers.
+
+## Plugins and connectors
+
+The **Plugins & connectors** tab shows which parts of your Library people
+actually use. It's available on every plan.
+
+1. Choose **Plugins**, **Skills** or **Connectors**.
+2. Choose a time range: **7 days**, **30 days** or **90 days**.
+
+At the top you see how many items are **In use**, total **Uses**, **Failed**
+uses (plugins and connectors only), and how many are **Not used**. Filter the
+list to **All**, **Not used** or **Failing**, or search by name.
+
+What counts as one use:
+
+- **Skills**: each time an agent loads the skill.
+- **Plugins**: their skills' loads plus their workflows' runs. **Failed**
+  counts failed runs.
+- **Connectors**: each tool call made through OpenWork. **Failed** counts
+  calls that failed.
+
+Click an item to see **Uses per day**, who uses it and how often, and what
+started the uses (**Agents**, **Workflows**, **Automations**, **Apps** or
+**Live views**). From there, click **Open in Library** or **Open connector** to
+change it. Click a person to see everything they used.
+
+If counting started partway through the time range, the page says **Counting
+since** and the date.
+
+Use this tab to find skills nobody uses, and connectors that fail before people
+give up on them.
+
+## Workflow runs
+
+The **Workflow Runs** tab lists your own runs of saved workflows and one-off
+tasks, newest first. Each run shows its name (or **One-off task**), when it
+finished, and **Succeeded** or **Failed**.
+
+Click **Details** on a run to see:
+
+- the workflow's steps, when the run came from a saved workflow
+- under **Technical details**: where the run came from (**Source**), the
+  **Tool calls** it made, its **Duration**, and the **Error** if it failed
+
+Runs come from OpenWork, [Automations](/start-here/do-work-with-it/workflows),
+and AI tools connected through the [OpenWork MCP gateway](/start-here/connect-openwork-mcp).
+The list refreshes every 30 seconds.
+
+## Related
+
+- [Audit logs](/cloud/audit-logs): who changed what in your organization.
+- [Counting usage](/ai-gateway/counting-usage): AI Gateway requests, tokens and
+  spend.
