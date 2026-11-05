@@ -10,6 +10,7 @@ import {
 import { z } from "zod"
 import { appLogger } from "../observability/logger.js"
 import { organizationFeatureEnabled } from "../features.js"
+import { markFeaturesUsed } from "../feature-usage.js"
 import { openworkYourConnectionsUrl } from "../mcp/connection-navigation.js"
 import {
   buildSlackEnvelope,
@@ -60,10 +61,19 @@ type WorkerDeps = {
   live: LiveFeedSource
   /** Whether the member's organization has `workbotDriveFiles` on. Unset: Den's feature rollout. */
   driveFiles?: (actor: SlackActor) => Promise<boolean>
+  /** Whether the member has `workbotSlackAnswerReply` on. Unset: Den's feature rollout. */
+  answerReply?: (actor: SlackActor) => Promise<boolean>
 }
 
 const slackDriveFilesEnabled = (actor: SlackActor) =>
   organizationFeatureEnabled(actor.organizationId, "workbotDriveFiles", { userId: actor.userId })
+
+const slackAnswerReplyEnabled = async (actor: SlackActor) => {
+  const enabled = await organizationFeatureEnabled(actor.organizationId, "workbotSlackAnswerReply", { userId: actor.userId })
+  // A Slack message is background work done for the member: count it as a use.
+  if (enabled) markFeaturesUsed({ organizationId: actor.organizationId, memberId: actor.memberId, keys: ["workbotSlackAnswerReply"] })
+  return enabled
+}
 
 const defaultWorkerDeps: WorkerDeps = {
   slack: slackClient,
@@ -76,9 +86,9 @@ const defaultWorkerDeps: WorkerDeps = {
  * The runner session's setup before each message. Off, the instructions travel in each message and the session has
  * none of Workbot's extras, which also takes them away from threads that had them.
  */
-function slackSessionSettings(workbot: boolean, driveFiles: boolean): SlackSessionSettings {
+function slackSessionSettings(workbot: boolean, driveFiles: boolean, answerReply: boolean): SlackSessionSettings {
   return workbot
-    ? { instructions: slackWorkbotInstructions({ driveFiles }), reactions: true, tasks: true }
+    ? { instructions: slackWorkbotInstructions({ driveFiles, answerReply }), reactions: true, tasks: true }
     : { instructions: "", reactions: false, tasks: false }
 }
 
@@ -310,6 +320,7 @@ export async function processSlackEvent(event: EventRow, suppliedDeps: WorkerDep
     // Chosen once per message, so turning the feature off never changes a reply half-way.
     cp.workbot = true
     cp.driveFiles = await (suppliedDeps.driveFiles ?? slackDriveFilesEnabled)(actor).catch(() => false)
+    cp.answerReply = await (suppliedDeps.answerReply ?? slackAnswerReplyEnabled)(actor).catch(() => false)
     cp.recipientUserId = event.slackUserId
     cp.recipientTeamId = event.teamId
     cp.privateReply =
@@ -382,7 +393,7 @@ export async function processSlackEvent(event: EventRow, suppliedDeps: WorkerDep
     },
     persist: (checkpoint) => persistSlackCheckpoint(event, checkpoint),
     title: `${event.channelId} · ${(payload.text ?? "Task").slice(0, 85)}`,
-    settings: slackSessionSettings(cp.workbot, cp.driveFiles),
+    settings: slackSessionSettings(cp.workbot, cp.driveFiles, cp.answerReply),
     ...(cp.workbot ? { live: deps.live } : {}),
     renew: () => renewSlackLease(event),
     log: (message, fields) => appLogger.warn(message, { event_id: event.id, ...fields }),
