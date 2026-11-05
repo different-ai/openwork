@@ -17,7 +17,7 @@ export const PINNED_CONNECT_TOOL_IDS: ReadonlySet<string> = new Set(
   ["search_capabilities", "execute_capability", "get_skill"].map(name => mcpToolId("openwork-cloud", name)));
 
 type ExecuteAfter = CallEvent & { readonly input: unknown } & (
-  | { readonly status: "completed"; result: { output?: unknown; metadata?: Record<string, unknown> } }
+  | { readonly status: "completed"; result: ToolResult }
   | { readonly status: "error"; readonly error: unknown }
 );
 type Context = {
@@ -32,9 +32,9 @@ type Context = {
   };
 };
 
-/** One OpenWork Cloud call made inside a Code Mode `execute`, kept because it reports a connection or an App build. */
+/** One inner call with a connection/App result. MCP envelopes stay separate from script-visible output. */
 export type PreservedMcpResult =
-  | { tool: string; input: unknown; status: "completed"; output: unknown }
+  | { tool: string; input: unknown; status: "completed"; output: unknown; mcpResult?: unknown }
   | { tool: string; input: unknown; status: "error"; error: string };
 
 const OPENWORK_CLOUD_TOOL = /^(?:openwork|openwork-cloud)_/;
@@ -95,14 +95,31 @@ function normalizedTool(tool: string): string {
   return tool.replace(/^(openwork(?:-cloud)?)\./, "$1_");
 }
 
+/** The native MCP transport's host-only envelope, never the script's chosen return value. */
+function mcpResult(result: ToolResult): Record<string, unknown> | undefined {
+  const raw = result.metadata?.mcp;
+  if (!isRecord(raw) || !Array.isArray(raw.content)) return undefined;
+  return {
+    content: raw.content,
+    ...(raw.structuredContent === undefined ? {} : { structuredContent: raw.structuredContent }),
+    ...(isRecord(raw._meta) ? { _meta: raw._meta } : {}),
+    ...(typeof raw.isError === "boolean" ? { isError: raw.isError } : {}),
+  };
+}
+
 export function preservedEntry(rawEvent: ExecuteAfter): PreservedMcpResult | null {
   const event = { ...rawEvent, tool: normalizedTool(rawEvent.tool) };
-  if (!OPENWORK_CLOUD_TOOL.test(event.tool)) return null;
-  const appBuilder = /_(?:search_capabilities|prepare_app|create_app|update_app)$/.test(event.tool);
+  const envelope = event.status === "completed" ? mcpResult(event.result) : undefined;
+  const connect = OPENWORK_CLOUD_TOOL.test(event.tool);
+  if (!connect && !envelope) return null;
+  const appBuilder = connect && /_(?:search_capabilities|prepare_app|create_app|update_app)$/.test(event.tool);
   const appLaunch = event.status === "completed" && isRecord(event.result.output) && isRecord(event.result.output.launch);
   const input = jsonCopy(event.input);
   const entry: PreservedMcpResult | null = event.status === "completed"
-    ? (appBuilder || appLaunch || reportsConnection(event.result.output)) ? { tool: event.tool, input, status: "completed", output: jsonCopy(event.result.output) } : null
+    ? (envelope || appBuilder || appLaunch || reportsConnection(event.result.output)) ? {
+      tool: event.tool, input, status: "completed", output: jsonCopy(event.result.output),
+      ...(envelope ? { mcpResult: jsonCopy(envelope) } : {}),
+    } : null
     : (appBuilder || reportsConnection(parseRecord(errorText(event.error)))) ? { tool: event.tool, input, status: "error", error: errorText(event.error) } : null;
   if (!entry) return null;
   return new TextEncoder().encode(JSON.stringify(entry)).byteLength <= MAX_ENTRY_BYTES ? entry : null;
@@ -156,8 +173,9 @@ type Execution = {
  * calls inside one `execute` and keeps only `{ tool, status, input }` per call.
  * Inner calls fire `execute.before`/`execute.after` with the outer call's
  * `messageID` and `id`; keep each call's own bounded result
- * (`openworkToolDetails`) and the ones that report a connection or an App build
+ * (`openworkToolDetails`) and MCP envelopes, connections, and App builds
  * (`openworkMcpResults`) on the outer call's metadata, which the engine saves.
+ * Native MCP envelopes require engine support for host-only `metadata.mcp`.
  */
 export function createMcpResultsCollector() {
   const open = new Map<string, Execution>();
@@ -219,6 +237,14 @@ export function createMcpResultsCollector() {
             ...(execution.truncated ? { openworkToolDetailsTruncated: true } : {}) };
         }
         return;
+      }
+      // Direct native MCP calls use the same renderer contract as reconstructed
+      // Code Mode calls. Keep the envelope in host metadata, not output/content.
+      if (event.status === "completed") {
+        const envelope = mcpResult(event.result);
+        if (envelope && byteLength(envelope) <= MAX_ENTRY_BYTES) {
+          event.result.metadata = { ...event.result.metadata, openworkMcpResult: jsonCopy(envelope) };
+        }
       }
       if (!execution) return;
       // The hook sees the same input object as `execute.before`. Matching by

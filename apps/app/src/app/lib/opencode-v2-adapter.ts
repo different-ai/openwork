@@ -720,8 +720,14 @@ export function codeModeConnectionParts(part: ToolPart): ToolPart[] {
     const status = readString(entry, "status");
     if (status === "completed") {
       const output = toolOutput(undefined, entry.output);
-      return [{ ...base, state: { status, input, output, title: tool, time,
-        metadata: { openworkMcpResult: isRecord(entry.output) && Array.isArray(entry.output.content) ? entry.output : { content: [{ type: "text", text: output }], structuredContent: entry.output, ...(isRecord(entry.output) && isRecord(entry.output.launch) ? { _meta: { "openwork/mcpApp": entry.output.launch } } : {}) } } } }];
+      // Transport metadata is separate from the value returned to the script.
+      // Older transcripts stored the envelope directly in output instead.
+      const envelope = readRecord(entry, "mcpResult") ?? readRecord(entry, "output");
+      const result = envelope && Array.isArray(envelope.content) ? envelope : {
+        content: [{ type: "text", text: output }], structuredContent: entry.output,
+        ...(isRecord(entry.output) && isRecord(entry.output.launch) ? { _meta: { "openwork/mcpApp": entry.output.launch } } : {}),
+      };
+      return [{ ...base, state: { status, input, output, title: tool, time, metadata: { openworkMcpResult: result } } }];
     }
     const error = readString(entry, "error");
     return status === "error" && error ? [{ ...base, state: { status, input, error, metadata: {}, time } }] : [];
