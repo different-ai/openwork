@@ -507,6 +507,7 @@ final class SessionRuntime {
         }
         session?.needsRefresh = true
         controls.update("Refreshing the selected window before continuing…", paused: false)
+        if current.parents.isEmpty { try await access.bringHere(current.target, app: current.app) }
         // A foreground observation shows the window in front, as input will see it.
         // Background reads the window where it is: capture works behind other windows.
         let focus = current.takesFront ? try await FocusLease.acquire(check: { try self.checkActive(current) }) : nil
@@ -831,6 +832,8 @@ final class SessionRuntime {
         if let prompt = access.personPrompt() { return personNeeded(prompt) }
         refreshFollow(id)
         let current = try current(id)
+        // A hidden or minimized window comes back without activating its app; one on another Space is reported.
+        if current.parents.isEmpty { try await access.bringHere(current.target, app: current.app) }
         // Saving an image sends no input: any mode, no front, and the observation stays valid.
         if actions.contains(where: { if case .saveImage = $0 { return true }; return false }) {
             guard actions.count == 1, case .saveImage(let file, let region, let replace) = actions[0] else {
@@ -914,6 +917,10 @@ final class SessionRuntime {
         var editorStep = editorTyping ? 0 : -1
         if editorTyping, credentialApproval != nil {
             throw UseError("protected_input", "A password or code goes only into a field the computer can identify. Nothing was sent.", next: "human_takeover")
+        }
+        // Focused input names no field, so it never carries a password or code.
+        if credentialApproval != nil, actions.contains(where: { if case .focused = $0 { return $0.entersText }; return false }) {
+            throw UseError("protected_input", "A password or code goes only into a field the computer can identify, never with target focused. Nothing was sent.", next: "human_takeover")
         }
         // Confirming a file panel hands the chosen files to the app, which can upload them:
         // the person approves first. Nothing is sent and the observation stays valid.
@@ -1202,7 +1209,7 @@ final class SessionRuntime {
                     choosing = (window, access.attribute(window.element, kAXTitleAttribute) as? String,
                         state.flatMap { try? access.captureDigest($0, focus: false) }, access.windowChanges(current.frontApp).windows)
                 }
-                if designApp, case .click = action, actions[(index + 1)...].contains(where: { if case .type = $0 { return true }; return false }) {
+                if designApp, case .click = action, actions[(index + 1)...].contains(where: { switch $0 { case .type, .focused: return true; default: return false } }) {
                     editBefore = access.editSession(in: current.target) != nil
                 }
                 var path = try await input.execute(action, app: current.app, target: current.target, lease: observation,
@@ -1214,6 +1221,10 @@ final class SessionRuntime {
                     })
                 uncertain = path != "waited"
                 if path == "canvas_text" { editSession = ["before_click": editBefore.map { $0 as Any } ?? NSNull(), "while_typing": true] }
+                if case .focused = action, designApp, editBefore != nil {
+                    // Read again after the step: what the before/after pair of this edit session showed.
+                    editSession = ["before_click": editBefore.map { $0 as Any } ?? NSNull(), "after_step": access.editSession(in: current.target) != nil]
+                }
                 if editorStep == index, case .type = action { clicked = true }
                 if case .arrange = action {
                     // Remember the person's frame once, and where this arrange left the window.
@@ -1507,7 +1518,8 @@ final class SessionRuntime {
             if await access.dialog(over: current.target, app: current.app) != nil { return .stop }
             switch need {
             case .menu: return .control(nil)
-            case .pointer: return .pointer
+            // Focused input checks the key window itself when it sends.
+            case .pointer, .keyWindow: return .pointer
             case .control, .keyboard, .later: break
             }
             var live: WindowState?

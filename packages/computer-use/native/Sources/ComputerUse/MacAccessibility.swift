@@ -787,6 +787,44 @@ final class MacAccessibility {
             throw UseError("text_edit_ended", "The text edit ended while typing on the canvas, so the rest was not typed. Observe again.", next: "observe")
         }
     }
+    /// What has the keyboard in the app's key window for `target: "focused"` (`FocusedTarget`), after the
+    /// key-window check, which refuses secure input, a secure field and anything outside the window.
+    func focusedKeyboard(target: WindowTarget, app: AppIdentity, requireFront: Bool) throws -> (FocusedTarget.Keyboard, AXUIElement?) {
+        try checkKeyWindow(target: target, app: app, requireFront: requireFront)
+        guard let focused = elementAttribute(AXUIElementCreateApplication(app.pid), kAXFocusedUIElementAttribute),
+              !CFEqual(focused, target.element) else { return (.nothing, nil) }
+        return (isTextEditor(focused) ? .editor : .other, focused)
+    }
+    /// Before every character of focused input: the key-window check again, the same thing with the
+    /// keyboard as when the step began, and the edit session it relied on still open.
+    func checkFocusedKeyboard(target: WindowTarget, app: AppIdentity, requireFront: Bool, was: AXUIElement?, session: AXUIElement?) throws {
+        let (_, now) = try focusedKeyboard(target: target, app: app, requireFront: requireFront)
+        guard now.map({ live in was.map { CFEqual($0, live) } == true }) ?? (was == nil) else {
+            throw UseError("focus_changed", "The keyboard moved during the step, so the rest was not sent. Observe again.", next: "observe")
+        }
+        if let session, (attribute(session, kAXEnabledAttribute) as? Bool) == false || !isInWindow(session, target: target) {
+            throw UseError("text_edit_ended", "The text edit ended during the step, so the rest was not sent. Observe again.", next: "observe")
+        }
+    }
+    /// Where the session's window is (`WindowPresence`), from the window list and accessibility.
+    func presence(_ target: WindowTarget, app: AppIdentity) -> WindowPresence {
+        let info = CGWindowListCopyWindowInfo(.optionIncludingWindow, target.id) as? [[String: Any]] ?? []
+        let entry = info.first { ($0[kCGWindowOwnerPID as String] as? Int32) == app.pid }
+        return WindowPresence.of(listed: entry != nil, onScreen: (entry?[kCGWindowIsOnscreen as String] as? Bool) == true,
+            minimized: (attribute(target.element, kAXMinimizedAttribute) as? Bool) == true, appHidden: app.app.isHidden)
+    }
+    /// Brings a hidden or minimized session window back without activating its app; refuses one on
+    /// another Space (`WindowPresence.offSpace`). Waits up to a second for it to show.
+    func bringHere(_ target: WindowTarget, app: AppIdentity) async throws {
+        switch presence(target, app: app) {
+        case .here, .gone: return
+        case .otherSpace: throw WindowPresence.offSpace
+        case .hidden: app.app.unhide()
+        case .minimized: _ = AXUIElementSetAttributeValue(target.element, kAXMinimizedAttribute as CFString, kCFBooleanFalse)
+        }
+        for _ in 0..<10 where presence(target, app: app) != .here { try await Task.sleep(nanoseconds: 100_000_000) }
+        if presence(target, app: app) == .otherSpace { throw WindowPresence.offSpace }
+    }
     /// The control showing that the app is editing text in the window (`BatchContinuation.marksEditSession`),
     /// enabled; nil when there is none. Reads labels only, never values.
     func editSession(in target: WindowTarget) -> AXUIElement? {

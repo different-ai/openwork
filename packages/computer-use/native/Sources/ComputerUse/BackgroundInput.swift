@@ -74,6 +74,8 @@ enum InputDelivery: String {
         case .key(let key, let flags) where NativeKey.isMenuShortcut(key, flags): return false
         case .key(_, let flags): return flags.contains(.maskCommand) || route == .skyLight && !signedKeys
         case .type, .enterValue: return route == .skyLight && !signedKeys
+        case .focused(.key(_, let flags)): return flags.contains(.maskCommand) || route == .skyLight && !signedKeys
+        case .focused: return route == .skyLight && !signedKeys
         case .click(_, _, let flags): return !flags.isEmpty
         case .move, .drag, .rightClick, .hold, .saveAs, .openInPanel: return true
         case .showMenu: return false

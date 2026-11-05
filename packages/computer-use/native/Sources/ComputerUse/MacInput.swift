@@ -162,6 +162,15 @@ final class MacInput {
                 let before = record.protected ? nil : access.attribute(record.element, kAXValueAttribute)
                 guard let field = try await takeKeyboard(record, target: target, app: app, lease: lease, access: access, background: background,
                     click: true, check: check, checkWindow: checkWindow) else {
+                    // A design app's value field took the click but accessibility names nothing with the keyboard:
+                    // the same value as raw keys to the key window, read back from the field itself.
+                    if record.role == ElementRecord.valueFieldRole, !record.protected,
+                       InputDelivery.takesToolKeys(info: app.app.bundleURL.flatMap { Bundle(url: $0)?.infoDictionary } ?? [:]),
+                       (try? access.focusedKeyboard(target: target, app: app, requireFront: !background))?.0 == .nothing {
+                        path = try await sendFocused(.enter(text, commit), app: app, target: target, access: access, background: background,
+                            afterOwnClick: false, readBack: record.element, check: check, checkWindow: checkWindow)
+                        break
+                    }
                     throw UseError("focus_required", "The field did not take the keyboard. Click it, then type, or observe again.", next: "observe")
                 }
                 report(.dispatched, point: CGPoint(x: record.frame.midX, y: record.frame.midY))
@@ -186,6 +195,9 @@ final class MacInput {
                 // Some fields keep a value only once committed: give the app a moment, then look.
                 try await Task.sleep(nanoseconds: 100_000_000); try check()
                 path = EnteredValue.outcome(text, before: before, after: access.attribute(record.element, kAXValueAttribute))
+            case .focused(let input):
+                path = try await sendFocused(input, app: app, target: target, access: access, background: background,
+                    afterOwnClick: canvasText, check: check, checkWindow: checkWindow)
             case .expect:
                 // Not input: the session checks it in the batch loop and never sends it here.
                 throw UseError("invalid_arguments", "An expect step sends no input.", next: "observe")
@@ -635,6 +647,54 @@ final class MacInput {
             try keyboard(NativeKey.navigation["enter"]!, flags: [], text: nil, pid: app.pid, check: check)
             _ = try await until(2, check: check, { access.focusedTextField(app.pid).map { CFEqual($0, goToField) } == true ? nil : true })
         })
+    }
+    /// `target: "focused"` (`FocusedTarget`): raw keys to the app's key window, checked before each one.
+    /// `readBack` is the control whose value an enter_value step reads afterwards, when it has one.
+    private func sendFocused(_ input: FocusedInput, app: AppIdentity, target: WindowTarget, access: MacAccessibility, background: Bool,
+                             afterOwnClick: Bool, readBack: AXUIElement? = nil, check: () throws -> Void, checkWindow: () throws -> Void) async throws -> String {
+        // An enter_value step's own click on a named value field (`readBack`) is where its keys go.
+        let designApp = InputDelivery.takesToolKeys(info: app.app.bundleURL.flatMap { Bundle(url: $0)?.infoDictionary } ?? [:])
+        let (holder, focused) = try access.focusedKeyboard(target: target, app: app, requireFront: !background)
+        // An edit session is read only where it decides anything: no named editor in a design app.
+        let session = designApp && holder != .editor && readBack == nil ? access.editSession(in: target) : nil
+        if let refusal = FocusedTarget.check(input, designApp: designApp, keyboard: readBack == nil ? holder : .editor, editSession: session != nil, afterOwnClick: afterOwnClick) {
+            throw refusal
+        }
+        func validate() throws {
+            try checkWindow()
+            try access.checkFocusedKeyboard(target: target, app: app, requireFront: !background, was: focused, session: session)
+        }
+        func press(_ key: String, _ flags: CGEventFlags) throws {
+            try validate()
+            let code = try keyCode(key, flags: flags)
+            try modifiers(flags, pid: app.pid, check: check)
+            try keyboard(code, flags: flags, text: nil, pid: app.pid, check: check)
+            releaseModifiers()
+        }
+        func type(_ text: String) async throws {
+            try await InputDispatch.type(text, check: check, validate: validate, send: { character in
+                try self.keyboard(0, flags: [], text: character, pid: app.pid, check: check)
+            })
+        }
+        report(.dispatched)
+        switch input {
+        case .key(let key, let flags):
+            try press(key, flags)
+            return FocusedTarget.unverified
+        case .type(let text):
+            try await type(text)
+            return FocusedTarget.unverified
+        case .enter(let text, let commit):
+            // Read back from the control, or from what the app names with the keyboard; never from a secure field.
+            let source = readBack ?? (holder == .editor ? focused : nil)
+            let before = source.flatMap { access.attribute($0, kAXValueAttribute) }
+            try press("a", .maskCommand)
+            try await type(text)
+            if commit != .none { try press(commit == .enter ? "enter" : "tab", []) }
+            try await Task.sleep(nanoseconds: 100_000_000); try check()
+            guard let after = source.flatMap({ access.attribute($0, kAXValueAttribute) }) else { return FocusedTarget.unverified }
+            return EnteredValue.outcome(text, before: before, after: after)
+        }
     }
     private func until<T>(_ seconds: Double, check: () throws -> Void, _ found: () -> T?) async throws -> T? {
         for _ in 0..<Int(seconds * 10) {
