@@ -212,9 +212,16 @@ final class SessionRuntime {
                     windows = try await access.windows(identity)
                 }
             }
+            var movedHere: String?
+            if windows.isEmpty, let window = access.windowsOnOtherSpaces(identity).first,
+               let way = await Spaces.bringHere(window, here: { self.access.isOnScreen(window) }) {
+                // Its window is on another Space: brought over without activating the app.
+                movedHere = way.rawValue
+                windows = try await access.windows(identity)
+            }
             if windows.isEmpty, let elsewhere = access.windowsElsewhere(identity).first {
-                // Its window is on another Space or in the Dock: bring it here, as a person would.
-                if await access.moveToThisSpace(elsewhere) { windows = try await access.windows(identity) }
+                // Its window is on another Space or in the Dock: minimized and restored here, as a person would.
+                if await access.moveToThisSpace(elsewhere) { movedHere = "minimize_restore"; windows = try await access.windows(identity) }
             }
             if windows.isEmpty, access.hasWindowsOnOtherSpaces(identity) { throw WindowPresence.offSpace }
             guard !windows.isEmpty else { throw UseError("window_unavailable", "The app opened, but did not expose a usable window. Check for a sign-in or app dialog, then request a session again.", next: "human_takeover") }
@@ -254,6 +261,8 @@ final class SessionRuntime {
                 "window_id": Int(target.id), "window_title": target.title, "mode": mode.rawValue, "delivery": delivery.rawValue, "followed": followed,
                 "state": opened.paused ? "paused" : "active", "expires_in_seconds": 900,
                 "next": next(opened)]
+            // Which way its window came over from another Space, so a report can tell which works.
+            if let movedHere { result["moved_here"] = movedHere }
             if file != nil {
                 result["file"] = FileOpenCheck.outcome(alert: fileAlert, documentWindowOpened: fileWindow != nil, retitled: false)
                 if let typeNote { result["type_note"] = typeNote }
@@ -1227,7 +1236,7 @@ final class SessionRuntime {
                         // Scrolling again after this batch's own scroll or drag moves the same view on:
                         // what changed under the point is the agent's own doing (a map panned, a list
                         // scrolled), so no new image is taken. What is at the point is still checked below.
-                        if !(BatchContinuation.continuesScroll(action, after: actions[..<index]) && progress.hasInput) {
+                        if !(BatchContinuation.continuesPan(action, after: actions[..<index]) && progress.hasInput) {
                             // Compared where the step lands, never shown: a window whose privacy scan cannot
                             // finish (Maps' map pins) still gets its pointer steps.
                             let captured = try await observationImage(current, bounds: bounds, state: live,
