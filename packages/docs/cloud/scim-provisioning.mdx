@@ -78,6 +78,28 @@ organization, a removed membership, or a pending invitation cannot be adopted;
 creation returns `409 Conflict`. Complete normal organization onboarding before
 retrying. Brand-new accounts follow the SCIM provisioning flow.
 
+## Supported requests
+
+Use these core operations when qualifying your deployment. Optional SCIM
+extensions and other request shapes are not implied by this list.
+
+| Resource | Operations and request details |
+| --- | --- |
+| Users | Create, read by ID, list, update, disable, reactivate, and delete. |
+| User matching and pages | Single `userName eq "…"` or `externalId eq "…"` filters; one-based `startIndex` and `count`, including an empty page after the last result. Other filter expressions are rejected rather than silently ignored. |
+| Profile and lifecycle updates | Test `displayName`, `name.formatted`, and boolean `active`. Both `Replace` and `replace` operation values are accepted. A name-only update must not reactivate a disabled user. |
+| Groups | Create, read, list, update membership, and delete. Request `excludedAttributes=members` to omit membership from a direct or list response without changing the stored group. |
+
+JSON resource responses use `application/scim+json`. Attribute selection is
+limited to top-level attributes; do not infer support for every nested projection.
+
+<Note>
+The corrections to pagination, matching, profile updates, response format,
+attribute exclusion, and disable/restore behavior are pending release. Confirm
+them on the deployed version before relying on these requests in your provider.
+A local passing test is not evidence that a deployment has been updated.
+</Note>
+
 ## Synchronize groups as teams
 
 User provisioning and group-to-team synchronization are separate settings.
@@ -138,11 +160,19 @@ treat a fresh user creation as proof of same-ID reactivation.
 </Note>
 
 A disconnected member record is organization history, not proof that a SCIM
-resource is still queryable or that the member can sign in. Likewise, a
-successful provisioning response is not a complete access test. Check a real
+resource is still queryable or that the member can sign in. Deactivation removes
+access; it is not a personal-data erasure request. Reactivation starts with the
+ordinary direct **Member** role, not a restored direct **Admin** grant. Review
+team-derived access separately.
+
+Removing organization access revokes the user's existing sign-in sessions and
+session-bound credentials. This can also sign them out of another organization
+without removing that organization's membership; they may need to sign in
+again to continue there.
+
+A successful provisioning response is not a complete sign-in test. Check SAML
 sign-in and relevant OpenWork clients before relying on deprovisioning for your
-access policy. Do not assume an existing session or another organization's
-access has the same lifecycle.
+access policy.
 
 ## Monitor provisioning
 
