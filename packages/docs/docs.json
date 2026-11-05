@@ -133,6 +133,12 @@
             ]
           },
           {
+            "group": "Maintenance",
+            "pages": [
+              "desktop-app/maintenance/back-up-conversation-history"
+            ]
+          },
+          {
             "group": "Troubleshooting",
             "pages": [
               "start-here/troubleshooting/diagnostic-prompts"
