@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { openWorkspaceFileForReading } from "../src/workspace-file-identity.js";
-import { mkdtemp, mkdir, realpath, rename, rm, symlink, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, realpath, rename, rm, symlink, utimes, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
@@ -17,6 +17,9 @@ async function fixture(size = 32) {
   const path = join(root, "outside.mp4");
   const bytes = Buffer.alloc(size, 123);
   await writeFile(path, bytes);
+  // Linux can keep both timestamps for writes within one filesystem clock tick.
+  // Start in the past so an actual edit reliably exercises the metadata guard.
+  await utimes(path, 946684800, 946684800);
   const config: ServerConfig = { host: "127.0.0.1", port: 8787, token: "client", hostToken: "host", approval: { mode: "auto", timeoutMs: 30_000 }, corsOrigins: [], workspaces: [], authorizedRoots: [workspace], readOnly: false, startedAt: 0, tokenSource: "generated", hostTokenSource: "generated", logFormat: "pretty", logRequests: false };
   return { config, root, workspace, path, bytes, [Symbol.asyncDispose]: () => rm(root, { recursive: true, force: true }) };
 }

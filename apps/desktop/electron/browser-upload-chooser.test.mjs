@@ -7,6 +7,20 @@ import { tmpdir } from 'node:os';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createBrowserUploadGrantStore, createBrowserUploadPermissions } from './browser-upload-permissions.mjs';
+
+async function stopChrome(chrome, closed) {
+ const waitForClose = async (ms) => {
+  let timer;
+  try {
+   return await Promise.race([closed.then(() => true), new Promise(resolve => { timer = setTimeout(() => resolve(false), ms); })]);
+  } finally { clearTimeout(timer); }
+ };
+ if (chrome.exitCode === null && chrome.signalCode === null) chrome.kill('SIGTERM');
+ if (await waitForClose(3_000)) return;
+ chrome.kill('SIGKILL');
+ if (!await waitForClose(3_000)) throw new Error('Chromium did not close within the teardown deadline');
+}
+
 test('real Chromium checks the receiving chooser frame against managed upload policy', { timeout: 30_000 }, async (t) => {
 let binary;
 for (const candidate of [process.env.OPENWORK_TEST_CHROME, process.platform === 'darwin' ? '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome' : '/usr/bin/google-chrome', '/usr/bin/chromium']) {
@@ -20,8 +34,19 @@ const server = createServer((req,res)=> { res.setHeader('Content-Type','text/htm
 server.listen(0,'127.0.0.1'); await once(server,'listening');
 const origin=`http://127.0.0.1:${server.address().port}`;
 const chrome=spawn(binary,['--headless=new','--no-sandbox','--no-first-run','--no-default-browser-check',`--user-data-dir=${tmp}/profile`,'--remote-debugging-port=0','about:blank'],{stdio:['ignore','ignore','pipe']});
+// Register before the test can fail or Chromium can exit. `exit` alone does not
+// mean its stdio has closed, and subscribing after kill can miss the event.
+const closed = new Promise(resolve => chrome.once('close', resolve));
 let socket;
-try {
+t.after(async () => {
+ socket?.close();
+ try { await stopChrome(chrome, closed); }
+ finally {
+  server.closeAllConnections(); await new Promise((resolve,reject) => server.close(error => error ? reject(error) : resolve()));
+  // Chromium helpers may finish profile writes just after the browser closes.
+  await rm(tmp,{recursive:true,force:true,maxRetries:5,retryDelay:100});
+ }
+});
  const debug=await new Promise((resolve,reject)=>{let err=''; const timer=setTimeout(()=>reject(new Error(err)),15000); chrome.stderr.on('data',d=>{err+=d; const m=err.match(/DevTools listening on ws:\/\/(127\.0\.0\.1:\d+)\//); if(m){clearTimeout(timer); resolve(`http://${m[1]}`);}});});
  const targets=await (await fetch(`${debug}/json/list`)).json();
  socket=new WebSocket(targets.find(t=>t.type==='page').webSocketDebuggerUrl); await once(socket,'open');
@@ -48,6 +73,4 @@ try {
  assert.equal(new URL(frame.url).origin,origin);assert.equal(await authorization.revalidate(frame.url),false);
  const child=await send('Runtime.evaluate',{expression:'document.querySelector("iframe").contentDocument.querySelector("input").files.length',returnByValue:true});assert.equal(child.result.value,0);
  console.log('PASS real Chromium: same-origin blocked-path iframe chooser is refused and receives zero files');
-} finally { socket?.close(); if (chrome.exitCode === null) { chrome.kill('SIGTERM'); await once(chrome,'exit').catch(()=>{}); } server.closeAllConnections(); await new Promise(r=>server.close(r)); await rm(tmp,{recursive:true,force:true}); }
-
 });
