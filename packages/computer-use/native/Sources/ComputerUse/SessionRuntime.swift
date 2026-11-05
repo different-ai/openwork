@@ -504,11 +504,21 @@ final class SessionRuntime {
         text(["ok": false, "code": "file_panel_approval_required", "app": current.frontApp.name, "panel_id": Int(current.target.id), "dispatched": false, "next": "observe",
               "message": "A file panel opened. The person is asked before the agent sees their files; nothing was read."])
     }
+    /// The app replaced the session's window while it was being read: the read starts over on the new one.
+    private struct ReplacementFollowed: Error { let replaced: [String: Any] }
     private func observe(_ id: String, image: Bool?, elements: String, menus: Bool = false, filePanelAccess: CGWindowID? = nil) async throws -> [[String: Any]] {
+        do { return try await observeOnce(id, image: image, elements: elements, menus: menus, filePanelAccess: filePanelAccess) }
+        catch let followed as ReplacementFollowed {
+            return try await observeOnce(id, image: image, elements: elements, menus: menus, filePanelAccess: filePanelAccess, replaced: followed.replaced)
+        }
+    }
+    private func observeOnce(_ id: String, image: Bool?, elements: String, menus: Bool, filePanelAccess: CGWindowID?,
+                             replaced known: [String: Any]? = nil) async throws -> [[String: Any]] {
         // A paused session never resumes from an observation: only the person's Continue does.
         // Retry only read-only capture races. Never repeat an action or cross takeover.
         // The app put a new window in place of the one the last action closed, after its receipt.
-        let replaced = await followReplacement(id)
+        var replaced = known
+        if replaced == nil { replaced = await followReplacement(id) }
         try await followDialog(id)
         if access.personPrompt() != nil {
             // Only the person can answer it: wait here, so the agent carries on once they
@@ -589,8 +599,8 @@ final class SessionRuntime {
                     // The window is going away under the read, as one a step just replaced does: once
                     // the app shows the new one, the read is of that window.
                     if ["accessibility_unavailable", "window_unavailable"].contains(error.code), attempt < 2,
-                       await self.followReplacement(id, settle: WindowReplacement.settle) != nil {
-                        continue
+                       let followed = await self.followReplacement(id, settle: WindowReplacement.settle) {
+                        throw ReplacementFollowed(replaced: followed)
                     }
                     guard error.code == "stale_observation", attempt < 2 else { throw SharedDesktop.yielding(error) }
                     try await Task.sleep(nanoseconds: 75_000_000)
@@ -931,7 +941,12 @@ final class SessionRuntime {
         }
         // macOS reports the new front app a moment after the window comes forward; real input
         // checks the front app before each event, so the first one waits for that report.
-        if front { await FrontReport.wait(for: current.frontApp.pid, frontmost: { NSWorkspace.shared.frontmostApplication?.processIdentifier }) }
+        if front {
+            await FrontReport.wait(for: current.frontApp.pid, frontmost: { NSWorkspace.shared.frontmostApplication?.processIdentifier })
+            // The window itself comes above the others a moment after its app is reported in front;
+            // a pointer step checks what is under its point before then.
+            if current.parents.isEmpty { await FrontReport.waitOnTop(current.target.id, pid: current.app.pid) }
+        }
         // The person had other work in front, and the window was just brought back for this
         // step. Coordinate steps still check the live window against the observation, where
         // each one lands, before any input; this app's later steps take the front too, so a
@@ -1472,9 +1487,15 @@ final class SessionRuntime {
         if progress.hasInput, current.mode == .control { session?.lastInput = realInput ? .real : .targeted }
         // After the app has taken the input in, the person's pointer goes back. Anything
         // held back or unconfirmed at the window server ends the step as uncertain.
+        var realRoute: [[String: Any]] = []
         if realInput {
             if let error = await RealInputGate.shared.finish(), failure == nil { failure = error; uncertain = true }
             input.restorePointer()
+            // Where each real event went, for a step that failed or worked in a file panel.
+            let trace = RealInputGate.shared.takeTrace()
+            if failure != nil || panelKeys {
+                realRoute = RealInputRoute.describe(trace, app: current.app.pid, bundle: { NSRunningApplication(processIdentifier: $0)?.bundleIdentifier })
+            }
         }
         var settled: Bool?
         if progress.hasInput || uncertain {
@@ -1505,10 +1526,12 @@ final class SessionRuntime {
             // An app's own panel window (QuickTime's launch Open window) can be the session's window too.
             session?.windowsBeforeInput = (windowsBefore.windows.union(windowsBefore.panels), now)
             // A step that closed its own window waits a moment for the app's new one.
-            let closedOwn = !windowsAfter.windows.contains(current.target.id) && current.parents.isEmpty
+            let closedOwn = !windowsAfter.windows.union(windowsAfter.panels).contains(current.target.id) && current.parents.isEmpty
             if let replaced = await followReplacement(id, settle: closedOwn ? WindowReplacement.settle : 0) { receipt["window_replaced"] = replaced }
         }
         receipt["delivery"] = (background ? InputDelivery.background : .foreground).rawValue
+        if !realRoute.isEmpty { receipt["real_input_route"] = realRoute }
+        if panelKeys, !input.goToTrace.isEmpty { receipt["go_to_trace"] = input.goToTrace }
         if let typeNote { receipt["type_note"] = typeNote }
         if let fileAlert { receipt["file_alert"] = fileAlert }
         if !checks.isEmpty { receipt["checks"] = checks }
@@ -1893,6 +1916,9 @@ final class SessionRuntime {
         guard desktopAvailable else { throw UseError("desktop_unavailable", "The desktop is temporarily unavailable. Observe again when available.", next: "observe") }
         // A dialog comes forward with its parent window and app.
         let window = current.frontTarget, owner = current.frontApp
+        // In a dialog, only the app comes forward and the dialog keeps the keyboard: raising or
+        // focusing its parent window takes the keyboard from a Save panel, whose keys then go nowhere.
+        let inDialog = !current.parents.isEmpty
         if current.mode == .control {
             _ = try access.validate(window, app: owner)
             // Each way once, read back after each; never keep stealing the front if a person intervenes.
@@ -1900,16 +1926,19 @@ final class SessionRuntime {
             _ = try await WindowFront.bring(attempt: { way in
                 switch way {
                 case .raise:
-                    _ = AXUIElementPerformAction(window.element, kAXRaiseAction as CFString)
+                    if !inDialog { _ = AXUIElementPerformAction(window.element, kAXRaiseAction as CFString) }
                     _ = owner.app.activate(options: [])
                 case .frontmost:
                     _ = AXUIElementSetAttributeValue(app, kAXFrontmostAttribute as CFString, kCFBooleanTrue)
                 case .mainWindow:
-                    _ = AXUIElementSetAttributeValue(window.element, kAXMainAttribute as CFString, kCFBooleanTrue)
-                    _ = AXUIElementSetAttributeValue(window.element, kAXFocusedAttribute as CFString, kCFBooleanTrue)
+                    if !inDialog {
+                        _ = AXUIElementSetAttributeValue(window.element, kAXMainAttribute as CFString, kCFBooleanTrue)
+                        _ = AXUIElementSetAttributeValue(window.element, kAXFocusedAttribute as CFString, kCFBooleanTrue)
+                    }
                     _ = AXUIElementSetAttributeValue(app, kAXFrontmostAttribute as CFString, kCFBooleanTrue)
                 case .keyRecords:
-                    _ = BackgroundFocus.post(pid: owner.pid, window: window.id, makeKey: true)
+                    // The dialog's own window takes the keyboard, never its parent's.
+                    _ = BackgroundFocus.post(pid: owner.pid, window: inDialog ? current.target.id : window.id, makeKey: true)
                     _ = AXUIElementSetAttributeValue(app, kAXFrontmostAttribute as CFString, kCFBooleanTrue)
                     _ = owner.app.activate(options: [])
                 }

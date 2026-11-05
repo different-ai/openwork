@@ -895,7 +895,8 @@ enum WindowFront {
     enum Way: String, CaseIterable { case raise, frontmost, mainWindow, keyRecords }
     static let refused = UseError("front_unavailable", "The app did not bring the selected window to the front, so nothing was sent. Observe again; the next step tries again.", next: "observe")
     /// Read back after each way, every `interval`, for at most `polls` reads.
-    @MainActor static func bring(ways: [Way] = Way.allCases, polls: Int = 4, interval: TimeInterval = 0.05,
+    /// Each way gets up to half a second: an app activated from the background takes that long.
+    @MainActor static func bring(ways: [Way] = Way.allCases, polls: Int = 10, interval: TimeInterval = 0.05,
         attempt: (Way) -> Void, inFront: () -> Bool, check: () throws -> Void, sleep: (TimeInterval) async throws -> Void) async throws -> Way {
         for way in ways {
             try check()
@@ -1270,6 +1271,28 @@ enum FrontReport {
             await sleep(step)
         }
         return frontmost() == pid
+    }
+    /// Waits (at most `limit`) for `window` to be the app windows' topmost at its own middle.
+    @MainActor static func waitOnTop(_ window: CGWindowID, pid: pid_t,
+                                     windows: () -> [(id: CGWindowID, pid: pid_t, bounds: CGRect, layer: Int)] = FrontReport.onScreen,
+                                     sleep: (TimeInterval) async -> Void = { try? await Task.sleep(nanoseconds: UInt64($0 * 1_000_000_000)) }) async {
+        for _ in 0..<Int(limit / step) {
+            if onTop(window, pid: pid, windows: windows()) { return }
+            await sleep(step)
+        }
+    }
+    static func onTop(_ window: CGWindowID, pid: pid_t, windows: [(id: CGWindowID, pid: pid_t, bounds: CGRect, layer: Int)]) -> Bool {
+        guard let own = windows.first(where: { $0.id == window }) else { return true }
+        let middle = CGPoint(x: own.bounds.midX, y: own.bounds.midY)
+        return windows.first(where: { $0.layer == 0 && $0.bounds.contains(middle) })?.id == window
+    }
+    static func onScreen() -> [(id: CGWindowID, pid: pid_t, bounds: CGRect, layer: Int)] {
+        ((CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID) as? [[String: Any]]) ?? []).compactMap { value in
+            guard let number = value[kCGWindowNumber as String] as? NSNumber, let owner = value[kCGWindowOwnerPID as String] as? NSNumber,
+                  let bounds = value[kCGWindowBounds as String] as? [String: Any],
+                  let rect = CGRect(dictionaryRepresentation: bounds as CFDictionary) else { return nil }
+            return (number.uint32Value, owner.int32Value, rect, (value[kCGWindowLayer as String] as? NSNumber)?.intValue ?? 0)
+        }
     }
 }
 

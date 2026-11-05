@@ -44,6 +44,9 @@ final class MacInput {
     /// Set for one action in an app that takes only hardware input: events go
     /// through the system input stream and move the real pointer, as a person's do.
     private var realInput = false
+    /// What each way of opening a panel's Go To field found, for a file panel step's receipt:
+    /// the way, and the role, identifier and process of the field that had the keyboard after it.
+    private(set) var goToTrace: [[String: Any]] = []
     /// Where the person's pointer was before the agent moved it.
     private var personPointer: CGPoint?
     /// The current step runs in the background, so keys to Chromium-class apps are signed.
@@ -686,6 +689,16 @@ final class MacInput {
                       check: () throws -> Void) async throws -> PanelGoTo.Failure? {
         let name = field.flatMap { access.attribute($0, kAXValueAttribute) as? String }
         var typedSlash = false
+        goToTrace = []
+        func describe(_ element: AXUIElement?) -> String {
+            guard let element else { return "none" }
+            var owner: pid_t = 0
+            AXUIElementGetPid(element, &owner)
+            let role = access.attribute(element, kAXRoleAttribute) as? String ?? "?"
+            let identifier = access.attribute(element, kAXIdentifierAttribute) as? String ?? ""
+            let process = owner == app.pid ? "app" : NSRunningApplication(processIdentifier: owner)?.bundleIdentifier ?? "another process"
+            return "\(role) \(identifier) (\(process))"
+        }
         // A sandboxed app's panel is drawn by macOS's panel process, which may report its Go To field itself.
         let service = AppIdentity.filePanelService(for: app.pid)
         func focusedField() -> AXUIElement? {
@@ -713,12 +726,20 @@ final class MacInput {
                           access.focusedTextField(app.pid).map({ CFEqual($0, field) }) == true else { return nil }
                     try keyboard(0, flags: [], text: "/", pid: app.pid, check: check)
                     typedSlash = true
-                    return try await opened()
+                    let found = try await opened()
+                    goToTrace.append(["way": "slash_in_name", "opened": found != nil,
+                                      "keyboard": describe(access.focusedTextField(app.pid) ?? service.flatMap(access.focusedTextField)),
+                                      "front": NSWorkspace.shared.frontmostApplication?.bundleIdentifier ?? "none"])
+                    return found
                 }
                 try modifiers(goTo, pid: app.pid, check: check)
                 try keyboard(try keyCode("g", flags: goTo), flags: goTo, text: nil, pid: app.pid, check: check)
                 releaseModifiers()
-                return try await opened()
+                let found = try await opened()
+                goToTrace.append(["way": way == .shortcut ? "shortcut" : "expanded", "opened": found != nil,
+                                  "keyboard": describe(access.focusedTextField(app.pid) ?? service.flatMap(access.focusedTextField)),
+                                  "front": NSWorkspace.shared.frontmostApplication?.bundleIdentifier ?? "none"])
+                return found
             }
             // The "/" stayed in the name field: put the name back as it was.
             if found == nil, typedSlash, let field, let name { _ = AXUIElementSetAttributeValue(field, kAXValueAttribute as CFString, name as CFString) }
