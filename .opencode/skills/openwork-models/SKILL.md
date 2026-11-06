@@ -25,6 +25,13 @@ generates the OpenWork provider overlay in memory. It selects the API URL from
 `OPENWORK_DEV_MODE`: dev uses `http://127.0.0.1:8791/api/v1`, otherwise prod
 uses `https://inference.openworklabs.com/api/v1`.
 
+Custom providers that are not on models.dev (their own API, key and models) are
+not OpenWork models: add them as one file in
+`ee/apps/gateway/src/models/providers/` following its `README.md`, then run
+`pnpm --dir ee/apps/gateway models:build` (it fails with every problem listed)
+and `node --conditions=development --import tsx --test test/model-catalog.test.ts`
+from `ee/apps/gateway`.
+
 Do not inspect the full `base.json` in chat. Use the scripts so the large source
 model body stays out of context.
 

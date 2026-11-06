@@ -6,9 +6,13 @@ This directory holds the generated OpenWork model catalog. Cloudflare Pages buil
 - Build output directory: `ee/apps/gateway/models-site/models`
 - Catalog URL: `https://models.openworklabs.com/api.json`
 
-The generated `models/api.json` file is ignored by git. It is rebuilt from `src/models/base.json` and the active OpenWork overlay by `scripts/build-models.mjs`.
+The generated `models/api.json` file is ignored by git. `scripts/build-models.mjs` rebuilds it, through `src/models/catalog.ts`, from three sources in this order:
 
-OpenWork-specific models live in `src/models/openwork-models.json`. `scripts/build-models.mjs` turns that list into the OpenWork provider overlay at build time and switches the provider API URL based on `OPENWORK_DEV_MODE`.
+1. `src/models/base.json`: the models.dev snapshot, refreshed by the Update Models workflow.
+2. `src/models/providers/*.json`: custom providers that are not on models.dev, one validated file each. See `src/models/providers/README.md`. A file that fails validation fails the build.
+3. `src/models/openwork-models.json`: OpenWork-specific models, turned into the `openwork` provider with an API URL that depends on `OPENWORK_DEV_MODE`.
+
+The gateway reads sources 1 and 2 through the same module for pricing and provider routing, so a custom provider works through the AI Gateway as soon as it is in the catalog.
 
 Local development still serves the generated catalog from the gateway Hono app at `/models/api.json` so one local service can provide both the proxy API and model catalog during dev.
 
