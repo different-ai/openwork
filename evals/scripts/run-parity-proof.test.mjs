@@ -42,6 +42,18 @@ test("the native skill denial proof runs on the v2 engine, not as a legacy proof
   ]);
 });
 
+test("conversation history capture validation runs on both engines in CI", async () => {
+  const spec = "evals/proofs/conversation-navigation.proof.test.ts";
+  assert.deepEqual(parityProofPlan(spec).map(item => item.engine), ["v1", "v2"]);
+  const ran = [];
+  const result = await runParityProof(spec, {
+    prepare: async () => ({}),
+    run: async (_args, env) => { ran.push(env.OPENWORK_EVAL_ENGINE); return env.OPENWORK_EVAL_ENGINE === "v2" ? 1 : 0; },
+  });
+  assert.deepEqual(ran, ["v1", "v2"]);
+  assert.equal(result, 1);
+});
+
 test("existing connector parity retains both v1 and v2 execution", () => {
   assert.deepEqual(parityProofPlan("evals/core/agent-connection-journey.e2e.test.ts").map(item => item.engine), ["v1", "v2"]);
 });

@@ -4,6 +4,7 @@
  * restore the exact layout the user was looking at.
  */
 export type ConversationHistoryEntry = {
+  workspaceId: string;
   sessionId: string;
   splitSessionId: string | null;
 };
@@ -18,10 +19,11 @@ export type ConversationHistoryDirection = "back" | "forward";
 
 function sameEntry(
   entry: ConversationHistoryEntry | undefined,
+  workspaceId: string,
   sessionId: string,
   splitSessionId: string | null,
 ) {
-  return entry?.sessionId === sessionId && (entry.splitSessionId ?? null) === splitSessionId;
+  return entry?.workspaceId === workspaceId && entry.sessionId === sessionId && entry.splitSessionId === splitSessionId;
 }
 
 export function createConversationTabHistory(
@@ -31,7 +33,7 @@ export function createConversationTabHistory(
 ): ConversationTabHistory {
   return {
     workspaceId,
-    entries: sessionId ? [{ sessionId, splitSessionId }] : [],
+    entries: sessionId ? [{ workspaceId, sessionId, splitSessionId }] : [],
     index: sessionId ? 0 : -1,
   };
 }
@@ -42,24 +44,20 @@ export function syncConversationTabHistory(
   sessionId: string | null,
   splitSessionId: string | null = null,
 ): ConversationTabHistory {
-  if (history.workspaceId !== workspaceId) {
-    return createConversationTabHistory(workspaceId, sessionId, splitSessionId);
-  }
-
   if (!sessionId) {
     if (history.entries.length === 0 && history.index === -1) return history;
     return createConversationTabHistory(workspaceId, null);
   }
 
-  if (sameEntry(history.entries[history.index], sessionId, splitSessionId)) return history;
+  if (sameEntry(history.entries[history.index], workspaceId, sessionId, splitSessionId)) return history;
 
   const entriesBeforeForwardBranch = history.index >= 0
     ? history.entries.slice(0, history.index + 1)
     : [];
   const last = entriesBeforeForwardBranch[entriesBeforeForwardBranch.length - 1];
-  const entries = sameEntry(last, sessionId, splitSessionId)
+  const entries = sameEntry(last, workspaceId, sessionId, splitSessionId)
     ? entriesBeforeForwardBranch
-    : [...entriesBeforeForwardBranch, { sessionId, splitSessionId }];
+    : [...entriesBeforeForwardBranch, { workspaceId, sessionId, splitSessionId }];
 
   return {
     workspaceId,
@@ -95,31 +93,23 @@ export function removeConversationHistoryEntry(
   workspaceId: string,
   sessionId: string,
 ): ConversationTabHistory {
-  if (history.workspaceId !== workspaceId) return history;
-  const removedIndex = history.entries.findIndex((entry) => entry.sessionId === sessionId);
-  const referencedAsSplit = history.entries.some((entry) => entry.splitSessionId === sessionId);
+  const removedIndex = history.entries.findIndex((entry) => entry.workspaceId === workspaceId && entry.sessionId === sessionId);
+  const referencedAsSplit = history.entries.some((entry) => entry.workspaceId === workspaceId && entry.splitSessionId === sessionId);
   if (removedIndex === -1 && !referencedAsSplit) return history;
 
-  const kept = history.entries
-    .filter((entry) => entry.sessionId !== sessionId)
-    .map((entry) => entry.splitSessionId === sessionId ? { ...entry, splitSessionId: null } : entry);
   const entries: ConversationHistoryEntry[] = [];
-  for (const entry of kept) {
-    const last = entries[entries.length - 1];
-    if (last && sameEntry(last, entry.sessionId, entry.splitSessionId)) continue;
-    entries.push(entry);
+  let index = -1;
+  for (const [oldIndex, entry] of history.entries.entries()) {
+    if (entry.workspaceId === workspaceId && entry.sessionId === sessionId) continue;
+    const next = entry.workspaceId === workspaceId && entry.splitSessionId === sessionId
+      ? { ...entry, splitSessionId: null } : entry;
+    if (!sameEntry(entries.at(-1), next.workspaceId, next.sessionId, next.splitSessionId)) entries.push(next);
+    if (oldIndex <= history.index) index = entries.length - 1;
   }
-  if (entries.length === 0) return createConversationTabHistory(workspaceId, null);
-
-  const index = removedIndex !== -1 && removedIndex <= history.index
-    ? Math.max(0, history.index - 1)
-    : history.index;
-
-  return {
-    workspaceId,
-    entries,
-    index: Math.min(index, entries.length - 1),
-  };
+  const currentIndex = Math.max(0, index);
+  const current = entries[currentIndex];
+  if (!current) return createConversationTabHistory(history.workspaceId, null);
+  return { workspaceId: current.workspaceId, entries, index: currentIndex };
 }
 
 export function navigateConversationTabHistory(
@@ -131,8 +121,10 @@ export function navigateConversationTabHistory(
   }
 
   const index = direction === "back" ? history.index - 1 : history.index + 1;
+  const entry = history.entries[index];
+  if (!entry) return { history, entry: null };
   return {
-    history: { ...history, index },
-    entry: history.entries[index] ?? null,
+    history: { ...history, workspaceId: entry.workspaceId, index },
+    entry,
   };
 }
