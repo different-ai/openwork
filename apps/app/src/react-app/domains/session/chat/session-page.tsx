@@ -61,6 +61,7 @@ import { MainSidebarControls } from "../sidebar/sidebar-chrome";
 import { MobileChatActions, MobileChatNavigation } from "./mobile-chat-navigation";
 import { useSessionManagementStore } from "../sidebar/session-management-store";
 import type { SessionSettleState } from "../sidebar/session-settle";
+import { captureSessionActionTarget, type SessionActionTarget } from "../sidebar/session-menu-actions";
 import { SessionSurface, type SessionSurfaceProps } from "../surface/session-surface";
 import { useSessionFindStore } from "../surface/find-store";
 import {
@@ -82,8 +83,8 @@ import { type SidePanelItem, useUiStateStore } from "../../../shell/ui-state-sto
 import type { SessionNumberShortcutsState } from "../../../shell/session-number-shortcuts";
 import { useBootOverlayVisible } from "../../../shell/boot-state";
 import {
-  OPEN_RENAME_SESSION_EVENT,
-  renameSessionIdFromEvent,
+  OPEN_SESSION_ACTION_EVENT,
+  sessionDialogRequestFromEvent,
 } from "../../../shell/session-actions-bus";
 
 import { isElectronRuntime, isMacPlatform } from "../../../../app/utils";
@@ -311,9 +312,9 @@ export type SessionPageProps = {
   chatFirstBusy?: boolean;
   /** Workspace-scoped wiring for the empty-state hero's full composer. */
   newTaskComposer?: NewTaskComposerContext | null;
-  onRenameSession?: (sessionId: string, title: string) => Promise<void> | void;
-  onDeleteSession?: (sessionId: string) => Promise<void> | void;
-  onArchiveSession?: (sessionId: string, archived: boolean) => Promise<void> | void;
+  onRenameSession?: (sessionId: string, title: string, workspaceId: string) => Promise<void> | void;
+  onDeleteSession?: (sessionId: string, workspaceId: string) => Promise<void> | void;
+  onArchiveSession?: (sessionId: string, archived: boolean, workspaceId: string) => Promise<void> | void;
   archiveDisabledReason?: string;
   onAccessibleTargetsChange?: (targets: OpenTarget[]) => void;
   /** Settings content rendered inside the right pane when the settings rail icon is active. */
@@ -537,7 +538,7 @@ export function SessionPage(props: SessionPageProps) {
   const [renameBusy, setRenameBusy] = useState(false);
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [deleteBusy, setDeleteBusy] = useState(false);
-  const [sessionActionId, setSessionActionId] = useState<string | null>(null);
+  const [sessionActionTarget, setSessionActionTarget] = useState<SessionActionTarget | null>(null);
   const workspaceName =
     props.selectedWorkspaceDisplay.displayName?.trim() ||
     props.selectedWorkspaceDisplay.name?.trim() ||
@@ -1093,10 +1094,7 @@ export function SessionPage(props: SessionPageProps) {
   useEffect(() => {
     props.onSessionTabsChange?.(sessionTabs.filter((tab) => !tab.draftDestination));
   }, [sessionTabs, props.onSessionTabsChange]);
-  const sessionActionTitle = useMemo(
-    () => sessionTitleForId(props.sidebar.workspaceSessionGroups, sessionActionId),
-    [props.sidebar.workspaceSessionGroups, sessionActionId],
-  );
+  const sessionActionTitle = sessionActionTarget?.title ?? "";
   const providerCount = props.hasUsableModel ? 1 : props.providerConnectedIds.length;
   const messageCountVisible = props.selectedSessionId ? 1 : 0;
   const hasMainContentTakeover = Boolean(props.mainContentTakeover);
@@ -1394,36 +1392,54 @@ export function SessionPage(props: SessionPageProps) {
     setDeleteOpen(false);
     setRenameBusy(false);
     setDeleteBusy(false);
-    setSessionActionId(null);
-  }, [props.selectedSessionId]);
+    setSessionActionTarget(null);
+  }, [props.selectedSessionId, props.selectedWorkspaceId]);
 
-  const openRenameModal = (sessionId: string) => {
+  const openRenameModal = (sessionId: string, workspaceId: string) => {
     if (!props.onRenameSession) return;
-    setSessionActionId(sessionId);
-    setRenameTitle(sessionTitleForId(props.sidebar.workspaceSessionGroups, sessionId));
+    const target = captureSessionActionTarget(props.sidebar.workspaceSessionGroups, sessionId, workspaceId);
+    if (!target) return;
+    setSessionActionTarget(target);
+    setRenameTitle(target.title);
     setRenameOpen(true);
   };
 
-  const handleRenameSessionRequest = useEffectEvent((event: Event) => {
-    if (!props.onRenameSession) return;
-    const sessionId = renameSessionIdFromEvent(event);
-    if (sessionId) openRenameModal(sessionId);
+  const openDeleteModal = (sessionId: string, workspaceId: string) => {
+    if (!props.onDeleteSession) return;
+    const target = captureSessionActionTarget(props.sidebar.workspaceSessionGroups, sessionId, workspaceId);
+    if (!target) return;
+    setSessionActionTarget(target);
+    setDeleteOpen(true);
+  };
+
+  const openCreateGroupModal = (workspaceId: string) => {
+    if (!props.sidebar.workspaceSessionGroups.some((entry) => entry.workspace.id === workspaceId)) return;
+    setCreateGroupWorkspaceId(workspaceId);
+    setCreateGroupLabel("");
+    setCreateGroupOpen(true);
+  };
+
+  const handleSessionDialogRequest = useEffectEvent((event: Event) => {
+    const request = sessionDialogRequestFromEvent(event);
+    if (!request) return;
+    if (request.action === "create-group") openCreateGroupModal(request.workspaceId);
+    else if (request.action === "rename") openRenameModal(request.target.sessionId, request.target.workspaceId);
+    else openDeleteModal(request.target.sessionId, request.target.workspaceId);
   });
 
   useEffect(() => {
-    if (!props.onRenameSession) return;
-    const handler = (event: Event) => handleRenameSessionRequest(event);
-    window.addEventListener(OPEN_RENAME_SESSION_EVENT, handler);
-    return () => window.removeEventListener(OPEN_RENAME_SESSION_EVENT, handler);
-  }, [props.onRenameSession]);
+    const handler = (event: Event) => handleSessionDialogRequest(event);
+    window.addEventListener(OPEN_SESSION_ACTION_EVENT, handler);
+    return () => window.removeEventListener(OPEN_SESSION_ACTION_EVENT, handler);
+  }, []);
 
   const submitRename = async () => {
-    const sessionId = sessionActionId;
+    const target = sessionActionTarget;
     const nextTitle = renameTitle.trim();
-    if (!sessionId || !props.onRenameSession || !nextTitle || nextTitle === sessionActionTitle.trim()) return;
+    if (!target || !props.onRenameSession || !nextTitle || nextTitle === sessionActionTitle.trim()) return;
     setRenameBusy(true);
     try {
-      await props.onRenameSession(sessionId, nextTitle);
+      await props.onRenameSession(target.sessionId, nextTitle, target.workspaceId);
       setRenameOpen(false);
     } finally {
       setRenameBusy(false);
@@ -1431,11 +1447,11 @@ export function SessionPage(props: SessionPageProps) {
   };
 
   const confirmDelete = async () => {
-    const sessionId = sessionActionId;
-    if (!sessionId || !props.onDeleteSession) return;
+    const target = sessionActionTarget;
+    if (!target || !props.onDeleteSession) return;
     setDeleteBusy(true);
     try {
-      await props.onDeleteSession(sessionId);
+      await props.onDeleteSession(target.sessionId, target.workspaceId);
       setDeleteOpen(false);
     } finally {
       setDeleteBusy(false);
@@ -1502,19 +1518,12 @@ export function SessionPage(props: SessionPageProps) {
           draftScope={props.newTaskComposer?.draftScope}
           onCreateSplitTaskInWorkspace={props.sidebar.onCreateSplitTaskInWorkspace}
           onOpenRenameSession={props.onRenameSession ? openRenameModal : undefined}
-          onOpenDeleteSession={props.onDeleteSession ? (sessionId) => {
-            setSessionActionId(sessionId);
-            setDeleteOpen(true);
-          } : undefined}
-          onArchiveSession={props.onArchiveSession ? (sessionId, archived) => {
-            void props.onArchiveSession?.(sessionId, archived);
+          onOpenDeleteSession={props.onDeleteSession ? openDeleteModal : undefined}
+          onArchiveSession={props.onArchiveSession ? (sessionId, archived, workspaceId) => {
+            void props.onArchiveSession?.(sessionId, archived, workspaceId);
           } : undefined}
           archiveDisabledReason={props.archiveDisabledReason}
-          onOpenCreateGroupModal={(workspaceId) => {
-            setCreateGroupWorkspaceId(workspaceId);
-            setCreateGroupLabel("");
-            setCreateGroupOpen(true);
-          }}
+          onOpenCreateGroupModal={openCreateGroupModal}
           onOpenRenameWorkspace={props.sidebar.onOpenRenameWorkspace}
           onRevealWorkspace={props.sidebar.onRevealWorkspace}
           onForgetWorkspace={props.sidebar.onForgetWorkspace}
@@ -1911,7 +1920,7 @@ export function SessionPage(props: SessionPageProps) {
                             workspaceId={props.runtimeWorkspaceId!}
                             sessionId={props.selectedSessionId!}
                             archived={archivedInWorkspace(props.selectedWorkspaceId, props.selectedSessionId)}
-                            onRestoreSession={async () => { await props.onArchiveSession?.(props.selectedSessionId!, false); }}
+                            onRestoreSession={async () => { await props.onArchiveSession?.(props.selectedSessionId!, false, props.selectedWorkspaceId!); }}
                             isControlTarget={activeWorkbenchPane === "primary"}
                             chatPane={canRenderSplitSurface ? "primary" : undefined}
                             opencodeBaseUrl={reactSessionBaseUrl}
@@ -1996,7 +2005,7 @@ export function SessionPage(props: SessionPageProps) {
                                   sandboxBackend={splitPaneRuntime.sandboxBackend}
                                   sessionId={splitSession.sessionId}
                                   archived={archivedInWorkspace(splitSession.workspaceId, splitSession.sessionId)}
-                                  onRestoreSession={async () => { await props.onArchiveSession?.(splitSession.sessionId, false); }}
+                                  onRestoreSession={async () => { await props.onArchiveSession?.(splitSession.sessionId, false, splitSession.workspaceId); }}
                                   isControlTarget={activeWorkbenchPane === "secondary"}
                                   chatPane="secondary"
                                   opencodeBaseUrl={splitPaneRuntime.opencodeBaseUrl}
