@@ -27,9 +27,9 @@ export type SidebarContextValue = {
   onPrefetchSession?: (workspaceId: string, sessionId: string) => void | (() => void);
   onCreateTaskInWorkspace: (workspaceId: string, groupId?: string) => void;
   onCreateSplitTaskInWorkspace: (workspaceId: string) => void;
-  onOpenRenameSession?: (sessionId: string) => void;
-  onOpenDeleteSession?: (sessionId: string) => void;
-  onArchiveSession?: (sessionId: string, archived: boolean) => void;
+  onOpenRenameSession?: (sessionId: string, workspaceId: string) => void;
+  onOpenDeleteSession?: (sessionId: string, workspaceId: string) => void;
+  onArchiveSession?: (sessionId: string, archived: boolean, workspaceId: string) => void;
   archiveDisabledReason?: string;
   onOpenCreateGroupModal?: (workspaceId: string) => void;
   onOpenRenameWorkspace: (workspaceId: string) => void;

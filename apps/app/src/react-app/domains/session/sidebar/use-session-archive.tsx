@@ -139,7 +139,7 @@ export function useSessionArchive(input: {
       icon: archived ? Archive : ArchiveRestore,
       undo: { label: t("common.undo"), onClick: () => {
         if (archived) void restore(target, false, undo);
-        else if (mounted.current) void archiveSession(target.sessionId, true);
+        else if (mounted.current) void archiveSessionInWorkspace(target.workspace.id, target.sessionId, true);
       } },
       view: { label: t("common.view"), onClick: () => {
         if (mounted.current) current.current.input.navigateToWorkspaceSession(target.workspace.id, target.sessionId);
@@ -343,20 +343,31 @@ export function useSessionArchive(input: {
     return null;
   }
 
-  function resolveTarget(sessionId: string, options?: ArchiveSessionOptions): ArchiveTarget | { error: string } {
-    const workspace = input.workspaces.find(workspace => input.sessionsByWorkspaceId[workspace.id]?.some(session => session.id === sessionId));
+  function resolveTarget(sessionId: string, options?: ArchiveSessionOptions, workspaceId?: string): ArchiveTarget | { error: string } {
+    const workspace = input.workspaces.find(workspace => (!workspaceId || workspace.id === workspaceId)
+      && input.sessionsByWorkspaceId[workspace.id]?.some(session => session.id === sessionId));
     if (!workspace) return { error: "Session was not found in the current session list" };
     const endpoint = input.endpointForSessionWorkspace(workspace);
     if (!endpoint) return { error: "The session's workspace is not connected." };
-    const title = sessionTitle(sessionId) ?? t("session.default_title");
+    const title = input.sessionsByWorkspaceId[workspace.id]?.find(session => session.id === sessionId)?.title?.trim() || t("session.default_title");
     const requester = options?.requester?.sessionId.trim();
     const requestedBy = requester ? { sessionId: requester, title: sessionTitle(requester) } : null;
     return { workspace, endpoint, sessionId, title, draftScope: input.draftScope, requestedBy };
   }
 
-  async function archiveSession(sessionId: string, archived: boolean, options?: ArchiveSessionOptions): Promise<ArchiveSessionOutcome> {
+  // Explicit UI owner; the agent's existing archiveSession contract stays unchanged.
+  function archiveSessionInWorkspace(workspaceId: string, sessionId: string, archived: boolean): Promise<ArchiveSessionOutcome> {
+    if (!workspaceId) return Promise.resolve({ kind: "verification_failed", message: "The session's workspace is missing." });
+    return archiveOwnedSession(sessionId, archived, undefined, workspaceId);
+  }
+
+  function archiveSession(sessionId: string, archived: boolean, options?: ArchiveSessionOptions): Promise<ArchiveSessionOutcome> {
+    return archiveOwnedSession(sessionId, archived, options);
+  }
+
+  async function archiveOwnedSession(sessionId: string, archived: boolean, options?: ArchiveSessionOptions, workspaceId?: string): Promise<ArchiveSessionOutcome> {
     if (busy.current || pending.current) return settle("cancelled");
-    const target = resolveTarget(sessionId, options);
+    const target = resolveTarget(sessionId, options, workspaceId);
     if ("error" in target) {
       toast.error(target.error);
       return { kind: "verification_failed", message: target.error };
@@ -370,6 +381,7 @@ export function useSessionArchive(input: {
 
   return {
     archiveSession,
+    archiveSessionInWorkspace,
     archiveDialog: (
       <AlertDialog open={target !== null} onOpenChange={open => { if (!open && !busy.current) closeDialog(settle("cancelled")); }}>
         <AlertDialogContent className="max-h-[calc(100dvh-2rem)] overflow-y-auto">

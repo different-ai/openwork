@@ -19,7 +19,6 @@ import {
   Folder,
   Clock3,
   ChevronRight,
-  Columns2,
   FolderPlus,
   LayoutGrid,
   ListFilter,
@@ -32,8 +31,6 @@ import {
   RotateCcw,
   FolderOpen,
   SquarePen,
-  Tag,
-  Undo2,
   X,
 } from "lucide-react";
 import { LazyMotion, MotionContext, Reorder, domMax, m, useDragControls } from "motion/react";
@@ -79,6 +76,7 @@ import {
 import { ActionContextMenu } from "@/components/ui/action-context-menu";
 import { ActionMenuItems } from "@/components/ui/action-menu-items";
 import type { MenuAction } from "@/components/ui/action-menu-model";
+import { buildSessionMenuActions } from "./session-menu-actions";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -436,71 +434,18 @@ function useSessionMenuActions({
   };
   const closeSplitView = () => useWorkbenchStore.getState().setSplit(null);
 
-  const actions: MenuAction[] = [{
-    type: "item", id: "pin",
-    label: isPinned ? t("session_management.unpin_session") : t("session_management.pin_session"),
-    icon: isPinned ? <PinOff className="size-4" /> : <Pin className="size-4" />,
-    onSelect: () => store.getState().togglePin(sessionId),
-  }];
-  if (settle && !isArchived) actions.push({
-    type: "item", id: "settle",
-    label: settle.settled ? t("session_management.unsettle_session") : t("session_management.settle_session"),
-    icon: settle.settled ? <Undo2 className="size-4" /> : <CheckCheck className="size-4" />,
-    disabled: !settle.settled && !settle.canSettle,
-    disabledReason: !settle.settled && !settle.canSettle ? t("session_management.settle_after_finish") : undefined,
-    dataAttributes: { "data-session-menu-settle": true },
-    onSelect: settle.toggle,
+  return buildSessionMenuActions({
+    isPinned, isArchived, settle,
+    groups, assignedGroupId,
+    onTogglePin: () => store.getState().togglePin(sessionId),
+    onAssignGroup: (groupId) => store.getState().assignGroup(workspaceId, sessionId, groupId),
+    onCreateGroup: ctx.onOpenCreateGroupModal ? () => ctx.onOpenCreateGroupModal?.(workspaceId) : undefined,
+    onOpenSplit: canOpenInSplit ? openInSplitView : undefined,
+    onCloseSplit: isInSplit ? closeSplitView : undefined,
+    onRename: ctx.onOpenRenameSession ? () => ctx.onOpenRenameSession?.(sessionId, workspaceId) : undefined,
+    onArchive: ctx.onArchiveSession && !ctx.archiveDisabledReason ? () => ctx.onArchiveSession?.(sessionId, !isArchived, workspaceId) : undefined,
+    onDelete: ctx.onOpenDeleteSession ? () => ctx.onOpenDeleteSession?.(sessionId, workspaceId) : undefined,
   });
-  if (canOpenInSplit) actions.push({
-    type: "item", id: "open-split", label: t("session_management.open_in_split_view"),
-    icon: <Columns2 className="size-4" />, dataAttributes: { "data-session-menu-open-split": true }, onSelect: openInSplitView,
-  });
-  if (isInSplit) actions.push({
-    type: "item", id: "close-split", label: t("session_management.close_split_view"),
-    icon: <Columns2 className="size-4" />, dataAttributes: { "data-session-menu-close-split": true }, onSelect: closeSplitView,
-  });
-  if (ctx.onOpenRenameSession) actions.push({
-    type: "item", id: "rename", label: t("workspace_list.rename_session"), icon: <Pencil className="size-4" />,
-    onSelect: () => ctx.onOpenRenameSession?.(sessionId),
-  });
-  const groupActions: MenuAction[] = groups.length === 0 ? [{
-    type: "item", id: "create-first-group", label: t("session_management.no_groups_yet"),
-    webContent: <>
-      <span className="min-w-0 flex-1 ow-fade-truncate text-muted-foreground">{t("session_management.no_groups_yet")}</span>
-      <span className="ml-auto flex size-5 shrink-0 items-center justify-center rounded-full bg-foreground/10 text-foreground"><Plus className="size-3.5" /></span>
-    </>,
-    onSelect: () => ctx.onOpenCreateGroupModal?.(workspaceId),
-  }] : [
-    {
-      type: "item", id: "ungroup", label: t("session_management.no_group"), disabled: !assignedGroupId,
-      onSelect: () => store.getState().assignGroup(workspaceId, sessionId, null),
-    },
-    { type: "separator" },
-    ...groups.map((group): MenuAction => ({
-      type: "item", id: `group:${group.id}`, label: group.label, disabled: assignedGroupId === group.id,
-      onSelect: () => store.getState().assignGroup(workspaceId, sessionId, group.id),
-    })),
-    { type: "separator" },
-    {
-      type: "item", id: "new-group", label: t("session_management.new_group"), icon: <FolderPlus className="size-4" />,
-      onSelect: () => ctx.onOpenCreateGroupModal?.(workspaceId),
-    },
-  ];
-  actions.push({
-    type: "item", id: "move-to-group", label: t("session_management.move_to_group"), icon: <Tag className="size-4" />,
-    submenu: groupActions, submenuClassName: { dropdown: "w-52" },
-  });
-  if (ctx.onArchiveSession && !ctx.archiveDisabledReason) actions.push({
-    type: "item", id: "archive",
-    label: isArchived ? t("session_management.unarchive_session") : t("session_management.archive_session"),
-    icon: isArchived ? <ArchiveRestore className="size-4" /> : <Archive className="size-4" />,
-    onSelect: () => ctx.onArchiveSession?.(sessionId, !isArchived),
-  });
-  if (ctx.onOpenDeleteSession) actions.push({ type: "separator" }, {
-    type: "item", id: "delete", label: t("workspace_list.delete_session"), icon: <Trash2 className="size-4" />, variant: "destructive",
-    onSelect: () => ctx.onOpenDeleteSession?.(sessionId),
-  });
-  return actions;
 }
 
 /** One quiet More menu in a fixed trailing slot: visible on hover, keyboard focus, touch, or while open. */
@@ -537,8 +482,9 @@ function SessionRowMenu({ className, sessionId, workspaceId, sessionTitle, works
 }
 
 /** Keep the shipped quick actions when the settledSessions rollout is off. */
-function SessionLegacyQuickActions({ sessionId, isPinned, isArchived, relativeTime }: {
+function SessionLegacyQuickActions({ sessionId, workspaceId, isPinned, isArchived, relativeTime }: {
   sessionId: string;
+  workspaceId: string;
   isPinned: boolean;
   isArchived: boolean;
   relativeTime: string | null;
@@ -570,7 +516,7 @@ function SessionLegacyQuickActions({ sessionId, isPinned, isArchived, relativeTi
           data-testid={`session-archive-${sessionId}`}
           onClick={(event) => {
             event.stopPropagation();
-            ctx.onArchiveSession?.(sessionId, !isArchived);
+            ctx.onArchiveSession?.(sessionId, !isArchived, workspaceId);
           }}
         >
           {isArchived ? <ArchiveRestore className="size-3.5" /> : <Archive className="size-3.5" />}
@@ -688,9 +634,9 @@ export type AppSidebarProps = {
   onPrefetchSession?: (workspaceId: string, sessionId: string) => void | (() => void);
   onCreateTaskInWorkspace: (workspaceId: string, groupId?: string) => void;
   onCreateSplitTaskInWorkspace: (workspaceId: string) => void;
-  onOpenRenameSession?: (sessionId: string) => void;
-  onOpenDeleteSession?: (sessionId: string) => void;
-  onArchiveSession?: (sessionId: string, archived: boolean) => void;
+  onOpenRenameSession?: (sessionId: string, workspaceId: string) => void;
+  onOpenDeleteSession?: (sessionId: string, workspaceId: string) => void;
+  onArchiveSession?: (sessionId: string, archived: boolean, workspaceId: string) => void;
   archiveDisabledReason?: string;
   onOpenCreateGroupModal?: (workspaceId: string) => void;
   onOpenRenameWorkspace: (workspaceId: string) => void;
@@ -2525,7 +2471,7 @@ export function SessionMenuItem({
         : cn("absolute end-2.5 top-1/2 z-10 -translate-y-1/2", shortcutDigit !== undefined && "invisible data-popup-open:visible focus-visible:visible")}
     />
   ) : (
-    <SessionLegacyQuickActions sessionId={session.id} isPinned={isPinned} isArchived={isArchived} relativeTime={relativeTime} />
+    <SessionLegacyQuickActions sessionId={session.id} workspaceId={workspaceId} isPinned={isPinned} isArchived={isArchived} relativeTime={relativeTime} />
   );
 
   const item = (

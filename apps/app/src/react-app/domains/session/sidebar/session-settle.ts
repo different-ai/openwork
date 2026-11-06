@@ -159,6 +159,8 @@ export function useSettleNow(): number {
 }
 
 export type SessionSettleState = {
+  /** Eligible surface/engine/session; busy eligible sessions remain visible but disabled. */
+  available: boolean;
   settled: boolean;
   /** Settle is offered: the session is idle, not archived and not settled yet. */
   canSettle: boolean;
@@ -184,6 +186,7 @@ export function useSessionSettleState(
     const activityAt = sessionActivityAt(session);
     const settled = isSessionSettled({ activityAt, entry, status, pinned, unread, autoSettleDays, now });
     return {
+      available: true,
       settled,
       canSettle: !settled && canSettleSessionStatus(status),
       toggle: () => {
@@ -194,7 +197,7 @@ export function useSessionSettleState(
   }, [autoSettleDays, enabled, entry, now, pinned, session, status, title, unread]);
 }
 
-const NOT_SETTLEABLE: SessionSettleState = { settled: false, canSettle: false, toggle: () => undefined };
+const NOT_SETTLEABLE: SessionSettleState = { available: false, settled: false, canSettle: false, toggle: () => undefined };
 
 export function settleSession(sessionId: string, title: string, activityAt: number) {
   const snapshot = useSessionManagementStore.getState().settle(sessionId, activityAt);
