@@ -1,11 +1,10 @@
-// models.dev provider catalog (src/models/base.json), read once and exposed as
+// Provider catalog (src/models/base.json from models.dev plus the custom
+// providers in src/models/providers), read once and exposed as
 // npm/api/env per provider id. The gateway classifies protocols from `npm`.
-import { readFileSync } from "node:fs"
-import path from "node:path"
-import { fileURLToPath } from "node:url"
 import { BEDROCK_MANTLE_PROVIDER_ID, bedrockMantleApiPathsFromCatalog, withBedrockMantleProvider } from "@openwork-ee/utils/bedrock-mantle-catalog"
 import { withLiteLlmProvider } from "@openwork-ee/utils/litellm-catalog"
 import { MICROSOFT_FOUNDRY_PROVIDER_ID, withMicrosoftFoundryProvider } from "@openwork-ee/utils/microsoft-foundry-catalog"
+import { readProviderCatalog } from "./models/catalog.js"
 
 export type CatalogProvider = {
   npm: string | null
@@ -20,8 +19,6 @@ export type CatalogProvider = {
 export type ProviderCatalog = {
   getCatalogProvider(providerId: string): CatalogProvider | null
 }
-
-const baseJsonPath = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "src", "models", "base.json")
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value)
@@ -59,7 +56,7 @@ let fileCatalog: ProviderCatalog | null = null
 
 export function loadProviderCatalogFromFile(): ProviderCatalog {
   if (!fileCatalog) {
-    const parsed: unknown = JSON.parse(readFileSync(baseJsonPath, "utf8"))
+    const parsed: unknown = readProviderCatalog()
     fileCatalog = createProviderCatalog(parsed)
   }
   return fileCatalog
