@@ -53,6 +53,7 @@ const INF = "inference.configuration"
 const IP = "inference_provider.configuration"
 const IPO = "inference_provider.member_oauth"
 const LITELLM = "Organization's LiteLLM proxy (admin API: key creation/deletion in issued mode)"
+const CUSTOM = "Organization's custom OpenAI-compatible provider (GET /models)"
 const MA = "models_analytics.reporting"
 const LLM = "llm_provider.configuration"
 const LLMC = "llm_provider.member_credential"
@@ -263,6 +264,12 @@ export const integrationsAuditRoutes: readonly AuditRouteDeclaration[] = [
   change("PUT", "/v1/inference-providers/:inferenceProviderId/litellm/member-key", "inference_provider.litellm.member_key.connect", IPO, res("provider", "inferenceProviderId"), "Verifies the caller's own LiteLLM key with the proxy (read only), stores it as the member credential (write-only) and grants the matching model group."),
   handlerRoute("tenant_change", "POST", "/v1/inference-providers/oauth/browser-litellm-key", "inference_provider.member_oauth.browser_litellm_key", IPO, res("provider_credential"), { notes: "Public route. Attributed (attributeMemberOAuthEntry) like browser-start once the live signed session cookie matches the entry's initiating user and the provider/set binding and litellm feature are rechecked; before key verification and the credential write that consumes the entry." }),
   handlerRoute("tenant_external", "POST", "/v1/inference-providers/oauth/browser-litellm-check", "inference_provider.member_oauth.browser_litellm_check", IPO, res("provider_credential"), { external: LITELLM, notes: "Public route. Attributed like browser-litellm-key once the cookie user matches the entry and the provider/set binding and litellm feature are rechecked; before LiteLLM key creation for that member." }),
+
+  // Custom OpenAI-compatible providers (gatewayCustomProviders feature; not covered by the provider emitter, see providerUncoveredRoutes)
+  external("POST", "/v1/inference-providers/custom/discover-models", "inference_provider.custom.discover_models", IP, res("provider"), CUSTOM, "Calls GET {baseUrl}/models with the caller-supplied key, or the saved key for the saved address's origin only; no local write."),
+  external("POST", "/v1/inference-providers/custom/test-connection", "inference_provider.custom.connection.test", IP, res("provider"), "AI Gateway (one test prompt to the custom provider)", "Sends the caller-supplied key, or the saved key for the saved address's origin only, and the unsaved model settings through AI Gateway; no local write and no usage recorded."),
+  change("POST", "/v1/inference-providers/custom", "inference_provider.custom.create", IP, res("provider"), "Creates the provider, its models, default group, organization credential set (write-only key) and grants locally; no call to the provider."),
+  change("PATCH", "/v1/inference-providers/:inferenceProviderId/custom", "inference_provider.custom.update", IP, res("provider", "inferenceProviderId"), "Updates name, address, models and/or replaces the write-only organization key locally; no call to the provider."),
 
   // Models analytics
   route("tenant_signal", "POST", "/v1/inference/analytics/events", "models_analytics.events.report", MA, res("models_analytics_event"), "org_context", { notes: "Desktop task metadata for the caller's own OpenWork Models calls; dropped unless the organization opted in. High volume." }),

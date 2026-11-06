@@ -9,7 +9,7 @@ import { DenChip } from "../../_components/ui/chip";
 import { DenInput } from "../../_components/ui/input";
 import { DenNotice } from "../../_components/ui/notice";
 import { DenSkeleton } from "../../_components/ui/skeleton";
-import { getAiGatewayProvidersRoute, getNewAiGatewayProviderRoute } from "../../_lib/den-org";
+import { getAiGatewayProvidersRoute, getNewAiGatewayCustomProviderRoute, getNewAiGatewayProviderRoute, orgFeatureEnabled } from "../../_lib/den-org";
 import { useOrgDashboard } from "../_providers/org-dashboard-provider";
 import { isSupportedGatewayNpm } from "./inference-provider-request";
 import { getProviderIconSlug, requestLlmProviderCatalog, type DenModelsDevProviderSummary } from "./llm-provider-data";
@@ -34,6 +34,13 @@ const TAGLINES: Record<string, string> = {
 };
 const FEATURED = Object.keys(TAGLINES);
 const INITIAL_ROWS = 10;
+const ANOTHER_PROVIDER = { title: "Another provider", tagline: "Anything with an OpenAI-compatible API, self-hosted included" };
+
+/** With `gatewayCustomProviders` on, the row shows unless the filter rules it out. */
+export function anotherProviderMatches(query: string): boolean {
+  const normalized = query.trim().toLowerCase();
+  return !normalized || `${ANOTHER_PROVIDER.title} ${ANOTHER_PROVIDER.tagline} custom`.toLowerCase().includes(normalized);
+}
 
 export function providerTagline(provider: Pick<DenModelsDevProviderSummary, "id" | "modelCount">) {
   return TAGLINES[provider.id] ?? `${provider.modelCount} ${provider.modelCount === 1 ? "model" : "models"}`;
@@ -47,7 +54,8 @@ export function orderCatalog<T extends { id: string; name: string }>(providers: 
 
 export function InferenceProviderPickerScreen({ embedded = false }: { embedded?: boolean }) {
   const Heading = embedded ? "h2" : "h1";
-  const { orgId, orgSlug } = useOrgDashboard();
+  const { orgId, orgSlug, orgContext } = useOrgDashboard();
+  const customProviders = orgFeatureEnabled(orgContext, "gatewayCustomProviders");
   const [catalog, setCatalog] = useState<DenModelsDevProviderSummary[]>([]);
   const [query, setQuery] = useState("");
   const [showAll, setShowAll] = useState(false);
@@ -129,13 +137,25 @@ export function InferenceProviderPickerScreen({ embedded = false }: { embedded?:
               </button>
             </li>
           ) : null}
-          {!catalogBusy && !error && !query.trim() && compatible && !visible.some((item) => item.id === compatible.id) ? (
+          {customProviders && !catalogBusy && anotherProviderMatches(query) ? (
+            <li className="border-t border-gray-100">
+              <Link href={getNewAiGatewayCustomProviderRoute(orgSlug)} data-testid="gateway-provider-pick-custom" className="flex items-center gap-3 px-4 py-2.5 hover:bg-gray-50">
+                <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-[7px] border border-dashed border-gray-300 text-gray-400"><Plus className="h-3.5 w-3.5" aria-hidden="true" /></span>
+                <span className="min-w-0 flex-1">
+                  <span className="block text-[13px] font-medium text-gray-900">{ANOTHER_PROVIDER.title}</span>
+                  <span className="block text-[12px] text-gray-500">{ANOTHER_PROVIDER.tagline}</span>
+                </span>
+                <ChevronRight className="h-4 w-4 shrink-0 text-gray-300" aria-hidden="true" />
+              </Link>
+            </li>
+          ) : null}
+          {!customProviders && !catalogBusy && !error && !query.trim() && compatible && !visible.some((item) => item.id === compatible.id) ? (
             <li className="border-t border-gray-100">
               <Link href={getNewAiGatewayProviderRoute(orgSlug, compatible.id)} data-testid="gateway-provider-pick-compatible" className="flex items-center gap-3 px-4 py-2.5 hover:bg-gray-50">
                 <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-[7px] border border-dashed border-gray-300 text-gray-400"><Plus className="h-3.5 w-3.5" aria-hidden="true" /></span>
                 <span className="min-w-0 flex-1">
-                  <span className="block text-[13px] font-medium text-gray-900">Another provider</span>
-                  <span className="block text-[12px] text-gray-500">Anything with an OpenAI-compatible API, self-hosted included</span>
+                  <span className="block text-[13px] font-medium text-gray-900">{ANOTHER_PROVIDER.title}</span>
+                  <span className="block text-[12px] text-gray-500">{ANOTHER_PROVIDER.tagline}</span>
                 </span>
                 <ChevronRight className="h-4 w-4 shrink-0 text-gray-300" aria-hidden="true" />
               </Link>

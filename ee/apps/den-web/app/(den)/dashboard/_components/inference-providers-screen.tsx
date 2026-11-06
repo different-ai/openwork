@@ -19,11 +19,13 @@ import { GatewayWhoCanUseModels } from "./gateway-who-can-use-models";
 import { useOrgInferenceProviders } from "./inference-provider-data";
 import { describeGatewayAccess, type DenInferenceProvider } from "./inference-provider-request";
 import { getProviderDocUrl, getProviderIconSlug } from "./llm-provider-data";
+import { isGatewayCustomProviderId } from "@openwork/types/den/gateway-custom-providers";
 import { LITELLM_DOC_URL, liteLlmAccessGroupId } from "./litellm-provider-data";
 
 const ROW = "flex items-center gap-4 px-4 py-3";
 
 function modelsLabel(provider: DenInferenceProvider) {
+  if (provider.custom) return `${provider.custom.models.length} ${provider.custom.models.length === 1 ? "model" : "models"}`;
   if (provider.modelIds === null) return `${provider.models.length} models`;
   if (provider.modelIds.length === 0) return "All models";
   return `${provider.modelIds.length} ${provider.modelIds.length === 1 ? "model" : "models"}`;
@@ -40,6 +42,7 @@ function ProviderRow({ provider, orgSlug }: { provider: DenInferenceProvider; or
   });
   const nobody = audience === "No one has access yet";
   const litellm = provider.litellm;
+  const customProvider = isGatewayCustomProviderId(provider.providerId);
   // Per-person LiteLLM keys are ready once the admin key syncs; each person adds their own key.
   const keyReady = litellm ? litellm.hasSyncKey && (litellm.mode === "member" || provider.credentialStatus === "ready") : provider.credentialStatus === "ready";
   const ready = provider.status === "active" && keyReady && !litellm?.lastSyncError && !nobody;
@@ -55,9 +58,9 @@ function ProviderRow({ provider, orgSlug }: { provider: DenInferenceProvider; or
   return (
     <div className={ROW} data-testid="gateway-provider-row">
       <DenBrandMark
-        name={provider.providerId}
-        simpleIconSlug={getProviderIconSlug(provider.providerId)}
-        serviceUrl={litellm ? LITELLM_DOC_URL : getProviderDocUrl(provider.providerConfig)}
+        name={customProvider ? provider.name : provider.providerId}
+        simpleIconSlug={customProvider ? undefined : getProviderIconSlug(provider.providerId)}
+        serviceUrl={customProvider ? null : litellm ? LITELLM_DOC_URL : getProviderDocUrl(provider.providerConfig)}
         className="h-8 w-8 shrink-0 rounded-[8px]"
         imageClassName="h-4 w-4"
       />

@@ -16,6 +16,8 @@ import { bedrockSettingsError, isAwsGatewayNpm, buildGatewayModelConfig, buildGa
 import { gatewayMemberSignInMethod, memberSignInConfigurationError, memberSignInCredentialKind, memberSignInCredentialUsable, memberSignInExtraneousFields, readAwsSsoSettings, sameMemberSignInConfiguration } from "./gateway-member-sign-in.js"
 import { effectiveGatewayGrants, memberGatewayTeams } from "./inference-provider-lifecycle.js"
 import { liteLlmCatalogProvider, liteLlmStatus, readLiteLlmSettings } from "./litellm-settings.js"
+import { customCatalogProvider, customProviderStatus } from "./gateway-custom-provider.js"
+import { isGatewayCustomProviderId } from "@openwork/types/den/gateway-custom-providers"
 import { getModelsDevProvider, type ModelsDevProvider } from "./models-dev.js"
 import { readProviderEnvNames } from "./provider-credentials.js"
 import { gatewayGroupAssignmentsComplete } from "./gateway-model-assignments.js"
@@ -51,15 +53,33 @@ export function validateGatewaySettings(config: Record<string, unknown>, setting
 }
 
 /**
- * The trusted catalog for a saved provider. LiteLLM catalogs come from the
- * organization's last sync (settings.litellm), never from models.dev.
+ * Catalogs stored on the provider row instead of models.dev: LiteLLM's last
+ * sync (settings.litellm) and a custom provider's own models (settings.custom).
+ * Null for models.dev providers.
  */
-export async function trustedProviderCatalog(provider: Pick<GatewayProvider, "provider_id" | "settings">): Promise<ModelsDevProvider | null> {
-  return isLiteLlmProviderId(provider.provider_id) ? liteLlmCatalogProvider(provider) : getModelsDevProvider(provider.provider_id)
+export function storedProviderCatalog(provider: Pick<GatewayProvider, "provider_id" | "name" | "settings">): ModelsDevProvider | null {
+  if (isLiteLlmProviderId(provider.provider_id)) return liteLlmCatalogProvider(provider)
+  // Unreadable custom settings give no catalog (never an empty one that would prune the models).
+  if (isGatewayCustomProviderId(provider.provider_id)) return customCatalogProvider(provider)
+  return null
+}
+
+/** Providers whose catalog is stored on the row: never looked up in models.dev. */
+export function hasStoredProviderCatalog(providerId: string): boolean {
+  return isLiteLlmProviderId(providerId) || isGatewayCustomProviderId(providerId)
+}
+
+/**
+ * The trusted catalog for a saved provider. LiteLLM and custom provider
+ * catalogs come from the provider row, never from models.dev.
+ */
+export async function trustedProviderCatalog(provider: Pick<GatewayProvider, "provider_id" | "name" | "settings">): Promise<ModelsDevProvider | null> {
+  return hasStoredProviderCatalog(provider.provider_id) ? storedProviderCatalog(provider) : getModelsDevProvider(provider.provider_id)
 }
 
 export async function gatewayCatalog(providerId: string, modelIds: string[]) {
   if (isLiteLlmProviderId(providerId)) throw new GatewayWriteError(400, "litellm_setup_required", "Create LiteLLM providers with POST /v1/inference-providers/litellm so OpenWork can sync their models.")
+  if (isGatewayCustomProviderId(providerId)) throw new GatewayWriteError(400, "custom_setup_required", "A person adds custom OpenAI-compatible providers in OpenWork (AI Gateway, Add a provider, Another provider), where the address, key and models are tested privately. Agents and this route can't create them; the API is POST /v1/inference-providers/custom.")
   const catalog = await getModelsDevProvider(providerId)
   if (!catalog) throw new GatewayWriteError(404, "provider_not_found")
   return resolveGatewayCatalog(catalog, modelIds)
@@ -116,15 +136,16 @@ export async function refreshGatewayCatalog(provider: GatewayProvider, audit?: P
     ? loadProviderAudit(db, "auditCaptureEnabled" in env && env.auditCaptureEnabled === true, providerSystemAuditContext(provider.organization_id, provider.id), "catalog.refresh")
     : audit ? { ...audit, step: "catalog.refresh" } : null
   // Catalog I/O never holds a provider/OAuth lock. A failed load cannot prune rows.
-  // LiteLLM's catalog is its last sync, stored on the provider row: no network.
-  const litellm = isLiteLlmProviderId(provider.provider_id)
-  const fetched = litellm ? null : await getModelsDevProvider(provider.provider_id).catch(() => null)
+  // LiteLLM's catalog is its last sync and a custom provider's is its own model
+  // list, both stored on the provider row: no network.
+  const onRow = hasStoredProviderCatalog(provider.provider_id)
+  const fetched = onRow ? null : await getModelsDevProvider(provider.provider_id).catch(() => null)
   let capture: ProviderAuditCapture | null | undefined
   try {
     const [snapshot] = await db.select().from(GatewayProviderTable)
       .where(and(eq(GatewayProviderTable.id, provider.id), eq(GatewayProviderTable.organization_id, provider.organization_id)))
     if (!snapshot) throw new GatewayWriteError(404, "inference_provider_not_found")
-    const catalog = litellm ? liteLlmCatalogProvider(snapshot) : fetched
+    const catalog = onRow ? storedProviderCatalog(snapshot) : fetched
     if (!catalog) return { provider: snapshot, catalogWarning: catalogUnavailableWarning }
     if (!catalogCompatible(catalog, snapshot)) return { provider: snapshot, catalogWarning: catalogSdkChangedWarning }
     const preview = resolveGatewayCatalog(catalog, snapshot.model_ids, snapshot.provider_config, false)
@@ -138,7 +159,8 @@ export async function refreshGatewayCatalog(provider: GatewayProvider, audit?: P
         .where(and(eq(GatewayProviderTable.id, provider.id), eq(GatewayProviderTable.organization_id, provider.organization_id))).for("update")
       if (!current) throw new GatewayWriteError(404, "inference_provider_not_found")
       // Recheck under the lock: the provider may have changed since the unlocked preview.
-      const lockedCatalog = litellm ? liteLlmCatalogProvider(current) : catalog
+      const lockedCatalog = onRow ? storedProviderCatalog(current) : catalog
+      if (!lockedCatalog) return { provider: current, catalogWarning: catalogUnavailableWarning }
       if (!catalogCompatible(lockedCatalog, current)) return { provider: current, catalogWarning: catalogSdkChangedWarning }
       const resolved = resolveGatewayCatalog(lockedCatalog, current.model_ids, current.provider_config, false)
       if (options.mayWrite && !(await options.mayWrite(tx))) return { provider: current, catalogWarning: resolved.catalogWarning }
@@ -361,6 +383,19 @@ export async function writeGatewaySet(
   const awsSso = input.awsSso === undefined ? mode === "org" ? null : existing?.aws_sso ?? null : input.awsSso === null ? null : readAwsSsoSettings(input.awsSso)
   if (input.awsSso && !awsSso) throw new GatewayWriteError(400, "invalid_aws_sso", "Enter the AWS access portal URL, IAM Identity Center region, 12-digit AWS account ID and permission set name.")
   const signIn = { oauth_client_id: clientId, oauth_client_secret: clientSecret, oauth_tenant_id: tenantId, aws_sso: awsSso }
+  // Custom OpenAI-compatible providers hold exactly one organization API key (no key maps, no per-member sign-in).
+  if (isGatewayCustomProviderId(provider.provider_id)) {
+    if (mode !== "org") throw new GatewayWriteError(400, "unsupported_credential_mode", "Custom providers use one organization API key. Per-member sign-in isn't available for them.")
+    if (input.apiKeys !== undefined || (input.credential !== undefined && input.credential.kind !== "api_key")) {
+      throw new GatewayWriteError(400, "invalid_credential", "Custom providers use one API key. Replace it with PATCH /v1/inference-providers/{inferenceProviderId}/custom.")
+    }
+    // A second active set (new, or a disabled one turned back on) would be a second key.
+    if (!existing || (existing.status !== "active" && input.status === "active")) {
+      const active = await tx.select({ id: GatewayCredentialSetTable.id }).from(GatewayCredentialSetTable)
+        .where(and(eq(GatewayCredentialSetTable.gateway_provider_id, provider.id), eq(GatewayCredentialSetTable.status, "active")))
+      if (active.some((set) => set.id !== existing?.id)) throw new GatewayWriteError(409, "custom_single_key", "Custom providers have one API key. Replace it with PATCH /v1/inference-providers/{inferenceProviderId}/custom instead of adding another credential set.")
+    }
+  }
   // LiteLLM member sets hold each member's own LiteLLM key, connected by that member.
   const litellm = isLiteLlmProviderId(provider.provider_id)
   const method = gatewayMemberSignInMethod(provider.provider_id)
@@ -679,7 +714,11 @@ export async function gatewaySummary(provider: GatewayProvider, memberId: Gatewa
   const litellm = status && !identities ? { ...status, baseUrl: null, attention: [] } : status
   const settings = publicProviderSettings(provider.settings)
   if (!identities) delete settings.upstreamBaseUrl
-  return { ...summary, ...(litellm ? { litellm } : {}), settings, modelGroups, credentialSets: setSummaries, accessGrants: access.map(gatewayGrantSummary), oauthCallbackUrl: `${baseUrl}/v1/inference-providers/oauth/callback`,
+  // Custom providers: the address and model settings, for people who may manage them (like settings.upstreamBaseUrl).
+  const orgSetIds = new Set(sets.filter((set) => set.credential_mode === "org" && set.status === "active").map((set) => set.id))
+  const custom = identities ? customProviderStatus(provider, credentials.some(({ credential }) => orgSetIds.has(credential.credential_set_id)
+    && credential.subject === "org" && credential.org_membership_id === null && credential.status === "active")) : undefined
+  return { ...summary, ...(litellm ? { litellm } : {}), ...(custom ? { custom } : {}), settings, modelGroups, credentialSets: setSummaries, accessGrants: access.map(gatewayGrantSummary), oauthCallbackUrl: `${baseUrl}/v1/inference-providers/oauth/callback`,
     ...(identities
       ? { credentials: credentials.map(({ credential, memberName, memberEmail }) => ({ id: credential.id, credentialSetId: credential.credential_set_id, subject: credential.subject, orgMembershipId: credential.org_membership_id, memberName, memberEmail, kind: credential.kind, status: credential.status, expiresAt: credential.expires_at?.toISOString() ?? null })) }
       : { credentialCounts: {

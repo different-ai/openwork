@@ -39,6 +39,7 @@ export const providerAuditRegistry = {
     memberOAuth: "Member OAuth exchange, disconnection and runtime token refresh are not covered by configuration capture.",
     migration: "Legacy provider migration writes and other services are outside this configuration emitter.",
     litellm: "LiteLLM provider creation, sync, key replacement and member key connection are not covered by configuration capture.",
+    custom: "Custom OpenAI-compatible provider creation, model discovery, tests and edits are not covered by configuration capture.",
     reads: "Routine read access is not covered; read-triggered catalog mutations are captured independently as system work.",
   },
 } satisfies { kind: string; scope: string; grouping: typeof AUDIT_WORKFLOW_REGISTRY["provider.configuration"]; categories: string[]; snapshotPolicy: string; emitter: string; failurePolicy: string; steps: Record<string, string>; backgroundSteps: string[]; uncovered: Record<string, string> }

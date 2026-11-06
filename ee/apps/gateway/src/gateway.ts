@@ -9,6 +9,7 @@ import { bedrockMantleHost, bedrockRuntimeHost, inferenceEgressAllowedOrigins, i
 import { BEDROCK_MANTLE_DEFAULT_API_PATH } from "@openwork-ee/utils/bedrock-mantle-catalog"
 import { parseGatewayModelAlias } from "@openwork-ee/utils/gateway-routing"
 import { isLiteLlmProviderId, liteLlmSpendTrackingEnabled } from "@openwork-ee/utils/litellm-catalog"
+import { isGatewayCustomProviderId } from "@openwork/types/den/gateway-custom-providers"
 import { fixedModelPricing, readModelPrice, type PricingCatalog } from "./pricing.js"
 import { GATEWAY_REQUEST_MODEL_HEADER, GATEWAY_GRANT_HEADER, type GatewayRequestOutcome, type GatewayRequestProtocol } from "@openwork/types/den/gateway"
 import type { Context, Hono } from "hono"
@@ -213,11 +214,20 @@ function displayProviderName(providerId: string) {
   return knownNames[providerId.toLowerCase()] ?? providerId.replace(/[-_]+/g, " ").replace(/\b\w/g, (letter) => letter.toUpperCase())
 }
 
+function providerDisplayName(provider: GatewayProvider) {
+  const name = provider.provider_config.name
+  if (isGatewayCustomProviderId(provider.provider_id) && typeof name === "string" && name.trim()) return name.trim()
+  return displayProviderName(provider.provider_id)
+}
+
 function readBaseUrl(provider: GatewayProvider, catalog: CatalogProvider | null, family: ProtocolFamily) {
   // Revalidate persisted overrides at runtime; self-hosted origins require an
   // explicit operator allowlist even when den-api accepted the configuration.
   const override = provider.settings.upstreamBaseUrl
   if (typeof override === "string" && override) return override
+  // A custom provider's only address is its saved one, checked on every request
+  // by resolveUpstream and the egress transport (public HTTPS or allowlisted).
+  if (isGatewayCustomProviderId(provider.provider_id)) return null
   const config = provider.provider_config
   const options = isJsonObject(config.options) ? config.options : null
   if (options && typeof options.baseURL === "string" && options.baseURL) return options.baseURL
@@ -955,6 +965,10 @@ export function registerGatewayRoutes(api: Hono<GatewayEnv>, input: GatewayRoute
       spendTracking = liteLlmSpendTrackingEnabled(selection.row.credentialSet.credential_mode)
       const price = spendTracking && selection.upstreamModel ? readModelPrice(selection.row.model?.model_config) : null
       requestPricing = price && selection.upstreamModel ? fixedModelPricing(provider.provider_id, selection.upstreamModel, price) : undefined
+    } else if (isGatewayCustomProviderId(provider.provider_id)) {
+      // Custom models are not in the models.dev snapshot: price from the saved model's cost, else record usage unpriced.
+      const price = selection.upstreamModel ? readModelPrice(selection.row.model?.model_config) : null
+      requestPricing = price && selection.upstreamModel ? fixedModelPricing(provider.provider_id, selection.upstreamModel, price) : undefined
     }
     rewriteSelectedModel(prepared, resolved, selection.upstreamModel)
     if (resolved.family === "bedrock_mantle" && resolved.regionDerived) {
@@ -1194,7 +1208,7 @@ export function registerGatewayRoutes(api: Hono<GatewayEnv>, input: GatewayRoute
         const result = genericProviderAuthError({
           status: upstream.status,
           providerId: provider.id,
-          providerName: displayProviderName(provider.provider_id),
+          providerName: providerDisplayName(provider),
           credentialMode: selection.row.credentialSet.credential_mode,
           requestId: openworkRequestId,
         })

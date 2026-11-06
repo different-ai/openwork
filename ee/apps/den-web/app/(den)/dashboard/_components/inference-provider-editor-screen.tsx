@@ -29,6 +29,8 @@ import {
 } from "./inference-provider-request";
 import { LITELLM_PROVIDER_ID } from "./litellm-provider-data";
 import { LiteLlmProviderScreen } from "./litellm-provider-screen";
+import { CustomProviderManageScreen } from "./custom-provider-manage-screen";
+import { isGatewayCustomProviderId } from "@openwork/types/den/gateway-custom-providers";
 import { formatProviderTimestamp, getProviderDocUrl, getProviderEnvNames, getProviderIconSlug, getProviderNpmPackage, requestLlmProviderCatalogDetail, type DenModelsDevProviderDetail } from "./llm-provider-data";
 import { normalizeAzureResourceNameInput } from "./llm-provider-guided";
 import { pickTestModel, sortModelsNewestFirst } from "./gateway-provider-models";
@@ -127,8 +129,8 @@ export function InferenceProviderEditorScreen({ inferenceProviderId, catalogProv
   useEffect(() => {
     setDetail(null);
     setCatalogError(null);
-    // LiteLLM models come from the organization's own proxy, not the shared catalog.
-    if (!orgId || !providerId || providerId === LITELLM_PROVIDER_ID) { setCatalogBusy(false); return; }
+    // LiteLLM and custom provider models come from the organization's own provider, not the shared catalog.
+    if (!orgId || !providerId || providerId === LITELLM_PROVIDER_ID || isGatewayCustomProviderId(providerId)) { setCatalogBusy(false); return; }
     let cancelled = false;
     setCatalogBusy(true);
     void requestLlmProviderCatalogDetail(orgId, providerId)
@@ -351,6 +353,7 @@ export function InferenceProviderEditorScreen({ inferenceProviderId, catalogProv
     );
   }
   if (provider?.providerId === LITELLM_PROVIDER_ID) return <LiteLlmProviderScreen provider={provider} reload={reload} embedded={embedded} />;
+  if (provider && isGatewayCustomProviderId(provider.providerId)) return <CustomProviderManageScreen key={provider.id} provider={provider} reload={reload} embedded={embedded} />;
 
   const teams = orgContext?.teams ?? [];
   const members = orgContext?.members ?? [];

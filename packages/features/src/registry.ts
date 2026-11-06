@@ -148,6 +148,17 @@ export const FEATURES = defineFeatures({
     deployments: ["cloud"],
     default: false,
   },
+  gatewayCustomProviders: {
+    label: "AI Gateway: custom OpenAI-compatible providers",
+    description: "Admins add any OpenAI-compatible provider to AI Gateway with a name, an API URL and one key, pick its models (fetched from the provider and matched to models.dev), test one, then save and edit it later.",
+    category: "models",
+    added: "2026-11-05",
+    since: "2026-11",
+    author: "OmarMcAdam",
+    docs: "docs/features/gateway-custom-providers/README.md",
+    deployments: everywhere,
+    default: false,
+  },
   plainFreeModel: {
     label: "Desktop: OpenWork Free listed like any other model",
     description: "The free model shows in the model picker under its own name (GPT-6 Luna) with the same row as every other model, stays selectable when its usage limit is used up, and the limit message appears in the chat after sending.",

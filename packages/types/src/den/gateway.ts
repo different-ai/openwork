@@ -5,6 +5,7 @@ import type {
   InferenceProviderCredentialStatus,
   InferenceProviderStatus,
 } from "./inference.js";
+import type { GatewayCustomProviderStatus } from "./gateway-custom-providers.js";
 
 // Persisted enum values and secret formats are unchanged; Models billing stays
 // in den/inference. Gateway consumers should use these canonical exports.
@@ -288,6 +289,8 @@ export interface GatewayProviderDetails extends GatewayProviderSummary {
   credentialSets: GatewayCredentialSet[];
   accessGrants: GatewayAccessGrant[];
   litellm?: GatewayLiteLlmStatus;
+  /** Custom OpenAI-compatible providers, for callers who hold Manage Gateway providers. Never the key. */
+  custom?: GatewayCustomProviderStatus;
 }
 
 export interface GatewayProviderListResponse {
