@@ -18,6 +18,8 @@ repo:
   inference, manage teams and access, set desktop policies, publish skills and
   plugins through marketplaces.
 
+Headless Workbot, Slack and Automation turns resolve models through Den's actor-scoped cloud-agent catalog. This includes AI Gateway and supported single-key legacy providers. Always recheck the executing member's grants and credential on mint/resume; never fall back to an administrator or deployment credential. See `ee/apps/headless-runner/README.md`.
+
 The app consumes OpenWork server surfaces (self-hosted or hosted) rather than
 inventing parallel behavior. Anything OpenCode can do is available in OpenWork,
 even before a dedicated UI exists.

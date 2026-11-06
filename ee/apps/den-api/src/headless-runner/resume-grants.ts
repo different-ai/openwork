@@ -8,7 +8,7 @@ import { appLogger } from "../observability/logger.js"
 import { checkRateLimit } from "../utils/rate-limit.js"
 import type { HeadlessModelAccess } from "@openwork-ee/headless-protocol"
 import { organizationCloudModelSelection } from "../workbot/model.js"
-import { cloudAgentGatewayAccess } from "../workbot/gateway-model.js"
+import { cloudAgentAccess } from "../workbot/cloud-agent-model.js"
 import { isWorkbotManagedLuna } from "@openwork/types/den/workbot-settings"
 import { workbotManagedLunaAccess } from "../workbot/managed-luna.js"
 import { indexCapabilityForTurn, type HeadlessIndexKind } from "./session-index.js"
@@ -158,7 +158,7 @@ export async function mintHeadlessTurnCredentials(input: {
   const authorizedAt = new Date()
   const modelAccess = input.indexKind === "workbot" && input.model && isWorkbotManagedLuna(input.model)
     ? await workbotManagedLunaAccess(input, input.model)
-    : await cloudAgentGatewayAccess(input, input.model ?? await organizationCloudModelSelection(input) ?? "")
+    : await cloudAgentAccess(input, input.model ?? await organizationCloudModelSelection(input) ?? "")
   const minted = await mintHeadlessRunMcpToken(input)
   const resumeGrant = await resumeGrantForTurn({ ...input, authorizedAt })
   const indexCapability = await indexCapabilityForTurn(input)
@@ -269,7 +269,7 @@ export async function exchangeHeadlessResumeGrant(
     if (!input.model) return { ok: false, status: 403, error: "model_unavailable" }
     try {
       // The persisted turn keeps its selected alias across rollout rollback; current member access is rechecked.
-      modelAccess = await (isWorkbotManagedLuna(input.model) ? workbotManagedLunaAccess : cloudAgentGatewayAccess)(row, input.model)
+      modelAccess = await (isWorkbotManagedLuna(input.model) ? workbotManagedLunaAccess : cloudAgentAccess)(row, input.model)
     } catch {
       return { ok: false, status: 403, error: "model_unavailable" }
     }

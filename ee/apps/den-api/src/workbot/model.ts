@@ -3,7 +3,7 @@ import { OrganizationTable } from "@openwork-ee/den-db/schema"
 import { normalizeDenTypeId } from "@openwork-ee/utils/typeid"
 import { readWorkbotModel, WORKBOT_DEFAULT_MODEL_ID } from "@openwork/types/den/workbot-settings"
 import { db } from "../db.js"
-import { cloudAgentGatewayCatalog } from "./gateway-model.js"
+import { cloudAgentCatalog } from "./cloud-agent-model.js"
 import { createHeadlessRunnerClient, defaultHeadlessRunnerDeps, type HeadlessModelCatalog } from "../headless-runner/client.js"
 import { workbotManagedLunaRoutable, workbotManagedLunaState } from "./managed-luna.js"
 
@@ -55,9 +55,9 @@ export async function readOrganizationDefaultModel(organizationId: string): Prom
 
 export type CloudModelActor = { organizationId: string; userId: string }
 
-/** One catalog boundary for settings and execution: the actor's AI Gateway models. Never shared across actors. */
+/** One catalog boundary for settings and execution: the actor's usable Gateway and legacy models. Never shared across actors. */
 export async function cloudAgentModelCatalog(actor: CloudModelActor): Promise<HeadlessModelCatalog> {
-  return cloudAgentGatewayCatalog(actor)
+  return cloudAgentCatalog(actor)
 }
 
 /** Workbot's managed starter is separate from custom cloud-agent defaults, as on desktop. */
@@ -78,7 +78,7 @@ export async function workbotModelCatalog(actor: CloudModelActor): Promise<Headl
 /** Selection only. Authorization belongs after the shared client's persisted-turn pin, at credential minting. */
 export async function organizationCloudModelSelection(actor: CloudModelActor, fallback: string | null = null): Promise<string | null> {
   const chosen = await readOrganizationDefaultModel(actor.organizationId)
-  return chosen ?? fallback ?? (await cloudAgentGatewayCatalog(actor)).defaultModel
+  return chosen ?? fallback ?? (await cloudAgentCatalog(actor)).defaultModel
 }
 
 /**
@@ -86,7 +86,7 @@ export async function organizationCloudModelSelection(actor: CloudModelActor, fa
  * usable AI Gateway assignment, and unavailable choices never fall back to a shared key.
  */
 export async function organizationCloudModel(actor: CloudModelActor, fallback: string | null = null): Promise<string | null> {
-  const catalog = await cloudAgentGatewayCatalog(actor)
+  const catalog = await cloudAgentCatalog(actor)
   const chosen = await readOrganizationDefaultModel(actor.organizationId)
   const model = chosen ?? fallback ?? catalog.defaultModel
   if (!model || !catalog.models.some((entry) => entry.id === model)) throw new Error("cloud_model_unavailable")

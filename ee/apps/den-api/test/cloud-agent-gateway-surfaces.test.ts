@@ -114,7 +114,7 @@ test("Slack credential refusal uses a safe non-retryable runner failure", async 
   })
 })
 
-function automationHarness(options: { savedModel?: string; mintDenied?: boolean; scoped?: boolean; interruptAfterSend?: boolean } = {}) {
+function automationHarness(options: { savedModel?: string; selectedModel?: string; mintDenied?: boolean; scoped?: boolean; interruptAfterSend?: boolean } = {}) {
   const sent: Array<Record<string, unknown>> = []
   const minted: Array<Parameters<HeadlessRunnerDeps["mintToken"]>[0]> = []
   const messageId = headlessMessageIdForRun("run_1")
@@ -122,7 +122,7 @@ function automationHarness(options: { savedModel?: string; mintDenied?: boolean;
     config: { url: "http://runner:8795", token: "t".repeat(40) }, maxTokenTtlMs: 3_600_000,
     mintToken: async (input) => {
       if (options.mintDenied) throw new Error("private access details")
-      assert.equal(input.model, options.savedModel ?? alias)
+      assert.equal(input.model, options.savedModel ?? options.selectedModel ?? alias)
       minted.push(input)
       return { token: "member-token", ...(input.modelAccessRequired ? { modelAccess } : {}) }
     },
@@ -133,7 +133,7 @@ function automationHarness(options: { savedModel?: string; mintDenied?: boolean;
       }
       if (init?.method === "POST") return Response.json({ id: "hs_abcdefgh" }, { status: 201 })
       const interrupted = !sent.length || (options.interruptAfterSend && sent.length === 1)
-      return Response.json({ turns: [{ messageId, status: interrupted ? "interrupted" : "completed", model: options.savedModel ?? alias, error: null, ...(options.scoped ? { modelAccessRequired: true } : {}) }], messages: [], finalAssistantText: "Done." })
+      return Response.json({ turns: [{ messageId, status: interrupted ? "interrupted" : "completed", model: options.savedModel ?? options.selectedModel ?? alias, error: null, ...(options.scoped ? { modelAccessRequired: true } : {}) }], messages: [], finalAssistantText: "Done." })
     },
   }
   const input: CloudAgentExecutorInput = {
@@ -145,7 +145,7 @@ function automationHarness(options: { savedModel?: string; mintDenied?: boolean;
   const deps = {
     client: createHeadlessRunnerClient(runner), ownerUserId: async () => actor.userId, stillHeadless: async () => true,
     cloudModel: async () => alias,
-    gatewayCatalog: async () => ({ defaultModel: alias, models: [{ id: alias, name: "Member model" }] }),
+    gatewayCatalog: async () => ({ defaultModel: alias, models: [{ id: options.selectedModel ?? alias, name: "Member model" }] }),
     sleep: async () => {}, pollIntervalMs: 0,
   }
   return { input, deps, sent, minted }
@@ -161,6 +161,24 @@ test("gateway Automations use exact actor defaults and reject unavailable explic
   assert.equal(result.ok, false)
   if (!result.ok) { assert.equal(result.needsAttention, true); assert.equal(result.retryable, false) }
   assert.equal(denied.sent.length, 0)
+})
+
+test("legacy Automations preserve provider record identity and the entire upstream slash ID", async () => {
+  const providerId = "lpr_00000000000000000000000000"
+  const modelId = "deployment/team/model"
+  const selectedModel = `${providerId}/${modelId}`
+  const harness = automationHarness({ selectedModel })
+  harness.input.action.model = { providerId, modelId }
+  harness.deps.cloudModel = async () => { throw new Error("explicit model must not use the default") }
+  assert.equal((await executeHeadlessAgent(harness.input, harness.deps)).ok, true)
+  assert.equal(harness.sent[0]?.model, selectedModel)
+  assert.equal(harness.minted[0]?.model, selectedModel)
+  const resumed = automationHarness({ savedModel: selectedModel, scoped: true })
+  resumed.deps.cloudModel = async () => { throw new Error("must not reselect") }
+  assert.equal((await executeHeadlessAgent(resumed.input, resumed.deps)).ok, true)
+  assert.equal(resumed.sent[0]?.model, selectedModel)
+  assert.equal(resumed.minted[0]?.modelAccessRequired, true)
+  assert.deepEqual(resumed.sent[0]?.credentials, { mcpToken: "member-token", modelAccess })
 })
 
 test("gateway Automations keep the saved model on recovery despite a changed default", async () => {

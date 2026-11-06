@@ -8,6 +8,7 @@ import { db } from "../../db.js"
 import { orgMemberRoute } from "../../middleware/index.js"
 import { jsonResponse, notFoundSchema, unauthorizedSchema } from "../../openapi.js"
 import { workbotIncludedDefaultModel, workbotUsesManagedDefault } from "../../workbot/managed-luna.js"
+import { cloudAgentLegacyCatalog } from "../../workbot/legacy-model.js"
 import type { OrgRouteVariables } from "./shared.js"
 
 const workbotReadinessDocumentSchema = workbotReadinessSchema.meta({ ref: "WorkbotReadiness" })
@@ -20,8 +21,8 @@ async function hasActiveGatewayProvider(organizationId: string): Promise<boolean
 }
 
 /**
- * Den refuses Workbot turns when the organization has no active AI Gateway provider. Members
- * cannot list providers, so Den web reads this content-free answer before sending someone to Workbot.
+ * Members cannot list providers, so Den web reads this content-free answer before sending someone
+ * to Workbot. A supported, credential-ready legacy provider also satisfies the custom-provider prerequisite.
  */
 export function registerOrgWorkbotReadinessRoutes<T extends { Variables: OrgRouteVariables }>(app: Hono<T>) {
   app.get(
@@ -30,7 +31,7 @@ export function registerOrgWorkbotReadinessRoutes<T extends { Variables: OrgRout
       tags: ["Organizations"],
       summary: "Check whether Workbot has an AI provider",
       description:
-        "Returns whether Workbot turns need the organization's AI Gateway and, only then, whether an active provider exists. The managed default uses the member's included OpenWork models and needs no custom Gateway provider while the member is entitled to them. Content-free: no provider names, counts, ids, models or grants. Each turn rechecks the member's access. Available to any organization member. Never exposed to MCP.",
+        "Returns whether Workbot turns need a custom provider and, only then, whether an active Gateway provider or a usable legacy provider exists. The legacy wire fields gatewayRequired and hasGatewayProvider also cover supported legacy providers with current member access and credentials. The managed default uses the member's included OpenWork models and needs no custom provider while the member is entitled to them. Content-free: no provider names, counts, ids, models or grants. Each turn rechecks the member's access. Available to any organization member. Never exposed to MCP.",
       ...{ "x-mcp": false },
       responses: {
         200: jsonResponse("Whether Workbot needs an AI Gateway provider and whether one exists.", workbotReadinessDocumentSchema),
@@ -47,7 +48,9 @@ export function registerOrgWorkbotReadinessRoutes<T extends { Variables: OrgRout
       const managedLuna = workbotUsesManagedDefault(chosen)
         && await workbotIncludedDefaultModel({ organizationId, userId: currentMember.userId }, chosen) !== null
       const gatewayRequired = !managedLuna
-      const hasGatewayProvider = gatewayRequired && await hasActiveGatewayProvider(organizationId)
+      // Keep the content-free wire field for older clients; a usable legacy route also satisfies it.
+      const hasGatewayProvider = gatewayRequired && (await hasActiveGatewayProvider(organizationId)
+        || (await cloudAgentLegacyCatalog({ organizationId, userId: currentMember.userId })).models.length > 0)
       return c.json({ gatewayRequired, hasGatewayProvider })
     },
   )

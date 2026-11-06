@@ -34,8 +34,8 @@ import { resolvePermissionsForMember } from "../permissions/resolve.js"
 import { ensureFreshPrivilegedSession } from "../privileged-session.js"
 import { getExternalMcpConnection } from "../capability-sources/external-mcp-connections.js"
 import { getOrgOAuthClient } from "../capability-sources/oauth-credentials.js"
-import { listHeadlessModels, slackRunnerAvailable } from "./headless.js"
-import { organizationDefaultModel } from "../workbot/model.js"
+import { slackRunnerAvailable } from "./headless.js"
+import { cloudAgentModelCatalog, readOrganizationDefaultModel } from "../workbot/model.js"
 import { publicRequestUrl } from "../request-url.js"
 import { openworkYourConnectionsUrl } from "../mcp/connection-navigation.js"
 import {
@@ -175,7 +175,7 @@ export function registerSlackAssistantRoutes<T extends { Variables: OrgRouteVari
       if (!connection) return c.json({ error: "not_found" }, 404)
       const installation = await getInstallation(connectionId)
       const runnerAvailable = slackRunnerAvailable()
-      const catalog = runnerAvailable ? await listHeadlessModels() : null
+      const catalog = runnerAvailable ? await cloudAgentModelCatalog({ organizationId: org.organization.id, userId: org.currentMember.userId }).catch(() => null) : null
       return c.json({
         enabled: installation?.enabled ?? false,
         installed: Boolean(installation?.botToken),
@@ -186,7 +186,7 @@ export function registerSlackAssistantRoutes<T extends { Variables: OrgRouteVari
         channelIds: installation?.channelIds ?? [],
         shadowMode: installation?.shadowMode ?? false,
         dailyLimit: installation?.dailyLimit ?? 100,
-        model: await organizationDefaultModel(org.organization.id),
+        model: await readOrganizationDefaultModel(org.organization.id),
         modelManagedByOrganization: true,
         defaultModel: catalog?.defaultModel ?? null,
         progressUpdates: installation?.progressUpdates ?? false,

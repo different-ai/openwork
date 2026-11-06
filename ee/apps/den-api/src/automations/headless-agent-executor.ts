@@ -18,7 +18,7 @@ import { DEN_MCP_HEADLESS_RUN_TOKEN_MAX_TTL_MS } from "../mcp/headless-run-token
 import { connectionBlockedExecution, type CloudAgentEvent, type CloudAgentExecution, type CloudAgentExecutorInput } from "./cloud-agent-executor.js"
 import { cloudAutomationRuntime } from "./headless-runtime.js"
 import { organizationCloudModel } from "../workbot/model.js"
-import { cloudAgentGatewayCatalog } from "../workbot/gateway-model.js"
+import { cloudAgentCatalog, headlessExplicitModelId } from "../workbot/cloud-agent-model.js"
 
 /**
  * Runs one cloud agent Automation on the shared headless runner.
@@ -61,7 +61,7 @@ export type HeadlessAgentExecutorDeps = {
   /** Live check that the organization still runs Automations headless. */
   stillHeadless: (organizationId: string) => Promise<boolean>
   cloudModel: typeof organizationCloudModel
-  gatewayCatalog: typeof cloudAgentGatewayCatalog
+  gatewayCatalog: typeof cloudAgentCatalog
   /** Test injection for protocol compatibility; production always uses saved steps. */
   stepTurns: (organizationId: string) => Promise<boolean>
   sleep: (ms: number, signal: AbortSignal) => Promise<void>
@@ -115,7 +115,7 @@ function defaultDeps(): HeadlessAgentExecutorDeps {
     ownerUserId,
     stillHeadless: async (organizationId) => (await cloudAutomationRuntime(organizationId)) === "headless",
     cloudModel: organizationCloudModel,
-    gatewayCatalog: cloudAgentGatewayCatalog,
+    gatewayCatalog: cloudAgentCatalog,
     stepTurns: async () => true,
     sleep: abortableSleep,
     pollIntervalMs: POLL_INTERVAL_MS,
@@ -256,7 +256,7 @@ export async function executeHeadlessAgent(
       try {
         const selected = isAutomationCloudDefaultModel(input.action.model)
           ? await deps.cloudModel(actor)
-          : input.action.model.modelId
+          : headlessExplicitModelId(input.action.model)
         const catalog = await deps.gatewayCatalog(actor)
         if (!selected || !catalog.models.some((entry) => entry.id === selected)) throw new Error("cloud_agent_gateway_model_unavailable")
         model = selected

@@ -2,7 +2,7 @@
 
 Cheap headless agent sessions for OpenWork. There is no UI and no VM. Each session has:
 
-- a model reached through the **OpenWork AI Gateway**
+- a model authorized by Den: **OpenWork AI Gateway**, managed OpenWork Models, or a supported legacy provider
 - tools from **OpenWork MCP** (`/mcp/agent`)
 - a small **scratch filesystem**
 
@@ -17,6 +17,16 @@ headless-runner (one Node process, SQLite file)
    ├── tools  → OpenWork MCP (bearer = caller's per-turn token)
    └── files  → per-session rows in SQLite (no host FS, no shell)
 ```
+
+## Legacy providers on organization-scoped turns
+
+Den's cloud-agent catalog also includes credential-ready legacy providers for the executing member. Workbot, Slack and the headless Automation executor use the same actor-scoped resolver for initial turns and resume-token exchanges. A legacy selection is `lpr_<provider-record>/<full-upstream-model-id>`; only the upstream request substitutes the original model ID. Equal model IDs under different providers remain distinct.
+
+The resolver requires active membership, a current org/team/member provider grant, configured model policy, and an active credential. Shared providers use their shared credential; per-member providers use **only the executing member's binding**, never the configuring admin's. Rotation is re-resolved on the next turn/resume; blocking or removing access denies further admission without deployment-key or alternate-model fallback. In-flight upstream requests are not retroactively revoked: revoke the token upstream for an immediate cutoff.
+
+Supported legacy routes are single bearer-key `@ai-sdk/openai-compatible` (Chat Completions), `@ai-sdk/openai` (Responses), and `@ai-sdk/anthropic` (Messages). Unsupported SDKs, multiple credential environment variables, custom headers/options, and model-level routing overrides are excluded rather than silently flattened. These direct routes retain upstream authorization and accounting, but do not gain OpenWork AI Gateway metering. Credentials travel server-to-server in per-turn `modelAccess` and stay out of catalogs, browser responses and persisted conversations.
+
+The deployment `/v1/models` catalog is not an authorization source for organization turns. Keep `modelAccessRequired` on; Den supplies the selected route after checking the actor. Settings pickers use Den's unified member catalog. The managed OpenWork default and existing Gateway alias behavior are unchanged.
 
 ## Goals and how they're met
 

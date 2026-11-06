@@ -96,6 +96,8 @@ The three boxes are **locations**: the user's machine (local), OpenWork Cloud (o
 | **OpenWork AI Gateway** | OpenWork Cloud or self-hosted | Checks model access and limits, applies upstream provider credentials, records usage. |
 | **Outside OpenWork** | Third parties | Model providers, MCP / SaaS services, and optional Workbot computers (Daytona or Freestyle). |
 
+**Direct legacy inference on the headless runner.** In addition to AI Gateway routes, Den can authorize supported single-key OpenAI-compatible, OpenAI Responses and Anthropic legacy providers for Workbot, Slack and headless Automations. Den checks active membership, current provider/model access and the executing member's active credential binding on every turn and resume. Only the selected upstream route and credential are sent server-to-server to the runner; provider-qualified model identity is persisted, not the key. Missing or revoked access does not fall back to a deployment or administrator key. Direct legacy inference retains the upstream gateway's restrictions and accounting, without OpenWork AI Gateway metering. Desktop use of the same legacy provider still delivers the member's key to their machine.
+
 **Automations.** An Automation is defined in Den and runs either on a person's **OpenWork Desktop** or in the cloud on the **headless runner**. A desktop picks up its work by connecting out to Den; Den does not open a connection into the user's machine. Each cloud run is one turn in its own runner session.
 
 ## 2. Detailed architecture
