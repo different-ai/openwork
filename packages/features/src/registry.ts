@@ -148,6 +148,17 @@ export const FEATURES = defineFeatures({
     deployments: ["cloud"],
     default: false,
   },
+  headlessLegacyProviders: {
+    label: "Headless: legacy LLM providers",
+    description: "Workbot, Slack and headless Automations can use supported legacy providers with the executing member's current grants and credential. Turning this off hides legacy model choices and blocks new turns and resumes without falling back to another key or model.",
+    category: "models",
+    added: "2026-11-05",
+    since: "2026-11",
+    author: "benjaminshafii",
+    docs: "docs/features/headless-legacy-providers/README.md",
+    deployments: everywhere,
+    default: false,
+  },
   gatewayCustomProviders: {
     label: "AI Gateway: custom OpenAI-compatible providers",
     description: "Admins add any OpenAI-compatible provider to AI Gateway with a name, an API URL and one key, pick its models (fetched from the provider and matched to models.dev), test one, then save and edit it later.",

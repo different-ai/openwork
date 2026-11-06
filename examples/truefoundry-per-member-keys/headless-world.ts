@@ -25,7 +25,7 @@ export const legacyHeadless = recipe("legacy-headless", async tools => {
   // The controller holds the key for the single provisioning request. Don't
   // pass it as an ambient variable to the child Den, Workbot or runner process.
   delete process.env.HEADLESS_TEST_GATEWAY_KEY;
-  const world = await bootWorkbot(tools.stack, undefined, { live: false, denEnv: { GATEWAY_ENABLED: "false" } });
+  const world = await bootWorkbot(tools.stack, undefined, { live: false, denEnv: { GATEWAY_ENABLED: "false" }, features: { headlessLegacyProviders: true } });
   const member = await inviteMember(world.den, "gateway-member", { name: "Gateway Member", email: "gateway-member@acme.test", password: "OpenWorkEval123!" });
   const headers = { authorization: `Bearer ${world.den.admin.token}`, "content-type": "application/json", "x-openwork-org-id": world.orgId };
   const roster = await denFetch(world.den.admin, "/v1/org", { headers });

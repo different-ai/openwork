@@ -25,6 +25,17 @@ test("catalog carries exact record identity and full upstream slash ID, never ke
   for (const model of [upstream, `compatible/${upstream}`, `lpr_other/${upstream}`, `${id}/model`]) await assert.rejects(models.access(actor, model), /unavailable/)
 })
 
+test("usage is recorded only when a legacy credential is resolved, never for a catalog or denied choice", async () => {
+  let uses = 0
+  const models = createCloudAgentLegacyModelService({ providers: async () => [provider()], used: async () => { uses++ } })
+  await models.catalog(actor)
+  assert.equal(uses, 0)
+  await assert.rejects(models.access(actor, "unavailable"))
+  assert.equal(uses, 0)
+  await models.access(actor, selected)
+  assert.equal(uses, 1)
+})
+
 test("single-env maps use the existing scoped runtime credential mapping", async () => {
   const models = service([provider({ source: "models_dev", credential: JSON.stringify({ SERVICE_API_KEY: "member-key" }) })])
   assert.equal((await models.access(actor, selected)).apiKey, "member-key")

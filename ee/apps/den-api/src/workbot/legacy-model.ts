@@ -5,6 +5,8 @@ import { decodeProviderCredential, readProviderEnvNames, toRuntimeProviderEnv } 
 import { CloudAgentGatewayAccessError, type CloudAgentGatewayActor } from "./gateway-model.js"
 
 export type CloudAgentLegacyProvider = {
+  /** Internal usage attribution, never included in the public model catalog. */
+  actorMemberId?: string
   id: string
   source: string
   providerId: string
@@ -16,6 +18,7 @@ export type CloudAgentLegacyProvider = {
 export type CloudAgentLegacyDeps = {
   /** Must enforce active org membership and current grants for shared AND per-member providers. */
   providers: (actor: CloudAgentGatewayActor) => Promise<CloudAgentLegacyProvider[]>
+  used?: (actor: CloudAgentGatewayActor, provider: CloudAgentLegacyProvider) => Promise<void>
 }
 
 /** The record identity, not the vendor name, keeps equal upstream IDs collision-free. */
@@ -83,7 +86,10 @@ export function createCloudAgentLegacyModelService(deps: CloudAgentLegacyDeps) {
         const selected = usableModels(provider).find(entry => legacyCloudModelId(provider.id, entry.modelId) === model)
         if (!selected) continue
         const access = route(provider)
-        if (access) return { ...access, model: selected.modelId }
+        if (access) {
+          await deps.used?.(actor, provider)
+          return { ...access, model: selected.modelId }
+        }
       }
       throw new CloudAgentGatewayAccessError("model_access_unavailable")
     },
@@ -91,7 +97,16 @@ export function createCloudAgentLegacyModelService(deps: CloudAgentLegacyDeps) {
 }
 
 const service = createCloudAgentLegacyModelService({
+  async used(actor, provider) {
+    if (!provider.actorMemberId) return
+    const { markFeaturesUsed } = await import("../feature-usage.js")
+    markFeaturesUsed({ organizationId: actor.organizationId, memberId: provider.actorMemberId, keys: ["headlessLegacyProviders"] })
+  },
   async providers(actor) {
+    // Shared chokepoint for catalogs, readiness, initial minting and resumes.
+    // Never read or deliver an upstream credential while the rollout is off.
+    const { organizationFeatureEnabled } = await import("../features.js")
+    if (!await organizationFeatureEnabled(actor.organizationId, "headlessLegacyProviders", { userId: actor.userId })) return []
     const [{ and, asc, eq, inArray, isNull }, { AuthUserTable, OrganizationTable, MemberTable, TeamTable, TeamMemberTable, LlmProviderTable, LlmProviderModelTable, LlmProviderMemberCredentialTable }, { normalizeDenTypeId }, { db }, { listAccessibleLlmProviderAccess }, { organizationAllowsManagedModels }] = await Promise.all([
       import("@openwork-ee/den-db/drizzle"), import("@openwork-ee/den-db/schema"), import("@openwork-ee/utils/typeid"), import("../db.js"), import("../routes/org/llm-provider-access.js"), import("../inference.js"),
     ])
@@ -116,6 +131,7 @@ const service = createCloudAgentLegacyModelService({
     ])
     return providers.filter(provider => provider.source !== "openwork" || managedAllowed).map(provider => ({
       ...provider,
+      actorMemberId: member.id,
       credential: provider.credentialMode === "per_member" ? credentials.find(binding => binding.llmProviderId === provider.id)?.secret ?? null : provider.apiKey,
       models: models.filter(model => model.llmProviderId === provider.id),
     }))

@@ -90,6 +90,12 @@ test("Workbot and Slack use the invoking member's legacy key on the real headles
   await provision(owner.memberId, ownerKey)
   await provision(member.memberId, memberKey)
 
+  const disabledSettings = checked(await admin("GET", "/v1/org/workbot-settings"))
+  assert.equal(list(field(disabledSettings.body, "models")).some(model => typeof model.id === "string" && model.id.includes(providerId)), false, "legacy models must be hidden by default")
+  const { cloudAgentAccess: defaultOffAccess } = await import("../../src/workbot/cloud-agent-model.js")
+  await assert.rejects(() => defaultOffAccess({ organizationId: workspace.orgId, userId: member.userId }, `${providerId}/${modelId}`))
+  checked(await den.setFeature(workspace.orgId, "headlessLegacyProviders", true))
+
   const settings = checked(await admin("GET", "/v1/org/workbot-settings"))
   noKeys(settings.body)
   const selectable = list(field(settings.body, "models")).find(model => typeof model.id === "string" && model.id.includes(providerId))
@@ -183,6 +189,24 @@ test("Workbot and Slack use the invoking member's legacy key on the real headles
     assert.ok(trace.includes("Legacy gateway file tools verified."))
     assert.ok(upstream.every(call => call.memberKey && call.model === modelId), "tool calls used another credential or model")
   }
+
+  // Turning the organization rollout off gates both visibility and execution,
+  // including saved-turn resume, without falling back or deleting history.
+  const beforeFlagOff = upstream.length
+  checked(await den.setFeature(workspace.orgId, "headlessLegacyProviders", false))
+  const offSettings = checked(await admin("GET", "/v1/org/workbot-settings"))
+  assert.equal(list(field(offSettings.body, "models")).some(model => model.id === selection), false)
+  checked(await den.request(mcp, "POST", "/v1/workbot/run-token", { body: { model: selection } }), 403)
+  checked(await den.request(mcp, "POST", "/v1/workbot/run-token", { body: {} }), 403)
+  checked(await den.request(null, "POST", "/v1/headless/resume-token", {
+    headers: { authorization: "Bearer fixture-private-runner-callback-token-123456789" },
+    body: { grant, sessionId: "hs_legacy_workbot_token", messageId: "legacy-token-turn", model: selection, modelAccessRequired: true },
+  }), 403)
+  assert.equal((await slack.send({ sessionId: thread.sessionId, messageId: "slack-flag-off", prompt, model: selection })).ok, false)
+  assert.equal(upstream.length, beforeFlagOff, "flag-off must not send any inference request")
+  const history = await client.readSession(conversation.value.id, { messageId: "workbot-legacy-proof" })
+  assert.equal(history.ok, true, "history must remain readable while the flag is off")
+  checked(await den.setFeature(workspace.orgId, "headlessLegacyProviders", true))
 
   // Resumes must re-resolve current credentials, not retain the old key.
   const rotated = live ? memberKey : "fixture-private-rotated-member-credential"
