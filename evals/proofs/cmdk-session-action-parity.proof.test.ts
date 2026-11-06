@@ -46,7 +46,7 @@ function keyboard(user: User, probe: Probe) {
   };
   const groups = async () => {
     await search("Move to group");
-    await user.see({ role: "option", text: /^Move to group/i });
+    await user.see({ role: "option", label: /^Move to group/i });
     await user.press("Enter");
     await user.see({ placeholder: "Search groups..." });
   };
@@ -93,7 +93,7 @@ test("a member organizes and safely removes the main conversation from Cmd+K eve
     await user.see("composer", { editable: true });
     expect(await probe.hash()).toContain(world.main.sessionId);
     await keys.search("Archive session");
-    await user.see({ role: "option", text: /^Archive session/ });
+    await user.see({ role: "option", label: /^Archive session/ });
     const archive = (await probe.dom(paletteRows)).elements.find(element => element.text.startsWith("Archive session"));
     expect(archive?.text).toContain(world.main.title);
     await preserved(probe, world);
@@ -106,8 +106,8 @@ test("a member organizes and safely removes the main conversation from Cmd+K eve
   await step("after: a workspace with zero groups still offers No group and New group", async () => {
     expect((await probe.dom("[data-session-group]")).elements).toHaveLength(0);
     await keys.groups();
-    await user.see({ role: "option", text: /^No group/ });
-    await user.see({ role: "option", text: /^New group/ });
+    await user.see({ role: "option", label: /^No group/ });
+    await user.see({ role: "option", label: /^New group/ });
     const disabled = (await probe.dom(`${paletteRows}[aria-disabled="true"], ${paletteRows}[data-disabled]`)).elements;
     expect(disabled.some(element => element.text.startsWith("No group"))).toBe(true);
     evidence.recordAssertionEvidence("An empty group picker is useful and cannot ungroup an already ungrouped conversation", `groups=0; No group disabled=${disabled.some(element => element.text.startsWith("No group"))}; New group visible`, disabled.some(element => element.text.startsWith("No group")));
@@ -142,7 +142,7 @@ test("a member organizes and safely removes the main conversation from Cmd+K eve
     await user.click({ role: "button", label: "Save" });
     await user.notSee({ placeholder: groupPrompt });
     await keys.groups();
-    await user.see({ role: "option", text: new RegExp(`^${world.groupName}`) });
+    await user.see({ role: "option", label: new RegExp(`^${world.groupName}`) });
     const noGroup = (await probe.dom(`${paletteRows}[aria-disabled="true"], ${paletteRows}[data-disabled]`)).elements.find(element => element.text.startsWith("No group"));
     expect(noGroup).toBeDefined();
     const groupHeaders = (await probe.dom("[data-session-group]")).elements;
@@ -180,10 +180,10 @@ test("a member organizes and safely removes the main conversation from Cmd+K eve
 
   await step("the member focuses a saved side chat while the main conversation remains the route", async () => {
     await keys.search("Open as side chat");
-    await user.see({ role: "option", text: /^Open as side chat/ });
+    await user.see({ role: "option", label: /^Open as side chat/ });
     await user.press("Enter");
     await user.type(paletteTarget, world.side.title, { replace: true });
-    await user.see({ role: "option", text: new RegExp(`^${world.side.title}`) });
+    await user.see({ role: "option", label: new RegExp(`^${world.side.title}`) });
     await user.press("Enter");
     await keys.closed();
     await user.see({ role: "textbox", nth: 1 }, { editable: true });
@@ -198,7 +198,7 @@ test("a member organizes and safely removes the main conversation from Cmd+K eve
 
   await step("after: Delete names the main conversation, not the focused side chat, and waits for consent", async () => {
     await keys.search("Delete session");
-    await user.see({ role: "option", text: /^Delete session/ });
+    await user.see({ role: "option", label: /^Delete session/ });
     const deletion = (await probe.dom(paletteRows)).elements.find(element => element.text.startsWith("Delete session"));
     expect(deletion?.text).toContain(world.main.title);
     expect(deletion?.text).not.toContain(world.side.title);
@@ -232,7 +232,7 @@ test("a member organizes and safely removes the main conversation from Cmd+K eve
     await user.click({ role: "textbox", nth: 1 });
     expect((await probe.dom(`${secondary}[data-workbench-pane-focused="true"]`)).elements).toHaveLength(1);
     await keys.search("Archive session");
-    await user.see({ role: "option", text: /^Archive session/ });
+    await user.see({ role: "option", label: /^Archive session/ });
     const archive = (await probe.dom(paletteRows)).elements.find(element => element.text.startsWith("Archive session"));
     expect(archive?.text).toContain(world.main.title);
     expect(archive?.text).not.toContain(world.side.title);
@@ -244,7 +244,7 @@ test("a member organizes and safely removes the main conversation from Cmd+K eve
 
   await step("after: Close side chat closes only the pane and preserves both conversations", async () => {
     await keys.search("Close side chat");
-    await user.see({ role: "option", text: /^Close side chat/ });
+    await user.see({ role: "option", label: /^Close side chat/ });
     await user.press("Enter");
     await keys.closed();
     const panes = await probe.eventually(() => probe.dom(secondary), { within: 10_000, label: "only the side pane closes", until: value => value.elements.length === 0 });
@@ -260,7 +260,7 @@ test("a member organizes and safely removes the main conversation from Cmd+K eve
 
   await step("after: Archive hides only the main conversation and Restore brings the same one back", async () => {
     await keys.search("Archive session");
-    await user.see({ role: "option", text: /^Archive session/ });
+    await user.see({ role: "option", label: /^Archive session/ });
     await user.press("Enter");
     await keys.closed();
     const archived = await probe.eventually(() => readSession(probe, world.workspace.workspaceId, world.main.sessionId), { within: 15_000, label: "the main conversation is archived in the native engine", until: value => value.archived });
@@ -270,7 +270,7 @@ test("a member organizes and safely removes the main conversation from Cmd+K eve
     await user.navigate(mainUrl);
     await user.see({ text: "This conversation is read-only. Restore it to continue; previous work will not restart." });
     await keys.search("Unarchive session");
-    await user.see({ role: "option", text: /^Unarchive session/ });
+    await user.see({ role: "option", label: /^Unarchive session/ });
     const restoration = (await probe.dom(paletteRows)).elements.find(element => element.text.startsWith("Unarchive session"));
     expect(restoration?.text).toContain(world.main.title);
     await user.screenshot();
@@ -287,7 +287,7 @@ test("a member organizes and safely removes the main conversation from Cmd+K eve
 
   await step("after: confirming Delete removes only the named main conversation", async () => {
     await keys.search("Delete session");
-    await user.see({ role: "option", text: /^Delete session/ });
+    await user.see({ role: "option", label: /^Delete session/ });
     await user.press("Enter");
     await keys.closed();
     await user.see({ role: "heading", text: "Delete session?" });
@@ -322,7 +322,7 @@ test("a member sees why Settle is unavailable and can cancel archiving a convers
 
   await step("after: Settle remains visible with its reason and Enter cannot settle the waiting conversation", async () => {
     await keys.search("Settle session");
-    await user.see({ role: "option", text: /^Settle session/ });
+    await user.see({ role: "option", label: /^Settle session/ });
     const disabled = (await probe.dom(`${paletteRows}[aria-disabled="true"], ${paletteRows}[data-disabled]`)).elements.find(element => element.text.startsWith("Settle session"));
     expect(disabled?.text).toContain("after it finishes");
     expect(disabled?.text).toContain(world.main.title);
@@ -339,7 +339,7 @@ test("a member sees why Settle is unavailable and can cancel archiving a convers
 
   await step("cancelling Stop and archive preserves the pending question and every other conversation", async () => {
     await keys.search("Archive session");
-    await user.see({ role: "option", text: /^Archive session/ });
+    await user.see({ role: "option", label: /^Archive session/ });
     await user.press("Enter");
     await keys.closed();
     await user.see({ role: "button", label: "Stop and archive" });
