@@ -293,7 +293,8 @@ secret:
     githubConnectorAppPrivateKey: ""
     githubConnectorAppWebhookSecret: ""
     initialAdminBootstrapCode: ""
-    # 24+ characters. Only rendered when set; used by denApi.auditUsage.
+    # 24+ characters. Only rendered when set; used by denApi.auditUsage and
+    # denApi.githubReconcile.
     maintenanceToken: ""
     # TypeSafe API key for Jev, which picks the model for each Smart request
     # (AI Gateway Smart Model Router, feature autoRouter). Only rendered when
@@ -327,6 +328,19 @@ denApi:
   auditUsage:
     enabled: false
     schedule: "30 3 * * *"
+    timeZone: "Etc/UTC"
+    tokenSecret: ""
+    tokenKey: DEN_MAINTENANCE_TOKEN
+  # GitHub connector reconcile. Checks due GitHub connector targets for new
+  # commits and queues a resync, by calling den-api POST /internal/github/reconcile/run
+  # every few minutes. Each run reads due targets in small pages, so it never loads
+  # every target at once. Push webhooks still sync without it; it is the backstop
+  # for webhooks that never arrived, and nothing else runs the check.
+  # Uses the same maintenance token as auditUsage: secret.values.maintenanceToken,
+  # or tokenSecret/tokenKey (here or under auditUsage; if both are set they must match).
+  githubReconcile:
+    enabled: false
+    schedule: "*/5 * * * *"
     timeZone: "Etc/UTC"
     tokenSecret: ""
     tokenKey: DEN_MAINTENANCE_TOKEN

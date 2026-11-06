@@ -413,6 +413,38 @@ export const ConnectorSyncEventTable = mysqlTable(
   ],
 )
 
+export const connectorTargetReconcileStatusValues = ["ok", "retrying", "paused"] as const
+
+/**
+ * When the scheduled reconcile next checks a connector target against its
+ * source (for GitHub, the branch head). One small row per target, so a run
+ * reads due targets from an index in pages instead of loading every target
+ * with its config. A run claims a row by moving next_probe_at a few minutes
+ * ahead, so a run that stops mid-probe is retried once that passes. Paused rows
+ * have no next_probe_at: they wait until the target, its instance or its
+ * account changes after paused_revision_at.
+ */
+export const ConnectorTargetReconcileTable = mysqlTable(
+  "connector_target_reconcile",
+  {
+    connectorTargetId: denTypeIdColumn("connectorTarget", "connector_target_id").notNull().primaryKey(),
+    organizationId: denTypeIdColumn("organization", "organization_id").notNull(),
+    connectorType: mysqlEnum("connector_type", connectorTypeValues).notNull(),
+    status: mysqlEnum("status", connectorTargetReconcileStatusValues).notNull().default("ok"),
+    nextProbeAt: timestamp("next_probe_at", { fsp: 3 }),
+    lastProbedAt: timestamp("last_probed_at", { fsp: 3 }),
+    failureCount: int("failure_count").notNull().default(0),
+    error: varchar("error", { length: 1024 }),
+    pausedRevisionAt: timestamp("paused_revision_at", { fsp: 3 }),
+    createdAt: timestamp("created_at", { fsp: 3 }).notNull().defaultNow(),
+  },
+  (table) => [
+    index("connector_target_reconcile_type_next_probe").on(table.connectorType, table.nextProbeAt, table.connectorTargetId),
+    index("connector_target_reconcile_type_status").on(table.connectorType, table.status),
+    index("connector_target_reconcile_organization_id").on(table.organizationId),
+  ],
+)
+
 export const ConnectorSourceBindingTable = mysqlTable(
   "connector_source_binding",
   {

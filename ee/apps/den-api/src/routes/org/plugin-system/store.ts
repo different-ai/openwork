@@ -12,6 +12,7 @@ import {
   ConnectorSourceBindingTable,
   ConnectorSourceTombstoneTable,
   ConnectorSyncEventTable,
+  ConnectorTargetReconcileTable,
   ConnectorTargetTable,
   ExternalMcpConnectionAccessGrantTable,
   ExternalMcpConnectionTable,
@@ -4063,6 +4064,10 @@ export async function disconnectConnectorAccount(input: { connectorAccountId: Co
     }
 
     if (instanceIds.length > 0) {
+      await tx.delete(ConnectorTargetReconcileTable).where(inArray(
+        ConnectorTargetReconcileTable.connectorTargetId,
+        tx.select({ id: ConnectorTargetTable.id }).from(ConnectorTargetTable).where(inArray(ConnectorTargetTable.connectorInstanceId, instanceIds)),
+      ))
       await tx.delete(ConnectorTargetTable).where(inArray(ConnectorTargetTable.connectorInstanceId, instanceIds))
       await tx.delete(ConnectorInstanceAccessGrantTable).where(inArray(ConnectorInstanceAccessGrantTable.connectorInstanceId, instanceIds))
       await tx.delete(ConnectorInstanceTable).where(inArray(ConnectorInstanceTable.id, instanceIds))
@@ -4541,6 +4546,10 @@ export async function removeConnectorInstance(input: { connectorInstanceId: Conn
       await tx.delete(ConnectorMappingTable).where(inArray(ConnectorMappingTable.id, mappingIds))
     }
 
+    await tx.delete(ConnectorTargetReconcileTable).where(inArray(
+      ConnectorTargetReconcileTable.connectorTargetId,
+      tx.select({ id: ConnectorTargetTable.id }).from(ConnectorTargetTable).where(eq(ConnectorTargetTable.connectorInstanceId, instance.id)),
+    ))
     await tx.delete(ConnectorTargetTable).where(eq(ConnectorTargetTable.connectorInstanceId, instance.id))
     await tx.delete(ConnectorInstanceAccessGrantTable).where(eq(ConnectorInstanceAccessGrantTable.connectorInstanceId, instance.id))
     await tx.delete(ConnectorInstanceTable).where(eq(ConnectorInstanceTable.id, instance.id))
