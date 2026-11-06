@@ -1,0 +1,407 @@
+name: Den DB migration test
+
+# Tests a pull request's Drizzle migrations against a short-lived PlanetScale
+# copy of production, seeded (Data Branching) from the latest backup, then
+# deletes the copy. Production itself is still migrated only by
+# den-db-migrate.yml after merge: deploy requests carry schema, not the data
+# statements in our migrations or the __drizzle_migrations journal, so this
+# workflow never opens one.
+#
+# Flow per run (every push to the PR restarts it):
+#   1. Delete this PR's previous copy, if one is left over.
+#   2. Seed migration-test-pr-<number> from the latest backup of main.
+#   3. Shrink it to PS-10 (seeded copies start at production's size).
+#   4. Run db:migrate and db:reconcile-permissions, exactly as production does.
+#   5. On a migration failure: fail the check and post the (redacted) error to
+#      Slack.
+#   6. Delete the copy, also when the run fails or is cancelled. Closing the PR
+#      deletes any leftover.
+#
+# Safety:
+# - Organization members' (MEMBER/OWNER) same-repository pull requests only,
+#   and only when the author triggered the run. Forks, outside collaborators
+#   and bots are skipped, or fail before any secret is read when someone other
+#   than the author pushed.
+# - Migration SQL from the PR runs with write access to a copy of production
+#   data. Give the den-db-migration-test environment required reviewers so a
+#   maintainer reads the migration before it runs, as prod-data-dry-run does.
+# - This repository is public, so logs are public. The migration output is
+#   never printed; the log shows only MySQL error codes. The full error, with
+#   quoted values redacted, goes to Slack.
+# - The PlanetScale token reaches only the steps that call pscale; the branch
+#   password only reaches the migrate step. Dependencies are installed before
+#   any credential exists. Every action is pinned to a commit SHA.
+#
+# Needs, on the den-db-migration-test environment:
+#   secrets PLANETSCALE_MIGRATION_TEST_TOKEN_ID and
+#   PLANETSCALE_MIGRATION_TEST_TOKEN: a service token limited to the Den
+#   database with read_database, read_branch, create_branch, delete_branch,
+#   read_backups, restore_production_branch_backup, connect_production_branch
+#   (the seeded copy counts as production) and delete_production_branch.
+#   secret SLACK_BOT_TOKEN (chat:write) and variable
+#   SLACK_DEN_DB_ALERTS_CHANNEL_ID.
+#   variables PLANETSCALE_MIGRATION_TEST_ORG and
+#   PLANETSCALE_MIGRATION_TEST_DATABASE.
+#   main must be deletion-protected (verified before each privileged step) and
+#   Data Branching must be enabled on the database.
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, closed]
+    paths:
+      - "ee/packages/den-db/drizzle/**"
+      - ".github/workflows/den-db-migration-test.yml"
+      - "scripts/dry-run-branch-guard.sh"
+
+permissions:
+  contents: read
+
+# A new push cancels the run in progress; its always() cleanup still deletes
+# the copy before the next run starts.
+concurrency:
+  group: den-db-migration-test-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+env:
+  PLANETSCALE_ORG: ${{ vars.PLANETSCALE_MIGRATION_TEST_ORG }}
+  DATABASE: ${{ vars.PLANETSCALE_MIGRATION_TEST_DATABASE }}
+  SOURCE_BRANCH: main
+  BRANCH: migration-test-pr-${{ github.event.pull_request.number }}
+  COPY_BRANCH_PATTERN: ^migration-test-pr-[0-9]+$
+  TARGET_CLUSTER_SIZE: PS_10
+
+jobs:
+  migration-test:
+    name: Test migrations on a production copy
+    # Organization members' own pull requests only, with the same identity
+    # checks as pr-proof.yml. author_association comes from GitHub, not the PR:
+    # repository write access alone does not make an outside collaborator a
+    # MEMBER. Everyone else is skipped before any secret is read.
+    if: >-
+      github.repository == 'different-ai/openwork' &&
+      github.event.action != 'closed' &&
+      github.event.repository.owner.type == 'Organization' &&
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      github.event.pull_request.base.repo.full_name == github.repository &&
+      github.event.pull_request.head.repo.id == github.event.repository.id &&
+      github.event.pull_request.base.repo.id == github.event.repository.id &&
+      github.event.pull_request.head.repo.fork == false &&
+      github.event.pull_request.base.repo.fork == false &&
+      github.event.pull_request.user.type == 'User' &&
+      contains(fromJSON('["MEMBER", "OWNER"]'), github.event.pull_request.author_association)
+    runs-on: blacksmith-4vcpu-ubuntu-2204
+    timeout-minutes: 120
+    environment:
+      name: den-db-migration-test
+      deployment: false
+    steps:
+      # The author check above says who opened the PR, not who pushed this
+      # commit. Someone else's push (or re-run) must not run their SQL under
+      # the member's name, so only the author can trigger it.
+      - name: Check who triggered the run
+        env:
+          PR_AUTHOR: ${{ github.event.pull_request.user.login }}
+          TRIGGERING_ACTOR: ${{ github.triggering_actor }}
+        run: |
+          set -euo pipefail
+          if [ "$TRIGGERING_ACTOR" != "$PR_AUTHOR" ]; then
+            echo "::error::Migrations run on a production copy only for the PR author's own pushes. $TRIGGERING_ACTOR triggered this run; $PR_AUTHOR can re-run it after reviewing the change."
+            exit 1
+          fi
+          echo "Triggered by the PR author, an organization member."
+
+      - name: Check configuration
+        env:
+          TOKEN_ID: ${{ secrets.PLANETSCALE_MIGRATION_TEST_TOKEN_ID }}
+          TOKEN: ${{ secrets.PLANETSCALE_MIGRATION_TEST_TOKEN }}
+        run: |
+          set -euo pipefail
+          missing=""
+          [ -z "$TOKEN_ID" ] && missing="$missing PLANETSCALE_MIGRATION_TEST_TOKEN_ID"
+          [ -z "$TOKEN" ] && missing="$missing PLANETSCALE_MIGRATION_TEST_TOKEN"
+          [ -z "$PLANETSCALE_ORG" ] && missing="$missing PLANETSCALE_MIGRATION_TEST_ORG"
+          [ -z "$DATABASE" ] && missing="$missing PLANETSCALE_MIGRATION_TEST_DATABASE"
+          if [ -n "$missing" ]; then
+            echo "::error::Missing on the den-db-migration-test environment:$missing"
+            exit 1
+          fi
+
+      - name: Checkout
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+
+      # Install before any database credential exists, so dependency lifecycle
+      # scripts never see the branch password or the PlanetScale token.
+      - name: Setup Node
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: 24.22.1
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
+        with:
+          version: 11.4.0
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile --filter "@openwork-ee/den-db..."
+
+      - name: Test branch safety guards
+        run: bash scripts/dry-run-branch-guard.test.sh
+
+      - name: Setup pscale CLI
+        uses: planetscale/setup-pscale-action@b6a50ee45b4b24944e1d8de6e57b3a5f6476a1af # v1
+
+      - name: Delete this PR's previous copy
+        env:
+          PLANETSCALE_SERVICE_TOKEN_ID: ${{ secrets.PLANETSCALE_MIGRATION_TEST_TOKEN_ID }}
+          PLANETSCALE_SERVICE_TOKEN: ${{ secrets.PLANETSCALE_MIGRATION_TEST_TOKEN }}
+        run: |
+          set -euo pipefail
+          source scripts/dry-run-branch-guard.sh
+          assert_dry_run_name "$BRANCH"
+          # Listing must succeed: an auth/network failure is not proof that
+          # the copy is absent.
+          branches="$(pscale branch list "$DATABASE" --org "$PLANETSCALE_ORG" --format json)"
+          if printf '%s' "$branches" | jq -e --arg name "$BRANCH" 'any(.[]; .name == $name)' > /dev/null; then
+            delete_dry_run_branch "$BRANCH"
+          else
+            echo "No previous copy"
+          fi
+
+      - name: Seed a copy from the latest backup
+        env:
+          PLANETSCALE_SERVICE_TOKEN_ID: ${{ secrets.PLANETSCALE_MIGRATION_TEST_TOKEN_ID }}
+          PLANETSCALE_SERVICE_TOKEN: ${{ secrets.PLANETSCALE_MIGRATION_TEST_TOKEN }}
+        run: |
+          set -euo pipefail
+          source scripts/dry-run-branch-guard.sh
+          assert_dry_run_name "$BRANCH"
+          assert_source_protected
+          echo "Seeding $BRANCH from the latest backup of $SOURCE_BRANCH at $TARGET_CLUSTER_SIZE"
+          pscale branch create "$DATABASE" "$BRANCH" --org "$PLANETSCALE_ORG" \
+            --from "$SOURCE_BRANCH" --seed-data --cluster-size "$TARGET_CLUSTER_SIZE" --wait > /dev/null
+          assert_copy_branch "$BRANCH"
+
+      # Seeded copies are billed as production branches at the source's size.
+      # --cluster-size above should already apply; this verifies it and
+      # resizes any keyspace that still runs larger.
+      - name: Shrink the copy
+        env:
+          PLANETSCALE_SERVICE_TOKEN_ID: ${{ secrets.PLANETSCALE_MIGRATION_TEST_TOKEN_ID }}
+          PLANETSCALE_SERVICE_TOKEN: ${{ secrets.PLANETSCALE_MIGRATION_TEST_TOKEN }}
+        run: |
+          set -euo pipefail
+          source scripts/dry-run-branch-guard.sh
+          assert_copy_branch "$BRANCH"
+          keyspaces_path="organizations/$PLANETSCALE_ORG/databases/$DATABASE/branches/$BRANCH/keyspaces"
+          oversized="$(pscale api "$keyspaces_path" | jq -r --arg size "$TARGET_CLUSTER_SIZE" '(.data // .)[] | select(.cluster_name != $size) | .name')"
+          if [ -z "$oversized" ]; then
+            echo "All keyspaces already run at $TARGET_CLUSTER_SIZE"
+            exit 0
+          fi
+          for keyspace in $oversized; do
+            echo "Resizing keyspace $keyspace to $TARGET_CLUSTER_SIZE"
+            pscale keyspace resize "$DATABASE" "$BRANCH" "$keyspace" --org "$PLANETSCALE_ORG" --cluster-size "$TARGET_CLUSTER_SIZE" > /dev/null
+          done
+          for attempt in $(seq 1 60); do
+            if pscale api "$keyspaces_path" | jq -e --arg size "$TARGET_CLUSTER_SIZE" \
+              'all((.data // .)[]; .cluster_name == $size and .ready == true and (.resizing | not) and (.resize_pending | not))' > /dev/null; then
+              echo "Copy shrunk to $TARGET_CLUSTER_SIZE"
+              exit 0
+            fi
+            echo "Resize in progress (check $attempt/60)"
+            sleep 20
+          done
+          echo "::error::The copy did not finish resizing to $TARGET_CLUSTER_SIZE within 20 minutes."
+          exit 1
+
+      # Production runs migrations with safe migrations briefly off; do the
+      # same on the copy in case the setting was inherited.
+      - name: Allow direct DDL on the copy
+        env:
+          PLANETSCALE_SERVICE_TOKEN_ID: ${{ secrets.PLANETSCALE_MIGRATION_TEST_TOKEN_ID }}
+          PLANETSCALE_SERVICE_TOKEN: ${{ secrets.PLANETSCALE_MIGRATION_TEST_TOKEN }}
+        run: |
+          set -euo pipefail
+          source scripts/dry-run-branch-guard.sh
+          assert_copy_branch "$BRANCH"
+          state="$(pscale branch safe-migrations disable "$DATABASE" "$BRANCH" --org "$PLANETSCALE_ORG" --format json)"
+          if ! jq -e '.safe_migrations == false' > /dev/null <<<"$state"; then
+            echo "::error::PlanetScale did not confirm safe migrations are off on $BRANCH."
+            exit 1
+          fi
+          echo "Safe migrations off on $BRANCH"
+
+      - name: Create a branch password
+        env:
+          PLANETSCALE_SERVICE_TOKEN_ID: ${{ secrets.PLANETSCALE_MIGRATION_TEST_TOKEN_ID }}
+          PLANETSCALE_SERVICE_TOKEN: ${{ secrets.PLANETSCALE_MIGRATION_TEST_TOKEN }}
+          PASSWORD_NAME: migration-test-${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          source scripts/dry-run-branch-guard.sh
+          assert_source_protected
+          assert_copy_branch "$BRANCH"
+          json="$(pscale password create "$DATABASE" "$BRANCH" "$PASSWORD_NAME" --org "$PLANETSCALE_ORG" --role admin --ttl 2h --format json)"
+          host="$(printf '%s' "$json" | jq -r '.access_host_url // .database_branch.access_host_url')"
+          username="$(printf '%s' "$json" | jq -r '.username')"
+          password="$(printf '%s' "$json" | jq -r '.plain_text')"
+          echo "::add-mask::$username"
+          echo "::add-mask::$password"
+          {
+            echo "COPY_DATABASE_HOST=$host"
+            echo "COPY_DATABASE_USERNAME=$username"
+            echo "COPY_DATABASE_PASSWORD=$password"
+          } >> "$GITHUB_ENV"
+          echo "Password created for $BRANCH"
+
+      - name: Run migrations on the copy
+        id: migrate
+        env:
+          DATABASE_HOST: ${{ env.COPY_DATABASE_HOST }}
+          DATABASE_USERNAME: ${{ env.COPY_DATABASE_USERNAME }}
+          DATABASE_PASSWORD: ${{ env.COPY_DATABASE_PASSWORD }}
+          DATABASE_NAME: ${{ env.DATABASE }}
+          MIGRATE_LOG: ${{ runner.temp }}/migrate.log
+        run: |
+          set -uo pipefail
+          : > "$MIGRATE_LOG"
+          # Output can contain production values, so it goes to a file, never
+          # to this public log. Retry only while the safe-migrations change is
+          # still reaching every gateway.
+          run_quietly() {
+            local attempt
+            for attempt in $(seq 1 8); do
+              echo "\$ $*" >> "$MIGRATE_LOG"
+              if "$@" >> "$MIGRATE_LOG" 2>&1; then
+                return 0
+              fi
+              if ! tail -n 50 "$MIGRATE_LOG" | grep -q "direct DDL is disabled"; then
+                return 1
+              fi
+              echo "DDL not allowed everywhere yet; retrying (attempt $attempt)"
+              sleep 15
+            done
+            return 1
+          }
+          if run_quietly pnpm --filter @openwork-ee/den-db db:migrate \
+            && run_quietly pnpm --filter @openwork-ee/den-db db:reconcile-permissions; then
+            echo "Migrations and permission reconciliation succeeded on $BRANCH." | tee -a "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          codes="$(grep -oE '(errno [0-9]+|sqlstate [0-9A-Z]+|ER_[A-Z_]+|code: .?[A-Z_]{3,}.?)' "$MIGRATE_LOG" | sort -u | tr '\n' ' ')"
+          echo "::error::Migrations failed on a copy of production. Error codes: ${codes:-none found}. The redacted error was posted to Slack."
+          {
+            echo "Migrations failed on a copy of production data."
+            echo ""
+            echo "Error codes: ${codes:-none found}"
+          } >> "$GITHUB_STEP_SUMMARY"
+          exit 1
+
+      - name: Post the failure to Slack
+        if: failure() && steps.migrate.outcome == 'failure'
+        env:
+          SLACK_BOT_TOKEN: ${{ secrets.SLACK_BOT_TOKEN }}
+          SLACK_CHANNEL: ${{ vars.SLACK_DEN_DB_ALERTS_CHANNEL_ID }}
+          MIGRATE_LOG: ${{ runner.temp }}/migrate.log
+          PR_URL: ${{ github.event.pull_request.html_url }}
+          PR_TITLE: ${{ github.event.pull_request.title }}
+          PR_AUTHOR: ${{ github.event.pull_request.user.login }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          if [ -z "$SLACK_BOT_TOKEN" ] || [ -z "$SLACK_CHANNEL" ]; then
+            echo "::warning::SLACK_BOT_TOKEN or SLACK_DEN_DB_ALERTS_CHANNEL_ID is not set; no Slack alert sent."
+            exit 0
+          fi
+          # Redact quoted literals (values from rows) and keep the last part of
+          # the output, where the error is.
+          excerpt="$(sed -E "s/'[^']*'/'…'/g; s/\"[^\"]*\"/\"…\"/g" "$MIGRATE_LOG" | tail -c 2500)"
+          payload="$(jq -n \
+            --arg channel "$SLACK_CHANNEL" \
+            --arg pr_url "$PR_URL" \
+            --arg pr_title "$PR_TITLE" \
+            --arg author "$PR_AUTHOR" \
+            --arg run_url "$RUN_URL" \
+            --arg excerpt "$excerpt" \
+            '{
+              channel: $channel,
+              text: ("Den migration failed on a production copy: " + $pr_title),
+              blocks: [
+                { type: "section", text: { type: "mrkdwn", text: (":rotating_light: *Den migration failed on a copy of production*\n<" + $pr_url + "|" + $pr_title + "> by " + $author + " · <" + $run_url + "|workflow run>") } },
+                { type: "section", text: { type: "mrkdwn", text: ("```" + $excerpt + "```") } }
+              ]
+            }')"
+          response="$(curl -sS -X POST https://slack.com/api/chat.postMessage \
+            -H "Authorization: Bearer $SLACK_BOT_TOKEN" \
+            -H "Content-Type: application/json; charset=utf-8" \
+            --data "$payload")"
+          if ! jq -e '.ok == true' > /dev/null <<<"$response"; then
+            echo "::warning::Slack did not accept the alert: $(jq -r '.error // "unknown error"' <<<"$response")"
+          fi
+
+      - name: Delete the copy
+        if: always()
+        env:
+          PLANETSCALE_SERVICE_TOKEN_ID: ${{ secrets.PLANETSCALE_MIGRATION_TEST_TOKEN_ID }}
+          PLANETSCALE_SERVICE_TOKEN: ${{ secrets.PLANETSCALE_MIGRATION_TEST_TOKEN }}
+        run: |
+          set -euo pipefail
+          if ! command -v pscale > /dev/null; then
+            echo "pscale was never set up, so no copy was created"
+            exit 0
+          fi
+          source scripts/dry-run-branch-guard.sh
+          assert_dry_run_name "$BRANCH"
+          branches="$(pscale branch list "$DATABASE" --org "$PLANETSCALE_ORG" --format json)"
+          if printf '%s' "$branches" | jq -e --arg name "$BRANCH" 'any(.[]; .name == $name)' > /dev/null; then
+            delete_dry_run_branch "$BRANCH"
+          else
+            echo "No copy to delete"
+          fi
+
+  # Backstop for a copy left behind by a run that could not clean up.
+  cleanup:
+    name: Delete the copy when the PR closes
+    # Same identity checks as migration-test: only members' PRs ever get a copy.
+    if: >-
+      github.repository == 'different-ai/openwork' &&
+      github.event.action == 'closed' &&
+      github.event.repository.owner.type == 'Organization' &&
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      github.event.pull_request.base.repo.full_name == github.repository &&
+      github.event.pull_request.head.repo.id == github.event.repository.id &&
+      github.event.pull_request.base.repo.id == github.event.repository.id &&
+      github.event.pull_request.head.repo.fork == false &&
+      github.event.pull_request.base.repo.fork == false &&
+      github.event.pull_request.user.type == 'User' &&
+      contains(fromJSON('["MEMBER", "OWNER"]'), github.event.pull_request.author_association)
+    runs-on: blacksmith-4vcpu-ubuntu-2204
+    timeout-minutes: 15
+    environment:
+      name: den-db-migration-test
+      deployment: false
+    steps:
+      - name: Checkout
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+
+      - name: Setup pscale CLI
+        uses: planetscale/setup-pscale-action@b6a50ee45b4b24944e1d8de6e57b3a5f6476a1af # v1
+
+      - name: Delete the copy
+        env:
+          PLANETSCALE_SERVICE_TOKEN_ID: ${{ secrets.PLANETSCALE_MIGRATION_TEST_TOKEN_ID }}
+          PLANETSCALE_SERVICE_TOKEN: ${{ secrets.PLANETSCALE_MIGRATION_TEST_TOKEN }}
+        run: |
+          set -euo pipefail
+          source scripts/dry-run-branch-guard.sh
+          assert_dry_run_name "$BRANCH"
+          branches="$(pscale branch list "$DATABASE" --org "$PLANETSCALE_ORG" --format json)"
+          if printf '%s' "$branches" | jq -e --arg name "$BRANCH" 'any(.[]; .name == $name)' > /dev/null; then
+            delete_dry_run_branch "$BRANCH"
+          else
+            echo "No copy to delete"
+          fi
