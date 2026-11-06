@@ -79,7 +79,7 @@ jobs:
       DATABASE_NAME: ${{ secrets.DATABASE_NAME }}
       PLANETSCALE_SERVICE_TOKEN_ID: ${{ secrets.PLANETSCALE_SERVICE_TOKEN_ID }}
       PLANETSCALE_SERVICE_TOKEN: ${{ secrets.PLANETSCALE_SERVICE_TOKEN }}
-      PLANETSCALE_ORG: ben-prologe
+      PLANETSCALE_ORG: different-ai
       PLANETSCALE_BRANCH: main
 
     steps:
