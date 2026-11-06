@@ -9,13 +9,18 @@ name: Den DB migration test
 #
 # Flow per run (every push to the PR restarts it):
 #   1. Delete this PR's previous copy, if one is left over.
-#   2. Seed migration-test-pr-<number> from the latest backup of main.
-#   3. Shrink it to PS-10 (seeded copies start at production's size).
-#   4. Run db:migrate and db:reconcile-permissions, exactly as production does.
-#   5. On a migration failure: fail the check and post the (redacted) error to
+#   2. Seed migration-test-pr-<number> from the latest backup of main
+#      (about 20 minutes).
+#   3. Run db:migrate and db:reconcile-permissions, exactly as production does.
+#   4. On a migration failure: fail the check and post the (redacted) error to
 #      Slack.
-#   6. Delete the copy, also when the run fails or is cancelled. Closing the PR
+#   5. Delete the copy, also when the run fails or is cancelled. Closing the PR
 #      deletes any leftover.
+#
+# The copy is not shrunk. PlanetScale creates seeded copies at production's
+# size whatever --cluster-size says, and resizing one from Metal takes longer
+# than the copy lives (over 20 minutes; measured on #7113), so it would only
+# add time. A run costs well under a dollar at full size.
 #
 # Safety:
 # - Organization members' (MEMBER/OWNER) same-repository pull requests only,
@@ -35,8 +40,7 @@ name: Den DB migration test
 # Needs, on the den-db-migration-test environment:
 #   secrets PLANETSCALE_MIGRATION_TEST_TOKEN_ID and
 #   PLANETSCALE_MIGRATION_TEST_TOKEN: a service token limited to the Den
-#   database with read_database, read_branch, create_branch (also covers the
-#   keyspace resize), delete_branch, delete_production_branch, read_backups,
+#   database with read_database, read_branch, create_branch, delete_branch, delete_production_branch, read_backups,
 #   restore_production_branch_backup, connect_branch and
 #   connect_production_branch (the seeded copy counts as production). No
 #   write_database: the workflow never changes database settings.
@@ -71,7 +75,6 @@ env:
   SOURCE_BRANCH: main
   BRANCH: migration-test-pr-${{ github.event.pull_request.number }}
   COPY_BRANCH_PATTERN: ^migration-test-pr-[0-9]+$
-  TARGET_CLUSTER_SIZE: PS_10
 
 jobs:
   migration-test:
@@ -181,11 +184,11 @@ jobs:
           source scripts/dry-run-branch-guard.sh
           assert_dry_run_name "$BRANCH"
           assert_source_protected
-          echo "Seeding $BRANCH from the latest backup of $SOURCE_BRANCH at $TARGET_CLUSTER_SIZE"
+          echo "Seeding $BRANCH from the latest backup of $SOURCE_BRANCH"
           # pscale's --wait gives up after 10 minutes, and seeding production
           # takes longer, so poll the branch's ready flag instead.
           pscale branch create "$DATABASE" "$BRANCH" --org "$PLANETSCALE_ORG" \
-            --from "$SOURCE_BRANCH" --seed-data --cluster-size "$TARGET_CLUSTER_SIZE" > /dev/null
+            --from "$SOURCE_BRANCH" --seed-data > /dev/null
           for attempt in $(seq 1 90); do
             copy="$(pscale api "organizations/$PLANETSCALE_ORG/databases/$DATABASE/branches/$BRANCH")" || copy='{}'
             if jq -e '.ready == true' > /dev/null <<<"$copy"; then
@@ -197,39 +200,6 @@ jobs:
             sleep 30
           done
           echo "::error::$BRANCH was not ready after 45 minutes."
-          exit 1
-
-      # Seeded copies are billed as production branches at the source's size.
-      # --cluster-size above should already apply; this verifies it and
-      # resizes any keyspace that still runs larger.
-      - name: Shrink the copy
-        env:
-          PLANETSCALE_SERVICE_TOKEN_ID: ${{ secrets.PLANETSCALE_MIGRATION_TEST_TOKEN_ID }}
-          PLANETSCALE_SERVICE_TOKEN: ${{ secrets.PLANETSCALE_MIGRATION_TEST_TOKEN }}
-        run: |
-          set -euo pipefail
-          source scripts/dry-run-branch-guard.sh
-          assert_copy_branch "$BRANCH"
-          keyspaces_path="organizations/$PLANETSCALE_ORG/databases/$DATABASE/branches/$BRANCH/keyspaces"
-          oversized="$(pscale api "$keyspaces_path" | jq -r --arg size "$TARGET_CLUSTER_SIZE" '(.data // .)[] | select(.cluster_name != $size) | .name')"
-          if [ -z "$oversized" ]; then
-            echo "All keyspaces already run at $TARGET_CLUSTER_SIZE"
-            exit 0
-          fi
-          for keyspace in $oversized; do
-            echo "Resizing keyspace $keyspace to $TARGET_CLUSTER_SIZE"
-            pscale keyspace resize "$DATABASE" "$BRANCH" "$keyspace" --org "$PLANETSCALE_ORG" --cluster-size "$TARGET_CLUSTER_SIZE" > /dev/null
-          done
-          for attempt in $(seq 1 60); do
-            if pscale api "$keyspaces_path" | jq -e --arg size "$TARGET_CLUSTER_SIZE" \
-              'all((.data // .)[]; .cluster_name == $size and .ready == true and (.resizing | not) and (.resize_pending | not))' > /dev/null; then
-              echo "Copy shrunk to $TARGET_CLUSTER_SIZE"
-              exit 0
-            fi
-            echo "Resize in progress (check $attempt/60)"
-            sleep 20
-          done
-          echo "::error::The copy did not finish resizing to $TARGET_CLUSTER_SIZE within 20 minutes."
           exit 1
 
       # Production runs migrations with safe migrations briefly off. A new copy
