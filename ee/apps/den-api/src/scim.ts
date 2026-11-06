@@ -1,4 +1,4 @@
-import { and, count, desc, eq, inArray, isNotNull, isNull, lt, lte, or, sql } from "@openwork-ee/den-db/drizzle"
+import { and, count, desc, eq, inArray, isNotNull, isNull, lt, lte, ne, or, sql } from "@openwork-ee/den-db/drizzle"
 import { AuthAccountTable, AuthUserTable, ExternalIdentityTable, MemberTable, ScimGroupMemberTable, ScimGroupTable, ScimProviderTable, ScimSyncEventTable, ScimUserTombstoneTable, TeamTable } from "@openwork-ee/den-db/schema"
 import { withOrganizationTeamMutation } from "./organization-team-roles.js"
 import { archiveTeamPermissionSets } from "./permissions/team-set-archive.js"
@@ -13,7 +13,7 @@ import { db } from "./db.js"
 import { env } from "./env.js"
 import { appLogger } from "./observability/logger.js"
 import { SCIM_SYNC_FAILURE_RECORDED_OPERATIONAL_MARKER } from "./operational-log-markers.js"
-import { removeOrganizationMember } from "./orgs.js"
+import { ensureBootstrapMembershipForOrganization, removeOrganizationMember } from "./orgs.js"
 import { resolveStoredScimProvider } from "./scim-token-storage.js"
 import { reconcileScimGroupsForUser } from "./scim-groups.js"
 import { deleteGlobalAuthUser } from "./user-deletion.js"
@@ -103,12 +103,18 @@ async function syncExternalIdentityForProvider(input: {
     return false
   }
 
+  const lifecycleOnly = Object.keys(input.resource).every(key => key === "id" || key === "active")
+  if (lifecycleOnly && input.resource.active === true) {
+    return reactivateScimUserForProvider({ provider: input.provider, userId })
+  }
   if (input.resource.active === false) {
     const deleted = await deleteScimProvisionedAccessForProvider({
       provider: input.provider,
       userId,
+      retainResource: true,
     })
-    return deleted.ok
+    if (!deleted.ok) return false
+    if (lifecycleOnly) return true
   }
 
   // primary: the IdP often creates then patches a user back to back.
@@ -123,22 +129,24 @@ async function syncExternalIdentityForProvider(input: {
   const externalId = maybeString(input.resource.externalId)
   const email = maybeString(asRecord(asArray(input.resource.emails)?.[0])?.value)
     ?? maybeString(input.resource.userName)
-  await db
-    .delete(ScimUserTombstoneTable)
-    .where(and(
-      eq(ScimUserTombstoneTable.organizationId, input.provider.organizationId),
-      or(
-        eq(ScimUserTombstoneTable.deprovisionedUserId, userId),
-        externalId ? eq(ScimUserTombstoneTable.externalId, externalId) : eq(ScimUserTombstoneTable.deprovisionedUserId, userId),
-        email ? eq(ScimUserTombstoneTable.email, email.toLowerCase()) : eq(ScimUserTombstoneTable.deprovisionedUserId, userId),
-      ),
-    ))
-  // SCIM reactivation is the IdP-authoritative path back in; clear the
-  // removal memory so SSO JIT can create a fresh active membership.
-  await clearRemovedMemberMemoryForScimReactivation({
-    organizationId: input.provider.organizationId,
-    userId,
-  })
+  if (input.resource.active !== false) {
+    await db
+      .delete(ScimUserTombstoneTable)
+      .where(and(
+        eq(ScimUserTombstoneTable.organizationId, input.provider.organizationId),
+        or(
+          eq(ScimUserTombstoneTable.deprovisionedUserId, userId),
+          externalId ? eq(ScimUserTombstoneTable.externalId, externalId) : eq(ScimUserTombstoneTable.deprovisionedUserId, userId),
+          email ? eq(ScimUserTombstoneTable.email, email.toLowerCase()) : eq(ScimUserTombstoneTable.deprovisionedUserId, userId),
+        ),
+      ))
+    // SCIM reactivation is the IdP-authoritative path back in; clear the
+    // removal memory so SSO JIT can create a fresh active membership.
+    await clearRemovedMemberMemoryForScimReactivation({
+      organizationId: input.provider.organizationId,
+      userId,
+    })
+  }
   const payload = {
     organizationId: input.provider.organizationId,
     userId,
@@ -163,7 +171,7 @@ async function syncExternalIdentityForProvider(input: {
       .update(ExternalIdentityTable)
       .set(payload)
       .where(eq(ExternalIdentityTable.id, existing.id))
-    await reconcileScimGroupsForUser({ provider: input.provider, userId })
+    if (input.resource.active !== false) await reconcileScimGroupsForUser({ provider: input.provider, userId })
     await cache.org.deleteMemberList(input.provider.organizationId)
     return true
   }
@@ -210,6 +218,8 @@ async function syncExternalIdentityFromScimUserIdForProvider(input: {
     .where(and(eq(AuthAccountTable.userId, input.userId), eq(AuthAccountTable.providerId, input.provider.providerId)))
     .limit(1)
   const account = accountRows[0] ?? null
+  const [identity] = await db.$primary.select({ active: ExternalIdentityTable.active }).from(ExternalIdentityTable)
+    .where(and(eq(ExternalIdentityTable.organizationId, input.provider.organizationId), eq(ExternalIdentityTable.scimProviderId, input.provider.providerId), eq(ExternalIdentityTable.userId, input.userId))).limit(1)
 
   return syncExternalIdentityForProvider({
     provider: input.provider,
@@ -220,9 +230,26 @@ async function syncExternalIdentityFromScimUserIdForProvider(input: {
       displayName: user.name,
       name: { formatted: user.name },
       emails: [{ value: user.email, primary: true }],
-      active: true,
+      active: identity?.active ?? true,
     },
   })
+}
+
+export async function reactivateScimUserForProvider(input: { provider: ScimProvider; userId: UserId }) {
+  const [identity] = await db.$primary.select().from(ExternalIdentityTable)
+    .where(and(eq(ExternalIdentityTable.organizationId, input.provider.organizationId), eq(ExternalIdentityTable.scimProviderId, input.provider.providerId), eq(ExternalIdentityTable.userId, input.userId))).limit(1)
+  const [account] = await db.$primary.select({ id: AuthAccountTable.id }).from(AuthAccountTable)
+    .where(and(eq(AuthAccountTable.providerId, input.provider.providerId), eq(AuthAccountTable.userId, input.userId))).limit(1)
+  if (!identity || !account) return false
+  // A reactivated identity gets a new ordinary membership, never its former grants.
+  await clearRemovedMemberMemoryForScimReactivation({ organizationId: input.provider.organizationId, userId: input.userId })
+  const member = await ensureBootstrapMembershipForOrganization({ organizationId: input.provider.organizationId, userId: input.userId, role: "member", email: identity.email })
+  if (!member) return false
+  await db.update(ExternalIdentityTable).set({ active: true, lastScimSyncAt: new Date() }).where(eq(ExternalIdentityTable.id, identity.id))
+  await db.delete(ScimUserTombstoneTable).where(and(eq(ScimUserTombstoneTable.organizationId, input.provider.organizationId), eq(ScimUserTombstoneTable.providerId, input.provider.providerId), eq(ScimUserTombstoneTable.deprovisionedUserId, input.userId)))
+  await reconcileScimGroupsForUser(input)
+  await cache.org.deleteMemberList(input.provider.organizationId)
+  return true
 }
 
 export async function syncExternalIdentityFromScimUserId(input: {
@@ -274,6 +301,29 @@ export async function deactivateExternalIdentityForScimUser(input: {
   }
 
   return deactivateExternalIdentityForScimUserForProvider({ provider, userId: input.userId })
+}
+
+export async function listOrganizationScimUsers(provider: ScimProvider) {
+  // Do not use Better Auth's unpaginated list: its adapter silently caps each
+  // findMany at 100, which loses users before a SCIM page or match is computed.
+  const rows = await db.$primary.select({ user: AuthUserTable, account: AuthAccountTable, identity: ExternalIdentityTable })
+    .from(AuthAccountTable)
+    .innerJoin(AuthUserTable, eq(AuthUserTable.id, AuthAccountTable.userId))
+    .innerJoin(MemberTable, and(eq(MemberTable.userId, AuthUserTable.id), eq(MemberTable.organizationId, provider.organizationId)))
+    .leftJoin(ExternalIdentityTable, and(eq(ExternalIdentityTable.userId, AuthUserTable.id), eq(ExternalIdentityTable.organizationId, provider.organizationId), eq(ExternalIdentityTable.scimProviderId, provider.providerId)))
+    .where(eq(AuthAccountTable.providerId, provider.providerId))
+    .orderBy(AuthUserTable.id)
+  return rows.map(({ user, account, identity }) => ({
+    schemas: ["urn:ietf:params:scim:schemas:core:2.0:User"],
+    id: user.id,
+    externalId: account.accountId,
+    userName: user.email,
+    displayName: user.name,
+    name: { formatted: user.name },
+    emails: [{ value: user.email, primary: true }],
+    active: identity?.active ?? true,
+    meta: { resourceType: "User", created: user.createdAt, lastModified: user.updatedAt, location: `${getScimBaseUrl()}/Users/${user.id}` },
+  }))
 }
 
 export function getScimBaseUrl() {
@@ -408,6 +458,8 @@ async function cleanupExternalIdentitiesForDeletedScimConnection(connection: typ
 export async function deleteScimProvisionedAccessForProvider(input: {
   provider: ScimProvider
   userId: UserId
+  /** PATCH active=false revokes access, but keeps the provider account and stable User ID. */
+  retainResource?: boolean
 }) {
   // primary: deprovisioning must see a user the IdP provisioned moments ago.
   const accountRows = await db.$primary
@@ -437,7 +489,11 @@ export async function deleteScimProvisionedAccessForProvider(input: {
   ])
   const user = userRows[0] ?? null
   const identity = identityRows[0] ?? null
-  const tombstoneEmail = (identity?.email ?? user?.email ?? "").trim().toLowerCase() || null
+  // Never let a valid token for another organization delete a globally known ID.
+  if (!account || !identity || identity.scimProviderId !== input.provider.providerId) {
+    return { ok: false as const, status: 404, body: { detail: "User not found" } }
+  }
+  const tombstoneEmail = (identity.email ?? user?.email ?? "").trim().toLowerCase() || null
 
   if (member) {
     const removed = await removeOrganizationMember({
@@ -472,12 +528,8 @@ export async function deleteScimProvisionedAccessForProvider(input: {
     })
 
   await db.transaction(async (tx) => {
-    if (account) {
+    if (!input.retainResource) {
       await tx.delete(AuthAccountTable).where(eq(AuthAccountTable.id, account.id))
-    } else {
-      await tx
-        .delete(AuthAccountTable)
-        .where(and(eq(AuthAccountTable.userId, input.userId), eq(AuthAccountTable.providerId, input.provider.providerId)))
     }
     await tx
       .update(ExternalIdentityTable)
@@ -495,7 +547,14 @@ export async function deleteScimProvisionedAccessForProvider(input: {
     .select({ value: count() })
     .from(MemberTable)
     .where(and(eq(MemberTable.userId, input.userId), isNull(MemberTable.removedAt)))
-  const deleteUser = shouldDeleteGlobalUser(Number(otherActiveMembershipRows[0]?.value ?? 0))
+  // A second tenant may have a retained, inactive SCIM resource even with no
+  // live memberships. One tenant's DELETE must not destroy that resource.
+  const [otherProviderAccounts] = await db.$primary.select({ value: count() }).from(AuthAccountTable)
+    .innerJoin(ScimProviderTable, eq(ScimProviderTable.providerId, AuthAccountTable.providerId))
+    .where(and(eq(AuthAccountTable.userId, input.userId), ne(ScimProviderTable.organizationId, input.provider.organizationId)))
+  const deleteUser = !input.retainResource
+    && shouldDeleteGlobalUser(Number(otherActiveMembershipRows[0]?.value ?? 0))
+    && Number(otherProviderAccounts?.value ?? 0) === 0
   if (deleteUser && user) {
     await deleteGlobalAuthUser(input.userId)
   }

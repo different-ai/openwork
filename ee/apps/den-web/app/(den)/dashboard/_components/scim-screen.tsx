@@ -536,7 +536,7 @@ export function ScimScreen({ embedded = false, setupMode = false, onIntroFacts }
               </div>
 
               <div className="rounded-[20px] border border-cyan-100 bg-cyan-50 p-4 text-[13px] leading-6 text-cyan-900">
-                SCIM deprovisioning retains a disconnected member record. The global user is deleted only after their final active organization membership is removed.
+                Deactivation removes organization access and retains the user for reactivation. Deletion removes the global user only when no active organization membership or other SCIM resource remains.
                 <p className="mt-2">
                   Last successful SCIM sync: {formatDateTime(health.lastSuccessfulSyncAt)}.
                 </p>
