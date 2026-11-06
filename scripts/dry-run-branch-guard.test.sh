@@ -17,7 +17,7 @@ pscale() {
     if [[ "$2" == */main ]]; then
       printf '{"name":"main","deletion_protected":%s}\n' "$protected"
     else
-      printf '{"name":"dry-run-123-1","parent_branch":"%s","deletion_protected":%s}\n' "$parent" "$copy_protected"
+      printf '{"name":"%s","parent_branch":"%s","deletion_protected":%s}\n' "${2##*/}" "$parent" "$copy_protected"
     fi
   elif [[ "$1 $2" == 'branch delete' ]]; then
     delete_calls=$((delete_calls+1))
@@ -59,4 +59,16 @@ reject delete_dry_run_branch dry-run-123-1
 still_exists=false
 list_failure=true
 reject delete_dry_run_branch dry-run-123-1
-echo 'Passed: invalid names, unprotected source, wrong parent, protected copy, API errors, deletion and absence verification'
+list_failure=false
+
+# den-db-migration-test.yml narrows the pattern to its own per-PR copies.
+COPY_BRANCH_PATTERN='^migration-test-pr-[0-9]+$'
+for name in main dry-run-123-1 migration-test-pr- migration-test-pr-1-extra migration-test-pr-main ''; do
+  reject delete_dry_run_branch "$name"
+done
+calls_before="$delete_calls"
+delete_dry_run_branch migration-test-pr-42 >/dev/null
+[[ "$delete_calls" == $((calls_before + 1)) ]]
+unset COPY_BRANCH_PATTERN
+
+echo 'Passed: invalid names, unprotected source, wrong parent, protected copy, API errors, deletion and absence verification, custom copy pattern'

@@ -1,10 +1,15 @@
 #!/usr/bin/env bash
-# Sourced by prod-data-dry-run.yml. Only raw API reads preserve the
-# deletion_protected field across installed pscale CLI versions.
+# Sourced by prod-data-dry-run.yml and den-db-migration-test.yml. Only raw API
+# reads preserve the deletion_protected field across installed pscale CLI
+# versions.
+#
+# COPY_BRANCH_PATTERN picks which copy names a workflow may touch. It defaults
+# to the dry-run names; it is a guard against mistakes, not a security boundary.
 
 assert_dry_run_name() {
-  if [[ ! "$1" =~ ^dry-run-[0-9]+-[0-9]+$ ]] || [[ "$1" == "$SOURCE_BRANCH" ]]; then
-    echo "::error::Refusing to act on a branch outside dry-run-<run-id>-<attempt>" >&2
+  local pattern="${COPY_BRANCH_PATTERN:-^dry-run-[0-9]+-[0-9]+$}"
+  if [[ -z "$1" ]] || [[ ! "$1" =~ $pattern ]] || [[ "$1" == "$SOURCE_BRANCH" ]]; then
+    echo "::error::Refusing to act on a branch outside the copy pattern $pattern" >&2
     return 1
   fi
 }
