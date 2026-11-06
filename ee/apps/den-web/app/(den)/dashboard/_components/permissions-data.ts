@@ -14,7 +14,7 @@ import { permissionsQueryKeys } from "./permissions-query-keys";
  */
 
 const statusSchema = z.enum(["allow", "deny"]);
-const setKindSchema = z.enum(["member_default", "admin_default", "team"]);
+const setKindSchema = z.enum(["member_default", "admin_default", "super_admin_default", "team"]);
 const sourceKindSchema = z.enum(["user", "seed", "reconcile", "migration"]);
 
 const teamReferenceSchema = z.object({ id: z.string(), name: z.string().nullable() });
@@ -25,6 +25,7 @@ const adminTeamSchema = z.object({ id: z.string(), name: z.string(), memberCount
 const appliesToSummarySchema = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("everyone"), memberCount: z.number() }),
   z.object({ kind: z.literal("admins"), directAdminCount: z.number(), adminTeams: z.array(adminTeamSchema) }),
+  z.object({ kind: z.literal("super_admins"), superAdminCount: z.number() }),
   z.object({ kind: z.literal("team"), team: teamReferenceSchema.nullable(), teams: z.array(teamReferenceSchema).default([]), memberCount: z.number() }),
 ]);
 
@@ -32,6 +33,7 @@ const appliesToDetailSchema = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("everyone"), memberCount: z.number() }),
   // People's names and emails come only with teams.view; the counts always do.
   z.object({ kind: z.literal("admins"), directAdminCount: z.number(), directAdmins: z.array(personSchema).nullable(), adminTeams: z.array(adminTeamSchema) }),
+  z.object({ kind: z.literal("super_admins"), superAdminCount: z.number(), superAdmins: z.array(personSchema).nullable() }),
   z.object({ kind: z.literal("team"), team: teamReferenceSchema.nullable(), teams: z.array(teamReferenceSchema).default([]), memberCount: z.number(), members: z.array(personSchema).nullable() }),
 ]);
 
