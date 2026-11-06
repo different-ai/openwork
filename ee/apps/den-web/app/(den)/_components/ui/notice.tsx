@@ -58,7 +58,8 @@ export function DenNotice({
         .join(" ")}
     >
       {Icon ? <Icon className={`mt-0.5 size-4 shrink-0 ${resolvedTone === "warning" ? "text-[var(--ow-warning)]" : ""}`} aria-hidden="true" /> : null}
-      <span className={action ? "min-w-0 flex-1" : undefined}>{message}</span>
+      {/* Inline notices space their row with justify-between, so the message fills it and stays next to the icon. */}
+      <span className={action || presentation === "inline" ? "min-w-0 flex-1" : undefined}>{message}</span>
       {/* Inline actions keep their hit area without increasing the text row's height. */}
       {action ? <span className={`flex shrink-0 items-center ${presentation === "inline" ? "-my-2" : ""}`}>{action}</span> : null}
     </div>

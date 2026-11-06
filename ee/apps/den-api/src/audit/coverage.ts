@@ -45,6 +45,11 @@ export const providerUncoveredRoutes = [
   "PUT /v1/inference-providers/:inferenceProviderId/litellm/member-key",
   "POST /v1/inference-providers/oauth/browser-litellm-key",
   "POST /v1/inference-providers/oauth/browser-litellm-check",
+  // Custom OpenAI-compatible providers: request evidence only (routes/integrations.ts).
+  "POST /v1/inference-providers/custom/discover-models",
+  "POST /v1/inference-providers/custom/test-connection",
+  "POST /v1/inference-providers/custom",
+  "PATCH /v1/inference-providers/:inferenceProviderId/custom",
   // AWS IAM Identity Center member sign-in: request evidence only.
   "POST /v1/inference-providers/oauth/browser-aws-start",
   "POST /v1/inference-providers/oauth/browser-aws-poll",

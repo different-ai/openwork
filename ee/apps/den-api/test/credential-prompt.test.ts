@@ -83,6 +83,10 @@ test("each AI Gateway provider asks for the credential it actually uses; LiteLLM
   assert.deepEqual(gatewayCredentialShape("google-vertex", ["GOOGLE_VERTEX_PROJECT"]), { kind: "gcp_service_account" })
   assert.deepEqual(gatewayCredentialShape("azure", ["AZURE_RESOURCE_NAME", "AZURE_API_KEY"]), { kind: "api_key_map", envNames: ["AZURE_API_KEY"] })
   assert.equal(gatewayCredentialShape("litellm", ["LITELLM_API_KEY"]), null)
+  // Custom OpenAI-compatible providers take one API key, never a key map, sent to the saved address.
+  assert.deepEqual(gatewayCredentialShape("openwork-custom", ["OPENWORK_CUSTOM_API_KEY"]), { kind: "api_key" })
+  assert.deepEqual(gatewayCredentialShape("openwork-custom", ["OPENWORK_CUSTOM_API_KEY", "OPENWORK_CUSTOM_ORG"]), { kind: "api_key" })
+  assert.equal(gatewayUpstreamDestination("openwork-custom", { npm: "@ai-sdk/openai-compatible" }, { upstreamBaseUrl: "https://api.acme.example/v1" }), credentialPromptDestination("https://api.acme.example/v1"))
   const prompt = gatewayProviderCredentialPrompt({ inferenceProviderId: "ipr_1", credentialSetId: "gcs_1", name: "Team Bedrock", destination: null, shape: { kind: "aws_keys" } })
   assert.deepEqual(prompt.target, { type: "gateway_provider_credential", inferenceProviderId: "ipr_1", credentialSetId: "gcs_1", credentialKind: "aws_keys" })
   // Field lists are fixed by kind; a prompt cannot carry values or arbitrary fields.

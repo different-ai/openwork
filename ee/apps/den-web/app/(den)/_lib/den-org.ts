@@ -894,6 +894,11 @@ export function getNewAiGatewayProviderRoute(orgSlug?: string | null, providerId
   return providerId ? `${base}?provider=${encodeURIComponent(providerId)}` : base;
 }
 
+/** The four-step wizard for a custom OpenAI-compatible provider (feature `gatewayCustomProviders`). */
+export function getNewAiGatewayCustomProviderRoute(orgSlug?: string | null): string {
+  return `${getAiGatewayRoute(orgSlug)}/providers/new/custom`;
+}
+
 export function getAiGatewayProviderRoute(orgSlug: string | null | undefined, inferenceProviderId: string): string {
   return `${getAiGatewayRoute(orgSlug)}/providers/${encodeURIComponent(inferenceProviderId)}`;
 }

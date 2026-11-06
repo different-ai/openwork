@@ -4,6 +4,7 @@
 import { BEDROCK_MANTLE_PROVIDER_ID, bedrockMantleApiPathsFromCatalog, withBedrockMantleProvider } from "@openwork-ee/utils/bedrock-mantle-catalog"
 import { withLiteLlmProvider } from "@openwork-ee/utils/litellm-catalog"
 import { MICROSOFT_FOUNDRY_PROVIDER_ID, withMicrosoftFoundryProvider } from "@openwork-ee/utils/microsoft-foundry-catalog"
+import { GATEWAY_CUSTOM_PROVIDER_ID, GATEWAY_CUSTOM_PROVIDER_NPM } from "@openwork/types/den/gateway-custom-providers"
 import { readProviderCatalog } from "./models/catalog.js"
 
 export type CatalogProvider = {
@@ -19,6 +20,16 @@ export type CatalogProvider = {
 export type ProviderCatalog = {
   getCatalogProvider(providerId: string): CatalogProvider | null
 }
+
+/**
+ * Custom OpenAI-compatible providers (feature `gatewayCustomProviders`) are not
+ * in models.dev. Every such row shares this synthetic, address-less entry: the
+ * upstream always comes from the row's `settings.upstreamBaseUrl`, which must be
+ * a public HTTPS address or an operator-allowlisted origin.
+ */
+export const GATEWAY_CUSTOM_PROVIDER_ENV = "OPENWORK_CUSTOM_API_KEY"
+export const gatewayCustomCatalogProvider: CatalogProvider = { npm: GATEWAY_CUSTOM_PROVIDER_NPM, api: null, env: [GATEWAY_CUSTOM_PROVIDER_ENV] }
+
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value)
@@ -45,6 +56,8 @@ export function createProviderCatalog(raw: unknown): ProviderCatalog {
         : id === MICROSOFT_FOUNDRY_PROVIDER_ID ? { ...provider, family: "microsoft_foundry" } : provider)
     }
   }
+  // A real upstream entry with this id never replaces the synthetic one: its address would bypass the custom-provider rules.
+  providers.set(GATEWAY_CUSTOM_PROVIDER_ID, gatewayCustomCatalogProvider)
   return {
     getCatalogProvider(providerId) {
       return providers.get(providerId) ?? null

@@ -295,6 +295,14 @@
       "development": "./src/den/activation.ts",
       "default": "./src/den/activation.ts"
     },
+    "./den/gateway-custom-providers": {
+      "types": {
+        "openwork-build": "./dist/types/src/den/gateway-custom-providers.d.ts",
+        "default": "./src/den/gateway-custom-providers.ts"
+      },
+      "development": "./src/den/gateway-custom-providers.ts",
+      "default": "./src/den/gateway-custom-providers.ts"
+    },
     "./den/feature-intros": {
       "types": {
         "openwork-build": "./dist/types/src/den/feature-intros.d.ts",
