@@ -54,6 +54,7 @@ on:
       - "ee/packages/den-db/drizzle/**"
       - ".github/workflows/den-db-migration-test.yml"
       - "scripts/dry-run-branch-guard.sh"
+      - "scripts/dry-run-branch-guard.test.sh"
 
 permissions:
   contents: read

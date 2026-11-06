@@ -4,6 +4,9 @@ set -euo pipefail
 # shellcheck source=scripts/dry-run-branch-guard.sh
 source "$(dirname "$0")/dry-run-branch-guard.sh"
 export PLANETSCALE_ORG=example DATABASE=example SOURCE_BRANCH=main
+# Workflows set COPY_BRANCH_PATTERN job-wide; start from the default so the
+# default-pattern cases below test what they say.
+unset COPY_BRANCH_PATTERN
 protected=true
 parent=main
 copy_protected=false
