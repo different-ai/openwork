@@ -3,9 +3,9 @@ import { MemberTable, OrganizationTable, ScimProviderTable, SsoProviderTable } f
 import { emailDomainMatches } from "./account-linking-policy.js"
 import { db } from "./db.js"
 import { getOrganizationEntitlements } from "./entitlements.js"
-import { runPostOrganizationMemberChangeHooks } from "./organization-member-hooks.js"
 import { acceptPendingInvitationForBootstrapMembership, ensureBootstrapMembershipForOrganization } from "./orgs.js"
 import { resolveStoredScimProvider } from "./scim-token-storage.js"
+import { restoreScimProvisionedMembership } from "./scim-reprovisioning.js"
 import { readSsoPerOrganization } from "./organization-sso-access.js"
 import { allowsVerifiedDomainAutoJoin, readOrganizationSsoPolicy } from "./sso-routing.js"
 import { ORGANIZATION_SSO_JIT_ROLE } from "./sso-jit.js"
@@ -149,13 +149,11 @@ export async function scimRequestOrganizationId(authorization: string | null | u
   return provider?.organizationId ?? null
 }
 
-/** After SCIM creates a user in an organization: billing and member setup, like any other join. */
+/**
+ * After SCIM creates (or links) a user in an organization: billing and member
+ * setup, like any other join. Someone an admin removed in Den while the identity
+ * provider kept them assigned comes back as a fresh member.
+ */
 export async function finishScimProvisionedMember(input: { organizationId: OrgId; userId: UserId }) {
-  const [member] = await db
-    .select({ id: MemberTable.id, removedAt: MemberTable.removedAt })
-    .from(MemberTable)
-    .where(and(eq(MemberTable.organizationId, input.organizationId), eq(MemberTable.userId, input.userId)))
-    .limit(1)
-  if (!member || member.removedAt) return
-  await runPostOrganizationMemberChangeHooks({ organizationId: input.organizationId, memberId: member.id, change: "added" })
+  await restoreScimProvisionedMembership(input)
 }
