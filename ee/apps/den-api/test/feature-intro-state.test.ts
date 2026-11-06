@@ -32,6 +32,11 @@ test("the view matches the shared contract and the request schema bounds keys", 
   const view = featureIntroStateView("ai-gateway.limits", { ...empty, firstSeenAt: day1, lastSeenAt: day2 })
   assert.deepEqual(view, { introKey: "ai-gateway.limits", introVersion: 1, firstSeenAt: day1.toISOString(), lastSeenAt: day2.toISOString(), dismissedAt: null, ctaClickedAt: null })
   assert.equal(featureIntroStateSchema.safeParse(view).success, true)
+  for (const field of ["firstSeenAt", "lastSeenAt", "dismissedAt", "ctaClickedAt"]) {
+    assert.equal(featureIntroStateSchema.safeParse({ ...view, [field]: day3.toISOString() }).success, true, field)
+    assert.equal(featureIntroStateSchema.safeParse({ ...view, [field]: null }).success, true, field)
+    assert.equal(featureIntroStateSchema.safeParse({ ...view, [field]: "not-a-timestamp" }).success, false, field)
+  }
   assert.equal(featureIntroEventRequestSchema.safeParse({ introKey: "members.teams", introVersion: 1, type: "seen" }).success, true)
   for (const introKey of ["", "AI-Gateway", "ai gateway", ".members", "members.", "a".repeat(121)]) {
     assert.equal(featureIntroEventRequestSchema.safeParse({ introKey, introVersion: 1, type: "seen" }).success, false, introKey)
