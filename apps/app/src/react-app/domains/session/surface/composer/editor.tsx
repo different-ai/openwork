@@ -38,9 +38,8 @@ import {
 } from "lexical";
 import type { InitialConfigType } from "@lexical/react/LexicalComposer.js";
 import { decodeComposerMentionValue, encodeComposerMentionValue, type ComposerMentionKind } from "./mention-encoding";
-import { parseConnectSkillToken } from "./connect-skill-token";
-import { encodeConnectorToken, parseConnectorToken } from "./connector-token";
-import { COMPOSER_DRAFT_TOKEN_RE, COMPOSER_TOKEN_CLASS } from "./composer-pills";
+import { encodeConnectorToken } from "./connector-token";
+import { COMPOSER_DRAFT_TOKEN_RE, COMPOSER_TOKEN_CLASS, parseComposerPillToken, type ComposerPill } from "./composer-pills";
 import {
   agentBadge,
   composerPillBadge,
@@ -54,7 +53,6 @@ import {
 } from "./composer-chips";
 import {
   encodeSessionReferenceToken,
-  parseSessionReferenceToken,
   type SessionReferenceTokenValue,
 } from "./session-reference-token";
 import { isComputerTarget } from "./computer-mentions";
@@ -290,6 +288,12 @@ function $createComposerSlashCommandNode(commandName: string) {
   return $applyNodeReplacement(new ComposerSlashCommandNode(commandName));
 }
 
+/** A skill chip is a local skill or a Connect skill; its token says which, so it badges like the sent chip. */
+function skillNodePill(name: string, token: string): ComposerPill {
+  const pill = parseComposerPillToken(token);
+  return pill?.kind === "connect-skill" || pill?.kind === "skill" ? pill : { kind: "skill", name };
+}
+
 class ComposerSkillNode extends TextNode {
   __skillName: string;
   __skillToken: string;
@@ -324,15 +328,15 @@ class ComposerSkillNode extends TextNode {
 
   override createDOM(_config: EditorConfig) {
     const dom = document.createElement("span");
-    renderComposerBadgeDom(dom, composerPillBadge({ kind: "skill", name: this.__skillName }));
+    renderComposerBadgeDom(dom, composerPillBadge(skillNodePill(this.__skillName, this.__skillToken)));
     dom.contentEditable = "false";
     dom.setAttribute("spellcheck", "false");
     return dom;
   }
 
   override updateDOM(prevNode: ComposerSkillNode, dom: HTMLElement) {
-    if (prevNode.__skillName !== this.__skillName) {
-      renderComposerBadgeDom(dom, composerPillBadge({ kind: "skill", name: this.__skillName }));
+    if (prevNode.__skillName !== this.__skillName || prevNode.__skillToken !== this.__skillToken) {
+      renderComposerBadgeDom(dom, composerPillBadge(skillNodePill(this.__skillName, this.__skillToken)));
     }
     return false;
   }
@@ -947,14 +951,22 @@ function setPrompt(
   const attachmentsById = new Map((attachments ?? []).map((item) => [item.id, item]));
   for (const segment of segments) {
     if (!segment) continue;
-    const connectorName = parseConnectorToken(segment);
-    if (connectorName) {
-      paragraph.append($createComposerConnectorNode(connectorName));
+    // Pill tokens decode through the same parser the send path and transcript use.
+    const pill = parseComposerPillToken(segment);
+    if (pill?.kind === "connector") {
+      paragraph.append($createComposerConnectorNode(pill.name));
       continue;
     }
-    const sessionReference = parseSessionReferenceToken(segment);
-    if (sessionReference) {
-      paragraph.append($createComposerSessionReferenceNode(sessionReference));
+    if (pill?.kind === "session") {
+      paragraph.append($createComposerSessionReferenceNode(pill));
+      continue;
+    }
+    if (pill?.kind === "connect-skill") {
+      paragraph.append($createComposerSkillNode(pill.slug, segment));
+      continue;
+    }
+    if (pill?.kind === "skill") {
+      paragraph.append($createComposerSkillNode(pill.name));
       continue;
     }
     const attachmentMatch = segment.match(/^\[attachment (.+)\]$/);
@@ -972,16 +984,6 @@ function setPrompt(
         paragraph.append($createComposerPastedTextNode(target.label, target.lines));
         continue;
       }
-    }
-    const connectSkill = parseConnectSkillToken(segment);
-    if (connectSkill) {
-      paragraph.append($createComposerSkillNode(connectSkill.slug, segment));
-      continue;
-    }
-    const skillMatch = segment.match(/^\[skill (.+)\]$/);
-    if (skillMatch?.[1]) {
-      paragraph.append($createComposerSkillNode(skillMatch[1]));
-      continue;
     }
     if (segment.startsWith("@")) {
       const token = decodeComposerMentionValue(segment.slice(1));
