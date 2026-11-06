@@ -121,6 +121,7 @@ export const platformAuditRoutes: readonly AuditRouteDeclaration[] = [
 
   // Auth helpers
   platform("GET", "/v1/auth/login-options", "auth.login_options.read", "platform.auth", "login_options", null, "Public, bot-protected; reveals account sign-in methods."),
+  platform("GET", "/v1/auth/sso-options", "auth.sso_options.read", "platform.auth", "login_options", null, "Public, rate limited; lists an organization's enabled SSO identity providers for its /sso/<slug> page."),
   platform("GET", "/v1/orgs/sso/resolve", "auth.sso.resolve", "platform.auth", "login_options", null, "Public, bot-protected email -> SSO routing."),
   handler("GET", "/v1/orgs/invitations/preview", "tenant_read", "invitation.preview", "invitation.read", "invitation", "Public preview by invitation id/token. The token proves the invitation's organization: once the invitation is found the handler attributes the served read there (category read, off by default), actor unknown. The token is never recorded (no resource id). Unknown tokens (404) stay platform evidence."),
   platform("POST", "/v1/auth/bootstrap/verify", "auth.bootstrap.verify", "platform.auth", "deployment", null, "One-time deployment bootstrap code."),

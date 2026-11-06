@@ -7,7 +7,9 @@ import {
   type DenOrgScimHealth,
   type DenOrgSsoConnection,
   getOrgAccessFlags,
+  orgFeatureEnabled,
   parseOrgScimPayload,
+  parseOrgSsoConnectionsPayload,
   parseOrgSsoPayload,
 } from "../../_lib/den-org";
 import { ORG_SCOPE_HEADER } from "../../_lib/org-scope";
@@ -19,6 +21,13 @@ export function ssoIntroState(connection: DenOrgSsoConnection | null): AuthSecur
   if (!connection) return "none";
   if (connection.status === "enabled") return "on";
   return connection.domainVerified ? "turn-on" : "verify-domain";
+}
+
+/** multipleSsoConnections: the furthest-along connection decides (any on, else any verified, else any saved). */
+export function ssoIntroStateForConnections(connections: readonly DenOrgSsoConnection[]): AuthSecuritySsoState {
+  if (connections.some((connection) => connection.status === "enabled")) return "on";
+  if (connections.some((connection) => connection.domainVerified)) return "turn-on";
+  return connections.length > 0 ? "verify-domain" : "none";
 }
 
 /** Where a SCIM connector is: none, created with nobody synced yet, syncing people. */
@@ -43,16 +52,18 @@ export function useAuthSecurityIntroFacts(enabled: boolean): AuthSecurityFacts |
   );
   const readable = enabled && Boolean(orgId) && access.canViewSso && access.canViewScim;
   const headers = { [ORG_SCOPE_HEADER]: orgId ?? "" };
+  // multipleSsoConnections: the furthest-along connection, not only the oldest.
+  const multiple = orgContext ? orgFeatureEnabled(orgContext, "multipleSsoConnections") : false;
 
   const sso = useQuery({
-    queryKey: ["feature-intros", "auth-security", "sso", orgId ?? ""],
+    queryKey: ["feature-intros", "auth-security", "sso", orgId ?? "", multiple],
     enabled: readable,
     retry: false,
     staleTime: 10_000,
     queryFn: async ({ signal }): Promise<AuthSecuritySsoState> => {
-      const { response, payload } = await requestJson("/v1/sso", { method: "GET", headers, signal }, 12000);
+      const { response, payload } = await requestJson(multiple ? "/v1/sso/connections" : "/v1/sso", { method: "GET", headers, signal }, 12000);
       if (!response.ok) throw new Error(getErrorMessage(payload, `Couldn't check single sign-on (${response.status}).`));
-      return ssoIntroState(parseOrgSsoPayload(payload).connection);
+      return multiple ? ssoIntroStateForConnections(parseOrgSsoConnectionsPayload(payload)) : ssoIntroState(parseOrgSsoPayload(payload).connection);
     },
   });
   const scim = useQuery({

@@ -236,6 +236,17 @@ export const FEATURES = defineFeatures({
     deployments: everywhere,
     default: false,
   },
+  multipleSsoConnections: {
+    label: "SSO: several connections per organization",
+    description: "An organization can set up more than one SSO connection: several identity providers, and each one covering one or more email domains. Each connection is verified, tested and turned on by itself, and sign-in shows one button per identity provider. Off: the SSO page manages a single connection.",
+    category: "administration",
+    added: "2026-11-05",
+    since: "2026-11",
+    author: "OmarMcAdam",
+    docs: "docs/features/multiple-sso-connections/README.md",
+    deployments: everywhere,
+    default: false,
+  },
   featureIntros: {
     label: "Den: feature intros",
     description: "Den pages, sub-pages and tabs explain themselves while nothing is set up: a full-screen intro, info box or banner with one action that leads straight to setup, a quiet dot on tabs not viewed yet, and a ? button to reopen the intro. Turning it off restores the previous empty states.",

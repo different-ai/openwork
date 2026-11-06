@@ -21,6 +21,7 @@ export const domainChangeEmitters: Readonly<Record<string, string>> = {
   "member.role_updated": "audit/domain/members.ts", "member.ownership_transferred": "audit/domain/members.ts", "member.removed": "audit/domain/members.ts",
   "scim_connection.token_rotated": "audit/domain/scim.ts", "scim_connection.deleted": "audit/domain/scim.ts", "scim_connection.reconciled": "audit/domain/scim.ts", "scim_group_mapping.updated": "audit/domain/scim.ts",
   "sso_connection.registered": "audit/domain/sso.ts", "sso_connection.enabled": "audit/domain/sso.ts", "sso_connection.disabled": "audit/domain/sso.ts", "sso_connection.deleted": "audit/domain/sso.ts",
+  "sso_connection.renamed": "audit/domain/sso.ts",
   "organization.complimentary_access.granted": "audit/domain/organization-settings.ts", "organization.complimentary_access.revoked": "audit/domain/organization-settings.ts",
   "organization.dpa_signed.updated": "audit/domain/organization-settings.ts",
   "web_origin.approved": "audit/domain/web-origins.ts", "web_origin.removed": "audit/domain/web-origins.ts",

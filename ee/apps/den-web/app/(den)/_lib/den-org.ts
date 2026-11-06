@@ -278,9 +278,15 @@ export type DenOrgScimHealth = {
 export type DenOrgSsoConnection = {
   id: string;
   providerId: string;
+  /** multipleSsoConnections: the saved name, or null. */
+  name: string | null;
+  /** What sign-in buttons show: the saved name, else one derived from the issuer. */
+  displayName: string;
   kind: "oidc" | "saml";
   issuer: string;
+  /** Every domain, comma separated; `domains` lists them. */
   domain: string;
+  domains: string[];
   status: "disabled" | "enabled";
   testStatus: "untested" | "testing" | "succeeded" | "failed";
   testExpiresAt: string | null;
@@ -292,6 +298,8 @@ export type DenOrgSsoConnection = {
   domainVerified: boolean;
   domainVerificationHost: string;
   domainVerificationDnsName: string;
+  /** One TXT record name per domain. */
+  domainVerificationDnsNames: Array<{ domain: string; dnsName: string }>;
   oidc: {
     clientId: string | null;
     scopes: string[];
@@ -1573,6 +1581,85 @@ export function parseOrgScimPayload(payload: unknown): {
   };
 }
 
+function parseOrgSsoConnection(raw: Record<string, unknown>): DenOrgSsoConnection | null {
+  const id = asString(raw.id);
+  const providerId = asString(raw.providerId);
+  const kind = asString(raw.kind);
+  const issuer = asString(raw.issuer);
+  const domain = asString(raw.domain);
+  const status = asString(raw.status);
+  const testStatus = asString(raw.testStatus);
+  const signInPath = asString(raw.signInPath);
+  const signInUrl = asString(raw.signInUrl);
+  const redirectUrl = asString(raw.redirectUrl);
+  const domainVerificationHost = asString(raw.domainVerificationHost);
+  const domainVerificationDnsName = asString(raw.domainVerificationDnsName);
+  const rawOidc = isRecord(raw.oidc) ? raw.oidc : null;
+  const rawSaml = isRecord(raw.saml) ? raw.saml : null;
+  const tokenEndpointAuthentication = asString(rawOidc?.tokenEndpointAuthentication);
+
+  if (!id || !providerId || !issuer || !domain || (status !== "disabled" && status !== "enabled") || (testStatus !== "untested" && testStatus !== "testing" && testStatus !== "succeeded" && testStatus !== "failed") || !signInPath || !signInUrl || !redirectUrl || !domainVerificationHost || !domainVerificationDnsName || (kind !== "oidc" && kind !== "saml")) {
+    return null;
+  }
+
+  const domains = asStringArray(raw.domains) ?? domain.split(",").map((entry) => entry.trim()).filter(Boolean);
+  const dnsNames = Array.isArray(raw.domainVerificationDnsNames)
+    ? raw.domainVerificationDnsNames.flatMap((entry) => {
+        if (!isRecord(entry)) return [];
+        const entryDomain = asString(entry.domain);
+        const dnsName = asString(entry.dnsName);
+        return entryDomain && dnsName ? [{ domain: entryDomain, dnsName }] : [];
+      })
+    : [];
+  return {
+    id,
+    providerId,
+    name: asString(raw.name),
+    displayName: asString(raw.displayName) ?? asString(raw.name) ?? issuer,
+    kind,
+    issuer,
+    domain,
+    domains,
+    status,
+    testStatus,
+    testExpiresAt: asIsoString(raw.testExpiresAt),
+    signInPath,
+    signInUrl,
+    redirectUrl,
+    acsUrl: asString(raw.acsUrl),
+    metadataUrl: asString(raw.metadataUrl),
+    domainVerified: asBoolean(raw.domainVerified),
+    domainVerificationHost,
+    domainVerificationDnsName,
+    domainVerificationDnsNames: dnsNames.length > 0 ? dnsNames : [{ domain: domains[0] ?? domain, dnsName: domainVerificationDnsName }],
+    oidc: rawOidc
+      ? {
+          clientId: asString(rawOidc.clientId),
+          scopes: asStringArray(rawOidc.scopes) ?? [],
+          skipDiscovery: asBoolean(rawOidc.skipDiscovery),
+          authorizationEndpoint: asString(rawOidc.authorizationEndpoint),
+          tokenEndpoint: asString(rawOidc.tokenEndpoint),
+          jwksEndpoint: asString(rawOidc.jwksEndpoint),
+          userInfoEndpoint: asString(rawOidc.userInfoEndpoint),
+          tokenEndpointAuthentication: tokenEndpointAuthentication === "client_secret_basic" || tokenEndpointAuthentication === "client_secret_post"
+            ? tokenEndpointAuthentication
+            : null,
+        }
+      : null,
+    saml: rawSaml
+      ? {
+          entryPoint: asString(rawSaml.entryPoint),
+          audience: asString(rawSaml.audience),
+          wantAssertionsSigned: asBoolean(rawSaml.wantAssertionsSigned),
+        }
+      : null,
+    lastTestedAt: asIsoString(raw.lastTestedAt),
+    lastError: asString(raw.lastError),
+    createdAt: asIsoString(raw.createdAt),
+    updatedAt: asIsoString(raw.updatedAt),
+  } satisfies DenOrgSsoConnection;
+}
+
 export function parseOrgSsoPayload(payload: unknown): {
   connection: DenOrgSsoConnection | null;
   domainVerificationToken: string | null;
@@ -1581,74 +1668,15 @@ export function parseOrgSsoPayload(payload: unknown): {
     return { connection: null, domainVerificationToken: null };
   }
 
-  const rawConnection = isRecord(payload.connection) ? payload.connection : null;
-  const connection = rawConnection
-    ? (() => {
-        const id = asString(rawConnection.id);
-        const providerId = asString(rawConnection.providerId);
-        const kind = asString(rawConnection.kind);
-        const issuer = asString(rawConnection.issuer);
-        const domain = asString(rawConnection.domain);
-        const status = asString(rawConnection.status);
-        const testStatus = asString(rawConnection.testStatus);
-        const signInPath = asString(rawConnection.signInPath);
-        const signInUrl = asString(rawConnection.signInUrl);
-        const redirectUrl = asString(rawConnection.redirectUrl);
-        const domainVerificationHost = asString(rawConnection.domainVerificationHost);
-        const domainVerificationDnsName = asString(rawConnection.domainVerificationDnsName);
-        const rawOidc = isRecord(rawConnection.oidc) ? rawConnection.oidc : null;
-        const rawSaml = isRecord(rawConnection.saml) ? rawConnection.saml : null;
-        const tokenEndpointAuthentication = asString(rawOidc?.tokenEndpointAuthentication);
-
-        if (!id || !providerId || !issuer || !domain || (status !== "disabled" && status !== "enabled") || (testStatus !== "untested" && testStatus !== "testing" && testStatus !== "succeeded" && testStatus !== "failed") || !signInPath || !signInUrl || !redirectUrl || !domainVerificationHost || !domainVerificationDnsName || (kind !== "oidc" && kind !== "saml")) {
-          return null;
-        }
-
-        return {
-          id,
-          providerId,
-          kind,
-          issuer,
-          domain,
-          status,
-          testStatus,
-          testExpiresAt: asIsoString(rawConnection.testExpiresAt),
-          signInPath,
-          signInUrl,
-          redirectUrl,
-          acsUrl: asString(rawConnection.acsUrl),
-          metadataUrl: asString(rawConnection.metadataUrl),
-          domainVerified: asBoolean(rawConnection.domainVerified),
-          domainVerificationHost,
-          domainVerificationDnsName,
-          oidc: rawOidc
-            ? {
-                clientId: asString(rawOidc.clientId),
-                scopes: asStringArray(rawOidc.scopes) ?? [],
-                skipDiscovery: asBoolean(rawOidc.skipDiscovery),
-                authorizationEndpoint: asString(rawOidc.authorizationEndpoint),
-                tokenEndpoint: asString(rawOidc.tokenEndpoint),
-                jwksEndpoint: asString(rawOidc.jwksEndpoint),
-                userInfoEndpoint: asString(rawOidc.userInfoEndpoint),
-                tokenEndpointAuthentication: tokenEndpointAuthentication === "client_secret_basic" || tokenEndpointAuthentication === "client_secret_post"
-                  ? tokenEndpointAuthentication
-                  : null,
-              }
-            : null,
-          saml: rawSaml
-            ? {
-                entryPoint: asString(rawSaml.entryPoint),
-                audience: asString(rawSaml.audience),
-                wantAssertionsSigned: asBoolean(rawSaml.wantAssertionsSigned),
-              }
-            : null,
-          lastTestedAt: asIsoString(rawConnection.lastTestedAt),
-          lastError: asString(rawConnection.lastError),
-          createdAt: asIsoString(rawConnection.createdAt),
-          updatedAt: asIsoString(rawConnection.updatedAt),
-        } satisfies DenOrgSsoConnection;
-      })()
-    : null;
-
+  const connection = isRecord(payload.connection) ? parseOrgSsoConnection(payload.connection) : null;
   return { connection, domainVerificationToken: asString(payload.domainVerificationToken) };
+}
+
+/** multipleSsoConnections: GET /v1/sso/connections. */
+export function parseOrgSsoConnectionsPayload(payload: unknown): DenOrgSsoConnection[] {
+  if (!isRecord(payload) || !Array.isArray(payload.connections)) return [];
+  return payload.connections.flatMap((entry) => {
+    const connection = isRecord(entry) ? parseOrgSsoConnection(entry) : null;
+    return connection ? [connection] : [];
+  });
 }
