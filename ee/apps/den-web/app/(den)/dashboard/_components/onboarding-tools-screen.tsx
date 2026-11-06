@@ -11,6 +11,7 @@ import { useDenFlow } from "../../_providers/den-flow-provider";
 import { useOrgDashboard } from "../_providers/org-dashboard-provider";
 import { IntegrationIcon } from "./integration-icon";
 import { useCreateMcpConnection, useMcpConnectionPresets, useMcpConnections } from "./mcp-connections-data";
+import { starterTeamToolConnection, starterTeamTools } from "./starter-team-tools";
 
 type ToolState = { status: "adding" | "added" | "error"; error?: string };
 const description = "Start with the tools your team already uses. Choose a few now, or add them whenever you need them.";
@@ -45,9 +46,7 @@ function ToolsForm() {
     return () => { alive.current = false; };
   }, []);
 
-  const presets = (presetsQuery.data ?? []).filter((preset, index, all) =>
-    (preset.authType === "none" || (preset.authType === "oauth" && !preset.requiresOAuthClient))
-    && all.findIndex((entry) => entry.url === preset.url) === index);
+  const presets = starterTeamTools(presetsQuery.data ?? []);
   const existingUrls = new Set((connectionsQuery.data ?? []).map((connection) => connection.url));
   const loading = presetsQuery.isPending || connectionsQuery.isPending;
   const loadError = presetsQuery.error ?? connectionsQuery.error;
@@ -73,13 +72,7 @@ function ToolsForm() {
         if (addedUrls.current.has(preset.url)) continue;
         setStates((current) => ({ ...current, [preset.presetId]: { status: "adding" } }));
         try {
-          await createConnection.mutateAsync({
-            name: preset.displayName,
-            url: preset.url,
-            authType: preset.authType,
-            credentialMode: preset.authType === "oauth" ? "per_member" : "shared",
-            access: { orgWide: true, memberIds: [], teamIds: [] },
-          });
+          await createConnection.mutateAsync(starterTeamToolConnection(preset));
           addedUrls.current.add(preset.url);
           if (alive.current) setStates((current) => ({ ...current, [preset.presetId]: { status: "added" } }));
         } catch (error) {
