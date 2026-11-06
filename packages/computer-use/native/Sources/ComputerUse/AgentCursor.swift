@@ -24,6 +24,16 @@ struct Presence {
     }
 }
 
+/// Overlays stay out of screen capture unless `OPENWORK_COMPUTER_USE_RECORDABLE_OVERLAY=1`
+/// asks for them in recordings (demos). The agent's own screenshots capture only the
+/// selected window, so the overlay never reaches them either way.
+enum OverlayCapture {
+    static let variable = "OPENWORK_COMPUTER_USE_RECORDABLE_OVERLAY"
+    static var sharingType: NSWindow.SharingType {
+        ProcessInfo.processInfo.environment[variable] == "1" ? .readOnly : .none
+    }
+}
+
 /// How the agent's cursor travels between inputs: like a hand, not a ruler. Short hops
 /// are quick and long ones take a little longer (Fitts's law), it eases into its target
 /// instead of overshooting, and it bows slightly off the straight line.
@@ -494,7 +504,7 @@ final class AgentCursor {
         let window = NSWindow(contentRect: screen, styleMask: .borderless, backing: .buffered, defer: false)
         window.isOpaque = false; window.backgroundColor = .clear; window.hasShadow = false
         window.ignoresMouseEvents = true
-        window.sharingType = .none
+        window.sharingType = OverlayCapture.sharingType
         window.level = .statusBar
         window.collectionBehavior = [.canJoinAllSpaces, .stationary, .ignoresCycle, .fullScreenAuxiliary]
         window.isReleasedWhenClosed = false
@@ -808,7 +818,7 @@ final class AgentCursor {
     private func buildPill() {
         let panel = NSPanel(contentRect: NSRect(x: 0, y: 0, width: 80, height: 26), styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
         panel.isOpaque = false; panel.backgroundColor = .clear; panel.hasShadow = true
-        panel.sharingType = .none
+        panel.sharingType = OverlayCapture.sharingType
         panel.level = .statusBar
         panel.hidesOnDeactivate = false
         panel.becomesKeyOnlyIfNeeded = true

@@ -525,6 +525,10 @@ export type DesktopCommandMap = {
   computerSetStandardCodeMode: { args: [enabled: boolean]; result: boolean };
   /** Reports the `parallelComputerUse` feature: a chat's subagents work on its computer as part of it. */
   computerSetParallelAgents: { args: [enabled: boolean]; result: boolean };
+  /** Whether the agent's cursor, frame and pill on this Mac show up in screen recordings. */
+  computerRecordableOverlay: { args: []; result: boolean };
+  /** Shows them in screen recordings from the next app the agent starts using, until OpenWork quits. */
+  computerSetRecordableOverlay: { args: [enabled: boolean]; result: boolean };
   /** Compatibility-only no-op for older renderers; returns the computerUse state. */
   computerSetBackgroundEnabled: { args: [enabled: boolean]; result: boolean };
   computerResetPermission: { args: [permission: ComputerPermission]; result: { setupId: string } };

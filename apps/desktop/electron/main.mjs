@@ -224,6 +224,8 @@ let browserPanel = null;
 const COMPUTER_POPOUT_NAME = /^openwork-computer-view-\d+$/;
 
 // Keep each chat's chosen computer in app data outside the workspace.
+// Advanced settings switch for demos; lasts until OpenWork quits. The launch variable turns it on at start.
+let computerRecordableOverlay = process.env.OPENWORK_COMPUTER_USE_RECORDABLE_OVERLAY === "1";
 const computerTargetsPath = () => path.join(app.getPath("userData"), "computer-use-targets.json");
 // The System Settings entry macOS lists for computer use: the helper's own
 // bundle, which takes responsibility for itself so grants never restart OpenWork.
@@ -275,6 +277,7 @@ const computerControl = createComputerControl({
       directory: path.join(app.getPath("userData"), "computer-use"),
     }),
     permissionEntry: async () => (await readComputerPermissionEntry()).name,
+    recordableOverlay: () => computerRecordableOverlay,
     onSetupReturn: async () => {
       const window = await createMainWindow();
       if (window.isMinimized()) window.restore();
@@ -2264,6 +2267,15 @@ const desktopCommandHandlers = {
   "computerSetParallelAgents": async (event, enabled) => {
       assertComputerSender(event);
       return computerControl.setParallelAgents(enabled === true);
+  },
+  "computerRecordableOverlay": async (event) => {
+      assertComputerSender(event);
+      return computerRecordableOverlay;
+  },
+  "computerSetRecordableOverlay": async (event, enabled) => {
+      assertComputerSender(event);
+      computerRecordableOverlay = enabled === true;
+      return computerRecordableOverlay;
   },
   // Compatibility for older renderers; background delivery now follows computerUse.
   "computerSetBackgroundEnabled": async (event) => {
