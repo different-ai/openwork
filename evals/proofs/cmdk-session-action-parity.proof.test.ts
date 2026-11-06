@@ -9,6 +9,7 @@ const test = spec.world(cmdkSessionActionParity, {
 });
 
 const paletteInput = "[data-command-palette-input]";
+const paletteTarget = { role: "combobox" } satisfies Parameters<User["type"]>[0];
 const paletteRows = "[data-command-palette-item]";
 const secondary = '[data-workbench-pane="secondary"]';
 const groupPrompt = "Name this group (e.g. Done, In progress):";
@@ -33,7 +34,7 @@ function keyboard(user: User, probe: Probe) {
       }
       resolved = true;
     }
-    await user.see(paletteInput, { editable: true });
+    await user.see(paletteTarget, { editable: true });
     await probe.eventually(() => probe.dom(paletteInput), {
       within: 5_000, label: "keyboard search receives focus",
       until: value => value.elements.some(element => element.focused),
@@ -41,7 +42,7 @@ function keyboard(user: User, probe: Probe) {
   };
   const search = async (text: string) => {
     await open();
-    await user.type(paletteInput, text, { replace: true });
+    await user.type(paletteTarget, text, { replace: true });
   };
   const groups = async () => {
     await search("Move to group");
@@ -84,7 +85,6 @@ async function preserved(probe: Probe, world: Awaited<ReturnType<typeof cmdkSess
 // The other two native conversations are wrong-target/deletion witnesses.
 test("a member organizes and safely removes the main conversation from Cmd+K even while a side chat has focus", async ({ world, user, probe, step, evidence }) => {
   const keys = keyboard(user, probe);
-  const row = (sessionId: string) => `[data-session-tab-id="${sessionId}"]`;
   const mainPath = `/workspace/${encodeURIComponent(world.workspace.workspaceId)}/session/${encodeURIComponent(world.main.sessionId)}`;
   const mainUrl = new URL(mainPath, world.app.webUrl).href;
   await user.resizeViewport({ width: 1440, height: 1000, deviceScaleFactor: 1 });
@@ -115,7 +115,7 @@ test("a member organizes and safely removes the main conversation from Cmd+K eve
   });
 
   await step("the member can cancel creating the first group without changing any conversation", async () => {
-    await user.type(paletteInput, "New group", { replace: true });
+    await user.type(paletteTarget, "New group", { replace: true });
     await user.press("Enter");
     await user.see({ placeholder: groupPrompt }, { editable: true });
     await keys.closed();
@@ -134,7 +134,7 @@ test("a member organizes and safely removes the main conversation from Cmd+K eve
 
   await step("after: New group creates an empty group without silently moving the main conversation", async () => {
     await keys.groups();
-    await user.type(paletteInput, "New group", { replace: true });
+    await user.type(paletteTarget, "New group", { replace: true });
     await user.press("Enter");
     await user.see({ placeholder: groupPrompt }, { editable: true });
     await keys.closed();
@@ -157,14 +157,14 @@ test("a member organizes and safely removes the main conversation from Cmd+K eve
 
   await step("after: choosing a group moves the main conversation and No group clears it again", async () => {
     await keys.groups();
-    await user.type(paletteInput, world.groupName, { replace: true });
+    await user.type(paletteTarget, world.groupName, { replace: true });
     await user.press("Enter");
     await keys.closed();
     await keys.groups();
     const assigned = (await probe.dom(`${paletteRows}[aria-disabled="true"], ${paletteRows}[data-disabled]`)).elements.find(element => element.text.startsWith(world.groupName));
     expect(assigned).toBeDefined();
     await user.screenshot();
-    await user.type(paletteInput, "No group", { replace: true });
+    await user.type(paletteTarget, "No group", { replace: true });
     await user.press("Enter");
     await keys.closed();
     await keys.groups();
@@ -182,12 +182,12 @@ test("a member organizes and safely removes the main conversation from Cmd+K eve
     await keys.search("Open as side chat");
     await user.see({ role: "option", text: /^Open as side chat/ });
     await user.press("Enter");
-    await user.type(paletteInput, world.side.title, { replace: true });
+    await user.type(paletteTarget, world.side.title, { replace: true });
     await user.see({ role: "option", text: new RegExp(`^${world.side.title}`) });
     await user.press("Enter");
     await keys.closed();
-    await user.see(`${secondary} [contenteditable="true"]`, { editable: true });
-    await user.click(`${secondary} [contenteditable="true"]`);
+    await user.see({ role: "textbox", nth: 1 }, { editable: true });
+    await user.click({ role: "textbox", nth: 1 });
     const focus = await probe.dom(`${secondary}[data-workbench-pane-focused="true"][data-workbench-workspace-id="${world.workspace.workspaceId}"]`);
     expect(focus.elements).toHaveLength(1);
     expect(await probe.hash()).toContain(world.main.sessionId);
@@ -229,7 +229,7 @@ test("a member organizes and safely removes the main conversation from Cmd+K eve
   });
 
   await step("Archive still names the main conversation when the member returns focus to the side chat", async () => {
-    await user.click(`${secondary} [contenteditable="true"]`);
+    await user.click({ role: "textbox", nth: 1 });
     expect((await probe.dom(`${secondary}[data-workbench-pane-focused="true"]`)).elements).toHaveLength(1);
     await keys.search("Archive session");
     await user.see({ role: "option", text: /^Archive session/ });
@@ -279,7 +279,7 @@ test("a member organizes and safely removes the main conversation from Cmd+K eve
     const restored = await probe.eventually(() => readSession(probe, world.workspace.workspaceId, world.main.sessionId), { within: 15_000, label: "the same native conversation is restored", until: value => !value.archived });
     expect(restored.title).toBe(world.main.title);
     await user.see("composer", { editable: true });
-    await user.see(row(world.main.sessionId));
+    await user.see({ role: "button", text: world.main.title });
     await preserved(probe, world);
     evidence.recordAssertionEvidence("Archive and Restore affect only the captured main conversation", `main archived=${archived.archived}, then restored=${!restored.archived}; id and title unchanged; side and reference stay active`, archived.archived && !restored.archived);
     await user.screenshot();
@@ -296,8 +296,8 @@ test("a member organizes and safely removes the main conversation from Cmd+K eve
     await user.notSee({ role: "heading", text: "Delete session?" });
     const deleted = await probe.eventually(() => probe.desktopApi(`/workspace/${encodeURIComponent(world.workspace.workspaceId)}/opencode2/api/session/${encodeURIComponent(world.main.sessionId)}`), { within: 15_000, label: "only the confirmed main conversation is deleted", until: value => value.status === 404 });
     await preserved(probe, world);
-    await user.see(row(world.side.sessionId));
-    await user.see(row(world.untouched.sessionId));
+    await user.see({ role: "button", text: world.side.title });
+    await user.see({ role: "button", text: world.untouched.title });
     evidence.recordAssertionEvidence("The destructive choice requires confirmation and has a bounded target", `confirmed main GET=${deleted.status}; side and reference GET=200, titles unchanged, archived=false`, deleted.status === 404);
     await user.screenshot();
   });
@@ -327,7 +327,7 @@ test("a member sees why Settle is unavailable and can cancel archiving a convers
     expect(disabled?.text).toContain("after it finishes");
     expect(disabled?.text).toContain(world.main.title);
     await user.press("Enter");
-    await user.see(paletteInput);
+    await user.see(paletteTarget);
     expect((await probe.dom('[data-workspace-settled-sessions] [data-session-tab-id="' + world.main.sessionId + '"]')).elements).toHaveLength(0);
     expect((await readSession(probe, world.workspace.workspaceId, world.main.sessionId)).archived).toBe(false);
     evidence.recordAssertionEvidence("Blocked is visible, explained and cannot dispatch", `disabled row=${disabled?.text}; Enter leaves search open; waiting conversation is not settled or archived`, Boolean(disabled?.text.includes("after it finishes")));
