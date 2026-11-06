@@ -11,6 +11,12 @@ test("the returning sign-in panel uses the browser cookie without a feature requ
   assert.match(source, /setRememberedPasswordOpen\(method === "password"\)/);
 });
 
+test("the remembered method is read once, so a later render cannot close the email form", () => {
+  const source = readFileSync(new URL("../_components/auth-panel.tsx", import.meta.url), "utf8");
+  const effect = source.slice(source.indexOf("const rememberedMethodReadRef"), source.indexOf("readLastSignInMethod(document.cookie)"));
+  assert.match(effect, /if \(rememberedMethodReadRef\.current\) \{\s*return;\s*\}\s*rememberedMethodReadRef\.current = true;/);
+});
+
 test("reads the remembered password or social method", () => {
   assert.equal(readLastSignInMethod("openwork-last-sign-in=google"), "google");
   assert.equal(readLastSignInMethod("a=1; openwork-last-sign-in=github; b=2"), "github");
