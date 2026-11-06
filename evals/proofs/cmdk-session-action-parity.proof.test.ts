@@ -1,6 +1,6 @@
 import { expect } from "vitest";
 import { spec, type Probe, type User } from "@openwork/testkit";
-import { cmdkSessionActionParity } from "../worlds/cmdk-session-action-parity.ts";
+import { cmdkSessionActionParity, cmdkSessionActionParityWithSettle } from "../worlds/cmdk-session-action-parity.ts";
 
 const test = spec.world(cmdkSessionActionParity, {
   timeout: 600_000,
@@ -279,7 +279,7 @@ test("a member organizes and safely removes the main conversation from Cmd+K eve
     const restored = await probe.eventually(() => readSession(probe, world.workspace.workspaceId, world.main.sessionId), { within: 15_000, label: "the same native conversation is restored", until: value => !value.archived });
     expect(restored.title).toBe(world.main.title);
     await user.see("composer", { editable: true });
-    await user.see({ role: "button", text: world.main.title });
+    await user.see({ role: "button", label: world.main.title });
     await preserved(probe, world);
     evidence.recordAssertionEvidence("Archive and Restore affect only the captured main conversation", `main archived=${archived.archived}, then restored=${!restored.archived}; id and title unchanged; side and reference stay active`, archived.archived && !restored.archived);
     await user.screenshot();
@@ -293,17 +293,27 @@ test("a member organizes and safely removes the main conversation from Cmd+K eve
     await user.see({ role: "heading", text: "Delete session?" });
     await user.see({ text: `This will permanently delete "${world.main.title}" and its messages.` });
     await user.click({ role: "button", label: "Delete" });
-    await user.notSee({ role: "heading", text: "Delete session?" });
+    // Deletion is asynchronous. First witness the persisted result, then wait
+    // for the consent surface to finish closing; notSee checks absence rather
+    // than waiting for a still-visible dialog to disappear.
     const deleted = await probe.eventually(() => probe.desktopApi(`/workspace/${encodeURIComponent(world.workspace.workspaceId)}/opencode2/api/session/${encodeURIComponent(world.main.sessionId)}`), { within: 15_000, label: "only the confirmed main conversation is deleted", until: value => value.status === 404 });
+    await probe.eventually(() => probe.dom('[role="dialog"], [role="alertdialog"]'), { within: 10_000, label: "the completed deletion closes its confirmation", until: value => !value.elements.some(element => element.text.includes("Delete session?")) });
+    await user.notSee({ role: "heading", text: "Delete session?" });
     await preserved(probe, world);
-    await user.see({ role: "button", text: world.side.title });
-    await user.see({ role: "button", text: world.untouched.title });
+    await user.see({ role: "button", label: world.side.title });
+    await user.see({ role: "button", label: world.untouched.title });
     evidence.recordAssertionEvidence("The destructive choice requires confirmation and has a bounded target", `confirmed main GET=${deleted.status}; side and reference GET=200, titles unchanged, archived=false`, deleted.status === 404);
     await user.screenshot();
   });
 });
 
-test("a member sees why Settle is unavailable and can cancel archiving a conversation that still needs an answer", async ({ world, user, probe, step, evidence }) => {
+const settleTest = spec.world(cmdkSessionActionParityWithSettle, {
+  timeout: 600_000,
+  resources: { surfaces: ["appWeb"], services: ["den", "mock"] },
+  needs: { commands: ["bun"] },
+});
+
+settleTest("a member sees why Settle is unavailable and can cancel archiving a conversation that still needs an answer", async ({ world, user, probe, step, evidence }) => {
   const keys = keyboard(user, probe);
   await user.resizeViewport({ width: 1280, height: 900, deviceScaleFactor: 1 });
 
