@@ -142,6 +142,21 @@ function skillInstruction(name: string) {
 }
 
 /**
+ * Metadata on a pill's visible text part. Every producer of a sent pill (the
+ * send paths, and engines that store a turn as one string and are decoded
+ * back into parts) tags the text the same way, so the transcript, prompt
+ * history and Edit read one shape.
+ */
+export function composerPillTextMetadata(pill: ComposerPill): Record<string, unknown> {
+  return {
+    openworkComposerPill: pill,
+    // Prompt history recalls a Connect skill or task reference from its durable token.
+    ...(pill.kind === "connect-skill" ? { openworkComposerToken: encodeConnectSkillToken(pill) } : {}),
+    ...(pill.kind === "session" ? { openworkComposerToken: composerPillToken(pill) } : {}),
+  };
+}
+
+/**
  * The two prompt parts every send path emits for a pill: the visible text
  * (tagged with the pill so the transcript renders a chip) and the synthetic
  * instruction (hidden from the transcript).
@@ -150,12 +165,7 @@ export function composerPillPromptParts(pill: ComposerPill): [TextPartInput, Tex
   return [{
     type: "text",
     text: composerPillText(pill),
-    metadata: {
-      openworkComposerPill: pill,
-      // Prompt history recalls a Connect skill from its durable token.
-      ...(pill.kind === "connect-skill" ? { openworkComposerToken: encodeConnectSkillToken(pill) } : {}),
-      ...(pill.kind === "session" ? { openworkComposerToken: composerPillToken(pill) } : {}),
-    },
+    metadata: composerPillTextMetadata(pill),
   }, {
     type: "text",
     text: composerPillInstruction(pill),
@@ -246,7 +256,7 @@ function getPillMatchers(): PillMatcher[] {
 }
 
 /** Decode exact historical sends without offering the retired polling instruction on new sends. */
-function computerInstructionHistory(target: "cloud" | "desktop"): string[] {
+export function computerInstructionHistory(target: "cloud" | "desktop"): string[] {
   const current = computerMentionInstruction(target);
   const legacyEnding = target === "cloud"
     ? "Return the session link and use remote-session:read to check replies."

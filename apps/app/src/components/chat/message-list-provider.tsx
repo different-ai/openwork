@@ -17,6 +17,7 @@ import type { AutoRouterReplyRoute } from "@openwork/types/den/auto-router"
 import { useSessionAutoRoutes } from "@/react-app/domains/session/sync/auto-route-store"
 import { useModelPickerCatalogStore } from "@/react-app/domains/session/models/model-collections-store"
 import type { ChatConnectionDecisionBinding } from "@/react-app/domains/session/surface/mcp-chat-reconnect"
+import type { SentMessageDraft } from "@/react-app/domains/session/surface/composer/sent-message-tokens"
 
 interface MessageListContextValue {
   mcpAppOrigin: McpAppOrigin | null
@@ -50,7 +51,8 @@ interface MessageListContextValue {
   /** Absent where a reply cannot be branched into a new chat (a task on another computer). */
   onForkAtMessage?: (messageId: string) => void | Promise<void>
   forkingMessageId?: string
-  onEditUserMessage: (messageId: string, text: string) => void
+  /** `text` is the draft with chip tokens; `draft` names the chips' mentions and pasted text. */
+  onEditUserMessage: (messageId: string, text: string, draft?: SentMessageDraft) => void
   /** Open a sub-agent (child) session in the main chat surface. */
   onOpenSubagentSession?: (sessionId: string) => void
   /** Stop one running sub-agent (child) session without stopping the parent turn. */
@@ -92,7 +94,7 @@ interface MessageListProviderProps {
   onRevertToUserMessage: (messageId: string) => void
   onForkAtMessage?: (messageId: string) => void | Promise<void>
   forkingMessageId?: string
-  onEditUserMessage: (messageId: string, text: string) => void
+  onEditUserMessage: (messageId: string, text: string, draft?: SentMessageDraft) => void
   onOpenSubagentSession?: (sessionId: string) => void
   onStopSubagentSession?: (sessionId: string) => void | Promise<void>
   onOpenRemoteTask?: (start: RemoteThreadStart) => void
@@ -200,7 +202,7 @@ export function MessageListProvider({
     setPrompt: (prompt: string) => handlersRef.current.setPrompt(prompt),
     onRevertToUserMessage: (messageId: string) => handlersRef.current.onRevertToUserMessage(messageId),
     onForkAtMessage: (messageId: string) => handlersRef.current.onForkAtMessage?.(messageId),
-    onEditUserMessage: (messageId: string, text: string) => handlersRef.current.onEditUserMessage(messageId, text),
+    onEditUserMessage: (messageId: string, text: string, draft?: SentMessageDraft) => handlersRef.current.onEditUserMessage(messageId, text, draft),
     onOpenSubagentSession: (sessionId: string) => handlersRef.current.onOpenSubagentSession?.(sessionId),
     onStopSubagentSession: (sessionId: string) => handlersRef.current.onStopSubagentSession?.(sessionId),
     onOpenRemoteTask: (start: RemoteThreadStart) => handlersRef.current.onOpenRemoteTask?.(start),
