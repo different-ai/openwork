@@ -1,0 +1,24 @@
+---
+title: "Plan OpenWork on DigitalOcean"
+sidebarTitle: "DigitalOcean"
+description: "Choose between Droplets, Kubernetes, and App Platform for OpenWork, with MySQL and durable worker storage."
+---
+
+DigitalOcean offers several deployment shapes for OpenWork: Linux Droplets, a Kubernetes cluster, or container services on App Platform. This is planning guidance; the repository does not ship a tested DigitalOcean-specific installer.
+
+## Deployment approach
+
+For a Droplet, start with [Docker and VM planning](/self-host/platforms/docker-and-vms). For Kubernetes, adapt the published Helm chart to your ingress and database. App Platform's [container image deployment](https://docs.digitalocean.com/products/app-platform/how-to/deploy-from-container-images/) can be assessed for Den web and Den API with Managed MySQL.
+
+## What you need
+
+- Separate web/API services, HTTPS hostnames, and secrets.
+- A MySQL 8-compatible database with private connectivity, verified TLS, backups, and a restore plan. App Platform's PostgreSQL development database is not a substitute.
+- Migrations completed before API traffic and health checks for both services.
+- A worker provisioner and durable workspace/data storage if you enable cloud workspaces.
+
+App Platform's [local filesystem is ephemeral and it does not support persistent volumes](https://docs.digitalocean.com/products/app-platform/how-to/store-data/). Use a separate runtime with appropriate durable filesystem storage for workers; object storage alone does not replace a worker's workspace filesystem.
+
+## Next step
+
+Review the [common requirements](/self-host/platforms/overview#common-requirements) and [licensing](/start-here/pricing-and-licensing). For help choosing among these routes, [ask us about DigitalOcean deployment](mailto:sales@openworklabs.com?subject=OpenWork%20deployment%20on%20DigitalOcean&body=Platform%3A%20DigitalOcean%0ADocs%3A%20https%3A%2F%2Fopenworklabs.com%2Fdocs%2Fself-host%2Fplatforms%2Fdigitalocean%0ATeam%20size%3A%20%0ADeployment%20constraints%3A%20).
