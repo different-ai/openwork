@@ -27,7 +27,7 @@ export function automationRunNotice(run: RunReceiptState): RunNotice | null {
     };
   }
   if (run.error.code === "connection_action_required") {
-    return { variant: "destructive", title: "Connection needed", message: run.error.message };
+    return { variant: "default", title: "Connection needed", message: run.error.message };
   }
   return {
     variant: "destructive",
