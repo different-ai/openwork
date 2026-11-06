@@ -21,3 +21,17 @@ describe("question panel dismissal", () => {
     expect(html).not.toContain("Dismiss");
   });
 });
+
+describe("question panel answer box", () => {
+  test("offers the typed answer as an alternative when there are options", () => {
+    const html = renderToStaticMarkup(<QuestionPanel questions={questions} busy={false} onReply={() => {}} />);
+    expect(html).toContain("Or type a custom answer");
+  });
+  test("asks for the answer directly when the question has no options", () => {
+    const textOnly: QuestionInfo[] = [{ header: "Failing check", question: "Which branch is this on?", options: [] }];
+    const html = renderToStaticMarkup(<QuestionPanel questions={textOnly} busy={false} onReply={() => {}} />);
+    expect(html).not.toContain("Or type a custom answer");
+    expect(html).toContain('aria-label="Which branch is this on?"');
+    expect(html).toContain("Send");
+  });
+});

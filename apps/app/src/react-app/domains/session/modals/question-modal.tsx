@@ -102,9 +102,12 @@ export function QuestionPanel(props: QuestionPanelProps) {
   const options = currentQuestion?.options ?? [];
   const isLastQuestion = state.currentIndex === props.questions.length - 1;
   const customAnswerEnabled = currentQuestion?.custom !== false;
+  // A question with no options is answered only in the text box, so it is the
+  // answer itself rather than an alternative to the options.
+  const textOnly = options.length === 0;
   const customAnswerVisible =
     customAnswerEnabled &&
-    (state.customAnswerActive || state.customInput.trim().length > 0);
+    (textOnly || state.customAnswerActive || state.customInput.trim().length > 0);
   const canProceed = (() => {
     if (!currentQuestion) return false;
     if (customAnswerEnabled && state.customInput.trim().length > 0) return true;
@@ -229,13 +232,16 @@ export function QuestionPanel(props: QuestionPanelProps) {
         ) : null}
 
         {customAnswerEnabled ? (
-          <div className="border-t border-dls-border pt-3">
-            <label className="block text-xs font-semibold text-dls-secondary mb-2 uppercase tracking-wide">
-              {t("question_modal.custom_answer_label")}
-            </label>
+          <div className={textOnly ? undefined : "border-t border-dls-border pt-3"}>
+            {textOnly ? null : (
+              <label className="block text-xs font-semibold text-dls-secondary mb-2 uppercase tracking-wide">
+                {t("question_modal.custom_answer_label")}
+              </label>
+            )}
             <div className="flex items-center gap-2">
               <input
                 type="text"
+                aria-label={textOnly ? currentQuestion.question : undefined}
                 value={state.customInput}
                 onFocus={() => dispatch({ type: "setCustomAnswerActive", value: true })}
                 onClick={() => dispatch({ type: "setCustomAnswerActive", value: true })}
