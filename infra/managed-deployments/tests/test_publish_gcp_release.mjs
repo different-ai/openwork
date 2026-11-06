@@ -34,7 +34,8 @@ else if (action === "storage buckets describe") {
 } else if (action === "storage buckets get-iam-policy") out(config.policy);
 else if (action === "storage objects list") {
   if (config.listError) { console.error("Permission denied"); process.exit(1); }
-  out(config.existing);
+  if (!args.includes("--raw") || args.includes("--stat") || args.includes("--all-versions")) throw new Error("Must inspect raw live and noncurrent generations with supported CLI flags");
+  out(Array.isArray(config.existing) ? [...config.existing, ...Object.keys(config.generations).filter((name) => existsSync(join(root, "uploaded-" + name)) && !config.existing.some((object) => object.name === "releases/gcp/" + config.version + "/" + name)).map((name) => ({ name: "releases/gcp/" + config.version + "/" + name, generation: config.generations[name] }))] : config.existing);
 } else if (args[0] === "storage" && args[1] === "cp") {
   const name = args[3].split("/").at(-1);
   if (!args.includes("--if-generation-match=0")) throw new Error("Missing overwrite guard");
@@ -151,10 +152,9 @@ for (const [label, overrides, pattern] of [
   ["requester pays", { storage: { name: bucket, projectNumber, versioning: { enabled: true }, billing: { requesterPays: true } } }, /prevents unauthenticated/],
   ["private policy", { policy: { bindings: [{ role: "roles/storage.objectViewer", members: ["allAuthenticatedUsers"] }] } }, /must already grant unconditional/],
   ["conditional policy", { policy: { bindings: [{ role: "roles/storage.objectViewer", members: ["allUsers"], condition: { expression: "false" } }] } }, /must already grant unconditional/],
-  ["later destination already exists", { existing: [{ name: `releases/gcp/${version}/manifest.json`, generation: "42" }] }, /Release version already exists/],
-  ["noncurrent destination already exists", { existing: [{ name: `releases/gcp/${version}/tutorial.md`, generation: "42", timeDeleted: "2026-01-01T00:00:00Z" }] }, /Release version already exists/],
+  ["unexpected existing object", { existing: [{ name: `releases/gcp/${version}/unexpected`, generation: "42" }] }, /Unexpected existing release object/],
   ["unverifiable existence", { listError: true }, /Permission denied/],
-  ["malformed existence response", { existing: {} }, /Release version already exists/],
+  ["malformed existence response", { existing: {} }, /Invalid release object inventory/],
 ]) {
   test(`refuses ${label} before any upload`, (t) => refused(fixture(t, overrides), pattern));
 }
@@ -189,6 +189,40 @@ test("refuses invalid bucket arguments before contacting gcloud", (t) => {
   assert.match(result.stderr, /Usage:/);
   assert.equal(f.commands().length, 0);
 });
+
+test("GCP resumes a partial publication and reuses exact generations on a full rerun", (t) => {
+  const f = fixture(t);
+  writeFileSync(join(f.root, "uploaded-bundle.tar.gz"), readFileSync(join(f.root, "bundle.tar.gz")));
+  const first = f.run();
+  assert.equal(first.status, 0, first.stderr);
+  assert.equal(f.commands().filter((args) => args[1] === "cp").length, 2);
+  const second = f.run();
+  assert.equal(second.status, 0, second.stderr);
+  assert.deepEqual(JSON.parse(second.stdout), JSON.parse(first.stdout));
+  assert.equal(f.commands().filter((args) => args[1] === "cp").length, 2);
+});
+
+test("GCP reuses the actual verified noncurrent generation, never a synthesized generation", (t) => {
+  const f = fixture(t, {
+    existing: [{ name: `releases/gcp/${version}/tutorial.md`, generation: "42", timeDeleted: "2026-01-01T00:00:00Z" }],
+    generations: { ...generations, "tutorial.md": "42" },
+  });
+  writeFileSync(join(f.root, "uploaded-tutorial.md"), readFileSync(join(f.root, "tutorial.md")));
+  const result = f.run();
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(JSON.parse(result.stdout).DEN_MANAGED_DEPLOYMENT_GCP_TEMPLATE_URL,
+    `https://storage.googleapis.com/${bucket}/releases/gcp/${version}/tutorial.md?generation=42`);
+  assert.equal(f.commands().filter((args) => args[1] === "cp").length, 2);
+});
+
+for (const name of names) {
+  test(`GCP preflights conflicting existing ${name} before any writes`, (t) => {
+    const f = fixture(t);
+    writeFileSync(join(f.root, "uploaded-" + name), "conflicting immutable bytes");
+    refused(f, /differs from the reviewed local artifact/, { beforeUpload: false });
+    assert.equal(f.commands().filter((args) => args[1] === "cp").length, 0);
+  });
+}
 
 test("generation precondition still refuses a concurrent upload after preflight", (t) => {
   const f = fixture(t, { concurrentObject: "bundle.tar.gz" });

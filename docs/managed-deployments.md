@@ -153,6 +153,104 @@ Do not hide the lock, invent a checksum or configure a mutable/latest artifact
 to make the page look ready. Publication, hosted configuration, and rollout
 changes require explicit operator approval.
 
+## Stable-release currency
+
+The **Managed Stable Installer** workflow prepares a candidate from GitHub's
+latest public stable release after release/image-publisher completion, with a
+six-hour reconciliation fallback. It does not select `dev`, alpha, draft or
+prerelease images, and it does not upgrade customer installations. Candidate
+preparation verifies the release tag's commit, exact Linux/amd64 image digests
+and OCI source identity, then runs installer and container/bootstrap checks.
+These checks are **not** a real-cloud fresh-install or approved-Update receipt.
+
+Production promotion stays an explicit, protected operator action until a real
+cloud qualification gate is automated. Qualify the exact retained candidate on
+an isolated account, including a fresh install and version-increasing Update,
+and retain the manifest SHA-256 and review URL. Dispatch the workflow from the
+trusted default branch with `promote=true`, that manifest hash, and the trusted
+repository qualification review URL. The URL is the operator's attestation,
+not an automated assertion that its contents passed. The dedicated
+`managed-installer-production` environment must have nonempty required
+reviewers and prevent self-review. The workflow verifies that policy before
+assuming the release role or publishing; an absent/unprotected environment
+fails closed. Do not assume an existing production environment has reviewers,
+or change other deployment environments as part of installer setup.
+A newer release or changed candidate invalidates the earlier review.
+
+Before enabling promotion, deploy the atomic configuration reader below and
+verify the configuration API from a controlled internal organization. A Render
+`live` deploy proves deployment completion, not installer availability: after
+promotion, verify that `GET /v1/managed-deployments/configuration` advertises the
+reviewed version before handing out new approvals.
+
+AWS promotion requires explicit operator configuration (never infer an account
+or create public access as a workaround):
+
+- `MANAGED_DEPLOYMENT_AWS_PROMOTION_ENABLED=true`.
+- `MANAGED_DEPLOYMENT_AWS_RELEASE_ROLE_ARN`: a narrowly scoped GitHub OIDC role
+  in the release account, trusted only for the repository's
+  `managed-installer-production` environment.
+- `MANAGED_DEPLOYMENT_AWS_RELEASE_ACCOUNT_ID`,
+  `MANAGED_DEPLOYMENT_AWS_RELEASE_BUCKET`, and
+  `MANAGED_DEPLOYMENT_AWS_RELEASE_REGION`.
+- Existing `RENDER_API_KEY` and `RENDER_DEN_CONTROL_PLANE_SERVICE_ID` secrets.
+- Publisher permissions include `s3:ListBucketVersions`, bucket/versioning reads
+  and conditional object creation, plus public verification of immutable bytes.
+  They do not require bucket-policy changes or object deletion.
+
+GCP remains candidate-only in this workflow. Do not silently enable an
+unconfigured provider or substitute GKE/Helm testing for managed Cloud Run
+qualification. Existing explicit GCP publication steps below still apply.
+
+### Atomic configuration and safe recovery
+
+Promotion writes **one** non-secret coordinate record on hosted Den:
+`DEN_MANAGED_DEPLOYMENT_AWS_RELEASE` (the configuration reader also supports
+`DEN_MANAGED_DEPLOYMENT_GCP_RELEASE`). Its value is a JSON object with exactly:
+
+```json
+{
+  "version": "0.18.65",
+  "templateUrl": "https://release-bucket.s3.us-east-1.amazonaws.com/releases/aws/0.18.65/cloudformation.json?versionId=immutable-template-version",
+  "bundleUrl": "https://release-bucket.s3.us-east-1.amazonaws.com/releases/aws/0.18.65/bundle.tar.gz?versionId=immutable-bundle-version",
+  "bundleSha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+}
+```
+
+This is a schema example, **not published artifacts**. Use only the publisher's
+verified coordinates and hash. AWS uses regional S3 object-version URLs; GCP
+uses exact GCS generation URLs. The control-plane origin still comes only from
+`DEN_API_PUBLIC_URL`; the coordinate record cannot override it.
+
+When the record is absent, the four legacy provider fields remain supported.
+When present but invalid, Den fails closed: it never silently revives an older
+legacy pin. Production promotion changes only this selected record and requests
+one Den deploy; it never bulk-rewrites unrelated environment values. Workflow
+writers share the `den-api-env` concurrency lock and re-read the selected key
+before writing. Render has no server-side compare-and-swap: dashboard/external
+API writers must respect that operational lock too.
+
+An old/out-of-order candidate cannot downgrade the advertised release. The
+same version with different bytes or coordinates is refused. Re-running a
+partial publication reuses only identical, publicly verified immutable object
+versions; conflicting bytes fail before uploads. If an installer fix changes
+an already-published version, publish a new reviewed version rather than
+replace its objects. Deterministic archives require Python 3 alongside the
+registry tooling.
+
+On ambiguous publication/configuration/deploy failure, inspect the actual
+objects, selected record and deploy receipt before retrying. No automatic
+rollback or uncertain mutation replay is performed. Disable the promotion
+opt-in to pause future operator promotions; the existing `managedDeployments`
+kill switch blocks launches while authenticated enrollment and health reporting
+continue. An operator may deliberately restore a prior coordinate record after
+review, but that affects new approvals only—it never rolls back a customer's
+database. Pending approval runs retain their frozen coordinates.
+
+Automatic **preparation** does not yet mean zero-touch production promotion.
+After merging, configure credentials and complete real-cloud qualification
+before claiming that the live managed installer follows the latest release.
+
 ## Google Cloud (GCP)
 
 The managed installer uses the shared Cloud Run module with explicit legacy
