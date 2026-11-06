@@ -1,0 +1,130 @@
+---
+title: "TrueFoundry: a key for each member"
+description: "Provision individual TrueFoundry keys to OpenWork desktop apps with an organization API key."
+keywords: ["TrueFoundry", "per-member keys", "provisioning", "legacy provider", "OpenAI-compatible"]
+---
+
+Use your existing TrueFoundry key-issuance workflow to give each OpenWork member their own key. Your script writes it to OpenWork; the desktop syncs it and calls TrueFoundry as that person. TrueFoundry continues to enforce whatever permissions, budgets and rate limits apply to that key.
+
+<Warning>
+This is the **legacy custom-provider** integration, not an OpenWork AI Gateway integration. The real TrueFoundry key reaches the member's desktop and is accessible to that user's local processes. Use this only if members may hold their own keys. If keys must stay on the server, do not use this recipe; see the [provider support matrix](/ai-gateway/provider-support) for server-side integrations.
+</Warning>
+
+## 1. Prepare the accounts and keys
+
+- Have the member sign up and join your OpenWork organization.
+- As an owner or admin, create an organization API key in OpenWork Cloud. Its owner needs **Manage people's provider keys** to provision member keys. Authenticate scripts with `x-api-key`, not `Authorization: Bearer`.
+- Find the organization ID and the member's **organization membership ID** (`om_…`), not their user ID (`usr_…`). `GET /v1/org` returns `organization.id` and the `members` roster; match by `members[].user.email` and use that entry's `id`.
+- In TrueFoundry, issue a key scoped to that person and the models they may use. Use your TrueFoundry deployment's supported token type and issuance process. Do not distribute an administrative token or reuse one person's key for everyone. A personal access token can carry permissions beyond inference; confirm its scope before deploying it to a laptop.
+
+Load the two keys into your provisioning process from your secret manager. Do not paste them into a chat, commit them, or enable shell tracing. For the example below, set:
+
+| Environment variable | Value |
+| --- | --- |
+| `OPENWORK_API_KEY` | The provisioning organization's API key |
+| `OPENWORK_ORG_ID` | Your `org_…` ID |
+| `OPENWORK_MEMBER_ID` | The recipient's `om_…` membership ID |
+| `TRUEFOUNDRY_MEMBER_KEY` | That person's TrueFoundry key |
+| `TRUEFOUNDRY_BASE_URL` | Your OpenAI-compatible gateway root, without `/models` or `/chat/completions` |
+| `TRUEFOUNDRY_MODEL_ID` | An exact model ID served by that gateway |
+
+For TrueFoundry's hosted gateway, the root tested with this recipe is `https://gateway.truefoundry.ai`. Self-hosted URLs can differ. With the member's key, check `GET <root>/models` and use the exact ID returned, including any prefix such as `openai/`. Never assume an administrator and a member see the same models.
+
+## 2. Create the provider and push the member's key
+
+Run this Python 3 script in your trusted provisioning environment. It uses only the standard library. It creates a provider granted to this member, then stores their key through the dedicated provisioning endpoint. It prints only the provider ID and credential state, not either key.
+
+```python
+import json
+import os
+import urllib.error
+import urllib.request
+
+api = os.environ.get("OPENWORK_API_URL", "https://api.openworklabs.com").rstrip("/")
+org_id = os.environ["OPENWORK_ORG_ID"]
+member_id = os.environ["OPENWORK_MEMBER_ID"]
+gateway = os.environ["TRUEFOUNDRY_BASE_URL"].rstrip("/")
+model = os.environ["TRUEFOUNDRY_MODEL_ID"]
+
+
+def request(method, path, body):
+    req = urllib.request.Request(
+        api + path,
+        method=method,
+        headers={
+            "Content-Type": "application/json",
+            "User-Agent": "OpenWork-TrueFoundry-Provisioner/1.0",
+            "x-api-key": os.environ["OPENWORK_API_KEY"],
+            "x-openwork-org-id": org_id,
+        },
+        data=json.dumps(body).encode(),
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=30) as response:
+            return json.load(response)
+    except urllib.error.HTTPError as error:
+        # Do not log request bodies, headers or raw upstream error messages.
+        raise SystemExit(f"OpenWork returned HTTP {error.code} for {method} {path}") from None
+
+
+# On later runs, set OPENWORK_PROVIDER_ID to reuse the provider you created.
+provider_id = os.environ.get("OPENWORK_PROVIDER_ID")
+if not provider_id:
+    created = request("POST", "/v1/llm-providers", {
+        "name": "TrueFoundry",
+        "source": "custom",
+        "customConfig": {
+            "id": "truefoundry",
+            "name": "TrueFoundry",
+            "npm": "@ai-sdk/openai-compatible",
+            "env": ["TRUEFOUNDRY_API_KEY"],
+            "api": gateway,
+            "models": [{"id": model, "name": model + " (TrueFoundry)"}],
+        },
+        "credentialMode": "per_member",
+        "allMembers": False,
+        "memberIds": [member_id],
+        "teamIds": [],
+    })
+    provider_id = created["llmProvider"]["id"]
+
+stored = request(
+    "PUT",
+    f"/v1/llm-providers/{provider_id}/member-credentials/{member_id}",
+    {"apiKey": os.environ["TRUEFOUNDRY_MEMBER_KEY"]},
+)
+print(json.dumps({"providerId": provider_id, "state": stored["state"]}))
+```
+
+Save the returned `lpr_…` provider ID. For another granted member or a key rotation, set `OPENWORK_PROVIDER_ID` and repeat the `PUT` with that member's membership ID and new key. Grant additional people or teams access to the provider in OpenWork Cloud first. For concurrent provisioners, use `expectedVersion`; see the [full credential API](/cloud/share-with-your-team/per-member-llm-credentials#admin-and-provisioner-flow).
+
+<Note>
+Provider creation sends **no TrueFoundry key**. Only the admin member-credential `PUT` accepts a key from an organization API key. Creating or editing a provider with a key, testing an unsaved key, or writing `my-credential` with an API key still returns `secure_entry_required`. The OpenWork agent cannot submit a key through this exception.
+</Note>
+
+## 3. Check the desktop
+
+1. Sign into the desktop app and select the same organization.
+2. Let organization providers sync. Select the TrueFoundry model in the composer and send a short message.
+3. Check TrueFoundry's request or usage logs to confirm the expected upstream identity received the request.
+
+The provider appears under **AI Gateway › AI Providers › Legacy Providers** in OpenWork Cloud. Before a member's key is provisioned, it may show **Needs organization credential** in the desktop and its models are unavailable.
+
+## 4. Rotate or remove access
+
+Issue the replacement key in TrueFoundry, `PUT` it for the same membership, and let the desktop sync before revoking the old key. To cut off access immediately, revoke or block the key **in TrueFoundry**. You can also mark the OpenWork binding blocked with:
+
+```text
+POST /v1/llm-providers/{providerId}/member-credentials/{membershipId}/block
+```
+
+Blocking in OpenWork prevents future credential resolution, but it does not revoke a key already delivered to a desktop. Upstream revocation is essential for offboarding.
+
+## Boundaries
+
+- TrueFoundry enforces the key's access and attributes usage. This path does not add OpenWork AI Gateway usage accounting, or automatically provision TrueFoundry accounts or tokens.
+- The model list is configured per OpenWork provider, not discovered separately for each member. A displayed model can still be rejected by TrueFoundry if that key cannot use it. Use separate providers or model lists when you need different picker options for different audiences.
+- Den encrypts stored keys. The write response, binding list and audit log do not expose them. The signed-in member's connect endpoint intentionally delivers their own key to the desktop; it is not a promise of hiding keys from end users or their local agents.
+- This tutorial covers desktop inference. Do not assume it enables Workbot or other AI Gateway-only surfaces.
+
+For a shared-key setup instead, use [Adding a custom LLM provider](/cloud/share-with-your-team/custom-llm-provider).
