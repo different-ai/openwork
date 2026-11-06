@@ -185,12 +185,27 @@ type GatewayModelRow = typeof GatewayProviderModelTable.$inferSelect
 const modelRowCurrent = (row: GatewayModelRow, model: GatewayModelInput) =>
   row.name === model.name && isDeepStrictEqual(row.model_config, JSON.parse(JSON.stringify(model.config)))
 
+/** model_id uses MySQL's case-insensitive default collation; match rows the same way. */
+export const modelIdKey = (id: string) => id.toLowerCase()
+
+/** Drops later models whose ID collides case-insensitively with an earlier one. */
+function uniqueGatewayModels(models: GatewayModelInput[]) {
+  const seen = new Set<string>()
+  return models.filter((model) => {
+    const key = modelIdKey(model.id)
+    if (seen.has(key)) return false
+    seen.add(key)
+    return true
+  })
+}
+
 /** Whether writeGatewayModels would change anything for these stored rows. */
 export function gatewayModelsChanged(existing: GatewayModelRow[], models: GatewayModelInput[]) {
-  if (existing.some((row) => !models.some((model) => model.id === row.model_id))) return true
-  return models.some((model) => {
-    const row = existing.find((row) => row.model_id === model.id)
-    return !row || !modelRowCurrent(row, model)
+  const unique = uniqueGatewayModels(models)
+  if (existing.some((row) => !unique.some((model) => modelIdKey(model.id) === modelIdKey(row.model_id)))) return true
+  return unique.some((model) => {
+    const row = existing.find((row) => modelIdKey(row.model_id) === modelIdKey(model.id))
+    return !row || row.model_id !== model.id || !modelRowCurrent(row, model)
   })
 }
 
@@ -202,20 +217,25 @@ export function gatewayModelsChanged(existing: GatewayModelRow[], models: Gatewa
  */
 export async function writeGatewayModels(tx: GatewayTx, provider: GatewayProvider, models: GatewayModelInput[]) {
   const existing = await tx.select().from(GatewayProviderModelTable).where(eq(GatewayProviderModelTable.gateway_provider_id, provider.id))
-  const desiredModelIds = new Set(models.map((model) => model.id))
-  const existingByModelId = new Map(existing.map((row) => [row.model_id, row]))
-  const removed = existing.filter((row) => !desiredModelIds.has(row.model_id)).map((row) => row.id)
+  const unique = uniqueGatewayModels(models)
+  if (unique.length !== models.length) {
+    console.warn("gateway_models_case_duplicates_skipped", { gatewayProviderId: provider.id, skipped: models.filter((model) => !unique.includes(model)).map((model) => model.id) })
+  }
+  const desiredModelIds = new Set(unique.map((model) => modelIdKey(model.id)))
+  const existingByModelId = new Map(existing.map((row) => [modelIdKey(row.model_id), row]))
+  const removed = existing.filter((row) => !desiredModelIds.has(modelIdKey(row.model_id))).map((row) => row.id)
   let changed = removed.length > 0
   if (removed.length) {
     // Caller holds the provider fence: links and rows disappear in one transaction.
     await tx.delete(GatewayModelGroupModelTable).where(inArray(GatewayModelGroupModelTable.gateway_provider_model_id, removed))
     await tx.delete(GatewayProviderModelTable).where(and(eq(GatewayProviderModelTable.gateway_provider_id, provider.id), inArray(GatewayProviderModelTable.id, removed)))
   }
-  for (const model of models) {
-    const row = existingByModelId.get(model.id)
-    if (row && modelRowCurrent(row, model)) continue
+  for (const model of unique) {
+    const row = existingByModelId.get(modelIdKey(model.id))
+    if (row && row.model_id === model.id && modelRowCurrent(row, model)) continue
     changed = true
-    if (row) await tx.update(GatewayProviderModelTable).set({ name: model.name, model_config: model.config }).where(eq(GatewayProviderModelTable.id, row.id))
+    // A case-only rename updates the row in place: the unique index would reject a second insert.
+    if (row) await tx.update(GatewayProviderModelTable).set({ model_id: model.id, name: model.name, model_config: model.config }).where(eq(GatewayProviderModelTable.id, row.id))
     else await tx.insert(GatewayProviderModelTable).values({ id: createDenTypeId("inferenceProviderModel"), gateway_provider_id: provider.id, model_id: model.id, name: model.name, model_config: model.config })
   }
   return changed
@@ -236,7 +256,7 @@ export async function enableGatewayGroupModels(tx: GatewayTx, provider: GatewayP
   const added: string[] = []
   let changed = false
   for (const model of selected) {
-    const row = existing.find((candidate) => candidate.model_id === model.id)
+    const row = existing.find((candidate) => modelIdKey(candidate.model_id) === modelIdKey(model.id))
     const rowId = row?.id ?? createDenTypeId("inferenceProviderModel")
     if (!row) {
       await tx.insert(GatewayProviderModelTable).values({ id: rowId, gateway_provider_id: provider.id, model_id: model.id, name: model.name, model_config: model.config })
