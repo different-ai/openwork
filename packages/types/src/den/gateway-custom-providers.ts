@@ -93,7 +93,7 @@ const listedModelIdsSchema = z.array(z.string().min(1).max(255)).max(GATEWAY_CUS
 
 export const gatewayCustomDiscoveryStateSchema = z.object({
   status: gatewayCustomDiscoveryStatusSchema,
-  lastFetchedAt: z.string().nullable(),
+  lastFetchedAt: z.string().datetime().nullable(),
   /** Only models in this list are flagged "no longer listed" after a re-fetch. Older rows omit it. */
   listedModelIds: listedModelIdsSchema.default([]),
 })
