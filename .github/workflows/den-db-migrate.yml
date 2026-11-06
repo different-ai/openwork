@@ -6,7 +6,7 @@ name: Den DB Migrate
 #   DATABASE_HOST                  PlanetScale host (e.g. aws.connect.psdb.cloud)
 #   DATABASE_USERNAME              PlanetScale branch password username
 #   DATABASE_PASSWORD              PlanetScale branch password
-#   DATABASE_NAME                  PlanetScale database name (drizzle-kit migrate connects over the MySQL protocol and needs it)
+#   DATABASE_NAME                  MySQL schema name for drizzle-kit (not the PlanetScale API database slug)
 #   PLANETSCALE_SERVICE_TOKEN_ID   PlanetScale service token id (used to toggle safe migrations)
 #   PLANETSCALE_SERVICE_TOKEN      PlanetScale service token secret
 #
@@ -80,6 +80,8 @@ jobs:
       PLANETSCALE_SERVICE_TOKEN_ID: ${{ secrets.PLANETSCALE_SERVICE_TOKEN_ID }}
       PLANETSCALE_SERVICE_TOKEN: ${{ secrets.PLANETSCALE_SERVICE_TOKEN }}
       PLANETSCALE_ORG: different-ai
+      # The API database slug is independent of the MySQL schema in DATABASE_NAME.
+      PLANETSCALE_DATABASE: openwork-den
       PLANETSCALE_BRANCH: main
 
     steps:
@@ -183,8 +185,8 @@ jobs:
           # Read the resulting state from the toggle's own response instead of a
           # separate `pscale branch show`: `disable` is idempotent, and it saves a
           # call that needs different API permissions and a different output shape.
-          if ! state="$(pscale_retry pscale branch safe-migrations disable "$DATABASE_NAME" "$PLANETSCALE_BRANCH" --org "$PLANETSCALE_ORG" --format json)"; then
-            echo "::error::Could not disable safe migrations for $DATABASE_NAME/$PLANETSCALE_BRANCH."
+          if ! state="$(pscale_retry pscale branch safe-migrations disable "$PLANETSCALE_DATABASE" "$PLANETSCALE_BRANCH" --org "$PLANETSCALE_ORG" --format json)"; then
+            echo "::error::Could not disable safe migrations for $PLANETSCALE_DATABASE/$PLANETSCALE_BRANCH."
             exit 1
           fi
           if ! jq -e '.safe_migrations == false' >/dev/null <<<"$state"; then
@@ -293,7 +295,7 @@ jobs:
             # Same as the disable step: trust the toggle's own JSON response, and
             # always echo it when it does not confirm, so a future API/CLI change
             # shows up in the log instead of being swallowed.
-            if output="$(pscale branch safe-migrations enable "$DATABASE_NAME" "$PLANETSCALE_BRANCH" --org "$PLANETSCALE_ORG" --format json 2>&1)"; then
+            if output="$(pscale branch safe-migrations enable "$PLANETSCALE_DATABASE" "$PLANETSCALE_BRANCH" --org "$PLANETSCALE_ORG" --format json 2>&1)"; then
               if jq -e '.safe_migrations == true' >/dev/null <<<"$output"; then
                 confirmed="true"
                 echo "PlanetScale confirmed safe migrations are enabled."
@@ -315,7 +317,7 @@ jobs:
           done
 
           if [ "$confirmed" != "true" ]; then
-            echo "::error::Safe migrations is NOT re-enabled on $DATABASE_NAME/$PLANETSCALE_BRANCH. Re-enable it manually: pscale branch safe-migrations enable $DATABASE_NAME $PLANETSCALE_BRANCH --org $PLANETSCALE_ORG"
+            echo "::error::Safe migrations is NOT re-enabled on $PLANETSCALE_DATABASE/$PLANETSCALE_BRANCH. Re-enable it manually: pscale branch safe-migrations enable $PLANETSCALE_DATABASE $PLANETSCALE_BRANCH --org $PLANETSCALE_ORG"
             exit 1
           fi
 
