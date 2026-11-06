@@ -141,9 +141,11 @@ For the assigned test user, verify:
 4. Reactivating and reassigning the user restores the same OpenWork identity.
 5. An unrelated OpenWork member remains unchanged throughout the test.
 
-OpenWork retains a disconnected member record for organization history. The
-global user is deleted only after their final active organization membership
-is removed.
+A disconnected member record is organization history, not proof that the SCIM
+resource can be restored. Verify disable and same-ID reactivation separately
+from permanent deletion; deployments without the pending lifecycle corrections
+can remove the resource during deactivation. See the [SCIM lifecycle checklist](/cloud/scim-provisioning#validate-the-complete-lifecycle)
+before expanding assignments.
 
 ## 6. Push Okta groups as OpenWork teams
 

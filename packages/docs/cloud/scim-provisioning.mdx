@@ -1,0 +1,259 @@
+---
+title: "SCIM provisioning"
+description: "Set up, validate, and operate user provisioning and group-to-team synchronization"
+keywords: ["SCIM", "provisioning", "deprovisioning", "reactivation", "groups", "teams", "token rotation", "reconciliation"]
+---
+
+SCIM lets your identity provider create OpenWork members, update their profiles,
+and remove organization access. You can also turn provisioned groups into
+OpenWork teams.
+
+SSO and SCIM do different jobs: **SSO authenticates a sign-in; SCIM manages the
+member lifecycle**. A successful SAML sign-in does not prove provisioning works,
+and a successful SCIM connection test does not prove sign-in or deactivation
+works.
+
+## Before you start
+
+You need:
+
+- An OpenWork organization with the **Enterprise** SCIM entitlement.
+- The organization owner, or someone granted **Manage SCIM provisioning**.
+  Viewing the configuration requires **View SCIM provisioning**.
+- An enabled SSO connection. Finish domain verification and the SSO test before
+  turning it on.
+- An identity provider that can send SCIM requests with a bearer token to your
+  deployment's stable HTTPS endpoint.
+
+Keep an owner with working SSO access available throughout the rollout. Start
+with test users, not the whole directory.
+
+Choose your provider's setup guide:
+
+- [Microsoft Entra ID](/cloud/scim-microsoft-entra)
+- [Okta](/cloud/scim-okta)
+- [Google Workspace limitations](/cloud/scim-google-workspace)
+
+## Create the connector
+
+In OpenWork, select the correct organization and open **Settings → Auth &
+Security → User provisioning (SCIM)**. Older versions show **Settings → SCIM**.
+
+1. Confirm that SSO is enabled. If OpenWork asks you to sign in again, complete
+   that step before changing the connector.
+2. Select **Create connector**.
+3. Copy the **SCIM base URL** and the one-time **SCIM bearer token** into your
+   identity provider's provisioning configuration.
+4. Run the identity provider's connection test, then provision one test user.
+5. In OpenWork **Members**, confirm the expected email and name appear.
+
+Use the displayed base URL unchanged. It normally ends in
+`/api/auth/scim/v2`; in a split-host deployment, its hostname can differ from
+the API hostname. Do not replace it with an SSO sign-in URL or append `/Users`
+in a field that asks for the base URL.
+
+<Warning>
+The bearer token authorizes provisioning for the selected organization. Store it
+in your identity provider's secret field. Never include it in screenshots,
+logs, support tickets, or shared setup notes. OpenWork shows it only immediately
+after creation or rotation.
+</Warning>
+
+**SCIM connected** means a connector exists. It is not confirmation that your
+identity provider has sent or completed a provisioning job.
+
+## Match users safely
+
+Use a stable, unique work email for `userName`, and keep it consistent with the
+email used for SSO. Check the actual mapping when your provider's principal
+name and work email differ. Do not change matching attributes during a rollout
+without checking how the provider will match existing users.
+
+OpenWork can link an existing account only if it already has an **active
+membership in this organization**. Linking preserves the existing user ID and
+does not grant a new organization role.
+
+An email match alone is insufficient. An account with membership only in another
+organization, a removed membership, or a pending invitation cannot be adopted;
+creation returns `409 Conflict`. Complete normal organization onboarding before
+retrying. Brand-new accounts follow the SCIM provisioning flow.
+
+## Supported requests
+
+Use these core operations when qualifying your deployment. Optional SCIM
+extensions and other request shapes are not implied by this list.
+
+| Resource | Operations and request details |
+| --- | --- |
+| Users | Create, read by ID, list, update, disable, reactivate, and delete. |
+| User matching and pages | Single `userName eq "…"` or `externalId eq "…"` filters; one-based `startIndex` and `count`, including an empty page after the last result. Other filter expressions are rejected rather than silently ignored. |
+| Profile and lifecycle updates | Test `displayName`, `name.formatted`, and boolean `active`. Both `Replace` and `replace` operation values are accepted. A name-only update must not reactivate a disabled user. |
+| Groups | Create, read, list, update membership, and delete. Request `excludedAttributes=members` to omit membership from a direct or list response without changing the stored group. |
+
+JSON resource responses use `application/scim+json`. Attribute selection is
+limited to top-level attributes; do not infer support for every nested projection.
+
+<Note>
+The corrections to pagination, matching, profile updates, response format,
+attribute exclusion, and disable/restore behavior are pending release. Confirm
+them on the deployed version before relying on these requests in your provider.
+A local passing test is not evidence that a deployment has been updated.
+</Note>
+
+## Synchronize groups as teams
+
+User provisioning and group-to-team synchronization are separate settings.
+Provision and verify users before testing group membership.
+
+| OpenWork setting | Effect |
+| --- | --- |
+| **Create teams from SCIM groups** off | OpenWork stores provisioned group information without projecting it into teams. |
+| **Create teams from SCIM groups** on | Provisioned groups create matching teams, and the identity provider manages their names and membership. |
+
+Select **Enable team sync**, then enable group provisioning or group push in
+your identity provider. In **Members → Teams**, look for **Managed by SCIM** and
+verify the members, not just the team name. Manually created teams remain
+separate; an existing team with the same name is not adopted by name alone.
+
+Manage synchronized group names and membership in the identity provider, not in
+OpenWork. A group named `Admins`, or a SAML group claim, does not grant Admin
+access by itself. An authorized OpenWork administrator must explicitly approve
+team access; see [Team Admin access](/cloud/members-and-rbac#team-admin-access).
+
+<Warning>
+Disabling team sync is not a user-deprovisioning action. OpenWork retains the
+teams and their current memberships as manual teams, but clears their Admin
+grants and stops their team permission sets from applying. Review retained
+access before using those teams manually. Re-enabling sync replaces retained
+membership with the SCIM group's membership and requires Admin reapproval.
+</Warning>
+
+## Validate the complete lifecycle
+
+<Warning>
+Disable-and-restore lifecycle corrections are pending release. The checklist
+below is a rollout requirement, not a claim that those corrections are already
+deployed. Do not rely on same-ID reactivation until your deployed version passes
+the disable-and-restore checks.
+</Warning>
+
+Before expanding scope, record the results below for a test user and group.
+Inspect provider provisioning logs and OpenWork together; a queued provider
+change has not yet changed access in OpenWork.
+
+| Test | What to verify |
+| --- | --- |
+| Create and match again | One member is created; a later match finds the same SCIM user ID rather than creating a duplicate. |
+| Update the profile | The mapped name changes in OpenWork **Members**, and the SCIM resource has the expected value. |
+| Add and remove a group member | The **Managed by SCIM** team gains and loses that member after successful provisioning. Repeat an add to check it does not duplicate membership. |
+| Disable with `active=false` | Active organization access is removed. Read the same SCIM user ID and confirm it remains available with `active=false`. |
+| Reactivate with `active=true` | The same SCIM user ID becomes active again, and organization access is restored. Verify team membership and role grants separately. |
+| Permanently delete | Test separately from suspension. Confirm the identity provider's delete request removes the intended organization access. Do not assume a deleted SCIM resource can be restored by its old ID. |
+| Check another user or organization | Unrelated membership and access remain unchanged. |
+
+<Note>
+Run the disable-and-reactivate test on the version you deploy, including a user
+whose only organization is the test organization. Versions without these
+corrections can remove the SCIM resource during deactivation, preventing
+restoration by its old ID. Do not
+treat a fresh user creation as proof of same-ID reactivation.
+</Note>
+
+A disconnected member record is organization history, not proof that a SCIM
+resource is still queryable or that the member can sign in. Deactivation removes
+access; it is not a personal-data erasure request. Reactivation starts with the
+ordinary direct **Member** role, not a restored direct **Admin** grant. Review
+team-derived access separately.
+
+Removing organization access revokes the user's existing sign-in sessions and
+session-bound credentials. This can also sign them out of another organization
+without removing that organization's membership; they may need to sign in
+again to continue there.
+
+A successful provisioning response is not a complete sign-in test. Check SAML
+sign-in and relevant OpenWork clients before relying on deprovisioning for your
+access policy.
+
+## Monitor provisioning
+
+Use both sides of the connection:
+
+- **Identity provider logs** show scope evaluation, matching, outbound requests,
+  retries, and provider-side failures.
+- **OpenWork's SCIM tab** shows the last successful sync and unresolved local
+  sync issues. **SCIM needs attention** includes the most recent issue and
+  retry information when available.
+- **Members** and **Teams** show the resulting organization state.
+
+OpenWork records failed lifecycle work for retry and review. This is separate
+from the identity provider's provisioning schedule and retry policy. A healthy
+OpenWork status does not prove every assigned identity has arrived. There is no
+fixed end-to-end provisioning delay to infer from the status alone.
+
+### When to run reconciliation
+
+Select **Run reconciliation** on the SCIM tab, or **Reconcile now** in an issue
+notice, to check OpenWork's local SCIM-managed identities for inconsistent
+organization membership or missing provisioning state.
+
+Reconciliation does **not** fetch your directory, start an Entra provisioning
+cycle, push an Okta assignment, or repair provider-side mappings. If a user has
+never reached OpenWork, investigate the provider's scope and provisioning logs
+first. When there is no local drift, reconciliation may finish without a visible
+member change.
+
+## Rotate or remove the connector
+
+### Rotate a token
+
+1. Arrange a maintenance window with the person managing the identity provider.
+2. Select **Rotate token** in OpenWork.
+3. Immediately replace the secret in the identity provider and save it.
+4. Retest the connection and one narrowly scoped provisioning operation.
+
+Rotation invalidates the old token immediately; there is no overlap period.
+Requests using it fail until the provider uses the new token. If the new token
+is lost, rotate again rather than trying to retrieve it later.
+
+### Delete a connector
+
+Stop provisioning in the identity provider first, then select **Delete
+connector** in OpenWork when you intend to disconnect it. The current bearer
+token stops working immediately.
+
+Deleting the connector is not a bulk offboarding procedure. It stops SCIM
+management and can leave member and team records behind. Review member access,
+retained teams, and any manual role grants separately. Use the identity
+provider's tested lifecycle flow before disconnecting when your goal is to
+remove users' access.
+
+## Limits and rollout boundaries
+
+- Verify the attributes and request shapes your provider actually sends. SCIM
+  support is not a promise that every optional schema extension, filter,
+  attribute projection, or bulk operation is supported.
+- Use direct user memberships for the first group test. Do not assume nested or
+  dynamic groups will be expanded by OpenWork; evaluate provider-side scope and
+  membership behavior separately.
+- On-demand provisioning and background provisioning can behave differently.
+  Test a full background cycle as well as individual on-demand operations.
+- A local protocol simulation is not a live identity-provider integration test
+  or a compliance certification. Microsoft Entra tenant provisioning has not
+  been verified by the local simulation; validate your tenant before rollout.
+
+## Troubleshooting
+
+| Symptom | Check first | Next step |
+| --- | --- | --- |
+| Connector creation is unavailable | Plan, **Manage SCIM provisioning**, and enabled SSO | Complete SSO setup or ask an authorized administrator to check access and the Enterprise entitlement. |
+| Connection test returns `401` | Token freshness and copied whitespace | Update the provider with the current token. Rotate only if needed; doing so revokes the old token. |
+| Create returns `409` | Existing account and active membership in the selected organization | Resolve membership or a prior successful create before retrying. Do not try to bypass matching by changing the email. |
+| Profile stays unchanged | Attribute mapping, response status, and deployed version | Inspect the exact failing attribute and read the resource back. A successful create does not prove every profile field supports updates. |
+| Group exists but no team appears | **Create teams from SCIM groups** | Enable team sync if teams are intended, then verify provisioned users and group membership. |
+| Removal has not taken effect | Provider job status and OpenWork unresolved issues | Confirm the outbound request completed successfully, then recheck current access. Do not assume a queued removal has revoked access. |
+| Reactivation returns `404` | Whether the original SCIM resource still exists | Stop expanding scope and review the deployment version and lifecycle behavior. Do not delete and recreate users merely to hide a failed restore test. |
+| Reconciliation changes nothing | Whether the user ever reached OpenWork | Inspect provider provisioning logs; reconciliation is not a directory import. |
+
+When asking for help, include the time, operation, HTTP status, affected
+attribute, and sanitized error text. Remove bearer tokens, authorization headers,
+SAML assertions, and personal directory data.
