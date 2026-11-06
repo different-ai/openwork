@@ -1,6 +1,7 @@
 import assert from "node:assert/strict"
 import { test } from "node:test"
-import { normalizeGatewayCustomBaseUrl } from "@openwork/types/den/gateway-custom-providers"
+import { z } from "zod"
+import { gatewayCustomDiscoveryStateSchema, gatewayCustomProviderStatusSchema, normalizeGatewayCustomBaseUrl } from "@openwork/types/den/gateway-custom-providers"
 import {
   customModelFromModelsDev,
   discoverCustomProviderModels,
@@ -35,6 +36,22 @@ const detailedEntry = {
   top_provider: { context_length: 128000, max_completion_tokens: 4096 },
   supported_parameters: ["tools", "temperature"],
 }
+
+test("discovery timestamps accept ISO date-times or null, not arbitrary strings", () => {
+  for (const lastFetchedAt of [null, "2026-11-05T12:34:56.789Z"]) {
+    assert.equal(gatewayCustomDiscoveryStateSchema.safeParse({ status: "basic", lastFetchedAt }).success, true)
+  }
+  for (const lastFetchedAt of ["not-a-timestamp", "2026-11-05", ""]) {
+    assert.equal(gatewayCustomDiscoveryStateSchema.safeParse({ status: "basic", lastFetchedAt }).success, false)
+  }
+})
+
+test("the provider status contract documents lastFetchedAt as a nullable date-time", () => {
+  const schema = z.toJSONSchema(gatewayCustomProviderStatusSchema)
+  const variants = schema.properties?.discovery?.properties?.lastFetchedAt?.anyOf
+  assert.ok(variants?.some((variant) => variant.type === "string" && variant.format === "date-time"))
+  assert.ok(variants.some((variant) => variant.type === "null"))
+})
 
 test("base URLs lose a trailing /chat/completions, /completions or slash", () => {
   assert.equal(normalizeGatewayCustomBaseUrl(" https://api.example.com/v1/chat/completions/ "), "https://api.example.com/v1")
