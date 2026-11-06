@@ -7,7 +7,8 @@ This zero-dependency Node.js example reconciles OpenWork Cloud per-member LLM cr
 Set these environment variables:
 
 - `OPENWORK_DEN_API_URL`: Den API base URL
-- `OPENWORK_DEN_TOKEN`: organization owner or admin bearer token
+- `OPENWORK_DEN_API_KEY`: an organization API key whose owner has the Manage people's provider keys permission (preferred for unattended runs; sent as `x-api-key`)
+- `OPENWORK_DEN_TOKEN`: alternatively, a signed-in owner or admin bearer token
 - `OPENWORK_ORG_ID`: organization ID sent as `x-openwork-org-id`
 - `OPENWORK_LLM_PROVIDER_ID`: the per-member LLM provider ID
 - `LITELLM_BASE_URL`: LiteLLM base URL, with or without `/v1`

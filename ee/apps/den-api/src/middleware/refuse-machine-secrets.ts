@@ -16,15 +16,25 @@ export function bodyCarriesSecret(body: unknown, fields: readonly string[]): boo
   })
 }
 
+export type RefuseMachineSecretsOptions = {
+  /**
+   * Let an organization API key send the secret. Only for routes whose whole
+   * purpose is a provisioning script writing keys it minted upstream (the
+   * admin per-member credential write). The agent is still always refused.
+   */
+  allowApiKeys?: boolean
+}
+
 /**
- * Entering a secret is human-only. The agent (internal MCP principal) and
- * API keys are always refused. Reads a clone of the body, so validators
- * downstream still see it.
+ * Entering a secret is human-only. The agent (internal MCP principal) is always
+ * refused, and so are API keys unless the route opts in with `allowApiKeys`.
+ * Reads a clone of the body, so validators downstream still see it.
  */
-export function refuseMachineSecrets(fields: readonly string[]): MiddlewareHandler<{ Variables: Partial<AuthContextVariables & OrganizationContextVariables> }> {
+export function refuseMachineSecrets(fields: readonly string[], options: RefuseMachineSecretsOptions = {}): MiddlewareHandler<{ Variables: Partial<AuthContextVariables & OrganizationContextVariables> }> {
   return async (c, next) => {
     const agent = c.get("session")?.id === "mcp_internal"
-    if (!agent && !c.get("apiKey")) return next()
+    const apiKey = Boolean(c.get("apiKey")) && options.allowApiKeys !== true
+    if (!agent && !apiKey) return next()
     const body: unknown = await c.req.raw.clone().json().catch(() => null)
     if (!bodyCarriesSecret(body, fields)) return next()
     return c.json(SECURE_ENTRY_REQUIRED, 400)

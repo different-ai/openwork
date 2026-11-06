@@ -1715,7 +1715,7 @@ export function registerOrgLlmProviderRoutes<T extends { Variables: OrgRouteVari
     describeRoute({
       tags: ["LLM Providers"],
       summary: "Set one member's LLM provider credential",
-      description: "Requires the Manage people's provider keys permission. Stores write-only credential material and optional external provisioner identifiers.",
+      description: "Requires the Manage people's provider keys permission. Stores write-only credential material and optional external provisioner identifiers. This is the provisioning route: an organization API key may call it (a script that mints each member's key upstream, for example in LiteLLM or TrueFoundry, and pushes it here). The agent may not.",
       responses: {
         200: jsonResponse("Member credential stored.", memberCredentialSummarySchema),
         400: jsonResponse("The provider is not per-member or the credential is invalid.", memberCredentialBadRequestSchema),
@@ -1726,7 +1726,8 @@ export function registerOrgLlmProviderRoutes<T extends { Variables: OrgRouteVari
       },
     }),
     orgPermissionRoute("llm_provider_credentials.manage"),
-    refuseMachineSecrets(["apiKey", "apiKeys"]),
+    // Provisioning scripts authenticate with an API key; the agent never sends keys.
+    refuseMachineSecrets(["apiKey", "apiKeys"], { allowApiKeys: true }),
     paramValidator(orgLlmProviderMemberCredentialParamsSchema),
     jsonValidator(adminMemberCredentialWriteSchema),
     async (c) => {
