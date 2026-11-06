@@ -25,7 +25,8 @@ function serializePermissionSet(state: PermissionSetAuditState): AuditSnapshot {
   return {
     id: state.set.id,
     name: auditText(state.set.name),
-    kind: state.set.defaultKey === null ? "team" : `${state.set.defaultKey}_default`,
+    // Same kinds as the permissions API: member_default, admin_default, super_admin_default, team.
+    kind: state.set.defaultKey === null ? "team" : `${state.set.defaultKey.replace("-", "_")}_default`,
     teamId: state.teamId,
     ...(state.teamIds ? { teamIds: [...state.teamIds].sort() } : {}),
     allowed: keyList(state.allowedKeys),

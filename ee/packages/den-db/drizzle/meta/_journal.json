@@ -1282,6 +1282,13 @@
       "when": 1793923522173,
       "tag": "0183_multiple_sso_connections",
       "breakpoints": true
+    },
+    {
+      "idx": 184,
+      "version": "5",
+      "when": 1793998552033,
+      "tag": "0184_super_admin_permission_set",
+      "breakpoints": true
     }
   ]
 }

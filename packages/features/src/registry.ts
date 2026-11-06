@@ -290,6 +290,17 @@ export const FEATURES = defineFeatures({
     deployments: everywhere,
     default: false,
   },
+  superAdminPermissionSet: {
+    label: "Super admin permission set",
+    description: "Super admins get their permissions from an editable Super admin role, seeded with every permission, beside Member and Admin. Off: super admins hold every permission and the role is hidden.",
+    category: "administration",
+    added: "2026-11-06",
+    since: "2026-11",
+    author: "benjaminshafii",
+    docs: "docs/features/super-admin-permission-set/README.md",
+    deployments: everywhere,
+    default: false,
+  },
   nativeDictation: {
     label: "Native dictation",
     description: "Dictate editable prompts in OpenWork and Workbot using native desktop dictation or live browser speech recognition.",

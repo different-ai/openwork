@@ -106,9 +106,10 @@ export type DenOrgAccessFlags = {
   canonicalRole: DenCanonicalRole;
   isOwner: boolean;
   /**
-   * Super-admin role (never the owner): every permission the owner has, so
-   * they can also make, change and remove super-admins. Only deleting the
-   * organization and transferring ownership stay with the owner.
+   * Super-admin role (never the owner): can make, change and remove
+   * super-admins, and gets the Super admin permission set, which starts with
+   * every permission the owner has. Only deleting the organization and
+   * transferring ownership stay with the owner.
    */
   isSuperAdmin: boolean;
   isMember: boolean;
@@ -631,7 +632,8 @@ export function canRefreshInvitationRole(role: string, access: Pick<DenOrgAccess
  * Access flags for a member. Pass `permissions` (`currentMember.permissions`
  * from GET /v1/org) for the signed-in member. Without it, as for other members
  * or an older server, flags follow the default permissions of the role, which
- * is what the API applies while the Permissions feature is off.
+ * is what the API applies while the Permissions feature is off. Only the owner
+ * always holds every key; a super-admin holds what their Super admin set allows.
  */
 export function getOrgAccessFlags(roleValue: string, isOwner: boolean, permissions?: readonly PermissionKey[] | null): DenOrgAccessFlags {
   const canonicalRole = getHighestCanonicalRole(roleValue, isOwner);
@@ -639,9 +641,13 @@ export function getOrgAccessFlags(roleValue: string, isOwner: boolean, permissio
   const isSuperAdmin = !resolvedIsOwner && isSuperAdminRole(roleValue);
   const isAdmin = resolvedIsOwner || canonicalRole === "admin";
   const held = new Set<PermissionKey>(
-    resolvedIsOwner || isSuperAdmin
+    resolvedIsOwner
       ? PERMISSION_KEYS
-      : permissions ?? [...permissionDefaultKeys("member"), ...(isAdmin ? permissionDefaultKeys("admin") : [])],
+      : permissions ?? [
+        ...permissionDefaultKeys("member"),
+        ...(isAdmin ? permissionDefaultKeys("admin") : []),
+        ...(isSuperAdmin ? permissionDefaultKeys("super-admin") : []),
+      ],
   );
   const can = (key: PermissionKey) => held.has(key);
 

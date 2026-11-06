@@ -21,7 +21,6 @@ import {
   decideRequiredPermission,
   decideRoleAssignment,
   firstMissingPermission,
-  hasOwnerAuthority,
   roleAssignmentNeedsAdminDefaultKeys,
   type RoleAssignmentDenial,
   type RoleAssignmentTarget,
@@ -140,7 +139,7 @@ export async function teamGrantDecisionInTransaction(input: {
   adminDefaultsOnly?: boolean
 }): Promise<TeamGrantDecision> {
   const { actor } = input
-  if (hasOwnerAuthority(actor)) return { ok: true }
+  if (actor.isOwner) return { ok: true }
   const teamKeys = input.teamId && !input.adminDefaultsOnly
     ? await teamSetPermissionKeys(input.tx, input.organizationId, input.teamId, { lock: "share" })
     : new Set<PermissionKey>()

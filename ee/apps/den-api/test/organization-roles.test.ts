@@ -124,6 +124,27 @@ test("a super-admin holds owner authority except over their own role", () => {
   assert.equal(decideAdminTeamChange({ actor: superAdmin, makesAdminTeam: true, deletesAdminTeam: true }), null)
 })
 
+test("a super-admin whose Super admin set was trimmed can't grant what they no longer hold", () => {
+  // Keys come from the Super admin permission set, not the role: build a caller whose set lacks billing.manage.
+  const held = new Set<PermissionKey>(ADMIN_DEFAULTS)
+  const trimmed: RoleAssignmentCaller = { isOwner: false, isSuperAdmin: true, isAdmin: true, has: (key) => held.has(key) }
+  assert.equal(adminGrantDenial(trimmed, [...ADMIN_DEFAULTS, "billing.manage"]), "billing.manage")
+  assert.equal(firstMissingPermission(trimmed, ["sso.manage"]), "sso.manage")
+  assert.equal(roleAssignmentNeedsAdminDefaultKeys({ caller: trimmed, callerMemberId: "member_caller", target: memberTarget, nextIsAdmin: true, nextIsSuperAdmin: false }), true)
+  assert.equal(decideRoleAssignment({
+    caller: trimmed,
+    callerMemberId: "member_caller",
+    target: memberTarget,
+    nextIsAdmin: true,
+    nextIsSuperAdmin: false,
+    adminDefaultKeys: [...ADMIN_DEFAULTS, "billing.manage"],
+  })?.reason, "admin_permissions_missing")
+  // Role-hierarchy authority over super-admins is unchanged.
+  assert.equal(decide({ caller: trimmed, target: superAdminTarget, nextIsAdmin: false }), null)
+  // The owner never needs the keys.
+  assert.equal(roleAssignmentNeedsAdminDefaultKeys({ caller: caller({ isOwner: true }), callerMemberId: "member_caller", target: memberTarget, nextIsAdmin: true, nextIsSuperAdmin: false }), false)
+})
+
 test("only the owner or a super-admin can remove a super-admin", () => {
   const removal = { targetIsDirectSuperAdmin: true, targetIsDirectAdmin: true, targetIsAdminViaTeam: false, targetIsPendingInvitation: false }
   const denial = decideMemberRemoval({ actor: caller({ isAdmin: true, keys: ["members.delete"] }), ...removal })

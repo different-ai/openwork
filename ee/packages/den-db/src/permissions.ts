@@ -59,6 +59,7 @@ type MemberId = typeof MemberTable.$inferSelect.id
 export const DEFAULT_PERMISSION_SET_NAMES: Readonly<Record<PermissionDefaultSetKey, string>> = {
   member: "Member permissions",
   admin: "Admin permissions",
+  "super-admin": "Super admin permissions",
 }
 
 const ID_CHUNK_SIZE = 500
@@ -153,7 +154,14 @@ export async function latestPermissionRowCreatedAt(tx: Tx, permissionSetId: Perm
   return row?.createdAt ?? null
 }
 
-/** The organization's Member and Admin default sets, or null where missing. */
+/** Whether every default set (Member, Admin and Super admin) exists. */
+export function hasEveryDefaultPermissionSet(
+  sets: Record<PermissionDefaultSetKey, PermissionSetSummary | null>,
+): sets is DefaultPermissionSets {
+  return PERMISSION_DEFAULT_SET_KEYS.every((defaultKey) => sets[defaultKey] !== null)
+}
+
+/** The organization's Member, Admin and Super admin default sets, or null where missing. */
 export async function getDefaultPermissionSets(
   database: PermissionDatabase,
   organizationId: OrganizationId,
@@ -163,7 +171,7 @@ export async function getDefaultPermissionSets(
     .from(PermissionSetTable)
     .where(and(eq(PermissionSetTable.organizationId, organizationId), isNotNull(PermissionSetTable.defaultKey)))
   const rows = options.lock ? await query.for(options.lock) : await query
-  const result: Record<PermissionDefaultSetKey, PermissionSetSummary | null> = { member: null, admin: null }
+  const result: Record<PermissionDefaultSetKey, PermissionSetSummary | null> = { member: null, admin: null, "super-admin": null }
   for (const row of rows) {
     if (row.defaultKey) result[row.defaultKey] = row
   }
@@ -171,10 +179,11 @@ export async function getDefaultPermissionSets(
 }
 
 /**
- * Idempotently creates the Member and Admin default sets for an organization,
- * each seeded (`source = 'seed'`) with an allow row for every catalog key whose
- * `defaultOn` includes it. Existing sets are returned unchanged and never
- * re-seeded. Safe under concurrent calls: the unique index on
+ * Idempotently creates the Member, Admin and Super admin default sets for an
+ * organization, each seeded (`source = 'seed'`) with an allow row for every
+ * catalog key that starts on in it (`isPermissionDefaultOn`: every key for
+ * Super admin). Existing sets are returned unchanged and never re-seeded, so
+ * organizations created before Super admin get only that set added. Safe under concurrent calls: the unique index on
  * (organization_id, default_key) makes a losing caller re-read the winner's sets.
  * Prefer the root database; inside a transaction the sets are created in a savepoint.
  */
@@ -183,7 +192,7 @@ export async function ensureDefaultPermissionSets(
   organizationId: OrganizationId,
 ): Promise<DefaultPermissionSets> {
   const existing = await getDefaultPermissionSets(database, organizationId)
-  if (existing.member && existing.admin) return { member: existing.member, admin: existing.admin }
+  if (hasEveryDefaultPermissionSet(existing)) return existing
 
   try {
     await inTransaction(database, async (tx) => {
@@ -218,8 +227,8 @@ export async function ensureDefaultPermissionSets(
   // In a transaction (a savepoint when `database` already is one), so it reads the primary:
   // on the root database a replica can lag the sets just inserted.
   const created = await inTransaction(database, (tx) => getDefaultPermissionSets(tx, organizationId, { lock: "share" }))
-  if (!created.member || !created.admin) throw new DefaultPermissionSetsMissingError(organizationId)
-  return { member: created.member, admin: created.admin }
+  if (!hasEveryDefaultPermissionSet(created)) throw new DefaultPermissionSetsMissingError(organizationId)
+  return created
 }
 
 /**
@@ -447,7 +456,7 @@ function isDefaultSetRow(row: { id: PermissionSetId; organizationId: Organizatio
 
 /**
  * Adds rows for catalog keys that are new to each default set (overview
- * section 8), for every organization's Member and Admin sets, or one
+ * section 8), for every organization's Member, Admin and Super admin sets, or one
  * organization's when `organizationId` is given. Covers archived sets and
  * organizations whose feature is off. Team sets are never reconciled.
  * Idempotent: a set is only written when it has a never-seen default key, and
