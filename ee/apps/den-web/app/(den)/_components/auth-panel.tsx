@@ -446,11 +446,21 @@ export function AuthPanel({
   const ssoContinueLabel = loginOption?.organizationName ? `Continue with ${loginOption.organizationName} SSO` : "Continue with SSO";
   const canRememberSignIn = emailFirstFlow && !prefilledEmail?.trim() && !lockEmail && !hideSocialAuth && !emailFirstInvite;
 
+  // Read the remembered method once. setAuthMode is a new function on every
+  // provider render, so without this guard any later render (a session check,
+  // typing the email) re-ran this effect, closed the email form the person had
+  // just opened from "Continue with email", and cleared sign-in errors.
+  const rememberedMethodReadRef = useRef(false);
   useEffect(() => {
     if (!canRememberSignIn) {
+      rememberedMethodReadRef.current = false;
       setRememberedMethod(null);
       return;
     }
+    if (rememberedMethodReadRef.current) {
+      return;
+    }
+    rememberedMethodReadRef.current = true;
     const method = readLastSignInMethod(document.cookie);
     if (!method) {
       setRememberedMethod(null);
