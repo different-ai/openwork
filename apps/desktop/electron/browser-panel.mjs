@@ -32,10 +32,6 @@ const BROWSER_DEFAULT_URL = "about:blank";
 // URL a user-initiated new tab (the "+" button / opening the browser panel)
 // lands on. The agent's programmatic path keeps BROWSER_DEFAULT_URL.
 const BROWSER_NEW_TAB_URL = "https://www.google.com";
-// Bound native page allocation across conversations. Refuse new work rather
-// than evicting a live document (unsaved input and CDP handles cannot be restored
-// from a URL). This is a tab bound, not a Chromium process or memory limit.
-const MAX_BROWSER_TABS = 12;
 const MAX_CLOSED_BROWSER_TABS = 20;
 const BROWSER_TARGET_RESOLVE_TIMEOUT_MS = 2500;
 const BROWSER_SECURITY_PREFERENCES = Object.freeze({
@@ -988,12 +984,8 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink, che
   });
 
   function createBrowserTab(url = "about:blank", { select = true, initializeBlank = true, deferBackground = false, ownerSessionId = null, restoreTabId = null, automationProtected = false, forPerson = false, contentsOptions = /** @type {import("electron").WebContentsViewConstructorOptions} */ ({}) } = {}) {
-    // Check synchronously before creating a WebContentsView, including pending
-    // opens, popups, transcript links and the tab-strip button.
-    if (browserTabs.size >= MAX_BROWSER_TABS) {
-      throw new BrowserTaskError("tab_limit", `OpenWork has ${MAX_BROWSER_TABS} browser tabs open. Close an unused browser tab in any conversation, then try again.`);
-    }
-    if (!restoreTabId && registry.size() >= 100) throw new Error("OpenWork has 100 saved browser tabs. Close an unused tab, then try again.");
+    // Keep existing documents intact when opening a tab: never evict a page
+    // (and its unsaved input or automation handles) to make room for another.
     installBrowserSessionHooks();
     ensureWebMcpFramePolicy();
     const tabId = restoreTabId ?? createBrowserTabId();
@@ -2207,7 +2199,6 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink, che
     ipcMain.handle("openwork:browser:state", () => ({
       ...browserStatePayload(),
       nativeViews: browserNativeViews(),
-      tabLimit: MAX_BROWSER_TABS,
       backgroundWindowCount: Number(Boolean(backgroundWindow && !backgroundWindow.isDestroyed())),
       backgroundWindowVisible: Boolean(backgroundWindow && !backgroundWindow.isDestroyed() && backgroundWindow.isVisible()),
       popOutAboveOthers: Boolean(popOutWindow && !popOutWindow.isDestroyed() && popOutWindow.isAlwaysOnTop()),
