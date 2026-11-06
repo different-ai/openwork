@@ -194,6 +194,22 @@ describe("rendered chat Markdown", () => {
     expect(html).not.toContain("<video");
   });
 
+  test("shows a local image as its file reference until the chat loads it", () => {
+    const html = renderMarkdownHtml("![Dolores Park postcard](<~/Downloads/OpenWork/ses_1/Dolores Park postcard.png>)", "chat");
+    expect(html).toContain('data-openwork-image-path="~/Downloads/OpenWork/ses_1/Dolores Park postcard.png"');
+    expect(html).toContain("data-openwork-image-fallback");
+    expect(html).toContain('data-openwork-link-href="~/Downloads/OpenWork/ses_1/Dolores Park postcard.png"');
+    // Never an address the window cannot load.
+    expect(html).not.toContain('src="#"');
+    expect(html).not.toContain("<img src=");
+  });
+
+  test("keeps web images as plain images", () => {
+    const html = renderMarkdownHtml("![chart](https://example.com/chart.png)", "chat");
+    expect(html).toContain('src="https://example.com/chart.png"');
+    expect(html).not.toContain("data-openwork-image-path");
+  });
+
   test("does not link destinations that cannot open", () => {
     const html = renderMarkdownHtml("[top](#top) and [share](//server/share/a.pdf)", "chat");
     expect(html).not.toContain("data-openwork-link-href");

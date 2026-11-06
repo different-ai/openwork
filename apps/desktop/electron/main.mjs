@@ -60,7 +60,7 @@ import {
 } from "./connect-link-branding.mjs";
 import { resolveConnectLinkPublicKeys } from "./connect-link-keys.mjs";
 import { openExternalUrl } from "./open-external.mjs";
-import { chatOutputFolder, listChatOutputFiles, openChatWorkspaceFile, opensFromChatOutput, resolveChatFilePath, resolveWorkspaceFileLaunch } from "./workspace-file-access.mjs";
+import { chatOutputFolder, listChatOutputFiles, openChatWorkspaceFile, opensFromChatOutput, readChatOutputImage, resolveChatFilePath, resolveWorkspaceFileLaunch } from "./workspace-file-access.mjs";
 import { createOpenWithApplications, installedApplicationCommand } from "./open-with-applications.mjs";
 const openWithApplications = createOpenWithApplications();
 import { resolveAppIdentifier, resolveUserDataPath } from "./dev-profile.mjs";
@@ -2237,6 +2237,12 @@ const desktopCommandHandlers = {
       // A subagent saves in the folder of the chat that started it.
       const folder = chatOutputFolder(app.getPath("downloads"), computerControl.chatOf({ sessionId: String(input?.sessionId ?? "") }));
       return { files: folder ? await listChatOutputFiles(folder) : [] };
+  },
+  "computerChatImage": async (event, input) => {
+      assertComputerSender(event);
+      // An image the chat shows in its reply: only one saved in this chat's own output folder.
+      const folder = chatOutputFolder(app.getPath("downloads"), computerControl.chatOf({ sessionId: String(input?.sessionId ?? "") }));
+      return readChatOutputImage(folder, String(input?.path ?? ""), { home: app.getPath("home") });
   },
   "computerListFileGrants": async (event) => {
       assertComputerSender(event);

@@ -1,4 +1,4 @@
-import { lstat, readdir, realpath, stat } from "node:fs/promises";
+import { lstat, readFile, readdir, realpath, stat } from "node:fs/promises";
 import path from "node:path";
 
 /**
@@ -187,4 +187,32 @@ export async function opensFromChatOutput(folder, target) {
   if (decision.ok === false) return false;
   const info = await lstat(target).catch(() => null);
   return Boolean(info?.isFile()) && (info.mode & 0o111) === 0;
+}
+
+const CHAT_IMAGE_TYPES = new Map([
+  ["png", "image/png"], ["jpg", "image/jpeg"], ["jpeg", "image/jpeg"], ["gif", "image/gif"],
+  ["webp", "image/webp"], ["avif", "image/avif"], ["bmp", "image/bmp"],
+]);
+const CHAT_IMAGE_MAX_BYTES = 25 * 1024 * 1024;
+
+/**
+ * An image this chat made, for showing inline in its reply: a regular file (not a link)
+ * with an image extension, resolving inside the chat's output folder and small enough
+ * to send to the window. Anything else is null, and the chat keeps the file reference.
+ * @param {string | null} folder
+ * @param {string} target
+ * @param {{ home?: string; maxBytes?: number }} [options]
+ * @returns {Promise<{ data: Uint8Array<ArrayBuffer>; contentType: string } | null>}
+ */
+export async function readChatOutputImage(folder, target, { home, maxBytes = CHAT_IMAGE_MAX_BYTES } = {}) {
+  if (!folder || typeof target !== "string") return null;
+  const requested = home && /^~[\\/]/.test(target) ? path.join(home, target.slice(2)) : target;
+  const contentType = CHAT_IMAGE_TYPES.get(path.extname(requested).slice(1).toLowerCase());
+  if (!contentType) return null;
+  const decision = await resolveWorkspaceFileLaunch(folder, requested);
+  if (decision.ok === false) return null;
+  const info = await lstat(requested).catch(() => null);
+  if (!info?.isFile() || info.size > maxBytes) return null;
+  const data = await readFile(decision.path).catch(() => null);
+  return data ? { data: new Uint8Array(data), contentType } : null;
 }
