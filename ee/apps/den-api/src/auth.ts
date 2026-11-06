@@ -53,6 +53,7 @@ import { auditUserUpdateAfter, auditUserUpdateBefore, recordAccountDeleted, reco
 import { auditSessionMethod, auditSessionRevokeReason, recordSessionCreated, recordSessionRevoked } from "./audit/domain/sessions.js";
 import { SCIM_TOKEN_STORAGE_STRATEGY } from "./scim-token-storage.js";
 import { createScimExistingUserLinkCheck } from "./scim-existing-user-linking.js";
+import { isUserKnownToScimOrganization, releaseStaleScimAccountForCreate } from "./scim-reprovisioning.js";
 import { fetchCimdMetadataResource, isCimdClientIdUrlAllowed } from "./mcp/cimd-policy.js";
 import { withLoopbackRedirectRelaxation } from "./mcp/cimd-loopback-redirects.js";
 import { syncDenSignupContact } from "./loops.js";
@@ -1128,6 +1129,11 @@ export const auth = betterAuth({
         if (organizationId && !await organizationAllowsProvisioning(organizationId, "scim")) {
           throw new APIError("FORBIDDEN", { message: SCIM_ENTERPRISE_REQUIRED_MESSAGE });
         }
+        // Someone an admin removed in Den but still assigned in the IdP: their
+        // leftover SCIM account would make this create a 409 duplicate.
+        if (organizationId) {
+          await releaseStaleScimAccountForCreate({ organizationId, body: ctx.body });
+        }
       }
 
       if (ctx.path === "/oauth2/authorize") {
@@ -1938,12 +1944,9 @@ export const auth = betterAuth({
     },
     scim({
       linkExistingUsers: {
-        requireExistingOrgMembership: true,
-        shouldLinkUser: createScimExistingUserLinkCheck((where) => db
-          .select({ id: schema.MemberTable.id })
-          .from(schema.MemberTable)
-          .where(where)
-          .limit(1)),
+        // Not requireExistingOrgMembership: someone an admin removed in Den
+        // may have no member row left, and the IdP must still reprovision them.
+        shouldLinkUser: createScimExistingUserLinkCheck(isUserKnownToScimOrganization),
       },
       // Group names are metadata, never organization role assignments.
       mapGroupToRoles: () => [],
