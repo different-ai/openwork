@@ -245,10 +245,20 @@ jobs:
           password="$(printf '%s' "$json" | jq -r '.plain_text')"
           echo "::add-mask::$username"
           echo "::add-mask::$password"
+          # Vitess connections name the keyspace, not the PlanetScale database
+          # (they differ for Den). Use the copy's default keyspace, or its only
+          # one.
+          keyspaces="$(pscale api "organizations/$PLANETSCALE_ORG/databases/$DATABASE/branches/$BRANCH/keyspaces")"
+          keyspace="$(jq -r '(.data // .) | (map(select(.default == true)) + (if length == 1 then . else [] end)) | .[0].name // empty' <<<"$keyspaces")"
+          if [ -z "$keyspace" ]; then
+            echo "::error::Could not pick the keyspace to migrate on $BRANCH (no default and more than one keyspace)."
+            exit 1
+          fi
           {
             echo "COPY_DATABASE_HOST=$host"
             echo "COPY_DATABASE_USERNAME=$username"
             echo "COPY_DATABASE_PASSWORD=$password"
+            echo "COPY_DATABASE_KEYSPACE=$keyspace"
           } >> "$GITHUB_ENV"
           echo "Password created for $BRANCH"
 
@@ -258,7 +268,7 @@ jobs:
           DATABASE_HOST: ${{ env.COPY_DATABASE_HOST }}
           DATABASE_USERNAME: ${{ env.COPY_DATABASE_USERNAME }}
           DATABASE_PASSWORD: ${{ env.COPY_DATABASE_PASSWORD }}
-          DATABASE_NAME: ${{ env.DATABASE }}
+          DATABASE_NAME: ${{ env.COPY_DATABASE_KEYSPACE }}
           MIGRATE_LOG: ${{ runner.temp }}/migrate.log
         run: |
           set -uo pipefail
