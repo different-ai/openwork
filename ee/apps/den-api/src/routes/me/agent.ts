@@ -148,7 +148,7 @@ async function memberAgentView(input: {
   // With the brief, any connector can be a source: say how many of its tools the agent may call (0 still shows).
   const readTools = brief
     ? await sourceReadToolCounts({
-      sources,
+      sources: sources.filter((source) => source.connections.length > 0 && source.connections.every((connection) => connection.state === "connected")),
       overrides: settings.sources.toolOverrides ?? {},
       listTools: (connection) => listConnectionToolsForMember({ organizationId: input.organizationId, memberId: input.memberId, connectionId: connection.id, deadlineMs: PAGE_TOOLS_DEADLINE_MS }),
       nativeOperations: async (providerKey) => nativeOperations(await input.catalog(), providerKey).map((operation) => ({ name: operation.name, method: operation.method, path: operation.path, summary: operation.operation.summary ?? null })),
