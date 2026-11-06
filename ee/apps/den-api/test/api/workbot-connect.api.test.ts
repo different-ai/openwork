@@ -145,3 +145,18 @@ test("external member OAuth preserves issuer, replay and Workbot return binding"
   assert.equal((await den.request(null, "GET", callback.pathname + callback.search)).status, 400)
   assert.equal(external.tokenRequests(), before)
 })
+
+test("Workbot lists every app the admins set up for the member, everyday apps first", async () => {
+  const { owner, orgId } = await den.createOrg(await den.signUp("Apps Example"), "Apps workspace")
+  const member = await den.newMember(owner, orgId, "Apps Member")
+  const token = await den.mintMcpToken(member, orgId)
+  const call = den.as(owner, orgId)
+  for (const name of ["Notion", "Slack"]) {
+    const created = await call("POST", "/v1/mcp-connections", { name, url: external.mcpUrl, authType: "oauth", credentialMode: "per_member", access: { orgWide: true } })
+    assert.equal(created.status, 200, summary(created))
+  }
+  const listed = await den.request(token, "GET", "/v1/workbot/connections")
+  assert.equal(listed.status, 200, summary(listed))
+  const apps = list(field(listed.body, "connections")).map(connection => [connection.name, connection.app])
+  assert.deepEqual(apps, [["Slack", "slack"], ["Notion", "other"]])
+})
