@@ -27,7 +27,7 @@ const warning = {
 
 test("a run that could not use a connection reads as needing that connection, not as completed", () => {
   expect(runStatusLabel(run)).toBe("Connection needed");
-  expect(automationRunNotice(run)).toEqual({ variant: "destructive", title: "Connection needed", message: run.error.message });
+  expect(automationRunNotice(run)).toEqual({ variant: "default", title: "Connection needed", message: run.error.message });
 });
 
 test("the run links to the connection on Your Connections in the signed-in Den", () => {
