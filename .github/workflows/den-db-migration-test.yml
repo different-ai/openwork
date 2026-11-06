@@ -35,9 +35,11 @@ name: Den DB migration test
 # Needs, on the den-db-migration-test environment:
 #   secrets PLANETSCALE_MIGRATION_TEST_TOKEN_ID and
 #   PLANETSCALE_MIGRATION_TEST_TOKEN: a service token limited to the Den
-#   database with read_database, read_branch, create_branch, delete_branch,
-#   read_backups, restore_production_branch_backup, connect_production_branch
-#   (the seeded copy counts as production) and delete_production_branch.
+#   database with read_database, read_branch, create_branch (also covers the
+#   keyspace resize), delete_branch, delete_production_branch, read_backups,
+#   restore_production_branch_backup, connect_branch and
+#   connect_production_branch (the seeded copy counts as production). No
+#   write_database: the workflow never changes database settings.
 #   secret SLACK_BOT_TOKEN (chat:write) and variable
 #   SLACK_DEN_DB_ALERTS_CHANNEL_ID.
 #   variables PLANETSCALE_MIGRATION_TEST_ORG and
@@ -216,8 +218,10 @@ jobs:
           echo "::error::The copy did not finish resizing to $TARGET_CLUSTER_SIZE within 20 minutes."
           exit 1
 
-      # Production runs migrations with safe migrations briefly off; do the
-      # same on the copy in case the setting was inherited.
+      # Production runs migrations with safe migrations briefly off. A new copy
+      # normally has it off already; turning it off needs write_database, which
+      # could also turn it off on main, so the token only needs that permission
+      # if a copy ever inherits the setting.
       - name: Allow direct DDL on the copy
         env:
           PLANETSCALE_SERVICE_TOKEN_ID: ${{ secrets.PLANETSCALE_MIGRATION_TEST_TOKEN_ID }}
@@ -226,7 +230,15 @@ jobs:
           set -euo pipefail
           source scripts/dry-run-branch-guard.sh
           assert_copy_branch "$BRANCH"
-          state="$(pscale branch safe-migrations disable "$DATABASE" "$BRANCH" --org "$PLANETSCALE_ORG" --format json)"
+          copy="$(pscale api "organizations/$PLANETSCALE_ORG/databases/$DATABASE/branches/$BRANCH")"
+          if jq -e '.safe_migrations != true' > /dev/null <<<"$copy"; then
+            echo "Safe migrations already off on $BRANCH"
+            exit 0
+          fi
+          if ! state="$(pscale branch safe-migrations disable "$DATABASE" "$BRANCH" --org "$PLANETSCALE_ORG" --format json)"; then
+            echo "::error::$BRANCH inherited safe migrations and the token cannot turn it off (needs write_database)."
+            exit 1
+          fi
           if ! jq -e '.safe_migrations == false' > /dev/null <<<"$state"; then
             echo "::error::PlanetScale did not confirm safe migrations are off on $BRANCH."
             exit 1
