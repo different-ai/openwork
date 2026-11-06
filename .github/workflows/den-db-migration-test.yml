@@ -182,9 +182,22 @@ jobs:
           assert_dry_run_name "$BRANCH"
           assert_source_protected
           echo "Seeding $BRANCH from the latest backup of $SOURCE_BRANCH at $TARGET_CLUSTER_SIZE"
+          # pscale's --wait gives up after 10 minutes, and seeding production
+          # takes longer, so poll the branch's ready flag instead.
           pscale branch create "$DATABASE" "$BRANCH" --org "$PLANETSCALE_ORG" \
-            --from "$SOURCE_BRANCH" --seed-data --cluster-size "$TARGET_CLUSTER_SIZE" --wait > /dev/null
-          assert_copy_branch "$BRANCH"
+            --from "$SOURCE_BRANCH" --seed-data --cluster-size "$TARGET_CLUSTER_SIZE" > /dev/null
+          for attempt in $(seq 1 90); do
+            copy="$(pscale api "organizations/$PLANETSCALE_ORG/databases/$DATABASE/branches/$BRANCH")" || copy='{}'
+            if jq -e '.ready == true' > /dev/null <<<"$copy"; then
+              echo "Copy ready after about $((attempt / 2)) minutes: $(jq -r '"\(.cluster_name) metal=\(.metal) production=\(.production)"' <<<"$copy")"
+              assert_copy_branch "$BRANCH"
+              exit 0
+            fi
+            [ $((attempt % 4)) -eq 0 ] && echo "Still seeding (state: $(jq -r '.state // "unknown"' <<<"$copy"))"
+            sleep 30
+          done
+          echo "::error::$BRANCH was not ready after 45 minutes."
+          exit 1
 
       # Seeded copies are billed as production branches at the source's size.
       # --cluster-size above should already apply; this verifies it and
