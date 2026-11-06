@@ -1,6 +1,8 @@
 import {
+  PERMISSION_DEFAULT_SET_LABELS,
   PERMISSION_KEYS,
   getPermissionDefinition,
+  isPermissionDefaultOn,
   isPermissionKey,
   isPermissionLockedOn,
   type PermissionDefaultSetKey,
@@ -26,9 +28,10 @@ export type PermissionChange = {
   status: PermissionStatus
 }
 
-/** The editor's effective permissions. The owner and super-admins hold every key. */
+/** The editor's effective permissions. The owner holds every key. */
 export type PermissionEditor = {
   isOwner: boolean
+  /** Direct super-admin role: may edit the Super admin set. Their keys come from `has`, like everyone else's. */
   isSuperAdmin?: boolean
   /** Effective admin: a direct admin role or a member of an Admin team. */
   isAdmin: boolean
@@ -39,6 +42,7 @@ export type PermissionEditProblem =
   | { error: "unknown_permission"; keys: string[] }
   | { error: "duplicate_permission"; keys: string[] }
   | { error: "admin_permissions_require_admin"; keys: PermissionKey[] }
+  | { error: "super_admin_permissions_require_super_admin"; keys: PermissionKey[] }
   | { error: "permission_locked"; keys: PermissionKey[] }
   | { error: "permission_not_held"; keys: PermissionKey[] }
 
@@ -71,13 +75,13 @@ function validateRequestedKeys(changes: readonly RequestedPermissionChange[]):
 }
 
 function notHeld(editor: PermissionEditor, keys: Iterable<PermissionKey>): PermissionKey[] {
-  if (editor.isOwner || editor.isSuperAdmin === true) return []
+  if (editor.isOwner) return []
   return sorted([...keys].filter((key) => !editor.has(key)))
 }
 
-/** Whether `key` starts on in this default set (its catalog `defaultOn` includes it). */
+/** Whether `key` starts on in this default set (`isPermissionDefaultOn`: every key for Super admin). */
 function isShippedDefault(key: PermissionKey, defaultKey: PermissionDefaultSetKey | null): boolean {
-  return defaultKey !== null && getPermissionDefinition(key).defaultOn.includes(defaultKey)
+  return defaultKey !== null && isPermissionDefaultOn(getPermissionDefinition(key), defaultKey)
 }
 
 /** Current status of a key in a set: no row means denied. */
@@ -88,7 +92,9 @@ export function currentPermissionStatus(current: ReadonlyMap<string, PermissionS
 /**
  * Plans an edit to an existing set (PUT /v1/permissions/sets/:id/permissions).
  * In order: unknown keys, duplicate keys, any edit to Admin permissions by an
- * editor who is neither the owner nor an effective admin, deny of a key locked
+ * editor who is neither the owner nor an effective admin, any edit to Super
+ * admin permissions by an editor who is neither the owner nor a super-admin
+ * (only they can make or remove super-admins), deny of a key locked
  * on for this default set, then allow of a key the editor does not hold (only
  * where the key is actually being turned on, so resending a set's current
  * state never fails). Re-allowing a key whose catalog `defaultOn` includes
@@ -109,6 +115,9 @@ export function planPermissionSetEdit(input: {
   const { defaultKey } = input
   if (defaultKey === "admin" && !input.editor.isOwner && input.editor.isSuperAdmin !== true && !input.editor.isAdmin) {
     return { ok: false, problem: { error: "admin_permissions_require_admin", keys: sorted(validated.changes.map((change) => change.key)) } }
+  }
+  if (defaultKey === "super-admin" && !input.editor.isOwner && input.editor.isSuperAdmin !== true) {
+    return { ok: false, problem: { error: "super_admin_permissions_require_super_admin", keys: sorted(validated.changes.map((change) => change.key)) } }
   }
 
   const locked = defaultKey === null
@@ -154,6 +163,8 @@ export function permissionEditProblemMessage(problem: PermissionEditProblem): st
       return `Each permission can appear only once. Listed more than once: ${keys}.`
     case "admin_permissions_require_admin":
       return "Only the owner and admins can change Admin permissions."
+    case "super_admin_permissions_require_super_admin":
+      return "Only the owner and super admins can change Super admin permissions."
     case "permission_locked":
       return `These permissions are always on for admins, so admins can't be locked out of managing permissions: ${keys}.`
     case "permission_not_held":
@@ -232,6 +243,8 @@ export function permissionSourceLabel(source: PermissionSource): string {
       return "Organization owner"
     case "super_admin":
       return "Super admin role"
+    case "super_admin_default":
+      return `${source.setName} (super admin role)`
     case "member_default":
       return source.setName
     case "admin_default":
@@ -241,6 +254,6 @@ export function permissionSourceLabel(source: PermissionSource): string {
     case "team":
       return `${source.setName} (via ${source.teamName} team)`
     case "code_default":
-      return source.set === "admin" ? "Admin permissions (default)" : "Member permissions (default)"
+      return `${PERMISSION_DEFAULT_SET_LABELS[source.set]} permissions (default)`
   }
 }

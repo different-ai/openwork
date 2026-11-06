@@ -231,6 +231,16 @@
               ],
               "description": "Deploy-time administrator recovery: Run a one-time, operator-selected Admin-team permission repair at deployment; disabling stops future repairs, not existing grants. Renders DEN_FEATURE_ADMINISTRATOR_RECOVERY."
             },
+            "superAdminPermissionSet": {
+              "enum": [
+                "",
+                "true",
+                "false",
+                true,
+                false
+              ],
+              "description": "Super admin permission set: Super admins get their permissions from an editable Super admin role, seeded with every permission, beside Member and Admin. Off: super admins hold every permission and the role is hidden. Renders DEN_FEATURE_SUPER_ADMIN_PERMISSION_SET."
+            },
             "nativeDictation": {
               "enum": [
                 "",
