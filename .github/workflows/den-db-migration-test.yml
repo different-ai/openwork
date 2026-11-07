@@ -10,7 +10,7 @@ name: Den DB migration test
 # Flow per run (every push to the PR restarts it):
 #   1. Delete this PR's previous copy, if one is left over.
 #   2. Seed migration-test-pr-<number> from the latest backup of main
-#      (about 20 minutes).
+#      (about 22 minutes; the whole run takes about 25).
 #   3. Run db:migrate and db:reconcile-permissions, exactly as production does.
 #   4. On a migration failure: fail the check and post the (redacted) error to
 #      Slack.
@@ -40,10 +40,11 @@ name: Den DB migration test
 # Needs, on the den-db-migration-test environment:
 #   secrets PLANETSCALE_MIGRATION_TEST_TOKEN_ID and
 #   PLANETSCALE_MIGRATION_TEST_TOKEN: a service token limited to the Den
-#   database with read_database, read_branch, create_branch, delete_branch, delete_production_branch, read_backups,
-#   restore_production_branch_backup, connect_branch and
-#   connect_production_branch (the seeded copy counts as production). No
-#   write_database: the workflow never changes database settings.
+#   database with read_database, read_branch, create_branch, delete_branch,
+#   delete_production_branch, read_backups, restore_production_branch_backup,
+#   connect_branch and connect_production_branch (the seeded copy counts as
+#   production). No write_database: the workflow never changes database
+#   settings.
 #   secret SLACK_BOT_TOKEN (chat:write) and variable
 #   SLACK_DEN_DB_ALERTS_CHANNEL_ID.
 #   variables PLANETSCALE_MIGRATION_TEST_ORG and
@@ -63,8 +64,8 @@ on:
 permissions:
   contents: read
 
-# A new push cancels the run in progress; its always() cleanup still deletes
-# the copy before the next run starts.
+# A new push, or closing or merging the PR, cancels the run in progress; its
+# always() cleanup still deletes the copy, and the closed-PR job is a backstop.
 concurrency:
   group: den-db-migration-test-${{ github.event.pull_request.number }}
   cancel-in-progress: true
@@ -96,7 +97,8 @@ jobs:
       github.event.pull_request.user.type == 'User' &&
       contains(fromJSON('["MEMBER", "OWNER"]'), github.event.pull_request.author_association)
     runs-on: blacksmith-4vcpu-ubuntu-2204
-    timeout-minutes: 120
+    # Up to 45 minutes of seeding plus migrations, with room to spare.
+    timeout-minutes: 75
     environment:
       name: den-db-migration-test
       deployment: false
