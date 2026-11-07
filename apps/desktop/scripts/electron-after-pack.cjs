@@ -3,6 +3,7 @@ const path = require("node:path");
 const { spawnSync } = require("node:child_process");
 const asar = require("@electron/asar");
 const { Arch } = require("electron-builder");
+const { verifyNativeModules } = require("./verify-native-modules.cjs");
 
 const computerUseHelperAppName = "OpenWork Computer Use.app";
 
@@ -69,6 +70,7 @@ function verifyRuntimeDependencies(context) {
       .listPackage(appAsarPath, { isPack: false })
       .map((entry) => normalizeAsarEntryPath(entry, path.sep)),
   );
+  verifyNativeModules(packagedFiles, context.electronPlatformName, context.arch, `${appAsarPath}.unpacked`);
   const stagedNodeModules = path.resolve(__dirname, "..", ".electron-runtime", "node_modules");
   const packageJsonPaths = [];
   function visitNodeModules(nodeModulesPath, archivePrefix) {
