@@ -445,7 +445,11 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink, che
   function routeBlockedMainWindowNavigation(url) {
     if (!/^https?:\/\//i.test(String(url ?? ""))) return;
     const ownerSessionId = registry.visibleSessionId();
-    runDetachedTask("open linked browser page", () => openBrowserUrlForAutomation(url, "builtin", { ownerSessionId }));
+    // Promise callbacks still run inside Electron's native navigation event.
+    // Defer the whole routing operation, not just the main-window stop.
+    setImmediate(() => {
+      runDetachedTask("open linked browser page", () => openBrowserUrlForAutomation(url, "builtin", { ownerSessionId }));
+    });
   }
 
   function cdpBrowserUrl() {
@@ -480,10 +484,15 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink, che
     signal?.throwIfAborted();
     const tab = createBrowserTab("about:blank", { select: true, initializeBlank: false, deferBackground: true, ownerSessionId, automationProtected: true });
     tab.operation = true;
-    const stop = () => {
-      if (!tab.view.webContents.isDestroyed()) tab.view.webContents.stop();
-      closeBrowserTab(tab.tabId);
+    let cleanupQueued = false;
+    const closeAfterNavigation = (error = undefined) => {
+      if (cleanupQueued) return;
+      cleanupQueued = true;
+      // Revoke the tab/control synchronously, before a retry can reuse them.
+      // Only native destruction waits for the navigation callback to unwind.
+      if (getBrowserTab(tab.tabId) === tab) closeBrowserTab(tab.tabId, false, error, { deferNativeClose: true });
     };
+    const stop = () => closeAfterNavigation(signal?.reason);
     signal?.addEventListener("abort", stop, { once: true });
     try {
       await beforeLoad?.(tab);
@@ -502,7 +511,7 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink, che
     }
     catch (error) {
       // Preserve the initiating failure when last-tab cleanup revokes control.
-      closeBrowserTab(tab.tabId, false, error);
+      closeAfterNavigation(error);
       throw error;
     }
     finally { signal?.removeEventListener("abort", stop); tab.operation = false; sendBrowserState(); }
@@ -1725,7 +1734,7 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink, che
     return tab;
   }
 
-  function closeBrowserTab(tabId = registry.onScreenTabId(), preserve = false, reason = undefined) {
+  function closeBrowserTab(tabId = registry.onScreenTabId(), preserve = false, reason = undefined, { deferNativeClose = false } = {}) {
     const tab = getBrowserTab(tabId);
     if (!registry.has(tabId)) return null;
     taskHost.invalidate(tabId, { closed: true, reason });
@@ -1753,9 +1762,13 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink, che
     if (removed && !removed.ownerHasTabs) {
       sendToRenderer("openwork:browser:panel-closed", { ownerSessionId: removed.tab.ownerSessionId });
     }
-    try {
-      if (tab && !tab.view.webContents.isDestroyed()) tab.view.webContents.close({ waitForBeforeUnload: false });
-    } catch { /* already destroyed */ }
+    const closeContents = () => {
+      try {
+        if (tab && !tab.view.webContents.isDestroyed()) tab.view.webContents.close({ waitForBeforeUnload: false });
+      } catch { /* already destroyed */ }
+    };
+    if (deferNativeClose) setImmediate(closeContents);
+    else closeContents();
     releaseEmptyBackgroundWindow();
     sendBrowserState();
     return tabId;
