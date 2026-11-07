@@ -144,16 +144,15 @@ const SLASH_TOKEN_RE = /(?<!\S)\/([A-Za-z0-9_-]+)(?!\S)/g;
 function locate(words: string, from: number, token: SentToken): { index: number; length: number; token: SentToken } | null {
   if (token.kind === "pill" && token.pill.kind === "connect-skill") {
     const { pill } = token;
-    // The visible text is `/slug`, and the slug is the skill's trigger or its
-    // slugged name. Prefer the slugged name; otherwise the next `/word`.
-    let fallback: RegExpExecArray | null = null;
+    // The instruction does not include the trigger slug, so only recover the
+    // visible text when it matches the skill's slugged name.
     SLASH_TOKEN_RE.lastIndex = from;
     for (let match = SLASH_TOKEN_RE.exec(words); match; match = SLASH_TOKEN_RE.exec(words)) {
-      if (match[1] === slugify(pill.name)) { fallback = match; break; }
-      fallback ??= match;
+      if (match[1] === slugify(pill.name)) {
+        return { index: match.index, length: match[0].length, token: { kind: "pill", pill: { ...pill, slug: match[1] } } };
+      }
     }
-    if (!fallback?.[1]) return null;
-    return { index: fallback.index, length: fallback[0].length, token: { kind: "pill", pill: { ...pill, slug: fallback[1] } } };
+    return null;
   }
   const visible = token.kind === "pill" ? composerPillText(token.pill) : mentionText(token.kind === "agent" ? token.name : token.path);
   // Parts are joined without separators, so a mention can follow a word directly.
