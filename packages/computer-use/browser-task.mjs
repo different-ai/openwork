@@ -1,6 +1,7 @@
 // The browser host owns task identity, observations and dispatch.
 // No model-specific API, arbitrary script execution, cookies or raw CDP surface.
 import { createHash, randomUUID } from "node:crypto";
+import { deferBrowserStop } from "./browser-navigation.mjs";
 
 const WORLD = 1001;
 const TRUST = "untrusted-site-content";
@@ -721,7 +722,9 @@ export function createBrowserTaskHost({ getTab, tabsFor, ownerOf, activeFor, isV
     for (const item of tabsFor(owner)) {
       const navigation = navigations.get(item.tabId);
       if (navigation) { navigation.manual = false; navigation.lifetime.abort(); }
-      if (!item.view.webContents.isDestroyed()) item.view.webContents.stop();
+      const revision = item.webMcpRevision;
+      deferBrowserStop(item.view.webContents, () => pausedSessions.has(owner)
+        && getTab(item.tabId) === item && item.webMcpRevision === revision);
       const sibling = states.get(item.tabId); sibling?.controller?.abort(); forget(sibling); publish(item.tabId, "paused", reason);
     }
     const state = stateFor(tabId); forget(state);
@@ -918,7 +921,11 @@ export function createBrowserTaskHost({ getTab, tabsFor, ownerOf, activeFor, isV
           const validate = await authorizeNavigation(navigationScope, url.href);
           validate();
           forget(state); dispatched = true;
-          const stop = () => { if (!tab.view.webContents.isDestroyed()) tab.view.webContents.stop(); };
+          const stop = () => {
+            const revision = tab.webMcpRevision;
+            deferBrowserStop(tab.view.webContents, () => getTab(tab.tabId) === tab
+              && tab.webMcpRevision === revision && navigations.get(tab.tabId) === navigationScope);
+          };
           requestSignal.addEventListener("abort", stop, { once: true });
           try { await navigate(tab, url.href); requestSignal.throwIfAborted(); }
           finally { requestSignal.removeEventListener("abort", stop); }

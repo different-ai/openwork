@@ -33,6 +33,7 @@ import { createNativeContextMenus } from "./context-menu.mjs";
 import { createNativeDictation, createSpeechDictation } from "./native-dictation.mjs";
 import { applyBrandAppName } from "./brand-app-name.mjs";
 import { createBrowserPanel } from "./browser-panel.mjs";
+import { deferBrowserStop } from "@openwork/computer-use/browser-navigation";
 import { createComputerControl } from "@openwork/computer-use/computer-control";
 import { createComputerAgentPermissions } from "./computer-agent-permissions.mjs";
 import { createBrowserUploadGrantStore, createBrowserUploadPermissions } from "./browser-upload-permissions.mjs";
@@ -3063,19 +3064,17 @@ async function createMainWindowInner() {
   // to replace the entire workspace UI with the website, with no way back
   // (#2000). Catch those at `did-start-navigation`, cancel the load, and
   // reroute the URL into a built-in browser tab instead.
+  let mainNavigationRevision = 0;
   mainWindow.webContents.on("did-start-navigation", (_event, url, isInPlace, isMainFrame) => {
     if (!isMainFrame || isInPlace) return;
+    const revision = ++mainNavigationRevision;
     if (browserPanel.isMainWindowAllowedNavigation(url)) return;
-    // Stopping inside this event aborts the main process for navigations the
-    // PDF viewer starts (`chrome.tabs.update` on a link click), so cancel the
-    // load on the next tick instead.
-    setImmediate(() => {
-      try {
-        if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.stop();
-      } catch {
-        // best effort — routing below still gives the user a way back
-      }
-    });
+    // Capture the originating contents: the window may be replaced before
+    // Chromium has unwound its navigation callback. Never stop its successor.
+    const contents = mainWindow.webContents;
+    const previousUrl = contents.getURL();
+    deferBrowserStop(contents, () => mainWindow?.webContents === contents
+      && mainNavigationRevision === revision && contents.getURL() === previousUrl);
     routeBlockedNavigationOnce(url);
   });
 
