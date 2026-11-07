@@ -486,7 +486,7 @@ export const SessionSsoAuthenticationTable = mysqlTable(
  * another organization's SSO, so a member of several organizations that
  * require SSO is not sent through each of them again. `authenticated_at` is
  * when the identity provider actually authenticated the person; copies keep
- * it, so an organization's "Ask for SSO again after" is never reset by one.
+ * it.
  * Removed with the session, user or organization.
  */
 export const SessionSsoProofTable = mysqlTable(

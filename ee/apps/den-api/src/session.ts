@@ -1,4 +1,4 @@
-import { and, eq, gt, lt, lte } from "@openwork-ee/den-db/drizzle"
+import { and, eq, gt } from "@openwork-ee/den-db/drizzle"
 import { AuthSessionTable, AuthUserTable } from "@openwork-ee/den-db/schema"
 import { normalizeDenTypeId } from "@openwork-ee/utils/typeid"
 import { createHmac, randomBytes, timingSafeEqual } from "node:crypto"
@@ -11,7 +11,7 @@ import { cache, type CachedAuthSession } from "./cache.js"
 import { db } from "./db.js"
 import { env } from "./env.js"
 import { appLogger } from "./observability/logger.js"
-import { getDenSessionExpiresAt, getDenSessionRefreshCutoff } from "./session-lifetime.js"
+import { sessionRefreshDue } from "./session-security-settings.js"
 
 type AuthSessionValue = {
   user: CachedAuthSession["user"]
@@ -351,12 +351,21 @@ async function getSessionFromToken(token: string, requestContext?: SessionReques
   }
 
   const now = new Date()
-  const refreshCutoff = getDenSessionRefreshCutoff(now)
-  if (row.session.expiresAt > refreshCutoff) {
+  if (!sessionRefreshDue(row.session, now)) {
     return bearerSessionValue(row)
   }
 
-  const nextExpiresAt = getDenSessionExpiresAt(now)
+  // Extending reads the person's session limits (sessionSecuritySettings), so
+  // shorter ones set by any of their organizations apply here too.
+  let nextExpiresAt: Date
+  try {
+    const { userSessionExpiresAt } = await import("./session-security-lifetime.js")
+    nextExpiresAt = await userSessionExpiresAt(row.session.userId, now, row.session.createdAt)
+  } catch (error) {
+    // The session stays valid until its current expiry; a later request extends it.
+    logger.error("session length could not be read", { auth_session_source: "den_session_middleware", request_id: requestContext?.requestId, error })
+    return bearerSessionValue(row)
+  }
   try {
     await db
       .update(AuthSessionTable)
@@ -367,8 +376,8 @@ async function getSessionFromToken(token: string, requestContext?: SessionReques
       .where(and(
         sessionTokenMatches(token),
         gt(AuthSessionTable.expiresAt, now),
-        lte(AuthSessionTable.expiresAt, refreshCutoff),
-        lt(AuthSessionTable.expiresAt, nextExpiresAt),
+        // Not already extended by a concurrent request.
+        eq(AuthSessionTable.updatedAt, row.session.updatedAt),
       ))
   } catch (error) {
     logger.error("session refresh failed", {

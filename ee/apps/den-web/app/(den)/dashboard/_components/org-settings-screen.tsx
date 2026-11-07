@@ -21,7 +21,7 @@ import { EnterprisePlanNotice } from "./enterprise-plan-notice";
 import { OrgWebOriginsSection } from "./org-web-origins-section";
 import { OrgDefaultModelSection } from "./default-model-section";
 import { OrgAutomationSettingsSection } from "./org-automation-settings-section";
-import { SettingsToggle } from "./settings-toggle";
+import { DenSwitch } from "../../_components/ui/switch";
 import { SsoRequirementFields, ssoRequirementDescription } from "./sso-requirement-fields";
 import { ssoSettingsChanges, type SsoSettings } from "../../_lib/sso-settings";
 import {
@@ -173,7 +173,7 @@ export function OrgSettingsScreen() {
   const [allowedDomainsDraft, setAllowedDomainsDraft] = useState("");
   const [domainRestrictionsEnabled, setDomainRestrictionsEnabled] =
     useState(false);
-  const [ssoDraft, setSsoDraft] = useState<SsoSettings>({ requireSso: false, restrictDomainToSso: false, ssoSessionMaxAgeHours: null });
+  const [ssoDraft, setSsoDraft] = useState<SsoSettings>({ requireSso: false, restrictDomainToSso: false });
   const [domainEditModeEnabled, setDomainEditModeEnabled] = useState(false);
   const [desktopVersionOptions, setDesktopVersionOptions] = useState<string[]>(
     [],
@@ -591,8 +591,8 @@ export function OrgSettingsScreen() {
               <span className="text-[13px] font-medium text-gray-500">
                 {domainRestrictionsEnabled ? "On" : "Off"}
               </span>
-              <SettingsToggle
-                label="Restrict allowed email domains"
+              <DenSwitch
+                aria-label="Restrict allowed email domains"
                 checked={domainRestrictionsEnabled}
                 disabled={
                   !canManageSettings || (domainRestrictionsEnabled && hasDraftDomains)

@@ -1,5 +1,5 @@
 import { peopleMemberCondition } from "./setup-agent-members.js"
-import { asc, and, eq, gt, isNull, lt, lte } from "@openwork-ee/den-db/drizzle"
+import { asc, and, eq, gt, isNull } from "@openwork-ee/den-db/drizzle"
 import { readFeatureRollouts, readMemberFeatureOverrides, readOrganizationFeatureOverrides, readMembersWithFeatureOverrides, type FeatureDatabase } from "@openwork-ee/den-db/organization-features"
 import { AuthSessionTable, AuthUserTable, InvitationTable, MemberTable, OAuthConsentTable, OrganizationTable, TeamTable } from "@openwork-ee/den-db/schema"
 import { isFeatureKey, type FeatureOverrides, type FeatureRollouts } from "@openwork/features"
@@ -11,7 +11,7 @@ import { env } from "./env.js"
 import { bumpGeneration, readManyThroughGeneration, readThroughGeneration, type GenerationCacheEntry } from "./generation-cache.js"
 import { roleIncludesOwner } from "./organization-member-guards.js"
 import { deploymentServiceReadinessSchema, type DeploymentServiceReadiness } from "@openwork/types/den/service-readiness"
-import { getDenSessionExpiresAt, getDenSessionRefreshCutoff } from "./session-lifetime.js"
+import { sessionRefreshDue } from "./session-security-settings.js"
 import { isSessionTokenDigest, sessionTokenDigest, sessionTokenMatches, storedSessionTokenDigest } from "./session-token.js"
 
 type OrgId = typeof OrganizationTable.$inferSelect.id
@@ -642,24 +642,13 @@ async function loadAuthSession(token: string, now: Date): Promise<CachedAuthSess
 }
 
 async function loadActiveSessionId(sessionId: DenTypeId<"session">, now: Date) {
-  const nextExpiresAt = getDenSessionExpiresAt(now)
-  await db
-    .update(AuthSessionTable)
-    .set({
-      expiresAt: nextExpiresAt,
-      updatedAt: now,
-    })
-    .where(and(
-      eq(AuthSessionTable.id, sessionId),
-      gt(AuthSessionTable.expiresAt, now),
-      lte(AuthSessionTable.expiresAt, getDenSessionRefreshCutoff(now)),
-      lt(AuthSessionTable.expiresAt, nextExpiresAt),
-    ))
-
   const rows = await cachedLoaderDb()
     .select({
       id: AuthSessionTable.id,
+      userId: AuthSessionTable.userId,
       expiresAt: AuthSessionTable.expiresAt,
+      createdAt: AuthSessionTable.createdAt,
+      updatedAt: AuthSessionTable.updatedAt,
     })
     .from(AuthSessionTable)
     .where(and(eq(AuthSessionTable.id, sessionId), gt(AuthSessionTable.expiresAt, now)))
@@ -669,10 +658,36 @@ async function loadActiveSessionId(sessionId: DenTypeId<"session">, now: Date) {
   if (!row) {
     return null
   }
-  return {
-    id: normalizeDenTypeId("session", row.id),
-    expiresAt: row.expiresAt,
+  if (!sessionRefreshDue(row, now)) {
+    return { id: normalizeDenTypeId("session", row.id), expiresAt: row.expiresAt }
   }
+
+  // Extending reads the person's session limits (sessionSecuritySettings).
+  // Lazy import: features.ts imports this module.
+  let nextExpiresAt: Date
+  try {
+    const { userSessionExpiresAt } = await import("./session-security-lifetime.js")
+    nextExpiresAt = await userSessionExpiresAt(row.userId, now, row.createdAt)
+  } catch (error) {
+    // The session stays valid until its current expiry; a later check extends it.
+    console.error("openwork_session_length_read_failed", { error })
+    return { id: normalizeDenTypeId("session", row.id), expiresAt: row.expiresAt }
+  }
+  await db
+    .update(AuthSessionTable)
+    .set({
+      expiresAt: nextExpiresAt,
+      updatedAt: now,
+    })
+    .where(and(
+      eq(AuthSessionTable.id, sessionId),
+      gt(AuthSessionTable.expiresAt, now),
+      // Not already extended by a concurrent request.
+      eq(AuthSessionTable.updatedAt, row.updatedAt),
+    ))
+  return nextExpiresAt > now
+    ? { id: normalizeDenTypeId("session", row.id), expiresAt: nextExpiresAt }
+    : null
 }
 
 async function loadActiveGrant(grantId: OAuthConsentId) {
