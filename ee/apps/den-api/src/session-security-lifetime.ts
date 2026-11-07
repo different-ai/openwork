@@ -65,7 +65,7 @@ export async function shortenMemberSessions(input: { organizationId: string; lim
     .where(and(eq(MemberTable.organizationId, normalizeDenTypeId("organization", input.organizationId)), isNull(MemberTable.removedAt)))
   await db
     .update(AuthSessionTable)
-    .set({ expiresAt: latest, updatedAt: sql`${AuthSessionTable.updatedAt}` })
+    .set({ expiresAt: latest, updatedAt: now })
     .where(and(
       inArray(AuthSessionTable.userId, memberUserIds),
       gt(AuthSessionTable.expiresAt, latest),
