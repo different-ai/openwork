@@ -324,8 +324,9 @@ export function liteLlmCatalogModels(modelIds: string[], info: Map<string, JsonR
  */
 export function liteLlmTeamModels(team: LiteLlmTeam, catalogIds: readonly string[]): string[] | null {
   if (!team.models.length || team.models.includes("all-proxy-models")) return [...catalogIds]
-  const known = team.models.filter((model) => catalogIds.includes(model))
-  return known.length === team.models.length ? [...new Set(known)].sort() : null
+  const catalogByLowercase = new Map(catalogIds.map((id) => [id.toLowerCase(), id]))
+  const known = team.models.map((model) => catalogByLowercase.get(model.toLowerCase()))
+  return known.every((model) => model !== undefined) ? [...new Set(known)].sort() : null
 }
 
 /** Stable identity of a model set, so members with the same access share one group. */
