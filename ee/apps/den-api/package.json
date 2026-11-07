@@ -37,7 +37,7 @@
     "@hono/mcp": "^0.2.5",
     "@hono/node-server": "2.1.5",
     "@hono/otel": "1.1.2",
-    "@hono/standard-validator": "^0.2.2",
+    "@hono/standard-validator": "^0.4.1",
     "@hono/swagger-ui": "^0.6.1",
     "@modelcontextprotocol/ext-apps": "^1.7.5",
     "@modelcontextprotocol/sdk": "^1.32.1",
