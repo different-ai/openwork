@@ -302,7 +302,6 @@ export function createCloudBrowser({ statePath, assertActive, enabled, beforeInp
     isVisible: () => true, enabled, allowed: allowedDestination, changed: () => {},
     beforeInput: (tab) => tab.view.webContents.prepareInput(),
     async openTab(url, sessionId, signal, admit) {
-      if (tabs.size >= 12) throw new Error("Close a browser tab before opening another.");
       assertActive(); signal.throwIfAborted();
       const target = await json("/json/new?about:blank", "PUT");
       const tab = makeTab(target);

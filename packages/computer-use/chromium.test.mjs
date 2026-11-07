@@ -9,12 +9,18 @@ import { createCloudBrowser, publicDestination } from "./chromium.mjs";
 async function fixture({ rejectInterception = false, holdInterception = false, existing = true, missingEgress = false, pages = existing ? ["tab"] : [], owned = pages } = {}) {
   const directory = await mkdtemp(join(tmpdir(), "openwork-browser-network-"));
   const commands = [], sockets = [], held = [];
-  let origin;
+  let origin, nextTab = 0;
   const target = (url = "https://8.8.8.8/resource", id = "tab") => ({ type: "page", id, url, title: "Test page",
     webSocketDebuggerUrl: origin.replace("http:", "ws:") + `/devtools/page/${id}` });
   const server = createServer((request, response) => {
     response.setHeader("content-type", "application/json");
-    response.end(JSON.stringify(request.url.startsWith("/json/new") ? target("about:blank") : pages.map(id => target(undefined, id))));
+    if (request.url.startsWith("/json/new")) {
+      const id = `opened-${++nextTab}`;
+      pages.push(id);
+      response.end(JSON.stringify(target("about:blank", id)));
+    } else {
+      response.end(JSON.stringify(pages.map(id => target(undefined, id))));
+    }
   });
   await new Promise(resolve => server.listen(0, "127.0.0.1", resolve));
   origin = `http://127.0.0.1:${server.address().port}`;
@@ -116,6 +122,24 @@ test("a conversation's active tab is the one of its tabs most recently in front"
   const f = await fixture({ pages: ["second", "first"], owned: ["first", "second"] });
   try {
     assert.equal((await f.browser.request({ sessionId: "chat", operation: "pause" })).tabId, "second");
+  } finally { await f.close(); }
+});
+
+test("cloud browser opens beyond twelve tabs without evicting another conversation's pages", async () => {
+  const original = Array.from({ length: 12 }, (_, index) => `existing-${index}`);
+  const f = await fixture({ pages: [...original] });
+  try {
+    const opened = [];
+    for (let index = 0; index < 4; index++) {
+      const result = await f.browser.request({ sessionId: "side", operation: "open", args: { url: `https://8.8.8.8/page-${index}` } });
+      assert.equal(result.ok, true, JSON.stringify(result));
+      opened.push(result.tabId);
+    }
+    assert.equal(new Set(opened).size, 4);
+    assert.deepEqual((await f.browser.request({ sessionId: "chat", operation: "tabs" })).tabs.map(tab => tab.tabId), original);
+    assert.deepEqual((await f.browser.request({ sessionId: "side", operation: "tabs" })).tabs.map(tab => tab.tabId), opened);
+    assert.equal(f.sockets.length, 16);
+    assert.equal((await f.browser.request({ sessionId: "side", operation: "pause", args: { tabId: original[0] } })).code, "wrong_conversation");
   } finally { await f.close(); }
 });
 
