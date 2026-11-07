@@ -27,13 +27,32 @@ import {
   parseOrgListPayload,
   roleIncludesCanonicalRole,
   permissionLockReason,
-  type SsoSessionMaxAgeHours,
+  type AdminReauthMinutes,
+  type MaxSessionLengthDays,
+  type SessionLengthHours,
 } from "../../_lib/den-org";
 import { bootOrgContextFor, shouldStartOrgBootRequests } from "../../_lib/org-boot-requests";
 import { consumeOrgSelectionRequest, shouldOpenOrgSelection } from "../../_lib/org-selection";
 import { restoreRememberedOrganization, setActiveOrganizationAndRemember } from "../../_lib/org-memory";
 import { ORG_SCOPE_HEADER, OrganizationNotFoundError, getRequestOrgScope, setRequestOrgScope } from "../../_lib/org-scope";
 import { SsoRequiredError, readSsoRequiredSignInPath, redirectToOrganizationSso } from "../../_lib/sso-required";
+
+/** PATCH /v1/org fields the dashboard sends; only what changed. */
+export type OrganizationSettingsUpdate = {
+  name?: string;
+  allowedEmailDomains?: string[] | null;
+  allowedDesktopVersions?: string[] | null;
+  requireSso?: boolean;
+  restrictDomainToSso?: boolean;
+  /** sessionSecuritySettings: Auth & Security › General. */
+  sessionLengthHours?: SessionLengthHours;
+  maxSessionLengthDays?: MaxSessionLengthDays;
+  adminReauthMinutes?: AdminReauthMinutes;
+  brandAppName?: string | null;
+  brandLogoUrl?: string | null;
+  brandIconUrl?: string | null;
+  brandAccentColor?: string | null;
+};
 
 type OrgDashboardContextValue = {
   orgSlug: string | null;
@@ -51,7 +70,7 @@ type OrgDashboardContextValue = {
   refreshOrgData: () => Promise<void>;
   createOrganization: (name: string) => Promise<void>;
   updateOrganizationName: (name: string) => Promise<void>;
-  updateOrganizationSettings: (input: { name?: string; allowedEmailDomains?: string[] | null; allowedDesktopVersions?: string[] | null; requireSso?: boolean; restrictDomainToSso?: boolean; ssoSessionMaxAgeHours?: SsoSessionMaxAgeHours | null; brandAppName?: string | null; brandLogoUrl?: string | null; brandIconUrl?: string | null; brandAccentColor?: string | null }) => Promise<void>;
+  updateOrganizationSettings: (input: OrganizationSettingsUpdate) => Promise<void>;
   deleteOrganization: () => Promise<void>;
   switchOrganization: (slug: string) => void;
   /** teamId (teamRoles): invite into a custom role by adding the pending member to its team. */
@@ -708,10 +727,10 @@ export function OrgDashboardProvider({
     await updateOrganizationSettings({ name: trimmed });
   }
 
-  async function updateOrganizationSettings(input: { name?: string; allowedEmailDomains?: string[] | null; allowedDesktopVersions?: string[] | null; requireSso?: boolean; restrictDomainToSso?: boolean; ssoSessionMaxAgeHours?: SsoSessionMaxAgeHours | null; brandAppName?: string | null; brandLogoUrl?: string | null; brandIconUrl?: string | null; brandAccentColor?: string | null }) {
+  async function updateOrganizationSettings(input: OrganizationSettingsUpdate) {
     ensureCanManageSettings();
     const shouldPublishOrgSettingsCompletion = pathnameRef.current === ORG_SETTINGS_PATH;
-    const body: { name?: string; allowedEmailDomains?: string[] | null; allowedDesktopVersions?: string[] | null; requireSso?: boolean; restrictDomainToSso?: boolean; ssoSessionMaxAgeHours?: SsoSessionMaxAgeHours | null; brandAppName?: string | null; brandLogoUrl?: string | null; brandIconUrl?: string | null; brandAccentColor?: string | null } = {};
+    const body: OrganizationSettingsUpdate = {};
     if (typeof input.name === "string") {
       const trimmed = input.name.trim();
       if (!trimmed) {
@@ -731,8 +750,14 @@ export function OrgDashboardProvider({
     if (input.restrictDomainToSso !== undefined) {
       body.restrictDomainToSso = input.restrictDomainToSso;
     }
-    if (input.ssoSessionMaxAgeHours !== undefined) {
-      body.ssoSessionMaxAgeHours = input.ssoSessionMaxAgeHours;
+    if (input.sessionLengthHours !== undefined) {
+      body.sessionLengthHours = input.sessionLengthHours;
+    }
+    if (input.maxSessionLengthDays !== undefined) {
+      body.maxSessionLengthDays = input.maxSessionLengthDays;
+    }
+    if (input.adminReauthMinutes !== undefined) {
+      body.adminReauthMinutes = input.adminReauthMinutes;
     }
     if (input.brandAppName !== undefined) {
       body.brandAppName = input.brandAppName;

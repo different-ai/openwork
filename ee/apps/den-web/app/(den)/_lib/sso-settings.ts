@@ -1,5 +1,3 @@
-import type { SsoSessionMaxAgeHours } from "./den-org";
-
 /**
  * The organization's SSO settings as saved and as drafted on the settings
  * screen. Only meaningful with ssoPerOrganization on; until then an enabled
@@ -8,7 +6,6 @@ import type { SsoSessionMaxAgeHours } from "./den-org";
 export type SsoSettings = {
   requireSso: boolean;
   restrictDomainToSso: boolean;
-  ssoSessionMaxAgeHours: SsoSessionMaxAgeHours | null;
 };
 
 export type SsoSettingsUpdate = Partial<SsoSettings>;
@@ -24,14 +21,5 @@ export function ssoSettingsChanges(input: { perOrganization: boolean; saved: Sso
   const changes: SsoSettingsUpdate = {};
   if (input.draft.requireSso !== input.saved.requireSso) changes.requireSso = input.draft.requireSso;
   if (input.draft.restrictDomainToSso !== input.saved.restrictDomainToSso) changes.restrictDomainToSso = input.draft.restrictDomainToSso;
-  if (input.draft.ssoSessionMaxAgeHours !== input.saved.ssoSessionMaxAgeHours) changes.ssoSessionMaxAgeHours = input.draft.ssoSessionMaxAgeHours;
   return changes;
-}
-
-/** Label for an "Ask for SSO again after" choice. */
-export function ssoSessionMaxAgeLabel(hours: SsoSessionMaxAgeHours | null): string {
-  if (hours === null) return "Only when their session ends";
-  if (hours < 24) return `After ${hours} hours`;
-  const days = hours / 24;
-  return days === 1 ? "After 1 day" : `After ${days} days`;
 }

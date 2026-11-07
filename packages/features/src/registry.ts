@@ -280,6 +280,17 @@ export const FEATURES = defineFeatures({
     deployments: everywhere,
     default: false,
   },
+  sessionSecuritySettings: {
+    label: "Den: session length, maximum session length and admin re-authentication settings",
+    description: "Auth & Security gets a General tab where admins choose how long sign-ins last without activity (12 hours to 7 days), how long they last at most however active (1 to 90 days, 30 by default), on the web and in the desktop app, and how recently an admin must have signed in before sensitive changes (15 minutes by default, up to 1 day, or never). Needs Auth & Security settings on. Off: sessions last 7 days without activity with no maximum, and sensitive changes ask admins to sign in again after 2 hours.",
+    category: "administration",
+    added: "2026-11-06",
+    since: "2026-11",
+    author: "OmarMcAdam",
+    docs: "docs/features/session-security-settings/README.md",
+    deployments: everywhere,
+    default: false,
+  },
   administratorRecovery: {
     label: "Deploy-time administrator recovery",
     description: "Run a one-time, operator-selected Admin-team permission repair at deployment; disabling stops future repairs, not existing grants.",

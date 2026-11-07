@@ -23,7 +23,6 @@ On, the organization's settings decide (Organization settings › Authentication
 | SSO set up, nothing required | "Continue with <org> SSO" first, "Use another sign-in method" below it | Any session |
 | **Require SSO** (`requireSso`) | Same, and the copy says the organization requires SSO | Only a session signed in through its SSO |
 | **Restrict this domain to our SSO** (`restrictDomainToSso`, new) | SSO only, invitations included; password, Google and new accounts on the domain are refused | Only a session signed in through its SSO |
-| **Ask for SSO again** (`ssoSessionMaxAgeHours`, new: 8, 24, 168 or 720; unset means only when the session ends) | Unchanged | With SSO required, only while that SSO sign-in is younger than the limit |
 
 ### Default: organizations with SSO keep it required
 
@@ -75,10 +74,11 @@ from settings needs the Enterprise plan.
   on HTTPS so a SAML identity provider's cross-site POST carries it). The
   callback copies proofs only from a live session of the same user. A password
   or Google session has no proofs to carry.
-- **Ask for SSO again.** A proof older than the organization's
-  `ssoSessionMaxAgeHours` no longer opens it (`403 sso_required`); the person
-  signs in through its SSO again and keeps their other proofs. A carried proof
-  keeps its age, so carrying never extends it.
+- **"Ask for SSO again" was removed.** An SSO proof opens the organization for
+  as long as the session lasts; how long sessions last is set in Auth &
+  Security › General ([`sessionSecuritySettings`](../session-security-settings/README.md)).
+  `PATCH /v1/org` no longer accepts `ssoSessionMaxAgeHours`, and a value
+  stored before the removal is ignored.
 - `session_sso_authentication` (one row per session) is superseded by
   `session_sso_proof` (migration 0179 copies its rows). It is still written
   with the newest proof so replicas from before 0179 keep working during a
@@ -95,8 +95,7 @@ from settings needs the Enterprise plan.
 - Turning **Require SSO** or the domain restriction on needs the admin's own
   session to have signed in through the organization's SSO (409
   `sso_session_required`), so nobody locks themselves out.
-- Restricting the domain and "Ask for SSO again" can only be changed while the
-  flag is on (404 `feature_disabled` otherwise).
+- Restricting the domain can only be changed while the flag is on (404 `feature_disabled` otherwise).
 
 API keys are created behind the organization check and are not re-checked.
 MCP access tokens and API keys issued before the flag turned on keep working
@@ -116,16 +115,14 @@ until they expire or are revoked.
 
 ![Organization settings with the flag on](./org-settings-sso.png)
 
-![Flag on: Require SSO with "Ask for SSO again"](./org-settings-ask-for-sso-again.png)
-
 ![Flag off: settings state that SSO is required, with no switch](./org-settings-flag-off.png)
 
 ## Turning it off
 
 Kill switch or the organization override restores today's behavior on the
 next request: domain emails go to SSO only and members are refused password
-and Google sign-in. `restrictDomainToSso` and `ssoSessionMaxAgeHours` stay
-stored but have no effect. Recorded SSO proofs are harmless when off.
+and Google sign-in. `restrictDomainToSso` stays
+stored but has no effect. Recorded SSO proofs are harmless when off.
 
 Turning it **on** for an organization with **Require SSO** set (every
 organization with SSO today, after migration 0180) asks a member to sign in

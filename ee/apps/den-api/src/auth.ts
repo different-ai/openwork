@@ -44,6 +44,7 @@ import {
   DEN_SESSION_EXPIRES_IN_SECONDS,
   DEN_SESSION_UPDATE_AGE_IN_SECONDS,
 } from "./session-lifetime.js";
+import { userSessionExpiresAt } from "./session-security-lifetime.js";
 import { DEN_ACCOUNT_CONFIG, DEN_USER_CONFIG } from "./account-linking-policy.js";
 import { cache } from "./cache.js";
 import { lastSignInCookieChange, lastSignInCookieWrites } from "./last-sign-in-method.js";
@@ -448,6 +449,18 @@ async function denyBetterAuthTeamMutation() {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+/** The earlier of `expiresAt` and the end of the person's session limits (sessionSecuritySettings). */
+async function clampSessionExpiresAt(userId: string, expiresAt: Date, createdAt: Date) {
+  try {
+    const latest = await userSessionExpiresAt(userId, new Date(), createdAt);
+    return latest < expiresAt ? latest : expiresAt;
+  } catch (error) {
+    // Never block a sign-in on this read; the next extension applies the length.
+    logger.error("session length could not be read", { user_id: userId, error });
+    return expiresAt;
+  }
 }
 
 function readStringProperty(value: unknown, propertyName: string) {
@@ -1046,6 +1059,8 @@ export const auth = betterAuth({
             data: {
               ...session,
               activeOrganizationId,
+              // sessionSecuritySettings: the strictest session limits of the person's organizations.
+              expiresAt: await clampSessionExpiresAt(userId, session.expiresAt, session.createdAt instanceof Date ? session.createdAt : new Date()),
             },
           };
         },
@@ -1079,6 +1094,13 @@ export const auth = betterAuth({
         },
       },
       update: {
+        // Better Auth extends a session by 7 days on /get-session; keep it to
+        // the person's session limits (sessionSecuritySettings).
+        before: async (session, context) => {
+          const current = context?.context.session?.session;
+          if (!(session.expiresAt instanceof Date) || !current || typeof current.userId !== "string") return;
+          return { data: { ...session, expiresAt: await clampSessionExpiresAt(current.userId, session.expiresAt, new Date(current.createdAt)) } };
+        },
         after: async (session) => {
           if (typeof session.token === "string") {
             // Better Auth session updates are the explicit invalidation point for cached sessions.

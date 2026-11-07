@@ -1,10 +1,14 @@
+import type { OrganizationContext } from "./orgs.js"
 import type { AuthContextVariables } from "./session.js"
+import { adminReauthMaxAgeMs, LEGACY_ADMIN_REAUTH_MAX_AGE_MS } from "./session-security-settings.js"
 
 // Step-up window for high-risk workspace actions (security settings, API keys,
 // roles, credentials, deletion). Verifying again starts a new session, so this
 // counts from the last sign-in or identity check. Routine plugin, marketplace,
 // and connector work does not step up; normal role checks still apply.
-export const PRIVILEGED_SESSION_MAX_AGE_MS = 2 * 60 * 60 * 1000
+// The organization chooses it with sessionSecuritySettings ("Enforce fresh
+// admin sessions"); this is the window while that is off.
+export const PRIVILEGED_SESSION_MAX_AGE_MS = LEGACY_ADMIN_REAUTH_MAX_AGE_MS
 export const CONNECTIONS_READ_SESSION_MAX_AGE_MS = 24 * 60 * 60 * 1000
 export const WORKSPACE_REAUTH_SECURITY_MESSAGE = "For security, confirm it's you before changing workspace settings."
 
@@ -42,9 +46,23 @@ export function hasFreshPrivilegedSession(
   return ageMs >= 0 && ageMs <= maxAgeMs
 }
 
+type PrivilegedSessionVariables = AuthContextVariables & { organizationContext?: OrganizationContext }
+
 export type PrivilegedSessionContext = {
-  get: <K extends "apiKey" | "session">(key: K) => AuthContextVariables[K] | undefined
+  get: <K extends "apiKey" | "session" | "organizationContext">(key: K) => PrivilegedSessionVariables[K] | undefined
 }
+
+/**
+ * The organization's "Enforce fresh admin sessions" window, in milliseconds,
+ * or null when it turned the check off. Without an organization (or with
+ * sessionSecuritySettings off): PRIVILEGED_SESSION_MAX_AGE_MS.
+ */
+export function organizationPrivilegedSessionMaxAgeMs(organizationContext: Pick<OrganizationContext, "features" | "organization"> | null | undefined): number | null {
+  if (!organizationContext) return PRIVILEGED_SESSION_MAX_AGE_MS
+  return adminReauthMaxAgeMs({ features: organizationContext.features, metadata: organizationContext.organization.metadata })
+}
+
+
 
 /** What the recent sign-in check reads from a request. */
 export type PrivilegedSessionInput = {
@@ -68,9 +86,10 @@ export type FreshPrivilegedSessionResult = { ok: true } | { ok: false; response:
  */
 export function checkFreshPrivilegedSession(
   input: PrivilegedSessionInput,
-  maxAgeMs = PRIVILEGED_SESSION_MAX_AGE_MS,
+  maxAgeMs: number | null = PRIVILEGED_SESSION_MAX_AGE_MS,
 ): FreshPrivilegedSessionResult {
-  if (input.apiKey) {
+  // null: the organization turned "Enforce fresh admin sessions" off.
+  if (input.apiKey || maxAgeMs === null) {
     return { ok: true }
   }
 
@@ -84,9 +103,22 @@ export function checkFreshPrivilegedSession(
   }
 }
 
+/**
+ * The recent sign-in check for the request's organization: its "Enforce
+ * fresh admin sessions" window. `minimumMaxAgeMs` widens it for checks that
+ * allow an older sign-in (reading connections), unless the organization
+ * turned the check off.
+ */
 export function ensureFreshPrivilegedSession(
   c: PrivilegedSessionContext,
-  maxAgeMs = PRIVILEGED_SESSION_MAX_AGE_MS,
+  minimumMaxAgeMs?: number,
 ): FreshPrivilegedSessionResult {
-  return checkFreshPrivilegedSession({ apiKey: c.get("apiKey"), session: c.get("session") }, maxAgeMs)
+  return checkFreshPrivilegedSession({ apiKey: c.get("apiKey"), session: c.get("session") }, requestPrivilegedSessionMaxAgeMs(c, minimumMaxAgeMs))
+}
+
+/** The window ensureFreshPrivilegedSession applies to this request; null when the organization turned it off. */
+export function requestPrivilegedSessionMaxAgeMs(c: PrivilegedSessionContext, minimumMaxAgeMs?: number): number | null {
+  const maxAgeMs = organizationPrivilegedSessionMaxAgeMs(c.get("organizationContext"))
+  if (maxAgeMs === null || minimumMaxAgeMs === undefined) return maxAgeMs
+  return Math.max(maxAgeMs, minimumMaxAgeMs)
 }

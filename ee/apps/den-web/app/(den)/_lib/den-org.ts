@@ -402,7 +402,9 @@ export type DenOrganizationMetadata = {
   allowedDesktopVersions?: string[];
   requireSso?: boolean;
   restrictDomainToSso?: boolean;
-  ssoSessionMaxAgeHours?: number;
+  sessionLengthHours?: number;
+  maxSessionLengthDays?: number;
+  adminReauthMinutes?: number;
   brandAppName?: string;
   brandLogoUrl?: string;
   brandIconUrl?: string;
@@ -500,27 +502,63 @@ export function getRestrictDomainToSsoFromMetadata(metadata: string | null): boo
   return parsed?.restrictDomainToSso === true;
 }
 
-/** ssoPerOrganization: "Ask for SSO again after" choices, in hours (matches den-api SSO_SESSION_MAX_AGE_HOURS). */
-export const SSO_SESSION_MAX_AGE_HOURS = [8, 24, 168, 720] as const;
-export type SsoSessionMaxAgeHours = (typeof SSO_SESSION_MAX_AGE_HOURS)[number];
-
-export function isSsoSessionMaxAgeHours(value: unknown): value is SsoSessionMaxAgeHours {
-  return SSO_SESSION_MAX_AGE_HOURS.some((hours) => hours === value);
-}
-
 /** The organization's stored SSO requirement settings. */
 export function getSsoSettingsFromMetadata(metadata: string | null): SsoSettings {
   return {
     requireSso: getRequireSsoFromMetadata(metadata),
     restrictDomainToSso: getRestrictDomainToSsoFromMetadata(metadata),
-    ssoSessionMaxAgeHours: getSsoSessionMaxAgeHoursFromMetadata(metadata),
   };
 }
 
-/** ssoPerOrganization: how long an SSO sign-in opens the organization; null while the session lasts. */
-export function getSsoSessionMaxAgeHoursFromMetadata(metadata: string | null): SsoSessionMaxAgeHours | null {
-  const value = parseOrganizationMetadata(metadata)?.ssoSessionMaxAgeHours;
-  return isSsoSessionMaxAgeHours(value) ? value : null;
+/**
+ * sessionSecuritySettings (Auth & Security › General): "Session length"
+ * choices in hours, matching den-api SESSION_LENGTH_HOURS.
+ */
+export const SESSION_LENGTH_HOURS = [12, 24, 72, 168] as const;
+export type SessionLengthHours = (typeof SESSION_LENGTH_HOURS)[number];
+export const DEFAULT_SESSION_LENGTH_HOURS: SessionLengthHours = 168;
+
+/** "Maximum Session Length" choices in days, matching den-api MAX_SESSION_LENGTH_DAYS. */
+export const MAX_SESSION_LENGTH_DAYS = [1, 7, 14, 30, 60, 90] as const;
+export type MaxSessionLengthDays = (typeof MAX_SESSION_LENGTH_DAYS)[number];
+export const DEFAULT_MAX_SESSION_LENGTH_DAYS: MaxSessionLengthDays = 30;
+
+/** "Enforce fresh Admin sessions" choices in minutes, matching den-api ADMIN_REAUTH_MINUTES; 0 is Disabled. */
+export const ADMIN_REAUTH_MINUTES = [15, 60, 240, 480, 1440, 0] as const;
+export type AdminReauthMinutes = (typeof ADMIN_REAUTH_MINUTES)[number];
+export const DEFAULT_ADMIN_REAUTH_MINUTES: AdminReauthMinutes = 15;
+
+export function isSessionLengthHours(value: unknown): value is SessionLengthHours {
+  return SESSION_LENGTH_HOURS.some((hours) => hours === value);
+}
+
+export function isMaxSessionLengthDays(value: unknown): value is MaxSessionLengthDays {
+  return MAX_SESSION_LENGTH_DAYS.some((days) => days === value);
+}
+
+export function isAdminReauthMinutes(value: unknown): value is AdminReauthMinutes {
+  return ADMIN_REAUTH_MINUTES.some((minutes) => minutes === value);
+}
+
+export type SessionSecuritySettings = {
+  sessionLengthHours: SessionLengthHours;
+  maxSessionLengthDays: MaxSessionLengthDays;
+  adminReauthMinutes: AdminReauthMinutes;
+};
+
+/** The organization's saved session settings, with the defaults for anything unset. */
+export function getSessionSecuritySettingsFromMetadata(metadata: string | null): SessionSecuritySettings {
+  const parsed = parseOrganizationMetadata(metadata);
+  return {
+    sessionLengthHours: isSessionLengthHours(parsed?.sessionLengthHours) ? parsed.sessionLengthHours : DEFAULT_SESSION_LENGTH_HOURS,
+    maxSessionLengthDays: isMaxSessionLengthDays(parsed?.maxSessionLengthDays) ? parsed.maxSessionLengthDays : DEFAULT_MAX_SESSION_LENGTH_DAYS,
+    adminReauthMinutes: isAdminReauthMinutes(parsed?.adminReauthMinutes) ? parsed.adminReauthMinutes : DEFAULT_ADMIN_REAUTH_MINUTES,
+  };
+}
+
+/** Whether Auth & Security › General applies: its feature and the Auth & Security page (den-api sessionSecuritySettingsApply). */
+export function sessionSecuritySettingsEnabled(orgContext: Pick<DenOrgContext, "features"> | null | undefined): boolean {
+  return orgFeatureEnabled(orgContext, "sessionSecuritySettings") && orgFeatureEnabled(orgContext, "authSecuritySettings");
 }
 
 export function getManagedBrandAssetFromMetadata(
@@ -983,11 +1021,11 @@ export function getSsoRoute(orgSlug?: string | null): string {
   return `${getOrgDashboardRoute(orgSlug)}/sso`;
 }
 
-export type AuthSecurityTab = "sso" | "scim";
+export type AuthSecurityTab = "general" | "sso" | "scim";
 
 /**
  * Settings › Auth & Security (feature `authSecuritySettings`): SSO and SCIM as
- * tabs. `setup` opens the tab's setup form directly instead of its intro.
+ * tabs, and General (sessionSecuritySettings). `setup` opens the tab's setup form directly instead of its intro.
  */
 export function getAuthSecurityRoute(orgSlug?: string | null, tab?: AuthSecurityTab, options: { setup?: boolean } = {}): string {
   const base = `${getOrgDashboardRoute(orgSlug)}/auth-security`;

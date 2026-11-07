@@ -160,8 +160,6 @@ import {
 import { ensureFreshPrivilegedSession } from "../../privileged-session.js"
 import { resolvePluginArchPluginRoles, type PluginArchActorContext } from "./plugin-system/access.js"
 import {
-  getFreshPrivilegedSessionRequiredResponse,
-  hasFreshPrivilegedSession,
   hasPermission,
   idParamSchema,
   orgAccessFailureStatus,
@@ -3512,8 +3510,9 @@ export function registerMcpConnectionRoutes<T extends { Variables: OrgRouteVaria
         return createExternalConnectionResponse(c, payload, body, externalKey, 201, c.get("session")?.id, c.get("requestId"), Boolean(c.get("apiKey")))
       }
 
-      if (!c.get("apiKey") && !hasFreshPrivilegedSession({ session: c.get("session") })) {
-        return c.json(getFreshPrivilegedSessionRequiredResponse(), 403)
+      const freshSession = ensureFreshPrivilegedSession(c)
+      if (!freshSession.ok) {
+        return c.json(freshSession.response, 403)
       }
       const canUpdateAnyConnection = await hasPermission(c, "connections.update")
       if (!canUpdateAnyConnection && connection.createdByOrgMembershipId !== payload.currentMember.id) {
@@ -3565,8 +3564,9 @@ export function registerMcpConnectionRoutes<T extends { Variables: OrgRouteVaria
     paramValidator(externalKeyParamsSchema),
     async (c) => {
       const payload = c.get("organizationContext")
-      if (!c.get("apiKey") && !hasFreshPrivilegedSession({ session: c.get("session") })) {
-        return c.json(getFreshPrivilegedSessionRequiredResponse(), 403)
+      const freshSession = ensureFreshPrivilegedSession(c)
+      if (!freshSession.ok) {
+        return c.json(freshSession.response, 403)
       }
 
       const { externalKey } = c.req.valid("param")
@@ -3603,8 +3603,9 @@ export function registerMcpConnectionRoutes<T extends { Variables: OrgRouteVaria
     jsonValidator(updateConnectionBodySchema),
     async (c) => {
       const payload = c.get("organizationContext")
-      if (!c.get("apiKey") && !hasFreshPrivilegedSession({ session: c.get("session") })) {
-        return c.json(getFreshPrivilegedSessionRequiredResponse(), 403)
+      const freshSession = ensureFreshPrivilegedSession(c)
+      if (!freshSession.ok) {
+        return c.json(freshSession.response, 403)
       }
 
       const { connectionId } = c.req.valid("param")
@@ -3711,7 +3712,7 @@ export function registerMcpConnectionRoutes<T extends { Variables: OrgRouteVaria
     describeRoute({
       tags: ["Authentication"],
       summary: "Remove an External MCP Connection",
-      description: "Permanently deletes the connection together with its access grants, stored shared and per-member accounts, OAuth client registration, and plugin MCP requirement bindings. The workspace owner (or anyone with the Remove any connection permission) can remove any connection; other members only the connections they created. Session callers must have signed in within the last 2 hours (403 reauth); API-key callers are exempt.",
+      description: "Permanently deletes the connection together with its access grants, stored shared and per-member accounts, OAuth client registration, and plugin MCP requirement bindings. The workspace owner (or anyone with the Remove any connection permission) can remove any connection; other members only the connections they created. Session callers must have signed in recently, within the organization's admin re-authentication window (2 hours unless it sets another; 403 reauth); API-key callers are exempt.",
       responses: {
         200: jsonResponse("The connection was removed.", okSchema),
         401: jsonResponse("The caller must be signed in.", unauthorizedSchema),
@@ -3723,8 +3724,9 @@ export function registerMcpConnectionRoutes<T extends { Variables: OrgRouteVaria
     paramValidator(connectionParamsSchema),
     async (c) => {
       const payload = c.get("organizationContext")
-      if (!c.get("apiKey") && !hasFreshPrivilegedSession({ session: c.get("session") })) {
-        return c.json(getFreshPrivilegedSessionRequiredResponse(), 403)
+      const freshSession = ensureFreshPrivilegedSession(c)
+      if (!freshSession.ok) {
+        return c.json(freshSession.response, 403)
       }
 
       const { connectionId } = c.req.valid("param")
