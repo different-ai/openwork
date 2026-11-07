@@ -516,6 +516,8 @@ export type DesktopCommandMap = {
   computerOpenSavedFile: { args: [input: { sessionId: string; path: string; reveal?: boolean }]; result: DesktopWorkspaceFileOpenResult };
   /** Files in the chat's output folder, newest first, with their size and last change (ms). */
   computerChatFiles: { args: [input: { sessionId: string }]; result: { files: Array<{ path: string; bytes: number; modifiedAt: number }> } };
+  /** An image saved in the chat's output folder, to show inline in a reply; null for anything else. */
+  computerChatImage: { args: [input: { sessionId: string; path: string }]; result: { data: Uint8Array<ArrayBuffer>; contentType: string } | null };
   computerListFileGrants: { args: []; result: { enabled: boolean; grants: Array<{ id: string; origin: string; folder: string; blocked?: boolean }> } };
   computerRemoveFileGrant: { args: [id: string]; result: { ok: boolean } };
   computerSetFeatureEnabled: { args: [enabled: boolean]; result: boolean };
