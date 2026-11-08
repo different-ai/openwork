@@ -150,7 +150,7 @@ export function WorkspaceAssistant({ name, context, includeContext, onIncludeCon
   const revealed = useRef(reveal);
   useEffect(() => { if (active && reveal !== revealed.current) { revealed.current = reveal; setMinimized(false); } }, [reveal, active]);
   const phone = !useWideScreen(640);
-  return <div ref={anchor} className={phone ? "relative z-30 w-full shrink-0 border-t border-[var(--wb-hairline)] bg-[var(--wb-bg)] px-3 pb-3 pt-2" : "fixed bottom-5 right-5 z-30 w-[min(26rem,calc(100vw-1.5rem))]"} data-workbot-workspace-assistant data-workbot-phone={phone || undefined}>
+  return <div ref={anchor} className={phone ? "relative z-30 w-full shrink-0 border-t border-[var(--wb-hairline)] bg-[var(--wb-bg)] px-3 pb-[calc(0.75rem_+_env(safe-area-inset-bottom))] pt-2" : "fixed bottom-5 right-5 z-30 w-[min(26rem,calc(100vw-1.5rem))]"} data-workbot-workspace-assistant data-workbot-phone={phone || undefined}>
     <Popover.Root open={surface.open} onOpenChange={(next, details) => {
       if (surface.blocked) return;
       // Working in the document behind it never minimizes the conversation; only Hide, the trigger or Escape do.
