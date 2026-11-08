@@ -42,10 +42,11 @@ const draftReason = "Save or close document drafts before switching chats.";
 
 type Destination = { label: string; icon: typeof MessageCircle; selected?: boolean; disabled?: boolean; onClick(): void };
 
-function destinations(props: NavigationProps): Destination[] {
+function destinations(props: NavigationProps, rail = false): Destination[] {
   const host = workbotHost();
   return [
-    {
+    // The desktop rail goes back to the chat you were in; the list beside it picks Main chat or a side chat.
+    rail ? { label: "Chats", icon: MessageCircle, selected: props.page === "home", onClick: () => props.onPage("home") } : {
       label: "Main chat", icon: MessageCircle, selected: props.page === "home" && props.currentChat === null,
       disabled: props.currentChat !== null && (props.drafts || !props.onOpenChat),
       onClick: () => {
@@ -117,25 +118,29 @@ function Account({ account }: { account?: ReactNode }) {
   return account ?? <AccountAvatar userName={workbotHost().user?.name ?? null} />;
 }
 
-/** Wide-screen icon rail and direct chat sidebar; no invented channels or Computer entry. */
+/**
+ * Wide-screen icon rail, and beside it the chat list only while a chat is on screen: Documents and Calendar bring their
+ * own navigation, so each view has one sidebar. No invented channels or Computer entry.
+ */
 export function DesktopNavigation(props: NavigationProps) {
   const host = workbotHost();
   const [filter, setFilter] = useState("");
+  const chatView = props.page === "home";
   return <aside className="workbot flex min-h-0 shrink-0 border-r border-[var(--wb-hairline)] text-[var(--wb-text)]" aria-label="Workbot navigation" data-workbot-desktop-navigation>
-    <div className="flex w-16 shrink-0 flex-col items-center gap-2 border-r border-[var(--wb-hairline)] bg-[var(--wb-surface)] py-3">
+    <div className={`flex w-16 shrink-0 flex-col items-center gap-2 bg-[var(--wb-surface)] py-3 ${chatView ? "border-r border-[var(--wb-hairline)]" : ""}`}>
       <span aria-hidden className="mb-3 grid size-9 place-items-center"><OpenWorkMark width={20} height={25} /></span>
-      <nav aria-label="Workspace" className="flex flex-col items-center gap-2">{destinations(props).map(({ label, icon: Icon, selected, disabled, onClick }) => <button key={label} type="button" onClick={onClick} disabled={disabled} title={disabled ? draftReason : label} aria-label={label} aria-current={selected ? "page" : undefined} className={`${control} aria-[current=page]:bg-[var(--wb-chip)] aria-[current=page]:text-[var(--wb-text)]`}><Icon size={18} strokeWidth={1.5} aria-hidden /></button>)}</nav>
+      <nav aria-label="Workspace" className="flex flex-col items-center gap-2">{destinations(props, true).map(({ label, icon: Icon, selected, disabled, onClick }) => <button key={label} type="button" onClick={onClick} disabled={disabled} title={disabled ? draftReason : label} aria-label={label} aria-current={selected ? "page" : undefined} className={`${control} aria-[current=page]:bg-[var(--wb-chip)] aria-[current=page]:text-[var(--wb-text)]`}><Icon size={18} strokeWidth={1.5} aria-hidden /></button>)}</nav>
       <div className="mt-auto flex flex-col items-center gap-3 pt-4">
         {props.search ?? (props.onSearch && <button type="button" onClick={props.onSearch} className={control} title="Search messages" aria-label="Search messages"><Search size={18} strokeWidth={1.5} aria-hidden /></button>)}
         <a href={host.homeHref} className={control} title="Your dashboard" aria-label="Your dashboard"><LayoutDashboard size={18} strokeWidth={1.5} aria-hidden /></a>
         <Account account={props.account} />
       </div>
     </div>
-    <div className="flex min-h-0 w-[260px] flex-col bg-[var(--wb-bg)] px-2 pb-3">
+    {chatView && <div className="flex min-h-0 w-[260px] flex-col bg-[var(--wb-bg)] px-2 pb-3">
       <div className="flex h-16 shrink-0 items-center px-1"><ChatFilter value={filter} onChange={setFilter} /></div>
       <nav aria-label="Chats" className="mb-4">{destinations(props).slice(0, 1).map(({ label, icon: Icon, selected, disabled, onClick }) => <button key={label} type="button" disabled={disabled} onClick={onClick} title={disabled ? draftReason : undefined} className={row} aria-current={selected ? "page" : undefined}><Icon size={16} strokeWidth={1.5} aria-hidden /><span className="flex-1">{label}</span>{props.chats?.main && <span className="text-[11px] text-[var(--wb-muted)]">{sinceLabel(props.chats.main.updatedAt)}</span>}</button>)}</nav>
       <SideChats props={props} filter={filter} />
-    </div>
+    </div>}
   </aside>;
 }
 

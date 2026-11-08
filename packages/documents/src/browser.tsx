@@ -111,9 +111,6 @@ function ScopedDocumentsBrowser({ provider, editor, scope, enabled, editingEnabl
     enabled: enabled && !authorization && (view !== "recent" || !!search), retry: false, gcTime: DOCUMENTS_LIST_GC_MS, staleTime: 60_000,
     refetchOnWindowFocus: true,
   })
-  const recentItems = view === "recent" && !search
-    ? query.isError ? [] : query.data?.pages[0]?.items ?? []
-    : recent.isError ? [] : recent.data?.items ?? []
   const items = useMemo(() => {
     const unique = new Map<string, DocumentItem>()
     for (const page of query.data?.pages ?? []) for (const item of page.items) unique.set(item.id, item)
@@ -301,16 +298,13 @@ function ScopedDocumentsBrowser({ provider, editor, scope, enabled, editingEnabl
   const refreshFailed = !accessLost && !flagOff && (query.isError || recent.isError)
   const lockedResources = new Set(opened.filter(item => locks.has(item.id)).map(item => (resources.get(item.id) ?? item).id))
   const listedItems = items.filter(item => !lockedResources.has(item.id))
+  // Tabs appear once a document is open; until then the list is the whole page, with nothing to switch between.
+  const visibleTabs = editorEnabled ? orderedTabs.filter(item => !locks.has(item.id)) : []
+  // Inside a folder the breadcrumbs say where you are; at the top level the Recent / My Drive switch already does.
+  const nested = view === "folder" && folders.length > 1
   return <section className="ow-documents" aria-label="Documents">
-    <aside className="ow-documents-sidebar">
-      <div className="ow-documents-source">Documents</div>
-      <button type="button" className="ow-documents-location" aria-current={activeTab === "files" && view === "recent" ? "page" : undefined} onClick={() => { supersede(); setView("recent"); setActiveTab("files"); setSearch(""); setDraft(""); setOrder("recent") }}><Clock size={16} strokeWidth={1.5} aria-hidden />Recent</button>
-      <button type="button" className="ow-documents-location" aria-current={activeTab === "files" && view === "folder" ? "page" : undefined} onClick={() => navigate(0)}><Folder size={16} strokeWidth={1.5} aria-hidden />{provider.rootLabel}</button>
-      <h2 className="ow-documents-recent-heading">Recent documents</h2>
-      {visible && recentItems.filter(item => !lockedResources.has(item.id)).slice(0, 8).map(item => <button type="button" className="ow-documents-recent-file" key={item.id} {...intent(item)} onClick={() => pick(item)}><ItemIcon item={item} /><span>{item.name}</span></button>)}
-    </aside>
     <div className="ow-documents-workspace">
-      <div className="ow-document-tabs-row" ref={tabsRow}><DocumentTabs items={editorEnabled ? orderedTabs.filter(item => !locks.has(item.id)) : []} activeId={activeTab} dirtyIds={dirtyIds} busyIds={busyIds} onSelect={selectTab} onClose={requestClose} onReorder={setTabOrder}/><div className="ow-document-actions" ref={setActionsHost}/></div>
+      <div className="ow-document-tabs-row" ref={tabsRow} hidden={visibleTabs.length === 0}><DocumentTabs items={visibleTabs} activeId={activeTab} dirtyIds={dirtyIds} busyIds={busyIds} onSelect={selectTab} onClose={requestClose} onReorder={setTabOrder}/><div className="ow-document-actions" ref={setActionsHost}/></div>
       {(accessLost || locks.size > 0) && <div className="ow-editor-message ow-documents-recovery" role="status" aria-busy={restoring}><Lock size={16} aria-hidden /><span>{flagOff ? "Documents is off for your workspace. An admin can turn it on." : needsSignIn ? "Sign in again to restore document access." : needsConnection ? recoveryUntil !== null ? "Google Drive needs a fresh connection." : "Connect Google Drive to browse and open your documents. Drive read permission is required." : "Some document access isn't confirmed."}</span>{needsSignIn && reauthenticateHref && <a href={reauthenticateHref} target="_blank" rel="noopener noreferrer">Sign in again</a>}{needsConnection && (renderConnect ? renderConnect(undefined, locks.size > 0) : connectionsHref && <a href={connectionsHref} target="_blank" rel="noopener noreferrer">{locks.size > 0 ? "Reconnect Google Drive" : "Connect Google Drive"}</a>)}{recoveryUntil !== null && locks.size > 0 && <span>Locked recovery is kept in this tab for up to 15 minutes.</span>}<button type="button" disabled={restoring} onClick={() => void restoreRecovery()}>{locks.size > 0 ? "Check access and restore tabs" : "Check browsing access"}</button>{recoveryError && <span>{recoveryError}</span>}</div>}
       {opened.filter(item => locks.has(item.id)).map(item => { const position = tabOrder.indexOf(item.id) + 1; return <div className="ow-editor-message ow-documents-recovery" role="group" aria-label={`Locked document ${position}`} key={item.id}><span>Locked document {position}</span><button type="button" disabled={restoring} aria-label={`Check access for locked document ${position}`} onClick={() => void restoreRecovery(item.id)}>Check access</button><button type="button" disabled={restoring} aria-label={`Discard locked document ${position}`} onClick={() => discardRecovery(item.id)}>Discard</button></div> })}
       {refreshFailed && activeTab !== "files" && <div className="ow-editor-message" role="status">Couldn't refresh documents. Your open document is unchanged.<button type="button" onClick={() => { void query.refetch(); void recent.refetch() }}>Try again</button></div>}
@@ -318,11 +312,18 @@ function ScopedDocumentsBrowser({ provider, editor, scope, enabled, editingEnabl
     {opening && !accessLost && <section className="ow-document-editor" role="status" aria-label="Opening document" aria-busy="true" data-testid="document-opening"><div className="ow-document-opening" aria-hidden="true"><div/><div/><div/><div/><div/></div></section>}
     <div className="ow-documents-main" hidden={opening || activeTab !== "files" || accessLost}>
       <header className="ow-documents-toolbar" hidden={!editorEnabled}>
-        <form onSubmit={submit} role="search" className="ow-documents-search"><Search size={16} strokeWidth={1.5} aria-hidden /><input aria-label={`Search ${folder.name}`} placeholder={`Search in ${folder.name}`} value={draft} maxLength={500} onChange={event => setDraft(event.target.value)} /><button type="submit">Search</button></form>
-        <button type="button" title="Refresh documents" aria-label="Refresh documents" disabled={!enabled || query.isFetching} onClick={() => { void query.refetch(); void recent.refetch() }}><RefreshCw size={16} strokeWidth={1.5} /></button>
-        <div className="ow-documents-layout" role="group" aria-label="Document view"><button type="button" aria-label="List view" aria-pressed={layout === "list"} onClick={() => setLayout("list")}><List size={16} strokeWidth={1.5} /></button><button type="button" aria-label="Grid view" aria-pressed={layout === "grid"} onClick={() => setLayout("grid")}><Grid2X2 size={16} strokeWidth={1.5} /></button></div>
+        <div className="ow-documents-views" role="group" aria-label="Show">
+          <button type="button" aria-pressed={view === "recent"} onClick={() => { supersede(); setView("recent"); setActiveTab("files"); setSearch(""); setDraft(""); setOrder("recent"); setSelected(null) }}><Clock size={15} strokeWidth={1.5} aria-hidden />Recent</button>
+          <button type="button" aria-pressed={view === "folder"} onClick={() => navigate(0)}><Folder size={15} strokeWidth={1.5} aria-hidden />{provider.rootLabel}</button>
+        </div>
+        <form onSubmit={submit} role="search" className="ow-documents-search"><Search size={16} strokeWidth={1.5} aria-hidden /><input aria-label={`Search ${folder.name}`} placeholder={`Search ${view === "recent" ? "recent documents" : folder.name}`} value={draft} maxLength={500} onChange={event => setDraft(event.target.value)} /><button type="submit" className="ow-documents-sr-only">Search</button></form>
+        <div className="ow-documents-controls">
+          <select aria-label="Sort documents" title="Sort documents" value={order} onChange={event => setOrder(event.target.value === "modified" ? "modified" : event.target.value === "recent" ? "recent" : "name")}><option value="recent">{view === "recent" ? "Most recent" : "Default order"}</option><option value="name">Name</option><option value="modified">Last modified</option></select>
+          <div className="ow-documents-layout" role="group" aria-label="Document view"><button type="button" aria-label="List view" title="List view" aria-pressed={layout === "list"} onClick={() => setLayout("list")}><List size={16} strokeWidth={1.5} /></button><button type="button" aria-label="Grid view" title="Grid view" aria-pressed={layout === "grid"} onClick={() => setLayout("grid")}><Grid2X2 size={16} strokeWidth={1.5} /></button></div>
+          <button type="button" title="Refresh documents" aria-label="Refresh documents" disabled={!enabled || query.isFetching} onClick={() => { void query.refetch(); void recent.refetch() }}><RefreshCw size={16} strokeWidth={1.5} /></button>
+        </div>
       </header>
-      <div className="ow-documents-heading" hidden={!editorEnabled}><nav aria-label="Folder breadcrumbs">{(view === "recent" ? [{ id: "recent", name: "Recent" }] : folders).map((entry, index) => <span key={`${entry.id}-${index}`}>{index > 0 && <ChevronRight size={14} aria-hidden />}<button type="button" onClick={() => view === "recent" ? selectTab("files") : navigate(index)} aria-current={index === folders.length - 1 ? "location" : undefined}>{entry.name}</button></span>)}</nav><label>Sort by <select aria-label="Sort documents" value={order} onChange={event => setOrder(event.target.value === "modified" ? "modified" : event.target.value === "recent" ? "recent" : "name")}><option value="recent">Drive order</option><option value="name">Name</option><option value="modified">Last modified</option></select></label></div>
+      {nested && <div className="ow-documents-heading" hidden={!editorEnabled}><nav aria-label="Folder breadcrumbs">{folders.map((entry, index) => <span key={`${entry.id}-${index}`}>{index > 0 && <ChevronRight size={14} aria-hidden />}<button type="button" onClick={() => navigate(index)} aria-current={index === folders.length - 1 ? "location" : undefined}>{entry.name}</button></span>)}</nav></div>}
       {editorEnabled && search && <div className="ow-documents-notice">Results for “{search}” <button type="button" onClick={() => { setDraft(""); setSearch("") }}>Clear search</button></div>}
       {accessLost ? null
         : query.isError ? <div className="ow-documents-state" role="status"><p>Couldn't load your documents.</p><button type="button" onClick={() => { void query.refetch(); void recent.refetch() }}>Try again</button></div>
