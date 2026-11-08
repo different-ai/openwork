@@ -100,7 +100,7 @@ export function WorkspaceMenu({ page, onPage, onDocument, onChats, drafts }: { p
     <Dialog.Trigger className={control} aria-label="Open workspace navigation" title="Navigate"><PanelLeft size={16} strokeWidth={1.5} aria-hidden /></Dialog.Trigger>
     <Dialog.Portal {...surface.portal}>
       <Dialog.Backdrop className="fixed inset-0 z-40 bg-[var(--wb-ink)]/10 transition-opacity duration-150 data-[ending-style]:opacity-0 data-[starting-style]:opacity-0 motion-reduce:transition-none" />
-      <Dialog.Popup className="workbot fixed inset-y-0 left-0 z-50 flex w-[min(20rem,100vw)] flex-col bg-[var(--wb-surface)] shadow-[var(--wb-sheet-shadow)] outline-none transition-transform duration-200 ease-out data-[ending-style]:-translate-x-full data-[starting-style]:-translate-x-full motion-reduce:transition-none">
+      <Dialog.Popup className="workbot fixed inset-y-0 left-0 z-50 flex w-[min(20rem,100vw)] flex-col bg-[var(--wb-surface)] shadow-[var(--wb-sheet-shadow)] outline-none workbot-sheet-motion transition-transform data-[ending-style]:-translate-x-full data-[starting-style]:-translate-x-full motion-reduce:transition-none">
         <div className="flex h-14 shrink-0 items-center justify-between px-4"><Dialog.Title className="text-[14px] font-semibold text-[var(--wb-text)]">Workbot</Dialog.Title><Dialog.Close className={control} aria-label="Close workspace navigation"><X size={16} strokeWidth={1.5} aria-hidden /></Dialog.Close></div>
         <nav aria-label="Workspace" className="px-2">
           <button type="button" className={row} aria-current={page === "home" ? "page" : undefined} onClick={() => navigate("home")}><House size={16} strokeWidth={1.5} aria-hidden />Home</button>

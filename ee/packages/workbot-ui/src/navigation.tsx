@@ -153,7 +153,7 @@ export function MobileNavigation(props: NavigationProps) {
     <Dialog.Trigger className={control} aria-label="Open workspace navigation" title="Navigate"><PanelLeft size={16} strokeWidth={1.5} aria-hidden /></Dialog.Trigger>
     <Dialog.Portal {...surface.portal}>
       <Dialog.Backdrop className="workbot fixed inset-0 z-40 bg-[var(--wb-ink)]/10 transition-opacity duration-150 data-[ending-style]:opacity-0 data-[starting-style]:opacity-0 motion-reduce:transition-none" />
-      <Dialog.Popup ref={viewport} className="workbot fixed left-0 top-[var(--wb-viewport-top,0px)] z-50 flex h-[var(--wb-viewport-height,100dvh)] w-[calc(100vw-48px)] max-w-[340px] flex-col bg-[var(--wb-bg)] pb-[env(safe-area-inset-bottom)] text-[var(--wb-text)] shadow-[var(--wb-sheet-shadow)] outline-none transition-transform duration-200 ease-out [--wb-nav-font-size:14px] [--wb-nav-row-height:44px] data-[ending-style]:-translate-x-full data-[starting-style]:-translate-x-full motion-reduce:transition-none" data-workbot-mobile-navigation>
+      <Dialog.Popup ref={viewport} className="workbot fixed left-0 top-[var(--wb-viewport-top,0px)] z-50 flex h-[var(--wb-viewport-height,100dvh)] w-[calc(100vw-48px)] max-w-[340px] flex-col bg-[var(--wb-bg)] pb-[env(safe-area-inset-bottom)] text-[var(--wb-text)] shadow-[var(--wb-sheet-shadow)] outline-none workbot-sheet-motion transition-transform [--wb-nav-font-size:14px] [--wb-nav-row-height:44px] data-[ending-style]:-translate-x-full data-[starting-style]:-translate-x-full motion-reduce:transition-none" data-workbot-mobile-navigation>
         <div className="flex h-14 shrink-0 items-center justify-between gap-2 pl-4 pr-3">
           <Dialog.Title className="sr-only">Menu</Dialog.Title>
           <Account account={props.account} />

@@ -179,12 +179,15 @@ try {
       const rows = [...node.querySelectorAll("[data-workbot-row]")]
       const box = el => { const r = el.getBoundingClientRect(); return { top: r.top, bottom: r.bottom } }
       const style = el => getComputedStyle(el)
-      const layer = el => getComputedStyle(el, "::before")
+      // The progressive blur (floating-glass.tsx): a tint layer, then blur layers growing toward the screen's edge.
+      const glass = el => el.querySelector("[data-workbot-glass]")
+      const strongest = el => getComputedStyle(glass(el).lastElementChild)
+      const tint = el => getComputedStyle(glass(el).firstElementChild)
       const arrow = document.querySelector(".workbot-scroll-latest")
       return {
         scroller: { ...box(node), clientHeight: node.clientHeight, scrollHeight: node.scrollHeight, padding: [style(node).paddingTop, style(node).paddingBottom, style(content).paddingTop, style(content).paddingBottom].join(" ") },
-        header: header && { ...box(header), position: style(header).position, blur: layer(header).backdropFilter || layer(header).webkitBackdropFilter, background: layer(header).backgroundColor },
-        dock: dock && { ...box(dock), position: style(dock).position, blur: layer(dock).backdropFilter || layer(dock).webkitBackdropFilter },
+        header: header && { ...box(header), position: style(header).position, blur: strongest(header).backdropFilter || strongest(header).webkitBackdropFilter, layers: glass(header).children.length, background: tint(header).backgroundImage, viewport: style(document.querySelector(".workbot-viewport")).position },
+        dock: dock && { ...box(dock), position: style(dock).position, blur: strongest(dock).backdropFilter || strongest(dock).webkitBackdropFilter, layers: glass(dock).children.length, background: tint(dock).backgroundImage },
         composer: box(dock.querySelector("[data-workbot-composer]")),
         last: box(rows.at(-1)),
         arrow: arrow && { position: style(arrow).position, visible: arrow.classList.contains("is-visible") },
@@ -197,9 +200,14 @@ try {
       assert.equal(bottom.header.position, "absolute", "header floats")
       assert.equal(bottom.dock.position, "absolute", "composer floats")
       assert.ok(bottom.scroller.top <= bottom.header.top + 1 && bottom.scroller.bottom >= bottom.dock.bottom - 1, "conversation runs under both")
-      assert.match(bottom.header.blur, /blur\(20px\)/, "header is blurred glass")
-      assert.match(bottom.dock.blur, /blur\(20px\)/, "composer area is blurred glass")
-      assert.notEqual(bottom.header.background, "rgb(251, 252, 253)", "header is translucent, not the solid page colour")
+      assert.match(bottom.header.blur, /blur\(14px\)/, "header is blurred glass")
+      assert.match(bottom.dock.blur, /blur\(14px\)/, "composer area is blurred glass")
+      assert.equal(bottom.header.layers, 5, "header blur is progressive: a tint and four blur layers")
+      assert.equal(bottom.dock.layers, 5, "composer blur is progressive: a tint and four blur layers")
+      assert.match(bottom.header.background, /linear-gradient\(.*(transparent|rgba\(0, 0, 0, 0\)) 100%\)$/, "header tint fades to transparent, never the solid page colour")
+      assert.match(bottom.dock.background, /linear-gradient\(.*(transparent|rgba\(0, 0, 0, 0\)) 100%\)$/, "composer tint fades to transparent, never the solid page colour")
+      // Safari 26 paints a fixed element's edge colour as solid bars behind its status bar and toolbar.
+      assert.notEqual(bottom.header.viewport, "fixed", "the page shell is never position: fixed")
       assert.ok(bottom.last.bottom <= bottom.composer.top + 0.5, `last message fully above the composer (${bottom.last.bottom} vs ${bottom.composer.top})`)
       assert.ok(bottom.last.bottom <= bottom.dock.top + 0.5, "last message clears the composer's glass")
       assert.equal(bottom.arrow.position, "absolute", "arrow floats")
