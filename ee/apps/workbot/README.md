@@ -148,12 +148,16 @@ permission requirements and concurrency boundaries.
 ## Workspace assistant
 
 `workbotWorkspaceAssistant` is off by default on cloud and self-hosted installs.
-With Workbot on, it adds the compact navigation drawer and floating composer to
-Documents and Calendar. Documents also requires `workbotDocuments`; Calendar
-retains its existing feature checks. The drawer reads recent files through the
-same authenticated Drive provider as Documents.
+With Workbot on, it adds the compact navigation drawer and an Ask Workbot action
+on an open document. The chat (conversation, composer, context chips) appears
+only in the chat view: Documents, Calendar and other views show their own title
+and full width, never a floating chat. Ask Workbot switches to the chat with the
+open document attached to the next message; the person can remove it before
+sending. Documents also requires `workbotDocuments`; Calendar retains its
+existing feature checks. The drawer reads recent files through the same
+authenticated Drive provider as Documents.
 
-At Send, the user can include or exclude the current view. The bounded snapshot
+The attached view is sent with one message only. The bounded snapshot
 contains the open Drive file's ID and unsaved status, or the calendar
 range, time zone and selected event/automation ID. Display titles, MIME labels and search text never enter the model prompt. It contains no document bytes or
 unsaved text. Contextual turns, retries and interrupted-turn resumes use read-only MCP credentials and disable write-capable runner tools. Changes require a separate explicit request from Home without view context. Workbot reads saved content using the member's existing connected
