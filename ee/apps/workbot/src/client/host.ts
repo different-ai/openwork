@@ -37,6 +37,8 @@ export const meSchema = z.object({
   browserChat: z.boolean().default(false),
   /** Chats open on the newest page kept on this device (`workbotInstantOpen`); older servers omit it. */
   instantOpen: z.boolean().default(false),
+  /** Reading earlier messages keeps its place (`workbotScrollToBottom`); older servers omit it. */
+  scrollToBottom: z.boolean().default(false),
   /** Workbot's profile behind its name (`workbotProfileSheet`); older servers omit it. */
   profileSheet: z.boolean().default(false),
   centeredProfile: z.boolean().default(false),
@@ -154,6 +156,7 @@ export function createHost(me: Me, recovery: { authorization?: WorkbotHost["docu
     browserDemonstrations: me.browserDemonstrations,
     browserChat: me.browser && me.browserChat,
     instantOpen: me.instantOpen,
+    scrollToBottom: me.scrollToBottom,
     documentEditing: me.documents && me.documentEditing,
     nativeDictation: me.nativeDictation,
     workspaceAssistant: me.workspaceAssistant,

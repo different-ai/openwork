@@ -93,6 +93,8 @@ const sessionSchema = z.object({
   browserChat: z.boolean().optional(),
   /** Chats open on the newest page kept on the device (`workbotInstantOpen`); older Dens omit it: off. */
   instantOpen: z.boolean().optional(),
+  /** Reading earlier messages keeps its place, with a return-to-latest button (`workbotScrollToBottom`); older Dens omit it: off. */
+  scrollToBottom: z.boolean().optional(),
   /** Tapping Workbot's name opens its profile: tasks, permissions, memory (`workbotProfileSheet`); older Dens omit it: off. */
   profileSheet: z.boolean().optional(),
   /** Centre avatar and expanded profile, separately reversible from the original sheet. */
@@ -432,6 +434,7 @@ export function registerWorkbotRoutes<T extends { Variables: object }>(app: Hono
         quickReply: features.workbotQuickReply,
         browserChat: features.workbotBrowserChat && features.browserUse && features.remoteComputers,
         instantOpen: features.workbotInstantOpen,
+        scrollToBottom: features.workbotScrollToBottom,
         // The profile opens from the name's status line, so it needs the working status.
         profileSheet: features.workbotProfileSheet && features.workbotWorkingStatus,
         centeredProfile: features.workbotCenteredProfile && features.workbotProfileSheet && features.workbotWorkingStatus,
