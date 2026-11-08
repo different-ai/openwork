@@ -29,6 +29,7 @@ const host: WorkbotHost = {
   sideChats: search.get("sideChats") === "1",
   browser: search.get("browser") === "1",
   computer: search.get("computer") === "1",
+  workingStatus: search.get("working") === "1",
   identity: { principalId: "user_fixture", organizationId: "org_fixture" },
 }
 

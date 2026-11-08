@@ -29,6 +29,8 @@ export const meSchema = z.object({
   sideChats: z.boolean().default(false),
   /** The header avatar opens the account menu with Sign out (`workbotAccountMenu`); older servers omit it. */
   accountMenu: z.boolean().default(false),
+  /** Work in progress in the header and task sheet (`workbotWorkingStatus`); older servers omit it. */
+  workingStatus: z.boolean().default(false),
   /** The Cmd+K / Ctrl+K command palette; older servers omit it. */
   denUrl: z.string().nullable(),
 })
@@ -151,6 +153,7 @@ export function createHost(me: Me, recovery: { authorization?: WorkbotHost["docu
         && current.userId === me.userId && current.organizationId === me.organizationId
     },
     sideChats: me.sideChats,
+    workingStatus: me.workingStatus,
     account: me.accountMenu ? { email: me.email, organizationName: me.organizationName, signOut, switchWorkspace } : undefined,
     identity: me.userId && me.organizationId ? { principalId: me.userId, organizationId: me.organizationId } : undefined,
   }

@@ -53,6 +53,11 @@ export type WorkbotHost = {
   verifyDocumentIdentity?(): Promise<boolean>
   /** The retained owner remains mounted, but this host authorization fact masks it. */
   documentAuthorization?: "signin" | "blocked" | "disabled"
+  /**
+   * What Workbot is doing shows as a status line under its name and a task sheet, not in the chat: no typing dots
+   * during tool work, no computer or task cards unless Workbot shows its screen (`workbotWorkingStatus`). Off when unset.
+   */
+  workingStatus?: boolean
   /** The person can start side chats next to their main chat (on while Workbot is on). Off when unset. */
   sideChats?: boolean
   /**

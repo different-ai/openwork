@@ -22,14 +22,29 @@ export type WorkbotPageEvent =
 /** The runner names a background task after the turn that started it: `<messageId>.t1`, `.t2`, … */
 const TASK_ID = /\.t\d+$/
 
+/** When each task last told the page about a step, so a busy task re-reads the page at most this often. */
+const taskSteps = new Map<string, number>()
+const TASK_STEP_EVERY_MS = 3_000
+
 /** Turns one runner event into what the page may see, or null when it isn't one of this person's Workbot turns. */
 export function toWorkbotPageEvent(raw: unknown): WorkbotPageEvent | null {
   const parsed = runnerEventSchema.safeParse(raw)
   if (!parsed.success || !parsed.data.messageId.startsWith(WORKBOT_MESSAGE_PREFIX)) return null
   const event = parsed.data
-  // A background task works out of sight: the page only re-reads when one starts, pauses or ends.
-  if (TASK_ID.test(event.messageId) && !(event.type === "changed" && event.status)) return null
   const messageId = event.messageId.slice(WORKBOT_MESSAGE_PREFIX.length)
+  if (TASK_ID.test(event.messageId)) {
+    // A background task works out of sight: the page re-reads when one starts, pauses or ends, and, at most every
+    // few seconds, when it starts a step, so the task sheet and the header follow it while it runs. Its words never
+    // stream to the page.
+    if (event.type === "changed" && event.status) return { ...event, messageId }
+    if (event.type !== "tool") return null
+    const now = Date.now()
+    const last = taskSteps.get(event.messageId) ?? 0
+    if (now - last < TASK_STEP_EVERY_MS) return null
+    taskSteps.set(event.messageId, now)
+    if (taskSteps.size > 500) taskSteps.delete(taskSteps.keys().next().value ?? "")
+    return { type: "changed", messageId }
+  }
   if (event.type === "tool") {
     // Cut like the stored step's updates (thread.ts), so the live words and the stored ones match.
     const doing = event.description?.trim().slice(0, 80)

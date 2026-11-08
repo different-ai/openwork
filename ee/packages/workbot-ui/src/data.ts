@@ -66,6 +66,11 @@ const taskSchema = z.object({
   finishedAt: z.number().nullable(),
   update: z.string().nullable().default(null),
   updates: z.array(z.string()).default([]),
+  /** Its steps so far in plain words, newest last (the last 12); older servers send none. */
+  steps: z.array(z.object({ label: z.string(), done: z.boolean(), at: z.number().nullable() })).default([]),
+  stepsDone: z.number().default(0),
+  /** The latest thing it wrote, on one line, while it works. */
+  note: z.string().nullable().default(null),
 });
 export type WorkbotTask = z.infer<typeof taskSchema>;
 const turnSchema = z.object({
@@ -129,8 +134,10 @@ export function useWorkbotThread(input: { turns: number; awaiting: boolean; live
     refetchInterval: (query) => {
       const data = query.state.data;
       const busy = input.awaiting || (data?.available === true && data.status === "busy");
-      if (input.live) return busy ? 10_000 : 60_000;
-      return busy ? 1_500 : 20_000;
+      // A background task working alone doesn't make the conversation busy, but its progress is worth following.
+      const tasks = data?.available === true && data.turns.some((turn) => turn.tasks.some((task) => task.status === "queued" || task.status === "working" || task.status === "paused"));
+      if (input.live) return busy ? 10_000 : tasks ? 15_000 : 60_000;
+      return busy ? 1_500 : tasks ? 5_000 : 20_000;
     },
     refetchIntervalInBackground: false,
     retry: 2,
