@@ -56,6 +56,7 @@ export const denSessionSchema = z.object({
   /** Work in progress shows in the header and task sheet, not the chat. A Den from before it doesn't say: off. */
   workingStatus: z.boolean().default(false),
   /** The conversation docks beside the Browser and Computer views (`workbotBrowserChat`). A Den from before it doesn't say: off. */
+  quickReply: z.boolean().default(false),
   browserChat: z.boolean().default(false),
   /** Chats open on the newest page kept on the device (`workbotInstantOpen`). A Den from before it doesn't say: off. */
   instantOpen: z.boolean().default(false),

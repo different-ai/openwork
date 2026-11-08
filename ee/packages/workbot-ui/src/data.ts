@@ -8,6 +8,7 @@ import { errorMessage as getErrorMessage, hostFetch, workbotHost } from "./host"
 import { liveRetryDelay, liveStreamOff, retryAfterMs } from "./live-retry";
 import { workbotAccessFailureSchema, type WorkbotAccessReason } from "@openwork/types/den/workbot-settings";
 import { loadThreadSnapshot, saveThreadSnapshot } from "./thread-cache";
+import { workbotLiveReadiness } from "./live-readiness";
 
 const requestJson = (path: string, init?: RequestInit, timeoutMs?: number) => workbotHost().requestJson(path, init, timeoutMs);
 
@@ -232,6 +233,7 @@ export function useWorkbotLive(enabled: boolean) {
     // Another chat: none of the text streaming in the last one belongs here.
     setLive({});
     const controller = new AbortController();
+    const readiness = workbotLiveReadiness.subscribe(chat);
     // Waits that end as soon as the page leaves.
     const sleep = (ms: number) =>
       new Promise<void>((resolve) => {
@@ -337,7 +339,7 @@ export function useWorkbotLive(enabled: boolean) {
               const block = buffer.slice(0, boundary);
               buffer = buffer.slice(boundary + 2);
               boundary = buffer.indexOf("\n\n");
-              if (/^event:\s*ready/m.test(block)) continue;
+              if (/^event:\s*ready/m.test(block)) { if (!controller.signal.aborted) readiness.ready(); continue; }
               const data = block.split("\n").filter((line) => line.startsWith("data:")).map((line) => line.slice(5).trimStart()).join("\n");
               if (data) handle(data);
             }
@@ -345,6 +347,7 @@ export function useWorkbotLive(enabled: boolean) {
         } catch {
           // Reconnect below.
         }
+        readiness.disconnect();
         setConnected(false);
         if (controller.signal.aborted) break;
         if (!opened) failures += 1;
@@ -354,7 +357,7 @@ export function useWorkbotLive(enabled: boolean) {
       }
     };
     void run();
-    return () => controller.abort();
+    return () => { readiness.disconnect(); controller.abort(); };
   }, [enabled, off, queryClient, chat]);
 
   return { connected, live };
@@ -387,6 +390,8 @@ export function useSendWorkbotMessage() {
   return useMutation({
     mutationFn: async (input: { id: string; text: string; attachments?: string[]; context?: WorkbotViewContext; teachingId?: string; teachingStepId?: number }) => {
       if (input.text.length > MAX_MESSAGE_CHARS) throw new WorkbotSendError("That's too long for one message. Send it as a file instead.", 400);
+      // Avoid racing the first streamed words on mount, but never make an unavailable stream block sending.
+      if (workbotHost().quickReply) await workbotLiveReadiness.wait(chat);
       const timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone;
       const { response, payload } = await requestJson(inChat("/v1/workbot/messages", chat), {
         method: "POST",

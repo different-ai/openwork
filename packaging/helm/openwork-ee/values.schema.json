@@ -381,6 +381,16 @@
               ],
               "description": "Workbot: browser recovery: Retries a read once when a loading page changes, reconnects a lost browser connection, and tells Workbot when a consent dialog or human-verification check is in the way. Never repeats clicks, typing or submissions. Renders DEN_FEATURE_WORKBOT_BROWSER_RECOVERY."
             },
+            "workbotQuickReply": {
+              "enum": [
+                "",
+                "true",
+                "false",
+                true,
+                false
+              ],
+              "description": "Workbot: quick human acknowledgment: Workbot answers work requests with a concise acknowledgment before discovery, reactions or browser work. Accepted explicit long requests can show a temporary receipt while waiting for the first model words. Does not promise a response-time SLA. Renders DEN_FEATURE_WORKBOT_QUICK_REPLY."
+            },
             "workbotWorkingStatus": {
               "enum": [
                 "",

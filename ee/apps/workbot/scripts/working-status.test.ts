@@ -78,7 +78,7 @@ test("a task's steps reach the page as a throttled re-read, never its words", ()
 
 test("the human acknowledgment precedes discovery, reactions and browser work, with or without workingStatus", () => {
   for (const workingStatus of [false, true]) {
-    const prompt = workbotInstructions({ ...base, workingStatus, browser: true })
+    const prompt = workbotInstructions({ ...base, workingStatus, browser: true, quickReply: true })
     assert.ok(prompt.includes("before any tool call, including search_capabilities, react, browser or computer operations"))
     assert.ok(prompt.includes("one or two short sentences"))
     assert.ok(prompt.includes("not a typing indicator or an emoji"))
@@ -88,6 +88,17 @@ test("the human acknowledgment precedes discovery, reactions and browser work, w
     assert.equal(prompt.includes("before you reply"), false)
   }
   assert.ok(workbotInstructions({ ...base, workingStatus: true }).includes("Never answer with only \"still working\""))
+})
+
+test("quickReply defaults off and retains the original first-reply and reaction rules", () => {
+  for (const workingStatus of [false, true]) {
+    const original = workbotInstructions({ ...base, workingStatus })
+    assert.equal(original, workbotInstructions({ ...base, workingStatus, quickReply: false }))
+    assert.ok(original.includes("before you reply: 👍"))
+    assert.equal(original.includes("before any tool call, including search_capabilities"), false)
+    assert.equal(original.includes("not a typing indicator or an emoji"), false)
+    assert.ok(original.includes(workingStatus ? "About 5 minutes" : "Sure, give me a sec."))
+  }
 })
 
 test("terminal and abandoned task lifecycles never project as active or keep a stale session busy", () => {

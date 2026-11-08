@@ -31,6 +31,8 @@ export const meSchema = z.object({
   accountMenu: z.boolean().default(false),
   /** Work in progress in the header and task sheet (`workbotWorkingStatus`); older servers omit it. */
   workingStatus: z.boolean().default(false),
+  /** Brief acknowledgment before tools (`workbotQuickReply`); older servers omit it. */
+  quickReply: z.boolean().default(false),
   /** The conversation docked beside the Browser and Computer views (`workbotBrowserChat`); older servers omit it. */
   browserChat: z.boolean().default(false),
   /** Chats open on the newest page kept on this device (`workbotInstantOpen`); older servers omit it. */
@@ -167,6 +169,7 @@ export function createHost(me: Me, recovery: { authorization?: WorkbotHost["docu
     workingStatus: me.workingStatus,
     profileSheet: me.profileSheet,
     account: me.accountMenu ? { email: me.email, organizationName: me.organizationName, signOut, switchWorkspace } : undefined,
+    quickReply: me.quickReply,
     identity: me.userId && me.organizationId ? { principalId: me.userId, organizationId: me.organizationId } : undefined,
   }
 }

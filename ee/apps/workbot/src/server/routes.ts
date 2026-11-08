@@ -149,6 +149,7 @@ export function registerWorkbotRoutes(app: Hono<AppEnv>, input: { config: Config
       sandboxGateway: member.den.sandboxGateway,
       browserRecovery: member.den.browserRecovery,
       // Saved steps are GA; older Dens may omit stepTurns, so preserve their continuous-turn protocol.
+      quickReply: async () => member.den.quickReply,
       stepTurns: member.den.stepTurns,
       // Per-chat cells are GA; older Dens may omit sessionCells, so preserve their legacy placement.
       sessionCells: member.den.sessionCells,
@@ -259,6 +260,7 @@ export function registerWorkbotRoutes(app: Hono<AppEnv>, input: { config: Config
       workingStatus: who.enabled && who.workingStatus,
       browserChat: who.enabled && who.browser && who.browserChat,
       instantOpen: who.enabled && who.instantOpen,
+      quickReply: who.enabled && who.quickReply,
       profileSheet: who.enabled && who.profileSheet,
       commandPalette: true,
       denUrl: config.denWebUrl ?? (await den.webUrl().catch(() => null)),

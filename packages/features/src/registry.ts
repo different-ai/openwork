@@ -451,6 +451,17 @@ export const FEATURES = defineFeatures({
     deployments: ["cloud"],
     default: false,
   },
+  workbotQuickReply: {
+    label: "Workbot: quick human acknowledgment",
+    description: "Workbot answers work requests with a concise acknowledgment before discovery, reactions or browser work. Accepted explicit long requests can show a temporary receipt while waiting for the first model words. Does not promise a response-time SLA.",
+    category: "workbot",
+    added: "2026-11-07",
+    since: "2026-11",
+    author: "benjaminshafii",
+    docs: "docs/features/workbot-quick-reply/README.md",
+    deployments: everywhere,
+    default: false,
+  },
   workbotWorkingStatus: {
     label: "Workbot: working status and task sheet",
     description: "While Workbot works, a quiet status line under its name says what it is doing; tapping the name opens a task sheet with its steps and each background task's steps. The chat keeps only what Workbot says: no typing dots during work, no computer or task cards unless Workbot is showing its screen. Its first reply stands on its own instead of \"give me a sec\", and it can say how a background task is going.",

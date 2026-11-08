@@ -60,6 +60,8 @@ export type WorkbotHost = {
    * during tool work, no computer or task cards unless Workbot shows its screen (`workbotWorkingStatus`). Off when unset.
    */
   workingStatus?: boolean
+  /** Concise first human acknowledgment (`workbotQuickReply`). Off when unset. */
+  quickReply?: boolean
   /**
    * A chat opens on the newest page this device kept from the last visit while it is read again
    * (`workbotInstantOpen`). Off when unset; the kept pages are cleared then.

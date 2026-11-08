@@ -81,6 +81,8 @@ export type WorkbotDeps = {
    * runner deploy switches between steps instead of cutting one off. Unset: preserve older Den's continuous turns.
    */
   stepTurns?: boolean
+  /** Brief human acknowledgment before any tool call (`workbotQuickReply`). Unset: off. */
+  quickReply?: (organizationId: string) => Promise<boolean>
   /**
    * Den's session `sessionCells` compatibility field: new chats get their own session cell on the runner
    * (`hs_c_…` ids, memory kept with the owner) and the person's existing chats are split out once per process. Chats
@@ -310,8 +312,14 @@ export function workbotInstructions(input: {
       ? `You are ${input.name}, the assistant ${input.organizationName} set up for ${person}. This is a side chat ${person} started for one topic, next to their main chat with you. You share the same memory across their chats.`
       : `You are ${input.name}, the assistant ${input.organizationName} set up for ${person}. This is your one ongoing conversation with them; it never resets.`,
     "",
-    `- ${person} watches this chat live and sees your words as you write them. For a request that needs work, write a brief human acknowledgment immediately, before any tool call, including search_capabilities, react, browser or computer operations. Use one or two short sentences in your own words: say the concrete next action and that you'll come back with what you find ("On it — I'll open YouTube now. I'll tell you what I find."). This is your first reply, not a typing indicator or an emoji. Don't investigate first or make them wait for a plan. Don't claim an action has already happened or work has started before it succeeds. Never invent an ETA. Then do the work and answer in its own short message. For an instant answer or a purely social message, answer directly instead.`,
-    ...(input.workingStatus ? [
+  /** Concise acknowledgment before tools; independent of the status-sheet rollout. Unset: off. */
+  quickReply?: boolean
+    input.quickReply
+      ? `- ${person} watches this chat live and sees your words as you write them. For a request that needs work, write a brief human acknowledgment immediately, before any tool call, including search_capabilities, react, browser or computer operations. Use one or two short sentences in your own words: say the concrete next action and that you'll come back with what you find ("On it — I'll open YouTube now. I'll tell you what I find."). This is your first reply, not a typing indicator or an emoji. Don't investigate first or make them wait for a plan. Don't claim an action has already happened or work has started before it succeeds. Never invent an ETA. Then do the work and answer in its own short message. For an instant answer or a purely social message, answer directly instead.`
+      : input.workingStatus
+        ? `- ${person} reads this chat like messages from a person, and sees what you're working on at the top of the chat, not in it. When something takes more than a moment, your first message must stand on its own, as a person would answer: say what you'll do and how you read the request, anything useful you already know, and when they'll hear back ("I'll build a 3D room planner where you can drag furniture around. About 5 minutes; I'll message you when it's ready."). Never send a bare "Sure, give me a sec." or "On it." Then do the work without narrating it, and answer in its own short message. Skip the first message only when the answer is instant.`
+        : `- ${person} watches this chat live and sees each thing you write as you write it, not only your final message. So sound like a person taking it on: in the same reply where you first use your computer or look through their apps, start with one short sentence of your own before the tool call ("Sure, give me a sec.", "Let me check your inbox."), then do the work, then answer in its own short message. Vary the words; skip it only when the answer is instant.`,
+    ...(input.quickReply && input.workingStatus ? [
       "- The header and task sheet show work in progress. Keep the first acknowledgment concise; don't turn it into a detailed plan or narrate every step in chat.",
     ] : []),
     `- ${person} is not technical. Never mention tools, MCP, capabilities, models, prompts, files or settings. Write like a helpful coworker: short, plain sentences.`,
@@ -339,7 +347,7 @@ export function workbotInstructions(input: {
       "- Give each background task a title the person will recognize in a few words (\"3D room planner\"), and start its brief with one plain sentence of what it will hand back.",
       "- When they ask how a task is going, answer from Background task state: what it is doing now, how far along it is, and what it has found so far, and offer to share a draft from its scratch files. Never answer with only \"still working\".",
     ] : []),
-    "- React to their message with one emoji (react) when a colleague would, after your acknowledgment when the request needs work: 👍 when you're on it or agree, ❤️ for thanks, 😮 or ‼️ when they tell you something surprising, 😂 when it's funny, 🎉 for good news. Not on every message. When a reaction is all a colleague would send back (\"thanks!\", \"ok\", \"sounds good\"), react with final: that is your whole reply.",
+    `- React to their message with one emoji (react) when a colleague would, ${input.quickReply ? "after your acknowledgment when the request needs work" : "before you reply"}: 👍 when you're on it or agree, ❤️ for thanks, 😮 or ‼️ when they tell you something surprising, 😂 when it's funny, 🎉 for good news. Not on every message. When a reaction is all a colleague would send back (\"thanks!\", \"ok\", \"sounds good\"), react with final: that is your whole reply.`,
     `- Memory: older messages drop out of what you can see, but files under memory/ are always shown to you. Keep them current without being asked: who ${person} is and how they like to work (memory/about.md), the people, projects and threads they care about (memory/people.md, memory/projects.md), and anything they ask you to remember. Write facts, not transcripts; update or remove what is no longer true. Never tell them you are updating memory unless they asked you to remember something.`,
     "- Ask before you send, post, delete or change anything in their apps, unless they asked for that exact action in this message.",
     input.canSchedule
@@ -408,6 +416,7 @@ async function ensureSession(actor: WorkbotActor, timeZone: string, deps: Workbo
     // Workbot keeps the person's files, works on its own computer, reacts to messages with an emoji and hands longer
     // work to background tasks; the runner offers each only on request.
     files: true,
+  const quickReply = await deps.quickReply?.(actor.organizationId).catch(() => false) ?? false
     computer: WORKBOT_COMPUTER,
     desktop: desktopViews.length > 0,
     ...(desktopViews.length ? { desktopViews } : {}),
@@ -421,7 +430,7 @@ async function ensureSession(actor: WorkbotActor, timeZone: string, deps: Workbo
   }
   const savedMain = await client.putSession(main, {
     title: `${name} · ${actor.firstName ?? "member"}`,
-    instructions: workbotInstructions({ name, organizationName: actor.organizationName, firstName: actor.firstName, timeZone, canSchedule, workspaceAssistant, guidedNavigation, browser: desktopViews.includes("browser"), computer: WORKBOT_COMPUTER, driveFiles, workingStatus }),
+    instructions: workbotInstructions({ name, organizationName: actor.organizationName, firstName: actor.firstName, timeZone, canSchedule, workspaceAssistant, guidedNavigation, browser: desktopViews.includes("browser"), computer: WORKBOT_COMPUTER, driveFiles, workingStatus, quickReply }),
     ...common,
     ref: MAIN_CHAT_REF,
     // A chat in its own cell keeps memory with the owner, and is never kept without these settings.
@@ -433,7 +442,7 @@ async function ensureSession(actor: WorkbotActor, timeZone: string, deps: Workbo
   // found again through its owner and ref, so it is never kept without them (the main chat's id is derived).
   const sessionId = await sessionOf(actor, chat, deps, { create: true })
   const saved = await client.putSession(sessionId, {
-    instructions: workbotInstructions({ name, organizationName: actor.organizationName, firstName: actor.firstName, timeZone, canSchedule, workspaceAssistant, guidedNavigation, browser: desktopViews.includes("browser"), computer: WORKBOT_COMPUTER, driveFiles, workingStatus, side: true }),
+    instructions: workbotInstructions({ name, organizationName: actor.organizationName, firstName: actor.firstName, timeZone, canSchedule, workspaceAssistant, guidedNavigation, browser: desktopViews.includes("browser"), computer: WORKBOT_COMPUTER, driveFiles, workingStatus, quickReply, side: true }),
     ...common,
     ref: chat,
     autoTitle: true,
