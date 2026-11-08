@@ -27,7 +27,7 @@ export function DocumentTabs({ items, activeId, dirtyIds, busyIds, onSelect, onC
     setAnnouncement(`Moved ${items.find(item => item.id === id)?.name ?? "document"} to position ${at + 1} of ${next.length}.`)
   }
   return <nav className="ow-document-tabs" aria-label="Open documents" onDragLeave={event => { if (!event.currentTarget.contains(event.relatedTarget instanceof Node ? event.relatedTarget : null)) setTarget(null) }}>
-    <button type="button" className="ow-document-tab-files" aria-current={activeId === "files" ? "page" : undefined} onClick={() => onSelect("files")}>Files</button>
+    <button type="button" className="ow-document-tab-files" aria-current={activeId === "files" ? "page" : undefined} onClick={() => onSelect("files")}>All documents</button>
     {items.map((item, index) => <div key={item.id} className="ow-document-tab" data-document-id={item.id} data-active={activeId === item.id} data-dragging={dragging === item.id} data-drop={target?.id === item.id ? target.edge : undefined} onDragOver={event => {
       if (!dragged.current || dragged.current === item.id) return
       event.preventDefault(); event.dataTransfer.dropEffect = "move"
