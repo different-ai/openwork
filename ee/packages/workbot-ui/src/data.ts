@@ -9,6 +9,7 @@ import { liveRetryDelay, liveStreamOff, retryAfterMs } from "./live-retry";
 import { workbotAccessFailureSchema, type WorkbotAccessReason } from "@openwork/types/den/workbot-settings";
 import { loadThreadSnapshot, saveThreadSnapshot } from "./thread-cache";
 import { workbotLiveReadiness } from "./live-readiness";
+import { nextWorking } from "./computer-work";
 
 const requestJson = (path: string, init?: RequestInit, timeoutMs?: number) => workbotHost().requestJson(path, init, timeoutMs);
 
@@ -176,10 +177,11 @@ export type LiveText = {
   step: number;
   text: string;
   /**
-   * `background`: commands on its computer, with no screen to watch. `update`: what that computer work is doing, in
-   * its own words, before the step is stored.
+   * `background`: commands on its computer, with no screen to watch. `surface`: which screen that work is on (its
+   * browser or the rest of its computer), once the call has said; absent until then, and the page doesn't guess.
+   * `update`: what that computer work is doing, in its own words, before the step is stored.
    */
-  working?: { on: "computer" | "other"; since: number; background?: true; update?: string };
+  working?: { on: "computer" | "other"; since: number; background?: true; surface?: "browser" | "computer"; update?: string };
   /** What earlier model calls of this turn wrote, kept until the conversation's next read has it. */
   earlier?: Array<{ step: number; text: string }>;
 };
@@ -187,7 +189,7 @@ export type LiveText = {
 const liveEventSchema = z.discriminatedUnion("type", [
   z.object({ type: z.literal("changed"), messageId: z.string(), status: z.string().optional() }),
   z.object({ type: z.literal("text"), messageId: z.string(), step: z.number(), delta: z.string(), reset: z.boolean().optional() }),
-  z.object({ type: z.literal("working"), messageId: z.string(), step: z.number(), on: z.enum(["computer", "other"]), background: z.literal(true).optional(), update: z.string().optional() }),
+  z.object({ type: z.literal("working"), messageId: z.string(), step: z.number(), on: z.enum(["computer", "other"]), background: z.literal(true).optional(), surface: z.enum(["browser", "computer"]).optional(), update: z.string().optional() }),
 ]);
 
 async function openStream(signal: AbortSignal, chat: string | null) {
@@ -296,10 +298,7 @@ export function useWorkbotLive(enabled: boolean) {
         // A finished model call's words stay until the conversation's next read has them, so they never blink out.
         const earlier = !sameStep && previous?.text ? [...(previous.earlier ?? []), { step: previous.step, text: previous.text }].slice(-3) : (previous?.earlier ?? []);
         if (value.type === "working") {
-          // A call saying what it does arrives after its start; until a later call says, the same kind of work keeps it.
-          const kept = sameStep && previous.working?.on === value.on && previous.working.background === value.background ? previous.working.update : undefined;
-          const update = value.update ?? kept;
-          return { ...current, [value.messageId]: { step: value.step, text: sameStep ? previous.text : "", earlier, working: { on: value.on, since: Date.now(), ...(value.background ? { background: true as const } : {}), ...(update ? { update } : {}) } } };
+          return { ...current, [value.messageId]: { step: value.step, text: sameStep ? previous.text : "", earlier, working: nextWorking(sameStep ? previous.working : undefined, value) } };
         }
         const text = value.reset || !sameStep ? value.delta : previous.text + value.delta;
         return { ...current, [value.messageId]: { step: value.step, text, earlier, ...(sameStep && previous.working && !value.reset ? { working: previous.working } : {}) } };

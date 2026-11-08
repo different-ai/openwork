@@ -14,6 +14,8 @@ With the feature on, the chat keeps only what Workbot says, and its work is disc
 
 Typing dots show only before Workbot has said or done anything. A task that failed or was stopped keeps its card in the chat with Try again.
 
+Once work in its browser or on its screen is over, the chat keeps a compact record of it where it happened, like anything else Workbot said: "Browser · Opened google.com" (the last picture of that screen beside it while the page still has one). It is read back with the conversation, so it is still there after a reload. Tapping it opens the full view; it never opens by itself. Commands run in the background leave no record in the chat (the task sheet has them).
+
 ![A background task and a quick command: today, flag on, task sheet](task.png)
 
 ![Browsing: today, flag on, task sheet with Watch](browsing.png)

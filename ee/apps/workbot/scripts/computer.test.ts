@@ -465,9 +465,12 @@ test("the screen's live view stays up while Workbot works on it, not once it tur
   // Still no screen while it says what the background work found.
   const after = computerWork([...browsed, { kind: "steps", steps: [step({ background: true })] }, { kind: "text", text: "Found twelve." }], { working: true, starting: null, lastIsLive: false })
   assert.deepEqual([after.watch, after.live.size], [null, 0])
-  // Back on the screen, its live view returns below Workbot's latest words.
-  const back = computerWork([...browsed, { kind: "steps", steps: [step({ background: true })] }], { working: true, starting: { on: "computer", since: 3 }, lastIsLive: false })
+  // Back on the screen, its live view returns below Workbot's latest words, once the call says which screen.
+  const back = computerWork([...browsed, { kind: "steps", steps: [step({ background: true })] }], { working: true, starting: { on: "computer", since: 3, surface: "browser" }, lastIsLive: false })
   assert.deepEqual([back.watch, back.trailing, back.starts], ["browser", ["browser"], "browser"])
+  // Before it says, nothing guesses: no card is made or brought back for screen work of an unknown kind.
+  const unsaid = computerWork([...browsed, { kind: "steps", steps: [step({ background: true })] }], { working: true, starting: { on: "computer", since: 3 }, lastIsLive: false })
+  assert.deepEqual([unsaid.watch, unsaid.trailing, unsaid.starts, unsaid.cards.size], [null, [], null, 2])
 })
 
 test("the screen is in the chat only while Workbot chooses to show it", () => {
@@ -555,5 +558,10 @@ test("what computer work is doing reaches the page as it starts, and other tools
   assert.deepEqual(tool("desktop", `  Drawing the ground and trunk${" ".repeat(3)}${"x".repeat(100)}`), { type: "working", messageId: "1", step: 2, on: "computer", update: `Drawing the ground and trunk   ${"x".repeat(49)}` })
   assert.deepEqual(tool("bash", "Rendering the scene"), { type: "working", messageId: "1", step: 2, on: "computer", background: true, update: "Rendering the scene" })
   assert.deepEqual(tool("desktop"), { type: "working", messageId: "1", step: 2, on: "computer" })
+  // Which screen it works on reaches the page as soon as the call has said, so the card is right from its first frame.
+  assert.deepEqual(toWorkbotPageEvent({ type: "tool", messageId: "wb_1", step: 2, tool: "desktop", view: "browser" }), { type: "working", messageId: "1", step: 2, on: "computer", surface: "browser" })
+  assert.deepEqual(toWorkbotPageEvent({ type: "tool", messageId: "wb_1", step: 2, tool: "desktop", view: "computer", description: "Opening Blender" }), { type: "working", messageId: "1", step: 2, on: "computer", surface: "computer", update: "Opening Blender" })
+  // Only the desktop has screens: another tool's view never reaches the page.
+  assert.deepEqual(toWorkbotPageEvent({ type: "tool", messageId: "wb_1", step: 2, tool: "bash", view: "browser" }), { type: "working", messageId: "1", step: 2, on: "computer", background: true })
   assert.deepEqual(tool("execute_capability", "Searching Gmail for invoices"), { type: "working", messageId: "1", step: 2, on: "other" })
 })

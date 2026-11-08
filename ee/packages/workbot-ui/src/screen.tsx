@@ -33,7 +33,7 @@ import {
 } from "./data";
 import { AppMark, AttachButton, FileBadge, FilesButton, FilesPanel, ImageThumb, isImage, kindLabel, SentAttachments, UploadTray, useFileDrop, type Upload } from "./files";
 import { createComposerState, type ComposerState, type Pending } from "./composer-state";
-import { computerWork, type ComputerSurface } from "./computer-work";
+import { computerWork, finishedSummary, keepsCard, type ComputerSurface } from "./computer-work";
 import { AccountAvatar } from "./account-menu";
 import { documentLinks, WorkbotMarkdown } from "./markdown";
 import { OpenFileContext } from "./open-file";
@@ -43,7 +43,7 @@ import { ModelRecovery, AccessRecovery } from "./model-recovery";
 import { hasAnsweredTurn, WorkbotSetupChip } from "./activation";
 import { WorkbotCalendar } from "./calendar";
 import { usePrefetchWorkbotDocuments, WorkbotDocuments } from "./documents";
-import { LiveGlimpse, openBrowserPage, WorkbotComputer } from "./computer";
+import { LastGlimpse, LiveGlimpse, openBrowserPage, WorkbotComputer } from "./computer";
 import { readBrowserSkillRunPrompt, type BrowserTeachingContext } from "@openwork/types/browser-demonstration";
 import { readWorkbotCorrectionPrompt, workbotCorrectionPrompt, workbotViewContextSchema, type WorkbotViewContext } from "@openwork/types/workbot-context";
 import type { DocumentOpenOutcome, DocumentOpenRequest } from "@openwork/documents";
@@ -1666,6 +1666,9 @@ function SurfaceCard({ surface, steps, live, showing, others, switchTo = null, s
     : surface === "background" ? `${live ? "Working" : "Worked"} on my computer`
     : `${live ? "Using" : "Used"} my computer`;
   const starting = surface === "browser" ? "Opening the browser" : surface === "background" ? "Running in the background" : "Starting up";
+  // Finished work on a screen, with the inline preview or the working status: a compact record that stays in the
+  // conversation, never a live view. One tap opens the full view.
+  if (!live && surface !== "background" && (workbotHost().browserPreview || workbotHost().workingStatus)) return <FinishedSurfaceCard surface={surface} steps={steps} watchable={watchable} />;
   // A thumbnail is a glance, never a takeover: one button opens the full view only on the person's tap.
   if (workbotHost().browserPreview && live && watchable && surface !== "background") return <section className="workbot-row-enter w-full max-w-[480px] rounded-[20px] bg-[var(--wb-chip)] p-3" aria-label={`${surface === "browser" ? "Browser" : "Computer"} activity`} data-workbot-browser-card>
     <div className="flex min-w-0 items-center gap-2.5 px-1 pb-1">
@@ -1708,6 +1711,29 @@ function SurfaceCard({ surface, steps, live, showing, others, switchTo = null, s
       }
     />
   );
+}
+
+/**
+ * Finished work in Workbot's browser or on its screen, as it stays in the conversation (also after a reload): what
+ * it came to ("Opened google.com"), and the last picture of that screen while this page still has one. The whole
+ * card opens the full view on tap when the person has that view; otherwise it is a static record. It never opens
+ * anything by itself.
+ */
+function FinishedSurfaceCard({ surface, steps, watchable }: { surface: Exclude<ComputerSurface, "background">; steps: WorkbotStep[]; watchable: boolean }) {
+  const name = surface === "browser" ? "Browser" : "Computer";
+  const summary = finishedSummary(surface, steps);
+  const body = <>
+    <span aria-hidden className="grid size-9 shrink-0 place-items-center rounded-[10px] bg-[var(--wb-surface)] text-[var(--wb-text)]">{surface === "browser" ? <Globe size={20} strokeWidth={1.7} /> : <Monitor size={20} strokeWidth={1.7} />}</span>
+    <span className="min-w-0 flex-1">
+      <span className="block text-[14px] font-semibold leading-5 text-[var(--wb-text)]">{name}</span>
+      <span className="block truncate text-[12px] leading-4 text-[var(--wb-muted)]">{summary}</span>
+    </span>
+    <LastGlimpse view={surface} />
+  </>;
+  const className = "flex w-full max-w-[480px] min-w-0 items-center gap-2.5 rounded-[20px] bg-[var(--wb-chip)] p-3 text-left";
+  return watchable
+    ? <button type="button" onClick={() => openSurface(surface)} aria-label={`${name}: ${summary}. Open ${surface === "browser" ? "the browser" : "the computer"}`} className={`${className} hover:bg-[var(--wb-bubble)] focus-visible:outline-none focus-visible:shadow-[var(--wb-focus)]`} data-workbot-browser-card="done">{body}</button>
+    : <section aria-label={`${name}: ${summary}`} className={className} data-workbot-browser-card="done">{body}</section>;
 }
 
 /** The pages Workbot opened, each opening in its Browser view (/browser/<id>). */
@@ -1854,7 +1880,7 @@ function TurnView(props: {
     // Apps used beside computer work show as logos on its card; on their own, as a quiet line.
     here.forEach((surface, at) => {
       const item = card(surface, at === here.length - 1 ? usedApps(apps, null) : []);
-      if (!quiet || item.showing || (workbotHost().browserPreview && item.live && item.surface !== "background")) items.push(item);
+      if (keepsCard(item, { quiet, preview: workbotHost().browserPreview === true })) items.push(item);
     });
     if (!quiet && apps.length > 0 && here.length === 0) items.push({ kind: "steps", key: `steps-${index}`, steps: apps, live: working && index === parts.length - 1 && lastIsLive });
   });
@@ -1867,7 +1893,7 @@ function TurnView(props: {
   if (live && liveText) items.push({ kind: "text", key: `text-${live.step}`, text: liveText });
   for (const surface of work.trailing) {
     const item = card(surface);
-    if (!quiet || item.showing || (workbotHost().browserPreview && item.live && item.surface !== "background")) items.push(item);
+    if (keepsCard(item, { quiet, preview: workbotHost().browserPreview === true })) items.push(item);
   }
   // Only once the server's conversation has accepted it: acknowledge without waiting for the model's first token.
   // Real words replace this acceptance line; it never claims the browser opened or a background job started.

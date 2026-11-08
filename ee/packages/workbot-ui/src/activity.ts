@@ -74,7 +74,11 @@ function turnSteps(turn: WorkbotTurn, live: LiveText | null): ActivityStep[] {
   // A step the model has started but that isn't stored yet.
   const working = live && live.step >= turn.modelSteps ? live.working : undefined;
   if (working) {
-    const label = working.update ?? (working.on === "computer" ? (working.background ? "Working on my computer" : "Using my computer") : null);
+    // Screen work that hasn't said which screen yet adds nothing: never "Using my computer" turning into the browser.
+    const label = working.on !== "computer" ? null
+      : working.background ? (working.update ?? "Working on my computer")
+      : working.surface ? (working.update ?? (working.surface === "browser" ? "Using the browser" : "Using my computer"))
+      : null;
     if (label) add({ key: `live:${live?.step}`, label, done: false, app: null });
   }
   return steps;
@@ -105,7 +109,7 @@ export function workbotActivity(turns: WorkbotTurn[], live: Record<string, LiveT
   const running = (main ? lastOpen(main.steps) : undefined) ?? null;
   const surfaces = answering?.parts.flatMap((part) => (part.kind === "steps" ? part.steps : [])).filter((step) => step.icon === "computer" && step.status === "running" && !step.background) ?? [];
   const liveWorking = liveText && answering && liveText.step >= answering.modelSteps ? liveText.working : undefined;
-  const screen = surfaces.at(-1)?.surface === "browser" ? "browser" : surfaces.length ? "computer" : liveWorking?.on === "computer" && !liveWorking.background ? "computer" : null;
+  const screen = surfaces.at(-1)?.surface === "browser" ? "browser" : surfaces.length ? "computer" : liveWorking?.on === "computer" && !liveWorking.background ? (liveWorking.surface ?? null) : null;
   const task = tasks.find((entry) => (entry.status === "queued" || entry.status === "working" || entry.status === "paused") && !entry.quiet) ?? null;
   if (running) {
     return { working: true, label: running.label, icon: running.app ? "app" : screen ?? "computer", app: running.app, since: main?.since ?? null, main, tasks, watch: screen };

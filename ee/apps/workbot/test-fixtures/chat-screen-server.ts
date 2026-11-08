@@ -3,10 +3,14 @@ import { createHash } from "node:crypto"
 import { readFile } from "node:fs/promises"
 import { fileURLToPath } from "node:url"
 import { createServer } from "vite"
-import { scenarios, type FixtureThread, type FixtureTurn } from "./chat-screen-scenarios.js"
+import { GOOGLE_EVENTS, googleAt, scenarios, type FixtureThread, type FixtureTurn } from "./chat-screen-scenarios.js"
 import { fixtureRemoteJobs } from "./remote-jobs.js"
 
 let remoteStopped = false
+let googleStarted: number | null = null
+const GOOGLE_EVENT_GAP_MS = 1_500
+const GOOGLE_STORED_MS = 4_500
+const GOOGLE_DONE_MS = 9_000
 
 /**
  * Test-only: serves chat-screen.tsx with Workbot's Vite config and answers the page's `/v1/workbot` requests from an
@@ -41,12 +45,29 @@ const json = (response: ServerResponse, status: number, value: unknown) => {
 async function answer(request: IncomingMessage, response: ServerResponse) {
   const url = new URL(request.url ?? "/", "http://fixture")
   const name = String(request.headers["x-fixture-scenario"] ?? "bubbles")
+  // "google" replays Nov 8's browser request in real time from the page's first read: GOOGLE_EVENTS while the call is
+  // written, the stored running step at GOOGLE_STORED_MS, done at GOOGLE_DONE_MS. A reload afterwards reads it done.
+  if (name === "google") {
+    googleStarted ??= Date.now()
+    const since = Date.now() - googleStarted
+    threads.set(name, googleAt(since < GOOGLE_STORED_MS ? 0 : since < GOOGLE_DONE_MS ? 1 : 2))
+  }
   const current = thread(name)
   const path = url.pathname
   if (request.method === "GET" && path === "/v1/workbot") return json(response, 200, { available: true, ...current })
   if (path === "/v1/workbot/events") {
     response.writeHead(200, { "Content-Type": "text/event-stream", "Cache-Control": "no-cache" })
     response.write("event: ready\ndata: {}\n\n")
+    if (name === "google" && googleStarted !== null) {
+      const since = Date.now() - googleStarted
+      const send = (event: unknown) => { if (!response.writableEnded) response.write(`data: ${JSON.stringify(event)}\n\n`) }
+      const timers = [
+        ...GOOGLE_EVENTS.map((event, index) => setTimeout(() => send(event), Math.max(0, index * GOOGLE_EVENT_GAP_MS - since))),
+        ...[GOOGLE_STORED_MS, GOOGLE_DONE_MS].map((at) => setTimeout(() => send({ type: "changed", messageId: "g1" }), Math.max(0, at - since + 50))),
+      ]
+      if (since >= GOOGLE_STORED_MS) for (const timer of timers.slice(0, GOOGLE_EVENTS.length)) clearTimeout(timer)
+      response.on("close", () => timers.forEach(clearTimeout))
+    }
     const ping = setInterval(() => response.write(": fixture\n\n"), 10_000)
     response.on("close", () => clearInterval(ping))
     return
@@ -142,7 +163,7 @@ if (process.env.WORKBOT_FIXTURE_FRAME) vite.httpServer?.on("upgrade", (request, 
   }
   socket.on("error", () => socket.destroy())
   void readFile(process.env.WORKBOT_FIXTURE_FRAME!).then((bytes) => {
-    frame(1, Buffer.from(JSON.stringify({ type: "page", id: "fixture", title: "Example Domain", url: "https://example.com" })))
+    frame(1, Buffer.from(JSON.stringify({ type: "page", id: "fixture", title: process.env.WORKBOT_FIXTURE_FRAME_TITLE ?? "Example Domain", url: process.env.WORKBOT_FIXTURE_FRAME_URL ?? "https://example.com" })))
     frame(2, bytes)
   }).catch(() => socket.destroy())
 })

@@ -4,6 +4,18 @@ import type { LiveText, WorkbotPart, WorkbotStep } from "./data";
  * Where Workbot's computer cards go in a reply: pure, so it is tested without a page.
  */
 
+/**
+ * What a step starting before it is stored is doing, after one more live `working` event for it. Where a call works
+ * (`surface`) and what it does (`update`) arrive after its start; the same kind of work keeps them until a later event
+ * says otherwise, so a card that knows it is the browser never goes back to not knowing.
+ */
+export function nextWorking(previous: LiveText["working"] | undefined, value: { on: "computer" | "other"; background?: true; surface?: "browser" | "computer"; update?: string }, now = Date.now()): NonNullable<LiveText["working"]> {
+  const same = previous?.on === value.on && previous.background === value.background ? previous : undefined;
+  const update = value.update ?? same?.update;
+  const surface = value.surface ?? same?.surface;
+  return { on: value.on, since: now, ...(value.background ? { background: true as const } : {}), ...(surface ? { surface } : {}), ...(update ? { update } : {}) };
+}
+
 /** Where on its computer Workbot works: its browser, its screen, or commands in the background with nothing to watch. */
 export type ComputerSurface = "browser" | "computer" | "background";
 
@@ -22,10 +34,12 @@ export function surfaceOf(step: WorkbotStep): ComputerSurface {
  * is not by itself a reason to put it in front of the person.
  *
  * `starts` is the card a step starting before it is stored belongs to, so what that step says it is doing shows there.
+ * Such a step has a card from its first frame only once its kind is known: commands in the background, or the screen
+ * the call names (`surface`). Screen work that hasn't said which screen yet gets no card at all, never a guess that
+ * would turn from "Computer" into "Browser" a moment later.
  */
 export function computerWork(parts: WorkbotPart[], { working, starting, lastIsLive }: { working: boolean; starting: LiveText["working"] | null; lastIsLive: boolean }) {
   const cards = new Map<ComputerSurface, { steps: WorkbotStep[]; last: number }>();
-  let screen: ComputerSurface | null = null;
   let current: ComputerSurface | null = null;
   // The kind of work it did last: after commands in the background, there is no screen to keep watching.
   let latest: ComputerSurface | null = null;
@@ -41,17 +55,18 @@ export function computerWork(parts: WorkbotPart[], { working, starting, lastIsLi
       card.steps.push(step);
       card.last = index;
       cards.set(surface, card);
-      if (surface !== "background") screen = surface;
       if (step.shown !== undefined) showing.set(surface, step.shown);
       latest = surface;
       if (lastIsLive && index === parts.length - 1) current = surface;
     }
   }
-  if (working && starting) {
-    // A step starting before it is stored: commands in the background, or the screen it was last on.
-    const surface: ComputerSurface = starting.background ? "background" : screen ?? "computer";
+  // A step starting before it is stored: commands in the background, or the screen the call says it works on.
+  const startingOn: ComputerSurface | null = !working || !starting ? null : starting.background ? "background" : starting.surface ?? null;
+  if (startingOn) {
+    const surface = startingOn;
     if (!cards.has(surface)) {
-      cards.set(surface, { steps: [{ label: "Using my computer", icon: "computer", status: "running", app: null, startedAt: null, finishedAt: null, updates: [], ...(starting.background ? { background: true as const } : {}) }], last: parts.length });
+      const label = surface === "browser" ? "Using the browser" : surface === "background" ? "Working on my computer" : "Using my computer";
+      cards.set(surface, { steps: [{ label, icon: "computer", status: "running", app: null, startedAt: null, finishedAt: null, updates: [], ...(surface === "browser" ? { surface: "browser" as const } : {}), ...(surface === "background" ? { background: true as const } : {}) }], last: parts.length });
     }
     current = surface;
     latest = surface;
@@ -67,4 +82,28 @@ export function computerWork(parts: WorkbotPart[], { working, starting, lastIsLi
   // Below its latest words: background work first, then the screen it is watched on.
   const trailing = [...live].sort((a, b) => Number(a === watch) - Number(b === watch));
   return { cards, live, watch, shown, placed, trailing, starts };
+}
+
+/**
+ * Whether a computer card stays in the conversation. With the working status (`quiet`), live work shows under
+ * Workbot's name rather than in the chat, so a live card shows only while Workbot shows its screen or, with the inline
+ * preview, while it works on a screen. Once work on its browser or screen is over, its card stays where it happened as
+ * a finished record, like anything else Workbot said, and is read back with the conversation after a reload. Commands
+ * in the background leave no card: the task sheet keeps them.
+ */
+export function keepsCard(card: { surface: ComputerSurface; live: boolean; showing: boolean }, { quiet, preview }: { quiet: boolean; preview: boolean }) {
+  if (!quiet || card.showing) return true;
+  if (card.surface === "background") return false;
+  return card.live ? preview : true;
+}
+
+/**
+ * What finished work on a screen comes to, in one line: the page it opened ("Opened google.com", "Opened
+ * google.com and 2 more"), else the last thing it said it did, else that it used its browser or computer.
+ */
+export function finishedSummary(surface: Exclude<ComputerSurface, "background">, steps: WorkbotStep[]): string {
+  const pages = steps.flatMap((step) => step.pages ?? []).filter((page, index, all) => all.findIndex((entry) => entry.id === page.id) === index);
+  const last = pages.at(-1);
+  if (last) return pages.length > 1 ? `Opened ${last.title} and ${pages.length - 1} more` : `Opened ${last.title}`;
+  return steps.flatMap((step) => step.updates).at(-1) ?? (surface === "browser" ? "Used the browser" : "Used my computer");
 }
