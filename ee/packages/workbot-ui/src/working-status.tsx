@@ -193,8 +193,8 @@ export function TaskSheet({ open, onClose, name, activity }: { open: boolean; on
         </div>
         <div className="min-h-0 flex-1 overflow-y-auto pb-4">
           <ActivityDetails name={name} activity={activity} />
-          <RemoteJobs jobs={remote.data?.jobs ?? []} />
-          {workbotHost().remoteTasks && remote.isError ? <p className="px-5 pt-3 text-[13px] text-[var(--wb-muted)]">Couldn&apos;t verify remote tasks. <button type="button" className="underline" onClick={() => void remote.refetch()}>Try again</button></p> : null}
+          <RemoteJobs jobs={remote.data?.jobs ?? []} statusError={remote.data?.statusError} />
+          {workbotHost().remoteTasks && remote.isError && !remote.data ? <p className="px-5 pt-3 text-[13px] text-[var(--wb-muted)]">Couldn&apos;t check remote tasks just now. <button type="button" className="underline" onClick={() => void remote.refetch()}>Try again</button></p> : null}
         </div>
         {watch ? <div className="shrink-0 border-t border-[var(--wb-hairline)] px-5 py-3"><WatchButton watch={watch} onDone={onClose} /></div> : null}
       </Dialog.Popup>

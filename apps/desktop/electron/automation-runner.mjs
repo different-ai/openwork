@@ -262,6 +262,7 @@ export async function watchRemoteSession(input) {
   let lastKey = null
   let lastReportedAt = 0
   let silentPolls = 0
+  let turnSeen = false
   while (!input.signal.aborted && Date.now() - startedAt < timing.maxMs) {
     let observation = null
     try {
@@ -273,7 +274,13 @@ export async function watchRemoteSession(input) {
         limit: REMOTE_SESSION_SNAPSHOT_LIMIT,
       })
       const running = snapshot?.status?.type === "busy" || snapshot?.status?.type === "retry"
-      if (input.turn && !remoteSessionTurnVisible(snapshot, input.turn)) {
+      // A long turn pushes its own user message out of the bounded tail; once seen, it stays sent.
+      if (input.turn && !turnSeen && !remoteSessionTurnVisible(snapshot, input.turn) && input.turn.messageId
+        && Array.isArray(snapshot?.messages) && snapshot.messages.length > 0) {
+        turnSeen = remoteSessionTurnVisible(await client.getThreadSnapshot(input.sessionId, { signal: input.signal }), input.turn)
+      }
+      if (input.turn && !turnSeen && remoteSessionTurnVisible(snapshot, input.turn)) turnSeen = true
+      if (input.turn && !turnSeen) {
         // A follow-up was just accepted; until its user message shows up the
         // previous turn's answer must not be reported as this turn's.
         observation = { status: "silent", messageCount: Array.isArray(snapshot?.messages) ? snapshot.messages.length : 0 }

@@ -2,7 +2,7 @@ import assert from "node:assert/strict"
 import { test } from "node:test"
 import { createServer } from "node:http"
 import { createHeadlessRunnerClient, type RunnerMessage, type RunnerSnapshot } from "@openwork-ee/headless-protocol"
-import { buildWorkbotRemoteJobs, applyWorkbotRemoteStatuses, readWorkbotRemoteJobs, readWorkbotRemoteJob, stopWorkbotRemoteJob, remoteJobDetail, WorkbotRemoteJobError, workbotInstructions, sendWorkbotMessage, resetWorkbotSessionCells, workbotOwner, workbotSessionId, type WorkbotActor } from "@openwork-ee/workbot-server"
+import { buildWorkbotRemoteJobs, applyWorkbotRemoteStatuses, readWorkbotRemoteJobs, remoteStatusFailure, readWorkbotRemoteJob, stopWorkbotRemoteJob, remoteJobDetail, WorkbotRemoteJobError, workbotInstructions, sendWorkbotMessage, resetWorkbotSessionCells, workbotOwner, workbotSessionId, type WorkbotActor } from "@openwork-ee/workbot-server"
 import type { RemoteSessionThreadStatus } from "@openwork/types/automations"
 import { createDen, denSessionSchema } from "../src/server/den.js"
 import { Hono } from "hono"
@@ -100,7 +100,86 @@ test("service reads the actor's derived chat, requests stored outputs, and passe
   assert.equal(read.searchParams.get("limit"), "1000")
   const stale = await readWorkbotRemoteJobs(actor, {}, { ...deps, remoteStatus: async () => { throw new Error("membership_revoked") } })
   assert.equal(stale.jobs[0]?.stale, true)
-  assert.equal(stale.jobs[0]?.status, null)
+  assert.equal(stale.jobs[0]?.status?.state, "running", "a failed refresh keeps the last verified state")
+  assert.equal(stale.statusError, "unavailable")
+})
+
+/** A Workbot chat with several remote-session:create receipts, served by an in-memory runner. */
+function chatWith(commandIds: string[]) {
+  return createHeadlessRunnerClient({ config: { url: "http://runner", token: "x".repeat(32) }, mintToken: async () => ({ token: "member_token" }), maxTokenTtlMs: 60_000, fetch: async input => {
+    const url = new URL(String(input))
+    if (url.pathname.endsWith("/sessions")) return Response.json({ sessions: [] })
+    return Response.json(snapshot(commandIds.flatMap((id, index) => [
+      call(`create_${id}`, "remote-session:create", { target: "desktop", title: `Task ${id}` }, "wb_request", 100 + index),
+      output(`create_${id}`, { target: "desktop", commandId: id, state: "queued" }),
+    ])))
+  } })
+}
+const statusOf = (ref: string, state: RemoteSessionThreadStatus["state"]): RemoteSessionThreadStatus => ({ ...live, ref, state, latestStep: state === "running" ? "Ran a command" : null })
+
+test("batched status: every task is checked in one call and each gets its own state", async () => {
+  resetWorkbotSessionCells()
+  const member = { ...actor, memberId: "member_batch", userId: "user_batch" }
+  const calls: unknown[] = []
+  const result = await readWorkbotRemoteJobs(member, {}, { client: chatWith(["cmd_a", "cmd_b", "cmd_c"]), remoteTasks: true, canSchedule: async () => false,
+    remoteStatus: async input => { calls.push(input); return { threads: [statusOf("cmd_a", "idle"), statusOf("cmd_b", "running"), statusOf("cmd_c", "waiting")], retryAfterMs: 5000 } } })
+  assert.equal(calls.length, 1, "one batched call, never one per row")
+  assert.deepEqual(calls[0], { threads: [{ commandId: "cmd_c" }, { commandId: "cmd_b" }, { commandId: "cmd_a" }], waitMs: 0 })
+  assert.deepEqual(result.jobs.map(job => [job.ref, job.status?.state, job.stale]), [[{ commandId: "cmd_c" }, "waiting", false], [{ commandId: "cmd_b" }, "running", false], [{ commandId: "cmd_a" }, "idle", false]])
+  assert.ok(result.jobs.every(job => typeof job.checkedAt === "number"))
+  assert.equal(result.statusError, undefined)
+})
+
+test("a failed refresh is retried once, then keeps each task's last state and when it was checked", async () => {
+  resetWorkbotSessionCells()
+  const member = { ...actor, memberId: "member_retry", userId: "user_retry" }
+  const client = chatWith(["cmd_a", "cmd_b"])
+  const base = { client, remoteTasks: true, canSchedule: async () => false }
+  const first = await readWorkbotRemoteJobs(member, {}, { ...base, remoteStatus: async () => ({ threads: [statusOf("cmd_a", "idle"), statusOf("cmd_b", "running")], retryAfterMs: 5000 }) })
+  const checkedAt = first.jobs.map(job => job.checkedAt)
+  // One passing failure, then success: the retry hides it entirely.
+  let attempts = 0
+  const recovered = await readWorkbotRemoteJobs(member, {}, { ...base, remoteStatus: async () => {
+    attempts += 1
+    if (attempts === 1) throw Object.assign(new Error("timeout"), { reason: "unavailable" })
+    return { threads: [statusOf("cmd_a", "idle"), statusOf("cmd_b", "running")], retryAfterMs: 5000 }
+  } })
+  assert.equal(attempts, 2)
+  assert.ok(recovered.jobs.every(job => !job.stale))
+  // Both attempts fail: nothing is lost or turned into a warning.
+  attempts = 0
+  const failed = await readWorkbotRemoteJobs(member, {}, { ...base, remoteStatus: async () => { attempts += 1; throw Object.assign(new Error("timeout"), { reason: "unavailable" }) } })
+  assert.equal(attempts, 2)
+  assert.equal(failed.statusError, "unavailable")
+  assert.deepEqual(failed.jobs.map(job => [job.status?.state, job.stale, job.unreachable ?? null]), [["running", true, null], ["idle", true, null]])
+  assert.ok(failed.jobs.every((job, index) => typeof job.checkedAt === "number" && job.checkedAt >= (checkedAt[index] ?? 0)))
+  // A signed-out token is not retried and is reported as such.
+  attempts = 0
+  const signedOut = await readWorkbotRemoteJobs(member, {}, { ...base, remoteStatus: async () => { attempts += 1; throw Object.assign(new Error("401"), { reason: "signed_out" }) } })
+  assert.equal(attempts, 1)
+  assert.equal(signedOut.statusError, "signed_out")
+  assert.equal(signedOut.jobs[0]?.status?.state, "running")
+})
+
+test("only a task Den can't reach, with nothing known about it, gets a plain unreachable reason", () => {
+  const jobs = buildWorkbotRemoteJobs(snapshot([call("cloud", "remote-session:create", { title: "Cloud task" }), output("cloud", { target: "cloud", sessionId: "cloud_1" })]))
+  const unreachable = applyWorkbotRemoteStatuses(jobs, { threads: [{ ref: "cloud_1", changed: false, version: "unavailable", stale: true }], retryAfterMs: 5000 })
+  assert.equal(unreachable.jobs[0]?.unreachable, "Can't reach your cloud computer right now.")
+  const known = applyWorkbotRemoteStatuses(jobs, { threads: [{ ref: "cloud_1", changed: false, version: "unavailable", stale: true }], retryAfterMs: 5000 },
+    { lastKnown: () => ({ status: { ...live, ref: "cloud_1", target: "cloud", state: "idle" }, checkedAt: 500 }) })
+  assert.deepEqual([known.jobs[0]?.status?.state, known.jobs[0]?.stale, known.jobs[0]?.checkedAt, known.jobs[0]?.unreachable], ["idle", true, 500, null])
+})
+
+test("Den adapter names a signed-out token so it is not retried, and other failures as passing", async () => {
+  const server = createServer((_req, res) => { res.writeHead(401, { "content-type": "application/json" }); res.end(JSON.stringify({ error: "unauthorized" })) })
+  await new Promise<void>(resolve => server.listen(0, "127.0.0.1", resolve))
+  const address = server.address(); assert.ok(address && typeof address !== "string")
+  try {
+    const den = createDen({ apiUrl: `http://127.0.0.1:${address.port}`, publicUrl: "http://localhost:8080" })
+    await assert.rejects(den.remoteStatus("expired-token", { threads: [{ commandId: "command_1" }], waitMs: 0 }), (error: unknown) => remoteStatusFailure(error) === "signed_out")
+    const closed = createDen({ apiUrl: "http://127.0.0.1:1", publicUrl: "http://localhost:8080" })
+    await assert.rejects(closed.remoteStatus("token", { threads: [{ commandId: "command_1" }], waitMs: 0 }), (error: unknown) => remoteStatusFailure(error) === "unavailable")
+  } finally { await new Promise<void>((resolve, reject) => server.close(error => error ? reject(error) : resolve())) }
 })
 
 test("Den adapter uses the member token and the existing read-only status capability", async () => {

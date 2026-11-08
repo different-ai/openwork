@@ -122,12 +122,46 @@ export function buildWorkbotRemoteJobs(snapshot: RunnerSnapshot): WorkbotRemoteJ
   return { jobs: selected, hasEarlier: snapshot.hasEarlier === true || jobs.size > MAX_JOBS }
 }
 
-/** Only live statuses returned for the requested refs can change state. No local-task completion inference. */
-export function applyWorkbotRemoteStatuses(jobs: WorkbotRemoteJobs, result: RemoteSessionStatusResult): WorkbotRemoteJobs {
+/** The last status Workbot verified for one task, kept so a failed refresh never erases what was known. */
+export type WorkbotRemoteLastKnown = { status: NonNullable<WorkbotRemoteJob["status"]>; checkedAt: number }
+
+/**
+ * Only live statuses returned for the requested refs can change state. No local-task completion inference.
+ * A ref Den couldn't check just now keeps its last verified state (stale, with when it was checked).
+ */
+export function applyWorkbotRemoteStatuses(
+  jobs: WorkbotRemoteJobs,
+  result: RemoteSessionStatusResult,
+  options: { now?: number; lastKnown?: (job: WorkbotRemoteJob) => WorkbotRemoteLastKnown | undefined } = {},
+): WorkbotRemoteJobs {
+  const now = options.now ?? Date.now()
   return { ...jobs, jobs: jobs.jobs.map(job => {
     const id = "commandId" in job.ref ? job.ref.commandId : job.ref.sessionId
     const status = result.threads.find(thread => thread.ref === id)
     const expectedTarget = "commandId" in job.ref ? "desktop" : "cloud"
-    return status?.changed && status.target === expectedTarget ? { ...job, status, stale: false } : job
+    if (status?.changed && status.target === expectedTarget) return { ...job, status, stale: false, checkedAt: now, unreachable: null }
+    const before = options.lastKnown?.(job)
+    if (before) return { ...job, status: before.status, stale: true, checkedAt: before.checkedAt, unreachable: null }
+    // Den answered but could not reach what runs it, and nothing was ever verified: say so plainly.
+    const unreachable = status && !status.changed && status.stale === true
+      ? (job.target === "cloud" ? "Can't reach your cloud computer right now." : "Can't reach the computer running this right now.")
+      : null
+    return { ...job, unreachable }
   }) }
+}
+
+/** Last known states only, after the whole status read failed. */
+export function retainWorkbotRemoteStatuses(
+  jobs: WorkbotRemoteJobs,
+  lastKnown: (job: WorkbotRemoteJob) => WorkbotRemoteLastKnown | undefined,
+): WorkbotRemoteJobs {
+  return { ...jobs, jobs: jobs.jobs.map(job => {
+    const before = lastKnown(job)
+    return before ? { ...job, status: before.status, stale: true, checkedAt: before.checkedAt } : job
+  }) }
+}
+
+/** Signed-out (needs the person) versus everything else (passing). Never includes tokens or response bodies. */
+export function remoteStatusFailure(error: unknown): "signed_out" | "unavailable" {
+  return typeof error === "object" && error !== null && "reason" in error && error.reason === "signed_out" ? "signed_out" : "unavailable"
 }

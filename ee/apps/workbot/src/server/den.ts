@@ -17,6 +17,17 @@ import type { Tokens } from "./sealed.js"
 export const WORKBOT_CLIENT_ID = "openwork-workbot"
 const SCOPES = "openid profile email offline_access mcp:read mcp:write"
 const TIMEOUT_MS = 20_000
+/** Each remote-session:status attempt; Workbot retries once. */
+const REMOTE_STATUS_TIMEOUT_MS = 8_000
+const remoteErrorCodeSchema = z.object({ error: z.string().max(120) })
+
+/** A remote-session call that failed: `signed_out` needs the person; anything else is passing. No token or body text. */
+export class DenRemoteSessionError extends Error {
+  constructor(readonly reason: "signed_out" | "unavailable", readonly code: string) {
+    super(`remote_session_${reason}:${code}`)
+    this.name = "DenRemoteSessionError"
+  }
+}
 
 const protectedResourceSchema = z.object({ resource: z.string(), authorization_servers: z.array(z.string()).min(1) })
 const metadataSchema = z.object({
@@ -206,23 +217,33 @@ export function createDen(options: { apiUrl: string; publicUrl: string; serviceT
   }
 
   /** Member-scoped calls to the existing remote-session protocol, never a service credential or caller-supplied org. */
-  const remoteCall = async (accessToken: string, action: "status" | "read" | "stop", body: unknown): Promise<unknown> => {
+  const remoteCall = async (accessToken: string, action: "status" | "read" | "stop", body: unknown, timeoutMs = TIMEOUT_MS): Promise<unknown> => {
     const client = new Client({ name: "openwork-workbot", version: "1" })
     const transport = new StreamableHTTPClientTransport(new URL(`${options.apiUrl}/mcp/agent`), {
       requestInit: { headers: { authorization: `Bearer ${accessToken}` } },
     })
     try {
-      await client.connect(transport, { timeout: TIMEOUT_MS })
-      const result = await client.callTool({ name: "execute_capability", arguments: { name: `remote-session:${action}`, body } }, undefined, { timeout: TIMEOUT_MS + 5_000 })
-      if (result.isError) throw new Error("remote_session_unavailable")
+      let result: Awaited<ReturnType<Client["callTool"]>>
+      try {
+        await client.connect(transport, { timeout: timeoutMs })
+        result = await client.callTool({ name: "execute_capability", arguments: { name: `remote-session:${action}`, body } }, undefined, { timeout: timeoutMs })
+      } catch (error) {
+        const status = typeof error === "object" && error !== null && "code" in error ? error.code : null
+        throw new DenRemoteSessionError(status === 401 || status === 403 ? "signed_out" : "unavailable", typeof status === "number" ? `http_${status}` : error instanceof Error ? error.name : "transport")
+      }
+      if (result.isError) {
+        const code = remoteErrorCodeSchema.safeParse(result.structuredContent)
+        const error = code.success ? code.data.error : "remote_session_unavailable"
+        throw new DenRemoteSessionError(error === "membership_required" || error === "insufficient_mcp_scope" ? "signed_out" : "unavailable", error)
+      }
       if (result.structuredContent) return result.structuredContent
       const blocks = z.array(z.object({ type: z.string(), text: z.string().optional() })).safeParse(result.content)
       for (const block of blocks.success ? blocks.data : []) {
         if (block.type !== "text" || !block.text) continue
         try { return JSON.parse(block.text) } catch { /* Not a JSON receipt. */ }
       }
-      throw new Error("remote_session_unavailable")
-    } finally { await client.close() }
+      throw new DenRemoteSessionError("unavailable", "not_json")
+    } finally { await client.close().catch(() => undefined) }
   }
 
   return {
@@ -280,7 +301,10 @@ export function createDen(options: { apiUrl: string; publicUrl: string; serviceT
     },
     /** Same owner-scoped status capability agents call; OAuth org, scopes and membership stay Den's decision. */
     async remoteStatus(accessToken: string, input: RemoteSessionStatusRequest) {
-      return remoteSessionStatusResultSchema.parse(await remoteCall(accessToken, "status", input))
+      // Bounded well below the browser's wait so the server can retry once and still answer in time.
+      const parsed = remoteSessionStatusResultSchema.safeParse(await remoteCall(accessToken, "status", input, REMOTE_STATUS_TIMEOUT_MS))
+      if (!parsed.success) throw new DenRemoteSessionError("unavailable", "invalid_status")
+      return parsed.data
     },
     remoteRead: (accessToken: string, input: { sessionId: string; workspaceId?: string; limit: number; from: "end" } | { requestId: string }) => remoteCall(accessToken, "read", input),
     remoteStop: (accessToken: string, input: { sessionId: string; workspaceId?: string; messageId: string }) => remoteCall(accessToken, "stop", input),

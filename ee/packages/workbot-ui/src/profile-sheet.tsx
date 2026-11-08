@@ -79,8 +79,9 @@ function TasksTab({ name, activity, onClose }: { name: string; activity: Workbot
       <ActivityDetails name={name} activity={activity} />
     </> : !remote.data?.jobs.length && !remote.isFetching ? <p className="px-5 pt-2 text-[13px] text-[var(--wb-muted)]">{name} isn&apos;t working on anything right now. Bigger jobs you hand it show up here while they run.</p> : null}
     {workbotHost().remoteTasks && remote.isPending ? <p className="px-5 pt-3 text-[13px] text-[var(--wb-muted)]" role="status">Checking your remote tasks…</p> : null}
-    {workbotHost().remoteTasks && remote.isError ? <p className="px-5 pt-3 text-[13px] text-[var(--wb-muted)]" role="status">Couldn&apos;t verify your remote tasks. <button type="button" className="underline" onClick={() => void remote.refetch()}>Try again</button></p> : null}
-    <RemoteJobs jobs={remote.data?.jobs ?? []} />
+    {/* Only when nothing is known yet; known rows keep their last state through a failed refresh. */}
+    {workbotHost().remoteTasks && remote.isError && !remote.data ? <p className="px-5 pt-3 text-[13px] text-[var(--wb-muted)]" role="status">Couldn&apos;t check your remote tasks just now. <button type="button" className="underline" onClick={() => void remote.refetch()}>Try again</button></p> : null}
+    <RemoteJobs jobs={remote.data?.jobs ?? []} statusError={remote.data?.statusError} />
     {remote.data?.hasEarlier ? <p className="px-5 pt-2 text-[12px] text-[var(--wb-muted)]">Showing recent remote tasks. Older jobs may be outside this chat&apos;s current history.</p> : null}
     {activity.watch ? <div className="px-5 pt-3"><WatchButton watch={activity.watch} onDone={onClose} /></div> : null}
   </>;
