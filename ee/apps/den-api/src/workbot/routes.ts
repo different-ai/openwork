@@ -85,6 +85,8 @@ const sessionSchema = z.object({
   accountMenu: z.boolean().optional(),
   /** Work in progress shows in the header and task sheet, not the chat (`workbotWorkingStatus`); older Dens omit it: off. */
   workingStatus: z.boolean().optional(),
+  /** Tapping Workbot's name opens its profile: tasks, permissions, memory (`workbotProfileSheet`); older Dens omit it: off. */
+  profileSheet: z.boolean().optional(),
   /** Always true for older Workbot clients; the command palette is available by default. */
   commandPalette: z.boolean().optional(),
   /**
@@ -412,6 +414,8 @@ export function registerWorkbotRoutes<T extends { Variables: object }>(app: Hono
         sideChats: true,
         accountMenu: features.workbotAccountMenu,
         workingStatus: features.workbotWorkingStatus,
+        // The profile opens from the name's status line, so it needs the working status.
+        profileSheet: features.workbotProfileSheet && features.workbotWorkingStatus,
         commandPalette: true,
         model,
         gatewayModels: true,

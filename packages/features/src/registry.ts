@@ -429,6 +429,17 @@ export const FEATURES = defineFeatures({
     deployments: everywhere,
     default: false,
   },
+  workbotProfileSheet: {
+    label: "Workbot: profile",
+    description: "Tapping Workbot's name opens its profile: what it is working on and its background tasks, what it can use (connected apps, browser, computer, files) with a link to manage connections, and what it remembers about the person, read-only.",
+    category: "workbot",
+    added: "2026-11-07",
+    since: "2026-11",
+    author: "benjaminshafii",
+    docs: "docs/features/workbot-profile-sheet/README.md",
+    deployments: everywhere,
+    default: false,
+  },
   workbotProactive: {
     label: "Workbot: Your agent",
     description: "Every member gets a read-only background agent that checks Gmail and Google Calendar each morning and about every three working hours, sending a short Workbot Slack DM only when needed. Members review checks and messages in My bot, tell it what they care about, narrow its hours and limits, undo changes, snooze or mute it. Admins choose its responsibilities and see aggregate 7-day health in Manage › Workbot, without member names or content. It never sends email, accepts invitations or edits data for them.",
