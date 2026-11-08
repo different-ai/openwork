@@ -2,8 +2,9 @@
 
 import { ArrowUp, Check, CircleAlert, Copy, FileText, Globe, Lock, Monitor, Pencil, Presentation } from "lucide-react";
 import { createContext, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type ClipboardEvent, type KeyboardEvent, type ReactNode } from "react";
-import { computerViews, setWorkbotHost, workbotHost, type WorkbotHost } from "./host";
+import { computerTabLabel, computerViews, setWorkbotHost, workbotHost, type WorkbotHost } from "./host";
 import { OpenWorkMark } from "./mark";
+import { clearThreadSnapshots } from "./thread-cache";
 import { ChatsButton, ChatsDrawer, chatTitle, RemoveChatButton, SideChatTitle, useChatLocation } from "./chats";
 import {
   useEditWorkbotMessage,
@@ -18,6 +19,7 @@ import {
   useWorkbotThread,
   WorkbotChatProvider,
   WorkbotSendError,
+  WORKBOT_FIRST_TURNS,
   workbotFilesKey,
   uploadWorkbotFile,
   type LiveText,
@@ -40,12 +42,12 @@ import { Welcome } from "./welcome";
 import { ModelRecovery, AccessRecovery } from "./model-recovery";
 import { hasAnsweredTurn, WorkbotSetupChip } from "./activation";
 import { WorkbotCalendar } from "./calendar";
-import { WorkbotDocuments } from "./documents";
+import { usePrefetchWorkbotDocuments, WorkbotDocuments } from "./documents";
 import { LiveGlimpse, openBrowserPage, WorkbotComputer } from "./computer";
 import { readBrowserSkillRunPrompt, type BrowserTeachingContext } from "@openwork/types/browser-demonstration";
 import { readWorkbotCorrectionPrompt, workbotCorrectionPrompt, workbotViewContextSchema, type WorkbotViewContext } from "@openwork/types/workbot-context";
 import type { DocumentOpenOutcome, DocumentOpenRequest } from "@openwork/documents";
-import { ComputerNavigationContext, ComputerOffer, DocumentNavigationContext, DocumentNavigationStatus, DocumentOffers, type DocumentNavigationState, OpenDocumentContext, SentContext, WorkspaceAssistant, WorkspaceMenu, WorkspaceNavigationContext } from "./workspace";
+import { ComputerNavigationContext, ComputerOffer, DockedChat, DocumentNavigationContext, DocumentNavigationStatus, DocumentOffers, type DocumentNavigationState, OpenDocumentContext, SentContext, useWideScreen, WorkspaceAssistant, WorkspaceMenu, WorkspaceNavigationContext } from "./workspace";
 import { useQueryClient } from "@tanstack/react-query";
 import { useNativeDictation } from "@openwork/ui/react";
 import { WorkbotDictation } from "./native-dictation";
@@ -60,7 +62,7 @@ import { WorkbotCommandPalette, type WorkbotPaletteTab } from "./command-palette
  * The conversation is read newest first: a first page small enough to answer quickly, then the rest of a full page in
  * the background, then a page more each time the person asks for earlier messages, up to the limit.
  */
-const FIRST_TURNS = 8;
+const FIRST_TURNS = WORKBOT_FIRST_TURNS;
 const PAGE_TURNS = 30;
 const MAX_TURNS = 200;
 const earlierWindow = (current: number) => Math.min(MAX_TURNS, current < PAGE_TURNS ? PAGE_TURNS : current + PAGE_TURNS);
@@ -95,6 +97,9 @@ type ChatNavigation = {
 /** The Workbot page. `host` is the app it lives in: signed-in requests, the person, their apps (see WorkbotHost). */
 export function WorkbotScreen({ host }: { host: WorkbotHost }) {
   setWorkbotHost(host);
+  // Pages kept on this device are only for people with instantOpen; turning it off forgets them.
+  const instantOpen = host.instantOpen === true;
+  useEffect(() => { if (!instantOpen) clearThreadSnapshots(); }, [instantOpen]);
   const sideChats = host.sideChats === true;
   const composers = useMemo(() => new Map<string | null, ComposerState>(), [host.identity?.organizationId, host.identity?.principalId]);
   // Disposed a tick after unmount, so a remount of the same owners (React's StrictMode check) keeps what was typed.
@@ -151,8 +156,11 @@ function ChatScreen({ host, composerState, navigation, onDraftsChange }: { host:
   const [filesOpen, setFilesOpen] = useState(false);
   // Once activated, keep this shell mounted even when the flag is revoked: draft editors must survive.
   const [teaching, setTeaching] = useState<BrowserTeachingContext>();
-  const [workspaceShell, setWorkspaceShell] = useState(host.workspaceAssistant === true || host.browserDemonstrations === true);
-  useEffect(() => { if (host.workspaceAssistant || host.browserDemonstrations) setWorkspaceShell(true); }, [host.workspaceAssistant, host.browserDemonstrations]);
+  // Chat beside the browser (`workbotBrowserChat`) needs the same shell as the floating chat: one conversation, many views.
+  const browserChat = host.browserChat === true && host.browser === true;
+  const [workspaceShell, setWorkspaceShell] = useState(host.workspaceAssistant === true || host.browserDemonstrations === true || browserChat);
+  useEffect(() => { if (host.workspaceAssistant || host.browserDemonstrations || browserChat) setWorkspaceShell(true); }, [host.workspaceAssistant, host.browserDemonstrations, browserChat]);
+  const wideScreen = useWideScreen();
   const [documentContext, setDocumentContext] = useState<WorkbotViewContext | null>(null);
   const [calendarContext, setCalendarContext] = useState<WorkbotViewContext | null>(null);
   const [browserContext, setBrowserContext] = useState<WorkbotViewContext | null>(null);
@@ -287,6 +295,7 @@ function ChatScreen({ host, composerState, navigation, onDraftsChange }: { host:
       name={data?.name ?? "Workbot"}
       tab={tab}
       tabs={paletteTabs(host)}
+      computerLabel={computerTabLabel(host)}
       onTab={(next) => setTab(next)}
       chats={navigation ? {
         current: navigation.chat,
@@ -368,6 +377,9 @@ function ChatScreen({ host, composerState, navigation, onDraftsChange }: { host:
 
   if (workspaceShell) {
     const name = data?.name ?? "Workbot";
+    // On the computer page, the conversation docks beside the live view on wide screens; elsewhere it floats.
+    const docked = browserChat && wideScreen && tab === "computer";
+    const floatingOnComputer = host.browserDemonstrations === true || browserChat;
     const busy = data?.status === "busy" || pending.some(entry => !entry.failed);
     const empty = !loading && !data?.turns.length && !pending.length;
     const starting = empty && (start.isPending || greetingAwaited);
@@ -420,12 +432,13 @@ function ChatScreen({ host, composerState, navigation, onDraftsChange }: { host:
           </div>
           <div className="flex min-h-0 min-w-0 flex-1" style={{ display: tab === "computer" ? undefined : "none" }} hidden={tab !== "computer"}>
             {computerVisited && computerViews(host).length > 0 && <WorkbotComputer key={`${host.identity?.organizationId}:${host.identity?.principalId}`} onTeachingChange={setTeaching} onRun={text => submit(text, undefined, true)} canTeach={!side} onViewChange={setComputerView} onContextChange={setBrowserContext} />}
+            {docked && <DockedChat name={name} context={currentContext} includeContext={includeContext} onIncludeContext={setIncludeContext} composer={composer} conversation={conversation} unavailable={!data && !loading} />}
           </div>
           </div>
           {previewFile && <PreviewPanel file={previewFile} onClose={() => setPreview(null)} />}
           </div>
-          <div hidden={!(host.workspaceAssistant || host.browserDemonstrations && tab === "computer") || tab === "home"}><WorkspaceAssistant name={name} context={currentContext} includeContext={includeContext} onIncludeContext={setIncludeContext}
-            composer={composer} conversation={conversation} onDocument={navigateFromChat} onComputer={navigateComputerFromChat} unavailable={!data && !loading} active={(host.workspaceAssistant === true || host.browserDemonstrations === true && tab === "computer") && tab !== "home"}
+          <div hidden={!(host.workspaceAssistant || floatingOnComputer && tab === "computer") || tab === "home" || docked}><WorkspaceAssistant name={name} context={currentContext} includeContext={includeContext} onIncludeContext={setIncludeContext}
+            composer={composer} conversation={conversation} onDocument={navigateFromChat} onComputer={navigateComputerFromChat} unavailable={!data && !loading} active={(host.workspaceAssistant === true || floatingOnComputer && tab === "computer") && tab !== "home" && !docked}
             reveal={revealChat} stayOpen={guided} /></div>
           {filesEnabled && <FilesPanel open={filesOpen} onClose={() => setFilesOpen(false)} assistantName={name} onOpenFile={file => { setFilesOpen(false); setPreview(file); }} />}
         </div>
@@ -728,26 +741,32 @@ function useWorkbotTab(beforeLeave?: (next: WorkbotTab) => boolean, preserveSear
   const setTab = (next: WorkbotTab, discard = false) => {
     if (next === tab) return;
     if (!discard && beforeLeaveRef.current?.(next) === false) return;
-    // The Computer tab opens on its Browser view, which has its own path (see WorkbotComputer).
-    window.history.pushState(null, "", `${next === "home" ? "/" : next === "computer" ? "/browser" : `/${next}`}${preserveSearch ? window.location.search : ""}`);
+    // The Computer tab opens on its first view (Browser, where the person has it), each with its own path (see WorkbotComputer).
+    window.history.pushState(null, "", `${next === "home" ? "/" : next === "computer" ? `/${computerViews(workbotHost())[0] ?? "browser"}` : `/${next}`}${preserveSearch ? window.location.search : ""}`);
     setTabState(next);
   };
   return [tab, setTab] as const;
 }
 
-/** Paper v3: Home / Calendar beside the name; the open tab sits on a soft chip. */
+/** Paper v3: the person's pages beside the name, in the same order as the drawer and the command palette; the open tab sits on a soft chip. */
 function WorkbotNav({ tab, onTab }: { tab: WorkbotTab; onTab: (tab: WorkbotTab) => void }) {
+  const host = workbotHost();
+  // Reaching Documents with the pointer or keyboard reads its first listing, so it opens with files, not a skeleton.
+  const prefetchDocuments = usePrefetchWorkbotDocuments();
+  const onIntent = (entry: WorkbotTab) => { if (entry === "documents" && tab !== "documents") prefetchDocuments(); };
   return (
     <nav className="ml-4 flex items-center gap-0.5" aria-label="Workbot">
-      {(["home", ...(workbotHost().calendar ? ["calendar" as const] : []), ...(workbotHost().documents ? ["documents" as const] : []), ...(computerViews(workbotHost()).length ? ["computer" as const] : [])] as const).map((entry) => (
+      {paletteTabs(host).map((entry) => (
         <button
           key={entry}
           type="button"
           aria-current={tab === entry ? "page" : undefined}
           onClick={() => onTab(entry)}
-          className={`flex h-8 items-center rounded-lg px-3 text-[13px] leading-4 transition-colors duration-150 focus-visible:outline-none focus-visible:shadow-[var(--wb-focus)] ${tab === entry ? "bg-[#EDF0F2] font-semibold text-[#11181C]" : "font-medium text-[#687076] hover:text-[#11181C]"}`}
+          onPointerEnter={() => onIntent(entry)}
+          onFocus={() => onIntent(entry)}
+          className={`flex h-8 items-center rounded-lg px-3 text-[13px] leading-4 transition-colors duration-150 focus-visible:outline-none focus-visible:shadow-[var(--wb-focus)] ${tab === entry ? "bg-[var(--wb-chip)] font-semibold text-[var(--wb-text)]" : "font-medium text-[var(--wb-muted)] hover:text-[var(--wb-text)]"}`}
         >
-          {entry === "home" ? "Home" : entry === "calendar" ? "Calendar" : entry === "documents" ? "Documents" : "Computer"}
+          {entry === "home" ? "Home" : entry === "calendar" ? "Calendar" : entry === "documents" ? "Documents" : computerTabLabel(host)}
         </button>
       ))}
     </nav>

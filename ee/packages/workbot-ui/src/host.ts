@@ -29,6 +29,8 @@ export type WorkbotHost = {
   computer?: boolean
   /** The Browser view of Workbot's computer (`browserUse`), rolled out separately from `computer`. Omitted means off. */
   browser?: boolean
+  /** The conversation stays docked beside the Browser and Computer views on wide screens (`workbotBrowserChat`). Needs `browser`. */
+  browserChat?: boolean
   /** Teach browser tasks and save private Cloud skills; omitted means off. */
   browserDemonstrations?: boolean
   /** Explicit document editing is enabled; omitted means preview only. */
@@ -53,6 +55,11 @@ export type WorkbotHost = {
   verifyDocumentIdentity?(): Promise<boolean>
   /** The retained owner remains mounted, but this host authorization fact masks it. */
   documentAuthorization?: "signin" | "blocked" | "disabled"
+  /**
+   * A chat opens on the newest page this device kept from the last visit while it is read again
+   * (`workbotInstantOpen`). Off when unset; the kept pages are cleared then.
+   */
+  instantOpen?: boolean
   /** The person can start side chats next to their main chat (on while Workbot is on). Off when unset. */
   sideChats?: boolean
   /**
@@ -86,6 +93,15 @@ export function setWorkbotHost(host: WorkbotHost) {
 /** The views of Workbot's computer this person has, Browser first; the Computer tab shows while there is one. */
 export function computerViews(host: WorkbotHost): Array<"browser" | "computer"> {
   return [...(host.browser === true ? ["browser" as const] : []), ...(host.computer === true ? ["computer" as const] : [])];
+}
+
+/**
+ * What the tab for Workbot's computer is called everywhere it is offered (header, navigation drawer, command palette,
+ * the Open action under a reply): "Browser" when the browser is the only view this person has, "Computer" otherwise.
+ */
+export function computerTabLabel(host: WorkbotHost): "Browser" | "Computer" {
+  const views = computerViews(host);
+  return views.length === 1 && views[0] === "browser" ? "Browser" : "Computer";
 }
 
 export function workbotHost(): WorkbotHost {

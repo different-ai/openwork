@@ -351,6 +351,26 @@
               ],
               "description": "Workbot: account menu: The avatar in Workbot's header opens a menu with the signed-in account and workspace, Switch workspace, Your dashboard and Sign out, instead of only linking to the dashboard. Renders DEN_FEATURE_WORKBOT_ACCOUNT_MENU."
             },
+            "workbotBrowserChat": {
+              "enum": [
+                "",
+                "true",
+                "false",
+                true,
+                false
+              ],
+              "description": "Workbot: chat beside the browser: On wide screens, Workbot's Browser and Computer views keep the conversation docked beside the live page, with the open tab shared as context, so people can direct browser-heavy work without switching back to Home. Narrow screens use the floating chat. Needs browser use. Renders DEN_FEATURE_WORKBOT_BROWSER_CHAT."
+            },
+            "workbotInstantOpen": {
+              "enum": [
+                "",
+                "true",
+                "false",
+                true,
+                false
+              ],
+              "description": "Workbot: chats open instantly: Workbot keeps the newest messages of each chat on the person's device and shows them the moment a chat opens, while it reads the conversation again. Nothing is kept while a reply is being written; kept messages are cleared on sign-out and after a week. Renders DEN_FEATURE_WORKBOT_INSTANT_OPEN."
+            },
             "workbotProactive": {
               "enum": [
                 "",
