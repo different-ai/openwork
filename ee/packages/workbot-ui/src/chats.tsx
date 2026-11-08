@@ -5,7 +5,8 @@ import { AlertDialog } from "@base-ui/react/alert-dialog";
 import { Dialog } from "@base-ui/react/dialog";
 import { ArrowLeft, PanelLeft, Plus, Trash2, X } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { newChatId, useRemoveWorkbotChat, type WorkbotChats } from "./data";
+import { useQueryClient } from "@tanstack/react-query";
+import { newChatId, prefetchWorkbotThread, useRemoveWorkbotChat, type WorkbotChats } from "./data";
 
 /**
  * Side chats: next to the person's main chat (one ongoing conversation), side chats keep one topic apart. They share
@@ -163,6 +164,9 @@ export function ChatsDrawer(props: {
     props.onOpenChat(chat);
     props.onClose();
   };
+  // A chat about to be opened is read as the finger or pointer reaches it, so it opens with its messages.
+  const queryClient = useQueryClient();
+  const warm = (chat: string | null) => { if (chat !== props.current) prefetchWorkbotThread(queryClient, chat); };
   const row = (selected: boolean) =>
     `flex h-11 w-full items-center gap-3 rounded-[10px] px-3 text-left transition-colors duration-150 focus-visible:outline-none focus-visible:shadow-[var(--wb-focus)] ${selected ? "bg-[var(--wb-chip)]" : "hover:bg-[var(--wb-chip)]"}`;
   return (
@@ -177,7 +181,7 @@ export function ChatsDrawer(props: {
             </Dialog.Close>
           </div>
           <nav aria-label="Chats" className="flex min-h-0 flex-1 flex-col px-2 pb-3">
-            <button type="button" onClick={() => open(null)} aria-current={props.current === null ? "page" : undefined} className={row(props.current === null)}>
+            <button type="button" onClick={() => open(null)} onPointerEnter={() => warm(null)} onTouchStart={() => warm(null)} onFocus={() => warm(null)} aria-current={props.current === null ? "page" : undefined} className={row(props.current === null)}>
               <span className="min-w-0 flex-1 truncate text-[14px] font-medium leading-5 text-[var(--wb-text)]">Main chat</span>
               {props.chats?.main ? <span className="shrink-0 text-[12px] leading-4 text-[var(--wb-muted)]">{sinceLabel(props.chats.main.updatedAt)}</span> : null}
             </button>
@@ -217,7 +221,7 @@ export function ChatsDrawer(props: {
                 <ul className="flex flex-col">
                   {shown.map((chat) => (
                     <li key={chat.id}>
-                      <button type="button" onClick={() => open(chat.id)} aria-current={props.current === chat.id ? "page" : undefined} className={row(props.current === chat.id)}>
+                      <button type="button" onClick={() => open(chat.id)} onPointerEnter={() => warm(chat.id)} onTouchStart={() => warm(chat.id)} onFocus={() => warm(chat.id)} aria-current={props.current === chat.id ? "page" : undefined} className={row(props.current === chat.id)}>
                         <span className={`min-w-0 flex-1 truncate text-[14px] leading-5 ${chat.title.trim() ? "text-[var(--wb-text)]" : "text-[var(--wb-muted)]"}`}>{chatTitle(chat.title)}</span>
                         <span className="shrink-0 text-[12px] leading-4 text-[var(--wb-muted)]">{sinceLabel(chat.updatedAt)}</span>
                       </button>

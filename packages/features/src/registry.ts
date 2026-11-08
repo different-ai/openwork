@@ -374,6 +374,17 @@ export const FEATURES = defineFeatures({
     deployments: everywhere,
     default: false,
   },
+  workbotInstantOpen: {
+    label: "Workbot: chats open instantly",
+    description: "Workbot keeps the newest messages of each chat on the person's device and shows them the moment a chat opens, while it reads the conversation again. Nothing is kept while a reply is being written; kept messages are cleared on sign-out and after a week.",
+    category: "workbot",
+    added: "2026-11-07",
+    since: "2026-11",
+    author: "benjaminshafii",
+    docs: "docs/features/workbot-instant-open/README.md",
+    deployments: everywhere,
+    default: false,
+  },
   workbotProactive: {
     label: "Workbot: Your agent",
     description: "Every member gets a read-only background agent that checks Gmail and Google Calendar each morning and about every three working hours, sending a short Workbot Slack DM only when needed. Members review checks and messages in My bot, tell it what they care about, narrow its hours and limits, undo changes, snooze or mute it. Admins choose its responsibilities and see aggregate 7-day health in Manage › Workbot, without member names or content. It never sends email, accepts invitations or edits data for them.",
