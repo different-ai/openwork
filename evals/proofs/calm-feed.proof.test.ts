@@ -118,7 +118,7 @@ test("a member on the Feed sees calm rows that never move and still knows which 
     return measured;
   });
 
-  const chip = `${row(question.sessionId)} [data-session-feed-workspace] > span`;
+  const chip = `${row(question.sessionId)} [data-session-feed-workspace]`;
   const chipAtRest = await step("at rest the workspace shows only as a dot in its color", async () => {
     await user.hover({ role: "tab", label: "Feed" });
     const dot = await one(chip);
@@ -130,16 +130,19 @@ test("a member on the Feed sees calm rows that never move and still knows which 
 
   await step("on hover the workspace dot opens to the right into its name, and Archive and More appear without moving the row", async () => {
     await user.hover({ testId: `sidebar-session-${question.sessionId}` });
-    const opened = await probe.eventually(() => one(chip), {
+    await probe.eventually(() => one(chip), {
       within: 2_000, label: "the workspace chip opens", until: (rect) => rect.width > chipAtRest.width + 16,
     });
+    // Let the 200ms opening finish before measuring where it ends.
+    await new Promise((resolve) => setTimeout(resolve, 400));
+    const opened = await one(chip);
     const now = await lanes(question.sessionId);
     const menu = await one(`[data-testid="session-actions-${question.sessionId}"]`);
     const archive = await one(`[data-testid="session-archive-${question.sessionId}"]`);
     const shifts = moved(rest, now);
     const inSlot = Math.abs(menu.left - now.menuSlot.left) <= 2 && Math.abs(menu.right - now.menuSlot.right) <= 2;
+    const growsRight = Math.abs(opened.left - chipAtRest.left) <= 1 && opened.right > chipAtRest.right && opened.right <= archive.left;
     const archiveBeforeMenu = archive.right <= menu.left && Math.abs(archive.top - menu.top) <= 1;
-    const growsRight = Math.abs(opened.left - chipAtRest.left) <= 1 && opened.right > chipAtRest.right;
     const ok = shifts.length === 0 && inSlot && archiveBeforeMenu && growsRight;
     evidence.recordAssertionEvidence("hover opens the workspace name and shows Archive before More",
       `moved: ${shifts.length ? shifts.join("; ") : "nothing"}; workspace chip ${describe(chipAtRest)} → ${describe(opened)}; Archive ${describe(archive)} before More ${describe(menu)} over its slot ${describe(now.menuSlot)}`, ok);

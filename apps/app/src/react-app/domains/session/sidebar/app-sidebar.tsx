@@ -2332,21 +2332,21 @@ type SessionMenuItemProps = {
  */
 function FeedWorkspaceChip({ workspaceId, name }: { workspaceId: string; name: string }) {
   const preference = useWorkspaceAvatarPreference(workspaceId);
+  // One element: it shrinks with the line, so a long name truncates instead of running under Archive.
   return (
-    <span className="flex h-4 shrink-0 items-center" data-session-feed-workspace={workspaceId} title={name}>
-      <span
-        aria-hidden="true"
-        className={cn(
-          "flex h-2 min-w-2 max-w-2 items-center overflow-hidden rounded-full",
-          "transition-[max-width,height,padding] duration-200 ease-out motion-reduce:transition-none",
-          "group-hover/menu-sub-item:h-4 group-hover/menu-sub-item:max-w-36 group-hover/menu-sub-item:px-1.5",
-          "group-focus-within/menu-sub-item:h-4 group-focus-within/menu-sub-item:max-w-36 group-focus-within/menu-sub-item:px-1.5",
-        )}
-        style={{ backgroundColor: resolveWorkspaceAvatarColor(workspaceId, preference?.color) }}
-      >
-        <span className="truncate whitespace-nowrap text-[10px] font-medium leading-4 text-white opacity-0 transition-opacity duration-150 group-hover/menu-sub-item:opacity-100 group-hover/menu-sub-item:delay-75 group-focus-within/menu-sub-item:opacity-100 motion-reduce:transition-none">
-          {name}
-        </span>
+    <span
+      data-session-feed-workspace={workspaceId}
+      title={name}
+      className={cn(
+        "flex h-2 min-w-2 max-w-2 shrink items-center overflow-hidden rounded-full",
+        "transition-[max-width,height,padding] duration-200 ease-out motion-reduce:transition-none",
+        "group-hover/menu-sub-item:h-4 group-hover/menu-sub-item:max-w-36 group-hover/menu-sub-item:px-1.5",
+        "group-focus-within/menu-sub-item:h-4 group-focus-within/menu-sub-item:max-w-36 group-focus-within/menu-sub-item:px-1.5",
+      )}
+      style={{ backgroundColor: resolveWorkspaceAvatarColor(workspaceId, preference?.color) }}
+    >
+      <span aria-hidden="true" className="min-w-0 truncate whitespace-nowrap text-[10px] font-medium leading-4 text-white opacity-0 transition-opacity duration-150 group-hover/menu-sub-item:opacity-100 group-hover/menu-sub-item:delay-75 group-focus-within/menu-sub-item:opacity-100 motion-reduce:transition-none">
+        {name}
       </span>
     </span>
   );
@@ -2590,9 +2590,9 @@ export function SessionMenuItem({
                     <span className="flex min-w-0 flex-1 items-center gap-1.5 transition-[margin] duration-200 ease-out group-hover/menu-sub-item:me-3 group-focus-within/menu-sub-item:me-3 motion-reduce:transition-none">
                       <FeedWorkspaceChip workspaceId={workspaceId} name={workspaceName ?? workspaceId} />
                       {decisionLabel ? (
-                        <span className="min-w-0 truncate" data-session-decision={waitingKind} title={itemTitle}>{decisionLabel}</span>
+                        <span className="shrink-0" data-session-decision={waitingKind} title={itemTitle}>{decisionLabel}</span>
                       ) : feedRow.groupLabel ? (
-                        <span className="min-w-0 truncate" data-session-feed-group>{feedRow.groupLabel}</span>
+                        <span className="min-w-0 flex-1 truncate" data-session-feed-group>{feedRow.groupLabel}</span>
                       ) : null}
                     </span>
                     <SessionNumberShortcutSlot digit={shortcutDigit} sharedWithMenu />
