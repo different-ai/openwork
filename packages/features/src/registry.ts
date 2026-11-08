@@ -440,6 +440,17 @@ export const FEATURES = defineFeatures({
     deployments: everywhere,
     default: false,
   },
+  workbotWorkingStatus: {
+    label: "Workbot: working status and task sheet",
+    description: "While Workbot works, a quiet status line under its name says what it is doing; tapping the name opens a task sheet with its steps and each background task's steps. The chat keeps only what Workbot says: no typing dots during work, no computer or task cards unless Workbot is showing its screen. Its first reply stands on its own instead of \"give me a sec\", and it can say how a background task is going.",
+    category: "workbot",
+    added: "2026-11-07",
+    since: "2026-11",
+    author: "benjaminshafii",
+    docs: "docs/features/workbot-working-status/README.md",
+    deployments: everywhere,
+    default: false,
+  },
   workbotProactive: {
     label: "Workbot: Your agent",
     description: "Every member gets a read-only background agent that checks Gmail and Google Calendar each morning and about every three working hours, sending a short Workbot Slack DM only when needed. Members review checks and messages in My bot, tell it what they care about, narrow its hours and limits, undo changes, snooze or mute it. Admins choose its responsibilities and see aggregate 7-day health in Manage › Workbot, without member names or content. It never sends email, accepts invitations or edits data for them.",

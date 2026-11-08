@@ -145,6 +145,7 @@ export function registerWorkbotRoutes(app: Hono<AppEnv>, input: { config: Config
       // Opening a document on request needs Documents too; Den still checks the member's Drive access on open.
       guidedNavigation: async () => member.den.guidedNavigation && member.den.documents === true,
       driveFiles: async () => member.den.driveFiles,
+      workingStatus: async () => member.den.workingStatus,
       sandboxGateway: member.den.sandboxGateway,
       // Saved steps are GA; older Dens may omit stepTurns, so preserve their continuous-turn protocol.
       stepTurns: member.den.stepTurns,
@@ -254,6 +255,7 @@ export function registerWorkbotRoutes(app: Hono<AppEnv>, input: { config: Config
       sideChats: who.enabled && who.sideChats,
       // Signing out and switching workspace don't depend on Workbot being on for this workspace.
       accountMenu: who.accountMenu,
+      workingStatus: who.enabled && who.workingStatus,
       browserChat: who.enabled && who.browser && who.browserChat,
       instantOpen: who.enabled && who.instantOpen,
       commandPalette: true,

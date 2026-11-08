@@ -56,6 +56,11 @@ export type WorkbotHost = {
   /** The retained owner remains mounted, but this host authorization fact masks it. */
   documentAuthorization?: "signin" | "blocked" | "disabled"
   /**
+   * What Workbot is doing shows as a status line under its name and a task sheet, not in the chat: no typing dots
+   * during tool work, no computer or task cards unless Workbot shows its screen (`workbotWorkingStatus`). Off when unset.
+   */
+  workingStatus?: boolean
+  /**
    * A chat opens on the newest page this device kept from the last visit while it is read again
    * (`workbotInstantOpen`). Off when unset; the kept pages are cleared then.
    */

@@ -83,6 +83,8 @@ const sessionSchema = z.object({
   sideChats: z.boolean(),
   /** The header avatar opens the account menu with Sign out (`workbotAccountMenu`); older Dens omit it: off. */
   accountMenu: z.boolean().optional(),
+  /** Work in progress shows in the header and task sheet, not the chat (`workbotWorkingStatus`); older Dens omit it: off. */
+  workingStatus: z.boolean().optional(),
   /** The conversation stays docked beside the Browser and Computer views (`workbotBrowserChat`); older Dens omit it: off. */
   browserChat: z.boolean().optional(),
   /** Chats open on the newest page kept on the device (`workbotInstantOpen`); older Dens omit it: off. */
@@ -413,6 +415,7 @@ export function registerWorkbotRoutes<T extends { Variables: object }>(app: Hono
         activationChecklist: true,
         sideChats: true,
         accountMenu: features.workbotAccountMenu,
+        workingStatus: features.workbotWorkingStatus,
         browserChat: features.workbotBrowserChat && features.browserUse && features.remoteComputers,
         instantOpen: features.workbotInstantOpen,
         commandPalette: true,

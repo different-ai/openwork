@@ -371,6 +371,16 @@
               ],
               "description": "Workbot: chats open instantly: Workbot keeps the newest messages of each chat on the person's device and shows them the moment a chat opens, while it reads the conversation again. Nothing is kept while a reply is being written; kept messages are cleared on sign-out and after a week. Renders DEN_FEATURE_WORKBOT_INSTANT_OPEN."
             },
+            "workbotWorkingStatus": {
+              "enum": [
+                "",
+                "true",
+                "false",
+                true,
+                false
+              ],
+              "description": "Workbot: working status and task sheet: While Workbot works, a quiet status line under its name says what it is doing; tapping the name opens a task sheet with its steps and each background task's steps. The chat keeps only what Workbot says: no typing dots during work, no computer or task cards unless Workbot is showing its screen. Its first reply stands on its own instead of \"give me a sec\", and it can say how a background task is going. Renders DEN_FEATURE_WORKBOT_WORKING_STATUS."
+            },
             "workbotProactive": {
               "enum": [
                 "",

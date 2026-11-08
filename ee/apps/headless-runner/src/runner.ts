@@ -38,6 +38,7 @@ import {
   taskInstructions,
   taskPrompt,
   taskMessageId,
+  taskProgress,
   tasksSection,
 } from "./tasks.js"
 import { formatBytes, withoutAttachments } from "./tool-files.js"
@@ -948,7 +949,9 @@ export class Runner {
     const history = await this.withFiles(sessionId, setup, expanded, context.messages)
     const recentTasks = kind !== "task" && session?.tasks ? store.recentTasks(sessionId, 8) : []
     // Task state changes while the conversation goes on, so it comes last: everything before it stays cached.
-    const state: Message[] = recentTasks.length ? [{ role: "user", text: tasksSection(recentTasks, Date.now()) }] : []
+    // Unfinished tasks (at most MAX_OPEN_TASKS) add how far they've got, read from their own rows.
+    const progress = new Map(recentTasks.filter((task) => ["queued", "running", "interrupted"].includes(task.status)).map((task) => [task.messageId, taskProgress(store.turnMessages(sessionId, task.messageId))] as const))
+    const state: Message[] = recentTasks.length ? [{ role: "user", text: tasksSection(recentTasks, Date.now(), progress) }] : []
     const { messages, repairs } = normalizeTranscript([...history, ...state])
     if (repairs) console.warn(`[headless-runner] context repaired ${JSON.stringify({ sessionId, messageId, repairs })}`)
     // Cached up to the two newest earlier turns (so the next turn starts from the cache) and the newest message.

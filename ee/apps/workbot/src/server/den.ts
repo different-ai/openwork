@@ -52,6 +52,8 @@ export const denSessionSchema = z.object({
   sideChats: z.boolean().default(false),
   /** The header avatar opens the account menu with Sign out. A Den from before it doesn't say: off. */
   accountMenu: z.boolean().default(false),
+  /** Work in progress shows in the header and task sheet, not the chat. A Den from before it doesn't say: off. */
+  workingStatus: z.boolean().default(false),
   /** The conversation docks beside the Browser and Computer views (`workbotBrowserChat`). A Den from before it doesn't say: off. */
   browserChat: z.boolean().default(false),
   /** Chats open on the newest page kept on the device (`workbotInstantOpen`). A Den from before it doesn't say: off. */
