@@ -4,7 +4,7 @@ import { readFile } from "node:fs/promises"
 import { fileURLToPath } from "node:url"
 import { createServer } from "vite"
 import { GOOGLE_EVENTS, googleAt, scenarios, type FixtureThread, type FixtureTurn } from "./chat-screen-scenarios.js"
-import { fixtureRemoteJobs } from "./remote-jobs.js"
+import { fixtureRemoteJobs, fixtureStaleRemoteJobs } from "./remote-jobs.js"
 
 let remoteStopped = false
 let googleStarted: number | null = null
@@ -101,7 +101,11 @@ async function answer(request: IncomingMessage, response: ServerResponse) {
     response.setHeader("Content-Type", kept.mediaType)
     return response.end(kept.bytes)
   }
-  if (path === "/v1/workbot/remote-jobs") return json(response, 200, { jobs: name === "remote" ? fixtureRemoteJobs(remoteStopped) : [], hasEarlier: false })
+  if (path === "/v1/workbot/remote-jobs") {
+    // `remote-stale`: the refresh failed and every row keeps its last verified state.
+    if (name === "remote-stale") return json(response, 200, { jobs: fixtureStaleRemoteJobs(), hasEarlier: false, statusError: "unavailable" })
+    return json(response, 200, { jobs: name === "remote" ? fixtureRemoteJobs(remoteStopped) : [], hasEarlier: false })
+  }
   if (path.startsWith("/v1/workbot/remote-jobs/")) {
     if (request.method === "POST" && path.endsWith("/stop")) { remoteStopped = true; return json(response, 200, { state: "stopped" }) }
     return json(response, 200, { state: "ready", canStop: !remoteStopped, messageId: "fixture-user", messages: [

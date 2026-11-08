@@ -79,9 +79,10 @@ export function remoteJobStateLabel(job: WorkbotRemoteJob) {
   }
 }
 
-/** The last known state's age, shown quietly only when this read couldn't refresh it. */
+/** The last known state's age, shown quietly only when this read couldn't refresh a task that may still change. */
 export function remoteJobUpdatedLabel(job: WorkbotRemoteJob, now = Date.now()) {
-  if (!job.stale || !job.status) return null;
+  // A finished task's state is final; its age would only add noise.
+  if (!job.stale || !job.status || job.status.state === "idle" || job.status.state === "error") return null;
   const at = job.checkedAt ?? job.status.observedAt;
   if (!at) return "Not updated just now";
   const minutes = Math.max(0, Math.floor((now - at) / 60_000));
@@ -170,7 +171,7 @@ function RemoteJobRow({ job }: { job: WorkbotRemoteJob }) {
       </summary>
       <div className="flex flex-col gap-2 pb-3 pl-7 text-[13px] leading-[19px] text-[var(--wb-muted)]">
         {job.status?.latestStep ? <><h3 className="font-medium text-[var(--wb-text)]">Latest reported step</h3><ul><li className="flex items-start gap-2">{state === "idle" ? <Check size={13} aria-label="Finished" className="mt-0.5 shrink-0" /> : <Monitor size={13} aria-label={job.stale ? "Last reported" : "In progress"} className="mt-0.5 shrink-0" />}<span className="whitespace-pre-wrap break-words">{job.status.latestStep}</span></li></ul></> : null}
-        {job.stale && job.status ? <p>This is the last state Workbot saw{checkedAt ? `, at ${new Date(checkedAt).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}` : ""}. It will refresh on its own.</p> : null}
+        {updated ? <p>This is the last state Workbot saw{checkedAt ? `, at ${new Date(checkedAt).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}` : ""}. It will refresh on its own.</p> : null}
         {state === "waiting" ? <>
           {pending ? <p className="whitespace-pre-wrap break-words text-[var(--wb-text)]">{pending.kind === "permission" ? pending.title : pending.question}</p> : null}
           <p>Open {job.target === "cloud" ? "the remote session in OpenWork Web" : "the session on your computer"} to review and answer. Nothing has been approved here.</p>

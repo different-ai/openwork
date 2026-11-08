@@ -37,6 +37,7 @@ const now = 10 * 60_000;
 const aged = { ...unverified.jobs[0]!, checkedAt: now - 5 * 60_000 };
 assert.equal(remoteJobUpdatedLabel(aged, now), "Updated 5m ago");
 assert.equal(remoteJobUpdatedLabel(job, now), null, "a fresh row shows no age");
+assert.equal(remoteJobUpdatedLabel({ ...aged, status: { ...aged.status!, state: "idle" } }, now), null, "a finished task's state is final; no age");
 const agedMarkup = renderToStaticMarkup(<RemoteJobs jobs={[aged]} />);
 assert.ok(agedMarkup.includes("data-workbot-remote-updated") && !agedMarkup.includes("Couldn"), "quiet age, no warning text");
 assert.ok(!agedMarkup.includes("lucide-circle-alert"), "no warning icon for a failed refresh");
