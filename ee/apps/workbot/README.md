@@ -24,8 +24,11 @@ browser ── chat.openworklabs.com (this app: page + API) ──┬── Den 
 Workbot uses the same chat-first navigation on every screen, without a layout rollout flag.
 At 1024px and wider, a 64px icon rail sits beside a 260px searchable chat list: Main chat stays first,
 then side chats ordered by latest activity. On smaller screens, the navigation button opens a drawer
-with Tabs, side chats, and a bottom search/new-chat row. Files, Documents, Calendar, Tasks and Apps
-open their existing destinations; capability availability and document-draft guards still apply.
+with the destinations, side chats, and a bottom search/new-chat row. Files, Documents, Calendar and Apps
+open their existing destinations; capability availability and document-draft guards still apply. Tasks are
+not a destination: what Workbot is doing shows under its name, and tapping the name opens the task sheet.
+Apps opens a plain sheet titled Apps. On phones (under 1024px) there is no profile: no avatar badge, no
+"Set up by" card and no profile tabs, only Workbot's name with its status where it says who is replying.
 No empty channel or space sections are invented. Computer is not a navigation destination; browser
 work is opened from its inline preview card, and files Workbot made open from their cards in the same
 panel (a full-screen sheet on phones; see `docs/features/workbot-artifact-panel`). While the desktop panel

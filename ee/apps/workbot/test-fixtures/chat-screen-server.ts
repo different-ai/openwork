@@ -172,7 +172,22 @@ async function answer(request: IncomingMessage, response: ServerResponse) {
     { name: "about-me.md", updatedAt: Date.now() - 2 * 86_400_000, content: "# Sam\n- Founder at Example Team; works mostly from a phone.\n- Prefers short answers, then details on request.\n- Cooks salmon with a predictive thermometer." },
     { name: "projects.md", updatedAt: Date.now() - 6 * 86_400_000, content: "- Workbot UI fixes (Nov 7 list)\n- 3D room planner for the new office" },
   ] })
-  if (path === "/v1/workbot/chats") return json(response, 200, { main: { updatedAt: Date.now() }, side: [] })
+  if (path === "/v1/workbot/chats") return json(response, 200, { main: { updatedAt: Date.now() - 60_000 }, side: request.headers["x-fixture-chat-list"] === "1" ? fixtureSideChats() : [] })
+  // Documents (`?documents=1`): a small Drive with recent files, one folder, and a text file that opens.
+  if (path === "/v1/workbot/documents/v1/capabilities/google-workspace/drive-files") {
+    const query = (url.searchParams.get("query") ?? "").toLowerCase()
+    const folder = url.searchParams.get("folderId")
+    const listed = fixtureDrive.filter((file) => (folder && folder !== "root" ? file.parent === folder : url.searchParams.get("filesOnly") === "true" ? file.mimeType !== FOLDER : file.parent === "root") && file.name.toLowerCase().includes(query))
+    return json(response, 200, { ok: true, files: listed.map(({ parent: _parent, text: _text, ...file }) => file) })
+  }
+  const driveFile = /^\/v1\/workbot\/documents\/v1\/documents\/google-drive\/files\/([^/]+)\/(metadata|editor)$/.exec(path)
+  if (driveFile) {
+    const found = fixtureDrive.find((file) => file.id === driveFile[1])
+    if (!found) return json(response, 404, { error: "not_found" })
+    if (driveFile[2] === "metadata") return json(response, 200, { id: found.id, name: found.name, mimeType: found.mimeType, modifiedTime: found.modifiedTime, size: found.size === null ? null : Number(found.size), openUrl: found.webViewLink })
+    if (request.method === "POST") return json(response, 200, { ok: true })
+    return json(response, 200, { kind: "text", connectionId: "google-workspace", fileId: found.id, name: found.name, revision: "1", canEdit: true, text: found.text ?? "" })
+  }
   // No live stream: the page reads the conversation again on its own.
   return json(response, 404, { error: "not_found" })
 }
@@ -194,6 +209,33 @@ const fixtureApps = [
   app("a3", "Salesforce", "not_connected", "ask_admin"),
   app("a4", "GitHub", "needs_attention", "connect"),
   app("a5", "Jira", "needs_attention", "ask_admin"),
+]
+
+/** Side chats for `?chatlist=1`, deliberately unsorted: the list orders them by latest activity. */
+const fixtureSideChats = () => {
+  const now = Date.now()
+  return [
+    { id: "casualgreeting01", title: "Casual greeting", updatedAt: now - 2 * 86_400_000 },
+    { id: "officeplan000001", title: "Office plan", updatedAt: now - 5 * 60_000 },
+    { id: "weeklyreview0001", title: "Weekly review", updatedAt: now - 3 * 3_600_000 },
+  ]
+}
+
+const FOLDER = "application/vnd.google-apps.folder"
+const day = 86_400_000
+const driveEntry = (id: string, name: string, mimeType: string, ageDays: number, size: string | null, parent = "root", text?: string) => ({
+  id, name, mimeType, parent, text, size,
+  modifiedTime: new Date(Date.UTC(2026, 10, 8, 15) - ageDays * day).toISOString(),
+  webViewLink: `https://drive.google.com/file/d/${id}/view`,
+})
+const fixtureDrive = [
+  driveEntry("folderclients01", "Clients", FOLDER, 3, null),
+  driveEntry("projectbrief001", "Project brief.txt", "text/plain", 0.1, "1240", "root",
+    "Project brief: new office\n\nGoal\nMove the team into the new office by March 1 without losing a working day.\n\nWhat we need\n- Desks and chairs for 14 people\n- Two meeting rooms with screens\n- Fast Wi-Fi on day one\n\nOpen questions\n- Who signs the lease addendum?\n- Do we keep the old phone line?\n\nNext step\nSam sends the floor plan to the landlord on Monday."),
+  driveEntry("budget2027sheet", "Budget 2027", "application/vnd.google-apps.spreadsheet", 1, null),
+  driveEntry("weeklynotes0001", "Weekly notes", "application/vnd.google-apps.document", 2, null),
+  driveEntry("offerletter0001", "Offer letter - Alex.pdf", "application/pdf", 4, "88214"),
+  driveEntry("acmecontract001", "Acme contract.docx", "application/vnd.openxmlformats-officedocument.wordprocessingml.document", 3, "45210", "folderclients01"),
 ]
 
 const entry = fileURLToPath(new URL("./chat-screen.tsx", import.meta.url))
