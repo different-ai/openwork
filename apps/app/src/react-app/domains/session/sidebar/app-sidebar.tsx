@@ -2327,26 +2327,46 @@ type SessionMenuItemProps = {
 };
 
 /**
- * A Feed row's workspace: a dot in the workspace's color that grows to the right into a pill with its name while
- * the row is hovered or focused.
+ * A Feed row's workspace: a fixed dot in the workspace's color. Hovering or focusing the row slides the workspace
+ * name open beside it (keyboard focus too; a click's lingering focus does not). The dot never changes size; only the name's column opens, so nothing before it moves.
+ *
+ * Motion: rows are hovered constantly, so the name waits 120ms (sweeping the pointer down the list opens nothing),
+ * opens over 200ms and closes faster, 120ms, with no delay. The column animates `grid-template-columns` from 0fr to
+ * 1fr, so it opens to the name's real width; the text fades in and moves 4px to the right. Reduced motion: fade only.
  */
-function FeedWorkspaceChip({ workspaceId, name }: { workspaceId: string; name: string }) {
+function FeedWorkspaceChip({ workspaceId, name, followed }: { workspaceId: string; name: string; followed: boolean }) {
   const preference = useWorkspaceAvatarPreference(workspaceId);
-  // One element: it shrinks with the line, so a long name truncates instead of running under Archive.
+  const open = "group-hover/menu-sub-item:delay-120 group-hover/menu-sub-item:duration-200 group-has-[:focus-visible]/menu-sub-item:delay-0 group-has-[:focus-visible]/menu-sub-item:duration-200";
   return (
-    <span
-      data-session-feed-workspace={workspaceId}
-      title={name}
-      className={cn(
-        "flex h-2 min-w-2 max-w-2 shrink items-center overflow-hidden rounded-full",
-        "transition-[max-width,height,padding] duration-200 ease-out motion-reduce:transition-none",
-        "group-hover/menu-sub-item:h-4 group-hover/menu-sub-item:max-w-36 group-hover/menu-sub-item:px-1.5",
-        "group-focus-within/menu-sub-item:h-4 group-focus-within/menu-sub-item:max-w-36 group-focus-within/menu-sub-item:px-1.5",
-      )}
-      style={{ backgroundColor: resolveWorkspaceAvatarColor(workspaceId, preference?.color) }}
-    >
-      <span aria-hidden="true" className="min-w-0 truncate whitespace-nowrap text-[10px] font-medium leading-4 text-white opacity-0 transition-opacity duration-150 group-hover/menu-sub-item:opacity-100 group-hover/menu-sub-item:delay-75 group-focus-within/menu-sub-item:opacity-100 motion-reduce:transition-none">
-        {name}
+    <span data-session-feed-workspace={workspaceId} title={name} className="flex h-4 min-w-0 shrink items-center">
+      <span
+        aria-hidden="true"
+        data-session-feed-workspace-dot
+        className="size-2 shrink-0 rounded-full"
+        style={{ backgroundColor: resolveWorkspaceAvatarColor(workspaceId, preference?.color) }}
+      />
+      <span
+        data-session-feed-workspace-name
+        className={cn(
+          "grid min-w-0 grid-cols-[0fr] transition-[grid-template-columns] delay-0 duration-120 ease-[cubic-bezier(0.2,0,0,1)]",
+          "group-hover/menu-sub-item:grid-cols-[1fr] group-has-[:focus-visible]/menu-sub-item:grid-cols-[1fr]",
+          "motion-reduce:transition-none",
+          open,
+        )}
+      >
+        <span className="min-w-0 overflow-hidden">
+          <span
+            className={cn(
+              "block max-w-40 truncate ps-1.5 text-sidebar-foreground/70 opacity-0",
+              "transition-[opacity,translate] delay-0 duration-120 ease-[cubic-bezier(0.2,0,0,1)] motion-safe:-translate-x-1",
+              "group-hover/menu-sub-item:opacity-100 group-has-[:focus-visible]/menu-sub-item:opacity-100",
+              "motion-safe:group-hover/menu-sub-item:translate-x-0 motion-safe:group-has-[:focus-visible]/menu-sub-item:translate-x-0",
+              open,
+            )}
+          >
+            {name}{followed ? <span className="text-muted-foreground/60"> ·</span> : null}
+          </span>
+        </span>
       </span>
     </span>
   );
@@ -2587,8 +2607,9 @@ export function SessionMenuItem({
                     <SessionTitle intent={titleIntent} title={displayTitle} tooltip={itemTitle} />
                   </span>
                   <span className="flex h-4 min-w-0 items-center gap-2 text-[11px] leading-4 text-muted-foreground" data-session-feed-subtitle>
-                    <span className="flex min-w-0 flex-1 items-center gap-1.5 transition-[margin] duration-200 ease-out group-hover/menu-sub-item:me-3 group-focus-within/menu-sub-item:me-3 motion-reduce:transition-none">
-                      <FeedWorkspaceChip workspaceId={workspaceId} name={workspaceName ?? workspaceId} />
+                    {/* me-3 keeps the line clear of the Archive button that shares this lane on hover. */}
+                    <span className="flex min-w-0 flex-1 items-center gap-1.5 me-3">
+                      <FeedWorkspaceChip workspaceId={workspaceId} name={workspaceName ?? workspaceId} followed={Boolean(decisionLabel || feedRow.groupLabel)} />
                       {decisionLabel ? (
                         <span className="shrink-0" data-session-decision={waitingKind} title={itemTitle}>{decisionLabel}</span>
                       ) : feedRow.groupLabel ? (

@@ -25,11 +25,13 @@ chosen is remembered on the device.
   row shows an **Archive** button just before the More menu (Unarchive in the
   Archived shelf). The thread header, command palette and Cmd/Ctrl+Shift+E
   archive or unarchive the open session.
-- **Workspace color.** Each row's second line shows its workspace as a dot in
-  the workspace's color. Hovering or focusing the row opens the dot to the right
-  into a pill with the workspace name (200ms ease-out; static with reduced
-  motion). The group, or **Permission** / **Question** when a decision is owed,
-  follows the chip.
+- **Workspace color.** Each row's second line starts with a fixed 8px dot in
+  the workspace's color. Hovering the row (or keyboard focus) slides the
+  workspace name open beside the dot; the dot itself never changes. Motion:
+  120ms hover delay so sweeping the pointer down the list opens nothing, 200ms
+  open, 120ms close with no delay, `cubic-bezier(0.2, 0, 0, 1)`, the name
+  fading in and moving 4px right; reduced motion fades only. The group, or
+  **Permission** / **Question** when a decision is owed, follows.
 - Waiting sessions stay in their normal place, listed once. Each 48px row gives
   the title the full first line; Archive, More and held shortcuts share the
   lower-right lane, so nothing in the row moves on hover, focus or shortcut hold.
@@ -67,7 +69,7 @@ Last interacted with first; each workspace is a colored dot:
 
 ![Feed, last active first](./feed-last-active.png)
 
-Hover opens the workspace name to the right and shows Archive before More:
+Hover slides the workspace name open beside the dot and shows Archive before More:
 
 ![Hover: workspace name and Archive](./feed-hover-archive.png)
 
@@ -83,7 +85,7 @@ Held shortcuts share the lower-right lane:
 
 `evals/proofs/calm-feed.proof.test.ts` covers the Workspaces default, saved Feed
 selection, a native Question staying in place, fixed row lanes through hover,
-focus and held shortcuts, the workspace dot opening into its name without
-running under Archive, Archive before More, Archive and Unarchive from the row,
+focus and held shortcuts, the dot staying put while the workspace name
+slides open beside it without running under Archive, Archive before More, Archive and Unarchive from the row,
 and Pin/Unpin and Rename. Dragging is covered by unit tests
 (`session-feed.test.ts`); native HTML drag is not driven in the proof.

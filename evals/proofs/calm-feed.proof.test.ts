@@ -118,34 +118,38 @@ test("a member on the Feed sees calm rows that never move and still knows which 
     return measured;
   });
 
-  const chip = `${row(question.sessionId)} [data-session-feed-workspace]`;
-  const chipAtRest = await step("at rest the workspace shows only as a dot in its color", async () => {
+  const dotSelector = `${row(question.sessionId)} [data-session-feed-workspace-dot]`;
+  const nameSelector = `${row(question.sessionId)} [data-session-feed-workspace-name]`;
+  const atRest = await step("at rest the workspace shows only as a dot in its color, its name closed", async () => {
     await user.hover({ role: "tab", label: "Feed" });
-    const dot = await one(chip);
-    const ok = Math.round(dot.width) <= 8 && Math.round(dot.height) <= 8;
-    evidence.recordAssertionEvidence("workspace dot at rest", `workspace chip ${describe(dot)}`, ok);
+    const dot = await one(dotSelector);
+    const name = await one(nameSelector);
+    const ok = Math.round(dot.width) === 8 && Math.round(dot.height) === 8 && Math.round(name.width) === 0;
+    evidence.recordAssertionEvidence("workspace dot at rest", `dot ${describe(dot)}; name column ${describe(name)}`, ok);
     expect(ok).toBe(true);
-    return dot;
+    return { dot, name };
   });
 
-  await step("on hover the workspace dot opens to the right into its name, and Archive and More appear without moving the row", async () => {
+  await step("on hover the workspace name slides open beside the unchanged dot, and Archive and More appear without moving the row", async () => {
     await user.hover({ testId: `sidebar-session-${question.sessionId}` });
-    await probe.eventually(() => one(chip), {
-      within: 2_000, label: "the workspace chip opens", until: (rect) => rect.width > chipAtRest.width + 16,
+    await probe.eventually(() => one(nameSelector), {
+      within: 2_000, label: "the workspace name opens", until: (rect) => rect.width > 16,
     });
-    // Let the 200ms opening finish before measuring where it ends.
-    await new Promise((resolve) => setTimeout(resolve, 400));
-    const opened = await one(chip);
+    // Let the 120ms hover delay and 200ms opening finish before measuring where it ends.
+    await new Promise((resolve) => setTimeout(resolve, 500));
+    const dot = await one(dotSelector);
+    const opened = await one(nameSelector);
     const now = await lanes(question.sessionId);
     const menu = await one(`[data-testid="session-actions-${question.sessionId}"]`);
     const archive = await one(`[data-testid="session-archive-${question.sessionId}"]`);
     const shifts = moved(rest, now);
     const inSlot = Math.abs(menu.left - now.menuSlot.left) <= 2 && Math.abs(menu.right - now.menuSlot.right) <= 2;
-    const growsRight = Math.abs(opened.left - chipAtRest.left) <= 1 && opened.right > chipAtRest.right && opened.right <= archive.left;
+    const dotStill = JSON.stringify(round(dot)) === JSON.stringify(round(atRest.dot));
+    const growsRight = dotStill && opened.left >= dot.right - 1 && opened.width > 16 && opened.right <= archive.left;
     const archiveBeforeMenu = archive.right <= menu.left && Math.abs(archive.top - menu.top) <= 1;
     const ok = shifts.length === 0 && inSlot && archiveBeforeMenu && growsRight;
     evidence.recordAssertionEvidence("hover opens the workspace name and shows Archive before More",
-      `moved: ${shifts.length ? shifts.join("; ") : "nothing"}; workspace chip ${describe(chipAtRest)} → ${describe(opened)}; Archive ${describe(archive)} before More ${describe(menu)} over its slot ${describe(now.menuSlot)}`, ok);
+      `moved: ${shifts.length ? shifts.join("; ") : "nothing"}; dot ${describe(atRest.dot)} → ${describe(dot)}; name ${describe(atRest.name)} → ${describe(opened)}; Archive ${describe(archive)} before More ${describe(menu)} over its slot ${describe(now.menuSlot)}`, ok);
     expect(shifts).toEqual([]);
     expect(inSlot).toBe(true);
     expect(archiveBeforeMenu).toBe(true);
