@@ -30,8 +30,10 @@ not a destination: what Workbot is doing shows under its name, and tapping the n
 Apps opens a plain sheet titled Apps. On phones (under 1024px) there is no profile: no avatar badge, no
 "Set up by" card and no profile tabs, only Workbot's name with its status where it says who is replying.
 No empty channel or space sections are invented. Computer is not a navigation destination; browser
-work is opened from its inline preview card. While its desktop panel is open, navigation folds into
-the same drawer so the conversation keeps its width; closing the panel restores the direct sidebar.
+work is opened from its inline preview card, and files Workbot made open from their cards in the same
+panel (a full-screen sheet on phones; see `docs/features/workbot-artifact-panel`). While the desktop panel
+is open, navigation folds into the same drawer so the conversation keeps its width; closing the panel
+restores the direct sidebar.
 
 The conversation and composer share a centered column capped at 800px. Changing screen size or
 switching chats preserves the existing per-chat draft and scroll owners.

