@@ -4,7 +4,7 @@ import type { XlsxWorkbook } from "@openwork/workbook";
 import { Menu } from "@base-ui/react/menu";
 import { Check, Download, Ellipsis, ExternalLink, Link, Maximize2, Minimize2, Share, X } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
-import { artifactKind, artifactLink, extensionOf, type ArtifactKind } from "./artifact";
+import { artifactKind, artifactLink, extensionOf, tabType, type ArtifactKind } from "./artifact";
 import { ArtifactIcon, useArtifactTitle } from "./artifact-card";
 import { downloadWorkbotFile, fetchWorkbotFileUrl, useWorkbotChat, useWorkbotFileBytes, useWorkbotFileUrl, useWorkbotImageUrl, useWorkbotPreview, useWorkbotPreviewPage, type WorkbotAttachment, type WorkbotPreview } from "./data";
 import { FileBadge } from "./files";
@@ -76,12 +76,18 @@ async function openInNewTab(file: WorkbotAttachment, title: string, chat: string
   tab.document.title = title;
   try {
     const kind = artifactKind(file);
-    const url = await fetchWorkbotFileUrl(file.id, chat, kind === "image");
     if (kind !== "html") {
+      // The tab shows the file under a type chosen here from a short list that never runs code (no SVG, no
+      // HTML/XML): a stored or uploaded type could otherwise run as a page with this site's origin.
+      const type = tabType(file.name);
+      if (!type) throw new Error("No safe way to show this file in a tab.");
+      const url = await fetchWorkbotFileUrl(file.id, chat, false, type);
       tab.opener = null;
       tab.location.replace(url);
+      setTimeout(() => URL.revokeObjectURL(url), 60_000);
       return;
     }
+    const url = await fetchWorkbotFileUrl(file.id, chat);
     const html = await (await fetch(url)).text();
     URL.revokeObjectURL(url);
     const doc = tab.document;
@@ -137,7 +143,7 @@ function ArtifactMenu({ file, title, expanded, onExpand }: { file: WorkbotAttach
                 <Menu.Separator className="mx-1 my-1 h-px bg-[var(--wb-hairline)]" />
               </>
             ) : null}
-            {TAB_KINDS.has(kind) ? (
+            {kind === "html" || (TAB_KINDS.has(kind) && tabType(file.name)) ? (
               <Menu.Item className={itemClass} onClick={() => void openInNewTab(file, title, chat)}>
                 <ExternalLink size={16} strokeWidth={1.5} aria-hidden className="text-[var(--wb-muted)]" />
                 Open in new tab
@@ -220,7 +226,8 @@ function PdfFrame({ url, title }: { url: string; title: string }) {
 /** PDFs show as pages like slides; without a rendering, the browser's own viewer. */
 function PdfPreview({ file }: { file: WorkbotAttachment }) {
   const preview = useWorkbotPreview(file.id, file.updatedAt);
-  const url = useWorkbotFileUrl(preview.isSuccess && !preview.data ? file.id : null, file.updatedAt);
+  // Shown in a frame on this page: always as a PDF, whatever type the file was stored with.
+  const url = useWorkbotFileUrl(preview.isSuccess && !preview.data ? file.id : null, file.updatedAt, "application/pdf");
   if (preview.data) return <Pages file={file} preview={preview.data} kind="document" />;
   if (url.isError) return <NoPreview file={file} reason="This file couldn't load." />;
   if (!url.data) return <Loading />;

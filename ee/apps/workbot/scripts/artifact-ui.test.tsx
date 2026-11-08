@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { renderToStaticMarkup } from "react-dom/server";
-import { artifactKind, artifactLabel, artifactLink, artifactTitle, htmlTitle, staticAppHtml } from "../../../packages/workbot-ui/src/artifact";
+import { artifactKind, artifactLabel, artifactLink, artifactTitle, htmlTitle, staticAppHtml, tabType } from "../../../packages/workbot-ui/src/artifact";
 import { ArtifactCards } from "../../../packages/workbot-ui/src/artifact-card";
 import { OpenFileIdContext } from "../../../packages/workbot-ui/src/open-file";
 import { setWorkbotHost } from "../../../packages/workbot-ui/src/host";
@@ -98,4 +98,10 @@ test("Copy link keeps the page and its chat, and names the file", () => {
 test("an app's thumbnail page is only shown when it can be made inert", () => {
   // No parser (server rendering): nothing to show, rather than the raw page.
   assert.equal(staticAppHtml("<title>x</title><body>Some visible words here<script>fetch('/x')</script></body>", null), null);
+});
+
+test("a file opens in its own tab only under a type that can't run as a page", () => {
+  assert.equal(tabType("Room plan.pdf"), "application/pdf");
+  assert.equal(tabType("photo.PNG"), "image/png");
+  for (const name of ["drawing.svg", "page.html", "page.xhtml", "feed.xml", "notes.txt", "README"]) assert.equal(tabType(name), null, name);
 });

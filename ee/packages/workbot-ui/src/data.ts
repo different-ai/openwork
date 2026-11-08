@@ -719,10 +719,12 @@ export async function uploadWorkbotFile(file: File, onProgress: (loaded: number)
 }
 
 /** A kept file's bytes as an object URL (thumbnails and downloads), fetched with the page's credentials. */
-export async function fetchWorkbotFileUrl(id: string, chat: string | null, inline = false) {
+export async function fetchWorkbotFileUrl(id: string, chat: string | null, inline = false, type?: string) {
   const response = await hostFetch(inChat(`/v1/workbot/files/${id}${inline ? "?inline=1" : ""}`, chat));
   if (!response.ok) throw new Error("This file is no longer available.");
-  return URL.createObjectURL(await response.blob());
+  const blob = await response.blob();
+  // A URL shown in a frame or tab gets the type its reader expects, never one stored with the file.
+  return URL.createObjectURL(type ? new Blob([blob], { type }) : blob);
 }
 
 /** A kept file's raw bytes, for previews that read the file (spreadsheets, text, slides); `version` refetches a revision. */
@@ -742,14 +744,14 @@ export function useWorkbotFileBytes(id: string | null, version?: number) {
 }
 
 /** An object URL for a kept file (PDF, video, audio). */
-export function useWorkbotFileUrl(id: string | null, version?: number) {
+export function useWorkbotFileUrl(id: string | null, version?: number, type?: string) {
   const chat = useWorkbotChat();
   return useQuery({
-    queryKey: ["workbot", "url", chat ?? "main", id, version ?? 0],
+    queryKey: ["workbot", "url", chat ?? "main", id, version ?? 0, type ?? ""],
     enabled: Boolean(id),
     staleTime: Number.POSITIVE_INFINITY,
     gcTime: 5 * 60_000,
-    queryFn: async () => fetchWorkbotFileUrl(id ?? "", chat),
+    queryFn: async () => fetchWorkbotFileUrl(id ?? "", chat, false, type),
   });
 }
 

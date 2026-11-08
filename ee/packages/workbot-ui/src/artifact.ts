@@ -126,3 +126,11 @@ export function staticAppHtml(html: string, parser: { parseFromString(source: st
   doc.head.prepend(policy);
   return `<!doctype html>${doc.documentElement.outerHTML}`;
 }
+
+/** The only types a file opens under in its own tab, by extension: documents and media that can't run as a page. */
+const TAB_TYPES: Readonly<Record<string, string>> = {
+  pdf: "application/pdf", png: "image/png", jpg: "image/jpeg", jpeg: "image/jpeg", gif: "image/gif", webp: "image/webp",
+  mp4: "video/mp4", m4v: "video/mp4", webm: "video/webm", mov: "video/quicktime",
+  mp3: "audio/mpeg", m4a: "audio/mp4", wav: "audio/wav", ogg: "audio/ogg",
+};
+export const tabType = (name: string): string | null => TAB_TYPES[extensionOf(name)] ?? null;
