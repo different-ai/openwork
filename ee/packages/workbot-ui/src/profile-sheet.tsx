@@ -182,7 +182,10 @@ function memoryTitle(file: string) {
 
 /** What Workbot remembers, file by file, newest first. Read-only: it changes when the person tells Workbot. */
 function MemoryTab({ name }: { name: string }) {
-  const memory = useWorkbotMemory(true);
+  // The profile can open without `workbotProfileSheet` (from the layout's nav); its memory read stays behind the flag.
+  const enabled = workbotHost().profileSheet === true;
+  const memory = useWorkbotMemory(enabled);
+  if (!enabled) return <p className="px-5 pt-1 text-[13px] leading-[19px] text-[var(--wb-muted)]">What {name} remembers about you isn&apos;t shown in this workspace yet.</p>;
   return <div className="flex flex-col gap-3 px-5 pt-1">
     <p className="text-[13px] leading-[18px] text-[var(--wb-muted)]">What {name} keeps in mind about you across chats. To change something, tell {name} in the chat.</p>
     {memory.isPending ? <p className="text-[13px] text-[var(--wb-muted)]" role="status">Reading what I remember…</p>
