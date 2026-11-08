@@ -70,11 +70,13 @@
     </div>
     <script>
       // The other pages (Computer, Documents, Calendar) have no message box: they wait for the app as before. Enter
-      // keeps the words for the app's box rather than adding a line.
+      // keeps the words for the app's box rather than adding a line, except on a phone or tablet keyboard, where Return
+      // adds a line as it does in the app's box.
       (function () {
         var boot = document.getElementById("workbot-boot")
         if (/^\/(computer|browser|documents|calendar)(\/|$)/.test(location.pathname)) { boot.remove(); return }
-        boot.querySelector("textarea").addEventListener("keydown", function (event) { if (event.key === "Enter" && !event.shiftKey) event.preventDefault() })
+        var touch = window.matchMedia("(hover: none) and (pointer: coarse)").matches
+        boot.querySelector("textarea").addEventListener("keydown", function (event) { if (event.key === "Enter" && !event.shiftKey && !touch) event.preventDefault() })
       })()
     </script>
     <div id="root"></div>

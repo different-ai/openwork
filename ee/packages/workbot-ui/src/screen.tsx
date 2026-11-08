@@ -66,6 +66,19 @@ const MAX_TURNS = 200;
 const earlierWindow = (current: number) => Math.min(MAX_TURNS, current < PAGE_TURNS ? PAGE_TURNS : current + PAGE_TURNS);
 const COLUMN = "min-w-0 w-full max-w-[640px]";
 
+/**
+ * A phone or tablet keyboard: no hover and a coarse pointer, the same test the page uses for its touch layout. There
+ * Return adds a new line, as in any messaging app, and only the send button sends.
+ */
+const TOUCH_KEYBOARD = "(hover: none) and (pointer: coarse)";
+function useTouchKeyboard() {
+  return useSyncExternalStore(
+    (changed) => { const query = window.matchMedia(TOUCH_KEYBOARD); query.addEventListener("change", changed); return () => query.removeEventListener("change", changed); },
+    () => window.matchMedia(TOUCH_KEYBOARD).matches,
+    () => false,
+  );
+}
+
 function newMessageId() {
   return crypto.randomUUID().replaceAll("-", "");
 }
@@ -1106,8 +1119,10 @@ function UserBubble({ text, muted = false, reaction = null, action }: { text: st
       </div>
     ) : null;
   }
+  // Full width, so the bubble's 85% is of the conversation: inside its right-aligned column the row would otherwise
+  // shrink to the words, and a short message ("Hey") would break inside its own bubble.
   return (
-    <div className="flex justify-end">
+    <div className="flex w-full justify-end">
       <div className="group/own relative max-w-[85%] sm:max-w-[480px]">
         {visible.correction && <div className="mb-1 px-3 text-[12px] text-[var(--wb-muted)]" data-workbot-correction-reference>
           <p>Correction to your message{visible.correction.sentAt !== null ? ` from ${new Date(visible.correction.sentAt).toLocaleString()}` : ""}</p>
@@ -1165,6 +1180,7 @@ function OwnMessage(props: {
   const [mode, setMode] = useState<"idle" | "editing">("idle");
   const [draft, setDraft] = useState(originalText);
   const field = useRef<HTMLTextAreaElement>(null);
+  const touch = useTouchKeyboard();
 
   useLayoutEffect(() => {
     const element = field.current;
@@ -1203,11 +1219,12 @@ function OwnMessage(props: {
                 event.preventDefault();
                 setDraft(originalText);
                 setMode("idle");
-              } else if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing) {
+              } else if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing && !touch) {
                 event.preventDefault();
                 save();
               }
             }}
+            enterKeyHint={touch ? "enter" : "send"}
             className="w-full resize-none rounded-[20px] bg-[var(--wb-surface)] px-4 py-2.5 text-[15px] leading-[22px] text-[var(--wb-text)] shadow-[var(--wb-composer-shadow)] outline-none"
           />
           <p className="text-right text-[12px] text-[var(--wb-muted)]">Earlier messages stay in the conversation.</p>
@@ -2027,6 +2044,7 @@ export function WorkbotComposer(props: {
 }) {
   const { text } = props;
   const input = useRef<HTMLTextAreaElement>(null);
+  const touch = useTouchKeyboard();
   const dictation = useNativeDictation({ enabled: props.nativeDictation === true, text, onText: props.onText,
     selection: () => ({ start: input.current?.selectionStart ?? text.length, end: input.current?.selectionEnd ?? text.length }),
     focusInput: () => input.current?.focus() });
@@ -2058,7 +2076,7 @@ export function WorkbotComposer(props: {
     input.current?.focus();
   };
   const onKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>) => {
-    if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing && event.keyCode !== 229) {
+    if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing && event.keyCode !== 229 && !touch) {
       event.preventDefault();
       sendNow();
     } else if (event.key === "Escape" && props.busy) {
@@ -2102,6 +2120,7 @@ export function WorkbotComposer(props: {
           onChange={(event) => dictation.edit(event.target.value)}
           onKeyDown={onKeyDown}
           onPaste={onPaste}
+          enterKeyHint={touch ? "enter" : "send"}
           placeholder={props.teaching ? "Explain this step or ask a question" : `Message ${props.name}`}
           aria-label={`Message ${props.name}`}
           className="max-h-[200px] min-h-9 min-w-0 flex-1 resize-none bg-transparent px-1.5 py-[7px] text-[16px] leading-[22px] text-[var(--wb-text)] outline-none placeholder:text-[var(--wb-faint)] sm:py-[9px] sm:text-[14px] sm:leading-[18px]"
@@ -2112,8 +2131,8 @@ export function WorkbotComposer(props: {
           onClick={showStop ? props.onStop : sendNow}
           disabled={props.disabled || (showStop ? props.stopping : !canSend)}
           aria-label={showStop ? "Stop" : "Send"}
-          aria-keyshortcuts={showStop ? "Escape" : "Enter"}
-          title={showStop ? "Stop (esc)" : "Send (⏎)"}
+          aria-keyshortcuts={showStop ? "Escape" : touch ? undefined : "Enter"}
+          title={showStop ? "Stop (esc)" : touch ? "Send" : "Send (⏎)"}
           className="grid size-9 shrink-0 place-items-center rounded-full bg-[var(--wb-ink)] text-[var(--wb-bg)] transition-colors duration-150 disabled:bg-[var(--wb-disabled)] focus-visible:outline-none focus-visible:shadow-[var(--wb-focus)]"
         >
           {showStop ? <span aria-hidden className="h-2.75 w-2.75 rounded-[2.5px] bg-[var(--wb-bg)]" /> : <ArrowUp size={16} strokeWidth={2.25} aria-hidden />}

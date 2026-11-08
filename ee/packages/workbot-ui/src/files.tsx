@@ -16,13 +16,13 @@ import {
 } from "./data";
 import { OpenFileContext } from "./open-file";
 import { dayLabel } from "./format";
+import { isImage } from "./images";
 import type { Upload } from "./composer-state";
 export type { Upload } from "./composer-state";
+export { isImage } from "./images";
 
 /** Files in Workbot (Paper v5: screens 5–8). */
 
-const IMAGE_TYPES = new Set(["image/png", "image/jpeg", "image/gif", "image/webp"]);
-export const isImage = (mediaType: string) => IMAGE_TYPES.has(mediaType);
 
 export function formatSize(bytes: number) {
   if (bytes >= 1024 * 1024 * 1024) return `${(bytes / (1024 * 1024 * 1024)).toFixed(1)} GB`;

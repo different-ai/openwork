@@ -2,6 +2,7 @@ import type { WorkbotCorrectionReference, WorkbotViewContext } from "@openwork/t
 import type { WorkbotAttachment, WorkbotFile } from "./data";
 import { WorkbotSendError } from "./data";
 import type { WorkbotAccessReason } from "@openwork/types/den/workbot-settings";
+import { isHeic, isImage, uploadableFiles } from "./images";
 
 export type Upload = {
   key: string;
@@ -62,17 +63,26 @@ export function createComposerState(uploadFile: Uploader) {
     waiters.delete(upload.key);
     if (upload.previewUrl) { URL.revokeObjectURL(upload.previewUrl); previewUrls.delete(upload.previewUrl); }
   };
+  let disposed = false;
+  const addFiles = (files: File[]) => {
+    if (disposed) return;
+    // A preview only for images this browser and Workbot show; a HEIC it couldn't convert stays a file tile.
+    const added: Upload[] = files.map(file => ({ key: crypto.randomUUID(), file,
+      previewUrl: isImage(file.type) ? URL.createObjectURL(file) : null,
+      loaded: 0, status: "uploading", error: null, saved: null }));
+    for (const upload of added) if (upload.previewUrl) previewUrls.add(upload.previewUrl);
+    publish({ ...state, uploads: [...state.uploads, ...added] });
+    for (const upload of added) start(upload);
+  };
   return {
     getSnapshot: () => state,
     subscribe: (listener: () => void) => { listeners.add(listener); return () => { listeners.delete(listener); }; },
     setText: (text: string) => publish({ ...state, text }),
+    /** HEIC photos are turned into JPEGs first (where the browser can), so they show and Workbot can read them. */
     add: (files: FileList | File[]) => {
-      const added: Upload[] = Array.from(files).map(file => ({ key: crypto.randomUUID(), file,
-        previewUrl: file.type.startsWith("image/") ? URL.createObjectURL(file) : null,
-        loaded: 0, status: "uploading", error: null, saved: null }));
-      for (const upload of added) if (upload.previewUrl) previewUrls.add(upload.previewUrl);
-      publish({ ...state, uploads: [...state.uploads, ...added] });
-      for (const upload of added) start(upload);
+      const list = Array.from(files);
+      if (list.some(isHeic)) void uploadableFiles(list).then(addFiles);
+      else addFiles(list);
     },
     retryUpload: (key: string) => {
       const upload = state.uploads.find(upload => upload.key === key);
@@ -125,6 +135,7 @@ export function createComposerState(uploadFile: Uploader) {
       publish({ ...state, pending: state.pending.filter(entry => !ids.has(entry.id)) });
     },
     dispose: () => {
+      disposed = true;
       for (const upload of [...state.uploads, ...state.pending.flatMap(entry => entry.uploads)]) release(upload);
       for (const url of previewUrls) URL.revokeObjectURL(url);
       previewUrls.clear();
