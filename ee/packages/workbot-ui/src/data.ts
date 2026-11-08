@@ -478,6 +478,24 @@ export function useWorkbotConnections(input: { enabled: boolean; waiting: boolea
   });
 }
 
+const memorySchema = z.object({ files: z.array(z.object({ name: z.string(), updatedAt: z.number(), content: z.string() })) });
+export type WorkbotMemoryFile = z.infer<typeof memorySchema>["files"][number];
+
+/** What Workbot remembers about the person, read-only, for its profile; read each time the Memory tab opens. */
+export function useWorkbotMemory(enabled: boolean) {
+  return useQuery({
+    queryKey: ["workbot", "memory", workbotHost().identity?.organizationId, workbotHost().identity?.principalId],
+    enabled,
+    queryFn: async () => {
+      const { response, payload } = await requestJson("/v1/workbot/memory", { method: "GET" }, 30_000);
+      if (!response.ok) throw new Error(getErrorMessage(payload, "Couldn't read what I remember. Try again."));
+      return memorySchema.parse(payload).files;
+    },
+    staleTime: 0,
+    retry: 1,
+  });
+}
+
 /** Leaving the welcome screen: Workbot starts the conversation with its own hello. */
 export function useStartWorkbot() {
   const queryClient = useQueryClient();

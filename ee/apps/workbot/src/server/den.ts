@@ -54,6 +54,8 @@ export const denSessionSchema = z.object({
   accountMenu: z.boolean().default(false),
   /** Work in progress shows in the header and task sheet, not the chat. A Den from before it doesn't say: off. */
   workingStatus: z.boolean().default(false),
+  /** Workbot's profile: tasks, permissions and read-only memory. A Den from before it doesn't say: off. */
+  profileSheet: z.boolean().default(false),
   /** The Cmd+K / Ctrl+K command palette. A Den from before it doesn't say: off. */
   /** The organization's default model for Workbot's turns. Null, or a Den from before it, means the runner's default. */
   model: z.string().nullable().default(null),

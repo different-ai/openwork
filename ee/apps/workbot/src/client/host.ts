@@ -31,6 +31,8 @@ export const meSchema = z.object({
   accountMenu: z.boolean().default(false),
   /** Work in progress in the header and task sheet (`workbotWorkingStatus`); older servers omit it. */
   workingStatus: z.boolean().default(false),
+  /** Workbot's profile behind its name (`workbotProfileSheet`); older servers omit it. */
+  profileSheet: z.boolean().default(false),
   /** The Cmd+K / Ctrl+K command palette; older servers omit it. */
   denUrl: z.string().nullable(),
 })
@@ -154,6 +156,7 @@ export function createHost(me: Me, recovery: { authorization?: WorkbotHost["docu
     },
     sideChats: me.sideChats,
     workingStatus: me.workingStatus,
+    profileSheet: me.profileSheet,
     account: me.accountMenu ? { email: me.email, organizationName: me.organizationName, signOut, switchWorkspace } : undefined,
     identity: me.userId && me.organizationId ? { principalId: me.userId, organizationId: me.organizationId } : undefined,
   }

@@ -256,6 +256,7 @@ export function registerWorkbotRoutes(app: Hono<AppEnv>, input: { config: Config
       // Signing out and switching workspace don't depend on Workbot being on for this workspace.
       accountMenu: who.accountMenu,
       workingStatus: who.enabled && who.workingStatus,
+      profileSheet: who.enabled && who.profileSheet,
       commandPalette: true,
       denUrl: config.denWebUrl ?? (await den.webUrl().catch(() => null)),
     })
@@ -504,6 +505,19 @@ export function registerWorkbotRoutes(app: Hono<AppEnv>, input: { config: Config
         connectUrl: connection.ready || !denWeb ? connection.connectUrl : workbotConnectionUrl(denWeb, member.den.organization.id, connection.id),
       })),
     })
+  })
+
+  /** What Workbot remembers about the person, read-only, for its profile (`workbotProfileSheet`). */
+  app.get("/v1/workbot/memory", async (c) => {
+    const member = c.get("member")
+    if (!enabled(c)) return c.json({ error: "workbot_not_enabled" }, 409)
+    if (!member.den.profileSheet) return c.json({ error: "feature_disabled" }, 404)
+    try {
+      return c.json({ files: await workbotFor(member).readMemory(actorOf(member)) })
+    } catch (error) {
+      if (error instanceof WorkbotUnavailableError) return c.json({ error: error.code }, 503)
+      throw error
+    }
   })
 
   app.get("/v1/workbot", async (c) => {

@@ -67,6 +67,15 @@ async function answer(request: IncomingMessage, response: ServerResponse) {
   }
   if (path === "/v1/workbot/files") return json(response, 200, { enabled: true, files: [...files.values()].map(({ bytes: _bytes, ...rest }) => rest) })
   if (path === "/v1/workbot/stop" || path.endsWith("/stop")) return json(response, 200, { ok: true })
+  if (path === "/v1/workbot/connections") return json(response, 200, { connections: [
+    { id: "c1", name: "Gmail", app: "gmail", ready: true, connectUrl: null },
+    { id: "c2", name: "Google Calendar", app: "googleCalendar", ready: true, connectUrl: null },
+    { id: "c3", name: "Slack", app: "slack", ready: false, connectUrl: "https://den.example.test/connect/slack" },
+  ] })
+  if (path === "/v1/workbot/memory") return json(response, 200, { files: [
+    { name: "about-me.md", updatedAt: Date.now() - 2 * 86_400_000, content: "# Sam\n- Founder at Example Team; works mostly from a phone.\n- Prefers short answers, then details on request.\n- Cooks salmon with a predictive thermometer." },
+    { name: "projects.md", updatedAt: Date.now() - 6 * 86_400_000, content: "- Workbot UI fixes (Nov 7 list)\n- 3D room planner for the new office" },
+  ] })
   if (path === "/v1/workbot/chats") return json(response, 200, { main: { updatedAt: Date.now() }, side: [] })
   // No live stream: the page reads the conversation again on its own.
   return json(response, 404, { error: "not_found" })
