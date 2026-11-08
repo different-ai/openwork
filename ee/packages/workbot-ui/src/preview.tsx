@@ -63,7 +63,7 @@ export function PreviewPanel({ file, onClose }: { file: WorkbotAttachment; onClo
   return (
     <aside
       aria-label={file.name}
-      className="workbot-panel-enter fixed inset-0 z-50 flex flex-col overflow-hidden bg-[var(--wb-surface)] lg:static lg:z-auto lg:mb-3 lg:mr-3 lg:w-[min(50vw,800px)] lg:shrink-0 lg:rounded-[18px] lg:shadow-[var(--wb-panel-shadow)]"
+      className="workbot-panel-enter fixed inset-0 z-50 flex flex-col overflow-hidden bg-[var(--wb-surface)] lg:static lg:z-auto lg:mb-3 lg:mr-3 lg:mt-[var(--wb-chrome-top,0px)] lg:w-[min(50vw,800px)] lg:shrink-0 lg:rounded-[18px] lg:shadow-[var(--wb-panel-shadow)]"
     >
       <header className="flex h-14 shrink-0 items-center gap-3 border-b border-[var(--wb-hairline)] pl-4 pr-2.5">
         <FileBadge name={file.name} mediaType={file.mediaType} />

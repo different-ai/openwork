@@ -160,12 +160,76 @@ try {
       const composer = await page.locator("[data-workbot-composer]").boundingBox()
       assert.ok(button.y + button.height < composer.y, "arrow clears composer")
       assert.ok(Math.abs(button.x + button.width / 2 - 195) < 2, "centered on phone")
+      const circle = await page.locator(".workbot-scroll-latest > span").boundingBox()
+      assert.ok(Math.abs(composer.y - (circle.y + circle.height) - 12) <= 1.5, `34px circle sits 12px above the message box (${composer.y - circle.y - circle.height})`)
+      assert.equal(Math.round(circle.width), 34)
       await page.screenshot({ path: `${out}/arrow.png` })
       await arrow.tap()
       await atBottom("arrow tap")
       await page.waitForTimeout(200)
       assert.equal(await arrow.isVisible(), false)
       await page.screenshot({ path: `${out}/after-tap.png` })
+    })
+    // Ben's iPhone: the arrow had its own 44px row and the header/composer were solid bars that ended text mid-line.
+    const chrome = () => page.evaluate(() => {
+      const node = [...document.querySelectorAll(".workbot-scroll")].find(n => n.clientHeight > 0)
+      const content = node.firstElementChild
+      const header = document.querySelector("[data-workbot-floating-header]")
+      const dock = document.querySelector("[data-workbot-floating-composer]")
+      const rows = [...node.querySelectorAll("[data-workbot-row]")]
+      const box = el => { const r = el.getBoundingClientRect(); return { top: r.top, bottom: r.bottom } }
+      const style = el => getComputedStyle(el)
+      const layer = el => getComputedStyle(el, "::before")
+      const arrow = document.querySelector(".workbot-scroll-latest")
+      return {
+        scroller: { ...box(node), clientHeight: node.clientHeight, scrollHeight: node.scrollHeight, padding: [style(node).paddingTop, style(node).paddingBottom, style(content).paddingTop, style(content).paddingBottom].join(" ") },
+        header: header && { ...box(header), position: style(header).position, blur: layer(header).backdropFilter || layer(header).webkitBackdropFilter, background: layer(header).backgroundColor },
+        dock: dock && { ...box(dock), position: style(dock).position, blur: layer(dock).backdropFilter || layer(dock).webkitBackdropFilter },
+        composer: box(dock.querySelector("[data-workbot-composer]")),
+        last: box(rows.at(-1)),
+        arrow: arrow && { position: style(arrow).position, visible: arrow.classList.contains("is-visible") },
+      }
+    })
+    await check("header and composer float over the conversation; the arrow never reserves space", async () => {
+      await open("scenario=bubbles&scroll=1&centered=1")
+      await atBottom("floating chrome bottom")
+      const bottom = await chrome()
+      assert.equal(bottom.header.position, "absolute", "header floats")
+      assert.equal(bottom.dock.position, "absolute", "composer floats")
+      assert.ok(bottom.scroller.top <= bottom.header.top + 1 && bottom.scroller.bottom >= bottom.dock.bottom - 1, "conversation runs under both")
+      assert.match(bottom.header.blur, /blur\(20px\)/, "header is blurred glass")
+      assert.match(bottom.dock.blur, /blur\(20px\)/, "composer area is blurred glass")
+      assert.notEqual(bottom.header.background, "rgb(251, 252, 253)", "header is translucent, not the solid page colour")
+      assert.ok(bottom.last.bottom <= bottom.composer.top + 0.5, `last message fully above the composer (${bottom.last.bottom} vs ${bottom.composer.top})`)
+      assert.ok(bottom.last.bottom <= bottom.dock.top + 0.5, "last message clears the composer's glass")
+      assert.equal(bottom.arrow.position, "absolute", "arrow floats")
+      assert.equal(bottom.arrow.visible, false)
+      await page.locator(".workbot-scroll").first().hover()
+      await page.mouse.wheel(0, -2400)
+      await page.locator(".workbot-scroll-latest.is-visible").waitFor()
+      await page.waitForTimeout(200)
+      const reading = await chrome()
+      assert.equal(reading.arrow.visible, true)
+      assert.equal(reading.scroller.padding, bottom.scroller.padding, "padding identical with the arrow shown or hidden")
+      assert.equal(reading.scroller.clientHeight, bottom.scroller.clientHeight, "height identical with the arrow shown or hidden")
+      assert.equal(reading.scroller.scrollHeight, bottom.scroller.scrollHeight, "content identical with the arrow shown or hidden")
+      const under = await page.evaluate(({ header, dock }) => [...document.querySelectorAll("[data-workbot-row]")].filter(row => { const r = row.getBoundingClientRect(); return r.top < header || r.bottom > dock }).length, { header: reading.header.bottom, dock: reading.dock.top })
+      assert.ok(under >= 1, "messages scroll underneath the floating parts")
+      await page.screenshot({ path: `${out}/floating-chrome.png` })
+      // The first message also scrolls fully clear of the header.
+      await page.evaluate(() => { const node = [...document.querySelectorAll(".workbot-scroll")].find(n => n.clientHeight > 0); node.scrollTop = 0 })
+      await page.waitForTimeout(100)
+      const top = await page.evaluate(() => document.querySelector("[data-workbot-row]").getBoundingClientRect().top)
+      assert.ok(top >= reading.header.bottom - 0.5, `first message clears the header (${top} vs ${reading.header.bottom})`)
+    })
+    await check("flag off: no arrow and no reserved strip", async () => {
+      await open("scenario=bubbles&centered=1")
+      await atBottom("flag off floating")
+      const off = await chrome()
+      assert.equal(off.arrow, null)
+      assert.equal(off.header.position, "absolute", "header floats without the flag")
+      assert.equal(off.dock.position, "absolute", "composer floats without the flag")
+      assert.ok(off.last.bottom <= off.composer.top + 0.5, "last message fully above the composer")
     })
     await check("reading position survives late content and same-session chat return", async () => {
       await open("scenario=bubbles&sideChats=1&scroll=1")

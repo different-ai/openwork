@@ -5,12 +5,16 @@
 - Owner: `benjaminshafii`
 - Default: off
 
-A small white down-arrow circle appears in the centre of the conversation, just
+A small 34 px down-chevron circle floats in the centre of the conversation, 12 px
 above the message box, only when the reader is more than one visible conversation
 screen from the bottom. Tap it to scroll smoothly to the latest message. Reduced
 motion makes the jump immediate. It fades over 150 ms and has a 44 px touch target.
-Its own strip keeps it off reply text and the composer; the page respects the
-phone's safe area and visual viewport when the keyboard opens.
+It floats over reply text like the header and message box do: it never takes a row
+of its own and never changes the conversation's size or padding. The page respects
+the phone's safe area and visual viewport when the keyboard opens.
+
+The floating, translucent header and message box are **not** behind this feature:
+they ship for everyone. Only the arrow is.
 
 ![iPhone-size Workbot conversation with scroll-to-latest enabled](arrow.png)
 
