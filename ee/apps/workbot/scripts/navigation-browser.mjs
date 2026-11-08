@@ -151,8 +151,7 @@ async function assertProfile(page, destination, screenshotName) {
   await selectedTab(destination === "Tasks" ? apps : tasks)
   await (destination === "Tasks" ? tasks : apps).click()
   await selectedTab(destination === "Tasks" ? tasks : apps)
-  // Computer-tab removal is an upstream change; deliberately do not assert its
-  // presence or absence in this local layout regression check yet.
+  assert.equal(await profile.getByRole("tab", { name: /^(Computer|Browser)$/ }).count(), 0, "Browser access belongs to the inline card, not profile navigation")
   await page.keyboard.press("Escape")
   await profile.waitFor({ state: "hidden" })
   const input = composer(page)
