@@ -21,6 +21,8 @@ import { openworkYourConnectionsUrl } from "../mcp/connection-navigation.js"
 import { createInternalMcpPrincipalHeader } from "../session.js"
 import { getOrganizationContextForUser, listTeamsForMember } from "../orgs.js"
 import { listMemberUsableConnectionFacts } from "../routes/org/mcp-connections.js"
+import { memberPermissionsForOrganizationContext } from "../middleware/member-permissions.js"
+import { workbotAppSchema, workbotApps } from "./apps.js"
 import { readWorkbotModel, WORKBOT_DEFAULT_MODEL_ID, workbotModelRecoverySchema, workbotAccessFailureSchema } from "@openwork/types/den/workbot-settings"
 import { getMemberInferenceAccess, organizationAllowsManagedModels } from "../inference.js"
 import { organizationHasOngoingInferenceSubscription } from "../stripe-billing.js"
@@ -197,6 +199,11 @@ const workbotConnectionsSchema = z.object({
     nativeProviderKey: z.string().nullable().optional(),
     connectMode: z.enum(["inline", "external", "admin"]).optional(),
   })),
+  /**
+   * Every connector this member can use, connected or not, for the Apps list on Workbot's profile: Connected first,
+   * then Needs sign-in, Not connected and Needs attention. Names, status, sign-in type and who manages it only.
+   */
+  apps: z.array(workbotAppSchema).optional(),
 })
 
 /** Which everyday app a connection is, for Workbot's welcome: Gmail (or Google Workspace), Slack, or Microsoft 365. */
@@ -508,7 +515,7 @@ export function registerWorkbotRoutes<T extends { Variables: object }>(app: Hono
       "x-mcp": false,
       summary: "The everyday apps the person can connect for Workbot",
       description:
-        "For the Workbot app only. The Gmail or Google Workspace, Slack and Microsoft 365 connections the organization's admins set up and this member may use, with whether each is ready for them, and where in Den they connect their own account.",
+        "For the Workbot app only. `connections`: the Gmail or Google Workspace, Slack and Microsoft 365 connections the organization's admins set up and this member may use, with whether each is ready for them, and where in Den they connect their own account. `apps`: every connector this member can use (shared with them org-wide, by team or directly, brought by a plugin they can use, native providers and their own sign-ins), connected or not, with a status from Den's stored credential health and readiness checks; never URLs, headers, keys or tokens.",
       responses: {
         200: jsonResponse("The connections.", workbotConnectionsSchema),
         401: jsonResponse("The token is missing, expired or revoked, or the membership ended.", unauthorizedSchema),
@@ -522,7 +529,11 @@ export function registerWorkbotRoutes<T extends { Variables: object }>(app: Hono
       const organizationContext = await getOrganizationContextForUser({ userId: normalizeDenTypeId("user", resolved.principal.userId), organizationId: resolved.organization.id })
       if (!organizationContext) return c.json({ connections: [] })
       const memberTeams = await listTeamsForMember({ organizationId: resolved.organization.id, memberId: normalizeDenTypeId("member", resolved.memberId) })
-      const facts = await listMemberUsableConnectionFacts({ context: { organizationContext, memberTeams, session: null } })
+      const [facts, permissions, features] = await Promise.all([
+        listMemberUsableConnectionFacts({ context: { organizationContext, memberTeams, session: null } }),
+        memberPermissionsForOrganizationContext(organizationContext, memberTeams),
+        getOrganizationFeatures(resolved.organization.id, { userId: resolved.user.id }),
+      ])
       const inline = Boolean(workbotOrigin())
       const connections = facts.flatMap((fact) => {
         const app = everydayApp(fact)
@@ -533,7 +544,10 @@ export function registerWorkbotRoutes<T extends { Variables: object }>(app: Hono
         const connectMode: "admin" | "inline" | "external" = fact.setupRequired === true ? "admin" : inline ? "inline" : "external"
         return [{ id: fact.id, name: fact.name, app, ready, connectUrl: ready ? null : openworkYourConnectionsUrl(fact.id), nativeProviderKey: fact.nativeProviderKey, connectMode }]
       })
-      return c.json({ connections })
+      // Only the profile's Apps list reads these (`workbotProfileSheet`); without it the answer is as before.
+      if (!features.workbotProfileSheet) return c.json({ connections })
+      const apps = workbotApps(facts, { inline, canManage: permissions.has("connections.manage"), connectUrl: openworkYourConnectionsUrl })
+      return c.json({ connections, apps })
     },
   )
 

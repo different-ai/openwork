@@ -34,7 +34,7 @@ function renderConnectAction(connections: WorkbotConnection[], fallbackHref?: st
     prepare: async () => { throw new Error("Rendering must not prepare a request") },
   })
   const client = new QueryClient()
-  client.setQueryData(["workbot", "connections", identity.organizationId, identity.principalId], connections)
+  client.setQueryData(["workbot", "connections", identity.organizationId, identity.principalId], { connections })
   function Action() {
     const flow = useWorkbotConnect()
     return createElement(WorkbotConnectAction, { flow, provider: "google-workspace", label: "Connect Google Drive", fallbackHref })

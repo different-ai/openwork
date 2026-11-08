@@ -87,10 +87,11 @@ function Thumbnail({ src, className }: { src: string | null; className: string }
 }
 
 /** A connected app's logo, bare (no tile), for headers, step lines and chips. */
-export function AppMark({ name, size = 12 }: { name: string; size?: number }) {
+export function AppMark({ name, size = 12, fallback = "dot" }: { name: string; size?: number; /** Without a logo: a dot, or the name's first letter in a tile (lists of apps). */ fallback?: "dot" | "letter" }) {
   const [failed, setFailed] = useState(0);
   const candidates = useMemo(() => workbotHost().appIcons(name), [name]);
   const src = candidates[failed];
+  if (!src && fallback === "letter") return <span aria-hidden className="grid shrink-0 place-items-center rounded-[5px] bg-[var(--wb-chip)] font-semibold text-[var(--wb-muted)]" style={{ width: size, height: size, fontSize: Math.round(size * 0.6) }}>{name.trim().charAt(0).toUpperCase() || "?"}</span>;
   if (!src) return <span aria-hidden className="rounded-full bg-[var(--wb-disabled)]" style={{ width: size - 4, height: size - 4 }} />;
   // eslint-disable-next-line @next/next/no-img-element
   return <img src={src} alt="" width={size} height={size} onError={() => setFailed((count) => count + 1)} className="shrink-0 object-contain" />;

@@ -19,7 +19,7 @@ const BY_NAME: Record<string, Hint> = {
   linear: { site: "linear.app" },
   "microsoft 365": { site: "microsoft.com" },
   notion: { site: "notion.com" },
-  salesforce: { slug: "salesforce" },
+  salesforce: { slug: "salesforce", site: "salesforce.com" },
   sentry: { site: "sentry.io" },
   slack: { site: "slack.com" },
   stripe: { site: "stripe.com" },
@@ -36,8 +36,20 @@ const DEN_ICONS: Record<string, string> = {
   "google.com": "/integrations/google.svg",
 }
 
+/** Known names, longest first, so "Google Calendar (team)" is Google Calendar and "Linear Eng" is Linear. */
+const KNOWN = Object.keys(BY_NAME).sort((a, b) => b.length - a.length)
+
+function hintFor(name: string): Hint | undefined {
+  const plain = name.trim().toLowerCase()
+  const exact = BY_NAME[plain]
+  if (exact) return exact
+  // Whole words only (the keys are plain words), so "Notional" is not Notion.
+  const known = KNOWN.find((key) => new RegExp(`(^|[^a-z0-9])${key}($|[^a-z0-9])`).test(plain))
+  return known ? BY_NAME[known] : undefined
+}
+
 export function appIconCandidates(name: string, denUrl: string | null): string[] {
-  const hint = BY_NAME[name.trim().toLowerCase()]
+  const hint = hintFor(name)
   if (!hint) return []
   const candidates: string[] = []
   const bundled = hint.site ? DEN_ICONS[hint.site] : undefined
