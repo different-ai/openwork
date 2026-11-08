@@ -121,7 +121,7 @@ function PermissionsTab({ name }: { name: string }) {
   const abilities: Array<{ label: string; on: boolean }> = [
     { label: "Browse the web in its own browser", on: views.includes("browser") },
     { label: "Use apps on its own computer", on: views.includes("computer") },
-    { label: "Read and edit your documents", on: host.documents === true },
+    { label: "Read your documents", on: host.documents === true },
     { label: "Your calendar", on: host.calendar === true },
   ];
   return <div className="flex flex-col gap-6 px-5 pt-1">
