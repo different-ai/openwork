@@ -54,7 +54,10 @@ export const denSessionSchema = z.object({
   accountMenu: z.boolean().default(false),
   /** Work in progress shows in the header and task sheet, not the chat. A Den from before it doesn't say: off. */
   workingStatus: z.boolean().default(false),
-  /** The Cmd+K / Ctrl+K command palette. A Den from before it doesn't say: off. */
+  /** The conversation docks beside the Browser and Computer views (`workbotBrowserChat`). A Den from before it doesn't say: off. */
+  browserChat: z.boolean().default(false),
+  /** Chats open on the newest page kept on the device (`workbotInstantOpen`). A Den from before it doesn't say: off. */
+  instantOpen: z.boolean().default(false),
   /** The organization's default model for Workbot's turns. Null, or a Den from before it, means the runner's default. */
   model: z.string().nullable().default(null),
   verifyModel: z.boolean().default(false),

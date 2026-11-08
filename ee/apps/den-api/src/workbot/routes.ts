@@ -85,6 +85,10 @@ const sessionSchema = z.object({
   accountMenu: z.boolean().optional(),
   /** Work in progress shows in the header and task sheet, not the chat (`workbotWorkingStatus`); older Dens omit it: off. */
   workingStatus: z.boolean().optional(),
+  /** The conversation stays docked beside the Browser and Computer views (`workbotBrowserChat`); older Dens omit it: off. */
+  browserChat: z.boolean().optional(),
+  /** Chats open on the newest page kept on the device (`workbotInstantOpen`); older Dens omit it: off. */
+  instantOpen: z.boolean().optional(),
   /** Always true for older Workbot clients; the command palette is available by default. */
   commandPalette: z.boolean().optional(),
   /**
@@ -412,6 +416,8 @@ export function registerWorkbotRoutes<T extends { Variables: object }>(app: Hono
         sideChats: true,
         accountMenu: features.workbotAccountMenu,
         workingStatus: features.workbotWorkingStatus,
+        browserChat: features.workbotBrowserChat && features.browserUse && features.remoteComputers,
+        instantOpen: features.workbotInstantOpen,
         commandPalette: true,
         model,
         gatewayModels: true,

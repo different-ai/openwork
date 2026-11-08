@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { ensureWorkspaceFiles } from "../src/workspace-init";
@@ -42,5 +42,26 @@ describe("legacy browser plugin cleanup", () => {
     const root = await workspaceWith(content);
     expect(await ensureWorkspaceFiles(root, "starter")).toEqual({ changed: false, reloadReasons: [] });
     expect(await readFile(join(root, "opencode.jsonc"), "utf8")).toBe(content);
+  });
+});
+
+describe("unreadable workspace config", () => {
+  test("skips the cleanup when the config path cannot be read as a file", async () => {
+    const root = await mkdtemp(join(tmpdir(), "openwork-legacy-browser-"));
+    roots.push(root);
+    await mkdir(join(root, "opencode.jsonc"));
+    expect(await ensureWorkspaceFiles(root, "starter")).toEqual({ changed: false, reloadReasons: [] });
+  });
+
+  const canDenyAccess = process.platform !== "win32" && process.getuid?.() !== 0;
+  test.skipIf(!canDenyAccess)("skips the cleanup when the OS denies access to the config", async () => {
+    const root = await workspaceWith(`{ "plugin": ["opencode-chrome-devtools"] }\n`);
+    const path = join(root, "opencode.jsonc");
+    await chmod(path, 0o000);
+    try {
+      expect(await ensureWorkspaceFiles(root, "starter")).toEqual({ changed: false, reloadReasons: [] });
+    } finally {
+      await chmod(path, 0o644);
+    }
   });
 });

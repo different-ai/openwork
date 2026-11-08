@@ -493,6 +493,11 @@ export async function startWorkbotGreeting(actor: WorkbotActor, input: { timeZon
   return { started: true }
 }
 
+/** Interrupted turns being resumed right now, by `<session>:<message>`. */
+const resuming = new Set<string>()
+/** How long opening a chat waits for resuming interrupted turns before answering without them. */
+const RESUME_WAIT_MS = 250
+
 export async function readWorkbotThread(
   actor: WorkbotActor,
   input: { turns?: number; chat?: WorkbotChat },
@@ -515,9 +520,22 @@ export async function readWorkbotThread(
   if (!read.ok) throw new WorkbotUnavailableError("workbot_runner_unavailable")
 
   // A runner restart, or a long task's token running out, pauses a turn; re-sending its id resumes it with a fresh token.
-  for (const interrupted of interruptedTurnIds(read.value)) {
+  // The resumes run side by side, and opening the chat waits for them only briefly: the turn already reads as busy, and
+  // the live stream or the next read shows it working. One resume per turn at a time, however many reads arrive.
+  const resumes = interruptedTurnIds(read.value).flatMap((interrupted) => {
+    const key = `${sessionId}:${interrupted}`
+    if (resuming.has(key)) return []
     const stored = read.value.turns.find((turn) => turn.messageId === interrupted)
-    await client.sendTurn({ userId: actor.userId, organizationId: actor.organizationId }, { sessionId, messageId: interrupted, prompt: "resume", ...executionFor(deps), ...(stored?.modelAccessRequired ? { modelAccessRequired: true, model: stored.model ?? undefined } : {}), ...((interrupted === GREETING_RUNNER_ID || read.value.messages.some(message => message.role === "user" && message.messageId === interrupted && (workbotContextReadOnly(readWorkbotContextPrompt(message.text).context) || readBrowserTeachingPrompt(message.text) !== message.text))) ? { readOnly: true } : {}) }).catch(() => null)
+    const resume = client.sendTurn({ userId: actor.userId, organizationId: actor.organizationId }, { sessionId, messageId: interrupted, prompt: "resume", ...executionFor(deps), ...(stored?.modelAccessRequired ? { modelAccessRequired: true, model: stored.model ?? undefined } : {}), ...((interrupted === GREETING_RUNNER_ID || read.value.messages.some(message => message.role === "user" && message.messageId === interrupted && (workbotContextReadOnly(readWorkbotContextPrompt(message.text).context) || readBrowserTeachingPrompt(message.text) !== message.text))) ? { readOnly: true } : {}) })
+      .catch(() => null)
+      .finally(() => resuming.delete(key))
+    resuming.add(key)
+    return [resume]
+  })
+  if (resumes.length > 0) {
+    let timer: ReturnType<typeof setTimeout> | undefined
+    await Promise.race([Promise.all(resumes), new Promise((resolve) => { timer = setTimeout(resolve, RESUME_WAIT_MS) })])
+    clearTimeout(timer)
   }
 
   const [filesEnabled, files] = await Promise.all([filesEnabledRead, filesRead])

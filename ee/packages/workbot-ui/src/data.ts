@@ -1,12 +1,13 @@
 "use client";
 
-import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { keepPreviousData, useMutation, useQuery, useQueryClient, type QueryClient } from "@tanstack/react-query";
 import { createContext, useContext, useEffect, useRef, useState } from "react";
 import { z } from "zod";
 import { workbotDocumentNavigationSchema, workbotViewContextSchema, WORKBOT_MAX_MESSAGE_CHARS, type WorkbotViewContext } from "@openwork/types/workbot-context";
 import { errorMessage as getErrorMessage, hostFetch, workbotHost } from "./host";
 import { liveRetryDelay, liveStreamOff, retryAfterMs } from "./live-retry";
 import { workbotAccessFailureSchema, type WorkbotAccessReason } from "@openwork/types/den/workbot-settings";
+import { loadThreadSnapshot, saveThreadSnapshot } from "./thread-cache";
 
 const requestJson = (path: string, init?: RequestInit, timeoutMs?: number) => workbotHost().requestJson(path, init, timeoutMs);
 
@@ -101,7 +102,7 @@ const turnSchema = z.object({
 });
 export type WorkbotTurn = z.infer<typeof turnSchema>;
 
-const threadSchema = z.discriminatedUnion("available", [
+export const threadSchema = z.discriminatedUnion("available", [
   z.object({ available: z.literal(false), reason: z.enum(["workbot_not_enabled", "workbot_runner_unavailable", "workbot_model_unavailable"]) }),
   z.object({
     available: z.literal(true),
@@ -117,20 +118,44 @@ export type WorkbotThread = z.infer<typeof threadSchema>;
 
 export const workbotQueryKey = ["workbot", "thread"] as const;
 
+/** The first read of a chat: small enough to answer quickly; the rest of a page is read behind it (screen.tsx). */
+export const WORKBOT_FIRST_TURNS = 8;
+const threadKey = (chat: string | null, turns: number) => [...workbotQueryKey, chat ?? "main", turns] as const;
+
+async function fetchThread(chat: string | null, turns: number) {
+  const { response, payload } = await requestJson(inChat(`/v1/workbot?turns=${turns}`, chat), { method: "GET" }, 30_000);
+  if (!response.ok) throw new Error(getErrorMessage(payload, "Couldn't load the conversation."));
+  const thread = threadSchema.parse(payload);
+  if (workbotHost().instantOpen) saveThreadSnapshot(workbotHost().identity, chat, thread);
+  return thread;
+}
+
+/** The page this device kept for the chat, when it still reads as a conversation. */
+function keptThread(chat: string | null) {
+  const parsed = threadSchema.safeParse(loadThreadSnapshot(workbotHost().identity, chat));
+  return parsed.success && parsed.data.available ? parsed.data : undefined;
+}
+
+/**
+ * Reads a chat's first page ahead of opening it (a side chat's row touched or hovered), so the click finds it read.
+ * A read made in the last 10 seconds is reused.
+ */
+export function prefetchWorkbotThread(queryClient: QueryClient, chat: string | null) {
+  void queryClient.prefetchQuery({ queryKey: threadKey(chat, WORKBOT_FIRST_TURNS), queryFn: () => fetchThread(chat, WORKBOT_FIRST_TURNS), staleTime: 10_000 });
+}
+
 /**
  * The conversation's newest `turns` turns. While the live stream is connected it is re-read only when
  * the stream says something changed; without it, it polls quickly while an answer is in progress.
+ * With `instantOpen`, a chat opens on the newest page kept on this device from the last visit while it is read again.
  */
 export function useWorkbotThread(input: { turns: number; awaiting: boolean; live: boolean }) {
   const chat = useWorkbotChat();
   return useQuery({
-    queryKey: [...workbotQueryKey, chat ?? "main", input.turns],
-    queryFn: async () => {
-      const { response, payload } = await requestJson(inChat(`/v1/workbot?turns=${input.turns}`, chat), { method: "GET" }, 30_000);
-      if (!response.ok) throw new Error(getErrorMessage(payload, "Couldn't load the conversation."));
-      return threadSchema.parse(payload);
-    },
-    placeholderData: keepPreviousData,
+    queryKey: threadKey(chat, input.turns),
+    queryFn: () => fetchThread(chat, input.turns),
+    // The previous window while a larger one is read; on a first open, what this device kept (instantOpen).
+    placeholderData: (previous) => previous ?? (workbotHost().instantOpen ? keptThread(chat) : undefined),
     refetchInterval: (query) => {
       const data = query.state.data;
       const busy = input.awaiting || (data?.available === true && data.status === "busy");

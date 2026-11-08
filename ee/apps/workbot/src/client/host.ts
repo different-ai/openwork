@@ -1,4 +1,4 @@
-import type { WorkbotHost } from "@openwork-ee/workbot-ui"
+import { clearThreadSnapshots, type WorkbotHost } from "@openwork-ee/workbot-ui"
 import { z } from "zod"
 import { appIconCandidates } from "./app-icons"
 
@@ -31,7 +31,10 @@ export const meSchema = z.object({
   accountMenu: z.boolean().default(false),
   /** Work in progress in the header and task sheet (`workbotWorkingStatus`); older servers omit it. */
   workingStatus: z.boolean().default(false),
-  /** The Cmd+K / Ctrl+K command palette; older servers omit it. */
+  /** The conversation docked beside the Browser and Computer views (`workbotBrowserChat`); older servers omit it. */
+  browserChat: z.boolean().default(false),
+  /** Chats open on the newest page kept on this device (`workbotInstantOpen`); older servers omit it. */
+  instantOpen: z.boolean().default(false),
   denUrl: z.string().nullable(),
 })
 export type Me = z.infer<typeof meSchema>
@@ -47,6 +50,8 @@ export async function signOut() {
   const response = await fetch("/auth/logout", { method: "POST", credentials: "same-origin", signal: AbortSignal.timeout(15_000) }).catch(() => null)
   // Never say signed out while the sign-in cookie may still be there.
   if (!response?.ok) throw new Error("Workbot couldn't sign you out. Check your connection and try again.")
+  // Chats kept on this device for instant opening leave with the person.
+  clearThreadSnapshots()
   window.location.assign("/auth/signed-out")
 }
 
@@ -118,6 +123,8 @@ export function createHost(me: Me, recovery: { authorization?: WorkbotHost["docu
       // The parent owns auth recovery, including when Documents is retained
       // behind another workspace page. Never navigate that owner away on 401.
       if (response.status === 401) {
+        // Signed out elsewhere or expired: nothing kept on this device outlives the sign-in.
+        clearThreadSnapshots()
         if (recovery.refreshIdentity) { if (!recovery.authorization) void recovery.refreshIdentity().catch(() => {}) }
         else if (window.location.pathname !== "/documents") signIn()
       }
@@ -137,6 +144,8 @@ export function createHost(me: Me, recovery: { authorization?: WorkbotHost["docu
     computer: me.computer,
     browser: me.browser,
     browserDemonstrations: me.browserDemonstrations,
+    browserChat: me.browser && me.browserChat,
+    instantOpen: me.instantOpen,
     documentEditing: me.documents && me.documentEditing,
     nativeDictation: me.nativeDictation,
     workspaceAssistant: me.workspaceAssistant,

@@ -1,11 +1,14 @@
 "use client";
 
-import { extractOfficeText, openXlsxWorkbook, sheetGridRows, type XlsxWorkbook } from "@openwork/workbook";
+import type { XlsxWorkbook } from "@openwork/workbook";
 import { Download, X } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { downloadWorkbotFile, useWorkbotChat, useWorkbotFileBytes, useWorkbotFileUrl, useWorkbotImageUrl, useWorkbotPreview, useWorkbotPreviewPage, type WorkbotAttachment, type WorkbotPreview } from "./data";
 import { FileBadge, formatSize, isImage, kindLabel } from "./files";
 import { WorkbotMarkdown } from "./markdown";
+
+/** The Office reader (and its XML parser) loads only when an Office file is previewed, not with every page. */
+const officeReader = () => import("@openwork/workbook");
 
 /**
  * A file opened beside the conversation: it shows the file itself, read in the browser, never a list of
@@ -177,7 +180,9 @@ function OfficePreview({ file, kind }: { file: WorkbotAttachment; kind: "slides"
   useEffect(() => {
     if (!bytes.data) return;
     let cancelled = false;
-    extractOfficeText(kind === "slides" ? "pptx" : "docx", bytes.data)
+    const data = bytes.data;
+    officeReader()
+      .then(({ extractOfficeText }) => extractOfficeText(kind === "slides" ? "pptx" : "docx", data))
       .then((value) => !cancelled && setText(value))
       .catch(() => !cancelled && setFailed(true));
     return () => {
@@ -288,7 +293,8 @@ function SheetPreview({ file, bytes }: { file: WorkbotAttachment; bytes: Uint8Ar
   const [failed, setFailed] = useState(false);
   useEffect(() => {
     let cancelled = false;
-    openXlsxWorkbook(bytes)
+    officeReader()
+      .then(({ openXlsxWorkbook }) => openXlsxWorkbook(bytes))
       .then((value) => !cancelled && setWorkbook(value))
       .catch(() => !cancelled && setFailed(true));
     return () => {
@@ -301,9 +307,8 @@ function SheetPreview({ file, bytes }: { file: WorkbotAttachment; bytes: Uint8Ar
     if (!workbook || !sheet) return;
     let cancelled = false;
     setRows(null);
-    workbook
-      .readSheet(sheet)
-      .then((data) => !cancelled && setRows(sheetGridRows(data)))
+    Promise.all([workbook.readSheet(sheet), officeReader()])
+      .then(([data, { sheetGridRows }]) => !cancelled && setRows(sheetGridRows(data)))
       .catch(() => !cancelled && setFailed(true));
     return () => {
       cancelled = true;
