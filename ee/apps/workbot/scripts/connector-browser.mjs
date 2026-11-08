@@ -157,6 +157,52 @@ try {
       })
     }
 
+    if (process.env.CONNECTOR_TYPING_ONLY !== "1") {
+      await check(`${size.name}: OpenWork's own features show one OpenWork logo in the stack, pulsing while one runs`, page, async () => {
+        await page.goto(`${base}/?scenario=openwork-live`, { waitUntil: "domcontentloaded" })
+        const stack = page.locator('[data-workbot-connector-line="live"] [data-workbot-connector-stack]').first()
+        await stack.waitFor({ timeout: 5_000 })
+        assert.deepEqual(await stack.locator("[data-workbot-connector-logo]").evaluateAll((logos) => logos.map((logo) => logo.dataset.workbotConnectorLogo)), ["Exa", "Google Drive", "Linear", "OpenWork"])
+        assert.equal(await stack.locator('[data-workbot-connector-logo="OpenWork"][data-active="true"]').count(), 1, "the running OpenWork feature's logo pulses")
+        assert.equal(await stack.locator("[data-workbot-openwork-mark] svg").count(), 1)
+        assert.doesNotMatch(await page.locator("body").innerText(), RAW)
+        await page.waitForTimeout(500)
+        await page.screenshot({ path: `${out}/${size.name}-openwork-live.png` })
+      })
+      await check(`${size.name}: the OpenWork logo stays after completion and reload, with names and details and no raw ids`, page, async () => {
+        await page.goto(`${base}/?scenario=openwork`, { waitUntil: "domcontentloaded" })
+        const stack = page.locator('[data-workbot-connector-line="done"] [data-workbot-connector-stack]').first()
+        await stack.waitFor()
+        const read = async () => ({ label: await stack.getAttribute("aria-label"), logos: await stack.locator("[data-workbot-connector-logo]").evaluateAll((logos) => logos.map((logo) => logo.dataset.workbotConnectorLogo)) })
+        const first = await read()
+        assert.deepEqual(first, { label: "Used Exa, Google Drive, Linear and OpenWork", logos: ["Exa", "Google Drive", "Linear", "OpenWork"] })
+        assert.equal(await stack.locator(".workbot-connector-pulse").count(), 0)
+        const logo = await stack.locator('[data-workbot-connector-logo="OpenWork"]').evaluate((node) => ({ width: node.getBoundingClientRect().width, radius: getComputedStyle(node).borderRadius }))
+        assert.equal(logo.width, 20, "same size as the other logos")
+        await page.waitForTimeout(500)
+        await page.screenshot({ path: `${out}/${size.name}-openwork-done.png` })
+        await page.locator("[data-workbot-connector-line]").first().screenshot({ path: `${out}/${size.name}-openwork-stack-closeup.png` })
+        if (!size.hasTouch) await stack.hover()
+        else await stack.tap()
+        const popover = page.locator("[data-workbot-connector-popover]")
+        await popover.waitFor({ state: "visible" })
+        await popover.locator("summary").click()
+        const text = (await popover.innerText()).replace(/\s+/g, " ")
+        assert.match(text, /Used Exa, Google Drive, Linear and OpenWork/)
+        assert.match(text, /OpenWork · Remote task/)
+        assert.match(text, /OpenWork · Weekly digest/)
+        assert.match(text, /OpenWork · Draft the weekly digest/)
+        assert.doesNotMatch(text, RAW)
+        await page.waitForTimeout(300)
+        await page.screenshot({ path: `${out}/${size.name}-openwork-expanded.png` })
+        await page.keyboard.press("Escape")
+        await page.reload({ waitUntil: "domcontentloaded" })
+        await stack.waitFor()
+        assert.deepEqual(await read(), first, "the same logos after a reload")
+        assert.doesNotMatch(await page.locator("body").innerText(), RAW)
+      })
+    }
+
     await check(`${size.name}: typing never moves the conversation`, page, async () => {
       await page.goto(`${base}/?scenario=bubbles`, { waitUntil: "domcontentloaded" })
       await page.locator("[data-workbot-composer] textarea").waitFor()
@@ -174,10 +220,27 @@ try {
       await box.fill("Short")
       await page.waitForTimeout(200)
       await box.press("End")
+      // While the box grows: scrollTop every frame may only move one way (up by the new line), never bounce. What is
+      // painted is read by an observer created after the page's own, so it runs after the page's correction and just
+      // before paint (a requestAnimationFrame read comes before layout and would see the uncorrected position).
+      await page.evaluate(() => {
+        const node = [...document.querySelectorAll(".workbot-scroll")].find((entry) => entry.clientHeight > 0)
+        window.__growTops = []
+        window.__growPainted = []
+        const tick = () => { window.__growTops.push(node.scrollTop); window.__growRaf = requestAnimationFrame(tick) }
+        tick()
+        window.__growObserver = new ResizeObserver(() => window.__growPainted.push(node.scrollHeight - node.clientHeight - node.scrollTop))
+        window.__growObserver.observe(node)
+      })
       await page.keyboard.type(" and now this message keeps going until it needs another line in the box, and another".repeat(1))
       await page.waitForTimeout(300)
+      const { tops, painted } = await page.evaluate(() => { cancelAnimationFrame(window.__growRaf); window.__growObserver.disconnect(); return { tops: window.__growTops, painted: window.__growPainted } })
       const gap = await page.evaluate(() => { const node = [...document.querySelectorAll(".workbot-scroll")].find((entry) => entry.clientHeight > 0); return node.scrollHeight - node.clientHeight - node.scrollTop })
       assert.ok(gap <= 1, `left ${gap}px short`)
+      const reversals = tops.slice(1).filter((top, index) => top < tops[index]).length
+      console.log(JSON.stringify({ size: size.name, growingLine: { distinctScrollTop: [...new Set(tops)], paintedGaps: painted } }))
+      assert.equal(reversals, 0, "scrollTop never moves back down while the box grows (no bounce)")
+      assert.ok(painted.every((value) => value <= 1), `the newest message stays in view in every painted resize: ${painted}`)
       await box.fill("")
     })
     assert.deepEqual(errors, [], "no browser runtime errors")

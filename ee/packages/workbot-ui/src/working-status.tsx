@@ -41,7 +41,7 @@ function clock(at: number) {
 }
 
 function StatusIcon({ activity, size = 12 }: { activity: WorkbotActivity; size?: number }) {
-  if (activity.icon === "app") return <ConnectorIcon app={{ name: activity.app, ...(activity.site ? { site: activity.site } : {}), ...(activity.remote ? { remote: true as const } : {}) }} size={size} />;
+  if (activity.icon === "app") return <ConnectorIcon app={{ name: activity.app, ...(activity.site ? { site: activity.site } : {}), ...(activity.remote ? { remote: true as const } : {}), ...(activity.openwork ? { openwork: true as const } : {}) }} size={size} />;
   if (activity.icon === "browser") return <Globe size={size} strokeWidth={1.75} aria-hidden className="shrink-0" />;
   if (activity.icon === "computer") return <Monitor size={size} strokeWidth={1.75} aria-hidden className="shrink-0" />;
   return <span aria-hidden className="workbot-presence-dot size-1.5 shrink-0 rounded-full" />;
@@ -112,7 +112,7 @@ function StepList({ steps, working }: { steps: ActivityStep[]; working: boolean 
         {step.done ? <Check size={11} strokeWidth={2.5} /> : <span className="workbot-presence-dot size-1.5 rounded-full" />}
       </span>
       <span className={`flex min-w-0 items-center gap-1.5 text-[13.5px] leading-5 ${step.done ? "text-[var(--wb-text)]" : "workbot-shimmer"}`}>
-        {step.app || step.remote || step.site ? <ConnectorIcon app={{ name: step.app, ...(step.site ? { site: step.site } : {}), ...(step.remote ? { remote: true as const } : {}) }} size={13} /> : null}
+        {step.app || step.remote || step.site ? <ConnectorIcon app={{ name: step.app, ...(step.site ? { site: step.site } : {}), ...(step.remote ? { remote: true as const } : {}), ...(step.openwork ? { openwork: true as const } : {}) }} size={13} /> : null}
         <span className="min-w-0">{step.label}</span>
       </span>
     </li>)}
@@ -152,7 +152,8 @@ function sheetLead(activity: WorkbotActivity) {
   const openTasks = activity.tasks.filter((task) => (task.status === "queued" || task.status === "working" || task.status === "paused") && !task.quiet);
   const lead = activity.main ? null : openTasks[0] ?? null;
   return {
-    title: activity.main ? (activity.main.request.trim() || "Your message") : lead?.title ?? "Recent tasks",
+    // Idle with nothing to look back on: say so plainly rather than titling an empty list "Recent tasks".
+    title: activity.main ? (activity.main.request.trim() || "Your message") : lead?.title ?? (activity.tasks.length > 0 ? "Recent tasks" : "Nothing running right now"),
     since: activity.main?.since ?? lead?.startedAt ?? null,
   };
 }
@@ -188,9 +189,9 @@ export function TaskSheet({ open, onClose, name, activity }: { open: boolean; on
       <Dialog.Popup className="workbot fixed inset-x-0 bottom-0 z-50 flex max-h-[85dvh] flex-col overflow-hidden rounded-t-[24px] bg-[var(--wb-surface)] pb-[env(safe-area-inset-bottom)] shadow-[var(--wb-panel-shadow)] outline-none transition-transform duration-200 ease-out data-[ending-style]:translate-y-full data-[starting-style]:translate-y-full motion-reduce:transition-none sm:inset-x-auto sm:bottom-auto sm:left-4 sm:top-14 sm:max-h-[min(36rem,calc(100dvh-5rem))] sm:w-[420px] sm:rounded-[16px] sm:data-[ending-style]:translate-y-0 sm:data-[ending-style]:opacity-0 sm:data-[starting-style]:translate-y-0 sm:data-[starting-style]:opacity-0" data-workbot-task-sheet>
         <div className="flex shrink-0 items-start justify-between gap-3 px-5 pb-4 pt-5">
           <div className="flex min-w-0 flex-col gap-2">
-            <span className={`w-fit rounded-md px-2 py-0.5 text-[12px] font-medium ${activity.working ? "bg-[var(--wb-ink)] text-[var(--wb-on-ink)]" : "bg-[var(--wb-chip)] text-[var(--wb-muted)]"}`}>{activity.working ? "In progress" : "Nothing running"}</span>
+            {activity.working ? <span className="w-fit rounded-md bg-[var(--wb-ink)] px-2 py-0.5 text-[12px] font-medium text-[var(--wb-on-ink)]">In progress</span> : null}
             <Dialog.Title className="line-clamp-2 text-[16px] font-semibold leading-[22px] text-[var(--wb-text)]">{title}</Dialog.Title>
-            {activity.working ? <Dialog.Description className="text-[13px] leading-[18px] text-[var(--wb-muted)]">{activity.label}{since ? ` · since ${clock(since)}` : ""}</Dialog.Description> : <Dialog.Description className="text-[13px] text-[var(--wb-muted)]">{name} isn&apos;t working on anything right now.</Dialog.Description>}
+            {activity.working ? <Dialog.Description className="text-[13px] leading-[18px] text-[var(--wb-muted)]">{activity.label}{since ? ` · since ${clock(since)}` : ""}</Dialog.Description> : <Dialog.Description className="text-[13px] leading-[18px] text-[var(--wb-muted)]">{activity.tasks.length > 0 ? `${name} isn't working on anything right now.` : `When you hand ${name} a bigger job, its progress shows here.`}</Dialog.Description>}
           </div>
           <Dialog.Close aria-label="Close" className="grid size-8 shrink-0 place-items-center rounded-full text-[var(--wb-muted)] shadow-[0_0_0_1px_var(--wb-ring)] hover:text-[var(--wb-text)] focus-visible:outline-none focus-visible:shadow-[var(--wb-focus)]"><X size={15} strokeWidth={1.75} aria-hidden /></Dialog.Close>
         </div>

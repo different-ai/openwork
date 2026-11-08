@@ -888,8 +888,8 @@ function WorkbotHeader(props: {
 /** Asks Workbot about what is open: one small action that switches to the chat, never a chat over the view. */
 function AskWorkbotButton({ name, onClick }: { name: string; onClick(): void }) {
   return <button type="button" onClick={onClick} data-workbot-ask
-    className="flex h-8 shrink-0 items-center gap-1.5 rounded-full px-3 text-[13px] font-medium text-[var(--wb-text)] transition-colors duration-150 hover:bg-[var(--wb-chip)] focus-visible:outline-none focus-visible:shadow-[var(--wb-focus)]">
-    <MessageCircle size={15} strokeWidth={1.75} aria-hidden className="text-[var(--wb-muted)]" />Ask {name}
+    className="flex h-8 shrink-0 items-center gap-1.5 rounded-full bg-[var(--wb-ink)] px-3.5 text-[13px] font-medium text-[var(--wb-on-ink)] transition-opacity duration-150 hover:opacity-90 focus-visible:outline-none focus-visible:shadow-[var(--wb-focus)]">
+    <MessageCircle size={15} strokeWidth={1.75} aria-hidden />Ask {name}
   </button>;
 }
 

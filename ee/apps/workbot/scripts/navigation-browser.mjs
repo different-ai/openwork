@@ -108,7 +108,8 @@ async function assertList(nav) {
 }
 async function assertDestinations(nav, phone = false) {
   const workspace = nav.getByRole("navigation", { name: phone ? "Go to" : "Workspace", exact: true })
-  await workspace.getByRole("button", { name: "Main chat", exact: true }).waitFor()
+  // The desktop rail returns to the chat; Main chat itself is picked in the list beside it (or in the phone drawer).
+  await workspace.getByRole("button", { name: phone ? "Main chat" : "Chats", exact: true }).waitFor()
   await workspace.getByRole("button", { name: "Files", exact: true }).waitFor()
   await workspace.getByRole("button", { name: "Apps", exact: true }).waitFor()
   // Task progress lives in the status under Workbot's name and the sheet behind it, never as a destination.
@@ -195,6 +196,26 @@ try {
     await desktopNav(page).getByRole("navigation", { name: "Workspace", exact: true }).getByRole("button", { name: "Apps", exact: true }).click()
     await assertAppsSheet(page, "desktop-apps")
     await assertDesktopColumn(page)
+  })
+  await check(page, "one sidebar per view: Documents has its own navigation, the chat list stays with the chat", async () => {
+    const documents = await createPage()
+    await documents.goto(`${base}/documents?scenario=bubbles&sideChats=1&documents=1`, { waitUntil: "domcontentloaded" })
+    await documents.locator(".ow-documents").waitFor()
+    await desktopNav(documents).waitFor()
+    assert.equal(await sideSection(desktopNav(documents)).count(), 0, "No chat list beside Documents")
+    assert.equal(await desktopNav(documents).getByRole("searchbox").count(), 0, "No chat search beside Documents")
+    const views = documents.getByRole("group", { name: "Show", exact: true })
+    await views.getByRole("button", { name: "Recent", exact: true }).waitFor()
+    await views.getByRole("button", { name: "My Drive", exact: true }).waitFor()
+    assert.equal(await documents.getByText("Recent documents", { exact: true }).count(), 0, "No second list of recent documents")
+    assert.equal(await documents.getByText("Documents", { exact: true }).filter({ visible: true }).count(), 1, "Documents is titled once")
+    assert.equal(await documents.locator(".ow-document-tabs-row").isVisible(), false, "No tab row until a document is open")
+    await assertNoOverflow(documents)
+    await shot(documents, "desktop-documents")
+    await desktopNav(documents).getByRole("navigation", { name: "Workspace", exact: true }).getByRole("button", { name: "Chats", exact: true }).click()
+    await sideSection(desktopNav(documents)).waitFor()
+    await composer(documents).waitFor()
+    await documents.context().close()
   })
   await check(page, "side selection URL highlight and plus new chat", async () => {
     await chatButton(desktopNav(page), "Office plan").click()

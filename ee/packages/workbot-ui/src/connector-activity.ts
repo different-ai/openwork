@@ -5,7 +5,7 @@ import type { LiveText, WorkbotStep, WorkbotTurn } from "./data";
  * logo stack under that answer and the header's status line. The chat only shows logos by default; its disclosure
  * names the apps and tools. The header can still say "Searching Exa", from the same current step.
  */
-export type ConnectorApp = { name: string | null; site?: string; remote?: true };
+export type ConnectorApp = { name: string | null; site?: string; remote?: true; openwork?: true };
 export type ConnectorRow = { key: string; label: string; detail: string | null; times: number; app: ConnectorApp };
 export type ConnectorSummary = {
   /** Workbot is working in an app right now (or still on what it found there, with nothing newer said or done). */
@@ -24,12 +24,18 @@ export type ConnectorSummary = {
   rows: ConnectorRow[];
 };
 
-const appOf = (step: WorkbotStep): ConnectorApp => ({ name: step.app, ...(step.site ? { site: step.site } : {}), ...(step.remote ? { remote: true as const } : {}) });
-const appKey = (app: ConnectorApp) => (app.remote ? "remote" : app.name ?? "app");
+const appOf = (step: WorkbotStep): ConnectorApp => ({
+  name: step.openwork ? "OpenWork" : step.app,
+  ...(step.site ? { site: step.site } : {}),
+  ...(step.remote ? { remote: true as const } : {}),
+  ...(step.openwork ? { openwork: true as const } : {}),
+});
+/** One logo per app; every OpenWork feature (remote tasks included) shares the single OpenWork logo. */
+export const appKey = (app: ConnectorApp) => (app.openwork ? "openwork" : app.remote ? "remote" : app.name ?? "app");
 
-/** "Exa", "Exa and Gmail", "Exa, Gmail and Linear"; "a connected app" when the app couldn't be named. */
+/** "Exa", "Exa and Gmail", "Exa, Gmail and OpenWork"; "a connected app" when the app couldn't be named. */
 export function connectorNames(apps: ConnectorApp[]) {
-  const list = apps.map((app) => (app.remote ? "a remote computer" : app.name ?? "a connected app"));
+  const list = apps.map((app) => (app.openwork ? "OpenWork" : app.remote ? "a remote computer" : app.name ?? "a connected app"));
   if (list.length <= 1) return list.join("");
   return `${list.slice(0, -1).join(", ")} and ${list.at(-1)}`;
 }
