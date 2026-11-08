@@ -61,6 +61,8 @@ export const denSessionSchema = z.object({
   browserChat: z.boolean().default(false),
   /** Chats open on the newest page kept on the device (`workbotInstantOpen`). A Den from before it doesn't say: off. */
   instantOpen: z.boolean().default(false),
+  /** Reading earlier messages keeps its place (`workbotScrollToBottom`). A Den from before it doesn't say: off. */
+  scrollToBottom: z.boolean().default(false),
   /** Workbot's profile: tasks, permissions and read-only memory. A Den from before it doesn't say: off. */
   profileSheet: z.boolean().default(false),
   centeredProfile: z.boolean().default(false),

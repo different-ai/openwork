@@ -371,6 +371,16 @@
               ],
               "description": "Workbot: chats open instantly: Workbot keeps the newest messages of each chat on the person's device and shows them the moment a chat opens, while it reads the conversation again. Nothing is kept while a reply is being written; kept messages are cleared on sign-out and after a week. Renders DEN_FEATURE_WORKBOT_INSTANT_OPEN."
             },
+            "workbotScrollToBottom": {
+              "enum": [
+                "",
+                "true",
+                "false",
+                true,
+                false
+              ],
+              "description": "Workbot: scroll to latest messages: People reading earlier messages keep their place while Workbot replies, with a button to return to the latest messages. Renders DEN_FEATURE_WORKBOT_SCROLL_TO_BOTTOM."
+            },
             "workbotBrowserRecovery": {
               "enum": [
                 "",

@@ -67,6 +67,8 @@ export type WorkbotHost = {
    * (`workbotInstantOpen`). Off when unset; the kept pages are cleared then.
    */
   instantOpen?: boolean
+  /** Reading earlier messages keeps its place, with a return-to-latest button (`workbotScrollToBottom`). Off when unset. */
+  scrollToBottom?: boolean
   /**
    * Tapping Workbot's name opens its profile: what it is working on, what it can use, and what it remembers about the
    * person, read-only (`workbotProfileSheet`). Off when unset.

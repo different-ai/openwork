@@ -1,6 +1,6 @@
 "use client";
 
-import { ArrowUp, Check, CircleAlert, Copy, FileText, Globe, Lock, Monitor, Pencil, Presentation } from "lucide-react";
+import { ArrowDown, ArrowUp, Check, CircleAlert, Copy, FileText, Globe, Lock, Monitor, Pencil, Presentation } from "lucide-react";
 import { createContext, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type ClipboardEvent, type KeyboardEvent, type ReactNode } from "react";
 import { computerTabLabel, computerViews, setWorkbotHost, workbotHost, type WorkbotHost } from "./host";
 import { OpenWorkMark } from "./mark";
@@ -56,6 +56,8 @@ import { workbotActivity, type WorkbotActivity } from "./activity";
 import { ProfileBadge, WorkingName } from "./working-status";
 import { firstReply } from "./first-reply";
 import { remoteJobActivity, remoteWatcherTaskIds, useWorkbotRemoteJobs } from "./remote-jobs";
+import { createConversationScrollState, useConversationScroll, type ConversationScrollState } from "./conversation-scroll";
+import { useWorkbotViewport } from "./viewport";
 
 /**
  * Workbot: one thread, instant. Layout and values follow the Paper file "WorkBot — one chat, set up once",
@@ -106,6 +108,8 @@ export function WorkbotScreen({ host }: { host: WorkbotHost }) {
   useEffect(() => { if (!instantOpen) clearThreadSnapshots(); }, [instantOpen]);
   const sideChats = host.sideChats === true;
   const composers = useMemo(() => new Map<string | null, ComposerState>(), [host.identity?.organizationId, host.identity?.principalId]);
+  const positions = useMemo(() => new Map<string | null, ConversationScrollState>(), [host.identity?.organizationId, host.identity?.principalId]);
+  const viewport = useWorkbotViewport();
   // Disposed a tick after unmount, so a remount of the same owners (React's StrictMode check) keeps what was typed.
   const disposeComposers = useRef<ReturnType<typeof setTimeout>>(undefined);
   useEffect(() => {
@@ -129,10 +133,13 @@ export function WorkbotScreen({ host }: { host: WorkbotHost }) {
     composer = createComposerState((file, progress, signal) => uploadWorkbotFile(file, progress, signal, chat));
     composers.set(chat, composer);
   }
+  let position = positions.get(chat);
+  if (!position) { position = createConversationScrollState(FIRST_TURNS); positions.set(chat, position); }
   return (
+    <div ref={viewport} className="workbot-viewport">
     <WorkbotChatProvider value={chat}>
-      {/* Screen lifecycles never own a person's unsent work. */}
-      <ChatScreen key={`${host.identity?.organizationId ?? ""}:${host.identity?.principalId ?? ""}:${chat ?? "main"}`} host={host} composerState={composer} navigation={navigation} onDraftsChange={setWorkspaceDrafts} />
+      {/* Screen lifecycles never own a person's unsent work or their place in this app session. */}
+      <ChatScreen key={`${host.identity?.organizationId ?? ""}:${host.identity?.principalId ?? ""}:${chat ?? "main"}`} host={host} composerState={composer} position={position} navigation={navigation} onDraftsChange={setWorkspaceDrafts} />
       {sideChats ? (
         <ChatsDrawer
           open={chatsOpen}
@@ -146,17 +153,23 @@ export function WorkbotScreen({ host }: { host: WorkbotHost }) {
         />
       ) : null}
     </WorkbotChatProvider>
+    </div>
   );
 }
 
 /** One chat: the main chat, or one of the person's side chats. */
-function ChatScreen({ host, composerState, navigation, onDraftsChange }: { host: WorkbotHost; composerState: ComposerState; navigation: ChatNavigation | null; onDraftsChange(dirty: boolean): void }) {
+function ChatScreen({ host, composerState, position, navigation, onDraftsChange }: { host: WorkbotHost; composerState: ComposerState; position: ConversationScrollState; navigation: ChatNavigation | null; onDraftsChange(dirty: boolean): void }) {
   const { user } = host;
   const side = navigation?.chat != null;
   const queryClient = useQueryClient();
   const draft = useSyncExternalStore(composerState.subscribe, composerState.getSnapshot, composerState.getSnapshot);
   const { pending } = draft;
-  const [turnWindow, setTurnWindow] = useState(FIRST_TURNS);
+  const [turnWindow, setTurnWindowState] = useState(position.turnWindow);
+  const setTurnWindow = useCallback((next: number | ((current: number) => number)) => {
+    const value = typeof next === "function" ? next(position.turnWindow) : next;
+    position.turnWindow = value;
+    setTurnWindowState(value);
+  }, [position]);
   const [filesOpen, setFilesOpen] = useState(false);
   // Once activated, keep this shell mounted even when the flag is revoked: draft editors must survive.
   const [teaching, setTeaching] = useState<BrowserTeachingContext>();
@@ -265,7 +278,7 @@ function ChatScreen({ host, composerState, navigation, onDraftsChange }: { host:
   const earlierToRead = data?.hasEarlier === true && !thread.isPlaceholderData;
   useEffect(() => {
     if (earlierToRead && turnWindow < PAGE_TURNS) setTurnWindow(PAGE_TURNS);
-  }, [earlierToRead, turnWindow]);
+  }, [earlierToRead, turnWindow, setTurnWindow]);
   // The page, header and message box show before the conversation is read; only the thread waits for it.
   const loading = thread.isPending;
   useEffect(() => {
@@ -403,7 +416,7 @@ function ChatScreen({ host, composerState, navigation, onDraftsChange }: { host:
     const busy = data?.status === "busy" || pending.some(entry => !entry.failed);
     const empty = !loading && !data?.turns.length && !pending.length;
     const starting = empty && (start.isPending || greetingAwaited);
-    const conversation = data || loading ? <Conversation watcherIds={watcherIds}
+    const conversation = data || loading ? <Conversation position={position} watcherIds={watcherIds}
       turns={data?.turns ?? []} loading={loading}
       canChange={!busy} onEdit={editTurn} editErrors={editErrors} pending={pending} live={stream.live}
       hasEarlier={data?.hasEarlier ?? false} earlierLimit={turnWindow >= MAX_TURNS && !thread.isPlaceholderData} loadingEarlier={thread.isFetching && thread.isPlaceholderData}
@@ -585,7 +598,7 @@ function ChatScreen({ host, composerState, navigation, onDraftsChange }: { host:
         </FirstOpen>
       ) : (
         <>
-          <Conversation watcherIds={watcherIds}
+          <Conversation position={position} watcherIds={watcherIds}
             turns={shown.turns}
             loading={loading}
             canChange={!busy}
@@ -990,6 +1003,7 @@ function showsTimestamp(previous: { at: number } | undefined, row: { at: number 
 }
 
 function Conversation(props: {
+  position: ConversationScrollState;
   watcherIds: ReadonlySet<string>;
   turns: WorkbotTurn[];
   /** The conversation hasn't been read yet: a placeholder stands where it will be, above anything just sent. */
@@ -1016,9 +1030,7 @@ function Conversation(props: {
   /** Why an edit of a message didn't go through, by message id. */
   editErrors: Readonly<Record<string, Error | string>>;
 }) {
-  const scroller = useRef<HTMLDivElement>(null);
-  const content = useRef<HTMLDivElement>(null);
-  const pinned = useRef(true);
+  const { scroller, content, far, latest, readEarlier } = useConversationScroll(props.position, props.pending);
   const known = new Set(props.turns.map((turn) => turn.id));
   // A pending message and its turn share a key and both show as a TurnView, so neither the bubble nor the dots under it
   // re-mount when the turn arrives.
@@ -1047,56 +1059,11 @@ function Conversation(props: {
   const previews = useRef<Record<string, string | null>>({});
   Object.assign(previews.current, localUrls);
 
-  // Follow new content (including streamed text) only while the person is at the bottom.
-  useLayoutEffect(() => {
-    const node = scroller.current;
-    const inner = content.current;
-    if (!node || !inner) return;
-    const follow = () => {
-      if (pinned.current) node.scrollTop = node.scrollHeight;
-    };
-    follow();
-    const observer = new ResizeObserver(follow);
-    observer.observe(inner);
-    return () => observer.disconnect();
-  }, []);
-
-  // Earlier messages arrive above what the person is reading: unless they're following the newest message, the row
-  // that was first stays where it was on screen, and what arrived is above it to scroll up to. Its bottom is kept,
-  // since a timestamp above its message goes once an earlier message from the same hour is above it.
-  const anchor = useRef<{ key: string; offset: number } | null>(null);
-  const firstKey = rows[0]?.key;
-  useLayoutEffect(() => {
-    const node = scroller.current;
-    if (!node) return;
-    const offset = (key: string) => {
-      const row = node.querySelector(`[data-workbot-row="${CSS.escape(key)}"]`);
-      return row ? row.getBoundingClientRect().bottom - node.getBoundingClientRect().top + node.scrollTop : null;
-    };
-    const previous = anchor.current;
-    const moved = previous && !pinned.current ? offset(previous.key) : null;
-    if (previous && moved !== null && moved !== previous.offset) node.scrollTop += moved - previous.offset;
-    const top = firstKey === undefined ? null : offset(firstKey);
-    anchor.current = firstKey === undefined || top === null ? null : { key: firstKey, offset: top };
-  });
-
-  // Sending always brings the conversation back to the newest message.
-  const pendingCount = props.pending.length;
-  useLayoutEffect(() => {
-    const node = scroller.current;
-    if (!node || pendingCount === 0) return;
-    pinned.current = true;
-    node.scrollTop = node.scrollHeight;
-  }, [pendingCount]);
-
   return (
+    <div className={`relative flex min-h-0 flex-1 flex-col ${workbotHost().scrollToBottom === true ? "pb-11" : ""}`} data-workbot-conversation>
     <div
       ref={scroller}
-      className="workbot-scroll flex-1 overflow-y-auto [overflow-anchor:none]"
-      onScroll={(event) => {
-        const node = event.currentTarget;
-        pinned.current = node.scrollHeight - node.scrollTop - node.clientHeight < 80;
-      }}
+      className="workbot-scroll min-h-0 flex-1 overflow-y-auto [overflow-anchor:none]"
     >
       <div ref={content} className="flex min-h-full flex-col items-center justify-end px-4 pb-2 pt-6 sm:px-10">
         <div className={`${COLUMN} flex flex-col`}>
@@ -1106,7 +1073,7 @@ function Conversation(props: {
             <button
               type="button"
               onClick={() => {
-                pinned.current = false;
+                readEarlier();
                 props.onLoadEarlier();
               }}
               disabled={props.loadingEarlier}
@@ -1156,7 +1123,18 @@ function Conversation(props: {
         </div>
       </div>
     </div>
+    {workbotHost().scrollToBottom === true && <ScrollToBottom visible={far} onClick={latest} />}
+    </div>
   );
+}
+
+/** A quiet 32px circle with a 44px touch target; its containing block ends above the composer. */
+function ScrollToBottom({ visible, onClick }: { visible: boolean; onClick(): void }) {
+  return <button type="button" aria-label="Scroll to latest message" title="Scroll to latest message"
+    aria-hidden={!visible} tabIndex={visible ? 0 : -1} disabled={!visible} onClick={onClick}
+    className={`workbot-scroll-latest absolute bottom-0 left-1/2 z-10 grid size-11 -translate-x-1/2 place-items-center rounded-full focus-visible:outline-none focus-visible:shadow-[var(--wb-focus)] ${visible ? "is-visible" : ""}`}>
+    <span className="grid size-8 place-items-center rounded-full bg-[var(--wb-surface)] text-[var(--wb-text)] shadow-[0_0_0_1px_var(--wb-ring)]"><ArrowDown size={16} strokeWidth={1.5} aria-hidden /></span>
+  </button>;
 }
 
 /**

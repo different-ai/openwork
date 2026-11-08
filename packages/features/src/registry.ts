@@ -440,6 +440,17 @@ export const FEATURES = defineFeatures({
     deployments: everywhere,
     default: false,
   },
+  workbotScrollToBottom: {
+    label: "Workbot: scroll to latest messages",
+    description: "People reading earlier messages keep their place while Workbot replies, with a button to return to the latest messages.",
+    category: "workbot",
+    added: "2026-11-08",
+    since: "2026-11",
+    author: "benjaminshafii",
+    docs: "docs/features/workbot-scroll-to-bottom/README.md",
+    deployments: everywhere,
+    default: false,
+  },
   workbotBrowserRecovery: {
     label: "Workbot: browser recovery",
     description: "Retries a read once when a loading page changes, reconnects a lost browser connection, and tells Workbot when a consent dialog or human-verification check is in the way. Never repeats clicks, typing or submissions.",

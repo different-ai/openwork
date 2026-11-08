@@ -266,6 +266,7 @@ export function registerWorkbotRoutes(app: Hono<AppEnv>, input: { config: Config
       quickReply: who.enabled && who.quickReply,
       browserChat: who.enabled && who.browser && who.browserChat,
       instantOpen: who.enabled && who.instantOpen,
+      scrollToBottom: who.enabled && who.scrollToBottom,
       profileSheet: who.enabled && who.profileSheet,
       centeredProfile: who.enabled && who.centeredProfile,
       browserPreview: who.enabled && who.browserPreview,
