@@ -126,10 +126,10 @@ export default {
         addProviderSafeTool(editor, {
           name,
           description: name === "openwork_context"
-            ? "Read OpenWork app context and available affordances. Discover session.search/read, session.archive/pin/settle/rename/set_model for existing conversations, session.group commands for sidebar groups, session.create/send to start or message sessions, session.question.list/answer for pending questions, and automation.propose for scheduled work."
+            ? "Read OpenWork app context and available affordances. Discover session.search/read, session.archive/pin/rename/set_model for existing conversations, session.group commands for sidebar groups, session.create/send to start or message sessions, session.question.list/answer for pending questions, and automation.propose for scheduled work."
             : name === "openwork_query"
               ? "Read an OpenWork affordance without changing the app or navigating. Use the exact id and arguments from openwork_context; session.read includes live background-agent activity."
-              : "Run an OpenWork command listed in openwork_context: archive/unarchive, pin/unpin, settle/un-settle, rename or change an idle session's model without opening it or starting inference; change sidebar groups; create or message sessions; answer pending questions with the person's answers; or propose an Automation. A proposal does not create, activate, or run anything. Use the exact discovered id, arguments and safety requirements.",
+              : "Run an OpenWork command listed in openwork_context: archive/unarchive, pin/unpin, rename or change an idle session's model without opening it or starting inference; change sidebar groups; create or message sessions; answer pending questions with the person's answers; or propose an Automation. A proposal does not create, activate, or run anything. Use the exact discovered id, arguments and safety requirements.",
           input: name === "openwork_context" ? { type: "object", properties: {}, additionalProperties: false } : {
             type: "object", properties: { id: { type: "string" }, args: { type: "object", additionalProperties: true } },
             required: ["id"], additionalProperties: false,

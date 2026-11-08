@@ -34,7 +34,8 @@ test("a member on the Feed sees calm rows that never move and still knows which 
     menuSlot: await one(`${row(id)} [data-session-action-slot="menu"]`),
   });
   type Lanes = Awaited<ReturnType<typeof lanes>>;
-  const laneNames = ["row", "indicator", "title", "shortcut", "subtitle", "decision", "menuSlot"] satisfies (keyof Lanes)[];
+  // The decision word follows the workspace chip, which opens into the workspace name on hover and focus.
+  const laneNames = ["row", "indicator", "title", "shortcut", "subtitle", "menuSlot"] satisfies (keyof Lanes)[];
   const moved = (rest: Lanes, now: Lanes) => laneNames
     .filter((lane) => JSON.stringify(round(rest[lane])) !== JSON.stringify(round(now[lane])))
     .map((lane) => `${lane} ${describe(rest[lane])} → ${describe(now[lane])}`);
@@ -117,21 +118,45 @@ test("a member on the Feed sees calm rows that never move and still knows which 
     return measured;
   });
 
-  await step("on hover the More menu appears in its reserved slot and nothing in the row moves", async () => {
+  const chip = `${row(question.sessionId)} [data-session-feed-workspace] > span`;
+  const chipAtRest = await step("at rest the workspace shows only as a dot in its color", async () => {
+    await user.hover({ role: "tab", label: "Feed" });
+    const dot = await one(chip);
+    const ok = Math.round(dot.width) <= 8 && Math.round(dot.height) <= 8;
+    evidence.recordAssertionEvidence("workspace dot at rest", `workspace chip ${describe(dot)}`, ok);
+    expect(ok).toBe(true);
+    return dot;
+  });
+
+  await step("on hover the workspace dot opens to the right into its name, and Archive and More appear without moving the row", async () => {
     await user.hover({ testId: `sidebar-session-${question.sessionId}` });
+    const opened = await probe.eventually(() => one(chip), {
+      within: 2_000, label: "the workspace chip opens", until: (rect) => rect.width > chipAtRest.width + 16,
+    });
     const now = await lanes(question.sessionId);
     const menu = await one(`[data-testid="session-actions-${question.sessionId}"]`);
+    const archive = await one(`[data-testid="session-archive-${question.sessionId}"]`);
     const shifts = moved(rest, now);
     const inSlot = Math.abs(menu.left - now.menuSlot.left) <= 2 && Math.abs(menu.right - now.menuSlot.right) <= 2;
-    evidence.recordAssertionEvidence("hover keeps every lane", `moved: ${shifts.length ? shifts.join("; ") : "nothing"}; More menu ${describe(menu)} over its slot ${describe(now.menuSlot)}`, shifts.length === 0 && inSlot);
+    const archiveBeforeMenu = archive.right <= menu.left && Math.abs(archive.top - menu.top) <= 1;
+    const growsRight = Math.abs(opened.left - chipAtRest.left) <= 1 && opened.right > chipAtRest.right;
+    const ok = shifts.length === 0 && inSlot && archiveBeforeMenu && growsRight;
+    evidence.recordAssertionEvidence("hover opens the workspace name and shows Archive before More",
+      `moved: ${shifts.length ? shifts.join("; ") : "nothing"}; workspace chip ${describe(chipAtRest)} → ${describe(opened)}; Archive ${describe(archive)} before More ${describe(menu)} over its slot ${describe(now.menuSlot)}`, ok);
     expect(shifts).toEqual([]);
     expect(inSlot).toBe(true);
+    expect(archiveBeforeMenu).toBe(true);
+    expect(growsRight).toBe(true);
     await user.screenshot();
   });
 
-  await step("keyboard focus reaches the row's More menu without moving the row", async () => {
+  await step("keyboard focus reaches the row's Archive button, then its More menu, without moving the row", async () => {
     await user.click({ testId: `sidebar-session-${question.sessionId}` });
     await user.hover({ role: "tab", label: "Feed" });
+    await user.press("Tab");
+    await probe.eventually(() => probe.dom(`[data-testid="session-archive-${question.sessionId}"]`), {
+      within: 5_000, label: "the Archive button holds keyboard focus", until: (snapshot) => snapshot.elements[0]?.focused === true,
+    });
     await user.press("Tab");
     const menu = await probe.eventually(() => probe.dom(`[data-testid="session-actions-${question.sessionId}"]`), {
       within: 5_000, label: "the More menu holds keyboard focus", until: (snapshot) => snapshot.elements[0]?.focused === true,
@@ -166,37 +191,26 @@ test("a member on the Feed sees calm rows that never move and still knows which 
     await user.notSee({ text: /^⌘\d$|^Ctrl\+\d$/ }, { timeoutMs: 3_000 });
   });
 
-  await step("a task still waiting on a decision cannot be settled from its menu", async () => {
-    await user.hover({ testId: `sidebar-session-${question.sessionId}` });
-    await user.click({ testId: `session-actions-${question.sessionId}` });
-    await user.see({ role: "menuitem", label: /Settle session/ });
-    const disabled = (await probe.dom('[data-session-menu-settle][data-disabled]')).elements.length
-      + (await probe.dom('[data-session-menu-settle][aria-disabled="true"]')).elements.length;
-    evidence.recordAssertionEvidence("waiting task cannot settle", `disabled Settle items in the open menu: ${disabled}`, disabled >= 1);
-    expect(disabled).toBeGreaterThanOrEqual(1);
-    await user.screenshot();
-    await user.press("Escape");
-  });
-
-  await step("the More menu settles the finished task onto the Settled shelf, and un-settles it back", async () => {
+  await step("the row's Archive button files the finished task under Archived, and the same button there brings it back", async () => {
     await user.hover({ testId: `sidebar-session-${resting.sessionId}` });
-    await user.click({ testId: `session-actions-${resting.sessionId}` });
-    await user.click({ role: "menuitem", label: /^Settle session/ });
-    const shelved = await probe.eventually(() => probe.dom(`[data-feed-shelf="settled"]`), {
-      within: 10_000, label: "the Settled shelf appears", until: (snapshot) => snapshot.elements.length === 1,
+    await user.click({ testId: `session-archive-${resting.sessionId}` });
+    const shelved = await probe.eventually(() => probe.dom(`[data-feed-shelf="archived"]`), {
+      within: 15_000, label: "the Archived shelf appears", until: (snapshot) => snapshot.elements.length === 1,
     });
-    const leftToday = (await probe.dom(`[data-sidebar-feed-section="today"] ${row(resting.sessionId)}`)).elements.length === 0;
-    await user.click({ text: "Settled" });
+    const leftToday = await probe.eventually(() => probe.dom(`[data-sidebar-feed-section="today"] ${row(resting.sessionId)}`), {
+      within: 15_000, label: "the task leaves Today", until: (snapshot) => snapshot.elements.length === 0,
+    });
+    const noSettled = (await probe.dom(`[data-feed-shelf="settled"]`)).elements.length === 0;
+    await user.click({ text: "Archived" });
     await user.see({ testId: `sidebar-session-${resting.sessionId}` });
     await user.screenshot();
     await user.hover({ testId: `sidebar-session-${resting.sessionId}` });
-    await user.click({ testId: `session-actions-${resting.sessionId}` });
-    await user.click({ role: "menuitem", label: /Un-settle session/ });
+    await user.click({ testId: `session-archive-${resting.sessionId}` });
     const back = await probe.eventually(() => probe.dom(`[data-sidebar-feed-section="today"] ${row(resting.sessionId)}`), {
-      within: 10_000, label: "the task returns under Today", until: (snapshot) => snapshot.elements.length === 1,
+      within: 15_000, label: "the task returns under Today", until: (snapshot) => snapshot.elements.length === 1,
     });
-    const ok = shelved.elements.length === 1 && leftToday && back.elements.length === 1;
-    evidence.recordAssertionEvidence("Settle and Un-settle from the menu", `Settled shelf shown: ${shelved.elements.length === 1}; left Today: ${leftToday}; back under Today after Un-settle: ${back.elements.length === 1}`, ok);
+    const ok = shelved.elements.length === 1 && leftToday.elements.length === 0 && noSettled && back.elements.length === 1;
+    evidence.recordAssertionEvidence("Archive and Unarchive from the row", `Archived shelf shown: ${shelved.elements.length === 1}; left Today: ${leftToday.elements.length === 0}; no Settled shelf: ${noSettled}; back under Today after Unarchive: ${back.elements.length === 1}`, ok);
     expect(ok).toBe(true);
   });
 
