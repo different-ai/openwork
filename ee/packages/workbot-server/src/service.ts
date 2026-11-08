@@ -314,6 +314,8 @@ export function workbotInstructions(input: {
    * chat: the first reply is a brief human acknowledgment, with detailed progress left to the header and task sheet.
    */
   workingStatus?: boolean
+  /** Remote-session introspection uses the same receipt refs as the profile (`workbotRemoteTasks`). Unset: off. */
+  remoteTasks?: boolean
 }) {
   const person = input.firstName ?? "this person"
   return [
@@ -355,6 +357,11 @@ export function workbotInstructions(input: {
     ...(input.workingStatus ? [
       "- Give each background task a title the person will recognize in a few words (\"3D room planner\"), and start its brief with one plain sentence of what it will hand back.",
       "- When they ask how a task is going, answer from Background task state: what it is doing now, how far along it is, and what it has found so far, and offer to share a draft from its scratch files. Never answer with only \"still working\".",
+    ] : []),
+    ...(input.remoteTasks ? [
+      "- Remote sessions are real tasks, whether they run on a cloud computer, a desktop or another registered computer. Before answering a current-progress question about one, call the actual remote-session:status capability through execute_capability with its persisted commandId (desktop/registered) or sessionId (cloud) from the successful remote-session:create receipt in this conversation: the same explicit refs the profile follows. Batch the known refs when following several tasks. Never invent a ref or identify a task by a matching title. If the receipt is no longer in context, say you cannot verify that task instead of guessing.",
+      "- For remote work, the local Background task state or a local Watch job describes only the watcher, not the remote task. Never use a local watcher's progress, completion, failure or final message as evidence the remote task is running or done. Base the answer on the remote-session:status result: its state, computerLabel, latestStep and preview, in plain words. Starting means waiting for the computer; running means working; waiting means the person must review the question or permission in that remote session, not that you approved it. Idle means the remote turn finished; error means it could not finish. A stale, denied or unreadable status is unverified, not proof of progress or completion.",
+      "- When following remote work, use remote-session:status for progress and remote-session:read for the full answer or transcript. When it finishes, come back with a short follow-up report containing the actual result and the obvious next step; report failures or approval needs truthfully instead of promising a result. An accepted delegation is not a finished result. Do not start duplicate Watch jobs just to make the remote task appear in the profile, and never approve a remote permission or answer its question without the person's explicit choice.",
     ] : []),
     `- React to their message with one emoji (react) when a colleague would, ${input.quickReply ? "after your acknowledgment when the request needs work" : "before you reply"}: 👍 when you're on it or agree, ❤️ for thanks, 😮 or ‼️ when they tell you something surprising, 😂 when it's funny, 🎉 for good news. Not on every message. When a reaction is all a colleague would send back (\"thanks!\", \"ok\", \"sounds good\"), react with final: that is your whole reply.`,
     `- Memory: older messages drop out of what you can see, but files under memory/ are always shown to you. Keep them current without being asked: who ${person} is and how they like to work (memory/about.md), the people, projects and threads they care about (memory/people.md, memory/projects.md), and anything they ask you to remember. Write facts, not transcripts; update or remove what is no longer true. Never tell them you are updating memory unless they asked you to remember something.`,
@@ -439,7 +446,7 @@ async function ensureSession(actor: WorkbotActor, timeZone: string, deps: Workbo
   }
   const savedMain = await client.putSession(main, {
     title: `${name} · ${actor.firstName ?? "member"}`,
-    instructions: workbotInstructions({ name, organizationName: actor.organizationName, firstName: actor.firstName, timeZone, canSchedule, workspaceAssistant, guidedNavigation, browser: desktopViews.includes("browser"), computer: WORKBOT_COMPUTER, driveFiles, workingStatus, quickReply }),
+    instructions: workbotInstructions({ name, organizationName: actor.organizationName, firstName: actor.firstName, timeZone, canSchedule, workspaceAssistant, guidedNavigation, browser: desktopViews.includes("browser"), computer: WORKBOT_COMPUTER, driveFiles, workingStatus, quickReply, remoteTasks: deps.remoteTasks === true }),
     ...common,
     ref: MAIN_CHAT_REF,
     // A chat in its own cell keeps memory with the owner, and is never kept without these settings.
@@ -451,7 +458,7 @@ async function ensureSession(actor: WorkbotActor, timeZone: string, deps: Workbo
   // found again through its owner and ref, so it is never kept without them (the main chat's id is derived).
   const sessionId = await sessionOf(actor, chat, deps, { create: true })
   const saved = await client.putSession(sessionId, {
-    instructions: workbotInstructions({ name, organizationName: actor.organizationName, firstName: actor.firstName, timeZone, canSchedule, workspaceAssistant, guidedNavigation, browser: desktopViews.includes("browser"), computer: WORKBOT_COMPUTER, driveFiles, workingStatus, quickReply, side: true }),
+    instructions: workbotInstructions({ name, organizationName: actor.organizationName, firstName: actor.firstName, timeZone, canSchedule, workspaceAssistant, guidedNavigation, browser: desktopViews.includes("browser"), computer: WORKBOT_COMPUTER, driveFiles, workingStatus, quickReply, remoteTasks: deps.remoteTasks === true, side: true }),
     ...common,
     ref: chat,
     autoTitle: true,

@@ -2,7 +2,7 @@ import assert from "node:assert/strict"
 import { test } from "node:test"
 import { createServer } from "node:http"
 import { createHeadlessRunnerClient, type RunnerMessage, type RunnerSnapshot } from "@openwork-ee/headless-protocol"
-import { buildWorkbotRemoteJobs, applyWorkbotRemoteStatuses, readWorkbotRemoteJobs, readWorkbotRemoteJob, stopWorkbotRemoteJob, remoteJobDetail, WorkbotRemoteJobError, resetWorkbotSessionCells, workbotOwner, workbotSessionId, type WorkbotActor } from "@openwork-ee/workbot-server"
+import { buildWorkbotRemoteJobs, applyWorkbotRemoteStatuses, readWorkbotRemoteJobs, readWorkbotRemoteJob, stopWorkbotRemoteJob, remoteJobDetail, WorkbotRemoteJobError, workbotInstructions, sendWorkbotMessage, resetWorkbotSessionCells, workbotOwner, workbotSessionId, type WorkbotActor } from "@openwork-ee/workbot-server"
 import type { RemoteSessionThreadStatus } from "@openwork/types/automations"
 import { createDen, denSessionSchema } from "../src/server/den.js"
 import { Hono } from "hono"
@@ -208,4 +208,44 @@ test("transcript projection is plain, bounded, and disables stop without a lates
   assert.ok(detail.messages.every(message => message.text.length === 4000))
   assert.equal(JSON.stringify(detail).includes("secret_tool"), false)
   assert.equal(remoteJobDetail({ messages: [{ id: "answer", role: "assistant", text: "done" }] }, job).canStop, false)
+})
+
+test("remote introspection instructions are static, default off and distinguish real work from its watcher", () => {
+  const base = { name: "Workbot", organizationName: "Example", firstName: null, timeZone: "UTC", canSchedule: false, workingStatus: true, quickReply: true }
+  const off = workbotInstructions(base)
+  assert.equal(workbotInstructions({ ...base, remoteTasks: false }), off, "flag off preserves the existing prompt byte-for-byte")
+  assert.equal(off.includes("Remote sessions are real tasks"), false)
+  const on = workbotInstructions({ ...base, remoteTasks: true })
+  assert.equal(on, workbotInstructions({ ...base, remoteTasks: true }), "no changing refs, live lookups or dates enter the cached instructions")
+  assert.equal(on.split("\n").filter(line => !line.startsWith("- Remote sessions are real tasks") && !line.startsWith("- For remote work,") && !line.startsWith("- When following remote work,")).join("\n"), off)
+  for (const rule of ["Before answering a current-progress question", "remote-session:status", "persisted commandId", "sessionId (cloud)", "same explicit refs the profile follows", "Never use a local watcher's progress, completion", "computerLabel, latestStep and preview", "waiting means the person must review", "remote-session:read", "short follow-up report", "never approve a remote permission"]) assert.ok(on.includes(rule), rule)
+})
+
+test("remote introspection reaches main and side-chat instructions without a synchronous remote lookup on send", async () => {
+  for (const remoteTasks of [undefined, false, true]) {
+    resetWorkbotSessionCells()
+    const instructions: string[] = []
+    let sent = 0
+    const client = createHeadlessRunnerClient({ config: { url: "http://runner", token: "t".repeat(32) }, mintToken: async () => ({ token: "member_token" }), maxTokenTtlMs: 60_000, fetch: async (input, init) => {
+      const url = new URL(String(input))
+      if (init?.method === "PUT") {
+        const body: unknown = JSON.parse(String(init.body))
+        assert.ok(typeof body === "object" && body !== null && "instructions" in body && typeof body.instructions === "string")
+        instructions.push(body.instructions)
+        return Response.json({ id: decodeURIComponent(url.pathname.split("/").at(-1) ?? "") })
+      }
+      if (init?.method === "POST" && url.pathname.endsWith("/turns")) { sent++; return Response.json({ state: "accepted" }, { status: 202 }) }
+      return Response.json({ error: "unknown_session" }, { status: 404 })
+    } })
+    const deps = { client, canSchedule: async () => false, remoteTasks,
+      remoteStatus: async () => { assert.fail("send must not block on remote status") },
+      remoteRead: async () => { assert.fail("send must not read a remote transcript") },
+    }
+    await sendWorkbotMessage(actor, { id: "message_one", text: "How is my remote task going?" }, deps)
+    await sendWorkbotMessage(actor, { id: "message_two", text: "And that remote task?", chat: "sidechat000000001" }, deps)
+    assert.equal(sent, 2)
+    assert.equal(instructions.length, 3, "main chat is refreshed for both sends, then the side chat")
+    for (const prompt of instructions) assert.equal(prompt.includes("Remote sessions are real tasks"), remoteTasks === true)
+    assert.ok(instructions.at(-1)?.includes("This is a side chat"))
+  }
 })
