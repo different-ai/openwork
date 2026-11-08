@@ -5,6 +5,14 @@ It enables remote-task introspection and guarded Stop controls, plus header inte
 status/profile flags still choose which surface shows them. No live flags are
 changed by this implementation.
 
+## Mobile verification
+
+Real WorkbotScreen at 390 × 844, deterministic in-memory remote job fixtures (not execution on a registered computer). External evidence, retained for 72 hours:
+
+![Remote session disclosure and guarded Stop](https://litter.catbox.moe/bcd23g.png)
+
+The list shows current reported state, computer, elapsed time and latest step. Disclosure reads bounded recent messages and the latest reported step, with a finished checkmark when verified idle. Full historical remote step logs are not available from the status API and are not invented. Pure watcher jobs merge only by exact persisted receipt references.
+
 ## Data and authorization
 
 `GET /v1/workbot/remote-jobs?chat=<optional side chat id>` reads only the signed-in

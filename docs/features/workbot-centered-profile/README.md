@@ -6,6 +6,12 @@ Requires `workbotWorkingStatus` and `workbotProfileSheet`. With these on, Workbo
 
 On phones the header keeps navigation/search on the left and Files/account on the right; Files becomes an accessible icon so the avatar stays truly centred. Side-chat titles remain visible beneath it. Tabs support arrow keys, Home/End, focus and panel relationships.
 
+## Mobile verification
+
+Real WorkbotScreen, 390 × 844, in-memory conversation (not a production session). External PR evidence, retained for 72 hours:
+
+![Five-tab profile on a phone](https://litter.catbox.moe/0uup7m.png)
+
 ## Try it
 
 Enable the three flags for a test organization in `/admin` → organization → Features (or use the existing `den_set_org_capability` admin capability). Reload Workbot. For local UI verification run the existing chat-screen fixture with `?scenario=browsing&working=1&profile=1&centered=1&browser=1`. Evidence screenshots and the browser verification report are linked from the PR, not committed to the repository. The fixture renders the real screen; it does not prove a production browser is working.
