@@ -26,14 +26,14 @@ import {
   type WorkbotAttachment,
   type WorkbotPart,
   type WorkbotStep,
-  type WorkbotPage,
   type WorkbotTask,
   type WorkbotThread,
   type WorkbotTurn,
 } from "./data";
 import { AppMark, AttachButton, FileBadge, FilesButton, FilesPanel, ImageThumb, isImage, kindLabel, SentAttachments, UploadTray, useFileDrop, type Upload } from "./files";
 import { createComposerState, type ComposerState, type Pending } from "./composer-state";
-import { computerWork, finishedSummary, keepsCard, type ComputerSurface } from "./computer-work";
+import { browserTask, computerWork, finishedSummary, keepsCard, type ComputerSurface } from "./computer-work";
+import { BrowserExperience, useBrowserPreview } from "./browser-preview";
 import { AccountAvatar } from "./account-menu";
 import { documentLinks, WorkbotMarkdown } from "./markdown";
 import { OpenFileContext } from "./open-file";
@@ -43,9 +43,9 @@ import { ModelRecovery, AccessRecovery } from "./model-recovery";
 import { hasAnsweredTurn, WorkbotSetupChip } from "./activation";
 import { WorkbotCalendar } from "./calendar";
 import { usePrefetchWorkbotDocuments, WorkbotDocuments } from "./documents";
-import { LastGlimpse, LiveGlimpse, openBrowserPage, WorkbotComputer } from "./computer";
+import { LastGlimpse, LiveGlimpse, WorkbotComputer } from "./computer";
 import { readBrowserSkillRunPrompt, type BrowserTeachingContext } from "@openwork/types/browser-demonstration";
-import { readWorkbotCorrectionPrompt, workbotCorrectionPrompt, workbotViewContextSchema, type WorkbotViewContext } from "@openwork/types/workbot-context";
+import { readWorkbotCorrectionPrompt, workbotCorrectionPrompt, workbotContextLabel, workbotViewContextSchema, type WorkbotViewContext } from "@openwork/types/workbot-context";
 import type { DocumentOpenOutcome, DocumentOpenRequest } from "@openwork/documents";
 import { ComputerNavigationContext, ComputerOffer, DockedChat, DocumentNavigationContext, DocumentNavigationStatus, DocumentOffers, type DocumentNavigationState, OpenDocumentContext, SentContext, useWideScreen, WorkspaceAssistant, WorkspaceMenu, WorkspaceNavigationContext } from "./workspace";
 import { useQueryClient } from "@tanstack/react-query";
@@ -139,7 +139,9 @@ export function WorkbotScreen({ host }: { host: WorkbotHost }) {
     <div ref={viewport} className="workbot-viewport">
     <WorkbotChatProvider value={chat}>
       {/* Screen lifecycles never own a person's unsent work or their place in this app session. */}
-      <ChatScreen key={`${host.identity?.organizationId ?? ""}:${host.identity?.principalId ?? ""}:${chat ?? "main"}`} host={host} composerState={composer} position={position} navigation={navigation} onDraftsChange={setWorkspaceDrafts} />
+      <BrowserExperience key={`${host.identity?.organizationId ?? ""}:${host.identity?.principalId ?? ""}:${chat ?? "main"}`}>
+        <ChatScreen host={host} composerState={composer} position={position} navigation={navigation} onDraftsChange={setWorkspaceDrafts} />
+      </BrowserExperience>
       {sideChats ? (
         <ChatsDrawer
           open={chatsOpen}
@@ -191,6 +193,9 @@ function ChatScreen({ host, composerState, position, navigation, onDraftsChange 
     if (!workspaceShell && documentsDirty && next !== "documents") { setLeavingDocuments(next); return false; }
     return true;
   }, workspaceShell);
+  const browserPreview = useBrowserPreview();
+  // A card tapped from the route's docked chat opens the same viewer surface, not a second browser alongside it.
+  useEffect(() => { if (browserPreview?.visible && tab === "computer") setTab("home"); }, [browserPreview?.visible, tab, setTab]);
   const [computerVisited, setComputerVisited] = useState(tab === "computer");
   // Which view the Computer page shows (Browser or Computer); the chat beside it leaves that live screen out.
   const [computerView, setComputerView] = useState<"browser" | "computer" | null>(null);
@@ -198,7 +203,7 @@ function ChatScreen({ host, composerState, position, navigation, onDraftsChange 
   const [documentsVisited, setDocumentsVisited] = useState(tab === "documents");
   const [calendarVisited, setCalendarVisited] = useState(tab === "calendar");
   useEffect(() => { if (tab === "documents") setDocumentsVisited(true); if (tab === "calendar") setCalendarVisited(true); }, [tab]);
-  const currentContext = tab === "documents" ? documentContext : tab === "calendar" ? calendarContext : tab === "computer" ? browserContext : null;
+  const currentContext = browserPreview?.visible ? browserPreview.context : tab === "documents" ? documentContext : tab === "calendar" ? calendarContext : tab === "computer" ? browserContext : null;
   // The views a message may name, as Den allows them: the browser tab with browser use, documents and the calendar with
   // the workspace assistant.
   const shares = (context: WorkbotViewContext | undefined): context is WorkbotViewContext => context !== undefined
@@ -316,7 +321,7 @@ function ChatScreen({ host, composerState, position, navigation, onDraftsChange 
   const remote = useWorkbotRemoteJobs(data !== null);
   const watcherIds = remoteWatcherTaskIds(remote.data?.jobs ?? []);
   const activity = useMemo(() => {
-    if (!host.workingStatus && !host.profileSheet && !host.remoteTasks) return null;
+    if (!host.browser && !host.workingStatus && !host.profileSheet && !host.remoteTasks) return null;
     const jobs = remote.data?.jobs ?? [];
     const watchers = remoteWatcherTaskIds(jobs);
     const turns = (data?.turns ?? []).map((turn) => ({ ...turn, tasks: turn.tasks.filter((task) => !watchers.has(task.id)) }));
@@ -326,7 +331,7 @@ function ChatScreen({ host, composerState, position, navigation, onDraftsChange 
     // A foreground answer wins; otherwise name the newest genuinely active job, local or remote.
     if (!local.main && away && (!localTask || (away.since ?? 0) >= (localTask.startedAt ?? 0))) return { ...local, working: true, label: away.label, icon: "computer" as const, since: away.since, watch: null };
     return local;
-  }, [host.workingStatus, host.profileSheet, host.remoteTasks, data, stream.live, activityNow, remote.data]);
+  }, [host.browser, host.workingStatus, host.profileSheet, host.remoteTasks, data, stream.live, activityNow, remote.data]);
   const addFiles = uploads.add;
   const paletteChats = useWorkbotChats(navigation !== null);
   const paletteTasks = useMemo(() => (data?.turns ?? []).flatMap((turn) => turn.tasks), [data?.turns]);
@@ -392,7 +397,7 @@ function ChatScreen({ host, composerState, position, navigation, onDraftsChange 
     const trimmed = text.trim();
     if (!trimmed && (plain || draft.uploads.length === 0)) return;
     // A teaching note or skill run carries its own browser snapshot.
-    const parsed = workbotViewContextSchema.safeParse(includeContext && !plain && !runSkill && !teaching ? currentContext : undefined);
+    const parsed = workbotViewContextSchema.safeParse((browserPreview?.visible ? browserPreview.includeContext : includeContext) && !plain && !runSkill && !teaching ? currentContext : undefined);
     const context = parsed.success && shares(parsed.data) ? parsed.data : undefined;
     const id = composerState.enqueue({ id: newMessageId(), text: trimmed, context, keepDraft: plain, ...(!runSkill && !plain && teaching ? { teachingId: teaching.id, teachingStepId: teaching.stepId } : {}) });
     const delivery = sendPending(id);
@@ -471,7 +476,7 @@ function ChatScreen({ host, composerState, position, navigation, onDraftsChange 
             {host.calendar && (calendarVisited || tab === "calendar") && <WorkbotCalendar connectionsHref={host.connectionsHref ?? null} assistantName={name} onContextChange={setCalendarContext} />}
           </div>
           <div className="flex min-h-0 min-w-0 flex-1" style={{ display: tab === "computer" ? undefined : "none" }} hidden={tab !== "computer"}>
-            {computerVisited && computerViews(host).length > 0 && <WorkbotComputer key={`${host.identity?.organizationId}:${host.identity?.principalId}`} onTeachingChange={setTeaching} onRun={text => submit(text, undefined, true)} canTeach={!side} onViewChange={setComputerView} onContextChange={setBrowserContext} />}
+            {computerVisited && tab === "computer" && !browserPreview?.visible && computerViews(host).length > 0 && <WorkbotComputer key={`${host.identity?.organizationId}:${host.identity?.principalId}`} onTeachingChange={setTeaching} onRun={text => submit(text, undefined, true)} canTeach={!side} onViewChange={setComputerView} onContextChange={setBrowserContext} />}
             {docked && <DockedChat name={name} context={currentContext} includeContext={includeContext} onIncludeContext={setIncludeContext} composer={composer} conversation={conversation} unavailable={!data && !loading} />}
           </div>
           </div>
@@ -838,7 +843,7 @@ function WorkbotHeader(props: {
   const { name, organizationName, userName, files } = props;
   const apps = useConnectedApps();
   const names = apps.map((app) => app.name);
-  if (workbotHost().centeredProfile && workbotHost().profileSheet && props.activity) return (
+  if ((workbotHost().browser || workbotHost().centeredProfile && workbotHost().profileSheet) && props.activity) return (
     <header className="grid min-h-[84px] shrink-0 grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-start gap-2 px-3 pb-2 pt-2 sm:px-5" data-workbot-profile-header>
       <div className="flex min-w-0 items-center gap-1 pt-2">
         {props.chats}{props.search}
@@ -1629,42 +1634,65 @@ function openSurface(surface: Exclude<ComputerSurface, "background">) {
   window.dispatchEvent(new PopStateEvent("popstate"));
 }
 
+/** The same browser task object from its first step through its stored, finished reply (P11). */
+function BrowserTaskCard({ turn, steps, working }: { turn: WorkbotTurn; steps: WorkbotStep[]; working: boolean }) {
+  const preview = useBrowserPreview();
+  const task = { id: turn.id, ...browserTask(steps, { working, title: turn.text.trim() || "Browser task", status: turn.status }) };
+  const { status, title, reason } = task;
+  const update = preview?.update;
+  useEffect(() => { update?.(task); }, [update, task.id, task.title, task.status, task.reason]);
+  const watchable = workbotHost().browser === true;
+  return <section className="w-full max-w-[480px] rounded-[20px] bg-[var(--wb-bubble)] p-3" aria-label="Browser activity" data-workbot-browser-card={status}>
+    <div className="flex min-w-0 items-center gap-2.5 px-1 pb-1">
+      <span aria-hidden className={`relative grid size-10 shrink-0 place-items-center rounded-[10px] ${status === "completed" ? "bg-[var(--wb-browser-success-bg)] text-[var(--wb-browser-success)]" : status === "failed" ? "bg-[var(--wb-surface)] text-[var(--wb-danger)]" : "bg-[var(--wb-browser-working-bg)] text-[var(--wb-browser-working)]"}`}>
+        <Globe size={22} strokeWidth={1.7} />
+        {status === "completed" ? <Check size={12} strokeWidth={2.5} className="absolute bottom-1 right-1 rounded-full bg-[var(--wb-browser-success-bg)]" /> : null}
+      </span>
+      <div className="min-w-0 flex-1">
+        <h3 className="text-[14px] font-semibold leading-5 text-[var(--wb-text)]">Browser</h3>
+        <p className="truncate text-[13px] leading-5 text-[var(--wb-text)]" role="status">{status === "working" ? "Working" : status === "failed" ? "Failed" : "Completed"} · {title}</p>
+      </div>
+    </div>
+    {reason ? <p className="px-1 pt-1 text-[13px] text-[var(--wb-danger)]">{reason}</p> : null}
+    {watchable ? working ? <LiveGlimpse view="browser" taskId={turn.id} previewOnly /> : <LastGlimpse view="browser" taskId={turn.id} large /> : null}
+    <button type="button" onClick={() => preview?.open(task)} disabled={!watchable || !preview} className="mt-3 flex h-10 w-full items-center justify-center rounded-full bg-[var(--wb-surface)] text-[13px] font-medium text-[var(--wb-text)] hover:bg-[var(--wb-chip)] disabled:opacity-50 focus-visible:outline-none focus-visible:shadow-[var(--wb-focus)]">Open preview</button>
+    {!watchable ? <p className="px-1 pt-2 text-[12px] text-[var(--wb-muted)]">Browser access is off for your organization.</p> : null}
+  </section>;
+}
+
 /**
  * Work in Workbot's browser or on the rest of its computer, as one card: what it is doing now in its own words, and a
  * live view of its screen only while Workbot is showing it to the person (when the computer is on for them) and that
  * view isn't already open beside the chat. Other work, on the screen or in the background, is its progress notes
  * alone. The browser card links the pages it opened. `starting` is what a step not yet stored says it is doing.
  */
-function SurfaceCard({ surface, steps, live, showing, others, switchTo = null, starting: startingUpdate = null }: { surface: ComputerSurface; steps: WorkbotStep[]; live: boolean; showing: boolean; others: UsedApp[]; switchTo?: SwitchTo | null; starting?: string | null }) {
+function SurfaceCard({ surface, steps, live, showing, others, switchTo = null, starting: startingUpdate = null }: { surface: Exclude<ComputerSurface, "browser">; steps: WorkbotStep[]; live: boolean; showing: boolean; others: UsedApp[]; switchTo?: SwitchTo | null; starting?: string | null }) {
   // The switch just tapped, until Workbot takes it up and the card offers the other one.
   const [asked, setAsked] = useState<string | null>(null);
   const updates = steps.flatMap((step) => step.updates);
   const latest = (live ? startingUpdate : null) ?? updates.at(-1) ?? null;
   const onScreen = useContext(ComputerOnScreenContext) === surface;
   const update = useHeld(latest, latest ?? "", UPDATE_HOLD_MS);
-  const pages = steps.flatMap((step) => step.pages ?? []).filter((page, index, all) => all.findIndex((entry) => entry.id === page.id) === index);
   const views = computerViews(workbotHost());
   // Each view is its own rollout: a card shows a screen only for a view this person has. Work in the background has
   // no screen of its own, so asking to see it needs at least one.
   const watchable = surface === "background" ? views.length > 0 : views.includes(surface);
-  const title = surface === "browser" ? `${live ? "Using" : "Used"} the browser`
-    : surface === "background" ? `${live ? "Working" : "Worked"} on my computer`
-    : `${live ? "Using" : "Used"} my computer`;
-  const starting = surface === "browser" ? "Opening the browser" : surface === "background" ? "Running in the background" : "Starting up";
+  const title = surface === "background" ? `${live ? "Working" : "Worked"} on my computer` : `${live ? "Using" : "Used"} my computer`;
+  const starting = surface === "background" ? "Running in the background" : "Starting up";
   // Finished work on a screen, with the inline preview or the working status: a compact record that stays in the
   // conversation, never a live view. One tap opens the full view.
   if (!live && surface !== "background" && (workbotHost().browserPreview || workbotHost().workingStatus)) return <FinishedSurfaceCard surface={surface} steps={steps} watchable={watchable} />;
   // A thumbnail is a glance, never a takeover: one button opens the full view only on the person's tap.
-  if (workbotHost().browserPreview && live && watchable && surface !== "background") return <section className="workbot-row-enter w-full max-w-[480px] rounded-[20px] bg-[var(--wb-chip)] p-3" aria-label={`${surface === "browser" ? "Browser" : "Computer"} activity`} data-workbot-browser-card>
+  if (workbotHost().browserPreview && live && watchable && surface !== "background") return <section className="workbot-row-enter w-full max-w-[480px] rounded-[20px] bg-[var(--wb-chip)] p-3" aria-label="Computer activity" data-workbot-computer-card>
     <div className="flex min-w-0 items-center gap-2.5 px-1 pb-1">
-      <span aria-hidden className="grid size-9 shrink-0 place-items-center rounded-[10px] bg-[var(--wb-surface)] text-[var(--wb-text)]">{surface === "browser" ? <Globe size={20} strokeWidth={1.7} /> : <Monitor size={20} strokeWidth={1.7} />}</span>
+      <span aria-hidden className="grid size-9 shrink-0 place-items-center rounded-[10px] bg-[var(--wb-surface)] text-[var(--wb-text)]"><Monitor size={20} strokeWidth={1.7} /></span>
       <div className="min-w-0">
-        <h3 className="text-[14px] font-semibold leading-5 text-[var(--wb-text)]">{surface === "browser" ? "Browser" : "Computer"}</h3>
+        <h3 className="text-[14px] font-semibold leading-5 text-[var(--wb-text)]">Computer</h3>
         <p className="truncate text-[12px] leading-4 text-[var(--wb-muted)]" role="status">{update ?? starting}</p>
       </div>
     </div>
     {!onScreen ? <LiveGlimpse view={surface} previewOnly /> : null}
-    <button type="button" onClick={() => openSurface(surface)} className="mt-3 flex h-10 w-full items-center justify-center rounded-full bg-[var(--wb-surface)] text-[13px] font-medium text-[var(--wb-text)] hover:bg-[var(--wb-bubble)] focus-visible:outline-none focus-visible:shadow-[var(--wb-focus)]">Open {surface === "browser" ? "browser" : "computer"}</button>
+    <button type="button" onClick={() => openSurface(surface)} className="mt-3 flex h-10 w-full items-center justify-center rounded-full bg-[var(--wb-surface)] text-[13px] font-medium text-[var(--wb-text)] hover:bg-[var(--wb-bubble)] focus-visible:outline-none focus-visible:shadow-[var(--wb-focus)]">Open computer</button>
   </section>;
   return (
     <WorkCard
@@ -1691,7 +1719,6 @@ function SurfaceCard({ surface, steps, live, showing, others, switchTo = null, s
               </button>
             </div>
           ) : null}
-          {views.includes("browser") && pages.length > 0 ? <BrowserPageLinks pages={pages} /> : null}
         </>
       }
     />
@@ -1704,11 +1731,11 @@ function SurfaceCard({ surface, steps, live, showing, others, switchTo = null, s
  * card opens the full view on tap when the person has that view; otherwise it is a static record. It never opens
  * anything by itself.
  */
-function FinishedSurfaceCard({ surface, steps, watchable }: { surface: Exclude<ComputerSurface, "background">; steps: WorkbotStep[]; watchable: boolean }) {
-  const name = surface === "browser" ? "Browser" : "Computer";
+function FinishedSurfaceCard({ surface, steps, watchable }: { surface: "computer"; steps: WorkbotStep[]; watchable: boolean }) {
+  const name = "Computer";
   const summary = finishedSummary(surface, steps);
   const body = <>
-    <span aria-hidden className="grid size-9 shrink-0 place-items-center rounded-[10px] bg-[var(--wb-surface)] text-[var(--wb-text)]">{surface === "browser" ? <Globe size={20} strokeWidth={1.7} /> : <Monitor size={20} strokeWidth={1.7} />}</span>
+    <span aria-hidden className="grid size-9 shrink-0 place-items-center rounded-[10px] bg-[var(--wb-surface)] text-[var(--wb-text)]"><Monitor size={20} strokeWidth={1.7} /></span>
     <span className="min-w-0 flex-1">
       <span className="block text-[14px] font-semibold leading-5 text-[var(--wb-text)]">{name}</span>
       <span className="block truncate text-[12px] leading-4 text-[var(--wb-muted)]">{summary}</span>
@@ -1717,29 +1744,8 @@ function FinishedSurfaceCard({ surface, steps, watchable }: { surface: Exclude<C
   </>;
   const className = "flex w-full max-w-[480px] min-w-0 items-center gap-2.5 rounded-[20px] bg-[var(--wb-chip)] p-3 text-left";
   return watchable
-    ? <button type="button" onClick={() => openSurface(surface)} aria-label={`${name}: ${summary}. Open ${surface === "browser" ? "the browser" : "the computer"}`} className={`${className} hover:bg-[var(--wb-bubble)] focus-visible:outline-none focus-visible:shadow-[var(--wb-focus)]`} data-workbot-browser-card="done">{body}</button>
-    : <section aria-label={`${name}: ${summary}`} className={className} data-workbot-browser-card="done">{body}</section>;
-}
-
-/** The pages Workbot opened, each opening in its Browser view (/browser/<id>). */
-function BrowserPageLinks({ pages }: { pages: WorkbotPage[] }) {
-  return (
-    <ul aria-label="Pages Workbot opened" className="flex flex-wrap gap-1 px-2.5 pb-2.5 pt-2">
-      {pages.map((page) => (
-        <li key={page.id} className="min-w-0">
-          <a
-            href={`/browser/${page.id}${window.location.search}`}
-            title={page.url}
-            onClick={(event) => { if (event.metaKey || event.ctrlKey || event.shiftKey || event.button !== 0) return; event.preventDefault(); openBrowserPage(page.id); }}
-            className="inline-flex h-7 max-w-[15rem] items-center gap-1.5 rounded-full bg-[var(--wb-chip)] px-2.5 text-[12px] text-[var(--wb-text)] hover:bg-[var(--wb-bubble)] focus-visible:outline-none focus-visible:shadow-[var(--wb-focus)]"
-          >
-            <Globe size={12} aria-hidden className="shrink-0 text-[var(--wb-muted)]" />
-            <span className="truncate">{page.title}</span>
-          </a>
-        </li>
-      ))}
-    </ul>
-  );
+    ? <button type="button" onClick={() => openSurface(surface)} aria-label={`${name}: ${summary}. Open the computer`} className={`${className} hover:bg-[var(--wb-bubble)] focus-visible:outline-none focus-visible:shadow-[var(--wb-focus)]`} data-workbot-computer-card="done">{body}</button>
+    : <section aria-label={`${name}: ${summary}`} className={className} data-workbot-computer-card="done">{body}</section>;
 }
 
 /** The other apps a computer card's work used, as logos in its trailing slot. */
@@ -1822,9 +1828,9 @@ function TurnView(props: {
 }) {
   const { turn, pending = null } = props;
   const { working, liveText, starting, lastIsLive } = replyProgress(turn, props.live);
-  // workingStatus: the chat keeps only what Workbot says. Its work shows under its name and in the task sheet; its
-  // screen shows here only while Workbot puts it in front of the person.
-  const quiet = workbotHost().workingStatus === true;
+  // Browser tasks use one persistent card, never the parallel computer/background cards.
+  const browserWork = starting?.surface === "browser" || turn.parts.some(part => part.kind === "steps" && part.steps.some(step => step.surface === "browser"));
+  const quiet = browserWork || workbotHost().workingStatus === true;
   const visibleTasks = turn.tasks.filter((task) => !props.watcherIds.has(task.id) && (!quiet || task.status === "failed" || task.status === "stopped"));
   // A message still sending waits on its files first, in the place the dots take next.
   const uploading = pending !== null && !pending.failed && pending.uploads.some((upload) => upload.status === "uploading");
@@ -1854,18 +1860,19 @@ function TurnView(props: {
     const update = isLive && surface === work.starts ? (starting?.update ?? null) : null;
     return { kind: "card", key: `card-${surface}`, surface, steps: work.cards.get(surface)?.steps ?? [], live: isLive, showing, others, switchTo, update };
   };
-  const items: TurnItem[] = [];
+  // Browser is the task object for this reply: its acknowledgment and answer stay below the same card.
+  const items: TurnItem[] = work.cards.has("browser") ? [card("browser")] : [];
   parts.forEach((part, index) => {
     if (part.kind === "text") {
       items.push({ kind: "text", key: `text-${part.step ?? `part-${index}`}`, text: part.text });
       return;
     }
-    const here = work.placed.get(index) ?? [];
+    const here = (work.placed.get(index) ?? []).filter(surface => surface !== "browser");
     const apps = part.steps.filter((step) => step.icon === "app");
     // Apps used beside computer work show as logos on its card; on their own, as a quiet line.
     here.forEach((surface, at) => {
       const item = card(surface, at === here.length - 1 ? usedApps(apps, null) : []);
-      if (keepsCard(item, { quiet, preview: workbotHost().browserPreview === true })) items.push(item);
+      if (!browserWork && keepsCard(item, { quiet, preview: workbotHost().browserPreview === true })) items.push(item);
     });
     if (!quiet && apps.length > 0 && here.length === 0) items.push({ kind: "steps", key: `steps-${index}`, steps: apps, live: working && index === parts.length - 1 && lastIsLive });
   });
@@ -1878,12 +1885,12 @@ function TurnView(props: {
   if (live && liveText) items.push({ kind: "text", key: `text-${live.step}`, text: liveText });
   for (const surface of work.trailing) {
     const item = card(surface);
-    if (keepsCard(item, { quiet, preview: workbotHost().browserPreview === true })) items.push(item);
+    if (!browserWork && keepsCard(item, { quiet, preview: workbotHost().browserPreview === true })) items.push(item);
   }
   // Only once the server's conversation has accepted it: acknowledge without waiting for the model's first token.
   // Real words replace this acceptance line; it never claims the browser opened or a background job started.
-  const acknowledgement = workbotHost().quickReply && !pending && !items.some((item) => item.kind === "text" && item.text.trim()) ? firstReply(turn) : null;
-  if (acknowledgement) items.unshift({ kind: "text", key: "accepted", text: acknowledgement });
+  const acknowledgement = (browserWork || workbotHost().quickReply) && !pending && !items.some((item) => item.kind === "text" && item.text.trim()) ? firstReply(turn) : null;
+  if (acknowledgement) items.splice(browserWork ? 1 : 0, 0, { kind: "text", key: "accepted", text: acknowledgement });
   // The place Workbot's next words will take, one message line tall: the typing dots, or the app step running right now
   // ("Using Gmail"), then the words themselves, each replacing the last without moving the conversation. Once it has
   // shown, it keeps its place until the words arrive.
@@ -1933,7 +1940,7 @@ function TurnView(props: {
             </AssistantBubble>
           ) : item.kind === "card" ? (
             <div key={item.key} className="py-1 pl-1">
-              <SurfaceCard surface={item.surface} steps={item.steps} live={item.live} showing={item.showing} others={item.others} switchTo={item.switchTo} starting={item.update} />
+              {item.surface === "browser" ? <BrowserTaskCard turn={turn} steps={item.steps} working={working} /> : <SurfaceCard surface={item.surface} steps={item.steps} live={item.live} showing={item.showing} others={item.others} switchTo={item.switchTo} starting={item.update} />}
             </div>
           ) : (
             <StepsSegment key={item.key} steps={item.steps} live={item.live} />
@@ -1943,7 +1950,7 @@ function TurnView(props: {
       </div>
       <DocumentOffers links={offers} />
       <DocumentNavigationStatus receipts={turn.navigation} />
-      {usedComputer && !workbotHost().browserPreview ? <ComputerOffer /> : null}
+      {usedComputer && !browserWork && !workbotHost().browserPreview ? <ComputerOffer /> : null}
       {turn.outputs.length ? <OutputFiles files={turn.outputs} /> : null}
       {/* Quiet: running and finished tasks live in the task sheet (the report says it's done); one that failed or was
           stopped stays here with its way forward. */}
@@ -2151,6 +2158,7 @@ export function WorkbotComposer(props: {
   onStop: () => void;
 }) {
   const { text } = props;
+  const browserPreview = useBrowserPreview();
   const input = useRef<HTMLTextAreaElement>(null);
   const touch = useTouchKeyboard();
   const dictation = useNativeDictation({ enabled: props.nativeDictation === true, text, onText: props.onText,
@@ -2204,6 +2212,7 @@ export function WorkbotComposer(props: {
   const teachingPhase = props.teaching?.phase === "recording" ? `Teaching ${props.name}` : props.teaching?.phase === "paused" ? "Recording paused · Still teaching" : "Reviewing the skill";
 
   return <>
+    {browserPreview?.visible && browserPreview.context ? <button type="button" aria-pressed={browserPreview.includeContext} onClick={() => browserPreview.setIncludeContext(!browserPreview.includeContext)} title={browserPreview.includeContext ? "Exclude this tab from your next message" : "Tell Workbot which tab you're on"} className={`mb-2 max-w-full truncate rounded-full px-2.5 py-1 text-[12px] text-[var(--wb-muted)] hover:bg-[var(--wb-chip)] focus-visible:outline-none focus-visible:shadow-[var(--wb-focus)] ${browserPreview.includeContext ? "" : "line-through"}`} data-workbot-preview-context>{workbotContextLabel(browserPreview.context)}{browserPreview.includeContext ? " · This tab" : " · Not shared"}</button> : null}
     <div
       data-workbot-composer
       className={`flex bg-[var(--wb-surface)] shadow-[var(--wb-composer-shadow)] transition-[border-radius] duration-150 ${

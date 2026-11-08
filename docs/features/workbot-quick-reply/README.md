@@ -2,6 +2,10 @@
 
 Feature key: `workbotQuickReply` · Deployments: cloud and self-hosted · Default: off · Author: @benjaminshafii
 
+## Browser default
+
+Browser task instructions now always require the brief acknowledgment before tools and a verified follow-up, and browser turns get the acceptance fallback regardless of this flag. This flag still controls non-browser first-response behavior. See [the unified browser experience](../workbot-browser-preview/README.md).
+
 ## Behavior
 
 When enabled, Workbot is instructed to acknowledge work requests in one or two short human sentences **before any tool call**, including discovery, reactions and browser/computer operations. It names its next intended action without claiming the action already happened, inventing an ETA or promising a two-second SLA. Detailed progress belongs in the working-status UI when that separate feature is enabled.

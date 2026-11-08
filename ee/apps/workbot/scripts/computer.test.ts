@@ -452,9 +452,9 @@ test("the screen's live view stays up while Workbot works on it, not once it tur
   const step = (extra: { surface?: "browser"; background?: true }, status: "running" | "done" = "done") =>
     ({ label: "step", icon: "computer" as const, status, app: null, startedAt: 1, finishedAt: null, updates: [], ...extra })
   const browsed = [{ kind: "text" as const, text: "Checking listings." }, { kind: "steps" as const, steps: [step({ surface: "browser" })] }, { kind: "text" as const, text: "The browser isn't responding, so I'll pull them another way." }]
-  // Saying what it is doing between browser steps keeps the browser's live view up below its words.
+  // Saying what it is doing between browser steps keeps the browser live at its first action.
   const narrating = computerWork(browsed, { working: true, starting: null, lastIsLive: false })
-  assert.deepEqual([narrating.watch, [...narrating.live], narrating.trailing, narrating.starts], ["browser", ["browser"], ["browser"], null])
+  assert.deepEqual([narrating.watch, [...narrating.live], narrating.trailing, narrating.starts], ["browser", ["browser"], [], null])
   // Commands in the background: only their card is live, and the browser card goes back to where it was used.
   const starting = computerWork(browsed, { working: true, starting: { on: "computer", since: 2, background: true }, lastIsLive: false })
   assert.deepEqual([starting.watch, [...starting.live], starting.trailing, starting.placed.get(1)], [null, ["background"], ["background"], ["browser"]])
@@ -465,9 +465,9 @@ test("the screen's live view stays up while Workbot works on it, not once it tur
   // Still no screen while it says what the background work found.
   const after = computerWork([...browsed, { kind: "steps", steps: [step({ background: true })] }, { kind: "text", text: "Found twelve." }], { working: true, starting: null, lastIsLive: false })
   assert.deepEqual([after.watch, after.live.size], [null, 0])
-  // Back on the screen, its live view returns below Workbot's latest words, once the call says which screen.
+  // Back on the browser, its same anchored card becomes live once the call says which screen.
   const back = computerWork([...browsed, { kind: "steps", steps: [step({ background: true })] }], { working: true, starting: { on: "computer", since: 3, surface: "browser" }, lastIsLive: false })
-  assert.deepEqual([back.watch, back.trailing, back.starts], ["browser", ["browser"], "browser"])
+  assert.deepEqual([back.watch, back.trailing, back.starts], ["browser", [], "browser"])
   // Before it says, nothing guesses: no card is made or brought back for screen work of an unknown kind.
   const unsaid = computerWork([...browsed, { kind: "steps", steps: [step({ background: true })] }], { working: true, starting: { on: "computer", since: 3 }, lastIsLive: false })
   assert.deepEqual([unsaid.watch, unsaid.trailing, unsaid.starts, unsaid.cards.size], [null, [], null, 2])

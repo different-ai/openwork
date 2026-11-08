@@ -1,13 +1,13 @@
 import assert from "node:assert/strict"
 import { test } from "node:test"
 import { firstReply } from "../../../packages/workbot-ui/src/first-reply.js"
-import { frameKey, keepFrame, lastFrame } from "../../../packages/workbot-ui/src/frame-cache.js"
+import { createFrameCache, frameKey, keepFrame, lastFrame } from "../../../packages/workbot-ui/src/frame-cache.js"
 import { TASK_QUIET_MS, workbotActivity } from "../../../packages/workbot-ui/src/activity.js"
 import type { WorkbotTask, WorkbotTurn } from "../../../packages/workbot-ui/src/data.js"
 import { FEATURES } from "../../../../packages/features/src/registry.js"
 import { resolveFeature } from "../../../../packages/features/src/resolve.js"
 
-test("each new behavior has an independent default-off, organization-overridable and killable flag", () => {
+test("retained non-browser and profile rollouts remain default-off, organization-overridable and killable", () => {
   for (const key of ["workbotCenteredProfile", "workbotBrowserPreview", "workbotQuickReply", "workbotRemoteTasks"] as const) {
     assert.equal(FEATURES[key].default, false)
     const base = { deployment: "cloud" as const, locks: {}, rollouts: {}, overrides: {} }
@@ -64,4 +64,116 @@ test("last frames are scoped to identity, chat and view, expire, and reject arbi
   keepFrame(key, "https://example.test/tracking.png", 101)
   assert.equal(lastFrame(key, 102), image)
   assert.equal(lastFrame(key, 5 * 60_000 + 100), null)
+})
+
+test("task pictures survive reload, stay isolated by identity/chat/task, and remain bounded", () => {
+  const entries = new Map<string, string>()
+  const storage = {
+    get length() { return entries.size },
+    key: (index: number) => [...entries.keys()][index] ?? null,
+    getItem: (key: string) => entries.get(key) ?? null,
+    setItem: (key: string, value: string) => { entries.set(key, value) },
+    removeItem: (key: string) => { entries.delete(key) },
+  }
+  const before = createFrameCache(() => storage)
+  const key = frameKey("org", "member", null, "browser", "turn-one")
+  const first = "data:image/jpeg;base64,Zm9v"
+  let notifications = 0
+  const unsubscribe = before.subscribeFrame(key, () => { notifications += 1 })
+  before.keepFrame(key, first, 100)
+  assert.equal(notifications, 1, "the historic glimpse sees a frame captured as the live glimpse unmounts")
+  before.keepFrame(frameKey("org", "member", null, "browser", "unrelated"), first, 100)
+  assert.equal(notifications, 1)
+  unsubscribe()
+  before.keepFrame(key, first, 100)
+  assert.equal(notifications, 1)
+  const reload = createFrameCache(() => storage)
+  assert.equal(reload.lastFrame(key, 6 * 60_000), first, "a completed task is not lost after the live preview's five-minute window")
+  for (const other of [
+    frameKey("other", "member", null, "browser", "turn-one"),
+    frameKey("org", "other", null, "browser", "turn-one"),
+    frameKey("org", "member", "side", "browser", "turn-one"),
+    frameKey("org", "member", null, "browser", "turn-two"),
+    frameKey("org", "member", null, "browser"),
+  ]) assert.equal(reload.lastFrame(other, 101), null)
+  const second = frameKey("org", "member", null, "browser", "turn-two")
+  reload.keepFrame(second, "data:image/jpeg;base64,YmFy", 200)
+  assert.equal(reload.lastFrame(key, 201), first, "a later task cannot replace an older task's picture")
+  assert.equal(createFrameCache(() => storage).lastFrame(key, 24 * 60 * 60_000 + 100), null)
+  for (let index = 0; index < 6; index += 1) reload.keepFrame(frameKey("org", "member", null, "browser", `turn-${index}`), first, 1_000 + index)
+  assert.equal(entries.size, 4)
+  assert.equal(createFrameCache(() => storage).lastFrame(frameKey("org", "member", null, "browser", "turn-0"), 2_000), null)
+  const newest = frameKey("org", "member", null, "browser", "turn-5")
+  reload.forgetFrame(newest)
+  assert.equal(createFrameCache(() => storage).lastFrame(newest, 2_000), null)
+})
+
+test("authorization denial clears the entire view including task frames, not unrelated scopes", () => {
+  const image = "data:image/jpeg;base64,Zm9v"
+  const scope = frameKey("org", "member", null, "browser")
+  const first = frameKey("org", "member", null, "browser", "turn-one")
+  const second = frameKey("org", "member", null, "browser", "turn-two")
+  for (const unrelated of [
+    frameKey("other", "member", null, "browser", "turn-one"),
+    frameKey("org", "other", null, "browser", "turn-one"),
+    frameKey("org", "member", "side", "browser", "turn-one"),
+    frameKey("org", "member", null, "computer", "turn-one"),
+  ]) for (const reloadBeforeDenial of [false, true]) {
+    const entries = new Map<string, string>()
+    const storage = {
+      get length() { return entries.size },
+      key: (index: number) => [...entries.keys()][index] ?? null,
+      getItem: (key: string) => entries.get(key) ?? null,
+      setItem: (key: string, value: string) => { entries.set(key, value) },
+      removeItem: (key: string) => { entries.delete(key) },
+    }
+    const original = createFrameCache(() => storage)
+    for (const key of [scope, first, second, unrelated]) original.keepFrame(key, image, 100)
+    const cache = reloadBeforeDenial ? createFrameCache(() => storage) : original
+    let cleared = 0
+    let unrelatedNotifications = 0
+    const absent = frameKey("org", "member", null, "browser", "mounted-no-frame")
+    for (const key of [scope, first, second, absent]) cache.subscribeFrame(key, () => {
+      assert.equal(cache.lastFrame(key, 101), null)
+      cleared += 1
+    })
+    cache.subscribeFrame(unrelated, () => { unrelatedNotifications += 1 })
+    cache.forgetViewFrames(first)
+    assert.equal(cleared, 4, "mounted live and historic views are all notified, including those without a cached frame")
+    for (const key of [scope, first, second]) {
+      assert.equal(cache.lastFrame(key, 101), null)
+      assert.equal(createFrameCache(() => storage).lastFrame(key, 101), null, "denied pixels cannot survive reload")
+      cache.keepFrame(key, image, 102)
+      assert.equal(cache.lastFrame(key, 103), null, "an old viewer's interval or cleanup cannot repopulate denied frames")
+    }
+    assert.equal(cache.lastFrame(unrelated, 103), image)
+    assert.equal(createFrameCache(() => storage).lastFrame(unrelated, 103), image)
+    assert.equal(unrelatedNotifications, 0)
+    cache.forgetViewFrames("not-a-valid-scope")
+    assert.equal(cache.lastFrame(unrelated, 103), image)
+    cache.allowViewFrames(scope)
+    // No old pixels are restored by authorization; only a newly drawn frame can be retained.
+    assert.equal(cache.lastFrame(first, 103), null)
+  }
+})
+
+test("denial invalidates memory and notifies subscribers even when session storage is unavailable", () => {
+  const cache = createFrameCache(() => { throw new Error("Storage disabled") })
+  const key = frameKey("org", "member", "chat", "browser", "task")
+  cache.keepFrame(key, "data:image/jpeg;base64,Zm9v", 100)
+  let notifications = 0
+  cache.subscribeFrame(key, () => { notifications += 1 })
+  cache.forgetViewFrames(frameKey("org", "member", "chat", "browser"))
+  assert.equal(cache.lastFrame(key, 101), null)
+  assert.equal(notifications, 1)
+})
+
+test("disabled picture persistence falls back to bounded memory without breaking work", () => {
+  const cache = createFrameCache(() => { throw new Error("Storage disabled") })
+  const image = "data:image/jpeg;base64,Zm9v"
+  cache.keepFrame("key", image, 100)
+  cache.keepFrame("key", "https://example.test/not-a-frame", 101)
+  assert.equal(cache.lastFrame("key", 102), image)
+  for (let index = 0; index < 4; index += 1) cache.keepFrame(`key-${index}`, image, 200 + index)
+  assert.equal(cache.lastFrame("key", 300), null)
 })

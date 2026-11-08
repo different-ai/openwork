@@ -2,6 +2,10 @@
 
 Feature key: `workbotWorkingStatus` · Deployments: cloud and self-hosted · Default: off · Author: @benjaminshafii
 
+## Browser default
+
+Browser tasks now always use a centered header status and one persistent Working/Completed/Failed Browser card, regardless of this flag. Computer/background cards and Open Computer are suppressed for browser turns. This flag still governs the non-browser quiet-work presentation and broader assistant instructions. The profile sheet remains separately flagged. See [the unified browser experience](../workbot-browser-preview/README.md); the original rollout description below applies only outside that browser default.
+
 ## What people see
 
 Without the feature, Workbot's work fills the chat: typing dots for as long as a reply runs, a "Working on my computer · Show me" card for every command, a "Using the browser" card with a live preview, a "Using Slack" line, and a card per background task. Its first message is often a bare "Sure, give me a sec."

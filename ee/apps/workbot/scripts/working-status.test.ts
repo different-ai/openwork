@@ -151,7 +151,7 @@ test("abandoned foreground calls lose their running steps and Stop eligibility",
   const [turn] = buildWorkbotTurns(stopped)
   assert.equal(turn!.status, "stopped")
   assert.equal(turn!.finishedAt, 200)
-  assert.deepEqual(turn!.parts.filter(part => part.kind === "steps").flatMap(part => part.steps.map(step => [step.status, step.finishedAt])), [["done", 200]])
+  assert.deepEqual(turn!.parts.filter(part => part.kind === "steps").flatMap(part => part.steps.map(step => [step.status, step.finishedAt, step.reason])), [["done", 200, "Stopped before the action finished."]])
   assert.equal(threadBusy(stopped), false)
   assert.deepEqual(interruptedTurnIds(stopped), [])
   assert.equal(workbotActivity([turn!] as WorkbotTurn[], {}).working, false)

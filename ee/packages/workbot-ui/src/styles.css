@@ -26,6 +26,10 @@
   --wb-type-sheet: #1d7044;
   --wb-type-slides: #c55a11;
   --wb-danger: #c4302b;
+  --wb-browser-success: #2b9a47;
+  --wb-browser-success-bg: #e7f7e9;
+  --wb-browser-working: #2589ed;
+  --wb-browser-working-bg: #e5f4fc;
   --wb-type-image: #6e56cf;
   --wb-card-shadow: 0 0 0 1px #0116270f, 0 1px 2px #0116270a;
   --wb-panel-shadow: 0 0 0 1px #0116270d, 0 12px 32px -12px #01162724, 0 2px 6px -2px #0116270f;
@@ -44,6 +48,21 @@
 /* One viewport owner: iOS's keyboard changes visualViewport, not 100dvh. Safe areas belong to the page, not the arrow. */
 .workbot-viewport { position: fixed; inset: 0; top: var(--wb-viewport-top, 0px); height: var(--wb-viewport-height, 100dvh); overflow: hidden; }
 .workbot-viewport > .workbot { height: 100%; padding-top: env(safe-area-inset-top); padding-bottom: env(safe-area-inset-bottom); }
+/* Preview changes the layout, not the viewer: a dark, full-screen phone sheet around the same browser. */
+.workbot-browser-sheet {
+  --wb-bg: #171a19;
+  --wb-surface: #272b2c;
+  --wb-chip: #303536;
+  --wb-bubble: #24292b;
+  --wb-text: #f2f4f5;
+  --wb-muted: #a8afb3;
+  --wb-ring: #ffffff24;
+  --wb-hairline: #ffffff17;
+  --wb-ink: #2589ed;
+  --wb-on-ink: #f2f4f5;
+  --wb-focus: 0 0 0 2px #68b7ff;
+}
+[data-workbot-browser-layout] > div > .workbot { height: 100%; }
 /* The arrow has its own strip above the composer, never over reply text or the message box. */
 .workbot-scroll-latest { opacity: 0; visibility: hidden; pointer-events: none; transition: opacity 150ms ease-out, visibility 0s 150ms; }
 .workbot-scroll-latest.is-visible { opacity: 1; visibility: visible; pointer-events: auto; transition-delay: 0s; }

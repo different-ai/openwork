@@ -25,10 +25,10 @@ export function surfaceOf(step: WorkbotStep): ComputerSurface {
 
 /**
  * Workbot's computer work in one reply, as one card per kind of work (its browser, its screen, its background
- * commands), however often it stops to say what it is doing. While it works, the cards it is using go below its latest
- * words: the one it is on now, and the screen it was last on, which stays while it says what it is doing. Once it turns
- * to commands in the background, that screen is no longer watched until Workbot is back on it. The others stay where
- * that work last happened.
+ * commands), however often it stops to say what it is doing. Browser work stays at its first action for the whole
+ * turn. Other live cards go below its latest words: the one it is on now, and the screen it was last on, which stays
+ * while it says what it is doing. Once it turns to commands in the background, that screen is no longer watched until
+ * Workbot is back on it. Other finished computer work stays where it last happened.
  *
  * Only a screen Workbot chose to show (the desktop tool's `show`) is `shown` with its live view: working on the screen
  * is not by itself a reason to put it in front of the person.
@@ -39,7 +39,7 @@ export function surfaceOf(step: WorkbotStep): ComputerSurface {
  * would turn from "Computer" into "Browser" a moment later.
  */
 export function computerWork(parts: WorkbotPart[], { working, starting, lastIsLive }: { working: boolean; starting: LiveText["working"] | null; lastIsLive: boolean }) {
-  const cards = new Map<ComputerSurface, { steps: WorkbotStep[]; last: number }>();
+  const cards = new Map<ComputerSurface, { steps: WorkbotStep[]; first: number; last: number }>();
   let current: ComputerSurface | null = null;
   // The kind of work it did last: after commands in the background, there is no screen to keep watching.
   let latest: ComputerSurface | null = null;
@@ -51,7 +51,7 @@ export function computerWork(parts: WorkbotPart[], { working, starting, lastIsLi
     for (const step of part.steps) {
       if (step.icon !== "computer") continue;
       const surface = surfaceOf(step);
-      const card = cards.get(surface) ?? { steps: [], last: index };
+      const card = cards.get(surface) ?? { steps: [], first: index, last: index };
       card.steps.push(step);
       card.last = index;
       cards.set(surface, card);
@@ -66,7 +66,7 @@ export function computerWork(parts: WorkbotPart[], { working, starting, lastIsLi
     const surface = startingOn;
     if (!cards.has(surface)) {
       const label = surface === "browser" ? "Using the browser" : surface === "background" ? "Working on my computer" : "Using my computer";
-      cards.set(surface, { steps: [{ label, icon: "computer", status: "running", app: null, startedAt: null, finishedAt: null, updates: [], ...(surface === "browser" ? { surface: "browser" as const } : {}), ...(surface === "background" ? { background: true as const } : {}) }], last: parts.length });
+      cards.set(surface, { steps: [{ label, icon: "computer", status: "running", app: null, startedAt: null, finishedAt: null, updates: [], ...(surface === "browser" ? { surface: "browser" as const } : {}), ...(surface === "background" ? { background: true as const } : {}) }], first: parts.length, last: parts.length });
     }
     current = surface;
     latest = surface;
@@ -78,9 +78,15 @@ export function computerWork(parts: WorkbotPart[], { working, starting, lastIsLi
   if (working && current) live.add(current);
   if (watch) live.add(watch);
   const placed = new Map<number, ComputerSurface[]>();
-  for (const [surface, card] of cards) if (!live.has(surface)) placed.set(card.last, [...(placed.get(card.last) ?? []), surface]);
-  // Below its latest words: background work first, then the screen it is watched on.
-  const trailing = [...live].sort((a, b) => Number(a === watch) - Number(b === watch));
+  // Browser work is one task per turn. Its card stays where it first started, including while live: narration and
+  // later browser calls update that object rather than moving it down the conversation (DESIGN P11).
+  for (const [surface, card] of cards) {
+    if (surface !== "browser" && live.has(surface)) continue;
+    const index = surface === "browser" ? card.first : card.last;
+    placed.set(index, [...(placed.get(index) ?? []), surface]);
+  }
+  // Other computer work still follows its latest words: background work first, then the screen it is watched on.
+  const trailing = [...live].filter((surface) => surface !== "browser").sort((a, b) => Number(a === watch) - Number(b === watch));
   return { cards, live, watch, shown, placed, trailing, starts };
 }
 
@@ -95,6 +101,36 @@ export function keepsCard(card: { surface: ComputerSurface; live: boolean; showi
   if (!quiet || card.showing) return true;
   if (card.surface === "background") return false;
   return card.live ? preview : true;
+}
+
+export type BrowserTask = {
+  title: string;
+  status: "working" | "completed" | "failed";
+  reason?: string;
+};
+
+/** The browser's one task for this turn; live, stored and reloaded cards use the same lifecycle. */
+export function browserTask(
+  steps: ReadonlyArray<{ status: string; reason?: string }>,
+  { working, title, status, error }: {
+    working: boolean;
+    title: string;
+    status?: "queued" | "working" | "done" | "failed" | "stopped";
+    error?: string | null;
+  },
+): BrowserTask {
+  if (working) return { title, status: "working" };
+  // Step status stays running|done for old clients; done means ended, while the additive reason preserves failure.
+  const failure = [...steps].reverse().find((step) => step.reason || step.status === "failed");
+  const unfinished = steps.some((step) => step.status === "running");
+  if (failure || unfinished || status === "failed" || status === "stopped") {
+    return {
+      title,
+      status: "failed",
+      reason: error || failure?.reason || (status === "stopped" ? "Stopped before the browser task finished." : "The browser task couldn't finish."),
+    };
+  }
+  return { title, status: "completed" };
 }
 
 /**

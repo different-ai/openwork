@@ -55,6 +55,11 @@ export type WorkbotStep = {
   /** What the leading slot shows: the connected app's logo, or Workbot's computer. */
   icon: "app" | "computer"
   status: "running" | "done"
+  /**
+   * A safe plain-language failure, never a tool's raw output. Additive on purpose: already-open clients validate
+   * status as running|done, so done means the call ended, not that it succeeded. New browser task cards read reason.
+   */
+  reason?: string
   /** The connected app it used, when known (for its logo). */
   app: string | null
   startedAt: number | null
@@ -390,7 +395,8 @@ function desktopUpdate(input: Record<string, unknown>): string | null {
 
 /**
  * Work on Workbot's computer reads as one step, however many commands it took: the person sees that it is using
- * its computer, never commands, retries or failures it recovered from (DESIGN C3, T2). Work in its browser is its own
+ * its computer, never commands or raw failure details (DESIGN C3, T2). Failures retain a safe reason rather than
+ * silently becoming successful when later calls are merged. Work in its browser is its own
  * step ("Using the browser"), with the pages it opened, and so is work on its screen apart from commands run in the
  * background ("Working on my computer"), which has nothing to watch. What it is doing, in its own words, travels in `updates`; the
  * page shows the newest one under the step.
@@ -428,6 +434,8 @@ function addComputerStep(parts: WorkbotPart[], name: string, input: Record<strin
   const took = at !== null && ended !== null ? Math.max(0, ended - at) : 0
   const worked = before + (took <= LONGEST_COMMAND_MS ? took : 0)
   workedMs.set(step, worked)
+  const failed = result?.role === "tool" && result.isError
+  if (failed) step.reason = browser ? "The browser action couldn't finish." : "The computer action couldn't finish."
   step.status = running ? "running" : "done"
   // Duration is shown as finishedAt − startedAt, and a running step counts up from startedAt.
   if (running) {
@@ -558,6 +566,7 @@ export function buildWorkbotTurns(snapshot: RunnerSnapshot, files: FileNames = n
         for (const step of part.steps) {
           if (step.status !== "running") continue
           step.status = "done"
+          step.reason ??= status === "stopped" ? "Stopped before the action finished." : "The action ended without a result."
           step.finishedAt = turn.updatedAt ?? step.startedAt
         }
       }
