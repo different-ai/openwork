@@ -107,10 +107,12 @@ async function assertList(nav) {
   assert.match(await chatButton(nav, "Casual greeting").innerText(), /2d/)
 }
 async function assertDestinations(nav, phone = false) {
-  const workspace = nav.getByRole("navigation", { name: phone ? "Tabs" : "Workspace", exact: true })
+  const workspace = nav.getByRole("navigation", { name: phone ? "Go to" : "Workspace", exact: true })
   await workspace.getByRole("button", { name: "Main chat", exact: true }).waitFor()
   await workspace.getByRole("button", { name: "Files", exact: true }).waitFor()
-  for (const unavailable of ["Calendar", "Documents", "Computer", "Browser"]) {
+  await workspace.getByRole("button", { name: "Apps", exact: true }).waitFor()
+  // Task progress lives in the status under Workbot's name and the sheet behind it, never as a destination.
+  for (const unavailable of ["Calendar", "Documents", "Computer", "Browser", "Tasks"]) {
     assert.equal(await workspace.getByRole("button", { name: unavailable, exact: true }).count(), 0, `${unavailable} is not a navigation destination in this fixture`)
     assert.equal(await workspace.getByRole("link", { name: unavailable, exact: true }).count(), 0)
   }
@@ -133,32 +135,22 @@ async function assertDesktopColumn(page) {
   assert.ok(box.x >= available.x && box.x + box.width <= available.x + available.width + 1, "Composer fits in the available chat area")
   await assertNoOverflow(page)
 }
-const appsTab = profile => profile.getByRole("tab", { name: /^(What I can use|Permissions|Apps)$/ })
-async function selectedTab(tab) {
-  await tab.waitFor()
-  await tab.page().waitForFunction(element => element.getAttribute("aria-selected") === "true", await tab.elementHandle())
-}
-async function assertProfile(page, destination, screenshotName) {
-  const profile = page.locator("[data-workbot-profile]")
-  await profile.waitFor()
-  const tasks = profile.getByRole("tab", { name: "Tasks", exact: true })
-  const apps = appsTab(profile)
-  await selectedTab(destination === "Tasks" ? tasks : apps)
-  if (destination === "Apps") await profile.getByRole("tabpanel").getByText("Gmail", { exact: true }).waitFor()
+/** Apps opens a plain sheet titled Apps: the apps list, no avatar, status or profile tabs. */
+async function assertAppsSheet(page, screenshotName) {
+  const sheet = page.locator("[data-workbot-apps-sheet]")
+  await sheet.waitFor()
+  await sheet.getByRole("heading", { name: "Apps", exact: true }).waitFor()
+  await sheet.getByText("Gmail", { exact: true }).waitFor()
+  assert.equal(await sheet.getByRole("tab").count(), 0, "The Apps sheet is a list, not a profile with tabs")
+  assert.equal(await page.locator("[data-workbot-profile]").count(), 0, "Apps does not open the profile")
   await shot(page, screenshotName)
-  // Verify the mounted profile is interactive, not merely the right initial label.
-  await (destination === "Tasks" ? apps : tasks).click()
-  await selectedTab(destination === "Tasks" ? apps : tasks)
-  await (destination === "Tasks" ? tasks : apps).click()
-  await selectedTab(destination === "Tasks" ? tasks : apps)
-  assert.equal(await profile.getByRole("tab", { name: /^(Computer|Browser)$/ }).count(), 0, "Browser access belongs to the inline card, not profile navigation")
   await page.keyboard.press("Escape")
-  await profile.waitFor({ state: "hidden" })
+  await sheet.waitFor({ state: "hidden" })
   const input = composer(page)
   const before = await input.inputValue()
   await input.click()
   await input.fill(`${before} Still editable.`)
-  assert.equal(await input.inputValue(), `${before} Still editable.`, "Closing the real profile leaves a usable composer")
+  assert.equal(await input.inputValue(), `${before} Still editable.`, "Closing the Apps sheet leaves a usable composer")
   await input.fill(before)
   await assertNoOverflow(page)
 }
@@ -199,13 +191,11 @@ try {
     await assertDesktopColumn(page)
     await shot(page, "desktop-1920x1080")
   })
-  for (const destination of ["Tasks", "Apps"]) {
-    await check(page, `desktop rail ${destination} opens the interactive real profile`, async () => {
-      await desktopNav(page).getByRole("navigation", { name: "Workspace", exact: true }).getByRole("button", { name: destination, exact: true }).click()
-      await assertProfile(page, destination, `desktop-profile-${destination.toLowerCase()}`)
-      await assertDesktopColumn(page)
-    })
-  }
+  await check(page, "desktop rail Apps opens the Apps sheet", async () => {
+    await desktopNav(page).getByRole("navigation", { name: "Workspace", exact: true }).getByRole("button", { name: "Apps", exact: true }).click()
+    await assertAppsSheet(page, "desktop-apps")
+    await assertDesktopColumn(page)
+  })
   await check(page, "side selection URL highlight and plus new chat", async () => {
     await chatButton(desktopNav(page), "Office plan").click()
     await page.waitForURL(url => url.searchParams.get("chat") === office.id)
@@ -291,6 +281,18 @@ try {
     await phone.keyboard.press("Escape")
     await drawer(phone).waitFor({ state: "hidden" })
     await phone.waitForFunction(() => document.activeElement?.getAttribute("aria-label") === "Open workspace navigation")
+    await assertDraft(phone, "An unsent main chat draft.")
+  })
+  await check(phone, "iPhone has no assistant profile: the name opens the task sheet, Apps a plain list", async () => {
+    assert.equal(await phone.locator("[data-workbot-profile-badge]").count(), 0, "No avatar-and-name badge on a phone")
+    const name = phone.locator("[data-workbot-working-name]")
+    await name.click()
+    const sheet = phone.locator("[data-workbot-task-sheet]")
+    await sheet.waitFor()
+    assert.equal(await phone.locator("[data-workbot-profile]").count(), 0, "The name opens the task sheet, not a profile")
+    await shot(phone, "iphone-task-sheet")
+    await phone.keyboard.press("Escape")
+    await sheet.waitFor({ state: "hidden" })
     await assertDraft(phone, "An unsent main chat draft.")
   })
   await check(phone, "phone persistent palette shortcut and drawer search survive reopen", async () => {
@@ -405,17 +407,15 @@ try {
       await assertDraft(phone, "An unsent main chat draft.")
     }
   })
-  for (const destination of ["Tasks", "Apps"]) {
-    await check(phone, `iPhone drawer ${destination} closes navigation and opens the interactive real profile`, async () => {
-      assert.equal(new URL(phone.url()).searchParams.has("chat"), false, "This flow returns to the main composer")
-      await trigger(phone).click()
-      await drawer(phone).getByRole("navigation", { name: "Tabs", exact: true }).getByRole("button", { name: destination, exact: true }).click()
-      await drawer(phone).waitFor({ state: "hidden" })
-      await assertProfile(phone, destination, `iphone-profile-${destination.toLowerCase()}`)
-      await assertDraft(phone, "An unsent main chat draft.")
-      await assertNoOverflow(phone)
-    })
-  }
+  await check(phone, "iPhone drawer Apps closes navigation and opens the Apps sheet", async () => {
+    assert.equal(new URL(phone.url()).searchParams.has("chat"), false, "This flow returns to the main composer")
+    await trigger(phone).click()
+    await drawer(phone).getByRole("navigation", { name: "Go to", exact: true }).getByRole("button", { name: "Apps", exact: true }).click()
+    await drawer(phone).waitFor({ state: "hidden" })
+    await assertAppsSheet(phone, "iphone-apps")
+    await assertDraft(phone, "An unsent main chat draft.")
+    await assertNoOverflow(phone)
+  })
   await check(phone, "iPhone side selection closes drawer and retains chat drafts", async () => {
     await trigger(phone).click()
     await chatButton(drawer(phone), "Office plan").click()
