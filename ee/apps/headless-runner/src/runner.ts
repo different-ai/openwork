@@ -46,6 +46,7 @@ import {
   ACTIVE,
   RESUMABLE,
   type Attachment,
+  type DesktopView,
   type Execution,
   type HeadlessModelAccess,
   type Message,
@@ -1162,9 +1163,9 @@ export class Runner {
                     written = ""
                     events.emit(sessionId, { type: "text", messageId, step: streamStep, delta: "", reset: true })
                   },
-                  onTool: (tool: string, description?: string) => {
+                  onTool: (tool: string, description?: string, view?: DesktopView) => {
                     timing.output()
-                    events.emit(sessionId, { type: "tool", messageId, step: streamStep, tool, ...(description ? { description } : {}) })
+                    events.emit(sessionId, { type: "tool", messageId, step: streamStep, tool, ...(description ? { description } : {}), ...(view ? { view } : {}) })
                   },
                 }
               : {}),
@@ -1792,9 +1793,9 @@ export class Runner {
               checkpoints.note(written)
               restartText()
             },
-            onTool: (tool: string, description?: string) => {
+            onTool: (tool: string, description?: string, view?: DesktopView) => {
               lane.timing.output()
-              events?.emit(sessionId, { type: "tool", messageId, step: modelStep, tool, ...(description ? { description } : {}) })
+              events?.emit(sessionId, { type: "tool", messageId, step: modelStep, tool, ...(description ? { description } : {}), ...(view ? { view } : {}) })
             },
           })
         } catch (error) {
