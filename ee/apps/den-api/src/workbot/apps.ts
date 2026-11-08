@@ -1,4 +1,5 @@
 import { z } from "zod"
+import { connectorIconCandidates, connectorDisplayName } from "@openwork/types/connector-brand"
 
 /**
  * Every connector the member can use from Workbot, for the Apps list on Workbot's profile (`workbotProfileSheet`):
@@ -15,6 +16,8 @@ export type WorkbotAppStatus = z.infer<typeof workbotAppStatusSchema>
 export const workbotAppSchema = z.object({
   id: z.string(),
   name: z.string(),
+  /** Brand assets or sized favicon-proxy URLs derived server-side; never the MCP URL itself. */
+  iconCandidates: z.array(z.string()).optional(),
   /** Which native service it is ("google-workspace"), or null for an MCP connector. */
   nativeProviderKey: z.string().nullable(),
   authType: z.enum(["oauth", "apikey", "none"]),
@@ -38,6 +41,8 @@ export type WorkbotApp = z.infer<typeof workbotAppSchema>
 export type WorkbotAppFact = {
   id: string
   name: string
+  /** Server-side only: used to identify the brand, never copied to the response. */
+  url?: string
   nativeProviderKey: string | null
   authType?: "oauth" | "apikey" | "none"
   credentialMode: "shared" | "per_member"
@@ -97,7 +102,8 @@ export function workbotApps(facts: readonly WorkbotAppFact[], input: {
     const connectMode = action === "connect" ? (input.inline && authType === "oauth" ? "inline" : "external") : "admin"
     apps.push({
       id: fact.id,
-      name: fact.name,
+      name: connectorDisplayName(fact.name),
+      iconCandidates: connectorIconCandidates({ name: fact.name, url: fact.url, nativeProviderKey: fact.nativeProviderKey }),
       nativeProviderKey: fact.nativeProviderKey,
       authType,
       status,

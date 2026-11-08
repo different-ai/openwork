@@ -525,7 +525,11 @@ export function registerWorkbotRoutes(app: Hono<AppEnv>, input: { config: Config
         ...connection,
         connectUrl: connection.ready || !denWeb ? connection.connectUrl : workbotConnectionUrl(denWeb, member.den.organization.id, connection.id),
       })),
-      ...(listed.apps && member.den.profileSheet ? { apps: listed.apps.map(linked) } : {}),
+      ...(listed.apps && member.den.profileSheet ? { apps: listed.apps.map((app) => ({
+        ...linked(app),
+        // Bundled Den assets live on Den, not on the standalone Workbot origin.
+        iconCandidates: app.iconCandidates?.map((src) => src.startsWith("/integrations/") || src === "/openwork-mark.svg" ? (denWeb ? new URL(src, denWeb).href : null) : src).filter((src): src is string => src !== null),
+      })) } : {}),
     })
   })
 

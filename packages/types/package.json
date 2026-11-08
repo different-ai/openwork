@@ -4,6 +4,14 @@
   "private": true,
   "type": "module",
   "exports": {
+    "./connector-brand": {
+      "types": {
+        "openwork-build": "./dist/types/src/connector-brand.d.ts",
+        "default": "./src/connector-brand.ts"
+      },
+      "development": "./src/connector-brand.ts",
+      "default": "./src/connector-brand.ts"
+    },
     "./workbot-remote-jobs": {
       "types": {
         "openwork-build": "./dist/types/src/workbot-remote-jobs.d.ts",

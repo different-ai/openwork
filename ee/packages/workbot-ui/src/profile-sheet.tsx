@@ -1,6 +1,7 @@
 "use client";
 
 import { Dialog } from "@base-ui/react/dialog";
+import { connectorDisplayName } from "@openwork/types/connector-brand";
 import { Clock3, Fingerprint, LayoutGrid, ListChecks, Lock, X } from "lucide-react";
 import { useId, useState, type ReactNode } from "react";
 import { describeSchedule } from "@openwork/calendar";
@@ -159,11 +160,12 @@ export function AppsList({ name }: { name: string }) {
       : apps.data.length === 0 ? <p className="py-2 text-[13px] text-[var(--wb-muted)]">No apps are set up for {name} yet.</p>
       : <ul data-workbot-apps>{apps.data.map((app) => {
           const status = APP_STATUS[app.status];
+          const displayName = connectorDisplayName(app.name);
           const note = appNote(app);
           return <li key={app.id} className={row} data-workbot-app={app.status}>
-            <AppMark name={app.name} size={18} fallback="letter" />
+            <AppMark name={displayName} size={18} fallback="letter" iconCandidates={app.iconCandidates} tile />
             <span className="flex min-w-0 flex-1 flex-col">
-              <span className="truncate">{app.name}</span>
+              <span className="truncate">{displayName}</span>
               <span className="flex items-center gap-1.5 text-[12px] text-[var(--wb-muted)]"><span aria-hidden className={`size-1.5 shrink-0 rounded-full ${status.dot}`} />{status.label}</span>
             </span>
             {app.action === "connect" ? <span className="flex max-w-[62%] justify-end"><WorkbotConnectionButton connection={app} flow={flow} /></span>

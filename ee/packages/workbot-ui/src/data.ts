@@ -489,6 +489,7 @@ const connectionsSchema = z.object({
   apps: z.array(z.object({
     id: z.string(),
     name: z.string(),
+    iconCandidates: z.array(z.string()).optional(),
     nativeProviderKey: z.string().nullable(),
     authType: z.enum(["oauth", "apikey", "none"]),
     status: z.enum(["connected", "needs_sign_in", "not_connected", "needs_attention"]),

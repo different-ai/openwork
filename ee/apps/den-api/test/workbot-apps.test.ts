@@ -65,10 +65,26 @@ test("only names, status, sign-in type and who manages it: secrets and addresses
   }
   const [app] = workbotApps([leaky, leaky], options)
   assert.ok(app)
-  assert.deepEqual(Object.keys(app).sort(), ["action", "authType", "connectMode", "connectUrl", "id", "managedBy", "name", "nativeProviderKey", "ready", "status"])
+  assert.deepEqual(Object.keys(app).sort(), ["action", "authType", "connectMode", "connectUrl", "iconCandidates", "id", "managedBy", "name", "nativeProviderKey", "ready", "status"])
   const json = JSON.stringify(workbotApps([leaky, leaky], options))
   for (const secret of ["secret-in-url", "secret-api-key", "secret-token", "X-Secret", "client-id", "person@example.test"]) assert.equal(json.includes(secret), false)
   // Duplicates (a native row listed twice) appear once; the shape is the published schema.
   assert.equal(workbotApps([leaky, leaky], options).length, 1)
   assert.equal(workbotAppSchema.strict().safeParse(app).success, true)
+})
+
+test("Apps carries derived brand images and tidy display names, never a connector URL or its credentials", () => {
+  const apps = workbotApps([
+    { ...fact("context", "Context7 / context7"), url: "https://mcp.context7.com/mcp?key=do-not-leak" },
+    { ...fact("google", "Work account", { nativeProviderKey: "google-workspace" }), url: "https://workspace.google.com" },
+    { ...fact("secret", "Internal tool"), url: "https://user:secret@private.test/mcp?key=do-not-leak" },
+    { ...fact("exa", "Research account"), url: "https://mcp.exa.ai/mcp?api_key=do-not-leak" },
+  ], options)
+  assert.equal(apps.find((app) => app.id === "context")?.name, "Context7")
+  assert.ok(apps.find((app) => app.id === "context")?.iconCandidates?.includes("/integrations/context7.png"))
+  assert.ok(apps.find((app) => app.id === "google")?.iconCandidates?.includes("/integrations/google.svg"))
+  assert.ok(apps.find((app) => app.id === "exa")?.iconCandidates?.some((src) => src.includes("exa")))
+  assert.deepEqual(apps.find((app) => app.id === "secret")?.iconCandidates, [])
+  const serialized = JSON.stringify(apps)
+  for (const secret of ["do-not-leak", "user:secret", "private.test", "mcp.exa.ai", "mcp.context7.com"]) assert.equal(serialized.includes(secret), false)
 })

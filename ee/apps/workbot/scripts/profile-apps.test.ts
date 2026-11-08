@@ -61,3 +61,17 @@ test("a Den without apps still lists its everyday connections, sorted the same w
 test("nothing usable: says so instead of an empty list", () => {
   assert.ok(render({ connections: [], apps: [] }).includes("No apps are set up for Workbot yet."))
 })
+
+
+test("Apps uses fixed logo tiles and server-derived candidates, with a letter only after all candidates fail", () => {
+  // Empty metadata means no trusted logo exists. It must not fall back to an unrelated host-name match.
+  const unknown = render({ connections: [], apps: [{ ...app("x", "Coffee SF / coffee-sf", "connected", null), iconCandidates: [] }] })
+  assert.ok(unknown.includes(">Coffee SF<"))
+  assert.equal(unknown.includes(" / coffee-sf"), false)
+  assert.ok(unknown.includes("data-workbot-app-letter"))
+  const logo = render({ connections: [], apps: [{ ...app("ctx", "Context7 / context7", "connected", null), iconCandidates: ["https://den.example.test/integrations/context7.png"] }] })
+  assert.ok(logo.includes('src="https://den.example.test/integrations/context7.png"'))
+  assert.ok(logo.includes('width="18" height="18"'))
+  assert.ok(logo.includes("size-8"))
+  assert.equal(logo.includes("data-workbot-app-letter"), false)
+})
