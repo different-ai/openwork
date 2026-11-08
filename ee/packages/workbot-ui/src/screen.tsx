@@ -1,6 +1,6 @@
 "use client";
 
-import { ArrowDown, ArrowUp, Check, CircleAlert, Copy, FileText, Globe, Lock, MessageCircle, Monitor, Pencil, Presentation, X } from "lucide-react";
+import { ArrowUp, Check, ChevronDown, CircleAlert, Copy, FileText, Globe, Lock, MessageCircle, Monitor, Pencil, Presentation, X } from "lucide-react";
 import { createContext, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type ClipboardEvent, type KeyboardEvent, type ReactNode } from "react";
 import { computerTabLabel, computerViews, setWorkbotHost, workbotHost, type WorkbotHost } from "./host";
 import { OpenWorkMark } from "./mark";
@@ -60,6 +60,7 @@ import { firstReply } from "./first-reply";
 import { remoteJobActivity, remoteWatcherTaskIds, useWorkbotRemoteJobs } from "./remote-jobs";
 import { createConversationScrollState, useConversationScroll, type ConversationScrollState } from "./conversation-scroll";
 import { useWorkbotViewport } from "./viewport";
+import { useFloatingChrome } from "./floating-chrome";
 import { fitTextarea } from "./auto-height";
 import { connectorSummary } from "./connector-activity";
 import { ConnectorLine } from "./connector-line";
@@ -371,7 +372,9 @@ function ChatScreen({ host, composerState, position, navigation, onDraftsChange 
     account: <AccountAvatar userName={user?.name ?? null} />,
   };
   const mobileNavigation = !showDesktopNavigation ? <MobileNavigation {...navigationProps} /> : null;
-  const layout = (children: ReactNode) => <div className="workbot workbot-layout flex min-h-0 min-w-0 bg-[var(--wb-bg)] antialiased">
+  // The chat's header and message box float over its conversation (floating-chrome.ts); other views keep them solid.
+  const chrome = useFloatingChrome();
+  const layout = (children: ReactNode, floating = false) => <div className={`workbot workbot-layout flex min-h-0 min-w-0 bg-[var(--wb-bg)] antialiased ${floating ? "is-floating-chrome" : ""}`}>
     {showDesktopNavigation && <DesktopNavigation {...navigationProps} />}
     <div className="workbot-layout-main flex min-h-0 min-w-0 flex-1 flex-col">{children}</div>
     {profileTab && activity && <ProfileSheet key={profileTab} open onClose={() => setProfileTab(null)} name={data?.name ?? "Workbot"} activity={activity} initialTab={profileTab} />}
@@ -477,15 +480,17 @@ function ChatScreen({ host, composerState, position, navigation, onDraftsChange 
       : welcome === "showing" ? <Welcome name={name} firstName={firstName} onBegin={() => { if (start.isIdle) { setGreetingAwaited(true); start.mutate(); } }} onDone={() => setWelcome("done")} />
       : data && empty && side ? <SideChatStart name={name} organizationName={data.organizationName}>{attached}{composer}</SideChatStart>
       : data && empty && !starting ? <FirstOpen name={name} organizationName={data.organizationName} firstName={firstName} onSuggestion={text => submit(text)} error={start.isError ? start.error instanceof WorkbotSendError && start.error.accessReason ? <AccessRecovery reason={start.error.accessReason} onRetry={() => { setGreetingAwaited(true); start.mutate(); }} /> : <ErrorLine action={{ label: "Try again", onClick: () => { setGreetingAwaited(true); start.mutate(); } }}>{HELLO_FAILED}</ErrorLine> : null}>{attached}{composer}</FirstOpen>
-      : <>{conversation}<div className="flex shrink-0 justify-center px-3 pb-4 pt-3"><div className={COLUMN}>{attached}{composer}</div></div></>;
+      : <>{conversation}<div ref={chrome.bottom} className="workbot-chrome-bottom absolute inset-x-0 bottom-0 z-20 flex justify-center px-3" data-workbot-floating-composer><div className={COLUMN}>{attached}{composer}</div></div></>;
+    // Only the conversation itself floats its header and message box; a welcome, first open or error stays as it was.
+    const floating = tab === "home" && Boolean(data || loading) && welcome !== "showing" && !(data && empty && (side || !starting));
     return <OpenFileContext.Provider value={setPreview}>
       <OpenDocumentContext.Provider value={tab === "documents" && documentContext?.kind === "document" ? documentContext.fileId : null}>
       <WorkspaceNavigationContext.Provider value={host.workspaceAssistant && host.documents ? navigateFromChat : null}>
       <ComputerNavigationContext.Provider value={navigateComputerFromChat}>
       <ComputerOnScreenContext.Provider value={tab === "computer" ? computerView : null}>
       <DocumentNavigationContext.Provider value={guided && host.documents ? { status: navigationStatus, open: followNavigation } : null}>
-        {layout(<div className="flex min-h-0 flex-1 flex-col" data-workbot-workspace>
-          <WorkbotHeader name={name} organizationName={data?.organizationName ?? ""} userName={user?.name ?? null} answered={hasAnsweredTurn(data?.turns)} activity={activity}
+        {layout(<div ref={chrome.frame} className="relative flex min-h-0 flex-1 flex-col" data-workbot-workspace>
+          <WorkbotHeader floating={floating ? chrome.top : undefined} name={name} organizationName={data?.organizationName ?? ""} userName={user?.name ?? null} answered={hasAnsweredTurn(data?.turns)} activity={activity}
             files={filesEnabled ? <FilesButton open={filesOpen} onOpen={() => setFilesOpen(true)} /> : null}
             chats={mobileNavigation} search={!showDesktopNavigation ? palette : null}
             page={pageTitle} action={askAbout ? <AskWorkbotButton name={name} onClick={askAbout} /> : null}
@@ -494,7 +499,7 @@ function ChatScreen({ host, composerState, position, navigation, onDraftsChange 
           />
           <div className="flex min-h-0 min-w-0 flex-1">
           <div className="flex min-h-0 min-w-0 flex-1 flex-col">
-          <div className="flex min-h-0 min-w-0 flex-1 flex-col" style={{ display: tab === "home" ? undefined : "none" }} hidden={tab !== "home"}>{home}</div>
+          <div className="relative flex min-h-0 min-w-0 flex-1 flex-col" style={{ display: tab === "home" ? undefined : "none" }} hidden={tab !== "home"}>{home}</div>
           <div className="flex min-h-0 min-w-0 flex-1 border-t border-[var(--wb-hairline)]" style={{ display: tab === "documents" ? undefined : "none" }} hidden={tab !== "documents"}>
             {(documentsVisited || tab === "documents") && <WorkbotDocuments onDirtyChange={reportDocumentDirty} onContextChange={setDocumentContext} openDocument={openDocument} onOpenSettled={settleNavigation} />}
           </div>
@@ -509,7 +514,7 @@ function ChatScreen({ host, composerState, position, navigation, onDraftsChange 
           {previewFile && <PreviewPanel file={previewFile} onClose={() => setPreview(null)} />}
           </div>
           {filesEnabled && <FilesPanel open={filesOpen} onClose={() => setFilesOpen(false)} assistantName={name} onOpenFile={file => { setFilesOpen(false); setPreview(file); }} />}
-        </div>)}
+        </div>, floating)}
       </DocumentNavigationContext.Provider>
       </ComputerOnScreenContext.Provider>
       </ComputerNavigationContext.Provider>
@@ -601,10 +606,13 @@ function ChatScreen({ host, composerState, position, navigation, onDraftsChange 
   );
 
   const chatId = navigation?.chat ?? null;
+  // Only the conversation itself floats its header and message box over it (floating-chrome.ts).
+  const floating = !(empty && (side || !starting));
   return (
     <OpenFileContext.Provider value={setPreview}>
-    {layout(<div className="flex min-h-0 flex-1 flex-col">
+    {layout(<div ref={chrome.frame} className="relative flex min-h-0 flex-1 flex-col">
       <WorkbotHeader
+        floating={floating ? chrome.top : undefined}
         name={shown.name}
         organizationName={shown.organizationName}
         userName={user?.name ?? null}
@@ -616,7 +624,7 @@ function ChatScreen({ host, composerState, position, navigation, onDraftsChange 
         activity={activity}
       />
       <div className="flex min-h-0 flex-1">
-      <div className="flex min-h-0 min-w-0 flex-1 flex-col">
+      <div className="relative flex min-h-0 min-w-0 flex-1 flex-col">
       {empty && side ? (
         <SideChatStart name={shown.name} organizationName={shown.organizationName}>{composer}</SideChatStart>
       ) : empty && !starting ? (
@@ -674,7 +682,7 @@ function ChatScreen({ host, composerState, position, navigation, onDraftsChange 
                   })()
             }
           />
-          <div className="flex shrink-0 justify-center px-3 pb-3 pt-3 sm:px-10 sm:pb-7">
+          <div ref={chrome.bottom} className="workbot-chrome-bottom absolute inset-x-0 bottom-0 z-20 flex justify-center px-3 sm:px-10" data-workbot-floating-composer>
             <div className={COLUMN}>
               {composer}
             </div>
@@ -700,7 +708,7 @@ function ChatScreen({ host, composerState, position, navigation, onDraftsChange 
           <p className="flex items-center gap-2 text-[14px] font-medium text-[var(--wb-text)]"><FileText size={16} strokeWidth={1.75} aria-hidden />Drop to add to your message</p>
         </div>
       ) : null}
-    </div>)}
+    </div>, floating)}
     </OpenFileContext.Provider>
   );
 }
@@ -839,6 +847,8 @@ function WorkbotHeader(props: {
   page?: string;
   /** That view's one action, such as Ask Workbot about the open document. */
   action?: ReactNode;
+  /** Floats the chat's header over its conversation (translucent, blurred); measured through this ref. */
+  floating?: (node: HTMLElement | null) => void;
 }) {
   const { name } = props;
   if (props.page) return (
@@ -849,8 +859,8 @@ function WorkbotHeader(props: {
     </header>
   );
   return (
-    <header className="grid min-h-[84px] shrink-0 grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-start gap-2 px-3 pb-2 pt-2 sm:px-5" data-workbot-profile-header>
-      <div className="flex min-w-0 items-center gap-1 pt-2">
+    <header ref={props.floating} className={`grid min-h-[84px] shrink-0 grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-start gap-2 px-3 pb-2 pt-2 sm:px-5 ${props.floating ? "workbot-chrome-top absolute inset-x-0 top-0 z-20" : ""}`} data-workbot-profile-header data-workbot-floating-header={props.floating ? "" : undefined}>
+      <div className={`flex min-w-0 items-center pt-2 ${props.floating ? "gap-2" : "gap-1"}`} data-workbot-header-side>
         {props.chats}{props.search}
         <div className="hidden min-w-0 lg:contents">{props.nav}</div>
       </div>
@@ -858,7 +868,7 @@ function WorkbotHeader(props: {
         <h1><ProfileBadge name={name} activity={props.activity} /></h1>
         {props.title ? <div className="flex max-w-[150px] items-center gap-1 text-[12px]">{props.title}</div> : null}
       </div>
-      <div className="flex min-w-0 items-center justify-end gap-1 pt-2 sm:gap-2.5">
+      <div className="flex min-w-0 items-center justify-end gap-1 pt-2 sm:gap-2.5" data-workbot-header-side>
         {props.remove}
         <div className="hidden sm:contents"><WorkbotSetupChip answered={props.answered === true} /></div>
       </div>
@@ -1067,12 +1077,12 @@ function Conversation(props: {
   Object.assign(previews.current, localUrls);
 
   return (
-    <div className={`relative flex min-h-0 flex-1 flex-col ${workbotHost().scrollToBottom === true ? "pb-11" : ""}`} data-workbot-conversation>
+    <div className="relative flex min-h-0 flex-1 flex-col" data-workbot-conversation>
     <div
       ref={scroller}
       className="workbot-scroll min-h-0 flex-1 overflow-y-auto [overflow-anchor:none]"
     >
-      <div ref={content} className="flex min-h-full flex-col items-center justify-end px-4 pb-2 pt-6 sm:px-10">
+      <div ref={content} className="workbot-scroll-content flex min-h-full flex-col items-center justify-end px-4 sm:px-10">
         <div className={`${COLUMN} flex flex-col`}>
           {props.loading ? <ThreadPlaceholder /> : props.hasEarlier && props.earlierLimit ? (
             <p className="mb-6 text-center text-[12px] text-[var(--wb-muted)]" role="status">History limit reached. Earlier messages aren&apos;t available here.</p>
@@ -1135,12 +1145,15 @@ function Conversation(props: {
   );
 }
 
-/** A quiet 32px circle with a 44px touch target; its containing block ends above the composer. */
+/**
+ * A quiet 34px circle with a 44px touch target, floating 12px above the message box (styles.css). It never takes a row
+ * of its own and never changes the conversation's size or padding.
+ */
 function ScrollToBottom({ visible, onClick }: { visible: boolean; onClick(): void }) {
   return <button type="button" aria-label="Scroll to latest message" title="Scroll to latest message"
     aria-hidden={!visible} tabIndex={visible ? 0 : -1} disabled={!visible} onClick={onClick}
-    className={`workbot-scroll-latest absolute bottom-0 left-1/2 z-10 grid size-11 -translate-x-1/2 place-items-center rounded-full focus-visible:outline-none focus-visible:shadow-[var(--wb-focus)] ${visible ? "is-visible" : ""}`}>
-    <span className="grid size-8 place-items-center rounded-full bg-[var(--wb-surface)] text-[var(--wb-text)] shadow-[0_0_0_1px_var(--wb-ring)]"><ArrowDown size={16} strokeWidth={1.5} aria-hidden /></span>
+    className={`workbot-scroll-latest absolute left-1/2 z-30 grid size-11 -translate-x-1/2 place-items-center rounded-full focus-visible:outline-none focus-visible:shadow-[var(--wb-focus)] ${visible ? "is-visible" : ""}`}>
+    <span className="grid size-[34px] place-items-center rounded-full border border-[var(--wb-ring)] bg-[var(--wb-surface)] text-[var(--wb-text)] shadow-[0_4px_12px_-4px_#01162733,0_1px_2px_#0116270f]"><ChevronDown size={18} strokeWidth={1.5} aria-hidden /></span>
   </button>;
 }
 

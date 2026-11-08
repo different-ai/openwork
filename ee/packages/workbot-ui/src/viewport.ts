@@ -19,11 +19,13 @@ export function useWorkbotViewport(active = true) {
       const nextTop = `${visual.offsetTop}px`;
       if (nextHeight !== height) node.style.setProperty("--wb-viewport-height", (height = nextHeight));
       if (nextTop !== top) node.style.setProperty("--wb-viewport-top", (top = nextTop));
+      // The keyboard covers the home indicator: the message box then sits on the keyboard, without the safe area.
+      node.toggleAttribute("data-workbot-keyboard", window.innerHeight - visual.height > 120);
     };
     resize();
     visual.addEventListener("resize", resize);
     visual.addEventListener("scroll", resize);
-    return () => { visual.removeEventListener("resize", resize); visual.removeEventListener("scroll", resize); };
+    return () => { visual.removeEventListener("resize", resize); visual.removeEventListener("scroll", resize); node.removeAttribute("data-workbot-keyboard"); };
   }, [active, node]);
   return viewport;
 }

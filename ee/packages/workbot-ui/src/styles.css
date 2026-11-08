@@ -46,8 +46,10 @@
 }
 
 /* One viewport owner: iOS's keyboard changes visualViewport, not 100dvh. Safe areas belong to the page, not the arrow. */
-.workbot-viewport { position: fixed; inset: 0; top: var(--wb-viewport-top, 0px); height: var(--wb-viewport-height, 100dvh); overflow: hidden; }
-.workbot-viewport > .workbot { height: 100%; padding-top: env(safe-area-inset-top); padding-bottom: env(safe-area-inset-bottom); }
+.workbot-viewport { --wb-safe-bottom: env(safe-area-inset-bottom); position: fixed; inset: 0; top: var(--wb-viewport-top, 0px); height: var(--wb-viewport-height, 100dvh); overflow: hidden; }
+/* With the keyboard open the message box sits on the keyboard, not above a home indicator it covers. */
+.workbot-viewport[data-workbot-keyboard] { --wb-safe-bottom: 0px; }
+.workbot-viewport > .workbot { height: 100%; padding-top: env(safe-area-inset-top); padding-bottom: var(--wb-safe-bottom, env(safe-area-inset-bottom)); }
 /* Preview changes the layout, not the viewer: a dark, full-screen phone sheet around the same browser. */
 .workbot-browser-sheet {
   --wb-bg: #171a19;
@@ -64,9 +66,71 @@
 }
 [data-workbot-browser-layout] > div > .workbot { height: 100%; }
 /* One responsive shell; the conversation and composer share an 800px column within the remaining desktop space. */
-.workbot-layout { height: 100%; padding-top: env(safe-area-inset-top); padding-bottom: env(safe-area-inset-bottom); }
+.workbot-layout { height: 100%; padding-top: env(safe-area-inset-top); padding-bottom: var(--wb-safe-bottom, env(safe-area-inset-bottom)); }
 .workbot-layout-main { overflow: hidden; }
-/* The arrow has its own strip above the composer, never over reply text or the message box. */
+
+/*
+ * The chat's header and message box float over the conversation, like a messaging app: translucent and blurred, so
+ * messages scroll underneath them and stay faintly readable. The chat column reaches into the safe areas (the floating
+ * parts pad themselves instead), and the conversation pads its ends by their measured heights (floating-chrome.ts).
+ */
+.workbot {
+  --wb-float-bg: color-mix(in srgb, var(--wb-bg) 76%, transparent);
+  --wb-float-control: color-mix(in srgb, var(--wb-surface) 82%, transparent);
+  --wb-float-blur: blur(20px) saturate(180%);
+}
+.workbot-layout.is-floating-chrome > .workbot-layout-main {
+  margin-top: calc(-1 * env(safe-area-inset-top));
+  margin-bottom: calc(-1 * var(--wb-safe-bottom, env(safe-area-inset-bottom)));
+}
+.workbot-chrome-top { padding-top: calc(env(safe-area-inset-top) + 8px); }
+.workbot-chrome-bottom { padding-top: 12px; padding-bottom: max(16px, calc(var(--wb-safe-bottom, env(safe-area-inset-bottom)) + 4px)); }
+/* The blur lives on its own layer, which fades out toward the conversation instead of ending in a hard line. */
+.workbot-chrome-top::before, .workbot-chrome-bottom::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+  background: var(--wb-float-bg);
+  -webkit-backdrop-filter: var(--wb-float-blur);
+  backdrop-filter: var(--wb-float-blur);
+}
+.workbot-chrome-top, .workbot-chrome-bottom { isolation: isolate; }
+.workbot-chrome-top::before {
+  -webkit-mask-image: linear-gradient(to top, transparent 0, #000 14px);
+  mask-image: linear-gradient(to top, transparent 0, #000 14px);
+}
+.workbot-chrome-bottom::before {
+  -webkit-mask-image: linear-gradient(to bottom, transparent 0, #000 22px);
+  mask-image: linear-gradient(to bottom, transparent 0, #000 22px);
+}
+/* The header's buttons become small floating circles over the conversation. */
+.workbot-chrome-top [data-workbot-header-side] button {
+  border-radius: 9999px;
+  background: var(--wb-float-control);
+  box-shadow: 0 0 0 1px var(--wb-ring), 0 2px 8px -4px #01162724;
+}
+.workbot-chrome-top [data-workbot-header-side] button:hover { background: var(--wb-chip); }
+.workbot-chrome-top [data-workbot-header-side] button:focus-visible { box-shadow: var(--wb-focus); }
+/* The name pill and the message box are glass too: what scrolls under them stays faintly there. */
+.workbot-chrome-top [data-workbot-profile-badge] > span,
+.workbot-chrome-bottom [data-workbot-composer] {
+  background: var(--wb-float-control);
+  -webkit-backdrop-filter: var(--wb-float-blur);
+  backdrop-filter: var(--wb-float-blur);
+}
+/* Under a floating header the conversation needs no fade of its own. */
+.is-floating-chrome .workbot-scroll { -webkit-mask-image: none; mask-image: none; }
+/* Its first and last message can still scroll fully clear of the floating parts (and a focused row stays clear). */
+.workbot-scroll { scroll-padding-top: var(--wb-chrome-top, 0px); scroll-padding-bottom: var(--wb-chrome-bottom, 0px); }
+.workbot-scroll-content { padding-top: calc(var(--wb-chrome-top, 0px) + 24px); padding-bottom: calc(var(--wb-chrome-bottom, 0px) + 8px); }
+
+/*
+ * The arrow floats over the conversation, centred 12px above the message box. It never takes a row of its own and
+ * never changes the conversation's size or padding. The 44px touch target holds a 34px circle, 5px from its bottom.
+ */
+.workbot-scroll-latest { bottom: max(4px, calc(var(--wb-chrome-bottom, 0px) - 5px)); }
 .workbot-scroll-latest { opacity: 0; visibility: hidden; pointer-events: none; transition: opacity 150ms ease-out, visibility 0s 150ms; }
 .workbot-scroll-latest.is-visible { opacity: 1; visibility: visible; pointer-events: auto; transition-delay: 0s; }
 @media (prefers-reduced-motion: reduce) { .workbot-scroll-latest { transition: none; } }
