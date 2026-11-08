@@ -59,6 +59,8 @@ const stepSchema = z.object({
   site: z.string().optional(),
   /** Work on another of the person's computers (a remote task). */
   remote: z.literal(true).optional(),
+  /** Work in OpenWork itself (remote tasks, workflows, skills, Automations, Apps): one OpenWork logo. Older servers omit it. */
+  openwork: z.literal(true).optional(),
 });
 export type WorkbotStep = z.infer<typeof stepSchema>;
 export type WorkbotPage = NonNullable<WorkbotStep["pages"]>[number];

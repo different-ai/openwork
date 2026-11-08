@@ -86,6 +86,11 @@ export type WorkbotStep = {
   site?: string
   /** Work on one of the person's other computers (a remote task), not in an app. */
   remote?: true
+  /**
+   * Work in OpenWork itself rather than another connector: remote tasks, workflows, skills, Automations, Apps, admin
+   * tools, background tasks. The page shows one OpenWork logo for all of it. Absent from older servers.
+   */
+  openwork?: true
 }
 /** A web page Workbot opened in its browser. `id` is short and stable, for the page's own link (/browser/<id>). */
 export type WorkbotPage = { id: string; url: string; title: string }
@@ -292,12 +297,16 @@ const APPS: Array<[RegExp, string]> = [
   [/gmail|mail/i, "Gmail"],
   [/calendar|gcal/i, "Google Calendar"],
   [/drive|docs|sheets/i, "Google Drive"],
+  [/google.*(document|spreadsheet|sheet|slide|file|folder)/i, "Google Drive"],
+  [/google.*chat/i, "Google Chat"],
   [/notion/i, "Notion"],
   [/linear/i, "Linear"],
   [/github/i, "GitHub"],
   [/hubspot/i, "HubSpot"],
   [/salesforce/i, "Salesforce"],
   [/jira|confluence|atlassian/i, "Atlassian"],
+  // Den's built-in Google tools ("native:google-workspace:…") that no pattern above names more precisely.
+  [/google/i, "Google Workspace"],
 ]
 
 /** What it is doing in a connected app, as a colleague would say it (DESIGN C4). */
@@ -390,20 +399,98 @@ const REMOTE_ACTIONS: Record<string, string> = {
   list: "Checking remote tasks",
 }
 
-/**
- * Work in a connected app, said the way a colleague would ("Searching Exa"), with which tool ran ("Web search") and
- * the app's website for its logo; or work on another of the person's computers. Null for everything else Workbot
- * calls (its own notes, skills, Den's settings), which stays out of sight.
- */
-export function connectorStep(name: string, input: Record<string, unknown>, connectors: WorkbotConnectors = new Map()):
-  { app: string | null; label: string; detail: string | null; site?: string; remote?: true } | null {
-  if (name !== "execute_capability" || typeof input.name !== "string") return null
-  const capability = input.name.trim()
+export type ConnectorStep = { app: string | null; label: string; detail: string | null; site?: string; remote?: true; openwork?: true }
+
+/** OpenWork's own features share one name and logo, so an answer shows a single OpenWork mark however many ran. */
+const OPENWORK = { app: "OpenWork", site: "openworklabs.com", openwork: true } as const
+
+const openworkStep = (label: string, detail: string | null, extra: { remote?: true } = {}): ConnectorStep => ({ ...OPENWORK, label, detail, ...extra })
+
+/** A person-readable name from a slug ("plan-my-day" → "Plan my day"); null for anything that looks like an id. */
+function plainName(value: unknown) {
+  if (typeof value !== "string") return null
+  const slug = value.trim().replace(/^skill:/, "")
+  if (!/^[a-z0-9][a-z0-9 _-]{0,58}$/i.test(slug)) return null
+  const parts = slug.split(/[-_ ]+/).filter(Boolean)
+  // A trailing random suffix ("…-ksdx8c7f") is an id, not part of the name.
+  if (parts.length > 1 && /^(?=.*\d)[a-z0-9]{6,}$/i.test(parts.at(-1) ?? "")) parts.pop()
+  const text = parts.join(" ")
+  return text ? `${text[0]!.toUpperCase()}${text.slice(1)}` : null
+}
+
+/** A short title the person gave (a background task's), on one line. */
+function shortTitle(value: unknown) {
+  if (typeof value !== "string") return null
+  const text = value.replace(/\s+/g, " ").trim()
+  if (!text) return null
+  return text.length > 48 ? `${text.slice(0, 47)}…` : text
+}
+
+/** Workbot's direct tools from OpenWork: skills, Apps, Your agent's checks and its own background tasks. */
+function openworkTool(name: string, input: Record<string, unknown>): ConnectorStep | null {
+  switch (name) {
+    case "start_task": return openworkStep("Starting a background task", shortTitle(input.title) ?? "Background task")
+    case "stop_task": return openworkStep("Stopping a background task", "Background task")
+    case "list_skills": return openworkStep("Checking skills", "Skills")
+    case "get_skill": return openworkStep("Reading a skill", plainName(input.name) ?? "Skill")
+    case "create_skill":
+    case "update_skill": return openworkStep("Saving a skill", plainName(input.name) ?? "Skill")
+    case "prepare_app":
+    case "create_app": return openworkStep("Building an app", "App")
+    case "update_app": return openworkStep("Updating an app", "App")
+    case "read_app": return openworkStep("Opening an app", "App")
+    case "render_workflow_artifact": return openworkStep("Showing a workflow's results", "Workflow")
+    case "request_check": return openworkStep("Asking your agent to check", "Your agent")
+    default: return null
+  }
+}
+
+/** What an OpenWork capability does, by area: Den's own operations ("createCloudAutomation", "putMeAgent"). */
+const OPENWORK_AREAS: Array<[RegExp, string]> = [
+  [/automation/i, "Automations"],
+  [/workflow/i, "Workflows"],
+  [/skill/i, "Skills"],
+  [/(^|[a-z])(app|apps|artifact)([A-Z]|$)/, "Apps"],
+  [/agent/i, "Your agent"],
+  [/member|organi[sz]ation|team|invit|role/i, "Organization"],
+  [/connection|connector|mcp/i, "Connections"],
+]
+
+function openworkCapability(capability: string): ConnectorStep | null {
   if (capability.startsWith("remote-session:")) {
     const action = capability.slice("remote-session:".length)
     const label = REMOTE_ACTIONS[action] ?? "Checking the remote task"
-    return { app: "Remote computer", label, detail: label, remote: true }
+    return openworkStep(label, "Remote task", { remote: true })
   }
+  if (capability.startsWith("admin:")) return openworkStep("Using OpenWork admin tools", toolDetail(capability.slice("admin:".length), null) ?? "Admin tools")
+  if (capability.startsWith("skill:")) return openworkStep("Using a skill", plainName(capability) ?? "Skill")
+  // A plugin's skill or Workflow, by ids only: say what kind of thing ran, never which ids.
+  if (capability.startsWith("plugin:")) return openworkStep("Using OpenWork", "Workflow or skill")
+  // Den's own operations are bare camelCase names; anything with a prefix is some other source.
+  if (!/^[a-z][a-zA-Z0-9]*$/.test(capability)) return null
+  const area = OPENWORK_AREAS.find(([pattern]) => pattern.test(capability))?.[1] ?? "OpenWork"
+  if (area === "Automations") {
+    const verb = capability.match(/^[a-z]+/)?.[0] ?? ""
+    const label = /create|post|put|update|patch|activate|deactivate/.test(verb) ? "Setting up an automation"
+      : /run|trigger/.test(verb) ? "Running an automation"
+      : /delete|archive|cancel/.test(verb) ? "Changing an automation"
+      : "Checking automations"
+    return openworkStep(label, area)
+  }
+  if (area === "Workflows") return openworkStep(/^(run|execute|post|trigger)/.test(capability) ? "Running a workflow" : "Checking workflows", area)
+  return openworkStep(appActionLabel("OpenWork", capability), area)
+}
+
+/**
+ * Work in a connected app, said the way a colleague would ("Searching Exa"), with which tool ran ("Web search") and
+ * the app's website for its logo; or work in OpenWork itself (a remote task on another of the person's computers, a
+ * workflow, skill, Automation, App, admin tool or background task), which the page shows as one OpenWork logo. Null
+ * for everything else Workbot calls (finding tools, its own notes and files), which stays out of sight.
+ */
+export function connectorStep(name: string, input: Record<string, unknown>, connectors: WorkbotConnectors = new Map()): ConnectorStep | null {
+  if (name !== "execute_capability") return openworkTool(name, input)
+  if (typeof input.name !== "string") return null
+  const capability = input.name.trim()
   // A connection's own tool: mcp:<connectionId>:<tool>. The id names the connection; the tool says what it did.
   const external = /^mcp:([^:]+):(.+)$/.exec(capability)
   if (external) {
@@ -414,8 +501,10 @@ export function connectorStep(name: string, input: Record<string, unknown>, conn
     const site = plainSite(known?.site ?? guessed?.site)
     return { app, label: app ? appActionLabel(app, tool) : "Using a connected app", detail: toolDetail(tool, app), ...(site ? { site } : {}) }
   }
+  const own = /^(remote-session|admin|skill|plugin):/.test(capability) ? openworkCapability(capability) : null
+  if (own) return own
   const app = APPS.find(([pattern]) => pattern.test(capability))?.[1] ?? null
-  if (!app) return null
+  if (!app) return openworkCapability(capability)
   const tool = capability.split(/[:/]/).pop() ?? ""
   return { app, label: appActionLabel(app, capability), detail: toolDetail(tool, app) }
 }
@@ -629,7 +718,7 @@ export function buildWorkbotTurns(snapshot: RunnerSnapshot, files: FileNames = n
           addComputerStep(parts, call.name, call.input, results.get(call.id), message.createdAt ?? null)
           continue
         }
-        // Only work in a connected app (or on another of the person's computers) is worth a line ("Searching Exa");
+        // Only work in a connected app or in OpenWork itself is worth a logo under the answer ("Searching Exa");
         // lookups, notes to self and files stay out of sight: files it made show as cards under the answer.
         const used = connectorStep(call.name, call.input, connectors)
         if (!used) continue
@@ -645,6 +734,7 @@ export function buildWorkbotTurns(snapshot: RunnerSnapshot, files: FileNames = n
           ...(used.detail ? { detail: used.detail } : {}),
           ...(used.site ? { site: used.site } : {}),
           ...(used.remote ? { remote: true as const } : {}),
+          ...(used.openwork ? { openwork: true as const } : {}),
         }
         const last = parts.at(-1)
         if (last?.kind === "steps") last.steps.push(step)

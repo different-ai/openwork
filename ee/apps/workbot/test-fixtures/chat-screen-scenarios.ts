@@ -1,3 +1,5 @@
+import type { RunnerMessage, RunnerSnapshot } from "@openwork-ee/headless-protocol"
+
 /**
  * Test-only conversations for chat-screen-server.ts, in the shape `GET /v1/workbot` answers. Each scenario is a
  * function so every server start begins from the same conversation.
@@ -85,6 +87,8 @@ export const scenarios: Record<string, () => FixtureThread> = {
   /** Nov 8: "Could you go on google.com with browser", as the conversation is read once it is done (see googleAt). */
   google: () => googleAt(2),
   exa: () => exaAt(3),
+  openwork: () => openworkAt(false),
+  "openwork-live": () => openworkAt(true),
   connectors: () => ({
     name: "Workbot", organizationName: "Example Team", status: "idle", hasEarlier: false, filesEnabled: true,
     turns: [hello(), turn("stack", "Find the UX research, check our design notes, and put the next steps in Linear.", minutesAgo(1), [
@@ -129,6 +133,68 @@ export function exaAt(phase: 0 | 1 | 2 | 3): FixtureThread {
   if (phase === 3) parts.push(said("Here's what stands out: keep feedback immediate, show system status, and make every action reversible.", 2))
   const asked = turn("x1", "could you use exa to search about best ux practices and skills", sent, parts, { modelSteps: phase === 0 ? 1 : phase === 3 ? 3 : 2 })
   return { name: "Workbot", organizationName: "Example Team", status: phase === 3 ? "idle" : "busy", hasEarlier: false, filesEnabled: true, turns: [hello(), phase === 3 ? asked : working(asked)] }
+}
+
+/**
+ * One answer that used connectors and OpenWork's own features, as the runner stores it: Exa, Google Drive, Linear,
+ * then a skill, a plugin Workflow, an Automation, a background task and a remote task on the person's Mac Studio.
+ * `live` leaves the remote task running. connector-steps.test.ts checks openworkAt against workbot-server's real
+ * buildWorkbotTurns of this transcript (the fixture server runs without the development build of workbot-server).
+ */
+export function openworkSnapshot(live: boolean, sent: number): RunnerSnapshot {
+  const id = "wb_ow1"
+  const messages: RunnerMessage[] = [{ messageId: id, role: "user", text: OPENWORK_REQUEST }]
+  OPENWORK_CALLS.forEach(([callId, name, input], index) => {
+    const at = sent + 1_000 + index * 2_000
+    messages.push({ messageId: id, role: "assistant", text: index === 0 ? "On it. I'll pull this together and set it up." : "", createdAt: at, toolCalls: [{ id: callId, name, input }] })
+    if (!(live && callId === "c8")) messages.push({ messageId: id, role: "tool", callId, name, isError: false, createdAt: at + 500 })
+  })
+  if (!live) messages.push({ messageId: id, role: "assistant", text: OPENWORK_ANSWER, createdAt: sent + 20_000, toolCalls: [] })
+  return {
+    status: live ? "busy" : "idle", finalAssistantText: "", hasEarlier: false, messages,
+    turns: [{ messageId: id, status: live ? "running" : "completed", createdAt: sent, updatedAt: sent + 21_000, error: null }],
+  }
+}
+export const OPENWORK_CONNECTORS = new Map([["emc_01kexa7q2m", { name: "Exa", site: "exa.ai" }], ["emc_01klin42aa", { name: "Linear", site: "linear.app" }]])
+const OPENWORK_REQUEST = "Make my weekly digest: research the format, use my notes and Linear, run it on my Mac Studio and schedule it."
+const OPENWORK_ANSWER = "Done. Your weekly digest runs every Monday at 9, and the first draft is on its way from your Mac Studio."
+const OPENWORK_CALLS: Array<[string, string, Record<string, unknown>]> = [
+  ["c1", "execute_capability", { name: "mcp:emc_01kexa7q2m:web_search_exa", body: { query: "weekly digest format" } }],
+  ["c2", "execute_capability", { name: "native:google-workspace:searchGoogleDriveFiles", query: { q: "digest" } }],
+  ["c3", "execute_capability", { name: "mcp:emc_01klin42aa:list_issues", body: {} }],
+  ["c4", "get_skill", { name: "weekly-digest-ksdx8c7f" }],
+  ["c5", "execute_capability", { name: "plugin:plg_01k9:cfg_01k9", body: {} }],
+  ["c6", "execute_capability", { name: "createCloudAutomation", body: { title: "Weekly digest" } }],
+  ["c7", "start_task", { title: "Draft the weekly digest", brief: "…" }],
+  ["c8", "execute_capability", { name: "remote-session:create", body: { target: "mac-studio" } }],
+]
+/** The steps workbot-server builds from OPENWORK_CALLS, in order (checked by connector-steps.test.ts). */
+const OPENWORK_STEPS: Array<Record<string, unknown>> = [
+  { label: "Searching Exa", app: "Exa", detail: "Web search", site: "exa.ai" },
+  { label: "Searching Google Drive", app: "Google Drive", detail: "Search drive files" },
+  { label: "Checking Linear", app: "Linear", detail: "List issues", site: "linear.app" },
+  { label: "Reading a skill", app: "OpenWork", detail: "Weekly digest", site: "openworklabs.com", openwork: true },
+  { label: "Using OpenWork", app: "OpenWork", detail: "Workflow or skill", site: "openworklabs.com", openwork: true },
+  { label: "Setting up an automation", app: "OpenWork", detail: "Automations", site: "openworklabs.com", openwork: true },
+  { label: "Starting a background task", app: "OpenWork", detail: "Draft the weekly digest", site: "openworklabs.com", openwork: true },
+  { label: "Starting a remote task", app: "OpenWork", detail: "Remote task", site: "openworklabs.com", openwork: true, remote: true },
+]
+
+/** The page's view of openworkSnapshot: (Exa)(Google Drive)(Linear)(OpenWork), one OpenWork logo for all its features. */
+export function openworkAt(live: boolean, sent = Date.now() - 30_000): FixtureThread {
+  const parts: Part[] = []
+  OPENWORK_STEPS.forEach((step, index) => {
+    const at = sent + 1_000 + index * 2_000
+    const running = live && index === OPENWORK_STEPS.length - 1
+    if (index === 0) parts.push(said("On it. I'll pull this together and set it up.", 0))
+    const value = { ...step, icon: "app", status: running ? "running" : "done", startedAt: at, finishedAt: running ? null : at + 500, updates: [] }
+    const last = parts.at(-1)
+    if (last?.kind === "steps") last.steps.push(value)
+    else parts.push({ kind: "steps", steps: [value] })
+  })
+  if (!live) parts.push(said(OPENWORK_ANSWER, OPENWORK_STEPS.length))
+  const asked = turn("wb_ow1", OPENWORK_REQUEST, sent, parts, { modelSteps: OPENWORK_STEPS.length + (live ? 0 : 1), finishedAt: live ? null : sent + 21_000 })
+  return { name: "Workbot", organizationName: "Example Team", status: live ? "busy" : "idle", hasEarlier: false, filesEnabled: true, turns: [hello(), live ? working(asked) : asked] }
 }
 
 /** What the page hears while the call is written, as workbot-server sends it: the start, then where, then what. */
