@@ -81,3 +81,37 @@ export function artifactTitle(file: Pick<WorkbotAttachment, "name">, html?: stri
   const base = extension ? file.name.slice(0, -(extension.length + 1)) : file.name;
   return base.trim() || file.name;
 }
+
+/** Nothing in a thumbnail may load, connect or navigate: only the document's own inline styles and inline images. */
+export const THUMBNAIL_CSP = "default-src 'none'; style-src 'unsafe-inline'; img-src data:; font-src data:; form-action 'none'";
+
+/**
+ * An app's page as it looks before any of its scripts run, safe to show without the person opening it: scripts,
+ * event handlers, frames, plugins, links, base and refresh tags, and every outside address (attributes, CSS imports
+ * and url()s) are removed, and a policy that blocks every request is put first. The frame showing it also runs no scripts. Null when there is no parser (server rendering) or the
+ * page has nothing to show without its scripts, so the card shows the app placeholder instead.
+ */
+export function staticAppHtml(html: string, parser: { parseFromString(source: string, type: "text/html"): Document } | null = typeof DOMParser === "undefined" ? null : new DOMParser()): string | null {
+  if (!parser) return null;
+  const doc = parser.parseFromString(html, "text/html");
+  for (const node of doc.querySelectorAll("script, noscript, template, iframe, frame, frameset, object, embed, applet, link, base, meta, portal, form")) node.remove();
+  // Styles keep their look but load nothing: imports and non-inline url()s go (the policy blocks them too).
+  const inertCss = (css: string) => css.replace(/@import[^;]*;?/gi, "").replace(/url\(\s*(?!['"]?\s*data:)[^)]*\)/gi, "none");
+  for (const style of doc.querySelectorAll("style")) style.textContent = inertCss(style.textContent ?? "");
+  for (const element of doc.querySelectorAll("[style]")) element.setAttribute("style", inertCss(element.getAttribute("style") ?? ""));
+  for (const element of doc.querySelectorAll("*")) {
+    for (const attribute of [...element.attributes]) {
+      const name = attribute.name.toLowerCase();
+      if (name.startsWith("on") || name === "ping" || name === "srcset" || ((name === "src" || name.endsWith("href") || name === "action" || name === "formaction" || name === "poster" || name === "background" || name === "data") && !attribute.value.trim().toLowerCase().startsWith("data:"))) element.removeAttribute(attribute.name);
+    }
+  }
+  const letters = (node: Node | null) => (node?.textContent ?? "").replace(/\s+/g, "").length;
+  const text = letters(doc.body) - [...doc.body.querySelectorAll("style")].reduce((total, style) => total + letters(style), 0);
+  const visible = text >= 12 || Boolean(doc.body.querySelector("img, svg, picture, video"));
+  if (!visible) return null;
+  const policy = doc.createElement("meta");
+  policy.setAttribute("http-equiv", "Content-Security-Policy");
+  policy.setAttribute("content", THUMBNAIL_CSP);
+  doc.head.prepend(policy);
+  return `<!doctype html>${doc.documentElement.outerHTML}`;
+}

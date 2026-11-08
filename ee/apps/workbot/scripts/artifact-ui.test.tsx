@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { renderToStaticMarkup } from "react-dom/server";
-import { artifactKind, artifactLabel, artifactLink, artifactTitle, htmlTitle } from "../../../packages/workbot-ui/src/artifact";
+import { artifactKind, artifactLabel, artifactLink, artifactTitle, htmlTitle, staticAppHtml } from "../../../packages/workbot-ui/src/artifact";
 import { ArtifactCards } from "../../../packages/workbot-ui/src/artifact-card";
 import { OpenFileIdContext } from "../../../packages/workbot-ui/src/open-file";
 import { setWorkbotHost } from "../../../packages/workbot-ui/src/host";
@@ -49,11 +49,9 @@ test("each card shows a thumbnail of the file itself, its icon, its title and it
 
   const appCard = cardOf(html, app.id);
   assert.match(appCard, /data-workbot-artifact-thumbnail/);
-  // The app runs in its own opaque origin, scaled down, without taking input or focus.
-  assert.match(appCard, /<iframe[^>]*sandbox="allow-scripts"/);
-  assert.doesNotMatch(appCard, /allow-same-origin/);
-  assert.match(appCard, /<iframe[^>]*tabindex="-1"/);
-  assert.match(appCard, /pointer-events-none/);
+  // A card never runs the app: without a parser to strip it (server rendering) the app shows its placeholder.
+  assert.doesNotMatch(appCard, /<iframe|allow-scripts/);
+  assert.match(appCard, /data-workbot-artifact-placeholder="html"/);
   assert.match(appCard, />3D Space &amp; Storage Organizer</);
   assert.match(appCard, />App</);
   assert.match(appCard, /data-workbot-artifact-icon="html"/);
@@ -95,4 +93,9 @@ test("an app is named by its own <title>; other files by their name without the 
 
 test("Copy link keeps the page and its chat, and names the file", () => {
   assert.equal(artifactLink("out-app", "https://chat.example.test/?chat=abc123#x"), "https://chat.example.test/?chat=abc123&artifact=out-app#x");
+});
+
+test("an app's thumbnail page is only shown when it can be made inert", () => {
+  // No parser (server rendering): nothing to show, rather than the raw page.
+  assert.equal(staticAppHtml("<title>x</title><body>Some visible words here<script>fetch('/x')</script></body>", null), null);
 });

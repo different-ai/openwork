@@ -8,6 +8,9 @@
  * Playwright resolver; WORKBOT_EVIDENCE_DIR sets the screenshot folder. ARTIFACT_BASELINE=1 only captures the old
  * screens (chat, then the first file opened) without asserting the new card or panel.
  *
+ * Also: an app that tries to load, send or navigate (prompt injection) does none of it from its card; only opening
+ * it in the panel runs it.
+ *
  * Checks, at 1440px and 1920px desktop and an iPhone-sized phone: each card shows a thumbnail, a title and a type;
  * a tap opens the side panel on desktop (the chat stays beside it) and a full-screen sheet on the phone, both with
  * only a title, "More" and Close in the header; Close returns to the chat.
@@ -67,7 +70,12 @@ try {
     assert.equal(await cards.count(), 3, `${viewport.name}: one card per file Workbot made`)
     const organizer = cards.filter({ hasText: "3D Space Organizer" })
     await organizer.waitFor()
-    assert.equal(await organizer.locator("[data-workbot-artifact-thumbnail] iframe[sandbox='allow-scripts']").count(), 1, "the app's card shows the app itself, in a sandboxed frame")
+    // The card shows the app's page without running it: no scripts, and a policy that blocks every request.
+    const thumbnail = organizer.locator("[data-workbot-artifact-thumbnail] iframe")
+    await thumbnail.waitFor()
+    assert.equal(await thumbnail.getAttribute("sandbox"), "", "the thumbnail frame runs no scripts")
+    const shown = await thumbnail.getAttribute("srcdoc")
+    assert.ok(shown && shown.includes("Content-Security-Policy") && !/<script/i.test(shown), "the thumbnail page has no scripts and blocks requests")
     assert.match(await organizer.innerText(), /App/)
     const report = cards.filter({ hasText: "Room plan" })
     assert.equal(await report.locator("[data-workbot-artifact-placeholder='pdf']").count(), 1, "a file without a rendering shows its type's placeholder")
@@ -140,6 +148,18 @@ try {
       await surface.waitFor()
       assert.equal((await surface.locator("[data-workbot-artifact-header]").innerText()).trim(), "Shopping list")
       assert.doesNotMatch(page.url(), /artifact=/)
+    }
+    if (viewport.name === "desktop-1440") {
+      // A hostile app's card makes no request and doesn't navigate before the person opens it.
+      const leaked = []
+      page.on("request", request => { if (request.url().includes("exfil.invalid")) leaked.push(request.url()) })
+      await page.goto(`${base}/?scenario=artifact-hostile&sideChats=1`)
+      const card = page.locator("[data-workbot-artifact-card]")
+      await card.locator("[data-workbot-artifact-thumbnail] iframe[sandbox='']").waitFor()
+      await card.filter({ hasText: "Inbox summary" }).waitFor()
+      await page.waitForTimeout(2000)
+      assert.deepEqual(leaked, [], "the card's thumbnail reached nothing")
+      await page.screenshot({ path: path.join(output, `${prefix}-${viewport.name}-hostile-card.png`) })
     }
     await context.close()
   }

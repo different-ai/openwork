@@ -2,7 +2,7 @@
 
 import { AppWindow, File, FileSpreadsheet, FileText, Film, Image as ImageIcon, Music, Presentation, type LucideIcon } from "lucide-react";
 import { useContext, useMemo } from "react";
-import { artifactColor, artifactKind, artifactLabel, artifactTitle, type ArtifactKind } from "./artifact";
+import { artifactColor, artifactKind, artifactLabel, artifactTitle, staticAppHtml, type ArtifactKind } from "./artifact";
 import { useWorkbotFileBytes, useWorkbotImageUrl, useWorkbotPreview, useWorkbotPreviewPage, type WorkbotAttachment } from "./data";
 import { OpenFileContext, OpenFileIdContext } from "./open-file";
 
@@ -74,7 +74,7 @@ export function ArtifactCard({ file }: { file: WorkbotAttachment }) {
   );
 }
 
-/** The file itself, small: an image, a rendered first page, the app running (without input), or its type. */
+/** The file itself, small: an image, a rendered first page, the app's page without its scripts, or its type. */
 export function ArtifactThumbnail({ file, kind, html }: { file: WorkbotAttachment; kind: ArtifactKind; html: string | null }) {
   if (kind === "image") return <ImageThumbnail file={file} kind={kind} />;
   if (kind === "html") return html === null ? <Placeholder kind={kind} /> : <AppThumbnail html={html} />;
@@ -89,16 +89,22 @@ function ImageThumbnail({ file, kind }: { file: WorkbotAttachment; kind: Artifac
   return url ? <img src={url} alt="" className="workbot-fade-in block h-full w-full object-cover" /> : <Placeholder kind={kind} />;
 }
 
-/** The app at a desktop width, scaled down to the card. Its own opaque origin, no input, and no focus stop. */
+/**
+ * The app at a desktop width, scaled down to the card, as its page looks before its scripts run (staticAppHtml): a
+ * card appearing never runs the app, sends anything or navigates. Only opening it in the panel runs it.
+ */
 function AppThumbnail({ html }: { html: string }) {
+  const page = useMemo(() => staticAppHtml(html), [html]);
+  if (page === null) return <Placeholder kind="html" />;
   return (
     <span className="relative block h-full w-full overflow-hidden bg-white">
       <iframe
-        srcDoc={html}
-        sandbox="allow-scripts"
+        srcDoc={page}
+        sandbox=""
         tabIndex={-1}
         title=""
         loading="lazy"
+        referrerPolicy="no-referrer"
         className="pointer-events-none absolute left-0 top-0 h-[300%] w-[300%] origin-top-left scale-[0.3333] border-0"
       />
     </span>
