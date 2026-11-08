@@ -164,8 +164,6 @@ import {
   sidebarRowPaddingInlineStart,
 } from "./sidebar-lanes";
 import { WorkspaceAvatarPicker } from "./workspace-avatar-picker";
-import { useWorkspaceAvatarPreference } from "./workspace-avatar-store";
-import { resolveWorkspaceAvatarColor } from "@/react-app/design-system/workspace-avatar-utils";
 import { isSameWorkbenchSession, useWorkbenchStore } from "../chat/workbench-store";
 import { shouldHideAttachedSideChat } from "./side-chat-status";
 import { SidebarDestination } from "./sidebar-destination";
@@ -1187,19 +1185,21 @@ function useSessionFeed(groups: WorkspaceSessionGroup[], { enabled, statusById }
   }), [enabled, feedFolders, groupBy, groups, groupsByWorkspace, now, pinnedIdList, placementById, sortBy, statusById, unreadIdList, workedAtById]);
 }
 
-/** The group a Feed row is filed in, shown after its workspace chip. */
-function useFeedGroupLabel() {
+/** The workspace, and the group when it has one, stands in for the project on each Feed row. */
+function useFeedSubtitle() {
   const groupsByWorkspace = useSessionManagementStore((state) => state.groupsByWorkspace);
   return React.useCallback(({ group, session }: FeedEntry) => {
+    const workspace = workspaceLabel(group.workspace);
     const state = groupsByWorkspace[group.workspace.id];
     const groupId = state?.assignments[session.id];
-    return groupId ? state?.groups.find((candidate) => candidate.id === groupId)?.label : undefined;
+    const groupLabel = groupId ? state?.groups.find((candidate) => candidate.id === groupId)?.label : undefined;
+    return groupLabel ? `${workspace} · ${groupLabel}` : workspace;
   }, [groupsByWorkspace]);
 }
 
-function FeedSessionRow({ entry, groupLabelFor, draggable = false }: {
+function FeedSessionRow({ entry, subtitleFor, draggable = false }: {
   entry: FeedEntry;
-  groupLabelFor: (entry: FeedEntry) => string | undefined;
+  subtitleFor: (entry: FeedEntry) => string;
   draggable?: boolean;
 }) {
   return (
@@ -1207,7 +1207,7 @@ function FeedSessionRow({ entry, groupLabelFor, draggable = false }: {
       session={entry.session}
       workspaceId={entry.group.workspace.id}
       workspaceName={workspaceLabel(entry.group.workspace)}
-      feedRow={{ groupLabel: groupLabelFor(entry) }}
+      feedRow={{ subtitle: subtitleFor(entry) }}
       draggable={draggable}
     />
   );
@@ -1218,7 +1218,7 @@ function FeedSessionRow({ entry, groupLabelFor, draggable = false }: {
  * Sorted by last activity, any row can be dragged to a new spot; it stays there until it has new activity.
  */
 function SessionFeedList({ feed }: { feed: SessionFeed }) {
-  const groupLabelFor = useFeedGroupLabel();
+  const subtitleFor = useFeedSubtitle();
   const orderIds = React.useMemo(
     () => feed.sections.flatMap(({ entries }) => entries.map((entry) => entry.session.id)),
     [feed.sections],
@@ -1247,11 +1247,11 @@ function SessionFeedList({ feed }: { feed: SessionFeed }) {
               {feed.reorderable ? (
                 <SessionReorderList sessionIds={orderIds} orderIds={orderIds} onReorder={onReorder}>
                   {entries.map((entry) => (
-                    <FeedSessionRow key={`${entry.group.workspace.id}:${entry.session.id}`} entry={entry} groupLabelFor={groupLabelFor} draggable />
+                    <FeedSessionRow key={`${entry.group.workspace.id}:${entry.session.id}`} entry={entry} subtitleFor={subtitleFor} draggable />
                   ))}
                 </SessionReorderList>
               ) : entries.map((entry) => (
-                <FeedSessionRow key={`${entry.group.workspace.id}:${entry.session.id}`} entry={entry} groupLabelFor={groupLabelFor} />
+                <FeedSessionRow key={`${entry.group.workspace.id}:${entry.session.id}`} entry={entry} subtitleFor={subtitleFor} />
               ))}
             </SidebarMenuSub>
           </SidebarMenuItem>
@@ -1279,13 +1279,13 @@ function FeedShelfDock({ feed, archived, groups }: {
   archived: GlobalArchivedSessionEntry[];
   groups: WorkspaceSessionGroup[];
 }) {
-  const groupLabelFor = useFeedGroupLabel();
+  const subtitleFor = useFeedSubtitle();
   const [openShelf, setOpenShelf] = React.useState<string | null>(null);
   if (feed.folders.length === 0 && archived.length === 0) return null;
   const workspaceNames = new Map(groups.map((group) => [group.workspace.id, workspaceLabel(group.workspace)]));
   const shelfProps = (shelf: string) => ({
     shelf,
-    groupLabelFor,
+    subtitleFor,
     expanded: openShelf === shelf,
     onExpandedChange: (open: boolean) => setOpenShelf(open ? shelf : null),
   });
@@ -1331,7 +1331,7 @@ function FeedShelfDock({ feed, archived, groups }: {
 }
 
 /** A collapsed shelf below the Feed: a pinned folder or Archived. Open, it shows about three rows. */
-function FeedShelf({ shelf, icon, label, detail, attention = null, action, entries, groupLabelFor, expanded, onExpandedChange }: {
+function FeedShelf({ shelf, icon, label, detail, attention = null, action, entries, subtitleFor, expanded, onExpandedChange }: {
   shelf: string;
   icon: React.ReactNode;
   label: string;
@@ -1339,7 +1339,7 @@ function FeedShelf({ shelf, icon, label, detail, attention = null, action, entri
   attention?: "needs-you" | "unread" | null;
   action?: React.ReactNode;
   entries: FeedEntry[];
-  groupLabelFor: (entry: FeedEntry) => string | undefined;
+  subtitleFor: (entry: FeedEntry) => string;
   expanded: boolean;
   onExpandedChange: (open: boolean) => void;
 }) {
@@ -1378,7 +1378,7 @@ function FeedShelf({ shelf, icon, label, detail, attention = null, action, entri
                 <SidebarMenuItem>
                   <SidebarMenuSub>
                     {entries.map((entry) => (
-                      <FeedSessionRow key={`${entry.group.workspace.id}:${entry.session.id}`} entry={entry} groupLabelFor={groupLabelFor} />
+                      <FeedSessionRow key={`${entry.group.workspace.id}:${entry.session.id}`} entry={entry} subtitleFor={subtitleFor} />
                     ))}
                   </SidebarMenuSub>
                 </SidebarMenuItem>
@@ -2322,55 +2322,9 @@ type SessionMenuItemProps = {
   isPinned?: boolean;
   draggable?: boolean;
   workspaceName?: string;
-  /** Feed rows: a quiet second line with the workspace's color, which opens into its name on hover, and the group. */
-  feedRow?: { groupLabel?: string };
+  /** Feed rows: a quiet second line naming the workspace and group. */
+  feedRow?: { subtitle: string };
 };
-
-/**
- * A Feed row's workspace: a fixed dot in the workspace's color. Hovering or focusing the row slides the workspace
- * name open beside it (keyboard focus too; a click's lingering focus does not). The dot never changes size; only the name's column opens, so nothing before it moves.
- *
- * Motion: rows are hovered constantly, so the name waits 120ms (sweeping the pointer down the list opens nothing),
- * opens over 200ms and closes faster, 120ms, with no delay. The column animates `grid-template-columns` from 0fr to
- * 1fr, so it opens to the name's real width; the text fades in and moves 4px to the right. Reduced motion: fade only.
- */
-function FeedWorkspaceChip({ workspaceId, name, followed }: { workspaceId: string; name: string; followed: boolean }) {
-  const preference = useWorkspaceAvatarPreference(workspaceId);
-  const open = "group-hover/menu-sub-item:delay-120 group-hover/menu-sub-item:duration-200 group-has-[:focus-visible]/menu-sub-item:delay-0 group-has-[:focus-visible]/menu-sub-item:duration-200";
-  return (
-    <span data-session-feed-workspace={workspaceId} title={name} className="flex h-4 min-w-0 shrink items-center">
-      <span
-        aria-hidden="true"
-        data-session-feed-workspace-dot
-        className="size-2 shrink-0 rounded-full"
-        style={{ backgroundColor: resolveWorkspaceAvatarColor(workspaceId, preference?.color) }}
-      />
-      <span
-        data-session-feed-workspace-name
-        className={cn(
-          "grid min-w-0 grid-cols-[0fr] transition-[grid-template-columns] delay-0 duration-120 ease-[cubic-bezier(0.2,0,0,1)]",
-          "group-hover/menu-sub-item:grid-cols-[1fr] group-has-[:focus-visible]/menu-sub-item:grid-cols-[1fr]",
-          "motion-reduce:transition-none",
-          open,
-        )}
-      >
-        <span className="min-w-0 overflow-hidden">
-          <span
-            className={cn(
-              "block max-w-40 truncate ps-1.5 text-sidebar-foreground/70 opacity-0",
-              "transition-[opacity,translate] delay-0 duration-120 ease-[cubic-bezier(0.2,0,0,1)] motion-safe:-translate-x-1",
-              "group-hover/menu-sub-item:opacity-100 group-has-[:focus-visible]/menu-sub-item:opacity-100",
-              "motion-safe:group-hover/menu-sub-item:translate-x-0 motion-safe:group-has-[:focus-visible]/menu-sub-item:translate-x-0",
-              open,
-            )}
-          >
-            {name}{followed ? <span className="text-muted-foreground/60"> ·</span> : null}
-          </span>
-        </span>
-      </span>
-    </span>
-  );
-}
 
 /** Feed rows: Archive (or Unarchive) one click away, just before the More menu, on hover or focus. */
 function FeedArchiveButton({ sessionId, isArchived, hidden }: { sessionId: string; isArchived: boolean; hidden: boolean }) {
@@ -2607,15 +2561,12 @@ export function SessionMenuItem({
                     <SessionTitle intent={titleIntent} title={displayTitle} tooltip={itemTitle} />
                   </span>
                   <span className="flex h-4 min-w-0 items-center gap-2 text-[11px] leading-4 text-muted-foreground" data-session-feed-subtitle>
-                    {/* me-3 keeps the line clear of the Archive button that shares this lane on hover. */}
-                    <span className="flex min-w-0 flex-1 items-center gap-1.5 me-3">
-                      <FeedWorkspaceChip workspaceId={workspaceId} name={workspaceName ?? workspaceId} followed={Boolean(decisionLabel || feedRow.groupLabel)} />
-                      {decisionLabel ? (
-                        <span className="shrink-0" data-session-decision={waitingKind} title={itemTitle}>{decisionLabel}</span>
-                      ) : feedRow.groupLabel ? (
-                        <span className="min-w-0 flex-1 truncate" data-session-feed-group>{feedRow.groupLabel}</span>
-                      ) : null}
-                    </span>
+                    {/* me-1 keeps the text clear of the Archive button that shares this lane on hover. */}
+                    {decisionLabel ? (
+                      <span className="me-1 min-w-0 flex-1 truncate" data-session-decision={waitingKind} title={feedRow.subtitle}>{decisionLabel}</span>
+                    ) : (
+                      <span className="me-1 min-w-0 flex-1 truncate">{feedRow.subtitle}</span>
+                    )}
                     <SessionNumberShortcutSlot digit={shortcutDigit} sharedWithMenu />
                   </span>
                 </span>

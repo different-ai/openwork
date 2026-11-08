@@ -25,13 +25,8 @@ chosen is remembered on the device.
   row shows an **Archive** button just before the More menu (Unarchive in the
   Archived shelf). The thread header, command palette and Cmd/Ctrl+Shift+E
   archive or unarchive the open session.
-- **Workspace color.** Each row's second line starts with a fixed 8px dot in
-  the workspace's color. Hovering the row (or keyboard focus) slides the
-  workspace name open beside the dot; the dot itself never changes. Motion:
-  120ms hover delay so sweeping the pointer down the list opens nothing, 200ms
-  open, 120ms close with no delay, `cubic-bezier(0.2, 0, 0, 1)`, the name
-  fading in and moving 4px right; reduced motion fades only. The group, or
-  **Permission** / **Question** when a decision is owed, follows.
+- Each row's second line names the workspace and group, or **Permission** /
+  **Question** when a decision is owed.
 - Waiting sessions stay in their normal place, listed once. Each 48px row gives
   the title the full first line; Archive, More and held shortcuts share the
   lower-right lane, so nothing in the row moves on hover, focus or shortcut hold.
@@ -50,7 +45,7 @@ chosen is remembered on the device.
   A drop stores `{ key, at }` for the session; it sorts at `key` while its last
   activity is not newer than `at`.
 - Activity: `session-activity.ts` and `workedAtById` in the session-management store.
-- Row: `FeedWorkspaceChip` and `FeedArchiveButton` in `app-sidebar.tsx`; archive
+- Row: `FeedArchiveButton` in `app-sidebar.tsx`; archive
   runs the existing `useSessionArchive` flow.
 
 ## Turning it off
@@ -65,11 +60,11 @@ records from earlier builds are ignored.
 Captured by `evals/proofs/calm-feed.proof.test.ts` from the real app in
 headless Chrome with Den and OpenCode v2; only the model is scripted.
 
-Last interacted with first; each workspace is a colored dot:
+Last interacted with first:
 
 ![Feed, last active first](./feed-last-active.png)
 
-Hover slides the workspace name open beside the dot and shows Archive before More:
+Hover shows Archive before More:
 
 ![Hover: workspace name and Archive](./feed-hover-archive.png)
 
@@ -85,7 +80,6 @@ Held shortcuts share the lower-right lane:
 
 `evals/proofs/calm-feed.proof.test.ts` covers the Workspaces default, saved Feed
 selection, a native Question staying in place, fixed row lanes through hover,
-focus and held shortcuts, the dot staying put while the workspace name
-slides open beside it without running under Archive, Archive before More, Archive and Unarchive from the row,
+focus and held shortcuts, Archive before More, Archive and Unarchive from the row,
 and Pin/Unpin and Rename. Dragging is covered by unit tests
 (`session-feed.test.ts`); native HTML drag is not driven in the proof.

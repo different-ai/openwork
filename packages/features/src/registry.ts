@@ -172,7 +172,7 @@ export const FEATURES = defineFeatures({
   },
   settledSessions: {
     label: "Desktop: session Feed",
-    description: "A Feed view in the sidebar lists every workspace's sessions, the last one interacted with first. Rows can be dragged into a new order, show their workspace as a color dot that opens into its name on hover, and have an Archive button next to More. Finished work is archived, not settled.",
+    description: "A Feed view in the sidebar lists every workspace's sessions, the last one interacted with first. Rows can be dragged into a new order and have an Archive button next to More. Finished work is archived, not settled.",
     category: "experience",
     added: "2026-10-29",
     since: "2026-10",

@@ -129,7 +129,7 @@
                 true,
                 false
               ],
-              "description": "Desktop: session Feed: A Feed view in the sidebar lists every workspace's sessions, the last one interacted with first. Rows can be dragged into a new order, show their workspace as a color dot that opens into its name on hover, and have an Archive button next to More. Finished work is archived, not settled. Renders DEN_FEATURE_SETTLED_SESSIONS."
+              "description": "Desktop: session Feed: A Feed view in the sidebar lists every workspace's sessions, the last one interacted with first. Rows can be dragged into a new order and have an Archive button next to More. Finished work is archived, not settled. Renders DEN_FEATURE_SETTLED_SESSIONS."
             },
             "appToolRepair": {
               "enum": [

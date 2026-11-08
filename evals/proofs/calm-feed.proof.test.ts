@@ -34,8 +34,7 @@ test("a member on the Feed sees calm rows that never move and still knows which 
     menuSlot: await one(`${row(id)} [data-session-action-slot="menu"]`),
   });
   type Lanes = Awaited<ReturnType<typeof lanes>>;
-  // The decision word follows the workspace chip, which opens into the workspace name on hover and focus.
-  const laneNames = ["row", "indicator", "title", "shortcut", "subtitle", "menuSlot"] satisfies (keyof Lanes)[];
+  const laneNames = ["row", "indicator", "title", "shortcut", "subtitle", "decision", "menuSlot"] satisfies (keyof Lanes)[];
   const moved = (rest: Lanes, now: Lanes) => laneNames
     .filter((lane) => JSON.stringify(round(rest[lane])) !== JSON.stringify(round(now[lane])))
     .map((lane) => `${lane} ${describe(rest[lane])} → ${describe(now[lane])}`);
@@ -118,42 +117,20 @@ test("a member on the Feed sees calm rows that never move and still knows which 
     return measured;
   });
 
-  const dotSelector = `${row(question.sessionId)} [data-session-feed-workspace-dot]`;
-  const nameSelector = `${row(question.sessionId)} [data-session-feed-workspace-name]`;
-  const atRest = await step("at rest the workspace shows only as a dot in its color, its name closed", async () => {
-    await user.hover({ role: "tab", label: "Feed" });
-    const dot = await one(dotSelector);
-    const name = await one(nameSelector);
-    const ok = Math.round(dot.width) === 8 && Math.round(dot.height) === 8 && Math.round(name.width) === 0;
-    evidence.recordAssertionEvidence("workspace dot at rest", `dot ${describe(dot)}; name column ${describe(name)}`, ok);
-    expect(ok).toBe(true);
-    return { dot, name };
-  });
-
-  await step("on hover the workspace name slides open beside the unchanged dot, and Archive and More appear without moving the row", async () => {
+  await step("on hover Archive appears just before the More menu, which sits in its reserved slot, and nothing in the row moves", async () => {
     await user.hover({ testId: `sidebar-session-${question.sessionId}` });
-    await probe.eventually(() => one(nameSelector), {
-      within: 2_000, label: "the workspace name opens", until: (rect) => rect.width > 16,
-    });
-    // Let the 120ms hover delay and 200ms opening finish before measuring where it ends.
-    await new Promise((resolve) => setTimeout(resolve, 500));
-    const dot = await one(dotSelector);
-    const opened = await one(nameSelector);
     const now = await lanes(question.sessionId);
     const menu = await one(`[data-testid="session-actions-${question.sessionId}"]`);
     const archive = await one(`[data-testid="session-archive-${question.sessionId}"]`);
     const shifts = moved(rest, now);
     const inSlot = Math.abs(menu.left - now.menuSlot.left) <= 2 && Math.abs(menu.right - now.menuSlot.right) <= 2;
-    const dotStill = JSON.stringify(round(dot)) === JSON.stringify(round(atRest.dot));
-    const growsRight = dotStill && opened.left >= dot.right - 1 && opened.width > 16 && opened.right <= archive.left;
-    const archiveBeforeMenu = archive.right <= menu.left && Math.abs(archive.top - menu.top) <= 1;
-    const ok = shifts.length === 0 && inSlot && archiveBeforeMenu && growsRight;
-    evidence.recordAssertionEvidence("hover opens the workspace name and shows Archive before More",
-      `moved: ${shifts.length ? shifts.join("; ") : "nothing"}; dot ${describe(atRest.dot)} → ${describe(dot)}; name ${describe(atRest.name)} → ${describe(opened)}; Archive ${describe(archive)} before More ${describe(menu)} over its slot ${describe(now.menuSlot)}`, ok);
+    const archiveBeforeMenu = archive.right <= menu.left && Math.abs(archive.top - menu.top) <= 1 && archive.left >= now.decision.right;
+    const ok = shifts.length === 0 && inSlot && archiveBeforeMenu;
+    evidence.recordAssertionEvidence("hover shows Archive before More and keeps every lane",
+      `moved: ${shifts.length ? shifts.join("; ") : "nothing"}; Archive ${describe(archive)} before More ${describe(menu)} over its slot ${describe(now.menuSlot)}; decision ends at ${Math.round(now.decision.right)}`, ok);
     expect(shifts).toEqual([]);
     expect(inSlot).toBe(true);
     expect(archiveBeforeMenu).toBe(true);
-    expect(growsRight).toBe(true);
     await user.screenshot();
   });
 
