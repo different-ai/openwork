@@ -89,7 +89,14 @@ async function answer(request: IncomingMessage, response: ServerResponse) {
     ] })
   }
   if (path === "/v1/workbot/files") return json(response, 200, { enabled: true, files: [...files.values()].map(({ bytes: _bytes, ...rest }) => rest) })
-  if (!path.startsWith("/v1/workbot/remote-jobs/") && (path === "/v1/workbot/stop" || path.endsWith("/stop"))) return json(response, 200, { ok: true })
+  if (!path.startsWith("/v1/workbot/remote-jobs/") && (path === "/v1/workbot/stop" || path.endsWith("/stop"))) {
+    const active = current.turns.at(-1)
+    if (active && active.status !== "done") {
+      active.status = "done"
+      active.finishedAt = Date.now()
+    }
+    return json(response, 200, { ok: true })
+  }
   if (path === "/v1/workbot/connections") return json(response, 200, { connections: [
     { id: "c1", name: "Gmail", app: "gmail", ready: true, connectUrl: null },
     { id: "c2", name: "Google Calendar", app: "googleCalendar", ready: true, connectUrl: null },
