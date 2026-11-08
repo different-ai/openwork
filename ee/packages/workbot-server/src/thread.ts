@@ -77,6 +77,15 @@ export type WorkbotStep = {
   shown?: boolean
   /** The web pages it opened in the browser, oldest first, so the person can open them too. */
   pages?: WorkbotPage[]
+  /**
+   * Work in a connected app: which of its tools ran, in plain words ("Web search"), for the footnote under the answer
+   * that lists what was used. Never a capability or connection id. Absent for computer work and from older servers.
+   */
+  detail?: string
+  /** The connected app's website ("exa.ai"), for its logo when the name alone doesn't find one. */
+  site?: string
+  /** Work on one of the person's other computers (a remote task), not in an app. */
+  remote?: true
 }
 /** A web page Workbot opened in its browser. `id` is short and stable, for the page's own link (/browser/<id>). */
 export type WorkbotPage = { id: string; url: string; title: string }
@@ -117,7 +126,7 @@ export type WorkbotTaskStep = { label: string; done: boolean; at: number | null 
 const TASK_STEPS = 12
 
 /** A task's steps and progress from its own transcript: what it did in apps and on its computer, in plain words. */
-function taskSteps(messages: RunnerMessage[]) {
+function taskSteps(messages: RunnerMessage[], connectors: WorkbotConnectors) {
   const finished = new Set(messages.flatMap((message) => (message.role === "tool" ? [message.callId] : [])))
   const steps: WorkbotTaskStep[] = []
   let stepsDone = 0
@@ -129,9 +138,9 @@ function taskSteps(messages: RunnerMessage[]) {
     for (const call of message.toolCalls) {
       const done = finished.has(call.id)
       if (done) stepsDone += 1
-      const app = call.name === "execute_capability" ? appOf(call.name, call.input) : null
+      const app = connectorStep(call.name, call.input, connectors)
       const said = typeof call.input.description === "string" && call.input.description.trim() ? call.input.description.trim() : null
-      const label = app ? appActionLabel(app, String(call.input.name ?? ""))
+      const label = app ? app.label
         : COMPUTER_TOOLS.has(call.name) ? (said ?? (call.name === "desktop" ? desktopUpdate(call.input) : null) ?? "Working on my computer")
         : null
       if (!label) continue
@@ -201,7 +210,7 @@ function taskStatus(turn: RunnerTurn): WorkbotTask["status"] {
   return "failed"
 }
 
-function tasksOf(snapshot: RunnerSnapshot, parent: string, byTurn: Map<string, RunnerMessage[]>): WorkbotTask[] {
+function tasksOf(snapshot: RunnerSnapshot, parent: string, byTurn: Map<string, RunnerMessage[]>, connectors: WorkbotConnectors): WorkbotTask[] {
   return snapshot.turns
     .filter((entry) => entry.kind === "task" && entry.parent === parent)
     .map((entry) => {
@@ -217,7 +226,7 @@ function tasksOf(snapshot: RunnerSnapshot, parent: string, byTurn: Map<string, R
         })
         .filter((update, index, all) => update !== all[index - 1])
       const update = open ? (updates.at(-1) ?? null) : null
-      const progress = taskSteps(byTurn.get(entry.messageId) ?? [])
+      const progress = taskSteps(byTurn.get(entry.messageId) ?? [], connectors)
       return {
         id: entry.messageId.slice(WORKBOT_MESSAGE_PREFIX.length),
         title: entry.title ?? "Background task",
@@ -323,9 +332,92 @@ function reactionOf(input: Record<string, unknown>): string | null {
   return /\p{Extended_Pictographic}|\p{Regional_Indicator}/u.test(emoji) ? emoji : null
 }
 
-function appOf(name: string, input: Record<string, unknown>): string | null {
-  const target = name === "execute_capability" && typeof input.name === "string" ? input.name : name
-  return APPS.find(([pattern]) => pattern.test(target))?.[1] ?? null
+/**
+ * The person's connected apps by connection id, as their admins named them, with each one's website for its logo.
+ * Read from Den by the host; without it (an older Den, or Den slow to answer) a well-known app is still named from
+ * its tools, and any other is "a connected app". Connection and capability ids never reach the page.
+ */
+export type WorkbotConnectors = ReadonlyMap<string, { name: string; site: string | null }>
+
+/** Connectors whose tools say which app they are ("web_search_exa"), by a word in the tool's name. */
+const KNOWN_CONNECTORS: Record<string, { name: string; site: string }> = {
+  exa: { name: "Exa", site: "exa.ai" },
+  planetscale: { name: "PlanetScale", site: "planetscale.com" },
+  pscale: { name: "PlanetScale", site: "planetscale.com" },
+  sentry: { name: "Sentry", site: "sentry.io" },
+  stripe: { name: "Stripe", site: "stripe.com" },
+  figma: { name: "Figma", site: "figma.com" },
+  granola: { name: "Granola", site: "granola.ai" },
+  asana: { name: "Asana", site: "asana.com" },
+  zendesk: { name: "Zendesk", site: "zendesk.com" },
+  posthog: { name: "PostHog", site: "posthog.com" },
+  vercel: { name: "Vercel", site: "vercel.com" },
+  render: { name: "Render", site: "render.com" },
+  intercom: { name: "Intercom", site: "intercom.com" },
+  airtable: { name: "Airtable", site: "airtable.com" },
+  supabase: { name: "Supabase", site: "supabase.com" },
+  cloudflare: { name: "Cloudflare", site: "cloudflare.com" },
+  deepwiki: { name: "DeepWiki", site: "deepwiki.com" },
+}
+
+/** "web_search_exa", "searchMessages" → ["web", "search", "exa"], ["search", "messages"]. */
+function words(name: string) {
+  return name.replace(/([a-z0-9])([A-Z])/g, "$1 $2").split(/[^a-zA-Z0-9]+/).map((word) => word.toLowerCase()).filter(Boolean)
+}
+
+/** What a tool does, in plain words, without the app's brand: "web_search_exa" in Exa (or "Exa Search") → "Web search". */
+function toolDetail(tool: string, app: string | null) {
+  const brand = app ? words(app)[0] : undefined
+  const plain = words(tool).filter((word) => word !== brand && !KNOWN_CONNECTORS[word] && !/^(mcp|tool|v\d+)$/.test(word)).join(" ")
+  if (!plain) return null
+  const text = `${plain[0]!.toUpperCase()}${plain.slice(1)}`
+  return text.length > 48 ? `${text.slice(0, 47)}…` : text
+}
+
+/** A site taken from what the host gives: a bare host name only ("exa.ai"), never a path or query. */
+function plainSite(site: string | null | undefined) {
+  return site && /^[a-z0-9.-]{3,80}$/i.test(site) ? site.toLowerCase() : undefined
+}
+
+const REMOTE_ACTIONS: Record<string, string> = {
+  create: "Starting a remote task",
+  send: "Messaging the remote task",
+  read: "Checking the remote task",
+  status: "Checking the remote task",
+  stop: "Stopping the remote task",
+  answer: "Answering the remote task",
+  targets: "Checking your computers",
+  list: "Checking remote tasks",
+}
+
+/**
+ * Work in a connected app, said the way a colleague would ("Searching Exa"), with which tool ran ("Web search") and
+ * the app's website for its logo; or work on another of the person's computers. Null for everything else Workbot
+ * calls (its own notes, skills, Den's settings), which stays out of sight.
+ */
+export function connectorStep(name: string, input: Record<string, unknown>, connectors: WorkbotConnectors = new Map()):
+  { app: string | null; label: string; detail: string | null; site?: string; remote?: true } | null {
+  if (name !== "execute_capability" || typeof input.name !== "string") return null
+  const capability = input.name.trim()
+  if (capability.startsWith("remote-session:")) {
+    const action = capability.slice("remote-session:".length)
+    const label = REMOTE_ACTIONS[action] ?? "Checking the remote task"
+    return { app: "Remote computer", label, detail: label, remote: true }
+  }
+  // A connection's own tool: mcp:<connectionId>:<tool>. The id names the connection; the tool says what it did.
+  const external = /^mcp:([^:]+):(.+)$/.exec(capability)
+  if (external) {
+    const [, connectionId = "", tool = ""] = external
+    const known = connectors.get(connectionId)
+    const guessed = words(tool).map((word) => KNOWN_CONNECTORS[word]).find(Boolean)
+    const app = known?.name.trim() || guessed?.name || APPS.find(([pattern]) => pattern.test(tool))?.[1] || null
+    const site = plainSite(known?.site ?? guessed?.site)
+    return { app, label: app ? appActionLabel(app, tool) : "Using a connected app", detail: toolDetail(tool, app), ...(site ? { site } : {}) }
+  }
+  const app = APPS.find(([pattern]) => pattern.test(capability))?.[1] ?? null
+  if (!app) return null
+  const tool = capability.split(/[:/]/).pop() ?? ""
+  return { app, label: appActionLabel(app, capability), detail: toolDetail(tool, app) }
 }
 
 /** The conversation's kept files, so the ones Workbot made show under the answer that made them. */
@@ -484,7 +576,7 @@ function outputsOf(files: FileNames, startedAt: number | null, finishedAt: numbe
   return [...latest.values()]
 }
 
-export function buildWorkbotTurns(snapshot: RunnerSnapshot, files: FileNames = new Map()): WorkbotTurn[] {
+export function buildWorkbotTurns(snapshot: RunnerSnapshot, files: FileNames = new Map(), connectors: WorkbotConnectors = new Map()): WorkbotTurn[] {
   const byTurn = new Map<string, RunnerMessage[]>()
   for (const message of snapshot.messages) {
     if (!message.messageId) continue
@@ -537,19 +629,22 @@ export function buildWorkbotTurns(snapshot: RunnerSnapshot, files: FileNames = n
           addComputerStep(parts, call.name, call.input, results.get(call.id), message.createdAt ?? null)
           continue
         }
-        // Only work in a connected app is worth a line ("Searching Slack"); lookups, notes to self and files stay
-        // out of sight: files it made show as cards under the answer.
-        const app = call.name === "execute_capability" ? appOf(call.name, call.input) : null
-        if (!app) continue
+        // Only work in a connected app (or on another of the person's computers) is worth a line ("Searching Exa");
+        // lookups, notes to self and files stay out of sight: files it made show as cards under the answer.
+        const used = connectorStep(call.name, call.input, connectors)
+        if (!used) continue
         const result = results.get(call.id)
         const step: WorkbotStep = {
-          label: appActionLabel(app, String(call.input.name ?? "")),
+          label: used.label,
           icon: "app",
           status: result === undefined ? "running" : "done",
-          app,
+          app: used.app,
           startedAt: message.createdAt ?? null,
           finishedAt: result?.createdAt ?? null,
           updates: [],
+          ...(used.detail ? { detail: used.detail } : {}),
+          ...(used.site ? { site: used.site } : {}),
+          ...(used.remote ? { remote: true as const } : {}),
         }
         const last = parts.at(-1)
         if (last?.kind === "steps") last.steps.push(step)
@@ -603,7 +698,7 @@ export function buildWorkbotTurns(snapshot: RunnerSnapshot, files: FileNames = n
       error: status === "failed" ? friendlyError(turn.error) : null,
       ...(status === "failed" && modelIssue(turn.error) ? { modelIssue: modelIssue(turn.error) } : {}),
       retryable: status === "failed" && retryableError(turn.error),
-      tasks: turn.kind === undefined ? tasksOf(snapshot, turn.messageId, byTurn) : [],
+      tasks: turn.kind === undefined ? tasksOf(snapshot, turn.messageId, byTurn, connectors) : [],
       greeting,
       suggestions,
     })

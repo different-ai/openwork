@@ -1,11 +1,12 @@
 import type { LiveText, WorkbotStep, WorkbotTask, WorkbotTurn } from "./data";
+import { connectorSummary } from "./connector-activity";
 
 /**
  * What Workbot is doing right now, for the status line under its name and the task sheet (`workingStatus`): one
  * short label, and behind it the steps of the reply in progress ("main") and of each background task. Worked out from
  * what the page already reads; nothing here reaches the chat itself.
  */
-export type ActivityStep = { key: string; label: string; done: boolean; app: string | null };
+export type ActivityStep = { key: string; label: string; done: boolean; app: string | null; site?: string; remote?: true };
 export type ActivityTask = Pick<WorkbotTask, "id" | "title" | "status" | "startedAt" | "finishedAt" | "note" | "stepsDone"> & {
   /** What it is doing now, or did last. */
   current: string | null;
@@ -28,6 +29,10 @@ export type WorkbotActivity = {
   icon: "browser" | "computer" | "app" | "task" | "thinking";
   /** The connected app in use, for its logo. */
   app: string | null;
+  /** That app's website, for its logo when its name finds none. */
+  site?: string;
+  /** The work is on another of the person's computers (a remote task). */
+  remote?: true;
   /** When the work on the line started, for its elapsed time. */
   since: number | null;
   /** The reply in progress: the person's message it answers, and its steps. Null while only tasks run. */
@@ -66,7 +71,7 @@ function turnSteps(turn: WorkbotTurn, live: LiveText | null): ActivityStep[] {
     if (part.kind !== "steps") return;
     part.steps.forEach((step: WorkbotStep, at) => {
       const key = `${index}:${at}`;
-      if (step.icon === "app") { add({ key, label: step.label, done: step.status === "done", app: step.app }); return; }
+      if (step.icon === "app") { add({ key, label: step.label, done: step.status === "done", app: step.app, ...(step.site ? { site: step.site } : {}), ...(step.remote ? { remote: true as const } : {}) }); return; }
       const updates = step.updates.length ? step.updates : [step.label];
       updates.forEach((update, n) => add({ key: `${key}:${n}`, label: update, done: step.status === "done" || n < updates.length - 1, app: null }));
     });
@@ -111,8 +116,15 @@ export function workbotActivity(turns: WorkbotTurn[], live: Record<string, LiveT
   const liveWorking = liveText && answering && liveText.step >= answering.modelSteps ? liveText.working : undefined;
   const screen = surfaces.at(-1)?.surface === "browser" ? "browser" : surfaces.length ? "computer" : liveWorking?.on === "computer" && !liveWorking.background ? (liveWorking.surface ?? null) : null;
   const task = tasks.find((entry) => (entry.status === "queued" || entry.status === "working" || entry.status === "paused") && !entry.quiet) ?? null;
+  // Work in a connected app reads the same here as on the line under the answer ("Searching Exa"), also while
+  // Workbot is still going through what it found there.
+  const connector = answering ? connectorSummary(answering, liveText) : null;
+  if (connector?.live && (!running || running.app !== null || running.remote)) {
+    const app = connector.latest;
+    return { working: true, label: connector.label, icon: "app", app: app.name, ...(app.site ? { site: app.site } : {}), ...(app.remote ? { remote: true as const } : {}), since: main?.since ?? null, main, tasks, watch: screen };
+  }
   if (running) {
-    return { working: true, label: running.label, icon: running.app ? "app" : screen ?? "computer", app: running.app, since: main?.since ?? null, main, tasks, watch: screen };
+    return { working: true, label: running.label, icon: running.app ? "app" : screen ?? "computer", app: running.app, ...(running.site ? { site: running.site } : {}), since: main?.since ?? null, main, tasks, watch: screen };
   }
   if (main) {
     return { working: true, label: liveText?.text ? "Writing" : "Thinking", icon: "thinking", app: null, since: main.since, main, tasks, watch: null };

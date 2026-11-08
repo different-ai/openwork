@@ -7,6 +7,16 @@ type Hint = { slug?: string; site?: string }
 const BY_NAME: Record<string, Hint> = {
   asana: { slug: "asana" },
   confluence: { slug: "confluence" },
+  exa: { site: "exa.ai" },
+  planetscale: { slug: "planetscale" },
+  posthog: { slug: "posthog" },
+  vercel: { slug: "vercel" },
+  render: { slug: "render" },
+  outlook: { site: "outlook.com" },
+  "outlook calendar": { site: "outlook.com" },
+  onedrive: { site: "onedrive.live.com" },
+  "microsoft teams": { site: "teams.microsoft.com" },
+  atlassian: { slug: "atlassian" },
   figma: { slug: "figma" },
   github: { slug: "github" },
   gmail: { slug: "gmail" },
@@ -48,8 +58,9 @@ function hintFor(name: string): Hint | undefined {
   return known ? BY_NAME[known] : undefined
 }
 
-export function appIconCandidates(name: string, denUrl: string | null): string[] {
-  const hint = hintFor(name)
+export function appIconCandidates(name: string, denUrl: string | null, site?: string): string[] {
+  // A connected app with no hint of its own: its website, when Den gave one ("exa.ai").
+  const hint = hintFor(name) ?? (site && /^[a-z0-9.-]{3,80}$/i.test(site) ? { site: site.toLowerCase() } : undefined)
   if (!hint) return []
   const candidates: string[] = []
   const bundled = hint.site ? DEN_ICONS[hint.site] : undefined

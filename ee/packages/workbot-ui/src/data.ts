@@ -53,6 +53,12 @@ const stepSchema = z.object({
   shown: z.boolean().optional(),
   /** Web pages it opened in the browser, each with a stable id for its link (/browser/<id>). */
   pages: z.array(z.object({ id: z.string(), url: z.string(), title: z.string() })).optional(),
+  /** Work in a connected app: which of its tools ran, in plain words ("Web search"). Older servers omit it. */
+  detail: z.string().optional(),
+  /** The connected app's website ("exa.ai"), for its logo when its name alone finds none. */
+  site: z.string().optional(),
+  /** Work on another of the person's computers (a remote task). */
+  remote: z.literal(true).optional(),
 });
 export type WorkbotStep = z.infer<typeof stepSchema>;
 export type WorkbotPage = NonNullable<WorkbotStep["pages"]>[number];

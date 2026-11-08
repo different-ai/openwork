@@ -85,3 +85,25 @@ test("an interrupted animation settles even when a browser does not send scrolle
   event("scroll")
   assert.equal(state.top, 1800)
 })
+
+test("a message box that briefly grows the conversation while typing never leaves it short of the newest message", t => {
+  const { node, state, event } = fixture(t)
+  assert.equal(node.scrollTop, 700)
+  // The box shrinks for a measurement: the conversation grows, the browser clamps scrollTop, the box grows back.
+  node.clientHeight = 366
+  node.scrollTop = node.scrollTop
+  node.clientHeight = 300
+  assert.equal(node.scrollTop, 634)
+  event("scroll")
+  assert.equal(state.following, true)
+  assert.equal(node.scrollTop, 700)
+})
+
+test("the same small move made by the person is theirs to keep", t => {
+  const { node, state, event } = fixture(t)
+  event("wheel", { deltaY: 30 })
+  node.scrollTop = 660
+  event("scroll")
+  assert.equal(node.scrollTop, 660)
+  assert.equal(state.following, true)
+})

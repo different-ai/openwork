@@ -367,6 +367,13 @@ export function createDen(options: { apiUrl: string; publicUrl: string; serviceT
       if (status !== 200 || !parsed.success) throw new Error(`den_connections_${status}`)
       return parsed.data
     },
+    /** Every connected app this member may use (id, name, website): what Workbot's steps in them are called. */
+    async connectors(accessToken: string) {
+      const { status, payload } = await authorized("GET", "/v1/workbot/connections", accessToken)
+      const parsed = workbotConnectionsSchema.safeParse(payload)
+      if (status !== 200 || !parsed.success) throw new Error(`den_connections_${status}`)
+      return parsed.data.connectors
+    },
     async connect(accessToken: string, connectionId: string, body: unknown) {
       return authorized("POST", `/v1/workbot/connections/${encodeURIComponent(connectionId)}/connect/start`, accessToken, body)
     },
@@ -415,6 +422,8 @@ const workbotConnectionsSchema = z.object({
     connectUrl: z.string().nullable(),
     ready: z.boolean(),
   })).optional(),
+  /** Every connected app this member may use, by connection id, for naming Workbot's work in it. Older Dens omit it. */
+  connectors: z.array(z.object({ id: z.string(), name: z.string(), site: z.string().nullable() })).default([]),
 })
 
 export type Den = ReturnType<typeof createDen>
