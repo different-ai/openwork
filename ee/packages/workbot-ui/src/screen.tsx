@@ -62,6 +62,7 @@ import { remoteJobActivity, remoteWatcherTaskIds, useWorkbotRemoteJobs } from ".
 import { createConversationScrollState, useConversationScroll, type ConversationScrollState } from "./conversation-scroll";
 import { useWorkbotViewport } from "./viewport";
 import { useFloatingChrome } from "./floating-chrome";
+import { FloatingGlass } from "./floating-glass";
 import { fitTextarea } from "./auto-height";
 import { connectorSummary } from "./connector-activity";
 import { ConnectorLine } from "./connector-line";
@@ -115,7 +116,7 @@ export function WorkbotScreen({ host }: { host: WorkbotHost }) {
   const sideChats = host.sideChats === true;
   const composers = useMemo(() => new Map<string | null, ComposerState>(), [host.identity?.organizationId, host.identity?.principalId]);
   const positions = useMemo(() => new Map<string | null, ConversationScrollState>(), [host.identity?.organizationId, host.identity?.principalId]);
-  const viewport = useWorkbotViewport();
+  const viewport = useWorkbotViewport(true, "absolute");
   // Disposed a tick after unmount, so a remount of the same owners (React's StrictMode check) keeps what was typed.
   const disposeComposers = useRef<ReturnType<typeof setTimeout>>(undefined);
   useEffect(() => {
@@ -496,7 +497,7 @@ function ChatScreen({ host, composerState, position, navigation, onDraftsChange 
       : welcome === "showing" ? <Welcome name={name} firstName={firstName} onBegin={() => { if (start.isIdle) { setGreetingAwaited(true); start.mutate(); } }} onDone={() => setWelcome("done")} />
       : data && empty && side ? <SideChatStart name={name} organizationName={data.organizationName}>{attached}{composer}</SideChatStart>
       : data && empty && !starting ? <FirstOpen name={name} organizationName={data.organizationName} firstName={firstName} onSuggestion={text => submit(text)} error={start.isError ? start.error instanceof WorkbotSendError && start.error.accessReason ? <AccessRecovery reason={start.error.accessReason} onRetry={() => { setGreetingAwaited(true); start.mutate(); }} /> : <ErrorLine action={{ label: "Try again", onClick: () => { setGreetingAwaited(true); start.mutate(); } }}>{HELLO_FAILED}</ErrorLine> : null}>{attached}{composer}</FirstOpen>
-      : <>{conversation}<div ref={chrome.bottom} className="workbot-chrome-bottom absolute inset-x-0 bottom-0 z-20 flex justify-center px-3" data-workbot-floating-composer><div className={COLUMN}>{attached}{composer}</div></div></>;
+      : <>{conversation}<div ref={chrome.bottom} className="workbot-chrome-bottom absolute inset-x-0 bottom-0 z-20 flex justify-center px-3" data-workbot-floating-composer><FloatingGlass edge="bottom" /><div className={COLUMN}>{attached}{composer}</div></div></>;
     // Only the conversation itself floats its header and message box; a welcome, first open or error stays as it was.
     const floating = tab === "home" && Boolean(data || loading) && welcome !== "showing" && !(data && empty && (side || !starting));
     return <>
@@ -699,6 +700,7 @@ function ChatScreen({ host, composerState, position, navigation, onDraftsChange 
             }
           />
           <div ref={chrome.bottom} className="workbot-chrome-bottom absolute inset-x-0 bottom-0 z-20 flex justify-center px-3 sm:px-10" data-workbot-floating-composer>
+            <FloatingGlass edge="bottom" />
             <div className={COLUMN}>
               {composer}
             </div>
@@ -767,7 +769,9 @@ function ThreadPlaceholder() {
     <div className="flex flex-col gap-[3px] pb-8" role="progressbar" aria-busy="true" aria-label="Loading conversation">
       <span className="ml-auto h-[38px] w-48 rounded-[20px] rounded-br-md bg-[var(--wb-bubble)]" />
       <span className="mt-3.5 h-6 w-40 rounded bg-[var(--wb-chip)]" />
-      <span className="mt-1.5 h-24 w-[70%] rounded-[20px] rounded-bl-md bg-[var(--wb-surface)] shadow-[var(--wb-card-shadow)]" />
+      <span className="mt-1.5 h-4 w-[78%] rounded bg-[var(--wb-chip)]" />
+      <span className="mt-2 h-4 w-[64%] rounded bg-[var(--wb-chip)]" />
+      <span className="mt-2 h-4 w-[70%] rounded bg-[var(--wb-chip)]" />
     </div>
   );
 }
@@ -879,6 +883,7 @@ function WorkbotHeader(props: {
   const phone = props.wide === false;
   return (
     <header ref={props.floating} className={`grid shrink-0 grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] gap-2 px-3 sm:px-5 ${phone ? "min-h-14 items-center py-1.5" : "min-h-[84px] items-start pb-2 pt-2"} ${props.floating ? "workbot-chrome-top absolute inset-x-0 top-0 z-20" : ""}`} data-workbot-profile-header data-workbot-floating-header={props.floating ? "" : undefined}>
+      {props.floating ? <FloatingGlass edge="top" /> : null}
       <div className={`flex min-w-0 items-center ${props.floating ? "gap-2" : "gap-1"} ${phone ? "" : "pt-2"}`} data-workbot-header-side>
         {props.chats}{props.search}
         <div className="hidden min-w-0 lg:contents">{props.nav}</div>
@@ -954,13 +959,13 @@ function Intro(props: { name: string; organizationName: string; firstName: strin
         <div className="flex flex-col gap-[3px]">
           <Timestamp at={props.at} />
           <div className="flex">
-            <p className="max-w-[520px] rounded-[20px] rounded-bl-md bg-[var(--wb-surface)] px-4 py-2.5 text-[15px] leading-[22px] text-[var(--wb-text)] shadow-[var(--wb-card-shadow)]">
+            <p className="max-w-[520px] py-1 text-[15px] leading-[22px] text-[var(--wb-text)]">
               {hello}{props.firstName ? ` ${props.firstName}` : ""}.{seeing ? ` I can already see your ${seeing}.` : ""}
             </p>
           </div>
           {props.followed ? null : (
             <div className="flex">
-              <p className="max-w-[520px] rounded-[20px] rounded-tl-md bg-[var(--wb-surface)] px-4 py-2.5 text-[15px] leading-[22px] text-[var(--wb-text)] shadow-[var(--wb-card-shadow)]">
+              <p className="max-w-[520px] py-1 text-[15px] leading-[22px] text-[var(--wb-text)]">
                 What can I take off your plate today?
               </p>
             </div>
@@ -1375,14 +1380,14 @@ function CopyAnswer({ text }: { text: string }) {
 }
 
 /**
- * Workbot's words in a chat bubble on the left: white on the page with a hairline, so its answers and the person's
- * grey bubbles on the right read as two sides of one conversation. It hugs short replies and stops at a readable
- * width; wide tables and code scroll inside it.
+ * Workbot's words flow on the page itself, with no box around them (like Finch or a notes app); the person's own
+ * messages stay compact grey bubbles on the right, so the two sides still read apart. It hugs short replies (Copy sits
+ * right after the words) and stops at a readable width; wide tables and code scroll inside it.
  */
 function AssistantBubble({ children, trailing = null }: { children: ReactNode; trailing?: ReactNode }) {
   return (
     <div className="flex items-end gap-1 py-[3px]">
-      <div className="flex w-fit min-w-0 max-w-full flex-col overflow-x-auto rounded-[20px] rounded-bl-md bg-[var(--wb-surface)] px-4 py-2.5 shadow-[var(--wb-card-shadow)] sm:max-w-[600px]">
+      <div className="flex w-fit min-w-0 max-w-full flex-col overflow-x-auto py-2 sm:max-w-[640px]" data-workbot-assistant-text>
         {children}
       </div>
       {trailing}
@@ -1400,13 +1405,13 @@ function WaitingSlot({ children }: { children?: ReactNode }) {
 }
 
 /**
- * Workbot writing a reply that doesn't show yet: one small reply bubble with three dots that darken in turn, like a
- * messaging app's typing indicator. Nothing else moves (DESIGN V6, P11).
+ * Workbot writing a reply that doesn't show yet: three dots that darken in turn where its words will start, like a
+ * messaging app's typing indicator, without a box (its replies have none). Nothing else moves (DESIGN V6, P11).
  */
 function TypingDots() {
   return (
     <div className="workbot-row-enter flex py-[3px]" role="status" aria-label="Workbot is processing">
-      <div className="flex h-9 items-center gap-[5px] rounded-[20px] rounded-bl-md bg-[var(--wb-surface)] px-4 shadow-[var(--wb-card-shadow)]">
+      <div className="flex h-9 items-center gap-[5px] px-0.5">
         <span aria-hidden className="workbot-typing-dot" />
         <span aria-hidden className="workbot-typing-dot" />
         <span aria-hidden className="workbot-typing-dot" />

@@ -44,6 +44,15 @@ recovery, keyboard focus and unsent drafts. Start `test-fixtures/chat-screen-ser
 `PLAYWRIGHT_MODULE` can point to a separate Playwright installation. These are deterministic UI
 checks, not evidence of live Den, runner or model integration.
 
+## On a phone
+
+The page runs edge to edge in iPhone Safari and as a Home Screen app (`manifest.webmanifest`, `display: standalone`,
+black-translucent status bar). The header and message box float over the conversation on a progressive blur
+(`floating-glass.tsx`); Workbot's replies flow on the page without a box, the person's messages stay grey bubbles.
+The page shell is deliberately not `position: fixed`: Safari 26 paints the colour at a fixed element's edge as a solid
+bar behind its status bar and floating toolbar, which hid everything under them. `/` and the manifest are served with
+`Cache-Control: no-cache`, so a phone picks up a deploy on its next load.
+
 ## Sessions
 
 Workbot keeps nothing on disk, so it runs as any number of instances. The person's Den tokens live in an HttpOnly,
