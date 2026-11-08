@@ -1,6 +1,6 @@
 "use client";
 
-import { ArrowDown, ArrowUp, Check, CircleAlert, Copy, FileText, Globe, Lock, Monitor, Pencil, Presentation } from "lucide-react";
+import { ArrowDown, ArrowUp, Check, CircleAlert, Copy, FileText, Globe, Lock, MessageCircle, Monitor, Pencil, Presentation, X } from "lucide-react";
 import { createContext, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type ClipboardEvent, type KeyboardEvent, type ReactNode } from "react";
 import { computerTabLabel, computerViews, setWorkbotHost, workbotHost, type WorkbotHost } from "./host";
 import { OpenWorkMark } from "./mark";
@@ -49,7 +49,7 @@ import { LastGlimpse, LiveGlimpse, WorkbotComputer } from "./computer";
 import { readBrowserSkillRunPrompt, type BrowserTeachingContext } from "@openwork/types/browser-demonstration";
 import { readWorkbotCorrectionPrompt, workbotCorrectionPrompt, workbotContextLabel, workbotViewContextSchema, type WorkbotViewContext } from "@openwork/types/workbot-context";
 import type { DocumentOpenOutcome, DocumentOpenRequest } from "@openwork/documents";
-import { ComputerNavigationContext, ComputerOffer, DockedChat, DocumentNavigationContext, DocumentNavigationStatus, DocumentOffers, type DocumentNavigationState, OpenDocumentContext, SentContext, useWideScreen, WorkspaceAssistant, WorkspaceNavigationContext } from "./workspace";
+import { ComputerNavigationContext, ComputerOffer, DockedChat, DocumentNavigationContext, DocumentNavigationStatus, DocumentOffers, type DocumentNavigationState, OpenDocumentContext, SentContext, useWideScreen, WorkspaceNavigationContext } from "./workspace";
 import { useQueryClient } from "@tanstack/react-query";
 import { useNativeDictation } from "@openwork/ui/react";
 import { WorkbotDictation } from "./native-dictation";
@@ -167,6 +167,9 @@ function ChatScreen({ host, composerState, position, navigation, onDraftsChange 
   const [calendarContext, setCalendarContext] = useState<WorkbotViewContext | null>(null);
   const [browserContext, setBrowserContext] = useState<WorkbotViewContext | null>(null);
   const [includeContext, setIncludeContext] = useState(true);
+  // The chat lives only on Home. "Ask Workbot" on an open document brings that document here, attached to the next
+  // message, instead of floating a second copy of the chat over Documents.
+  const [askContext, setAskContext] = useState<WorkbotViewContext | null>(null);
   const [openDocument, setOpenDocument] = useState<DocumentOpenRequest>();
   const [documentsDirty, setDocumentsDirty] = useState(false);
   const reportDocumentDirty = useCallback((dirty: boolean) => { setDocumentsDirty(dirty); onDraftsChange(dirty); }, [onDraftsChange]);
@@ -186,7 +189,7 @@ function ChatScreen({ host, composerState, position, navigation, onDraftsChange 
   const [documentsVisited, setDocumentsVisited] = useState(tab === "documents");
   const [calendarVisited, setCalendarVisited] = useState(tab === "calendar");
   useEffect(() => { if (tab === "documents") setDocumentsVisited(true); if (tab === "calendar") setCalendarVisited(true); }, [tab]);
-  const currentContext = browserPreview?.visible ? browserPreview.context : tab === "documents" ? documentContext : tab === "calendar" ? calendarContext : tab === "computer" ? browserContext : null;
+  const currentContext = browserPreview?.visible ? browserPreview.context : tab === "home" ? askContext : tab === "documents" ? documentContext : tab === "calendar" ? calendarContext : tab === "computer" ? browserContext : null;
   // The views a message may name, as Den allows them: the browser tab with browser use, documents and the calendar with
   // the workspace assistant.
   const shares = (context: WorkbotViewContext | undefined): context is WorkbotViewContext => context !== undefined
@@ -199,7 +202,6 @@ function ChatScreen({ host, composerState, position, navigation, onDraftsChange 
   useEffect(() => { if (viewKey) setIncludeContext(true); }, [viewKey]);
   // Den reports guidedNavigation only with the workspace assistant; each destination keeps its own switch.
   const guided = host.workspaceAssistant === true && host.guidedNavigation === true;
-  const [revealChat, setRevealChat] = useState(0);
   // Which reply asked for each open request, and what became of it. Kept for this page only: history never replays.
   const [navigationStatus, setNavigationStatus] = useState<Readonly<Record<string, DocumentNavigationState>>>({});
   const navigationRequests = useRef(new Map<string, string>());
@@ -220,14 +222,8 @@ function ChatScreen({ host, composerState, position, navigation, onDraftsChange 
     setTab("documents");
     return requestId;
   };
-  // Guided navigation from a conversation: the same chat stays open beside the document, sharing that view.
-  const navigateFromChat = (fileId: string) => {
-    const requestId = navigateDocument(fileId);
-    if (!guided) return requestId;
-    setIncludeContext(true);
-    setRevealChat(count => count + 1);
-    return requestId;
-  };
+  // Navigation from a conversation opens Documents on its own: the chat stays on Home (Ask Workbot brings the document back).
+  const navigateFromChat = navigateDocument;
   const followNavigation = (receipt: { id: string; fileId: string }) => {
     const requestId = navigateFromChat(receipt.fileId);
     if (!requestId) return;
@@ -241,9 +237,9 @@ function ChatScreen({ host, composerState, position, navigation, onDraftsChange 
   // Turns sent from this page, with the view they were sent from. Receipts on any other turn are never followed.
   const sentFrom = useRef(new Map<string, string>());
   const followed = useRef(new Set<string>());
-  // The same move for Workbot's computer: open it and keep the conversation beside it. Null while it is on screen.
+  // The same move for Workbot's computer. Null while it is on screen.
   const navigateComputerFromChat = guided && computerViews(host).length > 0 && tab !== "computer"
-    ? () => { setTab("computer"); setRevealChat(count => count + 1); }
+    ? () => setTab("computer")
     : null;
   const [preview, setPreview] = useState<WorkbotAttachment | null>(null);
   // The welcome shows once, while there's no conversation yet; leaving it, Workbot starts the conversation itself.
@@ -414,6 +410,8 @@ function ChatScreen({ host, composerState, position, navigation, onDraftsChange 
     // A teaching note or skill run carries its own browser snapshot.
     const parsed = workbotViewContextSchema.safeParse((browserPreview?.visible ? browserPreview.includeContext : includeContext) && !plain && !runSkill && !teaching ? currentContext : undefined);
     const context = parsed.success && shares(parsed.data) ? parsed.data : undefined;
+    // A document brought to the chat with Ask Workbot goes with this one message only.
+    if (context && askContext && tab === "home" && !browserPreview?.visible) setAskContext(null);
     const id = composerState.enqueue({ id: newMessageId(), text: trimmed, context, keepDraft: plain, ...(!runSkill && !plain && teaching ? { teachingId: teaching.id, teachingStepId: teaching.stepId } : {}) });
     const delivery = sendPending(id);
     if (runSkill) return delivery.then(() => {
@@ -437,9 +435,9 @@ function ChatScreen({ host, composerState, position, navigation, onDraftsChange 
 
   if (workspaceShell) {
     const name = data?.name ?? "Workbot";
-    // On the computer page, the conversation docks beside the live view on wide screens; elsewhere it floats.
+    // The conversation is shown on Home only. On a wide computer page it docks beside the live view (browser chat);
+    // no other view floats a copy of it.
     const docked = browserChat && wideScreen && tab === "computer";
-    const floatingOnComputer = host.browserDemonstrations === true || browserChat;
     const busy = data?.status === "busy" || pending.some(entry => !entry.failed);
     const empty = !loading && !data?.turns.length && !pending.length;
     const starting = empty && (start.isPending || greetingAwaited);
@@ -458,15 +456,25 @@ function ChatScreen({ host, composerState, position, navigation, onDraftsChange 
       }}
       onSuggestion={text => submit(text)} onSwitch={text => submit(text, undefined, false, true)} starting={starting} intro={null}
     /> : null;
+    const pageTitle = tab === "documents" ? "Documents" : tab === "calendar" ? "Calendar" : tab === "computer" ? computerTabLabel(host) : undefined;
+    // An open document offers one small way to ask about it: switch to the chat with that document attached.
+    const askable = tab === "documents" && documentContext?.kind === "document" && shares(documentContext) ? documentContext : null;
+    const askAbout = askable ? () => {
+      setAskContext(askable);
+      setIncludeContext(true);
+      setTab("home");
+      requestAnimationFrame(() => requestAnimationFrame(focusComposer));
+    } : null;
+    const attached = askContext && !browserPreview?.visible ? <AttachedContext context={askContext} onRemove={() => setAskContext(null)} /> : null;
     const composer = <WorkbotComposer teaching={teaching} text={draft.text} onText={composerState.setText} name={name} busy={busy} stopping={stop.isPending} filesEnabled={filesEnabled} nativeDictation={host.nativeDictation}
       uploads={uploads.uploads} onFiles={addFiles} onRemoveUpload={uploads.remove} onRetryUpload={uploads.retry}
       onSend={text => submit(text)} onStop={() => stop.mutate()} autoFocus={false} disabled={!data && !loading} />;
     const firstName = user?.name?.trim().split(/\s+/)[0] ?? null;
     const home = !data && !loading ? <div className="flex flex-1 flex-col items-center justify-center gap-3 px-5 text-center text-[13px] text-[var(--wb-muted)]" role="status"><p>Couldn't load your conversation.</p><button type="button" className="rounded-lg px-3 py-2 underline focus-visible:shadow-[var(--wb-focus)]" onClick={() => void thread.refetch()}>Try again</button></div>
       : welcome === "showing" ? <Welcome name={name} firstName={firstName} onBegin={() => { if (start.isIdle) { setGreetingAwaited(true); start.mutate(); } }} onDone={() => setWelcome("done")} />
-      : data && empty && side ? <SideChatStart name={name} organizationName={data.organizationName}>{composer}</SideChatStart>
-      : data && empty && !starting ? <FirstOpen name={name} organizationName={data.organizationName} firstName={firstName} onSuggestion={text => submit(text)} error={start.isError ? start.error instanceof WorkbotSendError && start.error.accessReason ? <AccessRecovery reason={start.error.accessReason} onRetry={() => { setGreetingAwaited(true); start.mutate(); }} /> : <ErrorLine action={{ label: "Try again", onClick: () => { setGreetingAwaited(true); start.mutate(); } }}>{HELLO_FAILED}</ErrorLine> : null}>{composer}</FirstOpen>
-      : <>{conversation}<div className="flex shrink-0 justify-center px-3 pb-4 pt-3"><div className={COLUMN}>{composer}</div></div></>;
+      : data && empty && side ? <SideChatStart name={name} organizationName={data.organizationName}>{attached}{composer}</SideChatStart>
+      : data && empty && !starting ? <FirstOpen name={name} organizationName={data.organizationName} firstName={firstName} onSuggestion={text => submit(text)} error={start.isError ? start.error instanceof WorkbotSendError && start.error.accessReason ? <AccessRecovery reason={start.error.accessReason} onRetry={() => { setGreetingAwaited(true); start.mutate(); }} /> : <ErrorLine action={{ label: "Try again", onClick: () => { setGreetingAwaited(true); start.mutate(); } }}>{HELLO_FAILED}</ErrorLine> : null}>{attached}{composer}</FirstOpen>
+      : <>{conversation}<div className="flex shrink-0 justify-center px-3 pb-4 pt-3"><div className={COLUMN}>{attached}{composer}</div></div></>;
     return <OpenFileContext.Provider value={setPreview}>
       <OpenDocumentContext.Provider value={tab === "documents" && documentContext?.kind === "document" ? documentContext.fileId : null}>
       <WorkspaceNavigationContext.Provider value={host.workspaceAssistant && host.documents ? navigateFromChat : null}>
@@ -477,6 +485,7 @@ function ChatScreen({ host, composerState, position, navigation, onDraftsChange 
           <WorkbotHeader name={name} organizationName={data?.organizationName ?? ""} userName={user?.name ?? null} answered={hasAnsweredTurn(data?.turns)} activity={activity}
             files={filesEnabled ? <FilesButton open={filesOpen} onOpen={() => setFilesOpen(true)} /> : null}
             chats={mobileNavigation} search={!showDesktopNavigation ? palette : null}
+            page={pageTitle} action={askAbout ? <AskWorkbotButton name={name} onClick={askAbout} /> : null}
             remove={navigation?.chat && data && data.turns.length > 0 ? <RemoveChatButton disabled={documentsDirty} chatId={navigation.chat} title={navigation.title} onRemoved={() => { composerState.dispose(); navigation.openChat(null); }} /> : null}
             title={navigation?.chat ? <SideChatTitle title={navigation.title} disabled={documentsDirty} onBack={() => navigation.openChat(null)} /> : undefined}
           />
@@ -496,9 +505,6 @@ function ChatScreen({ host, composerState, position, navigation, onDraftsChange 
           </div>
           {previewFile && <PreviewPanel file={previewFile} onClose={() => setPreview(null)} />}
           </div>
-          <div hidden={!(host.workspaceAssistant || floatingOnComputer && tab === "computer") || tab === "home" || docked}><WorkspaceAssistant name={name} context={currentContext} includeContext={includeContext} onIncludeContext={setIncludeContext}
-            composer={composer} conversation={conversation} onDocument={navigateFromChat} onComputer={navigateComputerFromChat} unavailable={!data && !loading} active={(host.workspaceAssistant === true || floatingOnComputer && tab === "computer") && tab !== "home" && !docked}
-            reveal={revealChat} stayOpen={guided} /></div>
           {filesEnabled && <FilesPanel open={filesOpen} onClose={() => setFilesOpen(false)} assistantName={name} onOpenFile={file => { setFilesOpen(false); setPreview(file); }} />}
         </div>)}
       </DocumentNavigationContext.Provider>
@@ -517,6 +523,7 @@ function ChatScreen({ host, composerState, position, navigation, onDraftsChange 
           userName={user?.name ?? null}
           files={null}
           chats={mobileNavigation} search={!showDesktopNavigation ? palette : null}
+          page={tab === "documents" ? "Documents" : tab === "calendar" ? "Calendar" : computerTabLabel(host)}
           answered={hasAnsweredTurn(data?.turns)}
           activity={activity}
         />
@@ -825,8 +832,19 @@ function WorkbotHeader(props: {
   search?: ReactNode;
   /** What Workbot is doing (workingStatus): a status line under the name, which opens the task sheet. */
   activity: WorkbotActivity;
+  /** A view other than the chat (Documents, Calendar…): its own title replaces Workbot and the chat's title. */
+  page?: string;
+  /** That view's one action, such as Ask Workbot about the open document. */
+  action?: ReactNode;
 }) {
   const { name } = props;
+  if (props.page) return (
+    <header className="flex h-14 shrink-0 items-center gap-1 px-3 sm:px-5" data-workbot-page-header>
+      {props.chats}{props.search}
+      <h1 className="min-w-0 flex-1 truncate px-1 text-[15px] font-semibold leading-5 text-[var(--wb-text)]">{props.page}</h1>
+      {props.action}
+    </header>
+  );
   return (
     <header className="grid min-h-[84px] shrink-0 grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-start gap-2 px-3 pb-2 pt-2 sm:px-5" data-workbot-profile-header>
       <div className="flex min-w-0 items-center gap-1 pt-2">
@@ -843,6 +861,26 @@ function WorkbotHeader(props: {
       </div>
     </header>
   );
+}
+
+/** Asks Workbot about what is open: one small action that switches to the chat, never a chat over the view. */
+function AskWorkbotButton({ name, onClick }: { name: string; onClick(): void }) {
+  return <button type="button" onClick={onClick} data-workbot-ask
+    className="flex h-8 shrink-0 items-center gap-1.5 rounded-full px-3 text-[13px] font-medium text-[var(--wb-text)] transition-colors duration-150 hover:bg-[var(--wb-chip)] focus-visible:outline-none focus-visible:shadow-[var(--wb-focus)]">
+    <MessageCircle size={15} strokeWidth={1.75} aria-hidden className="text-[var(--wb-muted)]" />Ask {name}
+  </button>;
+}
+
+/** The document brought to the chat with Ask Workbot; it goes with the next message, or the person removes it. */
+function AttachedContext({ context, onRemove }: { context: WorkbotViewContext; onRemove(): void }) {
+  const label = workbotContextLabel(context);
+  return <div className="mb-2 flex min-w-0" data-workbot-attached-context>
+    <span className="flex h-7 min-w-0 items-center gap-1.5 rounded-full bg-[var(--wb-chip)] pl-2.5 pr-1 text-[12px] text-[var(--wb-text)]" title={`${label}: Workbot reads it with your next message and can't change it from that message.`}>
+      <FileText size={13} strokeWidth={1.75} aria-hidden className="shrink-0 text-[var(--wb-muted)]" />
+      <span className="truncate" data-testid="workbot-attached-context">{label}<span className="text-[var(--wb-muted)]"> · Read-only{context.kind === "document" && context.unsaved ? " · Unsaved edits excluded" : ""}</span></span>
+      <button type="button" onClick={onRemove} aria-label={`Remove ${label}`} className="grid size-5 shrink-0 place-items-center rounded-full text-[var(--wb-muted)] hover:bg-[var(--wb-surface)] hover:text-[var(--wb-text)] focus-visible:outline-none focus-visible:shadow-[var(--wb-focus)]"><X size={12} strokeWidth={1.75} aria-hidden /></button>
+    </span>
+  </div>;
 }
 
 function timestampLabel(at: number) {
