@@ -26,9 +26,9 @@ const cleanups: Array<() => void | Promise<void>> = [];
 afterEach(async () => { for (const cleanup of cleanups.splice(0).reverse()) await cleanup(); });
 afterAll(async () => { Reflect.set(globalThis, "IS_REACT_ACT_ENVIRONMENT", previousAct); await GlobalRegistrator.unregister(); });
 
-async function mount(options: { archived?: boolean; busy?: boolean; v1?: boolean; deny?: boolean; wrongReadback?: boolean; disconnected?: boolean; settleIn?: string[]; status?: string } = {}) {
+async function mount(options: { archived?: boolean; busy?: boolean; v1?: boolean; deny?: boolean; wrongReadback?: boolean; disconnected?: boolean; status?: string } = {}) {
   useSessionModelStore.getState().setModel("ses_target", { providerID: "rebind", modelID: "model-a" });
-  useSessionManagementStore.setState({ pinnedIds: [], unreadIds: [], settledById: {} });
+  useSessionManagementStore.setState({ pinnedIds: [], unreadIds: [] });
   const writes: unknown[] = [];
   const renames: Array<{ path: string; method: string; authorization: string | null; body: unknown }> = [];
   const reloadedWorkspaces: string[] = [];
@@ -72,7 +72,7 @@ async function mount(options: { archived?: boolean; busy?: boolean; v1?: boolean
   function Register() {
     useSessionControlActions({ workspaces, selectedWorkspaceId: "one", selectedWorkspaceRoot: "/tmp/one", selectedSessionId: null,
       sessionsByWorkspaceId: { two: [{ id: "ses_target", time: { updated: 1_700_000_000, archived: options.archived ? 123 : 0 } }] }, canCreateTask: false,
-      settleWorkspaceIds: new Set(options.settleIn ?? ["two"]), sessionStatusById: options.status ? { ses_target: options.status } : undefined, openworkClient: client, opencodeClient: null, endpointForWorkspace,
+      sessionStatusById: options.status ? { ses_target: options.status } : undefined, openworkClient: client, opencodeClient: null, endpointForWorkspace,
       navigateToSession: () => { throw new Error("Must not navigate"); }, navigateToSessionRoot: () => { throw new Error("Must not navigate"); },
       createTaskInWorkspace: () => null, openModelPicker: () => { throw new Error("Must not open picker"); }, refreshRouteState: () => {},
       reloadWorkspaceSessions: async (workspaceId) => { reloadedWorkspaces.push(workspaceId); }, archiveSession: async () => ({ kind: "done" }),
@@ -188,33 +188,11 @@ test("pin rejects missing and archived targets but stale pins can still be remov
   expect(useSessionManagementStore.getState().pinnedIds).toEqual([]);
 });
 
-test("settle moves an idle session to Settled and un-settle brings it back, without engine writes", async () => {
+test("session.settle is gone: archive replaces it", async () => {
   const fixture = await mount();
-  await act(async () => { useSessionManagementStore.setState({ pinnedIds: ["ses_target"], unreadIds: ["ses_target"] }); });
-  expect(await fixture.command("session.settle", { sessionId: "ses_target", settled: true })).toMatchObject({ ok: true, result: { ok: true, settled: true } });
-  expect(useSessionManagementStore.getState()).toMatchObject({ pinnedIds: [], unreadIds: [] });
-  expect(await fixture.query("session.list_sessions", {})).toMatchObject({ ok: true, result: [{ sessionId: "ses_target", settled: true, pinned: false }] });
-  expect(await fixture.command("session.settle", { sessionId: "ses_target", settled: true })).toMatchObject({ ok: true, result: { settled: true, unchanged: true } });
-  expect(await fixture.command("session.settle", { sessionId: "ses_target", settled: false })).toMatchObject({ ok: true, result: { ok: true, settled: false } });
-  expect(await fixture.query("session.list_sessions", {})).toMatchObject({ ok: true, result: [{ sessionId: "ses_target", settled: false }] });
+  expect(await fixture.command("session.settle", { sessionId: "ses_target", settled: true })).toMatchObject({ ok: false });
+  const listed = await fixture.query("session.list_sessions", {});
+  expect(listed).toMatchObject({ ok: true, result: [{ sessionId: "ses_target" }] });
+  expect(JSON.stringify(listed)).not.toContain("settled");
   expect(fixture.writes).toEqual([]);
-  expect(fixture.renames).toEqual([]);
-});
-
-for (const [options, code] of [
-  [{ status: "waiting" }, "target_waiting"], [{ status: "thinking" }, "target_working"], [{ settleIn: ["one"] }, "unavailable"],
-] satisfies Array<[{ status?: string; settleIn?: string[] }, string]>) {
-  test(`settle refuses ${code} and leaves the session in view`, async () => {
-    const fixture = await mount(options);
-    expect(await fixture.command("session.settle", { sessionId: "ses_target", settled: true })).toMatchObject({ ok: false, code });
-    expect(useSessionManagementStore.getState().settledById).toEqual({});
-  });
-}
-
-test("settle rejects archived, missing and malformed targets", async () => {
-  const fixture = await mount({ archived: true });
-  expect(await fixture.command("session.settle", { sessionId: "ses_target", settled: true })).toMatchObject({ ok: false, error: expect.stringContaining("Unarchive") });
-  expect(await fixture.command("session.settle", { sessionId: "ses_missing", settled: true })).toMatchObject({ ok: false, error: expect.stringContaining("not found") });
-  expect(await fixture.command("session.settle", { sessionId: "ses_target", settled: "yes" })).toMatchObject({ ok: false });
-  expect(useSessionManagementStore.getState().settledById).toEqual({});
 });

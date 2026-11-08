@@ -1,6 +1,6 @@
 import { getDisplaySessionTitle } from "@/app/lib/session-title";
 import { t } from "@/i18n";
-import { sessionActivityAt } from "@/react-app/domains/session/sidebar/session-settle";
+import { sessionActivityAt } from "@/react-app/domains/session/sidebar/session-activity";
 import { getRootSessions } from "@/react-app/domains/session/sidebar/utils";
 
 import type { SessionOption } from "./command-palette";

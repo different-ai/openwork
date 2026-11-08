@@ -32,7 +32,6 @@ import { composeNativeSessionHistory } from "@/app/lib/opencode-session-native";
 import { prefetchOpeningSessionHistory, sessionHistoryIdentity, sessionHistoryRuntimeOwner, useSessionHistoryRuntimeOwners } from "@/react-app/domains/session/surface/session-history";
 import { sendSessionCommand, sessionWorkHeld } from "@/app/lib/opencode-interruption";
 import { useSessionManagementStore as sessionManagementStore } from "@/react-app/domains/session/sidebar/session-management-store";
-import { settleWorkspaceIds, useSessionSettleState } from "@/react-app/domains/session/sidebar/session-settle";
 import { getDisplaySessionTitle } from "@/app/lib/session-title";
 import { getSessionDescendantIds } from "@/react-app/domains/session/sidebar/utils";
 import { buildOpenworkWorkspaceBaseUrl } from "@/app/lib/openwork-server";
@@ -315,8 +314,6 @@ import {
  * so the session surface can detect ProviderModelNotFoundError and offer
  * recovery actions like "Change model".
  */
-const NO_SETTLE_WORKSPACES: ReadonlySet<string> = new Set();
-
 function serializeSDKError(error: unknown): string {
   if (error instanceof Error) return error.message;
   if (typeof error === "string") return error;
@@ -943,26 +940,24 @@ export function SessionRoute() {
     return { statusById: withSideChatActivity(statusById, sideChats, workspaceSessionGroups), labelById, sourceById, kindById };
   }, [attentionLocale, remoteAttentionKey, selectWorkspaceAttention, sideChats, sessionActivityByWorkspaceId, sessionWaitingByWorkspaceId, sessionChildIdsByWorkspaceId, workspaceSessionGroups]);
   const sidebarSessionStatusById = sidebarSessionAttention.statusById;
-  // Settling ships behind `settledSessions` and for OpenCode v2 only; v1 workspaces keep today's sidebar.
+  // The Feed view and the header's Archive toggle ship behind `settledSessions`.
   const settledSessionsEnabled = useDesktopFeature("settledSessions");
-  const settleWorkspaceIdSet = useMemo(
-    () => settledSessionsEnabled
-      ? settleWorkspaceIds(workspaces, (workspace) => endpointForSessionWorkspace(workspace)?.opencodeBaseUrl)
-      : NO_SETTLE_WORKSPACES,
-    [endpointForSessionWorkspace, settledSessionsEnabled, workspaces],
-  );
   const selectedSidebarSession = useMemo(() => {
     if (!selectedWorkspaceId || !selectedSessionId) return null;
     return workspaceSessionGroups.find((group) => group.workspace.id === selectedWorkspaceId)
       ?.sessions.find((session) => session?.id === selectedSessionId) ?? null;
   }, [selectedSessionId, selectedWorkspaceId, workspaceSessionGroups]);
-  // Sidebar row, palette, header button and Cmd/Ctrl+Shift+E all run this one toggle.
-  const currentSessionSettle = useSessionSettleState(
-    selectedSidebarSession,
-    selectedSessionId ? sidebarSessionStatusById[selectedSessionId] : undefined,
-    getDisplaySessionTitle(selectedSidebarSession?.title),
-    settleWorkspaceIdSet.has(selectedWorkspaceId),
-  );
+  // Palette, header button and Cmd/Ctrl+Shift+E all run this one toggle. The archive flow is set up further down.
+  const archiveSessionRef = useRef<((sessionId: string, archived: boolean) => Promise<unknown>) | null>(null);
+  const currentSessionArchived = (selectedSidebarSession?.time?.archived ?? 0) > 0;
+  const currentSessionArchive = useMemo(() => {
+    const sessionId = selectedSidebarSession?.id;
+    if (!settledSessionsEnabled || !sessionId || !opencodeClient) return undefined;
+    return {
+      archived: currentSessionArchived,
+      toggle: () => { void archiveSessionRef.current?.(sessionId, !currentSessionArchived); },
+    };
+  }, [currentSessionArchived, opencodeClient, selectedSidebarSession?.id, settledSessionsEnabled]);
 
   const sidebarActiveWorkspaceId = useMemo(() => {
     const sessionId = selectedSessionId?.trim() ?? "";
@@ -3032,7 +3027,7 @@ export function SessionRoute() {
     onCycleFavoriteModel: cycleFavoriteModel,
     onCycleModelSource: () => { cycleFavoriteModel(true); },
     onToggleFastMode: toggleFastMode,
-    onToggleSettleSession: currentSessionSettle.toggle,
+    onToggleArchiveSession: currentSessionArchive?.toggle,
   });
   useReactRenderWatchdog("SessionRoute", {
     selectedSessionId,
@@ -3084,6 +3079,7 @@ export function SessionRoute() {
   const handleArchiveSession = async (sessionId: string, archived: boolean) => {
     await archiveSession(sessionId, archived);
   };
+  archiveSessionRef.current = handleArchiveSession;
 
   useSessionControlActions({
     workspaces,
@@ -3094,7 +3090,6 @@ export function SessionRoute() {
     canCreateTask,
     openworkClient: client,
     opencodeClient,
-    settleWorkspaceIds: settleWorkspaceIdSet,
     sessionStatusById: sidebarSessionStatusById,
     endpointForWorkspace,
     navigateToSession: navigateToSessionForControl,
@@ -3403,19 +3398,19 @@ export function SessionRoute() {
         sessionManagementStore.getState().togglePin(selectedSessionId);
       },
     }];
-    if (currentSessionSettle.settled || currentSessionSettle.canSettle) {
+    if (currentSessionArchive) {
       items.push({
-        id: "session.settle.toggle",
-        title: currentSessionSettle.settled
-          ? t("session_management.unsettle_session")
-          : t("session_management.settle_session"),
+        id: "session.archive.toggle",
+        title: currentSessionArchive.archived
+          ? t("session_management.unarchive_session")
+          : t("session_management.archive_session"),
         detail: currentSessionForGroupMove.title,
         meta: "Session",
-        keywords: ["settle", "un-settle", "unsettle", "done", "finished", "clear", "tidy", "sidebar"],
+        keywords: ["archive", "unarchive", "restore", "done", "finished", "clear", "tidy", "sidebar"],
         group: "actions",
         action: () => {
           setCommandPaletteOpen(false);
-          currentSessionSettle.toggle();
+          currentSessionArchive.toggle();
         },
       });
     }
@@ -3434,7 +3429,7 @@ export function SessionRoute() {
       });
     }
     return items;
-  }, [currentSessionForGroupMove, currentSessionPinned, currentSessionSettle, opencodeClient, selectedSessionId, selectedWorkspaceId]);
+  }, [currentSessionArchive, currentSessionForGroupMove, currentSessionPinned, opencodeClient, selectedSessionId, selectedWorkspaceId]);
 
   // An empty composer has a group too: the one its new task will be created in.
   // The focused unsent side chat wins over the main empty composer.
@@ -3925,7 +3920,7 @@ export function SessionRoute() {
       />
     ) : null}
     <SessionPage
-      currentSessionSettle={currentSessionSettle}
+      currentSessionArchive={currentSessionArchive}
       sessionReferenceInventories={sessionReferenceInventories}
       createWorkspaceSessionMetadataCallbacks={createWorkspaceSessionMetadataCallbacks}
       isSessionReferenceCurrent={isSessionReferenceCurrent}
@@ -4090,7 +4085,6 @@ export function SessionRoute() {
         selectedSessionId,
         developerMode: false,
         sessionStatusById: sidebarSessionStatusById,
-        settleWorkspaceIds: settleWorkspaceIdSet,
         feedEnabled: settledSessionsEnabled,
         sessionAttentionLabelById: sidebarSessionAttention.labelById,
         sessionAttentionSourceById: sidebarSessionAttention.sourceById,
