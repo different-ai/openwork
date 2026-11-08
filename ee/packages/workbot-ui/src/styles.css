@@ -83,7 +83,7 @@
   margin-top: calc(-1 * env(safe-area-inset-top));
   margin-bottom: calc(-1 * var(--wb-safe-bottom, env(safe-area-inset-bottom)));
 }
-.workbot-chrome-top { padding-top: calc(env(safe-area-inset-top) + 8px); }
+.workbot-chrome-top { padding-top: calc(env(safe-area-inset-top) + 8px); padding-bottom: 12px; }
 .workbot-chrome-bottom { padding-top: 12px; padding-bottom: max(16px, calc(var(--wb-safe-bottom, env(safe-area-inset-bottom)) + 4px)); }
 /* The blur lives on its own layer, which fades out toward the conversation instead of ending in a hard line. */
 .workbot-chrome-top::before, .workbot-chrome-bottom::before {
@@ -113,7 +113,15 @@
 }
 .workbot-chrome-top [data-workbot-header-side] button:hover { background: var(--wb-chip); }
 .workbot-chrome-top [data-workbot-header-side] button:focus-visible { box-shadow: var(--wb-focus); }
+/* On a phone the name and what Workbot is doing sit on a small floating pill. */
+.workbot-chrome-top [data-workbot-working-name] {
+  border-radius: 9999px;
+  padding: 4px 14px;
+  box-shadow: 0 0 0 1px var(--wb-ring), 0 2px 8px -4px #01162724;
+}
+.workbot-chrome-top [data-workbot-working-name]:focus-visible { box-shadow: var(--wb-focus); }
 /* The name pill and the message box are glass too: what scrolls under them stays faintly there. */
+.workbot-chrome-top [data-workbot-working-name]:not(:hover),
 .workbot-chrome-top [data-workbot-profile-badge] > span,
 .workbot-chrome-bottom [data-workbot-composer] {
   background: var(--wb-float-control);

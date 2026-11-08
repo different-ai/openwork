@@ -7,7 +7,7 @@ import { OpenWorkMark } from "./mark";
 import { clearThreadSnapshots } from "./thread-cache";
 import { chatTitle, RemoveChatButton, SideChatTitle, useChatLocation } from "./chats";
 import { DesktopNavigation, MobileNavigation, type NavigationProps } from "./navigation";
-import { ProfileSheet } from "./profile-sheet";
+import { AppsSheet } from "./profile-sheet";
 import {
   useEditWorkbotMessage,
   useRetryWorkbotMessage,
@@ -55,7 +55,7 @@ import { useNativeDictation } from "@openwork/ui/react";
 import { WorkbotDictation } from "./native-dictation";
 import { WorkbotCommandPalette, type WorkbotPaletteTab } from "./command-palette";
 import { workbotActivity, type WorkbotActivity } from "./activity";
-import { ProfileBadge } from "./working-status";
+import { ProfileBadge, WorkingName } from "./working-status";
 import { firstReply } from "./first-reply";
 import { remoteJobActivity, remoteWatcherTaskIds, useWorkbotRemoteJobs } from "./remote-jobs";
 import { createConversationScrollState, useConversationScroll, type ConversationScrollState } from "./conversation-scroll";
@@ -353,7 +353,7 @@ function ChatScreen({ host, composerState, position, navigation, onDraftsChange 
     />
   );
   const dragging = useFileDrop(filesEnabled, addFiles);
-  const [profileTab, setProfileTab] = useState<"tasks" | "permissions" | null>(null);
+  const [appsOpen, setAppsOpen] = useState(false);
   // The browser viewer keeps a 480px conversation beside it. Its chosen panel temporarily discloses navigation
   // through the same drawer, rather than squeezing the conversation behind a second 324px sidebar.
   const showDesktopNavigation = wideScreen && !browserPreview?.visible;
@@ -364,7 +364,7 @@ function ChatScreen({ host, composerState, position, navigation, onDraftsChange 
     onOpenChat: navigation ? next => { if (!documentsDirty) { setTab("home"); navigation.openChat(next); } } : undefined,
     drafts: documentsDirty,
     onFiles: openFiles,
-    onTasks: () => setProfileTab("tasks"), onApps: () => setProfileTab("permissions"),
+    onApps: () => setAppsOpen(true),
     onOpen: () => void paletteChats.refetch(),
     // On phones the palette stays in the header even with the drawer closed, keeping Cmd/Ctrl+K available.
     search: showDesktopNavigation ? palette : undefined,
@@ -377,7 +377,7 @@ function ChatScreen({ host, composerState, position, navigation, onDraftsChange 
   const layout = (children: ReactNode, floating = false) => <div className={`workbot workbot-layout flex min-h-0 min-w-0 bg-[var(--wb-bg)] antialiased ${floating ? "is-floating-chrome" : ""}`}>
     {showDesktopNavigation && <DesktopNavigation {...navigationProps} />}
     <div className="workbot-layout-main flex min-h-0 min-w-0 flex-1 flex-col">{children}</div>
-    {profileTab && activity && <ProfileSheet key={profileTab} open onClose={() => setProfileTab(null)} name={data?.name ?? "Workbot"} activity={activity} initialTab={profileTab} />}
+    <AppsSheet open={appsOpen} onClose={() => setAppsOpen(false)} name={data?.name ?? "Workbot"} />
   </div>;
 
   useEffect(() => {
@@ -490,7 +490,7 @@ function ChatScreen({ host, composerState, position, navigation, onDraftsChange 
       <ComputerOnScreenContext.Provider value={tab === "computer" ? computerView : null}>
       <DocumentNavigationContext.Provider value={guided && host.documents ? { status: navigationStatus, open: followNavigation } : null}>
         {layout(<div ref={chrome.frame} className="relative flex min-h-0 flex-1 flex-col" data-workbot-workspace>
-          <WorkbotHeader floating={floating ? chrome.top : undefined} name={name} organizationName={data?.organizationName ?? ""} userName={user?.name ?? null} answered={hasAnsweredTurn(data?.turns)} activity={activity}
+          <WorkbotHeader floating={floating ? chrome.top : undefined} name={name} organizationName={data?.organizationName ?? ""} userName={user?.name ?? null} answered={hasAnsweredTurn(data?.turns)} activity={activity} wide={wideScreen}
             files={filesEnabled ? <FilesButton open={filesOpen} onOpen={() => setFilesOpen(true)} /> : null}
             chats={mobileNavigation} search={!showDesktopNavigation ? palette : null}
             page={pageTitle} action={askAbout ? <AskWorkbotButton name={name} onClick={askAbout} /> : null}
@@ -622,6 +622,7 @@ function ChatScreen({ host, composerState, position, navigation, onDraftsChange 
         remove={navigation && chatId && shown.turns.length > 0 ? <RemoveChatButton chatId={chatId} title={navigation.title} onRemoved={() => { composerState.dispose(); navigation.openChat(null); }} /> : null}
         answered={hasAnsweredTurn(shown.turns)}
         activity={activity}
+        wide={wideScreen}
       />
       <div className="flex min-h-0 flex-1">
       <div className="relative flex min-h-0 min-w-0 flex-1 flex-col">
@@ -847,6 +848,8 @@ function WorkbotHeader(props: {
   page?: string;
   /** That view's one action, such as Ask Workbot about the open document. */
   action?: ReactNode;
+  /** False on phones: the plain name and status replace the avatar and profile. */
+  wide?: boolean;
   /** Floats the chat's header over its conversation (translucent, blurred); measured through this ref. */
   floating?: (node: HTMLElement | null) => void;
 }) {
@@ -858,17 +861,19 @@ function WorkbotHeader(props: {
       {props.action}
     </header>
   );
+  // Phones show the chat, not a persona: Workbot's name with what it is doing, which opens the task sheet.
+  const phone = props.wide === false;
   return (
-    <header ref={props.floating} className={`grid min-h-[84px] shrink-0 grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-start gap-2 px-3 pb-2 pt-2 sm:px-5 ${props.floating ? "workbot-chrome-top absolute inset-x-0 top-0 z-20" : ""}`} data-workbot-profile-header data-workbot-floating-header={props.floating ? "" : undefined}>
-      <div className={`flex min-w-0 items-center pt-2 ${props.floating ? "gap-2" : "gap-1"}`} data-workbot-header-side>
+    <header ref={props.floating} className={`grid shrink-0 grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] gap-2 px-3 sm:px-5 ${phone ? "min-h-14 items-center py-1.5" : "min-h-[84px] items-start pb-2 pt-2"} ${props.floating ? "workbot-chrome-top absolute inset-x-0 top-0 z-20" : ""}`} data-workbot-profile-header data-workbot-floating-header={props.floating ? "" : undefined}>
+      <div className={`flex min-w-0 items-center ${props.floating ? "gap-2" : "gap-1"} ${phone ? "" : "pt-2"}`} data-workbot-header-side>
         {props.chats}{props.search}
         <div className="hidden min-w-0 lg:contents">{props.nav}</div>
       </div>
       <div className="flex min-w-0 flex-col items-center gap-1">
-        <h1><ProfileBadge name={name} activity={props.activity} /></h1>
+        <h1 className="min-w-0 max-w-full">{phone ? <WorkingName name={name} activity={props.activity} mark={null} tasksOnly /> : <ProfileBadge name={name} activity={props.activity} />}</h1>
         {props.title ? <div className="flex max-w-[150px] items-center gap-1 text-[12px]">{props.title}</div> : null}
       </div>
-      <div className="flex min-w-0 items-center justify-end gap-1 pt-2 sm:gap-2.5" data-workbot-header-side>
+      <div className={`flex min-w-0 items-center justify-end gap-1 sm:gap-2.5 ${phone ? "" : "pt-2"}`} data-workbot-header-side>
         {props.remove}
         <div className="hidden sm:contents"><WorkbotSetupChip answered={props.answered === true} /></div>
       </div>
@@ -879,8 +884,8 @@ function WorkbotHeader(props: {
 /** Asks Workbot about what is open: one small action that switches to the chat, never a chat over the view. */
 function AskWorkbotButton({ name, onClick }: { name: string; onClick(): void }) {
   return <button type="button" onClick={onClick} data-workbot-ask
-    className="flex h-8 shrink-0 items-center gap-1.5 rounded-full px-3 text-[13px] font-medium text-[var(--wb-text)] transition-colors duration-150 hover:bg-[var(--wb-chip)] focus-visible:outline-none focus-visible:shadow-[var(--wb-focus)]">
-    <MessageCircle size={15} strokeWidth={1.75} aria-hidden className="text-[var(--wb-muted)]" />Ask {name}
+    className="flex h-8 shrink-0 items-center gap-1.5 rounded-full bg-[var(--wb-ink)] px-3.5 text-[13px] font-medium text-[var(--wb-on-ink)] transition-opacity duration-150 hover:opacity-90 focus-visible:outline-none focus-visible:shadow-[var(--wb-focus)]">
+    <MessageCircle size={15} strokeWidth={1.75} aria-hidden />Ask {name}
   </button>;
 }
 
@@ -925,13 +930,11 @@ function Intro(props: { name: string; organizationName: string; firstName: strin
   const seeing = apps.length === 0 ? null : apps.length === 1 ? apps[0] : `${apps.slice(0, -1).join(", ")} and ${apps.at(-1)}`;
   const hour = new Date(props.at).getHours();
   const hello = hour < 12 ? "Morning" : hour < 18 ? "Hi" : "Evening";
+  // Phones open straight on the conversation: no avatar, name and "Set up by" card above it.
+  const wide = useWideScreen();
   return (
     <>
-      <div className="flex flex-col items-center gap-1.5 pb-7">
-        <Mark name={props.name} size="hero" />
-        <span className="pt-1 text-[15px] font-semibold leading-[18px] text-[var(--wb-text)]">{props.name}</span>
-        <span className="text-[12px] leading-4 text-[var(--wb-muted)]">Set up by {props.organizationName}</span>
-      </div>
+      {wide ? <WhoYouAreTalkingTo name={props.name} organizationName={props.organizationName} /> : null}
       {/* When Workbot wrote its own hello, that message follows; only the drawn greeting needs the lines here. */}
       {props.spoken ? null : (
         <div className="flex flex-col gap-[3px]">
@@ -993,16 +996,24 @@ function FirstOpen(props: { name: string; organizationName: string; firstName: s
   );
 }
 
-/** A new side chat, before its first message: who the person is talking to, then the composer. */
+/** Wide screens only: Workbot's mark, its name and who set it up, above the start of a conversation. */
+function WhoYouAreTalkingTo(props: { name: string; organizationName: string }) {
+  return (
+    <div className="flex flex-col items-center gap-1.5 pb-7">
+      <Mark name={props.name} size="hero" />
+      <span className="pt-1 text-[15px] font-semibold leading-[18px] text-[var(--wb-text)]">{props.name}</span>
+      <span className="text-[12px] leading-4 text-[var(--wb-muted)]">Set up by {props.organizationName}</span>
+    </div>
+  );
+}
+
+/** A new side chat, before its first message: the composer (and, on wide screens, who the person is talking to). */
 function SideChatStart(props: { name: string; organizationName: string; children: ReactNode }) {
+  const wide = useWideScreen();
   return (
     <div className="flex flex-1 items-center justify-center overflow-y-auto px-4 pb-18 sm:px-10">
       <div className={`${COLUMN} flex flex-col gap-1`}>
-        <div className="flex flex-col items-center gap-1.5 pb-7">
-          <Mark name={props.name} size="hero" />
-          <span className="pt-1 text-[15px] font-semibold leading-[18px] text-[var(--wb-text)]">{props.name}</span>
-          <span className="text-[12px] leading-4 text-[var(--wb-muted)]">Set up by {props.organizationName}</span>
-        </div>
+        {wide ? <WhoYouAreTalkingTo name={props.name} organizationName={props.organizationName} /> : null}
         {props.children}
       </div>
     </div>

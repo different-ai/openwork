@@ -6,7 +6,7 @@ import { useState } from "react";
 import { initials } from "./format";
 import { workbotHost, type WorkbotHost } from "./host";
 
-const avatarClass = "grid size-8 shrink-0 place-items-center rounded-full bg-[var(--wb-ink)] text-[11px] font-semibold tracking-[0.02em] text-[var(--wb-on-ink)] transition-opacity duration-150 hover:opacity-85 focus-visible:outline-none focus-visible:shadow-[var(--wb-focus)]";
+const avatarClass = "grid size-8 shrink-0 place-items-center rounded-full bg-[var(--wb-ink)] text-[12px] font-semibold tracking-[0.02em] text-[var(--wb-on-ink)] transition-opacity duration-150 hover:opacity-85 focus-visible:outline-none focus-visible:shadow-[var(--wb-focus)]";
 const itemClass = "flex h-9 w-full cursor-default items-center gap-2.5 rounded-lg px-2.5 text-[13px] leading-[18px] text-[var(--wb-text)] outline-none select-none data-[highlighted]:bg-[var(--wb-chip)] data-[disabled]:opacity-60";
 
 /** The header avatar: a link to the dashboard, or the account menu where the host offers one. */

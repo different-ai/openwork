@@ -53,3 +53,27 @@ test("a missing real logo uses a neat letter inside the circle, not a plug or ra
   assert.match(html, /data-workbot-app-letter="true">G/);
   assert.doesNotMatch(html, /lucide-plug|mcp:|emc_|execute_capability/);
 });
+
+test("OpenWork's own features are one OpenWork mark in the same round group, pulsing only while one runs", () => {
+  const step = (app: string | null, label: string, running: boolean, extra: Record<string, unknown> = {}) =>
+    ({ app, label, icon: "app" as const, status: running ? "running" as const : "done" as const, startedAt: 110, finishedAt: running ? null : 120, updates: [], ...extra });
+  const openwork = { site: "openworklabs.com", openwork: true as const };
+  const mixed = (running: boolean): WorkbotTurn => ({ ...turn, status: running ? "working" : "done", parts: [{ kind: "steps", steps: [
+    step("Exa", "Searching Exa", false, { site: "exa.ai" }),
+    step("OpenWork", "Starting a remote task", false, { ...openwork, remote: true, detail: "Remote task" }),
+    step("Google Drive", "Searching Google Drive", false),
+    step("OpenWork", "Reading a skill", false, { ...openwork, detail: "Weekly digest" }),
+    step("Linear", "Checking Linear", false, { site: "linear.app" }),
+    step("OpenWork", "Starting a background task", running, { ...openwork, detail: "Draft the digest" }),
+  ] }] });
+  const html = (running: boolean) => { const summary = connectorSummary(mixed(running), null); assert.ok(summary); return renderToStaticMarkup(<ConnectorLine summary={summary} />); };
+  const done = html(false);
+  assert.deepEqual([...done.matchAll(/data-workbot-connector-logo="([^"]+)"/g)].map((match) => match[1]), ["Exa", "OpenWork", "Google Drive", "Linear"]);
+  assert.equal((done.match(/data-workbot-openwork-mark/g) ?? []).length, 1, "one OpenWork mark, never a monitor icon or letter");
+  assert.doesNotMatch(done, /lucide-monitor/);
+  assert.match(done, /aria-label="Used Exa, OpenWork, Google Drive and Linear"/);
+  assert.doesNotMatch(done, /workbot-connector-pulse/);
+  const live = html(true);
+  assert.match(live, /data-workbot-connector-logo="OpenWork" data-active="true"/);
+  assert.equal((live.match(/workbot-connector-pulse/g) ?? []).length, 1);
+});

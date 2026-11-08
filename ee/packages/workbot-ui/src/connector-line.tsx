@@ -3,10 +3,15 @@
 import { Popover } from "@base-ui/react/popover";
 import { Monitor } from "lucide-react";
 import { AppMark } from "./files";
-import { connectorNames, type ConnectorApp, type ConnectorSummary } from "./connector-activity";
+import { OpenWorkMark } from "./mark";
+import { appKey, connectorNames, type ConnectorApp, type ConnectorSummary } from "./connector-activity";
 
-/** Shared Apps-tab brand resolver; a letter only after all real-logo candidates fail. */
+/**
+ * Shared Apps-tab brand resolver; a letter only after all real-logo candidates fail. OpenWork's own features use the
+ * inlined OpenWork mark, so it never depends on a host's asset or a network request.
+ */
 export function ConnectorIcon({ app, size = 14 }: { app: ConnectorApp; size?: number }) {
+  if (app.openwork) return <span aria-hidden className="grid shrink-0 place-items-center" style={{ width: size, height: size }} data-workbot-openwork-mark><OpenWorkMark width={Math.round(size * 0.8)} height={size} /></span>;
   if (app.remote) return <Monitor size={size} strokeWidth={1.75} aria-hidden className="shrink-0 text-[var(--wb-muted)]" />;
   return <AppMark name={app.name ?? "App"} site={app.site} size={size} fallback="letter" />;
 }
@@ -24,6 +29,7 @@ export function ConnectorLine({ summary }: { summary: ConnectorSummary }) {
   const shown = summary.apps.slice(0, VISIBLE_LOGOS);
   const more = summary.apps.length - shown.length;
   const names = `Used ${connectorNames(summary.apps)}`;
+  const activeKey = summary.active ? appKey(summary.active) : null;
   return (
     <div className="flex h-7 items-center" data-workbot-connector-line={summary.live ? "live" : "done"}>
       <Popover.Root>
@@ -31,14 +37,14 @@ export function ConnectorLine({ summary }: { summary: ConnectorSummary }) {
           className="relative flex h-7 w-fit items-center rounded-full outline-none focus-visible:shadow-[var(--wb-focus)]" data-workbot-connector-stack>
           <span aria-hidden className="flex items-center -space-x-[7px]">
             {shown.map((app) => {
-              const active = summary.active !== null && app.name === summary.active.name && app.remote === summary.active.remote;
-              return <span key={app.remote ? "remote" : app.name ?? "app"}
-                className={`relative grid size-5 shrink-0 place-items-center overflow-hidden rounded-full bg-white [--wb-muted:#687076] ring-2 ring-[var(--wb-bg)] ${active ? "workbot-connector-pulse" : ""}`}
+              const active = activeKey !== null && appKey(app) === activeKey;
+              return <span key={appKey(app)}
+                className={`relative grid size-5 shrink-0 place-items-center overflow-hidden rounded-full bg-white [--wb-ink:#1c2024] [--wb-muted:#687076] ring-2 ring-[var(--wb-bg)] ${active ? "workbot-connector-pulse" : ""}`}
                 data-workbot-connector-logo={app.name ?? "App"} data-active={active || undefined}>
                 <ConnectorIcon app={app} size={12} />
               </span>;
             })}
-            {more > 0 ? <span className={`relative grid size-5 shrink-0 place-items-center rounded-full bg-[var(--wb-chip)] text-[9px] font-medium tabular-nums text-[var(--wb-muted)] ring-2 ring-[var(--wb-bg)] ${summary.active && !shown.some((app) => app.name === summary.active?.name && app.remote === summary.active?.remote) ? "workbot-connector-pulse" : ""}`} data-workbot-connector-more>+{more}</span> : null}
+            {more > 0 ? <span className={`relative grid size-5 shrink-0 place-items-center rounded-full bg-[var(--wb-chip)] text-[9px] font-medium tabular-nums text-[var(--wb-muted)] ring-2 ring-[var(--wb-bg)] ${activeKey !== null && !shown.some((app) => appKey(app) === activeKey) ? "workbot-connector-pulse" : ""}`} data-workbot-connector-more>+{more}</span> : null}
           </span>
         </Popover.Trigger>
         <Popover.Portal>
@@ -50,7 +56,7 @@ export function ConnectorLine({ summary }: { summary: ConnectorSummary }) {
                 <ul aria-label="What was used" className="mt-1 flex max-h-48 flex-col gap-1 overflow-y-auto" data-workbot-connector-rows>
                   {summary.rows.map((row) => <li key={row.key} className="flex min-w-0 items-start gap-1.5">
                     <span aria-hidden className="mt-1 grid size-3 shrink-0 place-items-center"><ConnectorIcon app={row.app} size={12} /></span>
-                    <span className="min-w-0">{row.app.name ?? "Connected app"}{row.detail ? <span className="text-[var(--wb-faint)]"> · {row.detail}</span> : null}{row.times > 1 ? <span className="tabular-nums text-[var(--wb-faint)]"> ×{row.times}</span> : null}</span>
+                    <span className="min-w-0">{row.app.openwork ? "OpenWork" : row.app.name ?? "Connected app"}{row.detail ? <span className="text-[var(--wb-faint)]"> · {row.detail}</span> : null}{row.times > 1 ? <span className="tabular-nums text-[var(--wb-faint)]"> ×{row.times}</span> : null}</span>
                   </li>)}
                 </ul>
               </details>

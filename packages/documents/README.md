@@ -6,11 +6,13 @@ provider/editor contracts without embedding Workbot.
 
 ## Documents workspace
 
-- Recent files from Drive API v3, ordered by `recency desc`, excluding folders.
-  The sidebar is not a fabricated list or local browsing history.
-- My Drive and folder breadcrumbs, folder-scoped search, pagination,
+- One navigation: a Recent / My Drive switch beside the search, then quiet list
+  controls (sort, list or grid, refresh). No second sidebar or list of recent files.
+- Recent files from Drive API v3, ordered by `recency desc`, excluding folders,
+  not a fabricated list or local browsing history.
+- Folder breadcrumbs (only inside a folder), folder-scoped search, pagination,
   list/grid views and name/date sorting of loaded files.
-- Files open in internal tabs with close buttons and an unsaved-change dot. Switching or reordering tabs retains unsaved edits; closing an edited tab offers save, keep editing, or discard. Drag tabs to reorder, or focus a tab and use Alt+Shift+Left/Right. Delete closes the focused tab. The Files tab stays fixed.
+- Files open in internal tabs with close buttons and an unsaved-change dot. Switching or reordering tabs retains unsaved edits; closing an edited tab offers save, keep editing, or discard. Drag tabs to reorder, or focus a tab and use Alt+Shift+Left/Right. Delete closes the focused tab. The tab row appears once a file is open, with All documents fixed first.
   Closing a dirty file or leaving Documents asks whether to keep/discard edits.
   Page unload uses the browser's unsaved-changes protection.
 - Missing/expired Drive access shows Connect/Reconnect through Den's existing

@@ -173,6 +173,9 @@ const NO_CHATS: WorkbotChats["side"] = [];
 
 const ICON_BUTTON =
   "grid h-8 w-8 shrink-0 place-items-center rounded-full text-[var(--wb-muted)] transition-colors duration-150 hover:bg-[var(--wb-chip)] hover:text-[var(--wb-text)] focus-visible:outline-none focus-visible:shadow-[var(--wb-focus)]";
+/** The trigger sits in the rail and the phone header, beside the navigation's 40px controls: same size and shape. */
+const TRIGGER_BUTTON =
+  "grid size-10 shrink-0 place-items-center rounded-lg text-[var(--wb-muted)] transition-colors duration-150 hover:bg-[var(--wb-chip)] hover:text-[var(--wb-text)] focus-visible:outline-none focus-visible:shadow-[var(--wb-focus)]";
 
 export function WorkbotCommandPalette(props: WorkbotCommandPaletteProps) {
   const mac = useMemo(isMac, []);
@@ -402,7 +405,7 @@ export function WorkbotCommandPalette(props: WorkbotCommandPaletteProps) {
       onOpenChangeComplete={(next) => { if (!next) flushFocus(); }}
     >
       <Dialog.Trigger
-        className={ICON_BUTTON}
+        className={TRIGGER_BUTTON}
         aria-label="Search and actions"
         aria-keyshortcuts={mac ? "Meta+K" : "Control+K"}
         title={`Search and actions (${mod}${mac ? "" : "+"}K)`}

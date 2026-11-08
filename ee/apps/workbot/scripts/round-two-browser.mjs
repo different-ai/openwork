@@ -58,6 +58,7 @@ page.on('request', request => report.requests.push({ method: request.method(), u
 const flags = { browser: '1', working: '1', profile: '1', centered: '1', preview: '1', quick: '1' };
 async function go(scenario = 'browsing', overrides = {}) {
   const query = new URLSearchParams({ scenario, ...flags, ...overrides });
+  await page.setViewportSize({ width: 390, height: 844 });
   await page.goto(`${origin}/?${query}`, { waitUntil: 'domcontentloaded' });
   await page.locator('[data-workbot-composer]').waitFor();
   await page.evaluate(() => document.fonts.ready);
@@ -72,7 +73,10 @@ async function screenshot(name) {
   await page.screenshot({ path: file });
   report.screenshots.push(file);
 }
+// Phones show Workbot's plain name and status (no avatar badge or profile); the profile lives on wide screens.
+const NAME = '[data-workbot-profile-badge], [data-workbot-working-name]';
 async function openProfile() {
+  await page.setViewportSize({ width: 1280, height: 844 });
   await page.locator('[data-workbot-profile-badge]').click();
   await page.getByRole('tab', { name: 'Tasks', exact: true }).waitFor();
 }
@@ -84,10 +88,10 @@ try {
   });
   assert.equal(await page.locator('[data-workbot-live-thumbnail]').count(), 1);
   assert.equal(await page.getByRole('button', { name: 'Open browser', exact: true }).count(), 1);
-  const subtitle = await page.locator('[data-workbot-profile-badge] [data-workbot-status-line]').evaluate(element => ({ text: element.textContent, width: element.clientWidth, scrollWidth: element.scrollWidth }));
+  assert.equal(await page.locator('[data-workbot-profile-badge]').count(), 0, 'No avatar badge on a phone');
+  const subtitle = await page.locator('[data-workbot-working-name] [data-workbot-status-line]').evaluate(element => ({ text: element.textContent, width: element.clientWidth, scrollWidth: element.scrollWidth }));
   record('finalBadgeSubtitle', subtitle);
   assert.ok(subtitle.text.includes('Searching YouTube'));
-  assert.ok(!subtitle.text.includes('·'), 'No elapsed counter in centered badge');
   await screenshot('mobile-browsing');
   await page.getByRole('button', { name: 'Open browser', exact: true }).click();
   await page.waitForURL('**/browser?**');
@@ -111,13 +115,15 @@ try {
     if (tab === 'Identity') await page.getByText('About me', { exact: true }).waitFor();
     await screenshot(`mobile-profile-${tab.toLowerCase()}`);
   }
+  // On a phone the name opens the task sheet: what Workbot is doing, never a profile with tabs.
   await go('browsing', { centered: '0', preview: '0' });
   await page.locator('[data-workbot-working-name]').click();
-  const titleSize = await page.getByRole('heading', { name: 'Workbot', exact: true, level: 2 }).evaluate(element => getComputedStyle(element).fontSize);
-  assert.equal(titleSize, '20px');
-  record('flagOffTitleSize', titleSize);
-  assert.equal(await page.getByRole('tab').count(), 3);
-  await screenshot('mobile-profile-flag-off');
+  await page.locator('[data-workbot-task-sheet]').waitFor();
+  assert.equal(await page.getByRole('tab').count(), 0);
+  assert.equal(await page.locator('[data-workbot-profile]').count(), 0);
+  record('phoneNameOpensTaskSheet', true);
+  await screenshot('mobile-task-sheet');
+  await page.keyboard.press('Escape');
   for (const quick of ['1', '0']) {
     const start = performance.now();
     await go('waiting', { quick });
@@ -128,8 +134,8 @@ try {
     await screenshot(`mobile-waiting-quick-${quick}`);
   }
   await go('remote', { remote: '1', preview: '0', quick: '0' });
-  await page.waitForFunction(() => document.querySelector('[data-workbot-profile-badge]')?.textContent.includes('Checking the mobile browser flow'));
-  record('remoteBadge', await page.locator('[data-workbot-profile-badge]').innerText());
+  await page.waitForFunction(() => document.querySelector('[data-workbot-profile-badge], [data-workbot-working-name]')?.textContent.includes('Checking the mobile browser flow'));
+  record('remoteBadge', await page.locator(NAME).first().innerText());
   await openProfile();
   assert.equal(await page.locator('[data-workbot-remote-job]').count(), 3);
   const panel = page.getByRole('tabpanel');

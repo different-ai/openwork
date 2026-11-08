@@ -6,9 +6,10 @@ import { workbotActivity } from "../../../packages/workbot-ui/src/activity.js"
 import { connectorSummary } from "../../../packages/workbot-ui/src/connector-activity.js"
 import type { WorkbotTurn } from "../../../packages/workbot-ui/src/data.js"
 import { createConnectorCache } from "../src/server/routes.js"
+import { OPENWORK_CONNECTORS, openworkAt, openworkSnapshot } from "../test-fixtures/chat-screen-scenarios.js"
 
 /** Nothing internal ever reaches the page: no connection, capability or tool ids. */
-const RAW = /mcp:|emc_|execute_capability|search_capabilities|web_search_exa|remote-session:/
+const RAW = /mcp:|emc_|plg_|cfg_|execute_capability|search_capabilities|web_search_exa|remote-session:|native:|admin:|start_task|get_skill|createCloudAutomation/
 
 const EXA = "mcp:emc_01kexa7q2m:web_search_exa"
 
@@ -45,12 +46,90 @@ test("a connection's own tool is named for its app, with what it did and its sit
   assert.equal(connectorStep("execute_capability", { name: "gmail:searchMessages" })?.label, "Searching Gmail")
 })
 
-test("work on the person's other computers reads as a remote task; Workbot's own tools stay out of sight", () => {
-  assert.deepEqual(connectorStep("execute_capability", { name: "remote-session:create", body: { target: "desktop" } }), { app: "Remote computer", label: "Starting a remote task", detail: "Starting a remote task", remote: true })
-  assert.equal(connectorStep("execute_capability", { name: "remote-session:status" })?.label, "Checking the remote task")
-  assert.equal(connectorStep("execute_capability", { name: "getMe" }), null)
-  assert.equal(connectorStep("search_capabilities", { query: "exa" }), null)
-  assert.equal(connectorStep("memory_search", {}), null)
+test("OpenWork's own features read as OpenWork, in plain words; finding tools and notes stay out of sight", () => {
+  const own = (name: string, input: Record<string, unknown> = {}) => connectorStep(name, input)
+  // A remote task on another of the person's computers is OpenWork's feature: its logo, still said as a remote task.
+  assert.deepEqual(own("execute_capability", { name: "remote-session:create", body: { target: "desktop" } }), { app: "OpenWork", site: "openworklabs.com", openwork: true, label: "Starting a remote task", detail: "Remote task", remote: true })
+  assert.equal(own("execute_capability", { name: "remote-session:status" })?.label, "Checking the remote task")
+  assert.deepEqual(own("start_task", { title: "Q3 board deck", brief: "…" }), { app: "OpenWork", site: "openworklabs.com", openwork: true, label: "Starting a background task", detail: "Q3 board deck" })
+  assert.equal(own("get_skill", { name: "plan-my-day-k8xecmqp" })?.detail, "Plan my day", "a skill by its name, without its id suffix")
+  assert.equal(own("execute_capability", { name: "skill:create-skill" })?.detail, "Create skill")
+  assert.deepEqual(own("execute_capability", { name: "plugin:plg_01k9:cfg_01k9" }), { app: "OpenWork", site: "openworklabs.com", openwork: true, label: "Using OpenWork", detail: "Workflow or skill" })
+  assert.equal(own("execute_capability", { name: "createCloudAutomation" })?.label, "Setting up an automation")
+  assert.equal(own("execute_capability", { name: "listAutomations" })?.label, "Checking automations")
+  assert.equal(own("execute_capability", { name: "putMeAgent" })?.detail, "Your agent")
+  assert.equal(own("execute_capability", { name: "admin:den_sandbox_create" })?.label, "Using OpenWork admin tools")
+  assert.equal(own("create_app")?.label, "Building an app")
+  assert.equal(own("execute_capability", { name: "getMe" })?.app, "OpenWork")
+  for (const name of ["start_task", "get_skill", "list_skills", "create_app", "update_app", "read_app", "request_check"]) assert.equal(own(name)?.openwork, true, name)
+  // Den's built-in Google tools are Google, not OpenWork.
+  assert.equal(own("execute_capability", { name: "native:google-workspace:searchGoogleDriveFiles" })?.app, "Google Drive")
+  assert.equal(own("execute_capability", { name: "native:google-workspace:findGoogleChatDirectMessage" })?.app, "Google Chat")
+  assert.equal(own("execute_capability", { name: "native:google-workspace:getGoogleDocumentOutline" })?.app, "Google Drive")
+  assert.equal(own("execute_capability", { name: "postCapabilitiesMicrosoft365CalendarEvents" })?.app, "Outlook Calendar")
+  // Plumbing stays out of sight.
+  assert.equal(own("search_capabilities", { query: "exa" }), null)
+  assert.equal(own("memory_search"), null)
+  assert.equal(own("write_file", { path: "notes.md" }), null)
+  assert.equal(own("execute_capability", { name: "something:else" }), null)
+  for (const step of [own("get_skill", { name: "emc_01kexa7q2m" }), own("execute_capability", { name: "plugin:plg_01k9:cfg_01k9" })]) assert.doesNotMatch(JSON.stringify(step), /emc_|plg_|cfg_/)
+})
+
+/** An answer that used connectors and several OpenWork features, as the runner stores it. */
+function mixedSnapshot(live: boolean): RunnerSnapshot {
+  const calls: Array<[string, string, Record<string, unknown>]> = [
+    ["a", "execute_capability", { name: EXA }],
+    ["b", "execute_capability", { name: "remote-session:create" }],
+    ["c", "execute_capability", { name: "native:google-workspace:searchGoogleDriveFiles" }],
+    ["d", "get_skill", { name: "weekly-digest" }],
+    ["e", "execute_capability", { name: "mcp:emc_lin:list_issues" }],
+    ["f", "execute_capability", { name: "createCloudAutomation" }],
+    ["g", "start_task", { title: "Draft the digest", brief: "…" }],
+  ]
+  const messages: RunnerMessage[] = [{ messageId: "wb_ow", role: "user", text: "Make my weekly digest" }]
+  calls.forEach(([id, name, input], index) => {
+    messages.push({ messageId: "wb_ow", role: "assistant", text: "", createdAt: 110 + index * 10, toolCalls: [{ id, name, input }] })
+    if (!(live && id === "g")) messages.push({ messageId: "wb_ow", role: "tool", callId: id, name, isError: false, createdAt: 115 + index * 10 })
+  })
+  if (!live) messages.push({ messageId: "wb_ow", role: "assistant", text: "Done.", createdAt: 200, toolCalls: [] })
+  return { status: live ? "busy" : "idle", finalAssistantText: "", hasEarlier: false, turns: [{ messageId: "wb_ow", status: live ? "running" : "completed", createdAt: 100, updatedAt: 210, error: null }], messages }
+}
+
+test("one OpenWork logo per answer however many OpenWork features ran, in first-use order, and the same after a reload", () => {
+  const den: WorkbotConnectors = new Map([["emc_lin", { name: "Linear", site: "linear.app" }]])
+  const [answered] = turnsOf(mixedSnapshot(false), den)
+  assert.ok(answered)
+  assert.doesNotMatch(JSON.stringify(answered), RAW)
+  const summary = connectorSummary(answered, null)
+  assert.deepEqual(summary?.apps.map((app) => app.name), ["Exa", "OpenWork", "Google Drive", "Linear"])
+  assert.equal(summary?.apps.filter((app) => app.openwork).length, 1)
+  assert.equal(summary?.label, "Used Exa, OpenWork, Google Drive and Linear")
+  assert.deepEqual(summary?.rows.filter((row) => row.app.openwork).map((row) => row.detail), ["Remote task", "Weekly digest", "Automations", "Draft the digest"])
+  // The page rebuilds the answer from the runner's stored transcript on every read: a reload shows the same logos.
+  const [reloaded] = turnsOf(mixedSnapshot(false), den)
+  assert.deepEqual(reloaded && connectorSummary(reloaded, null), summary)
+
+  // While an OpenWork feature runs, its logo is the one that pulses, and the header shows it too.
+  const [live] = turnsOf(mixedSnapshot(true), den)
+  assert.ok(live)
+  const running = connectorSummary(live, null)
+  assert.equal(running?.live, true)
+  assert.equal(running?.active?.openwork, true)
+  const activity = workbotActivity([live], {}, 200)
+  assert.equal(activity.label, "Starting a background task")
+  assert.equal(activity.openwork, true)
+})
+
+test("the browser fixture's OpenWork answer is exactly what workbot-server builds from the runner's transcript", () => {
+  for (const live of [false, true]) {
+    const sent = 1_000_000
+    const built = turnsOf(openworkSnapshot(live, sent), OPENWORK_CONNECTORS).at(-1)
+    const fixture = openworkAt(live, sent).turns.at(-1)
+    assert.ok(built && fixture)
+    assert.deepEqual(fixture.parts, built.parts, live ? "live" : "done")
+    assert.equal(fixture.status, built.status)
+    assert.doesNotMatch(JSON.stringify(built), RAW)
+  }
 })
 
 test("while Workbot searches Exa, one live line under its answer says so, and the header says the same", () => {
@@ -107,7 +186,7 @@ test("work in several apps sums up as actions, naming each app once", () => {
   const [turn] = turnsOf(snapshot, new Map([["emc_lin", { name: "Linear", site: "linear.app" }]]))
   assert.ok(turn)
   const summary = connectorSummary(turn, null)
-  assert.equal(summary?.label, "Used Gmail, Linear and a remote computer")
+  assert.equal(summary?.label, "Used Gmail, Linear and OpenWork")
   assert.equal(summary?.count, "3 actions")
   assert.doesNotMatch(JSON.stringify(turn), RAW)
 })
