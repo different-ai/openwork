@@ -26,7 +26,9 @@ and Workbot servers omit this field, which the client treats as off.
 The scroll continuity fix is **not** behind this feature. Fresh app opens follow
 the latest message after cached/fetched history, streamed replies and late cards
 settle. A reader who switches chats or workspace views in the same app session
-keeps their place and loaded history window. Only new local sends, returning to
+keeps their place and loaded history window (up to the existing 200-turn cap).
+If new messages push the saved row outside that window while away, Workbot reads
+farther back to recover the same row. Only new local sends, returning to
 the bottom or the arrow deliberately resume following. Scroll positions are
 memory-only and scoped to signed-in person, organization and chat; reloads start
 at the newest message. Native scroll anchoring stays disabled, with one explicit

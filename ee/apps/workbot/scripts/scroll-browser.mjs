@@ -56,7 +56,7 @@ const geometry = () => page.locator(".workbot-scroll").filter({ visible: true })
 const atBottom = async label => {
   await page.waitForFunction(() => {
     const node = [...document.querySelectorAll(".workbot-scroll")].find(node => node.clientHeight > 0)
-    return node && Math.abs(node.scrollHeight - node.clientHeight - node.scrollTop) <= 2
+    return node?.querySelector("[data-workbot-row]") && Math.abs(node.scrollHeight - node.clientHeight - node.scrollTop) <= 2
   }, undefined, { timeout: 7000 })
   console.log(label, await geometry())
 }
@@ -206,6 +206,23 @@ try {
       await page.waitForFunction(() => document.querySelectorAll("[data-workbot-row]").length === 38)
       assert.ok(Math.abs((await geometry()).top - reading.top) <= 2, "return restores the older loaded page, not only the newest 8")
     })
+    await check("new turns while away cannot displace the saved reading row", async () => {
+      await open("scenario=bubbles&sideChats=1&scroll=1")
+      await atBottom("before leaving main chat")
+      await page.locator(".workbot-scroll").first().hover()
+      await page.mouse.wheel(0, -50000)
+      await page.waitForFunction(() => document.querySelector(".workbot-scroll").scrollTop <= 1)
+      const row = page.locator('[data-workbot-row="scroll-8"]')
+      const before = await row.boundingBox()
+      await page.getByRole("button", { name: "Chats", exact: true }).tap()
+      await page.getByRole("button", { name: "New side chat", exact: true }).tap()
+      await atBottom("side chat before new main message")
+      turns.push(makeTurn(38))
+      await page.getByRole("button", { name: "Back to main chat", exact: true }).tap()
+      await page.waitForFunction(() => document.querySelectorAll("[data-workbot-row]").length === 39)
+      assert.ok(Math.abs((await row.boundingBox()).y - before.y) <= 2, "missing saved row is fetched back, not replaced by the next row")
+      turns.pop()
+    })
     await check("reduced motion tap is immediate", async () => {
       await page.emulateMedia({ reducedMotion: "reduce" })
       await open("scenario=bubbles&scroll=1")
@@ -219,6 +236,6 @@ try {
     })
   }
   assert.deepEqual(errors, [], "no browser runtime errors")
-  console.log(JSON.stringify({ tests: process.env.SCROLL_BASELINE === "1" ? 4 : 11, failures, errors, screenshots: out }, null, 2))
+  console.log(JSON.stringify({ tests: process.env.SCROLL_BASELINE === "1" ? 4 : 12, failures, errors, screenshots: out }, null, 2))
 } finally { await browser.close() }
 assert.equal(failures.length, 0, `${failures.length} failed checks`)

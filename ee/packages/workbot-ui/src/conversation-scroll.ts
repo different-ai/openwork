@@ -25,6 +25,7 @@ export function observeConversationScroll(node: HTMLDivElement, content: HTMLDiv
   let width = 0;
   let expectedTop = node.scrollTop;
   let smooth = false;
+  let settleTimer: ReturnType<typeof setTimeout> | undefined;
   let touchY: number | undefined;
   const distance = () => Math.max(0, node.scrollHeight - node.clientHeight - node.scrollTop);
   const shown = () => node.clientHeight > 0 && node.getClientRects().length > 0;
@@ -59,20 +60,32 @@ export function observeConversationScroll(node: HTMLDivElement, content: HTMLDiv
     } else if (revealing) node.scrollTop = state.top;
     measure();
   };
+  const settle = () => {
+    clearTimeout(settleTimer);
+    if (!smooth || !shown()) return;
+    smooth = false;
+    state.following = distance() < 80;
+    remember();
+    measure();
+  };
+  const settling = () => { clearTimeout(settleTimer); settleTimer = setTimeout(settle, 200); };
   const scroll = () => {
     if (!shown()) { visible = false; return; }
     if (!visible || layoutChanged()) { layout(); return; }
     if (smooth) {
-      if (distance() <= 1) { smooth = false; remember(); }
+      if (distance() <= 1) settle();
+      else settling();
     } else if (Math.abs(node.scrollTop - expectedTop) > 1) {
       state.following = distance() < 80;
       remember();
     }
     measure();
   };
-  const interrupt = () => {
-    // Cancel an in-flight smooth jump if the person takes over.
+  const interrupt = (force = false) => {
+    // An upward gesture at scrollTop=0 cannot leave the bottom of a short conversation.
+    if (!force && !smooth && node.scrollTop <= 0) return;
     if (smooth) node.scrollTo({ top: node.scrollTop, behavior: "instant" });
+    clearTimeout(settleTimer);
     smooth = false;
     state.following = false;
     remember();
@@ -85,8 +98,12 @@ export function observeConversationScroll(node: HTMLDivElement, content: HTMLDiv
     touchY = y;
   };
   const key = (event: KeyboardEvent) => {
-    if (["ArrowUp", "PageUp", "Home"].includes(event.key) || event.key === " " && event.shiftKey) interrupt();
+    const navigation = ["ArrowUp", "ArrowDown", "PageUp", "PageDown", "Home", "End", " "].includes(event.key);
+    if (smooth && navigation || ["ArrowUp", "PageUp", "Home"].includes(event.key) || event.key === " " && event.shiftKey) interrupt();
   };
+  const pointer = () => { if (smooth) interrupt(); };
+  node.addEventListener("pointerdown", pointer, { passive: true });
+  node.addEventListener("scrollend", settle);
   node.addEventListener("scroll", scroll, { passive: true });
   node.addEventListener("wheel", wheel, { passive: true });
   node.addEventListener("touchstart", touchStart, { passive: true });
@@ -99,16 +116,20 @@ export function observeConversationScroll(node: HTMLDivElement, content: HTMLDiv
   layout();
   return {
     layout,
-    readEarlier() { interrupt(); },
+    readEarlier() { interrupt(true); },
     latest(animate = false) {
       state.following = true;
       state.anchor = null;
       smooth = animate && !window.matchMedia("(prefers-reduced-motion: reduce)").matches;
       node.scrollTo({ top: node.scrollHeight, behavior: smooth ? "smooth" : "instant" });
+      if (smooth) settling();
       measure();
     },
     dispose() {
+      clearTimeout(settleTimer);
       observer.disconnect();
+      node.removeEventListener("pointerdown", pointer);
+      node.removeEventListener("scrollend", settle);
       node.removeEventListener("scroll", scroll);
       node.removeEventListener("wheel", wheel);
       node.removeEventListener("touchstart", touchStart);

@@ -279,6 +279,13 @@ function ChatScreen({ host, composerState, position, navigation, onDraftsChange 
   useEffect(() => {
     if (earlierToRead && turnWindow < PAGE_TURNS) setTurnWindow(PAGE_TURNS);
   }, [earlierToRead, turnWindow, setTurnWindow]);
+  // New messages while this chat was away can push its saved row outside the newest-N window. Read farther back
+  // until that row returns, rather than restoring the same numeric offset onto a different message.
+  useEffect(() => {
+    const anchor = position.anchor;
+    if (position.following || !anchor || !data?.hasEarlier || thread.isFetching || thread.isPlaceholderData || turnWindow >= MAX_TURNS) return;
+    if (!data.turns.some(turn => turn.id === anchor.key) && !pending.some(entry => entry.id === anchor.key)) setTurnWindow(earlierWindow);
+  }, [data, pending, position, thread.isFetching, thread.isPlaceholderData, turnWindow, setTurnWindow]);
   // The page, header and message box show before the conversation is read; only the thread waits for it.
   const loading = thread.isPending;
   useEffect(() => {
