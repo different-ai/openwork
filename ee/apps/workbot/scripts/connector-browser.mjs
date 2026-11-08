@@ -115,7 +115,7 @@ try {
       await page.goto(`${base}/?scenario=bubbles`, { waitUntil: "domcontentloaded" })
       await page.locator("[data-workbot-composer] textarea").waitFor()
       await page.waitForTimeout(800)
-      for (const [label, prefill] of [["one line", ""], ["two lines", "Could you use exa to search about best ux practices and skills and then tell me which ones matter most for "]]) {
+      for (const [label, prefill] of [["one line", ""], ["two lines", "Could you use exa to search about best ux practices and skills\n"]]) {
         const result = await typing(page, prefill)
         console.log(JSON.stringify({ size: size.name, draft: label, scrollTopPerKeystroke: result.tops, distinctScrollTopPerFrame: result.distinctFrames, gapAfter: result.gap }))
         assert.equal(new Set(result.tops).size, 1, `${label}: scrollTop changed while typing`)
