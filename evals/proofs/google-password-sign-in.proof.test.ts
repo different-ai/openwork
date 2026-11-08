@@ -50,7 +50,7 @@ test("a member with an existing password signs in through Google to the same acc
       within: 15_000, label: "completed access_denied callback",
       until: (responses) => responses.some((response) => response.error === "access_denied"),
     });
-    await user.see({ text: /denied|error|sign in/i });
+    await user.see({ role: "textbox", label: "Email" });
     await user.screenshot();
     expect(await world.session()).toBeNull();
     expect(await world.accountRows()).toEqual(world.before);
