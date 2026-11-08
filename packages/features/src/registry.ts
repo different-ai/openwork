@@ -440,6 +440,17 @@ export const FEATURES = defineFeatures({
     deployments: everywhere,
     default: false,
   },
+  workbotBrowserRecovery: {
+    label: "Workbot: browser recovery",
+    description: "Retries a read once when a loading page changes, reconnects a lost browser connection, and tells Workbot when a consent dialog or human-verification check is in the way. Never repeats clicks, typing or submissions.",
+    category: "workbot",
+    added: "2026-11-07",
+    since: "2026-11",
+    author: "benjaminshafii",
+    docs: "docs/features/workbot-browser-recovery/README.md",
+    deployments: ["cloud"],
+    default: false,
+  },
   workbotWorkingStatus: {
     label: "Workbot: working status and task sheet",
     description: "While Workbot works, a quiet status line under its name says what it is doing; tapping the name opens a task sheet with its steps and each background task's steps. The chat keeps only what Workbot says: no typing dots during work, no computer or task cards unless Workbot is showing its screen. Its first reply stands on its own instead of \"give me a sec\", and it can say how a background task is going.",

@@ -147,6 +147,7 @@ export function registerWorkbotRoutes(app: Hono<AppEnv>, input: { config: Config
       driveFiles: async () => member.den.driveFiles,
       workingStatus: async () => member.den.workingStatus,
       sandboxGateway: member.den.sandboxGateway,
+      browserRecovery: member.den.browserRecovery,
       // Saved steps are GA; older Dens may omit stepTurns, so preserve their continuous-turn protocol.
       stepTurns: member.den.stepTurns,
       // Per-chat cells are GA; older Dens may omit sessionCells, so preserve their legacy placement.

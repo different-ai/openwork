@@ -33,6 +33,37 @@ test("browser live-view compatibility follows browser access without a separate 
   assert.equal((await me()).browserLiveView, false, "disabled access remains off for older clients")
 })
 
+test("a cold computer session takes browser recovery from authenticated Den, never the viewer body", async t => {
+  const signed = member("recovery_member")
+  const settings: Record<string, unknown>[] = []
+  t.mock.method(globalThis, "fetch", async (url: string | URL | Request, init?: RequestInit) => {
+    const path = new URL(url instanceof Request ? url.url : url).pathname
+    if (path === "/v1/sessions") return Response.json({ sessions: [] })
+    if (init?.method === "PUT") {
+      settings.push(JSON.parse(String(init.body)) as Record<string, unknown>)
+      return Response.json({ id: path.split("/").at(-1) })
+    }
+    if (path.endsWith("/desktop/viewer")) return Response.json({ state: "paused" })
+    return Response.json({ error: "unknown_session" }, { status: 404 })
+  })
+  const app = new Hono<AppEnv>()
+  registerWorkbotRoutes(app, {
+    config, den: { ...createDen({ apiUrl: config.denApiUrl, publicUrl: config.publicUrl }), session: async () => signed.den },
+    member: async (c, next) => { c.set("member", signed); await next() }, sameOrigin: async (_c, next) => next(),
+  })
+  const open = (body: unknown) => app.request("/v1/workbot/computer/viewer", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) })
+  for (const browserRecovery of [false, true, false]) {
+    signed.den.browserRecovery = browserRecovery
+    settings.length = 0
+    assert.equal((await open({ view: "browser" })).status, 200)
+    assert.ok(settings.length > 0)
+    assert.ok(settings.every(body => body.browserRecovery === browserRecovery))
+  }
+  settings.length = 0
+  assert.equal((await open({ view: "browser", browserRecovery: true })).status, 400)
+  assert.equal(settings.length, 0)
+})
+
 test("an explicit desktop off value preserves side chats on an older runner", async () => {
   const bodies: unknown[] = []
   const client = createHeadlessRunnerClient({

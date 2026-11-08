@@ -334,8 +334,26 @@ function readSettle(arm) {
     }).observe(document, { subtree: true, childList: true, attributes: true, attributeFilter: ["hidden", "disabled", "aria-busy", "aria-hidden", "open"] });
   }
   if (arm) state.at = performance.now();
-  return { quietMs: performance.now() - state.at, readyState: document.readyState, busy: !!document.querySelector('[aria-busy="true"]') };
+  return { quietMs: performance.now() - state.at, readyState: document.readyState, busy: !!document.querySelector('[aria-busy="true"]'), textChars: (document.body?.innerText || "").trim().length };
 }
+// What stands between the agent and the page's content: a cookie or consent wall, or a human-verification check.
+// Only kinds and a character count leave the page, never its text.
+function readBlockers() {
+  const shown = (element) => { const rect = element.getBoundingClientRect(); return rect.width > 40 && rect.height > 20 && getComputedStyle(element).visibility !== "hidden"; };
+  const any = (selectors) => selectors.some((selector) => [...document.querySelectorAll(selector)].some(shown));
+  const consent = /^consent\./.test(location.hostname) || any(["#onetrust-banner-sdk", "#onetrust-consent-sdk", "#CybotCookiebotDialog", "#didomi-host",
+    ".fc-consent-root", "[id^='sp_message_container']", "#qc-cmp2-container", "#truste-consent-track", "#usercentrics-root", "#cmpbox",
+    "form[action*='consent.']", "ytd-consent-bump-v2-lightbox", "[aria-modal='true'][aria-label*='cookie' i]", "[role='dialog'][aria-label*='cookie' i]", "[role='dialog'][aria-label*='consent' i]"]);
+  const challenge = /^(just a moment|attention required|are you a robot|prove your humanity|verify you are human|security check|access denied)/i.test(document.title.trim())
+    || any(["iframe[src*='challenges.cloudflare.com']", "iframe[src*='recaptcha']", "iframe[src*='hcaptcha.com']", "#challenge-form", "#px-captcha", "#captcha-container"]);
+  return { blocker: challenge ? "bot_check" : consent ? "consent" : null, textChars: (document.body?.innerText || "").trim().length };
+}
+const BLOCKER_NEXT = {
+  consent: "A cookie or consent dialog covers this page. Observe it (mode interactive) and choose the option the person would want, the most private one such as Reject all unless they said otherwise, then continue.",
+  bot_check: "The site is showing a human-verification check the agent must not solve. Tell the person and let them complete it in the browser view, then observe again.",
+};
+// Failures that are the page being busy, not something for a person to fix: the tab stays usable.
+const TRANSIENT_CODES = new Set(["page_changed", "busy", "navigation_timeout"]);
 function prepareAction(id, action) {
   const registry = globalThis.__openworkBrowserRefs;
   const observation = registry?.observations.get(id);
@@ -614,7 +632,12 @@ export function createBrowserTaskHost({ getTab, tabsFor, ownerOf, activeFor, isV
   // A password or code is typed only on a site (exact origin) the person confirmed. Without
   // this, as on hosts that cannot ask, sign-in fields stay with the person.
   approveCredential = /** @type {((sessionId: string, request: { site: string }, signal: AbortSignal) => Promise<boolean>) | undefined} */ (undefined),
-  fileChooserMs = 5000 }) {
+  fileChooserMs = 5000,
+  // With a budget, open and navigate wait up to this long for the page to load and stop changing, and an observation
+  // or extract that a still-loading page invalidated is retried once. 0 keeps the original behavior.
+  loadSettleMs = 0,
+  // Unexpected (uncoded) failures, for the host's own log: operation, code, whether input was sent, and the error.
+  onFailure = /** @type {(failure: { operation?: string, code: string, dispatched: boolean, detail: string }) => void} */ ((_failure) => {}) }) {
   const states = new Map();
   // request_id -> first receipt, per conversation: a retried act never replays input.
   const receipts = new Map();
@@ -808,29 +831,80 @@ export function createBrowserTaskHost({ getTab, tabsFor, ownerOf, activeFor, isV
       await delay(50);
     }
   }
-  async function extract(tab, args, signal) {
+  /**
+   * Bounded wait for a page that just loaded: its document readable and complete (or interactive and quiet), its
+   * structure unchanged for a moment, and no request it started in the last moment still running. Long polls and
+   * streams that started earlier don't hold it up. Reports what stands in the way of reading it, if anything.
+   */
+  async function settleLoad(tab, signal, budgetMs, recovery = false, requireText = false) {
+    const contents = tab.view.webContents;
+    const deadline = Date.now() + budgetMs;
+    for (;;) {
+      signal.throwIfAborted();
+      if (contents.isDestroyed()) fail("tab_closed", "The browser tab closed while it loaded.");
+      const loading = typeof contents.isLoading === "function" && contents.isLoading();
+      // Between two documents the page may not answer; that is still loading.
+      const page = loading ? null : await Promise.race([isolated(contents, readSettle, false).catch(() => null), delay(1000).then(() => null)]);
+      const recent = inFlight(tab, Date.now() - 1500);
+      const ready = page && (!requireText || page.textChars > 0) && !page.busy && recent === 0 && (page.readyState === "complete" ? page.quietMs >= 400 : page.readyState === "interactive" && page.quietMs >= 1000);
+      if (ready || Date.now() >= deadline) {
+        const found = recovery ? await Promise.race([isolated(contents, readBlockers).catch(() => null), delay(1000).then(() => null)]) : null;
+        return { outcome: ready ? "settled" : "still_loading", ...(found?.blocker ? { blocker: found.blocker } : {}), textChars: found?.textChars ?? null };
+      }
+      await delay(100);
+    }
+  }
+  /** What a load receipt adds: whether the page settled and what to do about anything in the way. */
+  function loaded(page) {
+    const next = page.blocker ? BLOCKER_NEXT[page.blocker]
+      : page.outcome === "still_loading" ? "The page is still loading. Observe it; if it is not ready, observe again in a moment. Do not open it again."
+      : page.textChars === 0 ? "The page shows no text (it may draw into a canvas or frames). Observe with includeImage to see it." : "observe";
+    return { page: page.outcome, ...(page.blocker ? { blocker: page.blocker } : {}), next };
+  }
+  /** A read-only operation a still-loading page changed under: wait for it to settle, then read once more. */
+  async function readAgain(tab, signal, recovery, read) {
+    try { return await read(); }
+    catch (error) {
+      if (!recovery || !loadSettleMs || !(error instanceof BrowserTaskError) || error.code !== "page_changed") throw error;
+      await settleLoad(tab, signal, Math.min(loadSettleMs, 4000));
+      return read();
+    }
+  }
+  async function extract(tab, args, signal, recovery) {
     const question = typeof args.question === "string" ? args.question.trim() : "";
     if (!question || question.length > 1000) fail("invalid_question", "Ask one question of at most 1000 characters.");
     const maxChars = Number.isInteger(args.maxChars) ? Math.min(8000, Math.max(200, args.maxChars)) : 2000;
     const revision = tab.webMcpRevision;
     const url = tab.view.webContents.getURL();
     // Withheld field values are redacted exactly as observations redact them.
-    const page = await isolated(tab.view.webContents, observePage, null, { mode: "extract" });
+    let page = await isolated(tab.view.webContents, observePage, null, { mode: "extract" });
+    // A page that has not drawn its text yet (an app still starting) gets one bounded wait before it is read again.
+    let found = null;
+    if (loadSettleMs && !page.text.trim()) {
+      found = await settleLoad(tab, signal, Math.min(loadSettleMs, 4000), recovery, true);
+      page = await isolated(tab.view.webContents, observePage, null, { mode: "extract" });
+    }
     if (!await allowed(url)) fail("website_blocked", "Your organization does not allow this website.");
     if (revision !== tab.webMcpRevision || url !== tab.view.webContents.getURL()) fail("page_changed", "The page changed while reading it. Try again.");
     signal.throwIfAborted();
     const passages = relevantPassages(page.text, question, maxChars);
+    if (recovery && !passages.length && !found) found = await Promise.race([isolated(tab.view.webContents, readBlockers).catch(() => null), delay(1000).then(() => null)]);
+    if (revision !== tab.webMcpRevision || url !== tab.view.webContents.getURL()) fail("page_changed", "The page changed while reading it. Try again.");
+    signal.throwIfAborted();
+    const next = found?.blocker ? BLOCKER_NEXT[found.blocker]
+      : !page.text.trim() ? "The page has no readable text yet. Observe with includeImage to see what it shows, or observe again in a moment if it is still loading."
+      : "No passage matched. Try other words, or browser_observe with includeText.";
     return { ok: true, tabId: tab.tabId, url: safeUrl(url), title: page.title, trust: TRUST, question, passages, pageChars: page.text.length,
-      ...(passages.length ? {} : { next: "No passage matched. Try other words, or browser_observe with includeText." }) };
+      ...(found?.blocker ? { blocker: found.blocker } : {}), ...(passages.length ? {} : { next }) };
   }
   /**
    * @typedef {{ type?: string, ref?: string, text?: string, checked?: boolean, values?: string[], key?: string, modifiers?: string[], x?: number, y?: number, deltaY?: number, files?: string[] }} BrowserAction
    * @param {{ sessionId?: string, operation?: string, args?: { tabId?: string, url?: string, provider?: string, includeImage?: boolean, mode?: string, limit?: number, includeText?: boolean,
    *   query?: {role?: string, name?: string, text?: string, exact?: boolean}, observationId?: string, toolId?: string, input?: unknown, question?: string, maxChars?: number,
    *   action?: BrowserAction, actions?: BrowserAction[], request_id?: string } }} request
-   * @param {{ signal?: AbortSignal }} options
+   * @param {{ signal?: AbortSignal, recovery?: boolean }} options
    */
-  async function request({ sessionId, operation, args = {} } = {}, { signal } = {}) {
+  async function request({ sessionId, operation, args = {} } = {}, { signal, recovery = false } = {}) {
     let tab, state, dispatched = false, abort, controller, openingController;
     /** @type {{ id: string, input: string, receipt: Record<string, unknown> } | null} */
     let entry = null;
@@ -866,9 +940,15 @@ export function createBrowserTaskHost({ getTab, tabsFor, ownerOf, activeFor, isV
         requestSignal.throwIfAborted();
         checkControl(sessionId, control);
         if (pausedSessions.has(sessionId)) fail("paused", "The user has browser control until they resume it or send their next message. End your turn and wait.");
+        const opened = !tab;
         if (!tab) {
           tab = await Promise.race([
             openTab(url.href, sessionId, requestSignal, async (created) => {
+              // Keep the tab's identity even if loading fails: the agent can inspect it, not open another blindly.
+              tab = created;
+              state = stateFor(created.tabId);
+              state.controller = controller;
+              publish(created.tabId, "running", "open");
               const validate = await authorizeNavigation(trackNavigation(sessionId, created, requestSignal), url.href);
               validate();
               dispatched = true;
@@ -883,8 +963,9 @@ export function createBrowserTaskHost({ getTab, tabsFor, ownerOf, activeFor, isV
           const validate = await Promise.race([authorizeNavigation(trackNavigation(sessionId, tab, requestSignal), url.href), canceled]);
           validate();
         }
+        const page = opened && loadSettleMs ? await Promise.race([settleLoad(tab, requestSignal, loadSettleMs, recovery), canceled]) : null;
         publish(tab.tabId, "idle");
-        return { ok: true, provider: "builtin", tabId: tab.tabId, url: safeUrl(tab.view.webContents.getURL()), visible: isVisible(tab.tabId), next: "observe" };
+        return { ok: true, provider: "builtin", tabId: tab.tabId, url: safeUrl(tab.view.webContents.getURL()), visible: isVisible(tab.tabId), next: "observe", ...(page ? loaded(page) : {}) };
       }
       tab = await Promise.race([resolve(sessionId, args.tabId, ["navigate", "pause", "handoff"].includes(operation)), canceled]);
       requestSignal.throwIfAborted();
@@ -907,7 +988,7 @@ export function createBrowserTaskHost({ getTab, tabsFor, ownerOf, activeFor, isV
         await prepare(tab);
         requestSignal.throwIfAborted();
         publish(tab.tabId, "running", operation);
-        if (operation === "observe") return observe(tab, args.includeImage === true, requestSignal, args.query, { mode: args.mode, limit: args.limit, includeText: args.includeText });
+        if (operation === "observe") return readAgain(tab, requestSignal, recovery, () => observe(tab, args.includeImage === true, requestSignal, args.query, { mode: args.mode, limit: args.limit, includeText: args.includeText }));
         if (operation === "site_tools") return siteTools({ tabId: tab.tabId, sessionId });
         if (operation === "site_tool") {
           forget(state);
@@ -929,9 +1010,10 @@ export function createBrowserTaskHost({ getTab, tabsFor, ownerOf, activeFor, isV
           requestSignal.addEventListener("abort", stop, { once: true });
           try { await navigate(tab, url.href); requestSignal.throwIfAborted(); }
           finally { requestSignal.removeEventListener("abort", stop); }
-          return { ok: true, tabId: tab.tabId, dispatched: true, outcome: "navigation_finished", url: safeUrl(tab.view.webContents.getURL()), next: "observe" };
+          const page = loadSettleMs ? await settleLoad(tab, requestSignal, loadSettleMs, recovery) : null;
+          return { ok: true, tabId: tab.tabId, dispatched: true, outcome: "navigation_finished", url: safeUrl(tab.view.webContents.getURL()), next: "observe", ...(page ? loaded(page) : {}) };
         }
-        if (operation === "extract") return extract(tab, args, requestSignal);
+        if (operation === "extract") return readAgain(tab, requestSignal, recovery, () => extract(tab, args, requestSignal, recovery));
         if (operation !== "act") fail("unknown_operation", "Use a supported browser operation.");
         // One action keeps the original receipt; actions (1-8) run in order
         // against one observation and return one receipt with the new state.
@@ -1191,8 +1273,26 @@ export function createBrowserTaskHost({ getTab, tabsFor, ownerOf, activeFor, isV
       // Refs stay usable after a refused action; after input, the page may differ.
       if (state && state.controller === controller && (dispatched || !(error instanceof BrowserTaskError))) forget(state);
       if (entry && !dispatched && receipts.get(sessionId)?.get(entry.id) === entry) receipts.get(sessionId)?.delete(entry.id);
-      if (tab && state?.status !== "paused" && (!state?.controller || state.controller === controller)) publish(tab.tabId, "needs_attention", error?.code || "Check browser");
-      return { ok: false, code: error instanceof BrowserTaskError ? error.code : "browser_operation_failed", error: error instanceof BrowserTaskError ? error.message : "Browser operation could not finish. Observe the page or take over to continue.", dispatched, mayHaveChangedState: dispatched, retrySafe: false, next: dispatched ? "observe_before_retry" : "review", trust: TRUST };
+      // A host's own coded failures (paused, egress_unavailable) keep their code and words; anything else is
+      // unexpected, so it is logged and the agent hears plainly whether anything reached the page and what to do.
+      const coded = error instanceof BrowserTaskError || (typeof error?.code === "string" && /^[a-z][a-z_]{2,40}$/.test(error.code) && typeof error.message === "string");
+      const timedOut = !coded && (error?.name === "TimeoutError" || error?.timedOut === true);
+      const code = coded ? error.code : timedOut ? "operation_timeout" : "browser_operation_failed";
+      const detail = !coded ? /disconnect|socket/i.test(error?.message ?? "") ? "connection_lost"
+        : /timed out|timeout/i.test(error?.message ?? "") ? "receipt_timeout"
+        : /ENOENT/.test(error?.code ?? "") ? "runtime_dependency_missing" : "unexpected_failure" : "";
+      if (!coded) { try { onFailure({ operation, code, dispatched, detail }); } catch { /* Logging never changes the receipt. */ } }
+      const message = coded ? error.message
+        : timedOut ? "The browser operation was not confirmed before the timeout. It may still be running."
+        : dispatched ? "The browser did not confirm this operation, and it may have changed the page."
+        : "The browser could not run this operation. Nothing reached the page.";
+      const next = dispatched ? "Observe the tab before doing anything else; never repeat input it may have received."
+        : code === "page_changed" ? "The page is still loading or redirecting. Observe again."
+        : coded ? "review" : "Retry this operation once. If it fails again, open the page in a new tab.";
+      if (tab && state?.status !== "paused" && (!state?.controller || state.controller === controller)) {
+        publish(tab.tabId, TRANSIENT_CODES.has(code) ? "idle" : "needs_attention", TRANSIENT_CODES.has(code) ? null : code);
+      }
+      return { ok: false, code, error: message, ...(tab ? { tabId: tab.tabId } : {}), ...(detail ? { detail } : {}), dispatched, mayHaveChangedState: dispatched, retrySafe: false, next, trust: TRUST };
     } finally {
       if (openingController && opening.get(sessionId) === openingController) opening.delete(sessionId);
       if (signal && abort) signal.removeEventListener("abort", abort);

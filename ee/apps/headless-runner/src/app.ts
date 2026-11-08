@@ -41,6 +41,8 @@ const createSessionBody = z
     documentNavigation: z.boolean().optional(),
     /** Run this conversation's computer through the runner's sandbox gateway (SANDBOX_GATEWAY), not its own provider. Off unless asked for. */
     sandboxGateway: z.boolean().optional(),
+    /** Trusted host rollout for read-only browser recovery. */
+    browserRecovery: z.boolean().optional(),
     /** Who the conversation belongs to, in the caller's terms, so the caller can list one person's conversations. */
     owner: z.string().min(1).max(200).optional(),
     /** The caller's own id for the conversation, returned when listing. */

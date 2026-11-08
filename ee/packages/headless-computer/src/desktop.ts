@@ -2,7 +2,7 @@
 import identity from "../dist/desktop-identity.mjs"
 import guestBundle from "../dist/desktop-guest-bundle.mjs"
 import { createHash, randomUUID } from "node:crypto"
-import { shellQuote, type SandboxHandle, type SandboxProvider } from "@openwork/sandbox"
+import { isSandboxError, shellQuote, type SandboxHandle, type SandboxProvider } from "@openwork/sandbox"
 import { z } from "zod"
 import { DESKTOP_PROTOCOL } from "./desktop-protocol.mjs"
 
@@ -72,13 +72,20 @@ export class Desktop {
       await this.install(box)
       started = await this.launch(box, this.image, this.guest)
     }
+    if (!started.ok && started.timedOut) {
+      // A timeout can leave startup running: only recheck health, never automatically replay start.
+      if ((await this.health(box))?.version === version) return "current"
+    }
     if (started.ok) {
       await this.healthy(box)
       return "current"
     }
     // A helper from before images and guests had their own identities refuses two of them; another image says so.
     if (!/out of date|start VERSION/i.test(started.detail)) {
-      throw new Error(`The computer needs a desktop snapshot built for this runner, including its restricted desktop helper.${started.detail ? ` ${started.detail}` : ""}`)
+      if (started.missingHelper) {
+        throw new Error(`The computer needs a desktop snapshot built for this runner, including its restricted desktop helper. ${started.detail}`)
+      }
+      throw new DesktopError("desktop_unresponsive", `The computer's desktop didn't start. Try reconnecting.${started.detail ? ` ${started.detail}` : ""}`)
     }
     // Another image: keep driving its own desktop while it speaks this runner's protocol.
     let own = ready
@@ -108,8 +115,19 @@ export class Desktop {
   }
 
   private async launch(box: SandboxHandle, image: string, guest: string) {
-    const result = await this.bridge(box, `start ${image} ${guest}`, 45_000)
-    return { ok: result.exitCode === 0, detail: result.stderr.trim().slice(0, 300) }
+    try {
+      const result = await this.bridge(box, `start ${image} ${guest}`, 45_000)
+      const detail = result.stderr.trim()
+      return {
+        ok: result.exitCode === 0,
+        detail: detail.slice(0, 300),
+        timedOut: /timed?\s*out|timeout/i.test(detail),
+        missingHelper: detail.includes(BRIDGE) && /command not found|no such file or directory|not found/i.test(detail),
+      }
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : String(error)
+      return { ok: false, detail: detail.slice(0, 300), timedOut: (isSandboxError(error) && error.code === "timeout") || /timed?\s*out|timeout/i.test(detail), missingHelper: false }
+    }
   }
 
   /** The image and guest this computer was built with, or null from a helper that predates in-place updates. */
