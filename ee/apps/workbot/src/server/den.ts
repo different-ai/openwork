@@ -4,6 +4,7 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js"
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js"
 import { skillCreatedPayloadSchema } from "@openwork/types/skill-created-app"
 import { headlessModelAccessSchema } from "@openwork-ee/headless-protocol"
+import { remoteSessionStatusResultSchema, type RemoteSessionStatusRequest } from "@openwork/types/automations"
 import { workbotAccessFailureSchema, type WorkbotAccessReason } from "@openwork/types/den/workbot-settings"
 import type { Tokens } from "./sealed.js"
 
@@ -62,6 +63,8 @@ export const denSessionSchema = z.object({
   instantOpen: z.boolean().default(false),
   /** Workbot's profile: tasks, permissions and read-only memory. A Den from before it doesn't say: off. */
   profileSheet: z.boolean().default(false),
+  /** Remote task discovery and live reads (`workbotRemoteTasks`); absent means off. */
+  remoteTasks: z.boolean().default(false),
   /** The organization's default model for Workbot's turns. Null, or a Den from before it, means the runner's default. */
   model: z.string().nullable().default(null),
   verifyModel: z.boolean().default(false),
@@ -200,6 +203,26 @@ export function createDen(options: { apiUrl: string; publicUrl: string; serviceT
 
   return {
     discover,
+  /** Member-scoped calls to the existing remote-session protocol, never a service credential or caller-supplied org. */
+  const remoteCall = async (accessToken: string, action: "status" | "read" | "stop", body: unknown): Promise<unknown> => {
+    const client = new Client({ name: "openwork-workbot", version: "1" })
+    const transport = new StreamableHTTPClientTransport(new URL(`${options.apiUrl}/mcp/agent`), {
+      requestInit: { headers: { authorization: `Bearer ${accessToken}` } },
+    })
+    try {
+      await client.connect(transport, { timeout: TIMEOUT_MS })
+      const result = await client.callTool({ name: "execute_capability", arguments: { name: `remote-session:${action}`, body } }, undefined, { timeout: TIMEOUT_MS + 5_000 })
+      if (result.isError) throw new Error("remote_session_unavailable")
+      if (result.structuredContent) return result.structuredContent
+      const blocks = z.array(z.object({ type: z.string(), text: z.string().optional() })).safeParse(result.content)
+      for (const block of blocks.success ? blocks.data : []) {
+        if (block.type !== "text" || !block.text) continue
+        try { return JSON.parse(block.text) } catch { /* Not a JSON receipt. */ }
+      }
+      throw new Error("remote_session_unavailable")
+    } finally { await client.close() }
+  }
+
     modelRecovery: (accessToken: string) => authorized("GET", "/v1/workbot/model-recovery", accessToken),
     /** The member's Get set up checklist; Den computes every step and enforces the feature. */
     activation: (accessToken: string) => authorized("GET", "/v1/workbot/activation", accessToken),
@@ -253,6 +276,12 @@ export function createDen(options: { apiUrl: string; publicUrl: string; serviceT
     },
     /** The normal private Cloud-skill path: Den owns permissions, audit, and persistence. */
     async saveBrowserSkill(accessToken: string, pluginName: string, skillMarkdown: string) {
+    /** Same owner-scoped status capability agents call; OAuth org, scopes and membership stay Den's decision. */
+    async remoteStatus(accessToken: string, input: RemoteSessionStatusRequest) {
+      return remoteSessionStatusResultSchema.parse(await remoteCall(accessToken, "status", input))
+    },
+    remoteRead: (accessToken: string, input: { sessionId: string; workspaceId?: string; limit: number; from: "end" } | { requestId: string }) => remoteCall(accessToken, "read", input),
+    remoteStop: (accessToken: string, input: { sessionId: string; workspaceId?: string; messageId: string }) => remoteCall(accessToken, "stop", input),
       const client = new Client({ name: "openwork-workbot", version: "1" })
       const transport = new StreamableHTTPClientTransport(new URL(`${options.apiUrl}/mcp/agent`), {
         requestInit: { headers: { authorization: `Bearer ${accessToken}` } },

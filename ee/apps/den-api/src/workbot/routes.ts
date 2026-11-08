@@ -95,6 +95,8 @@ const sessionSchema = z.object({
   instantOpen: z.boolean().optional(),
   /** Tapping Workbot's name opens its profile: tasks, permissions, memory (`workbotProfileSheet`); older Dens omit it: off. */
   profileSheet: z.boolean().optional(),
+  /** Read-only remote task status (`workbotRemoteTasks`); older Dens omit it: off. */
+  remoteTasks: z.boolean().optional(),
   /** Always true for older Workbot clients; the command palette is available by default. */
   commandPalette: z.boolean().optional(),
   /**
@@ -432,6 +434,7 @@ export function registerWorkbotRoutes<T extends { Variables: object }>(app: Hono
         model,
         gatewayModels: true,
         stepTurns: true,
+        remoteTasks: features.workbotRemoteTasks,
         sessionCells: true,
       })
     },

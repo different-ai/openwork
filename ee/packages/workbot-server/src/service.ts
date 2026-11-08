@@ -7,6 +7,9 @@ import { AUTOMATION_CLOUD_DEFAULT_MODEL } from "@openwork/types/automations"
 import { readWorkbotContextPrompt, readWorkbotCorrectionPrompt, workbotContextPrompt, workbotContextReadOnly, workbotCorrectionPrompt, WORKBOT_MAX_MESSAGE_CHARS, type WorkbotViewContext } from "@openwork/types/workbot-context"
 import { buildWorkbotTurns, GREETING_RUNNER_ID, interruptedTurnIds, threadBusy, WORKBOT_MESSAGE_PREFIX, type WorkbotTurn } from "./thread.js"
 import { workbotModelReady } from "./model-readiness.js"
+import type { RemoteSessionStatusRequest, RemoteSessionStatusResult } from "@openwork/types/automations"
+import type { WorkbotRemoteJobs, WorkbotRemoteJobDetail, WorkbotRemoteJobStop } from "@openwork/types/workbot-remote-jobs"
+import { applyWorkbotRemoteStatuses, buildWorkbotRemoteJobs, remoteJobDetail, WorkbotRemoteJobError } from "./remote-jobs.js"
 
 /**
  * Workbot: one chat per person, set up once by an admin. Each member has a
@@ -51,6 +54,12 @@ export type WorkbotFile = RunnerSavedFile
 export type WorkbotDeps = {
   /** The headless runner, or null when this deployment has none. */
   client: HeadlessRunnerClient | null
+  /** Independent default-off rollout. No transcript or network reads when unset. */
+  remoteTasks?: boolean
+  /** Optional member-authenticated adapter for the existing remote-session:status capability. Reads only. */
+  remoteStatus?: (input: RemoteSessionStatusRequest) => Promise<RemoteSessionStatusResult>
+  remoteRead?: (input: { sessionId: string; workspaceId?: string; limit: number; from: "end" } | { requestId: string }) => Promise<unknown>
+  remoteStop?: (input: { sessionId: string; workspaceId?: string; messageId: string }) => Promise<unknown>
   /** The views of Workbot's visible desktop this person may use (`browser`, `computer` for native apps); none: no desktop. */
   desktopViews?: RunnerDesktopView[]
   /** Whether Workbot may set up recurring work (Automations on the headless runner) for this organization. */
@@ -568,6 +577,66 @@ export async function readWorkbotThread(
   }
 }
 
+/**
+ * Remote tasks in this actor's recent chat. Tool outputs are needed to prove create receipts: the ordinary thread
+ * read deliberately omits them. Keep this separate, bounded and opt-in, so opening chat never waits on a computer.
+ * No caller-supplied remote ids enter the adapter. Den rechecks ownership and active membership for the live read.
+ */
+export async function readWorkbotRemoteJobs(actor: WorkbotActor, input: { chat?: WorkbotChat }, deps: WorkbotDeps): Promise<WorkbotRemoteJobs> {
+  if (deps.remoteTasks !== true) return { jobs: [], hasEarlier: false }
+  const sessionId = await sessionOf(actor, input.chat ?? null, deps)
+  const read = await clientOf(deps).readSession(sessionId, { turns: 40, limit: 1_000 })
+  if (!read.ok && read.status === 404) return { jobs: [], hasEarlier: false }
+  if (!read.ok) throw new WorkbotUnavailableError("workbot_runner_unavailable")
+  const jobs = buildWorkbotRemoteJobs(read.value)
+  if (read.value.messages.length >= 1_000) jobs.hasEarlier = true
+  if (!jobs.jobs.length || !deps.remoteStatus) return jobs
+  try {
+    const status = await deps.remoteStatus({ threads: jobs.jobs.map(job => job.ref), waitMs: 0 })
+    return applyWorkbotRemoteStatuses(jobs, status)
+  } catch {
+    // A denied, offline or revoked remote source is not proof of either running or done.
+    return jobs
+  }
+}
+
+async function ownRemoteJob(actor: WorkbotActor, input: { key: string; chat?: WorkbotChat }, deps: WorkbotDeps) {
+  if (deps.remoteTasks !== true) throw new WorkbotRemoteJobError("remote_job_not_found", 404)
+  const jobs = await readWorkbotRemoteJobs(actor, input, deps)
+  const job = jobs.jobs.find(entry => entry.key === input.key)
+  if (!job) throw new WorkbotRemoteJobError("remote_job_not_found", 404)
+  const sessionId = job.status?.sessionId ?? ("sessionId" in job.ref ? job.ref.sessionId : null)
+  if (!sessionId) throw new WorkbotRemoteJobError("remote_job_unavailable", 503)
+  return { job, sessionId, ...(job.status?.workspaceId ? { workspaceId: job.status.workspaceId } : {}) }
+}
+
+/** Pending desktop reads belong to the exact member/chat/job, never request ids from the browser. Bounded and short-lived. */
+const pendingRemoteReads = new Map<string, { requestId: string; until: number }>()
+
+/** Read on explicit disclosure only. The browser names a discovered key, never a remote session/workspace id. */
+export async function readWorkbotRemoteJob(actor: WorkbotActor, input: { key: string; chat?: WorkbotChat }, deps: WorkbotDeps): Promise<WorkbotRemoteJobDetail> {
+  const owned = await ownRemoteJob(actor, input, deps)
+  if (!deps.remoteRead) throw new WorkbotRemoteJobError("remote_job_unavailable", 503)
+  const key = JSON.stringify([actor.organizationId, actor.memberId, input.chat ?? null, input.key])
+  const pending = pendingRemoteReads.get(key)
+  const output = await deps.remoteRead(pending && pending.until > Date.now() ? { requestId: pending.requestId } : { sessionId: owned.sessionId, ...(owned.workspaceId ? { workspaceId: owned.workspaceId } : {}), limit: 12, from: "end" })
+  if (typeof output === "object" && output !== null && "state" in output && output.state === "pending" && "requestId" in output && typeof output.requestId === "string" && output.requestId.length <= 240) {
+    remember(pendingRemoteReads, key, { requestId: output.requestId, until: Date.now() + 60_000 })
+  } else pendingRemoteReads.delete(key)
+  return remoteJobDetail(output, owned.job)
+}
+
+/** Exact user action only; a fresh owner-scoped status plus the displayed user-turn guard prevents stopping newer work. */
+export async function stopWorkbotRemoteJob(actor: WorkbotActor, input: { key: string; messageId: string; chat?: WorkbotChat }, deps: WorkbotDeps): Promise<WorkbotRemoteJobStop> {
+  const owned = await ownRemoteJob(actor, input, deps)
+  if (!deps.remoteStop || owned.job.stale || (owned.job.status?.state !== "running" && owned.job.status?.state !== "waiting")) throw new WorkbotRemoteJobError("remote_stop_unavailable", 409)
+  const output = await deps.remoteStop({ sessionId: owned.sessionId, ...(owned.workspaceId ? { workspaceId: owned.workspaceId } : {}), messageId: input.messageId })
+  if (typeof output !== "object" || output === null) return { state: "not_stopped", reason: "unconfirmed" }
+  if ("state" in output && output.state === "pending") return { state: "pending" }
+  if ("stopped" in output && output.stopped === true) return { state: "stopped" }
+  return { state: "not_stopped", reason: "reason" in output && output.reason === "different_turn" ? "different_turn" : "unconfirmed" }
+}
+
 /** One of Workbot's memory files about the person, as they can read it on its profile. */
 export type WorkbotMemoryFile = { name: string; updatedAt: number; content: string }
 
@@ -793,6 +862,9 @@ export function createWorkbot(deps: WorkbotDeps) {
   return {
     ensureComputer: (actor: WorkbotActor, chat: WorkbotChat = null) => ensureSession(actor, "UTC", deps, chat),
     readThread: (actor: WorkbotActor, input: { turns?: number; chat?: WorkbotChat } = {}) => readWorkbotThread(actor, input, deps),
+    readRemoteJobs: (actor: WorkbotActor, input: { chat?: WorkbotChat } = {}) => readWorkbotRemoteJobs(actor, input, deps),
+    readRemoteJob: (actor: WorkbotActor, input: { key: string; chat?: WorkbotChat }) => readWorkbotRemoteJob(actor, input, deps),
+    stopRemoteJob: (actor: WorkbotActor, input: { key: string; messageId: string; chat?: WorkbotChat }) => stopWorkbotRemoteJob(actor, input, deps),
     readMemory: (actor: WorkbotActor) => readWorkbotMemory(actor, deps),
     /** The runner session a chat lives under (for a host that talks to the runner directly, e.g. live sockets). */
     sessionIdOf: (actor: WorkbotActor, chat: WorkbotChat = null) => sessionOf(actor, chat, deps),

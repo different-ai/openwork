@@ -506,6 +506,17 @@ export const FEATURES = defineFeatures({
     docs: "docs/features/workbot-agent-brief/README.md",
     deployments: everywhere,
     default: false,
+  workbotRemoteTasks: {
+    label: "Workbot: remote tasks",
+    description: "Shows recent tasks started on another computer in Workbot's profile and working status, from stored create receipts and member-authorized live status. De-duplicates pure status watchers by explicit task ids; never approves or stops remote work automatically.",
+    category: "workbot",
+    added: "2026-11-07",
+    since: "2026-11",
+    author: "benjaminshafii",
+    docs: "docs/features/workbot-remote-tasks/README.md",
+    deployments: everywhere,
+    default: false,
+  },
   },
   workbotSlackAnswerReply: {
     label: "Workbot: Slack answers as their own reply",
