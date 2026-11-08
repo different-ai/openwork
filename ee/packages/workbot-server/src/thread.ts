@@ -177,20 +177,30 @@ export type WorkbotTurn = {
 
 const ACTIVE = new Set(["queued", "running"])
 
-const TASK_STATUS: Record<string, WorkbotTask["status"]> = {
-  queued: "queued",
-  running: "working",
-  interrupted: "paused",
-  completed: "done",
-  failed: "failed",
-  aborted: "stopped",
+/** Older runner lifecycle markers can survive beside a nonterminal status. Never advertise abandoned work as live. */
+const ABANDONED = new Set(["runner_restart", "abandoned", "turn_abandoned", "runner_abandoned"])
+const STOPPED = new Set(["aborted", "stopped", "cancelled", "canceled", "abandoned"])
+
+function abandoned(turn: RunnerTurn) {
+  return STOPPED.has(turn.status) || (turn.error !== null && ABANDONED.has(turn.error))
+}
+
+function taskStatus(turn: RunnerTurn): WorkbotTask["status"] {
+  if (turn.status === "completed") return "done"
+  if (turn.status === "failed") return "failed"
+  if (abandoned(turn)) return "stopped"
+  if (turn.status === "queued") return "queued"
+  if (turn.status === "running") return "working"
+  if (turn.status === "interrupted") return "paused"
+  // The protocol is intentionally open to new statuses. An unknown status is not proof of a running job.
+  return "failed"
 }
 
 function tasksOf(snapshot: RunnerSnapshot, parent: string, byTurn: Map<string, RunnerMessage[]>): WorkbotTask[] {
   return snapshot.turns
     .filter((entry) => entry.kind === "task" && entry.parent === parent)
     .map((entry) => {
-      const status = TASK_STATUS[entry.status] ?? "working"
+      const status = taskStatus(entry)
       const open = status === "queued" || status === "working" || status === "paused"
       // Its plain-language updates: the description it gave each command on its computer.
       const updates = (byTurn.get(entry.messageId) ?? [])
@@ -440,12 +450,14 @@ const workedMs = new WeakMap<WorkbotStep, number>()
  */
 const LONGEST_COMMAND_MS = 6 * 60_000
 
-function statusOf(turn: RunnerTurn): WorkbotTurnStatus {
-  if (turn.status === "queued") return "queued"
-  // An interrupted turn is resumed by the next read, so the person sees it still working.
-  if (turn.status === "running" || turn.status === "interrupted") return "working"
+function statusOf(turn: RunnerTurn, resumable: ReadonlySet<string>): WorkbotTurnStatus {
   if (turn.status === "completed") return "done"
-  if (turn.status === "aborted") return "stopped"
+  if (turn.status === "failed") return "failed"
+  if (abandoned(turn)) return "stopped"
+  if (turn.status === "queued") return "queued"
+  if (turn.status === "running") return "working"
+  // Only the newest foreground interruption is resumed. Older interrupted messages aren't still working.
+  if (turn.status === "interrupted") return resumable.has(turn.messageId) ? "working" : "stopped"
   return "failed"
 }
 
@@ -473,6 +485,7 @@ export function buildWorkbotTurns(snapshot: RunnerSnapshot, files: FileNames = n
     byTurn.set(message.messageId, list)
   }
 
+  const resumable = new Set(interruptedTurnIds(snapshot))
   const turns: WorkbotTurn[] = []
   for (const turn of snapshot.turns) {
     // A background task's own work stays out of the conversation; its report shows instead.
@@ -536,8 +549,19 @@ export function buildWorkbotTurns(snapshot: RunnerSnapshot, files: FileNames = n
       }
     }
 
-    const status = statusOf(turn)
+    const status = statusOf(turn, resumable)
     const working = status === "working" || status === "queued"
+    // A cut-off call has no tool result, but a stopped/failed turn cannot have a running step or elapsed timer.
+    if (!working) {
+      for (const part of parts) {
+        if (part.kind !== "steps") continue
+        for (const step of part.steps) {
+          if (step.status !== "running") continue
+          step.status = "done"
+          step.finishedAt = turn.updatedAt ?? step.startedAt
+        }
+      }
+    }
     // A closing "Next: a | b | c" line becomes buttons: the hello asks for one, and later answers sometimes follow suit.
     let suggestions: string[] = []
     if (!working) {
@@ -585,12 +609,15 @@ export function buildWorkbotTurns(snapshot: RunnerSnapshot, files: FileNames = n
 export function interruptedTurnIds(snapshot: RunnerSnapshot): string[] {
   const ours = snapshot.turns.filter((entry) => entry.messageId.startsWith(WORKBOT_MESSAGE_PREFIX))
   const newest = ours.filter((entry) => entry.kind === undefined).at(-1)
-  const background = ours.filter((entry) => entry.kind !== undefined && entry.status === "interrupted").map((entry) => entry.messageId)
-  return newest?.status === "interrupted" ? [newest.messageId, ...background] : background
+  const canResume = (entry: RunnerTurn) => entry.status === "interrupted" && !abandoned(entry)
+  const background = ours.filter((entry) => entry.kind !== undefined && canResume(entry)).map((entry) => entry.messageId)
+  return newest && canResume(newest) ? [newest.messageId, ...background] : background
 }
 
 /** Whether Workbot is answering; background tasks working alongside don't hold up the conversation. */
 export function threadBusy(snapshot: RunnerSnapshot) {
-  if (snapshot.status === "busy") return true
-  return snapshot.turns.some((turn) => turn.kind !== "task" && (ACTIVE.has(turn.status) || turn.status === "interrupted"))
+  // A session's aggregate flag may lag its turns after Stop or a restart. Explicit lifecycle state wins.
+  if (snapshot.turns.length === 0) return snapshot.status === "busy"
+  const resumable = new Set(interruptedTurnIds(snapshot))
+  return snapshot.turns.some((turn) => turn.kind !== "task" && !abandoned(turn) && (ACTIVE.has(turn.status) || resumable.has(turn.messageId)))
 }

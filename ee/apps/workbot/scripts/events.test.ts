@@ -9,7 +9,7 @@ import { createServer, type IncomingMessage } from "node:http"
 import type { Duplex } from "node:stream"
 import { test } from "node:test"
 import { Hono } from "hono"
-import { workbotOwner, workbotSessionId } from "@openwork-ee/workbot-server"
+import { toWorkbotPageEvent, workbotOwner, workbotSessionId } from "@openwork-ee/workbot-server"
 import { createAuth, type AppEnv } from "../src/server/auth.js"
 import { createDen, denSessionSchema } from "../src/server/den.js"
 import { loadConfig } from "../src/server/config.js"
@@ -23,6 +23,15 @@ const runnerEvents = (via: string) => [
   // Not a Workbot turn: never reaches the page.
   { type: "changed", messageId: "slack_message", status: "running" },
 ]
+test("the web relay passes the model's first human words immediately, before any tool event", () => {
+  const first = { type: "text", messageId: "wb_ack", step: 0, delta: "On it — " }
+  assert.deepEqual(toWorkbotPageEvent(first), { ...first, messageId: "ack" })
+  const next = { ...first, delta: "I'll open YouTube now. I'll tell you what I find." }
+  assert.deepEqual(toWorkbotPageEvent(next), { ...next, messageId: "ack" })
+  // No text synthesis, buffering until a tool starts, or replacement by a reaction/typing event.
+  assert.deepEqual(toWorkbotPageEvent({ type: "tool", messageId: "wb_ack", step: 0, tool: "react" }), { type: "working", messageId: "ack", step: 0, on: "other" })
+})
+
 const pageEvents = (via: string) => [
   { type: "changed", messageId: "message_001", status: "running" },
   { type: "text", messageId: "message_001", step: 0, delta: via },

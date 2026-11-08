@@ -1,7 +1,7 @@
 import assert from "node:assert/strict"
 import { test } from "node:test"
 import type { RunnerSnapshot } from "@openwork-ee/headless-protocol"
-import { buildWorkbotTurns, toWorkbotPageEvent, workbotInstructions } from "@openwork-ee/workbot-server"
+import { buildWorkbotTurns, interruptedTurnIds, threadBusy, toWorkbotPageEvent, workbotInstructions } from "@openwork-ee/workbot-server"
 import { workbotActivity } from "../../../packages/workbot-ui/src/activity.js"
 import type { WorkbotTurn } from "../../../packages/workbot-ui/src/data.js"
 
@@ -38,7 +38,7 @@ test("a background task carries its steps, how many are done and its latest note
 
 test("the status line and sheet follow the task; nothing is in the chat for it", () => {
   const turns = buildWorkbotTurns(snapshot) as WorkbotTurn[]
-  const activity = workbotActivity(turns, {})
+  const activity = workbotActivity(turns, {}, 400)
   assert.equal(activity.working, true)
   assert.equal(activity.label, "3D room planner")
   assert.equal(activity.icon, "task")
@@ -76,11 +76,72 @@ test("a task's steps reach the page as a throttled re-read, never its words", ()
   assert.deepEqual(toWorkbotPageEvent({ type: "changed", messageId: "wb_m9.t1", status: "completed" }), { type: "changed", messageId: "m9.t1", status: "completed" })
 })
 
-test("with workingStatus, the first reply stands on its own and task progress is explained", () => {
-  const off = workbotInstructions(base)
-  const on = workbotInstructions({ ...base, workingStatus: true })
-  assert.ok(off.includes("Sure, give me a sec."))
-  assert.ok(on.includes("Never send a bare \"Sure, give me a sec.\""))
-  assert.ok(on.includes("Never answer with only \"still working\""))
-  assert.equal(off.includes("still working"), false)
+test("the human acknowledgment precedes discovery, reactions and browser work, with or without workingStatus", () => {
+  for (const workingStatus of [false, true]) {
+    const prompt = workbotInstructions({ ...base, workingStatus, browser: true })
+    assert.ok(prompt.includes("before any tool call, including search_capabilities, react, browser or computer operations"))
+    assert.ok(prompt.includes("one or two short sentences"))
+    assert.ok(prompt.includes("not a typing indicator or an emoji"))
+    assert.ok(prompt.includes("Never invent an ETA"))
+    assert.ok(prompt.includes("after your acknowledgment when the request needs work"))
+    assert.equal(prompt.includes("About 5 minutes"), false)
+    assert.equal(prompt.includes("before you reply"), false)
+  }
+  assert.ok(workbotInstructions({ ...base, workingStatus: true }).includes("Never answer with only \"still working\""))
+})
+
+test("terminal and abandoned task lifecycles never project as active or keep a stale session busy", () => {
+  for (const [status, error, expected] of [
+    ["completed", null, "done"], ["failed", null, "failed"], ["aborted", null, "stopped"],
+    ["stopped", null, "stopped"], ["cancelled", null, "stopped"], ["canceled", null, "stopped"],
+    ["abandoned", null, "stopped"], ["future_unknown_status", null, "failed"],
+    ["running", "runner_restart", "stopped"], ["interrupted", "runner_restart", "stopped"],
+    ["interrupted", "abandoned", "stopped"],
+  ] as const) {
+    const stale: RunnerSnapshot = { ...snapshot, status: "busy", turns: [snapshot.turns[0], { ...snapshot.turns[1], status, error }] }
+    const [turn] = buildWorkbotTurns(stale)
+    const [task] = turn!.tasks
+    assert.equal(task!.status, expected, `${status}/${error}`)
+    assert.equal(task!.finishedAt, 400)
+    assert.equal(task!.update, null)
+    assert.equal(task!.note, null)
+    assert.equal(threadBusy(stale), false)
+    assert.deepEqual(interruptedTurnIds(stale), [])
+    assert.equal(workbotActivity([turn!] as WorkbotTurn[], {}).working, false)
+  }
+})
+
+test("old foreground interruptions are stopped; genuine latest and task pauses remain resumable", () => {
+  const paused: RunnerSnapshot = {
+    ...snapshot, status: "busy",
+    turns: [
+      { ...snapshot.turns[0], status: "interrupted", error: "runner_restarted" },
+      { ...snapshot.turns[1], status: "interrupted", error: "token_expired" },
+      { messageId: "wb_m2", status: "interrupted", error: "runner_restarted", createdAt: 500, updatedAt: 600, prompt: "Latest request" },
+    ],
+  }
+  assert.deepEqual(interruptedTurnIds(paused), ["wb_m2", "wb_m1.t1"])
+  const turns = buildWorkbotTurns(paused)
+  assert.equal(turns[0]!.status, "stopped")
+  assert.equal(turns[0]!.tasks[0]!.status, "paused")
+  assert.equal(turns[1]!.status, "working")
+  assert.equal(threadBusy(paused), true)
+})
+
+test("abandoned foreground calls lose their running steps and Stop eligibility", () => {
+  const stopped: RunnerSnapshot = {
+    status: "busy", finalAssistantText: "", hasEarlier: false,
+    turns: [{ messageId: "wb_stop", status: "running", error: "runner_restart", createdAt: 100, updatedAt: 200 }],
+    messages: [
+      { messageId: "wb_stop", role: "user", text: "Open YouTube" },
+      { messageId: "wb_stop", role: "assistant", text: "I'll open YouTube now.", createdAt: 120, toolCalls: [{ id: "browser", name: "desktop", input: { view: "browser", operation: "open", args: { url: "https://youtube.com" } } }] },
+    ],
+  }
+  const [turn] = buildWorkbotTurns(stopped)
+  assert.equal(turn!.status, "stopped")
+  assert.equal(turn!.finishedAt, 200)
+  assert.deepEqual(turn!.parts.filter(part => part.kind === "steps").flatMap(part => part.steps.map(step => [step.status, step.finishedAt])), [["done", 200]])
+  assert.equal(threadBusy(stopped), false)
+  assert.deepEqual(interruptedTurnIds(stopped), [])
+  assert.equal(workbotActivity([turn!] as WorkbotTurn[], {}).working, false)
 })
