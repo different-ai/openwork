@@ -1,7 +1,7 @@
 "use client";
 
 import { Dialog } from "@base-ui/react/dialog";
-import { CalendarDays, FileText, FolderOpen, LayoutDashboard, Lock, MessageCircle, PanelLeft, Plus, Search, Shapes, X } from "lucide-react";
+import { CalendarDays, FileText, FolderOpen, Lock, MessageCircle, PanelLeft, Plus, Search, Shapes, X } from "lucide-react";
 import { useState, type ReactNode } from "react";
 import { AccountAvatar } from "./account-menu";
 import { chatTitle, sinceLabel } from "./chats";
@@ -36,7 +36,7 @@ export type NavigationProps = {
   account?: ReactNode;
 };
 
-const control = "grid size-9 shrink-0 place-items-center rounded-lg text-[var(--wb-muted)] transition-colors duration-150 hover:bg-[var(--wb-chip)] hover:text-[var(--wb-text)] disabled:cursor-not-allowed disabled:opacity-50 focus-visible:outline-none focus-visible:shadow-[var(--wb-focus)]";
+const control = "grid size-10 shrink-0 place-items-center rounded-lg text-[var(--wb-muted)] transition-colors duration-150 hover:bg-[var(--wb-chip)] hover:text-[var(--wb-text)] disabled:cursor-not-allowed disabled:opacity-50 focus-visible:outline-none focus-visible:shadow-[var(--wb-focus)]";
 const row = "flex min-h-[var(--wb-nav-row-height,40px)] w-full items-center gap-2.5 rounded-lg px-3 text-left text-[length:var(--wb-nav-font-size,13px)] text-[var(--wb-text)] transition-colors duration-150 hover:bg-[var(--wb-chip)] aria-[current=page]:bg-[var(--wb-chip)] disabled:cursor-not-allowed disabled:opacity-50 focus-visible:outline-none focus-visible:shadow-[var(--wb-focus)]";
 const draftReason = "Save or close document drafts before switching chats.";
 
@@ -78,7 +78,7 @@ function NewChatButton({ props, onDone, compact = false }: { props: NavigationPr
 function ChatFilter({ value, onChange }: { value: string; onChange(value: string): void }) {
   return <label className="flex h-9 min-w-0 flex-1 items-center gap-2 rounded-full bg-[var(--wb-chip)] px-3 text-[var(--wb-muted)] focus-within:shadow-[var(--wb-focus)]">
     <Search size={15} strokeWidth={1.5} aria-hidden className="shrink-0" />
-    <input type="search" aria-label="Search side chats" placeholder="Search" value={value} onChange={event => onChange(event.target.value)} className="min-w-0 flex-1 bg-transparent text-[length:var(--wb-nav-font-size,13px)] text-[var(--wb-text)] placeholder:text-[var(--wb-muted)] focus:outline-none" />
+    <input type="search" aria-label="Search side chats" placeholder="Find a chat" value={value} onChange={event => onChange(event.target.value)} className="min-w-0 flex-1 bg-transparent text-[length:var(--wb-nav-font-size,13px)] text-[var(--wb-text)] placeholder:text-[var(--wb-muted)] focus:outline-none" />
   </label>;
 }
 
@@ -104,7 +104,7 @@ function SideChats({ props, filter, onDone }: { props: NavigationProps; filter: 
         : <ul>{shown.map(chat => <li key={chat.id}><button type="button" className={row} disabled={props.drafts && props.currentChat !== chat.id} title={props.drafts && props.currentChat !== chat.id ? draftReason : chatTitle(chat.title)} aria-current={props.page === "home" && props.currentChat === chat.id ? "page" : undefined} onClick={() => {
           if (props.drafts && props.currentChat !== chat.id) return;
           props.onOpenChat?.(chat.id); props.onPage("home"); onDone?.();
-        }}><span className="min-w-0 flex-1 truncate">{chatTitle(chat.title)}</span><span className="shrink-0 text-[11px] text-[var(--wb-muted)]">{sinceLabel(chat.updatedAt)}</span></button></li>)}</ul>}
+        }}><span className="min-w-0 flex-1 truncate">{chatTitle(chat.title)}</span><span className="shrink-0 text-[12px] tabular-nums text-[var(--wb-muted)]">{sinceLabel(chat.updatedAt)}</span></button></li>)}</ul>}
       {props.failed && props.chats && <p role="status" className="px-3 py-2 text-[12px] leading-4 text-[var(--wb-muted)]">Couldn&apos;t refresh side chats. <Retry onRetry={props.onRetry} /></p>}
     </div>
   </section>;
@@ -123,7 +123,6 @@ function Account({ account }: { account?: ReactNode }) {
  * own navigation, so each view has one sidebar. No invented channels or Computer entry.
  */
 export function DesktopNavigation(props: NavigationProps) {
-  const host = workbotHost();
   const [filter, setFilter] = useState("");
   const chatView = props.page === "home";
   return <aside className="workbot flex min-h-0 shrink-0 border-r border-[var(--wb-hairline)] text-[var(--wb-text)]" aria-label="Workbot navigation" data-workbot-desktop-navigation>
@@ -132,13 +131,12 @@ export function DesktopNavigation(props: NavigationProps) {
       <nav aria-label="Workspace" className="flex flex-col items-center gap-2">{destinations(props, true).map(({ label, icon: Icon, selected, disabled, onClick }) => <button key={label} type="button" onClick={onClick} disabled={disabled} title={disabled ? draftReason : label} aria-label={label} aria-current={selected ? "page" : undefined} className={`${control} aria-[current=page]:bg-[var(--wb-chip)] aria-[current=page]:text-[var(--wb-text)]`}><Icon size={18} strokeWidth={1.5} aria-hidden /></button>)}</nav>
       <div className="mt-auto flex flex-col items-center gap-3 pt-4">
         {props.search ?? (props.onSearch && <button type="button" onClick={props.onSearch} className={control} title="Search messages" aria-label="Search messages"><Search size={18} strokeWidth={1.5} aria-hidden /></button>)}
-        <a href={host.homeHref} className={control} title="Your dashboard" aria-label="Your dashboard"><LayoutDashboard size={18} strokeWidth={1.5} aria-hidden /></a>
         <Account account={props.account} />
       </div>
     </div>
     {chatView && <div className="flex min-h-0 w-[260px] flex-col bg-[var(--wb-bg)] px-2 pb-3">
       <div className="flex h-16 shrink-0 items-center px-1"><ChatFilter value={filter} onChange={setFilter} /></div>
-      <nav aria-label="Chats" className="mb-4">{destinations(props).slice(0, 1).map(({ label, icon: Icon, selected, disabled, onClick }) => <button key={label} type="button" disabled={disabled} onClick={onClick} title={disabled ? draftReason : undefined} className={row} aria-current={selected ? "page" : undefined}><Icon size={16} strokeWidth={1.5} aria-hidden /><span className="flex-1">{label}</span>{props.chats?.main && <span className="text-[11px] text-[var(--wb-muted)]">{sinceLabel(props.chats.main.updatedAt)}</span>}</button>)}</nav>
+      <nav aria-label="Chats" className="mb-4">{destinations(props).slice(0, 1).map(({ label, icon: Icon, selected, disabled, onClick }) => <button key={label} type="button" disabled={disabled} onClick={onClick} title={disabled ? draftReason : undefined} className={row} aria-current={selected ? "page" : undefined}><Icon size={16} strokeWidth={1.5} aria-hidden /><span className="flex-1">{label}</span>{props.chats?.main && <span className="text-[12px] tabular-nums text-[var(--wb-muted)]">{sinceLabel(props.chats.main.updatedAt)}</span>}</button>)}</nav>
       <SideChats props={props} filter={filter} />
     </div>}
   </aside>;
@@ -166,7 +164,6 @@ export function MobileNavigation(props: NavigationProps) {
         <nav aria-label="Go to" className="max-h-[45dvh] shrink-0 overflow-y-auto px-2 pb-3">{destinations(props).map(({ label, icon: Icon, selected, disabled, onClick }) => <button key={label} type="button" onClick={() => { onClick(); close(); }} disabled={disabled} title={disabled ? draftReason : undefined} aria-current={selected ? "page" : undefined} className={row}><Icon size={16} strokeWidth={1.5} aria-hidden />{label}</button>)}</nav>
         <div className="flex min-h-0 flex-1 flex-col px-2"><SideChats props={props} filter={filter} onDone={close} /></div>
         <div className="mt-2 flex shrink-0 items-center gap-2 border-t border-[var(--wb-hairline)] px-3 py-3">
-          <a href={workbotHost().homeHref} className={control} title="Your dashboard" aria-label="Your dashboard"><LayoutDashboard size={16} strokeWidth={1.5} aria-hidden /></a>
           <ChatFilter value={filter} onChange={setFilter} />
           <NewChatButton props={props} onDone={close} compact />
         </div>
