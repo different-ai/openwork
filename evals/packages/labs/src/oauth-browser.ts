@@ -56,7 +56,7 @@ export async function routeOAuthBrowser(client: CdpClient, options: {
       if (typeof response.url === "string" && typeof response.status === "number") {
         const responseUrl = new URL(response.url);
         if (response.status >= 400) httpErrors.push({ path: responseUrl.pathname, status: response.status });
-        if (responseUrl.pathname === "/api/auth/error") callbackResponses.push({ status: response.status, error: responseUrl.searchParams.get("error") });
+        if (responseUrl.searchParams.has("error") && !responseUrl.pathname.startsWith("/api/auth/callback/") && response.status === 200) callbackResponses.push({ status: response.status, error: responseUrl.searchParams.get("error") });
       }
     }
     if (message.method === "Runtime.exceptionThrown") consoleErrors.push(JSON.stringify(params.exceptionDetails));

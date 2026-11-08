@@ -25,6 +25,6 @@ The world requires its own local Den; it rejects attached servers. Test data and
 
 ## Reproduce a regression
 
-Copy only the test fixture/world/proof files into a clean worktree of the target base, leaving all product source untouched. Run the same `google-password-sign-in` proof. Its first step captures the password screen before looking for Google, so a missing button retains the issue's screenshot and fails the next step. The same proof on the fix must pass chooser → denied consent (no session/link) → retry → consent → token/JWKS → original user session. It also verifies the other seeded identity remains unchanged.
+Copy only the test fixture/world/proof files into a clean worktree of the target base, leaving all product source untouched. Run the same `google-password-sign-in` proof. Its first step captures the password screen before looking for Google, so a missing button retains the issue's screenshot and fails the next step. The same proof on the fix must pass chooser → denied consent (no session/link) → retry → consent → token exchange → original user session. It also verifies the other seeded identity remains unchanged.
 
 New providers should compose the protocol fixture with provider-specific endpoint/issuer configuration and transport routes. Do not extend production auth with test-only endpoint variables. Non-OIDC providers such as GitHub will need their own token/profile dialect on top of the same lifecycle/witness pattern; the generic OIDC configuration alone does not claim GitHub compatibility.

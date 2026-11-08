@@ -75,7 +75,7 @@ test("a member with a password can choose social sign-in without losing password
     await user.type({ role: "textbox", label: "Password" }, world.person.password);
     await user.click({ role: "button", label: /^Sign in$/ });
     await user.see({ testId: "den-org-sidebar" }, { timeoutMs: 30_000 });
-    evidence.recordAssertionEvidence("The original password still authenticates", "The member reaches the signed-in organization sidebar using their unchanged password.", (await probe.dom('[data-testid="den-org-sidebar"]')).length > 0);
+    evidence.recordAssertionEvidence("The original password still authenticates", "The member reaches the signed-in organization sidebar using their unchanged password.", (await probe.dom('[data-testid="den-org-sidebar"]')).elements.length > 0);
     await user.screenshot();
   });
 });
