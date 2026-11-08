@@ -9,6 +9,9 @@ export type ConversationScrollState = {
   sent: Set<string>;
 };
 
+/** How long after a touch, wheel or key a scroll still counts as the person's. */
+const GESTURE_MS = 600;
+
 export function createConversationScrollState(turnWindow: number): ConversationScrollState {
   return { following: true, top: 0, anchor: null, turnWindow, sent: new Set() };
 }
@@ -27,6 +30,12 @@ export function observeConversationScroll(node: HTMLDivElement, content: HTMLDiv
   let smooth = false;
   let settleTimer: ReturnType<typeof setTimeout> | undefined;
   let touchY: number | undefined;
+  // When the person last touched, wheeled, pressed or keyed in the conversation, and whether a press is held (a
+  // scrollbar drag): scrolls outside those are the page's own layout, never the person leaving the newest message.
+  let gestureAt = 0;
+  let pressed = false;
+  const gesture = () => { gestureAt = Date.now(); };
+  const byPerson = () => pressed || Date.now() - gestureAt < GESTURE_MS;
   const distance = () => Math.max(0, node.scrollHeight - node.clientHeight - node.scrollTop);
   const shown = () => node.clientHeight > 0 && node.getClientRects().length > 0;
   const rows = () => content.querySelectorAll<HTMLElement>("[data-workbot-row]");
@@ -76,8 +85,13 @@ export function observeConversationScroll(node: HTMLDivElement, content: HTMLDiv
       if (distance() <= 1) settle();
       else settling();
     } else if (Math.abs(node.scrollTop - expectedTop) > 1) {
-      state.following = distance() < 80;
-      remember();
+      // A box beside the conversation that briefly grew it (the message box resizing as the person types) leaves the
+      // browser's clamped scrollTop behind: still at the newest message, so stay exactly at the bottom.
+      if (state.following && !byPerson() && distance() < 80) node.scrollTo({ top: node.scrollHeight, behavior: "instant" });
+      else {
+        state.following = distance() < 80;
+        remember();
+      }
     }
     measure();
   };
@@ -90,18 +104,21 @@ export function observeConversationScroll(node: HTMLDivElement, content: HTMLDiv
     state.following = false;
     remember();
   };
-  const wheel = (event: WheelEvent) => { if (event.deltaY < 0 || smooth) interrupt(); };
-  const touchStart = (event: TouchEvent) => { touchY = event.touches[0]?.clientY; };
+  const wheel = (event: WheelEvent) => { gesture(); if (event.deltaY < 0 || smooth) interrupt(); };
+  const touchStart = (event: TouchEvent) => { gesture(); touchY = event.touches[0]?.clientY; };
   const touchMove = (event: TouchEvent) => {
+    gesture();
     const y = event.touches[0]?.clientY;
     if (y !== undefined && touchY !== undefined && (y > touchY || smooth)) interrupt();
     touchY = y;
   };
   const key = (event: KeyboardEvent) => {
+    gesture();
     const navigation = ["ArrowUp", "ArrowDown", "PageUp", "PageDown", "Home", "End", " "].includes(event.key);
     if (smooth && navigation || ["ArrowUp", "PageUp", "Home"].includes(event.key) || event.key === " " && event.shiftKey) interrupt();
   };
-  const pointer = () => { if (smooth) interrupt(); };
+  const pointer = () => { gesture(); pressed = true; if (smooth) interrupt(); };
+  const released = () => { if (pressed) gesture(); pressed = false; };
   node.addEventListener("pointerdown", pointer, { passive: true });
   node.addEventListener("scrollend", settle);
   node.addEventListener("scroll", scroll, { passive: true });
@@ -109,6 +126,10 @@ export function observeConversationScroll(node: HTMLDivElement, content: HTMLDiv
   node.addEventListener("touchstart", touchStart, { passive: true });
   node.addEventListener("touchmove", touchMove, { passive: true });
   node.addEventListener("keydown", key);
+  // The press can end outside the conversation (a scrollbar drag released over the composer).
+  const view: Pick<Window, "addEventListener" | "removeEventListener"> | undefined = typeof window.addEventListener === "function" ? window : undefined;
+  view?.addEventListener("pointerup", released, { passive: true });
+  view?.addEventListener("pointercancel", released, { passive: true });
   const observer = new ResizeObserver(layout);
   observer.observe(content);
   // Content alone does not resize when the keyboard opens or the composer grows.
@@ -135,6 +156,8 @@ export function observeConversationScroll(node: HTMLDivElement, content: HTMLDiv
       node.removeEventListener("touchstart", touchStart);
       node.removeEventListener("touchmove", touchMove);
       node.removeEventListener("keydown", key);
+      view?.removeEventListener("pointerup", released);
+      view?.removeEventListener("pointercancel", released);
     },
   };
 }

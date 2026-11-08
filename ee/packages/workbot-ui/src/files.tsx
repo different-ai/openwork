@@ -2,7 +2,7 @@
 
 import { Dialog } from "@base-ui/react/dialog";
 import { Tooltip } from "@base-ui/react/tooltip";
-import { Download, Paperclip, Trash2, X } from "lucide-react";
+import { Download, Paperclip, Plug, Trash2, X } from "lucide-react";
 import { useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { workbotHost, useRetainedSurface } from "./host";
 import {
@@ -86,20 +86,25 @@ function Thumbnail({ src, className }: { src: string | null; className: string }
   );
 }
 
-/** The same brand candidates for Apps, headers and connector step lines; a fixed tile only in the Apps list. */
-export function AppMark({ name, size = 12, fallback = "dot", iconCandidates, tile = false }: {
-  name: string; size?: number; fallback?: "dot" | "letter"; iconCandidates?: readonly string[]; tile?: boolean;
+/**
+ * The same brand candidates for Apps, headers and connector step lines; a fixed tile only in the Apps list. Without a
+ * logo: a quiet dot, the name's first letter (lists of apps), or a plug (a connected app with no logo to find).
+ * `site` ("exa.ai", from Den) finds a logo when the name alone doesn't.
+ */
+export function AppMark({ name, size = 12, fallback = "dot", iconCandidates, tile = false, site }: {
+  name: string; size?: number; fallback?: "dot" | "letter" | "plug"; iconCandidates?: readonly string[]; tile?: boolean; site?: string;
 }) {
-  const candidates = useMemo(() => iconCandidates ?? workbotHost().appIcons(name), [iconCandidates, name]);
+  const candidates = useMemo(() => iconCandidates ?? workbotHost().appIcons(name, site), [iconCandidates, name, site]);
   // Reset the failed-candidate index when a different app (or fresh metadata) occupies this row.
   const mark = <AppMarkImage key={`${name}:${candidates.join("|")}`} name={name} size={size} fallback={fallback} candidates={candidates} />;
   return tile ? <span aria-hidden className="grid size-8 shrink-0 place-items-center overflow-hidden rounded-[7px] bg-[var(--wb-surface)] shadow-[0_0_0_1px_var(--wb-ring)]">{mark}</span> : mark;
 }
 
-function AppMarkImage({ name, size, fallback, candidates }: { name: string; size: number; fallback: "dot" | "letter"; candidates: readonly string[] }) {
+function AppMarkImage({ name, size, fallback, candidates }: { name: string; size: number; fallback: "dot" | "letter" | "plug"; candidates: readonly string[] }) {
   const [failed, setFailed] = useState(0);
   const src = candidates[failed];
   if (!src && fallback === "letter") return <span aria-hidden className="grid shrink-0 place-items-center font-semibold text-[var(--wb-muted)]" style={{ width: size, height: size, fontSize: Math.round(size * 0.6) }} data-workbot-app-letter>{name.trim().charAt(0).toUpperCase() || "?"}</span>;
+  if (!src && fallback === "plug") return <Plug size={size} strokeWidth={1.75} aria-hidden className="shrink-0 text-[var(--wb-muted)]" />;
   if (!src) return <span aria-hidden className="rounded-full bg-[var(--wb-disabled)]" style={{ width: size - 4, height: size - 4 }} />;
   // eslint-disable-next-line @next/next/no-img-element
   return <img src={src} alt="" width={size} height={size} referrerPolicy="no-referrer" onError={() => setFailed((count) => count + 1)} className="shrink-0 object-contain" style={{ width: size, height: size }} />;

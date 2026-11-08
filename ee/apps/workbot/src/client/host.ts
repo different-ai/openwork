@@ -147,7 +147,7 @@ export function createHost(me: Me, recovery: { authorization?: WorkbotHost["docu
     errorMessage: messageOf,
     user: { name: me.name },
     useConnectedApps: () => noApps,
-    appIcons: (name) => appIconCandidates(name, me.denUrl),
+    appIcons: (name, site) => appIconCandidates(name, me.denUrl, site),
     homeHref: me.denUrl ? `${me.denUrl}/dashboard` : "/",
     calendar: me.calendar,
     documents: me.documents,

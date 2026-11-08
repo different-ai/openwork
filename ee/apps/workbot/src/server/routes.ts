@@ -9,6 +9,7 @@ import {
   WorkbotRemoteJobError,
   type WorkbotActor,
   type WorkbotChat,
+  type WorkbotConnectors,
   type WorkbotEventsUnavailable,
 } from "@openwork-ee/workbot-server"
 import type { Context, Hono, MiddlewareHandler } from "hono"
@@ -105,6 +106,36 @@ function actorOf(member: Member): WorkbotActor {
   }
 }
 
+/** How long a person's connected app names are reused: connections change rarely, and a new one shows within this. */
+const CONNECTORS_TTL_MS = 5 * 60_000
+/** A failed read is retried this soon, so a passing Den hiccup doesn't leave apps unnamed for long. */
+const CONNECTORS_RETRY_MS = 30_000
+const CONNECTORS_KEPT = 2_000
+
+/**
+ * Each person's connected apps by connection id (name, website), read from Den once per CONNECTORS_TTL_MS and shared
+ * by every read of their chats in that time. Keyed by organization and member, never shared between people.
+ */
+export function createConnectorCache(read: (accessToken: string) => Promise<Array<{ id: string; name: string; site: string | null }>>, now = () => Date.now()) {
+  const kept = new Map<string, { at: number; ttl: number; value: Promise<WorkbotConnectors> }>()
+  return (key: string, accessToken: string): Promise<WorkbotConnectors> => {
+    const entry = kept.get(key)
+    if (entry && now() - entry.at < entry.ttl) return entry.value
+    const value = read(accessToken).then(
+      (list) => new Map(list.map((connector) => [connector.id, { name: connector.name, site: connector.site }])),
+      () => {
+        const failed = kept.get(key)
+        if (failed) failed.ttl = CONNECTORS_RETRY_MS
+        return new Map()
+      },
+    )
+    kept.delete(key)
+    kept.set(key, { at: now(), ttl: CONNECTORS_TTL_MS, value })
+    if (kept.size > CONNECTORS_KEPT) kept.delete(kept.keys().next().value ?? "")
+    return value
+  }
+}
+
 export function workbotConnectionUrl(denWeb: string, organizationId: string, connectionId: string) {
   return `${denWeb}/dashboard/your-connections?${new URLSearchParams({ connectionId, workbotOrganizationId: organizationId })}`
 }
@@ -112,6 +143,7 @@ export function workbotConnectionUrl(denWeb: string, organizationId: string, con
 export function registerWorkbotRoutes(app: Hono<AppEnv>, input: { config: Config; den: Den; member: MiddlewareHandler<AppEnv>; sameOrigin: MiddlewareHandler }) {
   const { config, den } = input
   const sent = new Map<string, number[]>()
+  const connectors = createConnectorCache((accessToken) => den.connectors(accessToken))
   const runnerFetch = observedRunnerFetch()
 
   /**
@@ -152,6 +184,7 @@ export function registerWorkbotRoutes(app: Hono<AppEnv>, input: { config: Config
       driveFiles: async () => member.den.driveFiles,
       workingStatus: async () => member.den.workingStatus,
       quickReply: async () => member.den.quickReply,
+      connectors: () => connectors(`${member.den.organization.id}:${member.den.memberId}`, member.accessToken),
       sandboxGateway: member.den.sandboxGateway,
       browserRecovery: member.den.browserRecovery,
       // Saved steps are GA; older Dens may omit stepTurns, so preserve their continuous-turn protocol.

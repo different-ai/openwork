@@ -84,6 +84,7 @@ export const scenarios: Record<string, () => FixtureThread> = {
   }),
   /** Nov 8: "Could you go on google.com with browser", as the conversation is read once it is done (see googleAt). */
   google: () => googleAt(2),
+  exa: () => exaAt(3),
   /** Short and long messages from the person (#1, #2): "Hey" must stay on one line. */
   bubbles: () => ({
     name: "Workbot", organizationName: "Example Team", status: "idle", hasEarlier: false, filesEnabled: true,
@@ -106,6 +107,21 @@ export function googleAt(phase: 0 | 1 | 2): FixtureThread {
   const parts: Part[] = phase === 0 ? [] : phase === 1 ? [{ kind: "steps", steps: [step] }] : [{ kind: "steps", steps: [step] }, said("Done: google.com is open in my browser.", 1)]
   const asked = turn("g1", "Could you go on google.com with browser", sent, parts, { modelSteps: phase === 0 ? 0 : phase === 1 ? 1 : 2 })
   return { name: "Workbot", organizationName: "Example Team", status: phase === 2 ? "idle" : "busy", hasEarlier: false, filesEnabled: true, turns: [hello(), phase === 2 ? asked : working(asked)] }
+}
+
+/**
+ * Ben's request of Nov 8 at 7:33 ("could you use exa to search about best ux practices and skills"), in the shape
+ * workbot-server builds from the runner's transcript for `mcp:<connection>:web_search_exa` calls: 0, the first search
+ * is running; 1, the second; 2, both done while Workbot reads the results; 3, answered (also what a reload reads).
+ */
+export function exaAt(phase: 0 | 1 | 2 | 3): FixtureThread {
+  const sent = Date.now() - 12_000
+  const search = (running: boolean, at: number) => ({ ...appStep("Searching Exa", "Exa", running, at), detail: "Web search", site: "exa.ai" })
+  const steps = phase === 0 ? [search(true, sent + 1_000)] : [search(false, sent + 1_000), search(phase === 1, sent + 4_000)]
+  const parts: Part[] = [said("I'll search Exa for best UX practices and skills, then I'll come back with the useful bits."), { kind: "steps", steps }]
+  if (phase === 3) parts.push(said("Here's what stands out: keep feedback immediate, show system status, and make every action reversible.", 2))
+  const asked = turn("x1", "could you use exa to search about best ux practices and skills", sent, parts, { modelSteps: phase === 0 ? 1 : phase === 3 ? 3 : 2 })
+  return { name: "Workbot", organizationName: "Example Team", status: phase === 3 ? "idle" : "busy", hasEarlier: false, filesEnabled: true, turns: [hello(), phase === 3 ? asked : working(asked)] }
 }
 
 /** What the page hears while the call is written, as workbot-server sends it: the start, then where, then what. */

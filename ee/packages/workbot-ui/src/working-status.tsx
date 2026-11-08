@@ -5,7 +5,7 @@ import { Check, Globe, Monitor, X } from "lucide-react";
 import { useEffect, useState, type ReactNode } from "react";
 import { useRetainedSurface, workbotHost } from "./host";
 import { useStopWorkbotTask } from "./data";
-import { AppMark } from "./files";
+import { ConnectorIcon } from "./connector-line";
 import type { ActivityStep, ActivityTask, WorkbotActivity } from "./activity";
 import { ProfileSheet } from "./profile-sheet";
 import { OpenWorkMark } from "./mark";
@@ -41,7 +41,7 @@ function clock(at: number) {
 }
 
 function StatusIcon({ activity, size = 12 }: { activity: WorkbotActivity; size?: number }) {
-  if (activity.app) return <AppMark name={activity.app} size={size} />;
+  if (activity.icon === "app") return <ConnectorIcon app={{ name: activity.app, ...(activity.site ? { site: activity.site } : {}), ...(activity.remote ? { remote: true as const } : {}) }} size={size} />;
   if (activity.icon === "browser") return <Globe size={size} strokeWidth={1.75} aria-hidden className="shrink-0" />;
   if (activity.icon === "computer") return <Monitor size={size} strokeWidth={1.75} aria-hidden className="shrink-0" />;
   return <span aria-hidden className="workbot-presence-dot size-1.5 shrink-0 rounded-full" />;
@@ -111,7 +111,7 @@ function StepList({ steps, working }: { steps: ActivityStep[]; working: boolean 
         {step.done ? <Check size={11} strokeWidth={2.5} /> : <span className="workbot-presence-dot size-1.5 rounded-full" />}
       </span>
       <span className={`flex min-w-0 items-center gap-1.5 text-[13.5px] leading-5 ${step.done ? "text-[var(--wb-text)]" : "workbot-shimmer"}`}>
-        {step.app ? <AppMark name={step.app} size={13} /> : null}
+        {step.app || step.remote || step.site ? <ConnectorIcon app={{ name: step.app, ...(step.site ? { site: step.site } : {}), ...(step.remote ? { remote: true as const } : {}) }} size={13} /> : null}
         <span className="min-w-0">{step.label}</span>
       </span>
     </li>)}

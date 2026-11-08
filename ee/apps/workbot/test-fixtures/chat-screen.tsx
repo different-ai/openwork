@@ -26,7 +26,7 @@ const host: WorkbotHost = {
   user: { name: "Sam Rivera" },
   useConnectedApps: () => [],
   // The same logos as the real page (Simple Icons, then favicons; no Den here).
-  appIcons: (name) => appIconCandidates(name, null),
+  appIcons: (name, site) => appIconCandidates(name, null, site),
   homeHref: "/",
   sideChats: search.get("sideChats") === "1",
   browser: search.get("browser") === "1",

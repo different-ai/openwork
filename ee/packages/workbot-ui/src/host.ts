@@ -17,8 +17,8 @@ export type WorkbotHost = {
   user: { name: string | null } | null
   /** The apps the person has connected, for the header. A hook: called once on every render of the header. */
   useConnectedApps: () => Array<{ id: string; name: string }>
-  /** Logo URLs to try in order for an app, by its display name. */
-  appIcons: (name: string) => string[]
+  /** Logo URLs to try in order for an app, by its display name, then by its website ("exa.ai") when it has one. */
+  appIcons: (name: string, site?: string) => string[]
   /** Where the avatar in the header leads. */
   homeHref: string
   /** Workbot's Calendar tab is on for this person (on while Workbot is on). */

@@ -5,7 +5,7 @@ export { workbotOwner, workbotSessionId, workbotSideChatSessionId, WORKBOT_CHAT_
 import type { HeadlessRunnerClient, RunnerDesktopView, RunnerSavedFile } from "@openwork-ee/headless-protocol"
 import { AUTOMATION_CLOUD_DEFAULT_MODEL } from "@openwork/types/automations"
 import { readWorkbotContextPrompt, readWorkbotCorrectionPrompt, workbotContextPrompt, workbotContextReadOnly, workbotCorrectionPrompt, WORKBOT_MAX_MESSAGE_CHARS, type WorkbotViewContext } from "@openwork/types/workbot-context"
-import { buildWorkbotTurns, GREETING_RUNNER_ID, interruptedTurnIds, threadBusy, WORKBOT_MESSAGE_PREFIX, type WorkbotTurn } from "./thread.js"
+import { buildWorkbotTurns, GREETING_RUNNER_ID, interruptedTurnIds, threadBusy, WORKBOT_MESSAGE_PREFIX, type WorkbotConnectors, type WorkbotTurn } from "./thread.js"
 import { workbotModelReady } from "./model-readiness.js"
 import type { RemoteSessionStatusRequest, RemoteSessionStatusResult } from "@openwork/types/automations"
 import type { WorkbotRemoteJob, WorkbotRemoteJobs, WorkbotRemoteJobDetail, WorkbotRemoteJobStop } from "@openwork/types/workbot-remote-jobs"
@@ -83,6 +83,11 @@ export type WorkbotDeps = {
   workingStatus?: (organizationId: string) => Promise<boolean>
   /** Brief human acknowledgment before any tool call (`workbotQuickReply`). Unset: off. */
   quickReply?: (organizationId: string) => Promise<boolean>
+  /**
+   * The person's connected apps by connection id (name and website), so work in one reads "Searching Exa" with its
+   * logo. Asked on every read, so the host caches it. Unset or failing: well-known apps are named from their tools.
+   */
+  connectors?: () => Promise<WorkbotConnectors>
   /** Den's `sandboxGateway` flag: the chats' computers run through the runner's sandbox gateway. Unset: unchanged. */
   sandboxGateway?: boolean
   /** Den-resolved workbotBrowserRecovery; never set by the model. */
@@ -523,6 +528,25 @@ export async function startWorkbotGreeting(actor: WorkbotActor, input: { timeZon
   return { started: true }
 }
 
+/** How long a read waits for the connected apps' names before naming apps from their tools alone. */
+const CONNECTORS_WAIT_MS = 300
+
+/** Started with the conversation's read; `settle` waits at most CONNECTORS_WAIT_MS more once that read is back. */
+function readConnectors(deps: WorkbotDeps) {
+  const load: Promise<WorkbotConnectors> = deps.connectors ? deps.connectors().catch(() => new Map()) : Promise.resolve(new Map())
+  return {
+    async settle(): Promise<WorkbotConnectors> {
+      let timer: ReturnType<typeof setTimeout> | undefined
+      const fallback = new Promise<WorkbotConnectors>((resolve) => { timer = setTimeout(() => resolve(new Map()), CONNECTORS_WAIT_MS) })
+      try {
+        return await Promise.race([load, fallback])
+      } finally {
+        clearTimeout(timer)
+      }
+    },
+  }
+}
+
 /** Interrupted turns being resumed right now, by `<session>:<message>`. */
 const resuming = new Set<string>()
 /** How long opening a chat waits for resuming interrupted turns before answering without them. */
@@ -537,6 +561,8 @@ export async function readWorkbotThread(
   splitOnce(actor, deps)
   const sessionId = await sessionOf(actor, input.chat ?? null, deps)
   const name = workbotName(actor.organizationMetadata)
+  // The names of the person's connected apps, beside the conversation; a slow Den never holds the chat up.
+  const connectorsRead = readConnectors(deps)
   // One runner round trip on the first load: the conversation and its files are read side by side.
   const filesEnabledRead = client.filesEnabled()
   const filesRead = filesEnabledRead.then((enabled) => (enabled ? client.listFiles(sessionId) : null))
@@ -568,7 +594,7 @@ export async function readWorkbotThread(
     clearTimeout(timer)
   }
 
-  const [filesEnabled, files] = await Promise.all([filesEnabledRead, filesRead])
+  const [filesEnabled, files, connectors] = await Promise.all([filesEnabledRead, filesRead, connectorsRead.settle()])
   const names = new Map(
     (files?.ok ? files.value : []).map((file) => [
       file.id,
@@ -579,7 +605,7 @@ export async function readWorkbotThread(
     name,
     organizationName: actor.organizationName,
     status: threadBusy(read.value) ? "busy" : "idle",
-    turns: buildWorkbotTurns(read.value, names),
+    turns: buildWorkbotTurns(read.value, names, connectors),
     hasEarlier: read.value.hasEarlier ?? false,
     filesEnabled,
   }
