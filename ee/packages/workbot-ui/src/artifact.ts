@@ -93,12 +93,23 @@ export const THUMBNAIL_CSP = "default-src 'none'; style-src 'unsafe-inline'; img
  */
 export function staticAppHtml(html: string, parser: { parseFromString(source: string, type: "text/html"): Document } | null = typeof DOMParser === "undefined" ? null : new DOMParser()): string | null {
   if (!parser) return null;
-  const doc = parser.parseFromString(html, "text/html");
+  // A parsed document is inert (no scripts, no loads); renaming every address-bearing attribute first keeps it so
+  // even if a parser ever fetched. Inline `data:` values are put back below.
+  const renamed = html.replace(/([\s/"'])(src|srcset|href|xlink:href|poster|background|data|action|formaction|ping)(\s*=)/gi, "$1data-wb-inert-$2$3");
+  const doc = parser.parseFromString(renamed, "text/html");
   for (const node of doc.querySelectorAll("script, noscript, template, iframe, frame, frameset, object, embed, applet, link, base, meta, portal, form")) node.remove();
   // Styles keep their look but load nothing: imports and non-inline url()s go (the policy blocks them too).
   const inertCss = (css: string) => css.replace(/@import[^;]*;?/gi, "").replace(/url\(\s*(?!['"]?\s*data:)[^)]*\)/gi, "none");
   for (const style of doc.querySelectorAll("style")) style.textContent = inertCss(style.textContent ?? "");
   for (const element of doc.querySelectorAll("[style]")) element.setAttribute("style", inertCss(element.getAttribute("style") ?? ""));
+  for (const element of doc.querySelectorAll("*")) {
+    for (const attribute of [...element.attributes]) {
+      if (!attribute.name.toLowerCase().startsWith("data-wb-inert-")) continue;
+      element.removeAttribute(attribute.name);
+      const original = attribute.name.slice("data-wb-inert-".length);
+      if (/^(src|xlink:href|href)$/i.test(original) && attribute.value.trim().toLowerCase().startsWith("data:image/")) element.setAttribute(original, attribute.value);
+    }
+  }
   for (const element of doc.querySelectorAll("*")) {
     for (const attribute of [...element.attributes]) {
       const name = attribute.name.toLowerCase();

@@ -7,7 +7,7 @@ import { useWorkbotFileBytes, useWorkbotImageUrl, useWorkbotPreview, useWorkbotP
 import { OpenFileContext, OpenFileIdContext } from "./open-file";
 
 /**
- * A file Workbot made, as a card in the conversation (Finch-style): a large preview of the file itself, then a small
+ * A file Workbot made, as a card in the conversation: a large preview of the file itself, then a small
  * icon, its title and its type. Tapping it opens the file beside the chat (a full-screen sheet on a phone).
  */
 

