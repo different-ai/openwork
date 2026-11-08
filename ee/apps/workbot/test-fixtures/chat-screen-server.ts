@@ -3,7 +3,7 @@ import { createHash } from "node:crypto"
 import { readFile } from "node:fs/promises"
 import { fileURLToPath } from "node:url"
 import { createServer } from "vite"
-import { exaAt, GOOGLE_EVENTS, googleAt, scenarios, type FixtureThread, type FixtureTurn } from "./chat-screen-scenarios.js"
+import { ARTIFACT_BYTES, exaAt, GOOGLE_EVENTS, googleAt, scenarios, type FixtureThread, type FixtureTurn } from "./chat-screen-scenarios.js"
 import { fixtureRemoteJobs, fixtureStaleRemoteJobs } from "./remote-jobs.js"
 
 // Observes real client requests; the fixture never changes browser controls or rendered UI.
@@ -139,6 +139,11 @@ async function answer(request: IncomingMessage, response: ServerResponse) {
   }
   const file = /^\/v1\/workbot\/files\/([^/]+)$/.exec(path)
   if (request.method === "GET" && file) {
+    const made = ARTIFACT_BYTES[file[1] ?? ""]
+    if (made) {
+      response.setHeader("Content-Type", made.mediaType)
+      return response.end(Buffer.from(made.bytes))
+    }
     const kept = files.get(file[1] ?? "")
     if (!kept) return json(response, 404, { error: "not_found" })
     response.setHeader("Content-Type", kept.mediaType)

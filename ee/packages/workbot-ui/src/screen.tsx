@@ -32,14 +32,15 @@ import {
   type WorkbotThread,
   type WorkbotTurn,
 } from "./data";
-import { AppMark, AttachButton, FileBadge, FilesButton, FilesPanel, ImageThumb, isImage, kindLabel, SentAttachments, UploadTray, useFileDrop, type Upload } from "./files";
+import { AppMark, AttachButton, FilesButton, FilesPanel, SentAttachments, UploadTray, useFileDrop, type Upload } from "./files";
 import { createComposerState, type ComposerState, type Pending } from "./composer-state";
 import { browserTask, computerWork, finishedSummary, keepsCard, type ComputerSurface } from "./computer-work";
 import { BrowserExperience, useBrowserPreview } from "./browser-preview";
 import { AccountAvatar } from "./account-menu";
 import { documentLinks, WorkbotMarkdown } from "./markdown";
 import { OpenFileContext } from "./open-file";
-import { PreviewPanel } from "./preview";
+import { ARTIFACT_PARAM } from "./artifact";
+import { ArtifactCards } from "./artifact-card";
 import { Welcome } from "./welcome";
 import { ModelRecovery, AccessRecovery } from "./model-recovery";
 import { hasAnsweredTurn, WorkbotSetupChip } from "./activation";
@@ -244,7 +245,8 @@ function ChatScreen({ host, composerState, position, navigation, onDraftsChange 
   const navigateComputerFromChat = guided && computerViews(host).length > 0 && tab !== "computer"
     ? () => setTab("computer")
     : null;
-  const [preview, setPreview] = useState<WorkbotAttachment | null>(null);
+  // Files open in the panel beside the chat (a sheet on a phone) that BrowserExperience owns, with browser tasks.
+  const openFile = useContext(OpenFileContext);
   // The welcome shows once, while there's no conversation yet; leaving it, Workbot starts the conversation itself.
   // "pending" until the conversation is first read: then it shows (no conversation yet) or never does. Side chats
   // start with the person's first message.
@@ -286,17 +288,31 @@ function ChatScreen({ host, composerState, position, navigation, onDraftsChange 
       else setNavigationStatus(current => ({ ...current, [target.id]: "superseded" }));
     }
   });
-  // The open file at its newest version: when Workbot revises it, the preview follows (same id, newer updatedAt).
-  const previewFile = useMemo(() => {
-    if (!preview || !data) return preview;
-    let newest = preview;
+  // The open file at its newest version: when Workbot revises it, the panel follows (same id, newer updatedAt).
+  const openedFile = browserPreview?.file ?? null;
+  const updateOpenedFile = browserPreview?.updateFile;
+  useEffect(() => {
+    if (!openedFile || !data || !updateOpenedFile) return;
+    let newest = openedFile;
     for (const turn of data.turns) {
       for (const file of [...turn.outputs, ...turn.attachments]) {
-        if (file.id === preview.id && (file.updatedAt ?? 0) > (newest.updatedAt ?? 0)) newest = file;
+        if (file.id === openedFile.id && (file.updatedAt ?? 0) > (newest.updatedAt ?? 0)) newest = file;
       }
     }
-    return newest;
-  }, [preview, data]);
+    if (newest !== openedFile) updateOpenedFile(newest);
+  }, [openedFile, data, updateOpenedFile]);
+  // A copied link (`?artifact=<id>`) opens that file once the conversation that has it is read, then leaves the address.
+  const linkedFile = useRef(typeof window === "undefined" ? null : new URL(window.location.href).searchParams.get(ARTIFACT_PARAM));
+  useEffect(() => {
+    const id = linkedFile.current;
+    if (!id || !data) return;
+    linkedFile.current = null;
+    const url = new URL(window.location.href);
+    url.searchParams.delete(ARTIFACT_PARAM);
+    window.history.replaceState(window.history.state, "", url);
+    const file = data.turns.flatMap((turn) => [...turn.outputs, ...turn.attachments]).filter((entry) => entry.id === id).at(-1);
+    if (file) openFile(file);
+  }, [data, openFile]);
   const filesEnabled = data?.filesEnabled ?? false;
   // Age unfinished jobs even when the event stream has gone quiet. The profile also opens before the first read.
   const activityNow = useNow();
@@ -355,7 +371,7 @@ function ChatScreen({ host, composerState, position, navigation, onDraftsChange 
   const [profileTab, setProfileTab] = useState<"tasks" | "permissions" | null>(null);
   // The browser viewer keeps a 480px conversation beside it. Its chosen panel temporarily discloses navigation
   // through the same drawer, rather than squeezing the conversation behind a second 324px sidebar.
-  const showDesktopNavigation = wideScreen && !browserPreview?.visible;
+  const showDesktopNavigation = wideScreen && !browserPreview?.panelOpen;
   const navigationProps: NavigationProps = {
     page: tab, onPage: setTab, currentChat: navigation?.chat ?? null,
     chats: paletteChats.data, loading: paletteChats.isPending, failed: paletteChats.isError,
@@ -478,7 +494,7 @@ function ChatScreen({ host, composerState, position, navigation, onDraftsChange 
       : data && empty && side ? <SideChatStart name={name} organizationName={data.organizationName}>{attached}{composer}</SideChatStart>
       : data && empty && !starting ? <FirstOpen name={name} organizationName={data.organizationName} firstName={firstName} onSuggestion={text => submit(text)} error={start.isError ? start.error instanceof WorkbotSendError && start.error.accessReason ? <AccessRecovery reason={start.error.accessReason} onRetry={() => { setGreetingAwaited(true); start.mutate(); }} /> : <ErrorLine action={{ label: "Try again", onClick: () => { setGreetingAwaited(true); start.mutate(); } }}>{HELLO_FAILED}</ErrorLine> : null}>{attached}{composer}</FirstOpen>
       : <>{conversation}<div className="flex shrink-0 justify-center px-3 pb-4 pt-3"><div className={COLUMN}>{attached}{composer}</div></div></>;
-    return <OpenFileContext.Provider value={setPreview}>
+    return <>
       <OpenDocumentContext.Provider value={tab === "documents" && documentContext?.kind === "document" ? documentContext.fileId : null}>
       <WorkspaceNavigationContext.Provider value={host.workspaceAssistant && host.documents ? navigateFromChat : null}>
       <ComputerNavigationContext.Provider value={navigateComputerFromChat}>
@@ -506,16 +522,15 @@ function ChatScreen({ host, composerState, position, navigation, onDraftsChange 
             {docked && <DockedChat name={name} context={currentContext} includeContext={includeContext} onIncludeContext={setIncludeContext} composer={composer} conversation={conversation} unavailable={!data && !loading} />}
           </div>
           </div>
-          {previewFile && <PreviewPanel file={previewFile} onClose={() => setPreview(null)} />}
           </div>
-          {filesEnabled && <FilesPanel open={filesOpen} onClose={() => setFilesOpen(false)} assistantName={name} onOpenFile={file => { setFilesOpen(false); setPreview(file); }} />}
+          {filesEnabled && <FilesPanel open={filesOpen} onClose={() => setFilesOpen(false)} assistantName={name} onOpenFile={file => { setFilesOpen(false); openFile(file); }} />}
         </div>)}
       </DocumentNavigationContext.Provider>
       </ComputerOnScreenContext.Provider>
       </ComputerNavigationContext.Provider>
       </WorkspaceNavigationContext.Provider>
       </OpenDocumentContext.Provider>
-    </OpenFileContext.Provider>;
+    </>;
   }
   if ((tab === "calendar" && host.calendar) || tab === "documents" || (tab === "computer" && computerViews(host).length > 0)) {
     return layout(
@@ -602,7 +617,7 @@ function ChatScreen({ host, composerState, position, navigation, onDraftsChange 
 
   const chatId = navigation?.chat ?? null;
   return (
-    <OpenFileContext.Provider value={setPreview}>
+    <>
     {layout(<div className="flex min-h-0 flex-1 flex-col">
       <WorkbotHeader
         name={shown.name}
@@ -682,7 +697,6 @@ function ChatScreen({ host, composerState, position, navigation, onDraftsChange 
         </>
       )}
       </div>
-      {previewFile ? <PreviewPanel file={previewFile} onClose={() => setPreview(null)} /> : null}
       </div>
       {filesEnabled ? (
         <FilesPanel
@@ -691,7 +705,7 @@ function ChatScreen({ host, composerState, position, navigation, onDraftsChange 
           assistantName={shown.name}
           onOpenFile={(file) => {
             setFilesOpen(false);
-            setPreview(file);
+            openFile(file);
           }}
         />
       ) : null}
@@ -701,7 +715,7 @@ function ChatScreen({ host, composerState, position, navigation, onDraftsChange 
         </div>
       ) : null}
     </div>)}
-    </OpenFileContext.Provider>
+    </>
   );
 }
 
@@ -1917,7 +1931,7 @@ function TurnView(props: {
       <DocumentOffers links={offers} />
       <DocumentNavigationStatus receipts={turn.navigation} />
       {usedComputer && !browserWork && !workbotHost().browserPreview ? <ComputerOffer /> : null}
-      {turn.outputs.length ? <OutputFiles files={turn.outputs} /> : null}
+      {turn.outputs.length ? <ArtifactCards files={turn.outputs} /> : null}
       {/* Quiet: running and finished tasks live in the task sheet (the report says it's done); one that failed or was
           stopped stays here with its way forward. */}
       {visibleTasks.length ? <TaskCards tasks={visibleTasks} canRetry={props.canChange} onRetry={(task) => props.onSuggestion(`Try the "${task.title}" background task again.`)} /> : null}
@@ -2078,29 +2092,6 @@ function TaskCards({ tasks, onRetry, canRetry }: { tasks: WorkbotTask[]; onRetry
   return (
     <div className="flex flex-col gap-2 pl-1 pt-3">
       {tasks.map((task) => <div key={task.id} data-workbot-task={task.id}><TaskCard task={task} canRetry={canRetry} onRetry={() => onRetry(task)} /></div>)}
-    </div>
-  );
-}
-
-/** Files Workbot made while answering, as cards under the answer that open in the preview panel. */
-function OutputFiles({ files }: { files: WorkbotAttachment[] }) {
-  const open = useContext(OpenFileContext);
-  return (
-    <div className="workbot-row-enter flex flex-wrap gap-2 pl-1 pt-3">
-      {files.map((file) => (
-        <button
-          key={file.id}
-          type="button"
-          onClick={() => open(file)}
-          className="flex min-w-0 max-w-full items-center gap-3 rounded-[14px] bg-[var(--wb-surface)] py-2 pl-2 pr-4 text-left shadow-[var(--wb-card-shadow)] transition-shadow duration-150 ease-out hover:shadow-[var(--wb-card-shadow-hover)] focus-visible:outline-none focus-visible:shadow-[var(--wb-focus)] sm:max-w-[320px]"
-        >
-          {isImage(file.mediaType) ? <ImageThumb id={file.id} className="size-9 shrink-0 rounded-[8px] outline outline-1 -outline-offset-1 outline-black/10" /> : <FileBadge name={file.name} mediaType={file.mediaType} />}
-          <span className="flex min-w-0 flex-col">
-            <span className="truncate text-[13.5px] font-medium leading-5 text-[var(--wb-text)]">{file.name}</span>
-            <span className="text-[12px] leading-4 text-[var(--wb-muted)]">{kindLabel(file.name, file.mediaType)}</span>
-          </span>
-        </button>
-      ))}
     </div>
   );
 }

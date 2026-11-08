@@ -234,6 +234,7 @@ jobs:
           pnpm --filter @openwork-ee/workbot test:remote-jobs
           pnpm --filter @openwork-ee/workbot test:profile-apps
           pnpm --filter @openwork-ee/workbot test:connector-ui
+          pnpm --filter @openwork-ee/workbot test:artifact-ui
       - name: Test headless conversations (follow-ups, read-only lookups, waiting messages, bounded reads, moving to Node)
         run: |
           pnpm --filter @openwork-ee/headless-runner test:conversation

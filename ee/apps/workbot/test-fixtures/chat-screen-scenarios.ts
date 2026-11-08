@@ -15,6 +15,7 @@ export type FixtureTurn = {
   error: string | null
   tasks?: unknown[]
   greeting?: boolean
+  outputs?: Array<{ id: string; name: string; mediaType: string; size: number; updatedAt?: number }>
 }
 export type FixtureThread = { name: string; organizationName: string; status: "idle" | "busy"; turns: FixtureTurn[]; hasEarlier: boolean; filesEnabled: boolean }
 
@@ -92,6 +93,19 @@ export const scenarios: Record<string, () => FixtureThread> = {
       { kind: "steps", steps: ["Exa", "Exa", "Google Drive", "Linear", "Slack", "GitHub", "PlanetScale", "Research"].map((app) => ({ ...appStep(`Checking ${app}`, app, false, ago(20)), detail: "Read notes" })) },
     ])],
   }),
+  /** Files Workbot made: an interactive app (a live thumbnail), then a report and a spreadsheet (placeholders by type). */
+  artifacts: () => ({
+    name: "Workbot", organizationName: "Example Team", status: "idle", hasEarlier: false, filesEnabled: true,
+    turns: [
+      hello(),
+      turn("a1", "Code me an app that organizes my space in 3D", minutesAgo(8), [said("Here's your 3D space organizer. Drag the boxes to plan the room; the shelf list on the right updates as you go.")], {
+        outputs: [ARTIFACT_FILES.organizer],
+      }),
+      turn("a2", "Can you also write up the plan and the shopping list?", minutesAgo(3), [said("Done: the plan is in the report and the shopping list is a spreadsheet.")], {
+        outputs: [ARTIFACT_FILES.report, ARTIFACT_FILES.shopping],
+      }),
+    ],
+  }),
   /** Short and long messages from the person (#1, #2): "Hey" must stay on one line. */
   bubbles: () => ({
     name: "Workbot", organizationName: "Example Team", status: "idle", hasEarlier: false, filesEnabled: true,
@@ -137,3 +151,40 @@ export const GOOGLE_EVENTS = [
   { type: "working", messageId: "g1", step: 0, on: "computer", surface: "browser" },
   { type: "working", messageId: "g1", step: 0, on: "computer", surface: "browser", update: "Opening google.com" },
 ]
+
+/** A small interactive app, as Workbot writes one: its <title> names the card. */
+const ORGANIZER_HTML = `<!doctype html><html><head><meta charset="utf-8"><title>3D Space Organizer</title>
+<style>
+body{margin:0;font:13px/1.4 system-ui,sans-serif;background:linear-gradient(180deg,#eef3f8,#dfe8f1);color:#11181c;height:100vh;display:flex}
+main{flex:1;display:grid;place-items:center;perspective:1200px}
+.room{width:420px;height:300px;position:relative;transform:rotateX(58deg) rotateZ(-38deg);transform-style:preserve-3d;background:#fdfdfd;box-shadow:0 30px 60px -20px #01162744;border-radius:6px;
+  background-image:linear-gradient(#0116270f 1px,transparent 1px),linear-gradient(90deg,#0116270f 1px,transparent 1px);background-size:30px 30px}
+.box{position:absolute;transform-style:preserve-3d;cursor:grab;border-radius:3px}
+.box::before{content:"";position:absolute;inset:0;transform:translateZ(var(--h));background:inherit;filter:brightness(1.08);border-radius:3px}
+aside{width:220px;background:#fff;border-left:1px solid #0116270f;padding:20px}
+h1{font-size:15px;margin:0 0 12px}li{display:flex;gap:8px;align-items:center;padding:6px 0;border-bottom:1px solid #0116270d}
+i{width:10px;height:10px;border-radius:3px;display:inline-block}ul{list-style:none;margin:0;padding:0}
+@media(max-width:700px){body{flex-direction:column}.room{width:300px;height:220px}aside{width:auto;border-left:0;border-top:1px solid #0116270f}}
+</style></head><body><main><div class="room" id="room"></div></main>
+<aside><h1>Shelves and storage</h1><ul id="list"></ul></aside>
+<script>
+const items=[["Bookshelf",20,20,60,180,"#5b8def",80],["Desk",120,30,150,70,"#f0a35e",40],["Storage bins",300,40,80,80,"#4fb38a",50],["Sofa",130,200,170,70,"#a78bdb",30],["Plant",340,220,40,40,"#7cc36b",60]];
+const room=document.getElementById("room"),list=document.getElementById("list");
+for(const [name,x,y,w,h,color,height] of items){const b=document.createElement("div");b.className="box";Object.assign(b.style,{left:x+"px",top:y+"px",width:w+"px",height:h+"px",background:color});b.style.setProperty("--h",height+"px");room.append(b);
+const li=document.createElement("li");li.innerHTML='<i style="background:'+color+'"></i>'+name;list.append(li);
+b.onpointerdown=e=>{b.setPointerCapture(e.pointerId);const sx=e.clientX,sy=e.clientY,ox=b.offsetLeft,oy=b.offsetTop;b.onpointermove=m=>{b.style.left=ox+(m.clientX-sx)+"px";b.style.top=oy+(m.clientY-sy)+"px"};b.onpointerup=()=>{b.onpointermove=null}}}
+</script></body></html>`
+
+const SHOPPING_CSV = "Item,Where,Price\nWall shelf (120cm),IKEA,49\nStorage bins x4,Container Store,36\nDesk lamp,Target,29\nPlant stand,IKEA,19\n"
+
+/** Bytes for the files the "artifacts" scenario made, served at /v1/workbot/files/:id. */
+export const ARTIFACT_BYTES: Record<string, { mediaType: string; bytes: string }> = {
+  "out-organizer": { mediaType: "text/html", bytes: ORGANIZER_HTML },
+  "out-report": { mediaType: "application/pdf", bytes: "%PDF-1.4\n% fixture\n" },
+  "out-shopping": { mediaType: "text/csv", bytes: SHOPPING_CSV },
+}
+const ARTIFACT_FILES = {
+  organizer: { id: "out-organizer", name: "space-organizer.html", mediaType: "text/html", size: ORGANIZER_HTML.length, updatedAt: 1 },
+  report: { id: "out-report", name: "Room plan.pdf", mediaType: "application/pdf", size: 48_211, updatedAt: 1 },
+  shopping: { id: "out-shopping", name: "Shopping list.csv", mediaType: "text/csv", size: SHOPPING_CSV.length, updatedAt: 1 },
+}

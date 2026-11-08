@@ -779,10 +779,11 @@ export function useWorkbotPreview(id: string | null, version?: number) {
 }
 
 /** One page of a preview as an object URL. */
-export function useWorkbotPreviewPage(id: string, page: number, version?: number) {
+export function useWorkbotPreviewPage(id: string, page: number, version?: number, enabled = true) {
   const chat = useWorkbotChat();
   return useQuery({
     queryKey: ["workbot", "preview-page", chat ?? "main", id, page, version ?? 0],
+    enabled,
     staleTime: Number.POSITIVE_INFINITY,
     gcTime: 5 * 60_000,
     placeholderData: keepPreviousData,

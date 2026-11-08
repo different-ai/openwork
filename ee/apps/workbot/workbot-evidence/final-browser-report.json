@@ -1,0 +1,704 @@
+{
+  "evidence": "Real React UI + in-memory threads + simulated recorded frame stream; NOT production integration.",
+  "origin": "http://localhost:4732",
+  "viewport": {
+    "width": 390,
+    "height": 844
+  },
+  "checks": [],
+  "screenshots": [
+    "/private/var/folders/d9/xqhkvsp94rg0n0n523snqztm0000gn/T/opencode/workbot-finch-artifact/ee/apps/workbot/workbot-evidence/final-failure.png"
+  ],
+  "errors": [
+    {
+      "kind": "http",
+      "status": 404,
+      "url": "http://localhost:4732/v1/workbot/computer/viewer",
+      "intentionalFailure": false
+    },
+    {
+      "kind": "console",
+      "text": "Failed to load resource: the server responded with a status of 404 (Not Found)",
+      "intentionalFailure": false
+    }
+  ],
+  "requests": [
+    {
+      "method": "GET",
+      "url": "http://localhost:4732/?scenario=browsing&browser=1&working=1&profile=1&centered=1&preview=1&quick=1"
+    },
+    {
+      "method": "GET",
+      "url": "http://localhost:4732/@vite/client"
+    },
+    {
+      "method": "GET",
+      "url": "http://localhost:4732/@fs/private/var/folders/d9/xqhkvsp94rg0n0n523snqztm0000gn/T/opencode/workbot-finch-artifact/ee/apps/workbot/test-fixtures/chat-screen.tsx"
+    },
+    {
+      "method": "GET",
+      "url": "http://localhost:4732/@fs/private/var/folders/d9/xqhkvsp94rg0n0n523snqztm0000gn/T/opencode/workbot-finch-artifact/ee/apps/workbot/node_modules/.vite/deps/react_jsx-dev-runtime.js?v=70c6e315"
+    },
+    {
+      "method": "GET",
+      "url": "http://localhost:4732/@fs/private/var/folders/d9/xqhkvsp94rg0n0n523snqztm0000gn/T/opencode/workbot-finch-artifact/ee/packages/workbot-ui/src/index.ts"
+    },
+    {
+      "method": "GET",
+      "url": "http://localhost:4732/@fs/private/var/folders/d9/xqhkvsp94rg0n0n523snqztm0000gn/T/opencode/workbot-finch-artifact/ee/apps/workbot/node_modules/.vite/deps/@tanstack_react-query.js?v=70c6e315"
+    },
+    {
+      "method": "GET",
+      "url": "http://localhost:4732/@fs/private/var/folders/d9/xqhkvsp94rg0n0n523snqztm0000gn/T/opencode/workbot-finch-artifact/ee/apps/workbot/node_modules/.vite/deps/react-dom_client.js?v=70c6e315"
+    },
+    {
+      "method": "GET",
+      "url": "http://localhost:4732/styles.css"
+    },
+    {
+      "method": "GET",
+      "url": "http://localhost:4732/app-icons.ts"
+    },
+    {
+      "method": "GET",
+      "url": "http://localhost:4732/@fs/private/var/folders/d9/xqhkvsp94rg0n0n523snqztm0000gn/T/opencode/workbot-finch-artifact/node_modules/.pnpm/vite@6.4.5_@types+node@24.13.3_jiti@2.7.0_lightningcss@1.32.0_terser@5.51.2_tsx@4.23.1_yaml@2.9.0/node_modules/vite/dist/client/env.mjs"
+    },
+    {
+      "method": "GET",
+      "url": "http://localhost:4732/@fs/private/var/folders/d9/xqhkvsp94rg0n0n523snqztm0000gn/T/opencode/workbot-finch-artifact/ee/packages/workbot-ui/src/screen.tsx"
+    },
+    {
+      "method": "GET",
+      "url": "http://localhost:4732/@fs/private/var/folders/d9/xqhkvsp94rg0n0n523snqztm0000gn/T/opencode/workbot-finch-artifact/packages/documents/src/index.ts"
+    },
+    {
+      "method": "GET",
+      "url": "http://localhost:4732/@fs/private/var/folders/d9/xqhkvsp94rg0n0n523snqztm0000gn/T/opencode/workbot-finch-artifact/ee/packages/workbot-ui/src/host.ts"
+    },
+    {
+      "method": "GET",
+      "url": "http://localhost:4732/@fs/private/var/folders/d9/xqhkvsp94rg0n0n523snqztm0000gn/T/opencode/workbot-finch-artifact/ee/packages/workbot-ui/src/discard-recovery.tsx"
+    },
+    {
+      "method": "GET",
+      "url": "http://localhost:4732/@fs/private/var/folders/d9/xqhkvsp94rg0n0n523snqztm0000gn/T/opencode/workbot-finch-artifact/ee/packages/workbot-ui/src/thread-cache.ts"
+    },
+    {
+      "method": "GET",
+      "url": "http://localhost:4732/@fs/private/var/folders/d9/xqhkvsp94rg0n0n523snqztm0000gn/T/opencode/workbot-finch-artifact/ee/apps/workbot/node_modules/.vite/deps/chunk-ZQLYZZZB.js?v=70c6e315"
+    },
+    {
+      "method": "GET",
+      "url": "http://localhost:4732/@fs/private/var/folders/d9/xqhkvsp94rg0n0n523snqztm0000gn/T/opencode/workbot-finch-artifact/ee/apps/workbot/node_modules/.vite/deps/chunk-G3PMV62Z.js?v=70c6e315"
+    },
+    {
+      "method": "GET",
+      "url": "http://localhost:4732/@fs/private/var/folders/d9/xqhkvsp94rg0n0n523snqztm0000gn/T/opencode/workbot-finch-artifact/ee/apps/workbot/node_modules/.vite/deps/chunk-POPOSILU.js?v=70c6e315"
+    },
+    {
+      "method": "GET",
+      "url": "http://localhost:4732/@fs/private/var/folders/d9/xqhkvsp94rg0n0n523snqztm0000gn/T/opencode/workbot-finch-artifact/packages/types/src/connector-brand.ts"
+    },
+    {
+      "method": "GET",
+      "url": "http://localhost:4732/@fs/private/var/folders/d9/xqhkvsp94rg0n0n523snqztm0000gn/T/opencode/workbot-finch-artifact/ee/apps/workbot/node_modules/.vite/deps/zod.js?v=70c6e315"
+    },
+    {
+      "method": "GET",
+      "url": "http://localhost:4732/@fs/private/var/folders/d9/xqhkvsp94rg0n0n523snqztm0000gn/T/opencode/workbot-finch-artifact/packages/documents/src/access.ts"
+    },
+    {
+      "method": "GET",
+      "url": "http://localhost:4732/@fs/private/var/folders/d9/xqhkvsp94rg0n0n523snqztm0000gn/T/opencode/workbot-finch-artifact/packages/documents/src/google-editor.ts"
+    },
+    {
+      "method": "GET",
+      "url": "http://localhost:4732/@fs/private/var/folders/d9/xqhkvsp94rg0n0n523snqztm0000gn/T/opencode/workbot-finch-artifact/packages/documents/src/sources.ts"
+    },
+    {
+      "method": "GET",
+      "url": "http://localhost:4732/@fs/private/var/folders/d9/xqhkvsp94rg0n0n523snqztm0000gn/T/opencode/workbot-finch-artifact/ee/apps/workbot/node_modules/.vite/deps/react.js?v=70c6e315"
+    },
+    {
+      "method": "GET",
+      "url": "http://localhost:4732/@fs/private/var/folders/d9/xqhkvsp94rg0n0n523snqztm0000gn/T/opencode/workbot-finch-artifact/ee/apps/workbot/node_modules/.vite/deps/@base-ui_react_alert-dialog.js?v=70c6e315"
+    },
+    {
+      "method": "GET",
+      "url": "http://localhost:4732/@fs/private/var/folders/d9/xqhkvsp94rg0n0n523snqztm0000gn/T/opencode/workbot-finch-artifact/ee/apps/workbot/node_modules/.vite/deps/lucide-react.js?v=70c6e315"
+    },
+    {
+      "method": "GET",
+      "url": "http://localhost:4732/@fs/private/var/folders/d9/xqhkvsp94rg0n0n523snqztm0000gn/T/opencode/workbot-finch-artifact/ee/packages/workbot-ui/src/mark.tsx"
+    },
+    {
+      "method": "GET",
+      "url": "http://localhost:4732/@fs/private/var/folders/d9/xqhkvsp94rg0n0n523snqztm0000gn/T/opencode/workbot-finch-artifact/ee/packages/workbot-ui/src/chats.tsx"
+    },
+    {
+      "method": "GET",
+      "url": "http://localhost:4732/@fs/private/var/folders/d9/xqhkvsp94rg0n0n523snqztm0000gn/T/opencode/workbot-finch-artifact/ee/packages/workbot-ui/src/navigation.tsx"
+    },
+    {
+      "method": "GET",
+      "url": "http://localhost:4732/@fs/private/var/folders/d9/xqhkvsp94rg0n0n523snqztm0000gn/T/opencode/workbot-finch-artifact/ee/packages/workbot-ui/src/profile-sheet.tsx"
+    },
+    {
+      "method": "GET",
+      "url": "http://localhost:4732/@fs/private/var/folders/d9/xqhkvsp94rg0n0n523snqztm0000gn/T/opencode/workbot-finch-artifact/ee/packages/workbot-ui/src/data.ts"
+    },
+    {
+      "method": "GET",
+      "url": "http://localhost:4732/@fs/private/var/folders/d9/xqhkvsp94rg0n0n523snqztm0000gn/T/opencode/workbot-finch-artifact/ee/packages/workbot-ui/src/files.tsx"
+    },
+    {
+      "method": "GET",
+      "url": "http://localhost:4732/@fs/private/var/folders/d9/xqhkvsp94rg0n0n523snqztm0000gn/T/opencode/workbot-finch-artifact/ee/packages/workbot-ui/src/composer-state.ts"
+    },
+    {
+      "method": "GET",
+      "url": "http://localhost:4732/@fs/private/var/folders/d9/xqhkvsp94rg0n0n523snqztm0000gn/T/opencode/workbot-finch-artifact/ee/packages/workbot-ui/src/computer-work.ts"
+    },
+    {
+      "method": "GET",
+      "url": "http://localhost:4732/@fs/private/var/folders/d9/xqhkvsp94rg0n0n523snqztm0000gn/T/opencode/workbot-finch-artifact/ee/packages/workbot-ui/src/browser-preview.tsx"
+    },
+    {
+      "method": "GET",
+      "url": "http://localhost:4732/@fs/private/var/folders/d9/xqhkvsp94rg0n0n523snqztm0000gn/T/opencode/workbot-finch-artifact/ee/packages/workbot-ui/src/account-menu.tsx"
+    },
+    {
+      "method": "GET",
+      "url": "http://localhost:4732/@fs/private/var/folders/d9/xqhkvsp94rg0n0n523snqztm0000gn/T/opencode/workbot-finch-artifact/ee/packages/workbot-ui/src/markdown.tsx"
+    },
+    {
+      "method": "GET",
+      "url": "http://localhost:4732/@fs/private/var/folders/d9/xqhkvsp94rg0n0n523snqztm0000gn/T/opencode/workbot-finch-artifact/ee/packages/workbot-ui/src/open-file.ts"
+    },
+    {
+      "method": "GET",
+      "url": "http://localhost:4732/@fs/private/var/folders/d9/xqhkvsp94rg0n0n523snqztm0000gn/T/opencode/workbot-finch-artifact/ee/packages/workbot-ui/src/artifact.ts"
+    },
+    {
+      "method": "GET",
+      "url": "http://localhost:4732/@fs/private/var/folders/d9/xqhkvsp94rg0n0n523snqztm0000gn/T/opencode/workbot-finch-artifact/ee/packages/workbot-ui/src/artifact-card.tsx"
+    },
+    {
+      "method": "GET",
+      "url": "http://localhost:4732/@fs/private/var/folders/d9/xqhkvsp94rg0n0n523snqztm0000gn/T/opencode/workbot-finch-artifact/ee/packages/workbot-ui/src/welcome.tsx"
+    },
+    {
+      "method": "GET",
+      "url": "http://localhost:4732/@fs/private/var/folders/d9/xqhkvsp94rg0n0n523snqztm0000gn/T/opencode/workbot-finch-artifact/ee/packages/workbot-ui/src/model-recovery.tsx"
+    },
+    {
+      "method": "GET",
+      "url": "http://localhost:4732/@fs/private/var/folders/d9/xqhkvsp94rg0n0n523snqztm0000gn/T/opencode/workbot-finch-artifact/ee/packages/workbot-ui/src/activation.tsx"
+    },
+    {
+      "method": "GET",
+      "url": "http://localhost:4732/@fs/private/var/folders/d9/xqhkvsp94rg0n0n523snqztm0000gn/T/opencode/workbot-finch-artifact/ee/packages/workbot-ui/src/calendar.tsx"
+    },
+    {
+      "method": "GET",
+      "url": "http://localhost:4732/@fs/private/var/folders/d9/xqhkvsp94rg0n0n523snqztm0000gn/T/opencode/workbot-finch-artifact/ee/packages/workbot-ui/src/documents.tsx"
+    },
+    {
+      "method": "GET",
+      "url": "http://localhost:4732/@fs/private/var/folders/d9/xqhkvsp94rg0n0n523snqztm0000gn/T/opencode/workbot-finch-artifact/ee/packages/workbot-ui/src/computer.tsx"
+    },
+    {
+      "method": "GET",
+      "url": "http://localhost:4732/@fs/private/var/folders/d9/xqhkvsp94rg0n0n523snqztm0000gn/T/opencode/workbot-finch-artifact/packages/types/src/browser-demonstration.ts"
+    },
+    {
+      "method": "GET",
+      "url": "http://localhost:4732/@fs/private/var/folders/d9/xqhkvsp94rg0n0n523snqztm0000gn/T/opencode/workbot-finch-artifact/packages/types/src/workbot-context.ts"
+    },
+    {
+      "method": "GET",
+      "url": "http://localhost:4732/@fs/private/var/folders/d9/xqhkvsp94rg0n0n523snqztm0000gn/T/opencode/workbot-finch-artifact/ee/packages/workbot-ui/src/workspace.tsx"
+    },
+    {
+      "method": "GET",
+      "url": "http://localhost:4732/@fs/private/var/folders/d9/xqhkvsp94rg0n0n523snqztm0000gn/T/opencode/workbot-finch-artifact/packages/ui/src/react/index.ts"
+    },
+    {
+      "method": "GET",
+      "url": "http://localhost:4732/@fs/private/var/folders/d9/xqhkvsp94rg0n0n523snqztm0000gn/T/opencode/workbot-finch-artifact/ee/packages/workbot-ui/src/native-dictation.tsx"
+    },
+    {
+      "method": "GET",
+      "url": "http://localhost:4732/@fs/private/var/folders/d9/xqhkvsp94rg0n0n523snqztm0000gn/T/opencode/workbot-finch-artifact/ee/packages/workbot-ui/src/command-palette.tsx"
+    },
+    {
+      "method": "GET",
+      "url": "http://localhost:4732/@fs/private/var/folders/d9/xqhkvsp94rg0n0n523snqztm0000gn/T/opencode/workbot-finch-artifact/ee/packages/workbot-ui/src/activity.ts"
+    },
+    {
+      "method": "GET",
+      "url": "http://localhost:4732/@fs/private/var/folders/d9/xqhkvsp94rg0n0n523snqztm0000gn/T/opencode/workbot-finch-artifact/ee/packages/workbot-ui/src/working-status.tsx"
+    },
+    {
+      "method": "GET",
+      "url": "http://localhost:4732/@fs/private/var/folders/d9/xqhkvsp94rg0n0n523snqztm0000gn/T/opencode/workbot-finch-artifact/ee/packages/workbot-ui/src/first-reply.ts"
+    },
+    {
+      "method": "GET",
+      "url": "http://localhost:4732/@fs/private/var/folders/d9/xqhkvsp94rg0n0n523snqztm0000gn/T/opencode/workbot-finch-artifact/ee/packages/workbot-ui/src/remote-jobs.tsx"
+    },
+    {
+      "method": "GET",
+      "url": "http://localhost:4732/@fs/private/var/folders/d9/xqhkvsp94rg0n0n523snqztm0000gn/T/opencode/workbot-finch-artifact/ee/packages/workbot-ui/src/conversation-scroll.ts"
+    },
+    {
+      "method": "GET",
+      "url": "http://localhost:4732/@fs/private/var/folders/d9/xqhkvsp94rg0n0n523snqztm0000gn/T/opencode/workbot-finch-artifact/ee/packages/workbot-ui/src/viewport.ts"
+    },
+    {
+      "method": "GET",
+      "url": "http://localhost:4732/@fs/private/var/folders/d9/xqhkvsp94rg0n0n523snqztm0000gn/T/opencode/workbot-finch-artifact/ee/packages/workbot-ui/src/auto-height.ts"
+    },
+    {
+      "method": "GET",
+      "url": "http://localhost:4732/@fs/private/var/folders/d9/xqhkvsp94rg0n0n523snqztm0000gn/T/opencode/workbot-finch-artifact/ee/packages/workbot-ui/src/connector-activity.ts"
+    },
+    {
+      "method": "GET",
+      "url": "http://localhost:4732/@fs/private/var/folders/d9/xqhkvsp94rg0n0n523snqztm0000gn/T/opencode/workbot-finch-artifact/ee/packages/workbot-ui/src/connector-line.tsx"
+    },
+    {
+      "method": "GET",
+      "url": "http://localhost:4732/@fs/private/var/folders/d9/xqhkvsp94rg0n0n523snqztm0000gn/T/opencode/workbot-finch-artifact/ee/apps/workbot/node_modules/.vite/deps/chunk-OSWOPBDM.js?v=70c6e315"
+    },
+    {
+      "method": "GET",
+      "url": "http://localhost:4732/@fs/private/var/folders/d9/xqhkvsp94rg0n0n523snqztm0000gn/T/opencode/workbot-finch-artifact/ee/apps/workbot/node_modules/.vite/deps/chunk-JDWSK6RP.js?v=70c6e315"
+    },
+    {
+      "method": "GET",
+      "url": "http://localhost:4732/@fs/private/var/folders/d9/xqhkvsp94rg0n0n523snqztm0000gn/T/opencode/workbot-finch-artifact/ee/apps/workbot/node_modules/.vite/deps/chunk-PDLEJQGY.js?v=70c6e315"
+    },
+    {
+      "method": "GET",
+      "url": "http://localhost:4732/@fs/private/var/folders/d9/xqhkvsp94rg0n0n523snqztm0000gn/T/opencode/workbot-finch-artifact/ee/apps/workbot/node_modules/.vite/deps/chunk-4AGW72KR.js?v=70c6e315"
+    },
+    {
+      "method": "GET",
+      "url": "http://localhost:4732/@fs/private/var/folders/d9/xqhkvsp94rg0n0n523snqztm0000gn/T/opencode/workbot-finch-artifact/ee/apps/workbot/node_modules/.vite/deps/chunk-DV2Q3IDH.js?v=70c6e315"
+    },
+    {
+      "method": "GET",
+      "url": "http://localhost:4732/@fs/private/var/folders/d9/xqhkvsp94rg0n0n523snqztm0000gn/T/opencode/workbot-finch-artifact/ee/apps/workbot/node_modules/.vite/deps/chunk-IVDGSEYY.js?v=70c6e315"
+    },
+    {
+      "method": "GET",
+      "url": "http://localhost:4732/@fs/private/var/folders/d9/xqhkvsp94rg0n0n523snqztm0000gn/T/opencode/workbot-finch-artifact/ee/apps/workbot/node_modules/.vite/deps/chunk-KGGTM2CR.js?v=70c6e315"
+    },
+    {
+      "method": "GET",
+      "url": "http://localhost:4732/@fs/private/var/folders/d9/xqhkvsp94rg0n0n523snqztm0000gn/T/opencode/workbot-finch-artifact/ee/apps/workbot/node_modules/.vite/deps/chunk-S64B7672.js?v=70c6e315"
+    },
+    {
+      "method": "GET",
+      "url": "http://localhost:4732/@fs/private/var/folders/d9/xqhkvsp94rg0n0n523snqztm0000gn/T/opencode/workbot-finch-artifact/ee/apps/workbot/node_modules/.vite/deps/chunk-LRYMTHYH.js?v=70c6e315"
+    },
+    {
+      "method": "GET",
+      "url": "http://localhost:4732/@fs/private/var/folders/d9/xqhkvsp94rg0n0n523snqztm0000gn/T/opencode/workbot-finch-artifact/packages/documents/src/office-engine.ts"
+    },
+    {
+      "method": "GET",
+      "url": "http://localhost:4732/@fs/private/var/folders/d9/xqhkvsp94rg0n0n523snqztm0000gn/T/opencode/workbot-finch-artifact/packages/documents/src/model.ts"
+    },
+    {
+      "method": "GET",
+      "url": "http://localhost:4732/@fs/private/var/folders/d9/xqhkvsp94rg0n0n523snqztm0000gn/T/opencode/workbot-finch-artifact/ee/apps/workbot/node_modules/.vite/deps/@base-ui_react_dialog.js?v=70c6e315"
+    },
+    {
+      "method": "GET",
+      "url": "http://localhost:4732/@fs/private/var/folders/d9/xqhkvsp94rg0n0n523snqztm0000gn/T/opencode/workbot-finch-artifact/packages/calendar/src/index.ts"
+    },
+    {
+      "method": "GET",
+      "url": "http://localhost:4732/@fs/private/var/folders/d9/xqhkvsp94rg0n0n523snqztm0000gn/T/opencode/workbot-finch-artifact/ee/packages/workbot-ui/src/calendar-data.ts"
+    },
+    {
+      "method": "GET",
+      "url": "http://localhost:4732/@fs/private/var/folders/d9/xqhkvsp94rg0n0n523snqztm0000gn/T/opencode/workbot-finch-artifact/ee/packages/workbot-ui/src/apps.ts"
+    },
+    {
+      "method": "GET",
+      "url": "http://localhost:4732/@fs/private/var/folders/d9/xqhkvsp94rg0n0n523snqztm0000gn/T/opencode/workbot-finch-artifact/ee/packages/workbot-ui/src/connect.tsx"
+    },
+    {
+      "method": "GET",
+      "url": "http://localhost:4732/@fs/private/var/folders/d9/xqhkvsp94rg0n0n523snqztm0000gn/T/opencode/workbot-finch-artifact/ee/packages/workbot-ui/src/format.ts"
+    },
+    {
+      "method": "GET",
+      "url": "http://localhost:4732/@fs/private/var/folders/d9/xqhkvsp94rg0n0n523snqztm0000gn/T/opencode/workbot-finch-artifact/ee/packages/workbot-ui/src/live-retry.ts"
+    },
+    {
+      "method": "GET",
+      "url": "http://localhost:4732/@fs/private/var/folders/d9/xqhkvsp94rg0n0n523snqztm0000gn/T/opencode/workbot-finch-artifact/packages/types/src/den/workbot-settings.ts"
+    },
+    {
+      "method": "GET",
+      "url": "http://localhost:4732/@fs/private/var/folders/d9/xqhkvsp94rg0n0n523snqztm0000gn/T/opencode/workbot-finch-artifact/ee/packages/workbot-ui/src/live-readiness.ts"
+    },
+    {
+      "method": "GET",
+      "url": "http://localhost:4732/@fs/private/var/folders/d9/xqhkvsp94rg0n0n523snqztm0000gn/T/opencode/workbot-finch-artifact/ee/apps/workbot/node_modules/.vite/deps/@base-ui_react_tooltip.js?v=70c6e315"
+    },
+    {
+      "method": "GET",
+      "url": "http://localhost:4732/@fs/private/var/folders/d9/xqhkvsp94rg0n0n523snqztm0000gn/T/opencode/workbot-finch-artifact/ee/packages/workbot-ui/src/images.ts"
+    },
+    {
+      "method": "GET",
+      "url": "http://localhost:4732/@fs/private/var/folders/d9/xqhkvsp94rg0n0n523snqztm0000gn/T/opencode/workbot-finch-artifact/ee/packages/workbot-ui/src/preview.tsx"
+    },
+    {
+      "method": "GET",
+      "url": "http://localhost:4732/@fs/private/var/folders/d9/xqhkvsp94rg0n0n523snqztm0000gn/T/opencode/workbot-finch-artifact/ee/apps/workbot/node_modules/.vite/deps/@base-ui_react_menu.js?v=70c6e315"
+    },
+    {
+      "method": "GET",
+      "url": "http://localhost:4732/@fs/private/var/folders/d9/xqhkvsp94rg0n0n523snqztm0000gn/T/opencode/workbot-finch-artifact/ee/apps/workbot/node_modules/.vite/deps/marked.js?v=70c6e315"
+    },
+    {
+      "method": "GET",
+      "url": "http://localhost:4732/@fs/private/var/folders/d9/xqhkvsp94rg0n0n523snqztm0000gn/T/opencode/workbot-finch-artifact/ee/packages/workbot-ui/src/model-recovery-state.ts"
+    },
+    {
+      "method": "GET",
+      "url": "http://localhost:4732/@fs/private/var/folders/d9/xqhkvsp94rg0n0n523snqztm0000gn/T/opencode/workbot-finch-artifact/ee/apps/workbot/node_modules/.vite/deps/@base-ui_react_popover.js?v=70c6e315"
+    },
+    {
+      "method": "GET",
+      "url": "http://localhost:4732/@fs/private/var/folders/d9/xqhkvsp94rg0n0n523snqztm0000gn/T/opencode/workbot-finch-artifact/packages/types/src/den/activation.ts"
+    },
+    {
+      "method": "GET",
+      "url": "http://localhost:4732/@fs/private/var/folders/d9/xqhkvsp94rg0n0n523snqztm0000gn/T/opencode/workbot-finch-artifact/ee/packages/workbot-ui/src/teaching.tsx"
+    },
+    {
+      "method": "GET",
+      "url": "http://localhost:4732/@fs/private/var/folders/d9/xqhkvsp94rg0n0n523snqztm0000gn/T/opencode/workbot-finch-artifact/ee/packages/workbot-ui/src/screencast.ts"
+    },
+    {
+      "method": "GET",
+      "url": "http://localhost:4732/@fs/private/var/folders/d9/xqhkvsp94rg0n0n523snqztm0000gn/T/opencode/workbot-finch-artifact/ee/packages/workbot-ui/src/frame-cache.ts"
+    },
+    {
+      "method": "GET",
+      "url": "http://localhost:4732/@fs/private/var/folders/d9/xqhkvsp94rg0n0n523snqztm0000gn/T/opencode/workbot-finch-artifact/packages/documents/src/browser.tsx"
+    },
+    {
+      "method": "GET",
+      "url": "http://localhost:4732/@fs/private/var/folders/d9/xqhkvsp94rg0n0n523snqztm0000gn/T/opencode/workbot-finch-artifact/packages/ui/src/common/paper.ts"
+    },
+    {
+      "method": "GET",
+      "url": "http://localhost:4732/@fs/private/var/folders/d9/xqhkvsp94rg0n0n523snqztm0000gn/T/opencode/workbot-finch-artifact/packages/ui/src/react/paper/grain-gradient.tsx"
+    },
+    {
+      "method": "GET",
+      "url": "http://localhost:4732/@fs/private/var/folders/d9/xqhkvsp94rg0n0n523snqztm0000gn/T/opencode/workbot-finch-artifact/packages/ui/src/react/paper/mesh-gradient.tsx"
+    },
+    {
+      "method": "GET",
+      "url": "http://localhost:4732/@fs/private/var/folders/d9/xqhkvsp94rg0n0n523snqztm0000gn/T/opencode/workbot-finch-artifact/packages/ui/src/react/paper/static-seeded-gradient.tsx"
+    },
+    {
+      "method": "GET",
+      "url": "http://localhost:4732/@fs/private/var/folders/d9/xqhkvsp94rg0n0n523snqztm0000gn/T/opencode/workbot-finch-artifact/packages/ui/src/react/download-card.tsx"
+    },
+    {
+      "method": "GET",
+      "url": "http://localhost:4732/@fs/private/var/folders/d9/xqhkvsp94rg0n0n523snqztm0000gn/T/opencode/workbot-finch-artifact/packages/ui/src/react/roadmap.tsx"
+    },
+    {
+      "method": "GET",
+      "url": "http://localhost:4732/@fs/private/var/folders/d9/xqhkvsp94rg0n0n523snqztm0000gn/T/opencode/workbot-finch-artifact/packages/ui/src/react/platform-detect.ts"
+    },
+    {
+      "method": "GET",
+      "url": "http://localhost:4732/@fs/private/var/folders/d9/xqhkvsp94rg0n0n523snqztm0000gn/T/opencode/workbot-finch-artifact/packages/ui/src/react/native-dictation.ts"
+    },
+    {
+      "method": "GET",
+      "url": "http://localhost:4732/@fs/private/var/folders/d9/xqhkvsp94rg0n0n523snqztm0000gn/T/opencode/workbot-finch-artifact/packages/ui/src/react/dictation-waveform.tsx"
+    },
+    {
+      "method": "GET",
+      "url": "http://localhost:4732/@fs/private/var/folders/d9/xqhkvsp94rg0n0n523snqztm0000gn/T/opencode/workbot-finch-artifact/packages/ui/src/react/dithered-onboarding-shell.tsx"
+    },
+    {
+      "method": "GET",
+      "url": "http://localhost:4732/@fs/private/var/folders/d9/xqhkvsp94rg0n0n523snqztm0000gn/T/opencode/workbot-finch-artifact/packages/calendar/src/react.ts"
+    },
+    {
+      "method": "GET",
+      "url": "http://localhost:4732/@fs/private/var/folders/d9/xqhkvsp94rg0n0n523snqztm0000gn/T/opencode/workbot-finch-artifact/ee/packages/workbot-ui/src/calendar-create.tsx"
+    },
+    {
+      "method": "GET",
+      "url": "http://localhost:4732/@fs/private/var/folders/d9/xqhkvsp94rg0n0n523snqztm0000gn/T/opencode/workbot-finch-artifact/ee/packages/workbot-ui/src/model-picker.tsx"
+    },
+    {
+      "method": "GET",
+      "url": "http://localhost:4732/@fs/private/var/folders/d9/xqhkvsp94rg0n0n523snqztm0000gn/T/opencode/workbot-finch-artifact/ee/apps/workbot/node_modules/.vite/deps/@base-ui_react_button.js?v=70c6e315"
+    },
+    {
+      "method": "GET",
+      "url": "http://localhost:4732/@fs/private/var/folders/d9/xqhkvsp94rg0n0n523snqztm0000gn/T/opencode/workbot-finch-artifact/packages/types/src/workbot-remote-jobs.ts"
+    },
+    {
+      "method": "GET",
+      "url": "http://localhost:4732/@fs/private/var/folders/d9/xqhkvsp94rg0n0n523snqztm0000gn/T/opencode/workbot-finch-artifact/ee/apps/workbot/node_modules/.vite/deps/@base-ui_react_autocomplete.js?v=70c6e315"
+    },
+    {
+      "method": "GET",
+      "url": "http://localhost:4732/@fs/private/var/folders/d9/xqhkvsp94rg0n0n523snqztm0000gn/T/opencode/workbot-finch-artifact/ee/packages/workbot-ui/src/command-palette-search.ts"
+    },
+    {
+      "method": "GET",
+      "url": "http://localhost:4732/@fs/private/var/folders/d9/xqhkvsp94rg0n0n523snqztm0000gn/T/opencode/workbot-finch-artifact/packages/calendar/src/adapters.ts"
+    },
+    {
+      "method": "GET",
+      "url": "http://localhost:4732/@fs/private/var/folders/d9/xqhkvsp94rg0n0n523snqztm0000gn/T/opencode/workbot-finch-artifact/packages/calendar/src/automation-items.ts"
+    },
+    {
+      "method": "GET",
+      "url": "http://localhost:4732/@fs/private/var/folders/d9/xqhkvsp94rg0n0n523snqztm0000gn/T/opencode/workbot-finch-artifact/packages/calendar/src/den-contract.ts"
+    },
+    {
+      "method": "GET",
+      "url": "http://localhost:4732/@fs/private/var/folders/d9/xqhkvsp94rg0n0n523snqztm0000gn/T/opencode/workbot-finch-artifact/packages/calendar/src/event.ts"
+    },
+    {
+      "method": "GET",
+      "url": "http://localhost:4732/@fs/private/var/folders/d9/xqhkvsp94rg0n0n523snqztm0000gn/T/opencode/workbot-finch-artifact/packages/calendar/src/format.ts"
+    },
+    {
+      "method": "GET",
+      "url": "http://localhost:4732/@fs/private/var/folders/d9/xqhkvsp94rg0n0n523snqztm0000gn/T/opencode/workbot-finch-artifact/packages/calendar/src/layout.ts"
+    },
+    {
+      "method": "GET",
+      "url": "http://localhost:4732/@fs/private/var/folders/d9/xqhkvsp94rg0n0n523snqztm0000gn/T/opencode/workbot-finch-artifact/packages/calendar/src/runs.ts"
+    },
+    {
+      "method": "GET",
+      "url": "http://localhost:4732/@fs/private/var/folders/d9/xqhkvsp94rg0n0n523snqztm0000gn/T/opencode/workbot-finch-artifact/packages/calendar/src/slot.ts"
+    },
+    {
+      "method": "GET",
+      "url": "http://localhost:4732/@fs/private/var/folders/d9/xqhkvsp94rg0n0n523snqztm0000gn/T/opencode/workbot-finch-artifact/packages/calendar/src/time.ts"
+    },
+    {
+      "method": "GET",
+      "url": "http://localhost:4732/@fs/private/var/folders/d9/xqhkvsp94rg0n0n523snqztm0000gn/T/opencode/workbot-finch-artifact/packages/types/src/automations.ts"
+    },
+    {
+      "method": "GET",
+      "url": "http://localhost:4732/@fs/private/var/folders/d9/xqhkvsp94rg0n0n523snqztm0000gn/T/opencode/workbot-finch-artifact/packages/types/src/automation-models.ts"
+    },
+    {
+      "method": "GET",
+      "url": "http://localhost:4732/@fs/private/var/folders/d9/xqhkvsp94rg0n0n523snqztm0000gn/T/opencode/workbot-finch-artifact/ee/packages/workbot-ui/src/connect-result.ts"
+    },
+    {
+      "method": "GET",
+      "url": "http://localhost:4732/@fs/private/var/folders/d9/xqhkvsp94rg0n0n523snqztm0000gn/T/opencode/workbot-finch-artifact/ee/apps/workbot/node_modules/.vite/deps/chunk-72XV6NYW.js?v=70c6e315"
+    },
+    {
+      "method": "GET",
+      "url": "http://localhost:4732/@fs/private/var/folders/d9/xqhkvsp94rg0n0n523snqztm0000gn/T/opencode/workbot-finch-artifact/ee/apps/workbot/node_modules/.vite/deps/chunk-UXM3UXPA.js?v=70c6e315"
+    },
+    {
+      "method": "GET",
+      "url": "http://localhost:4732/@fs/private/var/folders/d9/xqhkvsp94rg0n0n523snqztm0000gn/T/opencode/workbot-finch-artifact/ee/apps/workbot/node_modules/.vite/deps/chunk-7TFUQRHG.js?v=70c6e315"
+    },
+    {
+      "method": "GET",
+      "url": "http://localhost:4732/@fs/private/var/folders/d9/xqhkvsp94rg0n0n523snqztm0000gn/T/opencode/workbot-finch-artifact/ee/apps/workbot/node_modules/.vite/deps/chunk-MOSC4ZFK.js?v=70c6e315"
+    },
+    {
+      "method": "GET",
+      "url": "http://localhost:4732/@fs/private/var/folders/d9/xqhkvsp94rg0n0n523snqztm0000gn/T/opencode/workbot-finch-artifact/ee/apps/workbot/node_modules/.vite/deps/chunk-XQNLD6JA.js?v=70c6e315"
+    },
+    {
+      "method": "GET",
+      "url": "http://localhost:4732/@fs/private/var/folders/d9/xqhkvsp94rg0n0n523snqztm0000gn/T/opencode/workbot-finch-artifact/ee/apps/workbot/node_modules/.vite/deps/chunk-3PFZDDLS.js?v=70c6e315"
+    },
+    {
+      "method": "GET",
+      "url": "http://localhost:4732/@fs/private/var/folders/d9/xqhkvsp94rg0n0n523snqztm0000gn/T/opencode/workbot-finch-artifact/ee/apps/workbot/node_modules/.vite/deps/chunk-MJ2LKNCO.js?v=70c6e315"
+    },
+    {
+      "method": "GET",
+      "url": "http://localhost:4732/@fs/private/var/folders/d9/xqhkvsp94rg0n0n523snqztm0000gn/T/opencode/workbot-finch-artifact/ee/apps/workbot/node_modules/.vite/deps/chunk-NNYOQUXO.js?v=70c6e315"
+    },
+    {
+      "method": "GET",
+      "url": "http://localhost:4732/@fs/private/var/folders/d9/xqhkvsp94rg0n0n523snqztm0000gn/T/opencode/workbot-finch-artifact/ee/apps/workbot/node_modules/.vite/deps/chunk-OBQOYKLG.js?v=70c6e315"
+    },
+    {
+      "method": "GET",
+      "url": "http://localhost:4732/@fs/private/var/folders/d9/xqhkvsp94rg0n0n523snqztm0000gn/T/opencode/workbot-finch-artifact/ee/apps/workbot/node_modules/.vite/deps/chunk-6CAX5IFH.js?v=70c6e315"
+    },
+    {
+      "method": "GET",
+      "url": "http://localhost:4732/@fs/private/var/folders/d9/xqhkvsp94rg0n0n523snqztm0000gn/T/opencode/workbot-finch-artifact/ee/apps/workbot/node_modules/.vite/deps/@base-ui_react_select.js?v=70c6e315"
+    },
+    {
+      "method": "GET",
+      "url": "http://localhost:4732/@fs/private/var/folders/d9/xqhkvsp94rg0n0n523snqztm0000gn/T/opencode/workbot-finch-artifact/packages/types/src/skill-created-app.ts"
+    },
+    {
+      "method": "GET",
+      "url": "http://localhost:4732/@fs/private/var/folders/d9/xqhkvsp94rg0n0n523snqztm0000gn/T/opencode/workbot-finch-artifact/ee/apps/workbot/node_modules/.vite/deps/@paper-design_shaders.js?v=70c6e315"
+    },
+    {
+      "method": "GET",
+      "url": "http://localhost:4732/@fs/private/var/folders/d9/xqhkvsp94rg0n0n523snqztm0000gn/T/opencode/workbot-finch-artifact/ee/apps/workbot/node_modules/.vite/deps/@paper-design_shaders-react.js?v=70c6e315"
+    },
+    {
+      "method": "GET",
+      "url": "http://localhost:4732/@fs/private/var/folders/d9/xqhkvsp94rg0n0n523snqztm0000gn/T/opencode/workbot-finch-artifact/packages/documents/src/editor.tsx"
+    },
+    {
+      "method": "GET",
+      "url": "http://localhost:4732/@fs/private/var/folders/d9/xqhkvsp94rg0n0n523snqztm0000gn/T/opencode/workbot-finch-artifact/packages/documents/src/document-tabs.tsx"
+    },
+    {
+      "method": "GET",
+      "url": "http://localhost:4732/@fs/private/var/folders/d9/xqhkvsp94rg0n0n523snqztm0000gn/T/opencode/workbot-finch-artifact/packages/documents/src/item-icon.tsx"
+    },
+    {
+      "method": "GET",
+      "url": "http://localhost:4732/@fs/private/var/folders/d9/xqhkvsp94rg0n0n523snqztm0000gn/T/opencode/workbot-finch-artifact/packages/documents/src/queries.ts"
+    },
+    {
+      "method": "GET",
+      "url": "http://localhost:4732/@fs/private/var/folders/d9/xqhkvsp94rg0n0n523snqztm0000gn/T/opencode/workbot-finch-artifact/packages/documents/src/office-editor.tsx"
+    },
+    {
+      "method": "GET",
+      "url": "http://localhost:4732/@fs/private/var/folders/d9/xqhkvsp94rg0n0n523snqztm0000gn/T/opencode/workbot-finch-artifact/packages/documents/src/document-toolbar.tsx"
+    },
+    {
+      "method": "GET",
+      "url": "http://localhost:4732/@fs/private/var/folders/d9/xqhkvsp94rg0n0n523snqztm0000gn/T/opencode/workbot-finch-artifact/packages/ui/src/react/browser-dictation.ts"
+    },
+    {
+      "method": "GET",
+      "url": "http://localhost:4732/@fs/private/var/folders/d9/xqhkvsp94rg0n0n523snqztm0000gn/T/opencode/workbot-finch-artifact/ee/apps/workbot/node_modules/.vite/deps/@base-ui_react_combobox.js?v=70c6e315"
+    },
+    {
+      "method": "GET",
+      "url": "http://localhost:4732/@fs/private/var/folders/d9/xqhkvsp94rg0n0n523snqztm0000gn/T/opencode/workbot-finch-artifact/packages/ui/src/react/provider-icon.tsx"
+    },
+    {
+      "method": "GET",
+      "url": "http://localhost:4732/@fs/private/var/folders/d9/xqhkvsp94rg0n0n523snqztm0000gn/T/opencode/workbot-finch-artifact/ee/apps/workbot/node_modules/.vite/deps/chunk-NJVXY7CE.js?v=70c6e315"
+    },
+    {
+      "method": "GET",
+      "url": "http://localhost:4732/@fs/private/var/folders/d9/xqhkvsp94rg0n0n523snqztm0000gn/T/opencode/workbot-finch-artifact/ee/apps/workbot/node_modules/.vite/deps/chunk-HCL42GCZ.js?v=70c6e315"
+    },
+    {
+      "method": "GET",
+      "url": "http://localhost:4732/@fs/private/var/folders/d9/xqhkvsp94rg0n0n523snqztm0000gn/T/opencode/workbot-finch-artifact/ee/apps/workbot/node_modules/.vite/deps/fuzzysort.js?v=70c6e315"
+    },
+    {
+      "method": "GET",
+      "url": "http://localhost:4732/@fs/private/var/folders/d9/xqhkvsp94rg0n0n523snqztm0000gn/T/opencode/workbot-finch-artifact/packages/types/src/automation-schedule.ts"
+    },
+    {
+      "method": "GET",
+      "url": "http://localhost:4732/@fs/private/var/folders/d9/xqhkvsp94rg0n0n523snqztm0000gn/T/opencode/workbot-finch-artifact/packages/types/src/den/inference.ts"
+    },
+    {
+      "method": "GET",
+      "url": "http://localhost:4732/@fs/private/var/folders/d9/xqhkvsp94rg0n0n523snqztm0000gn/T/opencode/workbot-finch-artifact/ee/apps/workbot/node_modules/.vite/deps/chunk-7ULELY6O.js?v=70c6e315"
+    },
+    {
+      "method": "GET",
+      "url": "http://localhost:4732/@fs/private/var/folders/d9/xqhkvsp94rg0n0n523snqztm0000gn/T/opencode/workbot-finch-artifact/ee/apps/workbot/node_modules/.vite/deps/chunk-TELARGU3.js?v=70c6e315"
+    },
+    {
+      "method": "GET",
+      "url": "http://localhost:4732/@fs/private/var/folders/d9/xqhkvsp94rg0n0n523snqztm0000gn/T/opencode/workbot-finch-artifact/packages/documents/src/editor-actions.tsx"
+    },
+    {
+      "method": "GET",
+      "url": "http://localhost:4732/@fs/private/var/folders/d9/xqhkvsp94rg0n0n523snqztm0000gn/T/opencode/workbot-finch-artifact/packages/documents/src/unsaved-dialog.tsx"
+    },
+    {
+      "method": "GET",
+      "url": "http://localhost:4732/@fs/private/var/folders/d9/xqhkvsp94rg0n0n523snqztm0000gn/T/opencode/workbot-finch-artifact/packages/documents/src/collabora-controller.ts"
+    },
+    {
+      "method": "GET",
+      "url": "http://localhost:4732/@fs/private/var/folders/d9/xqhkvsp94rg0n0n523snqztm0000gn/T/opencode/workbot-finch-artifact/ee/apps/workbot/node_modules/.vite/deps/@base-ui_react_toolbar.js?v=70c6e315"
+    },
+    {
+      "method": "GET",
+      "url": "http://localhost:4732/@fs/private/var/folders/d9/xqhkvsp94rg0n0n523snqztm0000gn/T/opencode/workbot-finch-artifact/ee/apps/workbot/node_modules/.vite/deps/chunk-MIZWYKYF.js?v=70c6e315"
+    },
+    {
+      "method": "GET",
+      "url": "http://localhost:4732/@fs/private/var/folders/d9/xqhkvsp94rg0n0n523snqztm0000gn/T/opencode/workbot-finch-artifact/packages/ui/src/react/provider-logo-src.ts"
+    },
+    {
+      "method": "GET",
+      "url": "http://localhost:4732/@fs/private/var/folders/d9/xqhkvsp94rg0n0n523snqztm0000gn/T/opencode/workbot-finch-artifact/packages/ui/src/react/openwork-mark.tsx"
+    },
+    {
+      "method": "GET",
+      "url": "http://localhost:4732/@fs/private/var/folders/d9/xqhkvsp94rg0n0n523snqztm0000gn/T/opencode/workbot-finch-artifact/ee/apps/workbot/node_modules/.vite/deps/react-dom.js?v=70c6e315"
+    },
+    {
+      "method": "GET",
+      "url": "http://localhost:4732/v1/workbot?turns=8"
+    },
+    {
+      "method": "GET",
+      "url": "http://localhost:4732/v1/workbot/connections"
+    },
+    {
+      "method": "GET",
+      "url": "http://localhost:4732/v1/workbot/events"
+    },
+    {
+      "method": "POST",
+      "url": "http://localhost:4732/v1/workbot/computer/viewer"
+    },
+    {
+      "method": "GET",
+      "url": "https://www.google.com/s2/favicons?sz=64&domain=slack.com"
+    },
+    {
+      "method": "GET",
+      "url": "https://t3.gstatic.com/faviconV2?client=SOCIAL&type=FAVICON&fallback_opts=TYPE,SIZE,URL&url=http://slack.com&size=64"
+    },
+    {
+      "method": "GET",
+      "url": "http://localhost:4732/v1/workbot?turns=8"
+    },
+    {
+      "method": "GET",
+      "url": "http://localhost:4732/v1/workbot?turns=8"
+    },
+    {
+      "method": "GET",
+      "url": "http://localhost:4732/v1/workbot?turns=8"
+    }
+  ],
+  "failure": "TimeoutError: page.waitForFunction: Timeout 30000ms exceeded."
+}
