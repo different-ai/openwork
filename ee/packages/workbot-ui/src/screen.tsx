@@ -1820,8 +1820,8 @@ function TurnView(props: {
   // Real words replace this acceptance line; it never claims the browser opened or a background job started.
   const acknowledgement = (browserWork || workbotHost().quickReply) && !pending && !items.some((item) => item.kind === "text" && item.text.trim()) ? firstReply(turn) : null;
   if (acknowledgement) items.splice(browserWork ? 1 : 0, 0, { kind: "text", key: "accepted", text: acknowledgement });
-  // Work in connected apps, as one quiet line under the answer: what it is doing now ("Searching Exa… · 2 searches"),
-  // then a footnote of what it used. The header's status line reads the same summary, so both say the same thing.
+  // The connected apps as a quiet logo stack under the answer. The header reads the same summary for its status,
+  // so it names the same current connector; names and tool details in the chat are disclosed only on hover/tap.
   const connector = connectorSummary(turn, props.live);
   // The place Workbot's next words will take, one message line tall: the typing dots, or its work in an app right now,
   // then the words themselves, each replacing the last without moving the conversation. Once it has shown, it keeps

@@ -4,8 +4,8 @@ import { fileURLToPath, pathToFileURL } from "node:url"
 import { createRequire } from "node:module"
 
 /**
- * Real WorkbotScreen against the fixture server: the connector line under Workbot's answer while it searches Exa, its
- * footnote once done (tap to see what ran, still there after a reload), the header saying the same thing, and the
+ * Real WorkbotScreen against the fixture server: the connector logo group under Workbot's answer while it searches Exa,
+ * static once done (hover/tap to see names and tools, still there after a reload), the header saying the same thing, and the
  * conversation holding perfectly still while the person types.
  * Start: pnpm --filter @openwork-ee/workbot exec tsx test-fixtures/chat-screen-server.ts 3097
  * Run: PLAYWRIGHT_MODULE=/path/to/playwright/index.mjs node scripts/connector-browser.mjs
@@ -71,43 +71,84 @@ try {
       await page.goto(`${base}/?scenario=exa&working=1`, { waitUntil: "domcontentloaded" })
       const line = page.locator('[data-workbot-connector-line]').filter({ visible: true }).first()
 
-      await check(`${size.name}: a connector call shows "Searching Exa…" under the answer, with the header saying the same`, page, async () => {
+      await check(`${size.name}: a connector call shows only a logo under the answer, with matching header identity`, page, async () => {
         await page.locator('[data-workbot-connector-line="live"]').filter({ visible: true }).first().waitFor({ timeout: 5_000 })
-        assert.match(await line.innerText(), /^Searching Exa…/)
-        assert.match(await page.locator("[data-workbot-status-line]").first().innerText(), /Searching Exa/)
+        const stack = page.locator("[data-workbot-connector-stack]").first()
+        assert.equal(await stack.getAttribute("aria-label"), "Used Exa")
+        assert.equal(await stack.locator('[data-workbot-connector-logo="Exa"]').count(), 1)
+        assert.equal(await stack.locator('[data-active="true"]').count(), 1)
+        assert.match((await page.locator("[data-workbot-status-line]").first().innerText()).trim(), /Searching Exa/)
+        assert.doesNotMatch(await line.innerText(), /Searching|Used|searches/)
         assert.doesNotMatch(await page.locator("body").innerText(), RAW)
+        await page.waitForTimeout(650)
         await page.screenshot({ path: `${out}/${size.name}-live.png` })
       })
-      await check(`${size.name}: a second search collapses into one line that counts them`, page, async () => {
-        await page.waitForFunction(() => /Searching Exa….*2 searches/.test(document.querySelector('[data-workbot-connector-line="live"]')?.textContent ?? ""), undefined, { timeout: 6_000 })
-        assert.equal(await page.locator("[data-workbot-connector-line]").filter({ visible: true }).count(), 1)
+      await check(`${size.name}: repeated searches stay one logo, with no text or count`, page, async () => {
+        await page.waitForTimeout(2_500)
+        assert.equal(await line.locator("[data-workbot-connector-logo]").count(), 1)
+        assert.doesNotMatch(await line.innerText(), /Searching|Used|searches/)
         await page.screenshot({ path: `${out}/${size.name}-live-2.png` })
       })
-      await check(`${size.name}: once answered it settles into "Used Exa · 2 searches", which lists what ran`, page, async () => {
+      await check(`${size.name}: the same static logo after completion, with names on hover and details on tap`, page, async () => {
         await page.locator('[data-workbot-connector-line="done"]').filter({ visible: true }).first().waitFor({ timeout: 9_000 })
-        const footnote = page.locator('[data-workbot-connector-line="done"] button').filter({ visible: true }).first()
-        assert.match((await footnote.innerText()).replace(/\s+/g, " "), /Used Exa · 2 searches/)
-        // Directly under the answer it belongs to.
+        const stack = page.locator("[data-workbot-connector-stack]").first()
+        assert.equal(await stack.locator("[data-active]").count(), 0)
+        assert.doesNotMatch(await line.innerText(), /Searching|Used|searches/)
+        await page.waitForTimeout(400)
         const answer = await page.getByText("Here's what stands out").boundingBox()
-        const box = await footnote.boundingBox()
-        assert.ok(box.y >= answer.y + answer.height - 1 && box.y - (answer.y + answer.height) < 40, "footnote sits right under the answer")
+        const box = await stack.boundingBox()
+        assert.ok(box.y >= answer.y + answer.height - 1 && box.y - (answer.y + answer.height) < 40, "stack sits right under the answer")
         await page.screenshot({ path: `${out}/${size.name}-done.png` })
-        assert.equal(await footnote.getAttribute("aria-expanded"), "false")
-        await footnote.click()
-        const rows = page.locator("[data-workbot-connector-rows]").filter({ visible: true }).first()
-        assert.match((await rows.innerText()).replace(/\s+/g, " "), /Searching Exa · Web search ×2/)
-        assert.doesNotMatch(await page.locator("body").innerText(), RAW)
+        if (!size.hasTouch) await stack.hover()
+        else await stack.tap()
+        const popover = page.locator("[data-workbot-connector-popover]")
+        await popover.waitFor({ state: "visible" })
+        assert.match(await popover.innerText(), /Used Exa/)
+        const geometry = () => page.locator(".workbot-scroll").filter({ visible: true }).first().evaluate((node) => ({ top: node.scrollTop, height: node.scrollHeight }))
+        const before = await geometry()
+        await popover.locator("summary").click()
+        assert.match((await popover.innerText()).replace(/\s+/g, " "), /Exa · Web search ×2/)
+        assert.deepEqual(await geometry(), before, "tool disclosure never resizes the transcript")
+        assert.doesNotMatch(await popover.innerText(), RAW)
         await page.waitForTimeout(400)
         await page.screenshot({ path: `${out}/${size.name}-expanded.png` })
+        await page.keyboard.press("Escape")
       })
-      await check(`${size.name}: the footnote is still there after a reload`, page, async () => {
-        await page.reload({ waitUntil: "domcontentloaded" })
-        await page.locator('[data-workbot-connector-line="done"]').filter({ visible: true }).first().waitFor({ timeout: 5_000 })
-        assert.match((await page.locator('[data-workbot-connector-line="done"]').filter({ visible: true }).first().innerText()).replace(/\s+/g, " "), /Used Exa · 2 searches/)
-      })
-      await check(`${size.name}: the same footnote without the working status line`, page, async () => {
+      await check(`${size.name}: the same group persists after reload, without any feature flag`, page, async () => {
         await page.goto(`${base}/?scenario=exa`, { waitUntil: "domcontentloaded" })
-        await page.locator('[data-workbot-connector-line="done"]').filter({ visible: true }).first().waitFor({ timeout: 5_000 })
+        const stack = page.locator('[data-workbot-connector-line="done"] [data-workbot-connector-stack]').first()
+        await stack.waitFor()
+        assert.equal(await stack.getAttribute("aria-label"), "Used Exa")
+        await page.reload({ waitUntil: "domcontentloaded" })
+        await stack.waitFor()
+        assert.equal(await stack.getAttribute("aria-label"), "Used Exa")
+      })
+      await check(`${size.name}: distinct connectors overlap in first-use order with overflow and letter fallback`, page, async () => {
+        await page.goto(`${base}/?scenario=connectors`, { waitUntil: "domcontentloaded" })
+        const stack = page.locator("[data-workbot-connector-stack]").first()
+        await stack.waitFor()
+        assert.deepEqual(await stack.locator("[data-workbot-connector-logo]").evaluateAll((logos) => logos.map((logo) => logo.dataset.workbotConnectorLogo)), ["Exa", "Google Drive", "Linear", "Slack", "GitHub"])
+        assert.equal(await stack.locator("[data-workbot-connector-more]").innerText(), "+2")
+        const logos = await stack.locator("[data-workbot-connector-logo]").evaluateAll((logos) => logos.map((logo) => ({ x: logo.getBoundingClientRect().x, width: logo.getBoundingClientRect().width, radius: getComputedStyle(logo).borderRadius })))
+        assert.equal(logos[0].width, 20)
+        assert.equal(logos[1].x - logos[0].x, 13, "35% overlap")
+        await page.waitForTimeout(600)
+        await page.screenshot({ path: `${out}/${size.name}-stack.png` })
+        await stack.click()
+        const popover = page.locator("[data-workbot-connector-popover]")
+        await popover.waitFor({ state: "visible" })
+        assert.match(await popover.innerText(), /Used Exa, Google Drive, Linear, Slack, GitHub, PlanetScale and Research/)
+        await popover.locator("summary").click()
+        assert.ok((await popover.locator("[data-workbot-app-letter]").allTextContents()).includes("R"), "unknown connector falls back to its letter")
+        await page.keyboard.press("Escape")
+        await page.reload({ waitUntil: "domcontentloaded" })
+        await stack.waitFor()
+        assert.equal(await stack.locator("[data-workbot-connector-more]").innerText(), "+2")
+        // The group uses Workbot's tokens, not hardcoded white rings; verify it against dark host tokens too.
+        await page.addStyleTag({ content: ".workbot { --wb-bg:#11181c; --wb-surface:#1b2228; --wb-chip:#252e35; --wb-text:#eef2f6; --wb-muted:#a1aab3; --wb-faint:#89939c; --wb-user-bubble:#252e35; --wb-ring:#ffffff20; --wb-composer-shadow:0 0 0 1px #ffffff20; }" })
+        const ring = await stack.locator("[data-workbot-connector-logo]").first().evaluate((node) => getComputedStyle(node).boxShadow)
+        assert.ok(ring.includes("17, 24, 28"), "overlap ring follows dark host background")
+        await page.screenshot({ path: `${out}/${size.name}-stack-dark-tokens.png` })
       })
     }
 

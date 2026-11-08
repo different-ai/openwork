@@ -85,6 +85,13 @@ export const scenarios: Record<string, () => FixtureThread> = {
   /** Nov 8: "Could you go on google.com with browser", as the conversation is read once it is done (see googleAt). */
   google: () => googleAt(2),
   exa: () => exaAt(3),
+  connectors: () => ({
+    name: "Workbot", organizationName: "Example Team", status: "idle", hasEarlier: false, filesEnabled: true,
+    turns: [hello(), turn("stack", "Find the UX research, check our design notes, and put the next steps in Linear.", minutesAgo(1), [
+      said("I checked the research and your team's notes. The next steps are in Linear."),
+      { kind: "steps", steps: ["Exa", "Exa", "Google Drive", "Linear", "Slack", "GitHub", "PlanetScale", "Research"].map((app) => ({ ...appStep(`Checking ${app}`, app, false, ago(20)), detail: "Read notes" })) },
+    ])],
+  }),
   /** Short and long messages from the person (#1, #2): "Hey" must stay on one line. */
   bubbles: () => ({
     name: "Workbot", organizationName: "Example Team", status: "idle", hasEarlier: false, filesEnabled: true,

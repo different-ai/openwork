@@ -2,8 +2,8 @@ import type { LiveText, WorkbotStep, WorkbotTurn } from "./data";
 
 /**
  * Work in the person's connected apps during one answer (Exa, Gmail, Linear, a remote computer), summed up for the
- * quiet line under that answer and the header's status line, so both say the same thing. While Workbot is at it:
- * "Searching Exa · 2 searches". Once it has moved on: "Used Exa · 2 searches", which opens the list of what ran.
+ * logo stack under that answer and the header's status line. The chat only shows logos by default; its disclosure
+ * names the apps and tools. The header can still say "Searching Exa", from the same current step.
  */
 export type ConnectorApp = { name: string | null; site?: string; remote?: true };
 export type ConnectorRow = { key: string; label: string; detail: string | null; times: number; app: ConnectorApp };
@@ -26,7 +26,7 @@ const appOf = (step: WorkbotStep): ConnectorApp => ({ name: step.app, ...(step.s
 const appKey = (app: ConnectorApp) => (app.remote ? "remote" : app.name ?? "app");
 
 /** "Exa", "Exa and Gmail", "Exa, Gmail and Linear"; "a connected app" when the app couldn't be named. */
-function names(apps: ConnectorApp[]) {
+export function connectorNames(apps: ConnectorApp[]) {
   const list = apps.map((app) => (app.remote ? "a remote computer" : app.name ?? "a connected app"));
   if (list.length <= 1) return list.join("");
   return `${list.slice(0, -1).join(", ")} and ${list.at(-1)}`;
@@ -62,6 +62,6 @@ export function connectorSummary(turn: WorkbotTurn, live: LiveText | null): Conn
   const count = steps.length > 1 ? `${steps.length} ${searches ? "searches" : "actions"}` : null;
   // Live: what it is doing now. Several of the same in a row are one line that counts them.
   const running = [...steps].reverse().find((step) => step.status === "running") ?? latestStep;
-  const label = isLive ? running.label : `Used ${names(apps)}`;
+  const label = isLive ? running.label : `Used ${connectorNames(apps)}`;
   return { live: isLive, label, count, apps, latest: appOf(running), rows };
 }
