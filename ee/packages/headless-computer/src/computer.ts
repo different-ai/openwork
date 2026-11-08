@@ -113,11 +113,11 @@ export class Computers {
     this.desktopTools = this.desktop ? [DESKTOP_TOOL] : []
   }
 
-  desktopRun(sessionId: string, input: Record<string, unknown>, signal?: AbortSignal): Promise<ToolResult> {
-    return this.holding(sessionId, () => this.runDesktop(sessionId, input, signal))
+  desktopRun(sessionId: string, input: Record<string, unknown>, signal?: AbortSignal, policy?: { browserRecovery: boolean }): Promise<ToolResult> {
+    return this.holding(sessionId, () => this.runDesktop(sessionId, input, signal, policy))
   }
 
-  private async runDesktop(sessionId: string, input: Record<string, unknown>, signal?: AbortSignal): Promise<ToolResult> {
+  private async runDesktop(sessionId: string, input: Record<string, unknown>, signal?: AbortSignal, policy?: { browserRecovery: boolean }): Promise<ToolResult> {
     // `description` and `show` are for the person (what it is doing, and whether to put it in front of them); they
     // never reach the computer.
     const parsed = z.object({ view: z.enum(["browser", "computer"]), operation: z.string().max(64), args: z.record(z.string(), z.unknown()), description: z.string().optional(), show: z.boolean().optional() }).strict().parse(input)
@@ -141,8 +141,8 @@ export class Computers {
         ? z.object({ code: z.string().min(1).max(32_000), tabId: z.string().optional(), input: z.json().optional(), timeoutMs: z.number().int().min(1000).max(60_000).optional() }).strict().parse(parsed.args)
         : null
       const raw = await desktop.call(box, program ? "/computer/program" : parsed.view === "browser" ? "/browser/task" : "/computer/task", program
-        ? { ...program, sessionId, surface: parsed.view }
-        : { sessionId, ...(parsed.view === "browser" ? { operation: parsed.operation } : { name: parsed.operation }), args: parsed.args })
+        ? { ...program, sessionId, browserRecovery: policy?.browserRecovery === true, surface: parsed.view }
+        : { sessionId, browserRecovery: policy?.browserRecovery === true, ...(parsed.view === "browser" ? { operation: parsed.operation } : { name: parsed.operation }), args: parsed.args })
       signal?.throwIfAborted()
       const result = z.object({ ok: z.boolean().optional(), isError: z.boolean().optional(), image: z.object({ data: z.string(), mediaType: z.string().optional(), mimeType: z.string().optional() }).optional(), images: z.array(z.object({ data: z.string(), mimeType: z.string() })).optional(), content: z.array(z.object({ type: z.string(), text: z.string().optional(), data: z.string().optional(), mimeType: z.string().optional() })).optional() }).loose().parse(raw)
       const images = result.content?.flatMap(part => part.type === "image" && part.data ? [{ mediaType: part.mimeType ?? "image/png", data: part.data }] : []) ?? []

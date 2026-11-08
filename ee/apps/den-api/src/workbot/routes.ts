@@ -61,6 +61,8 @@ const sessionSchema = z.object({
   /** Workbot may use the browser on its cloud computer; off on older Dens, which gave the browser with `computer`. */
   browser: z.boolean().optional(),
   browserDemonstrations: z.boolean().optional(),
+  /** Read-only browser recovery and blocker guidance; default off. */
+  browserRecovery: z.boolean().optional(),
   /** Compatibility for older clients: equals browser access. Remove when those clients are unsupported. */
   browserLiveView: z.boolean().optional(),
   /** Workbot's computers run through the runner's sandbox gateway instead of its own provider; off on older Dens. */
@@ -400,6 +402,7 @@ export function registerWorkbotRoutes<T extends { Variables: object }>(app: Hono
         // Workbot's browser and its other desktop apps share one cloud computer but are rolled out separately.
         computer: features.computerUse && features.remoteComputers,
         browser: features.browserUse && features.remoteComputers,
+        browserRecovery: features.workbotBrowserRecovery,
         browserDemonstrations: features.browserDemonstrations && features.browserUse && features.remoteComputers,
         // Compatibility for older Workbot clients: the page stream now follows browser access.
         browserLiveView: features.browserUse && features.remoteComputers,

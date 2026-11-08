@@ -74,6 +74,8 @@ export type WorkbotDeps = {
   workingStatus?: (organizationId: string) => Promise<boolean>
   /** Den's `sandboxGateway` flag: the chats' computers run through the runner's sandbox gateway. Unset: unchanged. */
   sandboxGateway?: boolean
+  /** Den-resolved workbotBrowserRecovery; never set by the model. */
+  browserRecovery?: boolean
   /**
    * Den's session `stepTurns` compatibility field: turns go to the runner with `execution: "steps"`, so a
    * runner deploy switches between steps instead of cutting one off. Unset: preserve older Den's continuous turns.
@@ -412,6 +414,7 @@ async function ensureSession(actor: WorkbotActor, timeZone: string, deps: Workbo
     tasks: true,
     documentNavigation: guidedNavigation,
     ...(deps.sandboxGateway !== undefined ? { sandboxGateway: deps.sandboxGateway } : {}),
+    browserRecovery: deps.browserRecovery === true,
     owner: workbotOwner(actor.organizationId, actor.memberId),
     timeZone,
   }
