@@ -23,7 +23,8 @@ const VISIBLE_LOGOS = 5;
  * Only the current connector's ring breathes; completion leaves the same static group in place. Hover, focus or tap
  * reveals names, and a further tap on Tool details reveals what ran. The disclosure floats outside the transcript,
  * so inspecting it never changes the conversation's height or scroll position. Real logos keep a white canvas (some
- * are black); their separating ring follows the chat background, including dark hosts.
+ * are black); their separating ring follows the chat background, including dark hosts, and a fixed hairline inside
+ * keeps each white circle visible on a white chat.
  */
 export function ConnectorLine({ summary }: { summary: ConnectorSummary }) {
   const shown = summary.apps.slice(0, VISIBLE_LOGOS);
@@ -39,12 +40,12 @@ export function ConnectorLine({ summary }: { summary: ConnectorSummary }) {
             {shown.map((app) => {
               const active = activeKey !== null && appKey(app) === activeKey;
               return <span key={appKey(app)}
-                className={`relative grid size-5 shrink-0 place-items-center overflow-hidden rounded-full bg-white [--wb-ink:#1c2024] [--wb-muted:#687076] ring-2 ring-[var(--wb-bg)] ${active ? "workbot-connector-pulse" : ""}`}
+                className={`relative grid size-5 shrink-0 place-items-center overflow-hidden rounded-full bg-white [--wb-ink:#1c2024] [--wb-muted:#687076] shadow-[inset_0_0_0_1px_#01162717] ring-2 ring-[var(--wb-bg)] ${active ? "workbot-connector-pulse" : ""}`}
                 data-workbot-connector-logo={app.name ?? "App"} data-active={active || undefined}>
                 <ConnectorIcon app={app} size={12} />
               </span>;
             })}
-            {more > 0 ? <span className={`relative grid size-5 shrink-0 place-items-center rounded-full bg-[var(--wb-chip)] text-[9px] font-medium tabular-nums text-[var(--wb-muted)] ring-2 ring-[var(--wb-bg)] ${activeKey !== null && !shown.some((app) => appKey(app) === activeKey) ? "workbot-connector-pulse" : ""}`} data-workbot-connector-more>+{more}</span> : null}
+            {more > 0 ? <span className={`relative grid size-5 shrink-0 place-items-center rounded-full bg-[var(--wb-chip)] text-[9px] font-medium tabular-nums text-[var(--wb-muted)] shadow-[inset_0_0_0_1px_var(--wb-ring)] ring-2 ring-[var(--wb-bg)] ${activeKey !== null && !shown.some((app) => appKey(app) === activeKey) ? "workbot-connector-pulse" : ""}`} data-workbot-connector-more>+{more}</span> : null}
           </span>
         </Popover.Trigger>
         <Popover.Portal>
