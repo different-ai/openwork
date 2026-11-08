@@ -119,7 +119,7 @@ async function answer(request: IncomingMessage, response: ServerResponse) {
     { id: "c1", name: "Gmail", app: "gmail", ready: true, connectUrl: null },
     { id: "c2", name: "Google Calendar", app: "googleCalendar", ready: true, connectUrl: null },
     { id: "c3", name: "Slack", app: "slack", ready: false, connectUrl: "https://den.example.test/connect/slack" },
-  ] })
+  ], apps: fixtureApps })
   if (path === "/v1/workbot/memory") return json(response, 200, { files: [
     { name: "about-me.md", updatedAt: Date.now() - 2 * 86_400_000, content: "# Sam\n- Founder at Example Team; works mostly from a phone.\n- Prefers short answers, then details on request.\n- Cooks salmon with a predictive thermometer." },
     { name: "projects.md", updatedAt: Date.now() - 6 * 86_400_000, content: "- Workbot UI fixes (Nov 7 list)\n- 3D room planner for the new office" },
@@ -128,6 +128,25 @@ async function answer(request: IncomingMessage, response: ServerResponse) {
   // No live stream: the page reads the conversation again on its own.
   return json(response, 404, { error: "not_found" })
 }
+
+/** The profile's Apps list: every app the person can use, connected or not, as Den sorts it (Connected first). */
+const app = (id: string, name: string, status: "connected" | "needs_sign_in" | "not_connected" | "needs_attention", action: "connect" | "ask_admin" | "admin_settings" | null, managedBy: "you" | "organization" = action === "connect" ? "you" : "organization") => ({
+  id, name, nativeProviderKey: null, authType: "oauth" as const, status, managedBy, action,
+  connectMode: action === "connect" ? "external" as const : "admin" as const,
+  connectUrl: action === "connect" ? `https://den.example.test/dashboard/your-connections?connectionId=${id}` : null,
+  ready: status === "connected",
+})
+const fixtureApps = [
+  app("c1", "Gmail", "connected", null, "you"),
+  app("c2", "Google Calendar", "connected", null, "you"),
+  app("a1", "Linear", "connected", null),
+  app("a6", "Acme Wiki", "needs_sign_in", "connect"),
+  app("a2", "Notion", "needs_sign_in", "connect"),
+  app("c3", "Slack", "needs_sign_in", "connect"),
+  app("a3", "Salesforce", "not_connected", "ask_admin"),
+  app("a4", "GitHub", "needs_attention", "connect"),
+  app("a5", "Jira", "needs_attention", "ask_admin"),
+]
 
 const entry = fileURLToPath(new URL("./chat-screen.tsx", import.meta.url))
 const vite = await createServer({

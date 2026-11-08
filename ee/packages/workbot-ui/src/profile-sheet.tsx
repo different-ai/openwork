@@ -1,41 +1,53 @@
 "use client";
 
 import { Dialog } from "@base-ui/react/dialog";
-import { Clock3, Fingerprint, ListChecks, Lock, Monitor, ShieldCheck, X } from "lucide-react";
+import { Clock3, Fingerprint, LayoutGrid, ListChecks, Lock, X } from "lucide-react";
 import { useId, useState, type ReactNode } from "react";
 import { describeSchedule } from "@openwork/calendar";
 import { useWorkbotAutomations } from "./calendar-data";
 import { RemoteJobs, useWorkbotRemoteJobs } from "./remote-jobs";
 import { computerViews, useRetainedSurface, workbotHost } from "./host";
-import { useWorkbotConnections, useWorkbotMemory } from "./data";
+import { useWorkbotApps, useWorkbotMemory } from "./data";
+import { APP_STATUS, appNote } from "./apps";
+import { useWorkbotConnect, WorkbotConnectionButton } from "./connect";
 import { AppMark } from "./files";
 import { dayLabel } from "./format";
 import { OpenWorkMark } from "./mark";
 import type { WorkbotActivity } from "./activity";
-import { ActivityDetails, StatusIcon, WatchButton } from "./working-status";
+import { ActivityDetails, StatusIcon } from "./working-status";
 
 /**
  * Workbot's profile, behind its name (`profileSheet`): who it is and whether it is at work, then one tab at a time
- * (P3): what it is working on, what it can use, and what it remembers about the person. Read-only in this version:
+ * (P3): what it is working on, what it can use (Apps), and what it remembers about the person. No Computer tab: its
+ * browser and computer open only from a step's card in the chat. Read-only in this version:
  * the person changes memory by telling Workbot, and connections in Den.
+ *
+ * Tabs: "tasks", "permissions" (labelled Apps: every app the person can use, connected or not, then what Workbot can do), "schedules"
+ * (centered profile only) and "memory". `initialTab` picks the tab each time the sheet opens.
  */
-type ProfileTab = "tasks" | "permissions" | "computer" | "schedules" | "memory";
+export type ProfileTab = "tasks" | "permissions" | "schedules" | "memory";
 const TABS: Array<{ id: ProfileTab; label: string; icon: typeof ListChecks }> = [
   { id: "tasks", label: "Tasks", icon: ListChecks },
-  { id: "permissions", label: "Permissions", icon: ShieldCheck },
-  { id: "computer", label: "Computer", icon: Monitor },
+  { id: "permissions", label: "Apps", icon: LayoutGrid },
   { id: "schedules", label: "Schedules", icon: Clock3 },
   { id: "memory", label: "Identity", icon: Fingerprint },
 ];
 
 const row = "flex min-h-11 items-center gap-3 border-b border-[var(--wb-row-line)] py-2 text-[13.5px] text-[var(--wb-text)] last:border-b-0";
 
-export function ProfileSheet({ open, onClose, name, activity }: { open: boolean; onClose(): void; name: string; activity: WorkbotActivity; mark?: ReactNode }) {
+export function ProfileSheet({ open, onClose, name, activity, initialTab = "tasks" }: { open: boolean; onClose(): void; name: string; activity: WorkbotActivity; mark?: ReactNode; /** The tab it opens on, each time it opens (default Tasks). */ initialTab?: ProfileTab }) {
   const surface = useRetainedSurface(open);
-  const [tab, setTab] = useState<ProfileTab>("tasks");
+  const [tab, setTab] = useState<ProfileTab>(initialTab);
+  // The sheet stays mounted while closed, so each opening starts on the tab the caller asked for.
+  const [openedOn, setOpenedOn] = useState(open ? initialTab : null);
+  const want = open ? initialTab : null;
+  if (want !== openedOn) {
+    setOpenedOn(want);
+    if (want) setTab(want);
+  }
   const tabId = useId();
   const centered = workbotHost().centeredProfile === true;
-  const tabs = centered ? TABS : TABS.filter((entry) => entry.id !== "computer" && entry.id !== "schedules").map((entry) => ({ ...entry, label: entry.id === "permissions" ? "What I can use" : entry.id === "memory" ? "What I remember" : entry.label }));
+  const tabs = centered ? TABS : TABS.filter((entry) => entry.id !== "schedules").map((entry) => ({ ...entry, label: entry.id === "permissions" ? "What I can use" : entry.id === "memory" ? "What I remember" : entry.label }));
   return <Dialog.Root open={surface.open} onOpenChange={(next) => { if (!next) onClose(); }}>
     <Dialog.Portal {...surface.portal}>
       <Dialog.Backdrop className="fixed inset-0 z-40 bg-[var(--wb-ink)]/25 transition-opacity duration-200 data-[ending-style]:opacity-0 data-[starting-style]:opacity-0 motion-reduce:transition-none sm:bg-[var(--wb-ink)]/10" />
@@ -62,14 +74,15 @@ export function ProfileSheet({ open, onClose, name, activity }: { open: boolean;
           </div>
         </div>
         <div role="tabpanel" id={`${tabId}-panel`} aria-labelledby={`${tabId}-${tab}`} tabIndex={0} className="min-h-0 flex-1 overflow-y-auto pb-6 outline-none">
-          {tab === "tasks" ? <TasksTab name={name} activity={activity} onClose={onClose} /> : tab === "permissions" ? <PermissionsTab name={name} /> : tab === "computer" ? <ComputerTab name={name} onClose={onClose} /> : tab === "schedules" ? <SchedulesTab /> : <MemoryTab name={name} />}
+          {tab === "tasks" ? <TasksTab name={name} activity={activity} /> : tab === "permissions" ? <AppsTab name={name} /> : tab === "schedules" ? <SchedulesTab /> : <MemoryTab name={name} />}
         </div>
       </Dialog.Popup>
     </Dialog.Portal>
   </Dialog.Root>;
 }
 
-function TasksTab({ name, activity, onClose }: { name: string; activity: WorkbotActivity; onClose(): void }) {
+/** What Workbot is working on. Its browser and computer open from the step's card in the chat, not from here. */
+function TasksTab({ name, activity }: { name: string; activity: WorkbotActivity }) {
   const remote = useWorkbotRemoteJobs(true);
   const localWork = activity.main !== null || activity.tasks.length > 0;
   const localActive = activity.main !== null || activity.tasks.some((task) => !task.quiet && (task.status === "queued" || task.status === "working" || task.status === "paused"));
@@ -83,16 +96,7 @@ function TasksTab({ name, activity, onClose }: { name: string; activity: Workbot
     {workbotHost().remoteTasks && remote.isError && !remote.data ? <p className="px-5 pt-3 text-[13px] text-[var(--wb-muted)]" role="status">Couldn&apos;t check your remote tasks just now. <button type="button" className="underline" onClick={() => void remote.refetch()}>Try again</button></p> : null}
     <RemoteJobs jobs={remote.data?.jobs ?? []} statusError={remote.data?.statusError} />
     {remote.data?.hasEarlier ? <p className="px-5 pt-2 text-[12px] text-[var(--wb-muted)]">Showing recent remote tasks. Older jobs may be outside this chat&apos;s current history.</p> : null}
-    {activity.watch ? <div className="px-5 pt-3"><WatchButton watch={activity.watch} onDone={onClose} /></div> : null}
   </>;
-}
-
-function ComputerTab({ name, onClose }: { name: string; onClose(): void }) {
-  const views = computerViews(workbotHost());
-  return <div className="flex flex-col gap-3 px-5 pt-1">
-    <p className="text-[13px] leading-[19px] text-[var(--wb-muted)]">{name}&apos;s own browser and computer. The full view opens only when you choose to look.</p>
-    {views.length ? views.map((view) => <WatchButton key={view} watch={view} onDone={onClose} />) : <p className="flex items-center gap-2 text-[13px] text-[var(--wb-muted)]"><Lock size={14} aria-hidden />Your organization hasn&apos;t enabled a computer for {name}.</p>}
-  </div>;
 }
 
 function SchedulesTab() {
@@ -114,10 +118,13 @@ function SchedulesList() {
   </div>;
 }
 
-/** The apps and parts of its computer Workbot can use for the person, each saying whether it can; off ones stay listed with why (P4). */
-function PermissionsTab({ name }: { name: string }) {
+/**
+ * The apps and parts of its computer Workbot can use for the person, each saying whether it can; off ones stay listed
+ * with why (P4). Apps: every connector the person can use, connected or not (Connected first), with one Connect where
+ * they sign in themselves and a short note where only an admin can.
+ */
+function AppsTab({ name }: { name: string }) {
   const host = workbotHost();
-  const connections = useWorkbotConnections({ enabled: true, waiting: false });
   const views = computerViews(host);
   const abilities: Array<{ label: string; on: boolean }> = [
     { label: "Browse the web in its own browser", on: views.includes("browser") },
@@ -126,19 +133,7 @@ function PermissionsTab({ name }: { name: string }) {
     { label: "Your calendar", on: host.calendar === true },
   ];
   return <div className="flex flex-col gap-6 px-5 pt-1">
-    <section>
-      <h2 className="pb-1 text-[13px] font-medium text-[var(--wb-text)]">Your apps</h2>
-      {connections.isPending ? <p className="py-2 text-[13px] text-[var(--wb-muted)]" aria-busy="true">Checking your apps…</p>
-        : connections.isError ? <p className="py-2 text-[13px] text-[var(--wb-muted)]" role="status">Couldn&apos;t check your apps. <button type="button" className="underline" onClick={() => void connections.refetch()}>Try again</button></p>
-        : connections.data.length === 0 ? <p className="py-2 text-[13px] text-[var(--wb-muted)]">No apps are set up for {name} yet.</p>
-        : <ul>{connections.data.map((connection) => <li key={connection.id} className={row}>
-            <AppMark name={connection.name} size={16} />
-            <span className="min-w-0 flex-1 truncate">{connection.name}</span>
-            {connection.ready ? <span className="text-[12.5px] text-[var(--wb-muted)]">Connected</span>
-              : connection.connectUrl ? <a href={connection.connectUrl} target="_blank" rel="noreferrer noopener" className="rounded-full px-2.5 py-1 text-[12.5px] font-medium text-[var(--wb-text)] shadow-[0_0_0_1px_var(--wb-ring)] hover:bg-[var(--wb-chip)] focus-visible:outline-none focus-visible:shadow-[var(--wb-focus)]">Connect</a>
-              : <span className="flex items-center gap-1 text-[12.5px] text-[var(--wb-muted)]"><Lock size={12} aria-hidden />An admin sets this up</span>}
-          </li>)}</ul>}
-    </section>
+    <AppsList name={name} />
     <section>
       <h2 className="pb-1 text-[13px] font-medium text-[var(--wb-text)]">What {name} can do</h2>
       <ul>{abilities.map((ability) => <li key={ability.label} className={row}>
@@ -150,6 +145,35 @@ function PermissionsTab({ name }: { name: string }) {
   </div>;
 }
 
+/**
+ * Every app the person can use, connected or not: Connected first, then Needs sign-in, Not connected and Needs
+ * attention, each with its plain status; one Connect where they sign in themselves, "Ask your admin" where they can't.
+ */
+export function AppsList({ name }: { name: string }) {
+  const flow = useWorkbotConnect();
+  const apps = useWorkbotApps({ enabled: true, waiting: flow.pendingId !== null });
+  return <section>
+    <h2 className="pb-1 text-[13px] font-medium text-[var(--wb-text)]">Your apps</h2>
+    {apps.isPending ? <p className="py-2 text-[13px] text-[var(--wb-muted)]" aria-busy="true">Checking your apps…</p>
+      : apps.isError ? <p className="py-2 text-[13px] text-[var(--wb-muted)]" role="status">Couldn&apos;t check your apps. <button type="button" className="underline" onClick={() => void apps.refetch()}>Try again</button></p>
+      : apps.data.length === 0 ? <p className="py-2 text-[13px] text-[var(--wb-muted)]">No apps are set up for {name} yet.</p>
+      : <ul data-workbot-apps>{apps.data.map((app) => {
+          const status = APP_STATUS[app.status];
+          const note = appNote(app);
+          return <li key={app.id} className={row} data-workbot-app={app.status}>
+            <AppMark name={app.name} size={18} fallback="letter" />
+            <span className="flex min-w-0 flex-1 flex-col">
+              <span className="truncate">{app.name}</span>
+              <span className="flex items-center gap-1.5 text-[12px] text-[var(--wb-muted)]"><span aria-hidden className={`size-1.5 shrink-0 rounded-full ${status.dot}`} />{status.label}</span>
+            </span>
+            {app.action === "connect" ? <span className="flex max-w-[62%] justify-end"><WorkbotConnectionButton connection={app} flow={flow} /></span>
+              : note ? <span className="flex shrink-0 items-center gap-1 text-[12.5px] text-[var(--wb-muted)]"><Lock size={12} aria-hidden />{note}</span>
+              : null}
+          </li>;
+        })}</ul>}
+  </section>;
+}
+
 /** "about-me.md" → "About me". */
 function memoryTitle(file: string) {
   const plain = file.replace(/\.(md|txt)$/i, "").replace(/[-_]+/g, " ").trim();
@@ -158,7 +182,10 @@ function memoryTitle(file: string) {
 
 /** What Workbot remembers, file by file, newest first. Read-only: it changes when the person tells Workbot. */
 function MemoryTab({ name }: { name: string }) {
-  const memory = useWorkbotMemory(true);
+  // The profile can open without `workbotProfileSheet` (from the layout's nav); its memory read stays behind the flag.
+  const enabled = workbotHost().profileSheet === true;
+  const memory = useWorkbotMemory(enabled);
+  if (!enabled) return <p className="px-5 pt-1 text-[13px] leading-[19px] text-[var(--wb-muted)]">What {name} remembers about you isn&apos;t shown in this workspace yet.</p>;
   return <div className="flex flex-col gap-3 px-5 pt-1">
     <p className="text-[13px] leading-[18px] text-[var(--wb-muted)]">What {name} keeps in mind about you across chats. To change something, tell {name} in the chat.</p>
     {memory.isPending ? <p className="text-[13px] text-[var(--wb-muted)]" role="status">Reading what I remember…</p>

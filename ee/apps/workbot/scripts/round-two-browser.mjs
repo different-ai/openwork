@@ -105,9 +105,9 @@ try {
   await page.unroute('**/v1/workbot/computer/viewer*');
   await openProfile();
   await screenshot('mobile-profile-tasks');
-  for (const tab of ['Permissions', 'Computer', 'Schedules', 'Identity']) {
+  for (const tab of ['Apps', 'Schedules', 'Identity']) {
     await page.getByRole('tab', { name: tab, exact: true }).click();
-    if (tab === 'Permissions') await page.getByText('Gmail', { exact: true }).waitFor();
+    if (tab === 'Apps') await page.getByText('Gmail', { exact: true }).waitFor();
     if (tab === 'Identity') await page.getByText('About me', { exact: true }).waitFor();
     await screenshot(`mobile-profile-${tab.toLowerCase()}`);
   }

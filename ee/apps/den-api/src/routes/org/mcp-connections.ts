@@ -1553,6 +1553,7 @@ export type MemberUsableConnectionFacts = {
   name: string
   url: string
   nativeProviderKey: string | null
+  authType?: "oauth" | "apikey" | "none"
   credentialMode: "shared" | "per_member"
   createdAt?: string
   connected: boolean

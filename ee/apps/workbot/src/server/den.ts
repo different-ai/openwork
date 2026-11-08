@@ -356,12 +356,16 @@ export function createDen(options: { apiUrl: string; publicUrl: string; serviceT
       if (!parsed.success) throw new Error("den_run_token_200")
       return parsed.data
     },
-    /** The Gmail, Slack and Microsoft 365 connections the person's admins set up, and whether each is ready for them. */
+    /**
+     * The Gmail, Slack and Microsoft 365 connections the person's admins set up, and whether each is ready for them;
+     * with the profile (`workbotProfileSheet`), also every app they can use, connected or not. A Den from before
+     * `apps` (or with the profile off) leaves it out.
+     */
     async connections(accessToken: string) {
       const { status, payload } = await authorized("GET", "/v1/workbot/connections", accessToken)
       const parsed = workbotConnectionsSchema.safeParse(payload)
       if (status !== 200 || !parsed.success) throw new Error(`den_connections_${status}`)
-      return parsed.data.connections
+      return parsed.data
     },
     async connect(accessToken: string, connectionId: string, body: unknown) {
       return authorized("POST", `/v1/workbot/connections/${encodeURIComponent(connectionId)}/connect/start`, accessToken, body)
@@ -399,6 +403,18 @@ const workbotConnectionsSchema = z.object({
     nativeProviderKey: z.string().nullable().optional(),
     connectMode: z.enum(["inline", "external", "admin"]).optional(),
   })),
+  apps: z.array(z.object({
+    id: z.string(),
+    name: z.string(),
+    nativeProviderKey: z.string().nullable(),
+    authType: z.enum(["oauth", "apikey", "none"]),
+    status: z.enum(["connected", "needs_sign_in", "not_connected", "needs_attention"]),
+    managedBy: z.enum(["you", "organization"]),
+    action: z.enum(["connect", "ask_admin", "admin_settings"]).nullable(),
+    connectMode: z.enum(["inline", "external", "admin"]),
+    connectUrl: z.string().nullable(),
+    ready: z.boolean(),
+  })).optional(),
 })
 
 export type Den = ReturnType<typeof createDen>

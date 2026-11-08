@@ -484,27 +484,70 @@ const connectionsSchema = z.object({
     nativeProviderKey: z.string().nullable().optional(),
     connectMode: z.enum(["inline", "external", "admin"]).optional(),
   })),
+  /** Every app the person can use, connected or not (`workbotProfileSheet`); older Dens leave it out. */
+  apps: z.array(z.object({
+    id: z.string(),
+    name: z.string(),
+    nativeProviderKey: z.string().nullable(),
+    authType: z.enum(["oauth", "apikey", "none"]),
+    status: z.enum(["connected", "needs_sign_in", "not_connected", "needs_attention"]),
+    managedBy: z.enum(["you", "organization"]),
+    action: z.enum(["connect", "ask_admin", "admin_settings"]).nullable(),
+    connectMode: z.enum(["inline", "external", "admin"]),
+    connectUrl: z.string().nullable(),
+    ready: z.boolean(),
+  })).optional(),
 });
 export type WorkbotConnection = z.infer<typeof connectionsSchema>["connections"][number];
+export type WorkbotApp = NonNullable<z.infer<typeof connectionsSchema>["apps"]>[number];
+type WorkbotConnectionsPayload = z.infer<typeof connectionsSchema>;
+
+const APP_ORDER: Record<WorkbotApp["status"], number> = { connected: 0, needs_sign_in: 1, not_connected: 2, needs_attention: 3 };
+
+/** From a Den without `apps`: the everyday connections it does list, in the same shape and order. */
+export function appsFromConnections(connections: readonly WorkbotConnection[]): WorkbotApp[] {
+  return connections.map((connection): WorkbotApp => {
+    const admin = connection.connectMode === "admin" || (!connection.ready && !connection.connectUrl && connection.connectMode !== "inline");
+    return {
+      id: connection.id, name: connection.name, nativeProviderKey: connection.nativeProviderKey ?? null, authType: "oauth",
+      status: connection.ready ? "connected" : admin ? "not_connected" : "needs_sign_in",
+      managedBy: admin ? "organization" : "you",
+      action: connection.ready ? null : admin ? "ask_admin" : "connect",
+      connectMode: connection.connectMode ?? "external", connectUrl: connection.connectUrl, ready: connection.ready,
+    };
+  }).sort((a, b) => APP_ORDER[a.status] - APP_ORDER[b.status] || a.name.localeCompare(b.name, "en", { sensitivity: "base" }));
+}
+
+function connectionsQuery(input: { enabled: boolean; waiting: boolean }) {
+  return {
+    queryKey: ["workbot", "connections", workbotHost().identity?.organizationId, workbotHost().identity?.principalId],
+    enabled: input.enabled,
+    queryFn: async (): Promise<WorkbotConnectionsPayload> => {
+      const { response, payload } = await requestJson("/v1/workbot/connections", { method: "GET" }, 15_000);
+      // Hosts without this route just have nothing to connect here.
+      if (!response.ok) throw new Error("Couldn't verify your connections. Try again.");
+      return connectionsSchema.parse(payload);
+    },
+    refetchInterval: input.waiting ? 2_000 : false as const,
+    refetchOnWindowFocus: true,
+    retry: 1,
+  };
+}
+
+/**
+ * Every app the person can use from Workbot, connected or not, for the Apps list on its profile: Connected first,
+ * then Needs sign-in, Not connected and Needs attention. The same request (and cache) as the everyday connections.
+ */
+export function useWorkbotApps(input: { enabled: boolean; waiting: boolean }) {
+  return useQuery({ ...connectionsQuery(input), select: (payload: WorkbotConnectionsPayload) => payload.apps ?? appsFromConnections(payload.connections) });
+}
 
 /**
  * The Gmail, Slack and Microsoft 365 connections the person's admins set up, for the welcome screen. While the
  * person is connecting one in another tab it is re-read every two seconds, until it is ready.
  */
 export function useWorkbotConnections(input: { enabled: boolean; waiting: boolean }) {
-  return useQuery({
-    queryKey: ["workbot", "connections", workbotHost().identity?.organizationId, workbotHost().identity?.principalId],
-    enabled: input.enabled,
-    queryFn: async () => {
-      const { response, payload } = await requestJson("/v1/workbot/connections", { method: "GET" }, 15_000);
-      // Hosts without this route just have nothing to connect here.
-      if (!response.ok) throw new Error("Couldn't verify your connections. Try again.");
-      return connectionsSchema.parse(payload).connections;
-    },
-    refetchInterval: input.waiting ? 2_000 : false,
-    refetchOnWindowFocus: true,
-    retry: 1,
-  });
+  return useQuery({ ...connectionsQuery(input), select: (payload: WorkbotConnectionsPayload) => payload.connections });
 }
 
 const memorySchema = z.object({ files: z.array(z.object({ name: z.string(), updatedAt: z.number(), content: z.string() })) });

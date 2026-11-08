@@ -505,19 +505,27 @@ export function registerWorkbotRoutes(app: Hono<AppEnv>, input: { config: Config
     return new Response(JSON.stringify(payload), { status, headers: { "content-type": "application/json", "cache-control": "no-store" } })
   })
 
-  /** The everyday apps to connect on the welcome screen and workspace recovery actions. */
+  /**
+   * The everyday apps to connect on the welcome screen and workspace recovery actions; with the profile, every app the
+   * person can use for its Apps list (`apps`, names and status only).
+   */
   app.get("/v1/workbot/connections", async (c) => {
     if (!enabled(c)) return c.json({ error: "workbot_not_enabled" }, 409)
     const member = c.get("member")
-    const connections = await den.connections(member.accessToken).catch(() => null)
-    if (!connections) return c.json({ error: "connections_unavailable", message: "Couldn't verify your connections. Try again." }, 502)
+    const listed = await den.connections(member.accessToken).catch(() => null)
+    if (!listed) return c.json({ error: "connections_unavailable", message: "Couldn't verify your connections. Try again." }, 502)
     const denWeb = config.denWebUrl ?? (await den.webUrl().catch(() => null))
+    // Den's own link, at the Den web origin this Workbot is configured with.
+    const linked = <T extends { id: string; connectUrl: string | null }>(connection: T): T => ({
+      ...connection,
+      connectUrl: !connection.connectUrl || !denWeb ? connection.connectUrl : workbotConnectionUrl(denWeb, member.den.organization.id, connection.id),
+    })
     return c.json({
-      connections: connections.map((connection) => ({
+      connections: listed.connections.map((connection) => ({
         ...connection,
-        // Den's own link, at the Den web origin this Workbot is configured with.
         connectUrl: connection.ready || !denWeb ? connection.connectUrl : workbotConnectionUrl(denWeb, member.den.organization.id, connection.id),
       })),
+      ...(listed.apps && member.den.profileSheet ? { apps: listed.apps.map(linked) } : {}),
     })
   })
 

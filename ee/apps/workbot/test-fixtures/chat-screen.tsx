@@ -2,6 +2,7 @@ import { WorkbotScreen, type WorkbotHost } from "@openwork-ee/workbot-ui"
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
 import { createRoot } from "react-dom/client"
 import "../src/client/styles.css"
+import { appIconCandidates } from "../src/client/app-icons"
 
 /**
  * Test-only page: the real Workbot screen against the in-memory conversation in chat-screen-server.ts, to check the
@@ -24,7 +25,8 @@ const host: WorkbotHost = {
   },
   user: { name: "Sam Rivera" },
   useConnectedApps: () => [],
-  appIcons: () => [],
+  // The same logos as the real page (Simple Icons, then favicons; no Den here).
+  appIcons: (name) => appIconCandidates(name, null),
   homeHref: "/",
   sideChats: search.get("sideChats") === "1",
   browser: search.get("browser") === "1",

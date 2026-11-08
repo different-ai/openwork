@@ -9,7 +9,7 @@ import { registerWorkbotRoutes } from "../src/server/routes.js"
 
 const PUBLIC = "http://localhost:3090"
 
-function workbot(enabled: boolean) {
+function workbot(enabled: boolean, profileSheet = false) {
   const calls: Array<{ method: string; body?: unknown }> = []
   const config = loadConfig({ WORKBOT_PUBLIC_URL: PUBLIC, WORKBOT_DEN_API_URL: "http://localhost:3091", WORKBOT_DEN_WEB_URL: "https://console.example.test", WORKBOT_RUNNER_URL: "http://localhost:3092", WORKBOT_RUNNER_TOKEN: "r".repeat(32), WORKBOT_SESSION_SECRET: "s".repeat(32) })
   const state = { steps: [{ id: "first_response", done: true }], dismissed: false }
@@ -17,12 +17,18 @@ function workbot(enabled: boolean) {
     ...createDen({ apiUrl: config.denApiUrl, publicUrl: config.publicUrl }),
     activation: async () => { calls.push({ method: "GET" }); return { status: 200, payload: state } },
     activationEvent: async (_token: string, body: unknown) => { calls.push({ method: "POST", body }); return { status: 200, payload: { ...state, dismissed: true } } },
-    connections: async () => [{ id: "fixture-connection", name: "Fixture", app: "gmail", ready: false, connectUrl: "https://old.example.test/", connectMode: "external" }],
+    connections: async () => ({
+      connections: [{ id: "fixture-connection", name: "Fixture", app: "gmail", ready: false, connectUrl: "https://old.example.test/", connectMode: "external" }],
+      apps: [
+        { id: "fixture-linear", name: "Linear", nativeProviderKey: null, authType: "oauth", status: "connected", managedBy: "organization", action: null, connectMode: "admin", connectUrl: null, ready: true },
+        { id: "fixture-notion", name: "Notion", nativeProviderKey: null, authType: "oauth", status: "needs_sign_in", managedBy: "you", action: "connect", connectMode: "external", connectUrl: "https://old.example.test/", ready: false },
+      ],
+    }),
   }
   const auth = createAuth({ config, den })
   const app = new Hono<AppEnv>()
   registerWorkbotRoutes(app, { config, den, sameOrigin: auth.sameOrigin, member: async (c, next) => {
-    const who = denSessionSchema.parse({ user: { id: "user_example", name: "Example", email: "member@example.test" }, organization: { id: "org_example", name: "Example workspace", brandAppName: null }, memberId: "member_example", enabled, canSchedule: false })
+    const who = denSessionSchema.parse({ user: { id: "user_example", name: "Example", email: "member@example.test" }, organization: { id: "org_example", name: "Example workspace", brandAppName: null }, memberId: "member_example", enabled, canSchedule: false, profileSheet })
     c.set("member", { session: { id: "session_example", userId: who.user.id, organizationId: who.organization.id, tokens: { accessToken: "fixture-token", expiresAt: Date.now() + 60000 }, createdAt: Date.now() }, accessToken: "fixture-token", den: who })
     await next()
   } })
@@ -81,4 +87,17 @@ test("activation links strip only trailing slashes in one scan, including long s
   for (const suffix of ["", "/", "///", "/".repeat(100_000)]) {
     assert.equal(activationDenUrl({ denUrl: `https://den.example.test/base//path${suffix}`, organizationId: "org example" }, "invite_teammate"), expected)
   }
+})
+
+test("the profile's Apps list passes through only with the profile on, with Den links on the configured Den domain", async () => {
+  const off = await (await workbot(true).request("GET", "/v1/workbot/connections")).json()
+  assert.ok(typeof off === "object" && off !== null && !("apps" in off))
+  const response = await workbot(true, true).request("GET", "/v1/workbot/connections")
+  assert.equal(response.status, 200)
+  const body: unknown = await response.json()
+  assert.ok(typeof body === "object" && body !== null && "apps" in body && Array.isArray(body.apps))
+  assert.deepEqual(body.apps.map((app: { name: string; connectUrl: string | null }) => [app.name, app.connectUrl]), [
+    ["Linear", null],
+    ["Notion", "https://console.example.test/dashboard/your-connections?connectionId=fixture-notion&workbotOrganizationId=org_example"],
+  ])
 })
