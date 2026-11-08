@@ -432,6 +432,14 @@ export function createHeadlessRunnerClient(deps: HeadlessRunnerDeps) {
       return { ok: true, value: { deleted: true } }
     },
 
+    /** The scratch files the agent wrote in the session (memory/ included, wherever it is kept): paths and sizes only. */
+    async listScratchFiles(sessionId: string): Promise<RunnerResult<Array<{ path: string; size: number; updatedAt: number }>>> {
+      const { status, payload } = await request(deps, "GET", `${sessionPath(sessionId)}/files`)
+      const parsed = z.object({ files: z.array(z.object({ path: z.string(), size: z.number(), updatedAt: z.number() })) }).safeParse(payload)
+      if (status !== 200 || !parsed.success) return { ok: false, status, error: errorCode(payload, `headless_scratch_${status}`) }
+      return { ok: true, value: parsed.data.files }
+    },
+
     /** Reads one scratch file the agent wrote in the session. */
     async readFile(sessionId: string, path: string): Promise<RunnerResult<{ content: string }>> {
       const response = await deps.fetch(`${deps.config.url}${sessionPath(sessionId)}/files/content?path=${encodeURIComponent(path)}`, {

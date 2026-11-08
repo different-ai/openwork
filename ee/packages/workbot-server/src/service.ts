@@ -555,6 +555,32 @@ export async function readWorkbotThread(
   }
 }
 
+/** One of Workbot's memory files about the person, as they can read it on its profile. */
+export type WorkbotMemoryFile = { name: string; updatedAt: number; content: string }
+
+/** The most memory files, and characters of each, the profile shows. */
+const MEMORY_FILES = 12
+const MEMORY_CHARS = 8_000
+
+/**
+ * What Workbot remembers about the person: the files under memory/ of their main chat (shared with their side chats),
+ * newest first, for its profile. Read-only: the person changes memory by telling Workbot.
+ */
+export async function readWorkbotMemory(actor: WorkbotActor, deps: WorkbotDeps): Promise<WorkbotMemoryFile[]> {
+  const client = clientOf(deps)
+  splitOnce(actor, deps)
+  const sessionId = await sessionOf(actor, null, deps)
+  const listed = await client.listScratchFiles(sessionId)
+  if (!listed.ok && listed.status === 404) return []
+  if (!listed.ok) throw new WorkbotUnavailableError("workbot_runner_unavailable")
+  const files = listed.value.filter((file) => /^memory\/[^/]+\.(md|txt)$/i.test(file.path)).sort((a, b) => b.updatedAt - a.updatedAt).slice(0, MEMORY_FILES)
+  const read = await Promise.all(files.map(async (file) => {
+    const content = await client.readFile(sessionId, file.path)
+    return content.ok ? [{ name: file.path.slice("memory/".length), updatedAt: file.updatedAt, content: content.value.content.slice(0, MEMORY_CHARS) }] : []
+  }))
+  return read.flat()
+}
+
 /** The person's chats: the main chat (once it exists) and their side chats, most recently used first. */
 export async function listWorkbotChats(actor: WorkbotActor, deps: WorkbotDeps): Promise<{ main: { updatedAt: number } | null; side: WorkbotChatSummary[] }> {
   splitOnce(actor, deps)
@@ -754,6 +780,7 @@ export function createWorkbot(deps: WorkbotDeps) {
   return {
     ensureComputer: (actor: WorkbotActor, chat: WorkbotChat = null) => ensureSession(actor, "UTC", deps, chat),
     readThread: (actor: WorkbotActor, input: { turns?: number; chat?: WorkbotChat } = {}) => readWorkbotThread(actor, input, deps),
+    readMemory: (actor: WorkbotActor) => readWorkbotMemory(actor, deps),
     /** The runner session a chat lives under (for a host that talks to the runner directly, e.g. live sockets). */
     sessionIdOf: (actor: WorkbotActor, chat: WorkbotChat = null) => sessionOf(actor, chat, deps),
     /** Looks up where the person's chats live ahead of the first read, so opening the page waits on one runner call. */

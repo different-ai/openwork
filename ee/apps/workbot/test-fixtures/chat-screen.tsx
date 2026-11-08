@@ -30,6 +30,8 @@ const host: WorkbotHost = {
   browser: search.get("browser") === "1",
   computer: search.get("computer") === "1",
   workingStatus: search.get("working") === "1",
+  profileSheet: search.get("profile") === "1",
+  connectionsHref: "https://den.example.test/dashboard/your-connections",
   identity: { principalId: "user_fixture", organizationId: "org_fixture" },
 }
 

@@ -3,10 +3,11 @@
 import { Dialog } from "@base-ui/react/dialog";
 import { Check, Globe, Monitor, X } from "lucide-react";
 import { useEffect, useState, type ReactNode } from "react";
-import { useRetainedSurface } from "./host";
+import { useRetainedSurface, workbotHost } from "./host";
 import { useStopWorkbotTask } from "./data";
 import { AppMark } from "./files";
 import type { ActivityStep, ActivityTask, WorkbotActivity } from "./activity";
+import { ProfileSheet } from "./profile-sheet";
 
 /**
  * Workbot's working state, out of the chat (`workingStatus`): its name in the header carries a quiet line saying what
@@ -51,10 +52,12 @@ function StatusIcon({ activity, size = 12 }: { activity: WorkbotActivity; size?:
 export function WorkingName({ name, activity, mark }: { name: string; activity: WorkbotActivity; mark: ReactNode }) {
   const [open, setOpen] = useState(false);
   const now = useTicking(activity.working && activity.since !== null);
-  const openable = activity.working || activity.tasks.length > 0;
+  // With the profile, the name always opens it; otherwise only when there is work to look at.
+  const profile = workbotHost().profileSheet === true;
+  const openable = profile || activity.working || activity.tasks.length > 0;
   const title = <span className="truncate text-[15px] font-semibold leading-5 tracking-[-0.015em] text-[var(--wb-text)]">{name}</span>;
   return <>
-    <button type="button" disabled={!openable} onClick={() => setOpen(true)} aria-haspopup="dialog" aria-label={activity.working ? `${name}: ${activity.label}. Show what ${name} is doing` : `${name}: show recent tasks`}
+    <button type="button" disabled={!openable} onClick={() => setOpen(true)} aria-haspopup="dialog" aria-label={activity.working ? `${name}: ${activity.label}. Show what ${name} is doing` : profile ? `${name}: open profile` : `${name}: show recent tasks`}
       className="flex min-w-0 items-center gap-2 rounded-lg py-0.5 pr-1.5 text-left transition-colors duration-150 enabled:hover:bg-[var(--wb-chip)] focus-visible:outline-none focus-visible:shadow-[var(--wb-focus)] disabled:cursor-default" data-workbot-working-name>
       {mark}
       <span className="flex min-w-0 flex-col">
@@ -66,9 +69,11 @@ export function WorkingName({ name, activity, mark }: { name: string; activity: 
         </span> : null}
       </span>
     </button>
-    <TaskSheet open={open} onClose={() => setOpen(false)} name={name} activity={activity} />
+    {profile ? <ProfileSheet open={open} onClose={() => setOpen(false)} name={name} activity={activity} mark={mark} /> : <TaskSheet open={open} onClose={() => setOpen(false)} name={name} activity={activity} />}
   </>;
 }
+
+export { elapsed, StatusIcon };
 
 function StepList({ steps, working }: { steps: ActivityStep[]; working: boolean }) {
   return <ol className="flex flex-col" data-workbot-sheet-steps>
@@ -112,12 +117,38 @@ function TaskSection({ task, index, total }: { task: ActivityTask; index: number
  * background tasks with a check once done. A bottom sheet on phones (it reaches the bottom edge, so nothing behind
  * shows through), a panel under the name on wider screens.
  */
-export function TaskSheet({ open, onClose, name, activity }: { open: boolean; onClose(): void; name: string; activity: WorkbotActivity }) {
-  const surface = useRetainedSurface(open);
+/** What the sheet leads with: the reply in progress, else the first unfinished task. */
+function sheetLead(activity: WorkbotActivity) {
   const openTasks = activity.tasks.filter((task) => task.status === "queued" || task.status === "working" || task.status === "paused");
   const lead = activity.main ? null : openTasks[0] ?? null;
-  const title = activity.main ? (activity.main.request.trim() || "Your message") : lead?.title ?? "Recent tasks";
-  const since = activity.main?.since ?? lead?.startedAt ?? null;
+  return {
+    title: activity.main ? (activity.main.request.trim() || "Your message") : lead?.title ?? "Recent tasks",
+    since: activity.main?.since ?? lead?.startedAt ?? null,
+  };
+}
+
+/** The reply's steps and each background task's: the body of the task sheet, and the profile's Tasks tab. */
+export function ActivityDetails({ name, activity }: { name: string; activity: WorkbotActivity }) {
+  return <>
+    {activity.main ? <section className="flex flex-col gap-2 border-t border-[var(--wb-hairline)] px-5 pt-4" data-workbot-sheet-main>
+      <h3 className="text-[12px] font-medium text-[var(--wb-muted)]">{name}</h3>
+      <StepList steps={activity.main.steps} working />
+    </section> : null}
+    {activity.tasks.map((task, index) => <TaskSection key={task.id} task={task} index={index} total={activity.tasks.length} />)}
+  </>;
+}
+
+/** Opens Workbot's live browser or screen: the third level, only on request. */
+export function WatchButton({ watch, onDone }: { watch: "browser" | "computer"; onDone(): void }) {
+  return <button type="button" onClick={() => { onDone(); window.history.pushState(null, "", `/${watch}${window.location.search}`); window.dispatchEvent(new PopStateEvent("popstate")); }}
+    className="flex h-9 w-full items-center justify-center gap-2 rounded-full bg-[var(--wb-chip)] text-[13px] font-medium text-[var(--wb-text)] hover:bg-[var(--wb-bubble)] focus-visible:outline-none focus-visible:shadow-[var(--wb-focus)]" data-workbot-watch>
+    {watch === "browser" ? <Globe size={14} aria-hidden /> : <Monitor size={14} aria-hidden />}Watch {watch === "browser" ? "the browser" : "the screen"}
+  </button>;
+}
+
+export function TaskSheet({ open, onClose, name, activity }: { open: boolean; onClose(): void; name: string; activity: WorkbotActivity }) {
+  const surface = useRetainedSurface(open);
+  const { title, since } = sheetLead(activity);
   const watch = activity.watch;
   return <Dialog.Root open={surface.open} onOpenChange={(next) => { if (!next) onClose(); }}>
     <Dialog.Portal {...surface.portal}>
@@ -132,18 +163,9 @@ export function TaskSheet({ open, onClose, name, activity }: { open: boolean; on
           <Dialog.Close aria-label="Close" className="grid size-8 shrink-0 place-items-center rounded-full text-[var(--wb-muted)] shadow-[0_0_0_1px_var(--wb-ring)] hover:text-[var(--wb-text)] focus-visible:outline-none focus-visible:shadow-[var(--wb-focus)]"><X size={15} strokeWidth={1.75} aria-hidden /></Dialog.Close>
         </div>
         <div className="min-h-0 flex-1 overflow-y-auto pb-4">
-          {activity.main ? <section className="flex flex-col gap-2 border-t border-[var(--wb-hairline)] px-5 pt-4" data-workbot-sheet-main>
-            <h3 className="text-[12px] font-medium text-[var(--wb-muted)]">{name}</h3>
-            <StepList steps={activity.main.steps} working />
-          </section> : null}
-          {activity.tasks.map((task, index) => <TaskSection key={task.id} task={task} index={index} total={activity.tasks.length} />)}
+          <ActivityDetails name={name} activity={activity} />
         </div>
-        {watch ? <div className="shrink-0 border-t border-[var(--wb-hairline)] px-5 py-3">
-          <button type="button" onClick={() => { onClose(); window.history.pushState(null, "", `/${watch}${window.location.search}`); window.dispatchEvent(new PopStateEvent("popstate")); }}
-            className="flex h-9 w-full items-center justify-center gap-2 rounded-full bg-[var(--wb-chip)] text-[13px] font-medium text-[var(--wb-text)] hover:bg-[var(--wb-bubble)] focus-visible:outline-none focus-visible:shadow-[var(--wb-focus)]" data-workbot-watch>
-            {watch === "browser" ? <Globe size={14} aria-hidden /> : <Monitor size={14} aria-hidden />}Watch {watch === "browser" ? "the browser" : "the screen"}
-          </button>
-        </div> : null}
+        {watch ? <div className="shrink-0 border-t border-[var(--wb-hairline)] px-5 py-3"><WatchButton watch={watch} onDone={onClose} /></div> : null}
       </Dialog.Popup>
     </Dialog.Portal>
   </Dialog.Root>;

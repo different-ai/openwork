@@ -89,6 +89,8 @@ const sessionSchema = z.object({
   browserChat: z.boolean().optional(),
   /** Chats open on the newest page kept on the device (`workbotInstantOpen`); older Dens omit it: off. */
   instantOpen: z.boolean().optional(),
+  /** Tapping Workbot's name opens its profile: tasks, permissions, memory (`workbotProfileSheet`); older Dens omit it: off. */
+  profileSheet: z.boolean().optional(),
   /** Always true for older Workbot clients; the command palette is available by default. */
   commandPalette: z.boolean().optional(),
   /**
@@ -418,6 +420,8 @@ export function registerWorkbotRoutes<T extends { Variables: object }>(app: Hono
         workingStatus: features.workbotWorkingStatus,
         browserChat: features.workbotBrowserChat && features.browserUse && features.remoteComputers,
         instantOpen: features.workbotInstantOpen,
+        // The profile opens from the name's status line, so it needs the working status.
+        profileSheet: features.workbotProfileSheet && features.workbotWorkingStatus,
         commandPalette: true,
         model,
         gatewayModels: true,
