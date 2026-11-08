@@ -20,7 +20,7 @@ function workbot(enabled: boolean, profileSheet = false) {
     connections: async () => ({
       connections: [{ id: "fixture-connection", name: "Fixture", app: "gmail", ready: false, connectUrl: "https://old.example.test/", connectMode: "external" }],
       apps: [
-        { id: "fixture-linear", name: "Linear", nativeProviderKey: null, authType: "oauth", status: "connected", managedBy: "organization", action: null, connectMode: "admin", connectUrl: null, ready: true },
+        { id: "fixture-linear", name: "Linear", iconCandidates: ["/integrations/linear.svg", "https://www.google.com/s2/favicons?sz=64&domain=linear.app"], nativeProviderKey: null, authType: "oauth", status: "connected", managedBy: "organization", action: null, connectMode: "admin", connectUrl: null, ready: true },
         { id: "fixture-notion", name: "Notion", nativeProviderKey: null, authType: "oauth", status: "needs_sign_in", managedBy: "you", action: "connect", connectMode: "external", connectUrl: "https://old.example.test/", ready: false },
       ],
     }),
@@ -100,4 +100,10 @@ test("the profile's Apps list passes through only with the profile on, with Den 
     ["Linear", null],
     ["Notion", "https://console.example.test/dashboard/your-connections?connectionId=fixture-notion&workbotOrganizationId=org_example"],
   ])
+})
+
+
+test("bundled Apps icons resolve on Den's origin, while generated external candidates are kept intact", async () => {
+  const body = await (await workbot(true, true).request("GET", "/v1/workbot/connections")).json() as { apps: Array<{ iconCandidates?: string[] }> }
+  assert.deepEqual(body.apps[0]?.iconCandidates, ["https://console.example.test/integrations/linear.svg", "https://www.google.com/s2/favicons?sz=64&domain=linear.app"])
 })

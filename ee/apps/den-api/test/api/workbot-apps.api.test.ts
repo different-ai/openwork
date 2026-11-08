@@ -17,7 +17,7 @@ after(async () => { await service.close(); await den.close() })
 const SHARED_KEY = "synthetic-shared-api-key-do-not-leak"
 const HEADER_VALUE = "synthetic-header-value-do-not-leak"
 const PERSONAL_KEY = "synthetic-personal-api-key-do-not-leak"
-const APP_FIELDS = ["action", "authType", "connectMode", "connectUrl", "id", "managedBy", "name", "nativeProviderKey", "ready", "status"]
+const APP_FIELDS = ["action", "authType", "connectMode", "connectUrl", "iconCandidates", "id", "managedBy", "name", "nativeProviderKey", "ready", "status"]
 
 const { orgId, owner } = await den.createOrg(await den.signUp("Apps Owner"), "Apps workspace")
 const member = await den.newMember(owner, orgId, "Apps Member")
