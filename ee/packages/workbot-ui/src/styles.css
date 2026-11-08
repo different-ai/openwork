@@ -63,6 +63,9 @@
   --wb-focus: 0 0 0 2px #68b7ff;
 }
 [data-workbot-browser-layout] > div > .workbot { height: 100%; }
+/* One responsive shell; the conversation and composer share an 800px column within the remaining desktop space. */
+.workbot-layout { height: 100%; padding-top: env(safe-area-inset-top); padding-bottom: env(safe-area-inset-bottom); }
+.workbot-layout-main { overflow: hidden; }
 /* The arrow has its own strip above the composer, never over reply text or the message box. */
 .workbot-scroll-latest { opacity: 0; visibility: hidden; pointer-events: none; transition: opacity 150ms ease-out, visibility 0s 150ms; }
 .workbot-scroll-latest.is-visible { opacity: 1; visibility: visible; pointer-events: auto; transition-delay: 0s; }

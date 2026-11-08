@@ -6,7 +6,7 @@ import { useQuery } from "@tanstack/react-query";
 import { googleDriveFileId, workbotContextLabel, workbotContextReadOnly, type WorkbotViewContext } from "@openwork/types/workbot-context";
 import { CalendarDays, ChevronDown, FileText, Globe, House, Lock, MessageCircle, Monitor, PanelLeft, X } from "lucide-react";
 import { createContext, useContext, useEffect, useRef, useState, type ReactNode } from "react";
-import { computerTabLabel, computerViews, workbotHost, useRetainedSurface } from "./host";
+import { computerTabLabel, workbotHost, useRetainedSurface } from "./host";
 import { DOCUMENTS_LIST_GC_MS, ItemIcon } from "@openwork/documents/react";
 import { usePrefetchWorkbotDocuments, useWorkbotDocumentsSource } from "./documents";
 
@@ -94,7 +94,6 @@ export function WorkspaceMenu({ page, onPage, onDocument, onChats, drafts }: { p
     // Opening the drawer again within half a minute shows the same list at once; it refreshes after that.
     enabled: surface.open && documents.ready, retry: false, staleTime: 30_000, gcTime: DOCUMENTS_LIST_GC_MS,
   });
-  const computerLabel = computerTabLabel(host);
   const prefetchDocuments = usePrefetchWorkbotDocuments();
   const navigate = (next: WorkspacePage) => { onPage(next); setOpen(false); };
   const row = "flex h-11 w-full items-center gap-3 rounded-lg px-3 text-left text-[13px] text-[var(--wb-text)] hover:bg-[var(--wb-chip)] aria-[current=page]:bg-[var(--wb-chip)] focus-visible:outline-none focus-visible:shadow-[var(--wb-focus)]";
@@ -108,7 +107,6 @@ export function WorkspaceMenu({ page, onPage, onDocument, onChats, drafts }: { p
           <button type="button" className={row} aria-current={page === "home" ? "page" : undefined} onClick={() => navigate("home")}><House size={16} strokeWidth={1.5} aria-hidden />Home</button>
           <button type="button" className={row} disabled={!host.calendar} aria-current={page === "calendar" ? "page" : undefined} onClick={() => navigate("calendar")} title={!host.calendar ? "Calendar is off. An admin can turn it on." : undefined}><CalendarDays size={16} strokeWidth={1.5} aria-hidden />Calendar{!host.calendar && <Lock size={13} aria-label="Off for this workspace" />}</button>
           {host.documents === true && <button type="button" className={row} aria-current={page === "documents" ? "page" : undefined} onPointerEnter={page === "documents" ? undefined : prefetchDocuments} onFocus={page === "documents" ? undefined : prefetchDocuments} onClick={() => navigate("documents")}><FileText size={16} strokeWidth={1.5} aria-hidden />Documents</button>}
-          {computerViews(host).length > 0 && <button type="button" className={row} aria-current={page === "computer" ? "page" : undefined} onClick={() => navigate("computer")}>{computerLabel === "Browser" ? <Globe size={16} strokeWidth={1.5} aria-hidden /> : <Monitor size={16} strokeWidth={1.5} aria-hidden />}{computerLabel}</button>}
           {onChats && <button type="button" className={row} disabled={drafts} title={drafts ? "Save or close document drafts before switching chats." : undefined} onClick={() => { setOpen(false); onChats(); }}><MessageCircle size={16} strokeWidth={1.5} aria-hidden />Chats{drafts && <Lock size={13} aria-label="Save or close document drafts first" />}</button>}
           {drafts && onChats && <p className="px-3 py-1 text-[12px] text-[var(--wb-muted)]">Save or close drafts to switch chats.</p>}
         </nav>

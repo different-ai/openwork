@@ -5,7 +5,9 @@ import { createContext, useCallback, useContext, useEffect, useLayoutEffect, use
 import { computerTabLabel, computerViews, setWorkbotHost, workbotHost, type WorkbotHost } from "./host";
 import { OpenWorkMark } from "./mark";
 import { clearThreadSnapshots } from "./thread-cache";
-import { ChatsButton, ChatsDrawer, chatTitle, RemoveChatButton, SideChatTitle, useChatLocation } from "./chats";
+import { chatTitle, RemoveChatButton, SideChatTitle, useChatLocation } from "./chats";
+import { DesktopNavigation, MobileNavigation, type NavigationProps } from "./navigation";
+import { ProfileSheet } from "./profile-sheet";
 import {
   useEditWorkbotMessage,
   useRetryWorkbotMessage,
@@ -42,18 +44,18 @@ import { Welcome } from "./welcome";
 import { ModelRecovery, AccessRecovery } from "./model-recovery";
 import { hasAnsweredTurn, WorkbotSetupChip } from "./activation";
 import { WorkbotCalendar } from "./calendar";
-import { usePrefetchWorkbotDocuments, WorkbotDocuments } from "./documents";
+import { WorkbotDocuments } from "./documents";
 import { LastGlimpse, LiveGlimpse, WorkbotComputer } from "./computer";
 import { readBrowserSkillRunPrompt, type BrowserTeachingContext } from "@openwork/types/browser-demonstration";
 import { readWorkbotCorrectionPrompt, workbotCorrectionPrompt, workbotContextLabel, workbotViewContextSchema, type WorkbotViewContext } from "@openwork/types/workbot-context";
 import type { DocumentOpenOutcome, DocumentOpenRequest } from "@openwork/documents";
-import { ComputerNavigationContext, ComputerOffer, DockedChat, DocumentNavigationContext, DocumentNavigationStatus, DocumentOffers, type DocumentNavigationState, OpenDocumentContext, SentContext, useWideScreen, WorkspaceAssistant, WorkspaceMenu, WorkspaceNavigationContext } from "./workspace";
+import { ComputerNavigationContext, ComputerOffer, DockedChat, DocumentNavigationContext, DocumentNavigationStatus, DocumentOffers, type DocumentNavigationState, OpenDocumentContext, SentContext, useWideScreen, WorkspaceAssistant, WorkspaceNavigationContext } from "./workspace";
 import { useQueryClient } from "@tanstack/react-query";
 import { useNativeDictation } from "@openwork/ui/react";
 import { WorkbotDictation } from "./native-dictation";
 import { WorkbotCommandPalette, type WorkbotPaletteTab } from "./command-palette";
 import { workbotActivity, type WorkbotActivity } from "./activity";
-import { ProfileBadge, WorkingName } from "./working-status";
+import { ProfileBadge } from "./working-status";
 import { firstReply } from "./first-reply";
 import { remoteJobActivity, remoteWatcherTaskIds, useWorkbotRemoteJobs } from "./remote-jobs";
 import { createConversationScrollState, useConversationScroll, type ConversationScrollState } from "./conversation-scroll";
@@ -72,7 +74,7 @@ const FIRST_TURNS = WORKBOT_FIRST_TURNS;
 const PAGE_TURNS = 30;
 const MAX_TURNS = 200;
 const earlierWindow = (current: number) => Math.min(MAX_TURNS, current < PAGE_TURNS ? PAGE_TURNS : current + PAGE_TURNS);
-const COLUMN = "min-w-0 w-full max-w-[640px]";
+const COLUMN = "min-w-0 w-full max-w-[800px]";
 
 /**
  * A phone or tablet keyboard: no hover and a coarse pointer, the same test the page uses for its touch layout. There
@@ -96,7 +98,6 @@ type ChatNavigation = {
   /** Null for the main chat. */
   chat: string | null;
   title: string;
-  openChats: () => void;
   openChat: (chat: string | null) => void;
 };
 
@@ -118,15 +119,9 @@ export function WorkbotScreen({ host }: { host: WorkbotHost }) {
   }, [composers]);
   const [workspaceDrafts, setWorkspaceDrafts] = useState(false);
   const [chat, openChat] = useChatLocation(sideChats, workspaceDrafts ? () => false : undefined);
-  const [chatsOpen, setChatsOpen] = useState(false);
   const chats = useWorkbotChats(sideChats);
-  const refetchChats = chats.refetch;
-  // The list says when each chat was last used: it is read again each time it opens.
-  useEffect(() => {
-    if (chatsOpen) void refetchChats();
-  }, [chatsOpen, refetchChats]);
   const navigation: ChatNavigation | null = sideChats
-    ? { chat, title: chat ? chatTitle(chats.data?.side.find((entry) => entry.id === chat)?.title) : "Main chat", openChats: () => setChatsOpen(true), openChat }
+    ? { chat, title: chat ? chatTitle(chats.data?.side.find((entry) => entry.id === chat)?.title) : "Main chat", openChat }
     : null;
   let composer = composers.get(chat);
   if (!composer) {
@@ -142,18 +137,6 @@ export function WorkbotScreen({ host }: { host: WorkbotHost }) {
       <BrowserExperience key={`${host.identity?.organizationId ?? ""}:${host.identity?.principalId ?? ""}:${chat ?? "main"}`}>
         <ChatScreen host={host} composerState={composer} position={position} navigation={navigation} onDraftsChange={setWorkspaceDrafts} />
       </BrowserExperience>
-      {sideChats ? (
-        <ChatsDrawer
-          open={chatsOpen}
-          onClose={() => setChatsOpen(false)}
-          current={chat}
-          chats={chats.data}
-          loading={chats.isPending}
-          failed={chats.isError}
-          onRetry={() => void refetchChats()}
-          onOpenChat={openChat}
-        />
-      ) : null}
     </WorkbotChatProvider>
     </div>
   );
@@ -192,7 +175,7 @@ function ChatScreen({ host, composerState, position, navigation, onDraftsChange 
   const [tab, setTab] = useWorkbotTab((next) => {
     if (!workspaceShell && documentsDirty && next !== "documents") { setLeavingDocuments(next); return false; }
     return true;
-  }, workspaceShell);
+  }, true);
   const browserPreview = useBrowserPreview();
   // A card tapped from the route's docked chat opens the same viewer surface, not a second browser alongside it.
   useEffect(() => { if (browserPreview?.visible && tab === "computer") setTab("home"); }, [browserPreview?.visible, tab, setTab]);
@@ -321,7 +304,6 @@ function ChatScreen({ host, composerState, position, navigation, onDraftsChange 
   const remote = useWorkbotRemoteJobs(data !== null);
   const watcherIds = remoteWatcherTaskIds(remote.data?.jobs ?? []);
   const activity = useMemo(() => {
-    if (!host.browser && !host.workingStatus && !host.profileSheet && !host.remoteTasks) return null;
     const jobs = remote.data?.jobs ?? [];
     const watchers = remoteWatcherTaskIds(jobs);
     const turns = (data?.turns ?? []).map((turn) => ({ ...turn, tasks: turn.tasks.filter((task) => !watchers.has(task.id)) }));
@@ -333,7 +315,16 @@ function ChatScreen({ host, composerState, position, navigation, onDraftsChange 
     return local;
   }, [host.browser, host.workingStatus, host.profileSheet, host.remoteTasks, data, stream.live, activityNow, remote.data]);
   const addFiles = uploads.add;
-  const paletteChats = useWorkbotChats(navigation !== null);
+  const openFiles = filesEnabled ? () => { if (!workspaceShell && tab !== "home") setTab("home"); setFilesOpen(true); } : undefined;
+  const chatListEnabled = navigation !== null;
+  const paletteChats = useWorkbotChats(chatListEnabled);
+  const refetchChatList = paletteChats.refetch;
+  useEffect(() => {
+    if (!wideScreen || !chatListEnabled) return;
+    // The persistent desktop list has no drawer-open event. Keep changes from another device within reach.
+    const timer = window.setInterval(() => { if (document.visibilityState === "visible") void refetchChatList(); }, 30_000);
+    return () => window.clearInterval(timer);
+  }, [wideScreen, chatListEnabled, refetchChatList]);
   const paletteTasks = useMemo(() => (data?.turns ?? []).flatMap((turn) => turn.tasks), [data?.turns]);
   const palette = (
     <WorkbotCommandPalette
@@ -353,7 +344,7 @@ function ChatScreen({ host, composerState, position, navigation, onDraftsChange 
       } : null}
       busy={data?.status === "busy" || pending.some((entry) => !entry.failed)}
       onStop={data ? () => stop.mutate() : null}
-      onOpenFiles={filesEnabled ? () => { if (!workspaceShell && tab !== "home") setTab("home"); setFilesOpen(true); } : null}
+      onOpenFiles={openFiles ?? null}
       tasks={paletteTasks}
       onFocusComposer={data ? focusComposer : null}
       onShowTask={showTask}
@@ -362,6 +353,30 @@ function ChatScreen({ host, composerState, position, navigation, onDraftsChange 
     />
   );
   const dragging = useFileDrop(filesEnabled, addFiles);
+  const [profileTab, setProfileTab] = useState<"tasks" | "permissions" | null>(null);
+  // The browser viewer keeps a 480px conversation beside it. Its chosen panel temporarily discloses navigation
+  // through the same drawer, rather than squeezing the conversation behind a second 324px sidebar.
+  const showDesktopNavigation = wideScreen && !browserPreview?.visible;
+  const navigationProps: NavigationProps = {
+    page: tab, onPage: setTab, currentChat: navigation?.chat ?? null,
+    chats: paletteChats.data, loading: paletteChats.isPending, failed: paletteChats.isError,
+    onRetry: () => void paletteChats.refetch(),
+    onOpenChat: navigation ? next => { if (!documentsDirty) { setTab("home"); navigation.openChat(next); } } : undefined,
+    drafts: documentsDirty,
+    onFiles: openFiles,
+    onTasks: () => setProfileTab("tasks"), onApps: () => setProfileTab("permissions"),
+    onOpen: () => void paletteChats.refetch(),
+    // On phones the palette stays in the header even with the drawer closed, keeping Cmd/Ctrl+K available.
+    search: showDesktopNavigation ? palette : undefined,
+    onSearch: showDesktopNavigation ? undefined : () => document.querySelector<HTMLButtonElement>("[data-workbot-palette-trigger]")?.click(),
+    account: <AccountAvatar userName={user?.name ?? null} />,
+  };
+  const mobileNavigation = !showDesktopNavigation ? <MobileNavigation {...navigationProps} /> : null;
+  const layout = (children: ReactNode) => <div className="workbot workbot-layout flex min-h-0 min-w-0 bg-[var(--wb-bg)] antialiased">
+    {showDesktopNavigation && <DesktopNavigation {...navigationProps} />}
+    <div className="workbot-layout-main flex min-h-0 min-w-0 flex-1 flex-col">{children}</div>
+    {profileTab && activity && <ProfileSheet key={profileTab} open onClose={() => setProfileTab(null)} name={data?.name ?? "Workbot"} activity={activity} initialTab={profileTab} />}
+  </div>;
 
   useEffect(() => {
     if (greetingAwaited && (start.isError || start.data?.started === false || (data?.turns.length ?? 0) > 0)) setGreetingAwaited(false);
@@ -458,11 +473,10 @@ function ChatScreen({ host, composerState, position, navigation, onDraftsChange 
       <ComputerNavigationContext.Provider value={navigateComputerFromChat}>
       <ComputerOnScreenContext.Provider value={tab === "computer" ? computerView : null}>
       <DocumentNavigationContext.Provider value={guided && host.documents ? { status: navigationStatus, open: followNavigation } : null}>
-        <div className="workbot flex h-dvh flex-col bg-[var(--wb-bg)] antialiased" data-workbot-workspace>
-          <WorkbotHeader name={name} organizationName={data?.organizationName ?? ""} userName={user?.name ?? null} answered={hasAnsweredTurn(data?.turns)} search={palette} activity={activity}
+        {layout(<div className="flex min-h-0 flex-1 flex-col" data-workbot-workspace>
+          <WorkbotHeader name={name} organizationName={data?.organizationName ?? ""} userName={user?.name ?? null} answered={hasAnsweredTurn(data?.turns)} activity={activity}
             files={filesEnabled ? <FilesButton open={filesOpen} onOpen={() => setFilesOpen(true)} /> : null}
-            chats={host.workspaceAssistant ? <WorkspaceMenu page={tab} onPage={setTab} onDocument={navigateDocument} drafts={documentsDirty} onChats={navigation?.openChats} /> : navigation ? <ChatsButton onOpen={navigation.openChats} /> : null}
-            nav={host.workspaceAssistant ? null : <WorkbotNav tab={tab} onTab={setTab} />}
+            chats={mobileNavigation} search={!showDesktopNavigation ? palette : null}
             remove={navigation?.chat && data && data.turns.length > 0 ? <RemoveChatButton disabled={documentsDirty} chatId={navigation.chat} title={navigation.title} onRemoved={() => { composerState.dispose(); navigation.openChat(null); }} /> : null}
             title={navigation?.chat ? <SideChatTitle title={navigation.title} disabled={documentsDirty} onBack={() => navigation.openChat(null)} /> : undefined}
           />
@@ -486,7 +500,7 @@ function ChatScreen({ host, composerState, position, navigation, onDraftsChange 
             composer={composer} conversation={conversation} onDocument={navigateFromChat} onComputer={navigateComputerFromChat} unavailable={!data && !loading} active={(host.workspaceAssistant === true || floatingOnComputer && tab === "computer") && tab !== "home" && !docked}
             reveal={revealChat} stayOpen={guided} /></div>
           {filesEnabled && <FilesPanel open={filesOpen} onClose={() => setFilesOpen(false)} assistantName={name} onOpenFile={file => { setFilesOpen(false); setPreview(file); }} />}
-        </div>
+        </div>)}
       </DocumentNavigationContext.Provider>
       </ComputerOnScreenContext.Provider>
       </ComputerNavigationContext.Provider>
@@ -495,16 +509,15 @@ function ChatScreen({ host, composerState, position, navigation, onDraftsChange 
     </OpenFileContext.Provider>;
   }
   if ((tab === "calendar" && host.calendar) || tab === "documents" || (tab === "computer" && computerViews(host).length > 0)) {
-    return (
-      <div className="workbot flex h-dvh flex-col bg-[var(--wb-bg)] antialiased">
+    return layout(
+      <div className="flex min-h-0 flex-1 flex-col">
         <WorkbotHeader
           name={data?.name ?? "Workbot"}
           organizationName={data?.organizationName ?? ""}
           userName={user?.name ?? null}
           files={null}
-          nav={<WorkbotNav tab={tab} onTab={setTab} />}
+          chats={mobileNavigation} search={!showDesktopNavigation ? palette : null}
           answered={hasAnsweredTurn(data?.turns)}
-          search={palette}
           activity={activity}
         />
         {leavingDocuments && <div className="border-t border-[var(--wb-hairline)] px-4 py-2 text-[13px]" role="status">You have unsaved document edits. <button type="button" className="ml-3 underline" onClick={() => setLeavingDocuments(null)}>Keep editing</button><button type="button" className="ml-3 underline" onClick={() => { const next = leavingDocuments; setLeavingDocuments(null); setDocumentsDirty(false); setTab(next, true); }}>Discard edits and leave Documents</button></div>}
@@ -580,18 +593,16 @@ function ChatScreen({ host, composerState, position, navigation, onDraftsChange 
   const chatId = navigation?.chat ?? null;
   return (
     <OpenFileContext.Provider value={setPreview}>
-    <div className="workbot flex h-dvh flex-col bg-[var(--wb-bg)] antialiased">
+    {layout(<div className="flex min-h-0 flex-1 flex-col">
       <WorkbotHeader
         name={shown.name}
         organizationName={shown.organizationName}
         userName={user?.name ?? null}
         files={filesEnabled ? <FilesButton open={filesOpen} onOpen={() => setFilesOpen(true)} /> : null}
-        chats={navigation && !chatId ? <ChatsButton onOpen={navigation.openChats} /> : null}
+        chats={mobileNavigation} search={!showDesktopNavigation ? palette : null}
         title={navigation && chatId ? <SideChatTitle title={navigation.title} onBack={() => navigation.openChat(null)} /> : null}
         remove={navigation && chatId && shown.turns.length > 0 ? <RemoveChatButton chatId={chatId} title={navigation.title} onRemoved={() => { composerState.dispose(); navigation.openChat(null); }} /> : null}
-        nav={!chatId ? <WorkbotNav tab={tab} onTab={setTab} /> : null}
         answered={hasAnsweredTurn(shown.turns)}
-        search={palette}
         activity={activity}
       />
       <div className="flex min-h-0 flex-1">
@@ -679,7 +690,7 @@ function ChatScreen({ host, composerState, position, navigation, onDraftsChange 
           <p className="flex items-center gap-2 text-[14px] font-medium text-[var(--wb-text)]"><FileText size={16} strokeWidth={1.75} aria-hidden />Drop to add to your message</p>
         </div>
       ) : null}
-    </div>
+    </div>)}
     </OpenFileContext.Provider>
   );
 }
@@ -743,7 +754,7 @@ type WorkbotTab = WorkbotPaletteTab;
 
 /** The pages this person has, in the header's order. */
 function paletteTabs(host: WorkbotHost): WorkbotTab[] {
-  return ["home", ...(host.calendar ? ["calendar" as const] : []), ...(host.documents ? ["documents" as const] : []), ...(computerViews(host).length ? ["computer" as const] : [])];
+  return ["home", ...(host.calendar ? ["calendar" as const] : []), ...(host.documents ? ["documents" as const] : [])];
 }
 
 /** Puts the caret in the message box on screen (the Home composer, or the workspace chat's). */
@@ -795,31 +806,6 @@ function useWorkbotTab(beforeLeave?: (next: WorkbotTab) => boolean, preserveSear
   return [tab, setTab] as const;
 }
 
-/** Paper v3: the person's pages beside the name, in the same order as the drawer and the command palette; the open tab sits on a soft chip. */
-function WorkbotNav({ tab, onTab }: { tab: WorkbotTab; onTab: (tab: WorkbotTab) => void }) {
-  const host = workbotHost();
-  // Reaching Documents with the pointer or keyboard reads its first listing, so it opens with files, not a skeleton.
-  const prefetchDocuments = usePrefetchWorkbotDocuments();
-  const onIntent = (entry: WorkbotTab) => { if (entry === "documents" && tab !== "documents") prefetchDocuments(); };
-  return (
-    <nav className="ml-2 flex min-w-0 items-center gap-0.5 overflow-x-auto sm:ml-4" aria-label="Workbot">
-      {paletteTabs(host).map((entry) => (
-        <button
-          key={entry}
-          type="button"
-          aria-current={tab === entry ? "page" : undefined}
-          onClick={() => onTab(entry)}
-          onPointerEnter={() => onIntent(entry)}
-          onFocus={() => onIntent(entry)}
-          className={`flex h-8 items-center rounded-lg px-3 text-[13px] leading-4 transition-colors duration-150 focus-visible:outline-none focus-visible:shadow-[var(--wb-focus)] ${tab === entry ? "bg-[var(--wb-chip)] font-semibold text-[var(--wb-text)]" : "font-medium text-[var(--wb-muted)] hover:text-[var(--wb-text)]"}`}
-        >
-          {entry === "home" ? "Home" : entry === "calendar" ? "Calendar" : entry === "documents" ? "Documents" : computerTabLabel(host)}
-        </button>
-      ))}
-    </nav>
-  );
-}
-
 function WorkbotHeader(props: {
   name: string;
   organizationName: string;
@@ -838,12 +824,10 @@ function WorkbotHeader(props: {
   /** The command palette's button (and the palette), where it is on. */
   search?: ReactNode;
   /** What Workbot is doing (workingStatus): a status line under the name, which opens the task sheet. */
-  activity?: WorkbotActivity | null;
+  activity: WorkbotActivity;
 }) {
-  const { name, organizationName, userName, files } = props;
-  const apps = useConnectedApps();
-  const names = apps.map((app) => app.name);
-  if ((workbotHost().browser || workbotHost().centeredProfile && workbotHost().profileSheet) && props.activity) return (
+  const { name } = props;
+  return (
     <header className="grid min-h-[84px] shrink-0 grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-start gap-2 px-3 pb-2 pt-2 sm:px-5" data-workbot-profile-header>
       <div className="flex min-w-0 items-center gap-1 pt-2">
         {props.chats}{props.search}
@@ -856,36 +840,6 @@ function WorkbotHeader(props: {
       <div className="flex min-w-0 items-center justify-end gap-1 pt-2 sm:gap-2.5">
         {props.remove}
         <div className="hidden sm:contents"><WorkbotSetupChip answered={props.answered === true} /></div>
-        {files}
-        <AccountAvatar userName={userName} />
-      </div>
-    </header>
-  );
-  return (
-    <header className="flex h-13 shrink-0 items-center justify-between gap-3 px-4 sm:px-5">
-      {props.title ? <div className="flex min-w-0 items-center gap-2">{props.chats}{props.title}{props.nav}</div> : (
-        <div className="flex min-w-0 items-center gap-2" title={organizationName}>
-          {props.chats}
-          {props.activity ? <h1 className="flex min-w-[7.5rem] shrink"><WorkingName name={name} activity={props.activity} mark={<Mark name={name} size="header" />} /></h1> : <>
-            <Mark name={name} size="header" />
-            <h1 className="truncate text-[15px] font-semibold leading-5 tracking-[-0.015em] text-[var(--wb-text)]">{name}</h1>
-          </>}
-          {/* On a phone, what Workbot is doing takes the tabs' place while it works; the task sheet offers Watch. */}
-          {props.activity?.working ? <div className="hidden sm:contents">{props.nav}</div> : props.nav}
-        </div>
-      )}
-      <div className="flex shrink-0 items-center gap-2.5 sm:gap-3.5">
-        {props.search}
-        {props.remove}
-        <WorkbotSetupChip answered={props.answered === true} />
-        {files}
-        {apps.length > 0 ? (
-          <span className="flex h-7 items-center gap-[7px] rounded-full bg-[var(--wb-chip)] pl-2 pr-2.5" title={names.join(", ")} aria-label={`Connected: ${names.join(", ")}`}>
-            {apps.slice(0, 4).map((app) => <AppMark key={app.id} name={app.name} />)}
-            <span className="hidden max-w-[220px] truncate pl-0.5 text-[12px] leading-4 text-[var(--wb-muted)] sm:inline">{names.join(", ")}</span>
-          </span>
-        ) : null}
-        <AccountAvatar userName={userName} />
       </div>
     </header>
   );

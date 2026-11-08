@@ -19,6 +19,26 @@ browser ── chat.openworklabs.com (this app: page + API) ──┬── Den 
 - **Each turn** gets a fresh member-scoped token from `POST /v1/workbot/run-token` (at most an hour). Den refuses it
   when membership or the required access grant is no longer valid.
 
+## Navigation
+
+Workbot uses the same chat-first navigation on every screen, without a layout rollout flag.
+At 1024px and wider, a 64px icon rail sits beside a 260px searchable chat list: Main chat stays first,
+then side chats ordered by latest activity. On smaller screens, the navigation button opens a drawer
+with Tabs, side chats, and a bottom search/new-chat row. Files, Documents, Calendar, Tasks and Apps
+open their existing destinations; capability availability and document-draft guards still apply.
+No empty channel or space sections are invented. Computer is not a navigation destination; browser
+work is opened from its inline preview card. While its desktop panel is open, navigation folds into
+the same drawer so the conversation keeps its width; closing the panel restores the direct sidebar.
+
+The conversation and composer share a centered column capped at 800px. Changing screen size or
+switching chats preserves the existing per-chat draft and scroll owners.
+
+`pnpm --filter @openwork-ee/workbot test:navigation-browser` checks the real React screen against the
+local in-memory fixture, including 1440px/1920px desktop, 390px phone, switching, filtering, empty/error
+recovery, keyboard focus and unsent drafts. Start `test-fixtures/chat-screen-server.ts 3098` first;
+`PLAYWRIGHT_MODULE` can point to a separate Playwright installation. These are deterministic UI
+checks, not evidence of live Den, runner or model integration.
+
 ## Sessions
 
 Workbot keeps nothing on disk, so it runs as any number of instances. The person's Den tokens live in an HttpOnly,
