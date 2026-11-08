@@ -9,7 +9,7 @@ import { createHeadlessThreadClient } from "@openwork/headless-threads"
 import { createSessionRunner, emptyJournal } from "@openwork/remote-sessions"
 import { createDesktopSessionAdapter } from "../electron/session-runner-adapter.mjs"
 import { createDesktopSessionJournal, desktopSessionRunnerPartition } from "../electron/session-runner-journal.mjs"
-import { createDesktopAutomationRunner } from "../electron/automation-runner.mjs"
+import { createDesktopAutomationRunner, watchRemoteSession } from "../electron/automation-runner.mjs"
 import { stageRuntimeNodeModules } from "../scripts/prepare-runtime-node-modules.mjs"
 
 const account = { organizationId: "org_fixture", memberId: "member_fixture", runnerId: "runner_fixture" }
@@ -85,7 +85,14 @@ function nativeFixture() {
     }
     if (path === "/session/active") return response({ data: active ? { [sessionId]: { type: "running" } } : {} })
     if (path === `/session/${sessionId}`) return response({ data: { id: sessionId, metadata: sessionMetadata, title: "Remote fixture", model: { providerID: "fixture", id: "fixture-model" } } })
-    if (path === `/session/${sessionId}/message`) return response({ data: [...messages].reverse() })
+    if (path === `/session/${sessionId}/message`) {
+      // Native pages run newest first, bounded by limit, continued by cursor.
+      const newest = [...messages].reverse()
+      const start = Number(url.searchParams.get("cursor") ?? 0)
+      const limit = Number(url.searchParams.get("limit") ?? newest.length)
+      const end = start + limit
+      return response({ data: newest.slice(start, end), ...(end < newest.length ? { cursor: { next: String(end) } } : {}) })
+    }
     if (path === `/session/${sessionId}/model`) return response({ data: {} })
     if (path === `/session/${sessionId}/prompt`) {
       if (!messages.some((message) => message.id === body.id && body.id)) {
@@ -649,4 +656,59 @@ test("native observation reports the step the current turn ran last, only while 
   const done = await adapter.observe(receipt, signal)
   assert.equal(done.status, "idle")
   assert.equal(done.latestStep, null)
+})
+
+test("a finished long turn reports idle even after its own message left the bounded tail", async () => {
+  // Production: a 246-message remote session finished, but its first user message fell outside the last 200,
+  // so every observation said "running" for the rest of the night.
+  const native = nativeFixture()
+  const adapter = createDesktopSessionAdapter(native)
+  const signal = new AbortController().signal
+  const receipt = await adapter.create(command(), signal)
+  await adapter.send(receipt, { prompt: "open the PRs", messageId: "msg_longturn", model: null }, signal)
+  for (let index = 0; index < 240; index += 1) native.messages.push({ id: `msg_step${index}`, role: "assistant", text: `step ${index}` })
+  native.messages.push({ id: "msg_final", role: "assistant", text: "All PRs merged." })
+  native.active = false
+  const done = await adapter.observe(receipt, signal)
+  assert.equal(done.status, "idle")
+  assert.equal(done.finalText, "All PRs merged.")
+  // Seen once is enough: later observations read only the tail.
+  const reads = native.calls.length
+  const again = await adapter.observe(receipt, signal)
+  assert.equal(again.status, "idle")
+  assert.equal(native.calls.slice(reads).filter((call) => call.path.endsWith("/message")).length, 1)
+})
+
+test("a follow-up not yet in the session is still running, even on a long session", async () => {
+  const native = nativeFixture()
+  const adapter = createDesktopSessionAdapter(native)
+  const signal = new AbortController().signal
+  const receipt = await adapter.create(command(), signal)
+  for (let index = 0; index < 240; index += 1) native.messages.push({ id: `msg_old${index}`, role: index === 0 ? "user" : "assistant", text: `old ${index}` })
+  await adapter.send(receipt, { prompt: "one more thing", messageId: "msg_followup", model: null }, signal)
+  native.messages.pop()
+  native.active = false
+  const pending = await adapter.observe(receipt, signal)
+  assert.equal(pending.status, "running")
+  assert.equal(pending.finalText, undefined)
+})
+
+test("the released watcher also reports a finished long follow-up as idle", async () => {
+  const native = nativeFixture()
+  const adapter = createDesktopSessionAdapter(native)
+  const signal = new AbortController().signal
+  const receipt = await adapter.create(command(), signal)
+  native.messages.push({ id: "msg_turn", role: "user", text: "open the PRs" })
+  for (let index = 0; index < 240; index += 1) native.messages.push({ id: `msg_work${index}`, role: "assistant", text: `step ${index}` })
+  native.messages.push({ id: "msg_answer", role: "assistant", text: "Merged." })
+  native.active = false
+  const reports = []
+  const outcome = await watchRemoteSession({
+    sessionId: receipt.sessionId, workspaceId: receipt.workspaceId, turn: { messageId: "msg_turn", previousUserMessageId: null },
+    getLocalRuntime: native.getLocalRuntime, fetchImpl: native.fetchImpl, signal,
+    timing: { fastPollMs: 1, slowPollMs: 1, maxMs: 2_000 },
+    report: async (body) => { reports.push(body); return true },
+  })
+  assert.equal(outcome, "idle")
+  assert.equal(reports.at(-1).finalText, "Merged.")
 })
