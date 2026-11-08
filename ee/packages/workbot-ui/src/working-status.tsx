@@ -8,6 +8,8 @@ import { useStopWorkbotTask } from "./data";
 import { AppMark } from "./files";
 import type { ActivityStep, ActivityTask, WorkbotActivity } from "./activity";
 import { ProfileSheet } from "./profile-sheet";
+import { OpenWorkMark } from "./mark";
+import { RemoteJobs, useWorkbotRemoteJobs } from "./remote-jobs";
 
 /**
  * Workbot's working state, out of the chat (`workingStatus`): its name in the header carries a quiet line saying what
@@ -75,6 +77,31 @@ export function WorkingName({ name, activity, mark }: { name: string; activity: 
 
 export { elapsed, StatusIcon };
 
+/**
+ * The profile at the top centre (`profileSheet`), as a person shows in a messaging app: Workbot's avatar (the
+ * OpenWork mark), its name on a pill under it, and in the pill what it is doing now. The first level of what it is
+ * doing (status), then the profile on tap (tasks, what it can use, its computer, memory), then the live view.
+ */
+export function ProfileBadge({ name, activity }: { name: string; activity: WorkbotActivity }) {
+  const [open, setOpen] = useState(false);
+  return <>
+    <button type="button" onClick={() => setOpen(true)} aria-haspopup="dialog" aria-label={activity.working ? `${name}: ${activity.label}. Open ${name}'s profile` : `${name}: open profile`}
+      className="group flex flex-col items-center rounded-[18px] focus-visible:outline-none" data-workbot-profile-badge>
+      <span aria-hidden className="relative grid size-9 place-items-center rounded-full bg-[var(--wb-surface)] shadow-[0_0_0_1px_var(--wb-ring),var(--wb-card-shadow)] transition-transform duration-150 ease-out group-active:scale-[0.96] motion-reduce:transition-none">
+        <OpenWorkMark width={15} height={19} />
+      </span>
+      <span className="relative -mt-1.5 flex max-w-[136px] flex-col items-center rounded-[13px] bg-[var(--wb-surface)] px-2.5 py-[3px] shadow-[0_0_0_1px_var(--wb-ring),var(--wb-card-shadow)] transition-shadow duration-150 group-hover:shadow-[0_0_0_1px_var(--wb-disabled),var(--wb-card-shadow)] group-focus-visible:shadow-[var(--wb-focus)]">
+        <span className="max-w-full truncate text-[13px] font-semibold leading-4 tracking-[-0.01em] text-[var(--wb-text)]">{name}</span>
+        {activity.working ? <span className="workbot-subtitle-enter flex max-w-full items-center gap-1 text-[11px] leading-[14px] text-[var(--wb-muted)]" role="status" aria-live="polite" data-workbot-status-line>
+          <StatusIcon activity={activity} size={11} />
+          <span key={activity.label} className="workbot-shimmer min-w-0 truncate">{activity.label}</span>
+        </span> : null}
+      </span>
+    </button>
+    <ProfileSheet open={open} onClose={() => setOpen(false)} name={name} activity={activity} />
+  </>;
+}
+
 function StepList({ steps, working }: { steps: ActivityStep[]; working: boolean }) {
   return <ol className="flex flex-col" data-workbot-sheet-steps>
     {steps.map((step, index) => <li key={step.key} className="relative flex gap-3 pb-3">
@@ -94,21 +121,22 @@ function StepList({ steps, working }: { steps: ActivityStep[]; working: boolean 
   </ol>;
 }
 
-function TaskSection({ task, index, total }: { task: ActivityTask; index: number; total: number }) {
+function TaskSection({ task }: { task: ActivityTask }) {
   const stop = useStopWorkbotTask();
   const open = task.status === "queued" || task.status === "working" || task.status === "paused";
   const stopping = stop.isPending && stop.variables === task.id;
-  const state = task.status === "queued" ? "Waiting to start" : task.status === "paused" ? "Picking it back up" : task.status === "done" ? "Done" : task.status === "failed" ? "Couldn't finish" : task.status === "stopped" ? "Stopped" : null;
+  // Gone quiet: unfinished as far as the conversation knows, but no step for a long while. Said plainly, with Stop.
+  const state = open && task.quiet ? `No progress since ${task.lastAt ? clock(task.lastAt) : "it started"}` : task.status === "queued" ? "Waiting to start" : task.status === "paused" ? "Picking it back up" : task.status === "done" ? "Done" : task.status === "failed" ? "Couldn't finish" : task.status === "stopped" ? "Stopped" : null;
   return <section className="flex flex-col gap-2 border-t border-[var(--wb-hairline)] px-5 pb-2 pt-4" data-workbot-sheet-task={task.id}>
     <div className="flex items-start justify-between gap-3">
       <div className="min-w-0">
-        <h3 className="text-[12px] font-medium text-[var(--wb-muted)]">{total > 1 ? `Background task ${index + 1}` : "Background task"}{state ? ` · ${state}` : ""}</h3>
+        <h3 className="text-[12px] font-medium text-[var(--wb-muted)]">In the background{state ? ` · ${state}` : ""}</h3>
         <p className="truncate text-[14px] font-medium leading-5 text-[var(--wb-text)]">{task.title}</p>
       </div>
       {open ? <button type="button" disabled={stopping} onClick={() => stop.mutate(task.id)} className="h-7 shrink-0 rounded-full px-3 text-[12px] font-medium text-[var(--wb-muted)] transition-colors duration-150 hover:bg-[var(--wb-chip)] hover:text-[var(--wb-text)] disabled:opacity-50 focus-visible:outline-none focus-visible:shadow-[var(--wb-focus)]">{stopping ? "Stopping" : "Stop"}</button> : null}
     </div>
-    {open && task.note ? <p className="text-[12.5px] leading-[18px] text-[var(--wb-muted)]">{task.note}</p> : null}
-    {task.steps.length || open ? <StepList steps={task.steps} working={task.status === "working"} /> : null}
+    {open && !task.quiet && task.note ? <p className="text-[12.5px] leading-[18px] text-[var(--wb-muted)]">{task.note}</p> : null}
+    {task.steps.length || open ? <StepList steps={task.steps} working={task.status === "working" && !task.quiet} /> : null}
   </section>;
 }
 
@@ -119,7 +147,7 @@ function TaskSection({ task, index, total }: { task: ActivityTask; index: number
  */
 /** What the sheet leads with: the reply in progress, else the first unfinished task. */
 function sheetLead(activity: WorkbotActivity) {
-  const openTasks = activity.tasks.filter((task) => task.status === "queued" || task.status === "working" || task.status === "paused");
+  const openTasks = activity.tasks.filter((task) => (task.status === "queued" || task.status === "working" || task.status === "paused") && !task.quiet);
   const lead = activity.main ? null : openTasks[0] ?? null;
   return {
     title: activity.main ? (activity.main.request.trim() || "Your message") : lead?.title ?? "Recent tasks",
@@ -134,7 +162,7 @@ export function ActivityDetails({ name, activity }: { name: string; activity: Wo
       <h3 className="text-[12px] font-medium text-[var(--wb-muted)]">{name}</h3>
       <StepList steps={activity.main.steps} working />
     </section> : null}
-    {activity.tasks.map((task, index) => <TaskSection key={task.id} task={task} index={index} total={activity.tasks.length} />)}
+    {activity.tasks.map((task) => <TaskSection key={task.id} task={task} />)}
   </>;
 }
 
@@ -150,6 +178,7 @@ export function TaskSheet({ open, onClose, name, activity }: { open: boolean; on
   const surface = useRetainedSurface(open);
   const { title, since } = sheetLead(activity);
   const watch = activity.watch;
+  const remote = useWorkbotRemoteJobs(open);
   return <Dialog.Root open={surface.open} onOpenChange={(next) => { if (!next) onClose(); }}>
     <Dialog.Portal {...surface.portal}>
       <Dialog.Backdrop className="fixed inset-0 z-40 bg-[var(--wb-ink)]/25 transition-opacity duration-200 data-[ending-style]:opacity-0 data-[starting-style]:opacity-0 motion-reduce:transition-none sm:bg-[var(--wb-ink)]/10" />
@@ -164,6 +193,8 @@ export function TaskSheet({ open, onClose, name, activity }: { open: boolean; on
         </div>
         <div className="min-h-0 flex-1 overflow-y-auto pb-4">
           <ActivityDetails name={name} activity={activity} />
+          <RemoteJobs jobs={remote.data?.jobs ?? []} />
+          {workbotHost().remoteTasks && remote.isError ? <p className="px-5 pt-3 text-[13px] text-[var(--wb-muted)]">Couldn&apos;t verify remote tasks. <button type="button" className="underline" onClick={() => void remote.refetch()}>Try again</button></p> : null}
         </div>
         {watch ? <div className="shrink-0 border-t border-[var(--wb-hairline)] px-5 py-3"><WatchButton watch={watch} onDone={onClose} /></div> : null}
       </Dialog.Popup>

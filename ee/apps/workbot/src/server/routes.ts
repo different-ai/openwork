@@ -6,6 +6,7 @@ import {
   WORKBOT_CHAT_ID,
   WorkbotFilesUnavailableError,
   WorkbotUnavailableError,
+  WorkbotRemoteJobError,
   type WorkbotActor,
   type WorkbotChat,
   type WorkbotEventsUnavailable,
@@ -136,6 +137,10 @@ export function registerWorkbotRoutes(app: Hono<AppEnv>, input: { config: Config
   const workbotFor = (member: Member, desktopViews = desktopViewsOf(member.den)) =>
     createWorkbot({
       client: runnerClientFor(member),
+      remoteTasks: member.den.remoteTasks,
+      remoteStatus: input => den.remoteStatus(member.accessToken, input),
+      remoteRead: input => den.remoteRead(member.accessToken, input),
+      remoteStop: input => den.remoteStop(member.accessToken, input),
       desktopViews,
       canSchedule: async () => member.den.canSchedule,
       model: async () => member.den.model,
@@ -146,6 +151,7 @@ export function registerWorkbotRoutes(app: Hono<AppEnv>, input: { config: Config
       guidedNavigation: async () => member.den.guidedNavigation && member.den.documents === true,
       driveFiles: async () => member.den.driveFiles,
       workingStatus: async () => member.den.workingStatus,
+      quickReply: async () => member.den.quickReply,
       sandboxGateway: member.den.sandboxGateway,
       browserRecovery: member.den.browserRecovery,
       // Saved steps are GA; older Dens may omit stepTurns, so preserve their continuous-turn protocol.
@@ -257,9 +263,13 @@ export function registerWorkbotRoutes(app: Hono<AppEnv>, input: { config: Config
       // Signing out and switching workspace don't depend on Workbot being on for this workspace.
       accountMenu: who.accountMenu,
       workingStatus: who.enabled && who.workingStatus,
+      quickReply: who.enabled && who.quickReply,
       browserChat: who.enabled && who.browser && who.browserChat,
       instantOpen: who.enabled && who.instantOpen,
       profileSheet: who.enabled && who.profileSheet,
+      centeredProfile: who.enabled && who.centeredProfile,
+      browserPreview: who.enabled && who.browserPreview,
+      remoteTasks: who.enabled && who.remoteTasks,
       commandPalette: true,
       denUrl: config.denWebUrl ?? (await den.webUrl().catch(() => null)),
     })
@@ -508,6 +518,58 @@ export function registerWorkbotRoutes(app: Hono<AppEnv>, input: { config: Config
         connectUrl: connection.ready || !denWeb ? connection.connectUrl : workbotConnectionUrl(denWeb, member.den.organization.id, connection.id),
       })),
     })
+  })
+
+  /** Remote jobs proved by this chat's persisted receipts, never ids supplied by the browser. */
+  app.get("/v1/workbot/remote-jobs", async (c) => {
+    c.header("Cache-Control", "no-store")
+    const member = c.get("member")
+    if (!enabled(c)) return c.json({ error: "workbot_not_enabled" }, 409)
+    if (!member.den.remoteTasks) return c.json({ error: "feature_disabled" }, 404)
+    const scope = chatOf(c)
+    if (scope.refused) return scope.refused
+    try {
+      return c.json(await workbotFor(member).readRemoteJobs(actorOf(member), { chat: scope.chat }))
+    } catch (error) {
+      if (error instanceof WorkbotUnavailableError) return c.json({ error: error.code }, 503)
+      throw error
+    }
+  })
+
+  app.get("/v1/workbot/remote-jobs/:key", async (c) => {
+    c.header("Cache-Control", "no-store")
+    const member = c.get("member")
+    if (!enabled(c)) return c.json({ error: "workbot_not_enabled" }, 409)
+    if (!member.den.remoteTasks) return c.json({ error: "feature_disabled" }, 404)
+    const scope = chatOf(c)
+    if (scope.refused) return scope.refused
+    const key = c.req.param("key")
+    if (key.length > 260) return c.json({ error: "invalid_request" }, 400)
+    try {
+      return c.json(await workbotFor(member).readRemoteJob(actorOf(member), { key, chat: scope.chat }))
+    } catch (error) {
+      if (error instanceof WorkbotRemoteJobError) return c.json({ error: error.code }, error.status)
+      return c.json({ error: "remote_job_unavailable" }, 503)
+    }
+  })
+
+  app.post("/v1/workbot/remote-jobs/:key/stop", bodyLimit({ maxSize: 1024 }), async (c) => {
+    c.header("Cache-Control", "no-store")
+    const member = c.get("member")
+    if (!enabled(c)) return c.json({ error: "workbot_not_enabled" }, 409)
+    if (!member.den.remoteTasks) return c.json({ error: "feature_disabled" }, 404)
+    const scope = chatOf(c)
+    if (scope.refused) return scope.refused
+    const body = z.object({ messageId: z.string().trim().min(1).max(240) }).strict().safeParse(await c.req.json().catch(() => null))
+    const key = c.req.param("key")
+    if (!body.success || key.length > 260) return c.json({ error: "invalid_request" }, 400)
+    try {
+      return c.json(await workbotFor(member).stopRemoteJob(actorOf(member), { key, messageId: body.data.messageId, chat: scope.chat }))
+    } catch (error) {
+      if (error instanceof WorkbotRemoteJobError) return c.json({ error: error.code }, error.status)
+      // A dropped stop response is uncertain, never a successful stop or an invitation to replay it automatically.
+      return c.json({ error: "remote_stop_unconfirmed" }, 503)
+    }
   })
 
   /** What Workbot remembers about the person, read-only, for its profile (`workbotProfileSheet`). */

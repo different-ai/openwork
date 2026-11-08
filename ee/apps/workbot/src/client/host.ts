@@ -31,12 +31,18 @@ export const meSchema = z.object({
   accountMenu: z.boolean().default(false),
   /** Work in progress in the header and task sheet (`workbotWorkingStatus`); older servers omit it. */
   workingStatus: z.boolean().default(false),
+  /** Brief acknowledgment before tools (`workbotQuickReply`); older servers omit it. */
+  quickReply: z.boolean().default(false),
   /** The conversation docked beside the Browser and Computer views (`workbotBrowserChat`); older servers omit it. */
   browserChat: z.boolean().default(false),
   /** Chats open on the newest page kept on this device (`workbotInstantOpen`); older servers omit it. */
   instantOpen: z.boolean().default(false),
   /** Workbot's profile behind its name (`workbotProfileSheet`); older servers omit it. */
   profileSheet: z.boolean().default(false),
+  centeredProfile: z.boolean().default(false),
+  browserPreview: z.boolean().default(false),
+  /** Read-only remote tasks (`workbotRemoteTasks`); absent means off. */
+  remoteTasks: z.boolean().default(false),
   denUrl: z.string().nullable(),
 })
 export type Me = z.infer<typeof meSchema>
@@ -165,7 +171,11 @@ export function createHost(me: Me, recovery: { authorization?: WorkbotHost["docu
     },
     sideChats: me.sideChats,
     workingStatus: me.workingStatus,
+    quickReply: me.quickReply,
     profileSheet: me.profileSheet,
+    centeredProfile: me.centeredProfile,
+    browserPreview: me.browserPreview,
+    remoteTasks: me.remoteTasks,
     account: me.accountMenu ? { email: me.email, organizationName: me.organizationName, signOut, switchWorkspace } : undefined,
     identity: me.userId && me.organizationId ? { principalId: me.userId, organizationId: me.organizationId } : undefined,
   }

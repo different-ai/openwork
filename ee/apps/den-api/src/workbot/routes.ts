@@ -87,12 +87,20 @@ const sessionSchema = z.object({
   accountMenu: z.boolean().optional(),
   /** Work in progress shows in the header and task sheet, not the chat (`workbotWorkingStatus`); older Dens omit it: off. */
   workingStatus: z.boolean().optional(),
+  /** Brief acknowledgment before tools (`workbotQuickReply`); older Dens omit it: off. */
+  quickReply: z.boolean().optional(),
   /** The conversation stays docked beside the Browser and Computer views (`workbotBrowserChat`); older Dens omit it: off. */
   browserChat: z.boolean().optional(),
   /** Chats open on the newest page kept on the device (`workbotInstantOpen`); older Dens omit it: off. */
   instantOpen: z.boolean().optional(),
   /** Tapping Workbot's name opens its profile: tasks, permissions, memory (`workbotProfileSheet`); older Dens omit it: off. */
   profileSheet: z.boolean().optional(),
+  /** Centre avatar and expanded profile, separately reversible from the original sheet. */
+  centeredProfile: z.boolean().optional(),
+  /** Inline live thumbnail; never automatically opens the full browser. */
+  browserPreview: z.boolean().optional(),
+  /** Read-only remote task status (`workbotRemoteTasks`); older Dens omit it: off. */
+  remoteTasks: z.boolean().optional(),
   /** Always true for older Workbot clients; the command palette is available by default. */
   commandPalette: z.boolean().optional(),
   /**
@@ -421,10 +429,14 @@ export function registerWorkbotRoutes<T extends { Variables: object }>(app: Hono
         sideChats: true,
         accountMenu: features.workbotAccountMenu,
         workingStatus: features.workbotWorkingStatus,
+        quickReply: features.workbotQuickReply,
         browserChat: features.workbotBrowserChat && features.browserUse && features.remoteComputers,
         instantOpen: features.workbotInstantOpen,
         // The profile opens from the name's status line, so it needs the working status.
         profileSheet: features.workbotProfileSheet && features.workbotWorkingStatus,
+        centeredProfile: features.workbotCenteredProfile && features.workbotProfileSheet && features.workbotWorkingStatus,
+        browserPreview: features.workbotBrowserPreview && features.remoteComputers && (features.browserUse || features.computerUse),
+        remoteTasks: features.workbotRemoteTasks,
         commandPalette: true,
         model,
         gatewayModels: true,

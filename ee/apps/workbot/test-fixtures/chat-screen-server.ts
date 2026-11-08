@@ -1,7 +1,12 @@
 import type { IncomingMessage, ServerResponse } from "node:http"
+import { createHash } from "node:crypto"
+import { readFile } from "node:fs/promises"
 import { fileURLToPath } from "node:url"
 import { createServer } from "vite"
 import { scenarios, type FixtureThread, type FixtureTurn } from "./chat-screen-scenarios.js"
+import { fixtureRemoteJobs } from "./remote-jobs.js"
+
+let remoteStopped = false
 
 /**
  * Test-only: serves chat-screen.tsx with Workbot's Vite config and answers the page's `/v1/workbot` requests from an
@@ -39,6 +44,16 @@ async function answer(request: IncomingMessage, response: ServerResponse) {
   const current = thread(name)
   const path = url.pathname
   if (request.method === "GET" && path === "/v1/workbot") return json(response, 200, { available: true, ...current })
+  if (path === "/v1/workbot/events") {
+    response.writeHead(200, { "Content-Type": "text/event-stream", "Cache-Control": "no-cache" })
+    response.write("event: ready\ndata: {}\n\n")
+    const ping = setInterval(() => response.write(": fixture\n\n"), 10_000)
+    response.on("close", () => clearInterval(ping))
+    return
+  }
+  if (path === "/v1/workbot/computer/viewer" && process.env.WORKBOT_FIXTURE_FRAME) return json(response, 200, {
+    state: "connected", expiresAt: Date.now() + 60_000, paused: false, url: `ws://${request.headers.host}/vnc/${"f".repeat(43)}`,
+  })
   if (request.method === "POST" && path === "/v1/workbot/messages") {
     const input = JSON.parse((await body(request)).toString("utf8")) as { id: string; text: string; attachments?: string[] }
     const now = Date.now()
@@ -65,8 +80,16 @@ async function answer(request: IncomingMessage, response: ServerResponse) {
     response.setHeader("Content-Type", kept.mediaType)
     return response.end(kept.bytes)
   }
+  if (path === "/v1/workbot/remote-jobs") return json(response, 200, { jobs: name === "remote" ? fixtureRemoteJobs(remoteStopped) : [], hasEarlier: false })
+  if (path.startsWith("/v1/workbot/remote-jobs/")) {
+    if (request.method === "POST" && path.endsWith("/stop")) { remoteStopped = true; return json(response, 200, { state: "stopped" }) }
+    return json(response, 200, { state: "ready", canStop: !remoteStopped, messageId: "fixture-user", messages: [
+      { id: "fixture-user", role: "user", text: "Check the mobile browser flow and report what works." },
+      { id: "fixture-assistant", role: "assistant", text: "The mobile layout is checked. I'm verifying the last browser step." },
+    ] })
+  }
   if (path === "/v1/workbot/files") return json(response, 200, { enabled: true, files: [...files.values()].map(({ bytes: _bytes, ...rest }) => rest) })
-  if (path === "/v1/workbot/stop" || path.endsWith("/stop")) return json(response, 200, { ok: true })
+  if (!path.startsWith("/v1/workbot/remote-jobs/") && (path === "/v1/workbot/stop" || path.endsWith("/stop"))) return json(response, 200, { ok: true })
   if (path === "/v1/workbot/connections") return json(response, 200, { connections: [
     { id: "c1", name: "Gmail", app: "gmail", ready: true, connectUrl: null },
     { id: "c2", name: "Google Calendar", app: "googleCalendar", ready: true, connectUrl: null },
@@ -100,6 +123,28 @@ const vite = await createServer({
       })
     },
   }],
+})
+// Test-only screencast: the caller supplies a JPEG captured from an actual page. It is intentionally not a browser
+// runtime: UI tests exercise real frame drawing/retention without signing into a runner or claiming an external task.
+if (process.env.WORKBOT_FIXTURE_FRAME) vite.httpServer?.on("upgrade", (request, socket) => {
+  if (!request.url?.startsWith("/screencast/")) return
+  const key = request.headers["sec-websocket-key"]
+  if (!key) { socket.destroy(); return }
+  const accept = createHash("sha1").update(`${key}258EAFA5-E914-47DA-95CA-C5AB0DC85B11`).digest("base64")
+  socket.write(`HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Accept: ${accept}\r\n\r\n`)
+  const frame = (opcode: number, bytes: Buffer) => {
+    const head = Buffer.alloc(bytes.length < 126 ? 2 : bytes.length < 65_536 ? 4 : 10)
+    head[0] = 0x80 | opcode
+    if (bytes.length < 126) head[1] = bytes.length
+    else if (bytes.length < 65_536) { head[1] = 126; head.writeUInt16BE(bytes.length, 2) }
+    else { head[1] = 127; head.writeBigUInt64BE(BigInt(bytes.length), 2) }
+    if (!socket.destroyed) socket.write(Buffer.concat([head, bytes]))
+  }
+  socket.on("error", () => socket.destroy())
+  void readFile(process.env.WORKBOT_FIXTURE_FRAME!).then((bytes) => {
+    frame(1, Buffer.from(JSON.stringify({ type: "page", id: "fixture", title: "Example Domain", url: "https://example.com" })))
+    frame(2, bytes)
+  }).catch(() => socket.destroy())
 })
 await vite.listen()
 console.log(vite.resolvedUrls?.local[0])

@@ -31,6 +31,10 @@ const host: WorkbotHost = {
   computer: search.get("computer") === "1",
   workingStatus: search.get("working") === "1",
   profileSheet: search.get("profile") === "1",
+  centeredProfile: search.get("centered") === "1",
+  browserPreview: search.get("preview") === "1",
+  quickReply: search.get("quick") === "1",
+  remoteTasks: search.get("remote") === "1",
   connectionsHref: "https://den.example.test/dashboard/your-connections",
   identity: { principalId: "user_fixture", organizationId: "org_fixture" },
 }

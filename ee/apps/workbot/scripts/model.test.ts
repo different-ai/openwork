@@ -207,4 +207,18 @@ test("workbotDriveFiles reaches the instructions of the main chat and side chats
   }
   assert.equal(denSessionSchema.parse(older).driveFiles, false)
   assert.equal(denSessionSchema.parse({ ...older, driveFiles: true }).driveFiles, true)
+  assert.equal(denSessionSchema.parse(older).quickReply, false)
+  assert.equal(denSessionSchema.parse({ ...older, quickReply: true }).quickReply, true)
+})
+
+test("quickReply reaches main and side-chat instructions only when enabled", async () => {
+  for (const quickReply of [undefined, false, true]) {
+    const runner = fakeRunner()
+    const deps: WorkbotDeps = { client: runner.client, canSchedule: async () => false, ...(quickReply === undefined ? {} : { quickReply: async () => quickReply }) }
+    await sendWorkbotMessage(actor, { id: "message_one", text: "hi" }, deps)
+    await sendWorkbotMessage(actor, { id: "message_two", text: "in a side chat", chat: "sidechat000000001" }, deps)
+    const instructions = runner.sessions.flatMap(session => typeof session.instructions === "string" ? [session.instructions] : [])
+    assert.ok(instructions.length >= 2)
+    for (const prompt of instructions) assert.equal(prompt.includes("before any tool call, including search_capabilities"), quickReply === true)
+  }
 })
