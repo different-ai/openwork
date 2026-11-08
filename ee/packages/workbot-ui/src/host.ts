@@ -65,6 +65,11 @@ export type WorkbotHost = {
    * (`workbotInstantOpen`). Off when unset; the kept pages are cleared then.
    */
   instantOpen?: boolean
+  /**
+   * Tapping Workbot's name opens its profile: what it is working on, what it can use, and what it remembers about the
+   * person, read-only (`workbotProfileSheet`). Off when unset.
+   */
+  profileSheet?: boolean
   /** The person can start side chats next to their main chat (on while Workbot is on). Off when unset. */
   sideChats?: boolean
   /**
