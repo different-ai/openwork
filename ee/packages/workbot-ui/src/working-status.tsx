@@ -80,7 +80,7 @@ export { elapsed, StatusIcon };
 
 /**
  * The profile at the top centre (`profileSheet`), as a person shows in a messaging app: Workbot's avatar (the
- * OpenWork mark), its name on a pill under it, and in the pill what it is doing now. The first level of what it is
+ * OpenWork mark), its name on a pill just under it (never overlapping: over a glass header the two would blend), and in the pill what it is doing now. The first level of what it is
  * doing (status), then the profile on tap (tasks, what it can use, its computer, memory), then the live view.
  */
 export function ProfileBadge({ name, activity }: { name: string; activity: WorkbotActivity }) {
@@ -92,7 +92,7 @@ export function ProfileBadge({ name, activity }: { name: string; activity: Workb
       <span aria-hidden className="relative grid size-9 place-items-center rounded-full bg-[var(--wb-surface)] shadow-[0_0_0_1px_var(--wb-ring),var(--wb-card-shadow)] transition-transform duration-150 ease-out group-active:scale-[0.96] motion-reduce:transition-none">
         <OpenWorkMark width={15} height={19} />
       </span>
-      <span className="relative -mt-1.5 flex max-w-[136px] flex-col items-center rounded-[13px] bg-[var(--wb-surface)] px-2.5 py-[3px] shadow-[0_0_0_1px_var(--wb-ring),var(--wb-card-shadow)] transition-shadow duration-150 group-hover:shadow-[0_0_0_1px_var(--wb-disabled),var(--wb-card-shadow)] group-focus-visible:shadow-[var(--wb-focus)]">
+      <span className="relative mt-1 flex max-w-[136px] flex-col items-center rounded-[13px] bg-[var(--wb-surface)] px-2.5 py-[3px] shadow-[0_0_0_1px_var(--wb-ring),var(--wb-card-shadow)] transition-shadow duration-150 group-hover:shadow-[0_0_0_1px_var(--wb-disabled),var(--wb-card-shadow)] group-focus-visible:shadow-[var(--wb-focus)]">
         <span className="max-w-full truncate text-[13px] font-semibold leading-4 tracking-[-0.01em] text-[var(--wb-text)]">{name}</span>
         {activity.working ? <span className="workbot-subtitle-enter flex max-w-full items-center gap-1 text-[11px] leading-[14px] text-[var(--wb-muted)]" role="status" aria-live="polite" data-workbot-status-line>
           <StatusIcon activity={activity} size={11} />

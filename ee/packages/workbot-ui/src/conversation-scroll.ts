@@ -131,7 +131,10 @@ export function observeConversationScroll(node: HTMLDivElement, content: HTMLDiv
   view?.addEventListener("pointerup", released, { passive: true });
   view?.addEventListener("pointercancel", released, { passive: true });
   const observer = new ResizeObserver(layout);
-  observer.observe(content);
+  // Border box: the floating message box reaches over the conversation through the content's padding (--wb-chrome-
+  // bottom, floating-chrome.ts). A content-box observer never sees that padding grow, so a message box gaining a line
+  // left the newest message under it until something else re-measured (the next keystroke), then jumped.
+  observer.observe(content, { box: "border-box" });
   // Content alone does not resize when the keyboard opens or the composer grows.
   observer.observe(node);
   layout();

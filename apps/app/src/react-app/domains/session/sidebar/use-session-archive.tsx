@@ -27,6 +27,9 @@ import { clearQueuedSendContext } from "../sync/queued-send-context";
 import { isOrphanedInteraction, terminalToolCallIds } from "../sync/orphaned-interactions";
 import { applySessionArchived } from "../sync/session-sync";
 
+/** Archive or unarchive the open session: one toggle shared by the thread header, palette and shortcut. */
+export type SessionArchiveToggle = { archived: boolean; toggle: () => void };
+
 /** The agent conversation that asked, when the request came through the agent bridge. */
 export type ArchiveRequester = { sessionId: string; title: string | null };
 

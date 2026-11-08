@@ -171,8 +171,8 @@ export const FEATURES = defineFeatures({
     default: false,
   },
   settledSessions: {
-    label: "Desktop: settle finished sessions",
-    description: "Finished sessions can be settled into a collapsed Settled row at the end of their workspace, by hand or after a few idle days, and come back on new activity.",
+    label: "Desktop: session Feed",
+    description: "A Feed view in the sidebar lists every workspace's sessions, the last one interacted with first. Rows can be dragged into a new order and have an Archive button next to More. Finished work is archived, not settled.",
     category: "experience",
     added: "2026-10-29",
     since: "2026-10",

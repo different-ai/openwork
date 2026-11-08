@@ -9,10 +9,13 @@ const SessionDragContext = React.createContext<{
   setSession: (session: DraggedSession | null) => void;
 }>({ session: null, setSession: () => {} });
 
+/** The drop that produced a new order: `sourceId` now sits before or after `targetId`. */
+export type SessionReorderMove = { sourceId: string; targetId: string; after: boolean };
+
 const SessionReorderContext = React.createContext<{
   sessionIds: Set<string>;
   orderIds: string[];
-  onReorder: (ids: string[]) => void;
+  onReorder: (ids: string[], move: SessionReorderMove) => void;
 } | null>(null);
 
 export function SessionDragScope({ children }: { children: React.ReactNode }) {
@@ -28,7 +31,7 @@ export const useDraggedSession = () => React.useContext(SessionDragContext);
 export function SessionReorderList({ sessionIds, orderIds, onReorder, children }: {
   sessionIds: string[];
   orderIds: string[];
-  onReorder: (ids: string[]) => void;
+  onReorder: (ids: string[], move: SessionReorderMove) => void;
   children: React.ReactNode;
 }) {
   const ids = React.useMemo(() => new Set(sessionIds), [sessionIds]);
@@ -89,7 +92,8 @@ export function useSessionReorderTarget(id: string, workspaceId: string, enabled
         event.preventDefault();
         event.stopPropagation();
         const bounds = event.currentTarget.getBoundingClientRect();
-        list.onReorder(moveSessionInOrder(list.orderIds, drag.session.id, id, event.clientY >= bounds.top + bounds.height / 2));
+        const after = event.clientY >= bounds.top + bounds.height / 2;
+        list.onReorder(moveSessionInOrder(list.orderIds, drag.session.id, id, after), { sourceId: drag.session.id, targetId: id, after });
         drag.setSession(null);
       },
     },
