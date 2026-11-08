@@ -255,6 +255,7 @@ export function registerWorkbotRoutes(app: Hono<AppEnv>, input: { config: Config
       // Signing out and switching workspace don't depend on Workbot being on for this workspace.
       accountMenu: who.accountMenu,
       browserChat: who.enabled && who.browser && who.browserChat,
+      instantOpen: who.enabled && who.instantOpen,
       commandPalette: true,
       denUrl: config.denWebUrl ?? (await den.webUrl().catch(() => null)),
     })
@@ -513,7 +514,11 @@ export function registerWorkbotRoutes(app: Hono<AppEnv>, input: { config: Config
     if (scope.refused) return scope.refused
     const member = c.get("member")
     try {
-      return c.json({ available: true as const, ...(await workbotFor(member).readThread(actorOf(member), { turns: query.data.turns, chat: scope.chat })) })
+      const started = performance.now()
+      const thread = await workbotFor(member).readThread(actorOf(member), { turns: query.data.turns, chat: scope.chat })
+      // How long reading the conversation took here, apart from the network, as browsers' developer tools show it.
+      c.header("Server-Timing", `thread;dur=${Math.round(performance.now() - started)}`)
+      return c.json({ available: true as const, ...thread })
     } catch (error) {
       if (error instanceof WorkbotUnavailableError) return c.json({ available: false as const, reason: error.code })
       throw error

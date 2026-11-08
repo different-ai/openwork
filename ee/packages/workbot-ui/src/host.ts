@@ -55,6 +55,11 @@ export type WorkbotHost = {
   verifyDocumentIdentity?(): Promise<boolean>
   /** The retained owner remains mounted, but this host authorization fact masks it. */
   documentAuthorization?: "signin" | "blocked" | "disabled"
+  /**
+   * A chat opens on the newest page this device kept from the last visit while it is read again
+   * (`workbotInstantOpen`). Off when unset; the kept pages are cleared then.
+   */
+  instantOpen?: boolean
   /** The person can start side chats next to their main chat (on while Workbot is on). Off when unset. */
   sideChats?: boolean
   /**

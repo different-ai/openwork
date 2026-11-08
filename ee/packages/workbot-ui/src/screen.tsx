@@ -4,6 +4,7 @@ import { ArrowUp, Check, CircleAlert, Copy, FileText, Globe, Lock, Monitor, Penc
 import { createContext, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type ClipboardEvent, type KeyboardEvent, type ReactNode } from "react";
 import { computerTabLabel, computerViews, setWorkbotHost, workbotHost, type WorkbotHost } from "./host";
 import { OpenWorkMark } from "./mark";
+import { clearThreadSnapshots } from "./thread-cache";
 import { ChatsButton, ChatsDrawer, chatTitle, RemoveChatButton, SideChatTitle, useChatLocation } from "./chats";
 import {
   useEditWorkbotMessage,
@@ -18,6 +19,7 @@ import {
   useWorkbotThread,
   WorkbotChatProvider,
   WorkbotSendError,
+  WORKBOT_FIRST_TURNS,
   workbotFilesKey,
   uploadWorkbotFile,
   type LiveText,
@@ -60,7 +62,7 @@ import { WorkbotCommandPalette, type WorkbotPaletteTab } from "./command-palette
  * The conversation is read newest first: a first page small enough to answer quickly, then the rest of a full page in
  * the background, then a page more each time the person asks for earlier messages, up to the limit.
  */
-const FIRST_TURNS = 8;
+const FIRST_TURNS = WORKBOT_FIRST_TURNS;
 const PAGE_TURNS = 30;
 const MAX_TURNS = 200;
 const earlierWindow = (current: number) => Math.min(MAX_TURNS, current < PAGE_TURNS ? PAGE_TURNS : current + PAGE_TURNS);
@@ -82,6 +84,9 @@ type ChatNavigation = {
 /** The Workbot page. `host` is the app it lives in: signed-in requests, the person, their apps (see WorkbotHost). */
 export function WorkbotScreen({ host }: { host: WorkbotHost }) {
   setWorkbotHost(host);
+  // Pages kept on this device are only for people with instantOpen; turning it off forgets them.
+  const instantOpen = host.instantOpen === true;
+  useEffect(() => { if (!instantOpen) clearThreadSnapshots(); }, [instantOpen]);
   const sideChats = host.sideChats === true;
   const composers = useMemo(() => new Map<string | null, ComposerState>(), [host.identity?.organizationId, host.identity?.principalId]);
   // Disposed a tick after unmount, so a remount of the same owners (React's StrictMode check) keeps what was typed.
