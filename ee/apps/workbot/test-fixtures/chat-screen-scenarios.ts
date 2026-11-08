@@ -74,6 +74,8 @@ export const scenarios: Record<string, () => FixtureThread> = {
       ], { modelSteps: 1 })),
     ],
   }),
+  /** Nov 8: "Could you go on google.com with browser", as the conversation is read once it is done (see googleAt). */
+  google: () => googleAt(2),
   /** Short and long messages from the person (#1, #2): "Hey" must stay on one line. */
   bubbles: () => ({
     name: "Workbot", organizationName: "Example Team", status: "idle", hasEarlier: false, filesEnabled: true,
@@ -85,3 +87,22 @@ export const scenarios: Record<string, () => FixtureThread> = {
     ],
   }),
 }
+
+/**
+ * Ben's request of Nov 8 at each point the page reads it: 0, the call is being written and nothing is stored yet (the
+ * live `working` events in GOOGLE_EVENTS are all the page has); 1, the browser call is stored and running; 2, done.
+ */
+export function googleAt(phase: 0 | 1 | 2): FixtureThread {
+  const sent = Date.now() - 6_000
+  const step = computerStep(["Opening google.com"], phase === 1, sent + 1_000, { surface: "browser", pages: [{ id: "g00gle", url: "https://www.google.com/", title: "google.com" }] })
+  const parts: Part[] = phase === 0 ? [] : phase === 1 ? [{ kind: "steps", steps: [step] }] : [{ kind: "steps", steps: [step] }, said("Done: google.com is open in my browser.", 1)]
+  const asked = turn("g1", "Could you go on google.com with browser", sent, parts, { modelSteps: phase === 0 ? 0 : phase === 1 ? 1 : 2 })
+  return { name: "Workbot", organizationName: "Example Team", status: phase === 2 ? "idle" : "busy", hasEarlier: false, filesEnabled: true, turns: [hello(), phase === 2 ? asked : working(asked)] }
+}
+
+/** What the page hears while the call is written, as workbot-server sends it: the start, then where, then what. */
+export const GOOGLE_EVENTS = [
+  { type: "working", messageId: "g1", step: 0, on: "computer" },
+  { type: "working", messageId: "g1", step: 0, on: "computer", surface: "browser" },
+  { type: "working", messageId: "g1", step: 0, on: "computer", surface: "browser", update: "Opening google.com" },
+]

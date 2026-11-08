@@ -230,7 +230,7 @@ jobs:
           pnpm --filter @openwork-ee/headless-computer build
           pnpm --filter @openwork-ee/headless-computer test
           pnpm --filter @openwork-ee/headless-runner test:computer-config
-          pnpm --filter @openwork-ee/workbot exec tsx --conditions=development --test scripts/computer.test.ts scripts/browser-teaching.test.ts scripts/uploads.test.ts scripts/working-status.test.ts scripts/profile.test.ts scripts/round-two.test.ts
+          pnpm --filter @openwork-ee/workbot exec tsx --conditions=development --test scripts/computer.test.ts scripts/browser-teaching.test.ts scripts/uploads.test.ts scripts/working-status.test.ts scripts/profile.test.ts scripts/round-two.test.ts scripts/browser-card.test.ts
           pnpm --filter @openwork-ee/workbot test:remote-jobs
       - name: Test headless conversations (follow-ups, read-only lookups, waiting messages, bounded reads, moving to Node)
         run: |
