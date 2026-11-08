@@ -540,6 +540,22 @@ export function LiveGlimpse({ view, onOpen, previewOnly = false }: { view: Compu
     : <button type="button" onClick={onOpen} disabled={!onOpen} aria-label={`${label}. Open the full view`} className={className}>{picture}</button>;
 }
 
+/**
+ * The last picture of a view this page still has (in memory, for a few minutes, with the inline preview), small, for a
+ * finished card; nothing when there is none. Never a live connection.
+ */
+export function LastGlimpse({ view }: { view: ComputerView }) {
+  const host = workbotHost();
+  const chat = useWorkbotChat();
+  const read = () => host.browserPreview && host.identity ? lastFrame(glimpseKey(chat, view)) : null;
+  const [snapshot, setSnapshot] = useState(read);
+  // The live view this card replaces keeps its last picture as it closes, which is after this card first renders.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useEffect(() => setSnapshot(read()), [host, chat, view]);
+  if (!snapshot) return null;
+  return <img src={snapshot} alt="" aria-hidden className="h-10 w-16 shrink-0 rounded-[8px] bg-[#f5f6f7] object-cover object-top" data-workbot-last-frame />;
+}
+
 /** Resolves once noVNC has drawn into the layer's canvas (its pixels start transparent), or after `limit` ms. */
 function firstFrame(layer: HTMLElement, limit = 5_000) {
   const started = performance.now();
