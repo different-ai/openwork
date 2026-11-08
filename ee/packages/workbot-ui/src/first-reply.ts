@@ -12,7 +12,7 @@ export function firstReply(turn: Pick<WorkbotTurn, "text" | "status" | "greeting
   if (!request) return null;
   // Be conservative: an acceptance line must never turn “don't use the browser” or a teaching note into a promise
   // to operate it. The model handles nuanced requests; this deterministic fallback handles explicit work only.
-  if (/\b(don't|do not|never|without|stop|cancel|abort|avoid)\b/i.test(request)) return null;
+  if (/\b(don['’‘ʼ]?t|do not|not|never|without|stop|cancel|abort|avoid|wait|unless)\b/i.test(request)) return null;
   if (!/^(?:please\s+)?(?:(?:can|could|would|will)\s+you\s+)?(?:use|open|browse|find|search|check|research|investigate|build|create|make|run|take|look|work|start)\b/i.test(request)) return null;
   if (turn.status === "queued") return "I've got your request. I'll pick it up next and reply here.";
   if (/\b(browser|browse|youtube|website)\b/i.test(request)) return "On it — I'll take a look in my browser and tell you what I find.";

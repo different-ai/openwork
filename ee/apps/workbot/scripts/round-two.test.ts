@@ -25,7 +25,7 @@ test("accepted long requests get plain words, never an invented result or ETA", 
   assert.match(firstReply({ ...turn([], "working"), text: "Build a room planner" })!, /reply here with the result/)
   assert.match(firstReply({ ...turn([], "working"), text: "Use your computer" })!, /my computer/)
   assert.match(firstReply(turn([], "queued"))!, /pick it up next/)
-  for (const text of ["Don't use the browser", "Use the computer without opening a browser", "Why does the browser fail?", "[OpenWork browser teaching v2] Use a browser"]) assert.equal(firstReply({ ...turn([], "working"), text }), null)
+  for (const text of ["Don't use the browser", "Use the browser only for the plan; don’t open it yet.", "Use the browser but donʼt open it yet", "Use the browser for a plan, not to open anything", "Use the browser but wait for my approval", "Use the computer without opening a browser", "Why does the browser fail?", "[OpenWork browser teaching v2] Use a browser"]) assert.equal(firstReply({ ...turn([], "working"), text }), null)
   for (const status of ["done", "stopped", "failed"] as const) assert.equal(firstReply(turn([], status)), null)
   assert.equal(firstReply({ ...turn([], "working"), greeting: true }), null)
   assert.equal(firstReply({ ...turn([], "working"), text: "Thanks!" }), null)

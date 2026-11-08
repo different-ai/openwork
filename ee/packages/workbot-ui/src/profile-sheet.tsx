@@ -72,9 +72,10 @@ export function ProfileSheet({ open, onClose, name, activity }: { open: boolean;
 function TasksTab({ name, activity, onClose }: { name: string; activity: WorkbotActivity; onClose(): void }) {
   const remote = useWorkbotRemoteJobs(true);
   const localWork = activity.main !== null || activity.tasks.length > 0;
+  const localActive = activity.main !== null || activity.tasks.some((task) => !task.quiet && (task.status === "queued" || task.status === "working" || task.status === "paused"));
   return <>
     {localWork ? <>
-      <h2 className="px-5 pb-2 text-[13px] font-medium text-[var(--wb-text)]">{activity.working ? "In progress" : "Recent"}</h2>
+      <h2 className="px-5 pb-2 text-[13px] font-medium text-[var(--wb-text)]">{localActive ? "In progress" : "Recent"}</h2>
       <ActivityDetails name={name} activity={activity} />
     </> : !remote.data?.jobs.length && !remote.isFetching ? <p className="px-5 pt-2 text-[13px] text-[var(--wb-muted)]">{name} isn&apos;t working on anything right now. Bigger jobs you hand it show up here while they run.</p> : null}
     {workbotHost().remoteTasks && remote.isPending ? <p className="px-5 pt-3 text-[13px] text-[var(--wb-muted)]" role="status">Checking your remote tasks…</p> : null}
