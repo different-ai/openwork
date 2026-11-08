@@ -88,6 +88,11 @@ try {
         assert.equal(await line.locator("[data-workbot-connector-logo]").count(), 1)
         assert.doesNotMatch(await line.innerText(), /Searching|Used|searches/)
         await page.screenshot({ path: `${out}/${size.name}-live-2.png` })
+        await page.waitForFunction(() => {
+          const line = document.querySelector('[data-workbot-connector-line="live"]');
+          return line && line.querySelectorAll('[data-active="true"]').length === 0;
+        }, undefined, { timeout: 5_000 })
+        assert.equal(await line.locator(".workbot-connector-pulse").count(), 0, "no pulse after the tool returns, even while Workbot reads its results")
       })
       await check(`${size.name}: the same static logo after completion, with names on hover and details on tap`, page, async () => {
         await page.locator('[data-workbot-connector-line="done"]').filter({ visible: true }).first().waitFor({ timeout: 9_000 })

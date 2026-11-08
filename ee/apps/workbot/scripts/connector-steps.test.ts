@@ -71,6 +71,7 @@ test("while Workbot searches Exa, one live line under its answer says so, and th
   const [reading] = turnsOf(exaSnapshot("reading"))
   assert.ok(reading)
   assert.equal(connectorSummary(reading, null)?.live, true)
+  assert.equal(connectorSummary(reading, null)?.active, null, "logos stop pulsing as soon as the calls return")
   assert.equal(workbotActivity([reading], {}, 200).label, "Searching Exa")
   // Once its words start streaming, the line becomes the footnote and the header says it is writing.
   const streaming = { step: reading.modelSteps, text: "Here's what" }

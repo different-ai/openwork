@@ -31,14 +31,14 @@ export function ConnectorLine({ summary }: { summary: ConnectorSummary }) {
           className="relative flex h-7 w-fit items-center rounded-full outline-none focus-visible:shadow-[var(--wb-focus)]" data-workbot-connector-stack>
           <span aria-hidden className="flex items-center -space-x-[7px]">
             {shown.map((app) => {
-              const active = summary.live && app.name === summary.latest.name && app.remote === summary.latest.remote;
+              const active = summary.active !== null && app.name === summary.active.name && app.remote === summary.active.remote;
               return <span key={app.remote ? "remote" : app.name ?? "app"}
                 className={`relative grid size-5 shrink-0 place-items-center overflow-hidden rounded-full bg-white [--wb-muted:#687076] ring-2 ring-[var(--wb-bg)] ${active ? "workbot-connector-pulse" : ""}`}
                 data-workbot-connector-logo={app.name ?? "App"} data-active={active || undefined}>
                 <ConnectorIcon app={app} size={12} />
               </span>;
             })}
-            {more > 0 ? <span className={`relative grid size-5 shrink-0 place-items-center rounded-full bg-[var(--wb-chip)] text-[9px] font-medium tabular-nums text-[var(--wb-muted)] ring-2 ring-[var(--wb-bg)] ${summary.live && !shown.some((app) => app.name === summary.latest.name && app.remote === summary.latest.remote) ? "workbot-connector-pulse" : ""}`} data-workbot-connector-more>+{more}</span> : null}
+            {more > 0 ? <span className={`relative grid size-5 shrink-0 place-items-center rounded-full bg-[var(--wb-chip)] text-[9px] font-medium tabular-nums text-[var(--wb-muted)] ring-2 ring-[var(--wb-bg)] ${summary.active && !shown.some((app) => app.name === summary.active?.name && app.remote === summary.active?.remote) ? "workbot-connector-pulse" : ""}`} data-workbot-connector-more>+{more}</span> : null}
           </span>
         </Popover.Trigger>
         <Popover.Portal>

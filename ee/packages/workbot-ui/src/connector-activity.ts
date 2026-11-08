@@ -18,6 +18,8 @@ export type ConnectorSummary = {
   apps: ConnectorApp[];
   /** The app of the latest step, for the leading logo. */
   latest: ConnectorApp;
+  /** A tool is actually outstanding now; null once it returns, even while Workbot is reading its results. */
+  active: ConnectorApp | null;
   /** Each tool that ran, in order; the same one again in a row is one row with `times`. */
   rows: ConnectorRow[];
 };
@@ -61,7 +63,8 @@ export function connectorSummary(turn: WorkbotTurn, live: LiveText | null): Conn
   const searches = steps.every((step) => step.label.startsWith("Searching "));
   const count = steps.length > 1 ? `${steps.length} ${searches ? "searches" : "actions"}` : null;
   // Live: what it is doing now. Several of the same in a row are one line that counts them.
-  const running = [...steps].reverse().find((step) => step.status === "running") ?? latestStep;
+  const outstanding = working ? [...steps].reverse().find((step) => step.status === "running") : undefined;
+  const running = outstanding ?? latestStep;
   const label = isLive ? running.label : `Used ${connectorNames(apps)}`;
-  return { live: isLive, label, count, apps, latest: appOf(running), rows };
+  return { live: isLive, label, count, apps, latest: appOf(running), active: outstanding ? appOf(outstanding) : null, rows };
 }
