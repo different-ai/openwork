@@ -8,8 +8,8 @@ import { readWorkbotContextPrompt, readWorkbotCorrectionPrompt, workbotContextPr
 import { buildWorkbotTurns, GREETING_RUNNER_ID, interruptedTurnIds, threadBusy, WORKBOT_MESSAGE_PREFIX, type WorkbotTurn } from "./thread.js"
 import { workbotModelReady } from "./model-readiness.js"
 import type { RemoteSessionStatusRequest, RemoteSessionStatusResult } from "@openwork/types/automations"
-import type { WorkbotRemoteJobs, WorkbotRemoteJobDetail, WorkbotRemoteJobStop } from "@openwork/types/workbot-remote-jobs"
-import { applyWorkbotRemoteStatuses, buildWorkbotRemoteJobs, remoteJobDetail, WorkbotRemoteJobError } from "./remote-jobs.js"
+import type { WorkbotRemoteJob, WorkbotRemoteJobs, WorkbotRemoteJobDetail, WorkbotRemoteJobStop } from "@openwork/types/workbot-remote-jobs"
+import { applyWorkbotRemoteStatuses, buildWorkbotRemoteJobs, remoteJobDetail, remoteStatusFailure, retainWorkbotRemoteStatuses, WorkbotRemoteJobError, type WorkbotRemoteLastKnown } from "./remote-jobs.js"
 
 /**
  * Workbot: one chat per person, set up once by an admin. Each member has a
@@ -598,14 +598,32 @@ export async function readWorkbotRemoteJobs(actor: WorkbotActor, input: { chat?:
   const jobs = buildWorkbotRemoteJobs(read.value)
   if (read.value.messages.length >= 1_000) jobs.hasEarlier = true
   if (!jobs.jobs.length || !deps.remoteStatus) return jobs
-  try {
-    const status = await deps.remoteStatus({ threads: jobs.jobs.map(job => job.ref), waitMs: 0 })
-    return applyWorkbotRemoteStatuses(jobs, status)
-  } catch {
-    // A denied, offline or revoked remote source is not proof of either running or done.
-    return jobs
+  const keyOf = (job: WorkbotRemoteJob) => JSON.stringify([actor.organizationId, actor.memberId, input.chat ?? null, job.key])
+  const lastKnown = (job: WorkbotRemoteJob) => lastRemoteStatuses.get(keyOf(job))
+  // One batched read, the same capability agents call; one retry for a passing failure, none for a signed-out token.
+  let failure: "signed_out" | "unavailable" = "unavailable"
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    try {
+      const status = await deps.remoteStatus({ threads: jobs.jobs.map(job => job.ref), waitMs: 0 })
+      const applied = applyWorkbotRemoteStatuses(jobs, status, { lastKnown })
+      for (const job of applied.jobs) {
+        if (!job.stale && job.status) remember(lastRemoteStatuses, keyOf(job), { status: job.status, checkedAt: job.checkedAt ?? Date.now() })
+      }
+      return applied
+    } catch (error) {
+      failure = remoteStatusFailure(error)
+      // Never swallow silently again: the reason and a short code, without tokens or remote content.
+      const code = typeof error === "object" && error !== null && "code" in error && typeof error.code === "string" ? error.code.slice(0, 80) : undefined
+      console.warn("[workbot] remote_status_failed", { reason: failure, attempt: attempt + 1, error: error instanceof Error ? error.name : typeof error, code })
+      if (failure === "signed_out") break
+    }
   }
+  // A denied, offline or revoked remote source is not proof of either running or done: keep what was last verified.
+  return { ...retainWorkbotRemoteStatuses(jobs, lastKnown), statusError: failure }
 }
+
+/** The last verified status per member/chat/task, so a failed refresh (or a reload) still shows what was known. */
+const lastRemoteStatuses = new Map<string, WorkbotRemoteLastKnown>()
 
 async function ownRemoteJob(actor: WorkbotActor, input: { key: string; chat?: WorkbotChat }, deps: WorkbotDeps) {
   if (deps.remoteTasks !== true) throw new WorkbotRemoteJobError("remote_job_not_found", 404)

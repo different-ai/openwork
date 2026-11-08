@@ -39,9 +39,18 @@ also does other work stays visible, even with an identical title.
 Discovery reads the latest 40 turns / 1,000 messages with tool outputs and follows
 at most ten distinct remote refs. `hasEarlier` says the window may omit older
 work. Oversized/malformed/truncated create outputs are ignored rather than
-inventing refs. Remote status is fetched once per read (no wait) and shared by
-the header/profile query, at most every 15 seconds while visible. Failed reads
-retain the prior state marked “Couldn't verify now”, including its observed time.
+inventing refs. Remote status is fetched in one batched `remote-session:status`
+call per read (no wait, 8 seconds per attempt, retried once unless the token is
+signed out) and shared by the header/profile query, at most every 15 seconds
+while visible. Workbot keeps each task's last verified state (server and page),
+so a failed refresh shows that state with a quiet “Updated 5m ago”, never a
+warning. A warning appears only when a task truly can't be reached (Den reports
+its computer unreachable and nothing was ever verified) or the person is signed
+out, each with a plain reason. Failures are logged as
+`[workbot] remote_status_failed` with a reason and short code, never swallowed.
+
+Rows list running, waiting and starting tasks first (newest first), then tasks
+not yet checked, then finished ones under “Finished” with a checkmark.
 
 The collapsed row shows title, computer, verified state, elapsed time while active,
 and the latest reported step. Disclosure reads up to 12 remote messages and exposes
