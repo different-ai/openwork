@@ -24,7 +24,9 @@
 .ow-documents-views button:hover { background: transparent; color: var(--doc-text); }
 .ow-documents-views button[aria-pressed=true] { background: var(--doc-surface); color: var(--doc-text); font-weight: 500; box-shadow: 0 1px 2px color-mix(in srgb, var(--doc-text) 12%, transparent); }
 .ow-documents-controls { display: flex; flex-shrink: 0; align-items: center; gap: 8px; margin-left: auto; }
-.ow-documents-controls > button { display: flex; }
+/* One control height across the row: 36px, like the switch and the search. */
+.ow-documents-controls > button { display: grid; place-items: center; width: 36px; height: 36px; padding: 0; }
+.ow-documents-controls .ow-documents-layout button { display: grid; place-items: center; width: 34px; height: 34px; padding: 0; }
 .ow-documents-controls select { height: 36px; background: var(--doc-bg); border: 1px solid var(--doc-line); border-radius: 8px; padding: 0 8px; color: var(--doc-text); }
 .ow-documents-search { display: flex; align-items: center; gap: 10px; height: 36px; padding: 0 14px; border-radius: 18px; background: var(--doc-chip); flex: 1; min-width: 0; max-width: 560px; }
 .ow-documents-search:focus-within { box-shadow: 0 0 0 2px var(--doc-focus); }
