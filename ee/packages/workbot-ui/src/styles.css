@@ -205,3 +205,13 @@
   .workbot-welcome-rise, .workbot-welcome-leave, .workbot-app-enter { animation: none; }
   .workbot-typing-dot { animation: none; opacity: .55; }
 }
+
+/* Connector avatar group: a soft inset ring, never scale/position motion that would disturb the message rail. */
+.workbot-connector-pulse { animation: workbot-connector-pulse 2.8s ease-in-out infinite; }
+@keyframes workbot-connector-pulse {
+  0%, 100% { outline: 1px solid transparent; outline-offset: -1px; }
+  50% { outline: 1px solid var(--wb-disabled); outline-offset: -1px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .workbot-connector-pulse { animation: none; outline: 1px solid var(--wb-disabled); outline-offset: -1px; }
+}

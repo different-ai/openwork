@@ -3,7 +3,7 @@ import { createHash } from "node:crypto"
 import { readFile } from "node:fs/promises"
 import { fileURLToPath } from "node:url"
 import { createServer } from "vite"
-import { GOOGLE_EVENTS, googleAt, scenarios, type FixtureThread, type FixtureTurn } from "./chat-screen-scenarios.js"
+import { exaAt, GOOGLE_EVENTS, googleAt, scenarios, type FixtureThread, type FixtureTurn } from "./chat-screen-scenarios.js"
 import { fixtureRemoteJobs, fixtureStaleRemoteJobs } from "./remote-jobs.js"
 
 // Observes real client requests; the fixture never changes browser controls or rendered UI.
@@ -11,6 +11,9 @@ const browserRequests: Array<{ path: string; body: unknown }> = []
 const browserControlHeld = new Set<string>()
 let remoteStopped = false
 let googleStarted: number | null = null
+let exaStarted: number | null = null
+/** Ben's Exa request: the first search, the second, both done while it reads, then the answer (ms from first read). */
+const EXA_PHASES_MS = [3_000, 6_000, 9_000]
 const GOOGLE_EVENT_GAP_MS = 1_500
 const GOOGLE_STORED_MS = 4_500
 const GOOGLE_DONE_MS = 9_000
@@ -55,6 +58,14 @@ async function answer(request: IncomingMessage, response: ServerResponse) {
     const since = Date.now() - googleStarted
     threads.set(name, googleAt(since < GOOGLE_STORED_MS ? 0 : since < GOOGLE_DONE_MS ? 1 : 2))
   }
+  // "exa" replays the Exa request from the page's first read (EXA_PHASES_MS); `?exa=reset` starts it over.
+  if (name === "exa") {
+    if (url.searchParams.get("exa") === "reset") exaStarted = null
+    exaStarted ??= Date.now()
+    const since = Date.now() - exaStarted
+    const phase = EXA_PHASES_MS.findIndex((at) => since < at)
+    threads.set(name, exaAt(phase === -1 ? 3 : phase === 0 ? 0 : phase === 1 ? 1 : 2))
+  }
   const current = thread(name)
   const path = url.pathname
   if (request.method === "GET" && path === "/v1/workbot") return json(response, 200, { available: true, ...current })
@@ -69,6 +80,11 @@ async function answer(request: IncomingMessage, response: ServerResponse) {
         ...[GOOGLE_STORED_MS, GOOGLE_DONE_MS].map((at) => setTimeout(() => send({ type: "changed", messageId: "g1" }), Math.max(0, at - since + 50))),
       ]
       if (since >= GOOGLE_STORED_MS) for (const timer of timers.slice(0, GOOGLE_EVENTS.length)) clearTimeout(timer)
+      response.on("close", () => timers.forEach(clearTimeout))
+    }
+    if (name === "exa" && exaStarted !== null) {
+      const since = Date.now() - exaStarted
+      const timers = EXA_PHASES_MS.map((at) => setTimeout(() => { if (!response.writableEnded) response.write(`data: ${JSON.stringify({ type: "changed", messageId: "x1" })}\n\n`) }, Math.max(0, at - since + 50)))
       response.on("close", () => timers.forEach(clearTimeout))
     }
     const ping = setInterval(() => response.write(": fixture\n\n"), 10_000)

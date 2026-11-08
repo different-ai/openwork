@@ -60,6 +60,9 @@ import { firstReply } from "./first-reply";
 import { remoteJobActivity, remoteWatcherTaskIds, useWorkbotRemoteJobs } from "./remote-jobs";
 import { createConversationScrollState, useConversationScroll, type ConversationScrollState } from "./conversation-scroll";
 import { useWorkbotViewport } from "./viewport";
+import { fitTextarea } from "./auto-height";
+import { connectorSummary } from "./connector-activity";
+import { ConnectorLine } from "./connector-line";
 
 /**
  * Workbot: one thread, instant. Layout and values follow the Paper file "WorkBot — one chat, set up once",
@@ -1232,8 +1235,7 @@ function OwnMessage(props: {
   useLayoutEffect(() => {
     const element = field.current;
     if (mode !== "editing" || !element) return;
-    element.style.height = "auto";
-    element.style.height = `${Math.min(element.scrollHeight, 240)}px`;
+    fitTextarea(element, 240);
   }, [draft, mode]);
   useEffect(() => {
     if (mode !== "editing") return;
@@ -1588,32 +1590,6 @@ function useHeld<T>(value: T, key: string, minMs: number): T {
 /** A computer update stays at least this long, so quick commands read as one calm change. */
 const UPDATE_HOLD_MS = 1_600;
 
-/**
- * Work in connected apps between two things Workbot said, as one quiet line ("Using Gmail", then "Used Gmail"), `live`
- * while nothing has been said after it yet (DESIGN C3, T1). Work on its computer is a card of its own (computerWork).
- */
-function StepsSegment({ steps, live }: { steps: WorkbotStep[]; live: boolean }) {
-  const others = usedApps(steps, null).filter((app) => !app.computer);
-  if (others.length === 0) return null;
-  const label = `${live ? "Using" : "Used"} ${joinNames(others.map((app) => app.name))}`;
-  return (
-    <p
-      className={`flex h-7 items-center gap-2 pl-1 text-[12.5px] leading-4 ${live ? "workbot-row-enter" : "text-[var(--wb-faint)]"}`}
-      role={live ? "status" : undefined}
-      aria-live={live ? "polite" : undefined}
-    >
-      <span aria-hidden className="flex shrink-0 items-center gap-1">
-        {others.map((app) => (
-          <span key={app.key} className="workbot-app-enter grid size-4 place-items-center">
-            <AppMark name={app.name} size={14} />
-          </span>
-        ))}
-      </span>
-      <span key={label} className={`truncate ${live ? "workbot-shimmer text-[13px]" : ""}`}>{label}</span>
-    </p>
-  );
-}
-
 /** The other way of working, offered on a live card: one tap sends it as a follow-up. */
 type SwitchTo = { label: string; text: string; send(text: string): void };
 
@@ -1797,8 +1773,8 @@ function useSettled(flag: boolean, ms: number) {
   return flag && settled;
 }
 
-/** One thing a turn shows: a model call's words (one bubble each), work in apps between them, or a computer card. */
-type TurnItem = { kind: "text"; key: string; text: string } | { kind: "steps"; key: string; steps: WorkbotStep[]; live: boolean }
+/** One thing a turn shows: a model call's words (one bubble each) or a computer card; work in apps is its own line. */
+type TurnItem = { kind: "text"; key: string; text: string }
   | { kind: "card"; key: string; surface: ComputerSurface; steps: WorkbotStep[]; live: boolean; showing: boolean; others: UsedApp[]; switchTo: SwitchTo | null; update: string | null };
 
 function TurnView(props: {
@@ -1866,7 +1842,6 @@ function TurnView(props: {
       const item = card(surface, at === here.length - 1 ? usedApps(apps, null) : []);
       if (!browserWork && keepsCard(item, { quiet, preview: workbotHost().browserPreview === true })) items.push(item);
     });
-    if (!quiet && apps.length > 0 && here.length === 0) items.push({ kind: "steps", key: `steps-${index}`, steps: apps, live: working && index === parts.length - 1 && lastIsLive });
   });
   if (working && props.live) {
     for (const entry of props.live.earlier ?? []) {
@@ -1883,27 +1858,27 @@ function TurnView(props: {
   // Real words replace this acceptance line; it never claims the browser opened or a background job started.
   const acknowledgement = (browserWork || workbotHost().quickReply) && !pending && !items.some((item) => item.kind === "text" && item.text.trim()) ? firstReply(turn) : null;
   if (acknowledgement) items.splice(browserWork ? 1 : 0, 0, { kind: "text", key: "accepted", text: acknowledgement });
-  // The place Workbot's next words will take, one message line tall: the typing dots, or the app step running right now
-  // ("Using Gmail"), then the words themselves, each replacing the last without moving the conversation. Once it has
-  // shown, it keeps its place until the words arrive.
-  const tail = items.at(-1);
-  const runningApps = answering && tail?.kind === "steps" && tail.live && tail.steps.every((step) => step.icon === "app") ? tail : null;
-  if (runningApps) items.pop();
+  // The connected apps as a quiet logo stack under the answer. The header reads the same summary for its status,
+  // so it names the same current connector; names and tool details in the chat are disclosed only on hover/tap.
+  const connector = connectorSummary(turn, props.live);
+  // The place Workbot's next words will take, one message line tall: the typing dots, or its work in an app right now,
+  // then the words themselves, each replacing the last without moving the conversation. Once it has shown, it keeps
+  // its place until the words arrive; the app line then settles under them.
+  const connectorWaiting = connector !== null && answering && !liveText;
   const lastText = items.reduce((found, item, index) => (item.kind === "text" ? index : found), -1);
   const waiting = answering && !liveText && !lastIsLive && work.live.size === 0;
-  const fresh = items.length === 0 && !runningApps;
+  const fresh = items.length === 0 && !connectorWaiting;
   const settled = useSettled(waiting && !fresh, 350);
   // Quiet: the dots mean only "a reply is coming" before Workbot has said or done anything. Once it is at work, the
   // status line under its name says so; dots for minutes would read as someone typing.
   const atWork = parts.some((part) => part.kind === "steps") || Boolean(live?.working);
   const dots = !acknowledgement && (quiet ? waiting && items.length === 0 && !atWork : waiting && (fresh || settled));
-  const running = runningApps !== null;
   const [held, setHeld] = useState(false);
   useEffect(() => {
-    if (dots || running) setHeld(true);
+    if (dots || connectorWaiting) setHeld(true);
     else if (!answering || liveText) setHeld(false);
-  }, [dots, running, answering, liveText]);
-  const slot = uploading || (answering && !liveText && (dots || held || running));
+  }, [dots, connectorWaiting, answering, liveText]);
+  const slot = uploading || (answering && !liveText && (dots || held || connectorWaiting));
   const copyText = parts.flatMap((part) => (part.kind === "text" ? [part.text] : [])).join("\n\n");
   const offers = useMemo(() => (turn.status === "done" ? documentLinks(copyText) : []), [turn.status, copyText]);
   // One computer, so only the newest reply that used its screen offers to open it, already while it works. Commands run
@@ -1921,7 +1896,7 @@ function TurnView(props: {
       {pending?.failed ? (
         pending.accessIssue ? <AccessRecovery reason={pending.accessIssue} onRetry={props.onRetry} /> : <ErrorLine align="end" action={{ label: "Send again", onClick: props.onRetry }}>{pending.failed}</ErrorLine>
       ) : null}
-      {items.length > 0 || slot ? <Gap /> : null}
+      {items.length > 0 || slot || connector ? <Gap /> : null}
       {/* What it said and what it did, in the order it happened: "On it." · the computer card · the answer. */}
       <div className="group/answer flex flex-col">
         {items.map((item, index) =>
@@ -1930,15 +1905,14 @@ function TurnView(props: {
             <AssistantBubble key={item.key} trailing={turn.status === "done" && index === lastText ? <CopyAnswer text={copyText} /> : null}>
               <StreamingText text={item.text} instant={item.key === "accepted" || !(props.newestText && index === lastText && watched.current)} />
             </AssistantBubble>
-          ) : item.kind === "card" ? (
+          ) : (
             <div key={item.key} className="py-1 pl-1">
               {item.surface === "browser" ? <BrowserTaskCard turn={turn} steps={item.steps} working={working} /> : <SurfaceCard surface={item.surface} steps={item.steps} live={item.live} showing={item.showing} others={item.others} switchTo={item.switchTo} starting={item.update} />}
             </div>
-          ) : (
-            <StepsSegment key={item.key} steps={item.steps} live={item.live} />
           ),
         )}
-        {slot ? <WaitingSlot>{uploading ? <QuietLine label="Uploading your files" /> : runningApps ? <StepsSegment steps={runningApps.steps} live /> : dots ? <TypingDots /> : null}</WaitingSlot> : null}
+        {slot ? <WaitingSlot>{uploading ? <QuietLine label="Uploading your files" /> : connectorWaiting && connector ? <ConnectorLine summary={connector} /> : dots ? <TypingDots /> : null}</WaitingSlot> : null}
+        {connector && !(slot && connectorWaiting) ? <ConnectorLine summary={connector} /> : null}
       </div>
       <DocumentOffers links={offers} />
       <DocumentNavigationStatus receipts={turn.navigation} />
@@ -2162,10 +2136,8 @@ export function WorkbotComposer(props: {
   useLayoutEffect(() => {
     const node = input.current;
     if (!node) return;
-    const fit = () => {
-      node.style.height = "auto";
-      node.style.height = `${Math.min(node.scrollHeight, 200)}px`;
-    };
+    // Measured on an invisible copy: collapsing the box itself would move the conversation on every keystroke.
+    const fit = () => fitTextarea(node, 200);
     fit();
     let width = node.getBoundingClientRect().width;
     const observer = new ResizeObserver(() => {
@@ -2198,6 +2170,7 @@ export function WorkbotComposer(props: {
   };
   // While an answer is in progress, a typed message is still sent (it is answered next); an empty box offers Stop.
   const showStop = props.busy && !canSend;
+  // Only the corners change with longer text: the padding stays, so the 71st character never nudges the conversation.
   const multiline = hasFiles || text.includes("\n") || text.length > 70;
   // Teaching status and uploads sit inside the box, so whatever is stacked above it keeps its place.
   const stacked = hasFiles || props.teaching !== undefined;
@@ -2208,7 +2181,7 @@ export function WorkbotComposer(props: {
     <div
       data-workbot-composer
       className={`flex bg-[var(--wb-surface)] shadow-[var(--wb-composer-shadow)] transition-[border-radius] duration-150 ${
-        stacked ? "flex-col gap-2 rounded-[24px] pb-2 pl-2.5 pr-2 pt-2.5" : `items-end gap-1 pl-[7px] pr-[7px] sm:pr-2 ${multiline ? "rounded-[24px] py-2" : "rounded-full py-[7px] sm:py-2"}`
+        stacked ? "flex-col gap-2 rounded-[24px] pb-2 pl-2.5 pr-2 pt-2.5" : `items-end gap-1 py-[7px] pl-[7px] pr-[7px] sm:py-2 sm:pr-2 ${multiline ? "rounded-[24px]" : "rounded-full"}`
       }`}
     >
       {props.teaching && <div role="status" title={`${teachingPhase} · ${props.teaching.label}`} className="flex min-w-0 items-center gap-1.5 px-1.5 text-[12px] text-[var(--wb-muted)]" data-workbot-teaching-context>
