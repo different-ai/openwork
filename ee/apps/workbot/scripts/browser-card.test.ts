@@ -1,8 +1,9 @@
 import assert from "node:assert/strict"
 import { test } from "node:test"
+import { z } from "zod"
 import type { RunnerSnapshot } from "@openwork-ee/headless-protocol"
 import { buildWorkbotTurns, toWorkbotPageEvent } from "@openwork-ee/workbot-server"
-import { computerWork, finishedSummary, keepsCard, nextWorking } from "../../../packages/workbot-ui/src/computer-work.js"
+import { browserTask, computerWork, finishedSummary, keepsCard, nextWorking } from "../../../packages/workbot-ui/src/computer-work.js"
 import { workbotActivity } from "../../../packages/workbot-ui/src/activity.js"
 import { threadSchema, type LiveText, type WorkbotTurn } from "../../../packages/workbot-ui/src/data.js"
 
@@ -143,4 +144,88 @@ test("a finished card says what it came to", () => {
   assert.equal(finishedSummary("browser", [step({ updates: ["Reading the page"] })]), "Reading the page")
   assert.equal(finishedSummary("browser", [step({})]), "Used the browser")
   assert.equal(finishedSummary("computer", [step({})]), "Used my computer")
+})
+
+test("one browser task stays anchored at its first action through narration, later actions and completion", () => {
+  const [turn] = buildWorkbotTurns(finished)
+  assert.ok(turn)
+  const initial = turn.parts.find(part => part.kind === "steps")
+  assert.ok(initial?.kind === "steps")
+  const parts = [
+    { kind: "text" as const, text: "Checking the page." }, initial,
+    { kind: "text" as const, text: "Reading more." }, initial,
+    { kind: "text" as const, text: "Finished." },
+  ]
+  for (const working of [true, false]) {
+    const work = computerWork(parts, { working, starting: working ? { on: "computer", since: 200, surface: "browser" } : null, lastIsLive: false })
+    assert.equal(work.cards.size, 1)
+    assert.equal(work.cards.get("browser")?.steps.length, 2)
+    assert.deepEqual([...work.placed], [[1, ["browser"]]])
+    assert.deepEqual(work.trailing, [])
+  }
+})
+
+/** Mirrors screen.tsx: the browser task object first, followed by its acknowledgment and narration. */
+function assembledKeys(parts: WorkbotTurn["parts"], working: boolean, starting: LiveText["working"] | null, liveText = "") {
+  const work = computerWork(parts, { working, starting, lastIsLive: false })
+  const keys: string[] = work.cards.has("browser") ? ["card-browser"] : []
+  parts.forEach((part, index) => {
+    if (part.kind === "text") { keys.push(`text-${part.step ?? `part-${index}`}`); return }
+    for (const surface of work.placed.get(index) ?? []) if (surface !== "browser") keys.push(`card-${surface}`)
+  })
+  if (liveText) keys.push("text-live")
+  for (const surface of work.trailing) keys.push(`card-${surface}`)
+  return keys
+}
+
+test("screen assembly keeps the same browser card above its acknowledgment from streamed words through storage", () => {
+  const [turn] = buildWorkbotTurns(finished)
+  assert.ok(turn)
+  const first = turn.parts.find(part => part.kind === "steps")
+  assert.ok(first?.kind === "steps")
+  const starting: LiveText["working"] = { on: "computer", since: 100, surface: "browser" }
+  assert.deepEqual(assembledKeys([], true, starting), ["card-browser"])
+  assert.deepEqual(assembledKeys([], true, starting, "Checking the page"), ["card-browser", "text-live"])
+  assert.deepEqual(assembledKeys([first], true, null), ["card-browser"])
+  const preamble = { kind: "text" as const, text: "I'll check.", step: 0 }
+  assert.deepEqual(assembledKeys([preamble], true, starting, "Checking the page"), ["card-browser", "text-0", "text-live"])
+  assert.deepEqual(assembledKeys([preamble, first], true, null, "Reading more"), ["card-browser", "text-0", "text-live"])
+  const narrated = [preamble, first, { kind: "text" as const, text: "Reading more.", step: 1 }, first]
+  assert.deepEqual(assembledKeys(narrated, true, null), ["card-browser", "text-0", "text-1"])
+  assert.deepEqual(assembledKeys(narrated, false, null), ["card-browser", "text-0", "text-1"])
+})
+
+test("browser task has one title through Working, Completed and Failed, without claiming interrupted work completed", () => {
+  const title = "Check the page"
+  assert.deepEqual(browserTask([], { title, working: true }), { title, status: "working" })
+  assert.deepEqual(browserTask([{ status: "done" }], { title, working: false, status: "done" }), { title, status: "completed" })
+  assert.deepEqual(browserTask([{ status: "done", reason: "The browser action couldn't finish." }], { title, working: false }), { title, status: "failed", reason: "The browser action couldn't finish." })
+  assert.equal(browserTask([{ status: "failed" }], { title, working: false }).status, "failed", "the helper also tolerates an older experimental failed status")
+  for (const status of ["failed", "stopped"] as const) assert.equal(browserTask([{ status: "done" }], { title, working: false, status }).status, "failed")
+  assert.equal(browserTask([{ status: "running" }], { title, working: false }).status, "failed")
+})
+
+test("browser tool failures and cut-off calls survive server storage without leaking raw errors or becoming Computer", () => {
+  for (const status of ["completed", "failed", "aborted"] as const) {
+    for (const returned of [true, false]) {
+      const [turn] = buildWorkbotTurns({
+        ...finished,
+        turns: [{ messageId: "wb_g1", status, createdAt: 100, updatedAt: 200, error: null }],
+        messages: [
+          ...finished.messages.slice(0, 2),
+          ...(returned ? [{ messageId: "wb_g1", role: "tool" as const, callId: "d1", name: "desktop", isError: true, createdAt: 120, text: "secret provider error" }] : []),
+        ],
+      })
+      assert.ok(turn)
+      const steps = turn.parts.flatMap(part => part.kind === "steps" ? part.steps : [])
+      assert.equal(steps[0]?.surface, "browser")
+      assert.equal(steps[0]?.status, "done", "old clients must still parse the step's running|done enum")
+      assert.ok(steps[0]?.reason)
+      const oldStepSchema = z.object({ status: z.enum(["running", "done"]) })
+      assert.deepEqual(oldStepSchema.parse(steps[0]), { status: "done" }, "already-open clients ignore the additive reason instead of rejecting the whole thread")
+      assert.equal(JSON.stringify(turn).includes("secret provider error"), false)
+      const task = browserTask(steps, { title: "Check the page", working: false, status: turn.status })
+      assert.equal(task.status, "failed")
+    }
+  }
 })

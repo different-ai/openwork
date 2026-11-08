@@ -56,11 +56,11 @@ export type WorkbotHost = {
   /** The retained owner remains mounted, but this host authorization fact masks it. */
   documentAuthorization?: "signin" | "blocked" | "disabled"
   /**
-   * What Workbot is doing shows as a status line under its name and a task sheet, not in the chat: no typing dots
-   * during tool work, no computer or task cards unless Workbot shows its screen (`workbotWorkingStatus`). Off when unset.
+   * Quiet non-browser work under its name/task sheet rather than computer/task cards (`workbotWorkingStatus`).
+   * Off when unset. Browser turns always use their own persistent task card and header status.
    */
   workingStatus?: boolean
-  /** Concise first human acknowledgment (`workbotQuickReply`). Off when unset. */
+  /** Non-browser first human acknowledgment (`workbotQuickReply`). Off when unset; browser tasks acknowledge by default. */
   quickReply?: boolean
   /**
    * A chat opens on the newest page this device kept from the last visit while it is read again
@@ -74,9 +74,9 @@ export type WorkbotHost = {
    * person, read-only (`workbotProfileSheet`). Off when unset.
    */
   profileSheet?: boolean
-  /** Top-centre avatar/pill and five-tab profile (`workbotCenteredProfile`), off when unset. */
+  /** Rich five-tab profile (`workbotCenteredProfile`), off when unset. Browser access independently gets the centered header pill. */
   centeredProfile?: boolean
-  /** Passive inline preview of live browser/computer work (`workbotBrowserPreview`), off when unset. */
+  /** Passive native-computer preview (`workbotBrowserPreview`), off when unset. Browser task cards/previews are default. */
   browserPreview?: boolean
   /** Read-only remote tasks in profile and header (`workbotRemoteTasks`). Off when unset. */
   remoteTasks?: boolean

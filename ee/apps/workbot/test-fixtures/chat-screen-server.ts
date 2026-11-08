@@ -6,6 +6,9 @@ import { createServer } from "vite"
 import { GOOGLE_EVENTS, googleAt, scenarios, type FixtureThread, type FixtureTurn } from "./chat-screen-scenarios.js"
 import { fixtureRemoteJobs, fixtureStaleRemoteJobs } from "./remote-jobs.js"
 
+// Observes real client requests; the fixture never changes browser controls or rendered UI.
+const browserRequests: Array<{ path: string; body: unknown }> = []
+const browserControlHeld = new Set<string>()
 let remoteStopped = false
 let googleStarted: number | null = null
 const GOOGLE_EVENT_GAP_MS = 1_500
@@ -72,9 +75,33 @@ async function answer(request: IncomingMessage, response: ServerResponse) {
     response.on("close", () => clearInterval(ping))
     return
   }
-  if (path === "/v1/workbot/computer/viewer" && process.env.WORKBOT_FIXTURE_FRAME) return json(response, 200, {
-    state: "connected", expiresAt: Date.now() + 60_000, paused: false, url: `ws://${request.headers.host}/vnc/${"f".repeat(43)}`,
-  })
+  if (path === "/v1/workbot/computer/viewer" && process.env.WORKBOT_FIXTURE_FRAME) {
+    const input: unknown = JSON.parse((await body(request)).toString("utf8"))
+    browserRequests.push({ path, body: input })
+    if (typeof input === "object" && input !== null && "control" in input && input.control === true) browserControlHeld.add(name)
+    return json(response, 200, { state: "connected", expiresAt: Date.now() + 60_000, paused: browserControlHeld.has(name), url: `ws://${request.headers.host}/vnc/${"f".repeat(43)}` })
+  }
+  if (path === "/v1/workbot/computer/action" && request.method === "POST") {
+    const input: unknown = JSON.parse((await body(request)).toString("utf8"))
+    browserRequests.push({ path, body: input })
+    if (typeof input === "object" && input !== null && "action" in input && input.action === "continue") browserControlHeld.delete(name)
+    return json(response, 200, { ok: true })
+  }
+  if (path === "/v1/workbot/stop" && request.method === "POST") {
+    browserRequests.push({ path, body: null })
+    current.status = "idle"
+    for (const turn of current.turns) {
+      if (turn.status !== "working" && turn.status !== "queued") continue
+      turn.status = "stopped"
+      turn.finishedAt = Date.now()
+      for (const part of turn.parts) if (part.kind === "steps") {
+        for (const step of part.steps) if (typeof step === "object" && step !== null && "status" in step && step.status === "running") {
+          Object.assign(step, { status: "done", reason: "Stopped before the browser task finished.", finishedAt: Date.now() })
+        }
+      }
+    }
+    return json(response, 200, { ok: true })
+  }
   if (request.method === "POST" && path === "/v1/workbot/messages") {
     const input = JSON.parse((await body(request)).toString("utf8")) as { id: string; text: string; attachments?: string[] }
     const now = Date.now()
@@ -151,12 +178,15 @@ const fixtureApps = [
 const entry = fileURLToPath(new URL("./chat-screen.tsx", import.meta.url))
 const vite = await createServer({
   configFile: fileURLToPath(new URL("../vite.config.ts", import.meta.url)),
-  server: { port: Number(process.argv[2] ?? 3091), strictPort: true },
+  // A proof measures one loaded product revision, not a React Fast Refresh remount
+  // when another contributor saves source while its nine-second task is running.
+  server: { port: Number(process.argv[2] ?? 3091), strictPort: true, ...(process.env.WORKBOT_FIXTURE_FROZEN === "1" ? { hmr: false, watch: null } : {}) },
   plugins: [{
     name: "workbot-chat-screen-fixture",
     configureServer(server) {
       server.middlewares.use((request, response, next) => {
         const url = request.url ?? "/"
+        if (url === "/fixture/browser-witness") { json(response, 200, browserRequests); return }
         if (url.startsWith("/v1/workbot")) { void answer(request, response); return }
         if (url === "/" || url.startsWith("/?") || url.startsWith("/documents") || url.startsWith("/browser") || url.startsWith("/computer")) {
           void server.transformIndexHtml(url, `<!doctype html><html><head><meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" /><title>Workbot</title></head><body style="margin:0"><div id="root"></div><script type="module" src="/@fs/${entry}"></script></body></html>`)

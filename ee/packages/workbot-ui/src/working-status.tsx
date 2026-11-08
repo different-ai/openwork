@@ -84,8 +84,9 @@ export { elapsed, StatusIcon };
  */
 export function ProfileBadge({ name, activity }: { name: string; activity: WorkbotActivity }) {
   const [open, setOpen] = useState(false);
+  const profile = workbotHost().profileSheet === true;
   return <>
-    <button type="button" onClick={() => setOpen(true)} aria-haspopup="dialog" aria-label={activity.working ? `${name}: ${activity.label}. Open ${name}'s profile` : `${name}: open profile`}
+    <button type="button" onClick={() => setOpen(true)} aria-haspopup="dialog" aria-label={activity.working ? `${name}: ${activity.label}. Show what ${name} is doing` : profile ? `${name}: open profile` : `${name}: show recent tasks`}
       className="group flex flex-col items-center rounded-[18px] focus-visible:outline-none" data-workbot-profile-badge>
       <span aria-hidden className="relative grid size-9 place-items-center rounded-full bg-[var(--wb-surface)] shadow-[0_0_0_1px_var(--wb-ring),var(--wb-card-shadow)] transition-transform duration-150 ease-out group-active:scale-[0.96] motion-reduce:transition-none">
         <OpenWorkMark width={15} height={19} />
@@ -98,7 +99,7 @@ export function ProfileBadge({ name, activity }: { name: string; activity: Workb
         </span> : null}
       </span>
     </button>
-    <ProfileSheet open={open} onClose={() => setOpen(false)} name={name} activity={activity} />
+    {profile ? <ProfileSheet open={open} onClose={() => setOpen(false)} name={name} activity={activity} /> : <TaskSheet open={open} onClose={() => setOpen(false)} name={name} activity={activity} />}
   </>;
 }
 
@@ -166,11 +167,12 @@ export function ActivityDetails({ name, activity }: { name: string; activity: Wo
   </>;
 }
 
-/** Opens Workbot's live browser or screen: the third level, only on request. */
+/** Native-screen watching only. Browser tasks open from their persistent inline Open preview card. */
 export function WatchButton({ watch, onDone }: { watch: "browser" | "computer"; onDone(): void }) {
+  if (watch === "browser") return null;
   return <button type="button" onClick={() => { onDone(); window.history.pushState(null, "", `/${watch}${window.location.search}`); window.dispatchEvent(new PopStateEvent("popstate")); }}
     className="flex h-9 w-full items-center justify-center gap-2 rounded-full bg-[var(--wb-chip)] text-[13px] font-medium text-[var(--wb-text)] hover:bg-[var(--wb-bubble)] focus-visible:outline-none focus-visible:shadow-[var(--wb-focus)]" data-workbot-watch>
-    {watch === "browser" ? <Globe size={14} aria-hidden /> : <Monitor size={14} aria-hidden />}Watch {watch === "browser" ? "the browser" : "the screen"}
+    <Monitor size={14} aria-hidden />Watch the screen
   </button>;
 }
 
@@ -196,7 +198,7 @@ export function TaskSheet({ open, onClose, name, activity }: { open: boolean; on
           <RemoteJobs jobs={remote.data?.jobs ?? []} statusError={remote.data?.statusError} />
           {workbotHost().remoteTasks && remote.isError && !remote.data ? <p className="px-5 pt-3 text-[13px] text-[var(--wb-muted)]">Couldn&apos;t check remote tasks just now. <button type="button" className="underline" onClick={() => void remote.refetch()}>Try again</button></p> : null}
         </div>
-        {watch ? <div className="shrink-0 border-t border-[var(--wb-hairline)] px-5 py-3"><WatchButton watch={watch} onDone={onClose} /></div> : null}
+        {watch === "computer" ? <div className="shrink-0 border-t border-[var(--wb-hairline)] px-5 py-3"><WatchButton watch={watch} onDone={onClose} /></div> : null}
       </Dialog.Popup>
     </Dialog.Portal>
   </Dialog.Root>;

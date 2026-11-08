@@ -60,6 +60,14 @@ export const scenarios: Record<string, () => FixtureThread> = {
       ], { modelSteps: 2 })),
     ],
   }),
+  /** Deterministic running task for preview ownership/control proofs; no external identity. */
+  "browser-lifecycle": () => ({
+    name: "Workbot", organizationName: "Example Team", status: "busy", hasEarlier: false, filesEnabled: true,
+    turns: [hello(), working(turn("browser_live", "Open the project page in your browser", ago(10), [
+      said("I'll open the project page in my browser."),
+      { kind: "steps", steps: [computerStep(["Opening the project page"], true, ago(5), { surface: "browser" })] },
+    ], { modelSteps: 2 }))],
+  }),
   /** #9 and #10: a background task building an app, then a quick command on the computer. */
   task: () => ({
     name: "Workbot", organizationName: "Example Team", status: "busy", hasEarlier: false, filesEnabled: true,

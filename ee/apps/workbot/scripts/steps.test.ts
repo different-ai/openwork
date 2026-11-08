@@ -28,6 +28,8 @@ test("browser work is its own step that narrates what it does and links the page
   const steps = turn?.parts.flatMap((part) => (part.kind === "steps" ? part.steps : [])) ?? []
   assert.deepEqual(steps.map((step) => [step.label, step.surface ?? null, step.status]), [["Using the browser", "browser", "running"], ["Using my computer", null, "running"]])
   const [browser, computer] = steps
+  assert.equal(browser?.reason, "The browser action couldn't finish.", "a later merged call must not erase the earlier failure")
+  assert.equal(computer?.reason, undefined)
   // Plain words for each call, its own description first; never the typed value or a non-web address.
   assert.deepEqual(browser?.updates, ["Opening example-homes.test/search/2-bed", "Filling in the form", "Working in the browser", "Comparing prices on Example Homes"])
   assert.equal(JSON.stringify(turn).includes("private value"), false)
@@ -79,10 +81,19 @@ test("the browser and background-then-screen nudges are only given when the comp
   assert.equal(workbotInstructions(base).includes("check it in your browser"), false)
   assert.ok(workbotInstructions({ ...base, browser: true }).includes("check it in your browser"))
   // Getting it done in the background, and the screen only when it helps, are taught only when there is a screen.
-  for (const rule of ["get it done in the background", "only when it helps", "keep work they want to watch"]) {
+  for (const rule of ["get it done in the background", "only when the work needs them", "keep work they want to watch"]) {
     assert.equal(workbotInstructions(base).includes(rule), false)
     assert.ok(workbotInstructions({ ...base, browser: true }).includes(rule))
   }
+})
+
+test("browser task acknowledgment and tap-only previews do not depend on presentation flags", () => {
+  const input = { name: "Workbot", organizationName: "Example", firstName: "Alex", timeZone: "UTC", canSchedule: false, browser: true }
+  const instructions = workbotInstructions(input)
+  assert.ok(instructions.includes("before any tool call"))
+  assert.ok(instructions.includes("The person alone opens the full browser by tapping Open preview"))
+  assert.ok(instructions.includes("never opens its full view"))
+  assert.equal(instructions.includes("It appears in their chat only when you pass show: true"), false)
 })
 
 test("Drive PDFs and Office files are pulled onto the computer only when there is one, and only with workbotDriveFiles", () => {

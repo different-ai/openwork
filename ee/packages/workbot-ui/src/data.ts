@@ -40,6 +40,7 @@ const stepSchema = z.object({
   label: z.string(),
   icon: z.enum(["app", "computer"]),
   status: z.enum(["running", "done"]),
+  reason: z.string().optional(),
   app: z.string().nullable(),
   startedAt: z.number().nullable(),
   finishedAt: z.number().nullable(),
