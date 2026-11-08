@@ -81,6 +81,8 @@ export type WorkbotDeps = {
    * progress stays there rather than in the first, brief human acknowledgment. Unset: off.
    */
   workingStatus?: (organizationId: string) => Promise<boolean>
+  /** Brief human acknowledgment before any tool call (`workbotQuickReply`). Unset: off. */
+  quickReply?: (organizationId: string) => Promise<boolean>
   /** Den's `sandboxGateway` flag: the chats' computers run through the runner's sandbox gateway. Unset: unchanged. */
   sandboxGateway?: boolean
   /** Den-resolved workbotBrowserRecovery; never set by the model. */
@@ -90,8 +92,6 @@ export type WorkbotDeps = {
    * runner deploy switches between steps instead of cutting one off. Unset: preserve older Den's continuous turns.
    */
   stepTurns?: boolean
-  /** Brief human acknowledgment before any tool call (`workbotQuickReply`). Unset: off. */
-  quickReply?: (organizationId: string) => Promise<boolean>
   /**
    * Den's session `sessionCells` compatibility field: new chats get their own session cell on the runner
    * (`hs_c_…` ids, memory kept with the owner) and the person's existing chats are split out once per process. Chats
@@ -314,6 +314,8 @@ export function workbotInstructions(input: {
    * chat: the first reply is a brief human acknowledgment, with detailed progress left to the header and task sheet.
    */
   workingStatus?: boolean
+  /** Concise acknowledgment before tools; independent of the status-sheet rollout. Unset: off. */
+  quickReply?: boolean
   /** Remote-session introspection uses the same receipt refs as the profile (`workbotRemoteTasks`). Unset: off. */
   remoteTasks?: boolean
 }) {
@@ -323,8 +325,6 @@ export function workbotInstructions(input: {
       ? `You are ${input.name}, the assistant ${input.organizationName} set up for ${person}. This is a side chat ${person} started for one topic, next to their main chat with you. You share the same memory across their chats.`
       : `You are ${input.name}, the assistant ${input.organizationName} set up for ${person}. This is your one ongoing conversation with them; it never resets.`,
     "",
-  /** Concise acknowledgment before tools; independent of the status-sheet rollout. Unset: off. */
-  quickReply?: boolean
     input.quickReply
       ? `- ${person} watches this chat live and sees your words as you write them. For a request that needs work, write a brief human acknowledgment immediately, before any tool call, including search_capabilities, react, browser or computer operations. Use one or two short sentences in your own words: say the concrete next action and that you'll come back with what you find ("On it — I'll open YouTube now. I'll tell you what I find."). This is your first reply, not a typing indicator or an emoji. Don't investigate first or make them wait for a plan. Don't claim an action has already happened or work has started before it succeeds. Never invent an ETA. Then do the work and answer in its own short message. For an instant answer or a purely social message, answer directly instead.`
       : input.workingStatus
@@ -425,6 +425,7 @@ async function ensureSession(actor: WorkbotActor, timeZone: string, deps: Workbo
   const guidedNavigation = workspaceAssistant && (await deps.guidedNavigation?.(actor.organizationId).catch(() => false) ?? false)
   const driveFiles = await deps.driveFiles?.(actor.organizationId).catch(() => false) ?? false
   const workingStatus = await deps.workingStatus?.(actor.organizationId).catch(() => false) ?? false
+  const quickReply = await deps.quickReply?.(actor.organizationId).catch(() => false) ?? false
   const main = await sessionOf(actor, null, deps, { create: true })
   const mainInCell = WORKBOT_CELL_SESSION_ID.test(main)
   const desktopViews = deps.desktopViews ?? []
@@ -432,7 +433,6 @@ async function ensureSession(actor: WorkbotActor, timeZone: string, deps: Workbo
     // Workbot keeps the person's files, works on its own computer, reacts to messages with an emoji and hands longer
     // work to background tasks; the runner offers each only on request.
     files: true,
-  const quickReply = await deps.quickReply?.(actor.organizationId).catch(() => false) ?? false
     computer: WORKBOT_COMPUTER,
     desktop: desktopViews.length > 0,
     ...(desktopViews.length ? { desktopViews } : {}),

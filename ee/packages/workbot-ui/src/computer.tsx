@@ -9,6 +9,7 @@ import type { BrowserTeachingContext } from "@openwork/types/browser-demonstrati
 import type { WorkbotViewContext } from "@openwork/types/workbot-context";
 import { TEACHING_WINDOW_PLACEMENT, TeachButton, WorkbotTeaching } from "./teaching";
 import { addressFor, ScreencastViewer, type ScreencastPage } from "./screencast";
+import { captureFrame, forgetFrame, frameKey, lastFrame } from "./frame-cache";
 import { computerTabLabel, computerViews, errorMessage, workbotHost } from "./host";
 import { inChat, useWorkbotChat } from "./data";
 
@@ -88,7 +89,7 @@ export function WorkbotComputer({ onTeachingChange, onRun, canTeach = true, onVi
     // Nobody watching a hidden tab, so stop streaming until it is shown again.
     if (!target || paused || away) return;
     setError(null); setConnected(false); setReconnecting(false); setUpdating(false); setStarting(false); setLivePage(null); setStream(null);
-    return connectDesktopViewer(target, host, { view, control, chat, wake: true }, {
+    const disconnect = connectDesktopViewer(target, host, { view, control, chat, wake: true }, {
       paused: () => setPaused(true),
       agentPaused: setAgentPaused,
       connected: () => { setConnected(true); setReconnecting(false); setUpdating(false); setStarting(false); setError(null); },
@@ -99,6 +100,10 @@ export function WorkbotComputer({ onTeachingChange, onRun, canTeach = true, onVi
       page: setLivePage,
       stream: setStream,
     });
+    return () => {
+      if (host.browserPreview && host.identity) captureFrame(target, glimpseKey(chat, view));
+      disconnect();
+    };
   }, [host, identity, chat, view, control, paused, away, revision]);
 
   const action = async (next: "pause" | "resume" | "continue" | "rebuild") => {
@@ -446,7 +451,8 @@ type SharedGlimpse = { host: ReturnType<typeof workbotHost>; container: HTMLDivE
 /** Keyed by chat and view: each chat has its own computer, so one chat's connection never stands in for another's. */
 const sharedGlimpses = new Map<string, SharedGlimpse>();
 function glimpseKey(chat: string | null, view: ComputerView) {
-  return `${chat ?? ""}:${view}`;
+  const identity = workbotHost().identity;
+  return frameKey(identity?.organizationId ?? "", identity?.principalId ?? "", chat, view);
 }
 /** How long a view's connection outlives its last live view, so the next card of the same reply doesn't reconnect. */
 const GLIMPSE_LINGER_MS = 15_000;
@@ -473,8 +479,8 @@ function watchGlimpse(host: ReturnType<typeof workbotHost>, chat: string | null,
     paused: () => set("unavailable"),
     agentPaused: () => {},
     connected: () => set("live"),
-    reconnecting: () => set("connecting"),
-    failed: () => set("unavailable"),
+    reconnecting: () => { if (host.browserPreview && host.identity) captureFrame(container, key); set("connecting"); },
+    failed: () => { forgetFrame(key); set("unavailable"); },
   });
   sharedGlimpses.set(key, shared);
   return shared;
@@ -483,6 +489,7 @@ function watchGlimpse(host: ReturnType<typeof workbotHost>, chat: string | null,
 function releaseGlimpse(key: string, shared: SharedGlimpse) {
   shared.users -= 1;
   if (shared.users > 0) return;
+  if (shared.host.browserPreview && shared.host.identity && shared.state === "live") captureFrame(shared.container, key);
   shared.linger = setTimeout(() => {
     if (sharedGlimpses.get(key) === shared) sharedGlimpses.delete(key);
     shared.close();
@@ -495,9 +502,11 @@ function releaseGlimpse(key: string, shared: SharedGlimpse) {
  * appears once it has a picture, so connecting takes no room in the chat. Live views of the same view share one
  * connection, so a new card keeps the picture instead of connecting again.
  */
-export function LiveGlimpse({ view, onOpen }: { view: ComputerView; onOpen?(): void }) {
+export function LiveGlimpse({ view, onOpen, previewOnly = false }: { view: ComputerView; onOpen?(): void; previewOnly?: boolean }) {
   const host = workbotHost();
   const chat = useWorkbotChat();
+  const key = glimpseKey(chat, view);
+  const snapshot = host.browserPreview && host.identity ? lastFrame(key) : null;
   const screen = useRef<HTMLDivElement>(null);
   const [state, setState] = useState<GlimpseState>("connecting");
   // Once it has had a picture it stays, so a reconnect doesn't collapse it.
@@ -517,16 +526,18 @@ export function LiveGlimpse({ view, onOpen }: { view: ComputerView; onOpen?(): v
       releaseGlimpse(glimpseKey(chat, view), shared);
     };
   }, [host, chat, view, away]);
-  if (state === "unavailable") return null;
+  if (state === "unavailable") { if (snapshot) forgetFrame(key); return null; }
   const label = view === "browser" ? "Workbot is browsing" : "Workbot is using its computer";
-  return <button type="button" onClick={onOpen} disabled={!onOpen} aria-label={`${label}. Open the full view`}
-    className={`${pictured || state === "live" ? "block" : "hidden"} workbot-fade-in workbot-glimpse relative mt-2 aspect-[16/10] w-full overflow-hidden rounded-[10px] bg-[#f5f6f7] text-left outline-none focus-visible:shadow-[var(--wb-focus)] enabled:cursor-pointer`}>
+  const className = `${pictured || state === "live" || snapshot ? "block" : "hidden"} workbot-fade-in workbot-glimpse relative mt-2 aspect-[16/10] w-full overflow-hidden rounded-[10px] bg-[#f5f6f7] text-left outline-none focus-visible:shadow-[var(--wb-focus)] enabled:cursor-pointer`;
+  const picture = <>
+    {snapshot && state !== "live" ? <img src={snapshot} alt="Last browser frame" className="absolute inset-0 h-full w-full object-contain object-top" /> : null}
     <div ref={screen} className="pointer-events-none absolute inset-0" aria-hidden />
-    {state === "connecting" ? <span className="absolute inset-0 grid place-items-center text-[12px] text-[var(--wb-muted)]"><span className="workbot-shimmer">{view === "browser" ? "Connecting to the browser" : "Connecting to the computer"}</span></span> : null}
     <span className="absolute left-2 top-2 inline-flex items-center gap-1.5 rounded-full bg-[var(--wb-surface)]/90 px-2 py-0.5 text-[11px] font-medium text-[var(--wb-text)] shadow-[var(--wb-card-shadow)]">
-      <span className="workbot-presence-dot size-1.5 rounded-full" aria-hidden />{label}
+      <span className="workbot-presence-dot size-1.5 rounded-full" aria-hidden />{state === "live" ? label : "Last view · reconnecting"}
     </span>
-  </button>;
+  </>;
+  return previewOnly ? <div className={className} aria-label={label} data-workbot-live-thumbnail>{picture}</div>
+    : <button type="button" onClick={onOpen} disabled={!onOpen} aria-label={`${label}. Open the full view`} className={className}>{picture}</button>;
 }
 
 /** Resolves once noVNC has drawn into the layer's canvas (its pixels start transparent), or after `limit` ms. */

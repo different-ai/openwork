@@ -53,7 +53,9 @@ import { useNativeDictation } from "@openwork/ui/react";
 import { WorkbotDictation } from "./native-dictation";
 import { WorkbotCommandPalette, type WorkbotPaletteTab } from "./command-palette";
 import { workbotActivity, type WorkbotActivity } from "./activity";
-import { WorkingName } from "./working-status";
+import { ProfileBadge, WorkingName } from "./working-status";
+import { firstReply } from "./first-reply";
+import { remoteJobActivity, remoteWatcherTaskIds, useWorkbotRemoteJobs } from "./remote-jobs";
 
 /**
  * Workbot: one thread, instant. Layout and values follow the Paper file "WorkBot — one chat, set up once",
@@ -289,8 +291,22 @@ function ChatScreen({ host, composerState, navigation, onDraftsChange }: { host:
     return newest;
   }, [preview, data]);
   const filesEnabled = data?.filesEnabled ?? false;
-  // What Workbot is doing, for the status line under its name and the task sheet (workingStatus); null without it.
-  const activity = useMemo(() => (host.workingStatus && data ? workbotActivity(data.turns, stream.live) : null), [host.workingStatus, data, stream.live]);
+  // Age unfinished jobs even when the event stream has gone quiet. The profile also opens before the first read.
+  const activityNow = useNow();
+  const remote = useWorkbotRemoteJobs(data !== null);
+  const watcherIds = remoteWatcherTaskIds(remote.data?.jobs ?? []);
+  const activity = useMemo(() => {
+    if (!host.workingStatus && !host.profileSheet && !host.remoteTasks) return null;
+    const jobs = remote.data?.jobs ?? [];
+    const watchers = remoteWatcherTaskIds(jobs);
+    const turns = (data?.turns ?? []).map((turn) => ({ ...turn, tasks: turn.tasks.filter((task) => !watchers.has(task.id)) }));
+    const local = { ...workbotActivity(turns, stream.live, activityNow), connected: data !== null };
+    const away = remoteJobActivity(jobs);
+    const localTask = local.tasks.find((task) => !task.quiet && (task.status === "queued" || task.status === "working" || task.status === "paused"));
+    // A foreground answer wins; otherwise name the newest genuinely active job, local or remote.
+    if (!local.main && away && (!localTask || (away.since ?? 0) >= (localTask.startedAt ?? 0))) return { ...local, working: true, label: away.label, icon: "computer" as const, since: away.since, watch: null };
+    return local;
+  }, [host.workingStatus, host.profileSheet, host.remoteTasks, data, stream.live, activityNow, remote.data]);
   const addFiles = uploads.add;
   const paletteChats = useWorkbotChats(navigation !== null);
   const paletteTasks = useMemo(() => (data?.turns ?? []).flatMap((turn) => turn.tasks), [data?.turns]);
@@ -387,7 +403,7 @@ function ChatScreen({ host, composerState, navigation, onDraftsChange }: { host:
     const busy = data?.status === "busy" || pending.some(entry => !entry.failed);
     const empty = !loading && !data?.turns.length && !pending.length;
     const starting = empty && (start.isPending || greetingAwaited);
-    const conversation = data || loading ? <Conversation
+    const conversation = data || loading ? <Conversation watcherIds={watcherIds}
       turns={data?.turns ?? []} loading={loading}
       canChange={!busy} onEdit={editTurn} editErrors={editErrors} pending={pending} live={stream.live}
       hasEarlier={data?.hasEarlier ?? false} earlierLimit={turnWindow >= MAX_TURNS && !thread.isPlaceholderData} loadingEarlier={thread.isFetching && thread.isPlaceholderData}
@@ -569,7 +585,7 @@ function ChatScreen({ host, composerState, navigation, onDraftsChange }: { host:
         </FirstOpen>
       ) : (
         <>
-          <Conversation
+          <Conversation watcherIds={watcherIds}
             turns={shown.turns}
             loading={loading}
             canChange={!busy}
@@ -802,6 +818,24 @@ function WorkbotHeader(props: {
   const { name, organizationName, userName, files } = props;
   const apps = useConnectedApps();
   const names = apps.map((app) => app.name);
+  if (workbotHost().centeredProfile && workbotHost().profileSheet && props.activity) return (
+    <header className="grid min-h-[84px] shrink-0 grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-start gap-2 px-3 pb-2 pt-2 sm:px-5" data-workbot-profile-header>
+      <div className="flex min-w-0 items-center gap-1 pt-2">
+        {props.chats}{props.search}
+        <div className="hidden min-w-0 lg:contents">{props.nav}</div>
+      </div>
+      <div className="flex min-w-0 flex-col items-center gap-1">
+        <h1><ProfileBadge name={name} activity={props.activity} /></h1>
+        {props.title ? <div className="flex max-w-[150px] items-center gap-1 text-[12px]">{props.title}</div> : null}
+      </div>
+      <div className="flex min-w-0 items-center justify-end gap-1 pt-2 sm:gap-2.5">
+        {props.remove}
+        <div className="hidden sm:contents"><WorkbotSetupChip answered={props.answered === true} /></div>
+        {files}
+        <AccountAvatar userName={userName} />
+      </div>
+    </header>
+  );
   return (
     <header className="flex h-13 shrink-0 items-center justify-between gap-3 px-4 sm:px-5">
       {props.title ? <div className="flex min-w-0 items-center gap-2">{props.chats}{props.title}{props.nav}</div> : (
@@ -956,6 +990,7 @@ function showsTimestamp(previous: { at: number } | undefined, row: { at: number 
 }
 
 function Conversation(props: {
+  watcherIds: ReadonlySet<string>;
   turns: WorkbotTurn[];
   /** The conversation hasn't been read yet: a placeholder stands where it will be, above anything just sent. */
   loading?: boolean;
@@ -1089,7 +1124,7 @@ function Conversation(props: {
               return (
                 <li key={row.key} data-workbot-row={row.key} className={`flex flex-col gap-1 ${index > 0 ? (stamp ? "pt-9" : "pt-8") : stamp && props.intro ? "pt-1" : ""}`}>
                   {stamp ? <Timestamp at={row.at} /> : null}
-                  <TurnView
+                  <TurnView watcherIds={props.watcherIds}
                     canChange={props.canChange}
                     onEdit={props.onEdit}
                     editError={row.pending ? null : (props.editErrors[row.turn.id] ?? null)}
@@ -1631,6 +1666,18 @@ function SurfaceCard({ surface, steps, live, showing, others, switchTo = null, s
     : surface === "background" ? `${live ? "Working" : "Worked"} on my computer`
     : `${live ? "Using" : "Used"} my computer`;
   const starting = surface === "browser" ? "Opening the browser" : surface === "background" ? "Running in the background" : "Starting up";
+  // A thumbnail is a glance, never a takeover: one button opens the full view only on the person's tap.
+  if (workbotHost().browserPreview && live && watchable && surface !== "background") return <section className="workbot-row-enter w-full max-w-[480px] rounded-[20px] bg-[var(--wb-chip)] p-3" aria-label={`${surface === "browser" ? "Browser" : "Computer"} activity`} data-workbot-browser-card>
+    <div className="flex min-w-0 items-center gap-2.5 px-1 pb-1">
+      <span aria-hidden className="grid size-9 shrink-0 place-items-center rounded-[10px] bg-[var(--wb-surface)] text-[var(--wb-text)]">{surface === "browser" ? <Globe size={20} strokeWidth={1.7} /> : <Monitor size={20} strokeWidth={1.7} />}</span>
+      <div className="min-w-0">
+        <h3 className="text-[14px] font-semibold leading-5 text-[var(--wb-text)]">{surface === "browser" ? "Browser" : "Computer"}</h3>
+        <p className="truncate text-[12px] leading-4 text-[var(--wb-muted)]" role="status">{update ?? starting}</p>
+      </div>
+    </div>
+    {!onScreen ? <LiveGlimpse view={surface} previewOnly /> : null}
+    <button type="button" onClick={() => openSurface(surface)} className="mt-3 flex h-10 w-full items-center justify-center rounded-full bg-[var(--wb-surface)] text-[13px] font-medium text-[var(--wb-text)] hover:bg-[var(--wb-bubble)] focus-visible:outline-none focus-visible:shadow-[var(--wb-focus)]">Open {surface === "browser" ? "browser" : "computer"}</button>
+  </section>;
   return (
     <WorkCard
       title={title}
@@ -1746,6 +1793,7 @@ type TurnItem = { kind: "text"; key: string; text: string } | { kind: "steps"; k
   | { kind: "card"; key: string; surface: ComputerSurface; steps: WorkbotStep[]; live: boolean; showing: boolean; others: UsedApp[]; switchTo: SwitchTo | null; update: string | null };
 
 function TurnView(props: {
+  watcherIds: ReadonlySet<string>;
   canChange: boolean;
   onEdit: (turn: WorkbotTurn, text: string) => void;
   editError: Error | string | null;
@@ -1766,6 +1814,7 @@ function TurnView(props: {
   // workingStatus: the chat keeps only what Workbot says. Its work shows under its name and in the task sheet; its
   // screen shows here only while Workbot puts it in front of the person.
   const quiet = workbotHost().workingStatus === true;
+  const visibleTasks = turn.tasks.filter((task) => !props.watcherIds.has(task.id) && (!quiet || task.status === "failed" || task.status === "stopped"));
   // A message still sending waits on its files first, in the place the dots take next.
   const uploading = pending !== null && !pending.failed && pending.uploads.some((upload) => upload.status === "uploading");
   // An answer watched while it was written keeps revealing at its pace once it's stored; answers already done when the
@@ -1805,7 +1854,7 @@ function TurnView(props: {
     // Apps used beside computer work show as logos on its card; on their own, as a quiet line.
     here.forEach((surface, at) => {
       const item = card(surface, at === here.length - 1 ? usedApps(apps, null) : []);
-      if (!quiet || item.showing) items.push(item);
+      if (!quiet || item.showing || (workbotHost().browserPreview && item.live && item.surface !== "background")) items.push(item);
     });
     if (!quiet && apps.length > 0 && here.length === 0) items.push({ kind: "steps", key: `steps-${index}`, steps: apps, live: working && index === parts.length - 1 && lastIsLive });
   });
@@ -1818,8 +1867,12 @@ function TurnView(props: {
   if (live && liveText) items.push({ kind: "text", key: `text-${live.step}`, text: liveText });
   for (const surface of work.trailing) {
     const item = card(surface);
-    if (!quiet || item.showing) items.push(item);
+    if (!quiet || item.showing || (workbotHost().browserPreview && item.live && item.surface !== "background")) items.push(item);
   }
+  // Only once the server's conversation has accepted it: acknowledge without waiting for the model's first token.
+  // Real words replace this acceptance line; it never claims the browser opened or a background job started.
+  const acknowledgement = workbotHost().quickReply && !pending && !items.some((item) => item.kind === "text" && item.text.trim()) ? firstReply(turn) : null;
+  if (acknowledgement) items.unshift({ kind: "text", key: "accepted", text: acknowledgement });
   // The place Workbot's next words will take, one message line tall: the typing dots, or the app step running right now
   // ("Using Gmail"), then the words themselves, each replacing the last without moving the conversation. Once it has
   // shown, it keeps its place until the words arrive.
@@ -1833,7 +1886,7 @@ function TurnView(props: {
   // Quiet: the dots mean only "a reply is coming" before Workbot has said or done anything. Once it is at work, the
   // status line under its name says so; dots for minutes would read as someone typing.
   const atWork = parts.some((part) => part.kind === "steps") || Boolean(live?.working);
-  const dots = quiet ? waiting && items.length === 0 && !atWork : waiting && (fresh || settled);
+  const dots = !acknowledgement && (quiet ? waiting && items.length === 0 && !atWork : waiting && (fresh || settled));
   const running = runningApps !== null;
   const [held, setHeld] = useState(false);
   useEffect(() => {
@@ -1865,7 +1918,7 @@ function TurnView(props: {
           item.kind === "text" ? (
             // Natural replies: Copy sits beside the last bubble, so a finished answer doesn't add a row under itself.
             <AssistantBubble key={item.key} trailing={turn.status === "done" && index === lastText ? <CopyAnswer text={copyText} /> : null}>
-              <StreamingText text={item.text} instant={!(props.newestText && index === lastText && watched.current)} />
+              <StreamingText text={item.text} instant={item.key === "accepted" || !(props.newestText && index === lastText && watched.current)} />
             </AssistantBubble>
           ) : item.kind === "card" ? (
             <div key={item.key} className="py-1 pl-1">
@@ -1879,11 +1932,11 @@ function TurnView(props: {
       </div>
       <DocumentOffers links={offers} />
       <DocumentNavigationStatus receipts={turn.navigation} />
-      {usedComputer ? <ComputerOffer /> : null}
+      {usedComputer && !workbotHost().browserPreview ? <ComputerOffer /> : null}
       {turn.outputs.length ? <OutputFiles files={turn.outputs} /> : null}
       {/* Quiet: running and finished tasks live in the task sheet (the report says it's done); one that failed or was
           stopped stays here with its way forward. */}
-      {(quiet ? turn.tasks.filter((task) => task.status === "failed" || task.status === "stopped") : turn.tasks).length ? <TaskCards tasks={quiet ? turn.tasks.filter((task) => task.status === "failed" || task.status === "stopped") : turn.tasks} canRetry={props.canChange} onRetry={(task) => props.onSuggestion(`Try the "${task.title}" background task again.`)} /> : null}
+      {visibleTasks.length ? <TaskCards tasks={visibleTasks} canRetry={props.canChange} onRetry={(task) => props.onSuggestion(`Try the "${task.title}" background task again.`)} /> : null}
       {/* Workbot's hello offers what to ask next, only while it is still the latest message. */}
       {turn.suggestions.length && props.latest ? (
         <ul className="flex flex-wrap gap-2 pl-1 pt-3">

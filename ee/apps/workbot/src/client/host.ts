@@ -39,6 +39,8 @@ export const meSchema = z.object({
   instantOpen: z.boolean().default(false),
   /** Workbot's profile behind its name (`workbotProfileSheet`); older servers omit it. */
   profileSheet: z.boolean().default(false),
+  centeredProfile: z.boolean().default(false),
+  browserPreview: z.boolean().default(false),
   /** Read-only remote tasks (`workbotRemoteTasks`); absent means off. */
   remoteTasks: z.boolean().default(false),
   denUrl: z.string().nullable(),
@@ -169,10 +171,12 @@ export function createHost(me: Me, recovery: { authorization?: WorkbotHost["docu
     },
     sideChats: me.sideChats,
     workingStatus: me.workingStatus,
-    profileSheet: me.profileSheet,
-    account: me.accountMenu ? { email: me.email, organizationName: me.organizationName, signOut, switchWorkspace } : undefined,
     quickReply: me.quickReply,
-    identity: me.userId && me.organizationId ? { principalId: me.userId, organizationId: me.organizationId } : undefined,
+    profileSheet: me.profileSheet,
+    centeredProfile: me.centeredProfile,
+    browserPreview: me.browserPreview,
     remoteTasks: me.remoteTasks,
+    account: me.accountMenu ? { email: me.email, organizationName: me.organizationName, signOut, switchWorkspace } : undefined,
+    identity: me.userId && me.organizationId ? { principalId: me.userId, organizationId: me.organizationId } : undefined,
   }
 }

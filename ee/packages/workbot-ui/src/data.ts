@@ -518,7 +518,7 @@ export function useWorkbotMemory(enabled: boolean) {
     enabled,
     queryFn: async () => {
       const { response, payload } = await requestJson("/v1/workbot/memory", { method: "GET" }, 30_000);
-      if (!response.ok) throw new Error(getErrorMessage(payload, "Couldn't read what I remember. Try again."));
+      if (!response.ok) throw new Error("Couldn't read what I remember.");
       return memorySchema.parse(payload).files;
     },
     staleTime: 0,

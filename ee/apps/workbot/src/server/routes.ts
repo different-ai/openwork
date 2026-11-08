@@ -151,10 +151,10 @@ export function registerWorkbotRoutes(app: Hono<AppEnv>, input: { config: Config
       guidedNavigation: async () => member.den.guidedNavigation && member.den.documents === true,
       driveFiles: async () => member.den.driveFiles,
       workingStatus: async () => member.den.workingStatus,
+      quickReply: async () => member.den.quickReply,
       sandboxGateway: member.den.sandboxGateway,
       browserRecovery: member.den.browserRecovery,
       // Saved steps are GA; older Dens may omit stepTurns, so preserve their continuous-turn protocol.
-      quickReply: async () => member.den.quickReply,
       stepTurns: member.den.stepTurns,
       // Per-chat cells are GA; older Dens may omit sessionCells, so preserve their legacy placement.
       sessionCells: member.den.sessionCells,
@@ -263,10 +263,12 @@ export function registerWorkbotRoutes(app: Hono<AppEnv>, input: { config: Config
       // Signing out and switching workspace don't depend on Workbot being on for this workspace.
       accountMenu: who.accountMenu,
       workingStatus: who.enabled && who.workingStatus,
+      quickReply: who.enabled && who.quickReply,
       browserChat: who.enabled && who.browser && who.browserChat,
       instantOpen: who.enabled && who.instantOpen,
-      quickReply: who.enabled && who.quickReply,
       profileSheet: who.enabled && who.profileSheet,
+      centeredProfile: who.enabled && who.centeredProfile,
+      browserPreview: who.enabled && who.browserPreview,
       remoteTasks: who.enabled && who.remoteTasks,
       commandPalette: true,
       denUrl: config.denWebUrl ?? (await den.webUrl().catch(() => null)),
@@ -518,8 +520,6 @@ export function registerWorkbotRoutes(app: Hono<AppEnv>, input: { config: Config
     })
   })
 
-  /** What Workbot remembers about the person, read-only, for its profile (`workbotProfileSheet`). */
-  app.get("/v1/workbot/memory", async (c) => {
   /** Remote jobs proved by this chat's persisted receipts, never ids supplied by the browser. */
   app.get("/v1/workbot/remote-jobs", async (c) => {
     c.header("Cache-Control", "no-store")
@@ -572,6 +572,8 @@ export function registerWorkbotRoutes(app: Hono<AppEnv>, input: { config: Config
     }
   })
 
+  /** What Workbot remembers about the person, read-only, for its profile (`workbotProfileSheet`). */
+  app.get("/v1/workbot/memory", async (c) => {
     const member = c.get("member")
     if (!enabled(c)) return c.json({ error: "workbot_not_enabled" }, 409)
     if (!member.den.profileSheet) return c.json({ error: "feature_disabled" }, 404)

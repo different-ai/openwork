@@ -72,6 +72,10 @@ export type WorkbotHost = {
    * person, read-only (`workbotProfileSheet`). Off when unset.
    */
   profileSheet?: boolean
+  /** Top-centre avatar/pill and five-tab profile (`workbotCenteredProfile`), off when unset. */
+  centeredProfile?: boolean
+  /** Passive inline preview of live browser/computer work (`workbotBrowserPreview`), off when unset. */
+  browserPreview?: boolean
   /** Read-only remote tasks in profile and header (`workbotRemoteTasks`). Off when unset. */
   remoteTasks?: boolean
   /** The person can start side chats next to their main chat (on while Workbot is on). Off when unset. */

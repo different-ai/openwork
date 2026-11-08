@@ -56,13 +56,15 @@ export const denSessionSchema = z.object({
   accountMenu: z.boolean().default(false),
   /** Work in progress shows in the header and task sheet, not the chat. A Den from before it doesn't say: off. */
   workingStatus: z.boolean().default(false),
-  /** The conversation docks beside the Browser and Computer views (`workbotBrowserChat`). A Den from before it doesn't say: off. */
   quickReply: z.boolean().default(false),
+  /** The conversation docks beside the Browser and Computer views (`workbotBrowserChat`). A Den from before it doesn't say: off. */
   browserChat: z.boolean().default(false),
   /** Chats open on the newest page kept on the device (`workbotInstantOpen`). A Den from before it doesn't say: off. */
   instantOpen: z.boolean().default(false),
   /** Workbot's profile: tasks, permissions and read-only memory. A Den from before it doesn't say: off. */
   profileSheet: z.boolean().default(false),
+  centeredProfile: z.boolean().default(false),
+  browserPreview: z.boolean().default(false),
   /** Remote task discovery and live reads (`workbotRemoteTasks`); absent means off. */
   remoteTasks: z.boolean().default(false),
   /** The organization's default model for Workbot's turns. Null, or a Den from before it, means the runner's default. */
@@ -201,8 +203,6 @@ export function createDen(options: { apiUrl: string; publicUrl: string; serviceT
     return { status: response.status, payload }
   }
 
-  return {
-    discover,
   /** Member-scoped calls to the existing remote-session protocol, never a service credential or caller-supplied org. */
   const remoteCall = async (accessToken: string, action: "status" | "read" | "stop", body: unknown): Promise<unknown> => {
     const client = new Client({ name: "openwork-workbot", version: "1" })
@@ -223,6 +223,8 @@ export function createDen(options: { apiUrl: string; publicUrl: string; serviceT
     } finally { await client.close() }
   }
 
+  return {
+    discover,
     modelRecovery: (accessToken: string) => authorized("GET", "/v1/workbot/model-recovery", accessToken),
     /** The member's Get set up checklist; Den computes every step and enforces the feature. */
     activation: (accessToken: string) => authorized("GET", "/v1/workbot/activation", accessToken),
@@ -274,14 +276,14 @@ export function createDen(options: { apiUrl: string; publicUrl: string; serviceT
         signal: AbortSignal.timeout(TIMEOUT_MS),
       }).catch(() => undefined)
     },
-    /** The normal private Cloud-skill path: Den owns permissions, audit, and persistence. */
-    async saveBrowserSkill(accessToken: string, pluginName: string, skillMarkdown: string) {
     /** Same owner-scoped status capability agents call; OAuth org, scopes and membership stay Den's decision. */
     async remoteStatus(accessToken: string, input: RemoteSessionStatusRequest) {
       return remoteSessionStatusResultSchema.parse(await remoteCall(accessToken, "status", input))
     },
     remoteRead: (accessToken: string, input: { sessionId: string; workspaceId?: string; limit: number; from: "end" } | { requestId: string }) => remoteCall(accessToken, "read", input),
     remoteStop: (accessToken: string, input: { sessionId: string; workspaceId?: string; messageId: string }) => remoteCall(accessToken, "stop", input),
+    /** The normal private Cloud-skill path: Den owns permissions, audit, and persistence. */
+    async saveBrowserSkill(accessToken: string, pluginName: string, skillMarkdown: string) {
       const client = new Client({ name: "openwork-workbot", version: "1" })
       const transport = new StreamableHTTPClientTransport(new URL(`${options.apiUrl}/mcp/agent`), {
         requestInit: { headers: { authorization: `Bearer ${accessToken}` } },

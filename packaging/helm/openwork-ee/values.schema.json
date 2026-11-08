@@ -401,6 +401,26 @@
               ],
               "description": "Workbot: working status and task sheet: While Workbot works, a quiet status line under its name says what it is doing; tapping the name opens a task sheet with its steps and each background task's steps. The chat keeps only what Workbot says: no typing dots during work, no computer or task cards unless Workbot is showing its screen. Its first reply stands on its own instead of \"give me a sec\", and it can say how a background task is going. Renders DEN_FEATURE_WORKBOT_WORKING_STATUS."
             },
+            "workbotCenteredProfile": {
+              "enum": [
+                "",
+                "true",
+                "false",
+                true,
+                false
+              ],
+              "description": "Workbot: centred avatar and profile: A centred OpenWork avatar with Workbot's name and live status in a pill; tapping opens tasks, permissions, computer, schedules and identity. Requires the profile sheet and working status. Renders DEN_FEATURE_WORKBOT_CENTERED_PROFILE."
+            },
+            "workbotBrowserPreview": {
+              "enum": [
+                "",
+                "true",
+                "false",
+                true,
+                false
+              ],
+              "description": "Workbot: inline browser preview: Live browser/computer work offers a passive thumbnail and one Open browser button in the reply, reusing its last real frame while reconnecting. Never automatically opens the full view. Renders DEN_FEATURE_WORKBOT_BROWSER_PREVIEW."
+            },
             "workbotProfileSheet": {
               "enum": [
                 "",
@@ -410,6 +430,16 @@
                 false
               ],
               "description": "Workbot: profile: Tapping Workbot's name opens its profile: what it is working on and its background tasks, what it can use (connected apps, browser, computer, files) with a link to manage connections, and what it remembers about the person, read-only. Renders DEN_FEATURE_WORKBOT_PROFILE_SHEET."
+            },
+            "workbotRemoteTasks": {
+              "enum": [
+                "",
+                "true",
+                "false",
+                true,
+                false
+              ],
+              "description": "Workbot: remote tasks: Shows recent tasks started on another computer in Workbot's profile and working status, from stored create receipts and member-authorized live status. De-duplicates pure status watchers by explicit task ids; never approves or stops remote work automatically. Renders DEN_FEATURE_WORKBOT_REMOTE_TASKS."
             },
             "workbotProactive": {
               "enum": [
@@ -430,16 +460,6 @@
                 false
               ],
               "description": "Workbot: Your agent's brief and check rhythm: With Your agent on, it checks on one rhythm (every 2 hours in working hours by default, plus up to 3 extra checks it asks for) instead of four fixed message types, and follows a plain-text brief: the organization's default plus each member's own lines, set in Manage › Workbot, My bot or chat. Each check researches first and then writes at most a few short messages, each one finding with a lock-screen first sentence. Messages per day and hours stay hard limits. Renders DEN_FEATURE_WORKBOT_AGENT_BRIEF."
-            },
-            "workbotRemoteTasks": {
-              "enum": [
-                "",
-                "true",
-                "false",
-                true,
-                false
-              ],
-              "description": "Workbot: remote tasks: Shows recent tasks started on another computer in Workbot's profile and working status, from stored create receipts and member-authorized live status. De-duplicates pure status watchers by explicit task ids; never approves or stops remote work automatically. Renders DEN_FEATURE_WORKBOT_REMOTE_TASKS."
             },
             "workbotSlackAnswerReply": {
               "enum": [

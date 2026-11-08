@@ -50,9 +50,11 @@ export function remoteJobActive(job: WorkbotRemoteJob) {
 
 /** Header integration: choose the latest live remote job when there is no foreground answer. */
 export function remoteJobActivity(jobs: WorkbotRemoteJob[]) {
-  const job = jobs.find(remoteJobActive);
+  const job = [...jobs].filter(remoteJobActive).sort((a, b) => (b.startedAt ?? 0) - (a.startedAt ?? 0))[0];
   if (!job) return null;
-  return { key: job.key, title: job.title, label: job.status?.state === "waiting" ? `${job.title} · needs you` : job.title, since: job.startedAt, waiting: job.status?.state === "waiting" };
+  const computer = job.status?.computerLabel ?? (job.target === "cloud" ? "Cloud" : "your computer");
+  const progress = job.status?.state === "waiting" ? "needs you" : job.status?.latestStep ?? job.title;
+  return { key: job.key, title: job.title, label: `On ${computer} · ${progress}`, since: job.startedAt, waiting: job.status?.state === "waiting" };
 }
 
 /** Only explicit pure-watcher ids, from stored calls, may be suppressed. Never compare job titles. */
@@ -105,7 +107,7 @@ function RemoteJobTranscript({ job }: { job: WorkbotRemoteJob }) {
   const button = "w-fit rounded-full px-3 py-1.5 text-[12px] font-medium text-[var(--wb-text)] shadow-[0_0_0_1px_var(--wb-ring)] hover:bg-[var(--wb-chip)] focus-visible:outline-none focus-visible:shadow-[var(--wb-focus)] disabled:opacity-50";
   return <>
     <h3 className="font-medium text-[var(--wb-text)]">Latest messages</h3>
-    {detail.isPending ? <div aria-busy="true" aria-label="Reading latest messages" className="flex flex-col gap-2"><span className="h-8 rounded bg-[var(--wb-chip)]" /><span className="h-8 rounded bg-[var(--wb-chip)]" /></div>
+    {detail.isPending ? <p role="status">Reading the computer&apos;s latest messages…</p>
       : detail.isError ? <p role="status">{detail.error.message} <button type="button" className="underline" onClick={() => void detail.refetch()}>Try again</button></p>
       : detail.data?.state === "pending" ? <p>The computer hasn&apos;t sent the messages yet. <button type="button" className="underline" onClick={() => void detail.refetch()}>Check again</button></p>
       : detail.data?.state === "unavailable" ? <p>Messages aren&apos;t available here. Open the remote session to read them.</p>
