@@ -19,6 +19,11 @@
       "development": "./src/idp.ts",
       "default": "./src/idp.ts"
     },
+    "./oauth": {
+      "types": "./src/oauth/index.ts",
+      "development": "./src/oauth/index.ts",
+      "default": "./src/oauth/index.ts"
+    },
     "./mock-mcp": {
       "types": "./src/mock-mcp.ts",
       "development": "./src/mock-mcp.ts",

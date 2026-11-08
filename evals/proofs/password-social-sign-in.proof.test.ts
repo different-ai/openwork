@@ -15,13 +15,13 @@ test("a member with a password can choose social sign-in without losing password
     await user.click({ role: "button", label: "Next" });
     await user.see({ role: "textbox", label: "Password" });
     await user.see({ role: "button", label: "Forgot password?" });
-    evidence.recordAssertionEvidence("The account still defaults to password sign-in", "A seeded password account reaches the password form, with Sign in and Forgot password? available.", true);
+    evidence.recordAssertionEvidence("The account still defaults to password sign-in", "A seeded password account reaches the password form, with Sign in and Forgot password? available.", (await probe.text()).includes("Forgot password?"));
   });
 
   await step("after: Google and GitHub are alternatives below the password form", async () => {
     await user.see({ role: "button", label: "Sign in with Google" });
     await user.see({ role: "button", label: "Sign in with GitHub" });
-    evidence.recordAssertionEvidence("Both social sign-in alternatives are available", "Sign in with Google and Sign in with GitHub appear alongside the existing password form.", true);
+    evidence.recordAssertionEvidence("Both social sign-in alternatives are available", "Sign in with Google and Sign in with GitHub appear alongside the existing password form.", (await probe.text()).includes("Sign in with Google") && (await probe.text()).includes("Sign in with GitHub"));
     await user.screenshot();
   });
 
@@ -41,7 +41,7 @@ test("a member with a password can choose social sign-in without losing password
       await user.see({ text: /provider.*not found/i });
       await user.see({ role: "textbox", label: "Password" });
       await user.see({ role: "button", label: "Forgot password?" });
-      evidence.recordAssertionEvidence(`${provider} starts the real social-auth request`, `Observed POST /api/auth/sign-in/social with provider=${provider.toLowerCase()}, a callback URL, and no password; the unconfigured provider reports Provider not found and recovery remains available.`, true);
+      evidence.recordAssertionEvidence(`${provider} starts the real social-auth request`, `Observed POST /api/auth/sign-in/social with provider=${provider.toLowerCase()}, a callback URL, and no password; the unconfigured provider reports Provider not found and recovery remains available.`, request?.provider === provider.toLowerCase() && !Object.hasOwn(request ?? {}, "password"));
       await user.screenshot();
     });
   }
@@ -51,7 +51,7 @@ test("a member with a password can choose social sign-in without losing password
     await user.see({ role: "button", label: "Send reset link" });
     await user.notSee({ role: "button", label: "Sign in with Google" });
     await user.notSee({ role: "button", label: "Sign in with GitHub" });
-    evidence.recordAssertionEvidence("Recovery stays a separate flow", "Send reset link appears without either social sign-in alternative.", true);
+    evidence.recordAssertionEvidence("Recovery stays a separate flow", "Send reset link appears without either social sign-in alternative.", (await probe.text()).includes("Send reset link") && !(await probe.text()).includes("Sign in with Google"));
     await user.screenshot();
   });
 
@@ -63,7 +63,7 @@ test("a member with a password can choose social sign-in without losing password
     await user.see({ role: "textbox", label: "Password" });
     await user.see({ role: "button", label: "Sign in with Google" });
     await user.notSee({ role: "button", label: "Sign in with GitHub" });
-    evidence.recordAssertionEvidence("The caller's provider restriction is preserved", "The Google-only connection flow offers Google on the password step but no GitHub button.", true);
+    evidence.recordAssertionEvidence("The caller's provider restriction is preserved", "The Google-only connection flow offers Google on the password step but no GitHub button.", (await probe.text()).includes("Sign in with Google") && !(await probe.text()).includes("Sign in with GitHub"));
     await user.screenshot();
   });
 
@@ -75,7 +75,7 @@ test("a member with a password can choose social sign-in without losing password
     await user.type({ role: "textbox", label: "Password" }, world.person.password);
     await user.click({ role: "button", label: /^Sign in$/ });
     await user.see({ testId: "den-org-sidebar" }, { timeoutMs: 30_000 });
-    evidence.recordAssertionEvidence("The original password still authenticates", "The member reaches the signed-in organization sidebar using their unchanged password.", true);
+    evidence.recordAssertionEvidence("The original password still authenticates", "The member reaches the signed-in organization sidebar using their unchanged password.", (await probe.dom('[data-testid="den-org-sidebar"]')).length > 0);
     await user.screenshot();
   });
 });
