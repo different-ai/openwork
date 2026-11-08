@@ -231,6 +231,8 @@ try {
         tick()
         window.__growObserver = new ResizeObserver(() => window.__growPainted.push(node.scrollHeight - node.clientHeight - node.scrollTop))
         window.__growObserver.observe(node)
+        // With the floating message box the conversation keeps its size; its content's padding grows instead.
+        window.__growObserver.observe(node.firstElementChild, { box: "border-box" })
       })
       await page.keyboard.type(" and now this message keeps going until it needs another line in the box, and another".repeat(1))
       await page.waitForTimeout(300)
