@@ -1,7 +1,7 @@
 "use client";
 
 import { Dialog } from "@base-ui/react/dialog";
-import { CalendarDays, FileText, FolderOpen, LayoutDashboard, ListChecks, Lock, MessageCircle, PanelLeft, Plus, Search, Shapes, X } from "lucide-react";
+import { CalendarDays, FileText, FolderOpen, LayoutDashboard, Lock, MessageCircle, PanelLeft, Plus, Search, Shapes, X } from "lucide-react";
 import { useState, type ReactNode } from "react";
 import { AccountAvatar } from "./account-menu";
 import { chatTitle, sinceLabel } from "./chats";
@@ -26,8 +26,7 @@ export type NavigationProps = {
   onOpenChat?: (chat: string | null) => void;
   drafts: boolean;
   onFiles?: () => void;
-  /** Supply only when the host can open the real profile destination. */
-  onTasks?: () => void;
+  /** Task progress is not a destination: it lives in the status under Workbot's name and the sheet behind it. */
   onApps?: () => void;
   /** The real search trigger/palette. Mount only one navigation variant at a time. */
   search?: ReactNode;
@@ -60,7 +59,6 @@ function destinations(props: NavigationProps): Destination[] {
     ...(host.documents === true ? [{ label: "Documents", icon: FileText, selected: props.page === "documents", onClick: () => props.onPage("documents") }] : []),
     ...(host.calendar === true ? [{ label: "Calendar", icon: CalendarDays, selected: props.page === "calendar", onClick: () => props.onPage("calendar") }] : []),
     ...(props.onFiles ? [{ label: "Files", icon: FolderOpen, onClick: props.onFiles }] : []),
-    ...(props.onTasks ? [{ label: "Tasks", icon: ListChecks, onClick: props.onTasks }] : []),
     ...(props.onApps ? [{ label: "Apps", icon: Shapes, onClick: props.onApps }] : []),
   ];
 }
@@ -153,13 +151,14 @@ export function MobileNavigation(props: NavigationProps) {
     <Dialog.Portal {...surface.portal}>
       <Dialog.Backdrop className="workbot fixed inset-0 z-40 bg-[var(--wb-ink)]/10 transition-opacity duration-150 data-[ending-style]:opacity-0 data-[starting-style]:opacity-0 motion-reduce:transition-none" />
       <Dialog.Popup ref={viewport} className="workbot fixed left-0 top-[var(--wb-viewport-top,0px)] z-50 flex h-[var(--wb-viewport-height,100dvh)] w-[calc(100vw-48px)] max-w-[340px] flex-col bg-[var(--wb-bg)] pb-[env(safe-area-inset-bottom)] text-[var(--wb-text)] shadow-[var(--wb-sheet-shadow)] outline-none transition-transform duration-200 ease-out [--wb-nav-font-size:14px] [--wb-nav-row-height:44px] data-[ending-style]:-translate-x-full data-[starting-style]:-translate-x-full motion-reduce:transition-none" data-workbot-mobile-navigation>
-        <div className="flex h-14 shrink-0 items-center justify-between gap-2 pl-5 pr-3">
-          <Dialog.Title className="min-w-0 flex-1 truncate text-[14px] font-semibold">Workbot</Dialog.Title>
+        <div className="flex h-14 shrink-0 items-center justify-between gap-2 pl-4 pr-3">
+          <Dialog.Title className="sr-only">Menu</Dialog.Title>
           <Account account={props.account} />
+          <span className="flex-1" />
           {props.search ?? (props.onSearch && <button type="button" className={control} onClick={() => { close(); props.onSearch?.(); }} title="Search messages" aria-label="Search messages"><Search size={16} strokeWidth={1.5} aria-hidden /></button>)}
           <Dialog.Close className={control} aria-label="Close workspace navigation"><X size={16} strokeWidth={1.5} aria-hidden /></Dialog.Close>
         </div>
-        <nav aria-label="Tabs" className="max-h-[45dvh] shrink-0 overflow-y-auto px-2 pb-3"><h2 className="px-3 py-2 text-[12px] font-medium text-[var(--wb-muted)]">Tabs</h2>{destinations(props).map(({ label, icon: Icon, selected, disabled, onClick }) => <button key={label} type="button" onClick={() => { onClick(); close(); }} disabled={disabled} title={disabled ? draftReason : undefined} aria-current={selected ? "page" : undefined} className={row}><Icon size={16} strokeWidth={1.5} aria-hidden />{label}</button>)}</nav>
+        <nav aria-label="Go to" className="max-h-[45dvh] shrink-0 overflow-y-auto px-2 pb-3">{destinations(props).map(({ label, icon: Icon, selected, disabled, onClick }) => <button key={label} type="button" onClick={() => { onClick(); close(); }} disabled={disabled} title={disabled ? draftReason : undefined} aria-current={selected ? "page" : undefined} className={row}><Icon size={16} strokeWidth={1.5} aria-hidden />{label}</button>)}</nav>
         <div className="flex min-h-0 flex-1 flex-col px-2"><SideChats props={props} filter={filter} onDone={close} /></div>
         <div className="mt-2 flex shrink-0 items-center gap-2 border-t border-[var(--wb-hairline)] px-3 py-3">
           <a href={workbotHost().homeHref} className={control} title="Your dashboard" aria-label="Your dashboard"><LayoutDashboard size={16} strokeWidth={1.5} aria-hidden /></a>

@@ -82,6 +82,28 @@ export function ProfileSheet({ open, onClose, name, activity, initialTab = "task
   </Dialog.Root>;
 }
 
+/**
+ * Apps, from the navigation: the apps the person can use and what Workbot can do with them, as a plain sheet titled
+ * Apps. No avatar, status or profile tabs: it is a list, not a person.
+ */
+export function AppsSheet({ open, onClose, name }: { open: boolean; onClose(): void; name: string }) {
+  const surface = useRetainedSurface(open);
+  return <Dialog.Root open={surface.open} onOpenChange={(next) => { if (!next) onClose(); }}>
+    <Dialog.Portal {...surface.portal}>
+      <Dialog.Backdrop className="fixed inset-0 z-40 bg-[var(--wb-ink)]/25 transition-opacity duration-200 data-[ending-style]:opacity-0 data-[starting-style]:opacity-0 motion-reduce:transition-none sm:bg-[var(--wb-ink)]/10" />
+      <Dialog.Popup className="workbot fixed inset-x-0 bottom-0 top-3 z-50 flex flex-col overflow-hidden rounded-t-[24px] bg-[var(--wb-bg)] pb-[env(safe-area-inset-bottom)] shadow-[var(--wb-panel-shadow)] outline-none transition-transform duration-200 ease-out data-[ending-style]:translate-y-full data-[starting-style]:translate-y-full motion-reduce:transition-none sm:inset-y-0 sm:left-auto sm:right-0 sm:top-0 sm:w-[420px] sm:rounded-none sm:shadow-[var(--wb-sheet-shadow)] sm:data-[ending-style]:translate-x-full sm:data-[ending-style]:translate-y-0 sm:data-[starting-style]:translate-x-full sm:data-[starting-style]:translate-y-0" data-workbot-apps-sheet>
+        <div className="flex h-14 shrink-0 items-center justify-between gap-3 pl-5 pr-3">
+          <Dialog.Title className="text-[15px] font-semibold leading-5 text-[var(--wb-text)]">Apps</Dialog.Title>
+          <Dialog.Close aria-label="Close" className="grid size-9 place-items-center rounded-full text-[var(--wb-muted)] hover:bg-[var(--wb-chip)] hover:text-[var(--wb-text)] focus-visible:outline-none focus-visible:shadow-[var(--wb-focus)]"><X size={16} strokeWidth={1.75} aria-hidden /></Dialog.Close>
+        </div>
+        <div className="min-h-0 flex-1 overflow-y-auto pb-6">
+          <AppsTab name={name} titled />
+        </div>
+      </Dialog.Popup>
+    </Dialog.Portal>
+  </Dialog.Root>;
+}
+
 /** What Workbot is working on. Its browser and computer open from the step's card in the chat, not from here. */
 function TasksTab({ name, activity }: { name: string; activity: WorkbotActivity }) {
   const remote = useWorkbotRemoteJobs(true);
@@ -124,7 +146,8 @@ function SchedulesList() {
  * with why (P4). Apps: every connector the person can use, connected or not (Connected first), with one Connect where
  * they sign in themselves and a short note where only an admin can.
  */
-function AppsTab({ name }: { name: string }) {
+/** `titled`: the sheet is already titled Apps, so the list does not repeat it. */
+function AppsTab({ name, titled = false }: { name: string; titled?: boolean }) {
   const host = workbotHost();
   const views = computerViews(host);
   const abilities: Array<{ label: string; on: boolean }> = [
@@ -134,7 +157,7 @@ function AppsTab({ name }: { name: string }) {
     { label: "Your calendar", on: host.calendar === true },
   ];
   return <div className="flex flex-col gap-6 px-5 pt-1">
-    <AppsList name={name} />
+    <AppsList name={name} heading={!titled} />
     <section>
       <h2 className="pb-1 text-[13px] font-medium text-[var(--wb-text)]">What {name} can do</h2>
       <ul>{abilities.map((ability) => <li key={ability.label} className={row}>
@@ -150,11 +173,11 @@ function AppsTab({ name }: { name: string }) {
  * Every app the person can use, connected or not: Connected first, then Needs sign-in, Not connected and Needs
  * attention, each with its plain status; one Connect where they sign in themselves, "Ask your admin" where they can't.
  */
-export function AppsList({ name }: { name: string }) {
+export function AppsList({ name, heading = true }: { name: string; heading?: boolean }) {
   const flow = useWorkbotConnect();
   const apps = useWorkbotApps({ enabled: true, waiting: flow.pendingId !== null });
-  return <section>
-    <h2 className="pb-1 text-[13px] font-medium text-[var(--wb-text)]">Your apps</h2>
+  return <section aria-label="Your apps">
+    {heading ? <h2 className="pb-1 text-[13px] font-medium text-[var(--wb-text)]">Your apps</h2> : null}
     {apps.isPending ? <p className="py-2 text-[13px] text-[var(--wb-muted)]" aria-busy="true">Checking your apps…</p>
       : apps.isError ? <p className="py-2 text-[13px] text-[var(--wb-muted)]" role="status">Couldn&apos;t check your apps. <button type="button" className="underline" onClick={() => void apps.refetch()}>Try again</button></p>
       : apps.data.length === 0 ? <p className="py-2 text-[13px] text-[var(--wb-muted)]">No apps are set up for {name} yet.</p>

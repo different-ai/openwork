@@ -11,7 +11,8 @@ import { appIconCandidates } from "../src/client/app-icons"
  */
 const search = new URLSearchParams(window.location.search)
 const scenario = search.get("scenario") ?? "bubbles"
-const headers = () => new Headers({ "x-fixture-scenario": scenario })
+// `?chatlist=1` answers the chats list with a few side chats, as a person who has used Workbot for a while sees it.
+const headers = () => new Headers({ "x-fixture-scenario": scenario, ...(search.get("chatlist") === "1" ? { "x-fixture-chat-list": "1" } : {}) })
 const host: WorkbotHost = {
   async requestJson(path, init = {}) {
     const merged = headers()
@@ -39,6 +40,11 @@ const host: WorkbotHost = {
   instantOpen: search.get("instant") === "1",
   scrollToBottom: search.get("scroll") === "1",
   remoteTasks: search.get("remote") === "1",
+  // Documents and Calendar as Den turns them on for a workspace with the assistant (`?documents=1&calendar=1`).
+  documents: search.get("documents") === "1",
+  documentEditing: search.get("documents") === "1",
+  calendar: search.get("calendar") === "1",
+  workspaceAssistant: search.get("documents") === "1" || search.get("calendar") === "1",
   connectionsHref: "https://den.example.test/dashboard/your-connections",
   identity: { principalId: "user_fixture", organizationId: "org_fixture" },
 }

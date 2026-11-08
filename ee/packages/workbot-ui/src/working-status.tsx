@@ -51,18 +51,19 @@ function StatusIcon({ activity, size = 12 }: { activity: WorkbotActivity; size?:
  * The assistant's name, and under it what it is doing now with how long it has taken. Tapping it opens the task sheet.
  * Nothing to say: just the name, still opening the sheet when there are tasks to look back on.
  */
-export function WorkingName({ name, activity, mark }: { name: string; activity: WorkbotActivity; mark: ReactNode }) {
+export function WorkingName({ name, activity, mark, tasksOnly = false }: { name: string; activity: WorkbotActivity; mark: ReactNode; /** Phones: the name opens the task sheet, never a profile. */ tasksOnly?: boolean }) {
   const [open, setOpen] = useState(false);
   const now = useTicking(activity.working && activity.since !== null);
-  // With the profile, the name always opens it; otherwise only when there is work to look at.
-  const profile = workbotHost().profileSheet === true;
-  const openable = profile || activity.working || activity.tasks.length > 0;
+  // With the profile, the name always opens it; otherwise only when there is work to look at. On a phone it always
+  // opens the task sheet, which says plainly when nothing is running.
+  const profile = !tasksOnly && workbotHost().profileSheet === true;
+  const openable = tasksOnly || profile || activity.working || activity.tasks.length > 0;
   const title = <span className="truncate text-[15px] font-semibold leading-5 tracking-[-0.015em] text-[var(--wb-text)]">{name}</span>;
   return <>
     <button type="button" disabled={!openable} onClick={() => setOpen(true)} aria-haspopup="dialog" aria-label={activity.working ? `${name}: ${activity.label}. Show what ${name} is doing` : profile ? `${name}: open profile` : `${name}: show recent tasks`}
-      className="flex min-w-0 items-center gap-2 rounded-lg py-0.5 pr-1.5 text-left transition-colors duration-150 enabled:hover:bg-[var(--wb-chip)] focus-visible:outline-none focus-visible:shadow-[var(--wb-focus)] disabled:cursor-default" data-workbot-working-name>
+      className="flex min-w-0 items-center gap-2 rounded-lg py-0.5 pl-1.5 pr-1.5 text-left transition-colors duration-150 enabled:hover:bg-[var(--wb-chip)] focus-visible:outline-none focus-visible:shadow-[var(--wb-focus)] disabled:cursor-default" data-workbot-working-name>
       {mark}
-      <span className="flex min-w-0 flex-col">
+      <span className={`flex min-w-0 flex-col ${tasksOnly ? "items-center" : ""}`}>
         {title}
         {activity.working ? <span className="workbot-subtitle-enter flex min-w-0 items-center gap-1 text-[12px] leading-4 text-[var(--wb-muted)]" role="status" aria-live="polite" data-workbot-status-line>
           <StatusIcon activity={activity} />
