@@ -4,7 +4,7 @@ import { Dialog } from "@base-ui/react/dialog";
 import { Popover } from "@base-ui/react/popover";
 import { useQuery } from "@tanstack/react-query";
 import { googleDriveFileId, workbotContextLabel, workbotContextReadOnly, type WorkbotViewContext } from "@openwork/types/workbot-context";
-import { CalendarDays, FileText, Globe, House, Lock, MessageCircle, Monitor, PanelLeft, X } from "lucide-react";
+import { CalendarDays, ChevronDown, FileText, Globe, House, Lock, MessageCircle, Monitor, PanelLeft, X } from "lucide-react";
 import { createContext, useContext, useEffect, useRef, useState, type ReactNode } from "react";
 import { computerTabLabel, computerViews, workbotHost, useRetainedSurface } from "./host";
 import { DOCUMENTS_LIST_GC_MS, ItemIcon } from "@openwork/documents/react";
@@ -130,7 +130,16 @@ export function SentContext({ context }: { context?: WorkbotViewContext }) {
   return <p className="mb-1 truncate text-right text-[11px] text-[var(--wb-muted)]" title={workbotContextLabel(context)} data-workbot-sent-context>{context.kind === "browser" ? "Browser" : context.kind === "calendar" ? "Calendar" : "Documents"} · {workbotContextLabel(context)}{context.kind === "document" && context.unsaved ? " · Unsaved edits excluded" : ""}</p>;
 }
 
-/** The composer stays in the workspace; the conversation shows in an anchored Base UI popover until the person minimizes it. */
+/** The header's height (screen.tsx `WorkbotHeader`, h-13): a phone's conversation sheet opens just under it. */
+const HEADER_HEIGHT = 52;
+
+/**
+ * The composer stays in the workspace; the conversation shows in an anchored Base UI popover until the person
+ * minimizes it. On a wide screen both float over the page's corner. On a phone (under 640px) the composer and the
+ * context chip are the bottom row of the page itself, so the page above stops where they start instead of running
+ * under them, and the conversation opens as a full-width sheet from the header down to the composer: no card inside
+ * the page, no second set of margins around the bubbles.
+ */
 export function WorkspaceAssistant({ name, context, includeContext, onIncludeContext, composer, conversation, onDocument, onComputer = null, unavailable, active, reveal = 0, stayOpen = false }: { active: boolean; /** Opens the computer from the conversation; null while it is on screen. */ onComputer?: (() => void) | null; name: string; context: WorkbotViewContext | null; includeContext: boolean; onIncludeContext(value: boolean): void; composer: ReactNode; conversation: ReactNode; onDocument(fileId: string): void; unavailable: boolean; /** Increments when chat navigation should leave the conversation open beside the document. */ reveal?: number; /** Guided navigation keeps the conversation open while a document opens behind it. */ stayOpen?: boolean }) {
   // Shown by default; only the person's own minimize hides it, and coming back to a view keeps that choice.
   const [minimized, setMinimized] = useState(false);
@@ -140,7 +149,8 @@ export function WorkspaceAssistant({ name, context, includeContext, onIncludeCon
   // A new request from the conversation shows it again.
   const revealed = useRef(reveal);
   useEffect(() => { if (active && reveal !== revealed.current) { revealed.current = reveal; setMinimized(false); } }, [reveal, active]);
-  return <div ref={anchor} className="fixed bottom-3 right-3 z-30 w-[min(26rem,calc(100vw-1.5rem))] sm:bottom-5 sm:right-5" data-workbot-workspace-assistant>
+  const phone = !useWideScreen(640);
+  return <div ref={anchor} className={phone ? "relative z-30 w-full shrink-0 border-t border-[var(--wb-hairline)] bg-[var(--wb-bg)] px-3 pb-3 pt-2" : "fixed bottom-5 right-5 z-30 w-[min(26rem,calc(100vw-1.5rem))]"} data-workbot-workspace-assistant data-workbot-phone={phone || undefined}>
     <Popover.Root open={surface.open} onOpenChange={(next, details) => {
       if (surface.blocked) return;
       // Working in the document behind it never minimizes the conversation; only Hide, the trigger or Escape do.
@@ -150,15 +160,17 @@ export function WorkspaceAssistant({ name, context, includeContext, onIncludeCon
       }
       setMinimized(!next);
     }}>
-      <div className="mb-1 flex min-w-0 items-center justify-end gap-1.5">
+      <div className={`flex min-w-0 items-center gap-1.5 ${phone ? "mb-2 justify-between" : "mb-1 justify-end"}`}>
         {context && <button type="button" aria-pressed={includeContext} onClick={() => onIncludeContext(!includeContext)} title={includeContext ? "Exclude this view from your next message" : workbotContextReadOnly(context) ? "Include a read-only reference to this view" : "Tell Workbot which tab you're on"} className={`min-w-0 truncate rounded-full bg-[var(--wb-surface)] px-2.5 py-1 text-[11px] shadow-[var(--wb-card-shadow)] focus-visible:outline-none focus-visible:shadow-[var(--wb-focus)] ${includeContext ? "text-[var(--wb-text)]" : "text-[var(--wb-muted)] line-through"}`} data-workbot-view-context data-testid="workbot-view-context">{workbotContextLabel(context)}{includeContext ? workbotContextReadOnly(context) ? " · Read-only context" : " · This tab" : ""}{context.kind === "document" && context.unsaved ? " · Unsaved edits excluded" : ""}</button>}
-        <Popover.Trigger className="flex h-7 shrink-0 items-center gap-1.5 rounded-full bg-[var(--wb-surface)] px-2.5 text-[11px] text-[var(--wb-text)] shadow-[var(--wb-card-shadow)] focus-visible:outline-none focus-visible:shadow-[var(--wb-focus)]" aria-label={open ? "Hide workspace chat" : "Show workspace chat"}><MessageCircle size={13} strokeWidth={1.5} aria-hidden />{name}</Popover.Trigger>
+        <Popover.Trigger className={`flex h-7 shrink-0 items-center gap-1.5 rounded-full bg-[var(--wb-surface)] px-2.5 text-[11px] text-[var(--wb-text)] shadow-[var(--wb-card-shadow)] focus-visible:outline-none focus-visible:shadow-[var(--wb-focus)] ${phone ? "ml-auto" : ""}`} aria-label={open ? "Hide workspace chat" : "Show workspace chat"}><MessageCircle size={13} strokeWidth={1.5} aria-hidden />{name}</Popover.Trigger>
       </div>
       {composer}
       <Popover.Portal {...surface.portal}>
-        <Popover.Positioner anchor={anchor} side="top" align="end" sideOffset={8} collisionPadding={12} className="z-40 max-w-[var(--available-width)]">
-          <Popover.Popup initialFocus={false} className="workbot flex h-[min(34rem,var(--available-height))] w-[min(30rem,var(--available-width))] max-w-[calc(100vw-1.5rem)] flex-col overflow-hidden rounded-[var(--dls-radius,16px)] bg-[var(--wb-surface)] shadow-[var(--wb-panel-shadow)] outline-none" data-workbot-workspace-chat>
-            <div className="flex h-10 shrink-0 items-center justify-between px-3"><Popover.Title className="text-[13px] font-medium text-[var(--wb-text)]">{name}</Popover.Title><Popover.Close className={control} aria-label="Hide workspace chat"><X size={15} strokeWidth={1.5} aria-hidden /></Popover.Close></div>
+        <Popover.Positioner anchor={anchor} side="top" align="end" sideOffset={phone ? 0 : 8} collisionPadding={phone ? { top: HEADER_HEIGHT, right: 0, bottom: 0, left: 0 } : 12} className="z-40 max-w-[var(--available-width)]">
+          <Popover.Popup initialFocus={false} className={phone
+            ? "workbot flex h-[var(--available-height)] w-screen flex-col overflow-hidden border-t border-[var(--wb-hairline)] bg-[var(--wb-bg)] outline-none"
+            : "workbot flex h-[min(34rem,var(--available-height))] w-[min(30rem,var(--available-width))] max-w-[calc(100vw-1.5rem)] flex-col overflow-hidden rounded-[var(--dls-radius,16px)] bg-[var(--wb-surface)] shadow-[var(--wb-panel-shadow)] outline-none"} data-workbot-workspace-chat>
+            <div className="flex h-10 shrink-0 items-center justify-between px-3"><Popover.Title className="text-[13px] font-medium text-[var(--wb-text)]">{name}</Popover.Title><Popover.Close className={control} aria-label="Hide workspace chat">{phone ? <ChevronDown size={16} strokeWidth={1.5} aria-hidden /> : <X size={15} strokeWidth={1.5} aria-hidden />}</Popover.Close></div>
             <WorkspaceNavigationContext.Provider value={fileId => { if (!stayOpen) setMinimized(true); onDocument(fileId); }}>
               <ComputerNavigationContext.Provider value={onComputer ? () => { if (!stayOpen) setMinimized(true); onComputer(); } : null}>
                 {unavailable ? <p className="p-4 text-[13px] text-[var(--wb-muted)]" role="status">Chat is unavailable. Open Home to try again.</p> : conversation}
