@@ -293,6 +293,118 @@ try {
     await phone.waitForFunction(() => document.activeElement?.getAttribute("aria-label") === "Open workspace navigation")
     await assertDraft(phone, "An unsent main chat draft.")
   })
+  await check(phone, "phone persistent palette shortcut and drawer search survive reopen", async () => {
+    const shortcut = await phone.evaluate(() => /mac|iphone|ipad|ipod/i.test(navigator.platform) ? "Meta+k" : "Control+k")
+    report.phonePaletteShortcut = shortcut
+    const palette = phone.getByRole("dialog", { name: "Search and actions", exact: true })
+    const exercisePalette = async name => {
+      await palette.waitFor()
+      assert.equal(await drawer(phone).isVisible(), false, "Search opens independently of the closed navigation drawer")
+      const input = palette.getByRole("combobox")
+      await input.fill("files")
+      assert.equal(await input.inputValue(), "files", "The persistent palette accepts search input")
+      await shot(phone, name)
+      await phone.keyboard.press("Escape")
+      await palette.waitFor({ state: "hidden" })
+      await composer(phone).click()
+      await composer(phone).fill("An unsent main chat draft. Still editable.")
+      await assertDraft(phone, "An unsent main chat draft. Still editable.")
+      await composer(phone).fill("An unsent main chat draft.")
+      await assertNoOverflow(phone)
+    }
+    await composer(phone).focus()
+    await phone.keyboard.press(shortcut)
+    await exercisePalette("iphone-palette-shortcut-drawer-closed")
+    for (let reopen = 0; reopen < 2; reopen++) {
+      const before = chatReads
+      await Promise.all([
+        phone.waitForResponse(response => new URL(response.url()).pathname === "/v1/workbot/chats" && response.request().method() === "GET"),
+        trigger(phone).click(),
+      ])
+      await drawer(phone).waitFor()
+      assert.ok(chatReads > before, `Navigation reopen ${reopen + 1} refetches the actual chats list`)
+      report.navigationReopens ??= []
+      report.navigationReopens.push({ before, after: chatReads })
+      if (reopen === 0) {
+        await phone.keyboard.press("Escape")
+        await drawer(phone).waitFor({ state: "hidden" })
+        await composer(phone).focus()
+        await phone.keyboard.press(shortcut)
+        await exercisePalette("iphone-palette-shortcut-after-navigation-close")
+      } else {
+        await drawer(phone).getByRole("button", { name: "Search messages", exact: true }).click()
+        await drawer(phone).waitFor({ state: "hidden" })
+        await exercisePalette("iphone-palette-from-drawer-search")
+      }
+    }
+  })
+  await check(phone, "emulated visual viewport shrink and pan keeps drawer search visible", async () => {
+    await trigger(phone).click()
+    const popup = drawer(phone)
+    const search = popup.getByRole("searchbox", { name: "Search side chats", exact: true })
+    // Click as a person does: focus() can race the dialog's deferred initial-focus work during its opening frame.
+    await search.click()
+    // Browser-API emulation only: no app setters or CSS variable writes, and no
+    // claim that Chromium has opened or tested a real iOS software keyboard.
+    const restore = await phone.evaluateHandle(() => {
+      const visual = window.visualViewport
+      if (!visual) throw new Error("This browser does not expose visualViewport")
+      const saved = ["height", "offsetTop"].map(key => [key, Object.getOwnPropertyDescriptor(visual, key)])
+      Object.defineProperty(visual, "height", { configurable: true, get: () => 460 })
+      Object.defineProperty(visual, "offsetTop", { configurable: true, get: () => 30 })
+      visual.dispatchEvent(new Event("resize"))
+      visual.dispatchEvent(new Event("scroll"))
+      return () => {
+        for (const [key, descriptor] of saved) {
+          if (descriptor) Object.defineProperty(visual, key, descriptor)
+          else delete visual[key]
+        }
+        visual.dispatchEvent(new Event("resize"))
+        visual.dispatchEvent(new Event("scroll"))
+        return { height: visual.height, offsetTop: visual.offsetTop }
+      }
+    })
+    try {
+      await phone.waitForFunction(() => {
+        const box = document.querySelector("[data-workbot-mobile-navigation]")?.getBoundingClientRect()
+        return box && Math.abs(box.height - 460) <= 1 && Math.abs(box.top - 30) <= 1 && Math.abs(box.left) <= 1
+      })
+      const bounds = await popup.boundingBox()
+      const footer = await popup.locator(":scope > div").last().boundingBox()
+      const input = await search.boundingBox()
+      assert.ok(bounds && footer && input, "Drawer, bottom toolbar and focused search have visible bounds")
+      for (const [label, box] of [["Bottom toolbar", footer], ["Search input", input]]) {
+        assert.ok(box.y >= 30 - 1 && box.y + box.height <= 490 + 1, `${label} remains inside the emulated visual viewport`)
+        assert.ok(box.x >= bounds.x && box.x + box.width <= bounds.x + bounds.width + 1, `${label} fits in the drawer`)
+      }
+      assert.equal(await search.evaluate(node => document.activeElement === node), true, "Search remains focused after browser viewport events")
+      report.emulatedVisualViewport = {
+        evidence: "Headless Chromium visualViewport API emulation, NOT a real iOS keyboard test.",
+        height: 460, offsetTop: 30, popup: bounds, footer, search: input,
+      }
+      await assertNoOverflow(phone)
+      await shot(phone, "iphone-emulated-visual-viewport-keyboard")
+    } catch (error) {
+      report.visualViewportFailure = await popup.evaluate(node => ({
+        bounds: node.getBoundingClientRect().toJSON(), inlineStyle: node.getAttribute("style"),
+        computedTop: getComputedStyle(node).top, computedHeight: getComputedStyle(node).height,
+        viewportHeight: window.visualViewport.height, viewportTop: window.visualViewport.offsetTop,
+        coarse: matchMedia("(pointer: coarse)").matches, scale: window.visualViewport.scale,
+      }))
+      await shot(phone, "iphone-emulated-visual-viewport-failure")
+      throw error
+    } finally {
+      report.restoredVisualViewport = await restore.evaluate(restoreViewport => restoreViewport())
+      await restore.dispose()
+      await phone.waitForFunction(() => {
+        const box = document.querySelector("[data-workbot-mobile-navigation]")?.getBoundingClientRect()
+        return box && Math.abs(box.height - window.visualViewport.height) <= 1 && Math.abs(box.top - window.visualViewport.offsetTop) <= 1
+      })
+      await phone.keyboard.press("Escape")
+      await popup.waitFor({ state: "hidden" })
+      await assertDraft(phone, "An unsent main chat draft.")
+    }
+  })
   for (const destination of ["Tasks", "Apps"]) {
     await check(phone, `iPhone drawer ${destination} closes navigation and opens the interactive real profile`, async () => {
       assert.equal(new URL(phone.url()).searchParams.has("chat"), false, "This flow returns to the main composer")
