@@ -8,6 +8,7 @@ import { chatTitle, sinceLabel } from "./chats";
 import { newChatId, type WorkbotChats } from "./data";
 import { useRetainedSurface, workbotHost } from "./host";
 import { OpenWorkMark } from "./mark";
+import { useWorkbotViewport } from "./viewport";
 import type { WorkspacePage } from "./workspace";
 
 /** Shared navigation reads no data: the screen owns the chat query and every destination. */
@@ -19,6 +20,8 @@ export type NavigationProps = {
   loading: boolean;
   failed: boolean;
   onRetry(): void;
+  /** Read the list again when a phone drawer opens; cached chats stay visible while refreshing. */
+  onOpen?(): void;
   /** Omit where side chats are unavailable. New chats use the same callback. */
   onOpenChat?: (chat: string | null) => void;
   drafts: boolean;
@@ -143,12 +146,13 @@ export function MobileNavigation(props: NavigationProps) {
   const [open, setOpen] = useState(false);
   const [filter, setFilter] = useState("");
   const surface = useRetainedSurface(open);
+  const viewport = useWorkbotViewport(surface.open);
   const close = () => setOpen(false);
-  return <Dialog.Root open={surface.open} onOpenChange={next => { if (!surface.blocked) setOpen(next); }}>
+  return <Dialog.Root open={surface.open} onOpenChange={next => { if (!surface.blocked) { if (next && !open) props.onOpen?.(); setOpen(next); } }}>
     <Dialog.Trigger className={control} aria-label="Open workspace navigation" title="Navigate"><PanelLeft size={16} strokeWidth={1.5} aria-hidden /></Dialog.Trigger>
     <Dialog.Portal {...surface.portal}>
       <Dialog.Backdrop className="workbot fixed inset-0 z-40 bg-[var(--wb-ink)]/10 transition-opacity duration-150 data-[ending-style]:opacity-0 data-[starting-style]:opacity-0 motion-reduce:transition-none" />
-      <Dialog.Popup className="workbot fixed inset-y-0 left-0 z-50 flex w-[calc(100vw-48px)] max-w-[340px] flex-col bg-[var(--wb-bg)] pb-[env(safe-area-inset-bottom)] text-[var(--wb-text)] shadow-[var(--wb-sheet-shadow)] outline-none transition-transform duration-200 ease-out [--wb-nav-font-size:14px] [--wb-nav-row-height:44px] data-[ending-style]:-translate-x-full data-[starting-style]:-translate-x-full motion-reduce:transition-none" data-workbot-mobile-navigation>
+      <Dialog.Popup ref={viewport} className="workbot fixed left-0 top-[var(--wb-viewport-top,0px)] z-50 flex h-[var(--wb-viewport-height,100dvh)] w-[calc(100vw-48px)] max-w-[340px] flex-col bg-[var(--wb-bg)] pb-[env(safe-area-inset-bottom)] text-[var(--wb-text)] shadow-[var(--wb-sheet-shadow)] outline-none transition-transform duration-200 ease-out [--wb-nav-font-size:14px] [--wb-nav-row-height:44px] data-[ending-style]:-translate-x-full data-[starting-style]:-translate-x-full motion-reduce:transition-none" data-workbot-mobile-navigation>
         <div className="flex h-14 shrink-0 items-center justify-between gap-2 pl-5 pr-3">
           <Dialog.Title className="min-w-0 flex-1 truncate text-[14px] font-semibold">Workbot</Dialog.Title>
           <Account account={props.account} />

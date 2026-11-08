@@ -315,7 +315,16 @@ function ChatScreen({ host, composerState, position, navigation, onDraftsChange 
     return local;
   }, [host.browser, host.workingStatus, host.profileSheet, host.remoteTasks, data, stream.live, activityNow, remote.data]);
   const addFiles = uploads.add;
-  const paletteChats = useWorkbotChats(navigation !== null);
+  const openFiles = filesEnabled ? () => { if (!workspaceShell && tab !== "home") setTab("home"); setFilesOpen(true); } : undefined;
+  const chatListEnabled = navigation !== null;
+  const paletteChats = useWorkbotChats(chatListEnabled);
+  const refetchChatList = paletteChats.refetch;
+  useEffect(() => {
+    if (!wideScreen || !chatListEnabled) return;
+    // The persistent desktop list has no drawer-open event. Keep changes from another device within reach.
+    const timer = window.setInterval(() => { if (document.visibilityState === "visible") void refetchChatList(); }, 30_000);
+    return () => window.clearInterval(timer);
+  }, [wideScreen, chatListEnabled, refetchChatList]);
   const paletteTasks = useMemo(() => (data?.turns ?? []).flatMap((turn) => turn.tasks), [data?.turns]);
   const palette = (
     <WorkbotCommandPalette
@@ -335,7 +344,7 @@ function ChatScreen({ host, composerState, position, navigation, onDraftsChange 
       } : null}
       busy={data?.status === "busy" || pending.some((entry) => !entry.failed)}
       onStop={data ? () => stop.mutate() : null}
-      onOpenFiles={filesEnabled ? () => { if (!workspaceShell && tab !== "home") setTab("home"); setFilesOpen(true); } : null}
+      onOpenFiles={openFiles ?? null}
       tasks={paletteTasks}
       onFocusComposer={data ? focusComposer : null}
       onShowTask={showTask}
@@ -351,9 +360,12 @@ function ChatScreen({ host, composerState, position, navigation, onDraftsChange 
     onRetry: () => void paletteChats.refetch(),
     onOpenChat: navigation ? next => { if (!documentsDirty) { setTab("home"); navigation.openChat(next); } } : undefined,
     drafts: documentsDirty,
-    onFiles: filesEnabled ? () => setFilesOpen(true) : undefined,
+    onFiles: openFiles,
     onTasks: () => setProfileTab("tasks"), onApps: () => setProfileTab("permissions"),
-    search: palette,
+    onOpen: () => void paletteChats.refetch(),
+    // On phones the palette stays in the header even with the drawer closed, keeping Cmd/Ctrl+K available.
+    search: wideScreen ? palette : undefined,
+    onSearch: wideScreen ? undefined : () => document.querySelector<HTMLButtonElement>("[data-workbot-palette-trigger]")?.click(),
     account: <AccountAvatar userName={user?.name ?? null} />,
   };
   const mobileNavigation = !wideScreen ? <MobileNavigation {...navigationProps} /> : null;
@@ -461,7 +473,7 @@ function ChatScreen({ host, composerState, position, navigation, onDraftsChange 
         {layout(<div className="flex min-h-0 flex-1 flex-col" data-workbot-workspace>
           <WorkbotHeader name={name} organizationName={data?.organizationName ?? ""} userName={user?.name ?? null} answered={hasAnsweredTurn(data?.turns)} activity={activity}
             files={filesEnabled ? <FilesButton open={filesOpen} onOpen={() => setFilesOpen(true)} /> : null}
-            chats={mobileNavigation}
+            chats={mobileNavigation} search={!wideScreen ? palette : null}
             remove={navigation?.chat && data && data.turns.length > 0 ? <RemoveChatButton disabled={documentsDirty} chatId={navigation.chat} title={navigation.title} onRemoved={() => { composerState.dispose(); navigation.openChat(null); }} /> : null}
             title={navigation?.chat ? <SideChatTitle title={navigation.title} disabled={documentsDirty} onBack={() => navigation.openChat(null)} /> : undefined}
           />
@@ -501,7 +513,7 @@ function ChatScreen({ host, composerState, position, navigation, onDraftsChange 
           organizationName={data?.organizationName ?? ""}
           userName={user?.name ?? null}
           files={null}
-          chats={mobileNavigation}
+          chats={mobileNavigation} search={!wideScreen ? palette : null}
           answered={hasAnsweredTurn(data?.turns)}
           activity={activity}
         />
@@ -584,7 +596,7 @@ function ChatScreen({ host, composerState, position, navigation, onDraftsChange 
         organizationName={shown.organizationName}
         userName={user?.name ?? null}
         files={filesEnabled ? <FilesButton open={filesOpen} onOpen={() => setFilesOpen(true)} /> : null}
-        chats={mobileNavigation}
+        chats={mobileNavigation} search={!wideScreen ? palette : null}
         title={navigation && chatId ? <SideChatTitle title={navigation.title} onBack={() => navigation.openChat(null)} /> : null}
         remove={navigation && chatId && shown.turns.length > 0 ? <RemoveChatButton chatId={chatId} title={navigation.title} onRemoved={() => { composerState.dispose(); navigation.openChat(null); }} /> : null}
         answered={hasAnsweredTurn(shown.turns)}
