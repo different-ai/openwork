@@ -50,6 +50,8 @@ import { useQueryClient } from "@tanstack/react-query";
 import { useNativeDictation } from "@openwork/ui/react";
 import { WorkbotDictation } from "./native-dictation";
 import { WorkbotCommandPalette, type WorkbotPaletteTab } from "./command-palette";
+import { workbotActivity, type WorkbotActivity } from "./activity";
+import { WorkingName } from "./working-status";
 
 /**
  * Workbot: one thread, instant. Layout and values follow the Paper file "WorkBot — one chat, set up once",
@@ -279,6 +281,8 @@ function ChatScreen({ host, composerState, navigation, onDraftsChange }: { host:
     return newest;
   }, [preview, data]);
   const filesEnabled = data?.filesEnabled ?? false;
+  // What Workbot is doing, for the status line under its name and the task sheet (workingStatus); null without it.
+  const activity = useMemo(() => (host.workingStatus && data ? workbotActivity(data.turns, stream.live) : null), [host.workingStatus, data, stream.live]);
   const addFiles = uploads.add;
   const paletteChats = useWorkbotChats(navigation !== null);
   const paletteTasks = useMemo(() => (data?.turns ?? []).flatMap((turn) => turn.tasks), [data?.turns]);
@@ -402,7 +406,7 @@ function ChatScreen({ host, composerState, navigation, onDraftsChange }: { host:
       <ComputerOnScreenContext.Provider value={tab === "computer" ? computerView : null}>
       <DocumentNavigationContext.Provider value={guided && host.documents ? { status: navigationStatus, open: followNavigation } : null}>
         <div className="workbot flex h-dvh flex-col bg-[var(--wb-bg)] antialiased" data-workbot-workspace>
-          <WorkbotHeader name={name} organizationName={data?.organizationName ?? ""} userName={user?.name ?? null} answered={hasAnsweredTurn(data?.turns)} search={palette}
+          <WorkbotHeader name={name} organizationName={data?.organizationName ?? ""} userName={user?.name ?? null} answered={hasAnsweredTurn(data?.turns)} search={palette} activity={activity}
             files={filesEnabled ? <FilesButton open={filesOpen} onOpen={() => setFilesOpen(true)} /> : null}
             chats={host.workspaceAssistant ? <WorkspaceMenu page={tab} onPage={setTab} onDocument={navigateDocument} drafts={documentsDirty} onChats={navigation?.openChats} /> : navigation ? <ChatsButton onOpen={navigation.openChats} /> : null}
             nav={host.workspaceAssistant ? null : <WorkbotNav tab={tab} onTab={setTab} />}
@@ -447,6 +451,7 @@ function ChatScreen({ host, composerState, navigation, onDraftsChange }: { host:
           nav={<WorkbotNav tab={tab} onTab={setTab} />}
           answered={hasAnsweredTurn(data?.turns)}
           search={palette}
+          activity={activity}
         />
         {leavingDocuments && <div className="border-t border-[var(--wb-hairline)] px-4 py-2 text-[13px]" role="status">You have unsaved document edits. <button type="button" className="ml-3 underline" onClick={() => setLeavingDocuments(null)}>Keep editing</button><button type="button" className="ml-3 underline" onClick={() => { const next = leavingDocuments; setLeavingDocuments(null); setDocumentsDirty(false); setTab(next, true); }}>Discard edits and leave Documents</button></div>}
         <div className="flex min-h-0 flex-1 border-t border-[#01162712]">
@@ -533,6 +538,7 @@ function ChatScreen({ host, composerState, navigation, onDraftsChange }: { host:
         nav={!chatId ? <WorkbotNav tab={tab} onTab={setTab} /> : null}
         answered={hasAnsweredTurn(shown.turns)}
         search={palette}
+        activity={activity}
       />
       <div className="flex min-h-0 flex-1">
       <div className="flex min-h-0 min-w-0 flex-1 flex-col">
@@ -738,7 +744,7 @@ function useWorkbotTab(beforeLeave?: (next: WorkbotTab) => boolean, preserveSear
 /** Paper v3: Home / Calendar beside the name; the open tab sits on a soft chip. */
 function WorkbotNav({ tab, onTab }: { tab: WorkbotTab; onTab: (tab: WorkbotTab) => void }) {
   return (
-    <nav className="ml-4 flex items-center gap-0.5" aria-label="Workbot">
+    <nav className="ml-2 flex min-w-0 items-center gap-0.5 overflow-x-auto sm:ml-4" aria-label="Workbot">
       {(["home", ...(workbotHost().calendar ? ["calendar" as const] : []), ...(workbotHost().documents ? ["documents" as const] : []), ...(computerViews(workbotHost()).length ? ["computer" as const] : [])] as const).map((entry) => (
         <button
           key={entry}
@@ -771,6 +777,8 @@ function WorkbotHeader(props: {
   answered?: boolean;
   /** The command palette's button (and the palette), where it is on. */
   search?: ReactNode;
+  /** What Workbot is doing (workingStatus): a status line under the name, which opens the task sheet. */
+  activity?: WorkbotActivity | null;
 }) {
   const { name, organizationName, userName, files } = props;
   const apps = useConnectedApps();
@@ -780,9 +788,12 @@ function WorkbotHeader(props: {
       {props.title ? <div className="flex min-w-0 items-center gap-2">{props.chats}{props.title}{props.nav}</div> : (
         <div className="flex min-w-0 items-center gap-2" title={organizationName}>
           {props.chats}
-          <Mark name={name} size="header" />
-          <h1 className="truncate text-[15px] font-semibold leading-5 tracking-[-0.015em] text-[var(--wb-text)]">{name}</h1>
-          {props.nav}
+          {props.activity ? <h1 className="flex min-w-[7.5rem] shrink"><WorkingName name={name} activity={props.activity} mark={<Mark name={name} size="header" />} /></h1> : <>
+            <Mark name={name} size="header" />
+            <h1 className="truncate text-[15px] font-semibold leading-5 tracking-[-0.015em] text-[var(--wb-text)]">{name}</h1>
+          </>}
+          {/* On a phone, what Workbot is doing takes the tabs' place while it works; the task sheet offers Watch. */}
+          {props.activity?.working ? <div className="hidden sm:contents">{props.nav}</div> : props.nav}
         </div>
       )}
       <div className="flex shrink-0 items-center gap-2.5 sm:gap-3.5">
@@ -1733,6 +1744,9 @@ function TurnView(props: {
 }) {
   const { turn, pending = null } = props;
   const { working, liveText, starting, lastIsLive } = replyProgress(turn, props.live);
+  // workingStatus: the chat keeps only what Workbot says. Its work shows under its name and in the task sheet; its
+  // screen shows here only while Workbot puts it in front of the person.
+  const quiet = workbotHost().workingStatus === true;
   // A message still sending waits on its files first, in the place the dots take next.
   const uploading = pending !== null && !pending.failed && pending.uploads.some((upload) => upload.status === "uploading");
   // An answer watched while it was written keeps revealing at its pace once it's stored; answers already done when the
@@ -1751,7 +1765,7 @@ function TurnView(props: {
   const switchMode = answering ? props.onSwitch : undefined;
   // A computer card keeps its key wherever it sits, so moving below Workbot's newest words never restarts its live view.
   const work = computerWork(parts, { working, starting, lastIsLive });
-  const card = (surface: ComputerSurface, others: UsedApp[] = []): TurnItem => {
+  const card = (surface: ComputerSurface, others: UsedApp[] = []): Extract<TurnItem, { kind: "card" }> => {
     const isLive = work.live.has(surface);
     const showing = surface === work.shown;
     // The live card offers the other way: Carry on without me while Workbot shows its screen, Show me otherwise.
@@ -1770,8 +1784,11 @@ function TurnView(props: {
     const here = work.placed.get(index) ?? [];
     const apps = part.steps.filter((step) => step.icon === "app");
     // Apps used beside computer work show as logos on its card; on their own, as a quiet line.
-    here.forEach((surface, at) => items.push(card(surface, at === here.length - 1 ? usedApps(apps, null) : [])));
-    if (apps.length > 0 && here.length === 0) items.push({ kind: "steps", key: `steps-${index}`, steps: apps, live: working && index === parts.length - 1 && lastIsLive });
+    here.forEach((surface, at) => {
+      const item = card(surface, at === here.length - 1 ? usedApps(apps, null) : []);
+      if (!quiet || item.showing) items.push(item);
+    });
+    if (!quiet && apps.length > 0 && here.length === 0) items.push({ kind: "steps", key: `steps-${index}`, steps: apps, live: working && index === parts.length - 1 && lastIsLive });
   });
   if (working && props.live) {
     for (const entry of props.live.earlier ?? []) {
@@ -1780,7 +1797,10 @@ function TurnView(props: {
     }
   }
   if (live && liveText) items.push({ kind: "text", key: `text-${live.step}`, text: liveText });
-  for (const surface of work.trailing) items.push(card(surface));
+  for (const surface of work.trailing) {
+    const item = card(surface);
+    if (!quiet || item.showing) items.push(item);
+  }
   // The place Workbot's next words will take, one message line tall: the typing dots, or the app step running right now
   // ("Using Gmail"), then the words themselves, each replacing the last without moving the conversation. Once it has
   // shown, it keeps its place until the words arrive.
@@ -1791,7 +1811,10 @@ function TurnView(props: {
   const waiting = answering && !liveText && !lastIsLive && work.live.size === 0;
   const fresh = items.length === 0 && !runningApps;
   const settled = useSettled(waiting && !fresh, 350);
-  const dots = waiting && (fresh || settled);
+  // Quiet: the dots mean only "a reply is coming" before Workbot has said or done anything. Once it is at work, the
+  // status line under its name says so; dots for minutes would read as someone typing.
+  const atWork = parts.some((part) => part.kind === "steps") || Boolean(live?.working);
+  const dots = quiet ? waiting && items.length === 0 && !atWork : waiting && (fresh || settled);
   const running = runningApps !== null;
   const [held, setHeld] = useState(false);
   useEffect(() => {
@@ -1839,7 +1862,9 @@ function TurnView(props: {
       <DocumentNavigationStatus receipts={turn.navigation} />
       {usedComputer ? <ComputerOffer /> : null}
       {turn.outputs.length ? <OutputFiles files={turn.outputs} /> : null}
-      {turn.tasks.length ? <TaskCards tasks={turn.tasks} canRetry={props.canChange} onRetry={(task) => props.onSuggestion(`Try the "${task.title}" background task again.`)} /> : null}
+      {/* Quiet: running and finished tasks live in the task sheet (the report says it's done); one that failed or was
+          stopped stays here with its way forward. */}
+      {(quiet ? turn.tasks.filter((task) => task.status === "failed" || task.status === "stopped") : turn.tasks).length ? <TaskCards tasks={quiet ? turn.tasks.filter((task) => task.status === "failed" || task.status === "stopped") : turn.tasks} canRetry={props.canChange} onRetry={(task) => props.onSuggestion(`Try the "${task.title}" background task again.`)} /> : null}
       {/* Workbot's hello offers what to ask next, only while it is still the latest message. */}
       {turn.suggestions.length && props.latest ? (
         <ul className="flex flex-wrap gap-2 pl-1 pt-3">

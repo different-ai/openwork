@@ -83,6 +83,8 @@ const sessionSchema = z.object({
   sideChats: z.boolean(),
   /** The header avatar opens the account menu with Sign out (`workbotAccountMenu`); older Dens omit it: off. */
   accountMenu: z.boolean().optional(),
+  /** Work in progress shows in the header and task sheet, not the chat (`workbotWorkingStatus`); older Dens omit it: off. */
+  workingStatus: z.boolean().optional(),
   /** Always true for older Workbot clients; the command palette is available by default. */
   commandPalette: z.boolean().optional(),
   /**
@@ -409,6 +411,7 @@ export function registerWorkbotRoutes<T extends { Variables: object }>(app: Hono
         activationChecklist: true,
         sideChats: true,
         accountMenu: features.workbotAccountMenu,
+        workingStatus: features.workbotWorkingStatus,
         commandPalette: true,
         model,
         gatewayModels: true,

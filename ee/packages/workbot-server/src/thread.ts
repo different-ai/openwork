@@ -95,6 +95,49 @@ export type WorkbotTask = {
   update: string | null
   /** Everything it said it did on its computer, oldest first, kept after it is over. */
   updates: string[]
+  /**
+   * Its steps so far in plain words, oldest first (the newest 12): work in connected apps ("Searching Slack") and on
+   * its computer, each done once its call has returned. For the task sheet; never a tool's output.
+   */
+  steps: WorkbotTaskStep[]
+  /** Calls it has finished. */
+  stepsDone: number
+  /** The latest thing it wrote, on one line, while it works. */
+  note: string | null
+}
+
+export type WorkbotTaskStep = { label: string; done: boolean; at: number | null }
+
+/** How many of a task's steps the page gets: enough for the sheet, never a whole transcript. */
+const TASK_STEPS = 12
+
+/** A task's steps and progress from its own transcript: what it did in apps and on its computer, in plain words. */
+function taskSteps(messages: RunnerMessage[]) {
+  const finished = new Set(messages.flatMap((message) => (message.role === "tool" ? [message.callId] : [])))
+  const steps: WorkbotTaskStep[] = []
+  let stepsDone = 0
+  let note: string | null = null
+  for (const message of messages) {
+    if (message.role !== "assistant") continue
+    const text = message.text.replace(/\s+/g, " ").trim()
+    if (text) note = text.length > 160 ? `${text.slice(0, 159)}…` : text
+    for (const call of message.toolCalls) {
+      const done = finished.has(call.id)
+      if (done) stepsDone += 1
+      const app = call.name === "execute_capability" ? appOf(call.name, call.input) : null
+      const said = typeof call.input.description === "string" && call.input.description.trim() ? call.input.description.trim() : null
+      const label = app ? appActionLabel(app, String(call.input.name ?? ""))
+        : COMPUTER_TOOLS.has(call.name) ? (said ?? (call.name === "desktop" ? desktopUpdate(call.input) : null) ?? "Working on my computer")
+        : null
+      if (!label) continue
+      const short = label.slice(0, 80)
+      const previous = steps.at(-1)
+      // The same thing again (a retry, the next page of a search) is one step.
+      if (previous?.label === short) { previous.done = done; continue }
+      steps.push({ label: short, done, at: message.createdAt ?? null })
+    }
+  }
+  return { steps: steps.slice(-TASK_STEPS), stepsDone, note }
 }
 
 export type WorkbotTurn = {
@@ -159,6 +202,7 @@ function tasksOf(snapshot: RunnerSnapshot, parent: string, byTurn: Map<string, R
         })
         .filter((update, index, all) => update !== all[index - 1])
       const update = open ? (updates.at(-1) ?? null) : null
+      const progress = taskSteps(byTurn.get(entry.messageId) ?? [])
       return {
         id: entry.messageId.slice(WORKBOT_MESSAGE_PREFIX.length),
         title: entry.title ?? "Background task",
@@ -167,6 +211,9 @@ function tasksOf(snapshot: RunnerSnapshot, parent: string, byTurn: Map<string, R
         finishedAt: open ? null : (entry.updatedAt ?? null),
         update,
         updates,
+        steps: progress.steps,
+        stepsDone: progress.stepsDone,
+        note: open ? progress.note : null,
       }
     })
 }

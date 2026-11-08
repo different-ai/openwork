@@ -52,6 +52,8 @@ export const denSessionSchema = z.object({
   sideChats: z.boolean().default(false),
   /** The header avatar opens the account menu with Sign out. A Den from before it doesn't say: off. */
   accountMenu: z.boolean().default(false),
+  /** Work in progress shows in the header and task sheet, not the chat. A Den from before it doesn't say: off. */
+  workingStatus: z.boolean().default(false),
   /** The Cmd+K / Ctrl+K command palette. A Den from before it doesn't say: off. */
   /** The organization's default model for Workbot's turns. Null, or a Den from before it, means the runner's default. */
   model: z.string().nullable().default(null),

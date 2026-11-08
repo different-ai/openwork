@@ -351,6 +351,16 @@
               ],
               "description": "Workbot: account menu: The avatar in Workbot's header opens a menu with the signed-in account and workspace, Switch workspace, Your dashboard and Sign out, instead of only linking to the dashboard. Renders DEN_FEATURE_WORKBOT_ACCOUNT_MENU."
             },
+            "workbotWorkingStatus": {
+              "enum": [
+                "",
+                "true",
+                "false",
+                true,
+                false
+              ],
+              "description": "Workbot: working status and task sheet: While Workbot works, a quiet status line under its name says what it is doing; tapping the name opens a task sheet with its steps and each background task's steps. The chat keeps only what Workbot says: no typing dots during work, no computer or task cards unless Workbot is showing its screen. Its first reply stands on its own instead of \"give me a sec\", and it can say how a background task is going. Renders DEN_FEATURE_WORKBOT_WORKING_STATUS."
+            },
             "workbotProactive": {
               "enum": [
                 "",
