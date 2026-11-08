@@ -61,9 +61,12 @@ callback is not treated as an obsolete domain.
 - **Administrator-supplied clients:** Connect returns a configuration-required
   warning naming the new callback. An organization admin updates the existing
   OAuth application's redirect allowlist in the provider console, then saves
-  the same client ID in Connections and reconnects. Omitting the secret retains
-  the saved secret. Saving confirms the provider change; Den cannot verify the
-  provider console or alter its allowlist itself.
+  the same client ID in Connections and reconnects. Settings show the exact
+  callback and **I updated the callback URL in the provider** confirmation;
+  **Confirm callback URL** saves the unchanged client ID without requiring a
+  replacement secret. Omitting the secret retains the saved secret. Saving
+  confirms the provider change; Den cannot verify the provider console or alter
+  its allowlist itself.
 
 No connection deletion is needed: connection IDs, access grants, tool policies,
 plugin bindings and account rows stay in place. Ordinary calls do not migrate a
@@ -71,6 +74,9 @@ registration or discard working tokens just because the origin changed. When
 an automatically registered client is successfully replaced, existing access
 tokens and scopes remain, but refresh grants and pending PKCE transactions
 bound to the old client are cleared for all identities on that connection.
+Only an organization admin may trigger this replacement, including for
+per-member connections: a member's Connect attempt receives an instruction to
+ask an admin to reconnect first, without changing anyone's stored credentials.
 Members with still-valid access tokens can continue until they need to sign in
 again; an old refresh token is never sent with the replacement client. Existing
 revision and single-use checks reject callbacks from replaced registrations.

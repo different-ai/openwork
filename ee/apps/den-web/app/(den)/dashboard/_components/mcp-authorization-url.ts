@@ -156,6 +156,31 @@ export function describeMcpAuthorizationFailure(input: {
   details?: McpAuthorizationDebugDetails
 }): McpAuthorizationFailureDescription {
   const { connectionName, message, details } = input
+  if (details?.errorCode === "mcp_oauth_configuration_required") {
+    const domainChanged = /deployment (?:callback URL|domain) changed/i.test(message)
+    return {
+      title: domainChanged ? `${connectionName} needs an admin to reconnect` : `${connectionName} needs sign-in setup`,
+      description: message,
+      advice: details.redirectUri
+        ? domainChanged
+          ? [
+            "An organization admin must update the allowed callback URL in the provider's existing OAuth app.",
+            "In Connections, confirm the callback URL update, then reconnect. The saved client secret can stay unchanged.",
+          ]
+          : [
+            "Ask an organization admin to configure a pre-registered OAuth app in the provider's developer console and allowlist this redirect URI.",
+            "Save the app's client ID and optional client secret in Connections, then reconnect.",
+          ]
+        : [domainChanged
+          ? "Ask an organization admin to reconnect this connection before signing in again."
+          : "Ask an organization admin to review this connection's sign-in setup."],
+      retryable: false,
+      copyable: [
+        ...(details.redirectUri ? [{ label: "Redirect URI", value: details.redirectUri }] : []),
+        ...(details.diagnosticReference ? [{ label: "Reference", value: details.diagnosticReference }] : []),
+      ],
+    }
+  }
   if (details?.diagnosticCode === "MCP_OAUTH_REDIRECT_URI_NOT_ALLOWED") {
     return {
       title: `${connectionName} hasn't approved OpenWork yet`,

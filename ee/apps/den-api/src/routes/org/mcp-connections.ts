@@ -603,6 +603,7 @@ const connectionResponseSchema = z.object({
   oauthClientHasSecret: z.boolean().optional().describe("Whether a client secret is configured. Only returned with explicit connection-settings view permission; never the secret itself."),
   manualOAuthEndpoints: manualOAuthEndpointsSchema.nullable().optional().describe("Only returned with explicit connection-settings view permission; omitted from usable member listings, including for the connection creator."),
   oauthCallbackUrl: z.string().nullable().optional(),
+  oauthCallbackUpdateRequired: z.boolean().optional().describe("An admin must confirm the provider allowlists the current callback before reconnecting a pre-registered client. Omitted unless domain recovery is enabled and a saved callback has changed origin."),
   oauthSharedCallbackUrl: z.string().nullable().optional(),
   oauthClientMetadataUrl: z.string().nullable().optional(),
   oauthCallbackMode: z.enum(["shared-v1", "isolated-v1", "legacy-v1"]).nullable().optional(),
@@ -924,8 +925,8 @@ const connectStartFailedSchema = z.object({
 const oauthConfigurationRequiredSchema = z.object({
   error: z.literal("mcp_oauth_configuration_required"),
   message: z.string(),
-  callbackUrl: z.string(),
-  clientMetadataUrl: z.string(),
+  callbackUrl: z.string().optional(),
+  clientMetadataUrl: z.string().optional(),
   manualRequirements: z.array(z.string()),
 }).meta({ ref: "ExternalMcpOAuthConfigurationRequiredError" })
 
@@ -1460,6 +1461,14 @@ async function toConnectionResponse(
     ? reads.oauthClients.get(row.id) ?? null
     : null
   const oauthRegistrationSource = oauthRegistrationSourceForClient(oauthClient)
+  const recoverPublicOrigin = row.kind === "external_mcp" && row.authType === "oauth"
+    && options.includeAccess && await organizationFeatureEnabled(row.organizationId, "mcpOauthDomainRecovery")
+  const oauthCallbackUpdateRequired = recoverPublicOrigin && oauthRegistrationSource === "pre-registered"
+    && externalMcpCallbackOriginChanged({
+      connectionId: row.id,
+      callbackMode: row.oauthConfiguration?.callbackMode ?? "legacy-v1",
+      registeredRedirectUri: registeredRedirectUriForClient(oauthClient),
+    })
   const callbackMode = row.oauthConfiguration?.callbackMode ?? null
   const requiredAuthTypes = [...options.requiredAuthTypes]
   const presetRequiredAuthType = row.kind === "external_mcp"
@@ -1535,10 +1544,11 @@ async function toConnectionResponse(
     access,
     ...(options.includeAccess ? {
       oauthClientId: oauthClient?.clientId ?? null,
+      ...(oauthCallbackUpdateRequired ? { oauthCallbackUpdateRequired: true } : {}),
       oauthCallbackUrl: row.authType === "oauth"
         ? row.kind === "native_provider" && row.nativeProviderKey
           ? nativeProviderCallbackUrl(row.nativeProviderKey)
-          : callbackRedirectUriWithClient(row, oauthClient, await organizationFeatureEnabled(row.organizationId, "mcpOauthDomainRecovery"))
+          : callbackRedirectUriWithClient(row, oauthClient, recoverPublicOrigin)
         : null,
       oauthSharedCallbackUrl: row.kind === "external_mcp" && row.authType === "oauth" ? externalMcpSharedCallbackUrl() : null,
       oauthClientMetadataUrl: row.kind === "external_mcp" && row.authType === "oauth" ? externalMcpClientMetadataUrl() : null,
@@ -4166,6 +4176,20 @@ export function registerMcpConnectionRoutes<T extends { Variables: OrgRouteVaria
           }
         }
         const oauthClient = recoverPublicOrigin ? await getOrgOAuthClient(connection.organizationId, connection.id) : null
+        // A client registration is shared even when each member has their own
+        // account. Replacing it invalidates everyone's refresh grants and pending
+        // authorizations, so a member must not commit that organization-wide change.
+        if (!callerIsAdmin && oauthClient && externalMcpCallbackOriginChanged({
+          connectionId: connection.id,
+          callbackMode: connection.oauthConfiguration?.callbackMode ?? "legacy-v1",
+          registeredRedirectUri: registeredRedirectUriForClient(oauthClient),
+        })) {
+          return c.json({
+            error: "mcp_oauth_configuration_required",
+            message: "The deployment domain changed. An organization admin must reconnect this connection before members can sign in again.",
+            manualRequirements: ["Ask an organization admin to reconnect the existing connection, then sign in again."],
+          }, 409)
+        }
         if (oauthClient && oauthRegistrationSourceForClient(oauthClient) === "pre-registered"
           && externalMcpCallbackOriginChanged({
             connectionId: connection.id,

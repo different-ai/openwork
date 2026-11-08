@@ -149,6 +149,8 @@ export type ExternalMcpConnection = {
   oauthClientId?: string | null;
   oauthClientHasSecret?: boolean;
   oauthCallbackUrl?: string | null;
+  /** Admin-only: the provider's registered callback must be updated for the current deployment domain. */
+  oauthCallbackUpdateRequired?: boolean;
   oauthSharedCallbackUrl?: string | null;
   oauthClientMetadataUrl?: string | null;
   oauthCallbackMode?: "shared-v1" | "isolated-v1" | "legacy-v1" | null;

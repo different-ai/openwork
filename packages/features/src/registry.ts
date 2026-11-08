@@ -107,9 +107,11 @@ export const FEATURES = defineFeatures({
   mcpOauthDomainRecovery: {
     label: "MCP OAuth domain recovery",
     description: "Reconnect external MCP connections after the deployment public domain changes without recreating the connection.",
-    category: "connections",
-    added: "2026-11-08",
+    category: "connect",
+    added: "2026-10-15",
     since: "2026-10",
+    author: "benjaminshafii",
+    docs: "docs/external-mcp-oauth.md",
     deployments: everywhere,
     default: false,
   },
