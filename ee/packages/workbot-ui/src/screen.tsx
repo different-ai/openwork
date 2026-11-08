@@ -354,6 +354,9 @@ function ChatScreen({ host, composerState, position, navigation, onDraftsChange 
   );
   const dragging = useFileDrop(filesEnabled, addFiles);
   const [profileTab, setProfileTab] = useState<"tasks" | "permissions" | null>(null);
+  // The browser viewer keeps a 480px conversation beside it. Its chosen panel temporarily discloses navigation
+  // through the same drawer, rather than squeezing the conversation behind a second 324px sidebar.
+  const showDesktopNavigation = wideScreen && !browserPreview?.visible;
   const navigationProps: NavigationProps = {
     page: tab, onPage: setTab, currentChat: navigation?.chat ?? null,
     chats: paletteChats.data, loading: paletteChats.isPending, failed: paletteChats.isError,
@@ -364,13 +367,13 @@ function ChatScreen({ host, composerState, position, navigation, onDraftsChange 
     onTasks: () => setProfileTab("tasks"), onApps: () => setProfileTab("permissions"),
     onOpen: () => void paletteChats.refetch(),
     // On phones the palette stays in the header even with the drawer closed, keeping Cmd/Ctrl+K available.
-    search: wideScreen ? palette : undefined,
-    onSearch: wideScreen ? undefined : () => document.querySelector<HTMLButtonElement>("[data-workbot-palette-trigger]")?.click(),
+    search: showDesktopNavigation ? palette : undefined,
+    onSearch: showDesktopNavigation ? undefined : () => document.querySelector<HTMLButtonElement>("[data-workbot-palette-trigger]")?.click(),
     account: <AccountAvatar userName={user?.name ?? null} />,
   };
-  const mobileNavigation = !wideScreen ? <MobileNavigation {...navigationProps} /> : null;
+  const mobileNavigation = !showDesktopNavigation ? <MobileNavigation {...navigationProps} /> : null;
   const layout = (children: ReactNode) => <div className="workbot workbot-layout flex min-h-0 min-w-0 bg-[var(--wb-bg)] antialiased">
-    {wideScreen && <DesktopNavigation {...navigationProps} />}
+    {showDesktopNavigation && <DesktopNavigation {...navigationProps} />}
     <div className="workbot-layout-main flex min-h-0 min-w-0 flex-1 flex-col">{children}</div>
     {profileTab && activity && <ProfileSheet key={profileTab} open onClose={() => setProfileTab(null)} name={data?.name ?? "Workbot"} activity={activity} initialTab={profileTab} />}
   </div>;
@@ -473,7 +476,7 @@ function ChatScreen({ host, composerState, position, navigation, onDraftsChange 
         {layout(<div className="flex min-h-0 flex-1 flex-col" data-workbot-workspace>
           <WorkbotHeader name={name} organizationName={data?.organizationName ?? ""} userName={user?.name ?? null} answered={hasAnsweredTurn(data?.turns)} activity={activity}
             files={filesEnabled ? <FilesButton open={filesOpen} onOpen={() => setFilesOpen(true)} /> : null}
-            chats={mobileNavigation} search={!wideScreen ? palette : null}
+            chats={mobileNavigation} search={!showDesktopNavigation ? palette : null}
             remove={navigation?.chat && data && data.turns.length > 0 ? <RemoveChatButton disabled={documentsDirty} chatId={navigation.chat} title={navigation.title} onRemoved={() => { composerState.dispose(); navigation.openChat(null); }} /> : null}
             title={navigation?.chat ? <SideChatTitle title={navigation.title} disabled={documentsDirty} onBack={() => navigation.openChat(null)} /> : undefined}
           />
@@ -513,7 +516,7 @@ function ChatScreen({ host, composerState, position, navigation, onDraftsChange 
           organizationName={data?.organizationName ?? ""}
           userName={user?.name ?? null}
           files={null}
-          chats={mobileNavigation} search={!wideScreen ? palette : null}
+          chats={mobileNavigation} search={!showDesktopNavigation ? palette : null}
           answered={hasAnsweredTurn(data?.turns)}
           activity={activity}
         />
@@ -596,7 +599,7 @@ function ChatScreen({ host, composerState, position, navigation, onDraftsChange 
         organizationName={shown.organizationName}
         userName={user?.name ?? null}
         files={filesEnabled ? <FilesButton open={filesOpen} onOpen={() => setFilesOpen(true)} /> : null}
-        chats={mobileNavigation} search={!wideScreen ? palette : null}
+        chats={mobileNavigation} search={!showDesktopNavigation ? palette : null}
         title={navigation && chatId ? <SideChatTitle title={navigation.title} onBack={() => navigation.openChat(null)} /> : null}
         remove={navigation && chatId && shown.turns.length > 0 ? <RemoveChatButton chatId={chatId} title={navigation.title} onRemoved={() => { composerState.dispose(); navigation.openChat(null); }} /> : null}
         answered={hasAnsweredTurn(shown.turns)}

@@ -1,8 +1,10 @@
 import { expect } from "vitest";
 import { spec } from "@openwork/testkit";
 import { workbotCommandPalette } from "../worlds/workbot-command-palette.ts";
+import { workbotBrowserLifecycle } from "../worlds/workbot-browser-lifecycle.ts";
 
 const test = spec.world(workbotCommandPalette, { timeout: 120_000, needs: { placement: "local" }, resources: { surfaces: [], services: [] } });
+const browserTest = spec.world(workbotBrowserLifecycle, { timeout: 120_000, needs: { placement: "local" }, resources: { surfaces: [], services: [] } });
 const desktop = "[data-workbot-desktop-navigation]";
 const drawer = "[data-workbot-mobile-navigation]";
 const profile = "[data-workbot-profile]";
@@ -113,4 +115,32 @@ test("a member navigates direct chats and supported workspace destinations on de
       await user.see({ role: "textbox", label: "Message Workbot" });
     });
   }
+});
+
+browserTest("opening the browser temporarily compacts navigation instead of squeezing the conversation", async ({ world, user, probe, step, evidence }) => {
+  await user.resizeViewport({ width: 1440, height: 1000, deviceScaleFactor: 1 });
+  await user.navigate(`${world.url}?scenario=browser-lifecycle&browser=1&computer=1&sideChats=1`);
+  await step("desktop starts with persistent chats, then the inline card opens the existing panel", async () => {
+    await user.see({ role: "button", label: "Open preview" });
+    expect((await probe.dom(desktop)).elements).toHaveLength(1);
+    await user.click({ role: "button", label: "Open preview" });
+    await user.see({ role: "button", label: "Close browser view" });
+    await user.see({ role: "button", label: "Open workspace navigation" });
+    const chat = await probe.eventually(() => probe.dom(".workbot-layout-main"), { within: 5000, label: "the browser's conversation keeps its comfortable width", until: layout => (layout.elements[0]?.rect.width ?? 0) >= 400 });
+    const width = chat.elements[0]?.rect.width ?? 0;
+    expect(width).toBeGreaterThanOrEqual(400);
+    expect(width).toBeLessThanOrEqual(480);
+    expect((await probe.dom(desktop)).elements).toHaveLength(0);
+    expect((await probe.dom("[data-workbot-browser-panel]")).elements).toHaveLength(1);
+    evidence.recordAssertionEvidence("Opening the existing browser panel preserves a usable conversation", `${width}px conversation; navigation available through its drawer; one browser panel`, width >= 400 && width <= 480);
+    await user.screenshot();
+  });
+  await step("closing the panel restores direct sidebar chats", async () => {
+    await user.click({ role: "button", label: "Close browser view" });
+    await probe.eventually(() => probe.dom(desktop), { within: 5000, label: "persistent navigation returns", until: layout => layout.elements.length === 1 });
+    await user.notSee({ role: "button", label: "Open workspace navigation" });
+    expect((await probe.dom("[data-workbot-browser-panel]")).elements).toHaveLength(0);
+    evidence.recordAssertionEvidence("Closing the browser restores desktop navigation", "One persistent sidebar and no browser panel", (await probe.dom(desktop)).elements.length === 1);
+    await user.screenshot();
+  });
 });

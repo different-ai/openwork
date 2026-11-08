@@ -2,11 +2,11 @@
 
 Feature: `workbotCenteredProfile` · Cloud and self-hosted · Default **off** · Author: @benjaminshafii.
 
-The centered **header** avatar/status pill is now default wherever Browser access is enabled, independently of this flag. This flag still controls the richer profile-sheet layout and tabs; it does not enable the browser experience. See [the unified browser experience](../workbot-browser-preview/README.md).
+The centered **header** avatar/status pill and responsive chat navigation are now the default for everyone, independently of this flag and Browser access. This flag still controls the richer profile-sheet layout and tabs; it does not enable the browser experience. See [the unified browser experience](../workbot-browser-preview/README.md).
 
-The richer profile sheet requires `workbotWorkingStatus` and `workbotProfileSheet`. With these on, Workbot's OpenWork-logo avatar sits at the top centre of the chat, with its name in a pill and its current activity inside that pill. Tapping opens the profile: a large logo, name and Connected, then five accessible icon tabs: Tasks, Permissions, Computer, Schedules, Identity. Computer opens only on request. Schedules reads the same owner-scoped Automations as Calendar; Identity reads the existing memory API. Empty/error states say what happened and offer retry, not endless skeletons. The logo and name are not editable in this release; no decorative pencil pretending to work.
+The richer profile-sheet mode requires `workbotWorkingStatus` and `workbotProfileSheet`. It adds a larger logo and Schedules to the Tasks, Apps and Identity tabs. Computer is no longer a profile tab: browser work opens only from its inline card. Schedules reads the same owner-scoped Automations as Calendar; Identity reads the existing gated memory API. Empty/error states say what happened and offer retry, not endless skeletons. The logo and name are not editable in this release; no decorative pencil pretending to work.
 
-On phones the header keeps navigation/search on the left and Files/account on the right; Files becomes an accessible icon so the avatar stays truly centred. Side-chat titles remain visible beneath it. Tabs support arrow keys, Home/End, focus and panel relationships.
+The header keeps the avatar centred on desktop and phone. Files/account live in the shared navigation, not competing header controls; side-chat titles remain beneath the avatar. The profile tabs support arrow keys, Home/End, focus and panel relationships.
 
 ## Mobile verification
 
@@ -18,7 +18,7 @@ Real WorkbotScreen, 390 × 844, in-memory conversation (not a production session
 
 Enable the three flags for a test organization in `/admin` → organization → Features (or use the existing `den_set_org_capability` admin capability). Reload Workbot. For local UI verification run the existing chat-screen fixture with `?scenario=browsing&working=1&profile=1&centered=1&browser=1`. Evidence screenshots and the browser verification report are linked from the PR, not committed to the repository. The fixture renders the real screen; it does not prove a production browser is working.
 
-Turning this flag off restores the original three-tab profile, and the left-aligned header only where Browser access is unavailable. Turning `workbotProfileSheet` off restores the task sheet. No saved user data or work is changed.
+Turning this flag off restores the compact three-tab profile, without changing the centred header or chat navigation. Turning `workbotProfileSheet` off leaves Tasks and Apps available; Identity explains that memory browsing is unavailable instead of requesting a blocked endpoint. No saved user data or work is changed.
 
 ## Lifecycle bug fixes (not gated)
 

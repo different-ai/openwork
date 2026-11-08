@@ -27,7 +27,8 @@ then side chats ordered by latest activity. On smaller screens, the navigation b
 with Tabs, side chats, and a bottom search/new-chat row. Files, Documents, Calendar, Tasks and Apps
 open their existing destinations; capability availability and document-draft guards still apply.
 No empty channel or space sections are invented. Computer is not a navigation destination; browser
-work is opened from its inline preview card.
+work is opened from its inline preview card. While its desktop panel is open, navigation folds into
+the same drawer so the conversation keeps its width; closing the panel restores the direct sidebar.
 
 The conversation and composer share a centered column capped at 800px. Changing screen size or
 switching chats preserves the existing per-chat draft and scroll owners.
