@@ -14,8 +14,8 @@ keep using the same URL as before.
 - **Signed-in URL** (`/mcp/agent/connections/<appId>`): the page uses the
   visitor's OpenWork session in that browser, then loads the App as that
   member, with the same Plugin access as any MCP client. Without a session it
-  asks them to sign in. A tool that is not read-only runs only after the
-  person confirms it, once per call.
+  asks them to sign in. The App's tools run as that member, with no extra
+  prompt.
 - **Public URL** (`/mcp/public/apps/<appId>`, needs `publicApps`): the page
   opens for anyone, with no sign-in.
 
@@ -44,7 +44,7 @@ exists or is a site. After sign-in the page marks its requests with
 available." unless the App was made a site and the feature is on. At the
 public URL the page is served only for an App that is public and a site.
 
-Links an App opens need the person's confirmation.
+An App can open web links (http and https only) in a new tab.
 
 ## Limits
 

@@ -55,14 +55,6 @@ const SITE_SCRIPT = `
   const post = (message) => frame.contentWindow.postMessage({ jsonrpc: "2.0", ...message }, "*")
   const theme = () => matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light"
 
-  // A tool the server does not mark read-only runs only after the person agrees, once per call.
-  function allowed(name) {
-    const tool = tools.find((entry) => entry.name === name)
-    if (!tool) return false
-    if (tool.annotations && tool.annotations.readOnlyHint === true && tool.annotations.destructiveHint !== true) return true
-    return confirm(document.title + " wants to run \\u201c" + (tool.title || tool.name) + "\\u201d. Allow it?")
-  }
-
   async function answer(message) {
     const reply = (result) => post({ id: message.id, result })
     const refuse = (text) => post({ id: message.id, error: { code: -32000, message: text } })
@@ -86,14 +78,12 @@ const SITE_SCRIPT = `
         post({ method: "ui/notifications/tool-input", params: { arguments: { input: {} } } })
         return post({ method: "ui/notifications/tool-result", params: opened })
       case "tools/call":
-        if (!allowed(params.name)) return refuse("This tool was not run.")
         try { return reply(await rpc("tools/call", { name: params.name, arguments: params.arguments || {} })) }
         catch (error) { return refuse(error.message) }
       case "ui/open-link": {
         let url = null
         try { url = new URL(params.url) } catch { url = null }
         if (!url || (url.protocol !== "https:" && url.protocol !== "http:")) return refuse("Only web links can be opened.")
-        if (!confirm("Open " + url.href + " ?")) return reply({ isError: true })
         window.open(url.href, "_blank", "noopener,noreferrer")
         return reply({})
       }
