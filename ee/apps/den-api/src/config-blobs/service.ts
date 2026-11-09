@@ -108,7 +108,9 @@ import {
   itemRev,
   unsupportedReason,
   withInviteEmails,
+  createPeopleRedactor,
   type ExecutionPlan,
+  type PeopleRedactor,
 } from "./engine/index.js"
 import { configSecretEnvPolicy, readConfigSecretEnv } from "./env-secrets.js"
 import { getConfigInstanceId } from "./instance.js"
@@ -150,6 +152,7 @@ type MemberId = DenTypeId<"member">
 
 const logger = appLogger.child({ component: "config_blobs" })
 const SETTINGS_METADATA_KEY = "configBlobs"
+const PEOPLE_AREA_KEY: ConfigAreaKey = "members.people"
 const APPLY_LEASE_MS = 600_000
 const APPLY_LEASE_EXTEND_EVERY_MS = 60_000
 const MAX_ANALYSIS_ATTEMPTS = 3
@@ -293,7 +296,9 @@ export function parseAreaList(value: string | undefined | null): ConfigAreaKey[]
 // Export
 
 function areaContext(organizationId: string, actor: ConfigActor, features: FeatureMap): ConfigAreaContext {
-  return { db, organizationId, actor: { userId: actor.userId, memberId: actor.memberId }, deployment: configDeployment(), features }
+  const acting: ConfigActor = { userId: actor.userId, memberId: actor.memberId }
+  if (actor.apiKeyId) acting.apiKeyId = actor.apiKeyId
+  return { db, organizationId, actor: acting, deployment: configDeployment(), features }
 }
 
 type ExportedArea = { area: ConfigArea; items: ConfigItem[] }
@@ -375,8 +380,10 @@ export async function exportBlob(org: ConfigOrganization, caller: ConfigCaller, 
   }
   const exported = await exportAreas(areaContext(org.id, caller, org.features), keys)
   const blob = await assembleBlob(org, exported, omitted)
+  // The copy kept as the three-way base holds emails; `rev`s are the same either way (redaction keeps them).
   if (blob.baseHash) await recordExport({ organizationId: org.id, baseHash: blob.baseHash, areas: blob.scope, blob })
-  return blob
+  const people = await peopleRedactorFor(org.id, caller)
+  return people ? people.blob(blob) : blob
 }
 
 // ---------------------------------------------------------------------------
@@ -401,17 +408,33 @@ async function loadActor(organizationId: OrganizationId, memberId: string | null
 /** Normalized email → member id, for members and invited people (their placeholder member rows). */
 async function loadPeople(organizationId: OrganizationId): Promise<Map<string, string>> {
   const rows = await db.$primary
-    .select({ id: MemberTable.id, userEmail: AuthUserTable.email, inviteEmail: InvitationTable.email })
+    .select({ id: MemberTable.id, userEmail: AuthUserTable.email, inviteEmail: InvitationTable.email, removedAt: MemberTable.removedAt })
     .from(MemberTable)
     .leftJoin(AuthUserTable, eq(MemberTable.userId, AuthUserTable.id))
     .leftJoin(InvitationTable, eq(MemberTable.inviteId, InvitationTable.id))
     .where(eq(MemberTable.organizationId, organizationId))
   const people = new Map<string, string>()
-  for (const row of rows) {
+  // A current member wins over a removed row with the same email.
+  for (const row of [...rows.filter((entry) => !entry.removedAt), ...rows.filter((entry) => entry.removedAt)]) {
     const email = (row.userEmail ?? row.inviteEmail)?.trim().toLowerCase()
     if (email && !people.has(email)) people.set(email, row.id)
   }
   return people
+}
+
+/**
+ * Who may read other members' emails and names in config blobs, plans and
+ * reports: whoever may view the `members.people` area (its view permission,
+ * within the config token's areas). Den has no separate directory
+ * permission; this is the one config blobs already apply to people.
+ */
+function canReadPeople(caller: Pick<ConfigCaller, "can" | "tokenAreas">): boolean {
+  return canView(caller, PEOPLE_AREA_KEY)
+}
+
+/** Null when the caller may read people; otherwise what hides them from what it is sent. */
+async function peopleRedactorFor(organizationId: OrganizationId, caller: Pick<ConfigCaller, "can" | "tokenAreas">): Promise<PeopleRedactor | null> {
+  return canReadPeople(caller) ? null : createPeopleRedactor(await loadPeople(organizationId))
 }
 
 async function apiKeyName(apiKeyId: string): Promise<string | null> {
@@ -497,13 +520,24 @@ async function loadVisible(organizationId: OrganizationId, id: string, caller: P
 
 export async function listChangeRequestSummaries(organizationId: OrganizationId, caller: Pick<ConfigCaller, "can" | "tokenAreas">, state: "open" | "closed"): Promise<ConfigChangeRequestSummary[]> {
   const rows = await listChangeRequests(organizationId, { state })
-  return summaries(organizationId, rows.filter((row) => visibleTo(caller, row.areas)))
+  const out = await summaries(organizationId, rows.filter((row) => visibleTo(caller, row.areas)))
+  const people = await peopleRedactorFor(organizationId, caller)
+  return people ? out.map(people.summary) : out
+}
+
+/** A summary as the caller may see it (see `peopleRedactorFor`). */
+async function summaryFor(row: ConfigChangeRequestRow, caller: Pick<ConfigCaller, "can" | "tokenAreas">): Promise<ConfigChangeRequestSummary> {
+  const summary = await summaryOf(row)
+  const people = await peopleRedactorFor(row.organizationId, caller)
+  return people ? people.summary(summary) : summary
 }
 
 export async function getChangeRequestDetail(organizationId: OrganizationId, id: string, caller: Pick<ConfigCaller, "can" | "tokenAreas">): Promise<ConfigChangeRequestDetailResponse> {
   const row = await loadVisible(organizationId, id, caller)
-  const runs = (await listApplyRuns(organizationId, row.id, db.$primary)).map((run) => run.report)
-  return { changeRequest: await summaryOf(row), report: runs[0] ?? null, runs }
+  const people = await peopleRedactorFor(organizationId, caller)
+  const runs = (await listApplyRuns(organizationId, row.id, db.$primary)).map((run) => (people ? people.report(run.report) : run.report))
+  const summary = await summaryOf(row)
+  return { changeRequest: people ? people.summary(summary) : summary, report: runs[0] ?? null, runs }
 }
 
 /** One apply attempt of a visible change request, with its full report. */
@@ -517,7 +551,8 @@ export async function getApplyRunDetail(organizationId: OrganizationId, id: stri
   }
   const run = await getApplyRun(organizationId, row.id, applyRunId, db.$primary)
   if (!run) throw runNotFound()
-  return { run: run.report }
+  const people = await peopleRedactorFor(organizationId, caller)
+  return { run: people ? people.report(run.report) : run.report }
 }
 
 function runNotFound(): ConfigBlobError {
@@ -526,7 +561,8 @@ function runNotFound(): ConfigBlobError {
 
 export async function getChangeRequestPlan(organizationId: OrganizationId, id: string, caller: Pick<ConfigCaller, "can" | "tokenAreas">): Promise<{ plan: ConfigPlan | null; decisions: ConfigDecisions }> {
   const row = await loadVisible(organizationId, id, caller)
-  return { plan: row.plan, decisions: row.decisions ?? EMPTY_CONFIG_DECISIONS }
+  const people = await peopleRedactorFor(organizationId, caller)
+  return { plan: row.plan && people ? people.plan(row.plan) : row.plan, decisions: row.decisions ?? EMPTY_CONFIG_DECISIONS }
 }
 
 export async function getBeforeSnapshot(organizationId: OrganizationId, id: string, caller: Pick<ConfigCaller, "can" | "tokenAreas">): Promise<unknown> {
@@ -534,7 +570,8 @@ export async function getBeforeSnapshot(organizationId: OrganizationId, id: stri
   if (row.beforeSnapshot === null || row.beforeSnapshot === undefined) {
     throw new ConfigBlobError(404, { error: "before_snapshot_not_found", message: "This change has no before-snapshot: it was never applied." })
   }
-  return row.beforeSnapshot
+  const people = await peopleRedactorFor(organizationId, caller)
+  return people ? people.refs(row.beforeSnapshot) : row.beforeSnapshot
 }
 
 // ---------------------------------------------------------------------------
@@ -608,8 +645,9 @@ export async function dryRunChangeRequest(org: ConfigOrganization, caller: Confi
     secretInputs: null,
     apiKeyId: caller.apiKeyId,
   })
-  if ("invalid" in planned) return { plan: null, errors: planned.invalid }
-  return { plan: planned.plan, errors: planned.fatal }
+  const people = await peopleRedactorFor(org.id, caller)
+  if ("invalid" in planned) return { plan: null, errors: people ? planned.invalid.map(people.text) : planned.invalid }
+  return people ? { plan: people.plan(planned.plan), errors: planned.fatal.map(people.text) } : { plan: planned.plan, errors: planned.fatal }
 }
 
 export async function submitChangeRequest(org: ConfigOrganization, caller: ConfigCaller, input: SubmitInput, options: { source?: "ui" | "api" | "revert"; revertsChangeRequestId?: ConfigChangeRequestId; decisions?: ConfigDecisions } = {}): Promise<ConfigChangeRequestSummary> {
@@ -638,7 +676,7 @@ export async function submitChangeRequest(org: ConfigOrganization, caller: Confi
     ...(options.revertsChangeRequestId ? { revertsChangeRequestId: options.revertsChangeRequestId } : {}),
   })
   if (caller.apiKeyId) await supersedeOpenRequestsFromApiKey({ organizationId: org.id, apiKeyId: caller.apiKeyId, areas: scope, exceptId: row.id })
-  return summaryOf(row)
+  return summaryFor(row, caller)
 }
 
 // ---------------------------------------------------------------------------
@@ -872,7 +910,7 @@ export async function analyzeClaimedChangeRequest(claim: ClaimedChangeRequest): 
 
 const EDITABLE_STATUSES: readonly ConfigChangeRequestStatus[] = ["needs_review", "approved", "stale"]
 
-async function replan(row: ConfigChangeRequestRow, change: ChangeRequestPatch & { decisions?: ConfigDecisions; secretInputs?: ConfigSecretInput[] }, options: { dropApprovals?: boolean } = {}) {
+async function replan(row: ConfigChangeRequestRow, caller: ConfigCaller, change: ChangeRequestPatch & { decisions?: ConfigDecisions; secretInputs?: ConfigSecretInput[] }, options: { dropApprovals?: boolean } = {}) {
   const planned = await planChangeRequest(row, {
     ...(change.decisions ? { decisions: change.decisions } : {}),
     ...(change.secretInputs ? { secretInputs: change.secretInputs } : {}),
@@ -880,7 +918,8 @@ async function replan(row: ConfigChangeRequestRow, change: ChangeRequestPatch & 
   const patch = await planPatch(row, planned, options)
   const updated = await updateChangeRequest(row.organizationId, row.id, [row.status], { ...change, ...patch })
   if (!updated) throw new ConfigBlobError(409, { error: "change_request_moved_on", message: "This change moved on while you were editing it. Reload and try again." })
-  return { changeRequest: await summaryOf(updated), plan: updated.plan }
+  const people = await peopleRedactorFor(row.organizationId, caller)
+  return { changeRequest: await summaryFor(updated, caller), plan: updated.plan && people ? people.plan(updated.plan) : updated.plan }
 }
 
 async function loadEditable(organizationId: OrganizationId, id: string, caller: ConfigCaller): Promise<ConfigChangeRequestRow> {
@@ -894,7 +933,7 @@ async function loadEditable(organizationId: OrganizationId, id: string, caller: 
 
 export async function updateDecisions(organizationId: OrganizationId, id: string, caller: ConfigCaller, decisions: ConfigDecisions) {
   const row = await loadEditable(organizationId, id, caller)
-  return replan(row, { decisions })
+  return replan(row, caller, { decisions })
 }
 
 /**
@@ -922,7 +961,7 @@ export async function updateInputs(organizationId: OrganizationId, id: string, c
   const merged = new Map((row.secretInputs ?? []).map((input) => [input.path, input]))
   for (const input of inputs) merged.set(input.path, input)
   const secretInputs = [...merged.values()]
-  return replan(row, { secretInputs }, { dropApprovals: inputs.some((input) => input.decision === "value") })
+  return replan(row, caller, { secretInputs }, { dropApprovals: inputs.some((input) => input.decision === "value") })
 }
 
 // ---------------------------------------------------------------------------
@@ -974,15 +1013,15 @@ async function approveRow(row: ConfigChangeRequestRow, caller: ConfigCaller, pla
 
 export async function approveChangeRequest(organizationId: OrganizationId, id: string, caller: ConfigCaller, planHash: string): Promise<ConfigChangeRequestSummary> {
   const row = await loadVisible(organizationId, id, caller)
-  return summaryOf(await approveRow(row, caller, planHash))
+  return summaryFor(await approveRow(row, caller, planHash), caller)
 }
 
 /** Queues an approved request; with `planHash` a request in review is approved first (approve and apply in one call). */
 export async function requestApply(organizationId: OrganizationId, id: string, caller: ConfigCaller, planHash: string | undefined): Promise<ConfigChangeRequestSummary> {
   let row = await loadVisible(organizationId, id, caller)
-  if (row.status === "queued" || row.status === "applying") return summaryOf(row)
+  if (row.status === "queued" || row.status === "applying") return summaryFor(row, caller)
   if (row.status === "needs_review" && planHash) row = await approveRow(row, caller, planHash)
-  if (row.status === "queued") return summaryOf(row)
+  if (row.status === "queued") return summaryFor(row, caller)
   if (row.status !== "approved") {
     throw new ConfigBlobError(409, { error: "change_request_not_approved", message: row.status === "needs_review" ? "This change needs approval first." : "This change can't be applied now.", status: row.status })
   }
@@ -999,7 +1038,7 @@ export async function requestApply(organizationId: OrganizationId, id: string, c
   }
   const updated = await updateChangeRequest(organizationId, row.id, ["approved"], { status: "queued", availableAt: new Date(), applyRequestedBy: applyRequest(caller) })
   if (!updated) throw new ConfigBlobError(409, { error: "change_request_moved_on", message: "This change moved on. Reload and try again." })
-  return summaryOf(updated)
+  return summaryFor(updated, caller)
 }
 
 const CANCELLABLE: readonly ConfigChangeRequestStatus[] = CONFIG_CHANGE_REQUEST_OPEN_STATUSES.filter((status) => status !== "applying")
@@ -1012,7 +1051,7 @@ export async function cancelChangeRequest(organizationId: OrganizationId, id: st
   if (row.createdByMemberId !== caller.memberId) await caller.authorize(managePermissions(row.areas))
   const updated = await updateChangeRequest(organizationId, row.id, [row.status], { status: "cancelled", secretInputs: null, leaseOwner: null, leaseUntil: null })
   if (!updated) throw new ConfigBlobError(409, { error: "change_request_moved_on", message: "This change moved on. Reload and try again." })
-  return summaryOf(updated)
+  return summaryFor(updated, caller)
 }
 
 // ---------------------------------------------------------------------------
@@ -1421,7 +1460,8 @@ export async function applyClaimedChangeRequest(claim: ClaimedChangeRequest): Pr
   const { secrets, missing } = resolveSecretValues(withInvites, claim.secretInputs ?? [])
   if (missing.length > 0) return refusal(`Nothing was applied: ${missing.join("; ")}.`)
 
-  const ctx = areaContext(organizationId, actor, chosen.features)
+  // The applying token (if a config token approved) is the credential of audit events adapters record.
+  const ctx = areaContext(organizationId, { ...actor, apiKeyId: approval.apiKeyId ?? null }, chosen.features)
   const org = await db.$primary.select({ id: OrganizationTable.id, slug: OrganizationTable.slug, name: OrganizationTable.name }).from(OrganizationTable).where(eq(OrganizationTable.id, organizationId)).limit(1)
   const target = org[0]
   if (!target) return refusal("The organization no longer exists.")

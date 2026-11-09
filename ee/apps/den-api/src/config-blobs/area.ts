@@ -30,6 +30,12 @@ export type ConfigActor = {
   userId: string
   /** Org membership id (`om_…`) of the person (or API key's issuing member) acting. */
   memberId: string
+  /**
+   * The config token acting for that member, when one is: for an apply, the
+   * token that gave the approval it runs under. Adapters pass it as the
+   * `credentialId` of audit events they record themselves.
+   */
+  apiKeyId?: string | null
 }
 
 export type ConfigAreaContext = {
@@ -44,7 +50,9 @@ export type ConfigAreaContext = {
  * One item as an adapter exports it, and as the engine compares it.
  *
  * - `spec` is the portable, editable part. References to other items are
- *   `{ $ref: "<area>/<id>", name }` (people: `{ $ref: "people/<email>" }`).
+ *   `{ $ref: "<area>/<id>", name }` (people: `{ $ref: "people/<email>" }`;
+ *   callers who may not read the member directory get `people/<member id>`
+ *   instead, see engine/people.ts: adapters always export emails).
  *   Secret fields are `{ $secret: "<area>/<id>/<field path>", set: boolean }`.
  * - Nested child rows (models, entries…) stay inside `spec` as arrays of
  *   objects that carry their own `id`; declare their keys in `arrayKeys`.

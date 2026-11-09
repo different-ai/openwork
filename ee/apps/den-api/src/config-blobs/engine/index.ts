@@ -22,6 +22,7 @@ export {
   createRefResolver,
   findRefs,
   inviteRef,
+  isEmailHandle,
   localizeSpec,
   rewriteRefs,
   toPlanRef,
@@ -30,6 +31,7 @@ export {
   type RefResolverInput,
   type ResolvedRefOccurrence,
 } from "./refs.js"
+export { createPeopleRedactor, HIDDEN_PERSON, namePeopleByEmail, type PeopleRedactor } from "./people.js"
 export {
   checkSecretFields,
   findSecrets,

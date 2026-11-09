@@ -2,7 +2,7 @@ import assert from "node:assert/strict"
 import { createHash } from "node:crypto"
 import { after, test } from "node:test"
 import { and, count, eq } from "@openwork-ee/den-db/drizzle"
-import { ConfigObjectTable, ConfigObjectVersionTable, OrganizationTable } from "@openwork-ee/den-db/schema"
+import { AuditOperationTable, ConfigObjectTable, ConfigObjectVersionTable, OrganizationTable } from "@openwork-ee/den-db/schema"
 import { normalizeDenTypeId } from "@openwork-ee/utils/typeid"
 import type { ConfigFieldChange } from "@openwork/types/den/config-blobs"
 import sharp from "sharp"
@@ -269,4 +269,26 @@ test("round trip into a second organization; brand bytes identical; a model the 
   })
   assert.deepEqual(cleared.steps, [{ action: "set", target: "model", detail: "default" }])
   assert.deepEqual((await only(workbotSettingsArea, sourceCtx)).spec, { model: null, provider: null })
+})
+
+test("settings.audit: the capture change names the config token the apply runs under", async () => {
+  const auditOwner = await den.signUp("Audit Token Owner")
+  const org = await den.createOrg(auditOwner, "Audit token org")
+  const apiKeyId = `apikey-config-${den.stamp}`
+  const ctx: ConfigAreaContext = { ...await contextFor(org.orgId, org.owner), actor: { userId: org.owner.userId, memberId: org.owner.memberId, apiKeyId } }
+  const previous = await only(settingsAuditArea, ctx)
+  const captureOn = previous.spec.captureOn !== true
+  const result = await settingsAuditArea.apply(ctx, {
+    kind: "update", targetId: org.orgId, previous, item: { name: previous.name, spec: { captureOn } }, changes: [{ path: "captureOn" }], secretPaths: [],
+  })
+  assert.deepEqual(result.steps?.map((step) => step.target), ["captureOn"])
+  const operations = await db
+    .select({ principalKey: AuditOperationTable.principal_key, initiatingActor: AuditOperationTable.initiating_actor })
+    .from(AuditOperationTable)
+    .where(and(eq(AuditOperationTable.organization_id, normalizeDenTypeId("organization", org.orgId)), eq(AuditOperationTable.kind, "audit.policy")))
+  // Besides the system's own initialization of the policy: the member's change, under the token.
+  const byMember = operations.filter((operation) => operation.principalKey.startsWith("user:"))
+  assert.ok(byMember.length > 0, `the capture change was audited: ${JSON.stringify(operations)}`)
+  assert.ok(byMember.every((operation) => operation.principalKey.endsWith(`:key:${apiKeyId}`)), JSON.stringify(byMember))
+  assert.ok(byMember.every((operation) => field(operation.initiatingActor, "credentialId") === apiKeyId), JSON.stringify(byMember))
 })

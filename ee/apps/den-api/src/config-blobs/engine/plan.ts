@@ -45,6 +45,7 @@ import {
   toPlanRef,
   type ResolvedRefOccurrence,
 } from "./refs.js"
+import { namePeopleByEmail } from "./people.js"
 import { checkSecretFields, planSecrets, redactRawSecrets, replacesSecretValue, type ExecutionSecret } from "./secrets.js"
 import { isPlainObject, sha256, typeIdPrefix } from "./util.js"
 
@@ -220,11 +221,13 @@ export function buildPlan(input: BuildPlanInput): BuildPlanResult {
     issues.push(area ? { level: "error", message, area } : { level: "error", message })
   }
 
+  // `people/<member id>` (exports for callers who may not read emails) compares as the member's email here.
+  const blobAreas = input.people ? namePeopleByEmail(input.blobAreas, input.people) : input.blobAreas
   const ordered = sortAreas(input.areas)
   const areaByKey = new Map(ordered.map((area) => [area.key, area]))
   const scope = new Set(input.scope)
   for (const key of input.scope) if (!areaByKey.has(key)) addError(`area ${key} is not available on this server`, key)
-  for (const key of Object.keys(input.blobAreas)) {
+  for (const key of Object.keys(blobAreas)) {
     if (!input.scope.some((scoped) => scoped === key)) issues.push({ level: "warning", message: `area ${key} is in the blob but not in its scope: ignored` })
   }
   if (input.mode === "merge" && decisions.deletes.length > 0) issues.push({ level: "warning", message: "deletes are ignored in merge mode" })
@@ -232,7 +235,7 @@ export function buildPlan(input: BuildPlanInput): BuildPlanResult {
   // Size caps: matching and diffing are at least linear per item, and
   // proposals per pair; a blob past these is refused outright.
   let totalItems = 0
-  for (const blobArea of Object.values(input.blobAreas)) totalItems += blobArea?.items.length ?? 0
+  for (const blobArea of Object.values(blobAreas)) totalItems += blobArea?.items.length ?? 0
   const tooManyItems = totalItems > CONFIG_BLOB_MAX_ITEMS
   if (tooManyItems) addError(`the blob holds ${totalItems.toLocaleString("en-US")} items, more than the ${CONFIG_BLOB_MAX_ITEMS.toLocaleString("en-US")} allowed`)
 
@@ -240,7 +243,7 @@ export function buildPlan(input: BuildPlanInput): BuildPlanResult {
   const states: AreaState[] = []
   for (const area of ordered) {
     if (!scope.has(area.key)) continue
-    const blobArea = input.blobAreas[area.key]
+    const blobArea = blobAreas[area.key]
     const state: AreaState = { area, unsupported: unsupportedReason(area, input.deployment, input.features), items: [], invalid: new Map(), match: null }
     states.push(state)
     if (!blobArea) {

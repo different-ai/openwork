@@ -102,6 +102,15 @@ export const PEOPLE_AREA: ConfigAreaKey = "members.people"
  */
 export const SEND_INVITE_EMAIL_FIELD = "__sendInviteEmail"
 
+/**
+ * Whether a `people/…` handle is an email. The other form is a member id
+ * (`people/om_…`, exports for callers who may not read emails): it resolves
+ * only to a member of the target organization and can't be invited.
+ */
+export function isEmailHandle(handle: string): boolean {
+  return handle.includes("@")
+}
+
 /** Plan ref of the `members.people` create an invite decision adds. */
 export function inviteRef(email: string): string {
   return `invite:${normalizeEmail(email)}`
@@ -213,6 +222,10 @@ export function createRefResolver(input: RefResolverInput): (itemArea: ConfigAre
 
   const resolveAuto = (area: ConfigAreaKey | "people", handle: string, hint: string | undefined): RefResolution => {
     if (area === "people") {
+      if (!isEmailHandle(handle)) {
+        if (memberIds.has(handle)) return { kind: "target", id: handle, via: "target" }
+        return { kind: "unresolved", reason: `person ${handle} is not a member of this organization: choose a member or drop them` }
+      }
       const email = normalizeEmail(handle)
       const memberId = input.people?.get(email)
       if (memberId) return { kind: "target", id: memberId, via: "target" }
@@ -234,6 +247,10 @@ export function createRefResolver(input: RefResolverInput): (itemArea: ConfigAre
    */
   const resolveInvite = (parsed: { area: ConfigAreaKey | "people"; target: string }, hint: string | undefined): RefResolution => {
     if (parsed.area !== "people") return { kind: "unresolved", reason: "only people can be invited" }
+    if (!isEmailHandle(parsed.target)) {
+      const byId = resolveAuto("people", parsed.target, hint)
+      return byId.kind === "target" ? byId : { kind: "unresolved", reason: `person ${parsed.target} can't be invited without an email: choose a member or drop them` }
+    }
     const email = normalizeEmail(parsed.target)
     const auto = resolveAuto("people", parsed.target, hint)
     // A person in the blob that was skipped stays unresolved: inviting them anyway would undo the skip.

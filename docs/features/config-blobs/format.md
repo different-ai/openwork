@@ -98,6 +98,7 @@ There are three ways to identify an item, used in this order (details in [mappin
 - A reference to an item **in the same blob** resolves to whatever that item maps to.
 - A reference to an area **not in the blob** is looked up on the target: `id` → alias → `key` → unique natural key → proposed match.
 - People are referenced by email: `{ "$ref": "people/ada@example.com" }`. They resolve to target members, or to planned creates/invitations when `members.people` is in the blob. Otherwise a missing person is *unresolved*: invite them, or drop them from the grant.
+- Only callers who may view the `members.people` area (its `teams.view` permission, within a config token's areas) see other members' emails and names. Everyone else gets people as member ids with no name: `{ "$ref": "people/om_…" }`, in exports and before-snapshots, and with emails and person names hidden in plans, dry runs, summaries and apply reports. Revs and `baseHash` are computed before this, so they match either way. On import a member id resolves only to a member of the target organization (compared as that member's email, so re-importing such an export into its own organization changes nothing). Elsewhere it is unresolved: choose a member or drop it; an id can't be invited.
 - Free-text references in the current schema (e.g. `org_default_model.provider_id` = `openwork` | `lpr_…` | `ipr_…`) are turned into proper `$ref`s by the adapter.
 
 ## Secrets

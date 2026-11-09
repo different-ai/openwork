@@ -92,7 +92,7 @@ export const settingsAuditArea = defineConfigArea({
       const rejection = await setOrganizationAuditCapture({
         organizationId: normalizeDenTypeId("organization", ctx.organizationId),
         member: { id: normalizeDenTypeId("member", ctx.actor.memberId), userId: normalizeDenTypeId("user", ctx.actor.userId) },
-        credentialId: undefined,
+        credentialId: ctx.actor.apiKeyId ?? undefined,
         requestId: createDenTypeId("request"),
         input: { captureOn, expectedRevision: current.revision },
       })

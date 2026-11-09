@@ -22,6 +22,7 @@ import { ConfigApplyItemError, type ConfigApplyOp, type ConfigArea, type ConfigA
 import {
   baseHash,
   buildPlan,
+  createPeopleRedactor,
   canonicalJson,
   checkWrittenItems,
   executePlan,
@@ -1166,5 +1167,78 @@ describe("preflight", () => {
     assert.equal(item(second.plan, "members.teams", "target:tem_B").op, "delete")
     assert.ok(item(second.plan, "members.teams", "target:tem_B").flags.includes("blocked"))
     assert.deepEqual(second.execution.ops.map((op) => op.targetId), ["tem_B"])
+  })
+})
+
+describe("people as member ids (callers who may not read the member directory)", () => {
+  const people = new Map([["ada@example.com", "om_ada"], ["bob@example.com", "om_bob"]])
+  const teamBlob = (members: unknown[], rev?: string): Partial<Record<ConfigAreaKey, ConfigBlobArea>> => ({
+    "members.teams": { specVersion: 1, items: [{ id: "tem_A", key: "platform", name: "Platform", ...(rev ? { rev } : {}), spec: { description: "core", members } }] },
+  })
+
+  test("a member id of the target compares equal to the member's email: same-org re-import is unchanged", () => {
+    const store = seed()
+    const areas = makeAreas(store, [])
+    const team = areas.find((area) => area.key === "members.teams")!
+    const rev = itemRev(team, store.get("members.teams")![0]!)
+    const { plan, execution } = buildPlan(planInput(store, areas, teamBlob([{ $ref: "people/om_ada" }], rev), { people, sameOrganization: true }))
+    const entry = item(plan, "members.teams", "tem_A")
+    assert.equal(entry.op, "unchanged", JSON.stringify(entry))
+    assert.deepEqual(entry.refs?.map((ref) => [ref.ref, ref.resolvedId]), [["people/ada@example.com", "om_ada"]])
+    assert.equal(execution.ops.length, 0)
+
+    // Adding a member by id resolves to that member, and nothing is removed.
+    const added = buildPlan(planInput(store, areas, teamBlob([{ $ref: "people/om_ada" }, { $ref: "people/om_bob" }]), { people }))
+    const update = item(added.plan, "members.teams", "tem_A")
+    assert.equal(update.op, "update")
+    assert.deepEqual(update.fields.map((field) => [field.path, field.added, field.removed]), [["members", ["people/bob@example.com"], []]])
+  })
+
+  test("a member id that is not a member here is unresolved: choose a member or drop it, it can't be invited", () => {
+    const store = seed()
+    const areas = makeAreas(store, [])
+    const blob = teamBlob([{ $ref: "people/om_ada" }, { $ref: "people/om_elsewhere" }])
+    const { plan } = buildPlan(planInput(store, areas, blob, { people }))
+    const entry = item(plan, "members.teams", "tem_A")
+    assert.ok(entry.flags.includes("ref_unresolved"))
+    assert.ok(plan.summary.blocking > 0)
+    assert.ok(entry.reasons?.some((reason) => reason.includes("om_elsewhere is not a member")), JSON.stringify(entry.reasons))
+
+    const invite = buildPlan(planInput(store, areas, blob, { people, decisions: decisions({ refs: [{ area: "members.teams", ref: "tem_A", path: "members[1]", resolution: { invite: true } }] }) }))
+    assert.ok(item(invite.plan, "members.teams", "tem_A").flags.includes("ref_unresolved"))
+    assert.deepEqual(items(invite.plan, "members.people"), [])
+
+    const chosen = buildPlan(planInput(store, areas, blob, { people, decisions: decisions({ refs: [{ area: "members.teams", ref: "tem_A", path: "members[1]", resolution: { targetId: "om_bob" } }] }) }))
+    assert.equal(chosen.plan.summary.blocking, 0)
+  })
+
+  test("the redactor writes people as member ids and hides their emails and name hints", () => {
+    const redactor = createPeopleRedactor(people)
+    assert.deepEqual(redactor.spec({ grant: { $ref: "people/Ada@Example.com", name: "Ada Lovelace" }, team: { $ref: "members.teams/tem_A", name: "Platform" }, contact: "ada@example.com" }), {
+      grant: { $ref: "people/om_ada" },
+      team: { $ref: "members.teams/tem_A", name: "Platform" },
+      // Config values are never rewritten in a blob.
+      contact: "ada@example.com",
+    })
+    const plan: ConfigPlan = {
+      planHash: "sha256:x",
+      mode: "merge",
+      summary: { create: 0, update: 1, rename: 0, delete: 0, unchanged: 0, untouched: 0, skip: 0, blocking: 0 },
+      issues: [{ level: "warning", message: "eve@example.com is not a member" }],
+      areas: [{ area: "members.teams", label: "Teams", items: [{
+        area: "members.teams", ref: "tem_A", op: "update", matchedBy: "id", flags: [],
+        fields: [{ path: "members", added: ["Eve Example", "people/bob@example.com"], removed: [{ $ref: "people/ada@example.com", name: "Ada Lovelace" }] }],
+        refs: [{ path: "members[0]", ref: "people/eve@example.com", name: "Eve Example", resolvedId: null, via: null }],
+        reasons: ["members[0]: eve@example.com is not a member of this organization"],
+      }] }],
+    }
+    const shown = redactor.plan(plan)
+    const json = JSON.stringify(shown)
+    for (const hidden of ["eve@example.com", "Eve Example", "ada@example.com", "Ada Lovelace", "bob@example.com"]) assert.ok(!json.includes(hidden), `${hidden} in ${json}`)
+    const entry = shown.areas[0]!.items[0]!
+    assert.deepEqual(entry.fields[0]?.added, ["(hidden)", "people/om_bob"])
+    assert.deepEqual(entry.fields[0]?.removed, [{ $ref: "people/om_ada" }])
+    assert.deepEqual(entry.refs, [{ path: "members[0]", ref: "people/hidden", resolvedId: null, via: null }])
+    assert.equal(redactor.text("Removed bob@example.com from a team"), "Removed om_bob from a team")
   })
 })
