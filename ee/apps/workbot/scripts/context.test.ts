@@ -123,6 +123,30 @@ test("an older runner drops only browser recovery before other compatibility fal
   }
 })
 
+test("a step limit is sent as chosen, null included, and left out when unset", async () => {
+  const requests: Record<string, unknown>[] = []
+  const client = createHeadlessRunnerClient({ config: { url: "http://runner", token: "x".repeat(32) }, mintToken: async () => ({ token: "scoped-test-token" }), maxTokenTtlMs: 60000, fetch: async (_url, init) => {
+    requests.push(JSON.parse(String(init?.body)) as Record<string, unknown>)
+    return Response.json({ id: "hs_step_limit" })
+  } })
+  for (const maxSteps of [undefined, 250, 0, null]) assert.ok((await client.putSession("hs_step_limit", { computer: true, maxSteps })).ok)
+  assert.deepEqual(requests, [{ computer: true }, { computer: true, maxSteps: 250 }, { computer: true, maxSteps: 0 }, { computer: true, maxSteps: null }])
+})
+
+test("an older runner drops only the step limit, before every other compatibility fallback, and keeps a strict chat", async () => {
+  for (const maxSteps of [250, 0, null]) {
+    const requests: Record<string, unknown>[] = []
+    const client = createHeadlessRunnerClient({ config: { url: "http://runner", token: "x".repeat(32) }, mintToken: async () => ({ token: "scoped-test-token" }), maxTokenTtlMs: 60000, fetch: async (_url, init) => {
+      const body = JSON.parse(String(init?.body)) as Record<string, unknown>
+      requests.push(body)
+      return "maxSteps" in body || "browserRecovery" in body ? Response.json({ error: "invalid_request" }, { status: 400 }) : Response.json({ id: "hs_step_limit" })
+    } })
+    const settings = { computer: true, desktop: true, desktopViews: ["browser"] as Array<"browser">, sandboxGateway: true, owner: "example", ref: "sidechat_example", memoryScope: "owner" as const }
+    assert.ok((await client.putSession("hs_step_limit", { ...settings, browserRecovery: true, maxSteps, strict: true })).ok)
+    assert.deepEqual(requests, [{ ...settings, browserRecovery: true, maxSteps }, { ...settings, browserRecovery: true }, settings])
+  }
+})
+
 test("browser recovery compatibility never retries non-setting failures", async () => {
   for (const status of [401, 403, 409, 500]) {
     let calls = 0

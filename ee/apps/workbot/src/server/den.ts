@@ -86,6 +86,11 @@ export const denSessionSchema = z.object({
   quietCalendar: z.boolean().default(false),
   /** The organization's default model for Workbot's turns. Null, or a Den from before it, means the runner's default. */
   model: z.string().nullable().default(null),
+  /**
+   * The organization's step limit for Workbot's turns (`workbotStepLimit`): a number, 0 for no limit, or null for the
+   * runner's own. A Den from before it, or with it off, doesn't say: nothing is sent to the runner.
+   */
+  maxSteps: z.number().int().min(0).max(100_000).nullable().optional(),
   verifyModel: z.boolean().default(false),
   /** Den validates the exact gateway alias and mints model access for each turn. Older Dens stay on runner credentials. */
   gatewayModels: z.boolean().default(false),

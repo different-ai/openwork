@@ -531,6 +531,16 @@
               ],
               "description": "Workbot: Slack answers as their own reply: In Slack, Workbot's notes while it works (\"Let me check your calendar.\") stay in one message that updates in place, and its final answer is posted as a new reply that notifies the person, written in its own words. Replaces the fixed \"Done:\" ping that quoted the first line of the reply. Renders DEN_FEATURE_WORKBOT_SLACK_ANSWER_REPLY."
             },
+            "workbotStepLimit": {
+              "enum": [
+                "",
+                "true",
+                "false",
+                true,
+                false
+              ],
+              "description": "Workbot: step limit: Admins choose in Manage › Workbot how many steps Workbot may take on one request before it stops and asks for a smaller piece: the deployment's default, a number, or no limit. Applies to each member's chats from their next message. Renders DEN_FEATURE_WORKBOT_STEP_LIMIT."
+            },
             "browserUploadPermissions": {
               "enum": [
                 "",

@@ -11,6 +11,9 @@
  * - `provider`: for an AI Gateway alias, a reference to the AI Gateway
  *   provider serving it. It orders the import after that provider and tells
  *   readers where the model comes from; apply does not write it.
+ * - `maxSteps`: Workbot's step limit (`organization.metadata.workbot.maxSteps`),
+ *   null for the deployment default, 0 for no limit. Always exported as stored;
+ *   only applied where `workbotStepLimit` is on, otherwise skipped with a warning.
  * - Never carried: the Workbot Slack installation (signing secret, bot token
  *   and workspace binding), the model test results and the readiness checks
  *   (runtime). The proactive agent settings are `workbot.proactive`.
@@ -24,8 +27,9 @@ import { GatewayProviderModelTable, GatewayProviderTable, OrganizationTable } fr
 import { parseGatewayModelAlias } from "@openwork-ee/utils/gateway-routing"
 import { normalizeDenTypeId } from "@openwork-ee/utils/typeid"
 import { configRefSchema, type ConfigRef } from "@openwork/types/den/config-blobs"
-import { readWorkbotModel } from "@openwork/types/den/workbot-settings"
+import { readWorkbotMaxSteps, readWorkbotModel, workbotMaxStepsSchema } from "@openwork/types/den/workbot-settings"
 import { z } from "zod"
+import { organizationFeatureEnabled } from "../../features.js"
 import { RUNNER_UNAVAILABLE_MESSAGE, UNKNOWN_MODEL_MESSAGE, saveWorkbotDefaultModel } from "../../routes/org/workbot-settings.js"
 import { defineConfigArea, type ConfigAreaContext, type ConfigItem } from "../area.js"
 import { ApplySteps, ORG_SINGLETON_NATURAL_KEY, readSingleton, requireActorPermission, touches } from "./org-singleton.js"
@@ -40,11 +44,14 @@ const workbotSettingsSpecSchema = z.object({
   model: z.string().trim().min(1).max(255).nullable().default(null),
   /** The AI Gateway provider serving `model`; informational, orders the import after it. */
   provider: configRefSchema.nullable().default(null),
+  /** Workbot's step limit: null = the deployment default, 0 = no limit. */
+  maxSteps: workbotMaxStepsSchema.nullable().default(null),
 }).strict()
 
 const applySpecSchema = z.object({
   model: z.string().trim().min(1).max(255).nullable().default(null),
   provider: z.unknown().optional(),
+  maxSteps: workbotMaxStepsSchema.nullable().default(null),
 }).strict()
 
 async function providerRef(ctx: ConfigAreaContext, model: string | null): Promise<ConfigRef | null> {
@@ -68,7 +75,7 @@ async function exportItems(ctx: ConfigAreaContext): Promise<ConfigItem[]> {
     .limit(1)
   if (!row) return []
   const model = readWorkbotModel(row.metadata)
-  return [{ id: ctx.organizationId, name: ITEM_NAME, spec: { model, provider: await providerRef(ctx, model) } }]
+  return [{ id: ctx.organizationId, name: ITEM_NAME, spec: { model, provider: await providerRef(ctx, model), maxSteps: readWorkbotMaxSteps(row.metadata) } }]
 }
 
 export const workbotSettingsArea = defineConfigArea({
@@ -101,19 +108,37 @@ export const workbotSettingsArea = defineConfigArea({
     const parsed = applySpecSchema.safeParse(specObject(op.item.spec))
     if (!parsed.success) throw steps.fail("invalid_spec", parsed.error.issues[0]?.message ?? "Invalid Workbot settings.", "model")
     const next = parsed.data.model
-    if (!touches(op, "model")) return { localId, steps: [] }
+    const nextMaxSteps = parsed.data.maxSteps
+    const warnings: string[] = []
+    const wantsModel = touches(op, "model")
+    const wantsMaxSteps = touches(op, "maxSteps")
+    if (!wantsModel && !wantsMaxSteps) return { localId, steps: [] }
     const [current] = await exportItems(ctx)
     if (!current) throw steps.fail("organization_not_found", "The organization no longer exists.", undefined, 404)
-    if (current.spec.model === next) return { localId, steps: [] }
+    const modelChanges = wantsModel && current.spec.model !== next
+    let maxStepsChanges = wantsMaxSteps && current.spec.maxSteps !== nextMaxSteps
+    if (maxStepsChanges && !await organizationFeatureEnabled(ctx.organizationId, "workbotStepLimit", { userId: ctx.actor.userId })) {
+      warnings.push("Workbot's step limit wasn't changed: the step limit isn't on for this organization.")
+      maxStepsChanges = false
+    }
 
-    await steps.run({ action: "set", target: "model", detail: next ?? "default" }, "model", async () => {
-      await requireActorPermission(ctx, "inference.manage")
-      const saved = await saveWorkbotDefaultModel({ organizationId: normalizeDenTypeId("organization", ctx.organizationId), userId: ctx.actor.userId, model: next })
-      if (saved.choice === "runner_unavailable") throw new ConfigApplyError("workbot_runner_unavailable", RUNNER_UNAVAILABLE_MESSAGE, 503)
-      if (saved.choice === "unknown_model") {
-        throw new ConfigApplyError("unknown_model", `${UNKNOWN_MODEL_MESSAGE} (${next ?? "default"} isn't one of the models you can use in this organization.)`, 400)
-      }
-    })
-    return { localId, steps: steps.done }
+    if (modelChanges) {
+      await steps.run({ action: "set", target: "model", detail: next ?? "default" }, "model", async () => {
+        await requireActorPermission(ctx, "inference.manage")
+        const saved = await saveWorkbotDefaultModel({ organizationId: normalizeDenTypeId("organization", ctx.organizationId), userId: ctx.actor.userId, model: next })
+        if (saved.choice === "runner_unavailable") throw new ConfigApplyError("workbot_runner_unavailable", RUNNER_UNAVAILABLE_MESSAGE, 503)
+        if (saved.choice === "unknown_model") {
+          throw new ConfigApplyError("unknown_model", `${UNKNOWN_MODEL_MESSAGE} (${next ?? "default"} isn't one of the models you can use in this organization.)`, 400)
+        }
+      })
+    }
+    if (maxStepsChanges) {
+      const detail = nextMaxSteps === null ? "default" : nextMaxSteps === 0 ? "no limit" : String(nextMaxSteps)
+      await steps.run({ action: "set", target: "maxSteps", detail }, "maxSteps", async () => {
+        await requireActorPermission(ctx, "inference.manage")
+        await saveWorkbotDefaultModel({ organizationId: normalizeDenTypeId("organization", ctx.organizationId), userId: ctx.actor.userId, maxSteps: nextMaxSteps })
+      })
+    }
+    return { localId, steps: steps.done, ...(warnings.length ? { warnings } : {}) }
   },
 })

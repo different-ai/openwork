@@ -78,6 +78,9 @@ export const DEFAULT_SYSTEM_PROMPT = `You are OpenWork, an assistant running in 
 export const REPEAT_WAITS_MS = [5_000, 10_000, 20_000, 30_000]
 /** Used for anything a session's caller did not set (see `repeatLimitsSchema`). */
 export const DEFAULT_REPEAT_LIMITS: Required<RepeatLimits> = { maxWaitingMs: 10 * 60_000, maxIdenticalFailures: 3 }
+/** Model calls a turn may make: the session's own limit (0 = none), else the runner's configured one. */
+const stepLimit = (session: Session | null, configured: number) =>
+  session?.maxSteps == null ? configured : session.maxSteps === 0 ? Number.POSITIVE_INFINITY : session.maxSteps
 /**
  * Added to the system prompt for the rest of the turn when a limit is reached. It stays out of the transcript: the
  * caller's own instructions say who reads the final message. A model that still repeats the step is stopped.
@@ -1194,11 +1197,12 @@ export class Runner {
         }
       }
       const setup = await this.turnSetup(sessionId, messageId, kind, tools, credentials)
+      const maxSteps = stepLimit(setup.session, limits.maxSteps)
       const expanded = new Map<string, Message>()
 
       // The model call index within this turn, counting steps an interrupted run already stored.
       let modelStep = turnMessages().filter((message) => message.role === "assistant").length
-      for (let step = 0; step < limits.maxSteps; step += 1) {
+      for (let step = 0; step < maxSteps; step += 1) {
         timing.step()
         signal.throwIfAborted()
         // Between steps: the step a follow-up arrived during has finished, so nothing is cut off mid-way.
@@ -1797,7 +1801,7 @@ export class Runner {
         }
         const last = turnMessages().at(-1)
         if (last?.role === "assistant" && last.toolCalls.length === 0) return end("completed")
-        if (state.steps >= limits.maxSteps) return end("failed", "max_steps_exceeded")
+        if (state.steps >= stepLimit(session, limits.maxSteps)) return end("failed", "max_steps_exceeded")
         // A follow-up arrived during the step before: it wraps up here, with nothing cut off.
         if (running.superseded) return end("aborted", "superseded")
         if (Number.isFinite(limits.turnTimeoutMs) && Date.now() - stretchStartedAt >= limits.turnTimeoutMs) return end("failed", "turn_timeout")

@@ -57,6 +57,15 @@ export function workbotLunaAlias(catalog: { defaultModel: string; models: { id: 
   return candidates.length === 1 ? candidates[0]?.id ?? null : null
 }
 
+/**
+ * How many model calls Workbot may make on one request (`workbotStepLimit`): null is the deployment's default, 0 is no
+ * limit. Kept in the organization's metadata under `workbot.maxSteps`, next to the model.
+ */
+export const WORKBOT_MAX_STEPS_LIMIT = 100_000
+/** The limits Manage › Workbot offers, besides the default and no limit. The API accepts any whole number in range. */
+export const WORKBOT_MAX_STEPS_CHOICES = [100, 250, 500, 1000, 2500, 5000] as const
+export const workbotMaxStepsSchema = z.number().int().min(0).max(WORKBOT_MAX_STEPS_LIMIT)
+
 export const workbotModelOptionSchema = z.object({ id: z.string(), name: z.string(), provider: z.string().optional() })
 export type WorkbotModelOption = z.infer<typeof workbotModelOptionSchema>
 
@@ -75,6 +84,8 @@ export const workbotSettingsSchema = z.object({
   gatewayModels: z.boolean().optional(),
   /** Present only during the explicit Luna rollout. Catalog readiness is not a paid completion probe. */
   defaultReadiness: z.enum(["available", "unavailable", "unverified"]).optional(),
+  /** Model calls Workbot may make on one request: null is the deployment's default, 0 is no limit. Present only while `workbotStepLimit` is on. */
+  maxSteps: workbotMaxStepsSchema.nullable().optional(),
 })
 export type WorkbotSettings = z.infer<typeof workbotSettingsSchema>
 
@@ -107,10 +118,13 @@ export const workbotReadinessSchema = z.object({
 })
 export type WorkbotReadiness = z.infer<typeof workbotReadinessSchema>
 
+/** Either setting, or both; one left out is unchanged. */
 export const workbotSettingsInputSchema = z.strictObject({
   /** A model id from `models`, or null for the runner's default. */
-  model: z.string().trim().min(1).max(255).nullable(),
-})
+  model: z.string().trim().min(1).max(255).nullable().optional(),
+  /** Model calls per request: null for the deployment's default, 0 for no limit. Needs `workbotStepLimit`. */
+  maxSteps: workbotMaxStepsSchema.nullable().optional(),
+}).refine((input) => input.model !== undefined || input.maxSteps !== undefined, { message: "Send model, maxSteps or both." })
 export type WorkbotSettingsInput = z.infer<typeof workbotSettingsInputSchema>
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -141,5 +155,22 @@ export function withWorkbotModel(metadata: Record<string, unknown>, model: strin
   const workbot: Record<string, unknown> = { ...(isRecord(current) ? current : {}) }
   if (model) workbot.model = model
   else delete workbot.model
+  return { ...metadata, workbot }
+}
+
+/** The organization's step limit for Workbot: null for the deployment's default, 0 for no limit. */
+export function readWorkbotMaxSteps(metadata: unknown): number | null {
+  const workbot = metadataRecord(metadata).workbot
+  if (!isRecord(workbot)) return null
+  const parsed = workbotMaxStepsSchema.safeParse(workbot.maxSteps)
+  return parsed.success ? parsed.data : null
+}
+
+/** Metadata with the step limit set (or cleared with null); everything else is kept. */
+export function withWorkbotMaxSteps(metadata: Record<string, unknown>, maxSteps: number | null): Record<string, unknown> {
+  const current = metadata.workbot
+  const workbot: Record<string, unknown> = { ...(isRecord(current) ? current : {}) }
+  if (maxSteps === null) delete workbot.maxSteps
+  else workbot.maxSteps = maxSteps
   return { ...metadata, workbot }
 }

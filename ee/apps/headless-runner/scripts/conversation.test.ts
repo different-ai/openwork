@@ -508,3 +508,52 @@ test("opening a document is a request the runner records only for a navigation-e
     if (enabled) assert.deepEqual(JSON.parse(result.output), { fileId: "file_example", status: "requested" })
   }
 })
+
+test("a session's own step limit replaces the runner's: a number ends the turn there, 0 lifts the limit, and null goes back to the runner's", async () => {
+  for (const execution of [undefined, "steps" as const]) {
+    const mode = execution ?? "one go"
+    let calls = 0
+    let finishAt = Number.POSITIVE_INFINITY
+    // Never repeats itself, so the stuck check doesn't stop it; finishes on its own only from call `finishAt`.
+    const model: ModelClient = {
+      async complete() {
+        calls += 1
+        if (calls >= finishAt) return { text: "Done", toolCalls: [], usage }
+        return { text: "", toolCalls: [{ id: `call_${calls}`, name: "write_file", input: { path: "notes.md", content: `draft ${calls}` } }], usage }
+      },
+    }
+    using world = setup(model, undefined, { limits: { ...limits, maxSteps: 3 } })
+    const app = createApp({ store: world.store, runner: world.runner, apiToken })
+    const put = (body: Record<string, unknown>) =>
+      app.request(`/v1/sessions/${world.session}`, { method: "PUT", headers: { authorization: `Bearer ${apiToken}` }, body: JSON.stringify(body) })
+    const run = async (messageId: string) => {
+      const before = calls
+      world.runner.send({ sessionId: world.session, messageId, prompt: "Keep improving the notes", credentials: {}, execution })
+      await world.runner.idle()
+      const turn = world.store.getTurn(world.session, messageId)
+      return { status: turn?.status, error: turn?.error ?? null, calls: calls - before }
+    }
+    assert.equal(world.store.getSession(world.session)?.maxSteps, null, mode)
+
+    // Lower than the runner's three.
+    assert.equal((await put({ maxSteps: 2 })).status, 200, mode)
+    assert.equal(world.store.getSession(world.session)?.maxSteps, 2, mode)
+    assert.deepEqual(await run("m1"), { status: "failed", error: "max_steps_exceeded", calls: 2 }, mode)
+
+    // No limit: the turn goes past the runner's three and ends with its answer. A put that leaves it out keeps it.
+    assert.equal((await put({ maxSteps: 0 })).status, 200, mode)
+    assert.equal((await put({ title: "Notes" })).status, 200, mode)
+    assert.equal(world.store.getSession(world.session)?.maxSteps, 0, mode)
+    finishAt = calls + 6
+    assert.deepEqual(await run("m2"), { status: "completed", error: null, calls: 6 }, mode)
+
+    // Null clears the session's limit: the runner's three apply again.
+    finishAt = Number.POSITIVE_INFINITY
+    assert.equal((await put({ maxSteps: null })).status, 200, mode)
+    assert.equal(world.store.getSession(world.session)?.maxSteps, null, mode)
+    assert.deepEqual(await run("m3"), { status: "failed", error: "max_steps_exceeded", calls: 3 }, mode)
+
+    for (const maxSteps of [-1, 2.5, 100_001, "10"]) assert.equal((await put({ maxSteps })).status, 400, `${mode} ${String(maxSteps)}`)
+    assert.equal(world.store.getSession(world.session)?.maxSteps, null, mode)
+  }
+})

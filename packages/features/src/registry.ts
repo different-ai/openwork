@@ -617,6 +617,17 @@ export const FEATURES = defineFeatures({
     deployments: everywhere,
     default: false,
   },
+  workbotStepLimit: {
+    label: "Workbot: step limit",
+    description: "Admins choose in Manage › Workbot how many steps Workbot may take on one request before it stops and asks for a smaller piece: the deployment's default, a number, or no limit. Applies to each member's chats from their next message.",
+    category: "workbot",
+    added: "2026-11-09",
+    since: "2026-11",
+    author: "reachjalil",
+    docs: "docs/features/workbot-step-limit/README.md",
+    deployments: everywhere,
+    default: false,
+  },
   browserUploadPermissions: {
     label: "Browser: managed and remembered file-sharing permissions",
     description: "Admins set Allow, Ask first or Block for browser uploads, with website exceptions. Members can remember permission for one website and a folder on this computer across chats and Slack-started tasks, and revoke it in Settings.",
