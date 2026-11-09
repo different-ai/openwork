@@ -3,6 +3,7 @@ import { QueryClient, QueryClientProvider, useQuery } from "@tanstack/react-quer
 import { StrictMode, useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { createRoot } from "react-dom/client"
 import { createHost, fetchMe, signIn, type Me } from "./host"
+import { reloadOnStaleBuild } from "./stale-build"
 import "./styles.css"
 import { WorkspaceAccess } from "./workspace-access"
 
@@ -143,6 +144,7 @@ function handOffBoot(root: HTMLElement) {
   setTimeout(() => observer.disconnect(), 15_000)
 }
 
+reloadOnStaleBuild()
 const root = document.getElementById("root")
 if (root) {
   handOffBoot(root)

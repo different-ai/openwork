@@ -1,9 +1,8 @@
 import { createServer } from "node:http"
-import { dirname, join, relative } from "node:path"
+import { dirname, join } from "node:path"
 import { fileURLToPath } from "node:url"
 import { getRequestListener } from "@hono/node-server"
-import { serveStatic } from "@hono/node-server/serve-static"
-import { isRevalidatedFile } from "./static-cache.js"
+import { registerClientFiles } from "./static-cache.js"
 import { Hono } from "hono"
 import { routePath } from "hono/route"
 import { createAuth, type AppEnv } from "./auth.js"
@@ -57,14 +56,7 @@ if (config.dev) {
     else vite.middlewares(request, response)
   })
 } else {
-  const root = relative(process.cwd(), clientDir) || "."
-  app.use("/assets/*", serveStatic({ root, onFound: (_path, c) => c.header("Cache-Control", "public, max-age=31536000, immutable") }))
-  // The page itself ("/" serves index.html here) and the manifest are revalidated on every load. Without a
-  // Cache-Control header, browsers cache "/" heuristically from its Last-Modified, and a phone could keep opening the
-  // previous release's page (and its previous hashed script) after a deploy.
-  app.use("*", serveStatic({ root, onFound: (path, c) => { if (isRevalidatedFile(path)) c.header("Cache-Control", "no-cache") } }))
-  // Any other page path is the app itself.
-  app.get("*", serveStatic({ root, path: "index.html", onFound: (_path, c) => c.header("Cache-Control", "no-cache") }))
+  registerClientFiles(app, clientDir)
   server = createServer(getRequestListener(app.fetch))
 }
 
