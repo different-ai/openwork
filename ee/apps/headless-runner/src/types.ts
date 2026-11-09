@@ -46,6 +46,8 @@ export type ToolSpec = {
   name: string
   description: string
   inputSchema: Record<string, unknown>
+  /** Its server says it only reads (MCP `readOnlyHint`): calls to it may run at the same time. Never sent to the model. */
+  readOnly?: boolean
 }
 
 export type ToolImage = { mediaType: string; data: string }

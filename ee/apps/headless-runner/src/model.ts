@@ -1020,6 +1020,9 @@ function responsesStep(result: z.infer<typeof responsesResult>): ModelStep {
   }, result.status === "incomplete" && result.incomplete_details?.reason === "max_output_tokens")
 }
 
+/** Why a Responses call failed: `code` in OpenAI's own events, `type` where a gateway passes a provider's error on. */
+const responsesError = z.object({ code: z.string().nullish().catch(undefined), type: z.string().nullish().catch(undefined), message: z.string().optional() }).loose()
+
 const responsesEvent = z
   .object({
     type: z.string(),
@@ -1028,8 +1031,23 @@ const responsesEvent = z
     output_index: z.number().optional(),
     response: z.unknown().optional(),
     message: z.string().optional(),
+    code: z.string().nullish().catch(undefined),
+    error: responsesError.nullish().catch(undefined),
   })
   .loose()
+
+/**
+ * Failures that pass on their own: the provider had a problem or is busy, as Anthropic's `overloaded_error` and
+ * `api_error` are. Anything else (a refused prompt or image, a quota) would fail the same way again.
+ */
+const TRANSIENT_RESPONSES_ERRORS: ReadonlySet<string> = new Set([
+  "server_error",
+  "server_is_overloaded",
+  "overloaded",
+  "overloaded_error",
+  "rate_limit_exceeded",
+  "rate_limit_error",
+])
 
 /** Assembles a streamed Responses call into the same step a non-streamed call returns. */
 async function readResponsesStream(
@@ -1060,9 +1078,12 @@ async function readResponsesStream(
         if (!parsed.success) throw new ModelError("model_bad_response", "Unexpected response from the AI gateway.", false)
         final = parsed.data
       } else if (type === "response.failed" || type === "error") {
-        const failed = z.object({ error: z.object({ message: z.string().optional() }).loose().nullable().optional() }).loose().safeParse(event.data.response)
-        const reason = (failed.success ? failed.data.error?.message : undefined) ?? event.data.message ?? "unknown error"
-        throw new ModelError("model_failed", `The model failed: ${reason.slice(0, 300)}`, false, undefined, reason.slice(0, 300))
+        const failed = z.object({ error: responsesError.nullish() }).loose().safeParse(event.data.response)
+        const error = (failed.success ? failed.data.error : undefined) ?? event.data.error
+        const reason = error?.message ?? event.data.message ?? "unknown error"
+        // The call is made again from the start, like a stream that ended early (withStreamRetries).
+        const transient = [error?.code, error?.type, event.data.code].some((kind) => typeof kind === "string" && TRANSIENT_RESPONSES_ERRORS.has(kind))
+        throw new ModelError(transient ? "model_stream_interrupted" : "model_failed", `The model failed: ${reason.slice(0, 300)}`, transient, undefined, reason.slice(0, 300))
       }
     }
   } catch (error) {

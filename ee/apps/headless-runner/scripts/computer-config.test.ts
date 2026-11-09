@@ -3,6 +3,12 @@ import { test } from "node:test"
 import { loadConfig } from "../src/config.js"
 const base = { HEADLESS_API_TOKEN: "test-token-123456789012345678901234567890", HEADLESS_MODEL_PROTOCOL: "anthropic", HEADLESS_MODEL_BASE_URL: "https://example.com/v1", HEADLESS_MODEL: "test-model" }
 test("computer remains off by default", () => assert.equal(loadConfig(base).computer, undefined))
+test("a turn is limited to 1000 model calls unless the operator sets another limit, or 0 for none", () => {
+  assert.equal(loadConfig(base).limits.maxSteps, 1000)
+  assert.equal(loadConfig({ ...base, HEADLESS_MAX_STEPS: "40" }).limits.maxSteps, 40)
+  assert.equal(loadConfig({ ...base, HEADLESS_MAX_STEPS: "0" }).limits.maxSteps, Number.POSITIVE_INFINITY)
+  assert.equal(loadConfig(base).limits.turnTimeoutMs, Number.POSITIVE_INFINITY)
+})
 test("Freestyle's existing settings still select Freestyle", () => {
   const config = loadConfig({ ...base, HEADLESS_COMPUTER: "freestyle", FREESTYLE_API_KEY: "test" })
   assert.equal(config.computer?.kind, "freestyle")

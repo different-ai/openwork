@@ -149,12 +149,46 @@ test("only a call's own top-level description counts, once it is complete", () =
   assert.equal(streamedDescription(`{"args":{"code":"${"x".repeat(5_000)}"},"description":"Late"}`), null)
 })
 
-test("a failed response is a model error, not an empty answer", async () => {
-  const { fetch } = recorder(() => sse([{ type: "response.failed", response: { status: "failed", error: { code: "server_error", message: "The model crashed" } } }]))
+test("a failed response is a model error, not an empty answer, and a request the model refused is not sent again", async () => {
+  for (const event of [
+    { type: "response.failed", response: { status: "failed", error: { code: "invalid_prompt", message: "The prompt was refused" } } },
+    { type: "error", code: "insufficient_quota", message: "The prompt was refused" },
+    { type: "response.failed", response: { status: "failed", error: null } },
+  ]) {
+    const { calls, fetch } = recorder(() => sse([event]))
+    await assert.rejects(
+      openAIResponsesModel({ baseUrl: "https://gateway.test/v1", maxOutputTokens: 100, fetch, sleep: async () => undefined }).complete(request({ onText: () => undefined })),
+      (error: unknown) => error instanceof ModelError && error.code === "model_failed" && !error.retryable && /The prompt was refused|unknown error/.test(error.message),
+    )
+    assert.equal(calls.length, 1, JSON.stringify(event))
+  }
+})
+
+test("a response that failed because the provider was busy or broke is made again, as a stream that ended early is", async () => {
+  const completed = { type: "response.completed", response: { status: "completed", output: [{ type: "message", content: [{ type: "output_text", text: "Found it." }] }], usage: { input_tokens: 10, output_tokens: 5 } } }
+  for (const failure of [
+    { type: "response.failed", response: { status: "failed", error: { code: "server_error", message: "The model crashed" } } },
+    { type: "response.failed", response: { status: "failed", error: { code: "rate_limit_exceeded", message: "Too many requests" } } },
+    { type: "error", code: "server_is_overloaded", message: "Our servers are busy" },
+    { type: "error", error: { type: "overloaded_error", message: "Overloaded" } },
+  ]) {
+    // Fails once after writing part of an answer, then answers.
+    const { calls, fetch } = recorder(() => sse(calls.length === 1 ? [{ type: "response.output_text.delta", delta: "Fou" }, failure] : [{ type: "response.output_text.delta", delta: "Found it." }, completed]))
+    const written: string[] = []
+    const step = await openAIResponsesModel({ baseUrl: "https://gateway.test/v1", maxOutputTokens: 100, fetch, sleep: async () => undefined })
+      .complete(request({ onText: (delta) => written.push(delta), onReset: () => written.push("(reset)") }))
+    assert.equal(step.text, "Found it.", JSON.stringify(failure))
+    assert.equal(calls.length, 2)
+    assert.deepEqual(written, ["Fou", "(reset)", "Found it."], "the half-written answer is dropped")
+  }
+
+  // Still failing after the retries: the turn fails with the retryable code, and what the provider said.
+  const { calls, fetch } = recorder(() => sse([{ type: "response.failed", response: { status: "failed", error: { code: "server_error", message: "The model crashed" } } }]))
   await assert.rejects(
-    openAIResponsesModel({ baseUrl: "https://gateway.test/v1", maxOutputTokens: 100, fetch }).complete(request({ onText: () => undefined })),
-    (error: unknown) => error instanceof ModelError && error.code === "model_failed" && /The model crashed/.test(error.message),
+    openAIResponsesModel({ baseUrl: "https://gateway.test/v1", maxOutputTokens: 100, fetch, sleep: async () => undefined }).complete(request({ onText: () => undefined })),
+    (error: unknown) => error instanceof ModelError && error.code === "model_stream_interrupted" && error.retryable && error.detail === "The model crashed",
   )
+  assert.equal(calls.length, 3)
 })
 
 test("a response stopped at the output cap is marked cut off, and the call it was writing is not run", async () => {
