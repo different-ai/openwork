@@ -7,9 +7,10 @@ import { useEffect, useRef, useState } from "react";
 import { Check, ChevronDown, Plus, Search, X } from "lucide-react";
 import { DenPageHeader } from "../../_components/ui/page-header";
 import { DenButton } from "../../_components/ui/button";
-import { getNewPluginRoute, getPluginRoute } from "../../_lib/den-org";
+import { getNewPluginRoute, getOrgAccessFlags, getPluginRoute } from "../../_lib/den-org";
 import { useOrgDashboard } from "../_providers/org-dashboard-provider";
 import { FeatureIntroGate } from "../_features/feature-intros";
+import { visibleCountFact } from "../_features/feature-intros/model";
 import { managedAccessStatus } from "./access-summary";
 import { useDenToast } from "./den-toast";
 import { ItemPage } from "./item-header";
@@ -182,8 +183,15 @@ export function AdminPluginsScreen() {
   const builtInCount = firstPage ? firstPage.items.length - teamPlugins.length : 0;
   const setUpById = firstPage ? pluginsSetUpById(teamPlugins, orgContext?.currentMember.id ?? null) : null;
   const setUpByMember = setUpById ? orgContext?.members.find((member) => member.id === setUpById) : undefined;
+  // Without `sharing.manage_all` the list holds only plugins shared with this person, so an empty one
+  // doesn't mean the organization has none (a teammate's private plugins are hidden).
+  const seesAllPlugins = getOrgAccessFlags(
+    orgContext?.currentMember.role ?? "member",
+    orgContext?.currentMember.isOwner ?? false,
+    orgContext?.currentMember.permissions,
+  ).canManageAllShared;
   const introFacts = !firstPage ? null : filtered ? {} : {
-    plugins: Math.max(0, (firstPage.total ?? firstPage.items.length) - builtInCount),
+    plugins: visibleCountFact(Math.max(0, (firstPage.total ?? firstPage.items.length) - builtInCount), seesAllPlugins),
     setUpBy: setUpByMember ? setUpByMember.user.name || setUpByMember.user.email : null,
   };
   const createAction = <LinkButton variant="primary" size="sm" href={getNewPluginRoute(orgSlug)}><Plus className="h-4 w-4" aria-hidden />Create a plugin</LinkButton>;

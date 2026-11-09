@@ -15,7 +15,7 @@ import {
   getPluginsRoute,
 } from "../../_lib/den-org";
 import { useOrgDashboard } from "../_providers/org-dashboard-provider";
-import { useFeatureIntro } from "../_features/feature-intros";
+import { useFeatureIntro, useFeatureIntroRuntime } from "../_features/feature-intros";
 import { type AccessDraft, accessAddedToast, ownedAccessStatus } from "./access-summary";
 import { useDenToast } from "./den-toast";
 import { formatAddedDate } from "./item-dates";
@@ -29,7 +29,7 @@ import { receivedStatus } from "./library-view";
 import { usePluginAccess } from "./plugin-access-data";
 import { type DenPlugin, pluginQueryKeys, usePlugin } from "./plugin-data";
 import { PluginPageSkeleton } from "./plugin-skeletons";
-import { pluginSharedBeyondOwner } from "./plugins-intro-facts";
+import { pluginSharedBeyondOwnerWithCollections, usePluginCollectionGrants } from "./plugins-intro-facts";
 import { WhoCanUseIt } from "./who-can-use-it";
 import { SkillPreview, skillTitle } from "./skill-preview";
 export { skillTitle } from "./skill-preview";
@@ -150,11 +150,17 @@ function PluginPage({ pluginId, mode, libraryItems }: { pluginId: string; mode: 
   const [savingAccess, setSavingAccess] = useState(false);
   const [accessError, setAccessError] = useState<string | null>(null);
   const back = mode === "admin" ? { href: getPluginsRoute(orgSlug), label: "Plugins" } : { href: getLibraryRoute(orgSlug), label: "My Library" };
-  // Feature intros (flag `featureIntros`): on Manage, a banner while nobody besides its owner can use this plugin.
-  const accessIntro = useFeatureIntro("plugins.access", mode === "admin" && plugin.data && access.data && orgContext ? {
+  // Feature intros (flag `featureIntros`): on Manage, a banner while nobody besides its owner can use this plugin,
+  // directly or through a collection it's in.
+  const introsEnabled = useFeatureIntroRuntime().enabled;
+  const collectionGrants = usePluginCollectionGrants(
+    (plugin.data?.marketplaces ?? []).map((collection) => collection.id),
+    introsEnabled && mode === "admin" && Boolean(plugin.data),
+  );
+  const accessIntro = useFeatureIntro("plugins.access", mode === "admin" && plugin.data && access.data && collectionGrants && orgContext ? {
     // This plugin exists, so the section is set up.
     plugins: 1,
-    sharedBeyondOwner: pluginSharedBeyondOwner(draftFromPluginGrants(access.data), plugin.data.createdByOrgMembershipId),
+    sharedBeyondOwner: pluginSharedBeyondOwnerWithCollections(draftFromPluginGrants(access.data), plugin.data.createdByOrgMembershipId, collectionGrants),
     canEditAccess: plugin.data.createdByOrgMembershipId === orgContext.currentMember.id
       || getOrgAccessFlags(orgContext.currentMember.role, orgContext.currentMember.isOwner, orgContext.currentMember.permissions).canManageAllShared,
   } : null);

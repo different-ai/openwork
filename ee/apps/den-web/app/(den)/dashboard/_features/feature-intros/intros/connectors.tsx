@@ -16,8 +16,8 @@ export type ConnectorsFacts = {
   connectors?: number;
   /** Who added them, when that was one other person (`createdByName`). */
   setUpBy?: string | null;
-  /** Connector page: shared with everyone, a team or anyone besides the viewer. */
-  sharedBeyondYou?: boolean;
+  /** Connector page: shared with everyone, a team or anyone besides whoever added it. Null: unknown. */
+  sharedBeyondCreator?: boolean | null;
   /** Connector page: the viewer may change who can use it (`connections.manage`, or they added it). */
   canEditAccess?: boolean;
 };
@@ -119,7 +119,7 @@ export const connectorsIntros = [
       { when: (ctx) => ctx.facts.canEditAccess === true || ctx.can("canManageConnections"), label: "Choose who can use it", href: "#who-can-use-it" },
       { when: () => true, label: "Choose who can use it", href: "#who-can-use-it", locked: { reason: MANAGE_CONNECTIONS_LOCK } },
     ],
-    // Banner only: a connector nobody but the viewer can use yet. Unknown shows nothing.
-    setupState: (ctx) => (ctx.facts.sharedBeyondYou === false ? "partial" : "done"),
+    // Banner only: a connector nobody but the person who added it can use yet. Unknown shows nothing.
+    setupState: (ctx) => (ctx.facts.sharedBeyondCreator === false ? "partial" : "done"),
   }),
 ];

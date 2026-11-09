@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, type ReactNode } from "react";
+import { useEffect, useId, useRef, type ReactNode } from "react";
 import { useFeatureIntroRuntime } from "./feature-intro-provider";
 import { FeatureIntroBanner, FeatureIntroBox, FeatureIntroFullscreen } from "./feature-intro-views";
 import { getFeatureIntro } from "./intros";
@@ -37,17 +37,19 @@ export function useFeatureIntro(key: FeatureIntroKey, facts: FeatureIntroFacts |
   const ready = Boolean(intro) && facts !== null && facts !== undefined;
   const factsSignature = facts ? JSON.stringify(facts) : null;
   const recorded = useRef(new Set<FeatureIntroKey>());
+  const reporter = useId();
 
   useEffect(() => {
     if (!intro) return;
     return registerActive(key);
   }, [intro, key, registerActive]);
 
+  // Facts count only while this gate is mounted and loaded; they are withdrawn on unmount or reload.
   useEffect(() => {
     if (!ready || !facts) return;
-    reportFacts(key, facts);
+    return reportFacts(reporter, key, facts);
     // factsSignature stands in for `facts` so a new object with the same values doesn't re-report.
-  }, [ready, key, factsSignature, reportFacts]);
+  }, [ready, reporter, key, factsSignature, reportFacts]);
 
   const ctx = ready && facts ? contextFor(key, facts) : null;
   const parent = intro?.parent ? getFeatureIntro(intro.parent) : null;

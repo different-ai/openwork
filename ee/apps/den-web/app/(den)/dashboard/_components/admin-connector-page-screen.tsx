@@ -16,7 +16,7 @@ import { ChatButton, WhatYourAiCanDo } from "./connector-page-screen";
 import { GOOGLE_WORKSPACE_QUICK_ADD_ID, isNativeProviderCatalogId, MICROSOFT_365_QUICK_ADD_ID } from "./connector-catalog";
 import { useMemberSignIn } from "./connector-setup";
 import { ConnectorSettingsForm } from "./connector-settings";
-import { connectorSharedBeyondViewer, useConnectorsIntroFacts } from "./connectors-intro-facts";
+import { connectorSharedBeyondCreator, useConnectorsIntroFacts } from "./connectors-intro-facts";
 import { useDenToast } from "./den-toast";
 import { ItemHeader, ItemPage, SectionTitle } from "./item-header";
 import { ConfirmDialog, DetailRows, ItemMenu, removeEntry, ItemPanel, LinkButton } from "./item-list";
@@ -175,13 +175,13 @@ export function AdminConnectorPageScreen({ connection, confirmRemove = false }: 
     ? { orgWide: connection.access.orgWide, memberIds: connection.access.memberIds, teamIds: connection.access.teamIds }
     : { orgWide: false, memberIds: [], teamIds: [] };
   const addedBy = connection.createdByName?.trim();
-  // Feature intros (flag `featureIntros`): a banner while nobody besides the viewer can use this connector.
+  // Feature intros (flag `featureIntros`): a banner while nobody besides whoever added it can use this connector.
   const connectorsFacts = useConnectorsIntroFacts(useFeatureIntroRuntime().enabled);
   const accessIntro = useFeatureIntro("connectors.access", connectorsFacts ? {
     ...connectorsFacts,
     // This connector exists, so the section is set up even when it isn't in the manageable list.
     connectors: Math.max(1, connectorsFacts.connectors ?? 0),
-    sharedBeyondYou: connectorSharedBeyondViewer(connection, viewerId),
+    sharedBeyondCreator: connectorSharedBeyondCreator(connection, viewerId),
     canEditAccess: memberAccess?.canManageConnections === true || connection.createdByYou === true,
   } : null);
 

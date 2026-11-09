@@ -93,8 +93,17 @@ export type WorkbotModelTest = z.infer<typeof workbotModelTestSchema>
 export const workbotReadinessSchema = z.object({
   /** Workbot’s selected default requires the organization’s AI Gateway; managed Luna needs no custom provider. */
   gatewayRequired: z.boolean(),
-  /** The organization has at least one active AI Gateway provider. Checked only when gatewayRequired is true. */
+  /**
+   * The organization has at least one active AI Gateway provider. Checked only when gatewayRequired or
+   * organizationGatewayRequired is true.
+   */
   hasGatewayProvider: z.boolean(),
+  /**
+   * The same question for the workspace rather than the caller: whether Workbot needs a custom provider for
+   * members in general, ignoring the caller's own allowance or team policy. Setup screens use it so one
+   * admin's own entitlement doesn't decide what the workspace has set up. Absent from older servers.
+   */
+  organizationGatewayRequired: z.boolean().optional(),
 })
 export type WorkbotReadiness = z.infer<typeof workbotReadinessSchema>
 

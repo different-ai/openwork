@@ -99,11 +99,22 @@ test("API keys: full screen with none, nothing while loading or once one exists"
 test("collections: built-in one is not the organization's own", () => {
   assert.equal(isBuiltInCollection({ name: "OpenWork Marketplace", logoUrl: "/openwork-mark.svg" }), true);
   assert.equal(isBuiltInCollection({ name: "OpenWork Marketplace", logoUrl: null }), false);
-  assert.equal(collectionsIntroFacts(undefined), null);
+  assert.equal(collectionsIntroFacts(undefined, true), null);
   assert.deepEqual(
-    collectionsIntroFacts([{ name: "OpenWork Marketplace", logoUrl: "/openwork-mark.svg" }, { name: "Sales", logoUrl: null }]),
+    collectionsIntroFacts([{ name: "OpenWork Marketplace", logoUrl: "/openwork-mark.svg" }, { name: "Sales", logoUrl: null }], true),
     { collections: 2, ownCollections: 1 },
   );
+});
+
+test("collections: someone who only sees collections shared with them never gets the not-set-up intro", () => {
+  const list = intro("collections");
+  const builtInOnly = [{ name: "OpenWork Marketplace", logoUrl: "/openwork-mark.svg" }];
+  // A teammate's collections are hidden from them, so an empty or built-in-only list proves nothing.
+  assert.equal(sizeFor(list, collectionsIntroFacts([], false) ?? {}), null);
+  assert.equal(sizeFor(list, collectionsIntroFacts(builtInOnly, false) ?? {}), null);
+  // With `sharing.manage_all` the list is the whole organization.
+  assert.equal(sizeFor(list, collectionsIntroFacts([], true) ?? {}), "fullscreen");
+  assert.equal(sizeFor(list, collectionsIntroFacts(builtInOnly, true) ?? {}), "banner");
 });
 
 test("collections: full screen with none, banner with only the built-in one, box on an empty collection", () => {

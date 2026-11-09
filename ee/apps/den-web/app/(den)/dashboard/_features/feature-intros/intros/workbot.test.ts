@@ -52,6 +52,16 @@ test("facts come from the saved model and the Workbot readiness check", () => {
   );
   // Included models: no provider needed.
   assert.deepEqual(workbotIntroFacts({ deployed: true, settings: { model: null }, readiness: { gatewayRequired: false, hasGatewayProvider: false } }), { modelChosen: false, needsProvider: false });
+  // Admin B's own free allowance is blocked by a team policy, but the workspace's members don't need a provider.
+  assert.deepEqual(
+    workbotIntroFacts({ deployed: true, settings: { model: null }, readiness: { gatewayRequired: true, hasGatewayProvider: false, organizationGatewayRequired: false } }),
+    { modelChosen: false, needsProvider: false },
+  );
+  // And the other way round: this admin is fine, the workspace still needs a provider.
+  assert.deepEqual(
+    workbotIntroFacts({ deployed: true, settings: { model: null }, readiness: { gatewayRequired: false, hasGatewayProvider: false, organizationGatewayRequired: true } }),
+    { modelChosen: false, needsProvider: true },
+  );
   // Workbot not deployed here: never replaces the page, and needs no readiness check.
   assert.deepEqual(workbotIntroFacts({ deployed: false, settings: { model: null }, readiness: undefined }), { modelChosen: false, needsProvider: false });
 });

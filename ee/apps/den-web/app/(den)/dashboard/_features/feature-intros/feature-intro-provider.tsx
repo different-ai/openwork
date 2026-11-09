@@ -6,7 +6,7 @@ import { getOrgAccessFlags, orgFeatureEnabled } from "../../../_lib/den-org";
 import { useOrgDashboard } from "../../_providers/org-dashboard-provider";
 import { useFeatureIntroEvent, useFeatureIntroStates } from "./feature-intro-data";
 import { FEATURE_INTROS, getFeatureIntro } from "./intros";
-import { introStateFor, rootIntroKey, type FeatureIntroKnownSetup } from "./model";
+import { introStateFor, mergeReportedFacts, rootIntroKey, type FeatureIntroFactsReport, type FeatureIntroKnownSetup } from "./model";
 import type { FeatureIntro, FeatureIntroContext, FeatureIntroFacts, FeatureIntroKey } from "./types";
 
 type FeatureIntroRuntime = {
@@ -21,7 +21,11 @@ type FeatureIntroRuntime = {
   contextFor: (key: FeatureIntroKey, facts?: FeatureIntroFacts) => FeatureIntroContext | null;
   /** Setup from reported facts, else the last one seen on this browser, else "unknown". */
   setupFor: (key: FeatureIntroKey) => FeatureIntroKnownSetup;
-  reportFacts: (key: FeatureIntroKey, facts: FeatureIntroFacts) => void;
+  /**
+   * A mounted gate's current facts, under its own `reporter` id. Call the returned
+   * function to withdraw them (unmount, or facts back to loading).
+   */
+  reportFacts: (reporter: string, key: FeatureIntroKey, facts: FeatureIntroFacts) => () => void;
   /** Intros mounted on the current page, so `?` can open the most specific one. */
   activeKeys: readonly FeatureIntroKey[];
   registerActive: (key: FeatureIntroKey) => () => void;
@@ -35,20 +39,25 @@ const disabledRuntime: FeatureIntroRuntime = {
   record: () => undefined,
   contextFor: () => null,
   setupFor: () => "unknown",
-  reportFacts: () => undefined,
+  reportFacts: () => () => undefined,
   activeKeys: [],
   registerActive: () => () => undefined,
 };
 
 const FeatureIntroRuntimeContext = createContext<FeatureIntroRuntime>(disabledRuntime);
 
-function setupCacheKey(orgId: string): string {
-  return `den:feature-intro-setup:${orgId}`;
+/**
+ * Per organization and member: what one person can see (and has set up) is not what a teammate
+ * signed in on the same browser can. v2 drops v1 caches, which were shared and could hold tab
+ * states guessed from other tabs' facts.
+ */
+function setupCacheKey(scope: string): string {
+  return `den:feature-intro-setup:v2:${scope}`;
 }
 
-function readSetupCache(orgId: string): Record<string, FeatureIntroKnownSetup> {
+function readSetupCache(scope: string): Record<string, FeatureIntroKnownSetup> {
   try {
-    const raw = window.localStorage.getItem(setupCacheKey(orgId));
+    const raw = window.localStorage.getItem(setupCacheKey(scope));
     const parsed: unknown = raw ? JSON.parse(raw) : null;
     if (!parsed || typeof parsed !== "object") return {};
     const result: Record<string, FeatureIntroKnownSetup> = {};
@@ -61,39 +70,52 @@ function readSetupCache(orgId: string): Record<string, FeatureIntroKnownSetup> {
   }
 }
 
-function writeSetupCache(orgId: string, value: Record<string, FeatureIntroKnownSetup>) {
+function writeSetupCache(scope: string, value: Record<string, FeatureIntroKnownSetup>) {
   try {
-    window.localStorage.setItem(setupCacheKey(orgId), JSON.stringify(value));
+    window.localStorage.setItem(setupCacheKey(scope), JSON.stringify(value));
   } catch {
     // Storage full or blocked: the cache only saves a round trip to the page.
   }
-}
-
-function sameFacts(a: FeatureIntroFacts | undefined, b: FeatureIntroFacts): boolean {
-  if (!a) return false;
-  const keys = new Set([...Object.keys(a), ...Object.keys(b)]);
-  for (const key of keys) if (a[key] !== b[key]) return false;
-  return true;
 }
 
 /** Mounted in the dashboard shell. Renders its children unchanged; gated on the `featureIntros` flag. */
 export function FeatureIntroProvider({ children }: { children: ReactNode }) {
   const { orgContext, activeOrg } = useOrgDashboard();
   const orgId = orgContext?.organization.id ?? null;
+  const memberId = orgContext?.currentMember.id ?? null;
+  const cacheScope = orgId && memberId ? `${orgId}:${memberId}` : null;
   const enabled = Boolean(orgContext && orgId) && orgFeatureEnabled(orgContext, "featureIntros");
   const states = useFeatureIntroStates(orgId, enabled);
   const event = useFeatureIntroEvent(orgId);
   const recordEvent = event.mutate;
-  // Facts per section root ("ai-gateway"), merged from every gate on the page.
-  const [factsByRoot, setFactsByRoot] = useState<Record<string, FeatureIntroFacts>>({});
-  const [setupCache, setSetupCache] = useState<{ orgId: string | null; value: Record<string, FeatureIntroKnownSetup> }>({ orgId: null, value: {} });
+  // Facts from the gates mounted now, by gate. Only these count: facts from a page left
+  // earlier (e.g. AI Gateway before its first provider) would otherwise outlive setup.
+  const [reports, setReports] = useState<ReadonlyMap<string, FeatureIntroFactsReport>>(() => new Map());
+  const [setupCache, setSetupCache] = useState<{ scope: string | null; value: Record<string, FeatureIntroKnownSetup> }>({ scope: null, value: {} });
   const [activeKeys, setActiveKeys] = useState<FeatureIntroKey[]>([]);
 
   useEffect(() => {
-    if (!enabled || !orgId) return;
-    setSetupCache({ orgId, value: readSetupCache(orgId) });
-    setFactsByRoot({});
-  }, [enabled, orgId]);
+    if (!enabled || !cacheScope) return;
+    setSetupCache({ scope: cacheScope, value: readSetupCache(cacheScope) });
+  }, [enabled, cacheScope]);
+
+  // Facts per section root ("ai-gateway"), merged from the gates mounted for this organization.
+  const factsByRoot = useMemo(() => {
+    const roots = new Set([...reports.values()].map((report) => rootIntroKey(report.key)));
+    const result: Record<string, FeatureIntroFacts> = {};
+    for (const root of roots) {
+      const merged = mergeReportedFacts(reports.values(), root, orgId);
+      if (merged) result[root] = merged;
+    }
+    return result;
+  }, [reports, orgId]);
+
+  // Intros whose own gate is mounted now: only their setup can be read from facts. A tab's state
+  // from facts other gates reported (e.g. Limits while only Overview is on screen) would be a guess.
+  const reportedKeys = useMemo(
+    () => new Set([...reports.values()].filter((report) => report.orgId === orgId).map((report) => report.key)),
+    [reports, orgId],
+  );
 
   const access = useMemo(
     () => getOrgAccessFlags(
@@ -127,29 +149,32 @@ export function FeatureIntroProvider({ children }: { children: ReactNode }) {
     const intro = getFeatureIntro(key);
     if (!intro || !enabled) return "unknown";
     if (intro.helpOnly) return "done";
-    const facts = factsByRoot[rootIntroKey(key)];
-    if (facts) {
+    if (reportedKeys.has(key)) {
       const ctx = contextFor(key);
       if (ctx) return intro.setupState(ctx);
     }
-    return setupCache.orgId === orgId ? setupCache.value[key] ?? "unknown" : "unknown";
-  }, [enabled, factsByRoot, contextFor, setupCache, orgId]);
+    return setupCache.scope === cacheScope ? setupCache.value[key] ?? "unknown" : "unknown";
+  }, [enabled, reportedKeys, contextFor, setupCache, cacheScope]);
 
-  const reportFacts = useCallback((key: FeatureIntroKey, facts: FeatureIntroFacts) => {
-    const root = rootIntroKey(key);
-    setFactsByRoot((current) => {
-      const merged = { ...current[root], ...facts };
-      return sameFacts(current[root], merged) ? current : { ...current, [root]: merged };
+  const reportFacts = useCallback((reporter: string, key: FeatureIntroKey, facts: FeatureIntroFacts) => {
+    if (!orgId) return () => undefined;
+    const report: FeatureIntroFactsReport = { orgId, key, facts };
+    setReports((current) => new Map(current).set(reporter, report));
+    return () => setReports((current) => {
+      if (current.get(reporter) !== report) return current;
+      const next = new Map(current);
+      next.delete(reporter);
+      return next;
     });
-  }, []);
+  }, [orgId]);
 
-  // Remember each section's setup on this browser so sidebar dots stay quiet for set-up features.
+  // Remember each page's setup on this browser for this member, so dots stay quiet for set-up features.
   useEffect(() => {
-    if (!enabled || !orgId || setupCache.orgId !== orgId) return;
+    if (!enabled || !cacheScope || setupCache.scope !== cacheScope) return;
     const next = { ...setupCache.value };
     let changed = false;
     for (const intro of FEATURE_INTROS) {
-      if (!factsByRoot[rootIntroKey(intro.key)]) continue;
+      if (!reportedKeys.has(intro.key)) continue;
       const state = setupFor(intro.key);
       if (state !== "unknown" && next[intro.key] !== state) {
         next[intro.key] = state;
@@ -157,9 +182,9 @@ export function FeatureIntroProvider({ children }: { children: ReactNode }) {
       }
     }
     if (!changed) return;
-    writeSetupCache(orgId, next);
-    setSetupCache({ orgId, value: next });
-  }, [enabled, orgId, factsByRoot, setupCache, setupFor]);
+    writeSetupCache(cacheScope, next);
+    setSetupCache({ scope: cacheScope, value: next });
+  }, [enabled, cacheScope, reportedKeys, setupCache, setupFor]);
 
   const stateList = states.data;
   const stateFor = useCallback((key: FeatureIntroKey) => {

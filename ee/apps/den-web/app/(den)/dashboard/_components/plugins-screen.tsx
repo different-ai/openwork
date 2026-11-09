@@ -19,7 +19,7 @@ import { DashboardPageTemplate } from "../../_components/ui/dashboard-page-templ
 import { DenInput } from "../../_components/ui/input";
 import { buttonVariants, DenButton } from "../../_components/ui/button";
 import { DenNotice } from "../../_components/ui/notice";
-import { getNewPluginRoute, getPluginRoute } from "../../_lib/den-org";
+import { getNewPluginRoute, getOrgAccessFlags, getPluginRoute } from "../../_lib/den-org";
 import { useOrgDashboard } from "../_providers/org-dashboard-provider";
 import { FeatureIntroGate, useFeatureIntroUnseen, type FeatureIntroKey } from "../_features/feature-intros";
 import { PluginSourcesIntro } from "./plugin-sources-intro";
@@ -74,9 +74,11 @@ export function PluginsScreen() {
   const searchParams = useSearchParams();
   const router = useRouter();
   const pathname = usePathname();
-  const { orgSlug } = useOrgDashboard();
-  const { data: plugins = [], isLoading, error } = usePlugins();
-  const { data: connections = [], isLoading: integrationsLoading, error: integrationsError } = useIntegrations();
+  const { orgSlug, orgContext } = useOrgDashboard();
+  const { data: pluginsData, isLoading, error } = usePlugins();
+  const { data: connectionsData, isLoading: integrationsLoading, error: integrationsError } = useIntegrations();
+  const plugins = pluginsData ?? [];
+  const connections = connectionsData ?? [];
   const hasAnyIntegration = connections.length > 0;
   const viewParam = parsePluginView(searchParams.get("view"));
   const [activeView, setActiveViewState] = useState<PluginView>(viewParam ?? "plugins");
@@ -193,7 +195,15 @@ export function PluginsScreen() {
 
   const searchPlaceholder = SEARCH_PLACEHOLDERS[activeView];
   // Feature intros (flag `featureIntros`): null until both lists are known, so nothing flashes while loading.
-  const introFacts = isLoading || integrationsLoading || error || integrationsError ? null : pluginDirectoryIntroFacts(plugins, connections);
+  // Data, not isLoading: a paused or not-yet-enabled query has no data and isn't loading either.
+  const seesAllPlugins = getOrgAccessFlags(
+    orgContext?.currentMember.role ?? "member",
+    orgContext?.currentMember.isOwner ?? false,
+    orgContext?.currentMember.permissions,
+  ).canManageAllShared;
+  const introFacts = !pluginsData || !connectionsData || error || integrationsError
+    ? null
+    : pluginDirectoryIntroFacts(pluginsData, connectionsData, seesAllPlugins);
 
   const catalog = isLoading || integrationsLoading ? (
     <div className="rounded-[28px] border border-gray-200 bg-white px-6 py-10 text-[15px] text-gray-500">

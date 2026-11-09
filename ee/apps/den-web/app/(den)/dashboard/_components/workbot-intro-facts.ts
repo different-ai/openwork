@@ -21,7 +21,9 @@ export function workbotIntroFacts(input: {
   const modelChosen = input.settings.model !== null;
   if (!input.deployed) return { modelChosen, needsProvider: false };
   if (!input.readiness) return null;
-  return { modelChosen, needsProvider: input.readiness.gatewayRequired && !input.readiness.hasGatewayProvider };
+  // The workspace's answer, not this admin's own allowance or team policy (older servers: the caller's).
+  const gatewayRequired = input.readiness.organizationGatewayRequired ?? input.readiness.gatewayRequired;
+  return { modelChosen, needsProvider: gatewayRequired && !input.readiness.hasGatewayProvider };
 }
 
 /** Runs the readiness query only while `enabled` (the `featureIntros` flag) and Workbot is deployed. */
