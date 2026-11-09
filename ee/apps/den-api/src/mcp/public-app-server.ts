@@ -11,8 +11,8 @@ import { appSiteResponse, wantsAppSite } from "./app-site.js"
 import { preflightMcpJsonRpcRequest } from "./json-rpc-preflight.js"
 import { DEN_MCP_READ_SCOPE } from "./scopes.js"
 
-/** Where an App marked public is served. It needs no sign-in, unlike every /mcp/agent path. */
-export const PUBLIC_MCP_APP_ROUTE = "/mcp/public/apps/:appId"
+/** Where an App marked public is served, by its App id or its friendly name. It needs no sign-in, unlike every /mcp/agent path. */
+export const PUBLIC_MCP_APP_ROUTE = "/mcp/public/apps/:appIdOrName"
 
 /** MCP requests to a public App are a few hundred bytes; anything far larger is refused unread. */
 const MAX_REQUEST_BYTES = 64 * 1024
@@ -55,7 +55,7 @@ export function registerPublicMcpAppRoutes<T extends { Variables: RequestIdVaria
       const request = c.req.raw
       // A browser gets the App as a page when its author made it a site.
       if (wantsAppSite(request)) {
-        const page = await appSiteResponse({ appId: c.req.param("appId"), publicOnly: true })
+        const page = await appSiteResponse({ appIdOrName: c.req.param("appIdOrName"), publicOnly: true })
         if (page) return page
       }
       if (c.req.method !== "POST") return new Response(null, { status: 405, headers: { allow: "POST" } })
@@ -64,10 +64,11 @@ export function registerPublicMcpAppRoutes<T extends { Variables: RequestIdVaria
       const preflight = await preflightMcpJsonRpcRequest(request, typeof requestIdValue === "string" ? requestIdValue : "unknown")
       if (preflight) return preflight
 
-      const resource = await loadPublicMcpApp({ appId: c.req.param("appId") })
+      const appIdOrName = c.req.param("appIdOrName")
+      const resource = await loadPublicMcpApp({ appIdOrName })
       if (!resource) return jsonRpcError(await requestId(request), UNAVAILABLE, "public_app_unavailable")
 
-      const served = { ...resource.app, serverPath: mcpAppPublicPath(resource.app.appId), tools: [] }
+      const served = { ...resource.app, serverPath: mcpAppPublicPath(appIdOrName), tools: [] }
       const server = createMcpAppServer({
         definition: { app: served, tools: [] },
         scopes: PUBLIC_READ_SCOPES,

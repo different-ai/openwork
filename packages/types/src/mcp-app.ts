@@ -22,6 +22,9 @@ const descriptionSchema = z.string().trim().max(2_000)
 const textFallbackSchema = z.string().trim().min(1).max(8_000)
 const byteLength = (value: string) => new TextEncoder().encode(value).byteLength
 
+/** A public App's friendly URL name: 3 to 48 lowercase letters, digits and hyphens. It can never look like an App id. */
+export const mcpAppPublicNameSchema = z.string().regex(/^[a-z0-9][a-z0-9-]{1,46}[a-z0-9]$/u)
+
 export const mcpAppSourceSchema = z.object({
   reactSource: z.string().trim().min(1).max(200_000).refine((value) => byteLength(value) <= 200_000),
   cssSource: z.string().trim().max(100_000).refine((value) => byteLength(value) <= 100_000),
@@ -84,6 +87,8 @@ export const mcpAppAuthoringSchema = mcpAppSourceSchema.extend({
   public: z.boolean().optional(),
   /** The App is written to also work as a web page: a browser opening its MCP URL shows it full page. */
   site: z.boolean().optional(),
+  /** Friendly name for the public URL, /mcp/public/apps/<name>, unique across the deployment. */
+  publicName: mcpAppPublicNameSchema.optional(),
 })
 
 /** Correlates preparation and publication in chat; it grants no access or validation. */
@@ -197,8 +202,8 @@ export function mcpAppServerPath(appId: string): string {
 }
 
 /** Where an App marked public is served to anyone, outside the /mcp/agent OAuth resource. */
-export function mcpAppPublicPath(appId: string): string {
-  return `/mcp/public/apps/${mcpAppIdSchema.parse(appId)}`
+export function mcpAppPublicPath(appIdOrName: string): string {
+  return `/mcp/public/apps/${z.union([mcpAppIdSchema, mcpAppPublicNameSchema]).parse(appIdOrName)}`
 }
 
 export function mcpAppResourceUri(appId: string, revisionId: string): string {

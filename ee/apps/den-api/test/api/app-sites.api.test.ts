@@ -49,8 +49,9 @@ test("a browser gets a page at an App made a site, and the page holds nothing ab
 })
 
 test("a public site opens at the public URL too", async () => {
-  const appId = await createApp("Coffee with the team", { site: true, public: true })
+  const appId = await createApp("Coffee with the team", { site: true, public: true, publicName: "coffee-site" })
   await isPage(publicPath(appId), "public", "public URL")
+  await isPage(publicPath("coffee-site"), "public", "friendly public URL")
   await isPage(memberPath(appId), "member", "signed-in URL")
 
   await setFeature("appSites", false)

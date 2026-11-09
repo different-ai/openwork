@@ -490,7 +490,7 @@ export function registerExternalConnectionProxyRoutes<T extends { Variables: Req
     // a site. The page holds nothing about the App: it signs the visitor in
     // with their OpenWork session and then loads the App through this route.
     if (wantsAppSite(c.req.raw) && isMcpAppServerId(c.req.param("connectionId"))) {
-      const page = await appSiteResponse({ appId: c.req.param("connectionId"), publicOnly: false })
+      const page = await appSiteResponse({ appIdOrName: c.req.param("connectionId"), publicOnly: false })
       if (page) return page
     }
     const principal = await verifyMcpRequest(

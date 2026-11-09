@@ -184,8 +184,8 @@ function sitePage(mode: "public" | "member"): string {
  * not made a site, so the caller answers as it did before. `publicOnly` is the
  * public URL, where only an App that opens without sign-in gets a page.
  */
-export async function appSiteResponse(input: { appId: string; publicOnly: boolean }): Promise<Response | null> {
-  const site = await loadMcpAppSite({ appId: input.appId })
+export async function appSiteResponse(input: { appIdOrName: string; publicOnly: boolean }): Promise<Response | null> {
+  const site = await loadMcpAppSite({ appIdOrName: input.appIdOrName })
   if (!site || (input.publicOnly && !site.public)) return null
   return new Response(sitePage(input.publicOnly ? "public" : "member"), {
     headers: {
