@@ -38,6 +38,7 @@ import { denTypeIdPrefixes, normalizeDenTypeId } from "@openwork-ee/utils/typeid
 import { isAuthoredMcpAppVersion } from "@openwork/types/mcp-app"
 import { z } from "zod"
 import { latestConfigObjectVersions } from "../../config-object-versions.js"
+import { AGENT_TEMPLATE_PATH } from "../../workbot-proactive/template.js"
 import { requirePluginArchCapability } from "../../routes/org/plugin-system/access.js"
 import { createConfigObject, createConfigObjectVersion, setConfigObjectLifecycle } from "../../routes/org/plugin-system/store.js"
 import { ConfigApplyItemError, defineConfigArea, type ConfigAreaContext, type ConfigItem } from "../area.js"
@@ -98,6 +99,17 @@ const applySpecSchema = z.object({
 
 type Row = Awaited<ReturnType<typeof loadConfigObjects>>[number]
 
+/**
+ * The Workbot "Your agent" template (an `agent` object at a fixed path) is
+ * carried by `workbot.proactive`, which owns it: this area never exports,
+ * matches, creates or deletes it.
+ */
+function isAgentTemplate(type: unknown, path: unknown): boolean {
+  return type === "agent" && path === AGENT_TEMPLATE_PATH
+}
+
+const AGENT_TEMPLATE_SKIP = "the \"Your agent\" template is carried by Members' agents (workbot.proactive), not by this area"
+
 function contentOf(spec: ConfigItem["spec"]): { rawSourceText: string | null; payload: unknown } {
   const content = isJsonObject(spec.content) ? spec.content : {}
   return {
@@ -108,7 +120,7 @@ function contentOf(spec: ConfigItem["spec"]): { rawSourceText: string | null; pa
 
 async function readSkills(ctx: ConfigAreaContext, ids: readonly string[] | null): Promise<ConfigItem[]> {
   const organizationId = normalizeDenTypeId("organization", ctx.organizationId)
-  let rows: Row[] = await loadConfigObjects(ctx.db, organizationId, ids)
+  let rows: Row[] = (await loadConfigObjects(ctx.db, organizationId, ids)).filter((row) => !isAgentTemplate(row.objectType, row.currentRelativePath))
   if (rows.length === 0) return []
   const latest = await latestConfigObjectVersions(rows.map((row) => row.id), organizationId)
   // Authored MCP Apps are compiled through create_app / update_app, never through this area.
@@ -218,6 +230,22 @@ export const pluginsSkillsArea = defineConfigArea({
     ? `"${item.name}" comes from ${typeof item.spec.source === "string" ? `the source "${item.spec.source}"` : "a source"}; remove it from the repository instead.`
     : null,
 
+  async preflight(_ctx, op) {
+    if (op.kind === "create") {
+      if (isAgentTemplate(op.item.spec.type, op.item.spec.sourcePath)) return { skip: AGENT_TEMPLATE_SKIP }
+      if (op.item.spec.managedBy === "source") {
+        const source = typeof op.item.spec.source === "string" ? `the source "${op.item.spec.source}"` : "its source"
+        return { skip: `comes from ${source} (Plugins › Sources): the source's sync creates it once that source is set up here` }
+      }
+      return null
+    }
+    if (op.kind === "update" && op.previous.spec.managedBy === "source" && (touches(op.changes, "content") || touches(op.changes, "archived"))) {
+      const source = typeof op.previous.spec.source === "string" ? `the source "${op.previous.spec.source}"` : "its source"
+      return { block: `"${op.previous.name}" comes from ${source}: its content and archived state change in the repository, not by import. Skip this item (or keep its content as it is here).` }
+    }
+    return null
+  },
+
   irreversible: (op) => {
     if (op.kind === "update" && touches(op.changes, "content")) {
       return [`A new version of "${op.previous.name}" is saved; reverting adds another version, the history keeps this one.`]
@@ -260,6 +288,9 @@ export const pluginsSkillsArea = defineConfigArea({
 
       if (op.kind === "create") {
         if (spec.managedBy === "source") throw sourceManagedFailure(op.item.name, spec.source, "managedBy")
+        if (isAgentTemplate(spec.type, spec.sourcePath)) {
+          throw new ConfigApplyItemError({ code: "agent_template", message: `"${op.item.name}" is the Workbot "Your agent" template: import it with Members' agents (workbot.proactive).`, field: "sourcePath", status: 409 })
+        }
         await requirePluginArchCapability(actor, "config_object.create")
         const created = await log.run({ action: "create", target: "object", detail: `${spec.type} "${op.item.name}"` }, () => createConfigObject({
           context: actor,

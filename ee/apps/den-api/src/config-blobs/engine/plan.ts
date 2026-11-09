@@ -28,7 +28,7 @@ import {
   findConfigShapeProblem,
   parseConfigRef,
 } from "@openwork/types/den/config-blobs"
-import type { ConfigApplyOp, ConfigArea, ConfigAreaContext, ConfigItem } from "../area.js"
+import type { ConfigApplyOp, ConfigArea, ConfigAreaContext, ConfigItem, ConfigPreflightResult } from "../area.js"
 import { canonicalJsonPlain, itemRev } from "./canonical.js"
 import { classifyMatched, diffSpecs, type EngineFieldChange } from "./diff.js"
 import { blobItemAsConfigItem, matchArea, type ItemMatch } from "./match.js"
@@ -85,6 +85,18 @@ export type BuildPlanInput = {
    * every area is visible.
    */
   visibleAreas?: ReadonlySet<ConfigAreaKey>
+  /**
+   * The areas' `preflight` verdicts on the ops of an earlier build of this
+   * same plan, keyed by `preflightKey(area, ref)` (see `runPreflight`):
+   * `skip` plans the item as skipped (references to it resolve like an
+   * admin's skip), `block` adds the `blocked` flag, warnings become reasons.
+   */
+  preflight?: ReadonlyMap<string, ConfigPreflightResult>
+}
+
+/** Key of a plan item in `BuildPlanInput.preflight`. */
+export function preflightKey(area: ConfigAreaKey, ref: string): string {
+  return skippedKey(area, ref)
 }
 
 export type ExecutionItem = {
@@ -114,7 +126,7 @@ export type ExecutionOp = {
   name: string
   /** Updates: the plan's field changes (adapters write only these). Empty for creates and deletes. */
   changes: ConfigFieldChange[]
-  /** Updates: secret placeholders whose decision writes the credential (value, env, or unset of a stored one). */
+  /** Updates: spec paths (`field`) of the secret placeholders whose decision writes the credential (value, env, or unset of a stored one). */
   secretPaths: string[]
   /** `itemRev` of the target the op was planned against (updates, deletes): apply re-reads the item and compares. */
   targetRev?: string
@@ -297,6 +309,9 @@ export function buildPlan(input: BuildPlanInput): BuildPlanResult {
   // Skips: admin exclusions and unsupported areas.
   const skipped = new Set<string>()
   for (const skip of decisions.skips) skipped.add(skippedKey(skip.area, skip.ref))
+  const adminSkipped = new Set(skipped)
+  const preflight = input.preflight ?? new Map<string, ConfigPreflightResult>()
+  for (const [key, verdict] of preflight) if (verdict.skip) skipped.add(key)
   const blobMatches = new Map<ConfigAreaKey, readonly ItemMatch[]>()
   const writable = new Set<ConfigAreaKey>()
   for (const state of states) {
@@ -332,9 +347,12 @@ export function buildPlan(input: BuildPlanInput): BuildPlanResult {
         const protection = state.area.protectedFromDelete
           ? input.ctx ? state.area.protectedFromDelete(target, input.ctx) : "protection could not be checked"
           : null
+        const verdict = preflight.get(preflightKey(state.area.key, item.ref))
         if (protection) {
           item.reasons = [`cannot be deleted: ${protection}`]
           issues.push({ level: "warning", message: `${state.area.label} "${target.name}" cannot be deleted: ${protection}`, area: state.area.key })
+        } else if (verdict?.skip) {
+          item.reasons = [`not deleted: ${verdict.skip}`]
         } else {
           item.op = "delete"
           item.flags.push("destructive")
@@ -342,6 +360,7 @@ export function buildPlan(input: BuildPlanInput): BuildPlanResult {
           deletedIds.add(target.id)
           draft.exec = { area: state.area.key, ref: item.ref, kind: "delete", op: "delete", matchedBy: null, targetId: target.id, refs: [], secrets: [], previous: target, name: target.name, changes: [], secretPaths: [], targetRev: item.targetRev, irreversible: [] }
           setIrreversible(state.area, item, draft.exec)
+          applyVerdict(item, verdict)
         }
       }
       drafts.push(draft)
@@ -430,7 +449,8 @@ export function buildPlan(input: BuildPlanInput): BuildPlanResult {
       if (skipped.has(key)) {
         item.op = "skip"
         item.flags = []
-        item.reasons = [...reasons, "excluded from this import"]
+        const automatic = adminSkipped.has(key) ? undefined : preflight.get(key)?.skip
+        item.reasons = [...reasons, automatic ?? "excluded from this import"]
         continue
       }
 
@@ -515,11 +535,13 @@ export function buildPlan(input: BuildPlanInput): BuildPlanResult {
         const preferredId = blob.id && idPrefix !== null && typeIdPrefix(blob.id) === idPrefix ? blob.id : undefined
         const secretPaths = secrets.secrets
           .filter((secret) => secret.decision === "value" || secret.decision === "env" || (secret.decision === "unset" && secret.targetHasValue))
-          .map((secret) => secret.path)
+          // Spec paths (`credentialSets[id=…].credential`), as adapters compare them with `changes`; never the `$secret` handle.
+          .map((secret) => secret.field)
         draft.exec = match.target
           ? { area: area.key, ref: match.ref, kind: "update", op: item.op, matchedBy: match.matchedBy, targetId: match.target.id, item: execItem, refs, secrets: secrets.execution, previous: match.target, name: blob.name, changes: fields, secretPaths, targetRev: item.targetRev, irreversible: [] }
           : { area: area.key, ref: match.ref, kind: "create", op: "create", matchedBy: match.matchedBy, item: execItem, refs, secrets: secrets.execution, name: blob.name, changes: [], secretPaths: [], irreversible: [], ...(preferredId ? { preferredId } : {}) }
         setIrreversible(area, item, draft.exec)
+        applyVerdict(item, preflight.get(key))
         draft.uniqueProbe = { id: match.target?.id ?? blobItemAsConfigItem(blob, match.index).id, key: blob.key ?? match.target?.key ?? null, name: blob.name, spec: localized }
       }
     }
@@ -558,6 +580,9 @@ export function buildPlan(input: BuildPlanInput): BuildPlanResult {
       } else {
         draft.exec = { area: PEOPLE_AREA, ref, kind: "create", op: "create", matchedBy: null, item: { name: email, spec }, refs: [], secrets: [], name: email, changes: [], secretPaths: [], irreversible: [] }
         setIrreversible(peopleArea, item, draft.exec)
+        // An invite other items rely on can't just be skipped: a skip verdict blocks it instead.
+        const verdict = preflight.get(preflightKey(PEOPLE_AREA, ref))
+        applyVerdict(item, verdict?.skip ? { ...verdict, block: verdict.block ?? verdict.skip } : verdict)
       }
       inviteDrafts.push(draft)
     }
@@ -643,11 +668,7 @@ export function buildPlan(input: BuildPlanInput): BuildPlanResult {
  */
 function setIrreversible(area: ConfigArea, item: ConfigPlanItem, exec: ExecutionOp): void {
   if (!area.irreversible) return
-  let preview: ConfigApplyOp | null = null
-  if (exec.kind === "delete" && exec.targetId && exec.previous) preview = { kind: "delete", targetId: exec.targetId, previous: exec.previous }
-  else if (exec.kind === "update" && exec.targetId && exec.previous && exec.item) {
-    preview = { kind: "update", targetId: exec.targetId, previous: exec.previous, item: { ...exec.item }, changes: exec.changes, secretPaths: exec.secretPaths }
-  } else if (exec.kind === "create" && exec.item) preview = { kind: "create", item: { ...exec.item } }
+  const preview = previewOp(exec)
   if (!preview) return
   let effects: string[] = []
   try {
@@ -657,6 +678,32 @@ function setIrreversible(area: ConfigArea, item: ConfigPlanItem, exec: Execution
   }
   exec.irreversible = effects
   if (effects.length > 0) item.irreversible = effects
+}
+
+/**
+ * An execution op as the adapter's `apply` would get it, for plan-time
+ * checks (`irreversible`, `preflight`): the blob's spec with `$ref`s and
+ * `$secret`s still unresolved.
+ */
+export function previewOp(exec: ExecutionOp): ConfigApplyOp | null {
+  if (exec.kind === "delete" && exec.targetId && exec.previous) return { kind: "delete", targetId: exec.targetId, previous: exec.previous }
+  if (exec.kind === "update" && exec.targetId && exec.previous && exec.item) {
+    return { kind: "update", targetId: exec.targetId, previous: exec.previous, item: { ...exec.item }, changes: exec.changes, secretPaths: exec.secretPaths }
+  }
+  if (exec.kind === "create" && exec.item) return { kind: "create", item: { ...exec.item } }
+  return null
+}
+
+/** A preflight `block` (the `blocked` flag and its reason) and warnings on a planned write. */
+function applyVerdict(item: ConfigPlanItem, verdict: ConfigPreflightResult | undefined): void {
+  if (!verdict) return
+  const reasons = [...(item.reasons ?? [])]
+  if (verdict.block) {
+    item.flags.push("blocked")
+    reasons.push(verdict.block)
+  }
+  for (const warning of verdict.warnings ?? []) reasons.push(`warning: ${warning}`)
+  if (reasons.length > 0) item.reasons = reasons
 }
 
 /** The TypeID prefix every item shares, or null when they have none in common (or there are none). */

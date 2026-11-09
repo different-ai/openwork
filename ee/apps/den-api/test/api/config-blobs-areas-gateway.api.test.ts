@@ -150,7 +150,8 @@ test("update: keep preserves the stored key, value replaces it", async () => {
 
   const replaced = asSpec(resolveSpec(sourceExport.spec, resolve((path) => path.endsWith(".credential") ? { $secret: path, decision: "value", value: SECRET_2 } : { $secret: path, decision: "unset" })))
   const replaceOp = updateOp(area, afterKeep, { sourceId: sourceIds.providerId, name: sourceExport.name, spec: replaced })
-  assert.deepEqual(replaceOp.secretPaths, [`credentialSets[id=${sourceIds.setId}].credential`])
+  // Sets and groups are compared by name (their ids are instance-specific): the plan's paths name them so.
+  assert.deepEqual(replaceOp.secretPaths, ["credentialSets[id=Shared key].credential"])
   assert.deepEqual(area.irreversible?.(replaceOp), [`The stored key of credential set "Shared key" is replaced; the previous value can't be restored.`])
   const replacedResult = await area.apply(ctx, replaceOp)
   assert.deepEqual(replacedResult.steps, [
@@ -181,7 +182,7 @@ test("a group edit writes that group only; a failing grant rolls the item back a
   const edited = { ...spec, modelGroups: groups.map((group) => group.id === sourceIds.groupId ? { ...group, description: "Luna, and only Luna" } : group) }
   const grantsBefore = await grantRows(sourceIds.providerId)
   const op = updateOp(area, current, { name: current.name, spec: edited })
-  assert.deepEqual(op.changes.map((change) => change.path), [`modelGroups[id=${sourceIds.groupId}].description`])
+  assert.deepEqual(op.changes.map((change) => change.path), ["modelGroups[id=Luna only].description"])
   const result = await area.apply(ctx, op)
   assert.deepEqual(result.steps, [{ action: "update", target: "modelGroups[Luna only]", detail: "description" }])
   assert.deepEqual(await grantRows(sourceIds.providerId), grantsBefore, "grants untouched")

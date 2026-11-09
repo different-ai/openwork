@@ -148,7 +148,7 @@ export const settingsCollectionsArea = defineConfigArea({
   transactional: false,
 
   irreversible: (op) => op.kind === "delete"
-    ? [`The plugins in "${op.previous.name}" are taken out of it (plugins are not in config blobs yet), and access people had through it ends; a restore recreates it empty.`]
+    ? [`The plugins in "${op.previous.name}" are taken out of it, and access people had through it ends; a restore recreates it with a new id, and puts its plugins back only when Plugins is restored too.`]
     : [],
 
   async exportItems(ctx) {

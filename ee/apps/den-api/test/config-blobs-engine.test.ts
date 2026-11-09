@@ -27,7 +27,9 @@ import {
   executePlan,
   interruptReport,
   parseStoredExecution,
+  preflightKey,
   readItemsFor,
+  runPreflight,
   type ApplyRead,
   matchArea,
   rewriteRefs,
@@ -663,6 +665,18 @@ describe("execute", () => {
     assert.deepEqual(update.secretPaths, [], "keep writes no credential")
   })
 
+  test("a new credential value: the update names the secret by its spec path, never by its $secret handle", () => {
+    const store = seed()
+    const areas = makeAreas(store, [])
+    const blob = exportBlob(store, areas, ["ai-gateway.providers"])
+    const { plan, execution } = buildPlan(planInput(store, areas, blob, { secretInputs: [{ path: keepKey.path, decision: "value", value: "sk-new" }] }))
+    assert.equal(item(plan, "ai-gateway.providers", "ipr_A").op, "update")
+    const [update] = execution.ops
+    assert.deepEqual(update?.changes, [])
+    assert.deepEqual(update?.secretPaths, ["credentials.apiKey"])
+    assert.ok(!JSON.stringify(execution).includes("sk-new"), "values never enter the execution plan")
+  })
+
   test("report: names, steps, a ConfigApplyItemError's failure and steps done, not_reached after it, progress after every item", async () => {
     const store = seed()
     const calls: Call[] = []
@@ -1021,5 +1035,83 @@ describe("ordering", () => {
       "delete ai-gateway.providers",
       "delete members.teams",
     ])
+  })
+})
+
+describe("preflight", () => {
+  test("skip, block and warnings from the areas' preflight shape the plan; skipped items never execute", async () => {
+    const store = seed()
+    const seen: string[] = []
+    const areas = makeAreas(store, [], {
+      "members.teams": {
+        preflight: async (_ctx, op) => {
+          if (op.kind !== "create") return null
+          seen.push(op.item.name)
+          if (op.item.name === "Synced") return { skip: "comes from a source here" }
+          if (op.item.name === "Needs setup") return { block: "connect GitHub first", warnings: ["checked"] }
+          if (op.item.name === "Boom") throw new Error("database down")
+          return null
+        },
+      },
+    })
+    const blob: Partial<Record<ConfigAreaKey, ConfigBlobArea>> = {
+      "members.teams": { specVersion: 1, items: [
+        { id: "tem_S", name: "Synced", spec: { description: "", members: [] } },
+        { id: "tem_N", name: "Needs setup", spec: { description: "", members: [] } },
+        { id: "tem_F", name: "Fine", spec: { description: "", members: [] } },
+        { id: "tem_X", name: "Boom", spec: { description: "", members: [] } },
+      ] },
+      "ai-gateway.providers": { specVersion: 1, items: [{ id: "ipr_N", name: "Uses synced", spec: { providerId: "openai", access: { teams: [{ $ref: "members.teams/tem_S", name: "Synced" }] } } }] },
+    }
+    const input = planInput(store, areas, blob)
+    const first = buildPlan(input)
+    assert.equal(first.plan.summary.create, 5)
+    const verdicts = await runPreflight(first.execution, areas, ctx)
+    assert.deepEqual(seen.sort(), ["Boom", "Fine", "Needs setup", "Synced"])
+    assert.deepEqual([...verdicts.keys()].sort(), [preflightKey("members.teams", "tem_N"), preflightKey("members.teams", "tem_S"), preflightKey("members.teams", "tem_X")].sort())
+    const second = buildPlan({ ...input, preflight: verdicts })
+    assert.notEqual(second.plan.planHash, first.plan.planHash)
+
+    const synced = item(second.plan, "members.teams", "tem_S")
+    assert.equal(synced.op, "skip")
+    assert.deepEqual(synced.flags, [])
+    assert.ok(synced.reasons?.includes("comes from a source here"))
+    const blocked = item(second.plan, "members.teams", "tem_N")
+    assert.equal(blocked.op, "create")
+    assert.ok(blocked.flags.includes("blocked"))
+    assert.ok(blocked.reasons?.includes("connect GitHub first") && blocked.reasons.includes("warning: checked"))
+    // A check that throws never blocks: the apply does the real check.
+    const boom = item(second.plan, "members.teams", "tem_X")
+    assert.ok(!boom.flags.includes("blocked") && boom.reasons?.some((reason) => reason.startsWith("warning: ")))
+    // A reference to the skipped item is unresolved, as for an admin's skip.
+    const provider = item(second.plan, "ai-gateway.providers", "ipr_N")
+    assert.ok(provider.flags.includes("ref_unresolved"), JSON.stringify(provider))
+    assert.ok(!second.execution.ops.some((op) => op.ref === "tem_S"))
+    assert.equal(second.plan.summary.skip, 1)
+
+    // The admin skips the blocked item and drops the reference: nothing blocks, the preflight skip stays.
+    const resolved = buildPlan({ ...input, preflight: verdicts, decisions: decisions({
+      skips: [{ area: "members.teams", ref: "tem_N" }],
+      refs: [{ area: "ai-gateway.providers", ref: "ipr_N", path: "access.teams[0]", resolution: { drop: true } }],
+    }) })
+    assert.equal(resolved.plan.summary.blocking, 0, JSON.stringify(resolved.plan.areas))
+    assert.equal(item(resolved.plan, "members.teams", "tem_N").reasons?.at(-1), "excluded from this import")
+    assert.deepEqual(resolved.execution.ops.map((op) => op.ref).sort(), ["ipr_N", "tem_F", "tem_X"])
+  })
+
+  test("preflight on a delete: skip leaves the item untouched, block flags it", async () => {
+    const store = seed()
+    const areas = makeAreas(store, [], {
+      "members.teams": { preflight: async (_ctx, op) => (op.kind === "delete" ? (op.targetId === "tem_A" ? { skip: "still used" } : { block: "check first" }) : null) },
+    })
+    const blob: Partial<Record<ConfigAreaKey, ConfigBlobArea>> = { "members.teams": { specVersion: 1, items: [] } }
+    const input = planInput(store, areas, blob, { mode: "mirror", decisions: decisions({ deletes: [{ area: "members.teams", targetId: "tem_A" }, { area: "members.teams", targetId: "tem_B" }] }) })
+    const first = buildPlan(input)
+    const second = buildPlan({ ...input, preflight: await runPreflight(first.execution, areas, ctx) })
+    assert.equal(item(second.plan, "members.teams", "target:tem_A").op, "untouched")
+    assert.ok(item(second.plan, "members.teams", "target:tem_A").reasons?.[0]?.includes("still used"))
+    assert.equal(item(second.plan, "members.teams", "target:tem_B").op, "delete")
+    assert.ok(item(second.plan, "members.teams", "target:tem_B").flags.includes("blocked"))
+    assert.deepEqual(second.execution.ops.map((op) => op.targetId), ["tem_B"])
   })
 })

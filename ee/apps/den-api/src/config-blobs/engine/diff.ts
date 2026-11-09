@@ -15,6 +15,7 @@ import { canonicalJson, compareStrings, itemRev } from "./canonical.js"
 import {
   type ArrayLayout,
   arrayElementKey,
+  comparableTop,
   elementSchemaPath,
   isInformationalField,
   isOrderedArray,
@@ -31,7 +32,8 @@ export type EngineFieldChange = ConfigFieldChange
 
 export function diffSpecs(layout: ArrayLayout, before: unknown, after: unknown): EngineFieldChange[] {
   const changes: EngineFieldChange[] = []
-  walk(layout, before, after, "", "", changes)
+  const left = comparableTop(layout, before)
+  walk(left.layout, left.value, comparableTop(layout, after).value, "", "", changes)
   return changes
 }
 
@@ -112,7 +114,7 @@ export type MatchedClassification = {
 }
 
 export type ClassifyMatchedInput = {
-  area: Pick<ConfigArea, "orderedArrays" | "arrayKeys" | "informationalFields" | "informationalName" | "cosmeticFields">
+  area: Pick<ConfigArea, "orderedArrays" | "arrayKeys" | "informationalFields" | "comparableSpec" | "informationalName" | "cosmeticFields">
   blob: Pick<ConfigBlobItem, "name" | "key" | "rev" | "spec">
   /** The blob spec with refs rewritten to the target's ids (what would be written). */
   localizedSpec: ConfigSpec

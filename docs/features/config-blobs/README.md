@@ -1,8 +1,8 @@
 # Config blobs (internal name)
 
-- **Feature key (proposed):** `configBlobs`, declared in `packages/features/src/registry.ts`. Cloud and self-hosted, off by default.
+- **Feature key:** `configBlobs`, declared in `packages/features/src/registry.ts`. Cloud and self-hosted, off by default.
 - **Author:** @OmarMcAdam
-- **Status:** being built (phases 0–3, see [plan.md](./plan.md)).
+- **Status:** built behind the flag: export, change requests, plan-time preflight, apply, restore, config tokens, all 25 areas ([inventory.md](./inventory.md)). What remains is in [plan.md](./plan.md#status-2026-11-09).
 - **Turning it off:** hides Settings › Config and answers 404 on `/v1/config-blobs/*`. Change requests already applied stay applied; queued ones wait and resume when it's on again.
 
 ## What it is
@@ -24,7 +24,8 @@ An import never writes straight to the database. It becomes a **change request**
      (admin confirms proposed matches,                           │
       supplies secrets)                                          │
                  └──────────────────────► approve ──► apply queue ──► applied
-                                                                 (snapshot kept for revert)
+                                                         (before-snapshot of the items written,
+                                                          one run report per attempt)
 ```
 
 ## Documents
@@ -38,7 +39,7 @@ An import never writes straight to the database. It becomes a **change request**
 | [change-requests.md](./change-requests.md) | Queue lifecycle, API, config token, UI, apply and revert |
 | [plan.md](./plan.md) | Phased build plan, guard rails, tests, decisions |
 
-## Main decisions proposed
+## Main decisions (as built)
 
 1. **Every item carries its ID and a portable key.** An import tries to keep the source TypeID when that ID is free on the target, so cloud and self-hosted refer to the same item by the same ID. When it can't (for example, cloning an org on the same instance), we record an alias. Re-imports then match exactly, with no guessing. See [format.md](./format.md#identity).
 2. **Match in tiers, and never pick for the user when two items are equally good.** The order is: ID, then alias, then `externalKey`, then a natural key that is unique on both sides. Anything else is a *proposed* match the admin must confirm, Drizzle-style. Same-name collisions are always shown to the admin. See [mapping.md](./mapping.md).
@@ -47,7 +48,9 @@ An import never writes straight to the database. It becomes a **change request**
 5. **Secrets become placeholders.** Credential columns become `$secret` placeholders that say whether a value is set. On import each one is resolved: keep the current value, enter a new one, read it from an environment variable (self-hosted), or leave it unset so the item is created but needs setup.
 6. **Merge by default; deleting is opt-in.** A missing area or item means "leave it alone". Deletes happen only in `mirror` mode, within the blob's scope, and each one is listed for confirmation.
 7. **Applying reuses the existing services, not raw table writes.** Validation, permissions, audit logging and side effects stay the same as in the UI. Each config area is an *adapter* in one registry. A CI check makes every org-scoped table either exported or explicitly excluded.
-8. **Every apply first saves a "before" blob of its scope.** A revert is just another change request made from that blob.
+8. **No single transaction; minimal writes; a report per attempt.** Each item is written through its service, with only the writes its planned changes need. The run stops at the first failure and its report says what was written, where it stopped and what was not reached.
+9. **Every apply first saves a before-snapshot of the items it writes.** "Restore previous config" is just another change request made from it. It restores configuration only: emails sent, sign-ins revoked, credentials replaced or deleted, source syncs and history stay (each plan item lists these before approval). See [change-requests.md](./change-requests.md#apply).
+10. **Known failures surface before approval.** Each area's preflight skips or blocks writes that can't work on the target (no GitHub installation, SSO not ready, a domain not allowed, a source-managed skill…). See [change-requests.md](./change-requests.md#preflight-plan-time).
 
 ## Screens
 

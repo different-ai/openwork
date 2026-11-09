@@ -85,7 +85,9 @@ export type ConfigApplyOp =
       previous: ConfigItem
       /**
        * Field-level changes between `previous` and `item` (from the plan), plus
-       * `secretPaths` whose placeholder carries a new value. Adapters MUST write
+       * `secretPaths`: the spec paths (as in `changes`, e.g.
+       * `credentialSets[id=…].credential`, `requestHeaders[name=X].value`) of
+       * secrets whose placeholder carries a new value. Adapters MUST write
        * only what these name: untouched children, grants and settings are not
        * rewritten. An update with no changes and no secret values is never sent.
        */
@@ -124,6 +126,21 @@ export type ConfigNaturalKey = {
   /** Normalised value, or null when the item has none. Only used when unique on BOTH sides. */
   get: (item: ConfigItem) => string | null
 }
+
+/** What planning knows about an op besides the op itself: the secret decisions (never values). */
+export type ConfigPreflightInfo = {
+  secrets: ReadonlyArray<{ path: string; field: string; decision: "keep" | "env" | "value" | "unset" }>
+}
+
+/**
+ * A plan-time verdict on one op, from the area's `preflight`:
+ * - `skip`: the op can't be applied here and needs nothing from the admin
+ *   (the item is planned as `skip` with this reason, and never executed);
+ * - `block`: the op would fail as things stand; the admin fixes the target
+ *   (then re-plans) or skips the item (`blocked` flag with this reason);
+ * - `warnings`: shown on the plan item, nothing stops.
+ */
+export type ConfigPreflightResult = { skip?: string; block?: string; warnings?: string[] }
 
 export type ConfigSimilarity = (blob: ConfigItem, target: ConfigItem) => { score: number; reasons: string[] }
 
@@ -171,6 +188,14 @@ export type ConfigArea = {
   informationalFields?: string[]
   /** The item's name is derived on the target and never set by import (people): a different name is not a change. */
   informationalName?: boolean
+  /**
+   * The spec as compared, hashed and diffed, when it differs from the spec as
+   * exported. For nested rows whose ids are instance-specific (AI provider
+   * model groups and credential sets): their ids become labels that are the
+   * same on every organization, so a re-import into another organization
+   * matches them. Must be pure; it is applied once per comparison, at the top.
+   */
+  comparableSpec?: (spec: ConfigSpec) => ConfigSpec
   /** Fields in `spec` that, when they are the only change besides name/key, still count as a rename. Rarely needed. */
   cosmeticFields?: string[]
   /** Unique constraints on the target that a create/rename could break, e.g. team name. */
@@ -191,6 +216,14 @@ export type ConfigArea = {
    * Shown on the plan before approval and in the apply report.
    */
   irreversible?: (op: ConfigApplyOp) => string[]
+  /**
+   * Plan-time check of one create, update or delete that is known to fail (or
+   * be pointless) before apply: a missing GitHub account, a source-managed
+   * skill, SSO that isn't ready… Reads the target, never writes. The op is a
+   * preview: the blob's spec with `$ref`s and `$secret`s unresolved (secret
+   * decisions are in `info`). Return null when the op looks fine.
+   */
+  preflight?(ctx: ConfigAreaContext, op: ConfigApplyOp, info: ConfigPreflightInfo): Promise<ConfigPreflightResult | null>
   exportItems(ctx: ConfigAreaContext): Promise<ConfigItem[]>
   /**
    * Read only these items (by local id). Used by apply to re-check drift and to

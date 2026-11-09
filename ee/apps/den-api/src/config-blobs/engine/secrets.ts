@@ -14,6 +14,7 @@ import { isConfigRef, isConfigSecret } from "@openwork/types/den/config-blobs"
 import {
   type ArrayLayout,
   arrayElementKey,
+  comparableTop,
   elementSchemaPath,
   isPlainObject,
   isUnsafeKey,
@@ -32,6 +33,9 @@ export type SecretOccurrence = {
 }
 
 export function findSecrets(layout: ArrayLayout, spec: unknown): SecretOccurrence[] {
+  const top = comparableTop(layout, spec)
+  layout = top.layout
+  spec = top.value
   const out: SecretOccurrence[] = []
   const walk = (value: unknown, field: string, schemaPath: string) => {
     if (isConfigSecret(value)) {

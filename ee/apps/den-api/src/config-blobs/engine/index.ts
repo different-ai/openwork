@@ -46,6 +46,8 @@ export {
 } from "./secrets.js"
 export {
   buildPlan,
+  preflightKey,
+  previewOp,
   sortAreas,
   unsupportedReason,
   type BuildPlanInput,
@@ -58,4 +60,5 @@ export { executePlan, resolveSpec, secretsNeedingValues, type ExecuteOptions, ty
 export { countApplyItems, emptyApplyCounts, isNoopUpdate, pendingReportItems } from "./execute.js"
 export { checkWrittenItems, readItemsFor, type ApplyRead, type WrittenItemsCheck } from "./apply-check.js"
 export { parseStoredExecution } from "./stored-execution.js"
+export { runPreflight } from "./preflight.js"
 export { CONFIG_APPLY_INTERRUPTED_CODE, interruptReport, isInFlight, summarizeReport } from "./report.js"

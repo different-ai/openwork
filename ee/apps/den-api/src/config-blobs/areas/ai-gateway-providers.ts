@@ -397,9 +397,12 @@ async function txStep<T>(steps: TxSteps, step: ConfigApplyStep, write: () => Pro
   return result
 }
 
-/** Whether the plan changes the set element with this id (`modelGroups[id=…]`). A create (no `touched`) writes all. */
-function elementTouched(scope: MatrixScope, array: string, id: string): boolean {
-  return scope.touched === null || touches(scope.touched, `${array}[id=${id}]`)
+/**
+ * Whether the plan changes this set element (`modelGroups[id=<label>]`: the
+ * plan compares groups and sets by `childLabels`). A create (no `touched`) writes all.
+ */
+function elementTouched(scope: MatrixScope, array: string, label: string): boolean {
+  return scope.touched === null || touches(scope.touched, `${array}[id=${label}]`)
 }
 
 /**
@@ -418,6 +421,8 @@ async function applyMatrix(tx: GatewayTx, provider: GatewayProvider, spec: Resol
   const existingGrants = await tx.select().from(GatewayProviderAccessTable).where(eq(GatewayProviderAccessTable.gateway_provider_id, provider.id))
   const free = await freeIds(tx, { models: [], groups: spec.modelGroups.map((group) => group.id), sets: spec.credentialSets.map((set) => set.id), grants: spec.access.map((grant) => grant.id) })
 
+  const groupLabels = childLabels(spec.modelGroups)
+  const setLabels = childLabels(spec.credentialSets)
   const groupIds = new Map<string, { id: DenTypeId<"gatewayModelGroup">; existing: boolean; byId: boolean }>()
   const claimedGroups = new Set<string>()
   for (const group of spec.modelGroups) {
@@ -469,7 +474,7 @@ async function applyMatrix(tx: GatewayTx, provider: GatewayProvider, spec: Resol
     for (const group of spec.modelGroups) {
       const target = groupIds.get(group.id)
       if (!target) continue
-      if (target.byId && !elementTouched(scope, "modelGroups", group.id)) continue
+      if (target.byId && !elementTouched(scope, "modelGroups", groupLabels.get(group.id) ?? group.id)) continue
       const modelIds = [...new Set(group.models)].filter((id) => configured.some((model) => model.model_id === id))
       if (modelIds.length !== new Set(group.models).size) warnings.push(`Model group "${group.name}": ${new Set(group.models).size - modelIds.length} model(s) are not configured on this server and were left out.`)
       if (!target.existing) {
@@ -499,7 +504,7 @@ async function applyMatrix(tx: GatewayTx, provider: GatewayProvider, spec: Resol
     for (const set of spec.credentialSets) {
       const target = setIds.get(set.id)
       if (!target) continue
-      if (target.byId && !elementTouched(scope, "credentialSets", set.id)) continue
+      if (target.byId && !elementTouched(scope, "credentialSets", setLabels.get(set.id) ?? set.id)) continue
       const { awaitKey, ...secrets } = credentialInput(set, target.existing, warnings)
       if (!target.existing) {
         const input: GatewayCredentialSetPatch = {
@@ -728,6 +733,13 @@ function specSet(spec: ConfigItem["spec"], id: string): Record<string, unknown> 
   return null
 }
 
+/** A credential set by the label the plan names it with (`childLabels`), else by id. */
+function specSetByLabel(spec: Record<string, unknown>, label: string): Record<string, unknown> | null {
+  const labels = childLabels(spec.credentialSets)
+  const id = [...labels].find(([, entry]) => entry === label)?.[0] ?? label
+  return specSet(spec, id)
+}
+
 function isPlainRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value)
 }
@@ -744,9 +756,9 @@ function irreversible(op: ConfigApplyOp): string[] {
   for (const change of op.changes) {
     const match = /^credentialSets\[id=([^\]]+)\](?:\.(.+))?$/.exec(change.path)
     if (!match) continue
-    const [, setId, field] = match
-    const previous = setId ? specSet(op.previous.spec, setId) : null
-    const name = typeof previous?.name === "string" ? previous.name : setId
+    const [, label, field] = match
+    const previous = label ? specSetByLabel(op.previous.spec, label) : null
+    const name = typeof previous?.name === "string" ? previous.name : label
     if (!field && change.to === undefined && previous) out.push(`Credential set "${name}": its stored key and members' sign-ins are deleted (and revoked upstream).`)
     if (field && previous && ["credentialMode", "oauthClientId", "oauthTenantId", "awsSso"].some((key) => field === key || field.startsWith(`${key}.`))) {
       out.push(`Members' sign-ins through credential set "${name}" are revoked; they sign in again.`)
@@ -763,6 +775,55 @@ function irreversible(op: ConfigApplyOp): string[] {
     out.push(...secretEffects(set.oauthClientSecret, `OAuth client secret of credential set "${name}"`, previous.oauthClientSecret))
   }
   return [...new Set(out)]
+}
+
+// ---------------------------------------------------------------------------
+// Comparing across organizations
+
+/**
+ * Model groups and credential sets keep their row ids in the blob (a move to
+ * another instance reuses them, so Gateway aliases survive), but on the same
+ * instance an import gives them new ids. Compared, they are told apart by
+ * name instead (name and id when two share a name), and access grants name
+ * them by that label: a re-import into another organization then matches
+ * them, as the apply does (by id, then by name).
+ */
+export function childLabels(rows: unknown): Map<string, string> {
+  const entries = Array.isArray(rows) ? rows.flatMap((row) => isPlainRecord(row) && typeof row.id === "string" && typeof row.name === "string" ? [{ id: row.id, name: row.name }] : []) : []
+  const counts = new Map<string, number>()
+  for (const entry of entries) counts.set(entry.name, (counts.get(entry.name) ?? 0) + 1)
+  return new Map(entries.map((entry) => [entry.id, (counts.get(entry.name) ?? 0) > 1 ? `${entry.name}#${entry.id}` : entry.name]))
+}
+
+function comparableSpec(spec: Record<string, unknown>): Record<string, unknown> {
+  const groups = childLabels(spec.modelGroups)
+  const sets = childLabels(spec.credentialSets)
+  const relabel = (rows: unknown, labels: Map<string, string>) => Array.isArray(rows)
+    ? rows.map((row) => (isPlainRecord(row) && typeof row.id === "string" ? { ...row, id: labels.get(row.id) ?? row.id } : row))
+    : rows
+  const out: Record<string, unknown> = { ...spec }
+  if (Array.isArray(spec.models)) out.models = spec.models.map((model) => (isPlainRecord(model) ? Object.fromEntries(Object.entries(model).filter(([key]) => key !== "id")) : model))
+  if (spec.modelGroups !== undefined) out.modelGroups = relabel(spec.modelGroups, groups)
+  if (spec.credentialSets !== undefined) out.credentialSets = relabel(spec.credentialSets, sets)
+  if (Array.isArray(spec.access)) {
+    out.access = spec.access.map((grant) => {
+      if (!isPlainRecord(grant)) return grant
+      const { id: _id, ...rest } = grant
+      return {
+        ...rest,
+        ...(typeof grant.modelGroup === "string" ? { modelGroup: groups.get(grant.modelGroup) ?? grant.modelGroup } : {}),
+        ...(typeof grant.credentialSet === "string" ? { credentialSet: sets.get(grant.credentialSet) ?? grant.credentialSet } : {}),
+      }
+    })
+  }
+  return out
+}
+
+function upstreamBaseUrlOf(spec: Record<string, unknown>): string | null {
+  const settings = spec.settings
+  if (typeof settings !== "object" || settings === null || Array.isArray(settings)) return null
+  const value = Object.getOwnPropertyDescriptor(settings, "upstreamBaseUrl")?.value
+  return typeof value === "string" && value.trim() ? value.trim() : null
 }
 
 export const aiGatewayProvidersArea = defineConfigArea({
@@ -788,11 +849,22 @@ export const aiGatewayProvidersArea = defineConfigArea({
   secretFields: ["credentialSets[].credential", "credentialSets[].oauthClientSecret"],
   orderedArrays: ["pinnedModelIds", "custom.models"],
   arrayKeys: { models: "modelId", "custom.models": "id" },
+  comparableSpec,
   // Catalog reads (models.dev), Google/AWS token revocation and LiteLLM key
   // deletion happen around the writes, so the engine must not wrap apply in its own transaction.
   transactional: false,
   externalEffects: true,
   irreversible,
+  // The apply's own rule, earlier: a saved key is never sent to a host it was not saved for.
+  async preflight(_ctx, op, info) {
+    if (op.kind !== "update" || typeof op.item.spec.providerId !== "string" || !isGatewayCustomProviderId(op.item.spec.providerId)) return null
+    const before = upstreamBaseUrlOf(op.previous.spec)
+    const after = upstreamBaseUrlOf(op.item.spec)
+    if (!before || !after || sameCustomOrigin(before, after)) return null
+    const kept = info.secrets.filter((secret) => /^credentialSets\[[^\]]*\]\.credential$/.test(secret.field) && secret.decision === "keep")
+    if (kept.length === 0) return null
+    return { block: `"${op.item.name}" moves to another host: enter its API key again for that address instead of keeping the saved one.` }
+  },
   exportItems,
   readItems: readProviders,
   async apply(ctx, op) {

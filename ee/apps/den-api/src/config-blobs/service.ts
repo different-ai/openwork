@@ -103,6 +103,7 @@ import {
   parseStoredExecution,
   pendingReportItems,
   readItemsFor,
+  runPreflight,
   summarizeReport,
   secretsNeedingValues,
   itemRev,
@@ -753,7 +754,7 @@ async function planChangeRequest(row: PlanSource, overrides: { decisions?: Confi
   const decisions = overrides.decisions ?? row.decisions ?? EMPTY_CONFIG_DECISIONS
   const secretInputs = overrides.secretInputs ?? row.secretInputs ?? []
   const grouped = sourceInstanceId ? groupAliases(await listAliasRows(row.organizationId, sourceInstanceId, db.$primary)) : null
-  const result = buildPlan({
+  const planInput: Parameters<typeof buildPlan>[0] = {
     areas: CONFIG_AREAS,
     blobAreas: areas,
     scope,
@@ -771,7 +772,13 @@ async function planChangeRequest(row: PlanSource, overrides: { decisions?: Confi
     sameOrganization,
     baseSpecs: sameOrganization ? await baseSpecsFor(row.organizationId, row.baseHash) : undefined,
     ctx,
-  })
+  }
+  // Preflight: the areas look at the planned writes (reads only), then the plan is built again with their verdicts.
+  let result = buildPlan(planInput)
+  if (result.fatalErrors.length === 0) {
+    const verdicts = await runPreflight(result.execution, CONFIG_AREAS, ctx)
+    if (verdicts.size > 0) result = buildPlan({ ...planInput, preflight: verdicts })
+  }
   if (grouped) addAliasProvenance(result.plan, grouped.provenance)
   for (const entry of blob.omitted ?? []) {
     result.plan.issues.push({ level: "warning", message: `${areaLabel(entry.area)} was left out of the export: ${entry.reason}`, area: entry.area })

@@ -73,7 +73,7 @@ A blob is one JSON file. It may hold the whole org or any set of area keys. The 
   - `createdBy` / `updatedBy`
   - derived or cached fields
   - secrets
-- Child rows (models, entries) are nested inside the parent and carry their own `id` so they can be matched too.
+- Child rows (models, entries) are nested inside the parent and carry their own `id` so they can be matched too. Where child ids are instance-specific and a re-import into another organization must still match them (AI provider model groups and credential sets), the area's `comparableSpec` compares them by name instead (name and id when two share a name), and access grants name them by that label; the file keeps the ids, so a move to another instance reuses them.
 - Unknown fields on upload are an error (strict schema), so typos don't get dropped silently.
 - `rev` and `id` may be removed by someone writing a blob by hand. The item is then matched by the lower tiers and treated as having no base (two-way diff).
 

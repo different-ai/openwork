@@ -17,6 +17,7 @@ import { isConfigRef, isConfigSecret, type ConfigAreaKey } from "@openwork/types
 import {
   type ArrayLayout,
   arrayElementKey,
+  comparableTop,
   elementSchemaPath,
   isInformationalField,
   isOrderedArray,
@@ -31,6 +32,10 @@ const NO_LAYOUT: ArrayLayout = {}
 
 /** The normalized value hashing is computed over. `schemaPath` is where `value` sits in the spec. */
 export function normalizeSpecValue(layout: ArrayLayout, value: unknown, schemaPath = ""): unknown {
+  if (schemaPath === "" && layout.comparableSpec) {
+    const top = comparableTop(layout, value)
+    return normalizeSpecValue(top.layout, top.value, schemaPath)
+  }
   if (isConfigSecret(value)) return { $secret: schemaPath }
   if (isConfigRef(value)) return { $ref: value.$ref }
   if (Array.isArray(value)) {

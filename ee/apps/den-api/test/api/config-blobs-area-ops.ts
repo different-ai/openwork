@@ -5,7 +5,7 @@
  */
 import type { ConfigFieldChange, ConfigSpec } from "@openwork/types/den/config-blobs"
 import type { ConfigApplyOp, ConfigArea, ConfigItem } from "../../src/config-blobs/area.js"
-import { diffSpecs } from "../../src/config-blobs/engine/index.js"
+import { diffSpecs, findSecrets } from "../../src/config-blobs/engine/index.js"
 
 function isObject(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value)
@@ -39,19 +39,12 @@ export function unresolved(value: unknown, stored: Map<string, boolean>): unknow
   return Object.fromEntries(Object.entries(value).map(([key, entry]) => [key, unresolved(entry, stored)]))
 }
 
-/** Spec paths of secrets that carry a new value, e.g. `credentials.apiKey`, `requestHeaders[name=X].value`. */
-function valueSecretPaths(value: unknown, path = "", out: string[] = []): string[] {
-  if (Array.isArray(value)) {
-    value.forEach((entry, index) => {
-      const key = isObject(entry) && typeof entry.id === "string" ? `id=${entry.id}` : isObject(entry) && typeof entry.name === "string" ? `name=${entry.name}` : String(index)
-      valueSecretPaths(entry, `${path}[${key}]`, out)
-    })
-  } else if (isObject(value)) {
-    if (typeof value.$secret === "string") {
-      if (value.decision === "value") out.push(path)
-    } else for (const [key, entry] of Object.entries(value)) valueSecretPaths(entry, path ? `${path}.${key}` : key, out)
-  }
-  return out
+/** Spec paths of secrets that carry a new value, as the engine names them (`credentialSets[id=<label>].credential`, `requestHeaders[name=X].value`). */
+function valueSecretPaths(area: ConfigArea, spec: ConfigSpec): string[] {
+  return findSecrets(area, spec).flatMap((occurrence) => {
+    const placeholder: unknown = occurrence.placeholder
+    return isObject(placeholder) && placeholder.decision === "value" ? [occurrence.field] : []
+  })
 }
 
 /** The plan's changes between the target as exported and the (resolved) item to write. */
@@ -71,6 +64,6 @@ export function updateOp(area: ConfigArea, previous: ConfigItem, item: { name: s
     previous,
     item,
     changes: planChanges(area, previous, item),
-    secretPaths: valueSecretPaths(item.spec),
+    secretPaths: valueSecretPaths(area, item.spec),
   }
 }

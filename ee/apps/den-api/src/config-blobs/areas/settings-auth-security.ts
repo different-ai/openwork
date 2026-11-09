@@ -80,7 +80,7 @@ import { getSsoDomainVerificationDnsName } from "../../sso-domain-verification.j
 import { defaultSsoConnectionName, parseSsoDomains } from "../../sso-domains.js"
 import { isOrganizationSsoReady } from "../../sso-readiness.js"
 import { getSsoTestPresentation } from "../../sso-test-lifecycle.js"
-import { ConfigApplyItemError, defineConfigArea, type ConfigApplyOp, type ConfigApplyResult, type ConfigAreaContext, type ConfigItem } from "../area.js"
+import { ConfigApplyItemError, defineConfigArea, type ConfigApplyOp, type ConfigApplyResult, type ConfigAreaContext, type ConfigItem, type ConfigPreflightInfo, type ConfigPreflightResult } from "../area.js"
 import { ConfigApplyError, configRouteContext, expectRouteOk, isJsonObject, resolvedSecret, secretPlaceholder, specObject, specSecretSchema, type ConfigRouteContext, type JsonObject } from "./route-support.js"
 
 const AREA = "settings.auth-security"
@@ -689,6 +689,52 @@ async function applyScim(ctx: ConfigAreaContext, op: Exclude<ConfigApplyOp, { ki
 }
 
 // ---------------------------------------------------------------------------
+// Preflight
+
+/** The SSO switches this op turns on, as the session apply would compute them. */
+function enabledSwitches(op: Exclude<ConfigApplyOp, { kind: "delete" }>): Array<"requireSso" | "restrictDomainToSso"> {
+  const next = sessionSpecSchema.safeParse(op.item.spec)
+  if (!next.success) return []
+  const previous = op.kind === "update" ? sessionSpecSchema.safeParse(op.previous.spec) : null
+  const named = op.kind === "update" ? changedTopFields(op.changes) : null
+  return (["requireSso", "restrictDomainToSso"] as const).filter((field) => next.data[field]
+    && (named === null || named.has(field))
+    && !(previous?.success && previous.data[field]))
+}
+
+async function sessionPreflight(ctx: ConfigAreaContext, op: Exclude<ConfigApplyOp, { kind: "delete" }>): Promise<ConfigPreflightResult | null> {
+  let switches = enabledSwitches(op)
+  const organizationId = normalizeDenTypeId("organization", ctx.organizationId)
+  const perOrganization = await organizationFeatureEnabled(organizationId, "ssoPerOrganization")
+  const warnings: string[] = []
+  if (switches.includes("restrictDomainToSso") && !perOrganization) {
+    warnings.push("\"Restrict this domain to our SSO\" isn't available for this organization and won't be changed.")
+    switches = switches.filter((field) => field !== "restrictDomainToSso")
+  }
+  if (switches.length === 0) return warnings.length > 0 ? { warnings } : null
+  if (!await hasEnabledOrganizationSsoConnection(organizationId)) {
+    return { block: "SSO can't be required yet: this organization has no enabled SSO connection with a verified domain. Set up, verify, test and enable a connection first (a connection this import creates starts disabled), or skip this item and turn on \"Require SSO\" by hand later." }
+  }
+  if (perOrganization) {
+    return { block: "Requiring SSO must be turned on by an admin signed in through this organization's SSO, so nobody is locked out; an import can't. Skip this item (or set it to off) and turn it on in Settings › Auth & Security." }
+  }
+  return warnings.length > 0 ? { warnings } : null
+}
+
+function ssoConnectionPreflight(op: Exclude<ConfigApplyOp, { kind: "delete" }>, info: ConfigPreflightInfo): ConfigPreflightResult | null {
+  const spec = ssoConnectionApplySchema.safeParse(op.item.spec)
+  if (!spec.success) return null
+  if (spec.data.protocol === "saml" && !spec.data.saml?.cert && op.kind === "create") {
+    return { block: "Enter the identity provider's signing certificate (saml.cert) in the file, or skip this connection." }
+  }
+  if (spec.data.protocol !== "oidc") return null
+  const decision = info.secrets.find((secret) => secret.field === "oidc.clientSecret")?.decision
+  if (decision === "unset") return { block: "An OIDC connection can't work without a client secret: enter one instead of leaving it unset, or skip this connection." }
+  if (op.kind === "create" && decision === "keep") return { block: "A new connection has no stored client secret to keep: enter the OIDC client secret." }
+  return null
+}
+
+// ---------------------------------------------------------------------------
 // Irreversible effects
 
 function sessionIrreversible(op: ConfigApplyOp): string[] {
@@ -764,6 +810,14 @@ export const settingsAuthSecurityArea = defineConfigArea({
     if (kind === "scim") return "Removing SCIM provisioning deprovisions the people and teams it manages: do it in Settings › Auth & Security."
     return null
   },
+  async preflight(ctx, op, info) {
+    if (op.kind === "delete") return null
+    const kind = specKind(op.item.spec)
+    if (kind === "session") return sessionPreflight(ctx, op)
+    if (kind === "sso-connection") return ssoConnectionPreflight(op, info)
+    return null
+  },
+
   irreversible(op) {
     const kind = specKind(op.kind === "delete" ? op.previous.spec : op.item.spec)
     if (kind === "session") return sessionIrreversible(op)

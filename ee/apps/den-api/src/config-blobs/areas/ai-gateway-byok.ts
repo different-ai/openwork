@@ -259,6 +259,17 @@ export const aiGatewayByokArea = defineConfigArea({
   transactional: false,
   externalEffects: false,
 
+  // The apply's own rule, earlier: a saved key never follows a custom provider to another host.
+  async preflight(_ctx, op, info) {
+    if (op.kind !== "update" || op.item.spec.source !== "custom" || op.item.spec.credentialMode !== "shared") return null
+    const before = isJsonObject(op.previous.spec.provider) ? op.previous.spec.provider : null
+    const after = isJsonObject(op.item.spec.provider) ? op.item.spec.provider : null
+    if (!before || !after || !touches(op.changes, "provider") || sameProviderOrigins(before, mergeConfig(before, after, PROVIDER_FIELDS, PROVIDER_OPTION_FIELDS))) return null
+    const kept = info.secrets.filter((secret) => secret.field.startsWith("credentials.") && secret.decision === "keep").map((secret) => secret.field)
+    if (kept.length === 0) return null
+    return { block: `"${op.item.name}" moves to another address: enter its API key again for that address (${kept.join(", ")}) instead of keeping the saved one.` }
+  },
+
   irreversible: (op) => {
     if (op.kind === "delete") {
       const out = [`Members' own keys for "${op.previous.name}" are deleted; they enter them again after a restore.`]

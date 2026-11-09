@@ -12,6 +12,8 @@ Analysis turns an uploaded blob into a **plan**: a list of item operations, each
 5. Diff          classify each pair; field-level diff; three-way check against rev
 6. Secrets       list the placeholders that need input
 7. Plan          ordered operations + blocking issues + plan hash
+8. Preflight     each area checks its planned writes against the target (reads only);
+                 skips and blocks feed a second build of the plan (change-requests.md › Preflight)
 ```
 
 **Dependency order** comes from the adapter registry (each area declares the areas it references), sorted topologically. For example: `members.teams` → `members.roles` → `connectors.oauth-clients` → `connectors.mcp` → `ai-gateway.providers` → `desktop-policies` → `plugins.*` → `settings.advanced.collections`.

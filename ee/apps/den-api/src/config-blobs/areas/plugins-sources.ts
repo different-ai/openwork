@@ -236,6 +236,25 @@ async function queueSync(input: { actor: ActorContext; targetId: string; remoteI
     queueConnectorTargetResync({ context: input.actor, connectorTargetId: normalizeDenTypeId("connectorTarget", input.targetId) }), "targets")
 }
 
+type AccountSpec = { remoteId: string; displayName: string } | null
+
+/** The target's active installation a new source can use: same connector type and installation id. */
+async function findAccount(ctx: ConfigAreaContext, connectorType: (typeof connectorTypeValues)[number], account: AccountSpec) {
+  if (!account) return null
+  const [row] = await ctx.db.select().from(ConnectorAccountTable).where(and(
+    eq(ConnectorAccountTable.organizationId, normalizeDenTypeId("organization", ctx.organizationId)),
+    eq(ConnectorAccountTable.connectorType, connectorType),
+    eq(ConnectorAccountTable.remoteId, account.remoteId),
+    eq(ConnectorAccountTable.status, "active"),
+  )).limit(1)
+  return row ?? null
+}
+
+function needsAccountMessage(name: string, account: AccountSpec): string {
+  const who = account ? `"${account.displayName}"` : "its GitHub account"
+  return `"${name}" needs ${who} connected here first: connect the GitHub App in Plugins › Sources, then re-check this change (an installation belongs to the instance that made it), or skip this item.`
+}
+
 export const pluginsSourcesArea = defineConfigArea({
   key: AREA,
   label: "Sources",
@@ -267,6 +286,14 @@ export const pluginsSourcesArea = defineConfigArea({
     return []
   },
 
+  async preflight(ctx, op) {
+    if (op.kind !== "create") return null
+    const parsed = z.object({ connectorType: specSchema.shape.connectorType, account: specSchema.shape.account }).safeParse(op.item.spec)
+    if (!parsed.success) return null
+    if (await findAccount(ctx, parsed.data.connectorType, parsed.data.account)) return null
+    return { block: needsAccountMessage(op.item.name.trim(), parsed.data.account) }
+  },
+
   async exportItems(ctx) {
     return readSources(ctx, null)
   },
@@ -294,23 +321,9 @@ export const pluginsSourcesArea = defineConfigArea({
 
       if (op.kind === "create") {
         await requirePluginArchCapability(actor, "connector_instance.create")
-        const accounts = spec.account
-          ? await ctx.db.select().from(ConnectorAccountTable).where(and(
-            eq(ConnectorAccountTable.organizationId, organizationId),
-            eq(ConnectorAccountTable.connectorType, spec.connectorType),
-            eq(ConnectorAccountTable.remoteId, spec.account.remoteId),
-            eq(ConnectorAccountTable.status, "active"),
-          )).limit(1)
-          : []
-        const account = accounts[0]
+        const account = await findAccount(ctx, spec.connectorType, spec.account)
         if (!account) {
-          const who = spec.account ? `"${spec.account.displayName}"` : "its GitHub account"
-          throw new ConfigApplyItemError({
-            code: "needs_setup",
-            message: `"${name}" needs ${who} connected here first: connect the GitHub App in Plugins › Sources, then apply again (an installation belongs to the instance that made it).`,
-            field: "account",
-            status: 409,
-          })
+          throw new ConfigApplyItemError({ code: "needs_setup", message: needsAccountMessage(name, spec.account), field: "account", status: 409 })
         }
         const installationId = Number(account.remoteId)
         const created = await log.run({ action: "create", target: "source", detail: name }, () => createConnectorInstance({

@@ -4,14 +4,17 @@ description: "Download an organization's configuration as one JSON file, review 
 ---
 
 A **config blob** is one JSON file holding all or part of an organization's
-configuration: teams, roles, people, connectors, AI Gateway providers, desktop
-policies and settings. You can export it, keep it in version control, edit it, and
+configuration: teams, roles and people, connectors, AI Gateway providers and
+limits, plugins and skills, desktop policies, Workbot, and settings (25 areas, listed
+below). You can export it, keep it in version control, edit it, and
 import it again into the same organization or into another OpenWork (for example
 from OpenWork Cloud to a self-hosted Den).
 
 Nothing is written when you upload a file. Every import becomes a **change
 request**: OpenWork matches the file against what exists, shows a plan, and only
-writes after someone approves it. Every applied change can be reverted.
+writes after someone approves it. An applied change can be undone with **Restore
+previous config**, which puts the configuration back (see [Restore previous
+config](#restore-previous-config) for what it can't undo).
 
 <Note>
 Config import and export is behind the `configBlobs` feature, off by default. On a
@@ -81,14 +84,40 @@ the file.
 | `members.teams` | Members › Teams | `teams.view` | `teams.manage` |
 | `members.roles` | Members › Roles | `permissions.view` | `permissions.manage` |
 | `members.people` | Members › People | `teams.view` | `invitations.manage` |
+| `members.agent-permissions` | Members › Teams › Agents | `agent_permissions.view` | `agent_permissions.manage` |
+| `members.default-models` | Members › Teams › Models | `inference.view` | `inference.manage` |
+| `members.prompts` | Members › Teams › Prompts | `prompts.view` | `prompts.manage` |
 | `connectors.oauth-clients` | Connectors › OAuth apps | `oauth_clients.view` | `oauth_clients.manage` |
 | `connectors.mcp` | Connectors › MCP | `connections.view` | `connections.manage` |
 | `ai-gateway.providers` | AI Gateway › AI Providers | `gateway_providers.view` | `gateway_providers.manage` |
 | `ai-gateway.byok` | AI Gateway › Bring your own keys | `llm_providers.view` | `llm_providers.update` |
+| `ai-gateway.limits` | AI Gateway › Limits | `gateway_limits.view` | `gateway_limits.manage` |
+| `ai-gateway.smart-routers` | AI Gateway › AI Providers › Smart routers (OpenWork Cloud) | `gateway_providers.view` | `gateway_providers.manage` |
+| `ai-gateway.openwork-models` | AI Gateway › OpenWork Models (OpenWork Cloud) | `inference.view` | `inference.manage` |
+| `plugins.plugins` | Plugins › Plugins | `sharing.manage_all` | `sharing.manage_all` |
+| `plugins.skills` | Plugins › Skills (skills, agents, commands and other shared objects) | `sharing.manage_all` | `sharing.manage_all` |
+| `plugins.sources` | Plugins › Sources | `connectors.manage` | `connectors.manage` |
 | `desktop-policies` | Desktop policies | `desktop_policies.view` | `desktop_policies.manage` |
+| `workbot.settings` | Manage › Workbot | `inference.view` | `inference.manage` |
+| `workbot.proactive` | Manage › Workbot › Members' agents | `inference.view` | `inference.manage` |
 | `settings.general` | Settings › General | `organization.update` | `organization.update` |
 | `settings.web-origins` | Settings › Web origins | `web_origins.view` | `web_origins.manage` |
+| `settings.auth-security` | Settings › Auth & Security | `sso.view` | `sso.manage` |
 | `settings.advanced.collections` | Settings › Advanced › Collections | `marketplaces.manage` | `marketplaces.manage` |
+| `settings.advanced.brand` | Settings › Advanced › Brand appearance | `branding.update` | `branding.update` |
+| `settings.audit` | Observability › Audit logs › Settings | `audit.view` | `audit.manage` |
+
+Some areas carry only part of what their screen shows:
+
+- **People** are invited, never added directly: someone who is a member on the
+  source gets a pending invitation (silent unless you choose to send emails). An
+  owner is invited as an admin.
+- **Sources** need the GitHub App installed in the target organization first: an
+  installation belongs to the server and organization that made it.
+- **Auth & Security**: a new SSO connection starts disabled and unverified (verify
+  the domain, test, then enable it); SCIM tokens are never carried.
+- **Skills** that a source syncs are not imported (the source brings them), and the
+  Workbot "Your agent" template travels with `workbot.proactive`.
 
 `GET /v1/config-blobs/areas` lists the areas of your server, whether each is
 supported there, and whether you may export or import it. An export leaves out the
@@ -151,7 +180,7 @@ background.
 | `approved` | Approved for this exact plan (`planHash`) |
 | `queued`, `applying` | Waiting for, or holding, the organization's apply slot. One apply per organization at a time |
 | `applied` | Done. Keeps a before-snapshot and an apply report |
-| `failed` | An item failed. Items before it were applied; the rest were skipped. Revert with the before-snapshot |
+| `failed` | An item failed. Items before it were applied; the rest were not reached. The apply report says what was written and where it stopped |
 | `stale` | The organization changed since the plan. Re-analyzed automatically; approvals are dropped |
 | `invalid` | Not a usable file (unknown or newer area, duplicate IDs or keys). Final |
 | `superseded` | The same config token uploaded a newer file for the same scope |
@@ -166,6 +195,12 @@ background.
 - **Plans:** each item is `create`, `update`, `rename`, `unchanged`, `delete`,
   `untouched` or `skip`, with field-level changes. Items blocked by a missing
   decision are counted in `plan.summary.blocking`; approval is refused until it is `0`.
+- **Checks before approval:** the plan already checks what would fail on this
+  organization. Items that can't apply here are skipped with a reason (for example a
+  skill a source syncs); items that need something first are blocked with what to do
+  (connect the GitHub App, allow an email domain, set up SSO before requiring it,
+  enter a key again for a provider that moves to another address). Fix it and change
+  any decision to re-check, or skip the item.
 - **Approvals** are tied to `planHash`. Any change to the plan or a secret value
   drops them. An organization can require a second approver (Settings › Config),
   who must differ from the uploader and the first approver.
@@ -175,17 +210,33 @@ background.
   of its last approval; after that it goes back to review and needs approving again.
 - **Apply** runs as the last approver: they (or the config token's member) must
   still hold every written area's permission. Right before writing, the server
-  plans again; any difference makes the request `stale`. When a request is
-  applied, the organization's other open requests go `stale`.
+  re-reads the items it is about to write; if any changed since the plan, the
+  request goes `stale`. Each item is written on its own, with only the changes the
+  plan lists; there is no single transaction, so the apply stops at the first failing
+  item and its report says what was written. When a request is applied, the
+  organization's other open requests go `stale`.
 - **IDs:** a created item from another server reuses its source ID when that ID is
   free on the whole server and was never used in this organization before, so
   cloud → self-hosted → cloud keeps the same IDs. Otherwise, and always for a file
   exported from this same server, it gets a new ID and an alias, so the next import
   of the same file matches it ("matched via an earlier import").
-- **Interrupted applies** are never retried: the request fails, and you can revert
-  it from its before-snapshot.
-- **Revert** creates a new change request from the before-snapshot, reviewed and
-  applied like any other. Changes made since show up as conflicts.
+- **Interrupted applies** are never retried: the request fails, and you can restore
+  the previous config from its before-snapshot.
+
+### Restore previous config
+
+Every apply first saves a **before-snapshot** of the items it is about to write.
+**Restore previous config** (API: `POST …/revert`) creates a new change request
+from it, reviewed and applied like any other: items it created are deleted, items it
+changed are changed back, and changes made since show up as conflicts.
+
+It restores **configuration only**. It can't undo what the apply set off:
+invitation emails sent, sign-ins revoked or ended, credentials replaced or deleted
+(snapshots never hold secrets: a replaced key keeps its new value, and a deleted
+item's keys must be entered again), members removed (they can only be invited
+again), syncs a source ran, and history (skill versions, audit events). Recreated
+items get new IDs. The plan lists these effects on each item before you approve, and
+the restore's plan repeats them.
 
 Every apply is one audit operation (`config_blobs.apply`) with the changes of each
 item.

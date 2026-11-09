@@ -38,6 +38,7 @@ import {
   AuthUserTable,
   InvitationTable,
   MemberTable,
+  OrganizationTable,
   ScimProviderTable,
   SsoProviderTable,
   TeamMemberTable,
@@ -47,12 +48,13 @@ import { denTypeIdPrefixes, normalizeDenTypeId } from "@openwork-ee/utils/typeid
 import { z } from "zod"
 import { currentAuditChangeCapture } from "../../audit/request-capture.js"
 import { roleIncludesOwner } from "../../organization-member-guards.js"
+import { isEmailAllowedForOrganization } from "../../orgs.js"
 import { ORGANIZATION_ADMIN_ROLE, normalizeOrganizationRoleName, splitOrganizationRoles } from "../../organization-role-hierarchy.js"
 import { cancelInvitationAction, createInvitationAction } from "../../routes/org/invitations.js"
 import { removeMemberAction, updateMemberRoleAction } from "../../routes/org/members.js"
 import { updateTeam } from "../../routes/org/teams.js"
 import { getScimManagedTeamIds } from "../../scim-groups.js"
-import { defineConfigArea, type ConfigAreaContext, type ConfigItem } from "../area.js"
+import { defineConfigArea, type ConfigApplyOp, type ConfigAreaContext, type ConfigItem, type ConfigPreflightResult } from "../area.js"
 import {
   ConfigApplyError,
   ConfigStepLog,
@@ -360,6 +362,42 @@ function sendsInviteEmail(spec: { [key: string]: unknown }): boolean {
 }
 
 // ---------------------------------------------------------------------------
+// Preflight
+
+type InviteRules = { allowedEmailDomains: string[]; scim: boolean }
+
+/** One read per plan: preflight runs once per person with the same context. */
+const inviteRules = new WeakMap<ConfigAreaContext, Promise<InviteRules>>()
+
+function readInviteRules(ctx: ConfigAreaContext): Promise<InviteRules> {
+  const cached = inviteRules.get(ctx)
+  if (cached) return cached
+  const loading = (async () => {
+    const [row] = await ctx.db.select({ allowedEmailDomains: OrganizationTable.allowedEmailDomains }).from(OrganizationTable)
+      .where(eq(OrganizationTable.id, normalizeDenTypeId("organization", ctx.organizationId))).limit(1)
+    const domains = Array.isArray(row?.allowedEmailDomains) ? row.allowedEmailDomains.filter((entry): entry is string => typeof entry === "string") : []
+    return { allowedEmailDomains: domains, scim: (await identityProviders(ctx)).scim.size > 0 }
+  })()
+  inviteRules.set(ctx, loading)
+  return loading
+}
+
+/** The invitation action's own rules, before apply: allowed email domains and SCIM-provisioned people. */
+async function peoplePreflight(ctx: ConfigAreaContext, op: ConfigApplyOp): Promise<ConfigPreflightResult | null> {
+  if (op.kind !== "create" || typeof op.item.spec.email !== "string") return null
+  const email = normalizeEmail(op.item.spec.email)
+  const rules = await readInviteRules(ctx)
+  if (op.item.spec.managedBy === "scim" && rules.scim) {
+    return { skip: `${email} is provisioned by the identity provider (SCIM) on the source: this organization's SCIM provisions them` }
+  }
+  if (!isEmailAllowedForOrganization(rules.allowedEmailDomains, email)) {
+    return { block: `${email} can't be invited: this organization only allows ${rules.allowedEmailDomains.join(", ")} email addresses (Settings › General). Allow the domain first, or skip this person.` }
+  }
+  const role = typeof op.item.spec.role === "string" ? op.item.spec.role : ""
+  return roleIncludesOwner(role) ? { warnings: [`${email} is the owner on the source; they are invited as an admin (an import never moves ownership).`] } : null
+}
+
+// ---------------------------------------------------------------------------
 
 export const membersPeopleArea = defineConfigArea({
   key: AREA,
@@ -390,6 +428,8 @@ export const membersPeopleArea = defineConfigArea({
     if (item.spec.managedBy === "scim") return "Managed by your identity provider (SCIM)."
     return null
   },
+
+  preflight: (ctx, op) => peoplePreflight(ctx, op),
 
   irreversible: (op) => {
     const email = op.kind === "delete" ? emailOf(op.previous) ?? op.previous.name : typeof op.item.spec.email === "string" ? normalizeEmail(op.item.spec.email) : op.item.name

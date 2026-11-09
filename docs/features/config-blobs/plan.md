@@ -6,17 +6,27 @@ Every user-visible piece goes behind `configBlobs` (cloud + self-hosted, off by 
 
 | Phase | State |
 |---|---|
-| 0 · groundwork | **Built.** `configBlobs` flag, docs, shared types (`packages/types/src/den/config-blobs.ts`), area contract and registry, coverage check (`pnpm --filter @openwork-ee/den-api config-blobs:coverage`). |
-| 1 · export | **Built.** All eleven phase-1 adapters; `GET /areas`, `GET /export` (`$schema` → this server's public schema URL); Settings › Config export tree. |
-| 2 · change requests + plan | **Built.** `config_change_request` table and worker; matching tiers, references, three-way diff, plan hash; decisions and inputs endpoints; Changes tab and change request page. |
-| 3 · apply | **Built.** Approvals (optional second approver), per-org apply queue, stale detection, before-snapshot, aliases, secret write-through and purge, `tenant_job` audit, revert, `mirror` deletes. Not one database transaction (see change-requests.md › As built). Still to do: the cloud → self-hosted journey spec in `evals/`. |
-| 4 · config token + API docs | **Built.** `config` API keys with `config:export` / `config:submit` / `config:apply` and area limits; secret values only from config tokens; `env` secrets on self-hosted (`DEN_CONFIG_BLOB_SECRET_ENV_ALLOWLIST`); `?dryRun=true`; public `GET /v1/config-blobs/schema/1`; secret inputs expire after 7 days; public page `packages/docs/self-host/export-import-configuration.mdx` with the GitHub Actions example. Tests: `test/api/config-blobs-tokens-flow.api.test.ts`. |
-| 5 · coverage | **Not started.** The remaining areas, in the order below. |
-| 6 · cross-deployment polish | **Not started** beyond `unsupportedReason` per area and the `specVersion` check (upgraders, "newer than this server", `external_key` on more tables, pending-change hints). |
+| 0 · groundwork | **Done.** `configBlobs` flag, docs, shared types (`packages/types/src/den/config-blobs.ts`), area contract (`area.ts`) and registry, coverage check (`pnpm --filter @openwork-ee/den-api config-blobs:coverage`: 146 org-scoped tables, 58 owned, 95 excluded with a reason). |
+| 1 · export | **Done.** `GET /areas`, `GET /export` (`$schema` → this server's public schema URL); Settings › Config export tree. |
+| 2 · change requests + plan | **Done.** `config_change_request` table and worker; matching tiers, references, three-way diff, plan hash; decisions and inputs endpoints; Changes tab and change request page; **plan-time preflight** (area `preflight`, verdicts fed into `buildPlan`; change-requests.md › Preflight). |
+| 3 · apply | **Done.** Approvals (optional second approver, fresh sign-in, 24 h expiry), per-org apply queue, stale detection on the written items only, before-snapshot of the written items, minimal per-item writes, per-attempt run reports (`config_apply_run`), aliases, secret write-through and purge, `tenant_job` audit, "Restore previous config", `mirror` deletes. Not one database transaction (change-requests.md › Apply). |
+| 4 · config token + API docs | **Done.** `config` API keys with `config:export` / `config:submit` / `config:apply` and area limits; `env` secrets on self-hosted; `?dryRun=true`; public JSON Schema; secret inputs expire after 7 days; `packages/docs/self-host/export-import-configuration.mdx`. |
+| 5 · coverage | **Done: all 25 areas** (inventory.md › Areas). Whole-organization round trip: `test/api/config-blobs-whole-org.api.test.ts`. |
+| 6 · cross-deployment polish | **Partly.** Done: `unsupportedReason` per area (cloud-only areas skip on self-hosted), `specVersion` check and upgrader hook, D4 id reuse across instances, comparing instance-specific child ids by name (`comparableSpec`). |
+
+**Remaining:**
+
+- The cloud → self-hosted journey spec in `evals/` (two instances; the whole-org test covers two organizations on one instance, where ids are never reused).
+- A UI affordance to re-run preflight after fixing the target (today any decision or input change re-plans).
+- "Pending config change" hints on resource pages; `external_key` on more root tables for hand-written blobs.
+- Per-area upgraders once a `specVersion` moves past 1.
+- Blob size: brand images can approach the 5 MB limit (exported without data past a budget); a zip format would lift it.
+
+Bugs the whole-organization round trip found and fixed: re-importing a file into an organization cloned from it showed every AI provider as changed and needing secrets (model groups, credential sets and grants were compared by instance-specific child ids: now by name, `comparableSpec`); a new value for a nested credential (a credential set's key, an MCP header) was planned but never written, because updates named secrets by their `$secret` handle instead of their spec path (`secretPaths`); the Workbot "Your agent" template, once shared, was exported by both `plugins.skills` and `workbot.proactive`.
 
 ## Architecture: area adapters
 
-One registry in den-api, e.g. `ee/apps/den-api/src/config-blobs/areas/*.ts`. Each area implements:
+One registry in den-api: `ee/apps/den-api/src/config-blobs/registry.ts`, adapters in `areas/*.ts`, the contract in `area.ts` (the sketch below is the original proposal; `area.ts` is authoritative). Each area implements:
 
 ```ts
 type ConfigArea<Spec> = {
@@ -34,7 +44,11 @@ type ConfigArea<Spec> = {
   secrets: SecretField[];              // placeholder paths
   children?: ChildCollection[];        // nested rows matched inside a parent (models, entries…)
   exportItems(ctx): Promise<Item<Spec>[]>;           // allowlist serializer
-  apply(ctx, tx, op: Create | Update | Delete): Promise<ApplyResult>; // calls existing domain services
+  readItems?(ctx, ids): Promise<Item<Spec>[]>;       // apply reads only the items it writes
+  preflight?(ctx, op, { secrets }): Promise<{ skip?; block?; warnings? } | null>; // plan time, reads only
+  irreversible?(op): string[];                       // what a restore can't undo, shown before approval
+  comparableSpec?(spec): Spec;                       // compare instance-specific child ids by name
+  apply(ctx, op: Create | Update | Delete): Promise<ApplyResult>; // calls existing domain services; writes only the plan's changes
   upgrade?: Record<number, (old: unknown) => unknown>;
 };
 ```
@@ -55,7 +69,7 @@ The engine is generic. Adapters contain no matching or diff logic.
 
 **Guard rail (CI):** `scripts/check-config-blob-coverage.ts`, the same idea as `check-audit-route-coverage.ts`. Every org-scoped table in `den-db` must be either owned by an area or listed in `config-blobs/excluded.ts` with a reason (`runtime`, `secret`, `personal`, `billing`, `platform`). `delete-organization.ts` is the source list of org-scoped tables. When a new table appears, the author has to decide.
 
-**Round-trip property test:** for each adapter, `export → import into an empty org → export` gives identical specs and IDs. `export → import into the same org` gives an all-`unchanged` plan.
+**Round-trip property test:** for each adapter, `export → import into an empty org → export` gives identical specs (and IDs across instances). `export → import into the same org` gives an all-`unchanged` plan. As built: per-area tests in `test/api/config-blobs-areas-*.api.test.ts`, and the whole organization in `test/api/config-blobs-whole-org.api.test.ts`.
 
 ## Phase 0: groundwork (small)
 
@@ -124,7 +138,7 @@ Each one is its own small PR: adapter + round-trip test + coverage list update.
 |---|---|
 | An adapter bypasses domain rules by writing tables directly | adapters must call domain services; review checklist; round-trip tests |
 | Secrets leak through JSON columns | allowlist serializers only; a secret-pattern scan in tests over every exported fixture |
-| A big apply partially fails with external effects | one database transaction per request; external calls only as checks before or follow-ups after commit; before-snapshot for revert |
+| A big apply partially fails with external effects | preflight blocks known failures before approval; per-item writes through the services, stop at the first failure, a per-attempt report of what was written and not reached; before-snapshot for "Restore previous config" (configuration only) |
 | Import sends surprise invite emails or locks people out | silent invitations by default for cross-instance imports; never remove or demote the last owner or the applier; mirror-mode removals confirmed one by one |
 | Permission escalation through import (e.g. a role granting permissions the uploader doesn't have) | adapters check `managePermission` *and* the existing "can't grant more than you have" rules of the role and permission services |
 | Reusing IDs collides across orgs on one instance | check that the ID is free on the whole instance before reusing it; otherwise create a new one + alias |
