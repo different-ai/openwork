@@ -6,6 +6,8 @@ import { DenButton } from "../../_components/ui/button";
 import { DenSelect } from "../../_components/ui/select";
 import { DenInput } from "../../_components/ui/input";
 import { ApiKeySchemeAdvanced } from "./connector-setup-fields";
+import { ConnectorCallbackUpdate } from "./connector-callback-update";
+import { connectorOAuthClientUpdate } from "./connector-oauth-client-update";
 import { ConfirmDialog } from "./item-list";
 import { credentialModeForAuth } from "./member-api-key";
 import { McpCredentialInput } from "./mcp-credential-input";
@@ -37,6 +39,8 @@ export function ConnectorSettingsForm({ connection, onSaved, lockedReason = null
   const [apiKey, setApiKey] = useState("");
   const [clientId, setClientId] = useState(connection.oauthClientId ?? "");
   const [clientSecret, setClientSecret] = useState("");
+  const [callbackUpdateConfirmed, setCallbackUpdateConfirmed] = useState(false);
+  const callbackUpdateRequired = authType === "oauth" && connection.oauthCallbackUpdateRequired === true;
   const [manualDraft, setManualDraft] = useState(() => manualOAuthDraft(connection.manualOAuthEndpoints ?? EMPTY_OAUTH_ADDRESSES));
   const manualAddresses = manualDraft.values;
   const usingPublishedAddresses = publishedAddressesUnsaved(manualDraft, connection.manualOAuthEndpoints ?? EMPTY_OAUTH_ADDRESSES);
@@ -59,12 +63,13 @@ export function ConnectorSettingsForm({ connection, onSaved, lockedReason = null
   const scopesChanged = requestedScopes.join(" ") !== (connection.requestedScopes ?? []).join(" ");
   const keepsSavedClientSecret = connection.oauthClientHasSecret === true && clientId.trim() === (connection.oauthClientId ?? "") && !identityChanged;
   const clientChanged = usesOAuthApp && (clientId.trim() !== (connection.oauthClientId ?? "") || Boolean(clientSecret.trim()) || ((manualChanged || identityChanged) && Boolean(manualAddresses.authorizationEndpoint.trim())));
-  const changed = name.trim() !== connection.name || identityChanged || Boolean(usesSharedKey && normalizedApiKey) || clientChanged || scopesChanged || manualChanged || exposeDirectly !== connection.exposeDirectly;
+  const oauthClient = connectorOAuthClientUpdate({ clientChanged, callbackUpdateRequired, callbackUpdateConfirmed, clientId, clientSecret });
+  const changed = name.trim() !== connection.name || identityChanged || Boolean(usesSharedKey && normalizedApiKey) || Boolean(oauthClient) || scopesChanged || manualChanged || exposeDirectly !== connection.exposeDirectly;
   const keyRequired = usesSharedKey && identityChanged && !normalizedApiKey;
-  const disabled = halfSet || (authType === "oauth" && Boolean(manualAddresses.authorizationEndpoint) && !clientId.trim()) || !changed || !name.trim() || !url.trim() || keyRequired || (clientChanged && !clientId.trim()) || !connection.updatedAt;
+  const disabled = (callbackUpdateRequired && (!callbackUpdateConfirmed || !clientId.trim())) || halfSet || (authType === "oauth" && Boolean(manualAddresses.authorizationEndpoint) && !clientId.trim()) || !changed || !name.trim() || !url.trim() || keyRequired || (clientChanged && !clientId.trim()) || !connection.updatedAt;
 
   async function save() {
-    if (!connection.updatedAt) return;
+    if (!connection.updatedAt || disabled || lockedReason !== null || updateConnection.isPending) return;
     setError(null);
     const input: UpdateMcpConnectionInput = {
       connectionId: connection.id,
@@ -78,15 +83,14 @@ export function ConnectorSettingsForm({ connection, onSaved, lockedReason = null
       ...(authType === "oauth" && (manualChanged || (identityChanged && Boolean(manualAddresses.authorizationEndpoint.trim()))) ? { manualOAuthEndpoints: manualAddresses.authorizationEndpoint.trim() ? { authorizationEndpoint: manualAddresses.authorizationEndpoint.trim(), tokenEndpoint: manualAddresses.tokenEndpoint.trim() } : null } : {}),
       ...(!managedByPlugin ? apiKeyAuthSchemeInput(authType, apiKeyAuthScheme) : {}),
       ...(usesSharedKey && !managedByPlugin && normalizedApiKey ? { apiKey: normalizedApiKey } : {}),
-      ...(clientChanged && clientId.trim()
-        ? { oauthClient: { clientId: clientId.trim(), ...(clientSecret.trim() ? { clientSecret: clientSecret.trim() } : {}) } }
-        : {}),
+      ...(oauthClient ? { oauthClient } : {}),
       access: connection.access ?? { orgWide: false, memberIds: [], teamIds: [] },
     };
     try {
       const updated = await updateConnection.mutateAsync(input);
       setApiKey("");
       setClientSecret("");
+      setCallbackUpdateConfirmed(false);
       setManualDraft(manualOAuthDraft(updated.manualOAuthEndpoints ?? EMPTY_OAUTH_ADDRESSES));
       onSaved(usesPersonalKey
         ? `${updated.name} is ready. Each person can now add their own key in My Library.`
@@ -105,11 +109,13 @@ export function ConnectorSettingsForm({ connection, onSaved, lockedReason = null
       data-testid="connector-settings"
       onSubmit={(event) => {
         event.preventDefault();
+        if (disabled || lockedReason !== null || updateConnection.isPending) return;
         if (identityChanged || manualChanged) setConfirming(true);
         else void save();
       }}
     >
       <fieldset disabled={lockedReason !== null} className="flex min-w-0 flex-col gap-3">
+      {callbackUpdateRequired ? <ConnectorCallbackUpdate callbackUrl={connection.oauthCallbackUrl} confirmed={callbackUpdateConfirmed} onConfirmedChange={setCallbackUpdateConfirmed} /> : null}
       <Field label="Name">
         <DenInput value={name} onChange={(event) => setName(event.target.value)} data-testid="connector-settings-name" />
       </Field>
@@ -175,7 +181,7 @@ export function ConnectorSettingsForm({ connection, onSaved, lockedReason = null
             {lockedReason}
           </p>
         ) : null}
-        <DenButton type="submit" size="sm" loading={updateConnection.isPending} disabled={disabled || lockedReason !== null}>{usingPublishedAddresses ? "Save and use these addresses" : "Save changes"}</DenButton>
+        <DenButton type="submit" size="sm" loading={updateConnection.isPending} disabled={disabled || lockedReason !== null}>{callbackUpdateRequired ? "Confirm callback URL" : usingPublishedAddresses ? "Save and use these addresses" : "Save changes"}</DenButton>
       </div>
     </form>
     {connection.authType === "oauth" && !connection.manualOAuthEndpoints ? <ConnectorIssuerReview connection={connection} onSaved={onSaved} /> : null}

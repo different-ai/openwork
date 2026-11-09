@@ -104,6 +104,17 @@ function defineFeatures<const T extends Record<string, FeatureDefinition>>(featu
 const everywhere = ["cloud", "self_hosted"] as const
 
 export const FEATURES = defineFeatures({
+  mcpOauthDomainRecovery: {
+    label: "MCP OAuth domain recovery",
+    description: "Reconnect external MCP connections after the deployment public domain changes without recreating the connection.",
+    category: "connect",
+    added: "2026-10-15",
+    since: "2026-10",
+    author: "benjaminshafii",
+    docs: "docs/external-mcp-oauth.md",
+    deployments: everywhere,
+    default: false,
+  },
   webPerMember: {
     label: "OpenWork Web per member",
     description: "Admins choose which members get OpenWork Web from the Members page, and the organization pays for Web only for them. Members without it can't open a Web computer. Off: every member and pending invitation has Web and is billed for it.",
