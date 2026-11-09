@@ -17,6 +17,7 @@ import { dayLabel } from "./format";
 import { OpenWorkMark } from "./mark";
 import type { WorkbotActivity } from "./activity";
 import { ActivityDetails, StatusIcon } from "./working-status";
+import { PhoneSheetEdge, SheetGrabber, useSheetDrag } from "./sheet-drag";
 
 /**
  * Workbot's profile, behind its name (`profileSheet`): who it is and whether it is at work, then one tab at a time
@@ -53,12 +54,16 @@ export function ProfileSheet({ open, onClose, name, activity, initialTab = "task
   const centered = workbotHost().centeredProfile === true;
   const files = workbotHost().profileNav === true;
   const tabs = (centered ? TABS : TABS.filter((entry) => entry.id !== "schedules")).filter((entry) => files || entry.id !== "files").map((entry) => centered ? entry : ({ ...entry, label: entry.id === "permissions" ? "What I can use" : entry.id === "memory" ? "What I remember" : entry.label }));
+  const drag = useSheetDrag(onClose);
+  // One sheet for every screen size: a side panel from `sm` up, and on phones a full-height sheet under the status bar
+  // that reaches the bottom edge (its rows scroll under a glass fade), pulled down or closed to dismiss.
   return <Dialog.Root open={surface.open} onOpenChange={(next) => { if (!next) onClose(); }}>
     <Dialog.Portal {...surface.portal}>
       <Dialog.Backdrop className="fixed inset-0 z-40 bg-[var(--wb-ink)]/25 transition-opacity duration-200 data-[ending-style]:opacity-0 data-[starting-style]:opacity-0 motion-reduce:transition-none sm:bg-[var(--wb-ink)]/10" />
-      <Dialog.Popup className="workbot fixed inset-x-0 bottom-0 top-3 z-50 flex flex-col overflow-hidden rounded-t-[24px] bg-[var(--wb-bg)] pb-[env(safe-area-inset-bottom)] shadow-[var(--wb-panel-shadow)] outline-none workbot-sheet-motion transition-transform data-[ending-style]:translate-y-full data-[starting-style]:translate-y-full motion-reduce:transition-none sm:inset-y-0 sm:left-auto sm:right-0 sm:top-0 sm:w-[420px] sm:rounded-none sm:shadow-[var(--wb-sheet-shadow)] sm:data-[ending-style]:translate-x-full sm:data-[ending-style]:translate-y-0 sm:data-[starting-style]:translate-x-full sm:data-[starting-style]:translate-y-0" data-workbot-profile>
-        <div className="relative flex shrink-0 flex-col items-center gap-1.5 px-5 pb-4 pt-6">
-          <Dialog.Close aria-label="Close" className="absolute left-4 top-4 grid size-9 place-items-center rounded-full text-[var(--wb-muted)] shadow-[0_0_0_1px_var(--wb-ring)] hover:text-[var(--wb-text)] focus-visible:outline-none focus-visible:shadow-[var(--wb-focus)]"><X size={16} strokeWidth={1.75} aria-hidden /></Dialog.Close>
+      <Dialog.Popup ref={drag.popupRef} className="workbot fixed inset-x-0 bottom-0 top-[calc(env(safe-area-inset-top)+0.5rem)] z-50 flex flex-col overflow-hidden rounded-t-[24px] bg-[var(--wb-bg)] shadow-[var(--wb-panel-shadow)] outline-none workbot-sheet-motion transition-transform data-[ending-style]:translate-y-full data-[starting-style]:translate-y-full motion-reduce:transition-none sm:inset-y-0 sm:left-auto sm:right-0 sm:top-0 sm:w-[420px] sm:rounded-none sm:shadow-[var(--wb-sheet-shadow)] sm:data-[ending-style]:translate-x-full sm:data-[ending-style]:translate-y-0 sm:data-[starting-style]:translate-x-full sm:data-[starting-style]:translate-y-0" data-workbot-profile data-workbot-phone-sheet>
+        <div {...drag.handle} className="relative flex shrink-0 touch-none select-none flex-col items-center gap-1.5 px-5 pb-4 pt-6 sm:touch-auto sm:select-auto">
+          <SheetGrabber />
+          <Dialog.Close aria-label="Close" className="absolute left-4 top-4 grid size-9 place-items-center rounded-full text-[var(--wb-muted)] shadow-[0_0_0_1px_var(--wb-ring)] hover:text-[var(--wb-text)] focus-visible:outline-none focus-visible:shadow-[var(--wb-focus)]" data-workbot-sheet-close><X size={16} strokeWidth={1.75} aria-hidden /></Dialog.Close>
           <span aria-hidden className={`grid ${centered ? "size-[96px]" : "size-[76px]"} place-items-center rounded-full bg-[var(--wb-surface)] shadow-[var(--wb-card-shadow)]`}><OpenWorkMark width={centered ? 38 : 34} height={centered ? 48 : 42} /></span>
           <Dialog.Title className={`pt-2 font-semibold text-[var(--wb-text)] ${centered ? "text-[24px] leading-7 tracking-[-0.02em]" : "text-[20px] leading-6 tracking-[-0.015em]"}`}>{name}</Dialog.Title>
           <Dialog.Description className="flex max-w-full items-center gap-1.5 text-[14px] text-[var(--wb-muted)]" data-workbot-profile-status>
@@ -78,9 +83,10 @@ export function ProfileSheet({ open, onClose, name, activity, initialTab = "task
             </button>)}
           </div>
         </div>
-        <div role="tabpanel" id={`${tabId}-panel`} aria-labelledby={`${tabId}-${tab}`} tabIndex={0} className="min-h-0 flex-1 overflow-y-auto pb-6 outline-none">
+        <div role="tabpanel" id={`${tabId}-panel`} aria-labelledby={`${tabId}-${tab}`} tabIndex={0} className="min-h-0 flex-1 overflow-y-auto pb-[calc(env(safe-area-inset-bottom)+2rem)] outline-none sm:pb-6">
           {tab === "tasks" ? <TasksTab name={name} activity={activity} /> : tab === "files" ? <FilesTab name={name} open={surface.open} onClose={onClose} /> : tab === "permissions" ? <AppsTab name={name} /> : tab === "schedules" ? <SchedulesTab /> : <MemoryTab name={name} />}
         </div>
+        <PhoneSheetEdge />
       </Dialog.Popup>
     </Dialog.Portal>
   </Dialog.Root>;

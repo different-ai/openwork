@@ -869,7 +869,7 @@ function WorkbotHeader(props: {
   page?: string;
   /** That view's one action, such as Ask Workbot about the open document. */
   action?: ReactNode;
-  /** False on phones: the plain name and status replace the avatar and profile. */
+  /** False on phones: the plain name and status replace the avatar, and open the same sheet it does. */
   wide?: boolean;
   /** Floats the chat's header over its conversation (translucent, blurred); measured through this ref. */
   floating?: (node: HTMLElement | null) => void;
@@ -882,7 +882,7 @@ function WorkbotHeader(props: {
       {props.action}
     </header>
   );
-  // Phones show the chat, not a persona: Workbot's name with what it is doing, which opens the task sheet.
+  // Phones show the chat, not a persona: Workbot's name with what it is doing, which opens the same sheet as the avatar.
   const phone = props.wide === false;
   return (
     <header ref={props.floating} className={`grid shrink-0 grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] gap-2 px-3 sm:px-5 ${phone ? "min-h-14 items-center py-1.5" : "min-h-[84px] items-start pb-2 pt-2"} ${props.floating ? "workbot-chrome-top absolute inset-x-0 top-0 z-20" : ""}`} data-workbot-profile-header data-workbot-floating-header={props.floating ? "" : undefined}>
@@ -892,7 +892,7 @@ function WorkbotHeader(props: {
         <div className="hidden min-w-0 lg:contents">{props.nav}</div>
       </div>
       <div className="flex min-w-0 flex-col items-center gap-1">
-        <h1 className="min-w-0 max-w-full">{phone ? <WorkingName name={name} activity={props.activity} mark={null} tasksOnly /> : <ProfileBadge name={name} activity={props.activity} />}</h1>
+        <h1 className="min-w-0 max-w-full">{phone ? <WorkingName name={name} activity={props.activity} mark={null} phone /> : <ProfileBadge name={name} activity={props.activity} />}</h1>
         {props.title ? <div className="flex max-w-[150px] items-center gap-1 text-[12px]">{props.title}</div> : null}
       </div>
       <div className={`flex min-w-0 items-center justify-end gap-1 sm:gap-2.5 ${phone ? "" : "pt-2"}`} data-workbot-header-side>

@@ -25,6 +25,8 @@
     "test:connector-ui": "esbuild scripts/connector-logo-ui.test.tsx --bundle --conditions=development --platform=node --format=cjs --jsx=automatic --external:react --external:react-dom --external:@tanstack/react-query --external:zod --outfile=node_modules/.cache/connector-logo-ui.test.cjs && node node_modules/.cache/connector-logo-ui.test.cjs",
     "test:artifact-ui": "esbuild scripts/artifact-ui.test.tsx --bundle --conditions=development --platform=node --format=cjs --jsx=automatic --external:react --external:react-dom --external:@tanstack/react-query --external:zod --outfile=node_modules/.cache/artifact-ui.test.cjs && node node_modules/.cache/artifact-ui.test.cjs",
     "test:artifact-browser": "node scripts/artifact-browser.mjs",
+    "test:working-status-ui": "esbuild scripts/working-status-ui.test.tsx --bundle --conditions=development --platform=node --format=cjs --jsx=automatic --external:react --external:react-dom --external:@tanstack/react-query --external:zod --outfile=node_modules/.cache/working-status-ui.test.cjs && node node_modules/.cache/working-status-ui.test.cjs",
+    "test:task-sheet-browser": "node scripts/task-sheet-browser.mjs",
     "test:remote-jobs": "tsx --conditions=development --test scripts/remote-jobs.test.ts && esbuild scripts/remote-jobs-ui.test.tsx --bundle --conditions=development --platform=node --format=cjs --jsx=automatic --external:react --external:react-dom --external:@tanstack/react-query --external:zod --outfile=node_modules/.cache/remote-jobs-ui.test.cjs && node node_modules/.cache/remote-jobs-ui.test.cjs",
     "test:session-cells": "tsx --conditions=development --test scripts/session-cells.test.ts",
     "test:activation": "tsx --conditions=development --test scripts/activation.test.ts",

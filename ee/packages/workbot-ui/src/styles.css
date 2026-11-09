@@ -324,6 +324,16 @@
 .workbot-sheet-motion { transition-duration: 360ms; transition-timing-function: cubic-bezier(0.32, 0.72, 0, 1); }
 .workbot-sheet-motion[data-ending-style] { transition-duration: 220ms; transition-timing-function: cubic-bezier(0.4, 0, 1, 1); }
 ::view-transition-old(root), ::view-transition-new(root) { animation-duration: 200ms; animation-timing-function: cubic-bezier(0.2, 0, 0, 1); }
+/* On a phone, a sheet's close button is the same small glass circle as the floating header's (sheet-drag.tsx). */
+@media (max-width: 639.98px) {
+  [data-workbot-phone-sheet] [data-workbot-sheet-close] {
+    background: var(--wb-float-control);
+    -webkit-backdrop-filter: var(--wb-float-blur);
+    backdrop-filter: var(--wb-float-blur);
+    box-shadow: var(--wb-glass-shadow);
+  }
+  [data-workbot-phone-sheet] [data-workbot-sheet-close]:focus-visible { box-shadow: var(--wb-glass-shadow), var(--wb-focus); }
+}
 @media (prefers-reduced-motion: reduce) {
   .workbot-sheet-motion { transition: none; }
   ::view-transition-group(*), ::view-transition-old(*), ::view-transition-new(*) { animation: none !important; }

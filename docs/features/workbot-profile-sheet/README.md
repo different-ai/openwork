@@ -6,9 +6,9 @@ Needs `workbotWorkingStatus`: Den reports it on only when both are on, since the
 
 ## What people see
 
-Tapping Workbot's name in the header opens its profile: the mark, its name, and whether it is at work ("Opening your screenshot") or ready. Three tabs, one at a time:
+Tapping Workbot's name in the header opens its profile, on every screen size: a panel on the right on desktop, and on phones (where the name pill stands in for the avatar) the same profile as a full-height sheet under the status bar, with a grabber to pull it down. It shows the mark, its name, and whether it is at work ("Opening your screenshot") or ready. Three tabs, one at a time:
 
-- **Tasks**: the reply in progress and each background task, with their steps, Stop and Watch (the same content as the task sheet).
+- **Tasks**: the reply in progress with its steps, then one row per background task (title, one plain status line, a time, and Stop while it runs); a task's steps open inside its row, repeats counted ("Checking the remote task · 7 times"). The same content as the task sheet.
 - **Apps** ("What I can use"): every app the person can use, connected or not, in one list: Connected first, then Needs sign-in, Not connected and Needs attention, each with its logo (or first letter) and a plain status. One **Connect** (the existing Workbot connect flow) where the person signs in with their own account, including an expired sign-in; "Ask your admin" where only an admin can fix it ("Fix in OpenWork settings" for someone who can manage connections). Then what Workbot can do (browser, computer, documents, calendar), with off ones listed and locked rather than hidden. A link to manage connections in Den.
 - **What I remember**: Workbot's memory files about the person (`memory/*.md` of their main chat, shared with side chats), newest first, read-only. To change something, they tell Workbot.
 
