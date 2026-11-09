@@ -2,7 +2,7 @@ import * as crypto from "node:crypto"
 import type { Env, Hono } from "hono"
 import { describeRoute, type DescribeRouteOptions } from "hono-openapi"
 import { z } from "zod"
-import { headlessModelAccessSchema } from "@openwork-ee/headless-protocol"
+import { headlessModelAccessSchema, modelAttributionSchema } from "@openwork-ee/headless-protocol"
 import { attributeAuditRequest, auditServiceAttribution } from "../audit/request-capture.js"
 import { env } from "../env.js"
 import { tokenRoute } from "../middleware/index.js"
@@ -33,7 +33,7 @@ const exchangeBodySchema = z.object({
   modelAccessRequired: z.boolean().optional(),
 }).strict()
 
-const exchangeResponseSchema = z.object({ mcpToken: z.string(), expiresAt: z.iso.datetime(), readOnly: z.boolean(), modelAccess: headlessModelAccessSchema.optional() })
+const exchangeResponseSchema = z.object({ mcpToken: z.string(), expiresAt: z.iso.datetime(), readOnly: z.boolean(), modelAccess: headlessModelAccessSchema.optional(), modelAttribution: modelAttributionSchema.optional() })
 const exchangeErrorSchema = z.object({
   error: z.enum([
     "not_found",
@@ -160,7 +160,7 @@ export function registerHeadlessRunnerRoutes<T extends Env>(app: Hono<T>) {
 
         const result = await exchangeHeadlessResumeGrant(row, { sessionId, messageId, memberId, model, modelAccessRequired })
         if (result.ok) {
-          return c.json({ mcpToken: result.mcpToken, expiresAt: result.expiresAt.toISOString(), readOnly: result.readOnly, ...(result.modelAccess ? { modelAccess: result.modelAccess } : {}) }, 200)
+          return c.json({ mcpToken: result.mcpToken, expiresAt: result.expiresAt.toISOString(), readOnly: result.readOnly, ...(result.modelAccess ? { modelAccess: result.modelAccess } : {}), ...(result.modelAttribution ? { modelAttribution: result.modelAttribution } : {}) }, 200)
         }
         if (result.status === 429) {
           c.header("retry-after", String(Math.ceil(result.retryAfterMs / 1000)))

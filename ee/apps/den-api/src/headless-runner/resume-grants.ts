@@ -6,7 +6,7 @@ import { db } from "../db.js"
 import { mintHeadlessRunMcpToken, revokeHeadlessRunMcpToken } from "../mcp/headless-run-token-mint.js"
 import { appLogger } from "../observability/logger.js"
 import { checkRateLimit } from "../utils/rate-limit.js"
-import type { HeadlessModelAccess } from "@openwork-ee/headless-protocol"
+import type { HeadlessModelAccess, ModelAttribution } from "@openwork-ee/headless-protocol"
 import { organizationCloudModelSelection } from "../workbot/model.js"
 import { cloudAgentGatewayAccess } from "../workbot/gateway-model.js"
 import { isWorkbotManagedLuna } from "@openwork/types/den/workbot-settings"
@@ -152,7 +152,7 @@ export async function mintHeadlessTurnCredentials(input: {
   indexKind?: HeadlessIndexKind
   /** The member the turn is for, when the caller knows it (Workbot); looked up from the user otherwise. */
   memberId?: string
-}): Promise<{ token: string; tokenId: string; expiresAt: Date; resumeGrant?: string; modelAccess?: HeadlessModelAccess; indexCapability?: string }> {
+}): Promise<{ token: string; tokenId: string; expiresAt: Date; resumeGrant?: string; modelAccess?: HeadlessModelAccess; modelAttribution?: ModelAttribution; indexCapability?: string }> {
   // Taken before anything is minted: a credential revocation after this moment outranks the grant (see
   // headlessResumeGrantAuthorizedBeforeRevocation), however long minting takes.
   const authorizedAt = new Date()
@@ -230,7 +230,7 @@ async function headlessResumeGrantRevokedNow(row: GrantRow) {
 }
 
 export type HeadlessResumeExchange =
-  | { ok: true; mcpToken: string; expiresAt: Date; readOnly: boolean; modelAccess?: HeadlessModelAccess }
+  | { ok: true; mcpToken: string; expiresAt: Date; readOnly: boolean; modelAccess?: HeadlessModelAccess; modelAttribution?: ModelAttribution }
   | { ok: false; status: 403; error: HeadlessResumeGrantError }
   | { ok: false; status: 429; error: "rate_limited"; retryAfterMs: number }
 
@@ -288,5 +288,5 @@ export async function exchangeHeadlessResumeGrant(
     .update(HeadlessResumeGrantTable)
     .set({ lastUsedAt: now, useCount: sql`${HeadlessResumeGrantTable.useCount} + 1` })
     .where(eq(HeadlessResumeGrantTable.id, row.id))
-  return { ok: true, mcpToken: minted.token, expiresAt: minted.expiresAt, readOnly: row.readOnly, ...(modelAccess ? { modelAccess } : {}) }
+  return { ok: true, mcpToken: minted.token, expiresAt: minted.expiresAt, readOnly: row.readOnly, ...(modelAccess ? { modelAccess } : {}), ...(minted.modelAttribution ? { modelAttribution: minted.modelAttribution } : {}) }
 }

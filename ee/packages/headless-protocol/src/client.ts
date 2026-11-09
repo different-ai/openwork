@@ -65,6 +65,15 @@ export type HeadlessModelAccess = z.infer<typeof headlessModelAccessSchema>
 
 export type HeadlessRunnerActor = { userId: string; organizationId: string }
 
+/** Issued by Den after authenticating the member and checking the attribution rollout. Never caller input. */
+export const modelAttributionSchema = z.object({
+  memberId: z.string().min(1).max(512).regex(/^[\x21-\x7e]+$/),
+  userId: z.string().min(1).max(512).regex(/^[\x21-\x7e]+$/),
+  organizationId: z.string().min(1).max(512).regex(/^[\x21-\x7e]+$/),
+  email: z.string().min(1).max(512).regex(/^[\x21-\x7e]+$/).optional(),
+}).strict()
+export type ModelAttribution = z.infer<typeof modelAttributionSchema>
+
 export type HeadlessRunnerDeps = {
   config: HeadlessRunnerConfig
   fetch: typeof fetch
@@ -76,7 +85,7 @@ export type HeadlessRunnerDeps = {
    */
   mintToken: (
     input: HeadlessRunnerActor & { ttlMs?: number; sessionId?: string; messageId?: string; readOnly?: boolean; scopes?: readonly string[]; model?: string; modelAccessRequired?: boolean },
-  ) => Promise<{ token: string; resumeGrant?: string; modelAccess?: HeadlessModelAccess; indexCapability?: string }>
+  ) => Promise<{ token: string; resumeGrant?: string; modelAccess?: HeadlessModelAccess; indexCapability?: string; modelAttribution?: ModelAttribution }>
   /** Resolve scoped turns' persisted model before minting, even when today's default is no longer accessible. */
   modelAccessRequired?: (actor: HeadlessRunnerActor) => Promise<boolean> | boolean
   /** Optional trusted caller hook for member-scoped turns when mintToken does not supply access. */
@@ -549,7 +558,7 @@ export function createHeadlessRunnerClient(deps: HeadlessRunnerDeps) {
           if (!issued.modelAccess) return { ok: false, status: 503, error: "headless_model_access_unavailable" }
         }
       }
-      const { token, resumeGrant, modelAccess, indexCapability } = issued
+      const { token, resumeGrant, modelAccess, indexCapability, modelAttribution } = issued
       const { status, payload } = await request(deps, "POST", `${sessionPath(input.sessionId)}/turns`, {
         messageId: input.messageId,
         prompt: input.prompt,
@@ -561,6 +570,7 @@ export function createHeadlessRunnerClient(deps: HeadlessRunnerDeps) {
         // without them the body is exactly as before.
         credentials: {
           mcpToken: token,
+          ...(modelAttribution ? { modelAttribution: modelAttributionSchema.parse(modelAttribution) } : {}),
           ...(input.readOnly ? { readOnly: true } : {}),
           ...(resumeGrant ? { resumeGrant } : {}),
           ...(modelAccess ? { modelAccess } : {}),

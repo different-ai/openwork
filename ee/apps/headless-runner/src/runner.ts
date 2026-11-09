@@ -570,6 +570,7 @@ export class Runner {
             tools: [],
             model: selectedModel,
             apiKey,
+            attribution: credentials.modelAttribution,
             signal: AbortSignal.timeout(30_000),
           })
           title = cleanTitle(named.text)
@@ -1054,7 +1055,8 @@ export class Runner {
       if (!fresh || (fresh.readOnly && credentials.readOnly !== true)) return false
       if (store.modelAccessRequired(sessionId, messageId) && !fresh.modelAccess) return false
       if (fresh.modelAccess) store.requireModelAccess(sessionId, messageId)
-      credentials = { ...credentials, mcpToken: fresh.mcpToken, ...(fresh.modelAccess ? { modelAccess: fresh.modelAccess } : {}) }
+      // Den's fresh identity is authoritative, including omission when the rollout is disabled.
+      credentials = { ...credentials, mcpToken: fresh.mcpToken, modelAttribution: fresh.modelAttribution, ...(fresh.modelAccess ? { modelAccess: fresh.modelAccess } : {}) }
       credentialsAt = Date.now()
       issuedAt = credentialsAt
       // The turn timeout applies to each stretch between refreshes, as it does to each resumed run.
@@ -1151,6 +1153,7 @@ export class Runner {
             tools: setup.toolSpecs,
             model: setup.turn?.model ?? this.options.defaultModel,
             apiKey: credentials.modelAccess?.apiKey ?? credentials.modelApiKey ?? this.options.defaultModelApiKey ?? "",
+            attribution: credentials.modelAttribution,
             signal: AbortSignal.any([signal, writing.signal]),
             ...(events
               ? {
@@ -1595,7 +1598,7 @@ export class Runner {
     const needsToken = running.kind !== "report" && mcp !== undefined && state.mcp !== false
     const grant = resume ? await resume.keptGrant(running.sessionId, running.messageId) : null
     if (!grant || !resume) return needsToken || scoped ? null : { credentials: readOnly, at: Date.now() }
-    if (!needsToken && !scoped) return { credentials: { ...readOnly, resumeGrant: grant }, at: Date.now() }
+    // Even without tools (including reports), re-obtain the current attribution: identities are never persisted.
     // Asks for model access too when the turn requires it, pinned to its stored model; null without it.
     const fresh = await resume.refresh(running.sessionId, running.messageId, grant)
     // A grant never widens a turn: a read-only token for a turn that writes waits for its caller instead.
@@ -1609,6 +1612,7 @@ export class Runner {
         resumeGrant: grant,
         // Held in memory only, like every credential: never in step_schedule, checkpoints or the transcript.
         ...(fresh.modelAccess ? { modelAccess: fresh.modelAccess } : {}),
+        ...(fresh.modelAttribution ? { modelAttribution: fresh.modelAttribution } : {}),
       },
       at: Date.now(),
     }
@@ -1624,7 +1628,8 @@ export class Runner {
     if (this.options.store.modelAccessRequired(running.sessionId, running.messageId) && !fresh.modelAccess) return false
     if (fresh.modelAccess) this.options.store.requireModelAccess(running.sessionId, running.messageId)
     const now = Date.now()
-    lane.held = { credentials: { ...credentials, mcpToken: fresh.mcpToken, ...(fresh.modelAccess ? { modelAccess: fresh.modelAccess } : {}) }, at: now }
+    // A missing fresh identity clears the old one (for example after a rollout rollback).
+    lane.held = { credentials: { ...credentials, mcpToken: fresh.mcpToken, modelAttribution: fresh.modelAttribution, ...(fresh.modelAccess ? { modelAccess: fresh.modelAccess } : {}) }, at: now }
     lane.credentialsAt = now
     lane.issuedAt = now
     console.log(`[headless-runner] turn credentials refreshed ${JSON.stringify({ sessionId: running.sessionId, messageId: running.messageId })}`)
@@ -1779,6 +1784,7 @@ export class Runner {
             tools: setup.toolSpecs,
             model: setup.turn?.model ?? this.options.defaultModel,
             apiKey: chosen.apiKey,
+            attribution: credentials.modelAttribution,
             signal: AbortSignal.any([signal, writing.signal]),
             ...(continueFrom ? { continueFrom } : {}),
             // Always streamed: the text so far is what a cut-off step continues from.

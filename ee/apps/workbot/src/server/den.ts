@@ -3,7 +3,7 @@ import { z } from "zod"
 import { Client } from "@modelcontextprotocol/sdk/client/index.js"
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js"
 import { skillCreatedPayloadSchema } from "@openwork/types/skill-created-app"
-import { headlessModelAccessSchema } from "@openwork-ee/headless-protocol"
+import { headlessModelAccessSchema, modelAttributionSchema } from "@openwork-ee/headless-protocol"
 import { remoteSessionStatusResultSchema, type RemoteSessionStatusRequest } from "@openwork/types/automations"
 import { workbotAccessFailureSchema, type WorkbotAccessReason } from "@openwork/types/den/workbot-settings"
 import type { Tokens } from "./sealed.js"
@@ -95,6 +95,7 @@ const runTokenSchema = z.object({
   token: z.string(),
   resumeGrant: z.string().optional(),
   modelAccess: headlessModelAccessSchema.optional(),
+  modelAttribution: modelAttributionSchema.optional(),
   /** Den's session index capability: passed to the runner with the turn, never to the browser. */
   indexCapability: z.string().optional(),
 })

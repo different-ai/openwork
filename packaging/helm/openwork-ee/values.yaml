@@ -26,6 +26,7 @@ config:
   #   "false" off for everyone; /admin shows "Set by deployment config"
   # The /admin kill switch still turns a feature off, even when locked on.
   features:
+    headlessModelAttribution: ""  # default off · Attribute headless inference requests to the authenticated member through an operator-configured gateway header.
     webPerMember: ""              # default off · Admins choose which members get OpenWork Web from the Members page, and the organization pays for Web only for them. Members without it can't open a Web computer. Off: every member and pending invitation has Web and is billed for it.
     googleCalendarRecurrence: ""  # default off · Create and change recurring meeting series through the native Google Calendar capabilities.
     googleDrivePdfText: ""        # default off · Agents read the text of PDFs in Google Drive, up to 50 MB, instead of being told the file is too large.
