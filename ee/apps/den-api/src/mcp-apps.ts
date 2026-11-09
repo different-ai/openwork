@@ -28,7 +28,7 @@ import {
 } from "@openwork/types/mcp-app"
 import { db } from "./db.js"
 import { env } from "./env.js"
-import { organizationFeatureEnabled } from "./features.js"
+import { getOrganizationFeatures, organizationFeatureEnabled } from "./features.js"
 import { withPrimaryReads } from "./read-routing.js"
 import { buildGeneratedMcpApp, type GeneratedArtifactViewBuildResult } from "./generated-artifact-view-builder.js"
 import type { McpMemberIdentity } from "./mcp/external-capabilities.js"
@@ -251,6 +251,12 @@ async function requirePublishable(organizationId: string, tools: McpAppToolBindi
   }
 }
 
+async function requireSites(organizationId: string) {
+  if (!await organizationFeatureEnabled(organizationId, "appSites")) {
+    throw new McpAppError(409, "app_sites_off", "Opening Apps as sites is not turned on for this organization. Omit site, or ask an admin to turn the feature on. No revision was published.")
+  }
+}
+
 async function compile(input: CreateMcpAppInput, pluginId: string, tools: McpAppToolBinding[]) {
   const reactSource = input.reactSource.trim()
   const cssSource = input.cssSource?.trim() ?? ""
@@ -282,6 +288,7 @@ async function compile(input: CreateMcpAppInput, pluginId: string, tools: McpApp
     // before them never pay for reads they would make again themselves.
     ...(reactSource.includes(MCP_APP_INITIAL_RESULTS_META) ? { loadsWithLaunch: true } : {}),
     ...(input.public ? { public: true } : {}),
+    ...(input.site ? { site: true } : {}),
   })
   if (!parsed.success) throw new McpAppError(422, "mcp_app_invalid_build", "The compiler did not produce a valid bounded MCP App revision. No revision was published.")
   const payload = parsed.data
@@ -317,6 +324,7 @@ async function createMcpAppOnPrimary({ context, resolveTools, ...source }: McpAp
   let pluginId = input.pluginId ? await editablePlugin(context, input.pluginId) : null
   const resolved = await resolveTools(input.tools ?? [])
   if (input.public) await requirePublishable(context.organizationContext.organization.id, resolved)
+  if (input.site) await requireSites(context.organizationContext.organization.id)
   const workflows = await workflowsToAdd(context, pluginId, workflowTools(resolved))
   const compiled = await compile(input, pluginId ?? createDenTypeId("plugin"), resolved)
   let createdPluginId: DenTypeId<"plugin"> | null = null
@@ -380,10 +388,14 @@ async function updateMcpAppOnPrimary({ context, resolveTools, ...source }: McpAp
   // An omitted public keeps the App's current choice, like its tools.
   const isPublic = input.public ?? current.payload.public === true
   if (isPublic) await requirePublishable(context.organizationContext.organization.id, resolved)
+  const isSite = input.site ?? current.payload.site === true
+  // Only a new choice is checked, so an App keeps updating while the feature is off.
+  if (input.site) await requireSites(context.organizationContext.organization.id)
   const workflows = input.tools ? await workflowsToAdd(context, pluginId, workflowTools(resolved)) : []
   const compiled = await compile({
     ...input,
     public: isPublic,
+    site: isSite,
     cssSource: input.cssSource ?? storedSource(current.version, current.payload).cssSource,
     description: input.description ?? current.payload.description ?? undefined,
   }, pluginId, throughPlugin(resolved, pluginId))
@@ -678,6 +690,31 @@ export async function loadPublicMcpApp(input: { appId: string }): Promise<McpApp
     csp: payload.csp,
     resourceDigest: payload.resourceDigest,
   }
+}
+
+/**
+ * Whether a browser may be handed the site page for this App, asked before
+ * anyone has signed in: the App is active, its newest revision was made a
+ * site, and the feature is on for its organization. `public` says the page can
+ * load it with no sign-in. Nothing about the App itself is returned.
+ */
+export async function loadMcpAppSite(input: { appId: string }): Promise<{ public: boolean } | null> {
+  const parsedId = mcpAppIdSchema.safeParse(input.appId)
+  if (!parsedId.success || !env.appMcpServersEnabled) return null
+  const id = appId(parsedId.data)
+  const [app] = await db.select({ organizationId: ConfigObjectTable.organizationId }).from(ConfigObjectTable).where(and(
+    eq(ConfigObjectTable.id, id),
+    eq(ConfigObjectTable.objectType, "app"),
+    eq(ConfigObjectTable.status, "active"),
+    isNull(ConfigObjectTable.deletedAt),
+  )).limit(1)
+  if (!app) return null
+  const head = await latestRevisionHead(app.organizationId, id)
+  const content = head ? await revisionContent(app.organizationId, id, head) : null
+  if (!content || content.payload.site !== true) return null
+  const features = await getOrganizationFeatures(app.organizationId)
+  if (!features.appSites) return null
+  return { public: features.publicApps && content.payload.public === true && content.payload.tools.length === 0 }
 }
 
 // Opt-in numeric profiling only; never emit request payloads or identities.

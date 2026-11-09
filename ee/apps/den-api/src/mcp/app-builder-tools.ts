@@ -52,6 +52,7 @@ const authoringShape = {
   cssSource: createMcpAppInputSchema.shape.cssSource.describe("Complete CSS source using host theme variables and responsive container rules. Omit on creation for empty CSS; omit on update to keep existing CSS."),
   textFallback: createMcpAppInputSchema.shape.textFallback.describe("Readable plain-text alternative describing what the App shows, for hosts that cannot render it; usually one or two sentences."),
   public: createMcpAppInputSchema.shape.public.describe("true to serve the App to anyone at its public MCP URL with no OpenWork sign-in; only when the person asks for a public App. Needs the Public Apps feature and an App with no tools. Omit on update to keep the current choice, or pass false to make it private again."),
+  site: createMcpAppInputSchema.shape.site.describe("true when the person wants the App to also open as a web page: a browser opening its MCP URL then shows the App full page, with no chat beside it, so write it to stand alone. Needs the App sites feature. Omit on update to keep the current choice, or pass false to turn it off."),
   tools: documentedTools.optional().describe("Complete set of tools the App may call. Omit or use [] for a self-contained new App; omit on update to keep existing tools, or use [] to remove them."),
 }
 const prepareAppInputSchema = prepareMcpAppInputSchema.extend({

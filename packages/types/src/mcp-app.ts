@@ -82,6 +82,8 @@ export const mcpAppAuthoringSchema = mcpAppSourceSchema.extend({
   tools: toolDeclarationsSchema.optional(),
   /** Serve the App at its public MCP URL, with no sign-in. Only an App without tools can be public. */
   public: z.boolean().optional(),
+  /** The App is written to also work as a web page: a browser opening its MCP URL shows it full page. */
+  site: z.boolean().optional(),
 })
 
 /** Correlates preparation and publication in chat; it grants no access or validation. */
@@ -134,6 +136,8 @@ export const mcpAppCompiledRevisionSchema = z.object({
   loadsWithLaunch: z.literal(true).optional(),
   /** Marked public by an editor: served without sign-in at mcpAppPublicPath while it has no tools. */
   public: z.literal(true).optional(),
+  /** Its author made it work as a web page, so a browser opening its MCP URL gets the App instead of a refusal. */
+  site: z.literal(true).optional(),
 }).strict().refine((value) => byteLength(JSON.stringify(value)) <= MCP_APP_MAX_STORAGE_BYTES)
 
 export const mcpAppToolSummarySchema = z.object({

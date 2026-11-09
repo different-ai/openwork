@@ -214,6 +214,17 @@ export const FEATURES = defineFeatures({
     deployments: everywhere,
     default: false,
   },
+  appSites: {
+    label: "Apps: open an App as a site",
+    description: "An App its author made a site also opens as a web page: a browser that opens the App's MCP URL shows the App full page. Signed-in members use its tools there; an App marked public opens for anyone.",
+    category: "experience",
+    added: "2026-11-09",
+    since: "2026-11",
+    author: "reachjalil",
+    docs: "docs/features/app-sites/README.md",
+    deployments: everywhere,
+    default: false,
+  },
   composerBackgroundTasks: {
     label: "Desktop: background tasks on the composer",
     description: "Commands the agent leaves running in the background are listed on top of the composer, under the Agents list, with how long each has run, instead of a count in the chat.",

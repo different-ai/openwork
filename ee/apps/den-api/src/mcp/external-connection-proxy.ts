@@ -36,6 +36,7 @@ import { organizationFeatureEnabled } from "../features.js"
 import { tokenRoute } from "../middleware/index.js"
 import { resolvePublicOrigin } from "../capability-sources/generic-oauth.js"
 import { handleMcpAppServerRequest, isMcpAppServerId } from "./app-server.js"
+import { appSiteResponse, wantsAppSite } from "./app-site.js"
 import { getMcpResourceContext, verifyMcpRequest } from "./auth.js"
 import { externalMcpAppResourceUri, resolveMcpMemberIdentity } from "./external-capabilities.js"
 import { externalMcpToolSchemaDigest } from "./external-mcp-tool-arguments.js"
@@ -485,6 +486,13 @@ export function registerExternalConnectionProxyRoutes<T extends { Variables: Req
   app.all(path, tokenRoute, async (c) => {
     const requestIdValue = c.get("requestId")
     const requestId = typeof requestIdValue === "string" ? requestIdValue : "unknown"
+    // A browser at an App's URL gets the App as a page when its author made it
+    // a site. The page holds nothing about the App: it signs the visitor in
+    // with their OpenWork session and then loads the App through this route.
+    if (wantsAppSite(c.req.raw) && isMcpAppServerId(c.req.param("connectionId"))) {
+      const page = await appSiteResponse({ appId: c.req.param("connectionId"), publicOnly: false })
+      if (page) return page
+    }
     const principal = await verifyMcpRequest(
       c.req.raw.headers,
       getMcpResourceContext(c.req.raw, "agent", requestId),

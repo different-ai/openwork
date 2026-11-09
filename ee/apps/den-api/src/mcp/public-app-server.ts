@@ -7,6 +7,7 @@ import type { RequestIdVariables } from "hono/request-id"
 import { loadPublicMcpApp } from "../mcp-apps.js"
 import { publicRoute } from "../middleware/index.js"
 import { createMcpAppServer } from "./app-server.js"
+import { appSiteResponse, wantsAppSite } from "./app-site.js"
 import { preflightMcpJsonRpcRequest } from "./json-rpc-preflight.js"
 import { DEN_MCP_READ_SCOPE } from "./scopes.js"
 
@@ -52,6 +53,11 @@ export function registerPublicMcpAppRoutes<T extends { Variables: RequestIdVaria
     }),
     async (c) => {
       const request = c.req.raw
+      // A browser gets the App as a page when its author made it a site.
+      if (wantsAppSite(request)) {
+        const page = await appSiteResponse({ appId: c.req.param("appId"), publicOnly: true })
+        if (page) return page
+      }
       if (c.req.method !== "POST") return new Response(null, { status: 405, headers: { allow: "POST" } })
 
       const requestIdValue = c.get("requestId")
