@@ -149,7 +149,8 @@ export const analyticsIntros = [
     match: { path: getWorkflowRunsRoute() },
     icon: ScrollText,
     title: "Workflow runs",
-    summary: "See every run of a saved workflow or one-off task, and whether it worked.",
+    // Personal: `/v1/workflow-runs` lists only the viewer's own runs, so the copy and setup state are about them.
+    summary: "See each run of your saved workflows and one-off tasks, and whether it worked.",
     highlights: [
       { title: "Worked or failed.", text: "Each run with its result and when it finished." },
       { title: "See the steps.", text: "Open a run to see its workflow and the tools it used." },

@@ -30,8 +30,10 @@ function readiness(call: Call) {
   assert.equal(call.status, 200, summary(call))
   assert.equal(call.headers.get("cache-control"), "no-store")
   assert.ok(call.body && typeof call.body === "object" && !Array.isArray(call.body))
-  // Content-free: exactly two booleans, never provider names, counts or ids.
-  assert.deepEqual(Object.keys(call.body).sort(), ["gatewayRequired", "hasGatewayProvider"])
+  // Content-free: exactly three booleans, never provider names, counts or ids.
+  assert.deepEqual(Object.keys(call.body).sort(), ["gatewayRequired", "hasGatewayProvider", "organizationGatewayRequired"])
+  // With the free allowance off for everyone, the workspace answer matches the caller's.
+  assert.equal(field(call.body, "organizationGatewayRequired"), field(call.body, "gatewayRequired"))
   return { gatewayRequired: field(call.body, "gatewayRequired"), hasGatewayProvider: field(call.body, "hasGatewayProvider") }
 }
 

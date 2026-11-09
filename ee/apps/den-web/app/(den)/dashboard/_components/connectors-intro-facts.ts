@@ -14,11 +14,22 @@ export function connectorsSetUpBy(connections: readonly ExternalMcpConnection[])
   return names.size === 1 ? [...names][0] : null;
 }
 
-/** Whether anyone besides the viewer can use a connector. Google Workspace and Microsoft 365 (no access list) are everyone's. */
-export function connectorSharedBeyondViewer(connection: Pick<ExternalMcpConnection, "access">, viewerId: string | null): boolean {
+/**
+ * Whether anyone besides the person who added a connector can use it, whoever is looking: an admin
+ * opening a teammate's connector must not be told "no one else can use it" because it isn't shared
+ * with them. Google Workspace and Microsoft 365 (no access list) are everyone's. Null when the
+ * creator isn't known (older servers, someone else's connector): the banner then stays hidden.
+ */
+export function connectorSharedBeyondCreator(
+  connection: Pick<ExternalMcpConnection, "access" | "createdByYou" | "createdByOrgMembershipId">,
+  viewerId: string | null,
+): boolean | null {
   const access = connection.access;
   if (!access) return true;
-  return access.orgWide || access.teamIds.length > 0 || access.memberIds.some((id) => id !== viewerId);
+  if (access.orgWide || access.teamIds.length > 0) return true;
+  const creatorId = connection.createdByOrgMembershipId ?? (connection.createdByYou ? viewerId : null);
+  if (!creatorId) return access.memberIds.length > 1 ? true : null;
+  return access.memberIds.some((id) => id !== creatorId);
 }
 
 /**

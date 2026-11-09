@@ -122,6 +122,8 @@ export type ExternalMcpConnection = {
   createdByName?: string | null;
   /** Whether the signed-in member added it; they can always edit or remove it. */
   createdByYou?: boolean;
+  /** Org membership id of whoever added it (with createdByName). Older servers omit it. */
+  createdByOrgMembershipId?: string | null;
   /** The server's answer to whether the signed-in member can remove it now. Older servers omit it. */
   canRemove?: boolean;
   updatedAt: string | null;

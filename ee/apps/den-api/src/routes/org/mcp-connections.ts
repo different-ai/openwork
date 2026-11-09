@@ -558,6 +558,8 @@ const connectionResponseSchema = z.object({
   createdByName: z.string().nullable().optional(),
   /** Present with createdByName: whether the calling member added this connection (and so may always edit or remove it). */
   createdByYou: z.boolean().optional(),
+  /** Present with createdByName: the org membership id of whoever added it, so "shared beyond its creator" can be told apart from "shared beyond you". */
+  createdByOrgMembershipId: z.string().nullable().optional(),
   /** Present with createdByName: whether the calling member may remove this connection right now (Remove any connection, or they added it). */
   canRemove: z.boolean().optional(),
   createdAt: z.string().datetime().optional(),
@@ -1505,6 +1507,7 @@ async function toConnectionResponse(
     ...(options.includeAccess ? {
       createdByName: options.createdByName ?? null,
       createdByYou: row.createdByOrgMembershipId === options.callerOrgMembershipId,
+      createdByOrgMembershipId: row.createdByOrgMembershipId ?? null,
       canRemove: options.callerCanRemoveAnyConnection === true || row.createdByOrgMembershipId === options.callerOrgMembershipId,
     } : {}),
     createdAt: row.createdAt.toISOString(),

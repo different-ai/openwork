@@ -25,7 +25,8 @@ import { collectionsIntroFacts } from "./collections-intro-facts";
 export function MarketplacesScreen() {
   const { orgContext, orgSlug } = useOrgDashboard();
   const router = useRouter();
-  const { data: marketplaces = [], isLoading, error } = useMarketplaces();
+  const { data: marketplacesData, isLoading, error } = useMarketplaces();
+  const marketplaces = marketplacesData ?? [];
   const { hasAny: hasAnyIntegration, isLoading: integrationsLoading } = useHasAnyIntegration();
   const [query, setQuery] = useState("");
   const [createOpen, setCreateOpen] = useState(false);
@@ -37,7 +38,8 @@ export function MarketplacesScreen() {
 
   // With `featureIntros` on: full screen with no collection at all (in place of the empty states
   // below), banner while only the built-in OpenWork Marketplace exists (DESIGN.md I1, I2).
-  const intro = useFeatureIntro("collections", collectionsIntroFacts(isLoading || error ? undefined : marketplaces));
+  // From the data itself (not isLoading), which only lists collections this person has a role on.
+  const intro = useFeatureIntro("collections", collectionsIntroFacts(error ? undefined : marketplacesData, access.canManageAllShared));
 
   // Feature intro action (DESIGN.md I5): ?new=1 opens New collection once, then leaves the address.
   const searchParams = useSearchParams();

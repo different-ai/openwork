@@ -93,10 +93,22 @@ Size (I2), decided by `selectIntroSize`:
 - `partial` → banner above children (hidden 30 days after dismiss);
 - `done` → children only.
 
-Facts reported by any gate are merged per section root (`ai-gateway`), so a
-tab gate can tell its parent's state; pass section-level facts on the page
-gate. Last known setup states are cached per org in `localStorage` so sidebar
-dots stay quiet for set-up sections on later visits.
+Facts reported by the gates mounted now are merged per section root
+(`ai-gateway`), so a tab gate can tell its parent's state; pass section-level
+facts on the page gate. A gate withdraws its facts when it unmounts or its
+facts go back to `null` (loading), so facts from a page left earlier (e.g. the
+gateway before its first provider) never decide what a tab shows later.
+
+An intro's own setup (for dots) is read from facts only while its own gate is
+mounted, never guessed from other tabs' facts; the last known state is cached
+per organization *and member* in `localStorage` so sidebar dots stay quiet for
+set-up sections on later visits.
+
+Facts must describe the organization, not the viewer. When a list is filtered
+to what this person may see (e.g. `/v1/plugins` or `/v1/marketplaces` without
+`sharing.manage_all`), pass counts through `visibleCountFact(count,
+seesWholeOrg)`: items there prove setup, an empty list stays unknown, so a
+teammate's private work never makes someone else see "nothing set up".
 
 Need custom placement? `useFeatureIntro(key, facts)` returns
 `{ size, intro, element }` and renders nothing itself.

@@ -10,10 +10,14 @@ import {
   introDotVisible,
   introStateFor,
   matchFeatureIntro,
+  mergeReportedFacts,
   pickIntroCta,
+  visibleCountFact,
   selectIntroSize,
   shouldRecordSeen,
 } from "./model";
+import { getFeatureIntro } from "./intros";
+import type { FeatureIntroFactsReport } from "./model";
 import { defineFeatureIntro, type FeatureIntroContext, type FeatureIntroKey } from "./types";
 
 const now = Date.parse("2026-11-03T12:00:00.000Z");
@@ -126,4 +130,78 @@ test("the first matching action wins; members get the locked one", () => {
   });
   assert.equal(pickIntroCta(gateway, ctx(true))?.label, "Add your first AI provider");
   assert.equal(pickIntroCta(gateway, ctx(false))?.locked?.reason, "Your admin manages models");
+});
+
+test("section facts come only from gates mounted now, for this organization", () => {
+  const reports: FeatureIntroFactsReport[] = [
+    { orgId: "org_a", key: "ai-gateway", facts: { providers: 0, openworkModels: false } },
+    { orgId: "org_a", key: "ai-gateway.overview", facts: { providers: 2 } },
+    { orgId: "org_b", key: "ai-gateway.limits", facts: { policies: 4 } },
+    { orgId: "org_a", key: "members", facts: { invites: 1 } },
+  ];
+  assert.deepEqual(mergeReportedFacts(reports, "ai-gateway", "org_a"), { providers: 2, openworkModels: false });
+  assert.deepEqual(mergeReportedFacts(reports, "ai-gateway", "org_b"), { policies: 4 });
+  assert.equal(mergeReportedFacts(reports, "plugins", "org_a"), null);
+});
+
+test("Limits shows its own box, not the AI Gateway full screen, once the gateway's empty facts are withdrawn", () => {
+  const gatewayIntro = getFeatureIntro("ai-gateway");
+  const limitsIntro = getFeatureIntro("ai-gateway.limits");
+  assert.ok(gatewayIntro && limitsIntro);
+  const orgContext = parseOrgContextPayload({
+    organization: { id: "org_a", name: "Acme", slug: "acme" },
+    currentMember: { id: "member_1", userId: "user_1", role: "admin" },
+  });
+  assert.ok(orgContext);
+  const access = getOrgAccessFlags("admin", false);
+  const sizeOnLimits = (reports: FeatureIntroFactsReport[]) => {
+    const ctx: FeatureIntroContext = {
+      orgId: "org_a",
+      orgSlug: "acme",
+      orgContext,
+      access,
+      isAdmin: true,
+      can: (permission) => access[permission],
+      memberName: () => null,
+      facts: mergeReportedFacts(reports, "ai-gateway", "org_a") ?? {},
+    };
+    return selectIntroSize({ state: limitsIntro.setupState(ctx), parentState: gatewayIntro.setupState(ctx) });
+  };
+  const limitsGate: FeatureIntroFactsReport = { orgId: "org_a", key: "ai-gateway.limits", facts: { policies: 0 } };
+  const emptyGateway: FeatureIntroFactsReport = { orgId: "org_a", key: "ai-gateway", facts: { providers: 0, openworkModels: false } };
+
+  // Before: the gateway's "nothing set up" facts from an earlier visit were kept for the session.
+  assert.deepEqual(sizeOnLimits([emptyGateway, limitsGate]), { size: "fullscreen", target: "parent" });
+  // Now: the gateway gate unmounted (provider form) or is loading again, so only Limits reports.
+  assert.deepEqual(sizeOnLimits([limitsGate]), { size: "box", target: "self" });
+  // And once the gateway reports its provider, Limits still gets its box.
+  assert.deepEqual(
+    sizeOnLimits([{ ...emptyGateway, facts: { providers: 1, openworkModels: false } }, limitsGate]),
+    { size: "box", target: "self" },
+  );
+});
+
+test("a list filtered to the viewer proves setup when it has items, never the lack of it", () => {
+  assert.equal(visibleCountFact(0, true), 0);
+  assert.equal(visibleCountFact(3, true), 3);
+  assert.equal(visibleCountFact(3, false), 3);
+  assert.equal(visibleCountFact(0, false), undefined);
+
+  // Admin A made a plugin shared only with themselves; someone without `sharing.manage_all` sees none.
+  const plugins = getFeatureIntro("plugins");
+  const mcps = getFeatureIntro("plugins.mcps");
+  assert.ok(plugins && mcps);
+  const orgContext = parseOrgContextPayload({
+    organization: { id: "org_a", name: "Acme", slug: "acme" },
+    currentMember: { id: "member_b", userId: "user_b", role: "admin" },
+  });
+  assert.ok(orgContext);
+  const access = getOrgAccessFlags("admin", false);
+  const ctx = (facts: FeatureIntroContext["facts"]): FeatureIntroContext => ({
+    orgId: "org_a", orgSlug: "acme", orgContext, access, isAdmin: true, can: (permission) => access[permission], memberName: () => null, facts,
+  });
+  const partialView = { plugins: visibleCountFact(0, false), mcps: visibleCountFact(0, false) };
+  assert.equal(selectIntroSize({ state: mcps.setupState(ctx(partialView)), parentState: plugins.setupState(ctx(partialView)) }), null);
+  const wholeOrg = { plugins: visibleCountFact(0, true), mcps: visibleCountFact(0, true) };
+  assert.deepEqual(selectIntroSize({ state: mcps.setupState(ctx(wholeOrg)), parentState: plugins.setupState(ctx(wholeOrg)) }), { size: "fullscreen", target: "parent" });
 });
