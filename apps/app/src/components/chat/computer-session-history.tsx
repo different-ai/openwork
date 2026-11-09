@@ -168,8 +168,8 @@ export function ComputerSessionHistory({ history, active, renderAction, live, fi
       {crew ? <ComputerCrew members={crew.members} onOpen={crew.onOpen} /> : null}
       {/* What the session made for the person, without opening the card. */}
       {handedBack.length > 0 ? <div data-computer-saved-files="" className="border-t border-border px-3 py-2">
-        <ul aria-label="Saved files" className="space-y-1">
-          {shownFiles.map(file => <li key={file.path} data-computer-saved-file="" className="flex min-w-0 items-center gap-2">
+        <ul aria-label="Saved files" className="divide-y divide-border">
+          {shownFiles.map(file => <li key={file.path} data-computer-saved-file="" className="flex min-h-10 min-w-0 items-center gap-2">
             <FileText aria-hidden="true" className="size-4 shrink-0 text-muted-foreground" />
             <span className="min-w-0 flex-1 truncate text-sm" title={file.path}>{file.name}</span>
             <span className="shrink-0 text-xs tabular-nums text-muted-foreground">{formatFileSize(file.bytes)}</span>
