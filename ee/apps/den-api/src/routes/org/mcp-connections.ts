@@ -1894,8 +1894,8 @@ async function handleExternalMcpOAuthCallback(input: {
   return mcpOAuthCallbackHtml(completionPage({ ok: true, name: connection.name }))
 }
 
-type McpConnectionOrganizationContext = NonNullable<OrgRouteVariables["organizationContext"]>
-type CreateExternalConnectionBody = z.infer<typeof createExternalConnectionBodySchema>
+export type McpConnectionOrganizationContext = NonNullable<OrgRouteVariables["organizationContext"]>
+export type CreateExternalConnectionBody = z.infer<typeof createExternalConnectionBodySchema>
 type ConnectionAccessInput = z.infer<typeof accessInputSchema>
 
 /**
@@ -1958,10 +1958,10 @@ function memberManagedAccess(access: ConnectionAccessInput, creatorId: string): 
     teamIds: [...new Set(access.teamIds)],
   }
 }
-type UpdateConnectionBody = z.infer<typeof updateConnectionBodySchema>
-type McpConnectionResponseContext = Pick<Context, "json">
+export type UpdateConnectionBody = z.infer<typeof updateConnectionBodySchema>
+export type McpConnectionResponseContext = Pick<Context, "json">
 
-async function createExternalConnectionResponse(
+export async function createExternalConnectionResponse(
   c: McpConnectionResponseContext,
   payload: McpConnectionOrganizationContext,
   body: CreateExternalConnectionBody,
@@ -1970,6 +1970,8 @@ async function createExternalConnectionResponse(
   sessionId: string | null | undefined,
   requestId: string,
   apiKeyCaller = false,
+  /** `preferredId`: reuse this id for the new row (config-blob imports; the caller checked it is free). */
+  options: { preferredId?: ExternalMcpConnectionRow["id"] } = {},
 ): Promise<Response> {
   // Secrets must not travel through chat transcripts: when the caller is
   // the agent (internal MCP principal), refuse API-key connections.
@@ -2059,6 +2061,7 @@ async function createExternalConnectionResponse(
       memberIds: body.access.memberIds.map((id) => normalizeDenTypeId("member", id)),
       teamIds: body.access.teamIds.map((id) => normalizeDenTypeId("team", id)),
     },
+    ...(options.preferredId ? { id: options.preferredId } : {}),
   })
 
   const oauthClient = body.authType === "oauth" ? body.oauthClient ?? externalMcpPresetOAuthClient(body.url) : undefined
@@ -2135,7 +2138,7 @@ async function createExternalConnectionResponse(
   return responseStatus === 201 ? c.json(responseBody, 201) : c.json(responseBody)
 }
 
-async function replaceExternalConnectionResponse(
+export async function replaceExternalConnectionResponse(
   c: McpConnectionResponseContext,
   payload: McpConnectionOrganizationContext,
   body: UpdateConnectionBody,
@@ -2527,7 +2530,7 @@ function directAccessInput(grants: Awaited<ReturnType<typeof listDirectExternalM
   }
 }
 
-async function deleteExternalConnection(
+export async function deleteExternalConnection(
   c: McpConnectionResponseContext,
   payload: McpConnectionOrganizationContext,
   connection: ExternalMcpConnectionRow,

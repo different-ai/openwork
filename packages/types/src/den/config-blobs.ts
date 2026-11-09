@@ -243,6 +243,9 @@ export type ConfigFieldChange = {
   base?: unknown;
   /** Changed on both sides since export. */
   conflict?: boolean;
+  /** For set-valued fields (e.g. `access.teams`): elements added / removed. */
+  added?: unknown[];
+  removed?: unknown[];
 };
 
 export type ConfigMatchCandidate = { id: string; name: string; score: number; reasons: string[] };
@@ -403,7 +406,12 @@ export type ConfigAreaDescriptor = {
 // ---------------------------------------------------------------------------
 // HTTP API shapes (den-api `/v1/config-blobs/*`, consumed by den-web)
 
-export type ConfigAreasResponse = { areas: ConfigAreaDescriptor[] };
+export type ConfigAreasResponse = {
+  areas: ConfigAreaDescriptor[];
+  deployment: ConfigDeployment;
+  /** Whether `env` secret decisions are allowed here (self-hosted with an operator allowlist). */
+  allowEnvSecrets: boolean;
+};
 export type ConfigChangeRequestResponse = { changeRequest: ConfigChangeRequestSummary };
 export type ConfigChangeRequestListResponse = { changeRequests: ConfigChangeRequestSummary[] };
 export type ConfigChangeRequestDetailResponse = { changeRequest: ConfigChangeRequestSummary; report: ConfigApplyReport | null };

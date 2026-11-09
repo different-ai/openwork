@@ -166,6 +166,7 @@ export function DenCommandPalette({ open, onOpenChange, interceptNavigation }: D
       canManageDeploymentServices: orgContext?.canManageDeploymentServices === true,
       myBot: myAgentAvailable(orgContext),
       authSecuritySettings: orgFeatureEnabled(orgContext, "authSecuritySettings"),
+      configBlobs: orgFeatureEnabled(orgContext, "configBlobs"),
     });
     return flattenNavigationForSearch(sections)
       .filter((entry) => entry.href !== "#")

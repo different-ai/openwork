@@ -3665,7 +3665,8 @@ export async function getMarketplaceDetail(context: PluginArchActorContext, mark
   return serializeMarketplace(row, memberships.length)
 }
 
-export async function createMarketplace(input: { context: PluginArchActorContext; description?: string | null; logoUrl?: string | null; name: string; externalKey?: string }) {
+/** `id`: reuse this id for the new row (config-blob imports; the caller checked it is free). */
+export async function createMarketplace(input: { context: PluginArchActorContext; description?: string | null; logoUrl?: string | null; name: string; externalKey?: string; id?: MarketplaceId }) {
   const now = new Date()
   const row = {
     externalKey: input.externalKey ?? null,
@@ -3673,7 +3674,7 @@ export async function createMarketplace(input: { context: PluginArchActorContext
     createdByOrgMembershipId: input.context.organizationContext.currentMember.id,
     deletedAt: null,
     description: normalizeOptionalString(input.description ?? undefined),
-    id: createDenTypeId("marketplace"),
+    id: input.id ?? createDenTypeId("marketplace"),
     logoUrl: normalizeOptionalString(input.logoUrl ?? undefined),
     name: input.name.trim(),
     organizationId: input.context.organizationContext.organization.id,

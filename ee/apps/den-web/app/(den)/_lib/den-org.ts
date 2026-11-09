@@ -1041,6 +1041,18 @@ export function getAuthSecurityRoute(orgSlug?: string | null, tab?: AuthSecurity
 }
 
 
+export type ConfigTab = "overview" | "changes" | "history";
+
+/** Settings › Config (feature `configBlobs`): export and import the organization's configuration. */
+export function getConfigRoute(orgSlug?: string | null, tab?: ConfigTab): string {
+  const base = `${getOrgDashboardRoute(orgSlug)}/config`;
+  return tab && tab !== "overview" ? `${base}?tab=${tab}` : base;
+}
+
+export function getConfigChangeRequestRoute(orgSlug: string | null | undefined, changeRequestId: string): string {
+  return `${getConfigRoute(orgSlug)}/changes/${encodeURIComponent(changeRequestId)}`;
+}
+
 export function getPluginsRoute(orgSlug?: string | null): string {
   return `${getOrgDashboardRoute(orgSlug)}/plugins`;
 }

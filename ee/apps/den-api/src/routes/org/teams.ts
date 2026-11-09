@@ -166,7 +166,15 @@ function heldInTransaction(actor: MemberPermissions, keys: readonly PermissionKe
   return missing ? permissionDeniedResponse(missing) : null
 }
 
-async function createTeam(c: ResourceActionContext, payload: ResourceOrganizationContext, input: z.infer<typeof createTeamSchema>, externalKey?: string) {
+export type CreateTeamInput = z.infer<typeof createTeamSchema>
+export type UpdateTeamInput = z.infer<typeof updateTeamSchema>
+
+/**
+ * Exported for config-blob imports (src/config-blobs/areas/members-teams.ts),
+ * which call it with an in-process route context. `options.teamId` reuses a
+ * known-free id for the new team (config blobs reuse source ids); routes omit it.
+ */
+export async function createTeam(c: ResourceActionContext, payload: ResourceOrganizationContext, input: CreateTeamInput, externalKey?: string, options: { teamId?: TeamId } = {}) {
   return withOrganizationTeamMutation(payload.organization.id, async (tx) => {
   if (input.grantsOrganizationAdmin !== undefined) {
     const rolePermission = await requirePermission(c, "teams.manage_admin")
@@ -211,7 +219,7 @@ async function createTeam(c: ResourceActionContext, payload: ResourceOrganizatio
     return c.json({ error: "team_exists", message: "That team already exists in this organization." }, 409)
   }
 
-  const teamId = createDenTypeId("team")
+  const teamId = options.teamId ?? createDenTypeId("team")
   const now = new Date()
 
     await tx.insert(TeamTable).values({
@@ -260,7 +268,7 @@ async function affectedTeamUsageMembers(tx: TeamMutationTransaction, organizatio
   return [...new Set([...addedIds, ...old.flatMap((row) => row.id ? [row.id] : [])])]
 }
 
-async function updateTeam(c: ResourceActionContext, payload: ResourceOrganizationContext, rawId: string, input: z.infer<typeof updateTeamSchema>) {
+export async function updateTeam(c: ResourceActionContext, payload: ResourceOrganizationContext, rawId: string, input: UpdateTeamInput) {
   return withOrganizationMembershipUsageMutation(payload.organization.id, async (tx) => {
   let teamId: TeamId
   try {
@@ -397,7 +405,7 @@ async function updateTeam(c: ResourceActionContext, payload: ResourceOrganizatio
   }, (tx) => input.memberIds === undefined ? Promise.resolve([]) : affectedTeamUsageMembers(tx, payload.organization.id, rawId, input.memberIds))
 }
 
-async function deleteTeam(c: ResourceActionContext, payload: ResourceOrganizationContext, rawId: string) {
+export async function deleteTeam(c: ResourceActionContext, payload: ResourceOrganizationContext, rawId: string) {
   return withOrganizationMembershipUsageMutation(payload.organization.id, async (tx) => {
   let teamId: TeamId
   try {

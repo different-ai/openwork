@@ -165,7 +165,10 @@ async function loadDesktopPolicies(organizationId: typeof DesktopPolicyTable.$in
   })
 }
 
-async function createDesktopPolicy(c: ResourceActionContext, payload: ResourceOrganizationContext, input: z.infer<typeof desktopPolicyWriteSchema>, externalKey?: string) {
+export type DesktopPolicyWriteInput = z.infer<typeof desktopPolicyWriteSchema>
+
+/** `preferredId`: reuse this id for the new row (config-blob imports; the caller checked it is free). */
+export async function createDesktopPolicy(c: ResourceActionContext, payload: ResourceOrganizationContext, input: z.infer<typeof desktopPolicyWriteSchema>, externalKey?: string, preferredId?: DesktopPolicyId) {
   const entitlement = checkEntitlement(payload.organization.metadata, "desktopPolicies")
   if (!entitlement.ok) {
     return c.json(entitlement.response, entitlement.status)
@@ -175,7 +178,7 @@ async function createDesktopPolicy(c: ResourceActionContext, payload: ResourceOr
     const memberIds = await resolveMemberIds({ organizationId: payload.organization.id, values: input.memberIds })
     const teamIds = await resolveTeamIds({ organizationId: payload.organization.id, values: input.teamIds })
     const roles = resolveRoles(input.roles)
-    const desktopPolicyId = createDenTypeId("desktopPolicy")
+    const desktopPolicyId = preferredId ?? createDenTypeId("desktopPolicy")
     const now = new Date()
 
     await db.transaction(async (tx) => {
@@ -239,7 +242,7 @@ async function createDesktopPolicy(c: ResourceActionContext, payload: ResourceOr
   }
 }
 
-async function updateDesktopPolicy(c: ResourceActionContext, payload: ResourceOrganizationContext, rawId: string, input: z.infer<typeof desktopPolicyWriteSchema>, replace = false) {
+export async function updateDesktopPolicy(c: ResourceActionContext, payload: ResourceOrganizationContext, rawId: string, input: z.infer<typeof desktopPolicyWriteSchema>, replace = false) {
   const entitlement = checkEntitlement(payload.organization.metadata, "desktopPolicies")
   if (!entitlement.ok) {
     return c.json(entitlement.response, entitlement.status)
@@ -346,7 +349,7 @@ async function updateDesktopPolicy(c: ResourceActionContext, payload: ResourceOr
   }
 }
 
-async function deleteDesktopPolicy(c: ResourceActionContext, payload: ResourceOrganizationContext, rawId: string) {
+export async function deleteDesktopPolicy(c: ResourceActionContext, payload: ResourceOrganizationContext, rawId: string) {
   let desktopPolicyId: DesktopPolicyId
   try {
     desktopPolicyId = parseDesktopPolicyId(rawId)

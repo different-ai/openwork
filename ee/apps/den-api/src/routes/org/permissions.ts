@@ -30,7 +30,7 @@ import {
   type PermissionDefaultSetKey,
   type PermissionKey,
 } from "@openwork/types/den/permissions"
-import type { Hono } from "hono"
+import type { Context, Hono } from "hono"
 import { describeRoute, type DescribeRouteOptions } from "hono-openapi"
 import { z } from "zod"
 import { ORGANIZATION_AUDIT_ACTIONS } from "../../audit-events.js"
@@ -43,7 +43,7 @@ import {
   permissionSetTeamsChangedEvent,
   type PermissionSetAuditState,
 } from "../../audit/domain/permissions.js"
-import { auditChangeCapture } from "../../audit/request-capture.js"
+import { auditChangeCapture, type AuditChangeCapture } from "../../audit/request-capture.js"
 import { db } from "../../db.js"
 import { keysetAfter, keysetCursorQuerySchema, keysetPage, nextCursorSchema, type KeysetCursor } from "../../list-pagination.js"
 import { jsonValidator, orgMemberRoute, paramValidator, queryValidator, requireOrgPermission } from "../../middleware/index.js"
@@ -814,6 +814,442 @@ function organizationContext(c: { get(key: "organizationContext"): OrganizationC
 }
 
 // ---------------------------------------------------------------------------
+// Write actions: the bodies of the write routes below, callable with an
+// in-process route context (config-blob imports,
+// src/config-blobs/areas/members-roles.ts). Routes pass their own context.
+// ---------------------------------------------------------------------------
+
+export type CreatePermissionSetBody = z.infer<typeof createPermissionSetBodySchema>
+export type UpdatePermissionSetBody = z.infer<typeof updatePermissionSetBodySchema>
+type PermissionActionContext = Pick<Context, "json" | "body"> & PermissionRouteContext
+
+export async function createPermissionSetAction(c: PermissionActionContext, payload: OrganizationContext, body: CreatePermissionSetBody, capture: AuditChangeCapture | null, options: { permissionSetId?: PermissionSetId } = {}) {
+      const organizationId = payload.organization.id
+      const editor = await callerPermissions(c)
+      if (!editor) return c.json({ error: "organization_not_found" as const }, 404)
+
+      const plan = planPermissionSetCreate({ permissions: body.permissions, editor })
+      if (!plan.ok) return c.json(problemBody(plan.problem), problemStatus(plan.problem))
+
+      const actorMemberId = payload.currentMember.id
+      const allowed = plan.changes.map((change) => change.key)
+
+      if (!body.teamId) {
+        // A named role, given to zero or more teams now.
+        const name = body.name
+        if (!name) return c.json({ error: "invalid_request" as const, message: "Name the role.", details: [] }, 400)
+        const teamIds = [...new Set((body.teamIds ?? []).map((value) => normalizeDenTypeId("team", value)))]
+
+        const created = await withOrganizationTeamMutation(organizationId, async (tx) => {
+          // Team rows before set rows, as every team set write takes them.
+          const teams = teamIds.length > 0
+            ? await tx.select({ id: TeamTable.id }).from(TeamTable)
+              .where(and(eq(TeamTable.organizationId, organizationId), inArray(TeamTable.id, teamIds)))
+              .for("update")
+            : []
+          if (teams.length !== teamIds.length) return { ok: false as const, error: "team_not_found" as const }
+          const live = await editorInTransaction(tx, organizationId, actorMemberId)
+          if (!live.ok) return live
+          const livePlan = planPermissionSetCreate({ permissions: body.permissions, editor: live.editor })
+          if (!livePlan.ok) return { ok: false as const, error: "invalid_create" as const, problem: livePlan.problem }
+
+          const now = new Date()
+          const set: PermissionSetRow = {
+            id: options.permissionSetId ?? createDenTypeId("permissionSet"),
+            organizationId,
+            defaultKey: null,
+            name,
+            createdByOrgMembershipId: actorMemberId,
+            createdAt: now,
+            updatedAt: now,
+            archivedAt: null,
+            archivedByOrgMembershipId: null,
+          }
+          await tx.insert(PermissionSetTable).values({ id: set.id, organizationId, defaultKey: null, name, createdByOrgMembershipId: actorMemberId, createdAt: now })
+          const rows = buildPermissionRows({ organizationId, permissionSetId: set.id, changes: livePlan.changes, source: "user", changedByOrgMembershipId: actorMemberId, now })
+          if (rows.length > 0) await tx.insert(PermissionSetPermissionTable).values(rows)
+
+          const before = await readTeamLinks(tx, organizationId, await activeSetIdsForTeams(tx, organizationId, teamIds))
+          const changes = await assignTeamsToSet(tx, { organizationId, teamIds, setId: set.id, actorMemberId, now })
+          const auditEventIds = await appendDomainChanges(tx, capture, [
+            permissionSetCreatedEvent(organizationId, { set, teamId: teamIds[0] ?? null, teamIds, allowedKeys: allowed }),
+            ...await teamRoleChangeEvents(tx, organizationId, changes, before, { skip: set.id }),
+          ])
+          return { ok: true as const, set, teamId: teamIds[0] ?? null, auditEventIds }
+        })
+
+        if (!created.ok) {
+          if (created.error === "team_not_found") return c.json({ error: "team_not_found" as const, message: "One of these teams doesn't exist in your organization." }, 404)
+          if (created.error === "permission_revoked") return c.json(created.response, 403, permissionFailureHeaders(created.response))
+          return c.json(problemBody(created.problem), problemStatus(created.problem))
+        }
+        await finishLegacyAuditAction(capture, {
+          organizationId,
+          actorUserId: payload.currentMember.userId,
+          action: ORGANIZATION_AUDIT_ACTIONS.permissionSetCreated,
+          payload: {
+            permissionSetId: created.set.id,
+            permissionSetName: created.set.name,
+            teamId: created.teamId,
+            allowedCount: allowed.length,
+            allowedKeys: joinKeys(allowed),
+          },
+        }, created.auditEventIds)
+        return c.json({ set: await loadPermissionSetDetailFromPrimary(organizationId, created.set, await mayViewRosters(c)) }, 201)
+      }
+      if (body.name !== undefined || body.teamIds !== undefined) {
+        return c.json({ error: "invalid_request" as const, message: "Send either teamId, or a name and teamIds.", details: [] }, 400)
+      }
+
+      const teamId = normalizeDenTypeId("team", body.teamId)
+
+      const result = await withOrganizationTeamMutation(organizationId, async (tx) => {
+        // The team row serializes concurrent creates for the same team. The
+        // set is new, so its rows need no notBefore.
+        const [team] = await tx.select({ id: TeamTable.id, name: TeamTable.name }).from(TeamTable)
+          .where(and(eq(TeamTable.id, teamId), eq(TeamTable.organizationId, organizationId)))
+          .limit(1)
+          .for("update")
+        if (!team) return { ok: false as const, error: "team_not_found" as const }
+        const live = await editorInTransaction(tx, organizationId, actorMemberId)
+        if (!live.ok) return live
+        const livePlan = planPermissionSetCreate({ permissions: body.permissions, editor: live.editor })
+        if (!livePlan.ok) return { ok: false as const, error: "invalid_create" as const, problem: livePlan.problem }
+
+        const [existing] = await tx.select({ id: PermissionSetTable.id }).from(PermissionSetTeamTable)
+          .innerJoin(PermissionSetTable, eq(PermissionSetTable.id, PermissionSetTeamTable.permissionSetId))
+          .where(and(
+            eq(PermissionSetTeamTable.organizationId, organizationId),
+            eq(PermissionSetTeamTable.teamId, team.id),
+            isNull(PermissionSetTeamTable.removedAt),
+            isNull(PermissionSetTable.archivedAt),
+          ))
+          .limit(1)
+        if (existing) return { ok: false as const, error: "team_permission_set_exists" as const, permissionSetId: existing.id }
+
+        const now = new Date()
+        const set: PermissionSetRow = {
+          id: options.permissionSetId ?? createDenTypeId("permissionSet"),
+          organizationId,
+          defaultKey: null,
+          name: teamPermissionSetName(team.name),
+          createdByOrgMembershipId: actorMemberId,
+          createdAt: now,
+          updatedAt: now,
+          archivedAt: null,
+          archivedByOrgMembershipId: null,
+        }
+        await tx.insert(PermissionSetTable).values({
+          id: set.id,
+          organizationId,
+          defaultKey: null,
+          name: set.name,
+          createdByOrgMembershipId: actorMemberId,
+          createdAt: now,
+        })
+
+        // A brand-new set has no earlier link to this team to re-activate.
+        await tx.insert(PermissionSetTeamTable).values({
+          id: createDenTypeId("permissionSetTeam"),
+          organizationId,
+          permissionSetId: set.id,
+          teamId: team.id,
+          createdByOrgMembershipId: actorMemberId,
+          createdAt: now,
+        })
+
+        const rows = buildPermissionRows({
+          organizationId,
+          permissionSetId: set.id,
+          changes: plan.changes,
+          source: "user",
+          changedByOrgMembershipId: actorMemberId,
+          now,
+        })
+        if (rows.length > 0) await tx.insert(PermissionSetPermissionTable).values(rows)
+
+        const auditEventIds = await appendDomainChanges(tx, capture, [
+          permissionSetCreatedEvent(organizationId, { set, teamId: team.id, allowedKeys: allowed }),
+        ])
+        return { ok: true as const, set, teamId: team.id, auditEventIds }
+      })
+
+      if (!result.ok) {
+        if (result.error === "team_not_found") return c.json({ error: "team_not_found" as const, message: "This team doesn't exist in your organization." }, 404)
+        if (result.error === "permission_revoked") return c.json(result.response, 403, permissionFailureHeaders(result.response))
+        if (result.error === "invalid_create") return c.json(problemBody(result.problem), problemStatus(result.problem))
+        return c.json({
+          error: "team_permission_set_exists" as const,
+          message: "This team already has permissions. Edit them instead.",
+          permissionSetId: result.permissionSetId,
+        }, 409)
+      }
+
+      await finishLegacyAuditAction(capture, {
+        organizationId,
+        actorUserId: payload.currentMember.userId,
+        action: ORGANIZATION_AUDIT_ACTIONS.permissionSetCreated,
+        payload: {
+          permissionSetId: result.set.id,
+          permissionSetName: result.set.name,
+          teamId: result.teamId,
+          allowedCount: allowed.length,
+          allowedKeys: joinKeys(allowed),
+        },
+      }, result.auditEventIds)
+
+      return c.json({ set: await loadPermissionSetDetailFromPrimary(organizationId, result.set, await mayViewRosters(c)) }, 201)
+}
+
+export async function renamePermissionSetAction(c: PermissionActionContext, payload: OrganizationContext, rawPermissionSetId: string, name: string, capture: AuditChangeCapture | null) {
+      const organizationId = payload.organization.id
+      const permissionSetId = normalizeDenTypeId("permissionSet", rawPermissionSetId)
+      const actorMemberId = payload.currentMember.id
+
+      const result = await withOrganizationTeamMutation(organizationId, async (tx) => {
+        if (!(await lockPermissionSet(tx, organizationId, permissionSetId))) return { ok: false as const, error: "permission_set_not_found" as const }
+        const set = await readPermissionSet(tx, organizationId, permissionSetId)
+        if (!set) return { ok: false as const, error: "permission_set_not_found" as const }
+        if (set.defaultKey !== null) return { ok: false as const, error: "default_permission_set" as const }
+        if (set.archivedAt) return { ok: false as const, error: "permission_set_archived" as const }
+        const live = await editorInTransaction(tx, organizationId, actorMemberId)
+        if (!live.ok) return live
+        if (set.name === name) return { ok: true as const, set, auditEventIds: [] }
+
+        await tx.update(PermissionSetTable).set({ name }).where(eq(PermissionSetTable.id, set.id))
+        const renamed: PermissionSetRow = { ...set, name }
+        const teams = activeTeams((await readTeamLinks(tx, organizationId, [set.id])).get(set.id)).map((team) => team.id)
+        const auditEventIds = await appendDomainChanges(tx, capture, [
+          permissionSetRenamedEvent(organizationId, await auditStateFor(tx, set, teams[0] ?? null, teams), await auditStateFor(tx, renamed, teams[0] ?? null, teams)),
+        ])
+        return { ok: true as const, set: renamed, previousName: set.name, auditEventIds }
+      })
+
+      if (!result.ok) {
+        if (result.error === "permission_set_not_found") return c.json({ error: "permission_set_not_found" as const }, 404)
+        if (result.error === "default_permission_set") {
+          return c.json({ error: "default_permission_set" as const, message: "Member, Admin and Super admin keep their names." }, 400)
+        }
+        if (result.error === "permission_revoked") return c.json(result.response, 403, permissionFailureHeaders(result.response))
+        return c.json({ error: "permission_set_archived" as const, message: "This role was deleted and can't be changed." }, 409)
+      }
+      if (result.auditEventIds.length > 0) {
+        await finishLegacyAuditAction(capture, {
+          organizationId,
+          actorUserId: payload.currentMember.userId,
+          action: ORGANIZATION_AUDIT_ACTIONS.permissionSetRenamed,
+          payload: { permissionSetId: result.set.id, permissionSetName: result.set.name, previousName: result.previousName ?? null },
+        }, result.auditEventIds)
+      }
+      return c.json({ set: await loadPermissionSetDetailFromPrimary(organizationId, result.set, await mayViewRosters(c)) })
+}
+
+export async function setTeamPermissionSetAction(c: PermissionActionContext, payload: OrganizationContext, rawTeamId: string, requested: string | null, capture: AuditChangeCapture | null) {
+      const organizationId = payload.organization.id
+      const teamId = normalizeDenTypeId("team", rawTeamId)
+      const setId = requested ? normalizeDenTypeId("permissionSet", requested) : null
+      const actorMemberId = payload.currentMember.id
+
+      const result = await withOrganizationTeamMutation(organizationId, async (tx) => {
+        const [team] = await tx.select({ id: TeamTable.id }).from(TeamTable)
+          .where(and(eq(TeamTable.id, teamId), eq(TeamTable.organizationId, organizationId)))
+          .limit(1)
+          .for("update")
+        if (!team) return { ok: false as const, error: "team_not_found" as const }
+        let set: PermissionSetRow | null = null
+        if (setId) {
+          if (!(await lockPermissionSet(tx, organizationId, setId))) return { ok: false as const, error: "permission_set_not_found" as const }
+          set = await readPermissionSet(tx, organizationId, setId)
+          if (!set) return { ok: false as const, error: "permission_set_not_found" as const }
+          if (set.defaultKey !== null) return { ok: false as const, error: "default_permission_set" as const }
+          if (set.archivedAt) return { ok: false as const, error: "permission_set_archived" as const }
+        }
+        const live = await editorInTransaction(tx, organizationId, actorMemberId)
+        if (!live.ok) return live
+        if (set) {
+          // Giving a role grants its permissions to everyone in the team: the editor must hold them all.
+          const missing = [...allowedKeys((await readPermissionSetStates(tx, [set.id], { lock: "share" })).get(set.id))].filter((key) => !live.editor.has(key))
+          if (missing.length > 0) return { ok: false as const, error: "invalid_assign" as const, problem: { error: "permission_not_held" as const, keys: missing } }
+        }
+
+        const before = await readTeamLinks(tx, organizationId, [...new Set([...await activeSetIdsForTeams(tx, organizationId, [team.id]), ...(set ? [set.id] : [])])])
+        const changes = await assignTeamsToSet(tx, { organizationId, teamIds: [team.id], setId: set?.id ?? null, actorMemberId, now: new Date() })
+        const auditEventIds = await appendDomainChanges(tx, capture, await teamRoleChangeEvents(tx, organizationId, changes, before))
+        return { ok: true as const, set, changes, auditEventIds }
+      })
+
+      if (!result.ok) {
+        if (result.error === "team_not_found") return c.json({ error: "team_not_found" as const, message: "This team doesn't exist in your organization." }, 404)
+        if (result.error === "permission_set_not_found") return c.json({ error: "permission_set_not_found" as const }, 404)
+        if (result.error === "default_permission_set") {
+          return c.json({ error: "default_permission_set" as const, message: "Member, Admin and Super admin aren't custom roles. Make the team an Admin team instead." }, 400)
+        }
+        if (result.error === "permission_set_archived") return c.json({ error: "permission_set_archived" as const, message: "This role was deleted." }, 409)
+        if (result.error === "permission_revoked") return c.json(result.response, 403, permissionFailureHeaders(result.response))
+        return c.json(problemBody(result.problem), problemStatus(result.problem))
+      }
+      if (result.auditEventIds.length > 0) {
+        await finishLegacyAuditAction(capture, {
+          organizationId,
+          actorUserId: payload.currentMember.userId,
+          action: ORGANIZATION_AUDIT_ACTIONS.permissionSetTeamsChanged,
+          payload: {
+            teamId,
+            permissionSetId: result.set?.id ?? null,
+            permissionSetName: result.set?.name ?? null,
+            changedSets: result.changes.size,
+          },
+        }, result.auditEventIds)
+      }
+      return c.json({ set: result.set ? await loadPermissionSetDetailFromPrimary(organizationId, result.set, await mayViewRosters(c)) : null })
+}
+
+export async function updatePermissionSetPermissionsAction(c: PermissionActionContext, payload: OrganizationContext, rawPermissionSetId: string, requested: UpdatePermissionSetBody["changes"], capture: AuditChangeCapture | null) {
+      const organizationId = payload.organization.id
+      const editor = await callerPermissions(c)
+      if (!editor) return c.json({ error: "organization_not_found" as const }, 404)
+
+      const permissionSetId = normalizeDenTypeId("permissionSet", rawPermissionSetId)
+      const existing = await readPermissionSet(db, organizationId, permissionSetId)
+      if (!existing) return c.json({ error: "permission_set_not_found" as const }, 404)
+      // A default set must hold a row for every default key before it is
+      // diffed, or reconciliation could later override an explicit deny.
+      if (existing.defaultKey !== null) await ensureCurrentDefaultPermissionSets(organizationId)
+
+      const actorMemberId = payload.currentMember.id
+
+      const result = await withOrganizationTeamMutation(organizationId, async (tx) => {
+        if (!(await lockPermissionSet(tx, organizationId, permissionSetId))) return { ok: false as const, error: "permission_set_not_found" as const }
+        const set = await readPermissionSet(tx, organizationId, permissionSetId)
+        if (!set) return { ok: false as const, error: "permission_set_not_found" as const }
+        if (set.archivedAt) return { ok: false as const, error: "permission_set_archived" as const }
+        // Planned against the editor resolved here: owner/effective-admin for Admin permissions and
+        // the hold-the-key rule both use the latest committed permissions.
+        const live = await editorInTransaction(tx, organizationId, actorMemberId)
+        if (!live.ok) return live
+
+        const current = (await readPermissionSetStates(tx, [set.id], { lock: "share" })).get(set.id) ?? new Map<string, PermissionStatus>()
+        const plan = planPermissionSetEdit({ defaultKey: set.defaultKey, current, changes: requested, editor: live.editor })
+        if (!plan.ok) return { ok: false as const, error: "invalid_edit" as const, problem: plan.problem }
+        if (plan.changes.length === 0) return { ok: true as const, set, changes: [], granted: [], revoked: [], auditEventIds: [] }
+
+        await tx.insert(PermissionSetPermissionTable).values(buildPermissionRows({
+          organizationId,
+          permissionSetId: set.id,
+          changes: plan.changes,
+          source: "user",
+          changedByOrgMembershipId: actorMemberId,
+          notBefore: await latestPermissionRowCreatedAt(tx, set.id),
+        }))
+
+        const before = allowedKeys(current)
+        const after = new Set(before)
+        for (const change of plan.changes) {
+          if (change.status === "allow") after.add(change.key)
+          else after.delete(change.key)
+        }
+        const delta = permissionKeyDelta(before, after)
+        const links = await readTeamLinks(tx, organizationId, [set.id])
+        const teamId = currentTeam(links.get(set.id))?.id ?? null
+        const auditEventIds = await appendDomainChanges(tx, capture, [
+          permissionSetPermissionsChangedEvent(
+            organizationId,
+            { set, teamId, allowedKeys: [...before] },
+            { set, teamId, allowedKeys: [...after] },
+            delta,
+          ),
+        ])
+        return { ok: true as const, set, changes: plan.changes, granted: delta.granted, revoked: delta.revoked, auditEventIds }
+      })
+
+      if (!result.ok) {
+        if (result.error === "permission_set_not_found") return c.json({ error: "permission_set_not_found" as const }, 404)
+        if (result.error === "permission_set_archived") {
+          return c.json({ error: "permission_set_archived" as const, message: "This permission set was deleted and can't be changed." }, 409)
+        }
+        if (result.error === "permission_revoked") return c.json(result.response, 403, permissionFailureHeaders(result.response))
+        return c.json(problemBody(result.problem), problemStatus(result.problem))
+      }
+
+      if (result.changes.length > 0) {
+        await finishLegacyAuditAction(capture, {
+          organizationId,
+          actorUserId: payload.currentMember.userId,
+          action: ORGANIZATION_AUDIT_ACTIONS.permissionSetPermissionsChanged,
+          payload: {
+            permissionSetId: result.set.id,
+            permissionSetName: result.set.name,
+            permissionSetKind: setKind(result.set.defaultKey),
+            changedCount: result.changes.length,
+            grantedKeys: joinKeys(result.granted),
+            revokedKeys: joinKeys(result.revoked),
+          },
+        }, result.auditEventIds)
+      }
+
+      return c.json({ set: await loadPermissionSetDetailFromPrimary(organizationId, result.set, await mayViewRosters(c)) })
+}
+
+export async function archivePermissionSetAction(c: PermissionActionContext, payload: OrganizationContext, rawPermissionSetId: string, capture: AuditChangeCapture | null) {
+      const organizationId = payload.organization.id
+      const permissionSetId = normalizeDenTypeId("permissionSet", rawPermissionSetId)
+      const actorMemberId = payload.currentMember.id
+
+      const result = await withOrganizationTeamMutation(organizationId, async (tx) => {
+        if (!(await lockPermissionSet(tx, organizationId, permissionSetId))) return { ok: false as const, error: "permission_set_not_found" as const }
+        const set = await readPermissionSet(tx, organizationId, permissionSetId)
+        if (!set) return { ok: false as const, error: "permission_set_not_found" as const }
+        if (set.defaultKey !== null) return { ok: false as const, error: "default_permission_set" as const }
+        if (set.archivedAt) return { ok: false as const, error: "permission_set_archived" as const }
+        const live = await editorInTransaction(tx, organizationId, actorMemberId)
+        if (!live.ok) return live
+
+        const now = new Date()
+        const links = (await readTeamLinks(tx, organizationId, [set.id])).get(set.id) ?? []
+        const activeLinks = links.filter((link) => link.removedAt === null)
+        const teamId = currentTeam(links)?.id ?? null
+        const before = await auditStateFor(tx, set, teamId)
+
+        if (activeLinks.length > 0) {
+          await tx.update(PermissionSetTeamTable)
+            .set({ removedAt: now, removedByOrgMembershipId: actorMemberId })
+            .where(inArray(PermissionSetTeamTable.id, activeLinks.map((link) => link.linkId)))
+        }
+        await tx.update(PermissionSetTable)
+          .set({ archivedAt: now, archivedByOrgMembershipId: actorMemberId })
+          .where(eq(PermissionSetTable.id, set.id))
+
+        const archived: PermissionSetRow = { ...set, archivedAt: now, archivedByOrgMembershipId: actorMemberId }
+        const auditEventIds = await appendDomainChanges(tx, capture, [
+          permissionSetArchivedEvent(organizationId, before, { ...before, set: archived }),
+        ])
+        return { ok: true as const, set, teamId, auditEventIds }
+      })
+
+      if (!result.ok) {
+        if (result.error === "permission_set_not_found") return c.json({ error: "permission_set_not_found" as const }, 404)
+        if (result.error === "default_permission_set") {
+          return c.json({ error: "default_permission_set" as const, message: "Member, Admin and Super admin permissions can't be deleted. Turn permissions off instead." }, 400)
+        }
+        if (result.error === "permission_revoked") return c.json(result.response, 403, permissionFailureHeaders(result.response))
+        return c.json({ error: "permission_set_archived" as const, message: "This permission set was already deleted." }, 409)
+      }
+
+      await finishLegacyAuditAction(capture, {
+        organizationId,
+        actorUserId: payload.currentMember.userId,
+        action: ORGANIZATION_AUDIT_ACTIONS.permissionSetArchived,
+        payload: {
+          permissionSetId: result.set.id,
+          permissionSetName: result.set.name,
+          teamId: result.teamId,
+        },
+      }, result.auditEventIds)
+
+      return c.body(null, 204)
+}
+
+// ---------------------------------------------------------------------------
 // Routes
 // ---------------------------------------------------------------------------
 
@@ -914,186 +1350,7 @@ export function registerOrgPermissionRoutes<T extends { Variables: OrgRouteVaria
     orgMemberRoute(),
     requireOrgPermission("permissions.manage"),
     jsonValidator(createPermissionSetBodySchema),
-    async (c) => {
-      const payload = c.get("organizationContext")
-      const organizationId = payload.organization.id
-      const editor = await callerPermissions(c)
-      if (!editor) return c.json({ error: "organization_not_found" as const }, 404)
-
-      const body = c.req.valid("json")
-      const plan = planPermissionSetCreate({ permissions: body.permissions, editor })
-      if (!plan.ok) return c.json(problemBody(plan.problem), problemStatus(plan.problem))
-
-      const capture = auditChangeCapture(c)
-      const actorMemberId = payload.currentMember.id
-      const allowed = plan.changes.map((change) => change.key)
-
-      if (!body.teamId) {
-        // A named role, given to zero or more teams now.
-        const name = body.name
-        if (!name) return c.json({ error: "invalid_request" as const, message: "Name the role.", details: [] }, 400)
-        const teamIds = [...new Set((body.teamIds ?? []).map((value) => normalizeDenTypeId("team", value)))]
-
-        const created = await withOrganizationTeamMutation(organizationId, async (tx) => {
-          // Team rows before set rows, as every team set write takes them.
-          const teams = teamIds.length > 0
-            ? await tx.select({ id: TeamTable.id }).from(TeamTable)
-              .where(and(eq(TeamTable.organizationId, organizationId), inArray(TeamTable.id, teamIds)))
-              .for("update")
-            : []
-          if (teams.length !== teamIds.length) return { ok: false as const, error: "team_not_found" as const }
-          const live = await editorInTransaction(tx, organizationId, actorMemberId)
-          if (!live.ok) return live
-          const livePlan = planPermissionSetCreate({ permissions: body.permissions, editor: live.editor })
-          if (!livePlan.ok) return { ok: false as const, error: "invalid_create" as const, problem: livePlan.problem }
-
-          const now = new Date()
-          const set: PermissionSetRow = {
-            id: createDenTypeId("permissionSet"),
-            organizationId,
-            defaultKey: null,
-            name,
-            createdByOrgMembershipId: actorMemberId,
-            createdAt: now,
-            updatedAt: now,
-            archivedAt: null,
-            archivedByOrgMembershipId: null,
-          }
-          await tx.insert(PermissionSetTable).values({ id: set.id, organizationId, defaultKey: null, name, createdByOrgMembershipId: actorMemberId, createdAt: now })
-          const rows = buildPermissionRows({ organizationId, permissionSetId: set.id, changes: livePlan.changes, source: "user", changedByOrgMembershipId: actorMemberId, now })
-          if (rows.length > 0) await tx.insert(PermissionSetPermissionTable).values(rows)
-
-          const before = await readTeamLinks(tx, organizationId, await activeSetIdsForTeams(tx, organizationId, teamIds))
-          const changes = await assignTeamsToSet(tx, { organizationId, teamIds, setId: set.id, actorMemberId, now })
-          const auditEventIds = await appendDomainChanges(tx, capture, [
-            permissionSetCreatedEvent(organizationId, { set, teamId: teamIds[0] ?? null, teamIds, allowedKeys: allowed }),
-            ...await teamRoleChangeEvents(tx, organizationId, changes, before, { skip: set.id }),
-          ])
-          return { ok: true as const, set, teamId: teamIds[0] ?? null, auditEventIds }
-        })
-
-        if (!created.ok) {
-          if (created.error === "team_not_found") return c.json({ error: "team_not_found" as const, message: "One of these teams doesn't exist in your organization." }, 404)
-          if (created.error === "permission_revoked") return c.json(created.response, 403, permissionFailureHeaders(created.response))
-          return c.json(problemBody(created.problem), problemStatus(created.problem))
-        }
-        await finishLegacyAuditAction(capture, {
-          organizationId,
-          actorUserId: payload.currentMember.userId,
-          action: ORGANIZATION_AUDIT_ACTIONS.permissionSetCreated,
-          payload: {
-            permissionSetId: created.set.id,
-            permissionSetName: created.set.name,
-            teamId: created.teamId,
-            allowedCount: allowed.length,
-            allowedKeys: joinKeys(allowed),
-          },
-        }, created.auditEventIds)
-        return c.json({ set: await loadPermissionSetDetailFromPrimary(organizationId, created.set, await mayViewRosters(c)) }, 201)
-      }
-      if (body.name !== undefined || body.teamIds !== undefined) {
-        return c.json({ error: "invalid_request" as const, message: "Send either teamId, or a name and teamIds.", details: [] }, 400)
-      }
-
-      const teamId = normalizeDenTypeId("team", body.teamId)
-
-      const result = await withOrganizationTeamMutation(organizationId, async (tx) => {
-        // The team row serializes concurrent creates for the same team. The
-        // set is new, so its rows need no notBefore.
-        const [team] = await tx.select({ id: TeamTable.id, name: TeamTable.name }).from(TeamTable)
-          .where(and(eq(TeamTable.id, teamId), eq(TeamTable.organizationId, organizationId)))
-          .limit(1)
-          .for("update")
-        if (!team) return { ok: false as const, error: "team_not_found" as const }
-        const live = await editorInTransaction(tx, organizationId, actorMemberId)
-        if (!live.ok) return live
-        const livePlan = planPermissionSetCreate({ permissions: body.permissions, editor: live.editor })
-        if (!livePlan.ok) return { ok: false as const, error: "invalid_create" as const, problem: livePlan.problem }
-
-        const [existing] = await tx.select({ id: PermissionSetTable.id }).from(PermissionSetTeamTable)
-          .innerJoin(PermissionSetTable, eq(PermissionSetTable.id, PermissionSetTeamTable.permissionSetId))
-          .where(and(
-            eq(PermissionSetTeamTable.organizationId, organizationId),
-            eq(PermissionSetTeamTable.teamId, team.id),
-            isNull(PermissionSetTeamTable.removedAt),
-            isNull(PermissionSetTable.archivedAt),
-          ))
-          .limit(1)
-        if (existing) return { ok: false as const, error: "team_permission_set_exists" as const, permissionSetId: existing.id }
-
-        const now = new Date()
-        const set: PermissionSetRow = {
-          id: createDenTypeId("permissionSet"),
-          organizationId,
-          defaultKey: null,
-          name: teamPermissionSetName(team.name),
-          createdByOrgMembershipId: actorMemberId,
-          createdAt: now,
-          updatedAt: now,
-          archivedAt: null,
-          archivedByOrgMembershipId: null,
-        }
-        await tx.insert(PermissionSetTable).values({
-          id: set.id,
-          organizationId,
-          defaultKey: null,
-          name: set.name,
-          createdByOrgMembershipId: actorMemberId,
-          createdAt: now,
-        })
-
-        // A brand-new set has no earlier link to this team to re-activate.
-        await tx.insert(PermissionSetTeamTable).values({
-          id: createDenTypeId("permissionSetTeam"),
-          organizationId,
-          permissionSetId: set.id,
-          teamId: team.id,
-          createdByOrgMembershipId: actorMemberId,
-          createdAt: now,
-        })
-
-        const rows = buildPermissionRows({
-          organizationId,
-          permissionSetId: set.id,
-          changes: plan.changes,
-          source: "user",
-          changedByOrgMembershipId: actorMemberId,
-          now,
-        })
-        if (rows.length > 0) await tx.insert(PermissionSetPermissionTable).values(rows)
-
-        const auditEventIds = await appendDomainChanges(tx, capture, [
-          permissionSetCreatedEvent(organizationId, { set, teamId: team.id, allowedKeys: allowed }),
-        ])
-        return { ok: true as const, set, teamId: team.id, auditEventIds }
-      })
-
-      if (!result.ok) {
-        if (result.error === "team_not_found") return c.json({ error: "team_not_found" as const, message: "This team doesn't exist in your organization." }, 404)
-        if (result.error === "permission_revoked") return c.json(result.response, 403, permissionFailureHeaders(result.response))
-        if (result.error === "invalid_create") return c.json(problemBody(result.problem), problemStatus(result.problem))
-        return c.json({
-          error: "team_permission_set_exists" as const,
-          message: "This team already has permissions. Edit them instead.",
-          permissionSetId: result.permissionSetId,
-        }, 409)
-      }
-
-      await finishLegacyAuditAction(capture, {
-        organizationId,
-        actorUserId: payload.currentMember.userId,
-        action: ORGANIZATION_AUDIT_ACTIONS.permissionSetCreated,
-        payload: {
-          permissionSetId: result.set.id,
-          permissionSetName: result.set.name,
-          teamId: result.teamId,
-          allowedCount: allowed.length,
-          allowedKeys: joinKeys(allowed),
-        },
-      }, result.auditEventIds)
-
-      return c.json({ set: await loadPermissionSetDetailFromPrimary(organizationId, result.set, await mayViewRosters(c)) }, 201)
-    },
+    async (c) => createPermissionSetAction(c, c.get("organizationContext"), c.req.valid("json"), auditChangeCapture(c)),
   )
 
   app.get(
@@ -1144,51 +1401,7 @@ export function registerOrgPermissionRoutes<T extends { Variables: OrgRouteVaria
     requireOrgPermission("permissions.manage"),
     paramValidator(permissionSetParamsSchema),
     jsonValidator(renamePermissionSetBodySchema),
-    async (c) => {
-      const payload = c.get("organizationContext")
-      const organizationId = payload.organization.id
-      const permissionSetId = normalizeDenTypeId("permissionSet", c.req.valid("param").permissionSetId)
-      const name = c.req.valid("json").name
-      const capture = auditChangeCapture(c)
-      const actorMemberId = payload.currentMember.id
-
-      const result = await withOrganizationTeamMutation(organizationId, async (tx) => {
-        if (!(await lockPermissionSet(tx, organizationId, permissionSetId))) return { ok: false as const, error: "permission_set_not_found" as const }
-        const set = await readPermissionSet(tx, organizationId, permissionSetId)
-        if (!set) return { ok: false as const, error: "permission_set_not_found" as const }
-        if (set.defaultKey !== null) return { ok: false as const, error: "default_permission_set" as const }
-        if (set.archivedAt) return { ok: false as const, error: "permission_set_archived" as const }
-        const live = await editorInTransaction(tx, organizationId, actorMemberId)
-        if (!live.ok) return live
-        if (set.name === name) return { ok: true as const, set, auditEventIds: [] }
-
-        await tx.update(PermissionSetTable).set({ name }).where(eq(PermissionSetTable.id, set.id))
-        const renamed: PermissionSetRow = { ...set, name }
-        const teams = activeTeams((await readTeamLinks(tx, organizationId, [set.id])).get(set.id)).map((team) => team.id)
-        const auditEventIds = await appendDomainChanges(tx, capture, [
-          permissionSetRenamedEvent(organizationId, await auditStateFor(tx, set, teams[0] ?? null, teams), await auditStateFor(tx, renamed, teams[0] ?? null, teams)),
-        ])
-        return { ok: true as const, set: renamed, previousName: set.name, auditEventIds }
-      })
-
-      if (!result.ok) {
-        if (result.error === "permission_set_not_found") return c.json({ error: "permission_set_not_found" as const }, 404)
-        if (result.error === "default_permission_set") {
-          return c.json({ error: "default_permission_set" as const, message: "Member, Admin and Super admin keep their names." }, 400)
-        }
-        if (result.error === "permission_revoked") return c.json(result.response, 403, permissionFailureHeaders(result.response))
-        return c.json({ error: "permission_set_archived" as const, message: "This role was deleted and can't be changed." }, 409)
-      }
-      if (result.auditEventIds.length > 0) {
-        await finishLegacyAuditAction(capture, {
-          organizationId,
-          actorUserId: payload.currentMember.userId,
-          action: ORGANIZATION_AUDIT_ACTIONS.permissionSetRenamed,
-          payload: { permissionSetId: result.set.id, permissionSetName: result.set.name, previousName: result.previousName ?? null },
-        }, result.auditEventIds)
-      }
-      return c.json({ set: await loadPermissionSetDetailFromPrimary(organizationId, result.set, await mayViewRosters(c)) })
-    },
+    async (c) => renamePermissionSetAction(c, c.get("organizationContext"), c.req.valid("param").permissionSetId, c.req.valid("json").name, auditChangeCapture(c)),
   )
 
   app.put(
@@ -1211,68 +1424,7 @@ export function registerOrgPermissionRoutes<T extends { Variables: OrgRouteVaria
     requireOrgPermission("permissions.manage"),
     paramValidator(teamParamsSchema),
     jsonValidator(teamPermissionSetBodySchema),
-    async (c) => {
-      const payload = c.get("organizationContext")
-      const organizationId = payload.organization.id
-      const teamId = normalizeDenTypeId("team", c.req.valid("param").teamId)
-      const requested = c.req.valid("json").permissionSetId
-      const setId = requested ? normalizeDenTypeId("permissionSet", requested) : null
-      const capture = auditChangeCapture(c)
-      const actorMemberId = payload.currentMember.id
-
-      const result = await withOrganizationTeamMutation(organizationId, async (tx) => {
-        const [team] = await tx.select({ id: TeamTable.id }).from(TeamTable)
-          .where(and(eq(TeamTable.id, teamId), eq(TeamTable.organizationId, organizationId)))
-          .limit(1)
-          .for("update")
-        if (!team) return { ok: false as const, error: "team_not_found" as const }
-        let set: PermissionSetRow | null = null
-        if (setId) {
-          if (!(await lockPermissionSet(tx, organizationId, setId))) return { ok: false as const, error: "permission_set_not_found" as const }
-          set = await readPermissionSet(tx, organizationId, setId)
-          if (!set) return { ok: false as const, error: "permission_set_not_found" as const }
-          if (set.defaultKey !== null) return { ok: false as const, error: "default_permission_set" as const }
-          if (set.archivedAt) return { ok: false as const, error: "permission_set_archived" as const }
-        }
-        const live = await editorInTransaction(tx, organizationId, actorMemberId)
-        if (!live.ok) return live
-        if (set) {
-          // Giving a role grants its permissions to everyone in the team: the editor must hold them all.
-          const missing = [...allowedKeys((await readPermissionSetStates(tx, [set.id], { lock: "share" })).get(set.id))].filter((key) => !live.editor.has(key))
-          if (missing.length > 0) return { ok: false as const, error: "invalid_assign" as const, problem: { error: "permission_not_held" as const, keys: missing } }
-        }
-
-        const before = await readTeamLinks(tx, organizationId, [...new Set([...await activeSetIdsForTeams(tx, organizationId, [team.id]), ...(set ? [set.id] : [])])])
-        const changes = await assignTeamsToSet(tx, { organizationId, teamIds: [team.id], setId: set?.id ?? null, actorMemberId, now: new Date() })
-        const auditEventIds = await appendDomainChanges(tx, capture, await teamRoleChangeEvents(tx, organizationId, changes, before))
-        return { ok: true as const, set, changes, auditEventIds }
-      })
-
-      if (!result.ok) {
-        if (result.error === "team_not_found") return c.json({ error: "team_not_found" as const, message: "This team doesn't exist in your organization." }, 404)
-        if (result.error === "permission_set_not_found") return c.json({ error: "permission_set_not_found" as const }, 404)
-        if (result.error === "default_permission_set") {
-          return c.json({ error: "default_permission_set" as const, message: "Member, Admin and Super admin aren't custom roles. Make the team an Admin team instead." }, 400)
-        }
-        if (result.error === "permission_set_archived") return c.json({ error: "permission_set_archived" as const, message: "This role was deleted." }, 409)
-        if (result.error === "permission_revoked") return c.json(result.response, 403, permissionFailureHeaders(result.response))
-        return c.json(problemBody(result.problem), problemStatus(result.problem))
-      }
-      if (result.auditEventIds.length > 0) {
-        await finishLegacyAuditAction(capture, {
-          organizationId,
-          actorUserId: payload.currentMember.userId,
-          action: ORGANIZATION_AUDIT_ACTIONS.permissionSetTeamsChanged,
-          payload: {
-            teamId,
-            permissionSetId: result.set?.id ?? null,
-            permissionSetName: result.set?.name ?? null,
-            changedSets: result.changes.size,
-          },
-        }, result.auditEventIds)
-      }
-      return c.json({ set: result.set ? await loadPermissionSetDetailFromPrimary(organizationId, result.set, await mayViewRosters(c)) : null })
-    },
+    async (c) => setTeamPermissionSetAction(c, c.get("organizationContext"), c.req.valid("param").teamId, c.req.valid("json").permissionSetId, auditChangeCapture(c)),
   )
 
   app.put(
@@ -1295,94 +1447,7 @@ export function registerOrgPermissionRoutes<T extends { Variables: OrgRouteVaria
     requireOrgPermission("permissions.manage"),
     paramValidator(permissionSetParamsSchema),
     jsonValidator(updatePermissionSetBodySchema),
-    async (c) => {
-      const payload = c.get("organizationContext")
-      const organizationId = payload.organization.id
-      const editor = await callerPermissions(c)
-      if (!editor) return c.json({ error: "organization_not_found" as const }, 404)
-
-      const permissionSetId = normalizeDenTypeId("permissionSet", c.req.valid("param").permissionSetId)
-      const existing = await readPermissionSet(db, organizationId, permissionSetId)
-      if (!existing) return c.json({ error: "permission_set_not_found" as const }, 404)
-      // A default set must hold a row for every default key before it is
-      // diffed, or reconciliation could later override an explicit deny.
-      if (existing.defaultKey !== null) await ensureCurrentDefaultPermissionSets(organizationId)
-
-      const requested = c.req.valid("json").changes
-      const capture = auditChangeCapture(c)
-      const actorMemberId = payload.currentMember.id
-
-      const result = await withOrganizationTeamMutation(organizationId, async (tx) => {
-        if (!(await lockPermissionSet(tx, organizationId, permissionSetId))) return { ok: false as const, error: "permission_set_not_found" as const }
-        const set = await readPermissionSet(tx, organizationId, permissionSetId)
-        if (!set) return { ok: false as const, error: "permission_set_not_found" as const }
-        if (set.archivedAt) return { ok: false as const, error: "permission_set_archived" as const }
-        // Planned against the editor resolved here: owner/effective-admin for Admin permissions and
-        // the hold-the-key rule both use the latest committed permissions.
-        const live = await editorInTransaction(tx, organizationId, actorMemberId)
-        if (!live.ok) return live
-
-        const current = (await readPermissionSetStates(tx, [set.id], { lock: "share" })).get(set.id) ?? new Map<string, PermissionStatus>()
-        const plan = planPermissionSetEdit({ defaultKey: set.defaultKey, current, changes: requested, editor: live.editor })
-        if (!plan.ok) return { ok: false as const, error: "invalid_edit" as const, problem: plan.problem }
-        if (plan.changes.length === 0) return { ok: true as const, set, changes: [], granted: [], revoked: [], auditEventIds: [] }
-
-        await tx.insert(PermissionSetPermissionTable).values(buildPermissionRows({
-          organizationId,
-          permissionSetId: set.id,
-          changes: plan.changes,
-          source: "user",
-          changedByOrgMembershipId: actorMemberId,
-          notBefore: await latestPermissionRowCreatedAt(tx, set.id),
-        }))
-
-        const before = allowedKeys(current)
-        const after = new Set(before)
-        for (const change of plan.changes) {
-          if (change.status === "allow") after.add(change.key)
-          else after.delete(change.key)
-        }
-        const delta = permissionKeyDelta(before, after)
-        const links = await readTeamLinks(tx, organizationId, [set.id])
-        const teamId = currentTeam(links.get(set.id))?.id ?? null
-        const auditEventIds = await appendDomainChanges(tx, capture, [
-          permissionSetPermissionsChangedEvent(
-            organizationId,
-            { set, teamId, allowedKeys: [...before] },
-            { set, teamId, allowedKeys: [...after] },
-            delta,
-          ),
-        ])
-        return { ok: true as const, set, changes: plan.changes, granted: delta.granted, revoked: delta.revoked, auditEventIds }
-      })
-
-      if (!result.ok) {
-        if (result.error === "permission_set_not_found") return c.json({ error: "permission_set_not_found" as const }, 404)
-        if (result.error === "permission_set_archived") {
-          return c.json({ error: "permission_set_archived" as const, message: "This permission set was deleted and can't be changed." }, 409)
-        }
-        if (result.error === "permission_revoked") return c.json(result.response, 403, permissionFailureHeaders(result.response))
-        return c.json(problemBody(result.problem), problemStatus(result.problem))
-      }
-
-      if (result.changes.length > 0) {
-        await finishLegacyAuditAction(capture, {
-          organizationId,
-          actorUserId: payload.currentMember.userId,
-          action: ORGANIZATION_AUDIT_ACTIONS.permissionSetPermissionsChanged,
-          payload: {
-            permissionSetId: result.set.id,
-            permissionSetName: result.set.name,
-            permissionSetKind: setKind(result.set.defaultKey),
-            changedCount: result.changes.length,
-            grantedKeys: joinKeys(result.granted),
-            revokedKeys: joinKeys(result.revoked),
-          },
-        }, result.auditEventIds)
-      }
-
-      return c.json({ set: await loadPermissionSetDetailFromPrimary(organizationId, result.set, await mayViewRosters(c)) })
-    },
+    async (c) => updatePermissionSetPermissionsAction(c, c.get("organizationContext"), c.req.valid("param").permissionSetId, c.req.valid("json").changes, auditChangeCapture(c)),
   )
 
   app.get(
@@ -1451,66 +1516,7 @@ export function registerOrgPermissionRoutes<T extends { Variables: OrgRouteVaria
     orgMemberRoute(),
     requireOrgPermission("permissions.manage"),
     paramValidator(permissionSetParamsSchema),
-    async (c) => {
-      const payload = c.get("organizationContext")
-      const organizationId = payload.organization.id
-      const permissionSetId = normalizeDenTypeId("permissionSet", c.req.valid("param").permissionSetId)
-      const capture = auditChangeCapture(c)
-      const actorMemberId = payload.currentMember.id
-
-      const result = await withOrganizationTeamMutation(organizationId, async (tx) => {
-        if (!(await lockPermissionSet(tx, organizationId, permissionSetId))) return { ok: false as const, error: "permission_set_not_found" as const }
-        const set = await readPermissionSet(tx, organizationId, permissionSetId)
-        if (!set) return { ok: false as const, error: "permission_set_not_found" as const }
-        if (set.defaultKey !== null) return { ok: false as const, error: "default_permission_set" as const }
-        if (set.archivedAt) return { ok: false as const, error: "permission_set_archived" as const }
-        const live = await editorInTransaction(tx, organizationId, actorMemberId)
-        if (!live.ok) return live
-
-        const now = new Date()
-        const links = (await readTeamLinks(tx, organizationId, [set.id])).get(set.id) ?? []
-        const activeLinks = links.filter((link) => link.removedAt === null)
-        const teamId = currentTeam(links)?.id ?? null
-        const before = await auditStateFor(tx, set, teamId)
-
-        if (activeLinks.length > 0) {
-          await tx.update(PermissionSetTeamTable)
-            .set({ removedAt: now, removedByOrgMembershipId: actorMemberId })
-            .where(inArray(PermissionSetTeamTable.id, activeLinks.map((link) => link.linkId)))
-        }
-        await tx.update(PermissionSetTable)
-          .set({ archivedAt: now, archivedByOrgMembershipId: actorMemberId })
-          .where(eq(PermissionSetTable.id, set.id))
-
-        const archived: PermissionSetRow = { ...set, archivedAt: now, archivedByOrgMembershipId: actorMemberId }
-        const auditEventIds = await appendDomainChanges(tx, capture, [
-          permissionSetArchivedEvent(organizationId, before, { ...before, set: archived }),
-        ])
-        return { ok: true as const, set, teamId, auditEventIds }
-      })
-
-      if (!result.ok) {
-        if (result.error === "permission_set_not_found") return c.json({ error: "permission_set_not_found" as const }, 404)
-        if (result.error === "default_permission_set") {
-          return c.json({ error: "default_permission_set" as const, message: "Member, Admin and Super admin permissions can't be deleted. Turn permissions off instead." }, 400)
-        }
-        if (result.error === "permission_revoked") return c.json(result.response, 403, permissionFailureHeaders(result.response))
-        return c.json({ error: "permission_set_archived" as const, message: "This permission set was already deleted." }, 409)
-      }
-
-      await finishLegacyAuditAction(capture, {
-        organizationId,
-        actorUserId: payload.currentMember.userId,
-        action: ORGANIZATION_AUDIT_ACTIONS.permissionSetArchived,
-        payload: {
-          permissionSetId: result.set.id,
-          permissionSetName: result.set.name,
-          teamId: result.teamId,
-        },
-      }, result.auditEventIds)
-
-      return c.body(null, 204)
-    },
+    async (c) => archivePermissionSetAction(c, c.get("organizationContext"), c.req.valid("param").permissionSetId, auditChangeCapture(c)),
   )
 
   app.get(

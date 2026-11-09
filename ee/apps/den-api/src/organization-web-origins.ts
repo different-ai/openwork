@@ -194,8 +194,10 @@ export async function approveOrganizationWebOrigin(input: {
   organizationId: OrganizationId
   origin: string
   createdByOrgMemberId: MemberId
+  /** Reuse a known-free id (config-blob imports reuse source ids). Routes omit it. */
+  id?: OrganizationWebOriginId
 }, capture: AuditChangeCapture | null = null): Promise<ApproveOrganizationWebOriginResult> {
-  const id = createDenTypeId("organizationWebOrigin")
+  const id = input.id ?? createDenTypeId("organizationWebOrigin")
   const createdAt = new Date()
 
   let outcome: "created" | "already_approved" | "limit_reached"

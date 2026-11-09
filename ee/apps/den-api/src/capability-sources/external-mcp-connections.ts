@@ -496,8 +496,10 @@ export async function createExternalMcpConnection(input: {
   oauthConfiguration?: ExternalMcpOAuthConfigurationInput | null
   createdByOrgMembershipId: OrgMembershipId
   access: ExternalMcpAccessInput
+  /** Reuse this id for the new row (config-blob imports; the caller checked it is free). */
+  id?: ExternalMcpConnectionId
 }): Promise<ExternalMcpConnectionRow> {
-  const id = createDenTypeId("externalMcpConnection")
+  const id = input.id ?? createDenTypeId("externalMcpConnection")
   const oauthConfiguration: ExternalMcpOAuthConfiguration | null = input.authType === "oauth" && input.kind !== "native_provider"
     ? {
         ...(input.oauthConfiguration ?? {

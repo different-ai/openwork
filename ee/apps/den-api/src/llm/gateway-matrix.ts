@@ -215,7 +215,7 @@ export function gatewayModelsChanged(existing: GatewayModelRow[], models: Gatewa
  * insert new ones. Keeps model row IDs stable so existing wire aliases and
  * overlapping links survive catalog edits. Caller holds the provider row lock.
  */
-export async function writeGatewayModels(tx: GatewayTx, provider: GatewayProvider, models: GatewayModelInput[]) {
+export async function writeGatewayModels(tx: GatewayTx, provider: GatewayProvider, models: GatewayModelInput[], options: { createIds?: ReadonlyMap<string, GatewayModelRow["id"]> } = {}) {
   const existing = await tx.select().from(GatewayProviderModelTable).where(eq(GatewayProviderModelTable.gateway_provider_id, provider.id))
   const unique = uniqueGatewayModels(models)
   if (unique.length !== models.length) {
@@ -236,7 +236,7 @@ export async function writeGatewayModels(tx: GatewayTx, provider: GatewayProvide
     changed = true
     // A case-only rename updates the row in place: the unique index would reject a second insert.
     if (row) await tx.update(GatewayProviderModelTable).set({ model_id: model.id, name: model.name, model_config: model.config }).where(eq(GatewayProviderModelTable.id, row.id))
-    else await tx.insert(GatewayProviderModelTable).values({ id: createDenTypeId("inferenceProviderModel"), gateway_provider_id: provider.id, model_id: model.id, name: model.name, model_config: model.config })
+    else await tx.insert(GatewayProviderModelTable).values({ id: options.createIds?.get(modelIdKey(model.id)) ?? createDenTypeId("inferenceProviderModel"), gateway_provider_id: provider.id, model_id: model.id, name: model.name, model_config: model.config })
   }
   return changed
 }
@@ -280,7 +280,7 @@ export async function enableGatewayGroupModels(tx: GatewayTx, provider: GatewayP
   return { inferenceProviderId: provider.id, modelGroupId: group.id, modelIds: policy, groupModelIds, addedModelIds: added }
 }
 
-export async function writeGatewayGroup(tx: GatewayTx, provider: GatewayProvider, input: GatewayModelGroupPatch, groupId?: typeof GatewayModelGroupTable.$inferSelect.id) {
+export async function writeGatewayGroup(tx: GatewayTx, provider: GatewayProvider, input: GatewayModelGroupPatch, groupId?: typeof GatewayModelGroupTable.$inferSelect.id, options: { createId?: typeof GatewayModelGroupTable.$inferSelect.id } = {}) {
   const [existing] = groupId ? await tx.select().from(GatewayModelGroupTable)
     .where(and(eq(GatewayModelGroupTable.id, groupId), eq(GatewayModelGroupTable.gateway_provider_id, provider.id))) : []
   if (groupId && !existing) throw new GatewayWriteError(404, "model_group_not_found")
@@ -292,7 +292,7 @@ export async function writeGatewayGroup(tx: GatewayTx, provider: GatewayProvider
     && (!provider.model_ids.length || provider.model_ids.includes(row.model_id))
     && !gatewayModelConfigurationError(provider.provider_config, [row.model_config]))
   if (input.modelIds && selected?.length !== new Set(input.modelIds).size) throw new GatewayWriteError(404, "model_not_found", "Groups accept configured catalog model IDs from this provider only.")
-  const id = existing?.id ?? createDenTypeId("gatewayModelGroup")
+  const id = existing?.id ?? options.createId ?? createDenTypeId("gatewayModelGroup")
   // The caller holds the provider fence; callbacks recheck active group/set grants after access changes.
   const values = { name, description: input.description === undefined ? existing?.description ?? null : input.description, status: input.status ?? existing?.status ?? "active", updated_at: new Date() }
   if (existing) await tx.update(GatewayModelGroupTable).set(values).where(eq(GatewayModelGroupTable.id, id))
@@ -379,7 +379,7 @@ export async function writeGatewaySet(
   input: GatewayCredentialSetPatch,
   target: GatewaySet["id"] | { createdByOrgMembershipId: GatewayMemberId },
   /** Secure keys in chat: create a new organization set whose key a person adds afterwards. */
-  options: { awaitOrganizationKey?: boolean } = {},
+  options: { awaitOrganizationKey?: boolean; createId?: GatewaySet["id"] } = {},
 ) {
   const setId = typeof target === "string" ? target : undefined
   let creatorId: GatewayMemberId | null = null
@@ -425,7 +425,7 @@ export async function writeGatewaySet(
   if (litellm && (clientId || clientSecret)) throw new GatewayWriteError(400, "unsupported_oauth_client", "LiteLLM sets do not use an OAuth client.")
   const extraneous = memberSignInExtraneousFields(mode === "member" ? method : null, mode === "member" ? signIn : { ...signIn, oauth_client_id: null, oauth_client_secret: null })
   if (extraneous) throw new GatewayWriteError(400, "unsupported_sign_in_settings", extraneous)
-  const id = existing?.id ?? createDenTypeId("gatewayCredentialSet")
+  const id = existing?.id ?? options.createId ?? createDenTypeId("gatewayCredentialSet")
   const modeChanged = existing && mode !== existing.credential_mode
   const clientChanged = existing && !sameMemberSignInConfiguration(signIn, existing)
   const disabled = existing?.status === "active" && input.status === "disabled"
@@ -461,7 +461,7 @@ export async function writeGatewaySet(
   return { id, revoked }
 }
 
-export async function writeGatewayGrant(tx: GatewayTx, provider: GatewayProvider, input: GatewayAccessGrantWrite, grantId?: typeof GatewayProviderAccessTable.$inferSelect.id) {
+export async function writeGatewayGrant(tx: GatewayTx, provider: GatewayProvider, input: GatewayAccessGrantWrite, grantId?: typeof GatewayProviderAccessTable.$inferSelect.id, options: { createId?: typeof GatewayProviderAccessTable.$inferSelect.id } = {}) {
   const groupId = normalizeDenTypeId("gatewayModelGroup", input.modelGroupId)
   const setId = normalizeDenTypeId("gatewayCredentialSet", input.credentialSetId)
   const [group] = await tx.select().from(GatewayModelGroupTable).where(and(eq(GatewayModelGroupTable.id, groupId), eq(GatewayModelGroupTable.gateway_provider_id, provider.id)))
@@ -482,7 +482,7 @@ export async function writeGatewayGrant(tx: GatewayTx, provider: GatewayProvider
   const [duplicate] = await tx.select().from(GatewayProviderAccessTable).where(and(eq(GatewayProviderAccessTable.gateway_provider_id, provider.id), eq(GatewayProviderAccessTable.model_group_id, groupId), eq(GatewayProviderAccessTable.credential_set_id, setId), eq(GatewayProviderAccessTable.audience_key, audienceKey)))
   if (duplicate && duplicate.id !== grantId) throw new GatewayWriteError(409, "access_grant_exists")
   // Additions preserve pending consent. Removed/rebound access is checked under the provider fence at callback.
-  const id = grantId ?? createDenTypeId("inferenceProviderAccess")
+  const id = grantId ?? options.createId ?? createDenTypeId("inferenceProviderAccess")
   const values = { model_group_id: groupId, credential_set_id: setId, org_membership_id: memberId, team_id: teamId, audience_key: audienceKey }
   if (grantId) await tx.update(GatewayProviderAccessTable).set(values).where(and(eq(GatewayProviderAccessTable.id, id), eq(GatewayProviderAccessTable.gateway_provider_id, provider.id)))
   else await tx.insert(GatewayProviderAccessTable).values({ id, gateway_provider_id: provider.id, ...values })

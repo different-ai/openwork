@@ -830,7 +830,10 @@ async function loadLlmProviders(input: {
   })
 }
 
-async function createLlmProvider(c: ResourceActionContext, payload: ResourceOrganizationContext, input: z.infer<typeof llmProviderWriteSchema>, externalKey?: string) {
+export type LlmProviderWriteInput = z.infer<typeof llmProviderWriteSchema>
+
+/** `preferredId`: reuse this id for the new row (config-blob imports; the caller checked it is free). */
+export async function createLlmProvider(c: ResourceActionContext, payload: ResourceOrganizationContext, input: z.infer<typeof llmProviderWriteSchema>, externalKey?: string, preferredId?: LlmProviderId) {
 
   try {
     const normalized = await normalizeLlmProviderInput(input)
@@ -843,7 +846,7 @@ async function createLlmProvider(c: ResourceActionContext, payload: ResourceOrga
       values: input.teamIds,
     })
 
-    const llmProviderId = createDenTypeId("llmProvider")
+    const llmProviderId = preferredId ?? createDenTypeId("llmProvider")
     const protectedMemberIds = [...new Set([payload.currentMember.id, ...memberIds])]
     const now = new Date()
 
@@ -946,7 +949,7 @@ async function createLlmProvider(c: ResourceActionContext, payload: ResourceOrga
   }
 }
 
-async function updateLlmProvider(c: ResourceActionContext, payload: ResourceOrganizationContext, rawId: string, input: z.infer<typeof llmProviderWriteSchema>) {
+export async function updateLlmProvider(c: ResourceActionContext, payload: ResourceOrganizationContext, rawId: string, input: z.infer<typeof llmProviderWriteSchema>) {
 
   let llmProviderId: LlmProviderId
   try {
@@ -1085,7 +1088,7 @@ async function updateLlmProvider(c: ResourceActionContext, payload: ResourceOrga
   }
 }
 
-async function deleteLlmProvider(c: ResourceActionContext, payload: ResourceOrganizationContext, rawId: string) {
+export async function deleteLlmProvider(c: ResourceActionContext, payload: ResourceOrganizationContext, rawId: string) {
 
   let llmProviderId: LlmProviderId
   try {

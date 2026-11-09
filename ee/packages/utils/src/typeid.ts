@@ -142,6 +142,10 @@ export const idTypesMapNameToPrefix = {
   mcpRegistrationStatus: "mrs",
   mcpRegistrationEvent: "mre",
   featureIntroState: "fis",
+  configChangeRequest: "ccr",
+  configBlobAlias: "cba",
+  configBlobExport: "cbe",
+  denInstance: "dni",
 } as const
 
 export const denTypeIdPrefixes = idTypesMapNameToPrefix

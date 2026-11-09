@@ -1,0 +1,530 @@
+"use client";
+
+import {
+  type ConfigAreaKey,
+  type ConfigDecisions,
+  type ConfigFieldChange,
+  type ConfigPlan,
+  type ConfigPlanItem,
+  type ConfigPlanSecret,
+  type ConfigSecretInput,
+  parseConfigRef,
+} from "@openwork/types/den/config-blobs";
+import { ChevronRight } from "lucide-react";
+import { useState } from "react";
+import { DenButton } from "../../../_components/ui/button";
+import { DenCheckbox } from "../../../_components/ui/checkbox";
+import { DenChip } from "../../../_components/ui/chip";
+import { DenInput } from "../../../_components/ui/input";
+import { DenOptionCard } from "../../../_components/ui/option-card";
+import { DenSecretInput } from "../../../_components/ui/secret-input";
+import { DenSelect } from "../../../_components/ui/select";
+import { DenSwitch } from "../../../_components/ui/switch";
+import {
+  CONFIG_OP_LABELS,
+  type ConfigPlanEntry,
+  formatFieldPath,
+  formatFieldValue,
+  formatScore,
+  groupByOp,
+  inviteCount,
+  isDeletable,
+  isPeopleRef,
+  isRefOpen,
+  itemName,
+  matchDecision,
+  matchEntries,
+  matchTierLabel,
+  needsMatch,
+  planEntries,
+  refEntries,
+  targetChoices,
+} from "./config-blobs-model";
+
+export type StepProps = {
+  plan: ConfigPlan;
+  decisions: ConfigDecisions;
+  editable: boolean;
+  saving: boolean;
+  onDecisions: (next: ConfigDecisions) => void;
+};
+
+function StepEmpty({ children }: { children: string }) {
+  return <p className="py-4 text-[13px] text-gray-500">{children}</p>;
+}
+
+function ItemHeading({ entry }: { entry: ConfigPlanEntry }) {
+  return (
+    <p className="text-[13px] text-gray-900">
+      <span className="font-medium">{itemName(entry.item)}</span>
+      <span className="text-gray-500"> in {entry.areaLabel}</span>
+    </p>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Match
+
+export function MatchStep({ plan, decisions, editable, saving, onDecisions }: StepProps) {
+  const entries = matchEntries(plan, decisions);
+  if (entries.length === 0) return <StepEmpty>Every item matched on its own.</StepEmpty>;
+
+  function choose(entry: ConfigPlanEntry, targetId: string) {
+    const matches = decisions.matches.filter((match) => !(match.area === entry.area && match.ref === entry.item.ref));
+    onDecisions({ ...decisions, matches: [...matches, { area: entry.area, ref: entry.item.ref, targetId }] });
+  }
+
+  return (
+    <div className="flex flex-col divide-y divide-gray-100" data-testid="config-step-match">
+      {entries.map((entry) => {
+        const selected = matchDecision(decisions, entry);
+        const candidates = [...(entry.item.candidates ?? [])].sort((a, b) => b.score - a.score);
+        const target = entry.item.target;
+        if (target && !candidates.some((candidate) => candidate.id === target.id)) {
+          candidates.unshift({ id: target.id, name: target.name, score: 1, reasons: entry.item.reasons ?? [] });
+        }
+        const suggested = target?.id ?? (entry.item.op === "create" ? "create" : null);
+        const name = `config-match-${entry.area}-${entry.item.ref}`;
+        return (
+          <fieldset key={`${entry.area}:${entry.item.ref}`} className="flex flex-col gap-2 py-4" disabled={!editable || saving} data-testid="config-match-item">
+            <legend className="sr-only">Match for {itemName(entry.item)}</legend>
+            <div className="flex flex-wrap items-center gap-2">
+              <ItemHeading entry={entry} />
+              {needsMatch(entry.item) ? <DenChip tone="warning">Choose one</DenChip> : null}
+            </div>
+            {entry.item.flags.includes("conflict.identity") ? (
+              <p className="text-[12px] text-gray-500">Its ID and its name point to different items here.</p>
+            ) : null}
+            <DenOptionCard
+              type="radio"
+              name={name}
+              checked={selected === "create"}
+              onChange={() => choose(entry, "create")}
+              title={`Add as a new item${suggested === "create" && selected === null ? " (suggested)" : ""}`}
+              disabled={!editable || saving}
+              testId="config-match-create"
+            />
+            {candidates.map((candidate) => (
+              <DenOptionCard
+                key={candidate.id}
+                type="radio"
+                name={name}
+                checked={selected === candidate.id}
+                onChange={() => choose(entry, candidate.id)}
+                title={`Same as “${candidate.name}”${suggested === candidate.id && selected === null ? " (suggested)" : ""}`}
+                description={`${formatScore(candidate.score)} match${candidate.reasons.length > 0 ? `: ${candidate.reasons.join(", ")}` : ""}`}
+                disabled={!editable || saving}
+                testId="config-match-candidate"
+              />
+            ))}
+          </fieldset>
+        );
+      })}
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// References
+
+export function ReferencesStep({ plan, decisions, editable, saving, onDecisions }: StepProps) {
+  const entries = refEntries(plan);
+  if (entries.length === 0) return <StepEmpty>Every reference points to something that exists.</StepEmpty>;
+
+  function current(area: ConfigAreaKey, ref: string, path: string): string {
+    const found = decisions.refs.find((entry) => entry.area === area && entry.ref === ref && entry.path === path);
+    if (!found) return "";
+    if ("targetId" in found.resolution) return `target:${found.resolution.targetId}`;
+    return "drop" in found.resolution ? "drop" : "invite";
+  }
+
+  function choose(area: ConfigAreaKey, ref: string, path: string, value: string) {
+    const rest = decisions.refs.filter((entry) => !(entry.area === area && entry.ref === ref && entry.path === path));
+    if (!value) {
+      onDecisions({ ...decisions, refs: rest });
+      return;
+    }
+    const resolution: ConfigDecisions["refs"][number]["resolution"] = value.startsWith("target:")
+      ? { targetId: value.slice("target:".length) }
+      : value === "invite" ? { invite: true } : { drop: true };
+    onDecisions({ ...decisions, refs: [...rest, { area, ref, path, resolution }] });
+  }
+
+  return (
+    <div className="flex flex-col divide-y divide-gray-100" data-testid="config-step-references">
+      {entries.map((entry) => {
+        const { reference } = entry;
+        const parsed = parseConfigRef(reference.ref);
+        const people = isPeopleRef(reference);
+        const choices = parsed ? targetChoices(plan, parsed.area) : [];
+        const value = current(entry.area, entry.item.ref, reference.path);
+        return (
+          <div key={`${entry.area}:${entry.item.ref}:${reference.path}`} className="flex flex-col gap-2 py-3 sm:flex-row sm:items-center sm:justify-between sm:gap-4" data-testid="config-ref-item">
+            <div className="min-w-0">
+              <p className="truncate text-[13px] font-medium text-gray-900">{reference.name ?? parsed?.target ?? reference.ref}</p>
+              <p className="truncate text-[12px] text-gray-500">Used by {itemName(entry.item)} in {entry.areaLabel}</p>
+            </div>
+            <div className="flex shrink-0 items-center gap-2 sm:w-72">
+              {isRefOpen(reference) ? <DenChip tone="warning">Choose</DenChip> : null}
+              <DenSelect
+                aria-label={`What to do with ${reference.name ?? reference.ref}`}
+                value={value}
+                disabled={!editable || saving}
+                menuWidth="trigger"
+                onChange={(event) => choose(entry.area, entry.item.ref, reference.path, event.target.value)}
+              >
+                <option value="" disabled>Choose what to do</option>
+                {choices.map((choice) => <option key={choice.id} value={`target:${choice.id}`}>Use “{choice.name}”</option>)}
+                {people ? <option value="invite">Invite this person</option> : null}
+                <option value="drop">Leave it out</option>
+              </DenSelect>
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Secrets
+
+type SecretChoice = "keep" | "value" | "env" | "unset";
+
+export function SecretsStep({ plan, editable, saving, selfHosted, onInput }: {
+  plan: ConfigPlan;
+  editable: boolean;
+  saving: boolean;
+  selfHosted: boolean;
+  onInput: (input: ConfigSecretInput) => Promise<void>;
+}) {
+  const secrets = planEntries(plan).flatMap((entry) => (entry.item.secrets ?? []).map((secret) => ({ entry, secret })));
+  if (secrets.length === 0) return <StepEmpty>No secrets in this file.</StepEmpty>;
+  return (
+    <div className="flex flex-col divide-y divide-gray-100" data-testid="config-step-secrets">
+      {secrets.map(({ entry, secret }) => (
+        <SecretRow key={secret.path} entry={entry} secret={secret} editable={editable} saving={saving} selfHosted={selfHosted || secret.decision === "env"} onInput={onInput} />
+      ))}
+    </div>
+  );
+}
+
+function SecretRow({ entry, secret, editable, saving, selfHosted, onInput }: {
+  entry: ConfigPlanEntry;
+  secret: ConfigPlanSecret;
+  editable: boolean;
+  saving: boolean;
+  selfHosted: boolean;
+  onInput: (input: ConfigSecretInput) => Promise<void>;
+}) {
+  const [choice, setChoice] = useState<SecretChoice | "">(secret.decision ?? "");
+  const [value, setValue] = useState("");
+  const [env, setEnv] = useState(secret.env ?? "");
+  const envValid = /^[A-Z][A-Z0-9_]{0,127}$/.test(env);
+
+  async function pick(next: SecretChoice | "") {
+    setChoice(next);
+    if (next === "keep" || next === "unset") await onInput({ path: secret.path, decision: next });
+  }
+
+  async function saveValue() {
+    await onInput({ path: secret.path, decision: "value", value });
+    setValue("");
+  }
+
+  return (
+    <div className="flex flex-col gap-2 py-3" data-testid="config-secret-item">
+      <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between sm:gap-4">
+        <div className="min-w-0">
+          <p className="truncate text-[13px] font-medium text-gray-900">{formatFieldPath(secret.field)}</p>
+          <p className="truncate text-[12px] text-gray-500">{itemName(entry.item)} in {entry.areaLabel}</p>
+        </div>
+        <div className="flex shrink-0 items-center gap-2 sm:w-72">
+          {secret.decision === null ? <DenChip tone="warning">Choose</DenChip> : null}
+          <DenSelect
+            aria-label={`Secret for ${formatFieldPath(secret.field)}`}
+            value={choice}
+            disabled={!editable || saving}
+            menuWidth="trigger"
+            onChange={(event) => {
+              const next = event.target.value;
+              void pick(next === "keep" || next === "value" || next === "env" || next === "unset" ? next : "");
+            }}
+          >
+            <option value="" disabled>Choose what to do</option>
+            {secret.targetHasValue ? <option value="keep">Keep the current value</option> : null}
+            <option value="value">Enter a value</option>
+            {selfHosted ? <option value="env">Read from an environment variable</option> : null}
+            <option value="unset">Leave it empty</option>
+          </DenSelect>
+        </div>
+      </div>
+      {choice === "value" ? (
+        <div className="flex items-center gap-2 sm:pl-0">
+          <div className="min-w-0 flex-1">
+            <DenSecretInput
+              value={value}
+              onChange={setValue}
+              placeholder="Paste the value"
+              disabled={!editable || saving}
+              saved={secret.decision === "value" && value === ""}
+              aria-label={`Value for ${formatFieldPath(secret.field)}`}
+            />
+          </div>
+          <DenButton size="sm" variant="secondary" disabled={!editable || value === ""} loading={saving} onClick={() => void saveValue()}>Save value</DenButton>
+        </div>
+      ) : null}
+      {choice === "env" ? (
+        <div className="flex items-center gap-2">
+          <DenInput
+            value={env}
+            onChange={(event) => setEnv(event.target.value.toUpperCase())}
+            placeholder="OPENAI_API_KEY"
+            className="font-mono"
+            aria-label={`Environment variable for ${formatFieldPath(secret.field)}`}
+            disabled={!editable || saving}
+          />
+          <DenButton size="sm" variant="secondary" disabled={!editable || !envValid || (secret.decision === "env" && secret.env === env)} loading={saving} onClick={() => void onInput({ path: secret.path, decision: "env", env })}>
+            Use variable
+          </DenButton>
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// People
+
+export function PeopleStep({ plan, decisions, editable, saving, onDecisions }: StepProps) {
+  const count = inviteCount(plan, decisions);
+  return (
+    <div className="flex min-h-12 items-center justify-between gap-4 py-3" data-testid="config-step-people">
+      <div className="min-w-0">
+        <p className="text-[13px] font-medium text-gray-900">Send invite emails now</p>
+        <p className="text-[12px] text-gray-500">{count} {count === 1 ? "invitation" : "invitations"}. Off: invitations are created without an email.</p>
+      </div>
+      <DenSwitch
+        aria-label="Send invite emails now"
+        checked={decisions.people.sendInviteEmails}
+        disabled={!editable || saving}
+        onChange={(checked) => onDecisions({ ...decisions, people: { sendInviteEmails: checked } })}
+        testId="config-people-send-emails"
+      />
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Review
+
+export function ReviewStep({ plan, decisions, editable, saving, onDecisions, confirmed, onConfirm }: StepProps & {
+  confirmed: ReadonlySet<string>;
+  onConfirm: (key: string, checked: boolean) => void;
+}) {
+  return (
+    <div className="flex flex-col gap-8" data-testid="config-step-review">
+      {plan.areas.map((area) => (
+        <ReviewArea
+          key={area.area}
+          plan={plan}
+          area={area}
+          decisions={decisions}
+          editable={editable}
+          saving={saving}
+          onDecisions={onDecisions}
+          confirmed={confirmed}
+          onConfirm={onConfirm}
+        />
+      ))}
+    </div>
+  );
+}
+
+export function destructiveKey(area: ConfigAreaKey, item: ConfigPlanItem): string {
+  return `${area}:${item.ref}`;
+}
+
+/** Destructive changes other than mirror removals; each needs a tick before approval. */
+export function destructiveEntries(plan: ConfigPlan | null): ConfigPlanEntry[] {
+  if (!plan) return [];
+  return planEntries(plan).filter((entry) => entry.item.flags.includes("destructive") && !isDeletable(entry.item, plan.mode) && entry.item.op !== "skip");
+}
+
+function ReviewArea({ plan, area, decisions, editable, saving, onDecisions, confirmed, onConfirm }: StepProps & {
+  area: ConfigPlan["areas"][number];
+  confirmed: ReadonlySet<string>;
+  onConfirm: (key: string, checked: boolean) => void;
+}) {
+  const [confirmAll, setConfirmAll] = useState<string | null>(null);
+  const deletable = area.items.filter((item) => isDeletable(item, plan.mode));
+  const ticked = new Set(decisions.deletes.filter((entry) => entry.area === area.area).map((entry) => entry.targetId));
+  const groups = groupByOp(area.items.filter((item) => !isDeletable(item, plan.mode)));
+  const quiet = groups.filter((group) => group.op === "unchanged" || group.op === "untouched");
+  const loud = groups.filter((group) => group.op !== "unchanged" && group.op !== "untouched");
+
+  function setDeletes(targetIds: string[], checked: boolean) {
+    const others = decisions.deletes.filter((entry) => !(entry.area === area.area && targetIds.includes(entry.targetId)));
+    onDecisions({ ...decisions, deletes: checked ? [...others, ...targetIds.map((targetId) => ({ area: area.area, targetId }))] : others });
+  }
+
+  function setOverride(item: ConfigPlanItem, checked: boolean) {
+    const others = decisions.overrides.filter((entry) => !(entry.area === area.area && entry.ref === item.ref));
+    onDecisions({ ...decisions, overrides: checked ? [...others, { area: area.area, ref: item.ref }] : others });
+  }
+
+  return (
+    <section className="flex flex-col gap-3" aria-label={area.label} data-testid="config-review-area" data-area={area.area}>
+      <h3 className="text-[14px] font-semibold text-gray-950">{area.label}</h3>
+      {loud.length === 0 && deletable.length === 0 ? <p className="text-[13px] text-gray-500">No changes.</p> : null}
+      {loud.map((group) => (
+        <div key={group.op} className="flex flex-col">
+          <p className="pb-1 text-[12px] font-medium text-gray-500">{CONFIG_OP_LABELS[group.op]} ({group.items.length})</p>
+          <div className="flex flex-col divide-y divide-gray-100 border-y border-gray-100">
+            {group.items.map((item) => (
+              <ReviewItem
+                key={item.ref}
+                item={item}
+                overridden={decisions.overrides.some((entry) => entry.area === area.area && entry.ref === item.ref)}
+                onOverride={(checked) => setOverride(item, checked)}
+                confirmed={confirmed.has(destructiveKey(area.area, item))}
+                onConfirm={(checked) => onConfirm(destructiveKey(area.area, item), checked)}
+                editable={editable && !saving}
+              />
+            ))}
+          </div>
+        </div>
+      ))}
+      {deletable.length > 0 ? (
+        <div className="flex flex-col" data-testid="config-review-deletes">
+          <div className="flex flex-wrap items-center justify-between gap-2 pb-1">
+            <p className="text-[12px] font-medium text-gray-500">Not in the file: remove? ({ticked.size} of {deletable.length} ticked)</p>
+            {editable && confirmAll === null && ticked.size < deletable.length ? (
+              <DenButton variant="ghost" size="xs" onClick={() => setConfirmAll("")}>Select all</DenButton>
+            ) : null}
+            {editable && ticked.size > 0 ? (
+              <DenButton variant="ghost" size="xs" onClick={() => setDeletes(deletable.flatMap((item) => item.target ? [item.target.id] : []), false)}>Clear</DenButton>
+            ) : null}
+          </div>
+          {confirmAll !== null ? (
+            <div className="flex flex-wrap items-center gap-2 pb-2">
+              <label className="text-[13px] text-gray-700" htmlFor={`config-delete-all-${area.area}`}>Type <span className="font-mono">remove {deletable.length}</span> to tick all</label>
+              <DenInput id={`config-delete-all-${area.area}`} value={confirmAll} onChange={(event) => setConfirmAll(event.target.value)} className="w-40 font-mono" data-testid="config-delete-all-confirm" />
+              <DenButton
+                variant="destructive"
+                size="sm"
+                disabled={confirmAll.trim().toLowerCase() !== `remove ${deletable.length}` || saving}
+                onClick={() => { setDeletes(deletable.flatMap((item) => item.target ? [item.target.id] : []), true); setConfirmAll(null); }}
+              >
+                Tick all {deletable.length}
+              </DenButton>
+              <DenButton variant="ghost" size="sm" onClick={() => setConfirmAll(null)}>Cancel</DenButton>
+            </div>
+          ) : null}
+          <div className="flex flex-col divide-y divide-gray-100 border-y border-gray-100">
+            {deletable.map((item) => (
+              <label key={item.ref} className="flex min-h-10 items-center gap-3 py-2 text-[13px]" data-testid="config-delete-item">
+                <DenCheckbox
+                  checked={item.target ? ticked.has(item.target.id) : false}
+                  disabled={!editable || saving || !item.target}
+                  onCheckedChange={(checked) => item.target ? setDeletes([item.target.id], checked) : undefined}
+                />
+                <span className={item.target && ticked.has(item.target.id) ? "text-red-700" : "text-gray-900"}>{itemName(item)}</span>
+              </label>
+            ))}
+          </div>
+        </div>
+      ) : null}
+      {quiet.map((group) => (
+        <details key={group.op} className="group">
+          <summary className="flex cursor-pointer list-none items-center gap-1.5 text-[12px] text-gray-500 hover:text-gray-900">
+            <ChevronRight className="size-3.5 transition-transform duration-150 ease-out group-open:rotate-90" strokeWidth={1.5} aria-hidden="true" />
+            {CONFIG_OP_LABELS[group.op]} ({group.items.length})
+          </summary>
+          <ul className="mt-1 flex flex-col gap-1 pl-5 text-[13px] text-gray-600">
+            {group.items.map((item) => (
+              <li key={item.ref}>
+                {itemName(item)}
+                {item.op === "untouched" && item.reasons && item.reasons.length > 0 ? <span className="text-gray-500">: {item.reasons.join(", ")}</span> : null}
+              </li>
+            ))}
+          </ul>
+        </details>
+      ))}
+    </section>
+  );
+}
+
+function ReviewItem({ item, overridden, onOverride, confirmed, onConfirm, editable }: {
+  item: ConfigPlanItem;
+  overridden: boolean;
+  onOverride: (checked: boolean) => void;
+  confirmed: boolean;
+  onConfirm: (checked: boolean) => void;
+  editable: boolean;
+}) {
+  const drift = item.flags.includes("drift");
+  const destructive = item.flags.includes("destructive");
+  const tier = matchTierLabel(item.matchedBy);
+  const renamed = item.op === "rename" && item.target && item.blob && item.target.name !== item.blob.name;
+  return (
+    <details className="group py-2" open={drift || destructive} data-testid="config-review-item" data-op={item.op}>
+      <summary className="flex min-h-8 cursor-pointer list-none items-center gap-2 text-[13px]">
+        <ChevronRight className="size-3.5 shrink-0 text-gray-400 transition-transform duration-150 ease-out group-open:rotate-90" strokeWidth={1.5} aria-hidden="true" />
+        <span className="min-w-0 truncate font-medium text-gray-900">
+          {renamed ? `${item.target?.name} → ${item.blob?.name}` : itemName(item)}
+        </span>
+        {tier ? <span className="shrink-0 text-[12px] text-gray-500">{tier}</span> : null}
+        <span className="ml-auto flex shrink-0 items-center gap-1.5">
+          {drift ? <DenChip tone="warning">Changed here since export</DenChip> : null}
+          {destructive ? <DenChip tone="danger">Removes access or data</DenChip> : null}
+          {item.flags.includes("collision.unique") ? <DenChip tone="warning">Name already used</DenChip> : null}
+          {item.flags.includes("external_effect") ? <DenChip tone="neutral">Contacts the service</DenChip> : null}
+          {item.flags.includes("unsupported_field") ? <DenChip tone="neutral">Some fields dropped</DenChip> : null}
+        </span>
+      </summary>
+      <div className="flex flex-col gap-2 pb-1 pl-5 pt-2">
+        {item.fields.length > 0 ? <FieldDiff fields={item.fields} threeWay={drift} /> : item.op === "create" ? <p className="text-[12px] text-gray-500">New item.</p> : null}
+        {item.reasons && item.reasons.length > 0 ? <p className="text-[12px] text-gray-500">{item.reasons.join(". ")}</p> : null}
+        {drift ? (
+          <label className="flex items-center gap-2 text-[13px] text-gray-900">
+            <DenCheckbox checked={overridden} disabled={!editable} onCheckedChange={(checked) => onOverride(checked)} data-testid="config-override" />
+            Overwrite with the file’s version
+          </label>
+        ) : null}
+        {destructive ? (
+          <label className="flex items-center gap-2 text-[13px] text-gray-900">
+            <DenCheckbox checked={confirmed} disabled={!editable} onCheckedChange={(checked) => onConfirm(checked)} data-testid="config-confirm-destructive" />
+            I understand this removes access or data
+          </label>
+        ) : null}
+      </div>
+    </details>
+  );
+}
+
+function FieldDiff({ fields, threeWay }: { fields: ConfigFieldChange[]; threeWay: boolean }) {
+  const showBase = threeWay && fields.some((field) => field.base !== undefined);
+  return (
+    <table className="w-full table-fixed text-left text-[12px]">
+      <thead className="text-gray-500">
+        <tr>
+          <th className="w-1/4 py-1 pr-3 font-medium">Field</th>
+          {showBase ? <th className="py-1 pr-3 font-medium">When exported</th> : null}
+          <th className="py-1 pr-3 font-medium">Now</th>
+          <th className="py-1 font-medium">In the file</th>
+        </tr>
+      </thead>
+      <tbody className="divide-y divide-gray-100">
+        {fields.map((field) => (
+          <tr key={field.path} className={field.conflict ? "bg-[var(--dls-hover)]" : undefined} data-conflict={field.conflict ? "true" : undefined}>
+            <td className="truncate py-1.5 pr-3 text-gray-700" title={field.path}>{formatFieldPath(field.path)}</td>
+            {showBase ? <td className="break-words py-1.5 pr-3 text-gray-500">{formatFieldValue(field.base)}</td> : null}
+            <td className="break-words py-1.5 pr-3 text-gray-500">{formatFieldValue(field.from)}</td>
+            <td className="break-words py-1.5 text-gray-900">{formatFieldValue(field.to)}</td>
+          </tr>
+        ))}
+      </tbody>
+    </table>
+  );
+}
