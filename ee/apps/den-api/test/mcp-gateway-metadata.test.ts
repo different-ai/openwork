@@ -58,7 +58,7 @@ for (const toolShapes of [undefined, false, true]) {
 
 for (const toolShapes of [undefined, false, true]) {
   for (const appServers of [true, false]) {
-    test(`full tool view guidance stays direct regardless of capability shapes (Apps ${appServers}, tool shapes ${toolShapes ?? "default"})`, async () => {
+    test(`full tool view guidance calls tools directly and keeps how to use a search match (Apps ${appServers}, tool shapes ${toolShapes ?? "default"})`, async () => {
       const server = createAgentMcpServer({ appServers, toolView: "full", ...(toolShapes === undefined ? {} : { toolShapes }) })
       const client = new Client({ name: "full-view-guidance-unit-test", version: "1" })
       const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair()
@@ -73,9 +73,9 @@ for (const toolShapes of [undefined, false, true]) {
         const text = guidance.contents.flatMap(content => "text" in content ? [content.text] : []).join("\n")
         assert.ok(text.startsWith("Every connection action, Workflow, App and remote session you may use is its own tool"))
         assert.ok(text.includes("Call each tool directly with arguments matching its inputSchema."))
-        assert.equal(text.includes("argumentsSchema"), false)
-        assert.equal(text.includes("schemaDigest"), false)
-        assert.equal(text.includes("Every match is an MCP tool with an inputSchema"), false)
+        // Search stays for OpenWork's own operations and skills, so the guidance says how to run a match.
+        assert.equal(text.includes("Put an object matching argumentsSchema in execute_capability.body"), toolShapes !== true)
+        assert.equal(text.includes("Every match is an MCP tool with an inputSchema"), toolShapes === true)
         assert.equal(text.includes("To build or change an App"), appServers)
       } finally {
         await client.close()

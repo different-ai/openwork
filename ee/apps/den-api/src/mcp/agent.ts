@@ -596,7 +596,7 @@ export function registerAgentMcpRoutes<T extends { Variables: RequestIdVariables
       firstPartyToken,
       engineTools: organizationFeatures.connectEngineTools,
     })
-    // OpenWork's own engine on its rollout: the full view, plus search for what has no tool (engine-tool-view.ts).
+    // OpenWork's own engine on its rollout: the full view, plus a service directory and related words (engine-tool-view.ts).
     const engineTools = toolView === "full" && organizationFeatures.connectEngineTools
       && isOpenWorkEngineClient(requestInfo.clientInfo, firstPartyToken)
     const audience: AgentMcpAudience = { organizationId, userId: principal.userId, fullTools: toolView === "full" }
@@ -897,101 +897,100 @@ export function registerAgentMcpRoutes<T extends { Variables: RequestIdVariables
     }
 
     finishIndexTiming()
-    // The search view, and OpenWork's engine for what has no tool of its own.
-    if (toolView === "search" || engineTools) {
-      server.registerTool(
-        SEARCH_CAPABILITIES_TOOL_NAME,
-        {
-          title: "Search capabilities",
-          description: [
-            engineTools
-              ? "Search OpenWork's own operations and skills by keyword. Connection actions, Workflows, Apps and remote sessions are tools of their own: find those in the Code Mode catalog or with search()."
-              : "Search connection actions, saved Workflows, and skills by keyword.",
-            appServersEnabled
-              ? "Direct tools such as create_skill, get_skill, and the App builders prepare_app, create_app, read_app, and update_app are outside this search; call them directly."
-              : "Direct MCP tools such as create_skill and save_artifact_view are outside this search; call an available direct tool itself. For an app, dashboard, or artifact view of Workflow results, use save_artifact_view and follow its prerequisites.",
-            ...(engineTools ? [] : [
-              "Search covers native Google Workspace capabilities (Gmail, Calendar, Drive, Gmail drafts), org-connected external MCPs, and namespaced OpenWork Admin tools for allowlisted platform admins.",
-              "Accessible Workflows appear as marketplace matches with kind workflow and execute through execute_capability like every other exact search result.",
-            ]),
-            "Try 2-4 keyword variants before deciding a capability is unavailable.",
-            ...(toolShapes ? [] : ["Native API matches include a connector-namespaced name, pathParams, queryParams, querySchema, hasBody, and bodySchema. External MCP matches include argumentsSchema, schemaDigest, and invocation.argumentsField."]),
-            ...(engineTools ? [] : [appServersEnabled
-              ? "A match with kind mcp_app is a standard MCP App launch capability, either an App built in OpenWork (also its own MCP server, named in its description) or an App from a connected MCP server; execute it normally and the OpenWork host will render its advertised ui:// resource."
-              : "A match with kind mcp_app is a standard MCP App launch capability from a connected MCP server; execute it normally and the OpenWork host will render its advertised ui:// resource."]),
-            toolShapes
-              ? "Each match is an MCP tool (name, description, inputSchema, optional outputSchema and annotations) with its kind and connection status where available; call execute_capability with that name and arguments matching inputSchema."
-              : "Returns matches with exact name, summary, kind, invocation schemas, and connection status where available.",
-            "An optional hint explains coverage or next steps. connectionAction carries an explicit sign-in card; connectorCatalog contains setup suggestions, not executable tools. Built-in and marketplace skills return SKILL.md when executed; list_skills/get_skill reach them directly.",
-          ].join(" "),
-          annotations: SEARCH_CAPABILITIES_ANNOTATIONS,
-          _meta: { ui: { visibility: ["model", "app"] } },
-          inputSchema: z.object({
-            intent: z.enum(["discover", "connect"]).optional().describe("Use connect only when the user explicitly asks to connect, reconnect, or set up a service. Ordinary capability discovery must omit this or use discover; it will not show sign-in cards."),
-            query: z.string().min(1).describe("Keywords describing the capability you need, e.g. \"create organization\" or \"list workers\"."),
-            limit: z.number().int().min(1).max(20).optional().describe("Result budget for the highest-ranking capability matches."),
-            type: searchCapabilityTypeSchema.optional().describe("Source to search: API operations, platform-admin tools, connected MCPs, marketplace capabilities, or skills. connectors browses setup suggestions without probing tools; all combines accessible sources."),
-          }),
-          outputSchema: toolShapes ? MCP_TOOL_SEARCH_CAPABILITIES_OUTPUT_SCHEMA : SEARCH_CAPABILITIES_OUTPUT_SCHEMA,
-        },
-        async ({ query, limit, type, intent }) => {
-          if (type === "connectors") return connectorSetupToolResult()
-          const boundedLimit = limit ?? 5
-          const includeApps = !engineTools && appServersEnabled && (type === undefined || type === "all" || type === "mcp" || type === "marketplace")
-          // Generic Marketplace search excludes authored Apps in every rollout state.
-          // An explicit connect request still finds the connection, so its card can show.
-          const unlistedOnly = engineTools && intent !== "connect"
-          const result = await searchCapabilityRegistry(capabilityContext, { query, limit: boundedLimit, type, unlistedOnly })
-          const openable = includeApps ? await loadOpenableApps() : []
-          const matches = [...result.matches, ...searchMcpApps(openable, query, redirectUriBase)].sort(compareCapabilityMatches).slice(0, boundedLimit)
-          return capabilitySearchToolResult(matches, result.externalCoverageHint, intent === "connect" && (type === undefined || type === "all" || type === "mcp") && !matches.some(match => match.name.startsWith("mcp:")) ? connectorCatalogForQuery(query, false) : null, intent === "connect", toolShapes)
-        },
-      )
+    // Every view searches. The full view searches only for what has no tool of its
+    // own: OpenWork's API operations, whose per-route roles a list cannot check,
+    // and skills.
+    const fullView = toolView === "full"
+    server.registerTool(
+      SEARCH_CAPABILITIES_TOOL_NAME,
+      {
+        title: "Search capabilities",
+        description: [
+          fullView
+            ? `Search OpenWork's own operations and skills by keyword. Connection actions, Workflows, Apps and remote sessions are tools of their own: ${engineTools ? "find those in the Code Mode catalog or with search()" : "call those directly"}.`
+            : "Search connection actions, saved Workflows, and skills by keyword.",
+          appServersEnabled
+            ? "Direct tools such as create_skill, get_skill, and the App builders prepare_app, create_app, read_app, and update_app are outside this search; call them directly."
+            : "Direct MCP tools such as create_skill and save_artifact_view are outside this search; call an available direct tool itself. For an app, dashboard, or artifact view of Workflow results, use save_artifact_view and follow its prerequisites.",
+          ...(fullView ? [] : [
+            "Search covers native Google Workspace capabilities (Gmail, Calendar, Drive, Gmail drafts), org-connected external MCPs, and namespaced OpenWork Admin tools for allowlisted platform admins.",
+            "Accessible Workflows appear as marketplace matches with kind workflow and execute through execute_capability like every other exact search result.",
+          ]),
+          "Try 2-4 keyword variants before deciding a capability is unavailable.",
+          ...(toolShapes ? [] : ["Native API matches include a connector-namespaced name, pathParams, queryParams, querySchema, hasBody, and bodySchema. External MCP matches include argumentsSchema, schemaDigest, and invocation.argumentsField."]),
+          ...(fullView ? [] : [appServersEnabled
+            ? "A match with kind mcp_app is a standard MCP App launch capability, either an App built in OpenWork (also its own MCP server, named in its description) or an App from a connected MCP server; execute it normally and the OpenWork host will render its advertised ui:// resource."
+            : "A match with kind mcp_app is a standard MCP App launch capability from a connected MCP server; execute it normally and the OpenWork host will render its advertised ui:// resource."]),
+          toolShapes
+            ? "Each match is an MCP tool (name, description, inputSchema, optional outputSchema and annotations) with its kind and connection status where available; call execute_capability with that name and arguments matching inputSchema."
+            : "Returns matches with exact name, summary, kind, invocation schemas, and connection status where available.",
+          "An optional hint explains coverage or next steps. connectionAction carries an explicit sign-in card; connectorCatalog contains setup suggestions, not executable tools. Built-in and marketplace skills return SKILL.md when executed; list_skills/get_skill reach them directly.",
+        ].join(" "),
+        annotations: SEARCH_CAPABILITIES_ANNOTATIONS,
+        _meta: { ui: { visibility: ["model", "app"] } },
+        inputSchema: z.object({
+          intent: z.enum(["discover", "connect"]).optional().describe("Use connect only when the user explicitly asks to connect, reconnect, or set up a service. Ordinary capability discovery must omit this or use discover; it will not show sign-in cards."),
+          query: z.string().min(1).describe("Keywords describing the capability you need, e.g. \"create organization\" or \"list workers\"."),
+          limit: z.number().int().min(1).max(20).optional().describe("Result budget for the highest-ranking capability matches."),
+          type: searchCapabilityTypeSchema.optional().describe("Source to search: API operations, platform-admin tools, connected MCPs, marketplace capabilities, or skills. connectors browses setup suggestions without probing tools; all combines accessible sources."),
+        }),
+        outputSchema: toolShapes ? MCP_TOOL_SEARCH_CAPABILITIES_OUTPUT_SCHEMA : SEARCH_CAPABILITIES_OUTPUT_SCHEMA,
+      },
+      async ({ query, limit, type, intent }) => {
+        if (type === "connectors") return connectorSetupToolResult()
+        const boundedLimit = limit ?? 5
+        const includeApps = !fullView && appServersEnabled && (type === undefined || type === "all" || type === "mcp" || type === "marketplace")
+        // Generic Marketplace search excludes authored Apps in every rollout state.
+        // An explicit connect request still finds the connection, so its card can show.
+        const unlistedOnly = fullView && intent !== "connect"
+        const result = await searchCapabilityRegistry(capabilityContext, { query, limit: boundedLimit, type, unlistedOnly })
+        const openable = includeApps ? await loadOpenableApps() : []
+        const matches = [...result.matches, ...searchMcpApps(openable, query, redirectUriBase)].sort(compareCapabilityMatches).slice(0, boundedLimit)
+        return capabilitySearchToolResult(matches, result.externalCoverageHint, intent === "connect" && (type === undefined || type === "all" || type === "mcp") && !matches.some(match => match.name.startsWith("mcp:")) ? connectorCatalogForQuery(query, false) : null, intent === "connect", toolShapes)
+      },
+    )
 
-      server.registerTool(
-        EXECUTE_CAPABILITY_TOOL_NAME,
-        {
-          title: "Execute capability",
-          description: [
-            toolShapes
-              ? "Call a capability found via search_capabilities, by its exact name, with arguments matching that match's inputSchema."
-              : "Call a capability found via search_capabilities, by its exact name. Pass path/query/body only as described by that match's pathParams/queryParams/hasBody.",
-            "For external MCP capabilities, provider-advertised schema mismatches are returned as advisory schemaGuidance alongside the provider result; they do not block the downstream call.",
-            "When the exact capability is a standard MCP App launch tool, this call preserves its originating tool and ui:// binding so compatible OpenWork hosts render it without requiring a generated direct-tool name.",
-            "For skill capabilities listed in the remote skill catalog, this returns their authorized SKILL.md content; get_skill reads the same content by skill name without a search.",
-            "Returns the capability's content and, when supplied, its structuredContent unchanged: provider fields, Workflow results, skill content, or an App launch reference. Connection failures can include a connectionAction card; schemaGuidance is advisory. Other failures return isError with the error as text and structuredContent; invalid_capability_arguments lists the issues to correct, and unknown_capability means search again.",
-          ].join(" "),
-          annotations: EXECUTE_CAPABILITY_ANNOTATIONS,
-          _meta: { ui: { visibility: ["model", "app"] } },
-          inputSchema: toolShapes ? z.object({
-            name: z.string().min(1).describe("Capability identifier from a current search_capabilities match or authorized skill catalog entry."),
-            arguments: z.unknown().optional().describe(appServersEnabled
-              ? "One object matching the match's inputSchema. For an App (kind mcp_app), an optional launch input object the App receives."
-              : "One object matching the match's inputSchema."),
-            schemaDigest: z.string().regex(/^sha256:[a-f0-9]{64}$/).optional().describe("Optional schemaDigest from the match, to report schema drift since that search."),
-            // Older inputs, accepted for a while; capabilityCallInput explains why.
-            path: z.union([z.record(z.string(), z.unknown()), z.string()]).optional().describe("Older form of arguments.path; prefer arguments."),
-            query: z.union([z.record(z.string(), z.unknown()), z.string()]).optional().describe("Older form of arguments.query; prefer arguments."),
-            body: z.unknown().optional().describe("Older form of arguments (or arguments.body for an API operation); prefer arguments."),
-          }) : z.object({
-            name: z.string().min(1).describe("Capability identifier from a current search_capabilities match or authorized skill catalog entry."),
-            schemaDigest: z.string().regex(/^sha256:[a-f0-9]{64}$/).optional().describe("For an external MCP match, copy the exact schemaDigest returned by search_capabilities so schema drift can be reported as advisory guidance without blocking the provider call."),
-            path: z.union([z.record(z.string(), z.unknown()), z.string()]).optional().describe("Values substituted into the native API route placeholders named by the match's pathParams."),
-            query: z.union([z.record(z.string(), z.unknown()), z.string()]).optional().describe("Native API URL query values used to filter, sort, or page the request, keyed as advertised by the match's querySchema and queryParams."),
-            body: z.unknown().optional().describe(appServersEnabled
-              ? "For native API capabilities, the JSON body. For external MCP capabilities, the arguments object matching argumentsSchema. For an App (kind mcp_app), an optional launch input object the App receives."
-              : "For native API capabilities, the JSON body. For external MCP capabilities, the arguments object matching argumentsSchema."),
-            // Desktops built for MCP tool shapes send this whatever the flag says.
-            arguments: z.unknown().optional().describe("Alternative to path/query/body: one object holding them for a native API capability, or the arguments object for an external MCP capability."),
-          }),
-        },
-        executeCapabilityTool,
-      )
-    }
-    if (toolView === "full" && (method === "tools/list" || method === "tools/call")) {
-      // The full view replaces search_capabilities and execute_capability (except
-      // for OpenWork's engine, above). A tools/call loads only what it names;
-      // tools/list loads every tool.
+    server.registerTool(
+      EXECUTE_CAPABILITY_TOOL_NAME,
+      {
+        title: "Execute capability",
+        description: [
+          toolShapes
+            ? "Call a capability found via search_capabilities, by its exact name, with arguments matching that match's inputSchema."
+            : "Call a capability found via search_capabilities, by its exact name. Pass path/query/body only as described by that match's pathParams/queryParams/hasBody.",
+          "For external MCP capabilities, provider-advertised schema mismatches are returned as advisory schemaGuidance alongside the provider result; they do not block the downstream call.",
+          "When the exact capability is a standard MCP App launch tool, this call preserves its originating tool and ui:// binding so compatible OpenWork hosts render it without requiring a generated direct-tool name.",
+          "For skill capabilities listed in the remote skill catalog, this returns their authorized SKILL.md content; get_skill reads the same content by skill name without a search.",
+          "Returns the capability's content and, when supplied, its structuredContent unchanged: provider fields, Workflow results, skill content, or an App launch reference. Connection failures can include a connectionAction card; schemaGuidance is advisory. Other failures return isError with the error as text and structuredContent; invalid_capability_arguments lists the issues to correct, and unknown_capability means search again.",
+        ].join(" "),
+        annotations: EXECUTE_CAPABILITY_ANNOTATIONS,
+        _meta: { ui: { visibility: ["model", "app"] } },
+        inputSchema: toolShapes ? z.object({
+          name: z.string().min(1).describe("Capability identifier from a current search_capabilities match or authorized skill catalog entry."),
+          arguments: z.unknown().optional().describe(appServersEnabled
+            ? "One object matching the match's inputSchema. For an App (kind mcp_app), an optional launch input object the App receives."
+            : "One object matching the match's inputSchema."),
+          schemaDigest: z.string().regex(/^sha256:[a-f0-9]{64}$/).optional().describe("Optional schemaDigest from the match, to report schema drift since that search."),
+          // Older inputs, accepted for a while; capabilityCallInput explains why.
+          path: z.union([z.record(z.string(), z.unknown()), z.string()]).optional().describe("Older form of arguments.path; prefer arguments."),
+          query: z.union([z.record(z.string(), z.unknown()), z.string()]).optional().describe("Older form of arguments.query; prefer arguments."),
+          body: z.unknown().optional().describe("Older form of arguments (or arguments.body for an API operation); prefer arguments."),
+        }) : z.object({
+          name: z.string().min(1).describe("Capability identifier from a current search_capabilities match or authorized skill catalog entry."),
+          schemaDigest: z.string().regex(/^sha256:[a-f0-9]{64}$/).optional().describe("For an external MCP match, copy the exact schemaDigest returned by search_capabilities so schema drift can be reported as advisory guidance without blocking the provider call."),
+          path: z.union([z.record(z.string(), z.unknown()), z.string()]).optional().describe("Values substituted into the native API route placeholders named by the match's pathParams."),
+          query: z.union([z.record(z.string(), z.unknown()), z.string()]).optional().describe("Native API URL query values used to filter, sort, or page the request, keyed as advertised by the match's querySchema and queryParams."),
+          body: z.unknown().optional().describe(appServersEnabled
+            ? "For native API capabilities, the JSON body. For external MCP capabilities, the arguments object matching argumentsSchema. For an App (kind mcp_app), an optional launch input object the App receives."
+            : "For native API capabilities, the JSON body. For external MCP capabilities, the arguments object matching argumentsSchema."),
+          // Desktops built for MCP tool shapes send this whatever the flag says.
+          arguments: z.unknown().optional().describe("Alternative to path/query/body: one object holding them for a native API capability, or the arguments object for an external MCP capability."),
+        }),
+      },
+      executeCapabilityTool,
+    )
+    if (fullView && (method === "tools/list" || method === "tools/call")) {
+      // A tools/call loads only what it names; tools/list loads every tool.
       const namespace = requestInfo.toolName ? connectFullToolNamespace(requestInfo.toolName) : null
       const scope: ConnectFullToolScope | null = method === "tools/list" ? "list"
         : requestInfo.toolName === CONNECTION_STATUS_TOOL_NAME ? "status"
