@@ -28,6 +28,7 @@ import { agentCheckRequestsAvailable, registerAgentCheckRequestTool } from "./ag
 import { getCatalog, protectedResourceMetadata, protectedResourceMetadataRoute } from "./index.js"
 import { preflightMcpJsonRpcRequest } from "./json-rpc-preflight.js"
 import { createScopedAgentMcpHttpHandlers, type AgentMcpAudience } from "./agent-http.js"
+import { connectionsWithheld } from "./workbot-turn-limits.js"
 import { connectToolView, connectToolViewOverride, isOpenWorkEngineClient, requestClientInfo, type ConnectClientInfo } from "./connect-tool-view.js"
 import { CONNECTION_STATUS_TOOL_NAME, registerConnectFullTools, registerConnectionStatusTool, type CapabilityCall } from "./connect-full-tools.js"
 import { connectFullToolNamespace, loadConnectFullTools, loadConnectServices, type ConnectFullToolScope } from "./connect-full-tool-sources.js"
@@ -585,7 +586,9 @@ export function registerAgentMcpRoutes<T extends { Variables: RequestIdVariables
       userId: principal.userId,
       organizationId: principal.organizationId,
     })
-    const memberIdentity = member?.identity ?? null
+    // A Workbot turn's token names the connections an admin took away from Workbot (workbot-turn-limits.ts).
+    const withheldConnectionIds = connectionsWithheld(principal.scopes)
+    const memberIdentity = member ? { ...member.identity, ...(withheldConnectionIds ? { withheldConnectionIds } : {}) } : null
     const connectMcpAppHostSupported = supportsConnectMcpAppHost(
       c.req.header(CONNECT_MCP_APP_HOST_CAPABILITY_HEADER),
     ) && principal.scopes.has(DEN_MCP_APP_HOST_SCOPE)
@@ -856,6 +859,7 @@ export function registerAgentMcpRoutes<T extends { Variables: RequestIdVariables
             organizationId,
             orgMembershipId: memberIdentity.orgMembershipId,
             teamIds: memberIdentity.teamIds,
+            withheldConnectionIds: memberIdentity.withheldConnectionIds,
           }),
         })
         registerConnectMcpServerIndex({

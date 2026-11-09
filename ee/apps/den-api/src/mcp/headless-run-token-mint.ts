@@ -6,6 +6,7 @@ import { DEN_MCP_OPAQUE_ACCESS_TOKEN_PREFIX } from "../auth.js"
 import { db } from "../db.js"
 import { hashOpaqueMcpSecret } from "./auth.js"
 import { DEN_MCP_HEADLESS_RUN_CLIENT_ID, DEN_MCP_HEADLESS_RUN_TOKEN_MAX_TTL_MS } from "./headless-run-token.js"
+import { headlessRunTokenScopes } from "./workbot-turn-limits.js"
 
 /**
  * Mints a member-scoped MCP token for one headless run. Only trusted server
@@ -31,8 +32,7 @@ export async function mintHeadlessRunMcpToken(input: { userId: string; organizat
     referenceId: normalizeDenTypeId("organization", input.organizationId),
     createdAt: now,
     expiresAt,
-    // Extra scopes (a background agent's sources, agent-read-sources.ts) only ever narrow a read-only token.
-    scopes: JSON.stringify(input.readOnly ? ["mcp:read", ...(input.scopes ?? [])] : ["mcp:read", "mcp:write"]),
+    scopes: JSON.stringify(headlessRunTokenScopes(input)),
   })
   return { token: `${DEN_MCP_OPAQUE_ACCESS_TOKEN_PREFIX}${secret}`, tokenId: id, expiresAt }
 }
