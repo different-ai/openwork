@@ -69,6 +69,16 @@ test("form and report pages are help only: never shown on the page", () => {
   }
 });
 
+test("invoices: a box in place of an empty list, nothing while loading or once one exists", () => {
+  const entry = intro("billing.invoices");
+  assert.equal(matchFeatureIntro(settingsIntros, "/dashboard/billing/invoices", null)?.key, "billing.invoices");
+  assert.equal(sizeFor(entry, {}), null);
+  assert.equal(sizeFor(entry, { invoices: 0 }), "box");
+  assert.equal(sizeFor(entry, { invoices: 3 }), null);
+  assert.equal(pickIntroCta(entry, ctx({ invoices: 0 }, ["canManageBilling"]))?.href, "/dashboard/billing");
+  assert.ok(pickIntroCta(entry, ctx({ invoices: 0 }, []))?.locked);
+});
+
 test("desktop policies never promise more than model access", () => {
   const text = JSON.stringify(intro("desktop-policies").highlights);
   assert.match(text, /doesn.t apply them yet/);

@@ -40,6 +40,7 @@ import {
 import { normalizeUserCount, OPENWORK_WEB_QUANTITY_DEFINITION, type OrganizationBillingQuantities } from "./billing-quantities.js"
 import { billingUserCondition, getOrganizationBillingQuantities } from "./billing-users.js"
 import { getOrganizationPlanState } from "./organization-plan-state.js"
+import { serializeInvoicePage, type OrganizationInvoicePage } from "./billing-invoices.js"
 import { personAddRefusal } from "./organization-plan.js"
 
 type OrgId = typeof OrganizationTable.$inferSelect.id
@@ -1209,11 +1210,33 @@ export async function createOpenWorkWebCheckout(input: Omit<Parameters<typeof cr
   return createOrgSubscriptionCheckoutSession({ ...input, subscriptionType: WEB_SUBSCRIPTION_TYPE })
 }
 
-export async function createStripePortalSession(input: { organizationId: OrgId; returnUrl: string }) {
-  const storedCustomerId = await findStripeCustomerIdByOrg(input.organizationId)
-  const stripeCustomerId = storedCustomerId && await stripeCustomerBelongsToOrganization(storedCustomerId, input.organizationId)
+/** The organization's Stripe customer, verified against its metadata; null when it has none yet. */
+async function resolveOrganizationStripeCustomerId(organizationId: OrgId) {
+  const storedCustomerId = await findStripeCustomerIdByOrg(organizationId)
+  return storedCustomerId && await stripeCustomerBelongsToOrganization(storedCustomerId, organizationId)
     ? storedCustomerId
-    : await findStripeCustomerIdByOrgMetadata(input.organizationId)
+    : await findStripeCustomerIdByOrgMetadata(organizationId)
+}
+
+/**
+ * One page of the organization's finalized invoices, newest first, with
+ * Stripe's hosted page and PDF links. Drafts are left out: they have no links
+ * yet and may still change. An organization without a Stripe customer has no
+ * invoices.
+ */
+export async function listOrganizationInvoices(input: { organizationId: OrgId; limit: number; startingAfter?: string | null }): Promise<OrganizationInvoicePage> {
+  const stripeCustomerId = await resolveOrganizationStripeCustomerId(input.organizationId)
+  if (!stripeCustomerId) return { invoices: [], hasMore: false, nextCursor: null }
+  const page = await stripe().invoices.list({
+    customer: stripeCustomerId,
+    limit: input.limit,
+    ...(input.startingAfter ? { starting_after: input.startingAfter } : {}),
+  })
+  return serializeInvoicePage(page.data, page.has_more)
+}
+
+export async function createStripePortalSession(input: { organizationId: OrgId; returnUrl: string }) {
+  const stripeCustomerId = await resolveOrganizationStripeCustomerId(input.organizationId)
   if (!stripeCustomerId) {
     throw new Error("stripe_customer_missing")
   }

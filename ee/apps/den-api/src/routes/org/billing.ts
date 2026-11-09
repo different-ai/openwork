@@ -22,9 +22,15 @@ import {
   createSeatCheckoutSession,
   getOpenWorkWebBillingSummary,
   getOrgBillingSummary,
+  listOrganizationInvoices,
   PlanSubscriptionExistsError,
   syncStripeCheckoutSession,
 } from "../../stripe-billing.js"
+import {
+  BILLING_INVOICES_DEFAULT_PAGE_SIZE,
+  billingInvoicesQuerySchema,
+  billingInvoicesResponseSchema,
+} from "@openwork/types/den/billing-invoices"
 import { checkoutReturnUrls, defaultCheckoutReturnPageUrl } from "../../billing-plans.js"
 import { orgMemberRoute, orgPermissionRoute } from "../../middleware/index.js"
 import { forbiddenSchema, jsonResponse, notFoundSchema, unauthorizedSchema } from "../../openapi.js"
@@ -450,6 +456,59 @@ export function registerOrgBillingRoutes<T extends { Variables: OrgRouteVariable
         return c.json(billingNotConfiguredResponse("portal"), 503)
       }
       return c.json({ url: session.url })
+    },
+  )
+
+  app.get(
+    "/v1/billing/stripe/invoices",
+    describeRoute({
+      tags: ["Organizations"],
+      hide: true,
+      summary: "List the organization's Stripe invoices",
+      description: "Finalized invoices, newest first, with Stripe's hosted invoice page and PDF links. Drafts are not listed. An organization without a Stripe billing account gets an empty list. Page with `cursor` (the previous page's `nextCursor`).",
+      responses: {
+        200: jsonResponse("Invoices returned successfully.", billingInvoicesResponseSchema.meta({ ref: "OrgStripeInvoicesResponse" })),
+        400: jsonResponse("The query was invalid.", z.object({ error: z.literal("invalid_request") }).passthrough()),
+        401: jsonResponse("The caller must be signed in to see invoices.", unauthorizedSchema),
+        403: jsonResponse("The caller needs the Open the billing portal permission and a recent sign-in.", forbiddenSchema),
+        503: jsonResponse("This deployment does not sell anything through Stripe.", billingNotConfiguredSchema),
+      },
+    }),
+    // Invoices carry the billing address and payment details, so they need the
+    // same permission as the portal, where they were the only way to see them.
+    orgPermissionRoute("billing_portal.use"),
+    async (c) => {
+      const parsed = billingInvoicesQuerySchema.safeParse({
+        limit: c.req.query("limit"),
+        cursor: c.req.query("cursor"),
+      })
+      if (!parsed.success) {
+        return c.json({ error: "invalid_request", details: parsed.error }, 400)
+      }
+      try {
+        assertBillingProductConfigured("portal")
+      } catch {
+        return c.json(billingNotConfiguredResponse("portal"), 503)
+      }
+      const payload = c.get("organizationContext")
+      const page = await listOrganizationInvoices({
+        organizationId: payload.organization.id,
+        limit: parsed.data.limit ?? BILLING_INVOICES_DEFAULT_PAGE_SIZE,
+        startingAfter: parsed.data.cursor ?? null,
+      }).catch((error: unknown) => {
+        if (billingNotConfiguredProductForError(error, "portal")) return "not_configured" as const
+        // A cursor from another customer, or one that no longer exists.
+        if (error instanceof Error && error.message.includes("No such invoice")) return "invalid_cursor" as const
+        throw error
+      })
+      if (page === "not_configured") {
+        return c.json(billingNotConfiguredResponse("portal"), 503)
+      }
+      if (page === "invalid_cursor") {
+        return c.json({ error: "invalid_request", message: "That page of invoices is no longer available. Start from the first page." }, 400)
+      }
+      c.header("Cache-Control", "no-store")
+      return c.json(page)
     },
   )
 

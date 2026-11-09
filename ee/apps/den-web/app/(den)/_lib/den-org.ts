@@ -993,6 +993,10 @@ export function getBillingRoute(orgSlug?: string | null): string {
   return `${getOrgDashboardRoute(orgSlug)}/billing`;
 }
 
+export function getBillingInvoicesRoute(orgSlug?: string | null): string {
+  return `${getBillingRoute(orgSlug)}/invoices`;
+}
+
 export function getOrgSettingsRoute(orgSlug?: string | null): string {
   return `${getOrgDashboardRoute(orgSlug)}/org-settings`;
 }
