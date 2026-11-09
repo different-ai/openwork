@@ -93,15 +93,88 @@ test("service reads the actor's derived chat, requests stored outputs, and passe
   const result = await readWorkbotRemoteJobs(actor, {}, deps)
   assert.equal(result.jobs[0]?.status?.state, "running")
   assert.deepEqual(statuses, [{ threads: [{ commandId: "command_1" }], waitMs: 0 }])
-  const read = urls.find(url => url.pathname.includes(workbotSessionId(actor.organizationId, actor.memberId)))
-  assert.ok(read)
-  assert.equal(read.searchParams.get("outputs"), null)
-  assert.equal(read.searchParams.get("turns"), "40")
-  assert.equal(read.searchParams.get("limit"), "1000")
+  // The calls are read first without tool outputs; the create call found there is what needs them.
+  const reads = urls.filter(url => url.pathname.includes(workbotSessionId(actor.organizationId, actor.memberId)))
+  assert.deepEqual(reads.map(url => url.searchParams.get("outputs")), ["none", null])
+  for (const read of reads) {
+    assert.equal(read.searchParams.get("turns"), "40")
+    assert.equal(read.searchParams.get("limit"), "1000")
+  }
+  // A chat known to hold a create call is read with its outputs straight away.
+  urls.length = 0
   const stale = await readWorkbotRemoteJobs(actor, {}, { ...deps, remoteStatus: async () => { throw new Error("membership_revoked") } })
+  assert.deepEqual(urls.map(url => url.searchParams.get("outputs")), [null])
   assert.equal(stale.jobs[0]?.stale, true)
   assert.equal(stale.jobs[0]?.status?.state, "running", "a failed refresh keeps the last verified state")
   assert.equal(stale.statusError, "unavailable")
+})
+
+test("a chat with no remote task is read without tool outputs and Den is never asked", async () => {
+  resetWorkbotSessionCells()
+  const member = { ...actor, memberId: "member_none", userId: "user_none" }
+  const reads: Array<string | null> = []
+  let messages: RunnerMessage[] = [{ role: "assistant", messageId: "wb_request", text: "", toolCalls: [{ id: "bash", name: "bash", input: { command: "ls" } }] }, { role: "tool", messageId: "wb_request", callId: "bash", name: "bash", isError: false, output: "x".repeat(10_000) }]
+  const client = createHeadlessRunnerClient({ config: { url: "http://runner", token: "x".repeat(32) }, mintToken: async () => ({ token: "member_token" }), maxTokenTtlMs: 60_000, fetch: async input => {
+    const url = new URL(String(input))
+    if (url.pathname.endsWith("/sessions")) return Response.json({ sessions: [] })
+    reads.push(url.searchParams.get("outputs"))
+    // As the runner does: without outputs, a tool message carries only its length.
+    return Response.json(snapshot(url.searchParams.get("outputs") === "none" ? messages.map(message => message.role === "tool" ? { ...message, output: undefined } : message) : messages))
+  } })
+  const deps = { client, remoteTasks: true, canSchedule: async () => false, remoteStatus: async () => { assert.fail("nothing to ask Den about") } }
+  assert.deepEqual(await readWorkbotRemoteJobs(member, {}, deps), { jobs: [], hasEarlier: false })
+  assert.deepEqual(await readWorkbotRemoteJobs(member, {}, deps), { jobs: [], hasEarlier: false })
+  assert.deepEqual(reads, ["none", "none"])
+  // A create that failed is a call to check, but not a task: its output is read, and Den is still not asked.
+  messages = [...messages, call("failed", "remote-session:create", {}), output("failed", { error: "desktop_offline" })]
+  assert.deepEqual((await readWorkbotRemoteJobs(member, {}, deps)).jobs, [])
+  assert.deepEqual(reads, ["none", "none", "none", null])
+  // Once the call leaves the window, the chat is read without outputs again.
+  messages = messages.slice(0, 2)
+  await readWorkbotRemoteJobs(member, {}, deps)
+  await readWorkbotRemoteJobs(member, {}, deps)
+  assert.deepEqual(reads.slice(4), [null, "none"])
+})
+
+test("polls that overlap share one read; opening a row reuses the list just read, and Stop reads again", async () => {
+  resetWorkbotSessionCells()
+  const member = { ...actor, memberId: "member_shared", userId: "user_shared" }
+  let reads = 0
+  let statuses = 0
+  let release = () => {}
+  const held = new Promise<void>(resolve => { release = resolve })
+  const base = chatWith(["cmd_a"])
+  const client = { ...base, readSession: async (...args: Parameters<typeof base.readSession>) => { reads += 1; await held; return base.readSession(...args) } }
+  const deps = { client, remoteTasks: true, canSchedule: async () => false,
+    remoteStatus: async () => { statuses += 1; return { threads: [statusOf("cmd_a", "running")], retryAfterMs: 5000 } },
+    remoteRead: async () => ({ messages: [{ id: "remote_turn_1", role: "user", text: "Do it" }] }),
+    remoteStop: async () => ({ stopped: true }),
+  }
+  const polls = [readWorkbotRemoteJobs(member, {}, deps), readWorkbotRemoteJobs(member, {}, deps), readWorkbotRemoteJobs(member, {}, deps)]
+  // Another person's poll at the same time is their own read.
+  const other = readWorkbotRemoteJobs({ ...member, memberId: "member_shared_other" }, {}, deps)
+  await new Promise(resolve => setTimeout(resolve, 5))
+  release()
+  const results = await Promise.all(polls)
+  await other
+  assert.ok(results.every(result => result.jobs[0]?.status?.state === "running"))
+  assert.equal(statuses, 2, "one status call per person, not per request")
+  assert.equal(reads, 4, "each person's chat was read once without outputs and once with them")
+  // The next poll is a new read.
+  await readWorkbotRemoteJobs(member, {}, deps)
+  assert.equal(statuses, 3)
+  assert.equal(reads, 5)
+  // Opening a row right after uses that list; Stop always checks again.
+  assert.equal((await readWorkbotRemoteJob(member, { key: "command:cmd_a" }, deps)).state, "ready")
+  assert.equal(statuses, 3)
+  assert.equal(reads, 5)
+  assert.deepEqual(await stopWorkbotRemoteJob(member, { key: "command:cmd_a", messageId: "remote_turn_1" }, deps), { state: "stopped" })
+  assert.equal(statuses, 4)
+  assert.equal(reads, 6)
+  // A list whose statuses couldn't be checked is not kept for reuse.
+  await readWorkbotRemoteJobs(member, {}, { ...deps, remoteStatus: async () => { throw Object.assign(new Error("401"), { reason: "signed_out" }) } })
+  await readWorkbotRemoteJob(member, { key: "command:cmd_a" }, deps)
+  assert.equal(statuses, 5, "the row's read checked again")
 })
 
 /** A Workbot chat with several remote-session:create receipts, served by an in-memory runner. */

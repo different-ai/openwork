@@ -1,6 +1,7 @@
 import { createHeadlessRunnerClient, type RunnerDesktopView, type RunnerLiveEvent } from "@openwork-ee/headless-protocol"
 import {
   createWorkbot,
+  createWorkbotSessionWrites,
   toWorkbotPageEvent,
   workbotOwner,
   WORKBOT_CHAT_ID,
@@ -145,6 +146,8 @@ export function registerWorkbotRoutes(app: Hono<AppEnv>, input: { config: Config
   const sent = new Map<string, number[]>()
   const connectors = createConnectorCache((accessToken) => den.connectors(accessToken))
   const runnerFetch = observedRunnerFetch()
+  /** What this process last wrote to each chat's session, so an unchanged chat isn't written again on every message. */
+  const sessionWrites = createWorkbotSessionWrites()
 
   /**
    * The runner, told whose conversations these are: on celld that is the person's own cell (all their chats and
@@ -191,6 +194,7 @@ export function registerWorkbotRoutes(app: Hono<AppEnv>, input: { config: Config
       stepTurns: member.den.stepTurns,
       // Per-chat cells are GA; older Dens may omit sessionCells, so preserve their legacy placement.
       sessionCells: member.den.sessionCells,
+      sessionWrites,
     })
 
   const enabled = (c: Context<AppEnv>) => c.get("member").den.enabled
@@ -358,7 +362,7 @@ export function registerWorkbotRoutes(app: Hono<AppEnv>, input: { config: Config
       if (!existing.ok && existing.status === 404) sessionId = await workbot.ensureComputer(actorOf(member), scope.chat)
       else {
         if (!existing.ok) return desktopFailure(c, operation, existing.error)
-        const updated = await client.putSession(sessionId, { computer: true, desktop: true, desktopViews: views })
+        const updated = await workbot.allowDesktopViews(sessionId, views)
         if (!updated.ok) return desktopFailure(c, operation, updated.error)
       }
       // An outdated computer never connects or resumes and rebuilding is the only fix, so do it instead of asking. Not

@@ -2,7 +2,9 @@ import assert from "node:assert/strict"
 import { test } from "node:test"
 import { createHeadlessRunnerClient } from "@openwork-ee/headless-protocol"
 import {
+  createWorkbotSessionWrites,
   editWorkbotMessage,
+  removeWorkbotChat,
   readWorkbotThread,
   retryWorkbotMessage,
   sendWorkbotMessage,
@@ -221,4 +223,141 @@ test("quickReply reaches main and side-chat instructions only when enabled", asy
     assert.ok(instructions.length >= 2)
     for (const prompt of instructions) assert.equal(prompt.includes("before any tool call, including search_capabilities"), quickReply === true)
   }
+})
+
+/** A runner that keeps the sessions it was sent, forgets one when told to, and can hold or fail a session write. */
+function keptRunner(options: { catalog?: { defaultModel: string; models: { id: string; name: string }[]; verified?: boolean }; failWrites?: boolean } = {}) {
+  const kept = new Set<string>()
+  const writes: { id: string; body: Record<string, unknown> }[] = []
+  const turns: string[] = []
+  const order: string[] = []
+  let held: Promise<void> | null = null
+  let release = () => {}
+  const json = (status: number, body: unknown) => new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } })
+  const runnerFetch: typeof fetch = async (input, init) => {
+    const url = new URL(typeof input === "string" ? input : input instanceof URL ? input.href : input.url)
+    const method = init?.method ?? "GET"
+    const id = decodeURIComponent(url.pathname.split("/")[3] ?? "")
+    if (url.pathname === "/v1/models") {
+      order.push("models")
+      return options.catalog ? json(200, options.catalog) : json(404, {})
+    }
+    if (method === "PUT") {
+      order.push("write")
+      if (held) await held
+      if (options.failWrites) return json(500, { error: "storage_unavailable" })
+      const body: unknown = JSON.parse(typeof init?.body === "string" ? init.body : "{}")
+      if (isRecord(body)) writes.push({ id, body })
+      kept.add(id)
+      return json(200, { id })
+    }
+    if (method === "POST" && url.pathname.endsWith("/turns")) {
+      turns.push(kept.has(id) ? "accepted" : "unknown_session")
+      return kept.has(id) ? json(202, { state: "accepted" }) : json(404, { error: "unknown_session" })
+    }
+    if (method === "DELETE") {
+      kept.delete(id)
+      return new Response(null, { status: 204 })
+    }
+    return json(404, { error: "unknown_session" })
+  }
+  const client = createHeadlessRunnerClient({ config: { url: "http://runner", token: "t".repeat(32) }, fetch: runnerFetch, mintToken: async () => ({ token: "mcp-token" }), maxTokenTtlMs: 60_000 })
+  return {
+    client, writes, turns, order,
+    lose: () => kept.clear(),
+    hold: () => { held = new Promise<void>((resolve) => { release = resolve }) },
+    release: () => { held = null; release() },
+  }
+}
+
+test("a message writes the chat's settings again only when they changed", async () => {
+  const runner = keptRunner()
+  let clock = 0
+  const member = { ...actor, memberId: "member_writes" }
+  const deps: WorkbotDeps = { client: runner.client, canSchedule: async () => false, sessionWrites: createWorkbotSessionWrites(() => clock) }
+  const send = (id: string, input: { timeZone?: string; chat?: string } = {}, using = deps) => sendWorkbotMessage(member, { id, text: "hi", timeZone: "Europe/Paris", ...input }, using)
+  await send("message_one")
+  await send("message_two")
+  assert.equal(runner.writes.length, 1, "the chat is as the first message left it")
+  assert.deepEqual(runner.turns, ["accepted", "accepted"])
+
+  await send("message_three", { timeZone: "Asia/Tokyo" })
+  assert.equal(runner.writes.length, 2)
+  assert.equal(runner.writes[1]?.body.timeZone, "Asia/Tokyo")
+  await send("message_four", { timeZone: "Asia/Tokyo" }, { ...deps, quickReply: async () => true })
+  assert.equal(runner.writes.length, 3, "new instructions are a change")
+  assert.ok(String(runner.writes[2]?.body.instructions).includes("before any tool call, including search_capabilities"))
+
+  // A side chat: the main chat is unchanged, the side chat is new; then neither is written.
+  await send("message_five", { timeZone: "Asia/Tokyo", chat: "sidechat000000001" }, { ...deps, quickReply: async () => true })
+  assert.equal(runner.writes.length, 4)
+  assert.equal(runner.writes[3]?.body.ref, "sidechat000000001")
+  await send("message_six", { timeZone: "Asia/Tokyo", chat: "sidechat000000001" }, { ...deps, quickReply: async () => true })
+  assert.equal(runner.writes.length, 4)
+  // Removing the side chat forgets what was written to it.
+  assert.deepEqual(await removeWorkbotChat(member, "sidechat000000001", deps), { ok: true })
+  await send("message_seven", { timeZone: "Asia/Tokyo", chat: "sidechat000000001" }, { ...deps, quickReply: async () => true })
+  assert.equal(runner.writes.length, 5)
+  assert.equal(runner.turns.at(-1), "accepted")
+
+  // What was written is trusted for five minutes, so another instance's change is written over again.
+  clock += 5 * 60_000
+  await send("message_eight", { timeZone: "Asia/Tokyo" }, { ...deps, quickReply: async () => true })
+  assert.equal(runner.writes.length, 6)
+
+  // Without the host's memory of its writes, every message writes, as before.
+  const plain = keptRunner()
+  const other = { ...actor, memberId: "member_plain" }
+  for (const id of ["message_one", "message_two"]) await sendWorkbotMessage(other, { id, text: "hi" }, { client: plain.client, canSchedule: async () => false })
+  assert.equal(plain.writes.length, 2)
+})
+
+test("a chat the runner no longer has is written and the message sent once more", async () => {
+  const runner = keptRunner()
+  const member = { ...actor, memberId: "member_lost" }
+  const deps: WorkbotDeps = { client: runner.client, canSchedule: async () => false, sessionWrites: createWorkbotSessionWrites() }
+  assert.deepEqual(await sendWorkbotMessage(member, { id: "message_one", text: "hi" }, deps), { ok: true })
+  // Another instance removed it (or the runner lost it): this process still remembers its write.
+  runner.lose()
+  assert.deepEqual(await sendWorkbotMessage(member, { id: "message_two", text: "still there?" }, deps), { ok: true })
+  assert.deepEqual(runner.turns, ["accepted", "unknown_session", "accepted"])
+  assert.equal(runner.writes.length, 2, "the chat was written again before the second try")
+  await sendWorkbotMessage(member, { id: "message_three", text: "and now" }, deps)
+  assert.equal(runner.writes.length, 2)
+
+  // A write that fails is not remembered, and the failure reads as before.
+  const failing = keptRunner({ failWrites: true })
+  const failingDeps: WorkbotDeps = { client: failing.client, canSchedule: async () => false, sessionWrites: createWorkbotSessionWrites() }
+  for (const id of ["message_one", "message_two"]) {
+    await assert.rejects(sendWorkbotMessage({ ...actor, memberId: "member_failing" }, { id, text: "hi" }, failingDeps), { code: "workbot_runner_unavailable" })
+  }
+  assert.deepEqual(failing.order, ["write", "write"])
+  assert.deepEqual(failing.turns, [])
+})
+
+test("the model is checked while the chat is written, and a failed write is still the error reported", async () => {
+  const runner = keptRunner({ catalog: verifiedCatalog })
+  const deps: WorkbotDeps = { client: runner.client, canSchedule: async () => false, model: async () => "gateway/luna", verifyModel: true }
+  runner.hold()
+  const sending = sendWorkbotMessage({ ...actor, memberId: "member_beside" }, { id: "message_one", text: "hi" }, deps)
+  for (let i = 0; i < 50 && runner.order.length < 2; i++) await new Promise((resolve) => setTimeout(resolve, 1))
+  assert.deepEqual([...runner.order].sort(), ["models", "write"], "the catalog was read before the write came back")
+  assert.deepEqual(runner.turns, [])
+  runner.release()
+  assert.deepEqual(await sending, { ok: true })
+  assert.deepEqual(runner.turns, ["accepted"])
+
+  // Both fail: the session write is what the person hears about, as when it ran first.
+  const failing = keptRunner({ catalog: { ...verifiedCatalog, verified: false }, failWrites: true })
+  await assert.rejects(
+    sendWorkbotMessage({ ...actor, memberId: "member_both" }, { id: "message_one", text: "hi" }, { ...deps, client: failing.client }),
+    { code: "workbot_runner_unavailable" },
+  )
+  // Only the model fails: its own code, and no turn.
+  const unverified = keptRunner({ catalog: { ...verifiedCatalog, verified: false } })
+  await assert.rejects(
+    sendWorkbotMessage({ ...actor, memberId: "member_model" }, { id: "message_one", text: "hi" }, { ...deps, client: unverified.client }),
+    { code: "workbot_model_unavailable" },
+  )
+  assert.deepEqual(unverified.turns, [])
 })

@@ -9,7 +9,7 @@ import { buildWorkbotTurns, GREETING_RUNNER_ID, interruptedTurnIds, threadBusy, 
 import { workbotModelReady } from "./model-readiness.js"
 import type { RemoteSessionStatusRequest, RemoteSessionStatusResult } from "@openwork/types/automations"
 import type { WorkbotRemoteJob, WorkbotRemoteJobs, WorkbotRemoteJobDetail, WorkbotRemoteJobStop } from "@openwork/types/workbot-remote-jobs"
-import { applyWorkbotRemoteStatuses, buildWorkbotRemoteJobs, remoteJobDetail, remoteStatusFailure, retainWorkbotRemoteStatuses, WorkbotRemoteJobError, type WorkbotRemoteLastKnown } from "./remote-jobs.js"
+import { applyWorkbotRemoteStatuses, buildWorkbotRemoteJobs, hasRemoteCreateCall, remoteJobDetail, remoteStatusFailure, retainWorkbotRemoteStatuses, WorkbotRemoteJobError, type WorkbotRemoteLastKnown } from "./remote-jobs.js"
 
 /**
  * Workbot: one chat per person, set up once by an admin. Each member has a
@@ -103,6 +103,12 @@ export type WorkbotDeps = {
    * that already exist keep their ids. Unset: preserve older Den's legacy chat placement.
    */
   sessionCells?: boolean
+  /**
+   * What this process last wrote to each chat's session on the runner (`createWorkbotSessionWrites`, one per
+   * process), so a message whose chat settings haven't changed doesn't write them again. Unset: every message writes
+   * them, as before.
+   */
+  sessionWrites?: WorkbotSessionWrites
 }
 
 /** How a turn runs on the runner, as `sendTurn` takes it: nothing means continuous, as before step turns. */
@@ -170,6 +176,82 @@ function remember<K, V>(map: Map<K, V>, key: K, value: V) {
 
 const chatKey = (owner: string, chat: WorkbotChat) => `${owner}\n${chat ?? ""}`
 
+/** A remembered session write is trusted for this long; then the chat's settings are written again. */
+const SESSION_WRITE_MAX_AGE_MS = 5 * 60_000
+
+/**
+ * What this process last wrote to each chat's session on the runner, for the host to keep one of. It only ever lets a
+ * message skip a write identical to the last one made here: any other write to the session from this process (the
+ * Browser and Computer views turn the desktop on) forgets it, and it expires, so what another instance wrote is
+ * written over again within SESSION_WRITE_MAX_AGE_MS. Losing it costs one write. Bounded: the oldest entries go first.
+ */
+export function createWorkbotSessionWrites(now: () => number = Date.now) {
+  const written = new Map<string, { hash: string; at: number }>()
+  /**
+   * Writes in flight per session. Two that overlap can reach the runner in either order, so only a write that ran
+   * alone from start to end (`alone`) is remembered.
+   */
+  const writing = new Map<string, { count: number; alone: boolean }>()
+  return {
+    /** Whether the runner was last sent exactly this for the session, recently. Never while a write is under way. */
+    current(sessionId: string, hash: string) {
+      const last = written.get(sessionId)
+      return last !== undefined && last.hash === hash && now() - last.at < SESSION_WRITE_MAX_AGE_MS
+    },
+    /** A write is starting, so what was remembered no longer holds. Returns how to end it: with what was saved, or null. */
+    begin(sessionId: string) {
+      written.delete(sessionId)
+      const others = writing.get(sessionId)
+      const flight = others ?? { count: 0, alone: true }
+      if (others) others.alone = false
+      else writing.set(sessionId, flight)
+      flight.count += 1
+      return (hash: string | null) => {
+        flight.count -= 1
+        if (flight.count > 0) return
+        if (writing.get(sessionId) === flight) writing.delete(sessionId)
+        if (flight.alone && hash !== null) remember(written, sessionId, { hash, at: now() })
+      }
+    },
+    /** The session is gone or changed some other way: its next message writes it, and no write under way is remembered. */
+    forget(sessionId: string) {
+      written.delete(sessionId)
+      const flight = writing.get(sessionId)
+      if (flight) flight.alone = false
+    },
+  }
+}
+export type WorkbotSessionWrites = ReturnType<typeof createWorkbotSessionWrites>
+
+type SessionSettings = NonNullable<Parameters<HeadlessRunnerClient["putSession"]>[1]>
+
+/**
+ * Sends a chat's settings to the runner. Every such write goes through here, so `sessionWrites` knows of each one.
+ * The runner merges what it is sent into the session, so only a whole set of settings (not `partial`) is remembered,
+ * and only `reuse` (sending a message) may skip a write this process already made.
+ */
+async function writeSession(
+  deps: WorkbotDeps,
+  id: string,
+  settings: SessionSettings,
+  options: { reuse?: boolean; partial?: boolean } = {},
+): Promise<Awaited<ReturnType<HeadlessRunnerClient["putSession"]>> & { reused?: true }> {
+  const client = clientOf(deps)
+  const writes = deps.sessionWrites
+  if (!writes) return client.putSession(id, settings)
+  const hash = options.partial ? null : createHash("sha256").update(JSON.stringify(settings)).digest("hex")
+  if (options.reuse && hash !== null && writes.current(id, hash)) return { ok: true, value: { id, created: false }, reused: true }
+  const end = writes.begin(id)
+  let saved = false
+  try {
+    const result = await client.putSession(id, settings)
+    saved = result.ok
+    return result
+  } finally {
+    end(saved ? hash : null)
+  }
+}
+
 /**
  * Records the ids the runner listed for an owner's chats (the main chat by its ref, side chats by theirs). For a chat
  * listed under both its legacy id and a session cell (during a split), the cell wins; a chat already known to be in a
@@ -193,13 +275,16 @@ function rememberListed(owner: string, sessions: ReadonlyArray<{ id: string; ref
   listFailedAt.delete(owner)
 }
 
-/** Tests only: forget every chat id, listing and split request this process remembers. */
+/** Tests only: forget every chat id, listing, split request and remote-task read this process remembers. */
 export function resetWorkbotSessionCells() {
   chatSessions.clear()
   listedOwners.clear()
   listings.clear()
   listFailedAt.clear()
   splitOwners.clear()
+  remoteJobReads.clear()
+  recentRemoteJobs.clear()
+  remoteCreateSessions.clear()
 }
 
 /** Reads the person's chat list once per process (again 30 s after a failure). False while it can't be read. */
@@ -425,7 +510,14 @@ function clientOf(deps: WorkbotDeps) {
  * to exist first: it keeps its memory there.
  */
 async function ensureSession(actor: WorkbotActor, timeZone: string, deps: WorkbotDeps, chat: WorkbotChat = null) {
-  const client = clientOf(deps)
+  return (await settleSession(actor, timeZone, deps, chat)).id
+}
+
+/**
+ * `ensureSession`, saying whether a write was skipped. `reuse`: settings this process already wrote unchanged are not
+ * written again (`WorkbotDeps.sessionWrites`); only for a caller that recovers when the runner no longer has the chat.
+ */
+async function settleSession(actor: WorkbotActor, timeZone: string, deps: WorkbotDeps, chat: WorkbotChat = null, options: { reuse?: boolean } = {}): Promise<{ id: string; reused: boolean }> {
   const name = workbotName(actor.organizationMetadata)
   const canSchedule = await deps.canSchedule(actor.organizationId).catch(() => false)
   const workspaceAssistant = await deps.workspaceAssistant?.(actor.organizationId).catch(() => false) ?? false
@@ -451,20 +543,21 @@ async function ensureSession(actor: WorkbotActor, timeZone: string, deps: Workbo
     owner: workbotOwner(actor.organizationId, actor.memberId),
     timeZone,
   }
-  const savedMain = await client.putSession(main, {
+  const mainSettings: SessionSettings = {
     title: `${name} · ${actor.firstName ?? "member"}`,
     instructions: workbotInstructions({ name, organizationName: actor.organizationName, firstName: actor.firstName, timeZone, canSchedule, workspaceAssistant, guidedNavigation, browser: desktopViews.includes("browser"), computer: WORKBOT_COMPUTER, driveFiles, workingStatus, quickReply, remoteTasks: deps.remoteTasks === true }),
     ...common,
     ref: MAIN_CHAT_REF,
     // A chat in its own cell keeps memory with the owner, and is never kept without these settings.
     ...(mainInCell ? { memoryScope: "owner" as const, strict: true } : {}),
-  })
+  }
+  const savedMain = await writeSession(deps, main, mainSettings, options)
   if (!savedMain.ok) throw new WorkbotUnavailableError("workbot_runner_unavailable")
-  if (!chat) return savedMain.value.id
+  if (!chat) return { id: savedMain.value.id, reused: savedMain.reused === true }
   // Named by the runner after its first answer; never sent a title, so that name stays. Strict: a side chat is only
   // found again through its owner and ref, so it is never kept without them (the main chat's id is derived).
   const sessionId = await sessionOf(actor, chat, deps, { create: true })
-  const saved = await client.putSession(sessionId, {
+  const saved = await writeSession(deps, sessionId, {
     instructions: workbotInstructions({ name, organizationName: actor.organizationName, firstName: actor.firstName, timeZone, canSchedule, workspaceAssistant, guidedNavigation, browser: desktopViews.includes("browser"), computer: WORKBOT_COMPUTER, driveFiles, workingStatus, quickReply, remoteTasks: deps.remoteTasks === true, side: true }),
     ...common,
     ref: chat,
@@ -472,9 +565,9 @@ async function ensureSession(actor: WorkbotActor, timeZone: string, deps: Workbo
     // A legacy side chat shares the legacy main chat's memory, exactly as before; a chat in its own cell, the owner's.
     ...(WORKBOT_CELL_SESSION_ID.test(sessionId) ? { memoryScope: "owner" as const } : { memoryOf: workbotSessionId(actor.organizationId, actor.memberId) }),
     strict: true,
-  })
+  }, options)
   if (!saved.ok) throw new WorkbotUnavailableError("workbot_runner_unavailable")
-  return saved.value.id
+  return { id: saved.value.id, reused: savedMain.reused === true || saved.reused === true }
 }
 
 /** Turns shown per page of the conversation; earlier ones load on request. */
@@ -612,19 +705,74 @@ export async function readWorkbotThread(
   }
 }
 
+/** The window of the chat that remote tasks are looked for in. */
+const REMOTE_JOBS_WINDOW = { turns: 40, limit: 1_000 }
+/** A list read this recently is reused when a row is opened: the page reads the list every 15 s while a task is open. */
+const REMOTE_JOBS_REUSE_MS = 20_000
+const REMOTE_JOBS_KEPT = 2_000
+
+const remoteJobsKey = (actor: WorkbotActor, chat: WorkbotChat) => JSON.stringify([actor.organizationId, actor.memberId, chat])
+/** The read in flight per member and chat, shared by concurrent requests (several tabs, the header and the profile). */
+const remoteJobReads = new Map<string, Promise<WorkbotRemoteJobs>>()
+/** The last list read per member and chat with every status checked, for REMOTE_JOBS_REUSE_MS. Never another person's. */
+const recentRemoteJobs = new Map<string, { at: number; jobs: WorkbotRemoteJobs }>()
+/** Sessions whose window held a remote-session:create call at the last read: they are read with tool outputs at once. */
+const remoteCreateSessions = new Map<string, true>()
+
 /**
  * Remote tasks in this actor's recent chat. Tool outputs are needed to prove create receipts: the ordinary thread
  * read deliberately omits them. Keep this separate, bounded and opt-in, so opening chat never waits on a computer.
  * No caller-supplied remote ids enter the adapter. Den rechecks ownership and active membership for the live read.
+ * Requests for the same member and chat that overlap share one read.
  */
 export async function readWorkbotRemoteJobs(actor: WorkbotActor, input: { chat?: WorkbotChat }, deps: WorkbotDeps): Promise<WorkbotRemoteJobs> {
   if (deps.remoteTasks !== true) return { jobs: [], hasEarlier: false }
+  const key = remoteJobsKey(actor, input.chat ?? null)
+  let pending = remoteJobReads.get(key)
+  if (!pending) {
+    pending = loadWorkbotRemoteJobs(actor, input, deps).finally(() => remoteJobReads.delete(key))
+    remoteJobReads.set(key, pending)
+  }
+  return pending
+}
+
+/** One read of the chat's remote tasks and their live statuses, kept for REMOTE_JOBS_REUSE_MS when every status was checked. */
+async function loadWorkbotRemoteJobs(actor: WorkbotActor, input: { chat?: WorkbotChat }, deps: WorkbotDeps): Promise<WorkbotRemoteJobs> {
+  const key = remoteJobsKey(actor, input.chat ?? null)
+  const jobs = await checkWorkbotRemoteJobs(actor, input, deps)
+  recentRemoteJobs.delete(key)
+  if (jobs.jobs.length && !jobs.statusError) {
+    if (recentRemoteJobs.size >= REMOTE_JOBS_KEPT) {
+      const oldest = recentRemoteJobs.keys().next()
+      if (!oldest.done) recentRemoteJobs.delete(oldest.value)
+    }
+    recentRemoteJobs.set(key, { at: Date.now(), jobs })
+  }
+  return jobs
+}
+
+async function checkWorkbotRemoteJobs(actor: WorkbotActor, input: { chat?: WorkbotChat }, deps: WorkbotDeps): Promise<WorkbotRemoteJobs> {
   const sessionId = await sessionOf(actor, input.chat ?? null, deps)
-  const read = await clientOf(deps).readSession(sessionId, { turns: 40, limit: 1_000 })
+  const client = clientOf(deps)
+  // Tool outputs are most of what a read carries, and only a remote-session:create call has a receipt to prove. A
+  // chat not known to hold one is read without outputs first: its calls say whether the full read is needed at all.
+  if (!remoteCreateSessions.has(sessionId)) {
+    const calls = await client.readSession(sessionId, { ...REMOTE_JOBS_WINDOW, outputs: "none" })
+    if (!calls.ok && calls.status === 404) return { jobs: [], hasEarlier: false }
+    if (!calls.ok) throw new WorkbotUnavailableError("workbot_runner_unavailable")
+    if (!hasRemoteCreateCall(calls.value)) {
+      const none = buildWorkbotRemoteJobs(calls.value)
+      if (calls.value.messages.length >= REMOTE_JOBS_WINDOW.limit) none.hasEarlier = true
+      return none
+    }
+  }
+  const read = await client.readSession(sessionId, REMOTE_JOBS_WINDOW)
   if (!read.ok && read.status === 404) return { jobs: [], hasEarlier: false }
   if (!read.ok) throw new WorkbotUnavailableError("workbot_runner_unavailable")
+  if (hasRemoteCreateCall(read.value)) remember(remoteCreateSessions, sessionId, true)
+  else remoteCreateSessions.delete(sessionId)
   const jobs = buildWorkbotRemoteJobs(read.value)
-  if (read.value.messages.length >= 1_000) jobs.hasEarlier = true
+  if (read.value.messages.length >= REMOTE_JOBS_WINDOW.limit) jobs.hasEarlier = true
   if (!jobs.jobs.length || !deps.remoteStatus) return jobs
   const keyOf = (job: WorkbotRemoteJob) => JSON.stringify([actor.organizationId, actor.memberId, input.chat ?? null, job.key])
   const lastKnown = (job: WorkbotRemoteJob) => lastRemoteStatuses.get(keyOf(job))
@@ -653,9 +801,17 @@ export async function readWorkbotRemoteJobs(actor: WorkbotActor, input: { chat?:
 /** The last verified status per member/chat/task, so a failed refresh (or a reload) still shows what was known. */
 const lastRemoteStatuses = new Map<string, WorkbotRemoteLastKnown>()
 
-async function ownRemoteJob(actor: WorkbotActor, input: { key: string; chat?: WorkbotChat }, deps: WorkbotDeps) {
+/**
+ * The person's own task by the key the page names. Opening a row reuses the list the page just read; `fresh` (Stop)
+ * always reads the chat and every status again.
+ */
+async function ownRemoteJob(actor: WorkbotActor, input: { key: string; chat?: WorkbotChat }, deps: WorkbotDeps, options: { fresh?: boolean } = {}) {
   if (deps.remoteTasks !== true) throw new WorkbotRemoteJobError("remote_job_not_found", 404)
-  const jobs = await readWorkbotRemoteJobs(actor, input, deps)
+  const recent = options.fresh ? undefined : recentRemoteJobs.get(remoteJobsKey(actor, input.chat ?? null))
+  let jobs: WorkbotRemoteJobs
+  if (options.fresh) jobs = await loadWorkbotRemoteJobs(actor, input, deps)
+  else if (recent && Date.now() - recent.at < REMOTE_JOBS_REUSE_MS) jobs = recent.jobs
+  else jobs = await readWorkbotRemoteJobs(actor, input, deps)
   const job = jobs.jobs.find(entry => entry.key === input.key)
   if (!job) throw new WorkbotRemoteJobError("remote_job_not_found", 404)
   const sessionId = job.status?.sessionId ?? ("sessionId" in job.ref ? job.ref.sessionId : null)
@@ -681,7 +837,7 @@ export async function readWorkbotRemoteJob(actor: WorkbotActor, input: { key: st
 
 /** Exact user action only; a fresh owner-scoped status plus the displayed user-turn guard prevents stopping newer work. */
 export async function stopWorkbotRemoteJob(actor: WorkbotActor, input: { key: string; messageId: string; chat?: WorkbotChat }, deps: WorkbotDeps): Promise<WorkbotRemoteJobStop> {
-  const owned = await ownRemoteJob(actor, input, deps)
+  const owned = await ownRemoteJob(actor, input, deps, { fresh: true })
   if (!deps.remoteStop || owned.job.stale || (owned.job.status?.state !== "running" && owned.job.status?.state !== "waiting")) throw new WorkbotRemoteJobError("remote_stop_unavailable", 409)
   const output = await deps.remoteStop({ sessionId: owned.sessionId, ...(owned.workspaceId ? { workspaceId: owned.workspaceId } : {}), messageId: input.messageId })
   if (typeof output !== "object" || output === null) return { state: "not_stopped", reason: "unconfirmed" }
@@ -735,7 +891,10 @@ export async function listWorkbotChats(actor: WorkbotActor, deps: WorkbotDeps): 
 /** Removes a side chat with everything in it; refused while it is answering. The main chat can't be removed. */
 export async function removeWorkbotChat(actor: WorkbotActor, chatId: string, deps: WorkbotDeps) {
   if (!WORKBOT_CHAT_ID.test(chatId)) return { ok: false as const, code: "unknown_chat" as const }
-  const removed = await clientOf(deps).deleteSession(await sessionOf(actor, chatId, deps))
+  const sessionId = await sessionOf(actor, chatId, deps)
+  const removed = await clientOf(deps).deleteSession(sessionId)
+  // Removed, or already gone: nothing written to it is remembered.
+  if (removed.ok || removed.status === 404) deps.sessionWrites?.forget(sessionId)
   if (!removed.ok && removed.status === 409) return { ok: false as const, code: "busy" as const }
   if (!removed.ok && removed.status === 404) return { ok: false as const, code: "unknown_chat" as const }
   if (!removed.ok) throw new WorkbotUnavailableError("workbot_runner_unavailable")
@@ -750,13 +909,24 @@ export async function sendWorkbotMessage(
   const prompt = workbotContextPrompt(input.text, input.context)
   if (prompt.length > WORKBOT_MAX_MESSAGE_CHARS) return { ok: false as const, code: "message_too_long" as const }
   const client = clientOf(deps)
-  const sessionId = await ensureSession(actor, validTimeZone(input.timeZone), deps, input.chat ?? null)
+  const timeZone = validTimeZone(input.timeZone)
+  const chat = input.chat ?? null
+  // The model doesn't depend on the chat's settings, so both are settled side by side. A failed write is still the
+  // error reported first, as when they ran one after the other.
+  const modelRead = modelFor(actor, deps)
+  modelRead.catch(() => undefined) // Still awaited below; this only keeps a failed write from leaving it unhandled.
+  const settled = await settleSession(actor, timeZone, deps, chat, { reuse: true })
+  const model = await modelRead
   // The page's own id makes retries safe: the runner never starts a second turn for it. A message
   // sent while Workbot answers interrupts that answer, which wraps up keeping what it said, and this one is answered next.
-  const sent = await client.sendTurn(
+  const send = (sessionId: string) => client.sendTurn(
     { userId: actor.userId, organizationId: actor.organizationId },
-    { sessionId, messageId: `${WORKBOT_MESSAGE_PREFIX}${input.id}`, prompt, attachments: input.attachments, readOnly: workbotContextReadOnly(input.context) || readBrowserTeachingPrompt(input.text) !== input.text, interrupt: true, ...(await modelFor(actor, deps)), ...executionFor(deps) },
+    { sessionId, messageId: `${WORKBOT_MESSAGE_PREFIX}${input.id}`, prompt, attachments: input.attachments, readOnly: workbotContextReadOnly(input.context) || readBrowserTeachingPrompt(input.text) !== input.text, interrupt: true, ...model, ...executionFor(deps) },
   )
+  let sent = await send(settled.id)
+  // A skipped write trusted that the runner still has the chat. It doesn't (removed, or moved, since that write): the
+  // chat is written again and the message sent once more.
+  if (!sent.ok && sent.status === 404 && settled.reused) sent = await send(await ensureSession(actor, timeZone, deps, chat))
   if (!sent.ok && sent.status === 400 && sent.error === "unknown_file") return { ok: false as const, code: "unknown_file" as const }
   if (!sent.ok && sent.status === 429) return { ok: false as const, code: "too_many_queued" as const }
   if (!sent.ok) throw new WorkbotUnavailableError("workbot_runner_unavailable")
@@ -914,6 +1084,8 @@ export async function deleteWorkbotFile(actor: WorkbotActor, fileId: string, dep
 export function createWorkbot(deps: WorkbotDeps) {
   return {
     ensureComputer: (actor: WorkbotActor, chat: WorkbotChat = null) => ensureSession(actor, "UTC", deps, chat),
+    /** Turns on an existing chat's computer with the views the person may use, before the Browser or Computer view opens. */
+    allowDesktopViews: (sessionId: string, desktopViews: RunnerDesktopView[]) => writeSession(deps, sessionId, { computer: true, desktop: true, desktopViews }, { partial: true }),
     readThread: (actor: WorkbotActor, input: { turns?: number; chat?: WorkbotChat } = {}) => readWorkbotThread(actor, input, deps),
     readRemoteJobs: (actor: WorkbotActor, input: { chat?: WorkbotChat } = {}) => readWorkbotRemoteJobs(actor, input, deps),
     readRemoteJob: (actor: WorkbotActor, input: { key: string; chat?: WorkbotChat }) => readWorkbotRemoteJob(actor, input, deps),

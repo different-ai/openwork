@@ -164,6 +164,42 @@ test("Computer access uses the signed-in member's conversation and refuses a cal
   }
 })
 
+test("Opening the computer writes the chat's desktop settings, so the next message writes the whole chat again", async (t) => {
+  const writes: unknown[] = []
+  const json = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } })
+  t.mock.method(globalThis, "fetch", async (url: string | URL | Request, init?: RequestInit) => {
+    const parsed = new URL(url instanceof Request ? url.url : url)
+    if (parsed.pathname.endsWith("/desktop/viewer")) return json({ state: "connected", url: "wss://viewer.example.test/vnc/synthetic", expiresAt: Date.now() + 60_000, paused: false })
+    if (parsed.pathname.endsWith("/turns")) return json({ state: "accepted" }, 202)
+    if (init?.method === "PUT") {
+      writes.push(typeof init.body === "string" ? JSON.parse(init.body) : null)
+      return json({ id: parsed.pathname.split("/").at(-1) })
+    }
+    return json({ turns: [], messages: [], finalAssistantText: "" })
+  })
+  const signed = member("carol")
+  const app = new Hono<AppEnv>()
+  registerWorkbotRoutes(app, {
+    config, den: { ...createDen({ apiUrl: config.denApiUrl, publicUrl: config.publicUrl }), session: async () => signed.den, runToken: async () => ({ token: "synthetic-turn-token" }) },
+    member: async (c, next) => { c.set("member", signed); await next() }, sameOrigin: async (_c, next) => next(),
+  })
+  const send = (id: string) => app.request("/v1/workbot/messages", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ id, text: "hello", timeZone: "Europe/Paris" }) })
+  const wholeChat = (value: unknown) => typeof value === "object" && value !== null && "instructions" in value && "timeZone" in value
+  assert.equal((await send("message_001")).status, 202)
+  assert.equal((await send("message_002")).status, 202)
+  assert.equal(writes.length, 1, "an unchanged chat is written once")
+  assert.ok(wholeChat(writes[0]))
+  const opened = await app.request("/v1/workbot/computer/viewer", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ view: "browser", control: false }) })
+  assert.equal(opened.status, 200)
+  assert.deepEqual(writes[1], { computer: true, desktop: true, desktopViews: ["browser", "computer"] })
+  // The runner now holds what the view wrote; the message's write is not skipped on the strength of the earlier one.
+  assert.equal((await send("message_003")).status, 202)
+  assert.equal(writes.length, 3)
+  assert.deepEqual(writes[2], writes[0])
+  assert.equal((await send("message_004")).status, 202)
+  assert.equal(writes.length, 3)
+})
+
 test("Computer actions recheck access after resolving a cold session", async t => {
   const signed = member("alice")
   const calls: string[] = []
