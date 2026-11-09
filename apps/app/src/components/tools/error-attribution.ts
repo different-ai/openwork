@@ -2,6 +2,7 @@ import type { DynamicToolUIPart } from "ai"
 import { openworkCloudMcpConnectionActionSchema } from "@openwork/types/den/mcp-connection-action"
 import { connectionActionPayloadSchema, type ConnectionActionPayload } from "@openwork/types/connection-action-app"
 import { parseMcpAppResourceUri } from "@openwork/types/mcp-app"
+import { CONNECT_STATUS_TOOL, connectActionToolName } from "@/lib/capability-call"
 
 export type ToolErrorAttribution = {
   label: string
@@ -116,8 +117,16 @@ export function isOpenworkCloudCapabilityTool(toolName: string): boolean {
   return isConnectionTool(toolName)
 }
 
+/**
+ * Tools whose result may report a connection: the capability tools, and what
+ * Connect lists when every action is its own tool (`linear_list_issues`,
+ * `connection_status`), which answers as execute_capability does.
+ */
 function isConnectionTool(toolName: string): boolean {
-  return OPENWORK_CLOUD_CAPABILITY_TOOLS.has(toolName) || /^openwork(?:-cloud)?_run_artifact_[A-Za-z0-9_-]+$/.test(toolName)
+  return OPENWORK_CLOUD_CAPABILITY_TOOLS.has(toolName)
+    || /^openwork(?:-cloud)?_run_artifact_[A-Za-z0-9_-]+$/.test(toolName)
+    || toolName === CONNECT_STATUS_TOOL
+    || connectActionToolName(toolName) !== null
 }
 
 /**

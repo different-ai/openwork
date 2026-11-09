@@ -2,7 +2,7 @@ import type { DynamicToolUIPart } from "ai"
 
 import type { RemoteSessionPending } from "@openwork/types/automations"
 
-import { parseRecord } from "@/lib/capability-call"
+import { connectRemoteSessionAction, parseRecord } from "@/lib/capability-call"
 import { parseRemotePending } from "@/lib/remote-session-answers"
 
 /**
@@ -51,6 +51,9 @@ function toolResult(output: unknown): Record<string, unknown> | null {
 }
 
 function capabilityCall(part: DynamicToolUIPart): { name: string; body: Record<string, unknown> } | null {
+  // Connect may list each remote-session action as its own tool, whose input is the body.
+  const action = connectRemoteSessionAction(part.toolName)
+  if (action) return { name: `remote-session:${action}`, body: parseRecord(part.input) ?? {} }
   if (!part.toolName.endsWith("execute_capability")) return null
   const input = parseRecord(part.input)
   const name = text(input?.name)

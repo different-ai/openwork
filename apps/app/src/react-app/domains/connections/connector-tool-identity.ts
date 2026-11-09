@@ -1,5 +1,12 @@
 import type { DynamicToolUIPart } from "ai";
-import { getConnectionStatusProbeId } from "@/lib/capability-call";
+import {
+  CONNECT_STATUS_TOOL,
+  connectActionForConnection,
+  connectActionToolName,
+  connectDenOperation,
+  connectToolNamespace,
+  getConnectionStatusProbeId,
+} from "@/lib/capability-call";
 
 import { getMcpServerName, MCP_QUICK_CONNECT } from "@/app/constants";
 import type { DenExternalMcpConnection } from "@/app/lib/den";
@@ -184,6 +191,39 @@ function directConnectionIdentity(toolName: string, identities: ConnectorToolIde
   } : null;
 }
 
+/**
+ * The connector behind a tool Connect lists for one action
+ * (`openwork-cloud_linear_list_issues`) or behind `connection_status`, whose
+ * input names the connection's namespace. Connect derives the namespace from
+ * the connection's name, so the longest matching name wins, and the member's
+ * own organization connection wins over a catalog entry of the same name.
+ */
+function connectToolIdentity(part: DynamicToolUIPart, identities: ConnectorToolIdentity[]): ConnectorToolIdentity | null {
+  const owns = connectToolOwnerTest(part);
+  if (!owns) return null;
+  const owned = identities
+    .filter((identity) => owns(identity.name))
+    .sort((left, right) => (
+      connectToolNamespace(right.name).length - connectToolNamespace(left.name).length
+      || Number(Boolean(right.connectionId)) - Number(Boolean(left.connectionId))
+    ));
+  return owned[0] ?? null;
+}
+
+function connectToolOwnerTest(part: DynamicToolUIPart): ((connectionName: string) => boolean) | null {
+  if (part.toolName === CONNECT_STATUS_TOOL) {
+    const input = part.input && typeof part.input === "object" && "connection" in part.input ? part.input.connection : null;
+    if (typeof input !== "string") return null;
+    // Connect numbers a second connection of the same name ("linear_2").
+    const namespace = input.trim().replace(/_\d+$/, "");
+    return (name) => [input.trim(), namespace].includes(connectToolNamespace(name));
+  }
+  const action = connectActionToolName(part.toolName);
+  // `den` is OpenWork's own namespace, which no connection can take.
+  if (!action || connectDenOperation(part.toolName)) return null;
+  return (name) => connectActionForConnection(action, name) !== null;
+}
+
 /** Resolve a rendered tool call only when it can be attributed to a connector. */
 export function resolveConnectorToolIdentity(
   part: DynamicToolUIPart,
@@ -214,6 +254,9 @@ export function resolveConnectorToolIdentity(
     ));
     if (named) return named;
   }
+
+  const connectTool = connectToolIdentity(part, identities);
+  if (connectTool) return connectTool;
 
   const direct = directConnectionIdentity(part.toolName, identities);
   if (direct) return direct;

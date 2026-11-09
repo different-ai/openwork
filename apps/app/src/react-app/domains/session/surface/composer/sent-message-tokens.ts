@@ -3,7 +3,7 @@ import type { UIMessage } from "ai";
 import type { ComposerMentionKind } from "./mention-encoding";
 import { encodeComposerMentionValue } from "./mention-encoding";
 import { connectSkillPrompt } from "./connect-skill-token";
-import { connectorPrompt } from "./connector-token";
+import { CONNECTOR_PROMPT_HISTORY } from "./connector-token";
 import { sessionReferencePrompt } from "./session-reference-token";
 import { createPastedTextChip, type PastedTextChip } from "./pasted-text";
 import {
@@ -101,7 +101,10 @@ function instructionMatchers(): InstructionMatcher[] {
         ? pill({ kind: "connect-skill", slug: "", name: groups.name, marketplace: groups.marketplace, capability: groups.capability })
         : null,
     },
-    { re: templateRegExp(["name"], (slots) => connectorPrompt(slots.name!)), toToken: (groups) => groups.name ? pill({ kind: "connector", name: groups.name }) : null },
+    ...CONNECTOR_PROMPT_HISTORY.map((render): InstructionMatcher => ({
+      re: templateRegExp(["name"], (slots) => render(slots.name!)),
+      toToken: (groups) => groups.name ? pill({ kind: "connector", name: groups.name }) : null,
+    })),
     ...(["cloud", "desktop"] as const).flatMap((target) => computerInstructionHistory(target).map((instruction): InstructionMatcher => ({
       re: new RegExp(escapeRegExp(instruction), "g"),
       toToken: () => pill({ kind: "computer", target }),

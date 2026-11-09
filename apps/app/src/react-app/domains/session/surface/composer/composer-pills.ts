@@ -1,9 +1,9 @@
 import type { TextPartInput } from "@opencode-ai/sdk/v2/client";
 
 import type { ComposerPart } from "@/app/types";
-import { computerMentionInstruction, isComputerTarget, type ComputerTarget } from "./computer-mentions";
+import { computerMentionInstruction, isComputerTarget, searchFirstComputerMentionInstruction, type ComputerTarget } from "./computer-mentions";
 import { connectSkillPrompt, encodeConnectSkillToken, parseConnectSkillToken } from "./connect-skill-token";
-import { connectorPrompt, encodeConnectorToken, parseConnectorToken } from "./connector-token";
+import { CONNECTOR_PROMPT_HISTORY, connectorPrompt, encodeConnectorToken, parseConnectorToken } from "./connector-token";
 import {
   encodeSessionReferenceToken,
   parseSessionReferenceToken,
@@ -246,7 +246,10 @@ function getPillMatchers(): PillMatcher[] {
     // Instructions that older sends, or clients that flatten parts into one
     // string, left inline in the user's text.
     { re: templateRegExp(skillInstruction), toPill: (match) => match[1] ? { kind: "skill", name: match[1] } : null },
-    { re: templateRegExp(connectorPrompt), toPill: (match) => match[1] ? { kind: "connector", name: match[1] } : null },
+    ...CONNECTOR_PROMPT_HISTORY.map((render): PillMatcher => ({
+      re: templateRegExp(render),
+      toPill: (match) => match[1] ? { kind: "connector", name: match[1] } : null,
+    })),
     ...(["cloud", "desktop"] as const).flatMap((target) => computerInstructionHistory(target).map((instruction): PillMatcher => ({
       re: new RegExp(escapeRegExp(instruction), "g"),
       toPill: () => ({ kind: "computer", target }),
@@ -255,18 +258,25 @@ function getPillMatchers(): PillMatcher[] {
   return pillMatchers;
 }
 
-/** Decode exact historical sends without offering the retired polling instruction on new sends. */
+/** Decode exact historical sends without offering a retired instruction on new sends. */
 export function computerInstructionHistory(target: "cloud" | "desktop"): string[] {
-  const current = computerMentionInstruction(target);
-  const legacyEnding = target === "cloud"
+  const searchFirst = searchFirstComputerMentionInstruction(target);
+  const pollingEnding = target === "cloud"
     ? "Return the session link and use remote-session:read to check replies."
     : "Use remote-session:read with commandId to check delivery. A delivered receipt means the task was started, not that it finished; return the desktop session reference.";
-  return [current, current.replace(/OpenWork shows the started task.*(?=\]$)/, legacyEnding)];
+  return [
+    computerMentionInstruction(target),
+    searchFirst,
+    searchFirst.replace(/OpenWork shows the started task.*(?=\]$)/, pollingEnding),
+  ];
 }
 
 function isInstructionMatch(pill: ComposerPill, text: string) {
   if (pill.kind === "computer") {
     return computerInstructionHistory(pill.target).includes(text);
+  }
+  if (pill.kind === "connector") {
+    return CONNECTOR_PROMPT_HISTORY.some((render) => render(pill.name) === text);
   }
   return text === composerPillInstruction(pill);
 }
