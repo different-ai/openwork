@@ -150,6 +150,14 @@ function block(token: Token, index: number): ReactNode {
   }
 }
 
+/**
+ * An answer's text as its top-level blocks. Always the whole text as one document: a list's numbering, a link's
+ * definition or a table can depend on lines far apart.
+ */
+export function markdownBlocks(text: string): Token[] {
+  return Lexer.lex(text, { gfm: true, breaks: true });
+}
+
 /** Google Drive files a reply links to, in order and once each, labelled with the reply's own link text. */
 export function documentLinks(text: string): Array<{ fileId: string; label: string }> {
   const found = new Map<string, string>();
@@ -167,12 +175,33 @@ export function documentLinks(text: string): Array<{ fileId: string; label: stri
     visit(token.tokens);
     visit(token.items);
   };
-  visit(Lexer.lex(text, { gfm: true, breaks: true }));
+  visit(markdownBlocks(text));
   return [...found].map(([fileId, label]) => ({ fileId, label }));
 }
 
-/** Re-rendered only when its text changes: each streamed word re-reads the bubble it lands in, not every answer above. */
+const isRecord = (value: unknown): value is Record<string, unknown> => typeof value === "object" && value !== null;
+
+/** Whether two parsed tokens read the same all the way down. Tokens are plain data: text, numbers, lists and records. */
+export function sameToken(a: unknown, b: unknown): boolean {
+  if (a === b) return true;
+  if (!isRecord(a) || !isRecord(b) || Array.isArray(a) !== Array.isArray(b)) return false;
+  const keys = Object.keys(a);
+  return keys.length === Object.keys(b).length && keys.every((key) => key in b && sameToken(a[key], b[key]));
+}
+
+/**
+ * One top-level block of an answer (a paragraph, a list, a table…), in its place. What it shows comes from its token
+ * alone, so it re-renders only when that token reads differently: a reply being written re-renders the block it is
+ * writing, not every block above it.
+ */
+const MarkdownBlock = memo(function MarkdownBlock({ token }: { token: Token }) {
+  return block(token, 0);
+}, (previous, next) => sameToken(previous.token, next.token));
+
+/**
+ * Re-rendered only when its text changes: each streamed word re-reads the bubble it lands in, not every answer above.
+ * Within the bubble the text is read again in full, and only the blocks that came out differently re-render.
+ */
 export const WorkbotMarkdown = memo(function WorkbotMarkdown({ text }: { text: string }) {
-  const tokens = Lexer.lex(text, { gfm: true, breaks: true });
-  return <div className="flex flex-col gap-3 break-words text-[15px] leading-6 text-[var(--wb-text)]">{tokens.map(block)}</div>;
+  return <div className="flex flex-col gap-3 break-words text-[15px] leading-6 text-[var(--wb-text)]">{markdownBlocks(text).map((token, index) => <MarkdownBlock key={index} token={token} />)}</div>;
 });

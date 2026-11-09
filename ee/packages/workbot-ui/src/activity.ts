@@ -93,6 +93,35 @@ function turnSteps(turn: WorkbotTurn, live: LiveText | null): ActivityStep[] {
 
 const lastOpen = (steps: ActivityStep[]) => [...steps].reverse().find((step) => !step.done);
 
+/**
+ * The next moment an unfinished task goes quiet, after `now`; null when none will. Until then nothing here changes by
+ * the clock alone, so the page showing it doesn't have to keep time.
+ */
+export function nextTaskQuietAt(turns: WorkbotTurn[], now: number): number | null {
+  let next: number | null = null;
+  for (const turn of turns) {
+    for (const task of turn.tasks) {
+      const lastAt = taskOpen(task) ? lastSign(task) : null;
+      if (lastAt === null || lastAt + TASK_QUIET_MS <= now) continue;
+      if (next === null || lastAt + TASK_QUIET_MS < next) next = lastAt + TASK_QUIET_MS;
+    }
+  }
+  return next;
+}
+
+/**
+ * The stream as `workbotActivity` reads it: which model call is running, what it works on and whether it has written
+ * anything, never the words themselves. Unlike the text, this changes only a few times an answer.
+ */
+export function liveStatus(live: Readonly<Record<string, LiveText>>): Record<string, LiveText> {
+  const status: Record<string, LiveText> = {};
+  for (const [id, entry] of Object.entries(live)) {
+    // All the status line asks of the text: are there words ("…"), only blank space (" "), or nothing yet.
+    status[id] = { step: entry.step, text: entry.text.trim() ? "…" : entry.text ? " " : "", ...(entry.working ? { working: entry.working } : {}) };
+  }
+  return status;
+}
+
 function taskActivity(task: WorkbotTask, now: number): ActivityTask {
   const steps = task.steps.map((step, index) => ({ key: `${task.id}:${index}`, label: step.label, done: step.done || !taskOpen(task), app: null }));
   const current = taskOpen(task) ? (task.update ?? lastOpen(steps)?.label ?? steps.at(-1)?.label ?? null) : (steps.at(-1)?.label ?? null);

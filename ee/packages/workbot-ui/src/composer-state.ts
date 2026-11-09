@@ -43,8 +43,10 @@ export function createComposerState(uploadFile: Uploader) {
   const previewUrls = new Set<string>();
   const publish = (next: Snapshot) => { state = next; for (const listener of listeners) listener(); };
   const updateUpload = (key: string, patch: Partial<Upload>) => {
-    const update = (uploads: Upload[]) => uploads.map(upload => upload.key === key ? { ...upload, ...patch } : upload);
-    publish({ ...state, uploads: update(state.uploads), pending: state.pending.map(entry => ({ ...entry, uploads: update(entry.uploads) })) });
+    // Lists and messages without this file stay the same objects, so its progress re-renders only what shows it.
+    const update = (uploads: Upload[]) => uploads.some(upload => upload.key === key) ? uploads.map(upload => upload.key === key ? { ...upload, ...patch } : upload) : uploads;
+    const pending = state.pending.map(entry => { const uploads = update(entry.uploads); return uploads === entry.uploads ? entry : { ...entry, uploads }; });
+    publish({ ...state, uploads: update(state.uploads), pending: pending.some((entry, index) => entry !== state.pending[index]) ? pending : state.pending });
   };
   const start = (upload: Upload) => {
     if (upload.saved || waiters.has(upload.key)) return;

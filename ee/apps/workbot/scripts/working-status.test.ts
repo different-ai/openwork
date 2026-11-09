@@ -2,8 +2,8 @@ import assert from "node:assert/strict"
 import { test } from "node:test"
 import type { RunnerSnapshot } from "@openwork-ee/headless-protocol"
 import { buildWorkbotTurns, interruptedTurnIds, threadBusy, toWorkbotPageEvent, workbotInstructions } from "@openwork-ee/workbot-server"
-import { workbotActivity } from "../../../packages/workbot-ui/src/activity.js"
-import type { WorkbotTurn } from "../../../packages/workbot-ui/src/data.js"
+import { liveStatus, nextTaskQuietAt, TASK_QUIET_MS, workbotActivity } from "../../../packages/workbot-ui/src/activity.js"
+import type { LiveText, WorkbotTurn } from "../../../packages/workbot-ui/src/data.js"
 
 const base = { name: "Workbot", organizationName: "Example", firstName: "Alex", timeZone: "UTC", canSchedule: false }
 
@@ -155,4 +155,52 @@ test("abandoned foreground calls lose their running steps and Stop eligibility",
   assert.equal(threadBusy(stopped), false)
   assert.deepEqual(interruptedTurnIds(stopped), [])
   assert.equal(workbotActivity([turn!] as WorkbotTurn[], {}).working, false)
+})
+
+test("the status line reads the stream without its words, so a streamed word never moves it", () => {
+  const answering = buildWorkbotTurns({
+    status: "busy", finalAssistantText: "", hasEarlier: false,
+    turns: [{ messageId: "wb_m3", status: "running", createdAt: 100, error: null }],
+    messages: [
+      { messageId: "wb_m3", role: "user", text: "What did I miss?" },
+      { messageId: "wb_m3", role: "assistant", text: "", createdAt: 110, toolCalls: [{ id: "a1", name: "execute_capability", input: { name: "slack:searchMessages" } }] },
+      { messageId: "wb_m3", role: "tool", callId: "a1", name: "execute_capability", isError: false, createdAt: 120 },
+    ],
+  }) as WorkbotTurn[]
+  const plain: WorkbotTurn[] = [{ ...answering[0]!, parts: [], modelSteps: 0 }]
+  const streams: Array<Record<string, LiveText>> = [
+    {},
+    { m3: { step: 1, text: "" } },
+    { m3: { step: 1, text: " \n" } },
+    { m3: { step: 1, text: "Here is what" } },
+    { m3: { step: 1, text: "Here is what you missed", earlier: [{ step: 0, text: "On it." }] } },
+    { m3: { step: 1, text: "", working: { on: "computer", since: 5, surface: "browser", update: "Opening the page" } } },
+    { m3: { step: 1, text: "Checking", working: { on: "other", since: 5 } } },
+    { m3: { step: 0, text: "An earlier call's words" } },
+  ]
+  for (const turns of [answering, plain]) {
+    for (const live of streams) assert.deepEqual(workbotActivity(turns, liveStatus(live), 1_000), workbotActivity(turns, live, 1_000))
+  }
+  // More words of the same reply read the same, so the page around the reply has nothing to re-render.
+  assert.deepEqual(liveStatus(streams[3]!), liveStatus(streams[4]!))
+  assert.notDeepEqual(liveStatus(streams[1]!), liveStatus(streams[3]!))
+})
+
+test("the page ages tasks at the moment one goes quiet, not on a ticking clock", () => {
+  const [turn] = buildWorkbotTurns(snapshot) as WorkbotTurn[]
+  const [task] = turn!.tasks
+  const stepped = { ...task!, id: "stepped", startedAt: 1_000, steps: [{ label: "Building", done: false, at: 5_000 }] }
+  const started = { ...task!, id: "started", startedAt: 2_000, steps: [] }
+  const ended = { ...task!, id: "ended", status: "done" as const, startedAt: 3_000, finishedAt: 4_000, steps: [] }
+  const turns = [{ ...turn!, tasks: [stepped, started, ended] }]
+  const quiet = (now: number) => workbotActivity(turns, {}, now).tasks.filter((entry) => entry.quiet).map((entry) => entry.id).sort()
+  // The first task to go quiet sets the next time worth looking; until then the clock changes nothing.
+  assert.equal(nextTaskQuietAt(turns, 10_000), 2_000 + TASK_QUIET_MS)
+  assert.deepEqual(quiet(10_000), quiet(2_000 + TASK_QUIET_MS - 1))
+  assert.deepEqual(quiet(2_000 + TASK_QUIET_MS), ["started"])
+  assert.equal(nextTaskQuietAt(turns, 2_000 + TASK_QUIET_MS), 5_000 + TASK_QUIET_MS)
+  assert.deepEqual(quiet(5_000 + TASK_QUIET_MS), ["started", "stepped"])
+  // Nothing left to wait for: unfinished tasks are all quiet already, and finished ones never go quiet.
+  assert.equal(nextTaskQuietAt(turns, 5_000 + TASK_QUIET_MS), null)
+  assert.equal(nextTaskQuietAt([{ ...turn!, tasks: [ended] }], 0), null)
 })

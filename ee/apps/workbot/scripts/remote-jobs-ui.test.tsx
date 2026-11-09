@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { renderToStaticMarkup } from "react-dom/server";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { RemoteJobs, orderRemoteJobs, remoteJobActivity, remoteJobStateLabel, remoteJobUpdatedLabel, remoteWatcherTaskIds, retainRemoteStatuses, useWorkbotRemoteJobs } from "../../../packages/workbot-ui/src/remote-jobs";
+import { RemoteJobs, followConversation, orderRemoteJobs, remoteJobActivity, remoteJobStateLabel, remoteJobUpdatedLabel, remoteJobsPollMs, remoteWatcherTaskIds, retainRemoteStatuses, useWorkbotRemoteJobs } from "../../../packages/workbot-ui/src/remote-jobs";
 import { setWorkbotHost, type WorkbotHost } from "../../../packages/workbot-ui/src/host";
 import type { WorkbotRemoteJob } from "@openwork/types/workbot-remote-jobs";
 
@@ -68,6 +68,60 @@ for (const [state, label] of [["idle", "Finished"], ["error", "Couldn't finish"]
   assert.ok(job.status);
   assert.equal(remoteJobStateLabel({ ...job, status: { ...job.status, state } }), label);
 }
+// The list is polled quickly only while a task may still change, slowly once all are finished, and not at all with none.
+assert.equal(remoteJobsPollMs({ jobs: [running, finishedOld], hasEarlier: false }, false), 15_000);
+assert.equal(remoteJobsPollMs({ jobs: [job], hasEarlier: false }, false), 15_000, "waiting on the person is still open");
+assert.equal(remoteJobsPollMs({ jobs: [{ ...job, stale: true }], hasEarlier: false }, true), 15_000, "a failed refresh keeps following an open task");
+assert.equal(remoteJobsPollMs({ jobs: [never], hasEarlier: false }, false), 15_000, "a task not checked yet is tried again");
+assert.equal(remoteJobsPollMs({ jobs: [finishedOld, failed], hasEarlier: false }, false), 60_000, "a finished task may be continued elsewhere");
+assert.equal(remoteJobsPollMs({ jobs: [], hasEarlier: false }, false), false);
+assert.equal(remoteJobsPollMs(undefined, false), false);
+assert.equal(remoteJobsPollMs(undefined, true), 60_000, "a read that failed is tried again, slowly");
+// A new task is found when the conversation changes, not by a timer: at most one re-read per 15 s, never while hidden.
+async function conversationFollowed() {
+  const queries = new QueryClient();
+  const remoteKey = ["workbot", "remote-jobs", undefined, "main"];
+  const thread = ["workbot", "thread", "main", 30];
+  const tick = () => new Promise(resolve => setTimeout(resolve, 5));
+  const invalidated = () => queries.getQueryState(remoteKey)?.isInvalidated === true;
+  const settle = (updatedAt: number) => queries.setQueryData(remoteKey, { jobs: [], hasEarlier: false }, { updatedAt });
+  let hidden = false;
+  let clock = 1_000_000;
+  queries.setQueryData(thread, { turns: [{ id: "one", steps: 1 }] });
+  settle(clock - 60_000);
+  const following = followConversation(queries, { chat: null, remoteKey, hidden: () => hidden, now: () => clock });
+  queries.setQueryData(thread, { turns: [{ id: "one", steps: 1 }] });
+  await tick();
+  assert.equal(invalidated(), false, "a re-read that changed nothing looks for nothing");
+  queries.setQueryData(["workbot", "thread", "sidechat000000001", 30], { turns: [{ id: "other", steps: 1 }] });
+  queries.setQueryData(["workbot", "thread", "sidechat000000001", 30], { turns: [{ id: "other", steps: 2 }] });
+  await tick();
+  assert.equal(invalidated(), false, "another chat's change is not this chat's");
+  queries.setQueryData(thread, { turns: [{ id: "one", steps: 2 }] });
+  await tick();
+  assert.equal(invalidated(), true, "a step landed: the list is read again");
+  // Read a moment ago: the next change waits for the rest of the 15 s rather than reading on every step.
+  settle(clock);
+  queries.setQueryData(thread, { turns: [{ id: "one", steps: 3 }] });
+  await tick();
+  assert.equal(invalidated(), false);
+  following.stop();
+  // Hidden: the change is kept for when the page is shown.
+  settle(clock - 60_000);
+  const quiet = followConversation(queries, { chat: null, remoteKey, hidden: () => hidden, now: () => clock });
+  hidden = true;
+  queries.setQueryData(thread, { turns: [{ id: "one", steps: 4 }] });
+  await tick();
+  assert.equal(invalidated(), false, "a hidden page reads nothing");
+  hidden = false;
+  quiet.shown();
+  assert.equal(invalidated(), true);
+  quiet.stop();
+  settle(clock - 60_000);
+  queries.setQueryData(thread, { turns: [{ id: "one", steps: 5 }] });
+  await tick();
+  assert.equal(invalidated(), false, "stopped");
+}
 setWorkbotHost({ ...host, remoteTasks: false });
 assert.equal(renderToStaticMarkup(<RemoteJobs jobs={[job]} />), "", "flag-off UI masks cached data");
 const client = new QueryClient();
@@ -79,4 +133,7 @@ function Probe() {
 }
 renderToStaticMarkup(<QueryClientProvider client={client}><Probe /></QueryClientProvider>);
 assert.equal(requests, 0);
-console.log("remote jobs UI: safe pending text, truthful states, stale retention, explicit watcher ids, default-off cache masking passed");
+void conversationFollowed().then(
+  () => console.log("remote jobs UI: safe pending text, truthful states, stale retention, explicit watcher ids, default-off cache masking, polling only open tasks passed"),
+  (error: unknown) => { console.error(error); process.exitCode = 1; },
+);

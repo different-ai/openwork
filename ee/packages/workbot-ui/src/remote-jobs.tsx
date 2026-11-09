@@ -1,10 +1,10 @@
 "use client";
 
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useState } from "react";
+import { useMutation, useQuery, useQueryClient, type QueryClient, type QueryKey } from "@tanstack/react-query";
+import { useEffect, useState } from "react";
 import { Check, ChevronRight, CircleAlert, CircleX, Clock3, Lock, Monitor } from "lucide-react";
 import { workbotRemoteJobsSchema, workbotRemoteJobDetailSchema, workbotRemoteJobStopSchema, type WorkbotRemoteJob, type WorkbotRemoteJobs } from "@openwork/types/workbot-remote-jobs";
-import { inChat, useWorkbotChat } from "./data";
+import { inChat, useWorkbotChat, workbotQueryKey } from "./data";
 import { errorMessage, workbotHost } from "./host";
 
 export type { WorkbotRemoteJob, WorkbotRemoteJobs } from "@openwork/types/workbot-remote-jobs";
@@ -23,12 +23,96 @@ export function retainRemoteStatuses(next: WorkbotRemoteJobs, previous?: Workbot
   }) };
 }
 
-/** One member-scoped read, shared by header and profile. Off unless its host feature is enabled. */
-export function useWorkbotRemoteJobs(enabled: boolean) {
+/** A read older than this no longer vouches for what a task is doing. */
+const OVERDUE_MS = 45_000;
+
+/** How often the list is read while a task may still change. */
+const REMOTE_JOBS_POLL_MS = 15_000;
+/** How often it is read when no task is open: finished tasks (one may be continued elsewhere), or a read that failed. */
+const REMOTE_JOBS_SLOW_MS = 60_000;
+
+/** A task whose state may still change: working, waiting or starting when last seen, or not checked yet. */
+function remoteJobOpen(job: WorkbotRemoteJob) {
+  return !job.status || lastKnownActive(job);
+}
+
+/**
+ * When to read the list again on a timer: every 15 s while a task is open, every minute while its tasks are all
+ * finished or after a failed read, and not at all with no tasks (a new one is found by `followConversation`).
+ */
+export function remoteJobsPollMs(data: WorkbotRemoteJobs | undefined, failed: boolean): number | false {
+  if (data?.jobs.some(remoteJobOpen)) return REMOTE_JOBS_POLL_MS;
+  return failed || data?.jobs.length ? REMOTE_JOBS_SLOW_MS : false;
+}
+
+/**
+ * A remote task starts in a turn, so the list is read again when the conversation changes (a step lands, an answer
+ * finishes) instead of on a timer: at most once per REMOTE_JOBS_POLL_MS, and the last change is never dropped. A page
+ * nobody is looking at waits until it is shown (`shown`). Returns how to stop.
+ */
+export function followConversation(queryClient: QueryClient, input: { chat: string | null; remoteKey: QueryKey; hidden?: () => boolean; now?: () => number }) {
+  const hidden = input.hidden ?? (() => typeof document !== "undefined" && document.visibilityState === "hidden");
+  const now = input.now ?? Date.now;
+  const isThread = (key: QueryKey) => key[0] === workbotQueryKey[0] && key[1] === workbotQueryKey[1] && key[2] === (input.chat ?? "main");
+  // What each read of the conversation last held. A re-read that changed nothing keeps the same object.
+  const seen = new Map<string, unknown>();
+  for (const query of queryClient.getQueryCache().findAll({ predicate: (query) => isThread(query.queryKey) })) seen.set(query.queryHash, query.state.data);
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  let missed = false;
+  const read = () => {
+    timer = undefined;
+    if (hidden()) {
+      missed = true;
+      return;
+    }
+    missed = false;
+    void queryClient.invalidateQueries({ queryKey: input.remoteKey, exact: true });
+  };
+  const unsubscribe = queryClient.getQueryCache().subscribe((event) => {
+    if (event.type === "removed") seen.delete(event.query.queryHash);
+    if (event.type !== "updated" || event.action.type !== "success" || !isThread(event.query.queryKey)) return;
+    const known = seen.has(event.query.queryHash);
+    const changed = seen.get(event.query.queryHash) !== event.query.state.data;
+    seen.set(event.query.queryHash, event.query.state.data);
+    // The first read of a window is what the list's own first read already saw.
+    if (!known || !changed || timer !== undefined) return;
+    const last = queryClient.getQueryState(input.remoteKey)?.dataUpdatedAt ?? 0;
+    timer = setTimeout(read, Math.max(0, last + REMOTE_JOBS_POLL_MS - now()));
+  });
+  return {
+    /** The page is shown again: read now if the conversation changed while it was hidden. */
+    shown() {
+      if (missed && timer === undefined) read();
+    },
+    stop() {
+      unsubscribe();
+      clearTimeout(timer);
+    },
+  };
+}
+
+/**
+ * One member-scoped read, shared by header and profile. Off unless its host feature is enabled. `follow`: this caller
+ * (the screen, once) re-reads the list when the conversation changes.
+ */
+export function useWorkbotRemoteJobs(enabled: boolean, options: { follow?: boolean } = {}) {
   const chat = useWorkbotChat();
   const queryClient = useQueryClient();
   const allowed = enabled && workbotHost().remoteTasks === true;
   const key = ["workbot", "remote-jobs", workbotHost().identity, chat ?? "main"];
+  const follow = allowed && options.follow === true;
+  useEffect(() => {
+    if (!follow) return;
+    const following = followConversation(queryClient, { chat, remoteKey: ["workbot", "remote-jobs", workbotHost().identity, chat ?? "main"] });
+    const shown = () => {
+      if (document.visibilityState === "visible") following.shown();
+    };
+    document.addEventListener("visibilitychange", shown);
+    return () => {
+      document.removeEventListener("visibilitychange", shown);
+      following.stop();
+    };
+  }, [follow, queryClient, chat]);
   const query = useQuery({
     queryKey: key,
     enabled: allowed,
@@ -39,12 +123,22 @@ export function useWorkbotRemoteJobs(enabled: boolean) {
       return retainRemoteStatuses(workbotRemoteJobsSchema.parse(payload), queryClient.getQueryData<WorkbotRemoteJobs>(key));
     },
     staleTime: 5_000,
-    refetchInterval: allowed ? 15_000 : false,
+    refetchInterval: (current) => (allowed ? remoteJobsPollMs(current.state.data, current.state.status === "error") : false),
     refetchIntervalInBackground: false,
     retry: 1,
   });
+  // Overdue only while the list is being polled: with no task open, nothing is waiting on a refresh.
+  const polled = remoteJobsPollMs(query.data, query.isError) === REMOTE_JOBS_POLL_MS;
+  // Overdue is judged by the clock alone: look again the moment it becomes true, so no page has to keep time for it.
+  const [, look] = useState(0);
+  const updatedAt = query.dataUpdatedAt;
+  useEffect(() => {
+    if (!allowed || !polled || !updatedAt) return;
+    const timer = window.setTimeout(() => look(Date.now()), Math.max(0, updatedAt + OVERDUE_MS - Date.now()) + 1);
+    return () => window.clearTimeout(timer);
+  }, [allowed, polled, updatedAt]);
   // A failed or overdue refresh keeps every row's last state, marked stale; rows show how old it is, not a warning.
-  const unverified = query.isError || Date.now() - query.dataUpdatedAt > 45_000;
+  const unverified = query.isError || (polled && Date.now() - query.dataUpdatedAt > OVERDUE_MS);
   const data = query.data && unverified ? { ...query.data, jobs: query.data.jobs.map(job => ({ ...job, stale: true })) } : query.data;
   return { ...query, data: allowed ? data : undefined };
 }

@@ -28,3 +28,28 @@ test("a HEIC this browser can't decode is sent as it is, without a broken previe
   assert.deepEqual(uploaded, ["Workbot.heic", "shot.png"])
   composer.dispose()
 })
+
+test("typing and one file's upload progress leave the other messages being sent as they are", async () => {
+  const progress = new Map<string, (loaded: number) => void>()
+  const composer = createComposerState((file, onProgress) => { progress.set(file.name, onProgress); return new Promise(() => {}) })
+  composer.enqueue({ id: "message_sending", text: "Still on its way" })
+  composer.add([new File(["notes"], "notes.txt", { type: "text/plain" })])
+  const before = composer.getSnapshot()
+
+  // The conversation reads only `pending`: the same list means nothing in it re-renders.
+  composer.setText("A half-typed reply")
+  progress.get("notes.txt")?.(3)
+  const typed = composer.getSnapshot()
+  assert.equal(typed.pending, before.pending)
+  assert.equal(typed.uploads[0]?.loaded, 3)
+
+  // Once the file's message is sending too, its progress changes that message and no other.
+  composer.enqueue({ id: "message_with_file", text: "With the notes" })
+  const sending = composer.getSnapshot()
+  progress.get("notes.txt")?.(5)
+  const ticked = composer.getSnapshot()
+  assert.equal(ticked.pending[0], sending.pending[0])
+  assert.notEqual(ticked.pending[1], sending.pending[1])
+  assert.equal(ticked.pending[1]?.uploads[0]?.loaded, 5)
+  composer.dispose()
+})

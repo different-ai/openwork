@@ -1,7 +1,7 @@
 "use client";
 
 import { keepPreviousData, useMutation, useQuery, useQueryClient, type QueryClient } from "@tanstack/react-query";
-import { createContext, useContext, useEffect, useRef, useState } from "react";
+import { createContext, useContext, useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { z } from "zod";
 import { workbotDocumentNavigationSchema, workbotViewContextSchema, WORKBOT_MAX_MESSAGE_CHARS, type WorkbotViewContext } from "@openwork/types/workbot-context";
 import { errorMessage as getErrorMessage, hostFetch, workbotHost } from "./host";
@@ -10,6 +10,7 @@ import { workbotAccessFailureSchema, type WorkbotAccessReason } from "@openwork/
 import { loadThreadSnapshot, saveThreadSnapshot } from "./thread-cache";
 import { workbotLiveReadiness } from "./live-readiness";
 import { nextWorking } from "./computer-work";
+import { liveStatus } from "./activity";
 
 const requestJson = (path: string, init?: RequestInit, timeoutMs?: number) => workbotHost().requestJson(path, init, timeoutMs);
 
@@ -201,6 +202,50 @@ const liveEventSchema = z.discriminatedUnion("type", [
   z.object({ type: z.literal("working"), messageId: z.string(), step: z.number(), on: z.enum(["computer", "other"]), background: z.literal(true).optional(), surface: z.enum(["browser", "computer"]).optional(), update: z.string().optional() }),
 ]);
 
+/**
+ * Reply text as it streams, by turn. Kept outside React state so a streamed word re-renders only what reads that turn's
+ * text (`useWorkbotLiveText`), never the whole page.
+ */
+export type WorkbotLiveStore = {
+  get(): Readonly<Record<string, LiveText>>;
+  subscribe(changed: () => void): () => void;
+};
+
+function createLiveStore() {
+  let value: Record<string, LiveText> = {};
+  const listeners = new Set<() => void>();
+  return {
+    get: () => value,
+    subscribe: (changed: () => void) => { listeners.add(changed); return () => { listeners.delete(changed); }; },
+    update(next: (current: Record<string, LiveText>) => Record<string, LiveText>) {
+      const updated = next(value);
+      if (updated === value) return;
+      value = updated;
+      for (const changed of listeners) changed();
+    },
+  };
+}
+
+/** One turn's streamed text (null for none, or no turn yet). Its reader re-renders only when that turn's text changes. */
+export function useWorkbotLiveText(live: WorkbotLiveStore, id: string | null): LiveText | null {
+  return useSyncExternalStore(live.subscribe, () => (id === null ? null : live.get()[id] ?? null), () => null);
+}
+
+/**
+ * The stream as the status line reads it (`liveStatus`), as the same object until it changes: a few times an answer,
+ * not on every streamed word.
+ */
+export function useWorkbotLiveStatus(live: WorkbotLiveStore): Record<string, LiveText> {
+  const kept = useRef<{ key: string; status: Record<string, LiveText> }>({ key: "{}", status: {} });
+  const read = () => {
+    const status = liveStatus(live.get());
+    const key = JSON.stringify(status);
+    if (key !== kept.current.key) kept.current = { key, status };
+    return kept.current.status;
+  };
+  return useSyncExternalStore(live.subscribe, read, read);
+}
+
 async function openStream(signal: AbortSignal, chat: string | null) {
   return hostFetch(inChat("/v1/workbot/events", chat), { headers: { Accept: "text/event-stream" }, signal, cache: "no-store" });
 }
@@ -209,13 +254,13 @@ async function openStream(signal: AbortSignal, chat: string | null) {
  * Keeps a live stream open while the page is: reply text as it is written, and a re-read of the
  * conversation whenever it changes. Re-reads are coalesced so a burst of changes costs one request.
  * Reconnects with backoff (see `liveRetryDelay`); a hidden page tries again once it is shown. Returns whether it is
- * currently connected.
+ * currently connected, and the text being streamed as a store to read from (see `WorkbotLiveStore`).
  */
-export function useWorkbotLive(enabled: boolean) {
+export function useWorkbotLive(enabled: boolean): { connected: boolean; live: WorkbotLiveStore } {
   const queryClient = useQueryClient();
   const chat = useWorkbotChat();
   const [connected, setConnected] = useState(false);
-  const [live, setLive] = useState<Record<string, LiveText>>({});
+  const [live] = useState(createLiveStore);
   const refetching = useRef<{ running: boolean; again: boolean }>({ running: false, again: false });
   // Workbot isn't on for the organization: no stream until the page is shown again or a re-read finds it on.
   const [off, setOff] = useState(false);
@@ -242,7 +287,7 @@ export function useWorkbotLive(enabled: boolean) {
   useEffect(() => {
     if (!enabled || off) return;
     // Another chat: none of the text streaming in the last one belongs here.
-    setLive({});
+    live.update((current) => (Object.keys(current).length ? {} : current));
     const controller = new AbortController();
     const readiness = workbotLiveReadiness.subscribe(chat);
     // Waits that end as soon as the page leaves.
@@ -300,7 +345,7 @@ export function useWorkbotLive(enabled: boolean) {
         void refresh();
         return;
       }
-      setLive((current) => {
+      live.update((current) => {
         const previous = current[value.messageId];
         if (previous && value.step < previous.step) return current;
         const sameStep = previous?.step === value.step;
@@ -366,7 +411,7 @@ export function useWorkbotLive(enabled: boolean) {
     };
     void run();
     return () => { readiness.disconnect(); controller.abort(); };
-  }, [enabled, off, queryClient, chat]);
+  }, [enabled, off, queryClient, chat, live]);
 
   return { connected, live };
 }
