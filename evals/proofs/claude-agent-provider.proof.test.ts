@@ -147,6 +147,9 @@ saved("a person with a synthetic Claude Code account saves and disconnects only 
     await user.see({ role: "button", label: "Disconnect" }, { timeoutMs: WITHIN });
     await user.click({ role: "button", label: "Disconnect" });
     await probe.eventually(world.integration, { within: WITHIN, label: "native connection removed", until: values => values.length === 0 });
+    await probe.eventually(async () => (await probe.dom('[data-sonner-toast]')).elements.map((element) => element.text).join(" "), {
+      within: 5_000, label: "the saved notification finishes dismissing", until: (text) => !text.includes("Connection saved"),
+    });
     await user.notSee({ text: /^Connection saved$/ });
     const audit = await world.audit();
     expect(audit.some(event => event.subtype === "initialize")).toBe(true);
