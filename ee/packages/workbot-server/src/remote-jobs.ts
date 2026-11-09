@@ -67,6 +67,11 @@ function keysOf(body: Record<string, unknown>): string[] {
   return []
 }
 
+/** Whether the transcript has a remote-session:create call at all. Proving its receipt takes the tool outputs. */
+export function hasRemoteCreateCall(snapshot: RunnerSnapshot) {
+  return snapshot.messages.some(message => message.role === "assistant" && message.toolCalls.some(call => capability(call)?.name === "remote-session:create"))
+}
+
 /**
  * Windowed discovery from the actor-owned runner transcript. A successful create and its matching tool return are
  * required. Ref text in prose, failed/unanswered creates and watcher titles cannot create a remote task.

@@ -1,9 +1,10 @@
 import { createHash } from "node:crypto"
-import type { Context, Hono, MiddlewareHandler } from "hono"
+import type { Context, ErrorHandler, Hono, MiddlewareHandler } from "hono"
 import { deleteCookie, getCookie, setCookie } from "hono/cookie"
+import { routePath } from "hono/route"
 import { z } from "zod"
 import type { Config } from "./config.js"
-import { DenRateLimitedError, DenSignedOutError, type Den, type DenSession } from "./den.js"
+import { DenRateLimitedError, DenSignedOutError, DenUnavailableError, WorkbotTurnAccessError, type Den, type DenSession } from "./den.js"
 import { reportError } from "./error-reporting.js"
 import { createSealer, MAX_COOKIE_VALUE, randomToken, sessionSchema, type Tokens } from "./sealed.js"
 
@@ -27,6 +28,14 @@ const LOGIN_PURPOSE = "workbot-login-v1"
 const REFRESH_MARGIN_MS = 2 * 60_000
 /** How long Den's answer about who someone is (and whether Workbot is on) is reused. */
 const DEN_SESSION_CACHE_MS = 30_000
+/**
+ * While Den can't be reached (no answer, or 5xx), its last answer for the same sign-in and token stands in for at
+ * most this long after Den gave it. Anything Den does answer replaces it at once.
+ */
+const DEN_SESSION_STAND_IN_MS = 2 * 60_000
+/** After Den couldn't be reached, requests covered by that answer don't ask again for this long. */
+const DEN_SESSION_RETRY_MS = 10_000
+const DEN_SESSIONS_KEPT = 10_000
 /** A sign-in must finish within this long. */
 const LOGIN_TTL_MS = 10 * 60_000
 /** Den's refresh tokens last 30 days, and so does the cookie; each refresh starts it again. */
@@ -64,9 +73,10 @@ const hashToken = (token: string) => createHash("sha256").update(token).digest("
 /** What sign-in needs from Den. */
 export type DenAuth = Pick<Den, "authorizeUrl" | "exchangeCode" | "session" | "refresh" | "revoke"> & Partial<Pick<Den, "recordSignIn">>
 
-export function createAuth(input: { config: Pick<Config, "publicUrl" | "secureCookies" | "sessionSecret">; den: DenAuth; now?: () => number }) {
+export function createAuth(input: { config: Pick<Config, "publicUrl" | "secureCookies" | "sessionSecret">; den: DenAuth; now?: () => number; report?: typeof reportError }) {
   const { config, den } = input
   const now = input.now ?? Date.now
+  const report = input.report ?? reportError
   const sealer = createSealer(config.sessionSecret)
   // Over plain http (local), cookies are shared by every port of a host, so each Workbot names its own by port:
   // two local Workbots on 127.0.0.1 must never read or replace each other's sign-in.
@@ -79,7 +89,10 @@ export function createAuth(input: { config: Pick<Config, "publicUrl" | "secureCo
   const refreshed = new Map<string, { at: number; tokens: Tokens }>()
   /** Refresh tokens Den asked Workbot to wait on, and until when: no call reaches Den before then. */
   const coolingDown = new Map<string, number>()
-  const denSessions = new Map<string, { at: number; tokenHash: string; value: DenSession }>()
+  /** Den's last answer per sign-in: when Den gave it, for which token, and when Den last couldn't be reached. */
+  const denSessions = new Map<string, { at: number; tokenHash: string; value: DenSession; failedAt?: number }>()
+  /** The check in flight per sign-in and token, shared by concurrent requests. */
+  const denSessionChecks = new Map<string, Promise<DenSession>>()
 
   const readSession = (c: Context) => sealer.open(SESSION_PURPOSE, getCookie(c, sessionCookie), sessionSchema)
   const writeSession = (c: Context, session: Session) => {
@@ -124,7 +137,7 @@ export function createAuth(input: { config: Pick<Config, "publicUrl" | "secureCo
         }, (error: unknown) => {
           if (error instanceof DenRateLimitedError) {
             coolingDown.set(key, now() + error.retryAfter * 1000)
-            reportError("token_refresh_failed", error, { response: "den_unavailable", reason: "rate_limited" })
+            report("token_refresh_failed", error, { response: "den_unavailable", reason: "rate_limited" })
           }
           throw error
         })
@@ -134,16 +147,50 @@ export function createAuth(input: { config: Pick<Config, "publicUrl" | "secureCo
     return pending
   }
 
-  const denSession = async (sessionId: string, accessToken: string) => {
+  const denSession = (sessionId: string, accessToken: string): Promise<DenSession> => {
     const tokenHash = hashToken(accessToken)
     const cached = denSessions.get(sessionId)
-    if (cached && cached.tokenHash === tokenHash && now() - cached.at < DEN_SESSION_CACHE_MS) return cached.value
-    const value = await den.session(accessToken)
-    denSessions.set(sessionId, { at: now(), tokenHash, value })
-    if (denSessions.size > 10_000) {
-      for (const [entry, cachedValue] of denSessions) if (now() - cachedValue.at >= DEN_SESSION_CACHE_MS) denSessions.delete(entry)
+    if (cached && cached.tokenHash === tokenHash) {
+      if (now() - cached.at < DEN_SESSION_CACHE_MS) return Promise.resolve(cached.value)
+      // Den couldn't be reached a moment ago and this answer still covers the person: don't pile onto Den.
+      if (cached.failedAt !== undefined && now() - cached.failedAt < DEN_SESSION_RETRY_MS && now() - cached.at < DEN_SESSION_STAND_IN_MS) return Promise.resolve(cached.value)
     }
-    return value
+    const key = `${sessionId}:${tokenHash}`
+    let pending = denSessionChecks.get(key)
+    if (!pending) {
+      pending = den
+        .session(accessToken)
+        .then((value) => {
+          denSessions.delete(sessionId)
+          denSessions.set(sessionId, { at: now(), tokenHash, value })
+          if (denSessions.size > DEN_SESSIONS_KEPT) {
+            for (const [entry, kept] of denSessions) if (now() - kept.at >= DEN_SESSION_STAND_IN_MS) denSessions.delete(entry)
+            // Still full: the oldest answers go first.
+            for (const entry of denSessions.keys()) {
+              if (denSessions.size <= DEN_SESSIONS_KEPT) break
+              denSessions.delete(entry)
+            }
+          }
+          return value
+        }, (error: unknown) => {
+          const last = denSessions.get(sessionId)
+          // Only Den not answering is covered, only by its own recent answer for this same sign-in and token, and
+          // never for longer: `at` stays when Den gave the answer.
+          if (error instanceof DenUnavailableError && last && last.tokenHash === tokenHash && now() - last.at < DEN_SESSION_STAND_IN_MS) {
+            last.failedAt = now()
+            console.error("[workbot] den unavailable, using its recent answer", { error: error.message })
+            report("den_unavailable", error, { response: "recent_session" })
+            return last.value
+          }
+          // Den answered (signed out, not a member, something unreadable), or its last answer is too old or for
+          // another token: nothing remembered may speak for the person.
+          denSessions.delete(sessionId)
+          throw error
+        })
+        .finally(() => denSessionChecks.delete(key))
+      denSessionChecks.set(key, pending)
+    }
+    return pending
   }
 
   /** Requires a current session; a scope-bound tab may only see its original identity. */
@@ -197,10 +244,33 @@ export function createAuth(input: { config: Pick<Config, "publicUrl" | "secureCo
         return c.json({ error: "den_unavailable" }, 503, { "Retry-After": String(error.retryAfter) })
       }
       console.error("[workbot] den unavailable", { error: error instanceof Error ? error.message : "unknown" })
-      reportError(stage === "refresh" ? "token_refresh_failed" : "den_unavailable", error, { response: "den_unavailable" })
+      report(stage === "refresh" ? "token_refresh_failed" : "den_unavailable", error, { response: "den_unavailable" })
       return c.json({ error: "den_unavailable" }, 503)
     }
     await next()
+  }
+
+  /**
+   * What a route that threw answers. Den refusing the person's token, or not answering, on a route's own call reads
+   * as it does at sign-in (`signed_out`, `den_unavailable`), so the page handles it the same way; only a failure
+   * nobody expected is a 500 and a `route_error`.
+   */
+  const onError: ErrorHandler<AppEnv> = (error, c) => {
+    if (error instanceof WorkbotTurnAccessError) return error.response()
+    if (error instanceof DenSignedOutError) {
+      // The next request asks Den who this is rather than trust what it said before; that check ends the sign-in.
+      const session = readSession(c)
+      if (session) denSessions.delete(session.id)
+      return c.json({ error: "signed_out" }, 401)
+    }
+    if (error instanceof DenUnavailableError) {
+      console.error("[workbot] den unavailable", { path: c.req.path, error: error.message })
+      report("den_unavailable", error, { response: "den_unavailable", route: routePath(c), method: c.req.method })
+      return c.json({ error: "den_unavailable" }, 503)
+    }
+    console.error("[workbot] request failed", { path: c.req.path, error: error.message })
+    report("route_error", error, { route: routePath(c), method: c.req.method })
+    return c.json({ error: "internal_error" }, 500)
   }
 
   /** Changes to a conversation must come from Workbot's own page (on top of SameSite=Lax cookies). */
@@ -242,7 +312,7 @@ export function createAuth(input: { config: Pick<Config, "publicUrl" | "secureCo
         return c.redirect(await den.authorizeUrl({ state, verifier, chooseWorkspace: c.req.query("workspace") === "choose" }), 302)
       } catch (error) {
         console.error("[workbot] sign-in unavailable", { error: error instanceof Error ? error.message : "unknown" })
-        reportError("sign_in_unavailable", error)
+        report("sign_in_unavailable", error)
         return c.html(page("Workbot can't reach OpenWork", "Signing in isn't working right now. Try again in a minute.", { href: "/auth/login", label: "Try again" }), 503)
       }
     })
@@ -271,7 +341,7 @@ export function createAuth(input: { config: Pick<Config, "publicUrl" | "secureCo
       } catch (error) {
         console.error("[workbot] sign-in failed", { error: error instanceof Error ? error.message : "unknown" })
         // Den refusing the code (a reused or expired link) is tagged apart from Den failing.
-        reportError("sign_in_failed", error, { reason: error instanceof DenSignedOutError ? "rejected" : "error" })
+        report("sign_in_failed", error, { reason: error instanceof DenSignedOutError ? "rejected" : "error" })
         return c.html(page("Let's try that again", "OpenWork didn't finish signing you in.", { href: "/auth/login", label: "Sign in" }), 400)
       }
     })
@@ -291,5 +361,5 @@ export function createAuth(input: { config: Pick<Config, "publicUrl" | "secureCo
     })
   }
 
-  return { member, sameOrigin, register }
+  return { member, sameOrigin, register, onError }
 }

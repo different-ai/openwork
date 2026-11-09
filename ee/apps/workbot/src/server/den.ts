@@ -114,6 +114,20 @@ export class DenSignedOutError extends Error {
   }
 }
 
+/**
+ * Den couldn't be reached, didn't answer in time, or answered 5xx. A passing failure: never an answer about the
+ * person. `message` is a plain code (`den_unreachable`, `den_timeout`, `den_session_503`).
+ */
+export class DenUnavailableError extends Error {
+  constructor(code: string) {
+    super(code)
+    this.name = "DenUnavailableError"
+  }
+}
+
+/** A call to Den that got no answer at all, as the error callers tell apart from Den's own answers. */
+const unanswered = (error: unknown) => new DenUnavailableError(error instanceof Error && error.name === "TimeoutError" ? "den_timeout" : "den_unreachable")
+
 /** Den's token endpoint asked Workbot to wait this many seconds before asking again. */
 export class DenRateLimitedError extends Error {
   constructor(readonly retryAfter: number) {
@@ -214,7 +228,7 @@ export function createDen(options: { apiUrl: string; publicUrl: string; serviceT
       headers: { authorization: `Bearer ${accessToken}`, accept: "application/json", ...(body ? { "content-type": "application/json" } : {}) },
       ...(body ? { body: JSON.stringify(body) } : {}),
       signal: AbortSignal.timeout(TIMEOUT_MS),
-    })
+    }).catch((error: unknown) => { throw unanswered(error) })
     if (response.status === 401) throw new DenSignedOutError()
     const payload: unknown = await response.json().catch(() => null)
     return { status: response.status, payload }
@@ -328,6 +342,8 @@ export function createDen(options: { apiUrl: string; publicUrl: string; serviceT
     async session(accessToken: string): Promise<DenSession> {
       const { status, payload } = await authorized("GET", "/v1/workbot/session", accessToken)
       const parsed = denSessionSchema.safeParse(payload)
+      // 5xx is Den failing, not Den answering: only that (and no answer at all) may be covered by a recent answer.
+      if (status >= 500) throw new DenUnavailableError(`den_session_${status}`)
       if (status !== 200 || !parsed.success) throw new Error(`den_session_${status}`)
       return parsed.data
     },
@@ -394,6 +410,7 @@ export function createDen(options: { apiUrl: string; publicUrl: string; serviceT
     },
     async documentContent(accessToken: string, path: string) {
       const response = await fetch(`${options.apiUrl}/v1/workbot/documents${path}`, { headers: { authorization: `Bearer ${accessToken}` }, signal: AbortSignal.timeout(TIMEOUT_MS) })
+        .catch((error: unknown) => { throw unanswered(error) })
       if (response.status === 401) throw new DenSignedOutError()
       return response
     },

@@ -198,7 +198,9 @@ test("message and edit routes fail closed before runner access; normal chat stil
     assert.deepEqual(values[0], { text: "Summarize this", context: workbotContextForModel(context) })
     assert.deepEqual(values[1], { text: "My week?", context: calendar })
     assert.deepEqual(values[2], { text: "Hello" })
-    assert.notEqual(sessions[0], sessions[2], "different members keep distinct runner sessions")
+    // The second message found member_a's chat as the first left it, so it wasn't written again.
+    assert.equal(sessions.length, 2)
+    assert.notEqual(sessions[0], sessions[1], "different members keep distinct runner sessions")
     const reference = { messageId: "wb_message_001", quote: "Summarize this", sentAt: 100 }
     const overhead = workbotContextPrompt(workbotCorrectionPrompt("", reference), context).length
     const boundary = "x".repeat(WORKBOT_MAX_MESSAGE_CHARS - overhead)
@@ -207,7 +209,7 @@ test("message and edit routes fail closed before runner access; normal chat stil
     assert.equal(refused.status, 400)
     assert.deepEqual(await refused.json(), { error: "message_too_long", message: "That's too long for one message. Send it as a file instead." })
     assert.equal(turns.length, 3, "a final-envelope overflow never reaches the runner")
-    assert.equal(sessions.length, 3, "a final-envelope overflow never changes session settings")
+    assert.equal(sessions.length, 2, "a final-envelope overflow never changes session settings")
     assert.equal((await send({ newId: "message_004", text: boundary, context }, {}, path)).status, 202)
     const correction = turns[3]
     assert.ok(typeof correction === "object" && correction !== null && "prompt" in correction && typeof correction.prompt === "string")

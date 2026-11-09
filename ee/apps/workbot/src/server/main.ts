@@ -4,11 +4,10 @@ import { fileURLToPath } from "node:url"
 import { getRequestListener } from "@hono/node-server"
 import { registerClientFiles } from "./static-cache.js"
 import { Hono } from "hono"
-import { routePath } from "hono/route"
 import { createAuth, type AppEnv } from "./auth.js"
 import { loadConfig } from "./config.js"
-import { createDen, WorkbotTurnAccessError } from "./den.js"
-import { closeErrorReporting, initErrorReporting, reportError } from "./error-reporting.js"
+import { createDen } from "./den.js"
+import { closeErrorReporting, initErrorReporting } from "./error-reporting.js"
 import { registerWorkbotRoutes } from "./routes.js"
 import { registerReadinessRoute } from "./readiness.js"
 
@@ -24,12 +23,7 @@ app.use("*", async (c, next) => {
   c.header("Referrer-Policy", "strict-origin-when-cross-origin")
   c.header("X-Frame-Options", "DENY")
 })
-app.onError((error, c) => {
-  if (error instanceof WorkbotTurnAccessError) return error.response()
-  console.error("[workbot] request failed", { path: c.req.path, error: error.message })
-  reportError("route_error", error, { route: routePath(c), method: c.req.method })
-  return c.json({ error: "internal_error" }, 500)
-})
+app.onError(auth.onError)
 app.get("/healthz", (c) => c.json({ ok: true }))
 registerReadinessRoute(app, config)
 auth.register(app)
