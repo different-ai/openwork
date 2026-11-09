@@ -397,6 +397,17 @@ export const FEATURES = defineFeatures({
     deployments: everywhere,
     default: false,
   },
+  workbotDocumentMedia: {
+    label: "Workbot Documents: video and audio",
+    description: "Members play video and audio files from Drive and OneDrive in the document's tab, with seeking, instead of only a link to the original. Requires Workbot Documents.",
+    category: "workbot",
+    added: "2026-11-09",
+    since: "2026-11",
+    author: "reachjalil",
+    docs: "docs/features/workbot-document-media/README.md",
+    deployments: everywhere,
+    default: false,
+  },
   workbotWorkspaceAssistant: {
     label: "Workbot: workspace assistant",
     description: "Members ask Workbot about the document they have open (Ask Workbot brings it into the chat) and navigate from a compact sidebar. Workbot offers to open the documents it mentions. The chat itself stays on its own page.",

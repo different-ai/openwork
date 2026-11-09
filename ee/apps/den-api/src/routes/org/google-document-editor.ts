@@ -10,6 +10,7 @@ import { cellInputFromText, unsafeFormulaReason } from "@openwork/documents/offi
 import { env } from "../../env.js"
 import { orgMemberRoute, jsonValidator, paramValidator, queryValidator } from "../../middleware/index.js"
 import { jsonResponse } from "../../openapi.js"
+import { documentMediaKind, documentMediaRange, documentMediaRangeHeader, documentMediaResponse, documentMediaUnsatisfiable, readDocumentMediaRange } from "./document-media.js"
 import { readGoogleActionJson, requestGoogleAction, type GoogleWorkspaceActionDependencies } from "./google-workspace-actions.js"
 import type { OrgRouteVariables } from "./shared.js"
 
@@ -96,7 +97,7 @@ export function registerGoogleDocumentEditorRoutes<T extends { Variables: OrgRou
     if (!file.success || file.data.id !== fileId || file.data.trashed) return { ok: false, reply: failure(c, "This file is unavailable or in the trash.") } as const
     return { ok: true, file: file.data } as const
   }
-  const media = async (c: Parameters<typeof requestGoogleAction>[0], selected: GoogleWorkspaceActionDependencies, fileId: string) => { const url = readFile(fileId); url.searchParams.delete("fields"); url.searchParams.set("alt", "media"); return requestGoogleAction(c, selected, readScopes, url) }
+  const media = async (c: Parameters<typeof requestGoogleAction>[0], selected: GoogleWorkspaceActionDependencies, fileId: string, range?: string) => { const url = readFile(fileId); url.searchParams.delete("fields"); url.searchParams.set("alt", "media"); return requestGoogleAction(c, selected, readScopes, url, range ? { headers: { range } } : {}) }
   const exportPdf = async (c: Parameters<typeof requestGoogleAction>[0], selected: GoogleWorkspaceActionDependencies, fileId: string) => { const url = googleUrl("https://www.googleapis.com", `/drive/v3/files/${fileId}/export`); url.searchParams.set("mimeType", "application/pdf"); return requestGoogleAction(c, selected, readScopes, url) }
   const readDoc = async (c: Parameters<typeof requestGoogleAction>[0], selected: GoogleWorkspaceActionDependencies, fileId: string) => { const url = googleUrl("https://docs.googleapis.com", `/v1/documents/${fileId}`); url.searchParams.set("includeTabsContent", "true"); const result = await requestGoogleAction(c, selected, readScopes, url); if (!result.ok) return result; const data = docSchema.safeParse(await readGoogleActionJson(result.response)); return data.success ? { ok: true, data: data.data } as const : { ok: false, reply: failure(c, "Google could not return this document.") } as const }
 
@@ -152,7 +153,8 @@ export function registerGoogleDocumentEditorRoutes<T extends { Variables: OrgRou
         }
         return c.json({ ...common, kind: "text", text: new TextDecoder("utf-8", { fatal: true }).decode(bytes) })
       }
-      return c.json({ ...common, kind: "preview", mimeType: file.mimeType, canEdit: false, ...(file.mimeType === SLIDES ? { notice: "Preview only. Open in Google Slides to edit; changes stay in the original presentation." } : {}) })
+      const playable = c.get("organizationContext")!.features.workbotDocumentMedia ? documentMediaKind(file.mimeType) : null
+      return c.json({ ...common, kind: "preview", mimeType: file.mimeType, canEdit: false, ...(playable ? { media: playable } : {}), ...(file.mimeType === SLIDES ? { notice: "Preview only. Open in Google Slides to edit; changes stay in the original presentation." } : {}) })
     } catch (error) {
       // A limited reader must not force an Office startup or hide the explicit Edit action.
       if (officeMimeTypes.has(file.mimeType)) return c.json({ ...common, kind: "preview", mimeType: file.mimeType })
@@ -206,11 +208,20 @@ export function registerGoogleDocumentEditorRoutes<T extends { Variables: OrgRou
     } catch (error) { return failure(c, error instanceof Error ? error.message : "These edits could not be saved. Your draft is kept here.") }
   })
 
-  app.get(`${base}/content`, description("readGoogleDriveDocumentContent", "Preview a Drive PDF or image", z.unknown()), orgMemberRoute(), guard, paramValidator(params), queryValidator(z.object({ connectionId: connectionSchema })), async c => {
+  app.get(`${base}/content`, description("readGoogleDriveDocumentContent", "Preview a Drive PDF or image, or play a video or audio file", z.unknown()), orgMemberRoute(), guard, paramValidator(params), queryValidator(z.object({ connectionId: connectionSchema })), async c => {
     const { fileId } = c.req.valid("param"); const auth = await authorize(c, c.req.valid("query").connectionId); if (!auth.ok) return auth.reply
     const meta = await metadata(c, auth.selected, fileId); if (!meta.ok) return meta.reply
     // Google Slides previews as a PDF export; the presentation itself is never converted or copied.
     const slides = meta.file.mimeType === SLIDES
+    // Video and audio go to the browser's own player one byte range at a time, so it can start early and seek.
+    const playable = documentMediaKind(meta.file.mimeType)
+    if (playable && c.get("organizationContext")?.features.workbotDocumentMedia) {
+      const size = Number(meta.file.size)
+      const range = documentMediaRange(c.req.header("range"), size)
+      if (!range) return documentMediaUnsatisfiable(size)
+      const result = await media(c, auth.selected, fileId, documentMediaRangeHeader(range)); if (!result.ok) return result.reply
+      try { return documentMediaResponse(await readDocumentMediaRange(result.response, range), { mimeType: meta.file.mimeType, range, size }) } catch { return c.json({ error: "google_api_error", message: "Google did not return this part of the file. Try again." }, 502) }
+    }
     if (!slides && !["application/pdf", "image/png", "image/jpeg", "image/gif", "image/webp"].includes(meta.file.mimeType)) return failure(c, "This file has no safe inline preview.")
     const result = slides ? await exportPdf(c, auth.selected, fileId) : await media(c, auth.selected, fileId); if (!result.ok) return result.reply
     try { const bytes = await boundedBytes(result.response); return new Response(new Uint8Array(bytes).buffer, { headers: { "content-type": slides ? "application/pdf" : meta.file.mimeType, "cache-control": "no-store", "x-content-type-options": "nosniff", "content-security-policy": "default-src 'none'; sandbox" } }) } catch { return failure(c, "This preview is too large.") }

@@ -7,6 +7,7 @@ import { openExcel, openWord, patchExcel, patchWord } from "@openwork/documents/
 import { MicrosoftGraphScopeError } from "../../capability-sources/microsoft-graph.js"
 import { jsonValidator, paramValidator, queryValidator } from "../../middleware/index.js"
 import { jsonResponse } from "../../openapi.js"
+import { documentMediaKind, documentMediaRange, documentMediaRangeHeader, documentMediaResponse, documentMediaUnsatisfiable, readDocumentMediaRange } from "./document-media.js"
 import type { OrgRouteVariables } from "./shared.js"
 import { decodeMicrosoftDocumentId, graphItemSchema, graphListingSchema, listingResponseSchema, microsoftDocumentItem, officeUrl } from "./microsoft-document-items.js"
 
@@ -186,7 +187,8 @@ export function registerMicrosoftDocumentRoutes<T extends { Variables: OrgRouteV
         if (meta.mimeType === DOCX) return c.json({ ...common, ...await openWord(source.bytes) })
         return c.json({ ...common, kind: "text", text: new TextDecoder("utf-8", { fatal: true }).decode(source.bytes) })
       }
-      return c.json({ ...common, kind: "preview", mimeType: meta.mimeType, canEdit: false })
+      const playable = c.get("organizationContext")!.features.workbotDocumentMedia ? documentMediaKind(meta.mimeType) : null
+      return c.json({ ...common, kind: "preview", mimeType: meta.mimeType, canEdit: false, ...(playable ? { media: playable } : {}) })
     } catch (error) { return failure(c, error instanceof Error ? error.message : "This file cannot be edited inline.") }
   })
 
@@ -217,10 +219,19 @@ export function registerMicrosoftDocumentRoutes<T extends { Variables: OrgRouteV
     }
   })
 
-  app.get(`${base}/:fileId/content`, description("readMicrosoft365DocumentContent", "Preview a OneDrive PDF or image", z.unknown()), options.memberRoute, guard, paramValidator(params), queryValidator(z.object({ connectionId: z.literal("microsoft-365") }).strict()), async c => {
+  app.get(`${base}/:fileId/content`, description("readMicrosoft365DocumentContent", "Preview a OneDrive PDF or image, or play a video or audio file", z.unknown()), options.memberRoute, guard, paramValidator(params), queryValidator(z.object({ connectionId: z.literal("microsoft-365") }).strict()), async c => {
     const access = await options.access(c); if (!access.ok) return access.reply
     const { fileId } = c.req.valid("param")
     const meta = await item(c, access, fileId); if (!meta.ok) return meta.reply
+    // Video and audio go to the browser's own player one byte range at a time, so it can start early and seek.
+    const playable = documentMediaKind(meta.mimeType)
+    if (playable && c.get("organizationContext")?.features.workbotDocumentMedia) {
+      const size = meta.file.size ?? 0
+      const range = documentMediaRange(c.req.header("range"), size)
+      if (!range) return documentMediaUnsatisfiable(size)
+      const result = await graph(c, access.accessToken, graphUrl(access, `${meta.path}/content`), { headers: { range: documentMediaRangeHeader(range) } }); if (!result.ok) return result.reply
+      try { return documentMediaResponse(await readDocumentMediaRange(result.response, range), { mimeType: meta.mimeType, range, size }) } catch { return c.json({ error: "microsoft_graph_error", message: "Microsoft 365 did not return this part of the file. Try again." }, 502) }
+    }
     if (!PREVIEWS.has(meta.mimeType)) return failure(c, "This file has no safe inline preview.")
     try {
       const source = await download(c, access, meta.path); if (!source.ok) return source.reply

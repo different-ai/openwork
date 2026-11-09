@@ -168,6 +168,7 @@ function DocumentPreview({ data, editor, item }: { data: Extract<EditorDocument,
   // Keep one mounted viewer while its protected file bytes load, including Slides' PDF export.
   const pdf = data.mimeType === "application/pdf" || data.mimeType === "application/vnd.google-apps.presentation"
   if (pdf || ["image/png", "image/jpeg", "image/gif", "image/webp"].includes(data.mimeType)) return <BinaryPreview key={url} url={url} item={item} pdf={pdf} />
+  if (data.media) return <MediaPreview key={url} url={url} item={item} kind={data.media} />
   return <div className="ow-documents-state"><p>No inline preview is available.</p>{item.openUrl && <a href={item.openUrl} target="_blank" rel="noopener noreferrer">Open in {item.source?.storage ?? "Drive"}</a>}</div>
 }
 
@@ -178,5 +179,25 @@ function BinaryPreview({ url, item, pdf }: { url: string; item: DocumentItem; pd
     {state === "error" ? <div className="ow-documents-state"><p>Couldn't load this preview.</p><button type="button" onClick={() => setState("loading")}>Try again</button>{item.openUrl && <a href={item.openUrl} target="_blank" rel="noopener noreferrer">Open in {item.source?.storage ?? "Drive"}</a>}</div>
       : pdf ? <iframe className="ow-editor-preview" src={url} title={item.name} sandbox="allow-same-origin" onLoad={() => setState("ready")} onError={() => setState("error")} />
       : <div className="ow-editor-image"><img src={url} alt={item.name} onLoad={() => setState("ready")} onError={() => setState("error")} /></div>}
+  </div>
+}
+
+/** A video or audio file in the browser's own player. A file it can't play keeps the link to the original. */
+function MediaPreview({ url, item, kind }: { url: string; item: DocumentItem; kind: "video" | "audio" }) {
+  const [failed, setFailed] = useState(false)
+  const player = useRef<HTMLVideoElement & HTMLAudioElement>(null)
+  // Playback stops when its tab or Documents itself is no longer on screen, so nothing plays unseen.
+  useEffect(() => {
+    const element = player.current
+    if (!element || typeof IntersectionObserver === "undefined") return
+    const observer = new IntersectionObserver(entries => { if (entries.some(entry => !entry.isIntersecting)) element.pause() })
+    observer.observe(element)
+    return () => observer.disconnect()
+  }, [failed])
+  if (failed) return <div className="ow-documents-state" role="status"><p>This {kind} can't be played here.</p><button type="button" onClick={() => setFailed(false)}>Try again</button>{item.openUrl && <a href={item.openUrl} target="_blank" rel="noopener noreferrer">Open in {item.source?.storage ?? "Drive"}</a>}</div>
+  return <div className="ow-editor-media" data-kind={kind}>
+    {kind === "video"
+      ? <video ref={player} src={url} controls playsInline preload="metadata" aria-label={item.name} onError={() => setFailed(true)} />
+      : <audio ref={player} src={url} controls preload="metadata" aria-label={item.name} onError={() => setFailed(true)} />}
   </div>
 }

@@ -408,9 +408,16 @@ export function createDen(options: { apiUrl: string; publicUrl: string; serviceT
     async documents(accessToken: string, path: string, method: "GET" | "POST" = "GET", body?: unknown) {
       return authorized(method, `/v1/workbot/documents${path}`, accessToken, body)
     },
-    async documentContent(accessToken: string, path: string) {
-      const response = await fetch(`${options.apiUrl}/v1/workbot/documents${path}`, { headers: { authorization: `Bearer ${accessToken}` }, signal: AbortSignal.timeout(TIMEOUT_MS) })
+    /**
+     * A document's bytes for a preview or a media player. `range` is the player's own Range header. The time limit
+     * covers Den's answer, not the bytes after it: a player reads a video at its own pace.
+     */
+    async documentContent(accessToken: string, path: string, range?: string) {
+      const waiting = new AbortController()
+      const timer = setTimeout(() => waiting.abort(new DOMException("Den did not answer in time.", "TimeoutError")), TIMEOUT_MS)
+      const response = await fetch(`${options.apiUrl}/v1/workbot/documents${path}`, { headers: { authorization: `Bearer ${accessToken}`, ...(range ? { range } : {}) }, signal: waiting.signal })
         .catch((error: unknown) => { throw unanswered(error) })
+        .finally(() => clearTimeout(timer))
       if (response.status === 401) throw new DenSignedOutError()
       return response
     },

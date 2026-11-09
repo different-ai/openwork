@@ -482,8 +482,10 @@ export function registerWorkbotRoutes(app: Hono<AppEnv>, input: { config: Config
     if (!(method === "GET" && (path === "/v1/capabilities/google-workspace/drive-files" || path === "/v1/documents/microsoft-365/files")) && !(editor && (method === "GET" || editor[1] === "editor")) && !(office && (method === "GET" ? !office[1] && /\/[0-9a-f-]{36}$/.test(path) : path.endsWith("/office") || !!office[1]))) return c.json({ error: "not_found" }, 404)
     if (method === "POST" && !path.endsWith("/close") && !member.den.documentEditing) return c.json({ error: "feature_disabled", message: "Document editing is off for this workspace." }, 403)
     if (editor?.[1] === "content") {
-      const response = await den.documentContent(member.accessToken, `${path}${url.search}`)
-      return new Response(response.body, { status: response.status, headers: { "content-type": response.headers.get("content-type") ?? "application/octet-stream", "cache-control": "no-store", "x-content-type-options": "nosniff", "content-security-policy": "default-src 'none'; sandbox" } })
+      // A media player's Range goes to Den and Den's ranged answer comes back as it is, so video starts early and seeks.
+      const response = await den.documentContent(member.accessToken, `${path}${url.search}`, c.req.header("range"))
+      const ranged = Object.fromEntries(["content-length", "content-range", "accept-ranges"].flatMap(name => { const value = response.headers.get(name); return value ? [[name, value]] : [] }))
+      return new Response(response.body, { status: response.status, headers: { "content-type": response.headers.get("content-type") ?? "application/octet-stream", "cache-control": "no-store", "x-content-type-options": "nosniff", "content-security-policy": "default-src 'none'; sandbox", ...ranged } })
     }
     const body: unknown = method === "POST" ? await c.req.json().catch(() => null) : undefined
     const { status, payload } = await den.documents(member.accessToken, `${path}${url.search}`, method, body)

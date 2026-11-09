@@ -331,6 +331,16 @@
               ],
               "description": "Workbot Documents: editing: Members choose Edit from a document preview. Full Office editing starts their Cloud workspace only when requested. Requires Workbot Documents. Renders DEN_FEATURE_WORKBOT_DOCUMENT_EDITING."
             },
+            "workbotDocumentMedia": {
+              "enum": [
+                "",
+                "true",
+                "false",
+                true,
+                false
+              ],
+              "description": "Workbot Documents: video and audio: Members play video and audio files from Drive and OneDrive in the document's tab, with seeking, instead of only a link to the original. Requires Workbot Documents. Renders DEN_FEATURE_WORKBOT_DOCUMENT_MEDIA."
+            },
             "workbotWorkspaceAssistant": {
               "enum": [
                 "",
