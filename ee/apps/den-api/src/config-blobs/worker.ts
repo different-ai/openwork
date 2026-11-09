@@ -8,19 +8,36 @@
  */
 import { appLogger } from "../observability/logger.js"
 import { captureException } from "../observability/runtime.js"
-import { claimNextAnalysis, claimNextApply } from "./repository.js"
+import { claimNextAnalysis, claimNextApply, expireSecretInputs } from "./repository.js"
 import { analyzeClaimedChangeRequest, applyClaimedChangeRequest } from "./service.js"
 
 const logger = appLogger.child({ component: "config_blob_worker" })
 const DEFAULT_INTERVAL_MS = 1_000
 /** Bounds one tick so a burst of uploads never starves the applies behind it. */
 const MAX_PER_TICK = 10
+/** Secret-input expiry runs at most this often (one small indexed query), at most EXPIRE_BATCH requests each time. */
+const EXPIRE_EVERY_MS = 60_000
+const EXPIRE_BATCH = 50
+let lastExpiryAt = 0
 
-export type ConfigBlobWorkerTick = { analyzed: number; applied: number }
+export type ConfigBlobWorkerTick = { analyzed: number; applied: number; expired: number }
 
-/** One pass: up to MAX_PER_TICK analyses, then up to MAX_PER_TICK applies. Exposed for tests. */
-export async function runConfigBlobWorkerOnce(): Promise<ConfigBlobWorkerTick> {
-  const tick: ConfigBlobWorkerTick = { analyzed: 0, applied: 0 }
+/**
+ * One pass: secret-input expiry (once a minute), then up to MAX_PER_TICK
+ * analyses, then up to MAX_PER_TICK applies. Exposed for tests.
+ */
+export async function runConfigBlobWorkerOnce(options: { now?: Date } = {}): Promise<ConfigBlobWorkerTick> {
+  const tick: ConfigBlobWorkerTick = { analyzed: 0, applied: 0, expired: 0 }
+  const now = options.now ?? new Date()
+  if (options.now || now.getTime() - lastExpiryAt >= EXPIRE_EVERY_MS) {
+    lastExpiryAt = now.getTime()
+    try {
+      tick.expired = (await expireSecretInputs({ now, limit: EXPIRE_BATCH })).length
+    } catch (error) {
+      logger.error("config secret input expiry failed", { error })
+      captureException(error, { component: "config_blob_worker" })
+    }
+  }
   for (let index = 0; index < MAX_PER_TICK; index += 1) {
     const claim = await claimNextAnalysis()
     if (!claim) break

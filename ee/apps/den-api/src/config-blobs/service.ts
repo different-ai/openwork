@@ -97,6 +97,7 @@ import {
 } from "./engine/index.js"
 import { configSecretEnvPolicy, readConfigSecretEnv } from "./env-secrets.js"
 import { getConfigInstanceId } from "./instance.js"
+import { configBlobSchemaUrl } from "./json-schema.js"
 import { CONFIG_AREAS, getConfigArea } from "./registry.js"
 import {
   createChangeRequest,
@@ -124,7 +125,6 @@ type OrganizationId = DenTypeId<"organization">
 type MemberId = DenTypeId<"member">
 
 const logger = appLogger.child({ component: "config_blobs" })
-const SCHEMA_URL = "https://openworklabs.com/schemas/config-blob/v1.json"
 const SETTINGS_METADATA_KEY = "configBlobs"
 const APPLY_LEASE_MS = 600_000
 const APPLY_LEASE_EXTEND_EVERY_MS = 60_000
@@ -268,8 +268,9 @@ async function assembleBlob(org: Pick<ConfigOrganization, "id" | "slug" | "name"
   const flat: Partial<Record<ConfigAreaKey, ConfigBlobArea>> = {}
   for (const { area, items } of exported) flat[area.key] = { specVersion: area.specVersion, items: items.map((item) => blobItemFor(area, item)) }
   const entries = exported.flatMap(({ area, items }) => items.map((item) => ({ area: area.key, id: item.id, rev: specRev(area, item.spec) })))
+  const schemaUrl = configBlobSchemaUrl(CONFIG_BLOB_FORMAT_VERSION)
   const blob: ConfigBlob = {
-    $schema: SCHEMA_URL,
+    ...(schemaUrl ? { $schema: schemaUrl } : {}),
     format: CONFIG_BLOB_FORMAT,
     formatVersion: CONFIG_BLOB_FORMAT_VERSION,
     exportedAt: new Date().toISOString(),
@@ -473,11 +474,11 @@ function blobBytes(blob: unknown): number {
  * caller can't import. D5: a newer upload from the same API key and scope
  * supersedes that key's older open ones.
  */
-export async function submitChangeRequest(org: ConfigOrganization, caller: ConfigCaller, input: SubmitInput, options: { source?: "ui" | "api" | "revert"; revertsChangeRequestId?: ConfigChangeRequestId; decisions?: ConfigDecisions } = {}): Promise<ConfigChangeRequestSummary> {
-  if (blobBytes(input.blob) > CONFIG_BLOB_MAX_BYTES) {
+function checkSubmission(caller: ConfigCaller, raw: unknown): { blob: ConfigBlob; scope: ConfigAreaKey[] } {
+  if (blobBytes(raw) > CONFIG_BLOB_MAX_BYTES) {
     throw new ConfigBlobError(413, { error: "blob_too_large", message: `Config files are limited to ${CONFIG_BLOB_MAX_BYTES / (1024 * 1024)} MB.` })
   }
-  const envelope = parseEnvelope(input.blob)
+  const envelope = parseEnvelope(raw)
   if (!envelope.ok) throw new ConfigBlobError(400, { error: "invalid_blob", message: envelope.errors[0] ?? "This isn't an OpenWork config file.", errors: envelope.errors })
   const { blob } = envelope.value
   const scope = CONFIG_AREA_KEYS.filter((key) => blob.scope.includes(key))
@@ -490,6 +491,35 @@ export async function submitChangeRequest(org: ConfigOrganization, caller: Confi
       requiredPermissions: managePermissions(denied),
     })
   }
+  return { blob, scope }
+}
+
+export type ConfigDryRunResult = { plan: ConfigPlan | null; errors: string[] }
+
+/**
+ * `?dryRun=true`: the same checks and analysis as an upload, run at once and
+ * stored nowhere (no change request, no supersede, no export copy). `errors`
+ * are what would make the request `invalid`; blocking decisions show in
+ * `plan.summary.blocking`. Secrets are never involved: no inputs exist yet.
+ */
+export async function dryRunChangeRequest(org: ConfigOrganization, caller: ConfigCaller, input: Pick<SubmitInput, "blob" | "mode">): Promise<ConfigDryRunResult> {
+  const { blob } = checkSubmission(caller, input.blob)
+  const planned = await planChangeRequest({
+    organizationId: org.id,
+    blob: input.blob,
+    mode: input.mode,
+    baseHash: blob.baseHash ?? null,
+    createdByMemberId: normalizeDenTypeId("member", caller.memberId),
+    approvals: [],
+    decisions: null,
+    secretInputs: null,
+  })
+  if ("invalid" in planned) return { plan: null, errors: planned.invalid }
+  return { plan: planned.plan, errors: planned.fatal }
+}
+
+export async function submitChangeRequest(org: ConfigOrganization, caller: ConfigCaller, input: SubmitInput, options: { source?: "ui" | "api" | "revert"; revertsChangeRequestId?: ConfigChangeRequestId; decisions?: ConfigDecisions } = {}): Promise<ConfigChangeRequestSummary> {
+  const { blob, scope } = checkSubmission(caller, input.blob)
   const source = options.source ?? (caller.apiKeyId ? "api" : "ui")
   const row = await createChangeRequest({
     organizationId: org.id,
@@ -585,13 +615,16 @@ async function baseSpecsFor(organizationId: OrganizationId, hash: string | null)
   return out
 }
 
+/** What planning reads from a request: a stored row, or an unsaved dry run. */
+type PlanSource = Pick<ConfigChangeRequestRow, "organizationId" | "blob" | "mode" | "baseHash" | "createdByMemberId" | "approvals" | "decisions" | "secretInputs">
+
 /** The member a plan is computed for: the creator, else the last approver. Stable, so re-plans hash the same. */
-async function planningActor(row: ConfigChangeRequestRow): Promise<ConfigActor | null> {
+async function planningActor(row: PlanSource): Promise<ConfigActor | null> {
   return await loadActor(row.organizationId, row.createdByMemberId)
     ?? await loadActor(row.organizationId, row.approvals[row.approvals.length - 1]?.memberId ?? null)
 }
 
-async function planChangeRequest(row: ConfigChangeRequestRow, overrides: { decisions?: ConfigDecisions; secretInputs?: ConfigSecretInput[] } = {}): Promise<Planned | { invalid: string[] }> {
+async function planChangeRequest(row: PlanSource, overrides: { decisions?: ConfigDecisions; secretInputs?: ConfigSecretInput[] } = {}): Promise<Planned | { invalid: string[] }> {
   const envelope = parseEnvelope(row.blob)
   if (!envelope.ok) return { invalid: envelope.errors }
   const { blob, areas } = envelope.value
@@ -649,9 +682,10 @@ function approvalsSatisfied(approvals: readonly ConfigChangeRequestApproval[], s
 
 /** The patch a fresh plan implies: status, plan, errors, and approvals dropped when the plan hash moved. */
 async function planPatch(row: ConfigChangeRequestRow, planned: Planned | { invalid: string[] }, options: { dropApprovals?: boolean } = {}): Promise<ChangeRequestPatch> {
-  if ("invalid" in planned) return { status: "invalid", errors: planned.invalid, approvals: [], approvedPlanHash: null }
+  // `invalid` is terminal: its secret inputs are deleted at once.
+  if ("invalid" in planned) return { status: "invalid", errors: planned.invalid, approvals: [], approvedPlanHash: null, secretInputs: null }
   if (planned.fatal.length > 0) {
-    return { status: "invalid", plan: planned.plan, planHash: planned.plan.planHash, errors: planned.fatal, approvals: [], approvedPlanHash: null }
+    return { status: "invalid", plan: planned.plan, planHash: planned.plan.planHash, errors: planned.fatal, approvals: [], approvedPlanHash: null, secretInputs: null }
   }
   const keep = !options.dropApprovals && row.approvedPlanHash === planned.plan.planHash
   const approvals = keep ? row.approvals : []
@@ -686,7 +720,7 @@ export async function analyzeClaimedChangeRequest(claim: ClaimedChangeRequest): 
       await releaseClaim(claim, { status: "uploaded", availableAt: new Date(Date.now() + 5_000 * claim.attempts) })
       return "uploaded"
     }
-    await releaseClaim(claim, { status: "invalid", errors: [`The change couldn't be analyzed: ${errorMessage(error)}`] })
+    await releaseClaim(claim, { status: "invalid", errors: [`The change couldn't be analyzed: ${errorMessage(error)}`], secretInputs: null })
     return "invalid"
   }
 }

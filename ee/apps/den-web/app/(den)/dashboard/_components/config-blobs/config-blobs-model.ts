@@ -6,6 +6,7 @@ import {
   type ConfigBlob,
   type ConfigChangeRequestStatus,
   type ConfigDecisions,
+  type ConfigFieldChange,
   type ConfigMatchTier,
   type ConfigPlan,
   type ConfigPlanItem,
@@ -35,7 +36,7 @@ export const CONFIG_STATUS_PRESENTATION: Record<ConfigChangeRequestStatus, { lab
   failed: { label: "Failed", tone: "danger" },
   stale: { label: "Rechecking", tone: "neutral" },
   superseded: { label: "Replaced", tone: "neutral" },
-  cancelled: { label: "Cancelled", tone: "neutral" },
+  cancelled: { label: "Withdrawn", tone: "neutral" },
 };
 
 export const CONFIG_OP_LABELS: Record<ConfigPlanOp, string> = {
@@ -67,6 +68,26 @@ export function matchTierLabel(tier: ConfigMatchTier | null): string | null {
 export function formatSummaryCounts(summary: ConfigPlanSummary | null): { create: string; update: string; remove: string } | null {
   if (!summary) return null;
   return { create: `+${summary.create}`, update: `~${summary.update + summary.rename}`, remove: `−${summary.delete}` };
+}
+
+/**
+ * Whether the current member can approve, mirroring den-api: one approval per
+ * member and, with "Require a second approver" on, the second approver is
+ * neither the uploader nor the first approver.
+ */
+export function approvalState(input: {
+  approvals: ReadonlyArray<{ memberId: string }>;
+  createdByMemberId: string | null;
+  memberId: string | null;
+  requireSecondApprover: boolean;
+}): { needed: number; canApprove: boolean; reason: string | null } {
+  const needed = input.requireSecondApprover ? 2 : 1;
+  const mine = input.memberId !== null && input.approvals.some((approval) => approval.memberId === input.memberId);
+  if (mine) return { needed, canApprove: false, reason: input.approvals.length < needed ? "You approved this. It needs a second approver." : null };
+  if (input.requireSecondApprover && input.approvals.length >= 1 && input.memberId !== null && input.memberId === input.createdByMemberId) {
+    return { needed, canApprove: false, reason: "Waiting for a second approver. It can't be you: you uploaded this change." };
+  }
+  return { needed, canApprove: true, reason: null };
 }
 
 export function formatScore(score: number): string {
@@ -181,6 +202,17 @@ export function planEntries(plan: ConfigPlan | null): ConfigPlanEntry[] {
   return plan.areas.flatMap((area) => area.items.map((item) => ({ area: area.area, areaLabel: area.label, item })));
 }
 
+/**
+ * Request-level issues to show above the steps. Item-level validation errors
+ * (`Teams "Platform": …`) are left out: the item shows them on Review, where
+ * it can be skipped, and they would stay on screen after it was.
+ */
+export function requestIssues(plan: ConfigPlan | null): ConfigPlan["issues"] {
+  if (!plan) return [];
+  const itemPrefixes = plan.areas.flatMap((area) => area.items.flatMap((item) => item.blob ? [`${area.label} "${item.blob.name}": `] : []));
+  return plan.issues.filter((issue) => !(issue.level === "error" && itemPrefixes.some((prefix) => issue.message.startsWith(prefix))));
+}
+
 export function needsMatch(item: ConfigPlanItem): boolean {
   return item.flags.includes("needs_mapping") || item.flags.includes("conflict.identity");
 }
@@ -227,11 +259,27 @@ export function planSteps(plan: ConfigPlan | null, decisions: ConfigDecisions | 
   if (matches.length > 0) steps.push({ step: "match", label: "Match", open: matches.filter((entry) => needsMatch(entry.item)).length });
   const refs = refEntries(plan);
   if (refs.length > 0) steps.push({ step: "references", label: "References", open: refs.filter((entry) => isRefOpen(entry.reference)).length });
-  const secrets = planEntries(plan).flatMap((entry) => entry.item.secrets ?? []);
-  if (secrets.length > 0) steps.push({ step: "secrets", label: "Secrets", open: secrets.filter((secret) => secret.decision === null).length });
+  const secrets = planEntries(plan).flatMap((entry) => (entry.item.secrets ?? []).map((secret) => ({ entry, secret })));
+  // Only secrets of items that write count as open; an unchanged item's placeholder changes nothing.
+  if (secrets.length > 0) steps.push({ step: "secrets", label: "Secrets", open: secrets.filter(({ entry, secret }) => secret.decision === null && entry.item.flags.includes("needs_input")).length });
   if (inviteCount(plan, decisions) > 0) steps.push({ step: "people", label: "People", open: 0 });
-  steps.push({ step: "review", label: "Review", open: 0 });
+  steps.push({ step: "review", label: "Review", open: reviewEntries(plan).length });
   return steps;
+}
+
+/** Flags resolved on the Review step: skip an invalid item, overwrite a drifted one, or rename a colliding one. */
+export const CONFIG_REVIEW_FLAGS = ["blocked", "drift", "collision.unique"] as const;
+
+/** Items that still need a decision on the Review step. */
+export function reviewEntries(plan: ConfigPlan | null): ConfigPlanEntry[] {
+  return planEntries(plan).filter((entry) => entry.item.flags.some((flag) => (CONFIG_REVIEW_FLAGS as readonly string[]).includes(flag)));
+}
+
+/** Secrets the target already holds a value for and nobody decided yet: "Keep all" sets them in one go. */
+export function keepableSecrets(plan: ConfigPlan | null): string[] {
+  return planEntries(plan).flatMap((entry) => (entry.item.secrets ?? [])
+    .filter((secret) => secret.decision === null && secret.targetHasValue)
+    .map((secret) => secret.path));
 }
 
 export function groupByOp(items: readonly ConfigPlanItem[]): Array<{ op: ConfigPlanOp; items: ConfigPlanItem[] }> {
@@ -276,6 +324,10 @@ export function formatFieldValue(value: unknown): string {
   }
   if (isPlainObject(value)) {
     if (typeof value.name === "string") return value.name;
+    for (const key of ["id", "modelId", "key", "email"]) {
+      const label = value[key];
+      if (typeof label === "string" && Object.keys(value).length <= 2) return label;
+    }
     if (typeof value.$ref === "string") return typeof value.name === "string" ? value.name : value.$ref;
     if (typeof value.$secret === "string") return value.set ? "Secret (set)" : "Secret (not set)";
     const text = JSON.stringify(value);
@@ -284,13 +336,43 @@ export function formatFieldValue(value: unknown): string {
   return String(value);
 }
 
-/** `models[claude-opus-4].enabled` → `Models › claude-opus-4 › Enabled` */
+const FIELD_WORDS: Record<string, string> = { api: "API", url: "URL", urls: "URLs", id: "ID", ids: "IDs", mcp: "MCP", oauth: "OAuth", sso: "SSO", scim: "SCIM" };
+
+/** `apiKeyAuthScheme` → `API key auth scheme` */
+function humanizeField(field: string): string {
+  const words = field.replace(/([a-z0-9])([A-Z])/g, "$1 $2").split(" ").map((word) => FIELD_WORDS[word.toLowerCase()] ?? word.toLowerCase());
+  const first = words[0] ?? "";
+  words[0] = FIELD_WORDS[first.toLowerCase()] ?? first.replace(/^./, (letter) => letter.toUpperCase());
+  return words.join(" ");
+}
+
+/** The "Now" and "In the file" cells of a field change. Set-valued fields list what is added and removed. */
+export function formatFieldChange(field: ConfigFieldChange): { now: string; file: string } {
+  if (field.added !== undefined || field.removed !== undefined) {
+    const removed = field.removed ?? [];
+    const added = field.added ?? [];
+    return {
+      now: removed.length > 0 ? `Removes ${removed.map(formatFieldValue).join(", ")}` : "—",
+      file: added.length > 0 ? `Adds ${added.map(formatFieldValue).join(", ")}` : "—",
+    };
+  }
+  if (field.from === undefined && field.to !== undefined) return { now: "Not here", file: formatFieldValue(field.to) };
+  if (field.to === undefined && field.from !== undefined) return { now: formatFieldValue(field.from), file: "Removed" };
+  return { now: formatFieldValue(field.from), file: formatFieldValue(field.to) };
+}
+
+/** `models[id=claude-opus-4].enabled` → `Models › claude-opus-4 › Enabled` */
 export function formatFieldPath(path: string): string {
-  return path
-    .split(/\.|\[|\]/)
-    .filter(Boolean)
-    .map((segment, index) => (index === 0 || /^[a-z]/.test(segment)) && !segment.includes("-")
-      ? segment.replace(/([a-z])([A-Z])/g, "$1 $2").replace(/^./, (first) => first.toUpperCase())
-      : segment)
-    .join(" › ");
+  if (path === "(spec)") return "Settings";
+  const segments: string[] = [];
+  // Field names are humanized; bracketed parts (`[id=x]`, `[0]`, `[*]`) are values and shown as written.
+  for (const match of path.matchAll(/\[([^\]]*)\]|([^.[\]]+)/g)) {
+    const [, bracket, field] = match;
+    if (bracket !== undefined) {
+      segments.push(bracket.includes("=") ? bracket.slice(bracket.indexOf("=") + 1) : bracket);
+    } else if (field) {
+      segments.push(/^[a-z][A-Za-z0-9]*$/.test(field) ? humanizeField(field) : field);
+    }
+  }
+  return segments.join(" › ");
 }

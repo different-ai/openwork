@@ -11,8 +11,10 @@ import type {
   ConfigImportMode,
   ConfigSecretInput,
   ConfigBlob,
+  ConfigBlobSettings,
+  ConfigBlobSettingsResponse,
 } from "@openwork/types/den/config-blobs";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { type QueryClient, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { getErrorMessage, getRequestError, requestJson, requestResponse } from "../../../_lib/den-flow";
 import { ORG_SCOPE_HEADER } from "../../../_lib/org-scope";
 import { useOrgDashboard } from "../../_providers/org-dashboard-provider";
@@ -27,6 +29,7 @@ export const configQueryKeys = {
   list: (orgId: string, state: "open" | "closed") => ["config-blobs", orgId, "change-requests", state],
   detail: (orgId: string, id: string) => ["config-blobs", orgId, "change-request", id],
   plan: (orgId: string, id: string) => ["config-blobs", orgId, "change-request", id, "plan"],
+  settings: (orgId: string) => ["config-blobs", orgId, "settings"],
 };
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -35,6 +38,10 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 function isAreasResponse(value: unknown): value is ConfigAreasResponse {
   return isRecord(value) && Array.isArray(value.areas);
+}
+
+function isSettingsResponse(value: unknown): value is ConfigBlobSettingsResponse {
+  return isRecord(value) && isRecord(value.settings) && typeof value.settings.requireSecondApprover === "boolean";
 }
 
 function isListResponse(value: unknown): value is ConfigChangeRequestListResponse {
@@ -104,7 +111,7 @@ export function useConfigPlan(orgId: string | null, id: string, version: string 
   });
 }
 
-async function send<T>(orgId: string, method: "POST" | "PUT", path: string, body: unknown, guard: (value: unknown) => value is T, fallback: string): Promise<T> {
+async function send<T>(orgId: string, method: "POST" | "PUT" | "PATCH", path: string, body: unknown, guard: (value: unknown) => value is T, fallback: string): Promise<T> {
   const { response, payload } = await requestJson(path, { method, headers: { [ORG_SCOPE_HEADER]: orgId }, body: JSON.stringify(body ?? {}) }, 30000);
   if (!response.ok) throw getRequestError(payload, response, fallback);
   if (!guard(payload)) throw new Error(fallback);
@@ -132,8 +139,17 @@ export function useCreateConfigChangeRequest(orgId: string | null) {
     retry: false,
     mutationFn: (input: { blob: ConfigBlob; mode: ConfigImportMode; title?: string }) => run("Upload config", () =>
       send(orgId ?? "", "POST", `${BASE}/change-requests`, input, isChangeRequestResponse, "Couldn't upload this file.")),
-    onSettled: () => orgId ? queryClient.invalidateQueries({ queryKey: configQueryKeys.all(orgId) }) : undefined,
+    onSettled: () => refresh(queryClient, orgId ? configQueryKeys.all(orgId) : null),
   });
+}
+
+/**
+ * Refetches after a write without holding the mutation open: an awaited
+ * invalidation waits for every matching refetch, and a polled query whose
+ * fetch is replaced mid-flight can keep the button spinning.
+ */
+function refresh(queryClient: QueryClient, queryKey: readonly unknown[] | null): void {
+  if (queryKey) void queryClient.invalidateQueries({ queryKey });
 }
 
 /** Shared by decisions and inputs: both return the request and its re-computed plan. */
@@ -147,7 +163,7 @@ function usePlanUpdate<TInput>(orgId: string | null, id: string, label: string, 
       if (!orgId) return;
       queryClient.setQueryData<ConfigChangeRequestDetailResponse>(configQueryKeys.detail(orgId, id), (current) => current ? { ...current, changeRequest: result.changeRequest } : current);
     },
-    onSettled: () => orgId ? queryClient.invalidateQueries({ queryKey: configQueryKeys.plan(orgId, id) }) : undefined,
+    onSettled: () => refresh(queryClient, orgId ? configQueryKeys.plan(orgId, id) : null),
   });
 }
 
@@ -157,6 +173,28 @@ export function useSaveConfigDecisions(orgId: string | null, id: string) {
 
 export function useSaveConfigInputs(orgId: string | null, id: string) {
   return usePlanUpdate<{ inputs: ConfigSecretInput[] }>(orgId, id, "Save config secrets", "inputs", "Couldn't save this secret.");
+}
+
+export function useConfigBlobSettings(orgId: string | null, enabled = true) {
+  return useQuery({
+    queryKey: configQueryKeys.settings(orgId ?? ""),
+    enabled: enabled && Boolean(orgId),
+    retry: false,
+    queryFn: ({ signal }) => getJson(orgId ?? "", `${BASE}/settings`, isSettingsResponse, "Couldn't load the config settings.", signal),
+  });
+}
+
+export function useUpdateConfigBlobSettings(orgId: string | null) {
+  const queryClient = useQueryClient();
+  const run = useReauthable();
+  return useMutation({
+    retry: false,
+    mutationFn: (settings: ConfigBlobSettings) => run("Save config settings", () =>
+      send(orgId ?? "", "PATCH", `${BASE}/settings`, settings, isSettingsResponse, "Couldn't save this setting.")),
+    onSuccess: (result) => {
+      if (orgId) queryClient.setQueryData(configQueryKeys.settings(orgId), result);
+    },
+  });
 }
 
 export type ConfigRequestAction = "approve" | "apply" | "cancel" | "revert";
@@ -179,7 +217,7 @@ export function useConfigRequestAction(orgId: string | null, id: string) {
       if (!orgId || action === "revert") return;
       queryClient.setQueryData<ConfigChangeRequestDetailResponse>(configQueryKeys.detail(orgId, id), (current) => current ? { ...current, changeRequest: result.changeRequest } : current);
     },
-    onSettled: () => orgId ? queryClient.invalidateQueries({ queryKey: configQueryKeys.all(orgId) }) : undefined,
+    onSettled: () => refresh(queryClient, orgId ? configQueryKeys.all(orgId) : null),
   });
 }
 

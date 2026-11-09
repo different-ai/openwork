@@ -9,6 +9,7 @@ import { useConfigChangeRequests } from "./config-blobs-data";
 import { ConfigChangeList } from "./config-change-list";
 import { ConfigExportSection } from "./config-export-section";
 import { ConfigImportSection } from "./config-import-section";
+import { ConfigSettingsSection } from "./config-settings-section";
 import { useConfigBlobsFeature } from "./config-blobs-parts";
 
 function readTab(value: string | null): ConfigTab {
@@ -44,6 +45,8 @@ export function ConfigScreen() {
           <ConfigExportSection />
           <div className="border-t border-gray-100" />
           <ConfigImportSection />
+          <div className="border-t border-gray-100" />
+          <ConfigSettingsSection />
         </div>
       ) : tab === "changes" ? (
         <ConfigChangeList state="open" emptyMessage="No changes waiting. Import a config file from Overview to start one." />

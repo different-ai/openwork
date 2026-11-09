@@ -1,0 +1,358 @@
+---
+title: "Export and import organization configuration"
+description: "Download an organization's configuration as one JSON file, review it in git, and import it into the same or another OpenWork through reviewed change requests."
+---
+
+A **config blob** is one JSON file holding all or part of an organization's
+configuration: teams, roles, people, connectors, AI Gateway providers, desktop
+policies and settings. You can export it, keep it in version control, edit it, and
+import it again into the same organization or into another OpenWork (for example
+from OpenWork Cloud to a self-hosted Den).
+
+Nothing is written when you upload a file. Every import becomes a **change
+request**: OpenWork matches the file against what exists, shows a plan, and only
+writes after someone approves it. Every applied change can be reverted.
+
+<Note>
+Config import and export is behind the `configBlobs` feature, off by default. On a
+self-hosted Den, a platform administrator turns it on per organization from
+`/admin`, or for the whole installation with `config.features.configBlobs: "true"`
+in Helm (`DEN_FEATURE_CONFIG_BLOBS=true`). While it is off, every
+`/v1/config-blobs/*` route except the public JSON Schema answers `404`.
+</Note>
+
+This page complements [Provision organization configuration](/self-host/declarative-configuration).
+The keyed `PUT …/by-key/{key}` routes stay supported and are the simplest choice when a
+script owns a handful of resources. Use config blobs to copy a whole organization, to
+review configuration changes as a diff, or to move between deployments.
+
+## The file
+
+```jsonc
+{
+  "$schema": "https://your-den.example/v1/config-blobs/schema/1",
+  "format": "openwork.config-blob",
+  "formatVersion": 1,
+  "exportedAt": "2026-11-09T18:00:00.000Z",
+  "source": {
+    "deployment": "cloud",
+    "instanceId": "…",
+    "appVersion": "…",
+    "organization": { "id": "org_…", "slug": "acme", "name": "Acme" }
+  },
+  "scope": ["connectors.mcp", "members.teams"],
+  "baseHash": "sha256:…",
+  "areas": {
+    "connectors": { "mcp": { "specVersion": 1, "items": [ /* items */ ] } },
+    "members": { "teams": { "specVersion": 1, "items": [ /* items */ ] } }
+  },
+  "secrets": [ /* index of every secret placeholder */ ]
+}
+```
+
+- **`scope`** lists the areas the file owns. Only those areas are compared and
+  changed. An area in `scope` with `"items": []` means "this area should be empty",
+  which only deletes anything in `mirror` mode.
+- **`areas`** nests area keys on `.`: `connectors.mcp` is `areas.connectors.mcp`.
+- Each **item** has an `id` (the source ID), an optional `key` (the resource's
+  external key), a `name`, a `rev` (hash of the spec at export, used to detect
+  changes made on the target since) and a `spec`, the editable part. Unknown fields
+  are rejected, so typos never get dropped silently. You may remove `id` and `rev`
+  from hand-written items; they are then matched by key or name.
+- **References** to other items are `{ "$ref": "members.teams/tem_…", "name": "Platform" }`.
+  People are referenced by email: `{ "$ref": "people/ada@example.com" }`.
+- Files are limited to 5 MB.
+
+The JSON Schema for editors and CI is public, needs no authentication and is not
+behind the feature flag:
+
+```sh
+curl -sS "$DEN_API_URL/v1/config-blobs/schema/1" > config-blob.schema.json
+```
+
+Exports set `$schema` to this URL on the server that produced them (from
+`DEN_API_PUBLIC_URL`), so editors that understand `$schema` validate and complete
+the file.
+
+## Areas
+
+| Area key | Where in the dashboard | Needs to export | Needs to import |
+| --- | --- | --- | --- |
+| `members.teams` | Members › Teams | `teams.view` | `teams.manage` |
+| `members.roles` | Members › Roles | `permissions.view` | `permissions.manage` |
+| `members.people` | Members › People | `teams.view` | `invitations.manage` |
+| `connectors.oauth-clients` | Connectors › OAuth apps | `oauth_clients.view` | `oauth_clients.manage` |
+| `connectors.mcp` | Connectors › MCP | `connections.view` | `connections.manage` |
+| `ai-gateway.providers` | AI Gateway › AI Providers | `gateway_providers.view` | `gateway_providers.manage` |
+| `ai-gateway.byok` | AI Gateway › Bring your own keys | `llm_providers.view` | `llm_providers.update` |
+| `desktop-policies` | Desktop policies | `desktop_policies.view` | `desktop_policies.manage` |
+| `settings.general` | Settings › General | `organization.update` | `organization.update` |
+| `settings.web-origins` | Settings › Web origins | `web_origins.view` | `web_origins.manage` |
+| `settings.advanced.collections` | Settings › Advanced › Collections | `marketplaces.manage` | `marketplaces.manage` |
+
+`GET /v1/config-blobs/areas` lists the areas of your server, whether each is
+supported there, and whether you may export or import it. An export leaves out the
+areas you can't view and lists them in `omitted`.
+
+Never exported: credentials and tokens, billing, usage and runtime data (sessions,
+logs, audit events). The organization's name, slug and SSO domains are exported as
+`source` information only and are never applied. Some areas contain confidential
+content; treat an export like the configuration it describes.
+
+## Secrets
+
+Secrets are never in a file. Every secret field is a placeholder:
+
+```json
+{ "$secret": "connectors.mcp/emc_…/apiKey", "set": true }
+```
+
+`set` says whether the source had a value. The placeholder path is stable, so a file
+you edit and upload again keeps its placeholders. Before a change that writes a
+secret can be approved, each placeholder needs a decision, given in the file or
+through the inputs endpoint:
+
+| Decision | In the file | Through `PUT …/inputs` |
+| --- | --- | --- |
+| Keep the target's current value | `{ "$secret": "…", "keep": true }` | `{ "path": "…", "decision": "keep" }` |
+| Leave it unset ("needs setup") | `{ "$secret": "…", "unset": true }` | `{ "path": "…", "decision": "unset" }` |
+| Read an environment variable on the server | `{ "$secret": "…", "env": "ANTHROPIC_KEY" }` | `{ "path": "…", "decision": "env", "env": "ANTHROPIC_KEY" }` |
+| Set a value | never in the file | `{ "path": "…", "decision": "value", "value": "sk-…" }` |
+
+- Values are write-only: stored encrypted on the change request, never returned,
+  used once at apply and then deleted. They are also deleted when the request is
+  cancelled, superseded or invalid, and when it is not applied within **7 days**
+  (the request then asks for them again). Entering a value drops existing
+  approvals.
+- **Environment variables are self-hosted only**, and only for names the operator
+  allows in `DEN_CONFIG_BLOB_SECRET_ENV_ALLOWLIST` on the den-api process
+  (Helm: `denApi.env`). It is a comma-separated list of exact names, or prefixes
+  ending in `*`:
+
+  ```yaml
+  denApi:
+    env:
+      DEN_CONFIG_BLOB_SECRET_ENV_ALLOWLIST: "OPENWORK_IMPORT_*,ANTHROPIC_KEY"
+  ```
+
+  A bare `*` is refused. The variable is read when the change is applied; if it is
+  missing, nothing is applied. OpenWork Cloud never reads environment variables for
+  an organization.
+
+## Change requests
+
+Uploading returns `202` with a change request ID. The server analyzes it in the
+background.
+
+| Status | Meaning |
+| --- | --- |
+| `uploaded`, `analyzing` | Waiting for, or in, analysis |
+| `needs_review` | The plan is ready. Items may still need a decision (match, reference, secret) |
+| `approved` | Approved for this exact plan (`planHash`) |
+| `queued`, `applying` | Waiting for, or holding, the organization's apply slot. One apply per organization at a time |
+| `applied` | Done. Keeps a before-snapshot and an apply report |
+| `failed` | An item failed. Items before it were applied; the rest were skipped. Revert with the before-snapshot |
+| `stale` | The organization changed since the plan. Re-analyzed automatically; approvals are dropped |
+| `invalid` | Not a usable file (unknown or newer area, duplicate IDs or keys). Final |
+| `superseded` | The same config token uploaded a newer file for the same scope |
+| `cancelled` | Withdrawn |
+
+- **Modes:** `merge` (default) creates and updates only. `mirror` can also delete
+  items of the scoped areas that are not in the file; each delete must be ticked
+  in the decisions.
+- **Matching:** an item matches by ID, then by an alias from an earlier import, then by
+  `key`, then by a natural key that is unique on both sides (for example an MCP
+  URL). A name alone only *proposes* a match that you confirm.
+- **Plans:** each item is `create`, `update`, `rename`, `unchanged`, `delete`,
+  `untouched` or `skip`, with field-level changes. Items blocked by a missing
+  decision are counted in `plan.summary.blocking`; approval is refused until it is `0`.
+- **Approvals** are tied to `planHash`. Any change to the plan or a secret value
+  drops them. An organization can require a second approver (Settings › Config),
+  who must differ from the uploader and the first approver.
+- **Apply** runs as the last approver: they (or the config token's member) must
+  still hold every written area's permission. Right before writing, the server
+  plans again; any difference makes the request `stale`. When a request is
+  applied, the organization's other open requests go `stale`.
+- **IDs:** a created item reuses its source ID when that ID is free on the whole
+  server, so cloud → self-hosted → cloud keeps the same IDs. Otherwise it gets a new
+  ID and an alias, so the next import of the same file matches it.
+- **Revert** creates a new change request from the before-snapshot, reviewed and
+  applied like any other. Changes made since show up as conflicts.
+
+Every apply is one audit operation (`config_blobs.apply`) with the changes of each
+item.
+
+## Config tokens
+
+Automation uses a **config token**: an organization API key of type `config`. Create
+one in Settings › API keys, or with the API (needs the Manage API keys permission):
+
+```sh
+curl -sS -X POST "$DEN_API_URL/v1/api-keys" \
+  -H "Authorization: Bearer $SESSION_TOKEN" -H "x-openwork-org-id: $ORG_ID" \
+  -H 'Content-Type: application/json' \
+  -d '{"name":"CI config","type":"config","scopes":["config:export","config:submit"],"areas":["connectors.*","members.teams"]}'
+```
+
+| Scope | Allows |
+| --- | --- |
+| `config:export` | Download files and before-snapshots |
+| `config:submit` | Upload (and dry-run) change requests, read them and their plans, save decisions and secret inputs, cancel |
+| `config:apply` | Approve, apply and revert |
+
+- Scopes are independent: `config:apply` does not include `config:submit`.
+- `areas` (optional) limits the token to area keys or prefixes such as
+  `ai-gateway.*`. A limited token can't export, upload or read other areas.
+- A config token acts as the member who created it and can never do more than that
+  member could in the dashboard.
+- Only config tokens with `config:submit` may send secret values. Standard API keys
+  get `403 config_scope_required` on every config-blob route.
+- A new upload from a token supersedes that token's older open requests with exactly
+  the same scope.
+
+## API
+
+All routes take the token in `x-api-key`; the organization comes from the token.
+
+| Method and path | Scope | Purpose |
+| --- | --- | --- |
+| `GET /v1/config-blobs/schema/{formatVersion}` | public | JSON Schema |
+| `GET /v1/config-blobs/areas` | any | Areas on this server and what you may do |
+| `GET /v1/config-blobs/export?areas=a,b` | `config:export` | Download a file (all areas you can view by default) |
+| `POST /v1/config-blobs/change-requests` | `config:submit` | `{ blob, mode?, title?, autoApply? }` → `202 { changeRequest }` |
+| `POST /v1/config-blobs/change-requests?dryRun=true` | `config:submit` | Same body → `200 { dryRun, plan, errors }`; stores nothing |
+| `GET /v1/config-blobs/change-requests?state=open\|closed` | `config:submit` | The queue |
+| `GET /v1/config-blobs/change-requests/{id}` | `config:submit` | Status, approvals, apply report |
+| `GET /v1/config-blobs/change-requests/{id}/plan` | `config:submit` | Plan and saved decisions |
+| `PUT /v1/config-blobs/change-requests/{id}/decisions` | `config:submit` | Matches, references, deletes, overrides, skips, renames |
+| `PUT /v1/config-blobs/change-requests/{id}/inputs` | `config:submit` | Secret decisions and values |
+| `POST /v1/config-blobs/change-requests/{id}/approve` | `config:apply` | `{ planHash }` |
+| `POST /v1/config-blobs/change-requests/{id}/apply` | `config:apply` | Queue an approved request; with `{ planHash }`, approve and queue in one call |
+| `POST /v1/config-blobs/change-requests/{id}/cancel` | `config:submit` | Withdraw |
+| `POST /v1/config-blobs/change-requests/{id}/revert` | `config:apply` | New change request from the before-snapshot |
+| `GET /v1/config-blobs/change-requests/{id}/before-snapshot` | `config:export` | The state before apply |
+
+Export, upload, wait for analysis and read the plan:
+
+```sh
+curl -sS --fail-with-body -H "x-api-key: $CONFIG_TOKEN" \
+  "$DEN_API_URL/v1/config-blobs/export?areas=connectors.mcp,members.teams" > org-config.json
+
+# …edit org-config.json…
+
+ID=$(jq -n --slurpfile blob org-config.json '{blob: $blob[0], mode: "merge", title: "Rotate docs MCP"}' |
+  curl -sS --fail-with-body -X POST -H "x-api-key: $CONFIG_TOKEN" -H 'Content-Type: application/json' \
+    --data-binary @- "$DEN_API_URL/v1/config-blobs/change-requests" | jq -r .changeRequest.id)
+
+until STATUS=$(curl -sS -H "x-api-key: $CONFIG_TOKEN" "$DEN_API_URL/v1/config-blobs/change-requests/$ID" |
+  jq -r .changeRequest.status) && [ "$STATUS" != uploaded ] && [ "$STATUS" != analyzing ]; do sleep 2; done
+
+curl -sS -H "x-api-key: $CONFIG_TOKEN" "$DEN_API_URL/v1/config-blobs/change-requests/$ID/plan" |
+  jq '.plan.summary, [.plan.areas[].items[] | select(.flags | length > 0) | {area, ref, flags, secrets}]'
+```
+
+Answer the secret placeholders, then approve and apply with a token that holds
+`config:apply`:
+
+```sh
+curl -sS --fail-with-body -X PUT -H "x-api-key: $CONFIG_TOKEN" -H 'Content-Type: application/json' \
+  "$DEN_API_URL/v1/config-blobs/change-requests/$ID/inputs" \
+  -d '{"inputs":[{"path":"connectors.mcp/emc_…/apiKey","decision":"keep"}]}'
+
+PLAN_HASH=$(curl -sS -H "x-api-key: $APPLY_TOKEN" "$DEN_API_URL/v1/config-blobs/change-requests/$ID/plan" | jq -r .plan.planHash)
+curl -sS --fail-with-body -X POST -H "x-api-key: $APPLY_TOKEN" -H 'Content-Type: application/json' \
+  "$DEN_API_URL/v1/config-blobs/change-requests/$ID/apply" -d "{\"planHash\":\"$PLAN_HASH\"}"
+```
+
+Poll the request until it is `applied` or `failed`; the response's `report` lists
+each item.
+
+## Move from OpenWork Cloud to a self-hosted Den
+
+1. **On Cloud**, turn on config import and export for the organization and export
+   everything (Settings › Config › Export, or `GET /v1/config-blobs/export`).
+2. **On the self-hosted Den**, create the organization and sign in as its owner. Turn
+   on `configBlobs`. If you want to supply secrets from the environment, set
+   `DEN_CONFIG_BLOB_SECRET_ENV_ALLOWLIST` and the variables on den-api.
+3. **Upload** the file in Settings › Config › Import (or `POST …/change-requests`),
+   in `merge` mode.
+4. **Review** the plan. Everything is a `create`; source IDs are reused. People
+   become invitations; choose whether to send invitation emails now
+   (`decisions.people.sendInviteEmails`) or later. Resolve any references the
+   plan flags.
+5. **Secrets**: for each placeholder enter a value, choose an environment variable,
+   or leave it unset and finish setup later on the resource's page.
+6. **Approve and apply**, then export again: the IDs and specs match the Cloud
+   export. From now on, importing the next Cloud export shows only what changed.
+
+Cloud-only features don't exist on self-hosted servers; their areas are reported as
+not supported and left out.
+
+## CI with GitHub Actions
+
+Keep the export in a repository. A schedule records drift, pull requests get a
+dry-run plan, and merges submit a change request that an admin approves in the
+dashboard (or that a token with `config:apply` approves).
+
+```yaml
+name: OpenWork config
+on:
+  schedule: [{ cron: "0 6 * * *" }]
+  pull_request: { paths: ["openwork/org-config.json"] }
+  push: { branches: [main], paths: ["openwork/org-config.json"] }
+
+env:
+  DEN_API_URL: ${{ vars.DEN_API_URL }}
+
+jobs:
+  export:
+    if: github.event_name == 'schedule'
+    runs-on: ubuntu-latest
+    permissions: { contents: write, pull-requests: write }
+    steps:
+      - uses: actions/checkout@v4
+      - run: |
+          curl -sS --fail-with-body -H "x-api-key: ${{ secrets.OPENWORK_CONFIG_TOKEN }}" \
+            "$DEN_API_URL/v1/config-blobs/export" |
+            jq 'del(.exportedAt)' > openwork/org-config.json
+      - uses: peter-evans/create-pull-request@v7
+        with:
+          branch: openwork-config-drift
+          title: "OpenWork configuration changed outside git"
+          commit-message: "Update OpenWork config export"
+
+  plan:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: |
+          jq -n --slurpfile blob openwork/org-config.json '{blob: $blob[0], mode: "merge"}' |
+            curl -sS --fail-with-body -X POST -H "x-api-key: ${{ secrets.OPENWORK_CONFIG_TOKEN }}" \
+              -H 'Content-Type: application/json' --data-binary @- \
+              "$DEN_API_URL/v1/config-blobs/change-requests?dryRun=true" > plan.json
+          jq '.plan.summary' plan.json
+          jq -r '.plan.areas[].items[] | select(.op != "unchanged" and .op != "untouched") | "\(.op)\t\(.area)\t\((.blob // .target).name // .ref)"' plan.json
+          test "$(jq '.errors | length' plan.json)" = 0
+
+  submit:
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: |
+          jq -n --slurpfile blob openwork/org-config.json \
+            --arg title "git ${GITHUB_SHA::7}" '{blob: $blob[0], mode: "merge", title: $title}' |
+            curl -sS --fail-with-body -X POST -H "x-api-key: ${{ secrets.OPENWORK_CONFIG_TOKEN }}" \
+              -H 'Content-Type: application/json' --data-binary @- \
+              "$DEN_API_URL/v1/config-blobs/change-requests" | jq .changeRequest
+```
+
+Give the CI token `config:export` and `config:submit` only, so a person approves
+every change. A dry run reports `errors` (what would make the request `invalid`) and
+`plan.summary.blocking` (items that need a decision, such as secrets); it stores
+nothing and never supersedes an open request. Each push supersedes the previous
+open request from the same token for the same scope.
+
+Export `exportedAt` changes on every run; drop it before committing, as above, so a
+scheduled export only opens a pull request when configuration really changed.

@@ -366,6 +366,7 @@
               "self-host/gateway",
               "self-host/gateway-upgrade",
               "self-host/declarative-configuration",
+              "self-host/export-import-configuration",
               "start-here/installer-delivery",
               "start-here/on-prem-branding",
               "start-here/github-connector-helm"

@@ -2,6 +2,18 @@
 
 Every user-visible piece goes behind `configBlobs` (cloud + self-hosted, off by default; `.opencode/skills/add-a-feature`). Each phase can ship alone.
 
+## Status (2026-11-09)
+
+| Phase | State |
+|---|---|
+| 0 · groundwork | **Built.** `configBlobs` flag, docs, shared types (`packages/types/src/den/config-blobs.ts`), area contract and registry, coverage check (`pnpm --filter @openwork-ee/den-api config-blobs:coverage`). |
+| 1 · export | **Built.** All eleven phase-1 adapters; `GET /areas`, `GET /export` (`$schema` → this server's public schema URL); Settings › Config export tree. |
+| 2 · change requests + plan | **Built.** `config_change_request` table and worker; matching tiers, references, three-way diff, plan hash; decisions and inputs endpoints; Changes tab and change request page. |
+| 3 · apply | **Built.** Approvals (optional second approver), per-org apply queue, stale detection, before-snapshot, aliases, secret write-through and purge, `tenant_job` audit, revert, `mirror` deletes. Not one database transaction (see change-requests.md › As built). Still to do: the cloud → self-hosted journey spec in `evals/`. |
+| 4 · config token + API docs | **Built.** `config` API keys with `config:export` / `config:submit` / `config:apply` and area limits; secret values only from config tokens; `env` secrets on self-hosted (`DEN_CONFIG_BLOB_SECRET_ENV_ALLOWLIST`); `?dryRun=true`; public `GET /v1/config-blobs/schema/1`; secret inputs expire after 7 days; public page `packages/docs/self-host/export-import-configuration.mdx` with the GitHub Actions example. Tests: `test/api/config-blobs-tokens-flow.api.test.ts`. |
+| 5 · coverage | **Not started.** The remaining areas, in the order below. |
+| 6 · cross-deployment polish | **Not started** beyond `unsupportedReason` per area and the `specVersion` check (upgraders, "newer than this server", `external_key` on more tables, pending-change hints). |
+
 ## Architecture: area adapters
 
 One registry in den-api, e.g. `ee/apps/den-api/src/config-blobs/areas/*.ts`. Each area implements:

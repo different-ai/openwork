@@ -48,3 +48,18 @@ An import never writes straight to the database. It becomes a **change request**
 6. **Merge by default; deleting is opt-in.** A missing area or item means "leave it alone". Deletes happen only in `mirror` mode, within the blob's scope, and each one is listed for confirmation.
 7. **Applying reuses the existing services, not raw table writes.** Validation, permissions, audit logging and side effects stay the same as in the UI. Each config area is an *adapter* in one registry. A CI check makes every org-scoped table either exported or explicitly excluded.
 8. **Every apply first saves a "before" blob of its scope.** A revert is just another change request made from that blob.
+
+## Screens
+
+Taken from the real Den web app (light theme, local Den with seeded test organizations). The flow: export → edit the file → upload → resolve the steps the plan needs → approve → apply → revert if needed.
+
+| Screen | |
+|---|---|
+| **Settings › Config › Overview**: export tree (whole organization or chosen areas), import with Merge / Mirror, and the "Require a second approver" setting. | ![Config overview](./config-overview.png) |
+| **Changes**: open change requests with status and `+added ~changed −removed` counts. Applied and closed ones are under History. | ![Changes queue](./config-changes.png) |
+| **Match**: items the server can't match on its own. Each offers "Add as a new item" or a scored candidate; nothing is picked for you. | ![Match step](./config-change-request-match.png) |
+| **References**: a reference to something that exists neither here nor in the file: use an existing item or leave it out. | ![References step](./config-change-request-references.png) |
+| **Secrets**: values are never in the file. Keep the current value (with "Keep all" when re-importing into the same organization), enter one, read an environment variable (self-hosted with an allowlist only) or leave it empty. | ![Secrets step](./config-change-request-secrets.png) |
+| **Review**: per area, what is added, renamed, changed and removed, with a field diff (set fields list what is added and removed). Removals of access or data need a tick before approval; areas with no changes fold into one line. | ![Review step](./config-change-request-review.png) |
+| **Applied**: the result of the apply, item by item, with Revert (a new change request from the before-snapshot). | ![Applied report](./config-change-request-applied.png) |
+| **Settings › API Keys › Config token**: scopes (export, submit, approve and apply) and an optional area limit. | ![Config token form](./api-keys-config-token.png) |

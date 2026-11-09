@@ -5,7 +5,7 @@
  * file only reads and writes rows, with optimistic status guards.
  */
 import { randomUUID } from "node:crypto"
-import { and, asc, desc, eq, gt, inArray, isNull, lte, ne, or } from "@openwork-ee/den-db/drizzle"
+import { and, asc, desc, eq, gt, inArray, isNotNull, isNull, lt, lte, ne, or } from "@openwork-ee/den-db/drizzle"
 import {
   AuthUserTable,
   ConfigBlobAliasTable,
@@ -300,6 +300,37 @@ export async function supersedeOpenRequestsFromApiKey(input: {
   await database
     .update(ConfigChangeRequestTable)
     .set({ status: "superseded", secretInputs: null, leaseOwner: null, leaseUntil: null })
+    .where(and(scope, inArray(ConfigChangeRequestTable.id, ids)))
+  return ids
+}
+
+/** Secret inputs are kept at most this long on a request that was not applied. */
+export const CONFIG_SECRET_INPUTS_TTL_MS = 7 * 24 * 60 * 60 * 1000
+/** Open statuses whose secret inputs expire. Not `analyzing` / `applying` (a worker holds them; caught on a later sweep). */
+export const CONFIG_SECRET_INPUT_EXPIRY_STATUSES: readonly ConfigChangeRequestStatus[] = ["needs_review", "approved", "stale", "queued"]
+
+/**
+ * Deletes the secret inputs of open requests uploaded more than
+ * CONFIG_SECRET_INPUTS_TTL_MS ago, at most `limit` per call. Such a request
+ * goes `stale` with approvals dropped, so it is re-analyzed and asks for its
+ * secrets again. Closed statuses clear their inputs when they close
+ * (applied, failed, cancelled, superseded, invalid). Cheap: `status IN (…)`
+ * uses the queue index prefix, and only open requests are scanned.
+ */
+/** `now` sets the cutoff (tests pass a later time); the request is re-analyzed right away. */
+export async function expireSecretInputs(options: { now?: Date; limit?: number } = {}, database: ConfigDatabase = db.$primary): Promise<ConfigChangeRequestId[]> {
+  const now = options.now ?? new Date()
+  const scope = and(
+    inArray(ConfigChangeRequestTable.status, [...CONFIG_SECRET_INPUT_EXPIRY_STATUSES]),
+    lt(ConfigChangeRequestTable.createdAt, new Date(now.getTime() - CONFIG_SECRET_INPUTS_TTL_MS)),
+    isNotNull(ConfigChangeRequestTable.secretInputs),
+  )
+  const rows = await database.select({ id: ConfigChangeRequestTable.id }).from(ConfigChangeRequestTable).where(scope).limit(options.limit ?? 50)
+  if (rows.length === 0) return []
+  const ids = rows.map((row) => row.id)
+  await database
+    .update(ConfigChangeRequestTable)
+    .set({ secretInputs: null, status: "stale", approvals: [], approvedPlanHash: null, availableAt: new Date() })
     .where(and(scope, inArray(ConfigChangeRequestTable.id, ids)))
   return ids
 }

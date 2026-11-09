@@ -94,6 +94,7 @@ export const platformAuditRoutes: readonly AuditRouteDeclaration[] = [
   readOnly("/oauth/client-metadata.json", "discovery.oauth_client_metadata.read", "platform.discovery", "discovery_document", null),
   readOnly("/docs", "api_docs.read", "platform.discovery", "api_document", null),
   readOnly("/openapi.json", "api_docs.openapi.read", "platform.discovery", "api_document", null),
+  readOnly("/v1/config-blobs/schema/:formatVersion", "config_blob.schema.read", "platform.discovery", "api_document", null, "Public JSON Schema of the config blob format (envelope and area spec schemas); no organization, no flag, side-effect free."),
   readOnly("/v1/app-version", "app_version.read", "platform.discovery", "app_version", null),
   readOnly("/v1/orgs/sso/singleton", "auth.sso_singleton.read", "platform.discovery", "deployment", null),
   readOnly("/v1/auth/bootstrap/status", "auth.bootstrap.status.read", "platform.discovery", "deployment", null),

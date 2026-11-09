@@ -125,9 +125,10 @@ export function ConfigTokenFields({
                                 ]}
                             />
                             {draft.limitAreas ? (
-                                <div className="grid gap-2 sm:grid-cols-2">
+                                // Column by column, so areas of one sidebar group stay together.
+                                <div className="gap-x-6 sm:columns-2">
                                     {offeredAreas.map((area) => (
-                                        <label key={area.key} className="flex items-center gap-2 text-[13px] text-gray-900">
+                                        <label key={area.key} className="mb-2 flex break-inside-avoid items-center gap-2 text-[13px] text-gray-900">
                                             <DenCheckbox
                                                 name={`area-${area.key}`}
                                                 checked={draft.areas.includes(area.key)}

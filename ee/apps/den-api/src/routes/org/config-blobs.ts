@@ -34,6 +34,7 @@ import {
   approveChangeRequest,
   cancelChangeRequest,
   describeAreas,
+  dryRunChangeRequest,
   exportBlob,
   getBeforeSnapshot,
   getChangeRequestDetail,
@@ -50,9 +51,10 @@ import {
   type ConfigCaller,
   type ConfigOrganization,
 } from "../../config-blobs/service.js"
+import { configBlobJsonSchema } from "../../config-blobs/json-schema.js"
 import { allowConfigTokenSecrets, apiKeyHasConfigScope, getConfigTokenAreas, requireConfigScope } from "../../config-blobs/token.js"
 import { requireFeature } from "../../features.js"
-import { jsonValidator, orgMemberRoute, paramValidator, queryValidator, requireOrgPermission } from "../../middleware/index.js"
+import { jsonValidator, orgMemberRoute, paramValidator, publicRoute, queryValidator, requireOrgPermission } from "../../middleware/index.js"
 import { refuseMachineSecrets } from "../../middleware/refuse-machine-secrets.js"
 import { forbiddenSchema, invalidRequestSchema, jsonResponse, unauthorizedSchema } from "../../openapi.js"
 import type { AuthContextVariables } from "../../session.js"
@@ -156,10 +158,18 @@ const changeRequestListSchema = z.object({ changeRequests: z.array(changeRequest
 const changeRequestDetailSchema = z.object({ changeRequest: changeRequestSchema, report: reportSchema.nullable() }).meta({ ref: "ConfigChangeRequestDetailResponse" })
 const planResponseSchema = z.object({ plan: planSchema.nullable(), decisions: configDecisionsSchema }).meta({ ref: "ConfigChangeRequestPlanResponse" })
 const planUpdateResponseSchema = z.object({ changeRequest: changeRequestSchema, plan: planSchema.nullable() }).meta({ ref: "ConfigChangeRequestPlanUpdateResponse" })
+const dryRunResponseSchema = z.object({
+  dryRun: z.literal(true),
+  plan: planSchema.nullable(),
+  errors: z.array(z.string()),
+}).meta({ ref: "ConfigChangeRequestDryRunResponse" })
+const jsonSchemaDocumentSchema = z.record(z.string(), z.unknown()).meta({ ref: "ConfigBlobJsonSchema" })
 const settingsResponseSchema = z.object({ settings: z.object({ requireSecondApprover: z.boolean() }) }).meta({ ref: "ConfigBlobSettingsResponse" })
 
 const changeRequestParams = idParamSchema("changeRequestId", "configChangeRequest")
 const listQuerySchema = z.object({ state: z.enum(["open", "closed"]).default("open") })
+const submitQuerySchema = z.object({ dryRun: z.enum(["true", "false"]).optional() })
+const schemaParamsSchema = z.object({ formatVersion: z.string().max(10) })
 const exportQuerySchema = z.object({ areas: z.string().max(2000).optional() })
 const applyBodySchema = z.object({ planHash: z.string().optional() }).strict()
 
@@ -249,6 +259,30 @@ function today(): string {
 export function registerOrgConfigBlobRoutes<T extends { Variables: OrgRouteVariables }>(app: Hono<T>) {
   const feature = requireFeature("configBlobs")
 
+  // Public and not behind the per-organization flag: the format is the same for everyone, and editors and CI fetch it without credentials.
+  app.get(
+    `${BASE}/schema/:formatVersion`,
+    describeRoute({
+      tags: TAGS,
+      security: [],
+      summary: "Get the config blob JSON Schema",
+      description: "The JSON Schema (draft 2020-12) of a config blob in this format version: the envelope and every area's item spec. Exports point their `$schema` here. Public, no authentication.",
+      responses: {
+        200: jsonResponse("The JSON Schema.", jsonSchemaDocumentSchema),
+        404: jsonResponse("Unknown format version.", errorSchema),
+      },
+    }),
+    publicRoute,
+    paramValidator(schemaParamsSchema),
+    (c) => {
+      const version = c.req.valid("param").formatVersion
+      const schema = /^\d+$/.test(version) ? configBlobJsonSchema(Number(version)) : null
+      if (!schema) return c.json({ error: "unknown_format_version", message: `No config blob format version ${version} on this server.` }, 404)
+      c.header("Cache-Control", "public, max-age=3600")
+      return c.json(schema)
+    },
+  )
+
   app.get(
     `${BASE}/areas`,
     describe("List config areas", "The config areas of this server: label, sidebar path, spec version, whether each is supported here, and whether the caller may export or import it.", { status: 200, schema: areasResponseSchema, description: "Config areas returned." }),
@@ -285,19 +319,24 @@ export function registerOrgConfigBlobRoutes<T extends { Variables: OrgRouteVaria
 
   app.post(
     `${BASE}/change-requests`,
-    describe("Upload a config change request", "Uploads a config blob as a change request. It is analyzed in the background: poll the request until it is `needs_review`, then read its plan.", { status: 202, schema: changeRequestResponseSchema, description: "Stored; analysis is queued." }, {
+    describe("Upload a config change request", "Uploads a config blob as a change request. It is analyzed in the background: poll the request until it is `needs_review`, then read its plan. With `?dryRun=true` the blob is analyzed at once and nothing is stored (no change request, nothing superseded): the response is `200 { dryRun, plan, errors }`, for CI checks. `errors` are what would make the request `invalid`; `plan.summary.blocking` counts items that would need a decision.", { status: 202, schema: changeRequestResponseSchema, description: "Stored; analysis is queued." }, {
+      200: jsonResponse("Dry run: the plan the upload would produce. Nothing was stored.", dryRunResponseSchema),
       400: jsonResponse("Not a valid config blob.", errorSchema),
       413: jsonResponse("The blob is larger than the limit.", errorSchema),
     }),
     orgMemberRoute(),
     feature,
     requireConfigScope("config:submit"),
+    queryValidator(submitQuerySchema),
     bodyLimit({ maxSize: CONFIG_BLOB_MAX_BYTES + 64 * 1024, onError: (c) => c.json({ error: "blob_too_large", message: `Config files are limited to ${CONFIG_BLOB_MAX_BYTES / (1024 * 1024)} MB.` }, 413) }),
     jsonValidator(createConfigChangeRequestSchema),
     async (c) => {
       try {
         const { org, caller } = await configCaller(c, getConfigTokenAreas(c))
         const body = c.req.valid("json")
+        if (c.req.valid("query").dryRun === "true") {
+          return c.json({ dryRun: true, ...await dryRunChangeRequest(org, caller, { blob: body.blob, mode: body.mode }) }, 200)
+        }
         const changeRequest = await submitChangeRequest(org, caller, { blob: body.blob, mode: body.mode, autoApply: body.autoApply, ...(body.title ? { title: body.title } : {}) })
         return c.json({ changeRequest }, 202)
       } catch (error) {

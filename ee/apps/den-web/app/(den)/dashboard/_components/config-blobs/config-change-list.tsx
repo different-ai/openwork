@@ -11,9 +11,10 @@ import { useConfigChangeRequests } from "./config-blobs-data";
 import { formatRelativeTime } from "./config-blobs-model";
 import { ConfigCounts, ConfigRowSkeleton, ConfigStatusChip } from "./config-blobs-parts";
 
-export function changeRequestTitle(request: Pick<ConfigChangeRequestSummary, "title" | "source" | "revertsChangeRequestId">): string {
+export function changeRequestTitle(request: Pick<ConfigChangeRequestSummary, "title" | "source" | "revertsChangeRequestId" | "sourceOrganization">): string {
   if (request.title) return request.title;
   if (request.source === "revert") return "Revert of an earlier change";
+  if (request.sourceOrganization) return `Import from ${request.sourceOrganization.name}`;
   return request.source === "api" ? "Import from the API" : "Import";
 }
 
