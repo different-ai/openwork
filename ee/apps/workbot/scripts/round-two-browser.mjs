@@ -73,7 +73,7 @@ async function screenshot(name) {
   await page.screenshot({ path: file });
   report.screenshots.push(file);
 }
-// Phones show Workbot's plain name and status (no avatar badge or profile); the profile lives on wide screens.
+// Phones show Workbot's plain name and status instead of the avatar badge; both open the same profile.
 const NAME = '[data-workbot-profile-badge], [data-workbot-working-name]';
 async function openProfile() {
   await page.setViewportSize({ width: 1280, height: 844 });
@@ -115,14 +115,14 @@ try {
     if (tab === 'Identity') await page.getByText('About me', { exact: true }).waitFor();
     await screenshot(`mobile-profile-${tab.toLowerCase()}`);
   }
-  // On a phone the name opens the task sheet: what Workbot is doing, never a profile with tabs.
+  // On a phone the name opens the same profile as the avatar on a wide screen (ENG-1143), never a phone-only sheet.
   await go('browsing', { centered: '0', preview: '0' });
   await page.locator('[data-workbot-working-name]').click();
-  await page.locator('[data-workbot-task-sheet]').waitFor();
-  assert.equal(await page.getByRole('tab').count(), 0);
-  assert.equal(await page.locator('[data-workbot-profile]').count(), 0);
-  record('phoneNameOpensTaskSheet', true);
-  await screenshot('mobile-task-sheet');
+  await page.locator('[data-workbot-profile]').waitFor();
+  await page.getByRole('tab', { name: 'Tasks', exact: true }).waitFor();
+  assert.equal(await page.locator('[data-workbot-task-sheet]').count(), 0);
+  record('phoneNameOpensProfile', true);
+  await screenshot('mobile-name-profile');
   await page.keyboard.press('Escape');
   for (const quick of ['1', '0']) {
     const start = performance.now();

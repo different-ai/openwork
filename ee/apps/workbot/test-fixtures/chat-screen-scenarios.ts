@@ -121,6 +121,25 @@ export const scenarios: Record<string, () => FixtureThread> = {
     name: "Workbot", organizationName: "Example Team", status: "idle", hasEarlier: false, filesEnabled: true,
     turns: [hello(), turn("h1", "Summarize my inbox as a page", minutesAgo(2), [said("Here's the summary page.")], { outputs: [ARTIFACT_FILES.hostile] })],
   }),
+  /**
+   * ENG-1143, production Nov 9: nothing running, and background tasks that each polled a remote task many times (the
+   * same "Checking the remote task" step over and over), two of them gone quiet. Each must stay one row.
+   */
+  background: () => {
+    const polls = (count: number, firstAgo: number, gap: number) => Array.from({ length: count }, (_, index) => ({ label: "Checking the remote task", done: true, at: ago(firstAgo - index * gap) }))
+    const task = (id: string, title: string, status: string, startedAgo: number, steps: Array<{ label: string; done: boolean; at: number }>, finishedAgo: number | null = null) =>
+      ({ id, title, status, startedAt: ago(startedAgo), finishedAt: finishedAgo === null ? null : ago(finishedAgo), update: null, updates: steps.map((step) => step.label), steps, stepsDone: steps.filter((step) => step.done).length, note: null })
+    return { name: "Workbot", organizationName: "Example Team", status: "idle", hasEarlier: false, filesEnabled: true,
+      turns: [hello(), turn("bg1", "Keep an eye on the browser fix on my Mac Studio and tell me when it's merged", ago(9_000), [said("I'm watching it and will tell you here when it's merged.")], {
+        tasks: [
+          task("bg1.t1", "Watch the browser fix on the Mac Studio", "working", 8_900, polls(7, 8_800, 120)),
+          task("bg1.t2", "Watch the release checks", "working", 8_000, polls(5, 7_900, 180)),
+          task("bg1.t3", "Draft the release notes", "done", 7_000, [{ label: "Reading the merged changes", done: true, at: ago(6_900) }, ...polls(3, 6_800, 60), { label: "Writing the notes", done: true, at: ago(6_500) }], 6_400),
+          task("bg1.t4", "3D room planner", "stopped", 13_000, [], 12_000),
+        ],
+      })],
+    }
+  },
   /** Short and long messages from the person (#1, #2): "Hey" must stay on one line. */
   bubbles: () => ({
     name: "Workbot", organizationName: "Example Team", status: "idle", hasEarlier: false, filesEnabled: true,

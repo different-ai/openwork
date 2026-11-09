@@ -304,13 +304,13 @@ try {
     await phone.waitForFunction(() => document.activeElement?.getAttribute("aria-label") === "Open workspace navigation")
     await assertDraft(phone, "An unsent main chat draft.")
   })
-  await check(phone, "iPhone has no assistant profile: the name opens the task sheet, Apps a plain list", async () => {
+  await check(phone, "iPhone name opens the same sheet as the desktop avatar (the task sheet without the profile flag)", async () => {
     assert.equal(await phone.locator("[data-workbot-profile-badge]").count(), 0, "No avatar-and-name badge on a phone")
     const name = phone.locator("[data-workbot-working-name]")
     await name.click()
     const sheet = phone.locator("[data-workbot-task-sheet]")
     await sheet.waitFor()
-    assert.equal(await phone.locator("[data-workbot-profile]").count(), 0, "The name opens the task sheet, not a profile")
+    assert.equal(await phone.locator("[data-workbot-profile]").count(), 0, "Without the profile flag the desktop avatar opens the task sheet too")
     await shot(phone, "iphone-task-sheet")
     await phone.keyboard.press("Escape")
     await sheet.waitFor({ state: "hidden" })

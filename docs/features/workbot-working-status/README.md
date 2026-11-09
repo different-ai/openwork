@@ -13,7 +13,7 @@ Without the feature, Workbot's work fills the chat: typing dots for as long as a
 With the feature on, the chat keeps only what Workbot says, and its work is disclosed in three levels, each on request:
 
 1. **Status line.** Under Workbot's name in the header: what it is doing now and for how long ("Searching YouTube · 2m", "3D room planner · 4m"). On a phone it takes the tabs' place while Workbot works.
-2. **Task sheet.** Tapping the name: "In progress", what it's answering, then its steps with a check once done, and each background task's steps, latest note and Stop. A bottom sheet on phones, a panel under the name on wider screens.
+2. **Task sheet.** Tapping the name (without the profile; with `workbotProfileSheet` the name opens the profile on phones and desktop alike): "In progress", what it's answering, then its steps with a check once done, and one row per background task with one status line, a time and Stop; the task's steps and latest note open inside its row. A bottom sheet on phones (pull it down to close), a panel under the name on wider screens.
 3. **Watch.** In the sheet, when Workbot is on its browser or screen. Its screen appears in the chat only when Workbot shows it on purpose (`show: true`, e.g. the person asked to see it).
 
 Typing dots show only before Workbot has said or done anything. A task that failed or was stopped keeps its card in the chat with Try again.
