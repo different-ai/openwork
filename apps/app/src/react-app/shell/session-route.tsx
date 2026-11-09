@@ -3965,7 +3965,6 @@ export function SessionRoute() {
         ),
         claudeAgent: sessionProviderAuthSnapshot.claudeAgent,
         onConnectClaudeAgent: sessionProviderAuthStore.connectClaudeAgent,
-        onRefreshClaudeAgent: sessionProviderAuthStore.refreshClaudeAgent,
         onSelect: sessionProviderAuthStore.startProviderAuth,
         onSubmitApiKey: async (providerId, apiKey) => {
           const result = await sessionProviderAuthStore.submitProviderApiKey(providerId, apiKey);

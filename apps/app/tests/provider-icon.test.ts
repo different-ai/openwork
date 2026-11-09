@@ -81,6 +81,14 @@ describe("other provider icons", () => {
     expect(markup).not.toContain('aria-label="OpenWork"');
   });
 
+  test("Claude Code wears Anthropic's mark whatever the model is called", () => {
+    const anthropic = renderToStaticMarkup(createElement(ProviderIcon, { providerId: "anthropic" }));
+    const claudeCode = renderToStaticMarkup(createElement(ProviderIcon, { providerId: "claude-agent", providerName: "Claude Code" }));
+    expect(claudeCode).toBe(anthropic);
+    expect(claudeCode).toContain('d="M17.304 3.541');
+    expect(claudeCode).not.toContain("<img");
+  });
+
   test("unrelated providers still use their remote image", () => {
     const markup = renderToStaticMarkup(createElement(ProviderIcon, { providerId: "google" }));
     expect(markup).toContain('<img src="https://cdn.simpleicons.org/googlegemini"');

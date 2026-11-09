@@ -3029,6 +3029,9 @@ export function createClientV2(
     ));
   };
 
+  // The engine calls its Claude Code provider "Claude Agent"; people connect and pick it as Claude Code.
+  const OPENWORK_PROVIDER_NAMES: Record<string, string> = { "claude-agent": "Claude Code" };
+
   const listProviders = async (
     _parameters: DirectoryParameters = {},
     options?: RequestOptions,
@@ -3061,7 +3064,7 @@ export function createClientV2(
       }
       providersByID.set(model.providerID, {
         id: model.providerID,
-        name: providerNames.get(model.providerID) ?? model.providerID,
+        name: OPENWORK_PROVIDER_NAMES[model.providerID] ?? providerNames.get(model.providerID) ?? model.providerID,
         source: "config",
         env: [],
         options: {},
