@@ -51,14 +51,14 @@ const configSchema = z.object({
   HEADLESS_MCP_TOOL_ALLOWLIST: csv,
   HEADLESS_MAX_CONCURRENT_TURNS: z.coerce.number().int().min(1).max(1_000).default(32),
   /**
-   * Model calls per turn, so a turn that keeps making progress in a loop still ends (`max_steps_exceeded`). 0 means no
-   * limit: a long task then ends only with its answer, Stop, the stuck check or the turn timeout.
+   * Model calls per turn; past it the turn ends `max_steps_exceeded`. 0, the default, means no limit: a long task ends
+   * with its answer, Stop, the stuck check or the turn timeout. A session may set its own (`maxSteps`).
    */
-  HEADLESS_MAX_STEPS: z.coerce.number().int().min(0).default(1000),
+  HEADLESS_MAX_STEPS: z.coerce.number().int().min(0).default(0),
   HEADLESS_MAX_OUTPUT_TOKENS: z.coerce.number().int().min(256).max(128_000).default(16_384),
   /**
    * 0 means no limit. Every model and tool call has its own timeout, so a turn cannot hang on one call; a turn that
-   * keeps making calls is bounded by HEADLESS_MAX_STEPS instead.
+   * keeps making calls is bounded only where HEADLESS_MAX_STEPS or the session's `maxSteps` is set.
    */
   HEADLESS_TURN_TIMEOUT_MS: z.coerce
     .number()

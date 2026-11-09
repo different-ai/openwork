@@ -71,7 +71,7 @@ Turn status is one of `queued`, `running`, `completed`, `failed`, `interrupted` 
 - `mcp_unavailable` (connecting to `HEADLESS_MCP_URL` failed three times in a row, 0.5 s and 2 s apart)
 - `model_http_<status>`
 - `turn_timeout`
-- `max_steps_exceeded` (the turn made `HEADLESS_MAX_STEPS` model calls, or the session's `maxSteps`)
+- `max_steps_exceeded` (only with `HEADLESS_MAX_STEPS` or the session's `maxSteps` set: the turn made that many model calls)
 - `stuck_repeating`
 - `output_limit` (the model's replies stopped at `HEADLESS_MAX_OUTPUT_TOKENS` three times in a row)
 - `runner_restarted`
@@ -314,7 +314,7 @@ Nothing on celld changes, so pointing the URLs back is the rollback.
 | `HEADLESS_DB_PATH` | `./data/headless.sqlite` | Put it on a persistent volume |
 | `HEADLESS_PORT` | `8795` | |
 | `HEADLESS_MAX_CONCURRENT_TURNS` | `32` | Process-wide. Turns mostly wait on the network, so this is bounded by memory and Gateway rate limits, not CPU |
-| `HEADLESS_MAX_STEPS` | `1000` | Model calls per turn, so a turn that keeps making progress in a loop still ends (`max_steps_exceeded`). `0` means no limit: a long task then ends only with its answer, Stop, the stuck check or the turn timeout. A session may set its own with `maxSteps` |
+| `HEADLESS_MAX_STEPS` | `0` | Model calls per turn; past it the turn ends `max_steps_exceeded`. `0` means no limit: a long task ends with its answer, Stop, the stuck check or the turn timeout. A session may set its own with `maxSteps` |
 | `HEADLESS_TURN_TIMEOUT_MS` | `0` | `0` means no limit. Otherwise at least `10000`, applied to each stretch between credential refreshes |
 | `HEADLESS_CREDENTIAL_REFRESH_MS` | `3000000` | A turn with an MCP token pauses between steps after this long so the caller resumes it with a fresh one. Keep it under the token lifetime (60 minutes for Den) |
 | `HEADLESS_MAX_OUTPUT_TOKENS` | `16384` | Output cap per model call: Anthropic `max_tokens`, OpenAI `max_completion_tokens`. A streamed call has no total time limit, only 180 s without any data; a non-streamed call must finish in 180 s. A reply cut off there never ends a turn: a call it was writing gets an error, a reply with no complete call is dropped, and the next step asks for less |

@@ -4,16 +4,17 @@ Feature key: `workbotStepLimit` · Deployments: cloud and self-hosted · Default
 
 ## What changes
 
-Workbot stops a request after a set number of steps (one step is one call to
-the model, with the tools it asks for) and says "That needed more steps than I
-can take at once. Try a smaller piece of it." Until now only the operator could
-change that number, with `HEADLESS_MAX_STEPS` on the headless runner (1,000
-unless set; `0` for no limit).
+Workbot can stop a request after a set number of steps (one step is one call to
+the model, with the tools it asks for); it then says "That needed more steps
+than I can take at once. Try a smaller piece of it." By default there is no
+limit. Until now only the operator could set one, with `HEADLESS_MAX_STEPS` on
+the headless runner.
 
 With the feature on, Den › Manage › Workbot has a **Step limit** row under the
 default model. An admin with Manage OpenWork Models chooses:
 
-- **Default**: the deployment's own limit (`HEADLESS_MAX_STEPS`).
+- **Default**: the deployment's own setting (`HEADLESS_MAX_STEPS`; no limit
+  unless the operator set one).
 - **100, 250, 500, 1,000, 2,500 or 5,000 steps**.
 - **No limit**: a request ends only with its answer, Stop, the stuck check or
   the turn timeout.
