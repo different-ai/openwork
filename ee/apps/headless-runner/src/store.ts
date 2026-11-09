@@ -49,6 +49,7 @@ const sessionRow = z.object({
 })
 const sessionOptions = z.object({
   repeats: repeatLimitsSchema.optional(),
+  maxSteps: z.number().int().min(0).nullable().optional(),
   files: z.boolean().optional(),
   computer: z.boolean().optional(),
   desktop: z.boolean().optional(),
@@ -93,6 +94,8 @@ export type Session = {
   instructions: string
   /** The caller's limits for repeated steps; null uses the runner's defaults. */
   repeats: RepeatLimits | null
+  /** The caller's limit on model calls per turn (0 = no limit); null uses the runner's configured limit. */
+  maxSteps: number | null
   /**
    * Whether this conversation keeps files (uploads, files the agent hands back) and has a computer. Both are off
    * unless the caller asks for them, so turning a capability on for the runner changes nothing for callers that
@@ -135,6 +138,8 @@ export type SessionInput = {
   title?: string
   instructions?: string
   repeats?: RepeatLimits
+  /** Null goes back to the runner's configured limit. */
+  maxSteps?: number | null
   files?: boolean
   computer?: boolean
   desktop?: boolean
@@ -155,6 +160,7 @@ export type SessionInput = {
 /** The settings part of a session, leaving out what the caller didn't set. */
 function optionsOf(input: {
   repeats?: RepeatLimits | null
+  maxSteps?: number | null
   files?: boolean
   computer?: boolean
   desktop?: boolean
@@ -171,6 +177,8 @@ function optionsOf(input: {
 }): SessionOptions {
   return {
     ...(input.repeats ? { repeats: input.repeats } : {}),
+    // Null is kept here so a put can clear an earlier limit; it is never stored (serializeOptions).
+    ...(input.maxSteps !== undefined ? { maxSteps: input.maxSteps } : {}),
     ...(input.files !== undefined ? { files: input.files } : {}),
     ...(input.computer !== undefined ? { computer: input.computer } : {}),
     ...(input.desktop !== undefined ? { desktop: input.desktop } : {}),
@@ -194,6 +202,7 @@ const initialTitle = (input: SessionInput) => input.title ?? (input.autoTitle ? 
 function serializeOptions(options: SessionOptions) {
   const ordered = {
     ...(options.repeats ? { repeats: options.repeats } : {}),
+    ...(typeof options.maxSteps === "number" ? { maxSteps: options.maxSteps } : {}),
     ...(options.files ? { files: true } : {}),
     ...(options.computer ? { computer: true } : {}),
     ...(options.desktop ? { desktop: true } : {}),
@@ -580,6 +589,7 @@ export class Store {
       title: value.title,
       instructions: value.instructions,
       repeats: options.repeats ?? null,
+      maxSteps: options.maxSteps ?? null,
       files: options.files ?? false,
       computer: options.computer ?? false,
       desktop: options.desktop ?? false,

@@ -270,8 +270,9 @@ export type RunnerDesktopView = (typeof RUNNER_DESKTOP_VIEWS)[number]
  * (the caller's id for the conversation) list a person's conversations; `timeZone` dates their messages; `autoTitle`
  * names it after its first answer; `memoryOf` shares memory/ with another of their conversations (legacy chats);
  * `memoryScope: "owner"` keeps memory/ with the owner, shared by all their chats (per-chat session cells).
+ * `maxSteps` is the conversation's own limit on model calls per turn: 0 for no limit, null to go back to the runner's.
  */
-export type RunnerSessionSettings = { owner?: string; ref?: string; timeZone?: string; autoTitle?: boolean; memoryOf?: string; memoryScope?: "owner" }
+export type RunnerSessionSettings = { owner?: string; ref?: string; timeZone?: string; autoTitle?: boolean; memoryOf?: string; memoryScope?: "owner"; maxSteps?: number | null }
 
 const capabilityFields = (input: RunnerCapabilities & RunnerSessionSettings) => ({
   ...(input.files !== undefined ? { files: input.files } : {}),
@@ -289,6 +290,7 @@ const capabilityFields = (input: RunnerCapabilities & RunnerSessionSettings) => 
   ...(input.autoTitle !== undefined ? { autoTitle: input.autoTitle } : {}),
   ...(input.memoryOf ? { memoryOf: input.memoryOf } : {}),
   ...(input.memoryScope ? { memoryScope: input.memoryScope } : {}),
+  ...(input.maxSteps !== undefined ? { maxSteps: input.maxSteps } : {}),
 })
 
 /** A runner older than a setting refuses it as an invalid request; any other refusal is real. */
@@ -373,6 +375,12 @@ export function createHeadlessRunnerClient(deps: HeadlessRunnerDeps) {
       const extras = { ...(input.repeats ? { repeats: input.repeats } : {}), ...capabilityFields(input) }
       let { status, payload } = await request(deps, "PUT", sessionPath(id), { ...base, ...extras })
       let compatible: Record<string, unknown> = extras
+      // An older runner has no per-conversation step limit: the conversation keeps the runner's own, and its other settings.
+      if (unknownSetting(status, payload) && input.maxSteps !== undefined) {
+        const { maxSteps: _steps, ...rest } = compatible
+        compatible = rest
+        ;({ status, payload } = await request(deps, "PUT", sessionPath(id), { ...base, ...compatible }))
+      }
       // Older runners keep all other settings, without the new read-only recovery behavior.
       if (unknownSetting(status, payload) && input.browserRecovery !== undefined) {
         const { browserRecovery: _recovery, ...rest } = compatible
