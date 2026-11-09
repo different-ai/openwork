@@ -3,6 +3,7 @@ import { afterAll, describe, expect, mock, test } from "bun:test";
 import { GlobalRegistrator } from "@happy-dom/global-registrator";
 
 import type { MenuAction } from "../src/components/ui/action-menu-model";
+import type { SessionAction } from "../src/react-app/domains/session/sidebar/session-action-catalog";
 import type { WorkbenchSnapshot } from "../src/react-app/domains/session/chat/workbench-store";
 
 const ownedDom = typeof window === "undefined";
@@ -59,7 +60,7 @@ describe("human session actions share one menu/palette definition", () => {
     expect(await dispatchMenuAction(menu, "archive")).toBe(false);
     const callback = mock(() => {});
     const close = mock(() => {});
-    const disabled: MenuAction[] = [{ type: "item", id: "archive", label: "Archive session", disabled: true, disabledReason: "Workspace is offline", onSelect: callback }];
+    const disabled: SessionAction[] = [{ type: "item", kind: "archive", id: "archive", label: "Archive session", disabled: true, disabledReason: "Workspace is offline", onSelect: callback }];
     const palette = sessionMenuActionsToPalette(disabled, "Main", close);
     expect(palette[0]).toMatchObject({ disabled: true, detail: "Main — Workspace is offline" });
     palette[0]?.action();

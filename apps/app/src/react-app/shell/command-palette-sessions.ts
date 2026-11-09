@@ -2,6 +2,7 @@ import { getDisplaySessionTitle } from "@/app/lib/session-title";
 import { t } from "@/i18n";
 import { sessionActivityAt } from "@/react-app/domains/session/sidebar/session-activity";
 import { getRootSessions } from "@/react-app/domains/session/sidebar/utils";
+import { canOpenSessionAsSideChat } from "@/react-app/domains/session/sidebar/session-action-resolver";
 
 import type { SessionOption } from "./command-palette";
 import type { RouteSession, RouteWorkspace } from "./route-workspaces";
@@ -16,9 +17,7 @@ export function buildCommandPaletteSplitSessions(
   current: CommandPaletteSessionRef | null | undefined,
   secondary?: CommandPaletteSessionRef | null,
 ) {
-  if (!current) return [];
-  return sessions.filter((session) => ![current, secondary].some((visible) => visible
-    && session.workspaceId === visible.workspaceId && session.sessionId === visible.sessionId));
+  return sessions.filter((session) => canOpenSessionAsSideChat(session, current, secondary));
 }
 
 export function buildCommandPaletteSessions(

@@ -222,7 +222,7 @@ import { CommandPalette, type PaletteItem, type SessionGroupOption } from "./com
 import { buildCommandPaletteSessions } from "./command-palette-sessions";
 import { commandPaletteModelOptions, commandPaletteModelTarget, createCommandPaletteModelControls } from "./command-palette-models";
 import { requestSessionDialog } from "./session-actions-bus";
-import { buildSessionMenuActions } from "@/react-app/domains/session/sidebar/session-menu-actions";
+import { resolveSessionActions } from "@/react-app/domains/session/sidebar/session-action-resolver";
 import { sessionMenuActionsToPalette } from "./command-palette-session-actions";
 import type { ThinkingModeShortcutDirection } from "./thinking-mode-shortcut";
 import { SessionSearchDialog } from "./session-search-dialog";
@@ -3390,17 +3390,14 @@ export function SessionRoute() {
     if (!selectedSessionId || !selectedWorkspaceId || !currentSessionForGroupMove) return [];
     const target = { workspaceId: selectedWorkspaceId, sessionId: selectedSessionId, title: currentSessionForGroupMove.title };
     const isArchived = (selectedSidebarSession?.time?.archived ?? 0) > 0;
-    const actions = buildSessionMenuActions({
-      isPinned: currentSessionPinned,
-      isArchived,
-      groups: [], assignedGroupId: null,
-      onTogglePin: () => sessionManagementStore.getState().togglePin(target.sessionId),
-      onAssignGroup: () => {}, // The palette's group submode also supports unsent drafts.
-      onRename: opencodeClient ? () => requestSessionDialog({ action: "rename", target }) : undefined,
-      onDelete: client ? () => requestSessionDialog({ action: "delete", target }) : undefined,
-      onArchive: opencodeClient ? async () => {
-        await archiveSessionInWorkspace(target.workspaceId, target.sessionId, !isArchived);
-      } : undefined,
+    const actions = resolveSessionActions({
+      target, surface: "palette", isPinned: currentSessionPinned, isArchived,
+      groups: [], assignedGroupId: null, // The palette's group submode also supports unsent drafts.
+      capabilities: { rename: Boolean(opencodeClient), delete: Boolean(client), archive: Boolean(opencodeClient) },
+      services: {
+        management: sessionManagementStore.getState, requestDialog: requestSessionDialog,
+        onArchiveSession: async (sessionId, archived, workspaceId) => { await archiveSessionInWorkspace(workspaceId, sessionId, archived); },
+      },
     });
     return sessionMenuActionsToPalette(actions, target.title, () => setCommandPaletteOpen(false));
   }, [archiveSessionInWorkspace, client, currentSessionForGroupMove, currentSessionPinned, opencodeClient, selectedSessionId, selectedSidebarSession, selectedWorkspaceId]);

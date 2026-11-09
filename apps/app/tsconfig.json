@@ -22,6 +22,7 @@
   },
   "include": [
     "globals.d.ts",
+    "tests/session-action-coverage.typecheck.ts",
     "src/index.react.tsx",
     "src/components/**/*",
     "src/i18n/**/*",
