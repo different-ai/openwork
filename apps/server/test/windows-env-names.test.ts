@@ -82,6 +82,19 @@ test("on Windows the engine inherits ProgramData so Microsoft OpenSSH can start"
   assert.equal(inherited.SECRET_TOKEN, undefined);
 });
 
+test("the engine inherits the Claude executable override but not Claude credentials", () => {
+  const inherited = inheritedEngineEnv(undefined, {
+    OPENCODE_CLAUDE_PATH: "/opt/claude/bin/claude",
+    CLAUDE_CODE_OAUTH_TOKEN: "must-stay-private",
+    ANTHROPIC_API_KEY: "must-stay-private",
+    CLAUDE_SESSION_TOKEN: "must-stay-private",
+  }, "darwin");
+  assert.deepEqual(inherited, { OPENCODE_CLAUDE_PATH: "/opt/claude/bin/claude" });
+  assert.deepEqual(inheritedEngineEnv({ opencode_claude_path: "C:\\Claude\\claude.exe" }, {}, "win32"), {
+    OPENCODE_CLAUDE_PATH: "C:\\Claude\\claude.exe",
+  });
+});
+
 test("on macOS the engine inherits exact names only", () => {
   assert.deepEqual(inheritedEngineEnv(undefined, { PATH: "/usr/bin", Path: "/saved", windir: "x" }, "darwin"), {
     PATH: "/usr/bin",

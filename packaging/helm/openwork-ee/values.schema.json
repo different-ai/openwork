@@ -61,6 +61,16 @@
           "type": "object",
           "additionalProperties": false,
           "properties": {
+            "claudeAgentProvider": {
+              "enum": [
+                "",
+                "true",
+                "false",
+                true,
+                false
+              ],
+              "description": "Claude Code sign-in: Connect Claude through the Claude Code login on this computer, without an Anthropic API key. Renders DEN_FEATURE_CLAUDE_AGENT_PROVIDER."
+            },
             "webPerMember": {
               "enum": [
                 "",

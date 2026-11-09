@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { parseClaudeAgentIntegrationList } from "./claude-agent";
 import type { McpStatusMap } from "../types";
 import type { ConnectionActionIntent } from "@openwork/types/connection-action-app";
 import type { Message, Part, Session, Todo } from "@opencode-ai/sdk/v2/client";
@@ -1640,6 +1641,17 @@ export function createOpenworkServerClient(options: { baseUrl: string; token?: s
 
   return {
     baseUrl,
+    claudeAgentIntegration: async (workspaceId: string) => {
+      // Listing initializes the native built-in plugin catalog. An item GET can
+      // return IntegrationNotFoundError on a fresh engine before this read.
+      return parseClaudeAgentIntegrationList(await requestJson<unknown>(baseUrl, `/workspace/${encodeURIComponent(workspaceId)}/opencode2/api/integration`, { token, timeoutMs: timeouts.config }));
+    },
+    connectClaudeAgent: (workspaceId: string) => requestJson<void>(baseUrl, `/workspace/${encodeURIComponent(workspaceId)}/opencode2/api/integration/claude-agent/connect/external`, {
+      token, method: "POST", body: { methodID: "claude-login" }, timeoutMs: timeouts.config,
+    }),
+    removeClaudeAgentConnection: (workspaceId: string, credentialId: string) => requestJson<void>(baseUrl, `/workspace/${encodeURIComponent(workspaceId)}/opencode2/api/credential/${encodeURIComponent(credentialId)}`, {
+      token, method: "DELETE", timeoutMs: timeouts.config,
+    }),
     cloudComputerStatus: () => requestJson<{ ready: boolean; paused: boolean; busy: boolean; sessionId: string | null }>(baseUrl, "/cloud-computer/status", { token, timeoutMs: 15_000 }),
     cloudComputerFrame: () => requestJson<{ dataUrl: string; width: number; height: number; screenWidth: number; screenHeight: number; generation: number }>(baseUrl, "/cloud-computer/frame", { token, timeoutMs: 15_000 }),
     cloudComputerInteract: (body: Record<string, unknown>) => requestJson<unknown>(baseUrl, "/cloud-computer/interact", { token, method: "POST", body, timeoutMs: 15_000 }),

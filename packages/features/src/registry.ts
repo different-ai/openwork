@@ -104,6 +104,17 @@ function defineFeatures<const T extends Record<string, FeatureDefinition>>(featu
 const everywhere = ["cloud", "self_hosted"] as const
 
 export const FEATURES = defineFeatures({
+  claudeAgentProvider: {
+    label: "Claude Code sign-in",
+    description: "Connect Claude through the Claude Code login on this computer, without an Anthropic API key.",
+    category: "models",
+    added: "2026-11-09",
+    since: "2026-11",
+    author: "benjaminshafii",
+    docs: "docs/features/claude-agent-provider/README.md",
+    deployments: everywhere,
+    default: false,
+  },
   webPerMember: {
     label: "OpenWork Web per member",
     description: "Admins choose which members get OpenWork Web from the Members page, and the organization pays for Web only for them. Members without it can't open a Web computer. Off: every member and pending invitation has Web and is billed for it.",

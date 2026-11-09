@@ -292,9 +292,10 @@ class ManagedDesktopPolicy {
     if (/\/session\/[^/]+\/command(?:\/|$)/.test(enginePath)) await assert("saved_command");
     if (/^\/(?:config|global\/config)(?:\/|$)/.test(enginePath)) await assert("engine_config");
     if (/^\/(?:mcp|plugins?|skills?|agents?)(?:\/|$)/.test(enginePath)) await assert("extensions");
-    if (/^\/(?:auth|providers?)(?:\/|$)/.test(enginePath)) {
+    if (/^\/(?:auth|providers?|integration)(?:\/|$)/.test(enginePath)) {
       const providerID = enginePath.match(/^\/auth\/([^/]+)(?:\/|$)/)?.[1]
-        ?? enginePath.match(/^\/provider\/([^/]+)\/oauth\/(?:authorize|callback)$/)?.[1];
+        ?? enginePath.match(/^\/provider\/([^/]+)\/oauth\/(?:authorize|callback)$/)?.[1]
+        ?? enginePath.match(/^\/integration\/([^/]+)(?:\/|$)/)?.[1];
       await assert("provider", providerID ? { providerID } : {});
     }
     const model = typeof input.model === "object" && input.model !== null ? Object.fromEntries(Object.entries(input.model)) : input;
@@ -312,7 +313,8 @@ class ManagedDesktopPolicy {
     if (policy?.allowCustomProviders !== false) return;
     const enginePath = decodeURIComponent(path).replace(/^\/opencode2?/, "").replace(/^\/api/, "");
     const providerID = enginePath.match(/^\/auth\/([^/]+)(?:\/|$)/)?.[1]
-      ?? enginePath.match(/^\/provider\/([^/]+)\/oauth\/(?:authorize|callback)$/)?.[1];
+      ?? enginePath.match(/^\/provider\/([^/]+)\/oauth\/(?:authorize|callback)$/)?.[1]
+      ?? enginePath.match(/^\/integration\/([^/]+)(?:\/|$)/)?.[1];
     if (providerID) return this.assert("provider", { providerID });
     if (!request.body || !/^\/session(?:\/|$)/.test(enginePath)) return;
     let body: unknown;

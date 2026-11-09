@@ -22,6 +22,7 @@ import {
 import { createSessionOpenworkServer, type SessionServerEndpoint } from "./session-openwork-server";
 import { createProviderAuthStore, useProviderAuthStoreSnapshot } from "./store";
 import { useLiveProviderSync } from "./use-live-provider-sync";
+import { useDesktopFeature } from "../../session/status/use-desktop-feature";
 import { skipsLegacyProviderRefresh } from "./live-provider-sync";
 
 const emptyWorkspaceDisplay: WorkspaceDisplay = {
@@ -83,6 +84,9 @@ export function useSessionProviderAuth(input: UseSessionProviderAuthInput) {
     setDisabledProviderIds,
   } = input;
   const denAuth = useDenAuth();
+  const claudeAgentEnabled = useDesktopFeature("claudeAgentProvider");
+  const claudeAgentEnabledRef = useRef(claudeAgentEnabled);
+  claudeAgentEnabledRef.current = claudeAgentEnabled;
   const liveProviderSync = useLiveProviderSync(
     selectedWorkspaceEndpoint?.client ?? engineRootServer?.client ?? null,
     opencodeBaseUrl,
@@ -132,6 +136,9 @@ export function useSessionProviderAuth(input: UseSessionProviderAuthInput) {
   const store = useMemo(
     () =>
       createProviderAuthStore({
+        claudeAgentEnabled: () => claudeAgentEnabledRef.current,
+        nativeOpenworkClient: () => stateRef.current.selectedWorkspaceEndpoint?.client ?? null,
+        nativeWorkspaceId: () => stateRef.current.selectedWorkspaceEndpoint?.workspaceId ?? null,
         client: () => stateRef.current.opencodeClient,
         providers: () => stateRef.current.providers,
         providerDefaults: () => stateRef.current.providerDefaults,
@@ -215,6 +222,8 @@ export function useSessionProviderAuth(input: UseSessionProviderAuthInput) {
     setCompletedCloudProviderSync({ context: cloudProviderSyncContext, providerList });
     return providerList;
   }, [cloudProviderSyncContext, loadCloudProviderSync]);
+
+  useEffect(() => { store.syncFromOptions(); }, [store, claudeAgentEnabled]);
 
   useEffect(() => {
     store.start();

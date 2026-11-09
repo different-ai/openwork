@@ -362,6 +362,8 @@ const ENGINE_INHERITED_ENV = [
   "SystemDrive", "ProgramData", "ProgramFiles", "ProgramFiles(x86)", "ProgramW6432",
   "ALLUSERSPROFILE", "PUBLIC", "CommonProgramFiles", "CommonProgramFiles(x86)",
   "NODE_EXTRA_CA_CERTS", "SSL_CERT_FILE", "SSL_CERT_DIR",
+  // Executable location only: Claude Code owns its login and tokens.
+  "OPENCODE_CLAUDE_PATH",
 ];
 
 /** Caller values win; on Windows each name matches any spelling (`Path`, `windir`) and is passed once. */
