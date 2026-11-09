@@ -254,7 +254,6 @@ test("full-view tools list privately and run through the capability executor wit
   assert.equal(listed.result.ttlMs, 60_000)
   const names = listed.result.tools.map((tool) => tool.name)
   assert.ok(names.includes("linear.list_issues") && names.includes("google_workspace.getCapabilitiesGoogleWorkspaceGmailMessagesById") && names.includes("connection_status"))
-  assert.ok(!names.includes("search_capabilities") && !names.includes("execute_capability"))
   const issues = listed.result.tools.find((tool) => tool.name === "linear.list_issues")
   assert.deepEqual(issues?.inputSchema, issueSchema)
   assert.deepEqual(issues?.outputSchema, { type: "object" })

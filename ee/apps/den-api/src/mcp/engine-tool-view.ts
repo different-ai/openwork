@@ -10,10 +10,10 @@ import { singular, THING_SYNONYM_GROUPS, tokenize, type CapabilityMatch } from "
  * engine gets the full view, every connection action, Workflow, App and remote
  * session as its own tool, served on the one OpenWork Connect server so
  * OpenWork's own handling of those calls (sign-in cards, Apps, labels) is
- * unchanged. On top of the full view it gets:
+ * unchanged. Like every full view it keeps capability search and execute for
+ * what has no tool of its own: OpenWork's operations and skills. On top of
+ * that it gets:
  *
- * - capability search and execute for what has no tool of its own: OpenWork's
- *   operations and skills;
  * - a directory of connected services in the instructions, because the catalog
  *   groups every tool under the one server;
  * - related words in tool descriptions, because the engine's ranking knows no

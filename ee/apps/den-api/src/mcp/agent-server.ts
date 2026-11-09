@@ -41,7 +41,7 @@ function agentMcpDetailedInstructions(appServers: boolean, toolView: Instruction
     "To remove an organization connection (the connector in OpenWork, never data in the connected service), act only on the user's explicit request: search for removing a connection; when requestMcpConnectionRemoval is returned, list connections with getMcpConnections, and if more than one could be the one the user means, ask which first. Call it once with that connection's exact name as expectedName. It removes nothing: give the person handoff.url and handoff.instructions to confirm in OpenWork, then list connections to check it is gone; never say it was removed before that. On connection_in_use, tell the user which plugins need it and send detachFromPlugins only if they agree. When requestMcpConnectionRemoval is not returned, or the result is forbidden, relay that an organization owner or admin removes it in the Connections dashboard.",
     "Do not invent OAuth-client, credential, or local-extension setup. Organization connections are managed in the OpenWork Cloud dashboard / Settings > Connect; when a connection or marketplace readiness state requires administrator setup or member sign-in, relay that exact action.",
     ...(toolView === "search" ? [] : ["Call each tool directly with arguments matching its inputSchema."]),
-    ...(toolView === "full" ? [] : [searchMatches]),
+    searchMatches,
     "OpenWork always attempts the downstream provider call even when local schema checks find a mismatch; schemaGuidance is advisory (returned as openwork/schemaGuidance alongside provider results): if the provider succeeded, accept the result and do not retry because of the warning; if it failed, use the warning to correct the arguments or search again.",
     "If the provider returns invalid_capability_arguments, correct the listed issues and retry once with changed arguments; never retry the same arguments unchanged. If it returns unknown_capability, call search_capabilities again before retrying.",
     "When the user explicitly asks to connect or reconnect a service, search for that service by name with intent connect. Ordinary capability searches must omit intent connect: blocked connection matches are informational and must not trigger sign-in cards or automatic status calls. Only propose authorization when an explicitly requested operation actually depends on that connection. Explicit connection searches render a card when the result identifies one connection. Do not execute the same status again when the search response includes connectionAction. For an explicit connection request without a card, execute that exact status match once. When execute_capability fails with needs_connection or connection_not_connected, execute that connection's status capability (mcp:<connectionId>:*) once for the same card. For member-owned OAuth connections in OpenWork desktop, ask the user to click Connect or Reconnect on the inline card; desktop handles authorization directly, so do not send them to Den. For other actions, name connectionStatus.connectionName and relay connectionStatus.action exactly in text, distinguishing the member's Your Connections page, the organization Connections dashboard, and the provider's own admin console. Probes are live: after the human fixes the connector, search again in the same task; otherwise do not retry unchanged or improvise workarounds through other tools.",
@@ -79,20 +79,20 @@ export const AGENT_MCP_INSTRUCTIONS_MAX_CHARS = 4_096
 
 const CONNECTION_STATUS_INSTRUCTIONS = "connection_status shows the sign-in card for a service that is not ready; use it only for an explicit connect request or a failed connection. Relay the connection's exact action; a downstream failure does not mean OpenWork needs reconnecting. Never invent credentials or claim setup is ready."
 
-/** What the full tool view does instead of searching; every other rule is shared. */
-const FULL_TOOL_VIEW_INSTRUCTIONS = [
-  "Every connection action, Workflow, App and remote session you may use is its own tool: <service>.<action>, run-workflow.<name>, open-app.<name> and remote-session.<action>. Where the guidance says search_capabilities or execute_capability, call these tools (a capability a connection card names is den.<capability>); prepare_app takes their names, and execute_capability_script calls tools.<service>.<action>.",
-  CONNECTION_STATUS_INSTRUCTIONS,
-]
-
 /**
- * The full view in OpenWork's engine, which shows `linear.list_issues` as
- * `linear_list_issues` and keeps capability search for what has no tool.
+ * What the full tool view does instead of searching for everything: capability
+ * search stays for what has no tool. OpenWork's engine shows
+ * `linear.list_issues` as `linear_list_issues` and finds tools itself.
  */
-const ENGINE_TOOL_VIEW_INSTRUCTIONS = [
-  "Every connection action, Workflow, App and remote session you may use is its own tool: <service>_<action>, run-workflow_<name>, open-app_<name> and remote-session_<action>. Find them in the Code Mode catalog and with search(), and call them directly. search_capabilities and execute_capability cover only OpenWork's own operations and skills, which have no tool of their own; where the guidance says to search for or execute anything else, call its tool. prepare_app takes these tool names, and execute_capability_script calls tools.<service>.<action>.",
-  CONNECTION_STATUS_INSTRUCTIONS,
-]
+function fullToolViewInstructions(engine: boolean): string[] {
+  const separator = engine ? "_" : "."
+  return [
+    `Every connection action, Workflow, App and remote session you may use is its own tool: <service>${separator}<action>, run-workflow${separator}<name>, open-app${separator}<name> and remote-session${separator}<action>. ${engine ? "Find them in the Code Mode catalog and with search(), and call them directly. " : ""}search_capabilities and execute_capability cover only OpenWork's own operations and skills; for anything else the guidance says to search or execute, call its tool. prepare_app takes these tool names, and execute_capability_script calls tools.<service>.<action>.`,
+    CONNECTION_STATUS_INSTRUCTIONS,
+  ]
+}
+const FULL_TOOL_VIEW_INSTRUCTIONS = fullToolViewInstructions(false)
+const ENGINE_TOOL_VIEW_INSTRUCTIONS = fullToolViewInstructions(true)
 
 function agentMcpInstructions(appServers: boolean, toolView: InstructionView = "search", toolShapes = false): string {
   return [

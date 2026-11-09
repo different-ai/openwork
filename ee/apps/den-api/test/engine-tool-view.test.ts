@@ -119,11 +119,12 @@ test("the engine's instructions name its tools, keep search for the rest and lis
   assert.match(engine.guidance, /Call each tool directly with arguments matching its inputSchema\./)
   assert.match(engine.guidance, /Put an object matching argumentsSchema in execute_capability\.body/)
 
-  // Without the engine flag the full view and the search view are unchanged.
+  // Without the engine flag the full view keeps the same search, with no directory; the search view is unchanged.
   const full = await discovered({ toolView: "full", services })
-  assert.doesNotMatch(full.instructions, /Connected services|cover only OpenWork's own operations/)
+  assert.doesNotMatch(full.instructions, /Connected services|Code Mode catalog/)
   assert.match(full.instructions, /<service>\.<action>, run-workflow\.<name>/)
-  assert.doesNotMatch(full.guidance, /Put an object matching argumentsSchema/)
+  assert.match(full.instructions, /search_capabilities and execute_capability cover only OpenWork's own operations and skills/)
+  assert.match(full.guidance, /Put an object matching argumentsSchema in execute_capability\.body/)
   const search = await discovered({ engine: true, services })
   assert.doesNotMatch(search.instructions, /Connected services|<service>_<action>/)
 })
