@@ -25,21 +25,44 @@ export function parseClaudeAgentIntegrationList(value: unknown) {
 }
 
 export type ClaudeAgentIntegration = z.infer<typeof claudeAgentIntegrationSchema>["data"];
+
+/**
+ * Claude Code sign-in as the Connect a provider sheet and Settings see it.
+ * Absent (undefined) whenever the person cannot use it: the feature is off,
+ * the organization only allows its own providers, or no workspace is open.
+ */
 export type ClaudeAgentSetupState = {
-  enabled: boolean;
-  blockedReason: string | null;
   integration: ClaudeAgentIntegration | null;
+  /** A connect, check or disconnect is running. */
   busy: boolean;
+  /** Connect was pressed and the engine has not answered about `claude` yet. */
+  checking: boolean;
+  /** The engine's check of `claude` passed for the current connection in this app session. */
+  verified: boolean;
   error: string | null;
-  catalogError: string | null;
 };
 
+/** The engine's provider id. People see it as "Claude Code", a way to connect Anthropic. */
 export const CLAUDE_AGENT_PROVIDER_ID = "claude-agent";
-export const CLAUDE_AGENT_ROLLOUT_REASON = "Claude Agent is not enabled for this organization or installation. Your OpenWork administrator can enable it.";
-export function claudeAgentStatus(state: ClaudeAgentSetupState): string {
-  if (state.blockedReason) return state.blockedReason;
-  if (state.error) return "Could not check connection. Check again.";
-  const active = state.integration?.connections[0];
-  if (active?.status?.status === "needs_auth") return active.status.message;
-  return state.integration?.connections.length ? "Connection saved" : "Use Claude Code on the workspace computer";
+export const CLAUDE_AGENT_HOST_PROVIDER_ID = "anthropic";
+export const CLAUDE_CODE_NAME = "Claude Code";
+export const CLAUDE_CODE_SETUP_URL = "https://code.claude.com/docs/en/setup";
+export const CLAUDE_CODE_SIGN_IN_COMMAND = "claude auth login";
+// The engine allows 30 seconds for `claude` to start and 30 more to read each model's context size.
+export const CLAUDE_CODE_CHECK_TIMEOUT_MS = 65_000;
+export const CLAUDE_CODE_CHECK_TIMEOUT_MESSAGE = "Couldn't confirm that Claude Code is ready. Make sure it's installed and signed in, then check again.";
+
+/** The engine writes its reasons for a terminal, with commands in backticks; people read them as plain sentences. */
+export function plainClaudeMessage(message: string) {
+  return message.replaceAll("`", "");
+}
+
+/** The active connection's sign-in problem as the engine last reported it. */
+export function claudeAgentProblem(state: ClaudeAgentSetupState | undefined) {
+  const status = state?.integration?.connections[0]?.status;
+  return status?.status === "needs_auth" ? { ...status, message: plainClaudeMessage(status.message) } : null;
+}
+
+export function claudeAgentConnected(state: ClaudeAgentSetupState | undefined) {
+  return Boolean(state?.integration?.connections.length);
 }
