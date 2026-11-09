@@ -13,6 +13,8 @@ import { mcpPrincipalCredentialId, verifyMcpRequest } from "../mcp/auth.js"
 import { DEN_MCP_HEADLESS_RUN_TOKEN_MAX_TTL_MS } from "../mcp/headless-run-token.js"
 import { mintHeadlessTurnCredentials } from "../headless-runner/resume-grants.js"
 import { DEN_MCP_READ_SCOPE, DEN_MCP_WRITE_SCOPE } from "../mcp/scopes.js"
+import { workbotTurnLimitScopes } from "../mcp/workbot-turn-limits.js"
+import { readWorkbotProactiveSettings } from "@openwork/types/den/workbot-proactive"
 import { jsonResponse, unauthorizedSchema } from "../openapi.js"
 import { getOrganizationFeatures } from "../features.js"
 import { jsonValidator, tokenRoute } from "../middleware/index.js"
@@ -761,8 +763,12 @@ export function registerWorkbotRoutes<T extends { Variables: object }>(app: Hono
           model = await workbotIncludedDefaultModel(principal, chosen) ?? undefined
         }
         // Credential minting still reauthorizes the exact model for this member on every turn.
+        // "Not allowed" in the admin's Workbot settings covers the chat as well as Workbot's own checks.
+        const features = await getOrganizationFeatures(organization.id, { userId: principal.userId })
+        const scopes = features.workbotProactive ? workbotTurnLimitScopes(readWorkbotProactiveSettings(organization.metadata).sources) : []
         const { token, resumeGrant, modelAccess, indexCapability } = await mintHeadlessTurnCredentials({
           ...principal, ttlMs, readOnly, sessionId, messageId, model, indexKind: "workbot", memberId: resolved.memberId,
+          ...(scopes.length ? { scopes } : {}),
         })
         return c.json({
           token,

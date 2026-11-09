@@ -1450,10 +1450,14 @@ export async function listUsableExternalMcpConnections(input: {
   organizationId: OrganizationId
   orgMembershipId: OrgMembershipId
   teamIds: TeamId[]
+  /** Connections this caller can't use although the member can: an admin took them away from Workbot. */
+  withheldConnectionIds?: ReadonlySet<string>
 }): Promise<ExternalMcpConnectionRow[]> {
   const directConnections = await directlyUsableExternalMcpConnections(input)
   const sourcedConnections = await sourcedUsableExternalMcpConnections(input)
-  return withoutRetiredPluginOwnedConnections(input.organizationId, directConnections, sourcedConnections)
+  const usable = await withoutRetiredPluginOwnedConnections(input.organizationId, directConnections, sourcedConnections)
+  const withheld = input.withheldConnectionIds
+  return withheld?.size ? usable.filter((connection) => !withheld.has(connection.id)) : usable
 }
 
 /**
