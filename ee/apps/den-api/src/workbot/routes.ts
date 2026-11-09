@@ -187,6 +187,14 @@ function readBrandAppName(metadata: unknown): string | null {
   return typeof brand === "string" && brand.trim() ? brand.trim() : null
 }
 
+/** What a ranged file answer says about its bytes, for a media player that asked for a range. */
+function rangeHeaders(headers: Headers): Record<string, string> {
+  return Object.fromEntries(["content-length", "content-range", "accept-ranges"].flatMap((name) => {
+    const value = headers.get(name)
+    return value ? [[name, value]] : []
+  }))
+}
+
 function safeJson(text: string): unknown {
   try {
     return JSON.parse(text)
@@ -715,12 +723,15 @@ export function registerWorkbotRoutes<T extends { Variables: object }>(app: Hono
         if (Buffer.byteLength(body) > 2 * 1024 * 1024) return c.json({ error: "file_too_large" }, 413)
         headers.set("content-type", "application/json")
       }
+      // A media player asks for a file's bytes in ranges; the range and its answer pass through unchanged.
+      const range = editor?.[1] === "content" ? c.req.header("range") : undefined
+      if (range) headers.set("range", range)
       const response = await app.fetch(new Request(new URL(`${inner}${url.search}`, "http://den-api.local"), { method: c.req.method, headers, body }))
       // Den reports a Google refusal (for example a Google API turned off for the
       // connector) as 502. The tunnel in front of Den replaces 502 bodies with its
       // own page, so Workbot lost the reason. 424 carries the same body intact.
       const status = response.status === 502 ? 424 : response.status
-      return new Response(response.body, { status, headers: { "content-type": response.headers.get("content-type") ?? "application/json", "cache-control": "no-store", "x-content-type-options": "nosniff", ...(editor?.[1] === "content" ? { "content-security-policy": "default-src 'none'; sandbox" } : {}) } })
+      return new Response(response.body, { status, headers: { "content-type": response.headers.get("content-type") ?? "application/json", "cache-control": "no-store", "x-content-type-options": "nosniff", ...(editor?.[1] === "content" ? { "content-security-policy": "default-src 'none'; sandbox", ...rangeHeaders(response.headers) } : {}) } })
     },
   )
 

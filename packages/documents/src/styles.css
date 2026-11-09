@@ -150,6 +150,9 @@
 .ow-editor-preview { border: 0; width: 100%; height: 100%; min-height: 500px; }
 .ow-editor-image { flex: 1; overflow: auto; display: grid; place-items: center; padding: 24px; }
 .ow-editor-image img { max-width: 100%; height: auto; }
+.ow-editor-media { flex: 1; min-height: 0; display: grid; place-items: center; padding: 24px; }
+.ow-editor-media video { max-width: 100%; max-height: 100%; min-height: 0; border-radius: 8px; }
+.ow-editor-media audio { width: min(100%, 560px); }
 @media (max-width: 640px) { .ow-editor-paper { padding: 24px; min-height: 400px; } .ow-editor-pages { padding: 12px; } .ow-editor-formula { flex-wrap: wrap; } .ow-documents .ow-editor-grid :is(th,td) { display: table-cell !important; } }
 
 .ow-office-editor { min-height: 600px; }
