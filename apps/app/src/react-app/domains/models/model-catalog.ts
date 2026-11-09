@@ -1,4 +1,6 @@
 import { AUTO_ROUTER_PROVIDER_ID, autoRouterIdFromModel } from "@openwork/types/den/auto-router";
+import { FAST_DEFAULT_VARIANT } from "@openwork/types/cloud-model-fast";
+import { getModelBehaviorControls, getModelBehaviorSelection } from "@/app/lib/model-behavior";
 import type { ModelOption, ModelRef } from "@/app/types";
 import type { CloudImportedProvider } from "@/app/cloud/import-state";
 import { modelRefKey, nextFavoriteModel } from "../session/models/model-collections-store";
@@ -25,6 +27,31 @@ export function retainedModelCopy(reason: RetainedModelSelection["reason"]) {
 }
 export function nonDefaultModelSummary(model: ModelRef, value: string | null, label: string) {
   return !managesOwnBehavior(model) && value !== null ? label : null;
+}
+
+/**
+ * What a picker's trigger says after the model's name: its non-default setting, and whether Fast is on
+ * (shown on its own, so the setting beside it is the base level: "High", not "High + Fast").
+ * A saved setting the model does not list is only called out once the list is verified. While the list is
+ * still loading, or the model has no name here, the trigger says nothing rather than a raw setting id.
+ */
+export function modelTriggerSettings(input: {
+  model: ModelRef;
+  /** The trigger shows this model's name, not "Select model". */
+  named: boolean;
+  /** The model list is the engine's own answer for a verified sign-in, not a saved or partial one. */
+  verified: boolean;
+  options: readonly { value: string | null; label: string; description?: string }[];
+  value: string | null;
+}): { summary: string | null; fast: boolean } {
+  if (!input.named || managesOwnBehavior(input.model)) return { summary: null, fast: false };
+  const selection = getModelBehaviorSelection(input.options, input.value);
+  const controls = getModelBehaviorControls(selection.options, selection.value);
+  if (controls.fast) {
+    return { fast: true, summary: input.value === FAST_DEFAULT_VARIANT ? null : controls.options.find((option) => option.value === input.value)?.label ?? null };
+  }
+  const listed = selection.options.some((option) => option.value === input.value);
+  return { fast: false, summary: listed || input.verified ? nonDefaultModelSummary(input.model, input.value, selection.label) : null };
 }
 
 // "OpenWork Free": the free model every desktop gets. Its ids (and the `Auto`
