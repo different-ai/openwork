@@ -105,6 +105,10 @@ const sessionSchema = z.object({
   browserPreview: z.boolean().optional(),
   /** Read-only remote task status (`workbotRemoteTasks`); older Dens omit it: off. */
   remoteTasks: z.boolean().optional(),
+  /** Navigation lists only pages; Files and Apps live in the profile (`workbotProfileNav`); older Dens omit it: off. */
+  profileNav: z.boolean().optional(),
+  /** Meetings own the calendar grid, runs are quiet dots (`workbotQuietCalendar`); older Dens omit it: off. */
+  quietCalendar: z.boolean().optional(),
   /** Always true for older Workbot clients; the command palette is available by default. */
   commandPalette: z.boolean().optional(),
   /**
@@ -462,6 +466,9 @@ export function registerWorkbotRoutes<T extends { Variables: object }>(app: Hono
         centeredProfile: features.workbotCenteredProfile && features.workbotProfileSheet && features.workbotWorkingStatus,
         browserPreview: features.workbotBrowserPreview && features.remoteComputers && (features.browserUse || features.computerUse),
         remoteTasks: features.workbotRemoteTasks,
+        // Files and Apps move into the profile, so the profile has to be there.
+        profileNav: features.workbotProfileNav && features.workbotProfileSheet && features.workbotWorkingStatus,
+        quietCalendar: features.workbotQuietCalendar,
         commandPalette: true,
         model,
         gatewayModels: true,

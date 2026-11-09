@@ -7,7 +7,7 @@ import { OpenWorkMark } from "./mark";
 import { clearThreadSnapshots } from "./thread-cache";
 import { chatTitle, RemoveChatButton, SideChatTitle, useChatLocation } from "./chats";
 import { DesktopNavigation, MobileNavigation, type NavigationProps } from "./navigation";
-import { AppsSheet } from "./profile-sheet";
+import { AppsSheet, ProfileSheet, type ProfileTab } from "./profile-sheet";
 import {
   useEditWorkbotMessage,
   useRetryWorkbotMessage,
@@ -371,6 +371,9 @@ function ChatScreen({ host, composerState, position, navigation, onDraftsChange 
   );
   const dragging = useFileDrop(filesEnabled, addFiles);
   const [appsOpen, setAppsOpen] = useState(false);
+  // `profileNav`: the navigation lists only pages; Files and Apps are tabs of Workbot's profile, opened from its logo.
+  const profileNav = host.profileNav === true && host.profileSheet === true;
+  const [profileTab, setProfileTab] = useState<ProfileTab | null>(null);
   // The browser viewer keeps a 480px conversation beside it. Its chosen panel temporarily discloses navigation
   // through the same drawer, rather than squeezing the conversation behind a second 324px sidebar.
   const showDesktopNavigation = wideScreen && !browserPreview?.panelOpen;
@@ -387,6 +390,7 @@ function ChatScreen({ host, composerState, position, navigation, onDraftsChange 
     search: showDesktopNavigation ? palette : undefined,
     onSearch: showDesktopNavigation ? undefined : () => document.querySelector<HTMLButtonElement>("[data-workbot-palette-trigger]")?.click(),
     account: <AccountAvatar userName={user?.name ?? null} />,
+    ...(profileNav ? { onProfile: () => setProfileTab("tasks"), assistantName: data?.name ?? "Workbot" } : {}),
   };
   const mobileNavigation = !showDesktopNavigation ? <MobileNavigation {...navigationProps} /> : null;
   // The chat's header and message box float over its conversation (floating-chrome.ts); other views keep them solid.
@@ -395,6 +399,7 @@ function ChatScreen({ host, composerState, position, navigation, onDraftsChange 
     {showDesktopNavigation && <DesktopNavigation {...navigationProps} />}
     <div className="workbot-layout-main flex min-h-0 min-w-0 flex-1 flex-col">{children}</div>
     <AppsSheet open={appsOpen} onClose={() => setAppsOpen(false)} name={data?.name ?? "Workbot"} />
+    {profileNav ? <ProfileSheet open={profileTab !== null} initialTab={profileTab ?? "tasks"} onClose={() => setProfileTab(null)} name={data?.name ?? "Workbot"} activity={activity} /> : null}
   </div>;
 
   useEffect(() => {
@@ -508,7 +513,7 @@ function ChatScreen({ host, composerState, position, navigation, onDraftsChange 
       <DocumentNavigationContext.Provider value={guided && host.documents ? { status: navigationStatus, open: followNavigation } : null}>
         {layout(<div ref={chrome.frame} className="relative flex min-h-0 flex-1 flex-col" data-workbot-workspace>
           <WorkbotHeader floating={floating ? chrome.top : undefined} name={name} organizationName={data?.organizationName ?? ""} userName={user?.name ?? null} answered={hasAnsweredTurn(data?.turns)} activity={activity} wide={wideScreen}
-            files={filesEnabled ? <FilesButton open={filesOpen} onOpen={() => setFilesOpen(true)} /> : null}
+            files={filesEnabled && !profileNav ? <FilesButton open={filesOpen} onOpen={() => setFilesOpen(true)} /> : null}
             chats={mobileNavigation} search={!showDesktopNavigation ? palette : null}
             page={pageTitle} action={askAbout ? <AskWorkbotButton name={name} onClick={askAbout} /> : null}
             remove={navigation?.chat && data && data.turns.length > 0 ? <RemoveChatButton disabled={documentsDirty} chatId={navigation.chat} title={navigation.title} onRemoved={() => { composerState.dispose(); navigation.openChat(null); }} /> : null}
@@ -632,7 +637,7 @@ function ChatScreen({ host, composerState, position, navigation, onDraftsChange 
         name={shown.name}
         organizationName={shown.organizationName}
         userName={user?.name ?? null}
-        files={filesEnabled ? <FilesButton open={filesOpen} onOpen={() => setFilesOpen(true)} /> : null}
+        files={filesEnabled && !profileNav ? <FilesButton open={filesOpen} onOpen={() => setFilesOpen(true)} /> : null}
         chats={mobileNavigation} search={!showDesktopNavigation ? palette : null}
         title={navigation && chatId ? <SideChatTitle title={navigation.title} onBack={() => navigation.openChat(null)} /> : null}
         remove={navigation && chatId && shown.turns.length > 0 ? <RemoveChatButton chatId={chatId} title={navigation.title} onRemoved={() => { composerState.dispose(); navigation.openChat(null); }} /> : null}
@@ -769,9 +774,7 @@ function ThreadPlaceholder() {
     <div className="flex flex-col gap-[3px] pb-8" role="progressbar" aria-busy="true" aria-label="Loading conversation">
       <span className="ml-auto h-[38px] w-48 rounded-[20px] rounded-br-md bg-[var(--wb-bubble)]" />
       <span className="mt-3.5 h-6 w-40 rounded bg-[var(--wb-chip)]" />
-      <span className="mt-1.5 h-4 w-[78%] rounded bg-[var(--wb-chip)]" />
-      <span className="mt-2 h-4 w-[64%] rounded bg-[var(--wb-chip)]" />
-      <span className="mt-2 h-4 w-[70%] rounded bg-[var(--wb-chip)]" />
+      <span className="mt-1.5 h-24 w-[70%] rounded-[20px] rounded-bl-md bg-[var(--wb-surface)] shadow-[var(--wb-assistant-shadow)]" />
     </div>
   );
 }
@@ -959,13 +962,13 @@ function Intro(props: { name: string; organizationName: string; firstName: strin
         <div className="flex flex-col gap-[3px]">
           <Timestamp at={props.at} />
           <div className="flex">
-            <p className="max-w-[520px] py-1 text-[15px] leading-[22px] text-[var(--wb-text)]">
+            <p className="max-w-[520px] rounded-bl-md rounded-[20px] bg-[var(--wb-surface)] px-4 py-2.5 text-[15px] leading-[22px] text-[var(--wb-text)] shadow-[var(--wb-assistant-shadow)]">
               {hello}{props.firstName ? ` ${props.firstName}` : ""}.{seeing ? ` I can already see your ${seeing}.` : ""}
             </p>
           </div>
           {props.followed ? null : (
             <div className="flex">
-              <p className="max-w-[520px] py-1 text-[15px] leading-[22px] text-[var(--wb-text)]">
+              <p className="max-w-[520px] rounded-tl-md rounded-[20px] bg-[var(--wb-surface)] px-4 py-2.5 text-[15px] leading-[22px] text-[var(--wb-text)] shadow-[var(--wb-assistant-shadow)]">
                 What can I take off your plate today?
               </p>
             </div>
@@ -1380,14 +1383,14 @@ function CopyAnswer({ text }: { text: string }) {
 }
 
 /**
- * Workbot's words flow on the page itself, with no box around them (like Finch or a notes app); the person's own
- * messages stay compact grey bubbles on the right, so the two sides still read apart. It hugs short replies (Copy sits
- * right after the words) and stops at a readable width; wide tables and code scroll inside it.
+ * Workbot's words in a chat bubble on the left, like a person texting back: white on the page with a soft shadow
+ * (no outline), so its answers and the person's grey bubbles on the right read as two sides of one conversation. It
+ * hugs short replies (Copy sits right after it) and stops at a readable width; wide tables and code scroll inside it.
  */
 function AssistantBubble({ children, trailing = null }: { children: ReactNode; trailing?: ReactNode }) {
   return (
     <div className="flex items-end gap-1 py-[3px]">
-      <div className="flex w-fit min-w-0 max-w-full flex-col overflow-x-auto py-2 sm:max-w-[640px]" data-workbot-assistant-text>
+      <div className="flex w-fit min-w-0 max-w-full flex-col overflow-x-auto rounded-[20px] rounded-bl-md bg-[var(--wb-surface)] px-4 py-2.5 shadow-[var(--wb-assistant-shadow)] sm:max-w-[600px]" data-workbot-assistant-text>
         {children}
       </div>
       {trailing}
@@ -1405,13 +1408,13 @@ function WaitingSlot({ children }: { children?: ReactNode }) {
 }
 
 /**
- * Workbot writing a reply that doesn't show yet: three dots that darken in turn where its words will start, like a
- * messaging app's typing indicator, without a box (its replies have none). Nothing else moves (DESIGN V6, P11).
+ * Workbot writing a reply that doesn't show yet: one small reply bubble with three dots that darken in turn, like a
+ * messaging app's typing indicator. Nothing else moves (DESIGN V6, P11).
  */
 function TypingDots() {
   return (
     <div className="workbot-row-enter flex py-[3px]" role="status" aria-label="Workbot is processing">
-      <div className="flex h-9 items-center gap-[5px] px-0.5">
+      <div className="flex h-9 items-center gap-[5px] rounded-[20px] rounded-bl-md bg-[var(--wb-surface)] px-4 shadow-[var(--wb-assistant-shadow)]">
         <span aria-hidden className="workbot-typing-dot" />
         <span aria-hidden className="workbot-typing-dot" />
         <span aria-hidden className="workbot-typing-dot" />

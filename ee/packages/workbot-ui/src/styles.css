@@ -32,6 +32,8 @@
   --wb-browser-working-bg: #e5f4fc;
   --wb-type-image: #6e56cf;
   --wb-card-shadow: 0 0 0 1px #0116270f, 0 1px 2px #0116270a;
+  /* Workbot's reply bubbles: lifted by shadow alone, never an outline (DESIGN V3), so they read on the near-white page. */
+  --wb-assistant-shadow: 0 1px 2px #0116270f, 0 4px 14px -6px #0116271f;
   --wb-panel-shadow: 0 0 0 1px #0116270d, 0 12px 32px -12px #01162724, 0 2px 6px -2px #0116270f;
   --wb-page-shadow: 0 0 0 1px #0116270f, 0 6px 16px -8px #0116271f;
   --wb-user-bubble: #eef1f4;

@@ -40,6 +40,8 @@ const host: WorkbotHost = {
   instantOpen: search.get("instant") === "1",
   scrollToBottom: search.get("scroll") === "1",
   remoteTasks: search.get("remote") === "1",
+  profileNav: search.get("profileNav") === "1",
+  quietCalendar: search.get("quietCalendar") === "1",
   // Documents and Calendar as Den turns them on for a workspace with the assistant (`?documents=1&calendar=1`).
   documents: search.get("documents") === "1",
   documentEditing: search.get("documents") === "1",

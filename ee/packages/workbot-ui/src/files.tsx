@@ -357,9 +357,6 @@ function FileRow({ file, assistantName, onOpen }: { file: WorkbotFile; assistant
 /** Everything kept, newest first (Paper v5, screen 7). */
 export function FilesPanel({ open, onClose, assistantName, onOpenFile }: { open: boolean; onClose: () => void; assistantName: string; onOpenFile: (file: WorkbotFile) => void }) {
   const surface = useRetainedSurface(open);
-  const files = useWorkbotFiles(surface.open);
-  const list = files.data?.files ?? [];
-  const total = list.reduce((sum, file) => sum + file.size, 0);
   return (
     <Dialog.Root open={surface.open} onOpenChange={(next) => { if (!surface.blocked && !next) onClose(); }}>
       <Dialog.Portal {...surface.portal}>
@@ -370,36 +367,53 @@ export function FilesPanel({ open, onClose, assistantName, onOpenFile }: { open:
               <X size={14} strokeWidth={2} aria-hidden />
             </Dialog.Close>
           </div>
-          <div className="flex-1 overflow-y-auto pb-2 pl-5 pr-4 pt-2">
-            {files.isPending ? (
-              <ul aria-busy="true">
-                {[0, 1, 2].map((index) => (
-                  <li key={index} className="flex h-14 items-center gap-3 border-b border-[var(--wb-row-line)] pl-1">
-                    <span className="h-9 w-8 rounded-[7px] bg-[var(--wb-chip)]" />
-                    <span className="flex flex-col gap-1.5"><span className="h-3 w-40 rounded bg-[var(--wb-chip)]" /><span className="h-3 w-24 rounded bg-[var(--wb-chip)]" /></span>
-                  </li>
-                ))}
-              </ul>
-            ) : files.isError ? (
-              <p className="px-1 py-4 text-[13px] text-[var(--wb-muted)]">
-                Couldn&apos;t load your files.{" "}
-                <button type="button" onClick={() => void files.refetch()} className="font-medium text-[var(--wb-text)] underline underline-offset-2">Try again</button>
-              </p>
-            ) : list.length === 0 ? (
-              <p className="px-1 py-4 text-[13px] leading-5 text-[var(--wb-muted)]">Files you send {assistantName}, and files it makes for you, are kept here.</p>
-            ) : (
-              <ul>{list.map((file) => <FileRow key={file.id} file={file} assistantName={assistantName} onOpen={onOpenFile} />)}</ul>
-            )}
-          </div>
-          {list.length > 0 ? (
-            <div className="flex h-[52px] shrink-0 items-center justify-between border-t border-[var(--wb-hairline)] px-6 text-[12px] leading-4 text-[var(--wb-muted)]">
-              <span>{list.length} {list.length === 1 ? "file" : "files"} · {formatSize(total)}</span>
-              <span>Kept until you delete them</span>
-            </div>
-          ) : null}
+          <FilesList enabled={surface.open} assistantName={assistantName} onOpenFile={onOpenFile} />
         </Dialog.Popup>
       </Dialog.Portal>
     </Dialog.Root>
+  );
+}
+
+/**
+ * Files the person sent and files Workbot made, newest first, with how many and how much they take. The Files panel
+ * and the Files tab of Workbot's profile (`workbotProfileNav`) show the same list.
+ */
+export function FilesList({ enabled, assistantName, onOpenFile, framed = true }: { enabled: boolean; assistantName: string; onOpenFile: (file: WorkbotFile) => void; /** The panel's footer; the profile tab shows the count above the list instead. */ framed?: boolean }) {
+  const files = useWorkbotFiles(enabled);
+  const list = files.data?.files ?? [];
+  const total = list.reduce((sum, file) => sum + file.size, 0);
+  const summary = `${list.length} ${list.length === 1 ? "file" : "files"}, ${formatSize(total)}`;
+  return (
+    <>
+      <div className={framed ? "flex-1 overflow-y-auto pb-2 pl-5 pr-4 pt-2" : "flex flex-col px-5 pt-1"} data-workbot-files-list>
+        {!framed && list.length > 0 ? <p className="pb-1 text-[12px] leading-4 text-[var(--wb-muted)]">{summary}. Kept until you delete them.</p> : null}
+        {files.isPending ? (
+          <ul aria-busy="true">
+            {[0, 1, 2].map((index) => (
+              <li key={index} className="flex h-14 items-center gap-3 border-b border-[var(--wb-row-line)] pl-1">
+                <span className="h-9 w-8 rounded-[7px] bg-[var(--wb-chip)]" />
+                <span className="flex flex-col gap-1.5"><span className="h-3 w-40 rounded bg-[var(--wb-chip)]" /><span className="h-3 w-24 rounded bg-[var(--wb-chip)]" /></span>
+              </li>
+            ))}
+          </ul>
+        ) : files.isError ? (
+          <p className="px-1 py-4 text-[13px] text-[var(--wb-muted)]">
+            Couldn&apos;t load your files.{" "}
+            <button type="button" onClick={() => void files.refetch()} className="font-medium text-[var(--wb-text)] underline underline-offset-2">Try again</button>
+          </p>
+        ) : list.length === 0 ? (
+          <p className="px-1 py-4 text-[13px] leading-5 text-[var(--wb-muted)]">Files you send {assistantName}, and files it makes for you, are kept here.</p>
+        ) : (
+          <ul>{list.map((file) => <FileRow key={file.id} file={file} assistantName={assistantName} onOpen={onOpenFile} />)}</ul>
+        )}
+      </div>
+      {framed && list.length > 0 ? (
+        <div className="flex h-[52px] shrink-0 items-center justify-between border-t border-[var(--wb-hairline)] px-6 text-[12px] leading-4 text-[var(--wb-muted)]">
+          <span>{list.length} {list.length === 1 ? "file" : "files"} · {formatSize(total)}</span>
+          <span>Kept until you delete them</span>
+        </div>
+      ) : null}
+    </>
   );
 }
 

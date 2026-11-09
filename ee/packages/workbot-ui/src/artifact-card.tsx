@@ -86,7 +86,9 @@ function ImageThumbnail({ file, kind }: { file: WorkbotAttachment; kind: Artifac
   const url = useWorkbotImageUrl(file.id, file.updatedAt);
   // Blob URL from our own API; next/image cannot optimize it.
   // eslint-disable-next-line @next/next/no-img-element
-  return url ? <img src={url} alt="" className="workbot-fade-in block h-full w-full object-cover" /> : <Placeholder kind={kind} />;
+  // The whole picture at its own proportions on the card's tray: a phone screenshot or a portrait photo is not cropped
+  // to a 16:10 strip.
+  return url ? <img src={url} alt="" className="workbot-fade-in block h-full w-full object-contain p-2" /> : <Placeholder kind={kind} />;
 }
 
 /**

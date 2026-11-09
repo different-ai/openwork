@@ -127,7 +127,7 @@ try {
   for (const quick of ['1', '0']) {
     const start = performance.now();
     await go('waiting', { quick });
-    const ack = page.getByText("On it — I'll take a look in my browser and tell you what I find.", { exact: true });
+    const ack = page.getByText("Sure! I'll take a look in my browser and let you know what I find.", { exact: true });
     if (quick === '1') { await ack.waitFor({ timeout: 2000 }); assert.ok(performance.now() - start < 2000); }
     else { await page.waitForTimeout(250); assert.equal(await ack.count(), 0); }
     record(`quickReply${quick}`, { elapsedMs: performance.now() - start, acknowledgementCount: await ack.count() });

@@ -43,6 +43,7 @@ import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { CreateAutomationCard, type CreateAnchor } from "./calendar-create";
 import { ModelPicker, ModelSummary } from "./model-picker";
 import { workbotHost, useRetainedSurface } from "./host";
+import { CalendarAgenda, QuietMonthDaySummary, QuietTimeGrid, useElementWidth, WorkbotStatusButton, WorkbotWeekPanel } from "./calendar-quiet";
 import { calendarKey, useAutomationModels, useAutomationRuns, useCalendarAction, useCalendarSources, useRunReceipt, useWorkbotAutomations, type AutomationChanges } from "./calendar-data";
 
 /**
@@ -307,7 +308,7 @@ function TimeGrid(props: {
   );
 }
 
-function MonthGrid(props: { range: CalendarRange; zone: string; now: number; anchorMonth: number; automations: AutomationCalendarItem[]; meetings: CalendarEvent[]; list: readonly ListItem[]; selection: Selection; onSelect: (selection: Selection) => void; onOpenDay: (day: LocalDate) => void }) {
+function MonthGrid(props: { range: CalendarRange; zone: string; now: number; anchorMonth: number; automations: AutomationCalendarItem[]; meetings: CalendarEvent[]; list: readonly ListItem[]; selection: Selection; onSelect: (selection: Selection) => void; onOpenDay: (day: LocalDate) => void; /** `quietCalendar`: meetings only, then one line for the day's runs. */ quiet?: boolean }) {
   const today = localDateOf(props.now, props.zone);
   return (
     <div className="min-h-0 flex-1 overflow-y-auto" data-calendar-grid="month">
@@ -318,7 +319,7 @@ function MonthGrid(props: { range: CalendarRange; zone: string; now: number; anc
         {props.range.days.map((day) => {
           const entries = [
             ...props.meetings.filter((event) => allDayOn(event, day)).map((event) => ({ kind: "meeting" as const, key: event.key, event })),
-            ...blocksForDay(day, props.zone, props.automations, props.meetings).sort((left, right) => left.start - right.start),
+            ...blocksForDay(day, props.zone, props.quiet ? [] : props.automations, props.meetings).sort((left, right) => left.start - right.start),
           ];
           const isToday = compareDates(day, today) === 0;
           return (
@@ -332,6 +333,7 @@ function MonthGrid(props: { range: CalendarRange; zone: string; now: number; anc
                 </div>
               ))}
               {entries.length > 3 ? <button type="button" onClick={() => props.onOpenDay(day)} className="self-start px-1 text-[11px] text-[#687076] hover:text-black">{entries.length - 3} more</button> : null}
+              {props.quiet ? <span className="px-1"><QuietMonthDaySummary items={props.automations} day={day} zone={props.zone} /></span> : null}
             </div>
           );
         })}
@@ -524,7 +526,11 @@ function EditDialog({ item, busy, onClose, onSave }: { item: ListItem; busy: boo
   );
 }
 
-function AutomationPanel({ item, block, zone, onToast }: { item: ListItem; block: AutomationCalendarItem | null; zone: string; onToast: (text: string) => void }) {
+function PanelClose({ onClose }: { onClose?: () => void }) {
+  return onClose ? <button type="button" onClick={onClose} aria-label="Close" className="grid size-7 shrink-0 place-items-center rounded-[7px] text-[var(--wb-muted)] hover:bg-[var(--wb-chip)] focus-visible:outline-none focus-visible:shadow-[var(--wb-focus)]"><X size={15} strokeWidth={1.75} aria-hidden /></button> : null;
+}
+
+function AutomationPanel({ item, block, zone, onToast, onClose }: { item: ListItem; block: AutomationCalendarItem | null; zone: string; onToast: (text: string) => void; onClose?: () => void }) {
   const { automation, revision } = item;
   const runs = useAutomationRuns(automation.id);
   const action = useCalendarAction();
@@ -538,11 +544,14 @@ function AutomationPanel({ item, block, zone, onToast }: { item: ListItem; block
   });
   return (
     <aside className="flex w-full min-w-0 shrink-0 flex-col gap-4.5 border-t border-[var(--wb-hairline)] bg-[var(--wb-surface)] p-4 lg:w-95 lg:overflow-y-auto lg:border-l lg:border-t-0 lg:p-6" aria-label={automation.name} data-calendar-detail={automation.id}>
-      <div className="flex flex-col gap-1">
-        <span className="text-[12px] leading-4 text-[#687076]" data-calendar-next-run>
-          {blocked ? "Not scheduled until fixed" : automation.state === "inactive" ? "Paused" : when ?? "No run scheduled"}
-        </span>
-        <h2 className="text-[18px] font-semibold leading-5.5 tracking-[-0.015em] text-black">{automation.name}</h2>
+      <div className="flex items-start gap-3">
+        <div className="flex min-w-0 flex-1 flex-col gap-1">
+          <span className="text-[12px] leading-4 text-[#687076]" data-calendar-next-run>
+            {block?.status === "failed" ? `Failed ${when ?? ""}`.trim() : blocked ? "Not scheduled until fixed" : automation.state === "inactive" ? "Paused" : when ?? "No run scheduled"}
+          </span>
+          <h2 className="text-[18px] font-semibold leading-5.5 tracking-[-0.015em] text-black">{automation.name}</h2>
+        </div>
+        <PanelClose onClose={onClose} />
       </div>
       {blocked && automation.needsAttentionReason ? (
         <div className="flex items-start gap-2 rounded-lg bg-[var(--wb-tray)] px-3 py-2.5" data-calendar-blocked>
@@ -593,22 +602,37 @@ function AutomationPanel({ item, block, zone, onToast }: { item: ListItem; block
   );
 }
 
-function MeetingPanel({ event, zone }: { event: CalendarEvent; zone: string }) {
+function MeetingPanel({ event, zone, runs = [], onSelectRun, onClose }: { event: CalendarEvent; zone: string; /** Workbot runs that were about this meeting (`triggerContext.eventId`). */ runs?: AutomationCalendarItem[]; onSelectRun?: (item: AutomationCalendarItem) => void; onClose?: () => void }) {
   const source = event.provider === "google" ? "Google Calendar" : "Outlook Calendar";
   const when = event.timing.kind === "timed"
     ? `${formatInstant(event.timing.start, zone)} – ${formatTime(event.timing.end, zone)}`
     : `${formatDate(event.timing.startDate, "en-US")} · All day`;
   return (
     <aside className="flex w-full min-w-0 shrink-0 flex-col gap-4.5 border-t border-[var(--wb-hairline)] bg-[var(--wb-surface)] p-4 lg:w-95 lg:overflow-y-auto lg:border-l lg:border-t-0 lg:p-6" aria-label={event.title} data-calendar-meeting-detail={event.key}>
-      <div className="flex flex-col gap-1">
-        <span className="text-[12px] leading-4 text-[#687076]">{when}</span>
-        <h2 className="text-[18px] font-semibold leading-5.5 tracking-[-0.015em] text-black">{event.title}</h2>
+      <div className="flex items-start gap-3">
+        <div className="flex min-w-0 flex-1 flex-col gap-1">
+          <span className="text-[12px] leading-4 text-[#687076]">{when}</span>
+          <h2 className="text-[18px] font-semibold leading-5.5 tracking-[-0.015em] text-black">{event.title}</h2>
+        </div>
+        <PanelClose onClose={onClose} />
       </div>
       <div className="flex flex-col border-t border-[#0116270F]">
         <Row label="From">{source}</Row>
         {event.location ? <Row label="Where">{event.location}</Row> : null}
         {event.attendeeCount > 0 ? <Row label="Guests">{event.attendeeCount}</Row> : null}
       </div>
+      {runs.length ? (
+        <div className="flex flex-col" data-calendar-meeting-runs>
+          <h3 className="mb-1 text-[12px] font-semibold leading-4 text-black">Workbot for this meeting</h3>
+          {runs.map((item) => (
+            <button key={item.key} type="button" onClick={() => onSelectRun?.(item)} className="flex items-center gap-2.5 border-b border-[var(--wb-row-line)] py-2 text-left last:border-b-0 focus-visible:outline-none focus-visible:shadow-[var(--wb-focus)]">
+              <StatusIcon item={item} />
+              <span className="min-w-0 flex-1 truncate text-[13px] leading-4 text-[var(--wb-text)]">{item.name}</span>
+              <span className="shrink-0 text-[12px] text-[var(--wb-muted)]">{STATUS_LABEL[item.status]}</span>
+            </button>
+          ))}
+        </div>
+      ) : null}
       <div className="flex-1" />
       <div className="flex gap-2">
         {event.meetingUrl ? <a href={event.meetingUrl} target="_blank" rel="noreferrer" className="flex h-8.5 flex-1 items-center justify-center rounded-lg text-[13px] font-medium text-black shadow-[0_0_0_1px_#0116271F]">Join</a> : null}
@@ -658,6 +682,13 @@ export function WorkbotCalendar({ connectionsHref, assistantName, onContextChang
   const [selection, setSelection] = useState<Selection>(null);
   const [toast, setToast] = useState<string | null>(null);
   const [creating, setCreating] = useState<CreateAnchor | null>(null);
+  // `quietCalendar`: meetings own the grid, runs are dots, the Workbot panel opens on demand, narrow widths get an agenda.
+  const quiet = workbotHost().quietCalendar === true;
+  const [agenda, setAgenda] = useState(false);
+  const [weekPanel, setWeekPanel] = useState(false);
+  const runAction = useCalendarAction();
+  const width = useElementWidth<HTMLDivElement>();
+  const narrow = quiet && width.width !== null && width.width < 760;
   useEffect(() => {
     const timer = window.setInterval(() => setNow(Date.now()), 60_000);
     return () => window.clearInterval(timer);
@@ -681,14 +712,15 @@ export function WorkbotCalendar({ connectionsHref, assistantName, onContextChang
     : [], [layers.automations, list.data, now, range, runs.data]);
   const meetings = useMemo(() => layers.meetings ? [...(google.data?.events ?? []), ...(microsoft.data?.events ?? [])] : [], [google.data, layers.meetings, microsoft.data]);
 
-  // Open on the next thing that will run, as the design shows a selection.
+  // Open on the next thing that will run, as the design shows a selection. The quiet calendar opens on nothing.
   useEffect(() => {
-    if (selection || items.length === 0) return;
+    if (quiet || selection || items.length === 0) return;
     const next = items.find((item) => item.status === "upcoming") ?? items.at(-1);
     if (next) setSelection({ kind: "automation", automationId: next.automationId, itemKey: next.key });
-  }, [items, selection]);
+  }, [items, quiet, selection]);
 
-  const days = view === "week" ? weekdaysOnly(range.days, items, meetings, zone) : range.days;
+  // The quiet calendar keeps a weekend only for its meetings: runs there are counted in Workbot's panel.
+  const days = view === "week" ? weekdaysOnly(range.days, quiet ? [] : items, meetings, zone) : range.days;
   const selectedItem = selection?.kind === "automation" ? list.data?.items.find((entry) => entry.automation.id === selection.automationId) ?? null : null;
   const selectedBlock = selection?.kind === "automation" ? items.find((item) => item.key === selection.itemKey) ?? null : null;
   const selectedMeeting = selection?.kind === "meeting" ? meetings.find((event) => event.key === selection.key) ?? null : null;
@@ -717,7 +749,7 @@ export function WorkbotCalendar({ connectionsHref, assistantName, onContextChang
 
   return (
     <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-y-auto lg:flex-row lg:overflow-hidden" data-calendar-page>
-      <div className="flex h-[max(24rem,calc(100dvh-4rem))] min-w-0 shrink-0 flex-col px-3 pt-4 sm:px-5 lg:h-auto lg:min-h-0 lg:flex-1 lg:pr-7 lg:pt-6">
+      <div ref={width.ref} className="flex h-[max(24rem,calc(100dvh-4rem))] min-w-0 shrink-0 flex-col px-3 pt-4 sm:px-5 lg:h-auto lg:min-h-0 lg:flex-1 lg:pr-7 lg:pt-6">
         <div className="mb-3 flex shrink-0 flex-col gap-3 sm:pl-2 xl:flex-row xl:flex-wrap xl:items-center xl:justify-between" data-calendar-toolbar>
           <div className="flex flex-wrap items-center justify-between gap-2 xl:justify-start">
             <div className="flex min-w-0 items-center gap-2">
@@ -743,8 +775,8 @@ export function WorkbotCalendar({ connectionsHref, assistantName, onContextChang
             </div>
           </div>
           <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
-            <Legend testId="automations" checked={layers.automations} onToggle={() => setLayers((current) => ({ ...current, automations: !current.automations }))}>Automations</Legend>
-            <Legend testId="meetings" checked={layers.meetings} onToggle={() => setLayers((current) => ({ ...current, meetings: !current.meetings }))} title={`From ${meetingSource}`}>Meetings</Legend>
+            {quiet ? null : <Legend testId="automations" checked={layers.automations} onToggle={() => setLayers((current) => ({ ...current, automations: !current.automations }))}>Automations</Legend>}
+            {quiet ? null : <Legend testId="meetings" checked={layers.meetings} onToggle={() => setLayers((current) => ({ ...current, meetings: !current.meetings }))} title={`From ${meetingSource}`}>Meetings</Legend>}
             {layers.meetings ? providerStatuses.map((provider) => {
               const error = meetingQueries[provider].error;
               const text = error ? blockedLabel(error) : null;
@@ -758,12 +790,16 @@ export function WorkbotCalendar({ connectionsHref, assistantName, onContextChang
                 </span>
               );
             }) : null}
-            <div className="ml-auto flex shrink-0 rounded-lg bg-[#F1F3F5] p-0.5" role="radiogroup" aria-label="Calendar view">
-              {(["day", "week", "month"] as const).map((option) => (
-                <button key={option} type="button" role="radio" aria-checked={view === option} onClick={() => setView(option)} className={`flex h-6.5 items-center px-2.5 text-[12px] leading-4 ${view === option ? "rounded-md bg-white font-semibold text-black shadow-[0_1px_2px_#0116271A]" : "font-medium text-[#687076]"}`}>
-                  {option === "day" ? "Day" : option === "week" ? "Week" : "Month"}
-                </button>
-              ))}
+            {quiet && list.data ? <span className="ml-auto"><WorkbotStatusButton items={items} list={list.data.items} open={weekPanel && !selection} onToggle={() => { if (selection) { setSelection(null); setWeekPanel(true); } else setWeekPanel((open) => !open); }} /></span> : null}
+            <div className={`${quiet ? "" : "ml-auto "}flex shrink-0 rounded-lg bg-[#F1F3F5] p-0.5`} role="radiogroup" aria-label="Calendar view">
+              {(quiet ? (["agenda", "week", "month"] as const) : (["day", "week", "month"] as const)).map((option) => {
+                const checked = quiet ? (option === "agenda" ? agenda || narrow : !agenda && !narrow && view === option) : view === option;
+                return (
+                  <button key={option} type="button" role="radio" aria-checked={checked} onClick={() => { if (option === "agenda") { setAgenda(true); setView("week"); } else { setAgenda(false); setView(option); } }} className={`flex h-6.5 items-center px-2.5 text-[12px] leading-4 ${checked ? "rounded-md bg-white font-semibold text-black shadow-[0_1px_2px_#0116271A]" : "font-medium text-[#687076]"}`}>
+                    {option === "agenda" ? "Agenda" : option === "day" ? "Day" : option === "week" ? "Week" : "Month"}
+                  </button>
+                );
+              })}
             </div>
           </div>
         </div>
@@ -774,8 +810,12 @@ export function WorkbotCalendar({ connectionsHref, assistantName, onContextChang
           <div className="flex flex-1 flex-col gap-2 pl-14 pt-12" aria-busy="true">
             {Array.from({ length: 6 }, (_, index) => <div key={index} className="h-14.5 animate-pulse rounded bg-[#F4F6F7]" />)}
           </div>
+        ) : quiet && (agenda || narrow) ? (
+          <CalendarAgenda days={range.days} zone={zone} now={now} automations={items} meetings={meetings} list={list.data?.items ?? []} selection={selection} onSelect={setSelection} busy={runAction.isPending} onRunNow={(automationId) => runAction.mutate({ kind: "run", automationId }, { onSuccess: () => setToast("Running now"), onError: (error) => setToast(error.message) })} />
         ) : view === "month" ? (
-          <MonthGrid range={range} zone={zone} now={now} anchorMonth={anchor.month} automations={items} meetings={meetings} list={list.data?.items ?? []} selection={selection} onSelect={setSelection} onOpenDay={(target) => { setAnchor(target); setView("day"); }} />
+          <MonthGrid quiet={quiet} range={range} zone={zone} now={now} anchorMonth={anchor.month} automations={items} meetings={meetings} list={list.data?.items ?? []} selection={selection} onSelect={setSelection} onOpenDay={(target) => { setAnchor(target); setView(quiet ? "week" : "day"); }} />
+        ) : quiet ? (
+          <QuietTimeGrid range={range} days={days} zone={zone} now={now} automations={items} meetings={meetings} selection={selection} onSelect={setSelection} />
         ) : (
           <TimeGrid range={range} days={days} zone={zone} now={now} automations={items} meetings={meetings} list={list.data?.items ?? []} selection={selection} onSelect={setSelection} onCreateAt={setCreating} />
         )}
@@ -783,8 +823,9 @@ export function WorkbotCalendar({ connectionsHref, assistantName, onContextChang
           <p className="py-4 pl-16 text-[13px] text-[#687076]" data-calendar-empty>No automations yet. Ask in Home to set up something that repeats.</p>
         ) : null}
       </div>
-      {selectedItem ? <AutomationPanel key={selectedItem.automation.id} item={selectedItem} block={selectedBlock} zone={zone} onToast={setToast} />
-        : selectedMeeting ? <MeetingPanel event={selectedMeeting} zone={zone} />
+      {selectedItem ? <AutomationPanel key={selectedItem.automation.id} item={selectedItem} block={selectedBlock} zone={zone} onToast={setToast} onClose={quiet ? () => setSelection(null) : undefined} />
+        : selectedMeeting ? <MeetingPanel event={selectedMeeting} zone={zone} runs={quiet ? items.filter((item) => item.run?.triggerContext?.eventId === selectedMeeting.providerEventId) : []} onSelectRun={(item) => setSelection({ kind: "automation", automationId: item.automationId, itemKey: item.key })} onClose={quiet ? () => setSelection(null) : undefined} />
+        : quiet ? (weekPanel && list.data ? <WorkbotWeekPanel days={range.days.length <= 7 ? range.days : days.slice(0, 7)} zone={zone} now={now} title={view === "month" ? "Workbot this month" : "Workbot this week"} items={items} list={list.data.items} onSelect={setSelection} busy={runAction.isPending} onRunNow={(automationId) => runAction.mutate({ kind: "run", automationId }, { onSuccess: () => setToast("Running now"), onError: (error) => setToast(error.message) })} onClose={() => setWeekPanel(false)} /> : null)
         : <aside className="hidden w-95 shrink-0 border-l border-[#01162712] bg-white p-6 text-[13px] text-[#687076] lg:block">Pick something on the calendar to see it here.</aside>}
       {creating ? (
         <CreateAutomationCard

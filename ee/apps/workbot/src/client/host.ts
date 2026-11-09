@@ -45,6 +45,10 @@ export const meSchema = z.object({
   browserPreview: z.boolean().default(false),
   /** Read-only remote tasks (`workbotRemoteTasks`); absent means off. */
   remoteTasks: z.boolean().default(false),
+  /** Pages-only navigation with Files and Apps in the profile (`workbotProfileNav`); absent means off. */
+  profileNav: z.boolean().default(false),
+  /** Quiet calendar (`workbotQuietCalendar`); absent means off. */
+  quietCalendar: z.boolean().default(false),
   denUrl: z.string().nullable(),
 })
 export type Me = z.infer<typeof meSchema>
@@ -179,6 +183,8 @@ export function createHost(me: Me, recovery: { authorization?: WorkbotHost["docu
     centeredProfile: me.centeredProfile,
     browserPreview: me.browserPreview,
     remoteTasks: me.remoteTasks,
+    profileNav: me.profileNav,
+    quietCalendar: me.quietCalendar,
     account: me.accountMenu ? { email: me.email, organizationName: me.organizationName, signOut, switchWorkspace } : undefined,
     identity: me.userId && me.organizationId ? { principalId: me.userId, organizationId: me.organizationId } : undefined,
   }

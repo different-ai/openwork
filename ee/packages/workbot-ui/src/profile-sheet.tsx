@@ -2,8 +2,8 @@
 
 import { Dialog } from "@base-ui/react/dialog";
 import { connectorDisplayName } from "@openwork/types/connector-brand";
-import { Clock3, Fingerprint, LayoutGrid, ListChecks, Lock, X } from "lucide-react";
-import { useId, useState, type ReactNode } from "react";
+import { Clock3, Fingerprint, FolderOpen, LayoutGrid, ListChecks, Lock, X } from "lucide-react";
+import { useContext, useId, useState, type ReactNode } from "react";
 import { describeSchedule } from "@openwork/calendar";
 import { useWorkbotAutomations } from "./calendar-data";
 import { RemoteJobs, useWorkbotRemoteJobs } from "./remote-jobs";
@@ -11,7 +11,8 @@ import { computerViews, useRetainedSurface, workbotHost } from "./host";
 import { useWorkbotApps, useWorkbotMemory } from "./data";
 import { APP_STATUS, appNote } from "./apps";
 import { useWorkbotConnect, WorkbotConnectionButton } from "./connect";
-import { AppMark } from "./files";
+import { AppMark, FilesList } from "./files";
+import { OpenFileContext } from "./open-file";
 import { dayLabel } from "./format";
 import { OpenWorkMark } from "./mark";
 import type { WorkbotActivity } from "./activity";
@@ -23,12 +24,14 @@ import { ActivityDetails, StatusIcon } from "./working-status";
  * browser and computer open only from a step's card in the chat. Read-only in this version:
  * the person changes memory by telling Workbot, and connections in Den.
  *
- * Tabs: "tasks", "permissions" (labelled Apps: every app the person can use, connected or not, then what Workbot can do), "schedules"
- * (centered profile only) and "memory". `initialTab` picks the tab each time the sheet opens.
+ * Tabs: "tasks", "files" (with `profileNav`: Files left the navigation, which lists only pages), "permissions" (labelled
+ * Apps: every app the person can use, connected or not, then what Workbot can do), "schedules" (centered profile only)
+ * and "memory". `initialTab` picks the tab each time the sheet opens.
  */
-export type ProfileTab = "tasks" | "permissions" | "schedules" | "memory";
+export type ProfileTab = "tasks" | "files" | "permissions" | "schedules" | "memory";
 const TABS: Array<{ id: ProfileTab; label: string; icon: typeof ListChecks }> = [
   { id: "tasks", label: "Tasks", icon: ListChecks },
+  { id: "files", label: "Files", icon: FolderOpen },
   { id: "permissions", label: "Apps", icon: LayoutGrid },
   { id: "schedules", label: "Schedules", icon: Clock3 },
   { id: "memory", label: "Identity", icon: Fingerprint },
@@ -48,7 +51,8 @@ export function ProfileSheet({ open, onClose, name, activity, initialTab = "task
   }
   const tabId = useId();
   const centered = workbotHost().centeredProfile === true;
-  const tabs = centered ? TABS : TABS.filter((entry) => entry.id !== "schedules").map((entry) => ({ ...entry, label: entry.id === "permissions" ? "What I can use" : entry.id === "memory" ? "What I remember" : entry.label }));
+  const files = workbotHost().profileNav === true;
+  const tabs = (centered ? TABS : TABS.filter((entry) => entry.id !== "schedules")).filter((entry) => files || entry.id !== "files").map((entry) => centered ? entry : ({ ...entry, label: entry.id === "permissions" ? "What I can use" : entry.id === "memory" ? "What I remember" : entry.label }));
   return <Dialog.Root open={surface.open} onOpenChange={(next) => { if (!next) onClose(); }}>
     <Dialog.Portal {...surface.portal}>
       <Dialog.Backdrop className="fixed inset-0 z-40 bg-[var(--wb-ink)]/25 transition-opacity duration-200 data-[ending-style]:opacity-0 data-[starting-style]:opacity-0 motion-reduce:transition-none sm:bg-[var(--wb-ink)]/10" />
@@ -75,7 +79,7 @@ export function ProfileSheet({ open, onClose, name, activity, initialTab = "task
           </div>
         </div>
         <div role="tabpanel" id={`${tabId}-panel`} aria-labelledby={`${tabId}-${tab}`} tabIndex={0} className="min-h-0 flex-1 overflow-y-auto pb-6 outline-none">
-          {tab === "tasks" ? <TasksTab name={name} activity={activity} /> : tab === "permissions" ? <AppsTab name={name} /> : tab === "schedules" ? <SchedulesTab /> : <MemoryTab name={name} />}
+          {tab === "tasks" ? <TasksTab name={name} activity={activity} /> : tab === "files" ? <FilesTab name={name} open={surface.open} onClose={onClose} /> : tab === "permissions" ? <AppsTab name={name} /> : tab === "schedules" ? <SchedulesTab /> : <MemoryTab name={name} />}
         </div>
       </Dialog.Popup>
     </Dialog.Portal>
@@ -120,6 +124,12 @@ function TasksTab({ name, activity }: { name: string; activity: WorkbotActivity 
     <RemoteJobs jobs={remote.data?.jobs ?? []} statusError={remote.data?.statusError} />
     {remote.data?.hasEarlier ? <p className="px-5 pt-2 text-[12px] text-[var(--wb-muted)]">Showing recent remote tasks. Older jobs may be outside this chat&apos;s current history.</p> : null}
   </>;
+}
+
+/** Files the person sent and Workbot made; opening one closes the profile and shows it beside the chat. */
+function FilesTab({ name, open, onClose }: { name: string; open: boolean; onClose(): void }) {
+  const openFile = useContext(OpenFileContext);
+  return <FilesList enabled={open} assistantName={name} framed={false} onOpenFile={(file) => { onClose(); openFile(file); }} />;
 }
 
 function SchedulesTab() {

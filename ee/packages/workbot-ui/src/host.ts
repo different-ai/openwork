@@ -80,6 +80,16 @@ export type WorkbotHost = {
   browserPreview?: boolean
   /** Read-only remote tasks in profile and header (`workbotRemoteTasks`). Off when unset. */
   remoteTasks?: boolean
+  /**
+   * The navigation lists only full pages (Chats, Documents, Calendar); Files and Apps, which open beside the chat, are
+   * tabs in Workbot's profile, opened from the logo at the top of the navigation (`workbotProfileNav`). Off when unset.
+   */
+  profileNav?: boolean
+  /**
+   * Meetings own the calendar grid; automation runs are small dots at their time, each day says how many ran, and a
+   * Workbot panel opens on demand. Narrow widths get an agenda list (`workbotQuietCalendar`). Off when unset.
+   */
+  quietCalendar?: boolean
   /** The person can start side chats next to their main chat (on while Workbot is on). Off when unset. */
   sideChats?: boolean
   /**
