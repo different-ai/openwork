@@ -36,7 +36,7 @@ export function useSheetDrag(onClose: () => void) {
     if (!current || current.id !== event.pointerId) return;
     drag.current = null;
     if (!current.moved) return;
-    swallowClick.current = true;
+    if (!cancelled) swallowClick.current = true;
     const node = popup.current;
     if (!cancelled && node && sheetDragCloses(current.dy, current.velocity, node.offsetHeight)) {
       node.style.transition = "";
