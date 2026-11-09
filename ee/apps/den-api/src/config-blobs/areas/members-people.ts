@@ -55,6 +55,7 @@ import { removeMemberAction, updateMemberRoleAction } from "../../routes/org/mem
 import { updateTeam } from "../../routes/org/teams.js"
 import { getScimManagedTeamIds } from "../../scim-groups.js"
 import { defineConfigArea, type ConfigApplyOp, type ConfigAreaContext, type ConfigItem, type ConfigPreflightResult } from "../area.js"
+import { SEND_INVITE_EMAIL_FIELD } from "../engine/refs.js"
 import {
   ConfigApplyError,
   ConfigStepLog,
@@ -73,8 +74,7 @@ import {
 
 const AREA = "members.people"
 
-/** Set by the engine on a resolved create/update item to send invite emails. Absent or false: silent. */
-export const SEND_INVITE_EMAIL_FIELD = "__sendInviteEmail"
+export { SEND_INVITE_EMAIL_FIELD }
 
 const personSpecSchema = z.object({
   email: z.string().email().max(255),

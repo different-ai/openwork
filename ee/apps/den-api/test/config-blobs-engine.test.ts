@@ -466,6 +466,59 @@ describe("plan", () => {
     assert.notEqual(ticked.plan.planHash, unticked.plan.planHash)
   })
 
+  test("a restore lists only what the restored change wrote: the snapshot's items and its creates, nothing else", () => {
+    const store = seed()
+    store.set("members.teams", [
+      ...(store.get("members.teams") ?? []),
+      { id: "tem_C", key: null, name: "Ops", spec: { description: "", members: [] } },
+      { id: "tem_D", key: null, name: "Sales", spec: { description: "", members: [] } },
+      { id: "tem_NEW", key: null, name: "Added", spec: { description: "", members: [] } },
+    ])
+    const areas = makeAreas(store, [])
+    // The restored change updated Platform and Design (the snapshot) and created tem_NEW; Ops and Sales were never touched.
+    const blob = exportBlob(store, areas, ["members.teams"])
+    blob["members.teams"]!.items = blob["members.teams"]!.items.filter((entry) => entry.id === "tem_A" || entry.id === "tem_B")
+    blob["members.teams"]!.items[0]!.spec = { description: "before", members: [ada] }
+    const restore = { created: new Map<ConfigAreaKey, ReadonlySet<string>>([["members.teams", new Set(["tem_NEW"])]]) }
+    const { plan, execution } = buildPlan(planInput(store, areas, blob, {
+      mode: "mirror",
+      ctx,
+      restore,
+      decisions: decisions({ deletes: [{ area: "members.teams", targetId: "tem_NEW" }, { area: "members.teams", targetId: "tem_C" }] }),
+    }))
+    assert.deepEqual(items(plan, "members.teams").map((entry) => [entry.ref, entry.op]), [["tem_A", "update"], ["tem_B", "unchanged"], ["target:tem_NEW", "delete"]])
+    assert.equal(item(plan, "members.teams", "target:tem_NEW").reasons?.[0], "added by the change being restored — will be deleted")
+    assert.deepEqual(execution.ops.map((op) => [op.kind, op.targetId]), [["update", "tem_A"], ["delete", "tem_NEW"]], "a delete ticked for an item outside the change is ignored")
+    assert.equal(plan.summary.untouched, 0)
+    // Unticked, the created item is still offered; the others never are.
+    const unticked = buildPlan(planInput(store, areas, blob, { mode: "mirror", ctx, restore }))
+    assert.deepEqual(items(unticked.plan, "members.teams").map((entry) => [entry.ref, entry.op]), [["tem_A", "update"], ["tem_B", "unchanged"], ["target:tem_NEW", "untouched"]])
+  })
+
+  test("invitation emails: with sendInviteEmails, people creates (blob and invite decisions) say an email is sent", () => {
+    const store = seed()
+    const areas = makeAreas(store, [], {
+      "members.people": {
+        irreversible: (op) => (op.kind === "create" && op.item.spec.__sendInviteEmail === true ? [`An invitation email is sent to ${String(op.item.spec.email)}.`] : []),
+      },
+    })
+    const blob: Partial<Record<ConfigAreaKey, ConfigBlobArea>> = {
+      "members.teams": { specVersion: 1, items: [{ id: "tem_A", key: "platform", name: "Platform", spec: { description: "core", members: [ada, { $ref: "people/bob@example.com" }] } }] },
+      "members.people": { specVersion: 1, items: [{ name: "cy@example.com", spec: { email: "cy@example.com", role: "member", status: "invited", teams: [], managedBy: "manual" } }] },
+    }
+    const refs: ConfigDecisions["refs"] = [{ area: "members.teams", ref: "tem_A", path: "members[1]", resolution: { invite: true } }]
+    const silent = buildPlan(planInput(store, areas, blob, { decisions: decisions({ refs }) }))
+    assert.deepEqual(items(silent.plan, "members.people").map((entry) => entry.irreversible ?? []), [[], []])
+    const loud = buildPlan(planInput(store, areas, blob, { decisions: decisions({ refs, people: { sendInviteEmails: true } }) }))
+    assert.deepEqual(items(loud.plan, "members.people").map((entry) => [entry.ref, entry.irreversible]), [
+      ["invite:bob@example.com", ["An invitation email is sent to bob@example.com."]],
+      ["#0", ["An invitation email is sent to cy@example.com."]],
+    ])
+    assert.notEqual(loud.plan.planHash, silent.plan.planHash)
+    // The stored execution plan keeps the blob's spec; the flag is added at apply time.
+    assert.ok(loud.execution.ops.every((op) => op.item?.spec.__sendInviteEmail === undefined))
+  })
+
   test("unsupported areas are skipped with a reason", () => {
     const store = seed()
     const areas = makeAreas(store, [])

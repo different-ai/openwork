@@ -281,6 +281,90 @@ test("revert: a new change request from the before-snapshot restores the old val
   assert.equal(original.revertedByChangeRequestId, request.id)
 })
 
+test("a restore touches only what the change wrote: 2 of 5 teams and its creates, never the owner or other members; a withdrawn restore can be started again", async () => {
+  const orgR = await den.createOrg(owner, "Flow restore scope")
+  assert.ok((await den.setFeature(orgR.orgId, "configBlobs", true)).status < 300)
+  const apiR = den.as(owner, orgR.orgId)
+  const member = await den.newMember(owner, orgR.orgId, "Flow Restore Member")
+  const teamIds: string[] = []
+  for (const name of ["Alpha", "Bravo", "Charlie", "Delta", "Echo"]) teamIds.push(await den.createTeam(owner, orgR.orgId, name, [member.memberId]))
+  const [alphaId, bravoId] = teamIds
+  assert.ok(alphaId && bravoId)
+  const invitee = "flow-restore-invitee@example.com"
+
+  // The change: rename 2 of the 5 teams, add a team, invite one person.
+  const blob = asBlob((await apiR("GET", "/v1/config-blobs/export?areas=members.teams,members.people")).body)
+  setAreaItems(blob, "members.teams", [
+    ...areaItems(blob, "members.teams").map((item) => (item.id === alphaId ? { ...item, name: "Alpha 2" } : item.id === bravoId ? { ...item, name: "Bravo 2" } : item)),
+    { name: "Foxtrot", spec: TEAM_SPEC },
+  ])
+  setAreaItems(blob, "members.people", [...areaItems(blob, "members.people"), { name: invitee, spec: { email: invitee, role: "member", status: "invited", teams: [], managedBy: "manual" } }])
+  const created = await apiR("POST", "/v1/config-blobs/change-requests", { blob, mode: "merge", title: "Two renames" })
+  assert.equal(created.status, 202, summary(created))
+  const id = asSummary(created).id
+  assert.equal((await drive(apiR, id)).status, "needs_review")
+  let current = await plan(apiR, id)
+  assert.deepEqual(planItems(current).filter((item) => item.op !== "unchanged").map((item) => [item.area, item.op, item.blob?.name]), [
+    ["members.teams", "rename", "Alpha 2"],
+    ["members.teams", "rename", "Bravo 2"],
+    ["members.teams", "create", "Foxtrot"],
+    ["members.people", "create", invitee],
+  ], describePlan(current))
+
+  // Sending invitation emails is named before approval as something a restore can't undo, and only then.
+  const inviteEffects = (value: ConfigPlan) => planItems(value).find((item) => item.area === "members.people" && item.op === "create")?.irreversible ?? []
+  assert.deepEqual(inviteEffects(current), [])
+  const loud = await apiR("PUT", `/v1/config-blobs/change-requests/${id}/decisions`, { people: { sendInviteEmails: true } })
+  assert.equal(loud.status, 200, summary(loud))
+  const loudPlan = asPlan(field(loud.body, "plan"))
+  assert.deepEqual(inviteEffects(loudPlan), [`An invitation email is sent to ${invitee}.`])
+  assert.notEqual(loudPlan.planHash, current.planHash)
+  const quiet = await apiR("PUT", `/v1/config-blobs/change-requests/${id}/decisions`, { people: { sendInviteEmails: false } })
+  current = asPlan(field(quiet.body, "plan"))
+  assert.deepEqual(inviteEffects(current), [])
+
+  assert.equal(asSummary(await apiR("POST", `/v1/config-blobs/change-requests/${id}/apply`, { planHash: current.planHash })).status, "queued")
+  assert.equal((await drive(apiR, id)).status, "applied")
+  const [foxtrot] = await rows("SELECT id FROM team WHERE organization_id = ? AND name = 'Foxtrot'", [orgR.orgId])
+  const foxtrotId = String(foxtrot?.id)
+  const invitedId = asRuns(field((await apiR("GET", `/v1/config-blobs/change-requests/${id}`)).body, "runs"))[0]?.items.find((item) => item.area === "members.people")?.localId
+  assert.ok(invitedId)
+
+  // The restore lists the 2 renamed teams and the 2 creates (deletes, ticked), nothing else of either area.
+  const startRestore = async () => {
+    const reverted = await apiR("POST", `/v1/config-blobs/change-requests/${id}/revert`, {})
+    assert.equal(reverted.status, 201, summary(reverted))
+    const restore = asSummary(reverted)
+    assert.equal((await drive(apiR, restore.id)).status, "needs_review")
+    return { restoreId: restore.id, restorePlan: await plan(apiR, restore.id) }
+  }
+  const first = await startRestore()
+  const listed = planItems(first.restorePlan).map((item) => [item.area, item.op, item.target?.id ?? null])
+  assert.deepEqual(listed, [
+    ["members.teams", "rename", alphaId],
+    ["members.teams", "rename", bravoId],
+    ["members.teams", "delete", foxtrotId],
+    ["members.people", "delete", invitedId],
+  ], describePlan(first.restorePlan))
+  const listedIds = new Set(planItems(first.restorePlan).map((item) => item.target?.id))
+  for (const untouched of [orgR.owner.memberId, member.memberId, ...teamIds.slice(2)]) assert.ok(!listedIds.has(untouched), `${untouched} is not in the restore's plan`)
+  assert.equal(first.restorePlan.summary.untouched, 0)
+
+  // Withdrawn: the change can be restored again.
+  assert.equal(asSummary(await apiR("POST", `/v1/config-blobs/change-requests/${first.restoreId}/cancel`, {})).status, "cancelled")
+  const original = asSummary(await apiR("GET", `/v1/config-blobs/change-requests/${id}`))
+  assert.equal(original.revertedByChangeRequestId, null, "a cancelled restore no longer marks the change as restored")
+  const second = await startRestore()
+  assert.notEqual(second.restoreId, first.restoreId)
+  assert.equal(asSummary(await apiR("GET", `/v1/config-blobs/change-requests/${id}`)).revertedByChangeRequestId, second.restoreId)
+  assert.equal(asSummary(await apiR("POST", `/v1/config-blobs/change-requests/${second.restoreId}/apply`, { planHash: second.restorePlan.planHash })).status, "queued")
+  assert.equal((await drive(apiR, second.restoreId)).status, "applied")
+  const names = (await rows("SELECT name FROM team WHERE organization_id = ? ORDER BY name", [orgR.orgId])).map((row) => String(row.name))
+  assert.deepEqual(names, ["Alpha", "Bravo", "Charlie", "Delta", "Echo"])
+  const people = asBlob((await apiR("GET", "/v1/config-blobs/export?areas=members.people")).body)
+  assert.deepEqual(areaItems(people, "members.people").map((item) => String(item.spec.email).toLowerCase()).sort(), [owner.email, member.email].map((email) => email.toLowerCase()).sort())
+})
+
 test("import into a second organization on the same instance: new ids, aliases, secrets and a confirmed match", async () => {
   // A provider in the clone that looks like the source's: a proposed match the admin confirms.
   const similar = await apiB("POST", "/v1/llm-providers", {
@@ -597,6 +681,27 @@ test("ids from another instance are reused only when free and never in this orga
   assert.equal(freshTeam?.id, fresh, "a free id from another instance is reused")
 })
 
+test("a role from another instance keeps its id although the roles area's tables hold ids of other prefixes", async () => {
+  // Regression: the free-id check compared the role's `pms_` id with typed `psp_` columns, whose encoder threw.
+  const exported = asBlob((await apiA("GET", "/v1/config-blobs/export?areas=members.roles")).body)
+  assert.ok(exported.source)
+  exported.source = { ...exported.source, instanceId: "dni_flow_role_elsewhere" }
+  delete exported.baseHash
+  const roleId = createDenTypeId("permissionSet")
+  setAreaItems(exported, "members.roles", [{ id: roleId, name: "Imported Readers", spec: { builtIn: null, allow: ["teams.view"], teams: [] } }])
+  const created = await apiA("POST", "/v1/config-blobs/change-requests", { blob: exported, mode: "merge" })
+  assert.equal(created.status, 202, summary(created))
+  const id = asSummary(created).id
+  assert.equal((await drive(apiA, id)).status, "needs_review")
+  const current = await plan(apiA, id)
+  assert.equal(current.summary.blocking, 0, describePlan(current))
+  assert.equal(asSummary(await apiA("POST", `/v1/config-blobs/change-requests/${id}/apply`, { planHash: current.planHash })).status, "queued")
+  const applied = await drive(apiA, id)
+  assert.equal(applied.status, "applied", JSON.stringify(applied.errors))
+  const [role] = await rows("SELECT id FROM permission_set WHERE organization_id = ? AND name = ?", [orgA.orgId, "Imported Readers"])
+  assert.equal(role?.id, roleId, "the free role id from another instance is reused")
+})
+
 test("a hand-made blob claiming to come from this instance can't pin aliases through decisions (M8)", async () => {
   const blob = await teamsExport(apiA)
   blob.baseHash = `sha256:${"0".repeat(64)}`
@@ -717,6 +822,12 @@ test("a failing item: the run stops there, earlier items stay written, later one
   assert.equal(run.failure?.name, "Broken MCP")
   assert.equal(run.failure?.area, "connectors.mcp")
   assert.ok(run.failure?.failure.message, "the failure has a message")
+  // The item's name is said once: the route's message already names it, so no `Create "Broken MCP": ` in front.
+  const occurrences = (value: string) => value.split("Broken MCP").length - 1
+  assert.equal(occurrences(run.failure.failure.message), 1, run.failure.failure.message)
+  assert.ok(!run.failure.failure.message.startsWith(`Create "Broken MCP"`), run.failure.failure.message)
+  const requestError = settled.errors.find((error) => error.includes("Broken MCP"))
+  assert.equal(occurrences(requestError ?? ""), 1, requestError)
   assert.equal(run.items[2]?.startedAt, null)
   const [row] = await rows("SELECT status, failure_area, failure_ref, failure_code FROM config_apply_run WHERE id = ?", [run.runId])
   assert.equal(row?.status, "failed")

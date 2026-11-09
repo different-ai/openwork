@@ -134,6 +134,20 @@ export async function listChangeRequests(
     .limit(options.limit ?? 100)
 }
 
+/** Status of each of these requests of the organization (missing ids are left out). */
+export async function listChangeRequestStatuses(
+  organizationId: OrganizationId,
+  ids: readonly ConfigChangeRequestId[],
+  database: ConfigDatabase = db.$primary,
+): Promise<Map<string, ConfigChangeRequestStatus>> {
+  if (ids.length === 0) return new Map()
+  const rows = await database
+    .select({ id: ConfigChangeRequestTable.id, status: ConfigChangeRequestTable.status })
+    .from(ConfigChangeRequestTable)
+    .where(and(eq(ConfigChangeRequestTable.organizationId, organizationId), inArray(ConfigChangeRequestTable.id, [...new Set(ids)])))
+  return new Map(rows.map((row) => [row.id, row.status]))
+}
+
 export type ChangeRequestPatch = Partial<Omit<ConfigChangeRequestInsert, "id" | "organizationId" | "createdAt" | "updatedAt">>
 
 /**

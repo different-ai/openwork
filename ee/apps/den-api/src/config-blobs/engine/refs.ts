@@ -96,6 +96,12 @@ export type RefResolverInput = {
 
 export const PEOPLE_AREA: ConfigAreaKey = "members.people"
 
+/**
+ * Set on the spec of a `members.people` create when the admin chose to send
+ * invitation emails (`decisions.people.sendInviteEmails`). Absent or false: silent.
+ */
+export const SEND_INVITE_EMAIL_FIELD = "__sendInviteEmail"
+
 /** Plan ref of the `members.people` create an invite decision adds. */
 export function inviteRef(email: string): string {
   return `invite:${normalizeEmail(email)}`

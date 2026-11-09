@@ -23,6 +23,7 @@ import { DenSwitch } from "../../../_components/ui/switch";
 import {
   CONFIG_OP_LABELS,
   type ConfigPlanEntry,
+  deletesHeading,
   formatFieldChange,
   formatFieldPath,
   formatFieldValue,
@@ -338,11 +339,13 @@ export function PeopleStep({ plan, decisions, editable, saving, onDecisions }: S
 // ---------------------------------------------------------------------------
 // Review
 
-export function ReviewStep({ plan, decisions, editable, saving, onDecisions, confirmed, onConfirm, closed = false }: StepProps & {
+export function ReviewStep({ plan, decisions, editable, saving, onDecisions, confirmed, onConfirm, closed = false, restore = false }: StepProps & {
   confirmed: ReadonlySet<string>;
   onConfirm: (key: string, checked: boolean) => void;
   /** Applied or closed: the diff reads Before / After and decision controls are hidden. */
   closed?: boolean;
+  /** A "Restore previous config" request: its removals are what the restored change added. */
+  restore?: boolean;
 }) {
   // Areas where nothing changes collapse into one line at the end.
   const changed = plan.areas.filter((area) => area.items.some((item) => isDeletable(item, plan.mode) || !["unchanged", "untouched"].includes(item.op)));
@@ -362,6 +365,7 @@ export function ReviewStep({ plan, decisions, editable, saving, onDecisions, con
           confirmed={confirmed}
           onConfirm={onConfirm}
           closed={closed}
+          restore={restore}
         />
       ))}
       {quiet.length > 0 ? (
@@ -394,11 +398,12 @@ export function destructiveEntries(plan: ConfigPlan | null): ConfigPlanEntry[] {
   return planEntries(plan).filter((entry) => entry.item.flags.includes("destructive") && !isDeletable(entry.item, plan.mode) && entry.item.op !== "skip");
 }
 
-function ReviewArea({ plan, area, decisions, editable, saving, onDecisions, confirmed, onConfirm, closed }: StepProps & {
+function ReviewArea({ plan, area, decisions, editable, saving, onDecisions, confirmed, onConfirm, closed, restore }: StepProps & {
   area: ConfigPlan["areas"][number];
   confirmed: ReadonlySet<string>;
   onConfirm: (key: string, checked: boolean) => void;
   closed: boolean;
+  restore: boolean;
 }) {
   const [confirmAll, setConfirmAll] = useState<string | null>(null);
   const deletable = area.items.filter((item) => isDeletable(item, plan.mode));
@@ -456,8 +461,8 @@ function ReviewArea({ plan, area, decisions, editable, saving, onDecisions, conf
       ))}
       {deletable.length > 0 ? (
         <div className="flex flex-col" data-testid="config-review-deletes">
-          <div className="flex flex-wrap items-center justify-between gap-2 pb-1">
-            <p className="text-[12px] font-medium text-gray-500">Not in the file: remove? ({ticked.size} of {deletable.length} ticked)</p>
+          <div className="flex flex-wrap items-center gap-2 pb-1">
+            <p className="mr-auto text-[12px] font-medium text-gray-500">{deletesHeading(restore)} ({ticked.size} of {deletable.length} ticked)</p>
             {editable && confirmAll === null && ticked.size < deletable.length ? (
               <DenButton variant="ghost" size="xs" onClick={() => setConfirmAll("")}>Select all</DenButton>
             ) : null}
@@ -481,16 +486,29 @@ function ReviewArea({ plan, area, decisions, editable, saving, onDecisions, conf
             </div>
           ) : null}
           <div className="flex flex-col divide-y divide-gray-100 border-y border-gray-100">
-            {deletable.map((item) => (
-              <label key={item.ref} className="flex min-h-10 items-center gap-3 py-2 text-[13px]" data-testid="config-delete-item">
-                <DenCheckbox
-                  checked={item.target ? ticked.has(item.target.id) : false}
-                  disabled={!editable || saving || !item.target}
-                  onCheckedChange={(checked) => item.target ? setDeletes([item.target.id], checked) : undefined}
-                />
-                <span className={item.target && ticked.has(item.target.id) ? "text-red-700" : "text-gray-900"}>{itemName(item)}</span>
-              </label>
-            ))}
+            {deletable.map((item) => {
+              const isTicked = item.target ? ticked.has(item.target.id) : false;
+              const irreversible = item.irreversible ?? [];
+              return (
+                <div key={item.ref} className="flex flex-col gap-1 py-2" data-testid="config-delete-item">
+                  <label className="flex min-h-6 items-center gap-3 text-[13px]">
+                    <DenCheckbox
+                      checked={isTicked}
+                      disabled={!editable || saving || !item.target}
+                      onCheckedChange={(checked) => item.target ? setDeletes([item.target.id], checked) : undefined}
+                    />
+                    <span className={`min-w-0 truncate ${isTicked ? "text-red-700" : "text-gray-900"}`}>{itemName(item)}</span>
+                    {isTicked && irreversible.length > 0 ? <span className="ml-auto shrink-0"><DenChip tone="warning">Can't be undone</DenChip></span> : null}
+                  </label>
+                  {isTicked && irreversible.length > 0 ? (
+                    <div className="pl-7 text-[12px] text-gray-700" data-testid="config-review-irreversible">
+                      <p className="font-medium text-gray-900">{closed ? "Removing it:" : "If you remove it:"}</p>
+                      <ul className="list-disc pl-4">{irreversible.map((effect) => <li key={effect}>{effect}</li>)}</ul>
+                    </div>
+                  ) : null}
+                </div>
+              );
+            })}
           </div>
         </div>
       ) : null}

@@ -10,6 +10,7 @@ import {
   type ConfigAreaKey,
   type ConfigBlob,
   type ConfigChangeRequestStatus,
+  type ConfigChangeRequestSummary,
   type ConfigDecisions,
   type ConfigFieldChange,
   type ConfigMatchTier,
@@ -218,6 +219,22 @@ export function requestIssues(plan: ConfigPlan | null): ConfigPlan["issues"] {
   return plan.issues.filter((issue) => !(issue.level === "error" && itemPrefixes.some((prefix) => issue.message.startsWith(prefix))));
 }
 
+const RESTORE_CANT_UNDO_PREFIX = "These can't be undone by restoring: ";
+
+/**
+ * A restore's plan names, one warning per item, what the earlier change set off
+ * that restoring can't undo. They read as one list: `{ cantUndo, rest }`.
+ */
+export function splitRestoreIssues(issues: ConfigPlan["issues"]): { cantUndo: string[]; rest: ConfigPlan["issues"] } {
+  const cantUndo: string[] = [];
+  const rest: ConfigPlan["issues"] = [];
+  for (const issue of issues) {
+    if (issue.message.startsWith(RESTORE_CANT_UNDO_PREFIX)) cantUndo.push(issue.message.slice(RESTORE_CANT_UNDO_PREFIX.length));
+    else rest.push(issue);
+  }
+  return { cantUndo, rest };
+}
+
 export function needsMatch(item: ConfigPlanItem): boolean {
   return item.flags.includes("needs_mapping") || item.flags.includes("conflict.identity");
 }
@@ -236,12 +253,13 @@ export type ConfigRefEntry = ConfigPlanEntry & { reference: ConfigPlanRef };
 /** References that did not resolve on their own, decided or not. */
 export function refEntries(plan: ConfigPlan | null): ConfigRefEntry[] {
   return planEntries(plan).flatMap((entry) => (entry.item.refs ?? [])
-    .filter((reference) => reference.resolvedId === null || reference.via === "decision")
+    // A reference to an item this same file adds ("planned") resolves on apply; it needs no decision.
+    .filter((reference) => (reference.resolvedId === null && reference.via !== "planned") || reference.via === "decision")
     .map((reference) => ({ ...entry, reference })));
 }
 
 export function isRefOpen(reference: ConfigPlanRef): boolean {
-  return reference.resolvedId === null && !reference.decision;
+  return reference.resolvedId === null && reference.via !== "planned" && !reference.decision;
 }
 
 export function isPeopleRef(ref: ConfigPlanRef): boolean {
@@ -388,6 +406,20 @@ export function formatFieldPath(path: string): string {
 /** What admins call reverting: it restores configuration only, never side effects. */
 export const RESTORE_ACTION_LABEL = "Restore previous config";
 
+/**
+ * Whether "Restore previous config" is offered: the change was applied (or
+ * part of it), and no restore of it is open or done. den-api drops the link
+ * to a restore that was cancelled, refused or superseded, so it can be started again.
+ */
+export function canRestoreRequest(request: Pick<ConfigChangeRequestSummary, "status" | "revertedByChangeRequestId">, runCount: number): boolean {
+  return (request.status === "applied" || request.status === "failed") && !request.revertedByChangeRequestId && runCount > 0;
+}
+
+/** Heading of an area's removals: a restore only offers what the restored change added. */
+export function deletesHeading(restore: boolean): string {
+  return restore ? "Added by the change being restored: remove?" : "Not in the file: remove?";
+}
+
 export const CONFIG_RUN_STATUS_PRESENTATION: Record<ConfigApplyRunStatus, { label: string; tone: DenChipTone }> = {
   running: { label: "Applying", tone: "info" },
   applied: { label: "Applied", tone: "success" },
@@ -403,20 +435,17 @@ export const CONFIG_ITEM_STATUS_PRESENTATION: Record<ConfigApplyItemStatus, { la
   skipped: { label: "Not run", tone: "neutral" },
 };
 
-const STEP_VERBS: Record<ConfigApplyStep["action"], string> = {
-  create: "Created",
-  update: "Updated",
-  delete: "Deleted",
-  add: "Added",
-  remove: "Removed",
-  set: "Set",
-  keep: "Kept",
+const STEP_VERBS: Record<"done" | "attempted", Record<ConfigApplyStep["action"], string>> = {
+  done: { create: "Created", update: "Updated", delete: "Deleted", add: "Added", remove: "Removed", set: "Set", keep: "Kept" },
+  // A write that failed didn't happen: name it as what was tried.
+  attempted: { create: "Create", update: "Update", delete: "Delete", add: "Add", remove: "Remove", set: "Set", keep: "Keep" },
 };
 
 /** `{ action: "add", target: "access.teams", detail: "Platform" }` → `Added Access › Teams: Platform` */
-export function formatApplyStep(step: ConfigApplyStep): string {
+export function formatApplyStep(step: ConfigApplyStep, tense: "done" | "attempted" = "done"): string {
+  const verb = STEP_VERBS[tense][step.action];
   const target = step.target ? formatFieldPath(step.target) : "";
-  const head = target ? `${STEP_VERBS[step.action]} ${target}` : STEP_VERBS[step.action];
+  const head = target ? `${verb} ${target}` : verb;
   return step.detail ? `${head}: ${step.detail}` : head;
 }
 
@@ -460,7 +489,7 @@ export function runRequester(run: Pick<ConfigApplyReport, "requestedBy">): strin
 export function failureLocation(areaLabel: string, item: Pick<ConfigApplyReportItem, "name" | "failure">): string {
   const parts = [areaLabel, item.name];
   if (item.failure?.field) parts.push(formatFieldPath(item.failure.field));
-  else if (item.failure?.step) parts.push(formatApplyStep(item.failure.step));
+  else if (item.failure?.step) parts.push(formatApplyStep(item.failure.step, "attempted"));
   return parts.join(" › ");
 }
 
@@ -485,9 +514,9 @@ export function runFailure(run: ConfigApplyReport, areaLabel: (area: ConfigAreaK
   return {
     item,
     where: failureLocation(areaLabel(item.area), item),
-    failedStep: item.failure?.step ? formatApplyStep(item.failure.step) : null,
+    failedStep: item.failure?.step ? formatApplyStep(item.failure.step, "attempted") : null,
     message: item.failure?.message ?? item.error ?? "It failed without a message.",
-    written: item.steps.map(formatApplyStep),
+    written: item.steps.map((step) => formatApplyStep(step)),
     notReached: run.items.filter((entry) => entry.status === "not_reached"),
     interrupted: item.failure?.code === "interrupted",
   };

@@ -34,6 +34,7 @@ import { classifyMatched, diffSpecs, type EngineFieldChange } from "./diff.js"
 import { blobItemAsConfigItem, matchArea, type ItemMatch } from "./match.js"
 import {
   PEOPLE_AREA,
+  SEND_INVITE_EMAIL_FIELD,
   createRefResolver,
   findRefs,
   inviteRef,
@@ -92,6 +93,14 @@ export type BuildPlanInput = {
    * admin's skip), `block` adds the `blocked` flag, warnings become reasons.
    */
   preflight?: ReadonlyMap<string, ConfigPreflightResult>
+  /**
+   * The plan restores an earlier change ("Restore previous config"): the blob
+   * holds the items that change updated or deleted, as they were before.
+   * Only those, and the items it created (`created`, area → local ids,
+   * offered for deletion), are listed. Every other item of the areas is left
+   * out of the plan: it is neither offered for deletion nor changed.
+   */
+  restore?: { created: ReadonlyMap<ConfigAreaKey, ReadonlySet<string>> }
 }
 
 /** Key of a plan item in `BuildPlanInput.preflight`. */
@@ -329,7 +338,11 @@ export function buildPlan(input: BuildPlanInput): BuildPlanResult {
     if (!state.match) continue
     const drafts: Draft[] = []
     const deletedIds = new Set<string>()
+    const restoreCreated = input.restore ? input.restore.created.get(state.area.key) ?? new Set<string>() : null
     for (const target of state.match.unmatchedTargets) {
+      // A restore touches only what the restored change wrote: of the items not in the snapshot, the ones it created.
+      if (restoreCreated && !restoreCreated.has(target.id)) continue
+      const notInBlob = restoreCreated ? "added by the change being restored" : "not in the blob"
       const item: ConfigPlanItem = {
         area: state.area.key,
         ref: `target:${target.id}`,
@@ -341,8 +354,8 @@ export function buildPlan(input: BuildPlanInput): BuildPlanResult {
         targetRev: itemRev(state.area, target),
       }
       const draft: Draft = { item }
-      if (input.mode === "merge") item.reasons = ["not in the blob"]
-      else if (!deleteTicks.has(`${state.area.key}\u0000${target.id}`)) item.reasons = ["not in the blob — tick to delete"]
+      if (input.mode === "merge") item.reasons = [notInBlob]
+      else if (!deleteTicks.has(`${state.area.key}\u0000${target.id}`)) item.reasons = [`${notInBlob} — tick to delete`]
       else {
         const protection = state.area.protectedFromDelete
           ? input.ctx ? state.area.protectedFromDelete(target, input.ctx) : "protection could not be checked"
@@ -356,10 +369,10 @@ export function buildPlan(input: BuildPlanInput): BuildPlanResult {
         } else {
           item.op = "delete"
           item.flags.push("destructive")
-          item.reasons = ["not in the blob — will be deleted"]
+          item.reasons = [`${notInBlob} — will be deleted`]
           deletedIds.add(target.id)
           draft.exec = { area: state.area.key, ref: item.ref, kind: "delete", op: "delete", matchedBy: null, targetId: target.id, refs: [], secrets: [], previous: target, name: target.name, changes: [], secretPaths: [], targetRev: item.targetRev, irreversible: [] }
-          setIrreversible(state.area, item, draft.exec)
+          setIrreversible(state.area, item, draft.exec, decisions)
           applyVerdict(item, verdict)
         }
       }
@@ -540,7 +553,7 @@ export function buildPlan(input: BuildPlanInput): BuildPlanResult {
         draft.exec = match.target
           ? { area: area.key, ref: match.ref, kind: "update", op: item.op, matchedBy: match.matchedBy, targetId: match.target.id, item: execItem, refs, secrets: secrets.execution, previous: match.target, name: blob.name, changes: fields, secretPaths, targetRev: item.targetRev, irreversible: [] }
           : { area: area.key, ref: match.ref, kind: "create", op: "create", matchedBy: match.matchedBy, item: execItem, refs, secrets: secrets.execution, name: blob.name, changes: [], secretPaths: [], irreversible: [], ...(preferredId ? { preferredId } : {}) }
-        setIrreversible(area, item, draft.exec)
+        setIrreversible(area, item, draft.exec, decisions)
         applyVerdict(item, preflight.get(key))
         draft.uniqueProbe = { id: match.target?.id ?? blobItemAsConfigItem(blob, match.index).id, key: blob.key ?? match.target?.key ?? null, name: blob.name, spec: localized }
       }
@@ -579,7 +592,7 @@ export function buildPlan(input: BuildPlanInput): BuildPlanResult {
         item.reasons = [`${email} is not a valid email address, so they can't be invited`]
       } else {
         draft.exec = { area: PEOPLE_AREA, ref, kind: "create", op: "create", matchedBy: null, item: { name: email, spec }, refs: [], secrets: [], name: email, changes: [], secretPaths: [], irreversible: [] }
-        setIrreversible(peopleArea, item, draft.exec)
+        setIrreversible(peopleArea, item, draft.exec, decisions)
         // An invite other items rely on can't just be skipped: a skip verdict blocks it instead.
         const verdict = preflight.get(preflightKey(PEOPLE_AREA, ref))
         applyVerdict(item, verdict?.skip ? { ...verdict, block: verdict.block ?? verdict.skip } : verdict)
@@ -666,9 +679,10 @@ export function buildPlan(input: BuildPlanInput): BuildPlanResult {
  * (shown before approval) and the execution op (seeded into the report). The
  * preview op carries the blob's spec with refs and secrets still unresolved.
  */
-function setIrreversible(area: ConfigArea, item: ConfigPlanItem, exec: ExecutionOp): void {
+function setIrreversible(area: ConfigArea, item: ConfigPlanItem, exec: ExecutionOp, decisions: ConfigDecisions): void {
   if (!area.irreversible) return
-  const preview = previewOp(exec)
+  // As it will be applied: a person's create carries the invite-email choice.
+  const preview = previewOp(withInviteEmail(exec, decisions.people.sendInviteEmails))
   if (!preview) return
   let effects: string[] = []
   try {
@@ -692,6 +706,22 @@ export function previewOp(exec: ExecutionOp): ConfigApplyOp | null {
   }
   if (exec.kind === "create" && exec.item) return { kind: "create", item: { ...exec.item } }
   return null
+}
+
+/**
+ * An op as it is applied: with `send`, a `members.people` create (from the
+ * blob or an invite decision) carries `SEND_INVITE_EMAIL_FIELD`, so the
+ * invitation email goes out. The plan's irreversible effects use the same.
+ */
+export function withInviteEmail(op: ExecutionOp, send: boolean): ExecutionOp {
+  if (!send || op.area !== PEOPLE_AREA || op.kind !== "create" || !op.item) return op
+  return { ...op, item: { ...op.item, spec: { ...op.item.spec, [SEND_INVITE_EMAIL_FIELD]: true } } }
+}
+
+/** `withInviteEmail` on every op of an execution plan. */
+export function withInviteEmails(execution: ExecutionPlan, send: boolean): ExecutionPlan {
+  if (!send) return execution
+  return { ...execution, ops: execution.ops.map((op) => withInviteEmail(op, send)) }
 }
 
 /** A preflight `block` (the `blocked` flag and its reason) and warnings on a planned write. */

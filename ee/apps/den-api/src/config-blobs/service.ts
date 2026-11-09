@@ -90,7 +90,6 @@ import { appLogger } from "../observability/logger.js"
 import { updateOrganizationMetadata } from "../organization-metadata.js"
 import { resolvePermissionsForMember } from "../permissions/resolve.js"
 import type { ConfigActor, ConfigArea, ConfigAreaContext, ConfigItem } from "./area.js"
-import { SEND_INVITE_EMAIL_FIELD } from "./areas/members-people.js"
 import { ConfigApplyError } from "./areas/route-support.js"
 import {
   baseHash as computeBaseHash,
@@ -108,6 +107,7 @@ import {
   secretsNeedingValues,
   itemRev,
   unsupportedReason,
+  withInviteEmails,
   type ExecutionPlan,
 } from "./engine/index.js"
 import { configSecretEnvPolicy, readConfigSecretEnv } from "./env-secrets.js"
@@ -128,6 +128,7 @@ import {
   insertAliases,
   listAliasRows,
   listChangeRequests,
+  listChangeRequestStatuses,
   loadMemberNames,
   markOtherOpenRequestsStale,
   recordExport,
@@ -362,7 +363,8 @@ export async function exportBlob(org: ConfigOrganization, caller: ConfigCaller, 
   const keys: ConfigAreaKey[] = []
   for (const key of requested) {
     const area = registeredArea(key)
-    const unsupported = area ? unsupportedReason(area, deployment, org.features) : "not available on this server"
+    // The reason travels in the file and is read on the importing side, where "here" would mean the wrong organization.
+    const unsupported = area ? unsupportedReason(area, deployment, org.features)?.replace(/ here$/, ` in ${org.name}`) ?? null : "not available on this server"
     if (!area || unsupported) omitted.push({ area: key, reason: unsupported ?? "not available on this server" })
     else if (!tokenAllows(caller.tokenAreas, key)) omitted.push({ area: key, reason: "outside this config token's areas" })
     else if (!caller.can(area.viewPermission)) omitted.push({ area: key, reason: `needs the ${area.viewPermission} permission` })
@@ -452,9 +454,19 @@ export async function updateConfigBlobSettings(organizationId: OrganizationId, s
 // ---------------------------------------------------------------------------
 // Summaries and reads
 
+/** A restore that never went ahead (withdrawn, refused or replaced): the change it restored can be restored again. */
+const WITHDRAWN_RESTORE_STATUSES: readonly ConfigChangeRequestStatus[] = ["cancelled", "invalid", "superseded"]
+
 async function summaries(organizationId: OrganizationId, rows: Parameters<typeof toChangeRequestSummary>[0][]): Promise<ConfigChangeRequestSummary[]> {
   const names = await loadMemberNames(organizationId, summaryMemberIds(rows))
-  return rows.map((row) => toChangeRequestSummary(row, names))
+  // "Restored by a later change" only links a restore that is open or ran.
+  const restoreIds = rows.flatMap((row) => (row.revertedByChangeRequestId ? [row.revertedByChangeRequestId] : []))
+  const restoreStatuses = restoreIds.length > 0 ? await listChangeRequestStatuses(organizationId, restoreIds) : new Map<string, ConfigChangeRequestStatus>()
+  return rows.map((row) => {
+    const restoreStatus = row.revertedByChangeRequestId ? restoreStatuses.get(row.revertedByChangeRequestId) : undefined
+    const withdrawn = row.revertedByChangeRequestId !== null && (restoreStatus === undefined || WITHDRAWN_RESTORE_STATUSES.includes(restoreStatus))
+    return toChangeRequestSummary(withdrawn ? { ...row, revertedByChangeRequestId: null } : row, names)
+  })
 }
 
 async function summaryOf(row: ConfigChangeRequestRow): Promise<ConfigChangeRequestSummary> {
@@ -773,6 +785,15 @@ async function planChangeRequest(row: PlanSource, overrides: { decisions?: Confi
     baseSpecs: sameOrganization ? await baseSpecsFor(row.organizationId, row.baseHash) : undefined,
     ctx,
   }
+  // A restore lists only what the restored change wrote: the snapshot's items and the items it created.
+  const restoredId = row.sourceKind === "revert" ? restoredChangeRequestId(row.revertsChangeRequestId ?? null) : null
+  if (restoredId) {
+    const created = new Map<ConfigAreaKey, Set<string>>()
+    for (const entry of createdByRuns(await listApplyRuns(row.organizationId, restoredId, db.$primary))) {
+      created.set(entry.area, (created.get(entry.area) ?? new Set<string>()).add(entry.targetId))
+    }
+    planInput.restore = { created }
+  }
   // Preflight: the areas look at the planned writes (reads only), then the plan is built again with their verdicts.
   let result = buildPlan(planInput)
   if (result.fatalErrors.length === 0) {
@@ -783,9 +804,7 @@ async function planChangeRequest(row: PlanSource, overrides: { decisions?: Confi
   for (const entry of blob.omitted ?? []) {
     result.plan.issues.push({ level: "warning", message: `${areaLabel(entry.area)} was left out of the export: ${entry.reason}`, area: entry.area })
   }
-  if (row.sourceKind === "revert" && row.revertsChangeRequestId) {
-    result.plan.issues.push(...await restoreIssues(row.organizationId, row.revertsChangeRequestId, areas))
-  }
+  if (restoredId) result.plan.issues.push(...await restoreIssues(row.organizationId, restoredId, areas))
   return { plan: result.plan, execution: result.execution, fatal: result.fatalErrors, ctx }
 }
 
@@ -1062,16 +1081,9 @@ export async function revertChangeRequest(org: ConfigOrganization, id: string, c
   }
   await caller.authorize(managePermissions(row.areas))
   const runs = await listApplyRuns(org.id, row.id, db.$primary)
-  // Every attempt's creates (a failed attempt's creates stay too), deduplicated.
-  const created = new Map<string, { area: ConfigAreaKey; targetId: string }>()
-  for (const run of runs) {
-    for (const item of run.report.items) {
-      if (item.op === "create" && item.status === "applied" && item.localId) created.set(`${item.area}\u0000${item.localId}`, { area: item.area, targetId: item.localId })
-    }
-  }
   const afterRevs: Record<string, string> = {}
   for (const run of [...runs].reverse()) Object.assign(afterRevs, run.report.afterRevs ?? {})
-  const decisions: ConfigDecisions = { ...EMPTY_CONFIG_DECISIONS, deletes: [...created.values()] }
+  const decisions: ConfigDecisions = { ...EMPTY_CONFIG_DECISIONS, deletes: createdByRuns(runs) }
   const summary = await submitChangeRequest(org, caller, {
     blob: revertBlob(row.beforeSnapshot, afterRevs),
     mode: "mirror",
@@ -1082,17 +1094,31 @@ export async function revertChangeRequest(org: ConfigOrganization, id: string, c
   return summary
 }
 
+/** Items any apply attempt created (a failed attempt's creates stay too), deduplicated: what a restore deletes. */
+function createdByRuns(runs: readonly { report: ConfigApplyReport }[]): Array<{ area: ConfigAreaKey; targetId: string }> {
+  const created = new Map<string, { area: ConfigAreaKey; targetId: string }>()
+  for (const run of runs) {
+    for (const item of run.report.items) {
+      if (item.op === "create" && item.status === "applied" && item.localId) created.set(`${item.area}\u0000${item.localId}`, { area: item.area, targetId: item.localId })
+    }
+  }
+  return [...created.values()]
+}
+
+function restoredChangeRequestId(id: string | null): ConfigChangeRequestId | null {
+  if (!id) return null
+  try {
+    return normalizeDenTypeId("configChangeRequest", id)
+  } catch {
+    return null
+  }
+}
+
 /**
  * Plan issues of a restore: what the original apply did that restoring can't
  * undo (from its runs' reports), and credentials that can't come back.
  */
-async function restoreIssues(organizationId: OrganizationId, originalId: string, blobAreas: Partial<Record<ConfigAreaKey, ConfigBlobArea>>): Promise<ConfigPlan["issues"]> {
-  let changeRequestId: ConfigChangeRequestId
-  try {
-    changeRequestId = normalizeDenTypeId("configChangeRequest", originalId)
-  } catch {
-    return []
-  }
+async function restoreIssues(organizationId: OrganizationId, changeRequestId: ConfigChangeRequestId, blobAreas: Partial<Record<ConfigAreaKey, ConfigBlobArea>>): Promise<ConfigPlan["issues"]> {
   const issues: ConfigPlan["issues"] = []
   const runs = await listApplyRuns(organizationId, changeRequestId, db.$primary)
   const seen = new Set<string>()
@@ -1100,7 +1126,9 @@ async function restoreIssues(organizationId: OrganizationId, originalId: string,
     for (const item of run.report.items) {
       if (item.irreversible.length === 0 || (item.status !== "applied" && item.steps.length === 0)) continue
       const label = CONFIG_AREAS.find((area) => area.key === item.area)?.label ?? item.area
-      const message = `These can't be undone by restoring: ${label} "${item.name}": ${item.irreversible.join("; ")}.`
+      // Effects are whole sentences: join them as written, ending with one period.
+      const effects = item.irreversible.map((effect) => /[.!?]$/.test(effect) ? effect : `${effect}.`).join(" ")
+      const message = `These can't be undone by restoring: ${label} "${item.name}": ${effects}`
       if (seen.has(message)) continue
       seen.add(message)
       issues.push({ level: "warning", message, area: item.area })
@@ -1161,7 +1189,10 @@ async function isConfigIdFree(organizationId: OrganizationId, area: ConfigAreaKe
   for (const name of getConfigArea(area).tables) {
     const entry = tablesWithId().get(name)
     if (!entry) continue
-    const rows = await db.$primary.select({ one: sql<number>`1` }).from(entry.table).where(eq(entry.column, id)).limit(1)
+    // Raw comparison: an area's tables hold ids of several TypeID prefixes (a role's
+    // `permission_set_permission` rows are `psp_`), and a typed column's encoder
+    // throws on an id of another prefix instead of matching nothing.
+    const rows = await db.$primary.select({ one: sql<number>`1` }).from(entry.table).where(sql`${entry.column} = ${id}`).limit(1)
     if (rows.length > 0) return false
   }
   const audited = await db.$primary
@@ -1199,16 +1230,6 @@ async function jobCapture(input: { organizationId: OrganizationId; changeRequest
   } catch (error) {
     logger.warn("config apply audit capture unavailable; domain emitters fall back to legacy rows", { change_request_id: input.changeRequestId, error_name: error instanceof Error ? error.name : typeof error })
     return null
-  }
-}
-
-function withInviteEmails(execution: ExecutionPlan, send: boolean): ExecutionPlan {
-  if (!send) return execution
-  return {
-    ...execution,
-    ops: execution.ops.map((op) => op.area === "members.people" && op.kind === "create" && op.item
-      ? { ...op, item: { ...op.item, spec: { ...op.item.spec, [SEND_INVITE_EMAIL_FIELD]: true } } }
-      : op),
   }
 }
 
@@ -1294,6 +1315,24 @@ function describeApplyError(error: unknown): ConfigApplyFailure {
   return { code: "error", message: storedError(errorMessage(error)) }
 }
 
+/**
+ * A failure message read under its item (the report names the item): a
+ * leading `Create "Docs": ` is dropped when the rest names the item again
+ * (`Could not validate "Docs": …`), so the name is said once.
+ */
+function itemFailureMessage(name: string, message: string): string {
+  const separator = message.indexOf(": ")
+  if (!name || separator <= 0) return message
+  const prefix = message.slice(0, separator)
+  const rest = message.slice(separator + 2)
+  return prefix.includes(name) && rest.includes(name) ? rest : message
+}
+
+/** A request error for a failed item: `MCP "Docs": <message>`, or `MCP: <message>` when the message names the item. */
+function itemFailureError(areaKey: ConfigAreaKey, name: string, message: string): string {
+  return name && message.includes(name) ? `${areaLabel(areaKey)}: ${message}` : `${areaLabel(areaKey)} "${name}": ${message}`
+}
+
 /** Report items as stored: failure messages, step details and warnings bounded and redacted like `errors`. */
 function storedReportItems(items: readonly ConfigApplyReportItem[]): ConfigApplyReportItem[] {
   return items.map((item) => {
@@ -1303,7 +1342,7 @@ function storedReportItems(items: readonly ConfigApplyReportItem[]): ConfigApply
       steps: item.steps.map((step) => (step.detail === undefined ? step : { ...step, detail: storedError(step.detail) })),
     }
     if (item.failure) {
-      out.failure = { ...item.failure, message: storedError(item.failure.message) }
+      out.failure = { ...item.failure, message: storedError(itemFailureMessage(item.name, item.failure.message)) }
       if (item.failure.step?.detail !== undefined) out.failure.step = { ...item.failure.step, detail: storedError(item.failure.step.detail) }
     }
     return out
@@ -1534,7 +1573,7 @@ export async function applyClaimedChangeRequest(claim: ClaimedChangeRequest): Pr
   const ok = result.ok && !leaseLost
   const status: ConfigChangeRequestStatus = ok ? "applied" : "failed"
   await saveReport(summarizeReport({ ...report, items, warnings: warnings.map(storedError), afterRevs, status: ok ? "applied" : "failed", finishedAt: new Date().toISOString() }))
-  const errors = items.flatMap((item) => (item.status === "failed" && item.failure ? [storedError(`${areaLabel(item.area)} "${item.name}": ${item.failure.message}`)] : []))
+  const errors = items.flatMap((item) => (item.status === "failed" && item.failure ? [storedError(itemFailureError(item.area, item.name, item.failure.message))] : []))
   if (leaseLost && !errors.includes(LEASE_LOST_ERROR)) errors.push(LEASE_LOST_ERROR)
   const released = await releaseClaim(claim, { status, secretInputs: null, appliedAt: new Date(), errors })
   if (!released) {

@@ -27,12 +27,15 @@ import { ConfigApplyRuns } from "./config-apply-runs";
 import {
   RESTORE_ACTION_LABEL,
   approvalState,
+  canRestoreRequest,
   type ConfigStep,
   configExportFileName,
   formatRelativeTime,
   isTransientStatus,
   planSteps,
   requestIssues,
+  runFailure,
+  splitRestoreIssues,
 } from "./config-blobs-model";
 import { ConfigCounts, ConfigStatusChip, useConfigBlobsFeature } from "./config-blobs-parts";
 import { changeRequestByline, changeRequestTitle } from "./config-change-list";
@@ -203,12 +206,16 @@ function ChangeRequestBody({ request, runs, plan, decisions, planLoading, planEr
     : unconfirmed > 0 ? `Confirm ${unconfirmed} ${unconfirmed === 1 ? "removal" : "removals"} in Review`
     : approval.reason;
 
-  const canRestore = (request.status === "applied" || request.status === "failed") && !request.revertedByChangeRequestId && runs.length > 0;
+  const canRestore = canRestoreRequest(request, runs.length);
   const areaLabels = new Map<ConfigAreaKey, string>([
     ...(areas.data?.areas ?? []).map((entry): [ConfigAreaKey, string] => [entry.key, entry.label]),
     ...(plan?.areas ?? []).map((entry): [ConfigAreaKey, string] => [entry.area, entry.label]),
   ]);
   const areaLabel = (key: ConfigAreaKey) => areaLabels.get(key) ?? key;
+  // The newest run's failure box already explains its failure; don't repeat it in a banner above.
+  const latestFailure = runs[0] ? runFailure(runs[0], areaLabel) : null;
+  const errors = latestFailure ? request.errors.filter((entry) => !entry.includes(latestFailure.message)) : request.errors;
+  const { cantUndo, rest: otherIssues } = splitRestoreIssues(requestIssues(plan));
 
   const primary = request.status === "needs_review" && !approval.canApprove ? null : request.status === "needs_review" ? (
     <DenButton icon={CheckCircle2} disabled={approveBlockedReason !== null || !plan || saving} loading={action.isPending} onClick={() => run("approve")} data-testid="config-approve">
@@ -223,9 +230,10 @@ function ChangeRequestBody({ request, runs, plan, decisions, planLoading, planEr
   return (
     <>
       <header className="flex flex-col gap-2">
-        <div className="flex flex-wrap items-start justify-between gap-3">
-          <div className="flex min-w-0 flex-wrap items-center gap-2">
-            <h1 className="min-w-0 truncate text-[20px] font-semibold tracking-[-0.3px] text-gray-950">{changeRequestTitle(request)}</h1>
+        {/* Long titles wrap beside the actions, which stay top-right. */}
+        <div className="flex items-start justify-between gap-3">
+          <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1 pt-1">
+            <h1 className="min-w-0 break-words text-[20px] font-semibold leading-7 tracking-[-0.3px] text-gray-950">{changeRequestTitle(request)}</h1>
             <ConfigStatusChip status={request.status} />
           </div>
           <div className="flex shrink-0 items-center gap-2">
@@ -253,10 +261,21 @@ function ChangeRequestBody({ request, runs, plan, decisions, planLoading, planEr
       </header>
 
       {error ? <DenNotice tone="error" message={error} /> : null}
-      {request.errors.length > 0 ? (
-        <DenNotice tone="error" message={request.errors.length === 1 ? request.errors[0] : <ul className="list-disc pl-4">{request.errors.map((entry) => <li key={entry}>{entry}</li>)}</ul>} />
+      {errors.length > 0 ? (
+        <DenNotice tone="error" message={errors.length === 1 ? errors[0] : <ul className="list-disc pl-4">{errors.map((entry) => <li key={entry}>{entry}</li>)}</ul>} />
       ) : null}
-      {requestIssues(plan).map((issue) => (
+      {cantUndo.length > 0 ? (
+        <DenNotice
+          tone="warning"
+          message={(
+            <div data-testid="config-restore-cant-undo">
+              <p className="font-medium">Restoring can't undo what the earlier change set off:</p>
+              <ul className="list-disc pl-4">{cantUndo.map((entry) => <li key={entry}>{entry}</li>)}</ul>
+            </div>
+          )}
+        />
+      ) : null}
+      {otherIssues.map((issue) => (
         <DenNotice key={`${issue.level}:${issue.message}`} tone={issue.level === "error" ? "error" : issue.level === "warning" ? "warning" : "neutral"} message={issue.message} />
       ))}
       {planError ? <DenNotice tone="error" message={planError} /> : null}
@@ -291,6 +310,7 @@ function ChangeRequestBody({ request, runs, plan, decisions, planLoading, planEr
               onDecisions={updateDecisions}
               confirmed={shownConfirmed}
               closed={!editable}
+              restore={request.source === "revert"}
               onConfirm={(key, checked) => setConfirmed((current) => {
                 const next = new Set(current);
                 if (checked) next.add(key);

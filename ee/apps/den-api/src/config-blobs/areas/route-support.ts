@@ -233,8 +233,27 @@ export async function expectRouteOk(response: Response, action: string): Promise
   const body = await readResponseBody(response)
   if (response.status < 300) return isJsonObject(body) ? body : {}
   const code = isJsonObject(body) && typeof body.error === "string" ? body.error : "request_failed"
-  const message = isJsonObject(body) && typeof body.message === "string" ? body.message : `${action} failed (${response.status}).`
-  throw new ConfigApplyError(code, `${action}: ${message}`, response.status)
+  const message = isJsonObject(body) && typeof body.message === "string" && body.message.trim() ? body.message : null
+  throw new ConfigApplyError(code, routeErrorMessage(action, message, response.status), response.status)
+}
+
+/**
+ * A failed route's message, said once: `Create "Docs": <message>`, or the
+ * message alone when it already names what was acted on (`Could not validate
+ * "Docs": …`), or `Create "Docs" failed (500).` when the route gave none.
+ */
+export function routeErrorMessage(action: string, message: string | null, status: number): string {
+  if (!message) return `${action} failed (${status}).`
+  const subject = actionSubject(action)
+  return subject && message.includes(subject) ? message : `${action}: ${message}`
+}
+
+/** What an action label acts on: the quoted name (`Update "Docs"` → `Docs`), else what follows the verb. */
+function actionSubject(action: string): string | null {
+  const quoted = /"([^"]+)"/.exec(action)
+  if (quoted?.[1]) return quoted[1]
+  const rest = action.slice(action.indexOf(" ") + 1).trim()
+  return action.includes(" ") && rest ? rest : null
 }
 
 export function stringField(body: JsonObject, ...path: string[]): string {

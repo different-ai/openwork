@@ -3,7 +3,9 @@ import { test } from "node:test";
 import { CONFIG_BLOB_MAX_BYTES, EMPTY_CONFIG_DECISIONS, type ConfigApplyReport, type ConfigAreaDescriptor, type ConfigPlan } from "@openwork/types/den/config-blobs";
 import {
   approvalState,
+  canRestoreRequest,
   checkImportFile,
+  deletesHeading,
   configExportFileName,
   exportAreasParam,
   formatApplyStep,
@@ -19,7 +21,9 @@ import {
   isDeletable,
   keepableSecrets,
   planSteps,
+  refEntries,
   requestIssues,
+  splitRestoreIssues,
 } from "./config-blobs-model";
 
 function area(key: ConfigAreaDescriptor["key"], path: string[], overrides: Partial<ConfigAreaDescriptor> = {}): ConfigAreaDescriptor {
@@ -83,6 +87,18 @@ test("steps list only what the plan needs, with open decisions counted", () => {
   assert.deepEqual(keepableSecrets(plan), ["p"]);
 });
 
+test("a reference to an item the same file adds needs no decision", () => {
+  const withRefs: ConfigPlan = { ...plan, areas: [{ area: "connectors.mcp", label: "MCP", items: [{
+    area: "connectors.mcp", ref: "#0", op: "create", blob: { name: "Docs" }, matchedBy: null, flags: [], fields: [],
+    refs: [
+      { path: "access.teams[0]", ref: "members.teams/platform", name: "Platform", resolvedId: null, via: "planned" },
+      { path: "access.teams[1]", ref: "members.teams/gone", name: "Gone", resolvedId: null, via: null },
+    ],
+  }] }] };
+  assert.deepEqual(refEntries(withRefs).map((entry) => entry.reference.name), ["Gone"]);
+  assert.deepEqual(planSteps(withRefs, EMPTY_CONFIG_DECISIONS).map((step) => [step.step, step.open]), [["references", 1], ["review", 0]]);
+});
+
 test("in mirror mode target-only items are offered for removal", () => {
   const items = plan.areas[0]?.items ?? [];
   assert.deepEqual(items.map((item) => isDeletable(item, "mirror")), [false, true, false]);
@@ -111,6 +127,29 @@ test("item-level validation errors stay on the item, request-level issues stay o
     { level: "info", message: "Roles: in scope but not in the blob, treated as empty" },
   ] };
   assert.deepEqual(requestIssues(withIssues).map((issue) => issue.level), ["info"]);
+});
+
+test("a restore's can't-undo warnings read as one list", () => {
+  const { cantUndo, rest } = splitRestoreIssues([
+    { level: "warning", message: `These can't be undone by restoring: People "Ada": An invitation email is sent to ada@example.com.`, area: "members.people" },
+    { level: "info", message: "Credentials are never stored in snapshots." },
+  ]);
+  assert.deepEqual(cantUndo, [`People "Ada": An invitation email is sent to ada@example.com.`]);
+  assert.deepEqual(rest.map((issue) => issue.level), ["info"]);
+});
+
+test("restore is offered once per applied change, again after a withdrawn restore", () => {
+  assert.equal(canRestoreRequest({ status: "applied", revertedByChangeRequestId: null }, 1), true);
+  assert.equal(canRestoreRequest({ status: "failed", revertedByChangeRequestId: null }, 1), true);
+  // den-api links only a restore that is open or ran; a cancelled one comes back as null.
+  assert.equal(canRestoreRequest({ status: "applied", revertedByChangeRequestId: "ccr_1" }, 1), false);
+  assert.equal(canRestoreRequest({ status: "applied", revertedByChangeRequestId: null }, 0), false);
+  assert.equal(canRestoreRequest({ status: "cancelled", revertedByChangeRequestId: null }, 1), false);
+});
+
+test("a restore's removals are named as what the restored change added", () => {
+  assert.equal(deletesHeading(false), "Not in the file: remove?");
+  assert.equal(deletesHeading(true), "Added by the change being restored: remove?");
 });
 
 test("approval rules match den-api: one approval each, second approver not the uploader", () => {
@@ -151,6 +190,7 @@ test("apply steps read as plain sentences", () => {
   assert.equal(formatApplyStep({ action: "add", target: "access.teams", detail: "Platform" }), "Added Access › Teams: Platform");
   assert.equal(formatApplyStep({ action: "update", target: "models[id=gpt-5]" }), "Updated Models › gpt-5");
   assert.equal(formatApplyStep({ action: "create", target: "" }), "Created");
+  assert.equal(formatApplyStep({ action: "create", target: "connection", detail: "Docs" }, "attempted"), "Create Connection: Docs");
 });
 
 test("a run's counts, duration and who ran it", () => {

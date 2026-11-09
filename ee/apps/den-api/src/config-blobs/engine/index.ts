@@ -50,6 +50,8 @@ export {
   previewOp,
   sortAreas,
   unsupportedReason,
+  withInviteEmail,
+  withInviteEmails,
   type BuildPlanInput,
   type BuildPlanResult,
   type ExecutionItem,
