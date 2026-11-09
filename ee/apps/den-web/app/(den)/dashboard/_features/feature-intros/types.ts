@@ -57,6 +57,7 @@ export type FeatureIntroKey =
   | "org-settings"
   | "diagnostics"
   | "billing"
+  | "billing.invoices"
   | "api-keys"
   | "collections"
   | "collections.plugins"
