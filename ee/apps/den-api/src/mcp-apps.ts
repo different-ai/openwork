@@ -63,7 +63,8 @@ export type McpAppResource = { app: McpAppSummary; html: string; csp: McpAppCsp;
 export type McpAppEntry = { appId: string; pluginId: string; revisionId: string; title: string; description: string | null; serverPath: string }
 /** The App's current revision as its own MCP server serves it. */
 /** `loadsWithLaunch`: opening the App also runs its no-click tools that need no input. */
-export type McpAppServerDefinition = { app: McpAppSummary; tools: McpAppToolBinding[]; loadsWithLaunch?: boolean }
+/** `site`: its author made it work as a web page. */
+export type McpAppServerDefinition = { app: McpAppSummary; tools: McpAppToolBinding[]; loadsWithLaunch?: boolean; site?: boolean }
 /** Resolves declared tools as the author, before anything is published. */
 export type ResolveMcpAppTools = (tools: McpAppToolDeclaration[]) => Promise<McpAppToolBinding[]>
 
@@ -673,6 +674,7 @@ export async function loadMcpAppServerDefinition(input: McpAppAccessInput & { ap
     app: summarizeMcpAppRevision({ appId: id, revisionId: currentRevisionId, pluginId, payload }),
     tools: payload.tools,
     ...(payload.loadsWithLaunch ? { loadsWithLaunch: true } : {}),
+    ...(payload.site ? { site: true } : {}),
   }
 }
 
@@ -751,28 +753,27 @@ export async function loadPublicMcpApp(input: { appIdOrName: string }): Promise<
 }
 
 /**
- * Whether a browser may be handed the site page for this App, asked before
- * anyone has signed in: the App is active, its newest revision was made a
- * site, and the feature is on for its organization. `public` says the page can
- * load it with no sign-in. Nothing about the App itself is returned.
+ * Whether a browser at a public URL gets the site page: the App there is
+ * public, as loadPublicMcpApp checks, and its newest revision was made a site
+ * with the feature on. Asked with no sign-in, so it is only ever true for an
+ * App its editor already shared with everyone.
  */
-export async function loadMcpAppSite(input: { appIdOrName: string }): Promise<{ public: boolean } | null> {
-  if (!env.appMcpServersEnabled) return null
+export async function isPublicMcpAppSite(input: { appIdOrName: string }): Promise<boolean> {
+  if (!env.appMcpServersEnabled) return false
   const id = await appIdForPublicPath(input.appIdOrName)
-  if (!id) return null
+  if (!id) return false
   const [app] = await db.select({ organizationId: ConfigObjectTable.organizationId }).from(ConfigObjectTable).where(and(
     eq(ConfigObjectTable.id, id),
     eq(ConfigObjectTable.objectType, "app"),
     eq(ConfigObjectTable.status, "active"),
     isNull(ConfigObjectTable.deletedAt),
   )).limit(1)
-  if (!app) return null
+  if (!app) return false
   const head = await latestRevisionHead(app.organizationId, id)
-  const content = head ? await revisionContent(app.organizationId, id, head) : null
-  if (!content || content.payload.site !== true) return null
+  const payload = head ? (await revisionContent(app.organizationId, id, head))?.payload : null
+  if (!payload || payload.site !== true || payload.public !== true || payload.tools.length > 0) return false
   const features = await getOrganizationFeatures(app.organizationId)
-  if (!features.appSites) return null
-  return { public: features.publicApps && content.payload.public === true && content.payload.tools.length === 0 }
+  return features.appSites && features.publicApps
 }
 
 // Opt-in numeric profiling only; never emit request payloads or identities.

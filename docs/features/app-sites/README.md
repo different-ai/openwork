@@ -19,8 +19,8 @@ keep using the same URL as before.
 - **Public URL** (`/mcp/public/apps/<appId>`, needs `publicApps`): the page
   opens for anyone, with no sign-in.
 
-A site is optional. An App that was not made a site answers a browser exactly
-as it did before, and nothing changes for MCP clients either way.
+A site is optional. An App that was not made a site does not open as a page,
+and nothing changes for MCP clients either way.
 
 ## How a request is told apart
 
@@ -37,8 +37,14 @@ sandboxed frame and answers the frame's MCP Apps requests. The frame has no
 `allow-same-origin`, so the App's code cannot read the page's token or the
 origin's cookies.
 
-Before sign-in, a browser can learn only that an App id exists and was made a
-site. Links an App opens need the person's confirmation.
+At the signed-in URL nobody has signed in when the page is requested, so the
+App is not looked up: every App id gets the same page, whether or not the App
+exists or is a site. After sign-in the page marks its requests with
+`x-openwork-app-site`, and the App's server answers "The App is not
+available." unless the App was made a site and the feature is on. At the
+public URL the page is served only for an App that is public and a site.
+
+Links an App opens need the person's confirmation.
 
 ## Limits
 

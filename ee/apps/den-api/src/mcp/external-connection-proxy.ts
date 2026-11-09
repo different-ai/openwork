@@ -486,9 +486,10 @@ export function registerExternalConnectionProxyRoutes<T extends { Variables: Req
   app.all(path, tokenRoute, async (c) => {
     const requestIdValue = c.get("requestId")
     const requestId = typeof requestIdValue === "string" ? requestIdValue : "unknown"
-    // A browser at an App's URL gets the App as a page when its author made it
-    // a site. The page holds nothing about the App: it signs the visitor in
-    // with their OpenWork session and then loads the App through this route.
+    // A browser at an App's URL gets the site page. Nobody has signed in yet,
+    // so every App id gets the same page and the App is not looked up: the
+    // page signs the visitor in with their OpenWork session, and only then
+    // does this route say whether they may open the App as a site.
     if (wantsAppSite(c.req.raw) && isMcpAppServerId(c.req.param("connectionId"))) {
       const page = await appSiteResponse({ appIdOrName: c.req.param("connectionId"), publicOnly: false })
       if (page) return page

@@ -67,22 +67,52 @@ test("a public site opens at the public URL too", async () => {
   }
 })
 
-test("an App that was not made a site, and every MCP client, get the answers they got before", async () => {
+/** What the site page sends once the visitor has signed in. */
+async function asSitePage(appId: string) {
+  const call = await den.request(mcp, "POST", memberPath(appId), {
+    headers: { accept: "application/json, text/event-stream", "x-openwork-app-site": "1" },
+    body: { jsonrpc: "2.0", id: 1, method: "tools/list", params: {} },
+  })
+  const line = call.text.split("\n").find((entry) => entry.startsWith("data:"))
+  const envelope: unknown = line ? JSON.parse(line.slice(5)) : call.body
+  return { call, tools: field(envelope, "result", "tools"), error: field(envelope, "error", "message") }
+}
+
+test("before sign-in, the signed-in URL says nothing about whether an App exists or is a site", async () => {
   const plain = await createApp("Plain App")
   const site = await createApp("Site App", { site: true })
+  const pages = await Promise.all([site, plain, "cob_00000000000000000000000000"].map((id) => browse(memberPath(id))))
+  for (const page of pages) assert.equal(page.status, 200)
+  assert.equal(pages[1]?.text, pages[0]?.text, "an App that is not a site gets the same page")
+  assert.equal(pages[2]?.text, pages[0]?.text, "an App id that does not exist gets the same page")
 
-  const browser = await browse(memberPath(plain))
-  assert.equal(browser.status, 401, "a browser at an App without a site is asked to authorize, as before")
-  assert.notEqual(browser.headers.get("www-authenticate"), null)
+  // After sign-in the App's server decides: only the App made a site opens for the page.
+  assert.notEqual((await asSitePage(site)).tools, undefined)
+  const refused = await asSitePage(plain)
+  assert.equal(refused.error, "The App is not available.", refused.call.text)
+  await setFeature("appSites", false)
+  try {
+    assert.equal((await asSitePage(site)).error, "The App is not available.", "feature off")
+  } finally {
+    await setFeature("appSites", true)
+  }
+})
 
+test("MCP clients get the answers they got before", async () => {
+  const site = await createApp("Client App", { site: true })
   // An MCP client opening an event stream, or one with no Accept header, never gets the page.
   for (const accept of ["text/event-stream", undefined]) {
     const client = await den.request(null, "GET", memberPath(site), { headers: accept ? { accept } : {} })
     assert.equal(client.status, 401, `accept ${accept}`)
+    assert.notEqual(client.headers.get("www-authenticate"), null)
   }
   const withToken = await den.request(null, "GET", memberPath(site), { headers: { accept: "text/html", authorization: "Bearer not-a-token" } })
   assert.equal(withToken.status, 401, "a request with credentials is an MCP request")
-
-  const unknown = await browse(memberPath("cob_00000000000000000000000000"))
-  assert.equal(unknown.status, 401, "an unknown App id reads like any App without a site")
+  // Without the page's header, a member's MCP client opens any App it may use, site or not.
+  const plain = await createApp("Client plain App")
+  const listed = await den.request(mcp, "POST", memberPath(plain), {
+    headers: { accept: "application/json, text/event-stream" },
+    body: { jsonrpc: "2.0", id: 1, method: "tools/list", params: {} },
+  })
+  assert.ok(listed.text.includes("open_app"), listed.text)
 })

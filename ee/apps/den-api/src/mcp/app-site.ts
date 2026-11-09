@@ -1,5 +1,5 @@
 import { env } from "../env.js"
-import { loadMcpAppSite } from "../mcp-apps.js"
+import { isPublicMcpAppSite } from "../mcp-apps.js"
 
 /**
  * A browser opening an App's MCP URL: a GET that asks for HTML and carries no
@@ -38,7 +38,7 @@ const SITE_SCRIPT = `
       headers: {
         "content-type": "application/json",
         accept: "application/json, text/event-stream",
-        ...(token ? { authorization: "Bearer " + token } : {}),
+        ...(token ? { authorization: "Bearer " + token, "x-openwork-app-site": "1" } : {}),
       },
       body: JSON.stringify({ jsonrpc: "2.0", id: nextId++, method, params: params || {} }),
     })
@@ -179,14 +179,22 @@ function sitePage(mode: "public" | "member"): string {
   return `<!doctype html><html lang="en" data-mode="${mode}" data-sign-in="${escapeAttribute(env.webUrl)}"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="robots" content="noindex"><title>OpenWork App</title><style>html,body{margin:0;height:100%}body{font:15px system-ui,sans-serif;color-scheme:light dark}#app{display:block;width:100%;height:100%;border:0}#status{margin:0;padding:24px}</style></head><body><p id="status" role="status">Opening…</p><iframe id="app" title="App" sandbox="allow-scripts allow-forms" hidden></iframe><script>${SITE_SCRIPT}</script></body></html>`
 }
 
+/** Sent by the page on its signed-in requests, so the App's server refuses an App that was not made a site. */
+export const APP_SITE_HEADER = "x-openwork-app-site"
+
 /**
- * The site page for a browser at an App's MCP URL, or null when the App was
- * not made a site, so the caller answers as it did before. `publicOnly` is the
- * public URL, where only an App that opens without sign-in gets a page.
+ * The site page for a browser at an App's MCP URL, or null so the caller
+ * answers as it did before.
+ *
+ * At the public URL the page is served only for an App that is public and a
+ * site. At the signed-in URL nobody has signed in yet, so the App is not
+ * looked up at all: every App id gets the same page, which says nothing about
+ * whether the App exists. Once the visitor has signed in, the App's server
+ * decides whether they may open it as a site.
  */
 export async function appSiteResponse(input: { appIdOrName: string; publicOnly: boolean }): Promise<Response | null> {
-  const site = await loadMcpAppSite({ appIdOrName: input.appIdOrName })
-  if (!site || (input.publicOnly && !site.public)) return null
+  if (!env.appMcpServersEnabled) return null
+  if (input.publicOnly && !await isPublicMcpAppSite({ appIdOrName: input.appIdOrName })) return null
   return new Response(sitePage(input.publicOnly ? "public" : "member"), {
     headers: {
       "content-type": "text/html; charset=utf-8",
