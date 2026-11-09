@@ -56,6 +56,7 @@ import type { McpToolOperation } from "../../mcp/catalog.js"
 import { nativeOperations } from "../../mcp/native-capabilities.js"
 import { readAgentTemplate, type AgentTemplateVersion } from "../../workbot-proactive/template.js"
 import { workbotOrigin } from "../../workbot/config.js"
+import { resolveMemberWorkbotSettings } from "../../workbot/team-settings.js"
 
 /** How long the page waits for a connection's tools before saying nothing about them (the tool cache answers most). */
 const PAGE_TOOLS_DEADLINE_MS = 4_000
@@ -220,11 +221,14 @@ type MemberContext = { organizationId: DenTypeId<"organization">; memberId: DenT
 
 export function registerMeAgentRoutes<T extends { Variables: AuthContextVariables & Partial<OrganizationContextVariables> }>(app: Hono<T>) {
   /** The signed-in member, or why the route is off for them. */
-  const memberOf = (context: OrganizationContextVariables["organizationContext"] | undefined): MemberContext | { error: "workbot" | "workbotProactive" } => {
+  const memberOf = async (context: OrganizationContextVariables["organizationContext"] | undefined): Promise<MemberContext | { error: "workbot" | "workbotProactive" }> => {
     if (!context || workbotOrigin() === null) return { error: "workbot" }
     const userId = context.currentMember.userId
     if (!userId) return { error: "workbotProactive" }
-    return { organizationId: context.organization.id, memberId: context.currentMember.id, userId }
+    const member = { organizationId: context.organization.id, memberId: context.currentMember.id, userId }
+    // Workbot turned off for this member (workbotTeamSettings) is Workbot not being there for them: no agent either.
+    const workbot = await resolveMemberWorkbotSettings({ ...member, organization: context.organization, featureOn: context.features.workbotTeamSettings })
+    return workbot.enabled ? member : { error: "workbot" }
   }
 
   app.get(
@@ -237,13 +241,13 @@ export function registerMeAgentRoutes<T extends { Variables: AuthContextVariable
       responses: {
         200: jsonResponse("The member's agent.", memberAgentDocumentSchema),
         401: jsonResponse("The caller must be signed in.", unauthorizedSchema),
-        404: jsonResponse("Agents are off for this organization.", featureDisabledSchema),
+        404: jsonResponse("Agents are off for this organization, or Workbot is off for the member.", featureDisabledSchema),
       },
     }),
     orgMemberRoute(),
     requireFeature("workbotProactive"),
     async (c) => {
-      const member = memberOf(c.get("organizationContext"))
+      const member = await memberOf(c.get("organizationContext"))
       if ("error" in member) return c.json(disabled(member.error), 404)
       c.header("Cache-Control", "no-store")
       const settings = await readProactiveSettings(member.organizationId)
@@ -262,14 +266,14 @@ export function registerMeAgentRoutes<T extends { Variables: AuthContextVariable
         200: jsonResponse("The member's agent checks.", memberAgentChecksDocumentSchema),
         400: jsonResponse("The request was invalid.", invalidRequestSchema),
         401: jsonResponse("The caller must be signed in.", unauthorizedSchema),
-        404: jsonResponse("Agents are off for this organization.", featureDisabledSchema),
+        404: jsonResponse("Agents are off for this organization, or Workbot is off for the member.", featureDisabledSchema),
       },
     }),
     orgMemberRoute(),
     requireFeature("workbotProactive"),
     queryValidator(checksQuerySchema),
     async (c) => {
-      const member = memberOf(c.get("organizationContext"))
+      const member = await memberOf(c.get("organizationContext"))
       if ("error" in member) return c.json(disabled(member.error), 404)
       c.header("Cache-Control", "no-store")
       const days = c.req.valid("query").days ?? 7
@@ -290,7 +294,7 @@ export function registerMeAgentRoutes<T extends { Variables: AuthContextVariable
         200: jsonResponse("The member's agent after the change.", memberAgentSavedDocumentSchema),
         400: jsonResponse("The request was invalid, or asked for more than the admin allows.", changeRefusedSchema),
         401: jsonResponse("The caller must be signed in.", unauthorizedSchema),
-        404: jsonResponse("Agents are off for this organization.", featureDisabledSchema),
+        404: jsonResponse("Agents are off for this organization, or Workbot is off for the member.", featureDisabledSchema),
         409: jsonResponse("There is nothing to undo, or the change was changed again since.", changeRefusedSchema),
       },
     }),
@@ -298,7 +302,7 @@ export function registerMeAgentRoutes<T extends { Variables: AuthContextVariable
     requireFeature("workbotProactive"),
     jsonValidator(memberAgentInputDocumentSchema),
     async (c) => {
-      const member = memberOf(c.get("organizationContext"))
+      const member = await memberOf(c.get("organizationContext"))
       if ("error" in member) return c.json(disabled(member.error), 404)
       c.header("Cache-Control", "no-store")
       const input = c.req.valid("json")

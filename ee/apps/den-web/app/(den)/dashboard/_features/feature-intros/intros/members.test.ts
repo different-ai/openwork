@@ -42,6 +42,7 @@ test("members intros match the page, its tabs, Create role and team tabs (Everyo
   assert.equal(matchFeatureIntro(all, "/dashboard/members/roles/new", null)?.key, "members.roles.new");
   assert.equal(matchFeatureIntro(all, "/dashboard/members/teams/tem_1", new URLSearchParams("tab=overview"))?.key, "team-detail.members");
   assert.equal(matchFeatureIntro(all, "/dashboard/members/teams/everyone", new URLSearchParams("tab=prompts"))?.key, "team-detail.prompts");
+  assert.equal(matchFeatureIntro(all, "/dashboard/members/teams/tem_1", new URLSearchParams("tab=workbot"))?.key, "team-detail.workbot");
 });
 
 test("the Members section takes the page only when the viewer is alone, and never on a guess", () => {
@@ -83,7 +84,7 @@ test("team tabs: boxes for empty Members, Access, Models and Prompts; `?` only f
   assert.equal(sizeFor(byKey("team-detail.models"), { ...known, providers: 2, openworkModels: false }), null);
   assert.equal(sizeFor(byKey("team-detail.prompts"), { ...known, hasPrompt: false }), "box");
   assert.equal(sizeFor(byKey("team-detail.prompts"), { ...known, hasPrompt: true }), null);
-  for (const key of ["team-detail.role", "team-detail.agents", "team-detail.browser", "team-detail.desktop"]) {
+  for (const key of ["team-detail.role", "team-detail.agents", "team-detail.browser", "team-detail.workbot", "team-detail.desktop"]) {
     assert.equal(sizeFor(byKey(key), { ...known, teamMembers: 0, plugins: 0, hasPrompt: false }), null, key);
   }
 });

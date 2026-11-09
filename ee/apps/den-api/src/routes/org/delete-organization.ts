@@ -110,6 +110,7 @@ import { describeRoute } from "hono-openapi"
 import { z } from "zod"
 import { deleteOrganizationAgentPermissions } from "../../agent-permissions.js"
 import { deleteOrganizationDefaultModels } from "../../default-model.js"
+import { deleteOrganizationWorkbotTeamSettings } from "../../workbot/team-settings.js"
 import { deleteOrganizationFeatureIntroStates } from "../../feature-intros.js"
 import { deleteOrganizationPrompts } from "../../prompts.js"
 import { deleteOrganizationAutoRouters } from "../../auto-router.js"
@@ -658,6 +659,7 @@ export function registerDeleteOrganizationRoutes<T extends { Variables: OrgRoute
         await tx.delete(DesktopPolicyMemberTable).where(eq(DesktopPolicyMemberTable.organizationId, organizationId))
         await deleteOrganizationAgentPermissions(tx, organizationId)
         await deleteOrganizationDefaultModels(tx, organizationId)
+        await deleteOrganizationWorkbotTeamSettings(tx, organizationId)
         await deleteOrganizationPrompts(tx, organizationId)
         await deleteOrganizationAutoRouters(tx, organizationId)
         await tx.delete(DesktopPolicyTable).where(eq(DesktopPolicyTable.organizationId, organizationId))

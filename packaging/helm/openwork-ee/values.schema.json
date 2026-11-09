@@ -551,6 +551,16 @@
               ],
               "description": "Workbot: step limit: Admins choose in Manage › Workbot how many steps Workbot may take on one request before it stops and asks for a smaller piece: the deployment's default, a number, or no limit. Applies to each member's chats from their next message. Renders DEN_FEATURE_WORKBOT_STEP_LIMIT."
             },
+            "workbotTeamSettings": {
+              "enum": [
+                "",
+                "true",
+                "false",
+                true,
+                false
+              ],
+              "description": "Workbot: settings per team: Admins can give a team its own Workbot default model and its own Workbot name, and turn Workbot on or off for everyone or for a team; teams without their own use the organization's. A member on several teams whose settings differ gets the organization's. Renders DEN_FEATURE_WORKBOT_TEAM_SETTINGS."
+            },
             "browserUploadPermissions": {
               "enum": [
                 "",

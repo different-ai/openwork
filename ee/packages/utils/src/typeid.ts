@@ -142,6 +142,7 @@ export const idTypesMapNameToPrefix = {
   mcpRegistrationStatus: "mrs",
   mcpRegistrationEvent: "mre",
   featureIntroState: "fis",
+  workbotTeamSetting: "wts",
 } as const
 
 export const denTypeIdPrefixes = idTypesMapNameToPrefix

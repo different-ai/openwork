@@ -3,19 +3,27 @@ import { AuthUserTable, MemberTable, OrganizationTable } from "@openwork-ee/den-
 import type { DenTypeId } from "@openwork-ee/utils/typeid"
 import { readWorkbotProactiveSettings, type WorkbotProactiveSettings } from "@openwork/types/den/workbot-proactive"
 import { db } from "../db.js"
-import { organizationFeatureEnabled } from "../features.js"
+import { getOrganizationFeatures, organizationFeatureEnabled } from "../features.js"
 import { headlessRunnerConfig } from "../headless-runner/client.js"
 import { workbotOrigin } from "../workbot/config.js"
+import { resolveMemberWorkbotSettings } from "../workbot/team-settings.js"
 
 /**
  * Who has an agent, and where its messages can go. Three switches, all required: the `workbotProactive` feature
  * (with member overrides), Workbot on this deployment (`DEN_WORKBOT_URL`, the same capability that gates Workbot),
  * and the organization's own switch. Messages go out as a DM from the Workbot Slack app.
+ *
+ * For one member there is a fourth while `workbotTeamSettings` is on: Workbot itself, which an admin can turn off
+ * for everyone or for a team. A member without Workbot gets no check, brief or message from their agent.
  */
 
 export async function proactiveAllowed(organizationId: string, userId?: string) {
   if (workbotOrigin() === null) return false
-  return organizationFeatureEnabled(organizationId, "workbotProactive", userId ? { userId } : {})
+  if (!userId) return organizationFeatureEnabled(organizationId, "workbotProactive")
+  // The same cached feature read as before; the member's teams are read only while workbotTeamSettings is on.
+  const features = await getOrganizationFeatures(organizationId, { userId })
+  if (!features.workbotProactive) return false
+  return !features.workbotTeamSettings || (await resolveMemberWorkbotSettings({ organizationId, userId, featureOn: true })).enabled
 }
 
 /**

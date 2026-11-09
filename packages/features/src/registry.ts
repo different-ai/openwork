@@ -639,6 +639,17 @@ export const FEATURES = defineFeatures({
     deployments: everywhere,
     default: false,
   },
+  workbotTeamSettings: {
+    label: "Workbot: settings per team",
+    description: "Admins can give a team its own Workbot default model and its own Workbot name, and turn Workbot on or off for everyone or for a team; teams without their own use the organization's. A member on several teams whose settings differ gets the organization's.",
+    category: "workbot",
+    added: "2026-11-09",
+    since: "2026-11",
+    author: "reachjalil",
+    docs: "docs/features/workbot-team-settings/README.md",
+    deployments: everywhere,
+    default: false,
+  },
   browserUploadPermissions: {
     label: "Browser: managed and remembered file-sharing permissions",
     description: "Admins set Allow, Ask first or Block for browser uploads, with website exceptions. Members can remember permission for one website and a folder on this computer across chats and Slack-started tasks, and revoke it in Settings.",

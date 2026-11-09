@@ -8,6 +8,7 @@ import { db } from "../../db.js"
 import { orgMemberRoute } from "../../middleware/index.js"
 import { jsonResponse, notFoundSchema, unauthorizedSchema } from "../../openapi.js"
 import { workbotIncludedDefaultModel, workbotOrganizationManagedDefaultRoutable, workbotUsesManagedDefault } from "../../workbot/managed-luna.js"
+import { resolveMemberWorkbotSettings } from "../../workbot/team-settings.js"
 import type { OrgRouteVariables } from "./shared.js"
 
 const workbotReadinessDocumentSchema = workbotReadinessSchema.meta({ ref: "WorkbotReadiness" })
@@ -30,7 +31,7 @@ export function registerOrgWorkbotReadinessRoutes<T extends { Variables: OrgRout
       tags: ["Organizations"],
       summary: "Check whether Workbot has an AI provider",
       description:
-        "Returns whether Workbot turns need the organization's AI Gateway and, only then, whether an active provider exists. The managed default uses the member's included OpenWork models and needs no custom Gateway provider while the member is entitled to them. organizationGatewayRequired answers the same for the workspace, ignoring the caller's own allowance or team policy, for setup screens. Content-free: no provider names, counts, ids, models or grants. Each turn rechecks the member's access. Available to any organization member. Never exposed to MCP.",
+        "Returns whether Workbot turns need the organization's AI Gateway and, only then, whether an active provider exists. The managed default uses the member's included OpenWork models and needs no custom Gateway provider while the member is entitled to them. organizationGatewayRequired answers the same for the workspace, ignoring the caller's own allowance or team policy, for setup screens. `enabled` is false only when an admin turned Workbot off for everyone or for the caller's team (Workbot settings per team); absent means Workbot is on for the caller. Content-free: no provider names, counts, ids, models or grants. Each turn rechecks the member's access. Available to any organization member. Never exposed to MCP.",
       ...{ "x-mcp": false },
       responses: {
         200: jsonResponse("Whether Workbot needs an AI Gateway provider and whether one exists.", workbotReadinessDocumentSchema),
@@ -41,15 +42,19 @@ export function registerOrgWorkbotReadinessRoutes<T extends { Variables: OrgRout
     orgMemberRoute(),
     async (c) => {
       c.header("Cache-Control", "no-store")
-      const { organization, currentMember } = c.get("organizationContext")
+      const { organization, currentMember, features } = c.get("organizationContext")
       const organizationId = organization.id
       const chosen = readWorkbotModel(organization.metadata)
-      const managedLuna = workbotUsesManagedDefault(chosen)
-        && await workbotIncludedDefaultModel({ organizationId, userId: currentMember.userId }, chosen) !== null
+      // The caller's own default model and on/off switch: their team's when it sets one (workbotTeamSettings).
+      const workbot = await resolveMemberWorkbotSettings({ organizationId, memberId: currentMember.id, userId: currentMember.userId, organization, featureOn: features.workbotTeamSettings })
+      const mine = workbot.model
+      const managedLuna = workbotUsesManagedDefault(mine)
+        && await workbotIncludedDefaultModel({ organizationId, userId: currentMember.userId }, mine) !== null
       const gatewayRequired = !managedLuna
       const organizationGatewayRequired = !await workbotOrganizationManagedDefaultRoutable(organizationId, chosen)
       const hasGatewayProvider = (gatewayRequired || organizationGatewayRequired) && await hasActiveGatewayProvider(organizationId)
-      return c.json({ gatewayRequired, hasGatewayProvider, organizationGatewayRequired })
+      // Only said when off, so the answer is unchanged for everyone else.
+      return c.json({ gatewayRequired, hasGatewayProvider, organizationGatewayRequired, ...(workbot.enabled ? {} : { enabled: false }) })
     },
   )
 }
