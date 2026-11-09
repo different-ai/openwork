@@ -55,13 +55,17 @@ import { getScimManagedTeamIds } from "../../scim-groups.js"
 import { defineConfigArea, type ConfigAreaContext, type ConfigItem } from "../area.js"
 import {
   ConfigApplyError,
+  ConfigStepLog,
+  applyWithSteps,
   configRouteContext,
+  isJsonObject,
   expectRouteOk,
   resolvedRefIds,
   specObject,
   specRefSchema,
   stringField,
   teamRef,
+  touches,
   type ConfigRouteContext,
 } from "./route-support.js"
 
@@ -89,6 +93,7 @@ const personApplyFieldsSchema = z.object({
 }).passthrough()
 
 type ManagedBy = "manual" | "sso" | "scim"
+type MemberId = ReturnType<typeof normalizeDenTypeId<"member">>
 
 function normalizeEmail(email: string): string {
   return email.trim().toLowerCase()
@@ -150,8 +155,27 @@ async function managedByUsers(ctx: ConfigAreaContext, userIds: readonly string[]
   return out
 }
 
-/** Members (people, not setup agents) and pending invitations, one row per person. */
-async function listPeople(ctx: ConfigAreaContext): Promise<PersonRow[]> {
+/**
+ * Members (people, not setup agents) and pending invitations, one row per person.
+ * `ids` reads just those items: member ids with one query; an invitation-only
+ * item (`inv_…`, older rows) needs the whole list to tell it apart from a member
+ * with the same email, so its presence falls back to the full read, filtered.
+ */
+async function listPeople(ctx: ConfigAreaContext, ids: readonly string[] | null = null): Promise<PersonRow[]> {
+  if (ids) {
+    const memberIds = ids.flatMap((id) => preferredMemberId(id) ?? [])
+    if (memberIds.length !== ids.length) {
+      const wanted = new Set(ids)
+      return (await listPeople(ctx)).filter((person) => (person.memberId && wanted.has(person.memberId)) || (person.invitationId && wanted.has(person.invitationId)))
+    }
+    if (memberIds.length === 0) return []
+    return (await listPeopleRows(ctx, memberIds)).people
+  }
+  const { people, coveredInvitations } = await listPeopleRows(ctx, null)
+  return withInvitationOnlyPeople(ctx, people, coveredInvitations)
+}
+
+async function listPeopleRows(ctx: ConfigAreaContext, memberIds: readonly MemberId[] | null): Promise<{ people: PersonRow[]; coveredInvitations: Set<string> }> {
   const organizationId = normalizeDenTypeId("organization", ctx.organizationId)
   const members = await ctx.db
     .select({
@@ -167,7 +191,12 @@ async function listPeople(ctx: ConfigAreaContext): Promise<PersonRow[]> {
     .from(MemberTable)
     .leftJoin(AuthUserTable, eq(MemberTable.userId, AuthUserTable.id))
     .leftJoin(InvitationTable, eq(MemberTable.inviteId, InvitationTable.id))
-    .where(and(eq(MemberTable.organizationId, organizationId), isNull(MemberTable.removedAt), eq(MemberTable.isSetupAgent, false)))
+    .where(and(
+      eq(MemberTable.organizationId, organizationId),
+      isNull(MemberTable.removedAt),
+      eq(MemberTable.isSetupAgent, false),
+      memberIds ? inArray(MemberTable.id, [...memberIds]) : undefined,
+    ))
     .orderBy(asc(MemberTable.createdAt), asc(MemberTable.id))
   const people: PersonRow[] = []
   const coveredInvitations = new Set<string>()
@@ -179,6 +208,12 @@ async function listPeople(ctx: ConfigAreaContext): Promise<PersonRow[]> {
       people.push({ memberId: row.memberId, invitationId: row.invitationId, userId: null, email: normalizeEmail(row.invitationEmail), name: null, role: row.role, status: "invited" })
     }
   }
+  return { people, coveredInvitations }
+}
+
+/** Adds pending invitations that have no placeholder member (older rows). */
+async function withInvitationOnlyPeople(ctx: ConfigAreaContext, people: PersonRow[], coveredInvitations: Set<string>): Promise<PersonRow[]> {
+  const organizationId = normalizeDenTypeId("organization", ctx.organizationId)
   const invitations = await ctx.db
     .select({ id: InvitationTable.id, email: InvitationTable.email, role: InvitationTable.role })
     .from(InvitationTable)
@@ -214,7 +249,7 @@ async function teamIdsByMember(ctx: ConfigAreaContext, memberIds: readonly strin
 /** The target row behind an item id: a member (placeholder members included) or an invitation without one. */
 async function readTarget(ctx: ConfigAreaContext, targetId: string): Promise<PersonRow | null> {
   const id = targetId.trim()
-  return (await listPeople(ctx)).find((person) => person.memberId === id || person.invitationId === id) ?? null
+  return (await listPeople(ctx, [id])).find((person) => person.memberId === id || person.invitationId === id) ?? null
 }
 
 async function memberIdForInvitation(ctx: ConfigAreaContext, invitationId: string): Promise<string | null> {
@@ -270,13 +305,17 @@ async function invite(ctx: ConfigAreaContext, rc: ConfigRouteContext, input: { e
 
 /**
  * Puts the member in exactly `wanted` teams through the team route's
- * updateTeam (Admin-team and grant rules included). Teams managed by SCIM
- * are left alone with a warning: the identity provider owns their members.
+ * updateTeam (Admin-team and grant rules included). Only teams whose
+ * membership changes are written, one step each; updateTeam writes only this
+ * person's membership row. Teams managed by SCIM are left alone with a
+ * warning: the identity provider owns their members.
  */
-async function syncTeams(ctx: ConfigAreaContext, rc: ConfigRouteContext, memberId: string, wanted: readonly string[], label: string): Promise<string[]> {
+async function syncTeams(ctx: ConfigAreaContext, rc: ConfigRouteContext, log: ConfigStepLog, memberId: string, wanted: readonly string[], label: string, teamNames: Map<string, string>): Promise<string[]> {
   const warnings: string[] = []
   const organizationId = normalizeDenTypeId("organization", ctx.organizationId)
-  const current = new Set((await teamIdsByMember(ctx, [memberId])).get(memberId)?.map((team) => team.id) ?? [])
+  const currentTeams = (await teamIdsByMember(ctx, [memberId])).get(memberId) ?? []
+  for (const team of currentTeams) teamNames.set(team.id, team.name)
+  const current = new Set(currentTeams.map((team) => team.id))
   const next = new Set(wanted)
   const changed = [...new Set([...current, ...next])].filter((teamId) => current.has(teamId) !== next.has(teamId))
   if (changed.length === 0) return warnings
@@ -287,13 +326,26 @@ async function syncTeams(ctx: ConfigAreaContext, rc: ConfigRouteContext, memberI
       warnings.push(`${label}: team membership of a SCIM-managed team was left to the identity provider.`)
       continue
     }
-    const members = (await ctx.db.select({ id: TeamMemberTable.orgMembershipId }).from(TeamMemberTable).where(eq(TeamMemberTable.teamId, team)))
-      .flatMap((row) => row.id ? [row.id] : [])
-    const member = normalizeDenTypeId("member", memberId)
-    const memberIds = next.has(teamId) ? [...new Set([...members, member])] : members.filter((id) => id !== member)
-    await expectRouteOk(await updateTeam(rc.c, rc.payload, team, { memberIds }), `${next.has(teamId) ? "Add" : "Remove"} ${label} ${next.has(teamId) ? "to" : "from"} a team`)
+    const adding = next.has(teamId)
+    await log.run({ action: adding ? "add" : "remove", target: "teams", detail: teamNames.get(teamId) ?? teamId }, async () => {
+      const members = (await ctx.db.select({ id: TeamMemberTable.orgMembershipId }).from(TeamMemberTable).where(eq(TeamMemberTable.teamId, team)))
+        .flatMap((row) => row.id ? [row.id] : [])
+      const member = normalizeDenTypeId("member", memberId)
+      const memberIds = adding ? [...new Set([...members, member])] : members.filter((id) => id !== member)
+      await expectRouteOk(await updateTeam(rc.c, rc.payload, team, { memberIds }), `${adding ? "Add" : "Remove"} ${label} ${adding ? "to" : "from"} a team`)
+    })
   }
   return warnings
+}
+
+/** Team names from the resolved refs' name hints, for step details. */
+function refTeamNames(refs: unknown): Map<string, string> {
+  const out = new Map<string, string>()
+  if (!Array.isArray(refs)) return out
+  for (const ref of refs) {
+    if (isJsonObject(ref) && typeof ref.id === "string" && typeof ref.name === "string") out.set(ref.id, ref.name)
+  }
+  return out
 }
 
 async function refuseScimManaged(ctx: ConfigAreaContext, person: PersonRow) {
@@ -339,102 +391,142 @@ export const membersPeopleArea = defineConfigArea({
     return null
   },
 
+  irreversible: (op) => {
+    const email = op.kind === "delete" ? emailOf(op.previous) ?? op.previous.name : typeof op.item.spec.email === "string" ? normalizeEmail(op.item.spec.email) : op.item.name
+    if (op.kind === "delete") {
+      if (op.previous.spec.status === "invited") return [`The invitation of ${email} is cancelled; a restore sends them a new one.`]
+      return [
+        `${email} is removed from the organization: a restore can only invite them again, and they must accept to rejoin.`,
+        `${email}'s sign-ins to connectors and AI providers, their own keys and their API keys are revoked or deleted.`,
+      ]
+    }
+    if (!sendsInviteEmail(op.item.spec)) return []
+    if (op.kind === "create") return [`An invitation email is sent to ${email}.`]
+    return op.previous.spec.status === "invited" && touches(op.changes, "role") ? [`A new invitation email is sent to ${email}.`] : []
+  },
+
   async exportItems(ctx) {
-    const people = await listPeople(ctx)
-    const memberIds = people.flatMap((person) => person.memberId ? [person.memberId] : [])
-    const [teams, managedBy] = await Promise.all([
-      teamIdsByMember(ctx, memberIds),
-      managedByUsers(ctx, people.flatMap((person) => person.userId ? [person.userId] : [])),
-    ])
-    return people
-      .sort((left, right) => left.email.localeCompare(right.email))
-      .map((person): ConfigItem => ({
-        id: person.memberId ?? person.invitationId ?? person.email,
-        name: person.name?.trim() || person.email,
-        spec: {
-          email: person.email,
-          role: canonicalRole(person.role),
-          status: person.status,
-          teams: [...(person.memberId ? teams.get(person.memberId) ?? [] : [])]
-            .sort((left, right) => left.id.localeCompare(right.id))
-            .map((team) => teamRef(team.id, team.name)),
-          managedBy: (person.userId ? managedBy.get(person.userId) : undefined) ?? "manual",
-        },
-      }))
+    return peopleItems(ctx, await listPeople(ctx))
+  },
+
+  async readItems(ctx, ids) {
+    return peopleItems(ctx, await listPeople(ctx, ids))
   },
 
   async apply(ctx, op) {
-    const rc = await configRouteContext(ctx)
-    const capture = currentAuditChangeCapture(ctx.organizationId)
+    return applyWithSteps(async (log) => {
+      const rc = await configRouteContext(ctx)
+      const capture = currentAuditChangeCapture(ctx.organizationId)
 
-    if (op.kind === "delete") {
-      if (op.targetId === ctx.actor.memberId) throw new ConfigApplyError("cannot_remove_self", "You can't remove yourself.", 400)
-      const person = await readTarget(ctx, op.targetId)
-      if (!person) return { localId: op.targetId, warnings: [`${op.previous.name} is no longer in the organization.`] }
-      if (roleIncludesOwner(person.role)) throw new ConfigApplyError("owner_protected", "The owner can't be removed. Transfer ownership first.", 400)
-      await refuseScimManaged(ctx, person)
-      if (person.status === "active" && person.memberId) {
-        await expectRouteOk(await removeMemberAction(rc.c, rc.payload, person.memberId, capture), `Remove ${person.email}`)
-      } else if (person.invitationId) {
-        await expectRouteOk(await cancelInvitationAction(rc.c, rc.payload, person.invitationId, capture), `Cancel the invitation of ${person.email}`)
+      if (op.kind === "delete") {
+        if (op.targetId === ctx.actor.memberId) throw new ConfigApplyError("cannot_remove_self", "You can't remove yourself.", 400)
+        const person = await readTarget(ctx, op.targetId)
+        if (!person) return { localId: op.targetId, warnings: [`${op.previous.name} is no longer in the organization.`] }
+        if (roleIncludesOwner(person.role)) throw new ConfigApplyError("owner_protected", "The owner can't be removed. Transfer ownership first.", 400)
+        await refuseScimManaged(ctx, person)
+        if (person.status === "active" && person.memberId) {
+          const memberId = person.memberId
+          await log.run({ action: "delete", target: "member", detail: person.email }, async () => {
+            await expectRouteOk(await removeMemberAction(rc.c, rc.payload, memberId, capture), `Remove ${person.email}`)
+          })
+        } else if (person.invitationId) {
+          const invitationId = person.invitationId
+          await log.run({ action: "delete", target: "invitation", detail: person.email }, async () => {
+            await expectRouteOk(await cancelInvitationAction(rc.c, rc.payload, invitationId, capture), `Cancel the invitation of ${person.email}`)
+          })
+        }
+        return { localId: op.targetId }
       }
-      return { localId: op.targetId }
-    }
 
-    const raw = specObject(op.item.spec)
-    const spec = personApplyFieldsSchema.parse(raw)
-    const email = normalizeEmail(spec.email)
-    const role = canonicalRole(spec.role)
-    const teamIds = [...new Set(resolvedRefIds(raw.teams, `${email} teams`))]
-    const sendEmail = sendsInviteEmail(raw)
-    const warnings: string[] = []
+      const raw = specObject(op.item.spec)
+      const spec = personApplyFieldsSchema.parse(raw)
+      const email = normalizeEmail(spec.email)
+      const role = canonicalRole(spec.role)
+      const teamIds = [...new Set(resolvedRefIds(raw.teams, `${email} teams`))]
+      const teamNames = refTeamNames(raw.teams)
+      const sendEmail = sendsInviteEmail(raw)
+      const warnings: string[] = []
 
-    const target = op.kind === "update"
-      ? await readTarget(ctx, op.targetId)
-      : await (async () => {
-        const existing = await activeMemberByEmail(ctx, email)
-        return existing ? readTarget(ctx, existing) : null
-      })()
+      const target = op.kind === "update"
+        ? await readTarget(ctx, op.targetId)
+        : await (async () => {
+          const existing = await activeMemberByEmail(ctx, email)
+          return existing ? readTarget(ctx, existing) : null
+        })()
 
-    if (!target) {
-      if (op.kind === "update") throw new ConfigApplyError("member_not_found", `${op.previous.name} is no longer in the organization.`, 404)
-      if (spec.managedBy === "scim" && (await identityProviders(ctx)).scim.size > 0) {
-        throw new ConfigApplyError("scim_managed_member", `${email} is provisioned by an identity provider (SCIM) on the source; provision them through this organization's SCIM instead.`, 409)
+      if (!target) {
+        if (op.kind === "update") throw new ConfigApplyError("member_not_found", `${op.previous.name} is no longer in the organization.`, 404)
+        if (spec.managedBy === "scim" && (await identityProviders(ctx)).scim.size > 0) {
+          throw new ConfigApplyError("scim_managed_member", `${email} is provisioned by an identity provider (SCIM) on the source; provision them through this organization's SCIM instead.`, 409)
+        }
+        let inviteRole = role
+        if (roleIncludesOwner(role)) {
+          inviteRole = ORGANIZATION_ADMIN_ROLE
+          warnings.push(`${email} is the owner on the source; invited as an admin here (ownership is never moved by import).`)
+        }
+        if (spec.status === "active") warnings.push(`${email} was invited; they join when they accept.`)
+        const invited = await log.run(
+          { action: "create", target: "invitation", detail: `${email} (${inviteRole}${sendEmail ? ", email sent" : ", no email"})` },
+          () => invite(ctx, rc, { email, role: inviteRole, sendEmail, memberId: op.preferredId }),
+          "email",
+        )
+        const memberId = invited.memberId
+        if (!memberId) {
+          if (teamIds.length > 0) warnings.push(`${email}: teams are set when they accept.`)
+          return { localId: invited.invitationId, warnings }
+        }
+        warnings.push(...await syncTeams(ctx, rc, log, memberId, teamIds, email, teamNames))
+        return { localId: memberId, warnings }
       }
-      let inviteRole = role
-      if (roleIncludesOwner(role)) {
-        inviteRole = ORGANIZATION_ADMIN_ROLE
-        warnings.push(`${email} is the owner on the source; invited as an admin here (ownership is never moved by import).`)
-      }
-      if (spec.status === "active") warnings.push(`${email} was invited; they join when they accept.`)
-      const invited = await invite(ctx, rc, { email, role: inviteRole, sendEmail, memberId: op.preferredId })
-      const memberId = invited.memberId
-      if (!memberId) {
-        if (teamIds.length > 0) warnings.push(`${email}: teams are set when they accept.`)
-        return { localId: invited.invitationId, warnings }
-      }
-      warnings.push(...await syncTeams(ctx, rc, memberId, teamIds, email))
-      return { localId: memberId, warnings }
-    }
 
-    // Update (or a create that found the person already here).
-    await refuseScimManaged(ctx, target)
-    if (target.email !== email) warnings.push(`${target.email} keeps their email; it is not changed by import.`)
-    if (spec.status === "active" && target.status === "invited") warnings.push(`${target.email} has not accepted their invitation yet.`)
+      // Update (or a create that found the person already here: every field is compared then).
+      const inScope = (path: string) => op.kind === "create" || touches(op.changes, path)
+      await refuseScimManaged(ctx, target)
+      if (inScope("email") && target.email !== email) warnings.push(`${target.email} keeps their email; it is not changed by import.`)
+      if (spec.status === "active" && target.status === "invited") warnings.push(`${target.email} has not accepted their invitation yet.`)
 
-    if (canonicalRole(target.role) !== role) {
-      if (roleIncludesOwner(role) !== roleIncludesOwner(target.role)) {
-        warnings.push(`${target.email}: ownership is only moved by transferring it; role left as ${target.role}.`)
-      } else if (target.status === "active" && target.memberId) {
-        await expectRouteOk(await updateMemberRoleAction(rc.c, rc.payload, target.memberId, role, capture), `Change the role of ${target.email}`)
-      } else {
-        await invite(ctx, rc, { email: target.email, role, sendEmail })
+      if (inScope("role") && canonicalRole(target.role) !== role) {
+        if (roleIncludesOwner(role) !== roleIncludesOwner(target.role)) {
+          warnings.push(`${target.email}: ownership is only moved by transferring it; role left as ${target.role}.`)
+        } else if (target.status === "active" && target.memberId) {
+          const memberId = target.memberId
+          await log.run({ action: "set", target: "role", detail: role }, async () => {
+            await expectRouteOk(await updateMemberRoleAction(rc.c, rc.payload, memberId, role, capture), `Change the role of ${target.email}`)
+          })
+        } else {
+          await log.run({ action: "set", target: "role", detail: `${role} (invitation refreshed${sendEmail ? ", email sent" : ""})` }, () => invite(ctx, rc, { email: target.email, role, sendEmail }))
+        }
       }
-    }
 
-    const memberId = target.memberId
-    if (memberId) warnings.push(...await syncTeams(ctx, rc, memberId, teamIds, target.email))
-    else if (teamIds.length > 0) warnings.push(`${target.email}: teams are set when they accept.`)
-    return { localId: memberId ?? target.invitationId ?? op.item.sourceId ?? email, warnings }
+      const memberId = target.memberId
+      if (inScope("teams")) {
+        if (memberId) warnings.push(...await syncTeams(ctx, rc, log, memberId, teamIds, target.email, teamNames))
+        else if (teamIds.length > 0) warnings.push(`${target.email}: teams are set when they accept.`)
+      }
+      return { localId: memberId ?? target.invitationId ?? op.item.sourceId ?? email, warnings }
+    })
   },
 })
+
+async function peopleItems(ctx: ConfigAreaContext, people: PersonRow[]): Promise<ConfigItem[]> {
+  const memberIds = people.flatMap((person) => person.memberId ? [person.memberId] : [])
+  const [teams, managedBy] = await Promise.all([
+    teamIdsByMember(ctx, memberIds),
+    managedByUsers(ctx, people.flatMap((person) => person.userId ? [person.userId] : [])),
+  ])
+  return people
+    .sort((left, right) => left.email.localeCompare(right.email))
+    .map((person): ConfigItem => ({
+      id: person.memberId ?? person.invitationId ?? person.email,
+      name: person.name?.trim() || person.email,
+      spec: {
+        email: person.email,
+        role: canonicalRole(person.role),
+        status: person.status,
+        teams: [...(person.memberId ? teams.get(person.memberId) ?? [] : [])]
+          .sort((left, right) => left.id.localeCompare(right.id))
+          .map((team) => teamRef(team.id, team.name)),
+        managedBy: (person.userId ? managedBy.get(person.userId) : undefined) ?? "manual",
+      },
+    }))
+}

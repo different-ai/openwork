@@ -7,7 +7,7 @@
  */
 import assert from "node:assert/strict"
 import { after, test } from "node:test"
-import type { ConfigBlob, ConfigChangeRequestSummary, ConfigPlan, ConfigPlanItem, ConfigSecretInput } from "@openwork/types/den/config-blobs"
+import type { ConfigApplyReport, ConfigBlob, ConfigChangeRequestSummary, ConfigPlan, ConfigPlanItem, ConfigSecretInput } from "@openwork/types/den/config-blobs"
 import { bootDen, field, isRecord, startFakeMcpServer, summary, text, type Call } from "./harness.js"
 
 // Audit capture on (self-hosted entitlement) so the apply's job operation is recorded.
@@ -213,10 +213,30 @@ test("edit one field, upload, analyze: exactly one update; inputs, approve, appl
     assert.deepEqual(after, before, `${key} after apply equals the edited blob`)
   }
   const detail = await apiA("GET", `/v1/config-blobs/change-requests/${request.id}`)
-  assert.ok(Array.isArray(field(detail.body, "report", "items")))
+  const runs = asRuns(field(detail.body, "runs"))
+  assert.equal(runs.length, 1, "one run per apply attempt")
+  const [run] = runs
+  assert.ok(run)
+  assert.equal(run.status, "applied")
+  assert.equal(run.attempt, 1)
+  assert.equal(field(detail.body, "report", "runId"), run.runId, "report is the latest run")
+  assert.deepEqual(run.items.map((item) => [item.area, item.ref, item.name, item.status]), [["connectors.mcp", mcpId, "Docs MCP", "applied"]], "only the written item is in the report")
+  assert.equal(run.runsAs?.memberId, orgA.owner.memberId)
+  assert.ok(run.finishedAt && run.items[0]?.startedAt)
+  assert.ok(run.afterRevs?.[`connectors.mcp/${mcpId}`], "the after-state rev of the written item")
+  const one = await apiA("GET", `/v1/config-blobs/change-requests/${request.id}/runs/${run.runId}`)
+  assert.equal(one.status, 200, summary(one))
+  assert.equal(field(one.body, "run", "runId"), run.runId)
+  const [stored] = await rows("SELECT status, failure_code, report FROM config_apply_run WHERE id = ?", [run.runId])
+  assert.equal(stored?.status, "applied")
+  assert.equal(stored?.failure_code, null)
+  assert.ok(!String(stored?.report).includes("Docs MCP"), "the stored report is encrypted")
   const snapshot = await apiA("GET", `/v1/config-blobs/change-requests/${request.id}/before-snapshot`)
   assert.equal(snapshot.status, 200, summary(snapshot))
-  assert.equal(areaItems(asBlob(snapshot.body), "connectors.mcp").find((item) => item.id === mcpId)?.spec.exposeDirectly, false)
+  const before = asBlob(snapshot.body)
+  assert.deepEqual(before.scope, ["connectors.mcp"], "the snapshot covers the areas written")
+  assert.deepEqual(areaItems(before, "connectors.mcp").map((item) => item.id), [mcpId], "and only the items written")
+  assert.equal(areaItems(before, "connectors.mcp")[0]?.spec.exposeDirectly, false)
 
   const actions = await jobActions(request.id)
   assert.deepEqual(actions.filter((action) => action.startsWith("config_change_request.")).sort(), ["config_change_request.apply_completed", "config_change_request.apply_started"])
@@ -225,6 +245,18 @@ test("edit one field, upload, analyze: exactly one update; inputs, approve, appl
 })
 
 test("revert: a new change request from the before-snapshot restores the old value", async () => {
+  // An effect the original apply recorded as irreversible (adapters report these): the restore's plan names it.
+  const latest = asRuns(field((await apiA("GET", `/v1/config-blobs/change-requests/${firstRequestId}`)).body, "runs"))[0]
+  assert.ok(latest)
+  await repository.createApplyRun({
+    organizationId: normalizeOrg(orgA.orgId),
+    changeRequestId: normalizeId(firstRequestId),
+    requestedByMemberId: normalizeMember(orgA.owner.memberId),
+    requestedByApiKeyId: null,
+    runsAsMemberId: normalizeMember(orgA.owner.memberId),
+    startedAt: new Date(),
+    report: { ...latest, status: "applied", afterRevs: undefined, items: latest.items.map((item) => ({ ...item, irreversible: ["Members' sign-ins to Docs MCP were revoked"] })) },
+  })
   const reverted = await apiA("POST", `/v1/config-blobs/change-requests/${firstRequestId}/revert`, {})
   assert.equal(reverted.status, 201, summary(reverted))
   const request = asSummary(reverted)
@@ -234,6 +266,8 @@ test("revert: a new change request from the before-snapshot restores the old val
   assert.equal(analyzed.status, "needs_review", JSON.stringify(analyzed.errors))
   const current = await plan(apiA, request.id)
   assert.equal(current.mode, "mirror")
+  assert.ok(current.issues.some((issue) => issue.level === "warning" && issue.message.startsWith("These can't be undone by restoring:") && issue.message.includes(`"Docs MCP": Members' sign-ins to Docs MCP were revoked.`)), JSON.stringify(current.issues))
+  assert.ok(current.issues.some((issue) => issue.message.startsWith("Credentials are never stored in snapshots")), JSON.stringify(current.issues))
   assert.equal(current.summary.update, 1, describePlan(current))
   assert.equal(current.summary.delete + current.summary.create, 0, describePlan(current))
   assert.equal(current.summary.blocking, 0, describePlan(current))
@@ -628,6 +662,114 @@ test("the apply's audit names who queued it and who it ran as (L6)", async () =>
   const initiating: unknown = typeof operation.initiating_actor === "string" ? JSON.parse(operation.initiating_actor) : operation.initiating_actor
   assert.equal(field(initiating, "id"), owner.userId, "initiated by the member who queued it")
   assert.ok(String(operation.principal_key).includes(admin.userId), "runs as the last approver")
+})
+
+function asRuns(value: unknown): ConfigApplyReport[] {
+  assert.ok(Array.isArray(value), "runs")
+  return JSON.parse(JSON.stringify(value))
+}
+
+test("a failing item: the run stops there, earlier items stay written, later ones are not reached, and the report says where", async () => {
+  const blob = asBlob((await apiA("GET", "/v1/config-blobs/export?areas=members.teams,connectors.mcp")).body)
+  const docs = areaItems(blob, "connectors.mcp").find((item) => item.id === mcpId)
+  assert.ok(docs)
+  const connection = (name: string, url: string) => {
+    const spec: Record<string, unknown> = JSON.parse(JSON.stringify(docs.spec).replaceAll(`connectors.mcp/${mcpId}/`, `connectors.mcp/#${name}/`))
+    return { name, key: name.toLowerCase().replace(/[^a-z0-9]+/g, "-"), spec: { ...spec, url } }
+  }
+  setAreaItems(blob, "members.teams", [...areaItems(blob, "members.teams"), { name: "Partial Team", spec: TEAM_SPEC }])
+  setAreaItems(blob, "connectors.mcp", [
+    ...areaItems(blob, "connectors.mcp"),
+    connection("Broken MCP", "http://127.0.0.1:9/mcp"),
+    connection("Never MCP", `${mcpServer.url}/mcp`),
+  ])
+  const created = await apiA("POST", "/v1/config-blobs/change-requests", { blob, mode: "merge", title: "Partial" })
+  assert.equal(created.status, 202, summary(created))
+  const id = asSummary(created).id
+  assert.equal((await drive(apiA, id)).status, "needs_review")
+  let current = await plan(apiA, id)
+  const proposed = planItems(current).filter((item) => item.flags.includes("needs_mapping"))
+  if (proposed.length > 0) {
+    const decided = await apiA("PUT", `/v1/config-blobs/change-requests/${id}/decisions`, { matches: proposed.map((item) => ({ area: item.area, ref: item.ref, targetId: "create" })) })
+    current = asPlan(field(decided.body, "plan"))
+  }
+  const inputs: ConfigSecretInput[] = planItems(current).flatMap((item) => (item.op === "create" ? item.secrets ?? [] : []))
+    .map((secret): ConfigSecretInput => (secret.sourceHadValue ? { path: secret.path, decision: "value", value: SECRETS.mcp } : { path: secret.path, decision: "unset" }))
+  if (inputs.length > 0) current = asPlan(field((await apiA("PUT", `/v1/config-blobs/change-requests/${id}/inputs`, { inputs })).body, "plan"))
+  assert.equal(current.summary.blocking, 0, describePlan(current))
+  assert.deepEqual(planItems(current).filter((item) => item.op === "create").map((item) => item.blob?.name), ["Partial Team", "Broken MCP", "Never MCP"], describePlan(current))
+  const [stored] = await rows("SELECT execution IS NOT NULL AS has_execution FROM config_change_request WHERE id = ?", [id])
+  assert.equal(Number(stored?.has_execution), 1, "the execution plan is kept with the plan: apply re-reads only what it writes")
+
+  assert.equal(asSummary(await apiA("POST", `/v1/config-blobs/change-requests/${id}/apply`, { planHash: current.planHash })).status, "queued")
+  const settled = await drive(apiA, id)
+  assert.equal(settled.status, "failed")
+  assert.ok(settled.errors.some((error) => error.includes("Broken MCP")), JSON.stringify(settled.errors))
+
+  const detail = await apiA("GET", `/v1/config-blobs/change-requests/${id}`)
+  const runs = asRuns(field(detail.body, "runs"))
+  assert.equal(runs.length, 1)
+  const [run] = runs
+  assert.ok(run)
+  assert.equal(run.status, "failed")
+  assert.deepEqual(run.items.map((item) => [item.name, item.status]), [["Partial Team", "applied"], ["Broken MCP", "failed"], ["Never MCP", "not_reached"]])
+  assert.deepEqual(run.counts, { applied: 1, noop: 0, failed: 1, not_reached: 1, skipped: 0 })
+  assert.equal(run.failure?.name, "Broken MCP")
+  assert.equal(run.failure?.area, "connectors.mcp")
+  assert.ok(run.failure?.failure.message, "the failure has a message")
+  assert.equal(run.items[2]?.startedAt, null)
+  const [row] = await rows("SELECT status, failure_area, failure_ref, failure_code FROM config_apply_run WHERE id = ?", [run.runId])
+  assert.equal(row?.status, "failed")
+  assert.equal(row?.failure_area, "connectors.mcp")
+  assert.equal(row?.failure_code, run.failure?.failure.code)
+  const teams = await rows("SELECT id FROM team WHERE organization_id = ? AND name = 'Partial Team'", [orgA.orgId])
+  assert.equal(teams.length, 1, "the item before the failure stays written (no transaction)")
+  const never = await rows("SELECT id FROM external_mcp_connection WHERE organization_id = ? AND name IN ('Broken MCP', 'Never MCP')", [orgA.orgId])
+  assert.deepEqual(never, [])
+  const missing = await apiA("GET", `/v1/config-blobs/change-requests/${id}/runs/car_01jzzzzzzzzzzzzzzzzzzzzzzz`)
+  assert.equal(missing.status, 404, summary(missing))
+
+  // Restore previous config: deletes what the failed run created.
+  const reverted = await apiA("POST", `/v1/config-blobs/change-requests/${id}/revert`, {})
+  assert.equal(reverted.status, 201, summary(reverted))
+  const restore = asSummary(reverted)
+  assert.equal(restore.title, "Restore previous config: Partial")
+  assert.equal((await drive(apiA, restore.id)).status, "needs_review")
+  const restorePlan = await plan(apiA, restore.id)
+  assert.deepEqual(planItems(restorePlan).filter((item) => item.op === "delete").map((item) => item.target?.name), ["Partial Team"], describePlan(restorePlan))
+  await apiA("POST", `/v1/config-blobs/change-requests/${restore.id}/cancel`, {})
+})
+
+test("an interrupted apply: the next claim marks the run interrupted, the item in flight failed", async () => {
+  const { id, plan: current } = await uploadTeams(apiA, await teamsExport(apiA), [{ name: "Crash One", spec: TEAM_SPEC }])
+  assert.equal(asSummary(await apiA("POST", `/v1/config-blobs/change-requests/${id}/apply`, { planHash: current.planHash })).status, "queued")
+  const claim = await repository.claimNextApply()
+  assert.equal(claim?.id, id)
+  const startedAt = new Date()
+  const run = await repository.createApplyRun({
+    organizationId: normalizeOrg(orgA.orgId),
+    changeRequestId: normalizeId(id),
+    requestedByMemberId: normalizeMember(orgA.owner.memberId),
+    requestedByApiKeyId: null,
+    runsAsMemberId: normalizeMember(orgA.owner.memberId),
+    startedAt,
+    report: {
+      runId: "", attempt: 0, status: "running", startedAt: startedAt.toISOString(), finishedAt: null, requestedBy: null, runsAs: null,
+      counts: { applied: 0, noop: 0, failed: 0, not_reached: 0, skipped: 0 }, failure: null, warnings: [],
+      items: [{ area: "members.teams", ref: "#0", name: "Crash One", op: "create", localId: null, status: "not_reached", steps: [], warnings: [], irreversible: [], startedAt: startedAt.toISOString(), durationMs: null }],
+    },
+  })
+  // The worker died: its lease runs out and the next claim picks the request up.
+  await rows("UPDATE config_change_request SET lease_until = DATE_SUB(NOW(3), INTERVAL 1 HOUR) WHERE id = ?", [id])
+  assert.equal(await repository.claimNextApply(), null)
+  const detail = await apiA("GET", `/v1/config-blobs/change-requests/${id}`)
+  assert.equal(asSummary(detail).status, "failed")
+  const [interrupted] = asRuns(field(detail.body, "runs"))
+  assert.equal(interrupted?.runId, run.id)
+  assert.equal(interrupted?.status, "interrupted")
+  assert.equal(interrupted?.items[0]?.status, "failed")
+  assert.equal(interrupted?.items[0]?.failure?.code, "interrupted")
+  assert.equal(interrupted?.failure?.name, "Crash One")
 })
 
 function normalizeId(id: string) {

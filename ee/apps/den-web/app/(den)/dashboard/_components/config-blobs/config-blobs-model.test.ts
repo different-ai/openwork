@@ -1,13 +1,20 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { CONFIG_BLOB_MAX_BYTES, EMPTY_CONFIG_DECISIONS, type ConfigAreaDescriptor, type ConfigPlan } from "@openwork/types/den/config-blobs";
+import { CONFIG_BLOB_MAX_BYTES, EMPTY_CONFIG_DECISIONS, type ConfigApplyReport, type ConfigAreaDescriptor, type ConfigPlan } from "@openwork/types/den/config-blobs";
 import {
   approvalState,
   checkImportFile,
   configExportFileName,
   exportAreasParam,
+  formatApplyStep,
+  formatDuration,
   formatFieldChange,
   formatFieldPath,
+  formatRunCounts,
+  runDurationMs,
+  runFailure,
+  runIrreversible,
+  runRequester,
   groupConfigAreas,
   isDeletable,
   keepableSecrets,
@@ -112,4 +119,62 @@ test("approval rules match den-api: one approval each, second approver not the u
   assert.equal(approvalState({ approvals: [{ memberId: "m2" }], createdByMemberId: "m1", memberId: "m1", requireSecondApprover: true }).canApprove, false);
   assert.equal(approvalState({ approvals: [{ memberId: "m1" }], createdByMemberId: "m1", memberId: "m2", requireSecondApprover: true }).canApprove, true);
   assert.equal(approvalState({ approvals: [{ memberId: "m1" }], createdByMemberId: "m1", memberId: "m1", requireSecondApprover: false }).reason, null);
+});
+
+const failedRun: ConfigApplyReport = {
+  runId: "car_1",
+  attempt: 2,
+  status: "failed",
+  startedAt: "2026-11-09T10:00:00.000Z",
+  finishedAt: "2026-11-09T10:00:03.500Z",
+  requestedBy: { memberId: "om_1", name: "Ada", apiKeyName: "CI" },
+  runsAs: { memberId: "om_2", name: "Grace" },
+  counts: { applied: 1, noop: 1, failed: 1, not_reached: 2, skipped: 0 },
+  failure: null,
+  warnings: [],
+  items: [
+    { area: "members.teams", ref: "tem_1", name: "Platform", op: "update", localId: "tem_1", status: "applied", steps: [{ action: "add", target: "members", detail: "Ada" }], warnings: [], irreversible: ["Ada was emailed"], startedAt: "2026-11-09T10:00:00.000Z", durationMs: 120 },
+    { area: "members.teams", ref: "tem_2", name: "Design", op: "update", localId: "tem_2", status: "noop", steps: [], warnings: [], irreversible: [], startedAt: "2026-11-09T10:00:00.200Z", durationMs: 0 },
+    {
+      area: "ai-gateway.providers", ref: "ipr_1", name: "OpenAI", op: "update", localId: "ipr_1", status: "failed",
+      steps: [{ action: "update", target: "models[id=gpt-5]" }],
+      failure: { code: "invalid_url", message: "The base URL isn't reachable.", field: "baseUrl", step: { action: "set", target: "baseUrl" }, status: 400 },
+      warnings: [], irreversible: [], startedAt: "2026-11-09T10:00:00.300Z", durationMs: 900,
+    },
+    { area: "ai-gateway.providers", ref: "ipr_2", name: "Anthropic", op: "create", localId: null, status: "not_reached", steps: [], warnings: [], irreversible: [], startedAt: null, durationMs: null },
+    { area: "connectors.mcp", ref: "mcp_1", name: "Docs", op: "delete", localId: "mcp_1", status: "not_reached", steps: [], warnings: [], irreversible: ["Members' sign-ins are revoked"], startedAt: null, durationMs: null },
+  ],
+};
+const labels = (key: string) => ({ "members.teams": "Teams", "ai-gateway.providers": "AI Providers", "connectors.mcp": "MCP" }[key] ?? key);
+
+test("apply steps read as plain sentences", () => {
+  assert.equal(formatApplyStep({ action: "add", target: "access.teams", detail: "Platform" }), "Added Access › Teams: Platform");
+  assert.equal(formatApplyStep({ action: "update", target: "models[id=gpt-5]" }), "Updated Models › gpt-5");
+  assert.equal(formatApplyStep({ action: "create", target: "" }), "Created");
+});
+
+test("a run's counts, duration and who ran it", () => {
+  assert.equal(formatRunCounts(failedRun.counts), "1 done, 1 already up to date, 1 failed, 2 not reached");
+  assert.equal(formatRunCounts({ applied: 0, noop: 0, failed: 0, not_reached: 0, skipped: 0 }), "Nothing to apply");
+  assert.equal(formatDuration(runDurationMs(failedRun)), "3.5 s");
+  assert.equal(formatDuration(350), "350 ms");
+  assert.equal(formatDuration(125_000), "2 min 5 s");
+  assert.equal(formatDuration(null), "");
+  assert.equal(runRequester(failedRun), 'Ada with the token "CI"');
+});
+
+test("the failed item is explained: where, what, what was written, what was not reached", () => {
+  const failure = runFailure(failedRun, labels);
+  assert.ok(failure);
+  assert.equal(failure.where, "AI Providers › OpenAI › Base URL");
+  assert.equal(failure.message, "The base URL isn't reachable.");
+  assert.equal(failure.failedStep, "Set Base URL");
+  assert.deepEqual(failure.written, ["Updated Models › gpt-5"]);
+  assert.deepEqual(failure.notReached.map((item) => item.name), ["Anthropic", "Docs"]);
+  assert.equal(failure.interrupted, false);
+  assert.equal(runFailure({ ...failedRun, items: failedRun.items.filter((item) => item.status !== "failed") }, labels), null);
+});
+
+test("only effects that happened are listed as impossible to undo", () => {
+  assert.deepEqual(runIrreversible(failedRun, labels), ["Teams › Platform: Ada was emailed"]);
 });

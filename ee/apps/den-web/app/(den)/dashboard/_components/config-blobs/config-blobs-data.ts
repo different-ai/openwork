@@ -53,7 +53,10 @@ function isChangeRequestResponse(value: unknown): value is ConfigChangeRequestRe
 }
 
 function isDetailResponse(value: unknown): value is ConfigChangeRequestDetailResponse {
-  return isRecord(value) && (value.report === null || value.report === undefined || isRecord(value.report)) && isChangeRequestResponse(value);
+  return isRecord(value)
+    && (value.report === null || isRecord(value.report))
+    && Array.isArray(value.runs) && value.runs.every(isRecord)
+    && isChangeRequestResponse(value);
 }
 
 function isPlanResponse(value: unknown): value is ConfigChangeRequestPlanResponse {
@@ -203,7 +206,7 @@ const ACTION_FALLBACK: Record<ConfigRequestAction, string> = {
   approve: "Couldn't approve this change.",
   apply: "Couldn't apply this change.",
   cancel: "Couldn't cancel this change.",
-  revert: "Couldn't start the revert.",
+  revert: "Couldn't start restoring the previous config.",
 };
 
 export function useConfigRequestAction(orgId: string | null, id: string) {

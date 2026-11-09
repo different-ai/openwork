@@ -7,7 +7,7 @@
  * write. An origin has nothing else to edit: an update that changes it removes
  * the old origin and approves the new one.
  */
-import { asc, eq } from "@openwork-ee/den-db/drizzle"
+import { and, asc, eq, inArray } from "@openwork-ee/den-db/drizzle"
 import { OrganizationWebOriginTable } from "@openwork-ee/den-db/schema"
 import { denTypeIdPrefixes, normalizeDenTypeId } from "@openwork-ee/utils/typeid"
 import { ORGANIZATION_WEB_ORIGIN_LIMIT, normalizeExactHttpsOrigin } from "@openwork/types/den/organization-web-origins"
@@ -20,7 +20,7 @@ import { approveOrganizationWebOrigin, removeOrganizationWebOrigin } from "../..
 import { permissionDeniedMessage } from "../../permissions/effective.js"
 import { resolvePermissionsForMember } from "../../permissions/resolve.js"
 import { defineConfigArea, type ConfigAreaContext, type ConfigItem } from "../area.js"
-import { ConfigApplyError, specObject } from "./route-support.js"
+import { ConfigApplyError, applyWithSteps, specObject, touches } from "./route-support.js"
 
 const AREA = "settings.web-origins"
 
@@ -107,29 +107,47 @@ export const settingsWebOriginsArea = defineConfigArea({
   transactional: false,
 
   async exportItems(ctx) {
-    const rows = await ctx.db
-      .select({ id: OrganizationWebOriginTable.id, origin: OrganizationWebOriginTable.origin })
-      .from(OrganizationWebOriginTable)
-      .where(eq(OrganizationWebOriginTable.organizationId, normalizeDenTypeId("organization", ctx.organizationId)))
-      .orderBy(asc(OrganizationWebOriginTable.origin), asc(OrganizationWebOriginTable.id))
-    return rows.map((row): ConfigItem => ({ id: row.id, name: row.origin, spec: { origin: row.origin } }))
+    return readOrigins(ctx, null)
+  },
+
+  async readItems(ctx, ids) {
+    return readOrigins(ctx, ids)
   },
 
   async apply(ctx, op) {
-    await requireActorPermission(ctx, "web_origins.manage")
-    if (op.kind === "delete") {
-      await remove(ctx, op.targetId, op.previous.name)
-      return { localId: op.targetId }
-    }
-    const spec = webOriginSpecSchema.parse(specObject(op.item.spec))
-    const origin = normalizeExactHttpsOrigin(spec.origin)
-    if (!origin) throw new ConfigApplyError("invalid_web_origin", `${spec.origin} is not an exact HTTPS origin like https://workspace.example.com.`, 400)
+    return applyWithSteps(async (log) => {
+      await requireActorPermission(ctx, "web_origins.manage")
+      if (op.kind === "delete") {
+        await log.run({ action: "delete", target: "origin", detail: op.previous.name }, () => remove(ctx, op.targetId, op.previous.name))
+        return { localId: op.targetId }
+      }
+      const spec = webOriginSpecSchema.parse(specObject(op.item.spec))
+      const origin = normalizeExactHttpsOrigin(spec.origin)
+      if (!origin) throw new ConfigApplyError("invalid_web_origin", `${spec.origin} is not an exact HTTPS origin like https://workspace.example.com.`, 400, "origin")
 
-    if (op.kind === "create") return { localId: await approve(ctx, origin, op.preferredId) }
+      if (op.kind === "create") {
+        return { localId: await log.run({ action: "create", target: "origin", detail: origin }, () => approve(ctx, origin, op.preferredId)) }
+      }
 
-    if (originOf(op.previous) === origin) return { localId: op.targetId }
-    await remove(ctx, op.targetId, op.previous.name)
-    const localId = await approve(ctx, origin)
-    return { localId, warnings: [`${op.previous.name} was replaced by ${origin}.`] }
+      // The origin is the only field: an update that changes it replaces the row.
+      if (!touches(op.changes, "origin") || originOf(op.previous) === origin) return { localId: op.targetId }
+      await log.run({ action: "remove", target: "origin", detail: op.previous.name }, () => remove(ctx, op.targetId, op.previous.name))
+      const localId = await log.run({ action: "add", target: "origin", detail: origin }, () => approve(ctx, origin))
+      return { localId, warnings: [`${op.previous.name} was replaced by ${origin}.`] }
+    })
   },
 })
+
+async function readOrigins(ctx: ConfigAreaContext, ids: readonly string[] | null): Promise<ConfigItem[]> {
+  const originIds = ids?.flatMap((id) => preferredOriginId(id) ?? []) ?? null
+  if (originIds && originIds.length === 0) return []
+  const rows = await ctx.db
+    .select({ id: OrganizationWebOriginTable.id, origin: OrganizationWebOriginTable.origin })
+    .from(OrganizationWebOriginTable)
+    .where(and(
+      eq(OrganizationWebOriginTable.organizationId, normalizeDenTypeId("organization", ctx.organizationId)),
+      originIds ? inArray(OrganizationWebOriginTable.id, originIds) : undefined,
+    ))
+    .orderBy(asc(OrganizationWebOriginTable.origin), asc(OrganizationWebOriginTable.id))
+  return rows.map((row): ConfigItem => ({ id: row.id, name: row.origin, spec: { origin: row.origin } }))
+}

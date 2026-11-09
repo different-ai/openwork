@@ -10,6 +10,7 @@ import type {
   ConfigBlobItem,
   ConfigDecisions,
   ConfigDeployment,
+  ConfigFieldChange,
   ConfigImportMode,
   ConfigMatchTier,
   ConfigPlan,
@@ -27,7 +28,7 @@ import {
   findConfigShapeProblem,
   parseConfigRef,
 } from "@openwork/types/den/config-blobs"
-import type { ConfigArea, ConfigAreaContext, ConfigItem } from "../area.js"
+import type { ConfigApplyOp, ConfigArea, ConfigAreaContext, ConfigItem } from "../area.js"
 import { canonicalJsonPlain, itemRev } from "./canonical.js"
 import { classifyMatched, diffSpecs, type EngineFieldChange } from "./diff.js"
 import { blobItemAsConfigItem, matchArea, type ItemMatch } from "./match.js"
@@ -109,6 +110,16 @@ export type ExecutionOp = {
   refs: ResolvedRefOccurrence[]
   secrets: ExecutionSecret[]
   previous?: ConfigItem
+  /** Display name for the apply report (the blob item's, else the target's). */
+  name: string
+  /** Updates: the plan's field changes (adapters write only these). Empty for creates and deletes. */
+  changes: ConfigFieldChange[]
+  /** Updates: secret placeholders whose decision writes the credential (value, env, or unset of a stored one). */
+  secretPaths: string[]
+  /** `itemRev` of the target the op was planned against (updates, deletes): apply re-reads the item and compares. */
+  targetRev?: string
+  /** Effects a later restore can't undo, as the area describes them for this op (computed at plan time). */
+  irreversible: string[]
 }
 
 export type ExecutionPlan = {
@@ -329,7 +340,8 @@ export function buildPlan(input: BuildPlanInput): BuildPlanResult {
           item.flags.push("destructive")
           item.reasons = ["not in the blob — will be deleted"]
           deletedIds.add(target.id)
-          draft.exec = { area: state.area.key, ref: item.ref, kind: "delete", op: "delete", matchedBy: null, targetId: target.id, refs: [], secrets: [], previous: target }
+          draft.exec = { area: state.area.key, ref: item.ref, kind: "delete", op: "delete", matchedBy: null, targetId: target.id, refs: [], secrets: [], previous: target, name: target.name, changes: [], secretPaths: [], targetRev: item.targetRev, irreversible: [] }
+          setIrreversible(state.area, item, draft.exec)
         }
       }
       drafts.push(draft)
@@ -501,9 +513,13 @@ export function buildPlan(input: BuildPlanInput): BuildPlanResult {
         if (blob.id) execItem.sourceId = blob.id
         if (blob.key !== undefined) execItem.key = blob.key
         const preferredId = blob.id && idPrefix !== null && typeIdPrefix(blob.id) === idPrefix ? blob.id : undefined
+        const secretPaths = secrets.secrets
+          .filter((secret) => secret.decision === "value" || secret.decision === "env" || (secret.decision === "unset" && secret.targetHasValue))
+          .map((secret) => secret.path)
         draft.exec = match.target
-          ? { area: area.key, ref: match.ref, kind: "update", op: item.op, matchedBy: match.matchedBy, targetId: match.target.id, item: execItem, refs, secrets: secrets.execution, previous: match.target }
-          : { area: area.key, ref: match.ref, kind: "create", op: "create", matchedBy: match.matchedBy, item: execItem, refs, secrets: secrets.execution, ...(preferredId ? { preferredId } : {}) }
+          ? { area: area.key, ref: match.ref, kind: "update", op: item.op, matchedBy: match.matchedBy, targetId: match.target.id, item: execItem, refs, secrets: secrets.execution, previous: match.target, name: blob.name, changes: fields, secretPaths, targetRev: item.targetRev, irreversible: [] }
+          : { area: area.key, ref: match.ref, kind: "create", op: "create", matchedBy: match.matchedBy, item: execItem, refs, secrets: secrets.execution, name: blob.name, changes: [], secretPaths: [], irreversible: [], ...(preferredId ? { preferredId } : {}) }
+        setIrreversible(area, item, draft.exec)
         draft.uniqueProbe = { id: match.target?.id ?? blobItemAsConfigItem(blob, match.index).id, key: blob.key ?? match.target?.key ?? null, name: blob.name, spec: localized }
       }
     }
@@ -540,7 +556,8 @@ export function buildPlan(input: BuildPlanInput): BuildPlanResult {
         item.flags.push("blocked")
         item.reasons = [`${email} is not a valid email address, so they can't be invited`]
       } else {
-        draft.exec = { area: PEOPLE_AREA, ref, kind: "create", op: "create", matchedBy: null, item: { name: email, spec }, refs: [], secrets: [] }
+        draft.exec = { area: PEOPLE_AREA, ref, kind: "create", op: "create", matchedBy: null, item: { name: email, spec }, refs: [], secrets: [], name: email, changes: [], secretPaths: [], irreversible: [] }
+        setIrreversible(peopleArea, item, draft.exec)
       }
       inviteDrafts.push(draft)
     }
@@ -617,6 +634,29 @@ export function buildPlan(input: BuildPlanInput): BuildPlanResult {
   const plan: ConfigPlan = { planHash, mode: input.mode, summary, areas: planAreas, issues }
   const execution: ExecutionPlan = { planHash, blocking: summary.blocking, ops: [...forward, ...deletes.flat()] }
   return { plan, execution, errors, fatalErrors }
+}
+
+/**
+ * What the area says a later restore can't undo for this op, on the plan item
+ * (shown before approval) and the execution op (seeded into the report). The
+ * preview op carries the blob's spec with refs and secrets still unresolved.
+ */
+function setIrreversible(area: ConfigArea, item: ConfigPlanItem, exec: ExecutionOp): void {
+  if (!area.irreversible) return
+  let preview: ConfigApplyOp | null = null
+  if (exec.kind === "delete" && exec.targetId && exec.previous) preview = { kind: "delete", targetId: exec.targetId, previous: exec.previous }
+  else if (exec.kind === "update" && exec.targetId && exec.previous && exec.item) {
+    preview = { kind: "update", targetId: exec.targetId, previous: exec.previous, item: { ...exec.item }, changes: exec.changes, secretPaths: exec.secretPaths }
+  } else if (exec.kind === "create" && exec.item) preview = { kind: "create", item: { ...exec.item } }
+  if (!preview) return
+  let effects: string[] = []
+  try {
+    effects = area.irreversible(preview)
+  } catch {
+    effects = []
+  }
+  exec.irreversible = effects
+  if (effects.length > 0) item.irreversible = effects
 }
 
 /** The TypeID prefix every item shares, or null when they have none in common (or there are none). */

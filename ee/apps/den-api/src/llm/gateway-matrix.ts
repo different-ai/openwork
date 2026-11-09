@@ -298,8 +298,18 @@ export async function writeGatewayGroup(tx: GatewayTx, provider: GatewayProvider
   if (existing) await tx.update(GatewayModelGroupTable).set(values).where(eq(GatewayModelGroupTable.id, id))
   else await tx.insert(GatewayModelGroupTable).values({ id, gateway_provider_id: provider.id, ...values })
   if (selected) {
-    if (existing) await tx.delete(GatewayModelGroupModelTable).where(eq(GatewayModelGroupModelTable.model_group_id, id))
-    if (selected.length) await tx.insert(GatewayModelGroupModelTable).values(selected.map((model) => ({ id: createDenTypeId("gatewayModelGroupModel"), model_group_id: id, gateway_provider_model_id: model.id })))
+    // Only links that are added or removed are written; models that stay keep their link row.
+    const links = existing ? await tx.select().from(GatewayModelGroupModelTable).where(eq(GatewayModelGroupModelTable.model_group_id, id)) : []
+    const wanted = new Set(selected.map((model) => model.id))
+    const kept = new Set<string>()
+    const removed = links.filter((link) => {
+      if (!wanted.has(link.gateway_provider_model_id) || kept.has(link.gateway_provider_model_id)) return true
+      kept.add(link.gateway_provider_model_id)
+      return false
+    }).map((link) => link.id)
+    if (removed.length) await tx.delete(GatewayModelGroupModelTable).where(inArray(GatewayModelGroupModelTable.id, removed))
+    const added = selected.filter((model) => !kept.has(model.id))
+    if (added.length) await tx.insert(GatewayModelGroupModelTable).values(added.map((model) => ({ id: createDenTypeId("gatewayModelGroupModel"), model_group_id: id, gateway_provider_model_id: model.id })))
   }
   return id
 }

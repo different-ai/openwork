@@ -536,8 +536,9 @@ function ReviewItem({ item, overridden, onOverride, skipped, onSkip, renamedTo, 
   // A create matched nothing here; "Matched earlier" would only echo the "Add as a new item" choice.
   const tier = item.op === "create" ? null : matchTierLabel(item.matchedBy);
   const renamed = item.op === "rename" && item.target && item.blob && item.target.name !== item.blob.name;
+  const irreversible = item.op === "skip" ? [] : item.irreversible ?? [];
   return (
-    <details className="group py-2" open={drift || destructive || blocked || collision} data-testid="config-review-item" data-op={item.op}>
+    <details className="group py-2" open={drift || destructive || blocked || collision || irreversible.length > 0} data-testid="config-review-item" data-op={item.op}>
       <summary className="flex min-h-8 cursor-pointer list-none items-center gap-2 text-[13px]">
         <ChevronRight className="size-3.5 shrink-0 text-gray-400 transition-transform duration-150 ease-out group-open:rotate-90" strokeWidth={1.5} aria-hidden="true" />
         <span className="min-w-0 truncate font-medium text-gray-900">
@@ -549,6 +550,7 @@ function ReviewItem({ item, overridden, onOverride, skipped, onSkip, renamedTo, 
           {item.flags.includes("drift") ? <DenChip tone="warning">Changed here since export</DenChip> : null}
           {destructive ? <DenChip tone="danger">Removes access or data</DenChip> : null}
           {item.flags.includes("collision.unique") ? <DenChip tone="warning">Name already used</DenChip> : null}
+          {irreversible.length > 0 ? <DenChip tone="warning">Can't be undone</DenChip> : null}
           {item.flags.includes("external_effect") ? <DenChip tone="neutral">Contacts the service</DenChip> : null}
           {item.flags.includes("unsupported_field") ? <DenChip tone="neutral">Some fields dropped</DenChip> : null}
         </span>
@@ -556,6 +558,12 @@ function ReviewItem({ item, overridden, onOverride, skipped, onSkip, renamedTo, 
       <div className="flex flex-col gap-2 pb-1 pl-5 pt-2">
         {item.fields.length > 0 ? <FieldDiff fields={item.fields} threeWay={drift} closed={closed} /> : item.op === "create" ? <p className="text-[12px] text-gray-500">New item.</p> : null}
         {item.reasons && item.reasons.length > 0 ? <p className={`text-[12px] ${blocked ? "text-red-700" : "text-gray-500"}`}>{item.reasons.join(". ")}</p> : null}
+        {irreversible.length > 0 ? (
+          <div className="text-[12px] text-gray-700" data-testid="config-review-irreversible">
+            <p className="font-medium text-gray-900">{closed ? "Restoring the previous config can't undo:" : "Applying this can't be undone by restoring the previous config:"}</p>
+            <ul className="list-disc pl-4">{irreversible.map((effect) => <li key={effect}>{effect}</li>)}</ul>
+          </div>
+        ) : null}
         {collision && !skipped && !closed ? <RenameField current={renamedTo} editable={editable} onRename={onRename} /> : null}
         {drift && !closed ? (
           <label className="flex items-center gap-2 text-[13px] text-gray-900">

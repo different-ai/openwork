@@ -41,7 +41,11 @@ export type GatewayProviderPatch = {
  * Identity and destination are immutable. `trusted` is the provider's catalog,
  * loaded before the transaction (it may call models.dev).
  */
-export async function patchGatewayProvider(tx: GatewayTx, existing: GatewayProvider, trusted: ModelsDevProvider | null, input: GatewayProviderPatch, options: { createModelIds?: ReadonlyMap<string, GatewayModelRowId> } = {}): Promise<GatewayProvider> {
+/**
+ * `options.syncModels: false` (config-blob imports changing only the name or status)
+ * leaves the stored model rows as they are; otherwise they follow the catalog.
+ */
+export async function patchGatewayProvider(tx: GatewayTx, existing: GatewayProvider, trusted: ModelsDevProvider | null, input: GatewayProviderPatch, options: { createModelIds?: ReadonlyMap<string, GatewayModelRowId>; syncModels?: boolean } = {}): Promise<GatewayProvider> {
   if (input.providerId !== undefined && input.providerId !== existing.provider_id) throw new GatewayWriteError(409, "provider_identity_immutable", "Create a separate provider rather than moving existing groups and credentials to another catalog provider.")
   if (!trusted || trusted.id !== existing.provider_id || trusted.npm !== readProviderConfigNpm(existing.provider_config)) throw new GatewayWriteError(400, "provider_requires_configuration")
   const config = existing.provider_config
@@ -61,7 +65,7 @@ export async function patchGatewayProvider(tx: GatewayTx, existing: GatewayProvi
   // A custom provider's display name also lives in provider_config.name (what members and the desktop read).
   const providerConfig = isGatewayCustomProviderId(existing.provider_id) && name !== readProviderConfigName(config) ? { ...config, name } : config
   const provider: GatewayProvider = { ...existing, name, provider_config: providerConfig, model_ids: modelIds, status: input.status ?? existing.status, updated_at: new Date() }
-  await writeGatewayModels(tx, provider, catalog.models, { createIds: options.createModelIds })
+  if (options.syncModels !== false || input.modelIds !== undefined) await writeGatewayModels(tx, provider, catalog.models, { createIds: options.createModelIds })
   await tx.update(GatewayProviderTable).set({ name: provider.name, ...(providerConfig === config ? {} : { provider_config: providerConfig }), model_ids: modelIds, status: provider.status, updated_at: provider.updated_at }).where(eq(GatewayProviderTable.id, provider.id))
   return provider
 }

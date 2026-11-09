@@ -10,6 +10,7 @@
  * recent sign-in, exactly as in the dashboard).
  */
 import {
+  CONFIG_APPLY_RUN_STATUSES,
   CONFIG_BLOB_MAX_BYTES,
   CONFIG_CHANGE_REQUEST_SOURCES,
   CONFIG_CHANGE_REQUEST_STATUSES,
@@ -37,6 +38,7 @@ import {
   dryRunChangeRequest,
   exportBlob,
   getBeforeSnapshot,
+  getApplyRunDetail,
   getChangeRequestDetail,
   getChangeRequestPlan,
   getConfigBlobSettings,
@@ -57,7 +59,7 @@ import { requireFeature } from "../../features.js"
 import { jsonValidator, orgMemberRoute, paramValidator, publicRoute, queryValidator, requireOrgPermission } from "../../middleware/index.js"
 import { refuseMachineSecrets } from "../../middleware/refuse-machine-secrets.js"
 import { checkFreshPrivilegedSession, organizationPrivilegedSessionMaxAgeMs } from "../../privileged-session.js"
-import { forbiddenSchema, invalidRequestSchema, jsonResponse, unauthorizedSchema } from "../../openapi.js"
+import { denTypeIdSchema, forbiddenSchema, invalidRequestSchema, jsonResponse, unauthorizedSchema } from "../../openapi.js"
 import type { AuthContextVariables } from "../../session.js"
 import {
   idParamSchema,
@@ -110,10 +112,37 @@ const planSchema = z.object({
   issues: z.array(z.object({ level: z.enum(["error", "warning", "info"]), message: z.string(), area: configAreaKeySchema.optional() })),
 }).meta({ ref: "ConfigPlan" })
 
+const applyStepSchema = z.object({
+  action: z.enum(["create", "update", "delete", "add", "remove", "set", "keep"]),
+  target: z.string(),
+  detail: z.string().optional(),
+}).meta({ ref: "ConfigApplyStep" })
+
+const applyFailureSchema = z.object({
+  code: z.string(),
+  message: z.string(),
+  field: z.string().optional(),
+  step: applyStepSchema.optional(),
+  status: z.number().int().optional(),
+}).meta({ ref: "ConfigApplyFailure" })
+
+const applyItemStatuses = ["applied", "noop", "failed", "not_reached", "skipped"] as const
+
 const reportSchema = z.object({
+  runId: z.string(),
+  attempt: z.number().int(),
+  status: z.enum(CONFIG_APPLY_RUN_STATUSES),
+  startedAt: z.string().datetime(),
+  finishedAt: z.string().datetime().nullable(),
+  requestedBy: z.object({ memberId: z.string().nullable(), name: z.string().nullable(), apiKeyName: z.string().nullable() }).nullable(),
+  runsAs: z.object({ memberId: z.string(), name: z.string().nullable() }).nullable(),
+  counts: z.object(Object.fromEntries(applyItemStatuses.map((key) => [key, z.number().int()]))),
+  failure: z.object({ area: configAreaKeySchema, ref: z.string(), name: z.string(), failure: applyFailureSchema }).nullable(),
   items: z.array(z.object({
-    area: configAreaKeySchema, ref: z.string(), op: z.enum(CONFIG_PLAN_OPS), localId: z.string().nullable(),
-    status: z.enum(["applied", "failed", "skipped"]), warnings: z.array(z.string()), error: z.string().optional(),
+    area: configAreaKeySchema, ref: z.string(), name: z.string(), op: z.enum(CONFIG_PLAN_OPS), localId: z.string().nullable(),
+    status: z.enum(applyItemStatuses), steps: z.array(applyStepSchema), warnings: z.array(z.string()),
+    failure: applyFailureSchema.optional(), irreversible: z.array(z.string()),
+    startedAt: z.string().datetime().nullable(), durationMs: z.number().int().nullable(), error: z.string().optional(),
   })),
   warnings: z.array(z.string()),
   afterRevs: z.record(z.string(), z.string()).optional(),
@@ -156,7 +185,8 @@ const areasResponseSchema = z.object({
 
 const changeRequestResponseSchema = z.object({ changeRequest: changeRequestSchema }).meta({ ref: "ConfigChangeRequestResponse" })
 const changeRequestListSchema = z.object({ changeRequests: z.array(changeRequestSchema) }).meta({ ref: "ConfigChangeRequestListResponse" })
-const changeRequestDetailSchema = z.object({ changeRequest: changeRequestSchema, report: reportSchema.nullable() }).meta({ ref: "ConfigChangeRequestDetailResponse" })
+const changeRequestDetailSchema = z.object({ changeRequest: changeRequestSchema, report: reportSchema.nullable(), runs: z.array(reportSchema) }).meta({ ref: "ConfigChangeRequestDetailResponse" })
+const applyRunResponseSchema = z.object({ run: reportSchema }).meta({ ref: "ConfigApplyRunResponse" })
 const planResponseSchema = z.object({ plan: planSchema.nullable(), decisions: configDecisionsSchema }).meta({ ref: "ConfigChangeRequestPlanResponse" })
 const planUpdateResponseSchema = z.object({ changeRequest: changeRequestSchema, plan: planSchema.nullable() }).meta({ ref: "ConfigChangeRequestPlanUpdateResponse" })
 const dryRunResponseSchema = z.object({
@@ -168,6 +198,7 @@ const jsonSchemaDocumentSchema = z.record(z.string(), z.unknown()).meta({ ref: "
 const settingsResponseSchema = z.object({ settings: z.object({ requireSecondApprover: z.boolean() }) }).meta({ ref: "ConfigBlobSettingsResponse" })
 
 const changeRequestParams = idParamSchema("changeRequestId", "configChangeRequest")
+const applyRunParams = z.object({ changeRequestId: denTypeIdSchema("configChangeRequest"), runId: denTypeIdSchema("configApplyRun") })
 const listQuerySchema = z.object({ state: z.enum(["open", "closed"]).default("open") })
 const submitQuerySchema = z.object({ dryRun: z.enum(["true", "false"]).optional() })
 const schemaParamsSchema = z.object({ formatVersion: z.string().max(10) })
@@ -384,7 +415,7 @@ export function registerOrgConfigBlobRoutes<T extends { Variables: OrgRouteVaria
 
   app.get(
     `${BASE}/change-requests/:changeRequestId`,
-    describe("Get a config change request", "Status, summary, approvals and, once applied, the apply report.", { status: 200, schema: changeRequestDetailSchema, description: "The change request." }),
+    describe("Get a config change request", "Status, summary, approvals, the latest apply report (`report`) and every apply attempt, newest first (`runs`).", { status: 200, schema: changeRequestDetailSchema, description: "The change request." }),
     orgMemberRoute(),
     feature,
     requireConfigScope("config:submit"),
@@ -393,6 +424,24 @@ export function registerOrgConfigBlobRoutes<T extends { Variables: OrgRouteVaria
       try {
         const { org, caller } = await configCaller(c, getConfigTokenAreas(c))
         return c.json(await getChangeRequestDetail(org.id, c.req.valid("param").changeRequestId, caller))
+      } catch (error) {
+        return refusal(error)
+      }
+    },
+  )
+
+  app.get(
+    `${BASE}/change-requests/:changeRequestId/runs/:runId`,
+    describe("Get one apply run of a config change request", "One apply attempt: who requested it and who it ran as, and per item its status, the writes done, and where and why it failed.", { status: 200, schema: applyRunResponseSchema, description: "The apply run." }),
+    orgMemberRoute(),
+    feature,
+    requireConfigScope("config:submit"),
+    paramValidator(applyRunParams),
+    async (c) => {
+      try {
+        const { org, caller } = await configCaller(c, getConfigTokenAreas(c))
+        const params = c.req.valid("param")
+        return c.json(await getApplyRunDetail(org.id, params.changeRequestId, params.runId, caller))
       } catch (error) {
         return refusal(error)
       }
@@ -418,7 +467,7 @@ export function registerOrgConfigBlobRoutes<T extends { Variables: OrgRouteVaria
 
   app.get(
     `${BASE}/change-requests/:changeRequestId/before-snapshot`,
-    describe("Download a change request's before-snapshot", "The configuration of the request's areas as it was just before it was applied (JSON attachment): the source of a revert.", { status: 200, schema: blobSchema, description: "The before-snapshot blob." }),
+    describe("Download a change request's before-snapshot", "The items the apply wrote, as they were just before it (JSON attachment; its scope is the areas written): the source of \"Restore previous config\".", { status: 200, schema: blobSchema, description: "The before-snapshot blob." }),
     orgMemberRoute(),
     feature,
     requireConfigScope("config:export"),
@@ -538,7 +587,7 @@ export function registerOrgConfigBlobRoutes<T extends { Variables: OrgRouteVaria
 
   app.post(
     `${BASE}/change-requests/:changeRequestId/revert`,
-    describe("Revert a config change request", "Creates a new change request (source `revert`) from the applied request's before-snapshot, in mirror mode with the deletes of the items it created already ticked. It is reviewed and applied like any other.", { status: 201, schema: changeRequestResponseSchema, description: "The revert change request." }, { 409: jsonResponse("Not applied, or a revert is already open.", errorSchema) }),
+    describe("Restore the config before a change request", "\"Restore previous config\": creates a new change request (source `revert`) from the applied request's before-snapshot, in mirror mode with the deletes of the items it created already ticked. It is reviewed and applied like any other. It restores configuration only: its plan lists what the original apply did that can't be undone (emails sent, sign-ins revoked, credentials replaced or deleted).", { status: 201, schema: changeRequestResponseSchema, description: "The revert change request." }, { 409: jsonResponse("Not applied, or a revert is already open.", errorSchema) }),
     orgMemberRoute(),
     feature,
     requireConfigScope("config:apply"),

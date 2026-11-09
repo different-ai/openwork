@@ -1,12 +1,11 @@
 "use client";
 
-import type { ConfigApplyReport, ConfigChangeRequestSummary, ConfigDecisions, ConfigPlan, ConfigSecretInput } from "@openwork/types/den/config-blobs";
+import type { ConfigApplyReport, ConfigAreaKey, ConfigChangeRequestSummary, ConfigDecisions, ConfigPlan, ConfigSecretInput } from "@openwork/types/den/config-blobs";
 import { ArrowLeft, CheckCircle2, LockKeyhole, RotateCcw } from "lucide-react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useMemo, useState } from "react";
 import { DenButton } from "../../../_components/ui/button";
-import { DenChip } from "../../../_components/ui/chip";
 import { DenNotice } from "../../../_components/ui/notice";
 import { DenSkeleton } from "../../../_components/ui/skeleton";
 import { UnderlineTabs } from "../../../_components/ui/tabs";
@@ -24,15 +23,14 @@ import {
   useSaveConfigDecisions,
   useSaveConfigInputs,
 } from "./config-blobs-data";
+import { ConfigApplyRuns } from "./config-apply-runs";
 import {
-  CONFIG_OP_LABELS,
+  RESTORE_ACTION_LABEL,
   approvalState,
   type ConfigStep,
   configExportFileName,
   formatRelativeTime,
   isTransientStatus,
-  itemName,
-  planEntries,
   planSteps,
   requestIssues,
 } from "./config-blobs-model";
@@ -77,7 +75,7 @@ export function ConfigChangeRequestScreen({ changeRequestId }: { changeRequestId
       ) : (
         <ChangeRequestBody
           request={request}
-          report={detail.data?.report ?? null}
+          runs={detail.data?.runs ?? []}
           plan={planQuery.data?.plan ?? null}
           decisions={planQuery.data?.decisions ?? null}
           planLoading={planVersion !== null && planQuery.isPending}
@@ -103,9 +101,9 @@ function HeaderSkeleton() {
   );
 }
 
-function ChangeRequestBody({ request, report, plan, decisions, planLoading, planError }: {
+function ChangeRequestBody({ request, runs, plan, decisions, planLoading, planError }: {
   request: ConfigChangeRequestSummary;
-  report: ConfigApplyReport | null;
+  runs: readonly ConfigApplyReport[];
   plan: ConfigPlan | null;
   decisions: ConfigDecisions | null;
   planLoading: boolean;
@@ -205,14 +203,21 @@ function ChangeRequestBody({ request, report, plan, decisions, planLoading, plan
     : unconfirmed > 0 ? `Confirm ${unconfirmed} ${unconfirmed === 1 ? "removal" : "removals"} in Review`
     : approval.reason;
 
+  const canRestore = (request.status === "applied" || request.status === "failed") && !request.revertedByChangeRequestId && runs.length > 0;
+  const areaLabels = new Map<ConfigAreaKey, string>([
+    ...(areas.data?.areas ?? []).map((entry): [ConfigAreaKey, string] => [entry.key, entry.label]),
+    ...(plan?.areas ?? []).map((entry): [ConfigAreaKey, string] => [entry.area, entry.label]),
+  ]);
+  const areaLabel = (key: ConfigAreaKey) => areaLabels.get(key) ?? key;
+
   const primary = request.status === "needs_review" && !approval.canApprove ? null : request.status === "needs_review" ? (
     <DenButton icon={CheckCircle2} disabled={approveBlockedReason !== null || !plan || saving} loading={action.isPending} onClick={() => run("approve")} data-testid="config-approve">
       {request.autoApply ? "Approve and apply" : "Approve"}
     </DenButton>
   ) : request.status === "approved" ? (
     <DenButton disabled={saving} loading={action.isPending} onClick={() => run("apply")} data-testid="config-apply">Apply now</DenButton>
-  ) : request.status === "applied" && !request.revertedByChangeRequestId ? (
-    <DenButton variant="secondary" icon={RotateCcw} loading={action.isPending} onClick={() => run("revert")} data-testid="config-revert">Revert</DenButton>
+  ) : canRestore ? (
+    <DenButton variant="secondary" icon={RotateCcw} loading={action.isPending} onClick={() => run("revert")} data-testid="config-revert">{RESTORE_ACTION_LABEL}</DenButton>
   ) : null;
 
   return (
@@ -256,7 +261,7 @@ function ChangeRequestBody({ request, report, plan, decisions, planLoading, plan
       ))}
       {planError ? <DenNotice tone="error" message={planError} /> : null}
 
-      {report ? <ApplyReport report={report} plan={plan} /> : null}
+      <ConfigApplyRuns runs={runs} areaLabel={areaLabel} canRestore={canRestore} />
 
       {planLoading || (isTransientStatus(request.status) && !plan) ? (
         <div className="flex flex-col gap-3" aria-busy="true" data-testid="config-plan-loading">
@@ -306,59 +311,11 @@ function RequestLinks({ request }: { request: ConfigChangeRequestSummary }) {
   return (
     <p className="flex flex-wrap gap-x-4 text-[13px]">
       {request.revertsChangeRequestId ? (
-        <Link className="text-gray-600 underline-offset-2 hover:text-gray-900 hover:underline" href={getConfigChangeRequestRoute(activeOrg?.slug, request.revertsChangeRequestId)}>Undoes an earlier change</Link>
+        <Link className="text-gray-600 underline-offset-2 hover:text-gray-900 hover:underline" href={getConfigChangeRequestRoute(activeOrg?.slug, request.revertsChangeRequestId)}>Restores the config from before an earlier change</Link>
       ) : null}
       {request.revertedByChangeRequestId ? (
-        <Link className="text-gray-600 underline-offset-2 hover:text-gray-900 hover:underline" href={getConfigChangeRequestRoute(activeOrg?.slug, request.revertedByChangeRequestId)}>Reverted by a later change</Link>
+        <Link className="text-gray-600 underline-offset-2 hover:text-gray-900 hover:underline" href={getConfigChangeRequestRoute(activeOrg?.slug, request.revertedByChangeRequestId)}>Restored by a later change</Link>
       ) : null}
     </p>
-  );
-}
-
-function ApplyReport({ report, plan }: { report: ConfigApplyReport; plan: ConfigPlan | null }) {
-  const failed = report.items.filter((item) => item.status === "failed");
-  const applied = report.items.filter((item) => item.status === "applied").length;
-  const skipped = report.items.filter((item) => item.status === "skipped").length;
-  const names = new Map(planEntries(plan).map((entry) => [`${entry.area}:${entry.item.ref}`, { name: itemName(entry.item), area: entry.areaLabel }]));
-  const describe = (item: ConfigApplyReport["items"][number]) => names.get(`${item.area}:${item.ref}`) ?? { name: item.ref, area: item.area };
-  const warnings = [...report.warnings, ...report.items.flatMap((item) => item.warnings.map((warning) => `${describe(item).name}: ${warning}`))];
-  return (
-    <section className="flex flex-col gap-3" aria-labelledby="config-apply-report-title" data-testid="config-apply-report">
-      <div className="flex flex-wrap items-center gap-2">
-        <h2 id="config-apply-report-title" className="text-[14px] font-semibold text-gray-950">Result</h2>
-        <DenChip tone={failed.length > 0 ? "danger" : "success"}>{applied} applied</DenChip>
-        {failed.length > 0 ? <DenChip tone="danger">{failed.length} failed</DenChip> : null}
-        {skipped > 0 ? <DenChip tone="neutral">{skipped} not run</DenChip> : null}
-        {warnings.length > 0 ? <DenChip tone="warning">{warnings.length} {warnings.length === 1 ? "warning" : "warnings"}</DenChip> : null}
-      </div>
-      {report.items.length > 0 ? (
-        <ul className="flex flex-col divide-y divide-gray-100 border-y border-gray-100 text-[13px]">
-          {report.items.map((item) => {
-            const { name, area } = describe(item);
-            return (
-              <li key={`${item.area}:${item.ref}`} className="flex min-h-10 flex-col justify-center gap-0.5 py-2" data-status={item.status}>
-                <div className="flex items-center gap-2">
-                  <span className="w-16 shrink-0 text-gray-500">{CONFIG_OP_LABELS[item.op]}</span>
-                  <span className="min-w-0 truncate font-medium text-gray-900">{name}</span>
-                  <span className="min-w-0 truncate text-gray-500">{area}</span>
-                  <span className="ml-auto shrink-0">
-                    {item.status === "failed" ? <DenChip tone="danger">Failed</DenChip> : item.status === "skipped" ? <DenChip tone="neutral">Not run</DenChip> : <DenChip tone="success">Done</DenChip>}
-                  </span>
-                </div>
-                {item.error ? <span className="pl-[72px] text-red-700">{item.error}</span> : null}
-              </li>
-            );
-          })}
-        </ul>
-      ) : null}
-      {warnings.length > 0 ? (
-        <details className="group">
-          <summary className="cursor-pointer list-none text-[13px] text-gray-600 hover:text-gray-900">Warnings</summary>
-          <ul className="mt-1 list-disc pl-5 text-[13px] text-gray-600">
-            {warnings.map((warning) => <li key={warning}>{warning}</li>)}
-          </ul>
-        </details>
-      ) : null}
-    </section>
   );
 }

@@ -29,6 +29,7 @@ import {
   ConnectorTargetReconcileTable,
   ConnectorTargetTable,
   CloudRuntimeInstanceTable,
+  ConfigApplyRunTable,
   ConfigBlobAliasTable,
   ConfigBlobExportTable,
   ConfigChangeRequestTable,
@@ -697,6 +698,7 @@ export function registerDeleteOrganizationRoutes<T extends { Variables: OrgRoute
         await tx.delete(PluginTable).where(eq(PluginTable.organizationId, organizationId))
         await tx.delete(ConfigObjectTable).where(eq(ConfigObjectTable.organizationId, organizationId))
 
+        await tx.delete(ConfigApplyRunTable).where(eq(ConfigApplyRunTable.organizationId, organizationId))
         await tx.delete(ConfigChangeRequestTable).where(eq(ConfigChangeRequestTable.organizationId, organizationId))
         await tx.delete(ConfigBlobAliasTable).where(eq(ConfigBlobAliasTable.organizationId, organizationId))
         await tx.delete(ConfigBlobExportTable).where(eq(ConfigBlobExportTable.organizationId, organizationId))

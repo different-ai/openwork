@@ -19,6 +19,7 @@
 import { and, eq, inArray, isNull } from "@openwork-ee/den-db/drizzle"
 import { MarketplaceAccessGrantTable, MarketplaceTable } from "@openwork-ee/den-db/schema"
 import { denTypeIdPrefixes, normalizeDenTypeId } from "@openwork-ee/utils/typeid"
+import type { ConfigApplyStep } from "@openwork/types/den/config-blobs"
 import { z } from "zod"
 import { listTeamsForMember } from "../../member-teams.js"
 import { PluginArchAuthorizationError, requirePluginArchCapability, type PluginArchActorContext } from "../../routes/org/plugin-system/access.js"
@@ -30,9 +31,10 @@ import {
   setMarketplaceLifecycle,
   updateMarketplace,
 } from "../../routes/org/plugin-system/store.js"
-import { defineConfigArea, type ConfigApplyResult, type ConfigItem } from "../area.js"
+import { defineConfigArea, type ConfigApplyResult, type ConfigAreaContext, type ConfigItem } from "../area.js"
 import {
   ConfigApplyError,
+  applyWithSteps,
   configRouteContext,
   isJsonObject,
   loadMemberEmails,
@@ -42,6 +44,7 @@ import {
   specObject,
   specRefSchema,
   teamRef,
+  touches,
 } from "./route-support.js"
 
 const AREA = "settings.advanced.collections"
@@ -144,127 +147,200 @@ export const settingsCollectionsArea = defineConfigArea({
   secretFields: [],
   transactional: false,
 
-  async exportItems(ctx) {
-    const organizationId = normalizeDenTypeId("organization", ctx.organizationId)
-    const rows = await ctx.db
-      .select()
-      .from(MarketplaceTable)
-      .where(and(eq(MarketplaceTable.organizationId, organizationId), isNull(MarketplaceTable.deletedAt), inArray(MarketplaceTable.status, ["active", "archived"])))
-    if (rows.length === 0) return []
-    const grants = await ctx.db
-      .select()
-      .from(MarketplaceAccessGrantTable)
-      .where(and(inArray(MarketplaceAccessGrantTable.marketplaceId, rows.map((row) => row.id)), isNull(MarketplaceAccessGrantTable.removedAt)))
-    const [teamNames, memberEmails] = await Promise.all([
-      loadTeamNames(ctx.db, organizationId, grants.flatMap((grant) => grant.teamId ? [grant.teamId] : [])),
-      loadMemberEmails(ctx.db, organizationId, grants.flatMap((grant) => grant.orgMembershipId ? [grant.orgMembershipId] : [])),
-    ])
+  irreversible: (op) => op.kind === "delete"
+    ? [`The plugins in "${op.previous.name}" are taken out of it (plugins are not in config blobs yet), and access people had through it ends; a restore recreates it empty.`]
+    : [],
 
-    const items: ConfigItem[] = rows.map((row) => {
-      const rowGrants = grants.filter((grant) => grant.marketplaceId === row.id)
-      const teams = emptyByRole<{ id: string; name: string | undefined }>()
-      const members = emptyByRole<string>()
-      let orgWide: Role | null = null
-      for (const grant of rowGrants) {
-        if (grant.orgMembershipId) {
-          const email = memberEmails.get(grant.orgMembershipId)
-          if (email) members[grant.role].push(email)
-        } else if (grant.teamId) {
-          teams[grant.role].push({ id: grant.teamId, name: teamNames.get(grant.teamId) })
-        } else if (grant.orgWide) {
-          orgWide = grant.role
-        }
-      }
-      const teamRefs = Object.fromEntries(ROLES.map((role) => [role, teams[role].sort((left, right) => left.id.localeCompare(right.id)).map((team) => teamRef(team.id, team.name))]))
-      const memberRefs = Object.fromEntries(ROLES.map((role) => [role, [...new Set(members[role])].sort().map(personRef)]))
-      return {
-        id: row.id,
-        key: row.externalKey,
-        name: row.name,
-        spec: {
-          description: row.description ?? null,
-          logoUrl: row.logoUrl ?? null,
-          archived: row.status === "archived",
-          access: { orgWide, teams: teamRefs, members: memberRefs },
-        },
-      }
-    })
-    return items.sort((left, right) => left.name.localeCompare(right.name) || left.id.localeCompare(right.id))
+  async exportItems(ctx) {
+    return readCollections(ctx, null)
+  },
+
+  async readItems(ctx, ids) {
+    return readCollections(ctx, ids)
   },
 
   async apply(ctx, op): Promise<ConfigApplyResult> {
-    const { payload, c } = await configRouteContext(ctx)
-    const context: PluginArchActorContext = {
-      memberTeams: await listTeamsForMember({ organizationId: payload.organization.id, memberId: payload.currentMember.id }),
-      organizationContext: payload,
-      session: c.get("session"),
-    }
+    return applyWithSteps(async (log) => {
+      const { payload, c } = await configRouteContext(ctx)
+      const context: PluginArchActorContext = {
+        memberTeams: await listTeamsForMember({ organizationId: payload.organization.id, memberId: payload.currentMember.id }),
+        organizationContext: payload,
+        session: c.get("session"),
+      }
 
-    if (op.kind === "delete") {
-      await storeCall(`Remove "${op.previous.name}"`, () => setMarketplaceLifecycle({ context, marketplaceId: normalizeDenTypeId("marketplace", op.targetId), action: "delete" }))
-      return { localId: op.targetId }
-    }
+      if (op.kind === "delete") {
+        await log.run({ action: "delete", target: "collection", detail: op.previous.name }, () => storeCall(`Remove "${op.previous.name}"`, () => setMarketplaceLifecycle({ context, marketplaceId: normalizeDenTypeId("marketplace", op.targetId), action: "delete" })))
+        return { localId: op.targetId }
+      }
 
-    const raw = specObject(op.item.spec)
-    const parsed = applySpecSchema.safeParse(raw)
-    if (!parsed.success) throw new ConfigApplyError("invalid_spec", parsed.error.issues.map((issue) => `${issue.path.join(".")}: ${issue.message}`).join("; "))
-    const spec = parsed.data
-    const desired = desiredGrants(spec, raw)
-    const warnings: string[] = []
-    const label = `"${op.item.name}"`
+      const raw = specObject(op.item.spec)
+      const parsed = applySpecSchema.safeParse(raw)
+      if (!parsed.success) throw new ConfigApplyError("invalid_spec", parsed.error.issues.map((issue) => `${issue.path.join(".")}: ${issue.message}`).join("; "), 400, parsed.error.issues[0]?.path.join("."))
+      const spec = parsed.data
+      const desired = desiredGrants(spec, raw)
+      const warnings: string[] = []
+      const label = `"${op.item.name}"`
+      const inScope = (path: string) => op.kind === "create" || touches(op.changes, path)
 
-    let marketplaceId: ReturnType<typeof normalizeDenTypeId<"marketplace">>
-    let status: string
-    if (op.kind === "create") {
-      await storeCall(`Create ${label}`, () => requirePluginArchCapability(context, "marketplace.create"))
-      const created = await storeCall(`Create ${label}`, () => createMarketplace({
-        context,
-        name: op.item.name,
-        description: spec.description,
-        logoUrl: spec.logoUrl,
-        ...(op.item.key ? { externalKey: op.item.key } : {}),
-        ...(op.preferredId ? { id: normalizeDenTypeId("marketplace", op.preferredId) } : {}),
-      }))
-      marketplaceId = normalizeDenTypeId("marketplace", created.id)
-      status = "active"
-    } else {
-      marketplaceId = normalizeDenTypeId("marketplace", op.targetId)
-      const [row] = await ctx.db.select().from(MarketplaceTable).where(and(eq(MarketplaceTable.id, marketplaceId), eq(MarketplaceTable.organizationId, payload.organization.id))).limit(1)
-      if (!row || row.deletedAt) throw new ConfigApplyError("marketplace_not_found", `The collection "${op.previous.name}" no longer exists.`, 404)
-      if ((op.item.key ?? null) !== (row.externalKey ?? null)) warnings.push("A collection's key can't change; the existing key was kept.")
-      status = row.status
-      if (status !== "active" && !spec.archived) {
-        await storeCall(`Restore ${label}`, () => setMarketplaceLifecycle({ context, marketplaceId, action: "restore" }))
+      let marketplaceId: ReturnType<typeof normalizeDenTypeId<"marketplace">>
+      let status: string
+      if (op.kind === "create") {
+        await storeCall(`Create ${label}`, () => requirePluginArchCapability(context, "marketplace.create"))
+        const created = await log.run({ action: "create", target: "collection", detail: op.item.name }, () => storeCall(`Create ${label}`, () => createMarketplace({
+          context,
+          name: op.item.name,
+          description: spec.description,
+          logoUrl: spec.logoUrl,
+          ...(op.item.key ? { externalKey: op.item.key } : {}),
+          ...(op.preferredId ? { id: normalizeDenTypeId("marketplace", op.preferredId) } : {}),
+        })))
+        marketplaceId = normalizeDenTypeId("marketplace", created.id)
         status = "active"
+      } else {
+        marketplaceId = normalizeDenTypeId("marketplace", op.targetId)
+        const [row] = await ctx.db.select().from(MarketplaceTable).where(and(eq(MarketplaceTable.id, marketplaceId), eq(MarketplaceTable.organizationId, payload.organization.id))).limit(1)
+        if (!row || row.deletedAt) throw new ConfigApplyError("marketplace_not_found", `The collection "${op.previous.name}" no longer exists.`, 404)
+        if ((op.item.key ?? null) !== (row.externalKey ?? null) && touches(op.changes, "key")) warnings.push("A collection's key can't change; the existing key was kept.")
+        status = row.status
+        if (inScope("archived") && status !== "active" && !spec.archived) {
+          const id = marketplaceId
+          await log.run({ action: "set", target: "archived", detail: "false" }, () => storeCall(`Restore ${label}`, () => setMarketplaceLifecycle({ context, marketplaceId: id, action: "restore" })))
+          status = "active"
+        }
+        // Only the fields that change are sent; updateMarketplace keeps omitted ones.
+        const fields = {
+          ...(inScope("name") && op.item.name !== row.name ? { name: op.item.name } : {}),
+          ...(inScope("description") && spec.description !== (row.description ?? null) ? { description: spec.description } : {}),
+          ...(inScope("logoUrl") && spec.logoUrl !== (row.logoUrl ?? null) ? { logoUrl: spec.logoUrl } : {}),
+        }
+        const fieldSteps = Object.entries(fields).map(([field, value]): ConfigApplyStep => ({ action: "set", target: field, detail: value ?? "none" }))
+        const [first, ...rest] = fieldSteps
+        if (first) {
+          const id = marketplaceId
+          await log.run(first, () => storeCall(`Update ${label}`, () => updateMarketplace({ context, marketplaceId: id, ...fields })))
+          log.add(...rest)
+        }
       }
-      await storeCall(`Update ${label}`, () => updateMarketplace({ context, marketplaceId, name: op.item.name, description: spec.description, logoUrl: spec.logoUrl }))
-    }
 
-    // Grants: make the active grants exactly the blob's, through the same store calls as the access routes.
-    const current = await ctx.db
-      .select()
-      .from(MarketplaceAccessGrantTable)
-      .where(and(eq(MarketplaceAccessGrantTable.marketplaceId, marketplaceId), isNull(MarketplaceAccessGrantTable.removedAt)))
-    const currentByKey = new Map(current.map((grant) => [grantKey(grant), grant]))
-    for (const grant of desired) {
-      if (currentByKey.get(grant.key)?.role === grant.role) continue
-      await storeCall(`Grant access to ${label}`, () => createResourceAccessGrant({ context, resourceId: marketplaceId, resourceKind: "marketplace", value: { ...grant.value, role: grant.role } }))
-    }
-    const desiredKeys = new Set(desired.map((grant) => grant.key))
-    for (const grant of current) {
-      const key = grantKey(grant)
-      if (desiredKeys.has(key)) continue
-      if (grant.orgMembershipId === payload.currentMember.id && grant.role === "manager") {
-        // Same rule as the creator grant in the dashboard: the person applying keeps managing it.
-        warnings.push("Your own manager access was kept.")
-        continue
+      // Grants: only when the plan changes access; then only grants that are added, removed or change role.
+      if (inScope("access")) {
+        const id = marketplaceId
+        const current = await ctx.db
+          .select()
+          .from(MarketplaceAccessGrantTable)
+          .where(and(eq(MarketplaceAccessGrantTable.marketplaceId, marketplaceId), isNull(MarketplaceAccessGrantTable.removedAt)))
+        const currentByKey = new Map(current.map((grant) => [grantKey(grant), grant]))
+        const names = await grantNames(ctx, [...desired.map((grant) => grant.key), ...current.map(grantKey)])
+        for (const grant of desired) {
+          const existing = currentByKey.get(grant.key)
+          if (existing?.role === grant.role) continue
+          await log.run(
+            { action: existing ? "update" : "add", target: grantTarget(grant.key), detail: `${names.get(grant.key) ?? grant.key}: ${grant.role}` },
+            () => storeCall(`Grant access to ${label}`, () => createResourceAccessGrant({ context, resourceId: id, resourceKind: "marketplace", value: { ...grant.value, role: grant.role } })),
+          )
+        }
+        const desiredKeys = new Set(desired.map((grant) => grant.key))
+        for (const grant of current) {
+          const key = grantKey(grant)
+          if (desiredKeys.has(key)) continue
+          if (grant.orgMembershipId === payload.currentMember.id && grant.role === "manager") {
+            // Same rule as the creator grant in the dashboard: the person applying keeps managing it.
+            warnings.push("Your own manager access was kept.")
+            continue
+          }
+          await log.run(
+            { action: "remove", target: grantTarget(key), detail: `${names.get(key) ?? key}: ${grant.role}` },
+            () => storeCall(`Remove access to ${label}`, () => deleteResourceAccessGrant({ context, resourceId: id, resourceKind: "marketplace", grantId: grant.id })),
+          )
+        }
       }
-      await storeCall(`Remove access to ${label}`, () => deleteResourceAccessGrant({ context, resourceId: marketplaceId, resourceKind: "marketplace", grantId: grant.id }))
-    }
 
-    if (spec.archived && status === "active") {
-      await storeCall(`Archive ${label}`, () => setMarketplaceLifecycle({ context, marketplaceId, action: "archive" }))
-    }
-    return { localId: marketplaceId, ...(warnings.length > 0 ? { warnings } : {}) }
+      if (inScope("archived") && spec.archived && status === "active") {
+        const id = marketplaceId
+        await log.run({ action: "set", target: "archived", detail: "true" }, () => storeCall(`Archive ${label}`, () => setMarketplaceLifecycle({ context, marketplaceId: id, action: "archive" })))
+      }
+      return { localId: marketplaceId, warnings }
+    })
   },
 })
+
+function grantTarget(key: GrantKey): string {
+  if (key.startsWith("member:")) return "access.members"
+  if (key.startsWith("team:")) return "access.teams"
+  return "access.orgWide"
+}
+
+/** Team names and emails for grant keys, for step details. */
+async function grantNames(ctx: ConfigAreaContext, keys: readonly GrantKey[]): Promise<Map<GrantKey, string>> {
+  const teamIds = keys.flatMap((key) => key.startsWith("team:") ? [key.slice(5)] : [])
+  const memberIds = keys.flatMap((key) => key.startsWith("member:") ? [key.slice(7)] : [])
+  const [teamNames, memberEmails] = await Promise.all([
+    loadTeamNames(ctx.db, ctx.organizationId, teamIds),
+    loadMemberEmails(ctx.db, ctx.organizationId, memberIds),
+  ])
+  const out = new Map<GrantKey, string>([["org", "everyone"]])
+  for (const [id, name] of teamNames) out.set(`team:${id}`, name)
+  for (const [id, email] of memberEmails) out.set(`member:${id}`, email)
+  return out
+}
+
+async function readCollections(ctx: ConfigAreaContext, ids: readonly string[] | null): Promise<ConfigItem[]> {
+  const organizationId = normalizeDenTypeId("organization", ctx.organizationId)
+  const marketplaceIds = ids?.flatMap((id) => {
+    try {
+      return [normalizeDenTypeId("marketplace", id)]
+    } catch {
+      return []
+    }
+  }) ?? null
+  if (marketplaceIds && marketplaceIds.length === 0) return []
+  const rows = await ctx.db
+    .select()
+    .from(MarketplaceTable)
+    .where(and(
+      eq(MarketplaceTable.organizationId, organizationId),
+      isNull(MarketplaceTable.deletedAt),
+      inArray(MarketplaceTable.status, ["active", "archived"]),
+      marketplaceIds ? inArray(MarketplaceTable.id, marketplaceIds) : undefined,
+    ))
+  if (rows.length === 0) return []
+  const grants = await ctx.db
+    .select()
+    .from(MarketplaceAccessGrantTable)
+    .where(and(inArray(MarketplaceAccessGrantTable.marketplaceId, rows.map((row) => row.id)), isNull(MarketplaceAccessGrantTable.removedAt)))
+  const [teamNames, memberEmails] = await Promise.all([
+    loadTeamNames(ctx.db, organizationId, grants.flatMap((grant) => grant.teamId ? [grant.teamId] : [])),
+    loadMemberEmails(ctx.db, organizationId, grants.flatMap((grant) => grant.orgMembershipId ? [grant.orgMembershipId] : [])),
+  ])
+
+  const items: ConfigItem[] = rows.map((row) => {
+    const rowGrants = grants.filter((grant) => grant.marketplaceId === row.id)
+    const teams = emptyByRole<{ id: string; name: string | undefined }>()
+    const members = emptyByRole<string>()
+    let orgWide: Role | null = null
+    for (const grant of rowGrants) {
+      if (grant.orgMembershipId) {
+        const email = memberEmails.get(grant.orgMembershipId)
+        if (email) members[grant.role].push(email)
+      } else if (grant.teamId) {
+        teams[grant.role].push({ id: grant.teamId, name: teamNames.get(grant.teamId) })
+      } else if (grant.orgWide) {
+        orgWide = grant.role
+      }
+    }
+    const teamRefs = Object.fromEntries(ROLES.map((role) => [role, teams[role].sort((left, right) => left.id.localeCompare(right.id)).map((team) => teamRef(team.id, team.name))]))
+    const memberRefs = Object.fromEntries(ROLES.map((role) => [role, [...new Set(members[role])].sort().map(personRef)]))
+    return {
+      id: row.id,
+      key: row.externalKey,
+      name: row.name,
+      spec: {
+        description: row.description ?? null,
+        logoUrl: row.logoUrl ?? null,
+        archived: row.status === "archived",
+        access: { orgWide, teams: teamRefs, members: memberRefs },
+      },
+    }
+  })
+  return items.sort((left, right) => left.name.localeCompare(right.name) || left.id.localeCompare(right.id))
+}

@@ -919,12 +919,7 @@ export async function replaceExternalMcpConnectionAccess(input: {
       isNull(ExternalMcpConnectionAccessGrantTable.pluginMcpRequirementBindingId),
     ))
     if (sameAccess(existing, input.access)) return
-    await tx.delete(ExternalMcpConnectionAccessGrantTable).where(and(
-      eq(ExternalMcpConnectionAccessGrantTable.externalMcpConnectionId, input.connectionId),
-      isNull(ExternalMcpConnectionAccessGrantTable.pluginMcpRequirementBindingId),
-    ))
-    const rows = accessGrantRows(input)
-    if (rows.length > 0) await tx.insert(ExternalMcpConnectionAccessGrantTable).values(rows)
+    await writeDirectAccessDiff(tx, existing, input)
     if (usesMemberApiKey(connection)) {
       // Members who lose access lose their stored key; everyone else keeps theirs.
       await pruneUnreachableMemberApiKeys(tx, { organizationId: input.organizationId, connectionId: input.connectionId })
@@ -949,6 +944,32 @@ export async function replaceExternalMcpConnectionAccessForPluginBinding(input: 
   if (rows.length > 0) {
     await db.insert(ExternalMcpConnectionAccessGrantTable).values(rows)
   }
+}
+
+/**
+ * Makes a connection's direct grants equal `input.access`, writing only the
+ * grants that are added or removed: grants that stay keep their row.
+ */
+async function writeDirectAccessDiff(tx: ExternalMcpTransaction, existing: ExternalMcpConnectionAccessGrantRow[], input: {
+  organizationId: OrganizationId
+  connectionId: ExternalMcpConnectionId
+  access: ExternalMcpAccessInput
+  createdByOrgMembershipId: OrgMembershipId
+}): Promise<void> {
+  const wanted = accessGrantRows(input)
+  const keyOf = (row: { orgWide?: boolean | null; orgMembershipId?: string | null; teamId?: string | null }) =>
+    row.orgWide ? "org" : row.orgMembershipId ? `member:${row.orgMembershipId}` : row.teamId ? `team:${row.teamId}` : "none"
+  const wantedKeys = new Set(wanted.map(keyOf))
+  const kept = new Set<string>()
+  const removed = existing.filter((row) => {
+    const key = keyOf(row)
+    if (!wantedKeys.has(key) || kept.has(key)) return true
+    kept.add(key)
+    return false
+  }).map((row) => row.id)
+  if (removed.length > 0) await tx.delete(ExternalMcpConnectionAccessGrantTable).where(inArray(ExternalMcpConnectionAccessGrantTable.id, removed))
+  const added = wanted.filter((row) => !kept.has(keyOf(row)))
+  if (added.length > 0) await tx.insert(ExternalMcpConnectionAccessGrantTable).values(added)
 }
 
 function directAccessKeys(rows: ExternalMcpConnectionAccessGrantRow[]): Set<string> {
@@ -1270,20 +1291,12 @@ export async function updateExternalMcpConnection(
     }
 
     if (accessChanged) {
-      await tx.delete(ExternalMcpConnectionAccessGrantTable).where(and(
-        eq(ExternalMcpConnectionAccessGrantTable.organizationId, input.organizationId),
-        eq(ExternalMcpConnectionAccessGrantTable.externalMcpConnectionId, input.connectionId),
-        isNull(ExternalMcpConnectionAccessGrantTable.pluginMcpRequirementBindingId),
-      ))
-      const grantRows = accessGrantRows({
+      await writeDirectAccessDiff(tx, directGrants, {
         organizationId: input.organizationId,
         connectionId: input.connectionId,
         access: input.access,
         createdByOrgMembershipId: input.updatedByOrgMembershipId,
       })
-      if (grantRows.length > 0) {
-        await tx.insert(ExternalMcpConnectionAccessGrantTable).values(grantRows)
-      }
       if (usesMemberApiKey(existing)) {
         // Members who lose access lose their stored key; everyone else keeps theirs.
         await pruneUnreachableMemberApiKeys(tx, { organizationId: input.organizationId, connectionId: input.connectionId })

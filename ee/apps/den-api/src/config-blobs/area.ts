@@ -14,8 +14,11 @@
 import type { FeatureKey, FeatureMap } from "@openwork/features"
 import type { PermissionKey } from "@openwork/types/den/permissions"
 import type {
+  ConfigApplyFailure,
+  ConfigApplyStep,
   ConfigAreaKey,
   ConfigDeployment,
+  ConfigFieldChange,
   ConfigSpec,
 } from "@openwork/types/den/config-blobs"
 import type { z } from "zod"
@@ -75,13 +78,44 @@ export type ConfigApplyOp =
       /** Reuse this id for the new row when the adapter can (it is free on the whole instance). */
       preferredId?: string
     }
-  | { kind: "update"; targetId: string; item: ResolvedConfigItem; previous: ConfigItem }
+  | {
+      kind: "update"
+      targetId: string
+      item: ResolvedConfigItem
+      previous: ConfigItem
+      /**
+       * Field-level changes between `previous` and `item` (from the plan), plus
+       * `secretPaths` whose placeholder carries a new value. Adapters MUST write
+       * only what these name: untouched children, grants and settings are not
+       * rewritten. An update with no changes and no secret values is never sent.
+       */
+      changes: ConfigFieldChange[]
+      secretPaths: string[]
+    }
   | { kind: "delete"; targetId: string; previous: ConfigItem }
 
 export type ConfigApplyResult = {
   /** Local id of the created / updated row (for alias rows and later refs). */
   localId: string
   warnings?: string[]
+  /** Writes performed, in order (shown in the apply report). Empty means nothing was written (noop). */
+  steps?: ConfigApplyStep[]
+}
+
+/**
+ * Throw this from `apply` to report where an item failed. `stepsDone` are the
+ * writes that already happened for this item before the failure, so the report
+ * can say exactly what was left half-written.
+ */
+export class ConfigApplyItemError extends Error {
+  readonly failure: ConfigApplyFailure
+  readonly stepsDone: ConfigApplyStep[]
+  constructor(failure: ConfigApplyFailure, stepsDone: ConfigApplyStep[] = []) {
+    super(failure.message)
+    this.name = "ConfigApplyItemError"
+    this.failure = failure
+    this.stepsDone = stepsDone
+  }
 }
 
 export type ConfigNaturalKey = {
@@ -150,7 +184,20 @@ export type ConfigArea = {
   externalEffects?: boolean
   /** Items the engine must never delete (e.g. built-in roles, the applier themself). */
   protectedFromDelete?: (item: ConfigItem, ctx: ConfigAreaContext) => string | null
+  /**
+   * Effects of this op that a later revert cannot undo, in plain words for admins
+   * ("Invitation email sent to ada@example.com", "Members' sign-ins to this
+   * connector are revoked", "The stored API key is deleted and must be re-entered").
+   * Shown on the plan before approval and in the apply report.
+   */
+  irreversible?: (op: ConfigApplyOp) => string[]
   exportItems(ctx: ConfigAreaContext): Promise<ConfigItem[]>
+  /**
+   * Read only these items (by local id). Used by apply to re-check drift and to
+   * snapshot just the items about to be written, instead of exporting the area.
+   * Missing ids are simply absent from the result. Defaults to filtering exportItems.
+   */
+  readItems?(ctx: ConfigAreaContext, ids: string[]): Promise<ConfigItem[]>
   apply(ctx: ConfigAreaContext, op: ConfigApplyOp): Promise<ConfigApplyResult>
   /** Upgraders from older specVersions: `upgrade[1]` turns a v1 spec into v2. */
   upgrade?: Record<number, (spec: ConfigSpec) => ConfigSpec>

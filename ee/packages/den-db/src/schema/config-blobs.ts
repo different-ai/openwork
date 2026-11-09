@@ -1,5 +1,6 @@
 import { boolean, index, int, mysqlTable, timestamp, uniqueIndex, varchar } from "drizzle-orm/mysql-core"
 import {
+  CONFIG_APPLY_RUN_STATUSES,
   CONFIG_CHANGE_REQUEST_SOURCES,
   CONFIG_CHANGE_REQUEST_STATUSES,
   CONFIG_IMPORT_MODES,
@@ -68,9 +69,20 @@ export const ConfigChangeRequestTable = mysqlTable(
     approvedPlanHash: varchar("approved_plan_hash", { length: 80 }),
     applyRequestedBy: compatJsonColumn<ConfigChangeRequestApplyRequest>("apply_requested_by"),
     autoApply: boolean("auto_apply").notNull().default(false),
-    /** Export of the plan's scope taken just before apply: the revert source. */
+    /**
+     * The execution plan that goes with `plan` (ops, resolved refs, secret
+     * decisions, never secret values): apply runs it after re-reading only the
+     * items it writes, instead of re-exporting every area. Validated on read
+     * (den-api `config-blobs/engine/stored-execution.ts`).
+     */
+    execution: encryptedJsonColumn<unknown>("execution"),
+    /**
+     * The items an apply was about to write, as they were just before (a blob
+     * whose scope is the areas written): the source of "Restore previous config".
+     * Written once, before the first write; creates are not in it (they did not
+     * exist; the restore deletes them from the apply report).
+     */
     beforeSnapshot: encryptedJsonColumn<unknown>("before_snapshot"),
-    report: compatJsonColumn<ConfigApplyReport>("report"),
     errors: compatJsonColumn<string[]>("errors").notNull(),
     leaseOwner: varchar("lease_owner", { length: 64 }),
     leaseUntil: timestamp("lease_until", { fsp: 3 }),
@@ -85,6 +97,39 @@ export const ConfigChangeRequestTable = mysqlTable(
   (table) => [
     index("config_change_request_org_status").on(table.organizationId, table.status),
     index("config_change_request_queue").on(table.status, table.availableAt),
+  ],
+)
+
+/**
+ * One apply attempt of a change request, with its report (per item: status,
+ * steps written, failure). Written when the attempt starts, updated after
+ * every item, finalized at the end, so a crash leaves an accurate partial
+ * report. The failure columns repeat the first failed item for listing.
+ */
+export const ConfigApplyRunTable = mysqlTable(
+  "config_apply_run",
+  {
+    id: denTypeIdColumn("configApplyRun", "id").notNull().primaryKey(),
+    organizationId: denTypeIdColumn("organization", "organization_id").notNull(),
+    changeRequestId: denTypeIdColumn("configChangeRequest", "change_request_id").notNull(),
+    attempt: int("attempt").notNull(),
+    status: varchar("status", { length: 16, enum: CONFIG_APPLY_RUN_STATUSES }).notNull().default("running"),
+    requestedByMemberId: denTypeIdColumn("member", "requested_by_member_id"),
+    requestedByApiKeyId: varchar("requested_by_api_key_id", { length: 64 }),
+    runsAsMemberId: denTypeIdColumn("member", "runs_as_member_id"),
+    /** ConfigApplyReport. Encrypted: step details and failures name configuration. */
+    report: encryptedJsonColumn<ConfigApplyReport>("report").notNull(),
+    failureArea: varchar("failure_area", { length: 64 }).$type<ConfigAreaKey>(),
+    failureRef: varchar("failure_ref", { length: 200 }),
+    failureCode: varchar("failure_code", { length: 100 }),
+    startedAt: timestamp("started_at", { fsp: 3 }).notNull(),
+    finishedAt: timestamp("finished_at", { fsp: 3 }),
+    createdAt: timestamps.created_at,
+    updatedAt: timestamps.updated_at,
+  },
+  (table) => [
+    uniqueIndex("config_apply_run_attempt").on(table.changeRequestId, table.attempt),
+    index("config_apply_run_org_request").on(table.organizationId, table.changeRequestId),
   ],
 )
 

@@ -26,10 +26,12 @@
 import { and, eq, inArray, isNull } from "@openwork-ee/den-db/drizzle"
 import { ExternalMcpConnectionAccessGrantTable, ExternalMcpConnectionTable, OrgOAuthClientTable } from "@openwork-ee/den-db/schema"
 import { denTypeIdPrefixes, normalizeDenTypeId } from "@openwork-ee/utils/typeid"
+import type { ConfigApplyStep } from "@openwork/types/den/config-blobs"
 import { z } from "zod"
 import {
   getExternalMcpConnection,
   isSdkRegisteredOAuthClient,
+  listDirectExternalMcpConnectionAccess,
   normalizeExternalMcpIdentityUrl,
 } from "../../capability-sources/external-mcp-connections.js"
 import { externalMcpRequestHeaderNames } from "../../capability-sources/external-mcp-request-headers.js"
@@ -42,23 +44,32 @@ import {
   type UpdateConnectionBody,
 } from "../../routes/org/mcp-connections.js"
 import { hasPermission } from "../../routes/org/shared.js"
-import { defineConfigArea, type ConfigApplyResult, type ConfigItem } from "../area.js"
+import { defineConfigArea, type ConfigApplyOp, type ConfigApplyResult, type ConfigAreaContext, type ConfigItem } from "../area.js"
 import {
   CONFIG_APPLY_SESSION_ID,
   ConfigApplyError,
+  ConfigStepLog,
+  applyWithSteps,
   audienceRefs,
+  audienceSteps,
   configRouteContext,
   expectRouteOk,
+  idDiff,
   isJsonObject,
   loadMemberEmails,
   loadTeamNames,
+  opTouched,
+  pathUnder,
   resolvedRefIds,
   resolvedSecret,
+  secretEffects,
+  secretIsSet,
   secretPlaceholder,
   specAudienceSchema,
   specObject,
   specSecretSchema,
   stringField,
+  touches,
   type JsonObject,
 } from "./route-support.js"
 
@@ -172,182 +183,85 @@ export const connectorsMcpArea = defineConfigArea({
   transactional: false,
   externalEffects: true,
 
-  async exportItems(ctx) {
-    const organizationId = normalizeDenTypeId("organization", ctx.organizationId)
-    const rows = await ctx.db
-      .select()
-      .from(ExternalMcpConnectionTable)
-      .where(and(eq(ExternalMcpConnectionTable.organizationId, organizationId), eq(ExternalMcpConnectionTable.kind, "external_mcp")))
-    if (rows.length === 0) return []
-    const ids = rows.map((row) => row.id)
-    const [grants, clients] = await Promise.all([
-      ctx.db
-        .select()
-        .from(ExternalMcpConnectionAccessGrantTable)
-        .where(and(
-          eq(ExternalMcpConnectionAccessGrantTable.organizationId, organizationId),
-          inArray(ExternalMcpConnectionAccessGrantTable.externalMcpConnectionId, ids),
-          isNull(ExternalMcpConnectionAccessGrantTable.pluginMcpRequirementBindingId),
-        )),
-      ctx.db
-        .select()
-        .from(OrgOAuthClientTable)
-        .where(and(eq(OrgOAuthClientTable.organizationId, organizationId), inArray(OrgOAuthClientTable.providerId, ids))),
-    ])
-    const [teamNames, memberEmails] = await Promise.all([
-      loadTeamNames(ctx.db, organizationId, grants.flatMap((grant) => grant.teamId ? [grant.teamId] : [])),
-      loadMemberEmails(ctx.db, organizationId, grants.flatMap((grant) => grant.orgMembershipId ? [grant.orgMembershipId] : [])),
-    ])
-    const clientsByConnection = new Map(clients.map((client) => [client.providerId, client]))
-
-    const items: ConfigItem[] = rows.map((row) => {
-      const rowGrants = grants.filter((grant) => grant.externalMcpConnectionId === row.id)
-      const client = clientsByConnection.get(row.id)
-      const clientExtra = client ? normalizeOAuthClientExtra(client.extra) : null
-      const configuration = row.oauthConfiguration
-      const oauth: OAuthSpec | null = row.authType === "oauth"
-        ? {
-            authorizationServerIssuer: configuration?.authorizationServerIssuer ?? null,
-            requestedScopes: [...(configuration?.requestedScopes ?? [])].sort(),
-            manualOAuthEndpoints: configuration?.manualOAuthEndpoints
-              ? {
-                  authorizationEndpoint: configuration.manualOAuthEndpoints.authorizationEndpoint,
-                  tokenEndpoint: configuration.manualOAuthEndpoints.tokenEndpoint,
-                }
-              : null,
-            client: client && !isSdkRegisteredOAuthClient(clientExtra)
-              ? {
-                  clientId: client.clientId,
-                  tokenEndpointAuthMethod: readTokenEndpointAuthMethod(clientExtra?.tokenEndpointAuthMethod),
-                  clientSecret: secretPlaceholder(AREA, row.id, "oauth.client.clientSecret", Boolean(client.clientSecret)),
-                }
-              : null,
-          }
-        : null
-      const audience = audienceRefs({
-        teamIds: rowGrants.flatMap((grant) => grant.teamId ? [grant.teamId] : []),
-        memberIds: rowGrants.flatMap((grant) => grant.orgMembershipId ? [grant.orgMembershipId] : []),
-        teamNames,
-        memberEmails,
-      })
-      return {
-        id: row.id,
-        key: row.externalKey,
-        name: row.name,
-        spec: {
-          url: row.url,
-          authType: row.authType,
-          credentialMode: row.credentialMode,
-          exposeDirectly: row.exposeDirectly,
-          apiKeyAuthScheme: row.authType === "apikey" ? row.apiKeyAuthScheme : "bearer",
-          apiKey: row.authType === "apikey" && row.credentialMode === "shared"
-            ? secretPlaceholder(AREA, row.id, "apiKey", Boolean(row.apiKey))
-            : null,
-          requestHeaders: externalMcpRequestHeaderNames(row.requestHeaders).map((name) => ({
-            name,
-            value: secretPlaceholder(AREA, row.id, `requestHeaders.${name}.value`, true),
-          })),
-          oauth,
-          access: { orgWide: rowGrants.some((grant) => grant.orgWide), ...audience },
-        },
+  irreversible: (op) => {
+    if (op.kind === "delete") {
+      return [
+        `People's sign-ins and personal keys for "${op.previous.name}" are deleted; they connect again after a restore.`,
+        `Its shared API key, request header values and OAuth client secret are deleted; they must be re-entered to restore it.`,
+      ]
+    }
+    if (op.kind !== "update") return []
+    const out: string[] = []
+    const changes = op.changes
+    if (touches(changes, "url", "authType", "credentialMode", "apiKeyAuthScheme", "oauth.authorizationServerIssuer", "oauth.manualOAuthEndpoints")) {
+      out.push(`Members' sign-ins to "${op.previous.name}" are revoked; they sign in again.`)
+      if (touches(changes, "url", "authType", "credentialMode", "apiKeyAuthScheme", "oauth.authorizationServerIssuer") && isJsonObject(op.previous.spec.oauth) && isJsonObject(op.previous.spec.oauth.client)) {
+        const secret = isJsonObject(op.item.spec.oauth) && isJsonObject(op.item.spec.oauth.client) ? op.item.spec.oauth.client.clientSecret : undefined
+        if (secretIsSet(op.previous.spec.oauth.client.clientSecret) && !(isJsonObject(secret) && secret.decision === "value")) {
+          out.push(`The OAuth client secret of "${op.previous.name}" is deleted (its identity changes); it must be re-entered.`)
+        }
       }
-    })
-    return items.sort((left, right) => left.name.localeCompare(right.name) || left.id.localeCompare(right.id))
+    }
+    if (op.previous.spec.authType === "apikey" && op.previous.spec.credentialMode === "per_member" && changes.some((change) => pathUnder(change.path, "access") && (change.removed?.length ?? 0) > 0)) {
+      out.push(`People who lose access to "${op.previous.name}" lose their stored personal API key.`)
+    }
+    out.push(...secretEffects(op.item.spec.apiKey, `shared API key of "${op.previous.name}"`, op.previous.spec.apiKey))
+    const headers = Array.isArray(op.item.spec.requestHeaders) ? op.item.spec.requestHeaders : []
+    for (const header of headers) {
+      if (!isJsonObject(header) || typeof header.name !== "string") continue
+      const before = Array.isArray(op.previous.spec.requestHeaders) ? op.previous.spec.requestHeaders.find((entry) => isJsonObject(entry) && entry.name === header.name) : undefined
+      out.push(...secretEffects(header.value, `value of request header ${header.name}`, isJsonObject(before) ? before.value : { set: false }))
+    }
+    if (isJsonObject(op.item.spec.oauth) && isJsonObject(op.item.spec.oauth.client)) {
+      const previousClient = isJsonObject(op.previous.spec.oauth) && isJsonObject(op.previous.spec.oauth.client) ? op.previous.spec.oauth.client : null
+      out.push(...secretEffects(op.item.spec.oauth.client.clientSecret, `OAuth client secret of "${op.previous.name}"`, previousClient?.clientSecret ?? { set: false }))
+    }
+    return [...new Set(out)]
+  },
+
+  async exportItems(ctx) {
+    return readConnections(ctx, null)
+  },
+
+  async readItems(ctx, ids) {
+    return readConnections(ctx, ids)
   },
 
   async apply(ctx, op): Promise<ConfigApplyResult> {
-    const { c, payload, requestId } = await configRouteContext(ctx)
+    return applyWithSteps((log) => applyConnection(ctx, op, log))
+  },
+})
 
-    if (op.kind === "delete") {
-      const connection = await getExternalMcpConnection({ organizationId: payload.organization.id, connectionId: normalizeDenTypeId("externalMcpConnection", op.targetId) })
-      if (!connection) return { localId: op.targetId, warnings: ["The connection was already removed."] }
+async function applyConnection(ctx: ConfigAreaContext, op: ConfigApplyOp, log: ConfigStepLog): Promise<Omit<ConfigApplyResult, "steps">> {
+  const { c, payload, requestId } = await configRouteContext(ctx)
+
+  if (op.kind === "delete") {
+    const connection = await getExternalMcpConnection({ organizationId: payload.organization.id, connectionId: normalizeDenTypeId("externalMcpConnection", op.targetId) })
+    if (!connection) return { localId: op.targetId, warnings: ["The connection was already removed."] }
+    await log.run({ action: "delete", target: "connection", detail: connection.name }, async () => {
       const result = await deleteExternalConnection(c, payload, connection)
       if (result.response) await expectRouteOk(result.response, `Remove "${connection.name}"`)
-      return { localId: connection.id }
+    })
+    return { localId: connection.id }
+  }
+
+  const raw = specObject(op.item.spec)
+  const spec = parseApplySpec(raw)
+  const specAccess = readAccess(raw)
+  const headers = readHeaderDecisions(raw.requestHeaders)
+  const apiKeySecret = resolvedSecret(raw.apiKey, "apiKey")
+  const clientSecret = readClientSecret(raw)
+  const warnings: string[] = []
+  const accessInput = { orgWide: specAccess.orgWide, memberIds: specAccess.memberIds, teamIds: specAccess.teamIds }
+
+  if (op.kind === "create") {
+    const droppedHeaders = headers.filter((header) => typeof header.value !== "string").map((header) => header.name)
+    if (droppedHeaders.length > 0) warnings.push(`Request headers without a value were not created: ${droppedHeaders.join(", ")}.`)
+    if (spec.authType === "apikey" && spec.credentialMode === "shared" && apiKeySecret?.decision !== "value") {
+      warnings.push("Created without its shared API key: someone must enter it before the connection works.")
     }
-
-    const raw = specObject(op.item.spec)
-    const spec = parseApplySpec(raw)
-    const access = readAccess(raw)
-    const headers = readHeaderDecisions(raw.requestHeaders)
-    const apiKeySecret = resolvedSecret(raw.apiKey, "apiKey")
-    const clientSecret = readClientSecret(raw)
-    const warnings: string[] = []
-    const accessInput = { orgWide: access.orgWide, memberIds: access.memberIds, teamIds: access.teamIds }
-
-    if (op.kind === "create") {
-      const droppedHeaders = headers.filter((header) => typeof header.value !== "string").map((header) => header.name)
-      if (droppedHeaders.length > 0) warnings.push(`Request headers without a value were not created: ${droppedHeaders.join(", ")}.`)
-      if (spec.authType === "apikey" && spec.credentialMode === "shared" && apiKeySecret?.decision !== "value") {
-        warnings.push("Created without its shared API key: someone must enter it before the connection works.")
-      }
-      const client = spec.oauth?.client
-      const body: CreateExternalConnectionBody = {
-        name: op.item.name,
-        url: spec.url,
-        authType: spec.authType,
-        credentialMode: spec.credentialMode,
-        exposeDirectly: spec.exposeDirectly,
-        ...(apiKeySecret?.decision === "value" ? { apiKey: apiKeySecret.value } : {}),
-        ...(spec.authType === "apikey" ? { apiKeyAuthScheme: spec.apiKeyAuthScheme } : {}),
-        ...(spec.authType !== "none" || headers.length > 0
-          ? { requestHeaders: headers.flatMap((header) => typeof header.value === "string" ? [{ name: header.name, value: header.value }] : []) }
-          : {}),
-        ...(spec.authType === "oauth" && spec.oauth
-          ? {
-              ...(client ? {
-                oauthClient: {
-                  clientId: client.clientId,
-                  ...(clientSecret?.decision === "value" ? { clientSecret: clientSecret.value } : {}),
-                  ...(client.tokenEndpointAuthMethod ? { tokenEndpointAuthMethod: client.tokenEndpointAuthMethod } : {}),
-                },
-              } : {}),
-              ...(spec.oauth.manualOAuthEndpoints ? { manualOAuthEndpoints: spec.oauth.manualOAuthEndpoints } : {}),
-              ...(spec.oauth.authorizationServerIssuer ? { authorizationServerIssuer: spec.oauth.authorizationServerIssuer } : {}),
-              ...(spec.oauth.requestedScopes.length > 0 ? { requestedScopes: spec.oauth.requestedScopes } : {}),
-            }
-          : {}),
-        access: accessInput,
-      }
-      const created = await expectRouteOk(await createExternalConnectionResponse(
-        c, payload, body, op.item.key ?? undefined, 201, CONFIG_APPLY_SESSION_ID, requestId, false,
-        op.preferredId ? { preferredId: normalizeDenTypeId("externalMcpConnection", op.preferredId) } : {},
-      ), `Create "${op.item.name}"`)
-      return { localId: stringField(created, "id"), ...(warnings.length > 0 ? { warnings } : {}) }
-    }
-
-    const connection = await getExternalMcpConnection({ organizationId: payload.organization.id, connectionId: normalizeDenTypeId("externalMcpConnection", op.targetId) })
-    if (!connection) throw new ConfigApplyError("connection_not_found", `The connection "${op.previous.name}" no longer exists.`, 404)
-    // Same checks as PUT /v1/mcp-connections/:connectionId before it replaces.
-    const canUpdateAnyConnection = await hasPermission(c, "connections.update")
-    if (!canUpdateAnyConnection && connection.createdByOrgMembershipId !== payload.currentMember.id) {
-      throw new ConfigApplyError("forbidden", `Only people allowed to edit any connection, or its creator, can edit "${connection.name}".`, 403)
-    }
-    if ((op.item.key ?? null) !== (connection.externalKey ?? null)) {
-      warnings.push("A connection's key can't change; the existing key was kept.")
-    }
-    if (apiKeySecret?.decision === "unset") warnings.push("A saved shared API key can't be cleared by an import; it was kept.")
-    const unsetHeaders = headers.filter((header) => header.value === null).map((header) => header.name)
-    if (unsetHeaders.length > 0) warnings.push(`Request headers set to "unset" were removed: ${unsetHeaders.join(", ")}.`)
-
-    const stored = connection.oauthConfiguration
-    const storedClient = spec.oauth?.client
-      ? await ctx.db.select().from(OrgOAuthClientTable).where(and(eq(OrgOAuthClientTable.organizationId, payload.organization.id), eq(OrgOAuthClientTable.providerId, connection.id))).limit(1).then((rows) => rows[0] ?? null)
-      : null
-    const storedClientExtra = storedClient ? normalizeOAuthClientExtra(storedClient.extra) : null
-    const client = spec.oauth?.client ?? null
-    const clientChanged = client !== null && (
-      client.clientId !== storedClient?.clientId
-      || (client.tokenEndpointAuthMethod !== null && client.tokenEndpointAuthMethod !== readTokenEndpointAuthMethod(storedClientExtra?.tokenEndpointAuthMethod))
-      || clientSecret?.decision === "value"
-    )
-    const oauth = spec.authType === "oauth" ? spec.oauth : null
-    const issuer = oauth?.authorizationServerIssuer ?? null
-    const manual = oauth?.manualOAuthEndpoints ?? null
-    const storedManual = stored?.manualOAuthEndpoints ?? null
-
-    const body: UpdateConnectionBody = {
-      expectedUpdatedAt: connection.updatedAt.toISOString(),
+    const client = spec.oauth?.client
+    const body: CreateExternalConnectionBody = {
       name: op.item.name,
       url: spec.url,
       authType: spec.authType,
@@ -355,26 +269,255 @@ export const connectorsMcpArea = defineConfigArea({
       exposeDirectly: spec.exposeDirectly,
       ...(apiKeySecret?.decision === "value" ? { apiKey: apiKeySecret.value } : {}),
       ...(spec.authType === "apikey" ? { apiKeyAuthScheme: spec.apiKeyAuthScheme } : {}),
-      requestHeaders: headers.flatMap((header) => header.value === null ? [] : [header.value === undefined ? { name: header.name } : { name: header.name, value: header.value }]),
-      // Unchanged OAuth settings are not resent: a marketplace-bound connection refuses them even when equal.
-      ...(oauth && client && clientChanged ? {
-        oauthClient: {
-          clientId: client.clientId,
-          ...(clientSecret?.decision === "value" ? { clientSecret: clientSecret.value } : {}),
-          ...(client.tokenEndpointAuthMethod ? { tokenEndpointAuthMethod: client.tokenEndpointAuthMethod } : {}),
-        },
-      } : {}),
-      ...(oauth && issuer !== (stored?.authorizationServerIssuer ?? null) ? { authorizationServerIssuer: issuer } : {}),
-      ...(oauth && !sameStrings(oauth.requestedScopes, stored?.requestedScopes ?? []) ? { requestedScopes: oauth.requestedScopes } : {}),
-      ...(oauth && (manual?.authorizationEndpoint !== storedManual?.authorizationEndpoint || manual?.tokenEndpoint !== storedManual?.tokenEndpoint)
-        ? { manualOAuthEndpoints: manual }
+      ...(spec.authType !== "none" || headers.length > 0
+        ? { requestHeaders: headers.flatMap((header) => typeof header.value === "string" ? [{ name: header.name, value: header.value }] : []) }
+        : {}),
+      ...(spec.authType === "oauth" && spec.oauth
+        ? {
+            ...(client ? {
+              oauthClient: {
+                clientId: client.clientId,
+                ...(clientSecret?.decision === "value" ? { clientSecret: clientSecret.value } : {}),
+                ...(client.tokenEndpointAuthMethod ? { tokenEndpointAuthMethod: client.tokenEndpointAuthMethod } : {}),
+              },
+            } : {}),
+            ...(spec.oauth.manualOAuthEndpoints ? { manualOAuthEndpoints: spec.oauth.manualOAuthEndpoints } : {}),
+            ...(spec.oauth.authorizationServerIssuer ? { authorizationServerIssuer: spec.oauth.authorizationServerIssuer } : {}),
+            ...(spec.oauth.requestedScopes.length > 0 ? { requestedScopes: spec.oauth.requestedScopes } : {}),
+          }
         : {}),
       access: accessInput,
     }
-    if (oauth && client === null && op.previous.spec.oauth !== null && isJsonObject(op.previous.spec.oauth) && op.previous.spec.oauth.client !== null) {
-      warnings.push("The pre-registered OAuth client can't be removed by an import; it was kept.")
-    }
+    const localId = await log.run({ action: "create", target: "connection", detail: op.item.name }, async () => {
+      const created = await expectRouteOk(await createExternalConnectionResponse(
+        c, payload, body, op.item.key ?? undefined, 201, CONFIG_APPLY_SESSION_ID, requestId, false,
+        op.preferredId ? { preferredId: normalizeDenTypeId("externalMcpConnection", op.preferredId) } : {},
+      ), `Create "${op.item.name}"`)
+      return stringField(created, "id")
+    })
+    return { localId, warnings }
+  }
+
+  const connection = await getExternalMcpConnection({ organizationId: payload.organization.id, connectionId: normalizeDenTypeId("externalMcpConnection", op.targetId) })
+  if (!connection) throw new ConfigApplyError("connection_not_found", `The connection "${op.previous.name}" no longer exists.`, 404)
+  // Same checks as PUT /v1/mcp-connections/:connectionId before it replaces.
+  const canUpdateAnyConnection = await hasPermission(c, "connections.update")
+  if (!canUpdateAnyConnection && connection.createdByOrgMembershipId !== payload.currentMember.id) {
+    throw new ConfigApplyError("forbidden", `Only people allowed to edit any connection, or its creator, can edit "${connection.name}".`, 403)
+  }
+  const touched = opTouched(op)
+  const inScope = (...paths: string[]) => touches(touched, ...paths)
+  if (inScope("key") && (op.item.key ?? null) !== (connection.externalKey ?? null)) {
+    warnings.push("A connection's key can't change; the existing key was kept.")
+  }
+  if (apiKeySecret?.decision === "unset") warnings.push("A saved shared API key can't be cleared by an import; it was kept.")
+
+  // The PUT handler replaces the connection, so every part the plan does not change is sent
+  // as stored: updateExternalMcpConnection then writes only what differs (row fields, the
+  // OAuth client, and access grants as a diff).
+  const name = inScope("name") ? op.item.name : connection.name
+  const url = inScope("url") ? spec.url : connection.url
+  const authType = inScope("authType") ? spec.authType : connection.authType
+  const credentialMode = inScope("credentialMode") ? spec.credentialMode : connection.credentialMode
+  const authTypeChanges = authType !== connection.authType
+  const headersInScope = inScope("requestHeaders") || (inScope("url") && normalizeExternalMcpIdentityUrl(url) !== normalizeExternalMcpIdentityUrl(connection.url))
+  const unsetHeaders = headersInScope ? headers.filter((header) => header.value === null).map((header) => header.name) : []
+  if (unsetHeaders.length > 0) warnings.push(`Request headers set to "unset" were removed: ${unsetHeaders.join(", ")}.`)
+
+  const stored = connection.oauthConfiguration
+  const storedClient = spec.oauth?.client
+    ? await ctx.db.select().from(OrgOAuthClientTable).where(and(eq(OrgOAuthClientTable.organizationId, payload.organization.id), eq(OrgOAuthClientTable.providerId, connection.id))).limit(1).then((rows) => rows[0] ?? null)
+    : null
+  const storedClientExtra = storedClient ? normalizeOAuthClientExtra(storedClient.extra) : null
+  const client = spec.oauth?.client ?? null
+  const clientChanged = client !== null && (inScope("oauth.client") || authTypeChanges) && (
+    client.clientId !== storedClient?.clientId
+    || (client.tokenEndpointAuthMethod !== null && client.tokenEndpointAuthMethod !== readTokenEndpointAuthMethod(storedClientExtra?.tokenEndpointAuthMethod))
+    || clientSecret?.decision === "value"
+  )
+  const oauth = authType === "oauth" ? spec.oauth : null
+  const issuer = oauth?.authorizationServerIssuer ?? null
+  const manual = oauth?.manualOAuthEndpoints ?? null
+  const storedManual = stored?.manualOAuthEndpoints ?? null
+  const issuerChanged = oauth !== null && (inScope("oauth.authorizationServerIssuer") || authTypeChanges) && issuer !== (stored?.authorizationServerIssuer ?? null)
+  const scopesChanged = oauth !== null && (inScope("oauth.requestedScopes") || authTypeChanges) && !sameStrings(oauth.requestedScopes, stored?.requestedScopes ?? [])
+  const manualChanged = oauth !== null && (inScope("oauth.manualOAuthEndpoints") || authTypeChanges)
+    && (manual?.authorizationEndpoint !== storedManual?.authorizationEndpoint || manual?.tokenEndpoint !== storedManual?.tokenEndpoint)
+  const directGrants = await listDirectExternalMcpConnectionAccess({ organizationId: payload.organization.id, connectionId: connection.id })
+  const accessNow = {
+    orgWide: directGrants.some((grant) => grant.orgWide),
+    memberIds: [...new Set(directGrants.flatMap((grant) => grant.orgMembershipId ? [grant.orgMembershipId] : []))],
+    teamIds: [...new Set(directGrants.flatMap((grant) => grant.teamId ? [grant.teamId] : []))],
+  }
+  const access = inScope("access") ? accessInput : accessNow
+
+  const body: UpdateConnectionBody = {
+    expectedUpdatedAt: connection.updatedAt.toISOString(),
+    name,
+    url,
+    authType,
+    credentialMode,
+    ...(inScope("exposeDirectly") ? { exposeDirectly: spec.exposeDirectly } : {}),
+    ...(apiKeySecret?.decision === "value" ? { apiKey: apiKeySecret.value } : {}),
+    ...(authType === "apikey" && inScope("apiKeyAuthScheme") ? { apiKeyAuthScheme: spec.apiKeyAuthScheme } : {}),
+    ...(headersInScope
+      ? { requestHeaders: headers.flatMap((header) => header.value === null ? [] : [header.value === undefined ? { name: header.name } : { name: header.name, value: header.value }]) }
+      : {}),
+    // Unchanged OAuth settings are not resent: a marketplace-bound connection refuses them even when equal.
+    ...(oauth && client && clientChanged ? {
+      oauthClient: {
+        clientId: client.clientId,
+        ...(clientSecret?.decision === "value" ? { clientSecret: clientSecret.value } : {}),
+        ...(client.tokenEndpointAuthMethod ? { tokenEndpointAuthMethod: client.tokenEndpointAuthMethod } : {}),
+      },
+    } : {}),
+    ...(issuerChanged ? { authorizationServerIssuer: issuer } : {}),
+    ...(scopesChanged && oauth ? { requestedScopes: oauth.requestedScopes } : {}),
+    ...(manualChanged ? { manualOAuthEndpoints: manual } : {}),
+    access,
+  }
+  if (inScope("oauth.client") && oauth && client === null && op.previous.spec.oauth !== null && isJsonObject(op.previous.spec.oauth) && op.previous.spec.oauth.client !== null) {
+    warnings.push("The pre-registered OAuth client can't be removed by an import; it was kept.")
+  }
+
+  const steps: ConfigApplyStep[] = [
+    ...(name !== connection.name ? [{ action: "set" as const, target: "name", detail: name }] : []),
+    ...(url !== connection.url ? [{ action: "set" as const, target: "url", detail: url }] : []),
+    ...(authTypeChanges ? [{ action: "set" as const, target: "authType", detail: authType }] : []),
+    ...(credentialMode !== connection.credentialMode ? [{ action: "set" as const, target: "credentialMode", detail: credentialMode }] : []),
+    ...(body.exposeDirectly !== undefined && body.exposeDirectly !== connection.exposeDirectly ? [{ action: "set" as const, target: "exposeDirectly", detail: String(body.exposeDirectly) }] : []),
+    ...(body.apiKeyAuthScheme !== undefined && body.apiKeyAuthScheme !== connection.apiKeyAuthScheme ? [{ action: "set" as const, target: "apiKeyAuthScheme", detail: body.apiKeyAuthScheme }] : []),
+    ...(body.apiKey !== undefined ? [{ action: "set" as const, target: "apiKey" }] : []),
+    ...(headersInScope ? headerSteps(op.previous.spec.requestHeaders, headers) : []),
+    ...(body.oauthClient ? [{ action: "set" as const, target: "oauth.client", detail: body.oauthClient.clientId }] : []),
+    ...(issuerChanged ? [{ action: "set" as const, target: "oauth.authorizationServerIssuer", detail: issuer ?? "discovered" }] : []),
+    ...(scopesChanged && oauth ? [{ action: "set" as const, target: "oauth.requestedScopes", detail: oauth.requestedScopes.join(" ") || "default" }] : []),
+    ...(manualChanged ? [{ action: "set" as const, target: "oauth.manualOAuthEndpoints", detail: manual ? manual.authorizationEndpoint : "discovery" }] : []),
+    ...(inScope("access") ? [
+      ...(access.orgWide !== accessNow.orgWide ? [{ action: "set" as const, target: "access.orgWide", detail: String(access.orgWide) }] : []),
+      ...await audienceSteps(ctx.db, payload.organization.id, "access", {
+        teams: idDiff(accessNow.teamIds, access.orgWide ? [] : access.teamIds),
+        members: idDiff(accessNow.memberIds, access.orgWide ? [] : access.memberIds),
+      }),
+    ] : []),
+  ]
+  const [first, ...rest] = steps
+  if (!first) return { localId: connection.id, warnings }
+  // One PUT: all of these are written in one transaction, or none.
+  await log.run(first, async () => {
     await expectRouteOk(await replaceExternalConnectionResponse(c, payload, body, connection, canUpdateAnyConnection, c.get("session"), requestId), `Update "${op.item.name}"`)
-    return { localId: connection.id, ...(warnings.length > 0 ? { warnings } : {}) }
-  },
-})
+  })
+  log.add(...rest)
+  return { localId: connection.id, warnings }
+}
+
+function headerNames(value: unknown): string[] {
+  if (!Array.isArray(value)) return []
+  return value.flatMap((header) => isJsonObject(header) && typeof header.name === "string" ? [header.name] : [])
+}
+
+/** One step per request header added, removed, given a new value or unset. */
+function headerSteps(previous: unknown, next: HeaderDecision[]): ConfigApplyStep[] {
+  const before = new Set(headerNames(previous))
+  const after = new Set(next.filter((header) => header.value !== null).map((header) => header.name))
+  return [
+    ...next.filter((header) => header.value !== null && !before.has(header.name)).map((header): ConfigApplyStep => ({ action: "add", target: `requestHeaders[${header.name}]` })),
+    ...next.filter((header) => typeof header.value === "string" && before.has(header.name)).map((header): ConfigApplyStep => ({ action: "set", target: `requestHeaders[${header.name}].value` })),
+    ...[...before].filter((name) => !after.has(name)).map((name): ConfigApplyStep => ({ action: "remove", target: `requestHeaders[${name}]` })),
+  ]
+}
+
+async function readConnections(ctx: ConfigAreaContext, ids: readonly string[] | null): Promise<ConfigItem[]> {
+  const organizationId = normalizeDenTypeId("organization", ctx.organizationId)
+  const connectionIds = ids?.flatMap((id) => {
+    try {
+      return [normalizeDenTypeId("externalMcpConnection", id)]
+    } catch {
+      return []
+    }
+  }) ?? null
+  if (connectionIds && connectionIds.length === 0) return []
+  const rows = await ctx.db
+    .select()
+    .from(ExternalMcpConnectionTable)
+    .where(and(
+      eq(ExternalMcpConnectionTable.organizationId, organizationId),
+      eq(ExternalMcpConnectionTable.kind, "external_mcp"),
+      connectionIds ? inArray(ExternalMcpConnectionTable.id, connectionIds) : undefined,
+    ))
+  if (rows.length === 0) return []
+  const rowIds = rows.map((row) => row.id)
+  const [grants, clients] = await Promise.all([
+    ctx.db
+      .select()
+      .from(ExternalMcpConnectionAccessGrantTable)
+      .where(and(
+        eq(ExternalMcpConnectionAccessGrantTable.organizationId, organizationId),
+        inArray(ExternalMcpConnectionAccessGrantTable.externalMcpConnectionId, rowIds),
+        isNull(ExternalMcpConnectionAccessGrantTable.pluginMcpRequirementBindingId),
+      )),
+    ctx.db
+      .select()
+      .from(OrgOAuthClientTable)
+      .where(and(eq(OrgOAuthClientTable.organizationId, organizationId), inArray(OrgOAuthClientTable.providerId, rowIds))),
+  ])
+  const [teamNames, memberEmails] = await Promise.all([
+    loadTeamNames(ctx.db, organizationId, grants.flatMap((grant) => grant.teamId ? [grant.teamId] : [])),
+    loadMemberEmails(ctx.db, organizationId, grants.flatMap((grant) => grant.orgMembershipId ? [grant.orgMembershipId] : [])),
+  ])
+  const clientsByConnection = new Map(clients.map((client) => [client.providerId, client]))
+
+  const items: ConfigItem[] = rows.map((row) => {
+    const rowGrants = grants.filter((grant) => grant.externalMcpConnectionId === row.id)
+    const client = clientsByConnection.get(row.id)
+    const clientExtra = client ? normalizeOAuthClientExtra(client.extra) : null
+    const configuration = row.oauthConfiguration
+    const oauth: OAuthSpec | null = row.authType === "oauth"
+      ? {
+          authorizationServerIssuer: configuration?.authorizationServerIssuer ?? null,
+          requestedScopes: [...(configuration?.requestedScopes ?? [])].sort(),
+          manualOAuthEndpoints: configuration?.manualOAuthEndpoints
+            ? {
+                authorizationEndpoint: configuration.manualOAuthEndpoints.authorizationEndpoint,
+                tokenEndpoint: configuration.manualOAuthEndpoints.tokenEndpoint,
+              }
+            : null,
+          client: client && !isSdkRegisteredOAuthClient(clientExtra)
+            ? {
+                clientId: client.clientId,
+                tokenEndpointAuthMethod: readTokenEndpointAuthMethod(clientExtra?.tokenEndpointAuthMethod),
+                clientSecret: secretPlaceholder(AREA, row.id, "oauth.client.clientSecret", Boolean(client.clientSecret)),
+              }
+            : null,
+        }
+      : null
+    const audience = audienceRefs({
+      teamIds: rowGrants.flatMap((grant) => grant.teamId ? [grant.teamId] : []),
+      memberIds: rowGrants.flatMap((grant) => grant.orgMembershipId ? [grant.orgMembershipId] : []),
+      teamNames,
+      memberEmails,
+    })
+    return {
+      id: row.id,
+      key: row.externalKey,
+      name: row.name,
+      spec: {
+        url: row.url,
+        authType: row.authType,
+        credentialMode: row.credentialMode,
+        exposeDirectly: row.exposeDirectly,
+        apiKeyAuthScheme: row.authType === "apikey" ? row.apiKeyAuthScheme : "bearer",
+        apiKey: row.authType === "apikey" && row.credentialMode === "shared"
+          ? secretPlaceholder(AREA, row.id, "apiKey", Boolean(row.apiKey))
+          : null,
+        requestHeaders: externalMcpRequestHeaderNames(row.requestHeaders).map((name) => ({
+          name,
+          value: secretPlaceholder(AREA, row.id, `requestHeaders.${name}.value`, true),
+        })),
+        oauth,
+        access: { orgWide: rowGrants.some((grant) => grant.orgWide), ...audience },
+      },
+    }
+  })
+  return items.sort((left, right) => left.name.localeCompare(right.name) || left.id.localeCompare(right.id))
+}

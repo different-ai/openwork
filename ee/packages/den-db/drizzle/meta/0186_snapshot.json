@@ -1,7 +1,7 @@
 {
   "version": "5",
   "dialect": "mysql",
-  "id": "1bc53734-e9dc-4587-bdf0-7c64dce98b8e",
+  "id": "66308112-f81b-40db-a917-8857b3aee496",
   "prevId": "891ee9a0-46a3-4dfc-92ff-b9648343251f",
   "tables": {
     "admin_metric_refresh_lease": {
@@ -22500,6 +22500,155 @@
       "uniqueConstraints": {},
       "checkConstraint": {}
     },
+    "config_apply_run": {
+      "name": "config_apply_run",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "varchar(64)",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "organization_id": {
+          "name": "organization_id",
+          "type": "varchar(64)",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "change_request_id": {
+          "name": "change_request_id",
+          "type": "varchar(64)",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "attempt": {
+          "name": "attempt",
+          "type": "int",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "status": {
+          "name": "status",
+          "type": "varchar(16)",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "'running'"
+        },
+        "requested_by_member_id": {
+          "name": "requested_by_member_id",
+          "type": "varchar(64)",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "requested_by_api_key_id": {
+          "name": "requested_by_api_key_id",
+          "type": "varchar(64)",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "runs_as_member_id": {
+          "name": "runs_as_member_id",
+          "type": "varchar(64)",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "report": {
+          "name": "report",
+          "type": "mediumtext",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "failure_area": {
+          "name": "failure_area",
+          "type": "varchar(64)",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "failure_ref": {
+          "name": "failure_ref",
+          "type": "varchar(200)",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "failure_code": {
+          "name": "failure_code",
+          "type": "varchar(100)",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "started_at": {
+          "name": "started_at",
+          "type": "timestamp(3)",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "finished_at": {
+          "name": "finished_at",
+          "type": "timestamp(3)",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp(3)",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "(now())"
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "timestamp(3)",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3)"
+        }
+      },
+      "indexes": {
+        "config_apply_run_attempt": {
+          "name": "config_apply_run_attempt",
+          "columns": [
+            "change_request_id",
+            "attempt"
+          ],
+          "isUnique": true
+        },
+        "config_apply_run_org_request": {
+          "name": "config_apply_run_org_request",
+          "columns": [
+            "organization_id",
+            "change_request_id"
+          ],
+          "isUnique": false
+        }
+      },
+      "foreignKeys": {},
+      "compositePrimaryKeys": {
+        "config_apply_run_id": {
+          "name": "config_apply_run_id",
+          "columns": [
+            "id"
+          ]
+        }
+      },
+      "uniqueConstraints": {},
+      "checkConstraint": {}
+    },
     "config_blob_alias": {
       "name": "config_blob_alias",
       "columns": {
@@ -22835,16 +22984,16 @@
           "autoincrement": false,
           "default": false
         },
-        "before_snapshot": {
-          "name": "before_snapshot",
+        "execution": {
+          "name": "execution",
           "type": "mediumtext",
           "primaryKey": false,
           "notNull": false,
           "autoincrement": false
         },
-        "report": {
-          "name": "report",
-          "type": "json",
+        "before_snapshot": {
+          "name": "before_snapshot",
+          "type": "mediumtext",
           "primaryKey": false,
           "notNull": false,
           "autoincrement": false

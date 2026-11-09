@@ -14,6 +14,7 @@ import {
   resolveAgentBrief,
   type WorkbotProactiveHealth,
   type WorkbotProactiveSettings,
+  type WorkbotProactiveSettingsInput,
   type WorkbotProactiveView,
 } from "@openwork/types/den/workbot-proactive"
 import type { Hono } from "hono"
@@ -99,6 +100,59 @@ async function sourceConnectionsView(organizationId: DenTypeId<"organization">, 
   const [connections, connectedMembers] = await Promise.all([listOrganizationSourceConnections(organizationId), countConnectedMembers(organizationId)])
   // With the brief on, every connection is listed (`any`); otherwise only services with reviewed read tools.
   return groupSourceConnections(connections, { policy: settings.sources, connectedMembers, mode: briefOn ? "any" : "reviewed" })
+}
+
+/**
+ * PUT /v1/org/workbot-settings/proactive without the HTTP layer (also used by config-blob imports,
+ * src/config-blobs/areas/workbot-proactive.ts): the brief gate, the sources check, the policy merge and the template
+ * version, exactly as the route runs them. Permission and feature checks stay with the caller.
+ */
+export async function saveWorkbotProactiveSettings(input: {
+  organizationId: DenTypeId<"organization">
+  memberId: DenTypeId<"member">
+  userId: string
+  change: WorkbotProactiveSettingsInput
+}): Promise<
+  | { ok: true; settings: WorkbotProactiveSettings; template: AgentTemplateVersion; briefOn: boolean }
+  | { ok: false; error: "brief_off" | "invalid_sources" | "invalid_working_hours"; message: string }
+> {
+  const { organizationId, change } = input
+  const briefOn = await agentBriefAllowed(organizationId, input.userId)
+  if (change.brief && !briefOn) return { ok: false, error: "brief_off", message: "Your agent's brief isn't on for this organization." }
+  // Every id is one of the organization's connections, put where it can serve; an MCP only with reviewed read tools;
+  // each core source's default stays one of its allowed connections.
+  const invalid = checkSourcesChange({
+    change: change.sources,
+    connections: await listOrganizationSourceConnections(organizationId),
+    current: (await readProactiveSettings(organizationId)).sources,
+    mode: briefOn ? "any" : "reviewed",
+  })
+  if (invalid) return { ok: false, error: "invalid_sources", message: invalid }
+  const result: { settings: WorkbotProactiveSettings | null } = { settings: null }
+  await updateOrganizationMetadata(organizationId, (current) => {
+    result.settings = mergeWorkbotProactiveSettings(readWorkbotProactiveSettings(current), change)
+    return result.settings ? withWorkbotProactiveSettings(current, result.settings) : current
+  })
+  if (!result.settings) return { ok: false, error: "invalid_working_hours", message: INVALID_WORKING_HOURS_MESSAGE }
+  const current = await readAgentTemplate(organizationId)
+  const content = mergeAgentTemplate(current, change)
+  const template = content ? await saveAgentTemplate({ organizationId, memberId: input.memberId, content }) : current
+  return { ok: true, settings: result.settings, template, briefOn }
+}
+
+/**
+ * PUT /v1/org/workbot-settings without the HTTP layer (also used by config-blob imports,
+ * src/config-blobs/areas/workbot-settings.ts): only the actor's servable models are accepted.
+ */
+export async function saveWorkbotDefaultModel(input: { organizationId: DenTypeId<"organization">; userId: string; model: string | null }) {
+  const actor = { organizationId: input.organizationId, userId: input.userId }
+  const catalog = await workbotModelCatalog(actor).catch(() => null)
+  // Selecting the managed starter means Default. Do not save a Workbot-only route as Slack/Automation policy.
+  const model = isWorkbotManagedLuna(input.model) && input.model === catalog?.defaultModel ? null : input.model
+  const choice = checkWorkbotModelChoice(model, catalog)
+  if (choice !== "ok") return { choice, model: null, catalog }
+  const metadata = await updateOrganizationMetadata(input.organizationId, (current) => withWorkbotModel(current, model))
+  return { choice, model: readWorkbotModel(metadata), catalog }
 }
 
 /**
@@ -236,29 +290,13 @@ export function registerOrgWorkbotSettingsRoutes<T extends { Variables: OrgRoute
     async (c) => {
       c.header("Cache-Control", "no-store")
       const { organization, currentMember } = c.get("organizationContext")
-      const requested = c.req.valid("json")
-      const briefOn = await agentBriefAllowed(organization.id, currentMember.userId)
-      if (requested.brief && !briefOn) return c.json({ error: "invalid_request" as const, message: "Your agent's brief isn't on for this organization.", details: [] }, 400)
-      // Every id is one of the organization's connections, put where it can serve; an MCP only with reviewed read tools;
-      // each core source's default stays one of its allowed connections.
-      const invalid = checkSourcesChange({
-        change: requested.sources,
-        connections: await listOrganizationSourceConnections(organization.id),
-        current: (await readProactiveSettings(organization.id)).sources,
-        mode: briefOn ? "any" : "reviewed",
-      })
-      if (invalid) return c.json({ error: "invalid_request" as const, message: invalid }, 400)
-      const change = requested
-      const result: { settings: WorkbotProactiveSettings | null } = { settings: null }
-      await updateOrganizationMetadata(organization.id, (current) => {
-        result.settings = mergeWorkbotProactiveSettings(readWorkbotProactiveSettings(current), change)
-        return result.settings ? withWorkbotProactiveSettings(current, result.settings) : current
-      })
-      if (!result.settings) return c.json({ error: "invalid_working_hours" as const, message: INVALID_WORKING_HOURS_MESSAGE }, 400)
-      const current = await readAgentTemplate(organization.id)
-      const content = mergeAgentTemplate(current, change)
-      const template = content ? await saveAgentTemplate({ organizationId: organization.id, memberId: currentMember.id, content }) : current
-      return c.json(await proactiveView(organization.id, result.settings, template, (await memberPermissionsForRequest(c))?.has("connections.view") ?? false, briefOn))
+      const saved = await saveWorkbotProactiveSettings({ organizationId: organization.id, memberId: currentMember.id, userId: currentMember.userId, change: c.req.valid("json") })
+      if (!saved.ok) {
+        if (saved.error === "invalid_working_hours") return c.json({ error: "invalid_working_hours" as const, message: saved.message }, 400)
+        if (saved.error === "brief_off") return c.json({ error: "invalid_request" as const, message: saved.message, details: [] }, 400)
+        return c.json({ error: "invalid_request" as const, message: saved.message }, 400)
+      }
+      return c.json(await proactiveView(organization.id, saved.settings, saved.template, (await memberPermissionsForRequest(c))?.has("connections.view") ?? false, saved.briefOn))
     },
   )
 
@@ -346,17 +384,10 @@ export function registerOrgWorkbotSettingsRoutes<T extends { Variables: OrgRoute
     async (c) => {
       c.header("Cache-Control", "no-store")
       const context = c.get("organizationContext")
-      const organizationId = context.organization.id
-      const actor = { organizationId, userId: context.currentMember.userId }
-      const { model: requestedModel } = c.req.valid("json")
-      const catalog = await workbotModelCatalog(actor).catch(() => null)
-      // Selecting the managed starter means Default. Do not save a Workbot-only route as Slack/Automation policy.
-      const model = isWorkbotManagedLuna(requestedModel) && requestedModel === catalog?.defaultModel ? null : requestedModel
-      const choice = checkWorkbotModelChoice(model, catalog)
-      if (choice === "runner_unavailable") return c.json({ error: "workbot_runner_unavailable" as const, message: RUNNER_UNAVAILABLE_MESSAGE }, 503)
-      if (choice === "unknown_model") return c.json({ error: "unknown_model" as const, message: UNKNOWN_MODEL_MESSAGE }, 400)
-      const metadata = await updateOrganizationMetadata(organizationId, (current) => withWorkbotModel(current, model))
-      return c.json(workbotSettingsView(readWorkbotModel(metadata), catalog))
+      const saved = await saveWorkbotDefaultModel({ organizationId: context.organization.id, userId: context.currentMember.userId, model: c.req.valid("json").model })
+      if (saved.choice === "runner_unavailable") return c.json({ error: "workbot_runner_unavailable" as const, message: RUNNER_UNAVAILABLE_MESSAGE }, 503)
+      if (saved.choice === "unknown_model") return c.json({ error: "unknown_model" as const, message: UNKNOWN_MODEL_MESSAGE }, 400)
+      return c.json(workbotSettingsView(saved.model, saved.catalog))
     },
   )
 }

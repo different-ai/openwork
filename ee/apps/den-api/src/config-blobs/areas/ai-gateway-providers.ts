@@ -32,8 +32,8 @@ import { AuthUserTable, GatewayCredentialSetTable, GatewayModelGroupModelTable, 
 import { gatewayAudienceKey } from "@openwork-ee/utils/gateway-routing"
 import { isLiteLlmProviderId } from "@openwork-ee/utils/litellm-catalog"
 import { createDenTypeId, denTypeIdPrefixes, normalizeDenTypeId, type DenTypeId, type DenTypeIdName } from "@openwork-ee/utils/typeid"
-import { configRefSchema, configSecretSchema } from "@openwork/types/den/config-blobs"
-import { GATEWAY_PROVIDER_CREDENTIAL_KINDS, GATEWAY_PROVIDER_CREDENTIAL_MODES, GATEWAY_PROVIDER_STATUSES, gatewayAwsSsoSettingsSchema, type GatewayAccessGrantWrite, type GatewayCredentialSetPatch } from "@openwork/types/den/gateway"
+import { configRefSchema, configSecretSchema, type ConfigApplyStep, type ConfigFieldChange } from "@openwork/types/den/config-blobs"
+import { GATEWAY_PROVIDER_CREDENTIAL_KINDS, GATEWAY_PROVIDER_CREDENTIAL_MODES, GATEWAY_PROVIDER_STATUSES, gatewayAwsSsoSettingsSchema, type GatewayAccessGrantWrite, type GatewayCredentialSetPatch, type GatewayModelGroupPatch } from "@openwork/types/den/gateway"
 import { GATEWAY_CUSTOM_PROVIDER_ID, gatewayCustomModelSchema, isGatewayCustomProviderId, type GatewayCustomProviderSettings } from "@openwork/types/den/gateway-custom-providers"
 import { z } from "zod"
 import { recheckAuditEntitlement } from "../../audit/capture.js"
@@ -48,7 +48,8 @@ import { revokeUpstreamCredentials } from "../../llm/inference-provider-lifecycl
 import { readLiteLlmSettings } from "../../llm/litellm-settings.js"
 import type { ModelsDevProvider } from "../../llm/models-dev.js"
 import { resolvePermissionsForMember } from "../../permissions/resolve.js"
-import { defineConfigArea, type ConfigApplyResult, type ConfigAreaContext, type ConfigItem, type ResolvedConfigItem } from "../area.js"
+import { defineConfigArea, type ConfigApplyOp, type ConfigApplyResult, type ConfigAreaContext, type ConfigItem, type ResolvedConfigItem } from "../area.js"
+import { ConfigApplyError, ConfigStepLog, applyWithSteps, configItemError, opTouched, secretEffects, touches } from "./route-support.js"
 
 const AREA = "ai-gateway.providers" as const
 const MANAGE = "gateway_providers.manage" as const
@@ -134,9 +135,16 @@ function exportSettings(settings: Record<string, unknown>): ExportSpec["settings
 }
 
 async function exportItems(ctx: ConfigAreaContext): Promise<ConfigItem[]> {
+  return readProviders(ctx, null)
+}
+
+/** The providers (all, or just `ids`), each with its children read for those providers only. */
+async function readProviders(ctx: ConfigAreaContext, ids: readonly string[] | null): Promise<ConfigItem[]> {
   const database = ctx.db
   const organizationId = normalizeDenTypeId("organization", ctx.organizationId)
-  const providers = await database.select().from(GatewayProviderTable).where(eq(GatewayProviderTable.organization_id, organizationId))
+  const wanted = ids?.flatMap((id) => typedId("inferenceProvider", id) ?? []) ?? null
+  if (wanted && wanted.length === 0) return []
+  const providers = await database.select().from(GatewayProviderTable).where(and(eq(GatewayProviderTable.organization_id, organizationId), wanted ? inArray(GatewayProviderTable.id, wanted) : undefined))
   if (!providers.length) return []
   const providerIds = providers.map((provider) => provider.id)
   const [models, groups, sets, credentials, grants] = await Promise.all([
@@ -275,8 +283,8 @@ function actorOf(ctx: ConfigAreaContext): Actor {
   return { organizationId: normalizeDenTypeId("organization", ctx.organizationId), memberId: normalizeDenTypeId("member", ctx.actor.memberId), userId: ctx.actor.userId }
 }
 
-function failure(message: string): Error {
-  return new Error(`${AREA}: ${message}`)
+function failure(message: string, field?: string): Error {
+  return new ConfigApplyError("invalid_spec", `${AREA}: ${message}`, 400, field)
 }
 
 /** A blob id usable as a new row id: well-formed for the table and not taken on this instance. */
@@ -352,11 +360,13 @@ async function configuredModels(tx: GatewayTx, provider: GatewayProvider) {
   return rows.filter((row) => (!provider.model_ids.length || provider.model_ids.includes(row.model_id)) && !gatewayModelConfigurationError(provider.provider_config, [row.model_config]))
 }
 
-async function writePins(tx: GatewayTx, provider: GatewayProvider, pins: string[], warnings: string[]) {
+async function writePins(tx: GatewayTx, provider: GatewayProvider, pins: string[], warnings: string[]): Promise<boolean> {
   const configured = await configuredModels(tx, provider)
   const kept = [...new Set(pins)].filter((id) => configured.some((model) => model.model_id === id))
   if (kept.length !== pins.length) warnings.push(`${provider.name}: ${pins.length - kept.length} pinned model(s) are not configured on this server and were not pinned.`)
-  if (!isDeepStrictEqual(kept, provider.pinned_model_ids ?? [])) await tx.update(GatewayProviderTable).set({ pinned_model_ids: kept }).where(eq(GatewayProviderTable.id, provider.id))
+  if (isDeepStrictEqual(kept, provider.pinned_model_ids ?? [])) return false
+  await tx.update(GatewayProviderTable).set({ pinned_model_ids: kept }).where(eq(GatewayProviderTable.id, provider.id))
+  return true
 }
 
 function credentialInput(set: ResolvedSet, existing: boolean, warnings: string[]): Pick<GatewayCredentialSetPatch, "credential" | "oauthClientSecret"> & { awaitKey: boolean } {
@@ -373,93 +383,185 @@ function credentialInput(set: ResolvedSet, existing: boolean, warnings: string[]
   return { credential, oauthClientSecret, awaitKey }
 }
 
+/** Which parts of a provider an apply writes. A create writes everything. */
+type MatrixScope = { groups: boolean; sets: boolean; access: boolean; touched: ConfigFieldChange[] | null }
+
+/** Writes done inside the provider transaction; `current` is the one running (for a failure report). */
+type TxSteps = { done: ConfigApplyStep[]; current: ConfigApplyStep | null }
+
+async function txStep<T>(steps: TxSteps, step: ConfigApplyStep, write: () => Promise<T>): Promise<T> {
+  steps.current = step
+  const result = await write()
+  steps.done.push(step)
+  steps.current = null
+  return result
+}
+
+/** Whether the plan changes the set element with this id (`modelGroups[id=…]`). A create (no `touched`) writes all. */
+function elementTouched(scope: MatrixScope, array: string, id: string): boolean {
+  return scope.touched === null || touches(scope.touched, `${array}[id=${id}]`)
+}
+
 /**
- * Makes the provider's groups, credential sets and grants equal the spec.
- * Existing children match by id, then by name (groups and sets) or by
- * (group, set, audience) (grants). Unmatched existing children are removed.
+ * Makes the provider's groups, credential sets and grants equal the spec, for
+ * the parts in `scope` only. Existing children match by id, then by name
+ * (groups and sets) or by (group, set, audience) (grants). A child matched by
+ * id is written only when the plan changes it, and then only its changed
+ * fields; unmatched existing children are removed. Grants are added and
+ * removed one by one, never rewritten.
  */
-async function applyMatrix(tx: GatewayTx, provider: GatewayProvider, spec: ResolvedSpec, trusted: ModelsDevProvider | null, actor: Actor, warnings: string[]) {
+async function applyMatrix(tx: GatewayTx, provider: GatewayProvider, spec: ResolvedSpec, trusted: ModelsDevProvider | null, actor: Actor, warnings: string[], scope: MatrixScope, steps: TxSteps) {
   const revoked: Awaited<ReturnType<typeof removeGatewayCredentialSet>> = []
+  if (!scope.groups && !scope.sets && !scope.access) return revoked
   const existingGroups = await tx.select().from(GatewayModelGroupTable).where(eq(GatewayModelGroupTable.gateway_provider_id, provider.id))
   const existingSets = await tx.select().from(GatewayCredentialSetTable).where(eq(GatewayCredentialSetTable.gateway_provider_id, provider.id))
   const existingGrants = await tx.select().from(GatewayProviderAccessTable).where(eq(GatewayProviderAccessTable.gateway_provider_id, provider.id))
   const free = await freeIds(tx, { models: [], groups: spec.modelGroups.map((group) => group.id), sets: spec.credentialSets.map((set) => set.id), grants: spec.access.map((grant) => grant.id) })
 
-  const groupIds = new Map<string, { id: DenTypeId<"gatewayModelGroup">; existing: boolean }>()
+  const groupIds = new Map<string, { id: DenTypeId<"gatewayModelGroup">; existing: boolean; byId: boolean }>()
   const claimedGroups = new Set<string>()
   for (const group of spec.modelGroups) {
-    if (groupIds.has(group.id)) throw failure(`model group id ${group.id} appears twice in "${provider.name}".`)
-    const match = existingGroups.find((row) => row.id === group.id && !claimedGroups.has(row.id))
+    if (groupIds.has(group.id)) throw failure(`model group id ${group.id} appears twice in "${provider.name}".`, "modelGroups")
+    const byId = existingGroups.find((row) => row.id === group.id && !claimedGroups.has(row.id))
+    const match = byId
       ?? existingGroups.find((row) => row.name === group.name && !claimedGroups.has(row.id) && !spec.modelGroups.some((other) => other.id === row.id))
     if (match) claimedGroups.add(match.id)
     const reusable = typedId("gatewayModelGroup", group.id)
-    groupIds.set(group.id, match ? { id: match.id, existing: true } : { id: reusable && free.groups.has(reusable) ? reusable : createDenTypeId("gatewayModelGroup"), existing: false })
+    groupIds.set(group.id, match ? { id: match.id, existing: true, byId: Boolean(byId) } : { id: reusable && free.groups.has(reusable) ? reusable : createDenTypeId("gatewayModelGroup"), existing: false, byId: false })
   }
-  const setIds = new Map<string, { id: DenTypeId<"gatewayCredentialSet">; existing: boolean }>()
+  const setIds = new Map<string, { id: DenTypeId<"gatewayCredentialSet">; existing: boolean; byId: boolean }>()
   const claimedSets = new Set<string>()
   for (const set of spec.credentialSets) {
-    if (setIds.has(set.id)) throw failure(`credential set id ${set.id} appears twice in "${provider.name}".`)
-    const match = existingSets.find((row) => row.id === set.id && !claimedSets.has(row.id))
+    if (setIds.has(set.id)) throw failure(`credential set id ${set.id} appears twice in "${provider.name}".`, "credentialSets")
+    const byId = existingSets.find((row) => row.id === set.id && !claimedSets.has(row.id))
+    const match = byId
       ?? existingSets.find((row) => row.name === set.name && !claimedSets.has(row.id) && !spec.credentialSets.some((other) => other.id === row.id))
     if (match) claimedSets.add(match.id)
     const reusable = typedId("gatewayCredentialSet", set.id)
-    setIds.set(set.id, match ? { id: match.id, existing: true } : { id: reusable && free.sets.has(reusable) ? reusable : createDenTypeId("gatewayCredentialSet"), existing: false })
+    setIds.set(set.id, match ? { id: match.id, existing: true, byId: Boolean(byId) } : { id: reusable && free.sets.has(reusable) ? reusable : createDenTypeId("gatewayCredentialSet"), existing: false, byId: false })
   }
+  const groupName = (id: string) => spec.modelGroups.find((group) => groupIds.get(group.id)?.id === id)?.name ?? existingGroups.find((row) => row.id === id)?.name ?? id
+  const setName = (id: string) => spec.credentialSets.find((set) => setIds.get(set.id)?.id === id)?.name ?? existingSets.find((row) => row.id === id)?.name ?? id
+  const grantDetail = (groupId: string, setId: string, audience: string) => `${groupName(groupId)} / ${setName(setId)} / ${audience}`
 
-  const desiredGrants = spec.access.map((grant) => {
+  const desiredGrants = scope.access ? spec.access.map((grant) => {
     const group = groupIds.get(grant.modelGroup)
     const set = setIds.get(grant.credentialSet)
-    if (!group || !set) throw failure(`an access grant of "${provider.name}" names a model group or credential set that is not in the provider.`)
+    if (!group || !set) throw failure(`an access grant of "${provider.name}" names a model group or credential set that is not in the provider.`, "access")
     const audience: GatewayAccessGrantWrite["audience"] = grant.audience === "team" ? { type: "team", teamId: normalizeDenTypeId("team", grant.team.id) }
       : grant.audience === "member" ? { type: "member", memberId: normalizeDenTypeId("member", grant.member.id) }
       : { type: "organization" }
-    return { sourceId: grant.id, write: { modelGroupId: group.id, credentialSetId: set.id, audience }, key: `${group.id}|${set.id}|${gatewayAudienceKey(audience)}` }
-  })
+    const label = grant.audience === "team" ? `team ${grant.team.name ?? grant.team.id}` : grant.audience === "member" ? grant.member.$ref.replace(/^people\//, "") : "everyone"
+    return { sourceId: grant.id, write: { modelGroupId: group.id, credentialSetId: set.id, audience }, key: `${group.id}|${set.id}|${gatewayAudienceKey(audience)}`, label }
+  }) : []
   const keptGrants = new Set<string>()
-  for (const row of existingGrants) {
-    const key = `${row.model_group_id}|${row.credential_set_id}|${row.audience_key}`
-    if (desiredGrants.some((grant) => grant.key === key) && !keptGrants.has(key)) keptGrants.add(key)
-    else await removeGatewayAccessGrant(tx, provider, row.id)
-  }
-
-  const configured = await configuredModels(tx, provider)
-  for (const group of spec.modelGroups) {
-    const target = groupIds.get(group.id)
-    if (!target) continue
-    const modelIds = [...new Set(group.models)].filter((id) => configured.some((model) => model.model_id === id))
-    if (modelIds.length !== new Set(group.models).size) warnings.push(`Model group "${group.name}": ${new Set(group.models).size - modelIds.length} model(s) are not configured on this server and were left out.`)
-    const input = { name: group.name, description: group.description, status: group.status, modelIds }
-    if (target.existing) await writeGatewayGroup(tx, provider, input, target.id)
-    else await writeGatewayGroup(tx, provider, input, undefined, { createId: target.id })
-  }
-  for (const row of existingGroups) if (!claimedGroups.has(row.id)) await removeGatewayModelGroup(tx, provider, row.id)
-
-  // Sets are checked against the trusted catalog's credential env names, as the set routes do.
-  const setProvider: GatewayProvider = trusted ? { ...provider, provider_config: { ...provider.provider_config, env: trusted.env } } : provider
-  for (const set of spec.credentialSets) {
-    const target = setIds.get(set.id)
-    if (!target) continue
-    const { awaitKey, ...secrets } = credentialInput(set, target.existing, warnings)
-    const input: GatewayCredentialSetPatch = {
-      name: set.name, credentialMode: set.credentialMode, status: set.status,
-      oauthClientId: set.oauthClientId ?? "", oauthTenantId: set.oauthTenantId ?? "", awsSso: set.awsSso,
-      ...(secrets.credential ? { credential: secrets.credential } : {}),
-      ...(secrets.oauthClientSecret !== undefined ? { oauthClientSecret: secrets.oauthClientSecret } : {}),
+  if (scope.access) {
+    for (const row of existingGrants) {
+      const key = `${row.model_group_id}|${row.credential_set_id}|${row.audience_key}`
+      if (desiredGrants.some((grant) => grant.key === key) && !keptGrants.has(key)) keptGrants.add(key)
+      else await txStep(steps, { action: "remove", target: "access", detail: grantDetail(row.model_group_id, row.credential_set_id, row.audience_key) }, () => removeGatewayAccessGrant(tx, provider, row.id))
     }
-    if (target.existing) revoked.push(...(await writeGatewaySet(tx, setProvider, input, target.id)).revoked)
-    else await writeGatewaySet(tx, setProvider, input, { createdByOrgMembershipId: actor.memberId }, { createId: target.id, awaitOrganizationKey: awaitKey })
-    if (awaitKey) warnings.push(`Credential set "${set.name}" has no key yet: add it in AI Gateway before people can use "${provider.name}".`)
   }
-  for (const row of existingSets) if (!claimedSets.has(row.id)) revoked.push(...await removeGatewayCredentialSet(tx, provider, row.id))
+
+  if (scope.groups) {
+    const configured = await configuredModels(tx, provider)
+    const links = existingGroups.length ? await tx.select().from(GatewayModelGroupModelTable).where(inArray(GatewayModelGroupModelTable.model_group_id, existingGroups.map((row) => row.id))) : []
+    for (const group of spec.modelGroups) {
+      const target = groupIds.get(group.id)
+      if (!target) continue
+      if (target.byId && !elementTouched(scope, "modelGroups", group.id)) continue
+      const modelIds = [...new Set(group.models)].filter((id) => configured.some((model) => model.model_id === id))
+      if (modelIds.length !== new Set(group.models).size) warnings.push(`Model group "${group.name}": ${new Set(group.models).size - modelIds.length} model(s) are not configured on this server and were left out.`)
+      if (!target.existing) {
+        await txStep(steps, { action: "create", target: `modelGroups[${group.name}]` }, () => writeGatewayGroup(tx, provider, { name: group.name, description: group.description, status: group.status, modelIds }, undefined, { createId: target.id }))
+        continue
+      }
+      const row = existingGroups.find((entry) => entry.id === target.id)
+      const linked = new Set(links.filter((link) => link.model_group_id === target.id).flatMap((link) => configured.find((model) => model.id === link.gateway_provider_model_id)?.model_id ?? []))
+      const input: GatewayModelGroupPatch = {
+        ...(row?.name !== group.name ? { name: group.name } : {}),
+        ...(row?.description !== group.description ? { description: group.description } : {}),
+        ...(row?.status !== group.status ? { status: group.status } : {}),
+        ...(linked.size !== modelIds.length || modelIds.some((id) => !linked.has(id)) ? { modelIds } : {}),
+      }
+      const fields = Object.keys(input)
+      if (fields.length === 0) continue
+      await txStep(steps, { action: "update", target: `modelGroups[${group.name}]`, detail: fields.join(", ") }, () => writeGatewayGroup(tx, provider, input, target.id))
+    }
+    for (const row of existingGroups) {
+      if (!claimedGroups.has(row.id)) await txStep(steps, { action: "delete", target: `modelGroups[${row.name}]` }, () => removeGatewayModelGroup(tx, provider, row.id))
+    }
+  }
+
+  if (scope.sets) {
+    // Sets are checked against the trusted catalog's credential env names, as the set routes do.
+    const setProvider: GatewayProvider = trusted ? { ...provider, provider_config: { ...provider.provider_config, env: trusted.env } } : provider
+    for (const set of spec.credentialSets) {
+      const target = setIds.get(set.id)
+      if (!target) continue
+      if (target.byId && !elementTouched(scope, "credentialSets", set.id)) continue
+      const { awaitKey, ...secrets } = credentialInput(set, target.existing, warnings)
+      if (!target.existing) {
+        const input: GatewayCredentialSetPatch = {
+          name: set.name, credentialMode: set.credentialMode, status: set.status,
+          oauthClientId: set.oauthClientId ?? "", oauthTenantId: set.oauthTenantId ?? "", awsSso: set.awsSso,
+          ...(secrets.credential ? { credential: secrets.credential } : {}),
+          ...(secrets.oauthClientSecret !== undefined ? { oauthClientSecret: secrets.oauthClientSecret } : {}),
+        }
+        await txStep(steps, { action: "create", target: `credentialSets[${set.name}]` }, () => writeGatewaySet(tx, setProvider, input, { createdByOrgMembershipId: actor.memberId }, { createId: target.id, awaitOrganizationKey: awaitKey }))
+        if (awaitKey) warnings.push(`Credential set "${set.name}" has no key yet: add it in AI Gateway before people can use "${provider.name}".`)
+        continue
+      }
+      const row = existingSets.find((entry) => entry.id === target.id)
+      const input: GatewayCredentialSetPatch = {
+        ...(row?.name !== set.name ? { name: set.name } : {}),
+        ...(row?.credential_mode !== set.credentialMode ? { credentialMode: set.credentialMode } : {}),
+        ...(row?.status !== set.status ? { status: set.status } : {}),
+        ...((row?.oauth_client_id ?? null) !== (set.oauthClientId || null) ? { oauthClientId: set.oauthClientId ?? "" } : {}),
+        ...((row?.oauth_tenant_id ?? null) !== (set.oauthTenantId?.trim().toLowerCase() || null) ? { oauthTenantId: set.oauthTenantId ?? "" } : {}),
+        ...(!isDeepStrictEqual(row?.aws_sso ?? null, set.awsSso ?? null) ? { awsSso: set.awsSso } : {}),
+        ...(secrets.credential ? { credential: secrets.credential } : {}),
+        // "unset" of a secret that is not stored writes nothing.
+        ...(secrets.oauthClientSecret !== undefined && (secrets.oauthClientSecret !== "" || row?.oauth_client_secret) ? { oauthClientSecret: secrets.oauthClientSecret } : {}),
+      }
+      const fields = Object.keys(input)
+      if (fields.length === 0) continue
+      const result = await txStep(steps, { action: "update", target: `credentialSets[${set.name}]`, detail: fields.join(", ") }, () => writeGatewaySet(tx, setProvider, input, target.id))
+      revoked.push(...result.revoked)
+    }
+    for (const row of existingSets) {
+      if (!claimedSets.has(row.id)) revoked.push(...await txStep(steps, { action: "delete", target: `credentialSets[${row.name}]` }, () => removeGatewayCredentialSet(tx, provider, row.id)))
+    }
+  }
 
   for (const grant of desiredGrants) {
     if (keptGrants.has(grant.key)) continue
     keptGrants.add(grant.key)
     const reusable = typedId("inferenceProviderAccess", grant.sourceId)
-    await writeGatewayGrant(tx, provider, grant.write, undefined, reusable && free.grants.has(reusable) ? { createId: reusable } : {})
+    await txStep(steps, { action: "add", target: "access", detail: `${groupName(grant.write.modelGroupId)} / ${setName(grant.write.credentialSetId)} / ${grant.label}` }, () => writeGatewayGrant(tx, provider, grant.write, undefined, reusable && free.grants.has(reusable) ? { createId: reusable } : {}))
   }
-  await tx.update(GatewayProviderTable).set({ updated_at: new Date() }).where(eq(GatewayProviderTable.id, provider.id))
+  if (steps.done.length > 0) await tx.update(GatewayProviderTable).set({ updated_at: new Date() }).where(eq(GatewayProviderTable.id, provider.id))
   return revoked
+}
+
+/**
+ * Runs a provider write and reports its steps. The write is one transaction:
+ * if it fails nothing was written, so the error lists no steps done, only the
+ * step that failed. Upstream revocation runs after commit, as its own step.
+ */
+async function runProviderWrite(ctx: ConfigAreaContext, log: ConfigStepLog, id: DenTypeId<"inferenceProvider">, kind: "create" | "update" | "delete", mutate: (tx: GatewayTx, steps: TxSteps) => Promise<Awaited<ReturnType<typeof removeGatewayCredentialSet>>>, options: { lockOrganization?: boolean } = {}) {
+  const steps: TxSteps = { done: [], current: null }
+  let revoked: Awaited<ReturnType<typeof removeGatewayCredentialSet>>
+  try {
+    revoked = await providerWrite(ctx, id, kind, (tx) => mutate(tx, steps), options)
+  } catch (error) {
+    const step = steps.current
+    throw configItemError(error, [], step ? { step, field: step.target.split("[")[0] } : {})
+  }
+  log.add(...steps.done)
+  if (revoked.length) {
+    await log.run({ action: "delete", target: "credentials", detail: `${revoked.length} credential(s) revoked upstream` }, () => revokeUpstreamCredentials(revoked))
+  }
 }
 
 function parseResolved(item: ResolvedConfigItem): ResolvedSpec {
@@ -488,7 +590,7 @@ function customSettings(baseUrl: string, spec: ResolvedSpec, discovery: GatewayC
   return { upstreamBaseUrl: baseUrl, custom }
 }
 
-async function createProvider(ctx: ConfigAreaContext, item: ResolvedConfigItem, spec: ResolvedSpec, preferredId: string | undefined): Promise<ConfigApplyResult> {
+async function createProvider(ctx: ConfigAreaContext, log: ConfigStepLog, item: ResolvedConfigItem, spec: ResolvedSpec, preferredId: string | undefined): Promise<Omit<ConfigApplyResult, "steps">> {
   const actor = actorOf(ctx)
   const id = typedId("inferenceProvider", preferredId) ?? createDenTypeId("inferenceProvider")
   const warnings: string[] = []
@@ -508,7 +610,7 @@ async function createProvider(ctx: ConfigAreaContext, item: ResolvedConfigItem, 
   } else {
     let resolved: Awaited<ReturnType<typeof gatewayCatalog>>
     try { resolved = await gatewayCatalog(spec.providerId, spec.modelIds) } catch (error) {
-      if (error instanceof GatewayWriteError && error.code === "provider_not_found") throw failure(`"${item.name}" uses provider "${spec.providerId}", which this server's model catalog doesn't have.`)
+      if (error instanceof GatewayWriteError && error.code === "provider_not_found") throw failure(`"${item.name}" uses provider "${spec.providerId}", which this server's model catalog doesn't have.`, "providerId")
       throw error
     }
     validateGatewaySettings(resolved.config, spec.settings)
@@ -516,70 +618,151 @@ async function createProvider(ctx: ConfigAreaContext, item: ResolvedConfigItem, 
     catalog = resolved.catalog
     models = resolved.models
   }
-  const revoked = await providerWrite(ctx, id, "create", async (tx) => {
-    await tx.insert(GatewayProviderTable).values(provider)
-    await writeGatewayModels(tx, provider, models, { createIds: await modelCreateIds(tx, spec) })
-    await writePins(tx, provider, spec.pinnedModelIds, warnings)
-    return applyMatrix(tx, provider, spec, catalog, actor, warnings)
+  const all: MatrixScope = { groups: true, sets: true, access: true, touched: null }
+  await runProviderWrite(ctx, log, id, "create", async (tx, steps) => {
+    await txStep(steps, { action: "create", target: "provider", detail: item.name }, async () => {
+      await tx.insert(GatewayProviderTable).values(provider)
+      await writeGatewayModels(tx, provider, models, { createIds: await modelCreateIds(tx, spec) })
+    })
+    if (spec.pinnedModelIds.length) await txStep(steps, { action: "set", target: "pinnedModelIds", detail: spec.pinnedModelIds.join(", ") }, () => writePins(tx, provider, spec.pinnedModelIds, warnings))
+    return applyMatrix(tx, provider, spec, catalog, actor, warnings, all, steps)
   })
-  await revokeUpstreamCredentials(revoked)
-  return { localId: id, ...(warnings.length ? { warnings } : {}) }
+  return { localId: id, warnings }
 }
 
-async function updateProvider(ctx: ConfigAreaContext, targetId: string, item: ResolvedConfigItem, spec: ResolvedSpec): Promise<ConfigApplyResult> {
+/**
+ * Update: only the parts the plan changes are written. Provider fields (name,
+ * status, settings, model policy) go through patchGatewayProvider with just the
+ * changed fields; a custom provider's settings row is rewritten as one row
+ * when any of them changes (its address, catalog and policy are validated together).
+ */
+async function updateProvider(ctx: ConfigAreaContext, log: ConfigStepLog, op: Extract<ConfigApplyOp, { kind: "update" }>, spec: ResolvedSpec): Promise<Omit<ConfigApplyResult, "steps">> {
   const actor = actorOf(ctx)
-  const id = normalizeDenTypeId("inferenceProvider", targetId)
+  const item = op.item
+  const id = normalizeDenTypeId("inferenceProvider", op.targetId)
   const warnings: string[] = []
+  const touched = opTouched(op)
+  const nameChanged = touches(touched, "name")
+  const statusChanged = touches(touched, "status")
+  const settingsChanged = touches(touched, "settings")
+  const modelsChanged = touches(touched, "modelIds", "models", "custom")
+  const providerFieldsChanged = nameChanged || statusChanged || settingsChanged || modelsChanged
+  const scope: MatrixScope = { groups: touches(touched, "modelGroups"), sets: touches(touched, "credentialSets"), access: touches(touched, "access"), touched }
   const [before] = await ctx.db.select().from(GatewayProviderTable).where(and(eq(GatewayProviderTable.id, id), eq(GatewayProviderTable.organization_id, actor.organizationId)))
   if (!before) throw new GatewayWriteError(404, "inference_provider_not_found")
-  if (before.provider_id !== spec.providerId) throw failure(`"${item.name}" can't change from provider "${before.provider_id}" to "${spec.providerId}". Create a separate provider instead.`)
+  if (before.provider_id !== spec.providerId) throw failure(`"${item.name}" can't change from provider "${before.provider_id}" to "${spec.providerId}". Create a separate provider instead.`, "providerId")
   // Catalog I/O happens before any lock, as in the routes.
   const trusted = isGatewayCustomProviderId(before.provider_id) ? null : await trustedProviderCatalog(before)
-  const revoked = await providerWrite(ctx, id, "update", async (tx) => {
-    const existing = await lockProvider(tx, actor, id)
-    let provider: GatewayProvider
+  await runProviderWrite(ctx, log, id, "update", async (tx, steps) => {
+    let provider = await lockProvider(tx, actor, id)
     let catalog: ModelsDevProvider | null = trusted
-    const createModelIds = await modelCreateIds(tx, spec)
-    if (isGatewayCustomProviderId(existing.provider_id)) {
+    if (isGatewayCustomProviderId(provider.provider_id)) {
+      const existing = provider
       const current = readCustomProviderSettings(existing.settings)
       const currentUrl = typeof existing.settings.upstreamBaseUrl === "string" ? existing.settings.upstreamBaseUrl : null
       if (!current || !currentUrl) throw new GatewayWriteError(409, "custom_settings_invalid", "This provider's saved settings can't be read. Remove it and add it again.")
       const baseUrl = customBaseUrl(spec.settings.upstreamBaseUrl)
       // A saved key is never sent to a host it was not saved for.
       if (!sameCustomOrigin(baseUrl, currentUrl) && spec.credentialSets.some((set) => set.credentialMode === "org" && set.credential?.decision !== "value")) {
-        throw failure(`"${item.name}" moves to another host; enter its API key again for that address.`)
+        throw failure(`"${item.name}" moves to another host; enter its API key again for that address.`, "settings.upstreamBaseUrl")
       }
       const modelIds = new Set((spec.custom?.models ?? []).map((model) => model.id))
-      provider = { ...existing, name: item.name, provider_config: customProviderConfig(item.name), settings: { ...existing.settings, ...customSettings(baseUrl, spec, current.discovery) }, model_ids: [...new Set(spec.modelIds)], pinned_model_ids: (existing.pinned_model_ids ?? []).filter((pin) => modelIds.has(pin)), status: spec.status, updated_at: new Date() }
-      validateGatewaySettings(provider.provider_config, { upstreamBaseUrl: baseUrl })
-      catalog = customCatalogProvider(provider)
+      const next: GatewayProvider = { ...existing, name: item.name, provider_config: customProviderConfig(item.name), settings: { ...existing.settings, ...customSettings(baseUrl, spec, current.discovery) }, model_ids: [...new Set(spec.modelIds)], pinned_model_ids: (existing.pinned_model_ids ?? []).filter((pin) => modelIds.has(pin)), status: spec.status, updated_at: new Date() }
+      validateGatewaySettings(next.provider_config, { upstreamBaseUrl: baseUrl })
+      catalog = customCatalogProvider(next)
       if (!catalog) throw new GatewayWriteError(400, "invalid_request", "Check the custom provider's model settings.")
-      if (spec.status === "disabled" && existing.status === "active") await tx.delete(GatewayProviderOauthStateTable).where(eq(GatewayProviderOauthStateTable.gateway_provider_id, existing.id))
-      await tx.update(GatewayProviderTable).set({ name: provider.name, provider_config: provider.provider_config, settings: provider.settings, model_ids: provider.model_ids, pinned_model_ids: provider.pinned_model_ids, status: provider.status, updated_at: provider.updated_at }).where(eq(GatewayProviderTable.id, provider.id))
-      await writeGatewayModels(tx, provider, resolveGatewayCatalog(catalog, provider.model_ids, provider.provider_config, false).models, { createIds: createModelIds })
-    } else {
-      const persisted = publicProviderSettings(existing.settings)
-      const removed = Object.keys(persisted).filter((key) => !Object.hasOwn(spec.settings, key))
-      if (removed.length) throw new GatewayWriteError(409, "provider_destination_immutable", "Create a separate provider to change the upstream account or destination. Existing credentials cannot be relocated.")
-      provider = await patchGatewayProvider(tx, existing, trusted, { name: item.name, modelIds: spec.modelIds, settings: spec.settings, status: spec.status }, { createModelIds })
+      if (providerFieldsChanged) {
+        const custom = catalog
+        await txStep(steps, { action: "update", target: "provider", detail: changedFieldList(touched, ["name", "status", "settings", "modelIds", "custom", "models"]) }, async () => {
+          if (spec.status === "disabled" && existing.status === "active") await tx.delete(GatewayProviderOauthStateTable).where(eq(GatewayProviderOauthStateTable.gateway_provider_id, existing.id))
+          await tx.update(GatewayProviderTable).set({ name: next.name, provider_config: next.provider_config, settings: next.settings, model_ids: next.model_ids, pinned_model_ids: next.pinned_model_ids, status: next.status, updated_at: next.updated_at }).where(eq(GatewayProviderTable.id, next.id))
+          await writeGatewayModels(tx, next, resolveGatewayCatalog(custom, next.model_ids, next.provider_config, false).models, { createIds: await modelCreateIds(tx, spec) })
+        })
+        provider = next
+      }
+    } else if (providerFieldsChanged) {
+      if (settingsChanged) {
+        const persisted = publicProviderSettings(provider.settings)
+        const removed = Object.keys(persisted).filter((key) => !Object.hasOwn(spec.settings, key))
+        if (removed.length) throw new GatewayWriteError(409, "provider_destination_immutable", "Create a separate provider to change the upstream account or destination. Existing credentials cannot be relocated.")
+      }
+      const existing = provider
+      const createModelIds = modelsChanged ? await modelCreateIds(tx, spec) : undefined
+      provider = await txStep(steps, { action: "update", target: "provider", detail: changedFieldList(touched, ["name", "status", "settings", "modelIds", "models"]) }, () => patchGatewayProvider(tx, existing, trusted, {
+        ...(nameChanged ? { name: item.name } : {}),
+        ...(statusChanged ? { status: spec.status } : {}),
+        ...(settingsChanged ? { settings: spec.settings } : {}),
+        ...(modelsChanged ? { modelIds: spec.modelIds } : {}),
+      }, { ...(createModelIds ? { createModelIds } : {}), syncModels: modelsChanged }))
     }
-    await writePins(tx, provider, spec.pinnedModelIds, warnings)
-    return applyMatrix(tx, provider, spec, catalog, actor, warnings)
+    if (touches(touched, "pinnedModelIds")) {
+      const current = provider
+      await txStep(steps, { action: "set", target: "pinnedModelIds", detail: spec.pinnedModelIds.join(", ") || "none" }, () => writePins(tx, current, spec.pinnedModelIds, warnings))
+    }
+    return applyMatrix(tx, provider, spec, catalog, actor, warnings, scope, steps)
   })
-  await revokeUpstreamCredentials(revoked)
-  return { localId: id, ...(warnings.length ? { warnings } : {}) }
+  return { localId: id, warnings }
 }
 
-async function deleteProvider(ctx: ConfigAreaContext, targetId: string): Promise<ConfigApplyResult> {
+function changedFieldList(changes: readonly ConfigFieldChange[], fields: readonly string[]): string | undefined {
+  const hit = fields.filter((field) => touches(changes, field))
+  return hit.length ? hit.join(", ") : undefined
+}
+
+async function deleteProvider(ctx: ConfigAreaContext, log: ConfigStepLog, targetId: string, name: string): Promise<Omit<ConfigApplyResult, "steps">> {
   const actor = actorOf(ctx)
   const id = normalizeDenTypeId("inferenceProvider", targetId)
-  const revoked = await providerWrite(ctx, id, "delete", async (tx) => {
+  await runProviderWrite(ctx, log, id, "delete", async (tx, steps) => {
     const provider = await lockProvider(tx, actor, id)
     // No usage-limit choice: a provider with active usage limits is refused with their list.
-    return removeGatewayProvider(tx, provider, { organizationId: actor.organizationId, memberId: actor.memberId }, undefined)
+    return txStep(steps, { action: "delete", target: "provider", detail: name }, () => removeGatewayProvider(tx, provider, { organizationId: actor.organizationId, memberId: actor.memberId }, undefined))
   }, { lockOrganization: true })
-  await revokeUpstreamCredentials(revoked)
   return { localId: id }
+}
+
+/** The credential set (from a spec) with this id. */
+function specSet(spec: ConfigItem["spec"], id: string): Record<string, unknown> | null {
+  const sets = spec.credentialSets
+  if (!Array.isArray(sets)) return null
+  for (const set of sets) if (isPlainRecord(set) && set.id === id) return set
+  return null
+}
+
+function isPlainRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value)
+}
+
+/** Plain-language effects a restore can't undo (credential deletion, sign-in revocation, overwritten keys). */
+function irreversible(op: ConfigApplyOp): string[] {
+  if (op.kind === "delete") {
+    const out = [`The stored keys of "${op.previous.name}" and members' sign-ins to it are deleted (and revoked upstream); keys must be re-entered after a restore.`]
+    if (op.previous.spec.providerId === "litellm") out.push(`Keys OpenWork created in LiteLLM for "${op.previous.name}" are deleted there.`)
+    return out
+  }
+  if (op.kind !== "update") return []
+  const out: string[] = []
+  for (const change of op.changes) {
+    const match = /^credentialSets\[id=([^\]]+)\](?:\.(.+))?$/.exec(change.path)
+    if (!match) continue
+    const [, setId, field] = match
+    const previous = setId ? specSet(op.previous.spec, setId) : null
+    const name = typeof previous?.name === "string" ? previous.name : setId
+    if (!field && change.to === undefined && previous) out.push(`Credential set "${name}": its stored key and members' sign-ins are deleted (and revoked upstream).`)
+    if (field && previous && ["credentialMode", "oauthClientId", "oauthTenantId", "awsSso"].some((key) => field === key || field.startsWith(`${key}.`))) {
+      out.push(`Members' sign-ins through credential set "${name}" are revoked; they sign in again.`)
+    }
+    if (field === "status" && change.to === "disabled") out.push(`Credential set "${name}" is disabled: members' sign-ins through it are revoked.`)
+  }
+  const sets = Array.isArray(op.item.spec.credentialSets) ? op.item.spec.credentialSets : []
+  for (const set of sets) {
+    if (!isPlainRecord(set) || typeof set.id !== "string") continue
+    const previous = specSet(op.previous.spec, set.id)
+    if (!previous) continue
+    const name = typeof set.name === "string" ? set.name : set.id
+    out.push(...secretEffects(set.credential, `key of credential set "${name}"`, previous.credential))
+    out.push(...secretEffects(set.oauthClientSecret, `OAuth client secret of credential set "${name}"`, previous.oauthClientSecret))
+  }
+  return [...new Set(out)]
 }
 
 export const aiGatewayProvidersArea = defineConfigArea({
@@ -609,13 +792,17 @@ export const aiGatewayProvidersArea = defineConfigArea({
   // deletion happen around the writes, so the engine must not wrap apply in its own transaction.
   transactional: false,
   externalEffects: true,
+  irreversible,
   exportItems,
+  readItems: readProviders,
   async apply(ctx, op) {
-    const unavailable = gatewayManagementUnavailable()
-    if (unavailable) throw failure(unavailable.message)
-    if (op.kind === "delete") return deleteProvider(ctx, op.targetId)
-    const spec = parseResolved(op.item)
-    assertApplicable(ctx, spec, op.item.name)
-    return op.kind === "create" ? createProvider(ctx, op.item, spec, op.preferredId) : updateProvider(ctx, op.targetId, op.item, spec)
+    return applyWithSteps(async (log) => {
+      const unavailable = gatewayManagementUnavailable()
+      if (unavailable) throw new ConfigApplyError("gateway_unavailable", `${AREA}: ${unavailable.message}`, 409)
+      if (op.kind === "delete") return deleteProvider(ctx, log, op.targetId, op.previous.name)
+      const spec = parseResolved(op.item)
+      assertApplicable(ctx, spec, op.item.name)
+      return op.kind === "create" ? createProvider(ctx, log, op.item, spec, op.preferredId) : updateProvider(ctx, log, op, spec)
+    })
   },
 })

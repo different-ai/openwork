@@ -145,6 +145,7 @@ export const idTypesMapNameToPrefix = {
   configChangeRequest: "ccr",
   configBlobAlias: "cba",
   configBlobExport: "cbe",
+  configApplyRun: "car",
   denInstance: "dni",
 } as const
 

@@ -63,6 +63,20 @@ export const CONFIG_AREA_KEYS = [
   "settings.general",
   "settings.web-origins",
   "settings.advanced.collections",
+  "members.agent-permissions",
+  "members.default-models",
+  "members.prompts",
+  "ai-gateway.limits",
+  "ai-gateway.smart-routers",
+  "ai-gateway.openwork-models",
+  "plugins.plugins",
+  "plugins.skills",
+  "plugins.sources",
+  "workbot.settings",
+  "workbot.proactive",
+  "settings.auth-security",
+  "settings.advanced.brand",
+  "settings.audit",
 ] as const;
 export type ConfigAreaKey = (typeof CONFIG_AREA_KEYS)[number];
 export const configAreaKeySchema = z.enum(CONFIG_AREA_KEYS);
@@ -345,6 +359,8 @@ export type ConfigPlanItem = {
   refs?: ConfigPlanRef[];
   /** Hash of the target's current spec this item was planned against. */
   targetRev?: string;
+  /** Effects of writing this item that a later "Restore previous config" can't undo (from the area's `irreversible`). */
+  irreversible?: string[];
 };
 
 export type ConfigPlanSummary = Record<ConfigPlanOp, number> & { blocking: number };
@@ -443,10 +459,73 @@ export type ConfigChangeRequestSummary = {
   appliedAt: string | null;
 };
 
-export type ConfigApplyReport = {
-  items: Array<{ area: ConfigAreaKey; ref: string; op: ConfigPlanOp; localId: string | null; status: "applied" | "failed" | "skipped"; warnings: string[]; error?: string }>;
+/**
+ * One write an adapter performed (or would have performed) for an item.
+ * `target` names the part of the item: "models[gpt-5]", "access.teams", "credentials.apiKey".
+ */
+export type ConfigApplyStep = {
+  action: "create" | "update" | "delete" | "add" | "remove" | "set" | "keep";
+  target: string;
+  detail?: string;
+};
+
+/** Where and why an item failed. `step` is the write that failed, when the adapter knows it. */
+export type ConfigApplyFailure = {
+  code: string;
+  message: string;
+  /** Spec path the failure is about, e.g. "baseUrl" or "access.teams[1]". */
+  field?: string;
+  step?: ConfigApplyStep;
+  /** HTTP-like status from the underlying service, when there is one. */
+  status?: number;
+};
+
+/**
+ * - applied: written.
+ * - noop: nothing to write after all (the target already matched).
+ * - failed: the failure stopped the run here.
+ * - not_reached: planned, but the run stopped before it.
+ * - skipped: excluded by the plan (skip / untouched / unchanged items are not listed).
+ */
+export type ConfigApplyItemStatus = "applied" | "noop" | "failed" | "not_reached" | "skipped";
+
+export type ConfigApplyReportItem = {
+  area: ConfigAreaKey;
+  ref: string;
+  name: string;
+  op: ConfigPlanOp;
+  localId: string | null;
+  status: ConfigApplyItemStatus;
+  /** Writes performed, in order. For a failed item: the ones done before the failure. */
+  steps: ConfigApplyStep[];
   warnings: string[];
-  /** `rev` of every item in scope right after the apply, keyed `<area>/<id>`: the three-way base of a revert. */
+  failure?: ConfigApplyFailure;
+  /** Effects a later revert cannot undo (emails sent, sign-ins revoked, history lost…). */
+  irreversible: string[];
+  startedAt: string | null;
+  durationMs: number | null;
+  /** @deprecated use `failure.message`. Kept for older stored reports. */
+  error?: string;
+};
+
+export const CONFIG_APPLY_RUN_STATUSES = ["running", "applied", "failed", "interrupted"] as const;
+export type ConfigApplyRunStatus = (typeof CONFIG_APPLY_RUN_STATUSES)[number];
+
+/** One apply attempt of a change request. */
+export type ConfigApplyReport = {
+  runId: string;
+  attempt: number;
+  status: ConfigApplyRunStatus;
+  startedAt: string;
+  finishedAt: string | null;
+  requestedBy: { memberId: string | null; name: string | null; apiKeyName: string | null } | null;
+  runsAs: { memberId: string; name: string | null } | null;
+  counts: Record<ConfigApplyItemStatus, number>;
+  /** The first failed item, repeated here so callers don't have to search. */
+  failure: { area: ConfigAreaKey; ref: string; name: string; failure: ConfigApplyFailure } | null;
+  items: ConfigApplyReportItem[];
+  warnings: string[];
+  /** `rev` of every item written, right after the apply, keyed `<area>/<id>`: the three-way base of a revert. */
   afterRevs?: Record<string, string>;
 };
 
@@ -483,6 +562,8 @@ export type ConfigAreasResponse = {
 };
 export type ConfigChangeRequestResponse = { changeRequest: ConfigChangeRequestSummary };
 export type ConfigChangeRequestListResponse = { changeRequests: ConfigChangeRequestSummary[] };
-export type ConfigChangeRequestDetailResponse = { changeRequest: ConfigChangeRequestSummary; report: ConfigApplyReport | null };
+/** `report` is the latest apply attempt; `runs` lists every attempt, newest first. */
+export type ConfigChangeRequestDetailResponse = { changeRequest: ConfigChangeRequestSummary; report: ConfigApplyReport | null; runs: ConfigApplyReport[] };
+export type ConfigApplyRunResponse = { run: ConfigApplyReport };
 export type ConfigChangeRequestPlanResponse = { plan: ConfigPlan | null; decisions: ConfigDecisions };
 export type ConfigChangeRequestPlanUpdateResponse = { changeRequest: ConfigChangeRequestSummary; plan: ConfigPlan | null };

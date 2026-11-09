@@ -7,6 +7,7 @@ import assert from "node:assert/strict"
 import { describe, test } from "node:test"
 import { z } from "zod"
 import type {
+  ConfigApplyReport,
   ConfigAreaKey,
   ConfigBlobArea,
   ConfigDecisions,
@@ -17,12 +18,17 @@ import type {
   ResolvedConfigSecret,
 } from "@openwork/types/den/config-blobs"
 import { CONFIG_AREA_KEYS, EMPTY_CONFIG_DECISIONS, flattenConfigAreas } from "@openwork/types/den/config-blobs"
-import type { ConfigApplyOp, ConfigArea, ConfigAreaContext, ConfigItem } from "../src/config-blobs/area.js"
+import { ConfigApplyItemError, type ConfigApplyOp, type ConfigArea, type ConfigAreaContext, type ConfigItem } from "../src/config-blobs/area.js"
 import {
   baseHash,
   buildPlan,
   canonicalJson,
+  checkWrittenItems,
   executePlan,
+  interruptReport,
+  parseStoredExecution,
+  readItemsFor,
+  type ApplyRead,
   matchArea,
   rewriteRefs,
   secretsNeedingValues,
@@ -641,8 +647,9 @@ describe("execute", () => {
     const { execution } = buildPlan(planInput(store, areas, blob, { secretInputs: [keepKey] }))
     const failed = await executePlan(execution, areas, ctx, new Map())
     assert.equal(failed.ok, false)
-    assert.deepEqual(failed.items.map((entry) => entry.status), ["failed", "skipped"])
-    assert.equal(failed.items[0]?.error, "boom")
+    assert.deepEqual(failed.items.map((entry) => entry.status), ["failed", "not_reached"])
+    assert.deepEqual(failed.items[0]?.failure, { code: "error", message: "boom" })
+    assert.equal(failed.items[1]?.startedAt, null, "never started")
 
     const working = makeAreas(store, calls)
     const applied = await executePlan(execution, working, ctx, new Map())
@@ -652,8 +659,176 @@ describe("execute", () => {
     if (update?.kind !== "update") return
     assert.deepEqual(update.item.spec.credentials, { apiKey: { $secret: keepKey.path, decision: "keep" } })
     assert.equal(update.previous.id, "ipr_A")
+    assert.deepEqual(update.changes.map((change) => change.path), ["baseUrl"], "only the plan's changes are handed over")
+    assert.deepEqual(update.secretPaths, [], "keep writes no credential")
+  })
+
+  test("report: names, steps, a ConfigApplyItemError's failure and steps done, not_reached after it, progress after every item", async () => {
+    const store = seed()
+    const calls: Call[] = []
+    const areas = makeAreas(store, calls, {
+      "members.teams": {
+        apply: async (_ctx, op) => {
+          calls.push({ area: "members.teams", op })
+          if (op.kind === "update" && op.item.name === "Designers") {
+            throw new ConfigApplyItemError(
+              { code: "team_name_taken", message: "That name is taken.", field: "name", step: { action: "set", target: "name", detail: "Designers" } },
+              [{ action: "add", target: "members", detail: "Ada" }],
+            )
+          }
+          return { localId: op.kind === "create" ? "tem_new" : op.kind === "update" || op.kind === "delete" ? op.targetId : "", steps: [{ action: "set", target: "description" }] }
+        },
+        irreversible: (op) => (op.kind === "update" ? [`Members of ${op.item.name} were notified`] : []),
+      },
+    })
+    const blob = exportBlob(store, areas, ["members.teams", "ai-gateway.providers"])
+    blob["members.teams"]!.items[0]!.spec = { description: "core platform", members: [ada] }
+    blob["members.teams"]!.items[1]!.name = "Designers"
+    blob["ai-gateway.providers"]!.items[0]!.spec = { ...blob["ai-gateway.providers"]!.items[0]!.spec, baseUrl: "https://proxy.example.com" }
+    const { plan, execution } = buildPlan(planInput(store, areas, blob, { secretInputs: [keepKey] }))
+    assert.deepEqual(item(plan, "members.teams", "tem_B").irreversible, ["Members of Designers were notified"], "shown before approval")
+    const snapshots: string[][] = []
+    const result = await executePlan(execution, areas, ctx, new Map(), {
+      onProgress: async (entries) => { snapshots.push(entries.map((entry) => entry.status)) },
+    })
+    assert.equal(result.ok, false)
+    assert.deepEqual(result.items.map((entry) => [entry.name, entry.op, entry.status]), [
+      ["Platform", "update", "applied"],
+      ["Designers", "rename", "failed"],
+      ["Anthropic (prod)", "update", "not_reached"],
+    ])
+    const [applied, failed, notReached] = result.items
+    assert.deepEqual(applied?.steps, [{ action: "set", target: "description" }])
+    assert.deepEqual(applied?.irreversible, ["Members of Platform were notified"])
+    assert.equal(failed?.failure?.code, "team_name_taken")
+    assert.equal(failed?.failure?.field, "name")
+    assert.deepEqual(failed?.steps, [{ action: "add", target: "members", detail: "Ada" }], "what was already written for the failed item")
+    assert.deepEqual(failed?.irreversible, ["Members of Designers were notified"])
+    assert.equal(notReached?.startedAt, null)
+    assert.ok(typeof applied?.durationMs === "number")
+    assert.equal(calls.some((call) => call.area === "ai-gateway.providers"), false)
+    // Each item reports when it starts and when it ends: a crash leaves the in-flight item visible.
+    assert.deepEqual(snapshots.map((entry) => entry.join(",")), [
+      "not_reached,not_reached,not_reached",
+      "applied,not_reached,not_reached",
+      "applied,not_reached,not_reached",
+      "applied,failed,not_reached",
+    ])
+    const interrupted = interruptReport({ ...emptyReport(), items: [applied!, { ...failed!, status: "not_reached", failure: undefined }, notReached!] }, new Date(), "stopped")
+    assert.deepEqual(interrupted.items.map((entry) => entry.status), ["applied", "failed", "not_reached"])
+    assert.equal(interrupted.failure?.failure.code, "interrupted")
+    assert.equal(interrupted.status, "interrupted")
+    assert.deepEqual(interrupted.counts, { applied: 1, noop: 0, failed: 1, not_reached: 1, skipped: 0 })
+  })
+
+  test("an update with no changes and no credential is never sent: reported noop", async () => {
+    const store = seed()
+    const calls: Call[] = []
+    const areas = makeAreas(store, calls)
+    const blob = exportBlob(store, areas, ["members.teams"])
+    blob["members.teams"]!.items[1]!.spec = { description: "design team", members: [] }
+    const { execution } = buildPlan(planInput(store, areas, blob))
+    const emptied = { ...execution, ops: execution.ops.map((op) => ({ ...op, changes: [] })) }
+    const result = await executePlan(emptied, areas, ctx, new Map())
+    assert.equal(result.ok, true)
+    assert.deepEqual(result.items.map((entry) => entry.status), ["noop"])
+    assert.equal(calls.length, 0)
+    // An adapter that reports no steps found nothing to write either.
+    const quiet = makeAreas(store, calls, { "members.teams": { apply: async (_ctx, op) => ({ localId: op.kind === "create" ? "x" : op.targetId, steps: [] }) } })
+    const second = await executePlan(execution, quiet, ctx, new Map())
+    assert.deepEqual(second.items.map((entry) => entry.status), ["noop"])
   })
 })
+
+describe("apply reads only what it writes", () => {
+  test("drift is checked on the written items alone; untouched areas are never exported; the before-snapshot holds only written items", async () => {
+    const store = seed()
+    store.set("members.teams", [...(store.get("members.teams") ?? []), { id: "tem_C", key: null, name: "Sales", spec: { description: "", members: [] } }])
+    const calls: Call[] = []
+    const exportsByArea = new Map<ConfigAreaKey, number>()
+    const readsByArea = new Map<ConfigAreaKey, string[][]>()
+    const counted = (key: ConfigAreaKey, withReadItems: boolean): Partial<ConfigArea> => ({
+      exportItems: async () => {
+        exportsByArea.set(key, (exportsByArea.get(key) ?? 0) + 1)
+        return structuredClone(store.get(key) ?? [])
+      },
+      ...(withReadItems ? {
+        readItems: async (_ctx: ConfigAreaContext, ids: string[]) => {
+          readsByArea.set(key, [...(readsByArea.get(key) ?? []), ids])
+          return structuredClone((store.get(key) ?? []).filter((entry) => ids.includes(entry.id)))
+        },
+      } : {}),
+    })
+    const areas = makeAreas(store, calls, {
+      "ai-gateway.providers": counted("ai-gateway.providers", true),
+      "members.teams": counted("members.teams", true),
+      "connectors.mcp": counted("connectors.mcp", false),
+      "members.people": counted("members.people", false),
+    })
+    const blob = exportBlob(store, areas, ["ai-gateway.providers"])
+    blob["ai-gateway.providers"]!.items[0]!.spec = { ...blob["ai-gateway.providers"]!.items[0]!.spec, baseUrl: "https://proxy.example.com" }
+    const { execution } = buildPlan(planInput(store, areas, blob, { secretInputs: [keepKey] }))
+    exportsByArea.clear()
+
+    const checked = await checkWrittenItems(execution, areas, ctx)
+    assert.deepEqual(checked.problems, [])
+    assert.deepEqual([...exportsByArea.entries()], [], "no area is exported")
+    assert.deepEqual(readsByArea.get("ai-gateway.providers"), [["ipr_A"]], "only the written provider")
+    assert.deepEqual(readsByArea.get("members.teams"), [["tem_A"]], "only the team the provider references")
+    assert.deepEqual(checked.reads.map((read) => `${read.kind} ${read.area} ${read.ids}`), ["read ai-gateway.providers 1", "read members.teams 1"])
+    assert.deepEqual([...checked.before.entries()].map(([key, entries]) => [key, entries.map((entry) => entry.id)]), [["ai-gateway.providers", ["ipr_A"]]])
+
+    // The written item changed since the plan: stale. A change elsewhere in the org is not drift.
+    store.get("members.teams")![2]!.name = "Sales EMEA"
+    assert.deepEqual((await checkWrittenItems(execution, areas, ctx)).problems, [])
+    store.get("ai-gateway.providers")![0]!.name = "Renamed meanwhile"
+    assert.deepEqual((await checkWrittenItems(execution, areas, ctx)).problems, ['ai-gateway.providers "Anthropic (prod)" changed since the plan was made'])
+    store.get("ai-gateway.providers")![0]!.name = "Anthropic (prod)"
+    store.set("members.teams", (store.get("members.teams") ?? []).filter((entry) => entry.id !== "tem_A"))
+    assert.match((await checkWrittenItems(execution, areas, ctx)).problems.join("\n"), /access\.teams\[0\] points at an item that no longer exists/)
+  })
+
+  test("a create whose unique name was taken since the plan is stale (the only check that reads a whole area)", async () => {
+    const store = seed()
+    const calls: Call[] = []
+    const areas = makeAreas(store, calls)
+    const blob: Partial<Record<ConfigAreaKey, ConfigBlobArea>> = { "members.teams": { specVersion: 1, items: [{ id: "tem_SRC", name: "Research", spec: { description: "", members: [] } }] } }
+    const { execution } = buildPlan(planInput(store, areas, blob))
+    const fine = await checkWrittenItems(execution, areas, ctx)
+    assert.deepEqual(fine.problems, [])
+    assert.deepEqual(fine.reads.map((read) => `${read.kind} ${read.area}`), ["export members.teams"])
+    store.get("members.teams")!.push({ id: "tem_R", key: null, name: "research", spec: { description: "", members: [] } })
+    assert.deepEqual((await checkWrittenItems(execution, areas, ctx)).problems, ['members.teams "Research": another item now has name "research"'])
+  })
+
+  test("readItemsFor: readItems when the area has it, else the export filtered", async () => {
+    const store = seed()
+    const areas = makeAreas(store, [])
+    const teams = areas.find((area) => area.key === "members.teams")!
+    const reads: ApplyRead[] = []
+    assert.deepEqual((await readItemsFor(teams, ctx, ["tem_B", "tem_B", "tem_missing"], reads)).map((entry) => entry.id), ["tem_B"])
+    assert.deepEqual(reads, [{ area: "members.teams", kind: "export", ids: 2 }])
+    assert.deepEqual(await readItemsFor(teams, ctx, [], reads), [])
+    assert.equal(reads.length, 1, "nothing to read: no call")
+  })
+
+  test("the stored execution plan round-trips; another plan hash or a malformed one is refused", () => {
+    const store = seed()
+    const areas = makeAreas(store, [])
+    const blob = exportBlob(store, areas, ["members.teams"])
+    blob["members.teams"]!.items[1]!.spec = { description: "design team", members: [] }
+    const { execution } = buildPlan(planInput(store, areas, blob))
+    const stored: unknown = JSON.parse(JSON.stringify(execution))
+    assert.deepEqual(parseStoredExecution(stored, execution.planHash), execution)
+    assert.equal(parseStoredExecution(stored, "sha256:other"), null)
+    assert.equal(parseStoredExecution({ planHash: execution.planHash, ops: [{ nope: true }] }, execution.planHash), null)
+    assert.equal(parseStoredExecution(null, execution.planHash), null)
+  })
+})
+
+function emptyReport(): ConfigApplyReport {
+  return { runId: "car_1", attempt: 1, status: "running", startedAt: new Date(0).toISOString(), finishedAt: null, requestedBy: null, runsAs: null, counts: { applied: 0, noop: 0, failed: 0, not_reached: 0, skipped: 0 }, failure: null, items: [], warnings: [] }
+}
 
 describe("security limits", () => {
   const team = (index: number) => ({ id: `tem_${String(index).padStart(6, "0")}`, name: `Team ${index}`, spec: { description: "", members: [] } })

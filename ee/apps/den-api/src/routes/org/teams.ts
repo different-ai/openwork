@@ -379,10 +379,24 @@ export async function updateTeam(c: ResourceActionContext, payload: ResourceOrga
     await tx.update(TeamTable).set({ name: nextName, updatedAt, grantsOrganizationAdmin: input.grantsOrganizationAdmin }).where(eq(TeamTable.id, team.id))
 
     if (memberIds) {
-      await tx.delete(TeamMemberTable).where(eq(TeamMemberTable.teamId, team.id))
-      if (memberIds.length > 0) {
+      // Only the memberships that change are written: people who stay keep their row
+      // (and its createdAt), so adding or removing one person touches one row.
+      const stored = await tx
+        .select({ id: TeamMemberTable.id, memberId: TeamMemberTable.orgMembershipId })
+        .from(TeamMemberTable)
+        .where(eq(TeamMemberTable.teamId, team.id))
+      const wanted = new Set<MemberId | null>(memberIds)
+      const kept = new Set<MemberId | null>()
+      const removedRows = stored.filter((row) => {
+        if (!wanted.has(row.memberId) || kept.has(row.memberId)) return true
+        kept.add(row.memberId)
+        return false
+      }).map((row) => row.id)
+      if (removedRows.length > 0) await tx.delete(TeamMemberTable).where(inArray(TeamMemberTable.id, removedRows))
+      const addedMemberIds = [...new Set(memberIds)].filter((memberId) => !kept.has(memberId))
+      if (addedMemberIds.length > 0) {
         await tx.insert(TeamMemberTable).values(
-          memberIds.map((memberId) => ({
+          addedMemberIds.map((memberId) => ({
             id: createDenTypeId("teamMember"),
             teamId: team.id,
             orgMembershipId: memberId,

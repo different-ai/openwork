@@ -1,8 +1,9 @@
 /**
  * Runs an execution plan through the area adapters, in order
- * (change-requests.md › Apply, step 3). Transactions, locking, snapshots and
- * alias writes are the caller's job; this only resolves each op's item and
- * calls `area.apply`.
+ * (change-requests.md › Apply, step 3). Locking, snapshots, run rows and
+ * alias writes are the caller's job; this resolves each op's item, calls
+ * `area.apply` and keeps a per-item report the caller can persist after every
+ * item (`onProgress`).
  *
  * What an adapter receives:
  * - every `$ref` gets `id`: the local target id (existing item, or the id a
@@ -12,16 +13,25 @@
  *   `members.people` create the plan added for them (it runs first), so an
  *   adapter never sees a reference without an id;
  * - every `$secret` becomes a `ResolvedConfigSecret` (keep / value / unset).
- *   `env` decisions must be resolved by the caller into `value` secrets.
+ *   `env` decisions must be resolved by the caller into `value` secrets;
+ * - an update carries the plan's field `changes` and the `secretPaths` whose
+ *   decision writes a credential. An update with neither is never sent: it is
+ *   reported `noop`.
+ *
+ * No transaction: each adapter writes through the domain services, which
+ * commit per item. The report (what was written, where it stopped) and the
+ * before-snapshot are the safety net (change-requests.md › Apply).
  */
 import type {
+  ConfigApplyFailure,
+  ConfigApplyItemStatus,
+  ConfigApplyReportItem,
   ConfigAreaKey,
-  ConfigApplyReport,
   ConfigSpec,
   ResolvedConfigSecret,
 } from "@openwork/types/den/config-blobs"
 import { isConfigSecret } from "@openwork/types/den/config-blobs"
-import type { ConfigApplyOp, ConfigArea, ConfigAreaContext, ResolvedConfigItem } from "../area.js"
+import { ConfigApplyItemError, type ConfigApplyOp, type ConfigArea, type ConfigAreaContext, type ResolvedConfigItem } from "../area.js"
 import type { ExecutionOp, ExecutionPlan } from "./plan.js"
 import { DROP_REF, PEOPLE_AREA, inviteRef, rewriteRefs } from "./refs.js"
 import { isPlainObject, isUnsafeKey } from "./util.js"
@@ -32,14 +42,62 @@ export type ExecuteOptions = {
    * creates reuse the source id when it is (D4). Without it, no id is reused.
    */
   isIdFree?: (id: string, area: ConfigAreaKey) => Promise<boolean>
+  /**
+   * Called (and awaited) after an item starts and after it ends, with the
+   * whole report so far: the caller persists it, so a crash leaves an
+   * accurate partial report. Its failures are the caller's to swallow.
+   */
+  onProgress?: (items: readonly ConfigApplyReportItem[]) => Promise<void>
+  /** Failure for an error that is not a ConfigApplyItemError (the caller redacts). Default: code "error" and the message. */
+  describeError?: (error: unknown) => ConfigApplyFailure
+  /** Clock, for tests. */
+  now?: () => number
 }
 
-export type ExecuteResult = ConfigApplyReport & {
+export type ExecuteResult = {
   ok: boolean
+  items: ConfigApplyReportItem[]
+  warnings: string[]
   /** Every create that ran. */
   created: Array<{ area: ConfigAreaKey; ref: string; sourceId?: string; localId: string }>
   /** Alias rows to write: creates that could not keep their source id, and confirmed matches to a different id. */
   aliases: Array<{ area: ConfigAreaKey; sourceId: string; localId: string }>
+}
+
+export function emptyApplyCounts(): Record<ConfigApplyItemStatus, number> {
+  return { applied: 0, noop: 0, failed: 0, not_reached: 0, skipped: 0 }
+}
+
+export function countApplyItems(items: readonly Pick<ConfigApplyReportItem, "status">[]): Record<ConfigApplyItemStatus, number> {
+  const counts = emptyApplyCounts()
+  for (const item of items) counts[item.status] += 1
+  return counts
+}
+
+/** The report items of a plan before anything ran: every op `not_reached`. */
+export function pendingReportItems(execution: ExecutionPlan): ConfigApplyReportItem[] {
+  return execution.ops.map((op) => ({
+    area: op.area,
+    ref: op.ref,
+    name: op.name,
+    op: op.op,
+    localId: op.targetId ?? null,
+    status: "not_reached",
+    steps: [],
+    warnings: [],
+    irreversible: [...op.irreversible],
+    startedAt: null,
+    durationMs: null,
+  }))
+}
+
+function defaultFailure(error: unknown): ConfigApplyFailure {
+  return { code: "error", message: error instanceof Error ? error.message : String(error) }
+}
+
+/** An update that would write nothing: no field changes and no credential to store. */
+export function isNoopUpdate(op: Pick<ExecutionOp, "kind" | "changes" | "secretPaths">): boolean {
+  return op.kind === "update" && op.changes.length === 0 && op.secretPaths.length === 0
 }
 
 export async function executePlan(
@@ -49,29 +107,48 @@ export async function executePlan(
   secrets: ReadonlyMap<string, ResolvedConfigSecret>,
   opts: ExecuteOptions = {},
 ): Promise<ExecuteResult> {
-  const result: ExecuteResult = { ok: true, items: [], warnings: [], created: [], aliases: [] }
+  const now = opts.now ?? Date.now
+  const describe = opts.describeError ?? defaultFailure
+  const items = pendingReportItems(execution)
+  const result: ExecuteResult = { ok: true, items, warnings: [], created: [], aliases: [] }
   if (execution.blocking > 0) {
     result.ok = false
     result.warnings.push(`the plan has ${execution.blocking} blocking item(s): nothing was applied`)
-    for (const op of execution.ops) result.items.push({ area: op.area, ref: op.ref, op: op.op, localId: null, status: "skipped", warnings: [] })
+    for (const item of items) item.status = "skipped"
     return result
+  }
+  const progress = async () => {
+    if (opts.onProgress) await opts.onProgress(items)
   }
   const areaByKey = new Map(areas.map((area) => [area.key, area]))
   /** `${area}\u0000${blob ref}` → local id of creates done in this run. */
   const planned = new Map<string, string>()
-  let failed = false
-  for (const op of execution.ops) {
-    if (failed) {
-      result.items.push({ area: op.area, ref: op.ref, op: op.op, localId: null, status: "skipped", warnings: [] })
+  for (const [index, op] of execution.ops.entries()) {
+    const entry = items[index]
+    if (!entry) continue
+    const started = now()
+    entry.startedAt = new Date(started).toISOString()
+    if (isNoopUpdate(op)) {
+      entry.status = "noop"
+      entry.irreversible = []
+      entry.durationMs = 0
+      await progress()
       continue
     }
     try {
       const area = areaByKey.get(op.area)
       if (!area) throw new Error(`area ${op.area} is not available`)
       const applyOp = await toApplyOp(op, planned, secrets, opts)
+      if (area.irreversible) entry.irreversible = safeIrreversible(area, applyOp) ?? entry.irreversible
+      await progress()
       const applied = await area.apply(ctx, applyOp)
-      const warnings = applied.warnings ?? []
-      result.items.push({ area: op.area, ref: op.ref, op: op.op, localId: applied.localId, status: "applied", warnings })
+      entry.localId = applied.localId
+      entry.warnings = applied.warnings ?? []
+      entry.steps = applied.steps ?? []
+      // An adapter that reports steps and wrote none found nothing to do after all.
+      entry.status = applied.steps !== undefined && applied.steps.length === 0 ? "noop" : "applied"
+      if (entry.status === "noop") entry.irreversible = []
+      entry.durationMs = now() - started
       if (op.kind === "create") {
         planned.set(`${op.area}\u0000${op.ref}`, applied.localId)
         const sourceId = op.item?.sourceId
@@ -80,13 +157,32 @@ export async function executePlan(
       } else if (op.kind === "update" && op.matchedBy === "decision" && op.item?.sourceId && op.item.sourceId !== applied.localId) {
         result.aliases.push({ area: op.area, sourceId: op.item.sourceId, localId: applied.localId })
       }
+      await progress()
     } catch (error) {
-      failed = true
       result.ok = false
-      result.items.push({ area: op.area, ref: op.ref, op: op.op, localId: null, status: "failed", warnings: [], error: error instanceof Error ? error.message : String(error) })
+      entry.status = "failed"
+      entry.durationMs = now() - started
+      if (error instanceof ConfigApplyItemError) {
+        entry.failure = error.failure
+        entry.steps = [...error.stepsDone]
+      } else {
+        entry.failure = describe(error)
+      }
+      // Effects only count once something was written for the item.
+      if (entry.steps.length === 0) entry.irreversible = []
+      await progress()
+      break
     }
   }
   return result
+}
+
+function safeIrreversible(area: ConfigArea, op: ConfigApplyOp): string[] | null {
+  try {
+    return area.irreversible ? area.irreversible(op) : null
+  } catch {
+    return null
+  }
 }
 
 async function toApplyOp(
@@ -105,7 +201,7 @@ async function toApplyOp(
   if (op.item.key !== undefined) item.key = op.item.key
   if (op.kind === "update") {
     if (!op.targetId || !op.previous) throw new Error("update without a target")
-    return { kind: "update", targetId: op.targetId, item, previous: op.previous }
+    return { kind: "update", targetId: op.targetId, item, previous: op.previous, changes: op.changes, secretPaths: op.secretPaths }
   }
   if (op.preferredId && opts.isIdFree && await opts.isIdFree(op.preferredId, op.area)) return { kind: "create", item, preferredId: op.preferredId }
   return { kind: "create", item }

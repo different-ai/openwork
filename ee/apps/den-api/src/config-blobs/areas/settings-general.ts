@@ -28,7 +28,7 @@ import { updateOrganizationAction } from "../../routes/org/core.js"
 import { permissionDeniedMessage } from "../../permissions/effective.js"
 import { resolvePermissionsForMember } from "../../permissions/resolve.js"
 import { defineConfigArea, type ConfigAreaContext, type ConfigItem } from "../area.js"
-import { ConfigApplyError, configRouteContext, expectRouteOk, specObject } from "./route-support.js"
+import { ConfigApplyError, applyWithSteps, configRouteContext, expectRouteOk, specObject, touches } from "./route-support.js"
 
 const AREA = "settings.general"
 const ITEM_NAME = "General settings"
@@ -103,38 +103,57 @@ export const settingsGeneralArea = defineConfigArea({
     return [{ id: ctx.organizationId, name: ITEM_NAME, spec: await readSpec(ctx) }]
   },
 
+  async readItems(ctx, ids): Promise<ConfigItem[]> {
+    return ids.includes(ctx.organizationId) ? [{ id: ctx.organizationId, name: ITEM_NAME, spec: await readSpec(ctx) }] : []
+  },
+
   async apply(ctx, op) {
-    await requireActorPermission(ctx, "organization.update")
-    if (op.kind === "delete") throw new ConfigApplyError("not_deletable", "Organization settings can't be deleted.", 400)
-    const next = generalSpecSchema.parse(specObject(op.item.spec))
-    const current = await readSpec(ctx)
-    const warnings: string[] = []
-    const localId = ctx.organizationId
+    return applyWithSteps(async (log) => {
+      await requireActorPermission(ctx, "organization.update")
+      if (op.kind === "delete") throw new ConfigApplyError("not_deletable", "Organization settings can't be deleted.", 400)
+      const next = generalSpecSchema.parse(specObject(op.item.spec))
+      const current = await readSpec(ctx)
+      const warnings: string[] = []
+      const localId = ctx.organizationId
+      // A create (the one settings item matched nothing) compares every field with the target.
+      const inScope = (path: string) => op.kind === "create" || touches(op.changes, path)
 
-    const domainsChange = !sameList(current.allowedEmailDomains, next.allowedEmailDomains)
-    const versionsChange = !sameList(current.allowedDesktopVersions, next.allowedDesktopVersions)
-    if (domainsChange || versionsChange) {
-      const { c, payload } = await configRouteContext(ctx)
-      const response = await updateOrganizationAction(c, payload, {
-        ...(domainsChange ? { allowedEmailDomains: next.allowedEmailDomains } : {}),
-        ...(versionsChange ? { allowedDesktopVersions: next.allowedDesktopVersions } : {}),
-      })
-      await expectRouteOk(response, "Update organization settings")
-    }
+      const domainsChange = inScope("allowedEmailDomains") && !sameList(current.allowedEmailDomains, next.allowedEmailDomains)
+      const versionsChange = inScope("allowedDesktopVersions") && !sameList(current.allowedDesktopVersions, next.allowedDesktopVersions)
+      if (domainsChange || versionsChange) {
+        const { c, payload } = await configRouteContext(ctx)
+        // PATCH /v1/org with only the changed setting: the other one is not resent.
+        if (domainsChange) {
+          await log.run({ action: "set", target: "allowedEmailDomains", detail: next.allowedEmailDomains?.join(", ") ?? "anyone" }, async () => {
+            await expectRouteOk(await updateOrganizationAction(c, payload, { allowedEmailDomains: next.allowedEmailDomains }), "Update allowed email domains")
+          })
+        }
+        if (versionsChange) {
+          await log.run({ action: "set", target: "allowedDesktopVersions", detail: next.allowedDesktopVersions?.join(", ") ?? "every version" }, async () => {
+            await expectRouteOk(await updateOrganizationAction(c, payload, { allowedDesktopVersions: next.allowedDesktopVersions }), "Update allowed desktop versions")
+          })
+        }
+      }
 
-    const automationChanges = {
-      ...(current.automations.desktop !== next.automations.desktop ? { desktop: next.automations.desktop } : {}),
-      ...(current.automations.cloud !== next.automations.cloud ? { cloud: next.automations.cloud } : {}),
-    }
-    if (Object.keys(automationChanges).length > 0) {
-      // Only the kinds that change: turning Cloud on needs the deployment's headless runner.
-      const saved = await saveOrganizationAutomationSettings(normalizeDenTypeId("organization", ctx.organizationId), automationChanges)
-      if (!saved.ok) throw new ConfigApplyError(saved.error, saved.message, 409)
-    }
+      const automationChanges = {
+        ...(inScope("automations.desktop") && current.automations.desktop !== next.automations.desktop ? { desktop: next.automations.desktop } : {}),
+        ...(inScope("automations.cloud") && current.automations.cloud !== next.automations.cloud ? { cloud: next.automations.cloud } : {}),
+      }
+      if (Object.keys(automationChanges).length > 0) {
+        const field = automationChanges.desktop !== undefined && automationChanges.cloud === undefined ? "automations.desktop"
+          : automationChanges.cloud !== undefined && automationChanges.desktop === undefined ? "automations.cloud"
+          : "automations"
+        await log.run({ action: "set", target: field, detail: Object.entries(automationChanges).map(([kind, on]) => `${kind} ${on ? "on" : "off"}`).join(", ") }, async () => {
+          // Only the kinds that change: turning Cloud on needs the deployment's headless runner.
+          const saved = await saveOrganizationAutomationSettings(normalizeDenTypeId("organization", ctx.organizationId), automationChanges)
+          if (!saved.ok) throw new ConfigApplyError(saved.error, saved.message, 409)
+        }, field)
+      }
 
-    if (JSON.stringify(normalizeDesktopAppRestrictions(next.desktopAppRestrictions)) !== JSON.stringify(current.desktopAppRestrictions)) {
-      warnings.push("Desktop app restrictions are a legacy setting replaced by Desktop policies; they were not changed.")
-    }
-    return { localId, warnings }
+      if (inScope("desktopAppRestrictions") && JSON.stringify(normalizeDesktopAppRestrictions(next.desktopAppRestrictions)) !== JSON.stringify(current.desktopAppRestrictions)) {
+        warnings.push("Desktop app restrictions are a legacy setting replaced by Desktop policies; they were not changed.")
+      }
+      return { localId, warnings }
+    })
   },
 })

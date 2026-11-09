@@ -8,6 +8,7 @@ import { randomUUID } from "node:crypto"
 import { and, asc, desc, eq, gt, inArray, isNotNull, isNull, lt, lte, ne, or } from "@openwork-ee/den-db/drizzle"
 import {
   AuthUserTable,
+  ConfigApplyRunTable,
   ConfigBlobAliasTable,
   ConfigBlobExportTable,
   ConfigChangeRequestTable,
@@ -17,17 +18,21 @@ import {
 import { createDenTypeId, type DenTypeId } from "@openwork-ee/utils/typeid"
 import {
   CONFIG_CHANGE_REQUEST_OPEN_STATUSES,
+  type ConfigApplyReport,
   type ConfigAreaKey,
   type ConfigChangeRequestStatus,
   type ConfigChangeRequestSummary,
 } from "@openwork/types/den/config-blobs"
 import { db } from "../db.js"
+import { interruptReport, summarizeReport } from "./engine/report.js"
 
 export type ConfigChangeRequestRow = typeof ConfigChangeRequestTable.$inferSelect
 export type ConfigChangeRequestInsert = typeof ConfigChangeRequestTable.$inferInsert
 export type ConfigChangeRequestId = DenTypeId<"configChangeRequest">
 export type ConfigBlobAliasRow = typeof ConfigBlobAliasTable.$inferSelect
 export type ConfigBlobExportRow = typeof ConfigBlobExportTable.$inferSelect
+export type ConfigApplyRunRow = typeof ConfigApplyRunTable.$inferSelect
+export type ConfigApplyRunId = DenTypeId<"configApplyRun">
 type OrganizationId = DenTypeId<"organization">
 type MemberId = DenTypeId<"member">
 
@@ -43,7 +48,7 @@ export const CONFIG_ANALYSIS_CLAIMABLE_STATUSES: readonly ConfigChangeRequestSta
  * keeping its before-snapshot for a revert.
  */
 export const CONFIG_APPLY_CLAIMABLE_STATUSES: readonly ConfigChangeRequestStatus[] = ["queued", "applying"]
-export const CONFIG_APPLY_INTERRUPTED_ERROR = "apply interrupted; check the before-snapshot and revert if needed"
+export const CONFIG_APPLY_INTERRUPTED_ERROR = "The apply stopped part-way (the server restarted or lost its lock). Check the apply report, then fix and upload again, or restore the previous config."
 /** Open statuses that go `stale` when another request of the org is applied. */
 export const CONFIG_STALEABLE_STATUSES: readonly ConfigChangeRequestStatus[] = ["needs_review", "approved", "queued"]
 export const CONFIG_CLOSED_STATUSES: readonly ConfigChangeRequestStatus[] = ["invalid", "applied", "failed", "superseded", "cancelled"]
@@ -235,6 +240,7 @@ export async function claimNextApply(options: { leaseMs?: number } = {}): Promis
           leaseOwner: null,
           leaseUntil: null,
         }).where(and(eq(ConfigChangeRequestTable.id, row.id), eq(ConfigChangeRequestTable.status, "applying")))
+        await interruptRunningApplyRuns(row.organizationId, row.id, tx)
         await markOtherOpenRequestsStale(row.organizationId, row.id, tx)
         continue
       }
@@ -509,4 +515,132 @@ export async function pruneExports(organizationId: OrganizationId, keep = CONFIG
     .offset(keep)
   if (old.length === 0) return 0
   return affectedRows(await db.$primary.delete(ConfigBlobExportTable).where(inArray(ConfigBlobExportTable.id, old.map((row) => row.id))))
+}
+
+// ---------------------------------------------------------------------------
+// Apply runs (one row per apply attempt, with its report)
+
+function failureColumns(report: ConfigApplyReport) {
+  return {
+    failureArea: report.failure?.area ?? null,
+    failureRef: report.failure ? report.failure.ref.slice(0, 200) : null,
+    failureCode: report.failure ? report.failure.failure.code.slice(0, 100) : null,
+  }
+}
+
+export type CreateApplyRunInput = {
+  organizationId: OrganizationId
+  changeRequestId: ConfigChangeRequestId
+  requestedByMemberId: MemberId | null
+  requestedByApiKeyId: string | null
+  runsAsMemberId: MemberId | null
+  /** Built with `runId: ""` and `attempt: 0`: both are filled in here. */
+  report: ConfigApplyReport
+  startedAt: Date
+}
+
+/** Inserts the run of the next attempt (status `running`). Returns the row with `runId` and `attempt` set in its report. */
+export async function createApplyRun(input: CreateApplyRunInput, database: ConfigDatabase = db.$primary): Promise<ConfigApplyRunRow> {
+  const id = createDenTypeId("configApplyRun")
+  const previous = await database
+    .select({ attempt: ConfigApplyRunTable.attempt })
+    .from(ConfigApplyRunTable)
+    .where(eq(ConfigApplyRunTable.changeRequestId, input.changeRequestId))
+    .orderBy(desc(ConfigApplyRunTable.attempt))
+    .limit(1)
+  const attempt = (previous[0]?.attempt ?? 0) + 1
+  const report = summarizeReport({ ...input.report, runId: id, attempt, status: "running" })
+  await database.insert(ConfigApplyRunTable).values({
+    id,
+    organizationId: input.organizationId,
+    changeRequestId: input.changeRequestId,
+    attempt,
+    status: "running",
+    requestedByMemberId: input.requestedByMemberId,
+    requestedByApiKeyId: input.requestedByApiKeyId,
+    runsAsMemberId: input.runsAsMemberId,
+    report,
+    ...failureColumns(report),
+    startedAt: input.startedAt,
+  })
+  const row = await getApplyRun(input.organizationId, input.changeRequestId, id, database)
+  if (!row) throw new Error("config_apply_run_insert_lost")
+  return row
+}
+
+/**
+ * Saves a run's report (after every item, and once at the end). Only while the
+ * run is still `running`: a run already marked `interrupted` by the next claim
+ * keeps that status, but its items are still updated with what this worker did.
+ */
+export async function saveApplyRunReport(
+  run: Pick<ConfigApplyRunRow, "id" | "organizationId">,
+  report: ConfigApplyReport,
+  database: ConfigDatabase = db.$primary,
+): Promise<boolean> {
+  const summarized = summarizeReport(report)
+  const finishedAt = summarized.finishedAt ? new Date(summarized.finishedAt) : null
+  const result = await database
+    .update(ConfigApplyRunTable)
+    .set({ report: summarized, status: summarized.status, finishedAt, ...failureColumns(summarized) })
+    .where(and(eq(ConfigApplyRunTable.organizationId, run.organizationId), eq(ConfigApplyRunTable.id, run.id), eq(ConfigApplyRunTable.status, "running")))
+  if (affectedRows(result) > 0) return true
+  // Interrupted meanwhile: record what this worker did, keep `interrupted`.
+  await database
+    .update(ConfigApplyRunTable)
+    .set({ report: { ...summarized, status: "interrupted" }, ...failureColumns(summarized) })
+    .where(and(eq(ConfigApplyRunTable.organizationId, run.organizationId), eq(ConfigApplyRunTable.id, run.id), eq(ConfigApplyRunTable.status, "interrupted")))
+  return false
+}
+
+export async function getApplyRun(
+  organizationId: OrganizationId,
+  changeRequestId: ConfigChangeRequestId,
+  id: ConfigApplyRunId,
+  database: ConfigDatabase = db,
+): Promise<ConfigApplyRunRow | null> {
+  const rows = await database
+    .select()
+    .from(ConfigApplyRunTable)
+    .where(and(eq(ConfigApplyRunTable.organizationId, organizationId), eq(ConfigApplyRunTable.changeRequestId, changeRequestId), eq(ConfigApplyRunTable.id, id)))
+    .limit(1)
+  return rows[0] ?? null
+}
+
+/** Every run of a change request, newest first. */
+export async function listApplyRuns(organizationId: OrganizationId, changeRequestId: ConfigChangeRequestId, database: ConfigDatabase = db): Promise<ConfigApplyRunRow[]> {
+  return database
+    .select()
+    .from(ConfigApplyRunTable)
+    .where(and(eq(ConfigApplyRunTable.organizationId, organizationId), eq(ConfigApplyRunTable.changeRequestId, changeRequestId)))
+    .orderBy(desc(ConfigApplyRunTable.attempt))
+    .limit(50)
+}
+
+/** The newest run of a change request, or null when it was never applied. */
+export async function latestApplyRun(organizationId: OrganizationId, changeRequestId: ConfigChangeRequestId, database: ConfigDatabase = db): Promise<ConfigApplyRunRow | null> {
+  const rows = await database
+    .select()
+    .from(ConfigApplyRunTable)
+    .where(and(eq(ConfigApplyRunTable.organizationId, organizationId), eq(ConfigApplyRunTable.changeRequestId, changeRequestId)))
+    .orderBy(desc(ConfigApplyRunTable.attempt))
+    .limit(1)
+  return rows[0] ?? null
+}
+
+/** A worker died or lost its lease mid-apply: its `running` runs become `interrupted`, items in flight failed ("interrupted"). */
+export async function interruptRunningApplyRuns(organizationId: OrganizationId, changeRequestId: ConfigChangeRequestId, database: ConfigDatabase = db.$primary): Promise<number> {
+  const running = await database
+    .select()
+    .from(ConfigApplyRunTable)
+    .where(and(eq(ConfigApplyRunTable.organizationId, organizationId), eq(ConfigApplyRunTable.changeRequestId, changeRequestId), eq(ConfigApplyRunTable.status, "running")))
+  const now = new Date()
+  for (const run of running) {
+    const report = interruptReport(run.report, now, CONFIG_APPLY_INTERRUPTED_ERROR)
+    await database
+      .update(ConfigApplyRunTable)
+      .set({ report, status: "interrupted", finishedAt: now, ...failureColumns(report) })
+      .where(and(eq(ConfigApplyRunTable.id, run.id), eq(ConfigApplyRunTable.status, "running")))
+  }
+  return running.length
 }

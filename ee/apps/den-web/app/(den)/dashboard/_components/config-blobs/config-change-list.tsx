@@ -13,7 +13,7 @@ import { ConfigCounts, ConfigRowSkeleton, ConfigStatusChip } from "./config-blob
 
 export function changeRequestTitle(request: Pick<ConfigChangeRequestSummary, "title" | "source" | "revertsChangeRequestId" | "sourceOrganization">): string {
   if (request.title) return request.title;
-  if (request.source === "revert") return "Revert of an earlier change";
+  if (request.source === "revert") return "Restore previous config";
   if (request.sourceOrganization) return `Import from ${request.sourceOrganization.name}`;
   return request.source === "api" ? "Import from the API" : "Import";
 }

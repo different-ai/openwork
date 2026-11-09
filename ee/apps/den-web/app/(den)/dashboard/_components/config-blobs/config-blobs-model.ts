@@ -1,6 +1,11 @@
 import {
   CONFIG_BLOB_MAX_BYTES,
   configBlobSchema,
+  type ConfigApplyItemStatus,
+  type ConfigApplyReport,
+  type ConfigApplyReportItem,
+  type ConfigApplyRunStatus,
+  type ConfigApplyStep,
   type ConfigAreaDescriptor,
   type ConfigAreaKey,
   type ConfigBlob,
@@ -375,4 +380,122 @@ export function formatFieldPath(path: string): string {
     }
   }
   return segments.join(" › ");
+}
+
+// ---------------------------------------------------------------------------
+// Apply runs (one report per apply attempt)
+
+/** What admins call reverting: it restores configuration only, never side effects. */
+export const RESTORE_ACTION_LABEL = "Restore previous config";
+
+export const CONFIG_RUN_STATUS_PRESENTATION: Record<ConfigApplyRunStatus, { label: string; tone: DenChipTone }> = {
+  running: { label: "Applying", tone: "info" },
+  applied: { label: "Applied", tone: "success" },
+  failed: { label: "Failed", tone: "danger" },
+  interrupted: { label: "Stopped part-way", tone: "danger" },
+};
+
+export const CONFIG_ITEM_STATUS_PRESENTATION: Record<ConfigApplyItemStatus, { label: string; tone: DenChipTone }> = {
+  applied: { label: "Done", tone: "success" },
+  noop: { label: "Already up to date", tone: "neutral" },
+  failed: { label: "Failed", tone: "danger" },
+  not_reached: { label: "Not reached", tone: "neutral" },
+  skipped: { label: "Not run", tone: "neutral" },
+};
+
+const STEP_VERBS: Record<ConfigApplyStep["action"], string> = {
+  create: "Created",
+  update: "Updated",
+  delete: "Deleted",
+  add: "Added",
+  remove: "Removed",
+  set: "Set",
+  keep: "Kept",
+};
+
+/** `{ action: "add", target: "access.teams", detail: "Platform" }` → `Added Access › Teams: Platform` */
+export function formatApplyStep(step: ConfigApplyStep): string {
+  const target = step.target ? formatFieldPath(step.target) : "";
+  const head = target ? `${STEP_VERBS[step.action]} ${target}` : STEP_VERBS[step.action];
+  return step.detail ? `${head}: ${step.detail}` : head;
+}
+
+/** `1.2 s`, `350 ms`, `2 min 5 s`; empty when unknown. */
+export function formatDuration(ms: number | null): string {
+  if (ms === null || !Number.isFinite(ms) || ms < 0) return "";
+  if (ms < 1000) return `${Math.round(ms)} ms`;
+  if (ms < 60_000) return `${(ms / 1000).toFixed(ms < 10_000 ? 1 : 0)} s`;
+  const minutes = Math.floor(ms / 60_000);
+  const seconds = Math.round((ms % 60_000) / 1000);
+  return seconds > 0 ? `${minutes} min ${seconds} s` : `${minutes} min`;
+}
+
+/** How long a run took (or has been running), from its start and end. */
+export function runDurationMs(run: Pick<ConfigApplyReport, "startedAt" | "finishedAt">, now = Date.now()): number | null {
+  const started = Date.parse(run.startedAt);
+  const finished = run.finishedAt ? Date.parse(run.finishedAt) : now;
+  return Number.isNaN(started) || Number.isNaN(finished) ? null : Math.max(0, finished - started);
+}
+
+/** `3 done, 1 failed, 2 not reached`: only the non-zero counts. */
+export function formatRunCounts(counts: ConfigApplyReport["counts"]): string {
+  const parts: string[] = [];
+  if (counts.applied > 0) parts.push(`${counts.applied} done`);
+  if (counts.noop > 0) parts.push(`${counts.noop} already up to date`);
+  if (counts.failed > 0) parts.push(`${counts.failed} failed`);
+  if (counts.not_reached > 0) parts.push(`${counts.not_reached} not reached`);
+  if (counts.skipped > 0) parts.push(`${counts.skipped} not run`);
+  return parts.length > 0 ? parts.join(", ") : "Nothing to apply";
+}
+
+/** `Ada Lovelace`, `Ada Lovelace with the token "CI"`, or `a member`. */
+export function runRequester(run: Pick<ConfigApplyReport, "requestedBy">): string {
+  const by = run.requestedBy;
+  if (!by) return "a member";
+  const name = by.name ?? "a member";
+  return by.apiKeyName ? `${name} with the token "${by.apiKeyName}"` : name;
+}
+
+/** `AI Providers › OpenAI › Base URL`: where an item failed (area, item, then the field or the failed write). */
+export function failureLocation(areaLabel: string, item: Pick<ConfigApplyReportItem, "name" | "failure">): string {
+  const parts = [areaLabel, item.name];
+  if (item.failure?.field) parts.push(formatFieldPath(item.failure.field));
+  else if (item.failure?.step) parts.push(formatApplyStep(item.failure.step));
+  return parts.join(" › ");
+}
+
+export type ConfigRunFailure = {
+  item: ConfigApplyReportItem;
+  /** `Area › Item › Field`. */
+  where: string;
+  /** The write that failed, in words, when the adapter said which. */
+  failedStep: string | null;
+  message: string;
+  /** Writes already done for the failed item, in words. */
+  written: string[];
+  /** Items after it that never ran. */
+  notReached: ConfigApplyReportItem[];
+  interrupted: boolean;
+};
+
+/** The failed item of a run, explained: what failed, where, what was already written, what was not reached. */
+export function runFailure(run: ConfigApplyReport, areaLabel: (area: ConfigAreaKey) => string): ConfigRunFailure | null {
+  const item = run.items.find((entry) => entry.status === "failed");
+  if (!item) return null;
+  return {
+    item,
+    where: failureLocation(areaLabel(item.area), item),
+    failedStep: item.failure?.step ? formatApplyStep(item.failure.step) : null,
+    message: item.failure?.message ?? item.error ?? "It failed without a message.",
+    written: item.steps.map(formatApplyStep),
+    notReached: run.items.filter((entry) => entry.status === "not_reached"),
+    interrupted: item.failure?.code === "interrupted",
+  };
+}
+
+/** Effects of a run that restoring the previous config can't undo, one line per item. */
+export function runIrreversible(run: ConfigApplyReport, areaLabel: (area: ConfigAreaKey) => string): string[] {
+  return run.items
+    .filter((item) => item.irreversible.length > 0 && (item.status === "applied" || item.steps.length > 0))
+    .map((item) => `${areaLabel(item.area)} › ${item.name}: ${item.irreversible.join("; ")}`);
 }

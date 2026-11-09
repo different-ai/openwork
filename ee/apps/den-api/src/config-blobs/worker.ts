@@ -70,7 +70,7 @@ export async function runConfigBlobWorkerOnce(options: { now?: Date } = {}): Pro
     try {
       if (await applyClaimedChangeRequest(claim)) tick.applied += 1
     } catch (error) {
-      // The lease expires; the next claim marks the request failed (apply interrupted), never applies it twice.
+      // The lease expires; the next claim marks the request failed and its run interrupted, never applies it twice.
       logger.error("config change request apply crashed", { change_request_id: claim.id, organization_id: claim.organizationId, error })
       captureException(error, { component: "config_blob_worker" })
     }

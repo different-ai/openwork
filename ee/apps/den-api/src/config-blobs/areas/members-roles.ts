@@ -37,7 +37,7 @@ import {
   updatePermissionSetPermissionsAction,
 } from "../../routes/org/permissions.js"
 import { defineConfigArea, type ConfigAreaContext, type ConfigItem } from "../area.js"
-import { ConfigApplyError, configRouteContext, expectRouteOk, resolvedRefIds, specObject, specRefSchema, stringField, teamRef } from "./route-support.js"
+import { ConfigApplyError, applyWithSteps, configRouteContext, expectRouteOk, isJsonObject, resolvedRefIds, specObject, specRefSchema, stringField, teamRef, touches } from "./route-support.js"
 
 const AREA = "members.roles"
 
@@ -129,120 +129,168 @@ export const membersRolesArea = defineConfigArea({
     return builtIn ? `${item.name} permissions are built in and can't be deleted.` : null
   },
 
+  irreversible: (op) => op.kind === "delete"
+    ? [`"${op.previous.name}" is archived with its permission history; a restore creates a new role with a new id.`]
+    : [],
+
   async exportItems(ctx) {
-    const organizationId = normalizeDenTypeId("organization", ctx.organizationId)
-    // Same as GET /v1/permissions/sets: the built-in sets are created on first read.
-    await ensureCurrentDefaultPermissionSets(organizationId)
-    const sets = (await ctx.db
-      .select({ id: PermissionSetTable.id, name: PermissionSetTable.name, defaultKey: PermissionSetTable.defaultKey })
-      .from(PermissionSetTable)
-      .where(and(eq(PermissionSetTable.organizationId, organizationId), isNull(PermissionSetTable.archivedAt)))
-      .orderBy(asc(PermissionSetTable.name), asc(PermissionSetTable.id)))
-      .filter((set) => set.defaultKey !== "super-admin" || superAdminSetShown(ctx))
-    const setIds = sets.map((set) => set.id)
-    const [states, teamsBySet] = await Promise.all([
-      readPermissionSetStates(ctx.db, setIds),
-      activeTeamIdsBySet(ctx, setIds),
-    ])
-    const rank = (key: PermissionDefaultSetKey | null) => key === null ? PERMISSION_DEFAULT_SET_KEYS.length : PERMISSION_DEFAULT_SET_KEYS.indexOf(key)
-    return sets
-      .sort((left, right) => rank(left.defaultKey) - rank(right.defaultKey))
-      .map((set): ConfigItem => ({
-        id: set.id,
-        key: set.defaultKey,
-        name: set.name,
-        spec: {
-          builtIn: set.defaultKey,
-          allow: [...allowedKeys(states.get(set.id))].sort(),
-          teams: set.defaultKey !== null
-            ? []
-            : [...(teamsBySet.get(set.id) ?? [])].sort((left, right) => left.id.localeCompare(right.id)).map((team) => teamRef(team.id, team.name)),
-        },
-      }))
+    return readRoles(ctx, null)
+  },
+
+  async readItems(ctx, ids) {
+    return readRoles(ctx, ids)
   },
 
   async apply(ctx, op) {
-    const { c, payload } = await configRouteContext(ctx)
-    const capture = currentAuditChangeCapture(ctx.organizationId)
-    const organizationId = normalizeDenTypeId("organization", ctx.organizationId)
+    return applyWithSteps(async (log) => {
+      const { c, payload } = await configRouteContext(ctx)
+      const capture = currentAuditChangeCapture(ctx.organizationId)
+      const organizationId = normalizeDenTypeId("organization", ctx.organizationId)
 
-    if (op.kind === "delete") {
-      if (builtInOf(op.previous)) throw new ConfigApplyError("default_permission_set", `${op.previous.name} permissions can't be deleted.`, 400)
-      await expectRouteOk(await archivePermissionSetAction(c, payload, op.targetId, capture), `Delete role "${op.previous.name}"`)
-      return { localId: op.targetId }
-    }
-
-    const raw = specObject(op.item.spec)
-    const spec = roleApplyFieldsSchema.parse(raw)
-    const teamIds = [...new Set(resolvedRefIds(raw.teams, `Role "${op.item.name}" teams`).map((id) => normalizeDenTypeId("team", id)))]
-    const { known, unknown } = splitAllowed(spec.allow)
-    const warnings = unknown.length > 0
-      ? [`Not on this server, skipped: ${unknown.join(", ")}.`]
-      : []
-    if (spec.builtIn && teamIds.length > 0) {
-      throw new ConfigApplyError("invalid_spec", `${PERMISSION_DEFAULT_SET_LABELS[spec.builtIn]} permissions can't be given to teams; make the team an Admin team instead.`)
-    }
-
-    if (op.kind === "create") {
-      if (spec.builtIn) {
-        throw new ConfigApplyError("default_permission_set", `${PERMISSION_DEFAULT_SET_LABELS[spec.builtIn]} permissions always exist and can only be updated.`, 400)
+      if (op.kind === "delete") {
+        if (builtInOf(op.previous)) throw new ConfigApplyError("default_permission_set", `${op.previous.name} permissions can't be deleted.`, 400)
+        await log.run({ action: "delete", target: "role", detail: op.previous.name }, async () => {
+          await expectRouteOk(await archivePermissionSetAction(c, payload, op.targetId, capture), `Delete role "${op.previous.name}"`)
+        })
+        return { localId: op.targetId }
       }
+
+      const raw = specObject(op.item.spec)
+      const spec = roleApplyFieldsSchema.parse(raw)
+      const teamIds = [...new Set(resolvedRefIds(raw.teams, `Role "${op.item.name}" teams`).map((id) => normalizeDenTypeId("team", id)))]
+      const { known, unknown } = splitAllowed(spec.allow)
+      const warnings = unknown.length > 0
+        ? [`Not on this server, skipped: ${unknown.join(", ")}.`]
+        : []
+      if (spec.builtIn && teamIds.length > 0) {
+        throw new ConfigApplyError("invalid_spec", `${PERMISSION_DEFAULT_SET_LABELS[spec.builtIn]} permissions can't be given to teams; make the team an Admin team instead.`, 400, "teams")
+      }
+
+      if (op.kind === "create") {
+        if (spec.builtIn) {
+          throw new ConfigApplyError("default_permission_set", `${PERMISSION_DEFAULT_SET_LABELS[spec.builtIn]} permissions always exist and can only be updated.`, 400)
+        }
+        const name = op.item.name.trim()
+        const localId = await log.run({ action: "create", target: "role", detail: name }, async () => {
+          const response = await createPermissionSetAction(c, payload, {
+            name,
+            teamIds,
+            permissions: known.map((key) => ({ key, status: "allow" as const })),
+          }, capture, { permissionSetId: preferredSetId(op.preferredId) })
+          return stringField(await expectRouteOk(response, `Create role "${name}"`), "set", "id")
+        })
+        return { localId, warnings }
+      }
+
+      // update: each part is written only when the plan changes it.
+      const setId = normalizeDenTypeId("permissionSet", op.targetId)
+      const [set] = await ctx.db
+        .select({ id: PermissionSetTable.id, name: PermissionSetTable.name, defaultKey: PermissionSetTable.defaultKey, archivedAt: PermissionSetTable.archivedAt })
+        .from(PermissionSetTable)
+        .where(and(eq(PermissionSetTable.organizationId, organizationId), eq(PermissionSetTable.id, setId)))
+        .limit(1)
+      if (!set || set.archivedAt) throw new ConfigApplyError("permission_set_not_found", `Role "${op.previous.name}" no longer exists.`, 404)
+      if ((spec.builtIn ?? null) !== set.defaultKey) {
+        throw new ConfigApplyError("invalid_spec", `"${set.name}" can't change between a built-in and a custom role.`, 400, "builtIn")
+      }
+
+      // Name: built-in sets keep their names.
       const name = op.item.name.trim()
-      const response = await createPermissionSetAction(c, payload, {
-        name,
-        teamIds,
-        permissions: known.map((key) => ({ key, status: "allow" as const })),
-      }, capture, { permissionSetId: preferredSetId(op.preferredId) })
-      const body = await expectRouteOk(response, `Create role "${name}"`)
-      return { localId: stringField(body, "set", "id"), warnings }
-    }
+      if (touches(op.changes, "name")) {
+        if (set.defaultKey === null && name && name !== set.name) {
+          await log.run({ action: "set", target: "name", detail: name }, async () => {
+            await expectRouteOk(await renamePermissionSetAction(c, payload, set.id, name, capture), `Rename role "${set.name}"`)
+          })
+        } else if (set.defaultKey !== null && name !== set.name) {
+          warnings.push(`${set.name} permissions keep their name.`)
+        }
+      }
 
-    // update
-    const setId = normalizeDenTypeId("permissionSet", op.targetId)
-    const [set] = await ctx.db
-      .select({ id: PermissionSetTable.id, name: PermissionSetTable.name, defaultKey: PermissionSetTable.defaultKey, archivedAt: PermissionSetTable.archivedAt })
-      .from(PermissionSetTable)
-      .where(and(eq(PermissionSetTable.organizationId, organizationId), eq(PermissionSetTable.id, setId)))
-      .limit(1)
-    if (!set || set.archivedAt) throw new ConfigApplyError("permission_set_not_found", `Role "${op.previous.name}" no longer exists.`, 404)
-    if ((spec.builtIn ?? null) !== set.defaultKey) {
-      throw new ConfigApplyError("invalid_spec", `"${set.name}" can't change between a built-in and a custom role.`)
-    }
+      // Permissions: send only keys whose status changes (the action re-plans against the locked set).
+      if (touches(op.changes, "allow")) {
+        if (set.defaultKey !== null) await ensureCurrentDefaultPermissionSets(organizationId)
+        const current = allowedKeys((await readPermissionSetStates(ctx.db, [set.id])).get(set.id))
+        const wanted = new Set<string>(known)
+        const changes = PERMISSION_KEYS.flatMap((key) => {
+          const allowNow = current.has(key)
+          const allowNext = wanted.has(key)
+          return allowNow === allowNext ? [] : [{ key, status: allowNext ? "allow" as const : "deny" as const }]
+        })
+        if (changes.length > 0) {
+          const detail = changes.map((change) => `${change.status === "allow" ? "+" : "-"}${change.key}`).join(", ")
+          await log.run({ action: "update", target: "allow", detail }, async () => {
+            await expectRouteOk(await updatePermissionSetPermissionsAction(c, payload, set.id, changes, capture), `Change permissions of "${set.name}"`)
+          })
+        }
+      }
 
-    // Name: built-in sets keep their names.
-    const name = op.item.name.trim()
-    if (set.defaultKey === null && name && name !== set.name) {
-      await expectRouteOk(await renamePermissionSetAction(c, payload, set.id, name, capture), `Rename role "${set.name}"`)
-    } else if (set.defaultKey !== null && name !== set.name) {
-      warnings.push(`${set.name} permissions keep their name.`)
-    }
-
-    // Permissions: send only keys whose status changes (the action re-plans against the locked set).
-    if (set.defaultKey !== null) await ensureCurrentDefaultPermissionSets(organizationId)
-    const current = allowedKeys((await readPermissionSetStates(ctx.db, [set.id])).get(set.id))
-    const wanted = new Set<string>(known)
-    const changes = PERMISSION_KEYS.flatMap((key) => {
-      const allowNow = current.has(key)
-      const allowNext = wanted.has(key)
-      return allowNow === allowNext ? [] : [{ key, status: allowNext ? "allow" as const : "deny" as const }]
+      // Teams (custom roles): give the role to added teams, take it from removed ones.
+      if (set.defaultKey === null && touches(op.changes, "teams")) {
+        const current = (await activeTeamIdsBySet(ctx, [set.id])).get(set.id) ?? []
+        const currentTeams = new Set(current.map((team) => team.id))
+        const wantedTeams = new Set<string>(teamIds)
+        const teamName = (id: string) => current.find((team) => team.id === id)?.name ?? refName(raw.teams, id) ?? id
+        for (const teamId of wantedTeams) {
+          if (currentTeams.has(teamId)) continue
+          await log.run({ action: "add", target: "teams", detail: teamName(teamId) }, async () => {
+            await expectRouteOk(await setTeamPermissionSetAction(c, payload, teamId, set.id, capture), `Give role "${set.name}" to a team`)
+          })
+        }
+        for (const teamId of currentTeams) {
+          if (wantedTeams.has(teamId)) continue
+          await log.run({ action: "remove", target: "teams", detail: teamName(teamId) }, async () => {
+            await expectRouteOk(await setTeamPermissionSetAction(c, payload, teamId, null, capture), `Take role "${set.name}" from a team`)
+          })
+        }
+      }
+      return { localId: set.id, warnings }
     })
-    if (changes.length > 0) {
-      await expectRouteOk(await updatePermissionSetPermissionsAction(c, payload, set.id, changes, capture), `Change permissions of "${set.name}"`)
-    }
-
-    // Teams (custom roles): give the role to added teams, take it from removed ones.
-    if (set.defaultKey === null) {
-      const currentTeams = new Set((await activeTeamIdsBySet(ctx, [set.id])).get(set.id)?.map((team) => team.id) ?? [])
-      const wantedTeams = new Set<string>(teamIds)
-      for (const teamId of wantedTeams) {
-        if (currentTeams.has(teamId)) continue
-        await expectRouteOk(await setTeamPermissionSetAction(c, payload, teamId, set.id, capture), `Give role "${set.name}" to a team`)
-      }
-      for (const teamId of currentTeams) {
-        if (wantedTeams.has(teamId)) continue
-        await expectRouteOk(await setTeamPermissionSetAction(c, payload, teamId, null, capture), `Take role "${set.name}" from a team`)
-      }
-    }
-    return { localId: set.id, warnings }
   },
 })
+
+/** The `name` hint of the resolved ref to `id` in `refs`, if any. */
+function refName(refs: unknown, id: string): string | null {
+  if (!Array.isArray(refs)) return null
+  for (const ref of refs) {
+    if (isJsonObject(ref) && ref.id === id && typeof ref.name === "string") return ref.name
+  }
+  return null
+}
+
+async function readRoles(ctx: ConfigAreaContext, ids: readonly string[] | null): Promise<ConfigItem[]> {
+  const organizationId = normalizeDenTypeId("organization", ctx.organizationId)
+  const setIdFilter = ids?.flatMap((id) => preferredSetId(id) ?? []) ?? null
+  if (setIdFilter && setIdFilter.length === 0) return []
+  // Same as GET /v1/permissions/sets: the built-in sets are created on first read.
+  await ensureCurrentDefaultPermissionSets(organizationId)
+  const sets = (await ctx.db
+    .select({ id: PermissionSetTable.id, name: PermissionSetTable.name, defaultKey: PermissionSetTable.defaultKey })
+    .from(PermissionSetTable)
+    .where(and(
+      eq(PermissionSetTable.organizationId, organizationId),
+      isNull(PermissionSetTable.archivedAt),
+      setIdFilter ? inArray(PermissionSetTable.id, setIdFilter) : undefined,
+    ))
+    .orderBy(asc(PermissionSetTable.name), asc(PermissionSetTable.id)))
+    .filter((set) => set.defaultKey !== "super-admin" || superAdminSetShown(ctx))
+  const setIds = sets.map((set) => set.id)
+  const [states, teamsBySet] = await Promise.all([
+    readPermissionSetStates(ctx.db, setIds),
+    activeTeamIdsBySet(ctx, setIds),
+  ])
+  const rank = (key: PermissionDefaultSetKey | null) => key === null ? PERMISSION_DEFAULT_SET_KEYS.length : PERMISSION_DEFAULT_SET_KEYS.indexOf(key)
+  return sets
+    .sort((left, right) => rank(left.defaultKey) - rank(right.defaultKey))
+    .map((set): ConfigItem => ({
+      id: set.id,
+      key: set.defaultKey,
+      name: set.name,
+      spec: {
+        builtIn: set.defaultKey,
+        allow: [...allowedKeys(states.get(set.id))].sort(),
+        teams: set.defaultKey !== null
+          ? []
+          : [...(teamsBySet.get(set.id) ?? [])].sort((left, right) => left.id.localeCompare(right.id)).map((team) => teamRef(team.id, team.name)),
+      },
+    }))
+}

@@ -9,6 +9,8 @@
 import assert from "node:assert/strict"
 import { after, before, test } from "node:test"
 import { createDenTypeId } from "@openwork-ee/utils/typeid"
+import { ConfigApplyItemError } from "../../src/config-blobs/area.js"
+import { updateOp } from "./config-blobs-area-ops.js"
 import { bootDen, field, startFakeMcpServer, summary, text } from "./harness.js"
 
 const den = await bootDen()
@@ -265,8 +267,9 @@ test("re-applying an export into the same org with keep changes nothing and keep
     for (const item of before.get(area.key) ?? []) {
       const spec = resolve(item.spec, sameOrgRefs, keepAll)
       assert.ok(isObject(spec))
-      const result = await area.apply(ctx, { kind: "update", targetId: item.id, previous: item, item: { sourceId: item.id, key: item.key, name: item.name, spec } })
+      const result = await area.apply(ctx, updateOp(area, item, { sourceId: item.id, key: item.key, name: item.name, spec }))
       assert.equal(result.localId, item.id, `${area.key} ${item.name}`)
+      assert.deepEqual(result.steps ?? [], [], `${area.key} ${item.name}: nothing written`)
     }
   }
   const afterExport = await exportAll(orgA)
@@ -288,19 +291,24 @@ test("a secret given as a value replaces the stored one", async () => {
   const replace = (value: string) => (): SecretDecision => ({ decision: "value", value })
 
   const acme = only(exported.get("ai-gateway.byok"), "Acme LLM")
-  await aiGatewayByokArea.apply(ctx, { kind: "update", targetId: acme.id, previous: acme, item: { key: acme.key, name: acme.name, spec: resolvedSpec(acme.spec, sameOrgRefs, replace("byok-rotated")) } })
+  const rotated = await aiGatewayByokArea.apply(ctx, updateOp(aiGatewayByokArea, acme, { key: acme.key, name: acme.name, spec: resolvedSpec(acme.spec, sameOrgRefs, replace("byok-rotated")) }))
+  assert.deepEqual(rotated.steps, [{ action: "set", target: "credentials.apiKey" }], "only the key is written")
   const [provider] = await db.select().from(LlmProviderTable).where(eq(LlmProviderTable.id, acme.id))
   assert.equal(provider?.apiKey, "byok-rotated")
 
   const docs = only(exported.get("connectors.mcp"), "Docs MCP")
-  await connectorsMcpArea.apply(ctx, { kind: "update", targetId: docs.id, previous: docs, item: { key: docs.key, name: docs.name, spec: resolvedSpec(docs.spec, sameOrgRefs, replace("mcp-rotated")) } })
+  const mcpRotated = await connectorsMcpArea.apply(ctx, updateOp(connectorsMcpArea, docs, { key: docs.key, name: docs.name, spec: resolvedSpec(docs.spec, sameOrgRefs, replace("mcp-rotated")) }))
+  assert.deepEqual(mcpRotated.steps, [{ action: "set", target: "apiKey" }, { action: "set", target: "requestHeaders[X-Tenant].value" }])
   const [mcp] = await db.select().from(ExternalMcpConnectionTable).where(eq(ExternalMcpConnectionTable.id, docs.id))
   assert.equal(mcp?.apiKey, "mcp-rotated")
   assert.ok(mcp?.requestHeaders?.includes("mcp-rotated"), "request header value replaced")
   assert.ok(mcpServer.wire.some((entry) => entry.authorization === "Bearer mcp-rotated"), "the new key was checked against the server")
 
   const client = only(exported.get("connectors.oauth-clients"), "Google Workspace")
-  await connectorsOAuthClientsArea.apply(ctx, { kind: "update", targetId: client.id, previous: client, item: { name: client.name, spec: resolvedSpec(client.spec, sameOrgRefs, replace("goog-rotated")) } })
+  const clientOp = updateOp(connectorsOAuthClientsArea, client, { name: client.name, spec: resolvedSpec(client.spec, sameOrgRefs, replace("goog-rotated")) })
+  assert.deepEqual(connectorsOAuthClientsArea.irreversible?.(clientOp), ["The stored Google Workspace OAuth app's client secret is replaced; the previous value can't be restored."])
+  const clientRotated = await connectorsOAuthClientsArea.apply(ctx, clientOp)
+  assert.deepEqual(clientRotated.steps, [{ action: "set", target: "clientSecret" }])
   const [row] = await db.select().from(OrgOAuthClientTable).where(eq(OrgOAuthClientTable.id, client.id))
   assert.equal(row?.clientSecret, "goog-rotated")
 })
@@ -405,13 +413,15 @@ test("a BYOK provider moving to another address can't keep its key, and loses it
     return { ...spec, provider: { ...spec.provider, api: "https://elsewhere.example.test/v1", options: { baseURL: "https://elsewhere.example.test/v1" } } }
   }
   await assert.rejects(
-    aiGatewayByokArea.apply(ctx, { kind: "update", targetId: acme.id, previous: acme, item: { key: acme.key, name: acme.name, spec: moved(keepAll) } }),
-    (error: unknown) => error instanceof Error && "code" in error && error.code === "needs_input" && /another address/.test(error.message),
+    aiGatewayByokArea.apply(ctx, updateOp(aiGatewayByokArea, acme, { key: acme.key, name: acme.name, spec: moved(keepAll) })),
+    (error: unknown) => error instanceof ConfigApplyItemError && error.failure.code === "needs_input" && /another address/.test(error.message) && error.stepsDone.length === 0,
   )
   const [unchanged] = await db.select().from(LlmProviderTable).where(eq(LlmProviderTable.id, acme.id))
   assert.equal(field(unchanged?.providerConfig, "api"), "https://llm.example.test/v1", "nothing was written")
 
-  const result = await aiGatewayByokArea.apply(ctx, { kind: "update", targetId: acme.id, previous: acme, item: { key: acme.key, name: acme.name, spec: moved(() => ({ decision: "value", value: "byok-for-elsewhere" })) } })
+  const movedOp = updateOp(aiGatewayByokArea, acme, { key: acme.key, name: acme.name, spec: moved(() => ({ decision: "value", value: "byok-for-elsewhere" })) })
+  assert.ok(aiGatewayByokArea.irreversible?.(movedOp).some((line) => /inline/.test(line)), "moving host is listed as irreversible")
+  const result = await aiGatewayByokArea.apply(ctx, movedOp)
   assert.ok(result.warnings?.some((warning) => /inline credentials/.test(warning)), JSON.stringify(result.warnings))
   const [provider] = await db.select().from(LlmProviderTable).where(eq(LlmProviderTable.id, acme.id))
   assert.equal(provider?.apiKey, "byok-for-elsewhere")
@@ -421,4 +431,136 @@ test("a BYOK provider moving to another address can't keep its key, and loses it
   const models = await db.select().from(LlmProviderModelTable).where(eq(LlmProviderModelTable.llmProviderId, acme.id))
   assert.ok(models.length > 0)
   assert.ok(!JSON.stringify(models.map((model) => model.modelConfig)).includes(SECRETS.byokHeader), "model headers dropped too")
+})
+
+// ---------------------------------------------------------------------------
+// Writes follow the plan's changes
+
+const { DesktopPolicyMemberTable, ExternalMcpConnectionAccessGrantTable, LlmProviderAccessTable, MarketplaceAccessGrantTable } = await import("@openwork-ee/den-db/schema")
+const { and, isNull } = await import("@openwork-ee/den-db/drizzle")
+
+function rowIds(rows: Array<{ id: string }>): string[] {
+  return rows.map((row) => row.id).sort()
+}
+
+test("readItems returns exactly what exportItems returns for those ids", async () => {
+  const ctx = await ctxFor(orgA)
+  for (const area of AREAS) {
+    const items = await area.exportItems(ctx)
+    const pick = items.filter((_, index) => index % 2 === 0)
+    assert.deepEqual(await area.readItems?.(ctx, [...pick.map((item) => item.id), "nope_0000"]), pick, area.key)
+    assert.deepEqual(await area.readItems?.(ctx, []), [], `${area.key}: no ids`)
+  }
+})
+
+test("MCP: changing access adds and removes only those grants; the rest of the connection is not resent", async () => {
+  const ctx = await ctxFor(orgA)
+  const [docs] = (await connectorsMcpArea.readItems?.(ctx, [mcpApiKeyId])) ?? []
+  assert.ok(docs)
+  const grants = () => db.select().from(ExternalMcpConnectionAccessGrantTable).where(eq(ExternalMcpConnectionAccessGrantTable.externalMcpConnectionId, mcpApiKeyId))
+  const before = await grants()
+  const teamGrant = before.find((grant) => grant.teamId === teamA)
+  assert.ok(teamGrant)
+  const probesBefore = mcpServer.wire.length
+  const spec = resolvedSpec(docs.spec, sameOrgRefs, keepAll)
+  assert.ok(isObject(spec.access))
+  const op = updateOp(connectorsMcpArea, docs, { key: docs.key, name: docs.name, spec: { ...spec, access: { ...spec.access, members: [] } } })
+  assert.deepEqual(op.changes.map((change) => change.path), ["access.members"])
+  assert.deepEqual(connectorsMcpArea.irreversible?.(op), [], "shared key: nobody loses a personal key")
+  const result = await connectorsMcpArea.apply(ctx, op)
+  assert.deepEqual(result.steps, [{ action: "remove", target: "access.members", detail: teammate.email.toLowerCase() }])
+  const after = await grants()
+  assert.deepEqual(rowIds(after), [teamGrant.id], "the team grant keeps its row")
+  assert.equal(mcpServer.wire.length, probesBefore, "an access change does not probe the server")
+  const [row] = await db.select().from(ExternalMcpConnectionTable).where(eq(ExternalMcpConnectionTable.id, mcpApiKeyId))
+  assert.equal(row?.apiKey, "mcp-rotated", "the key is untouched")
+
+  const back = (await connectorsMcpArea.readItems?.(ctx, [mcpApiKeyId]))?.[0]
+  assert.ok(back)
+  const undo = await connectorsMcpArea.apply(ctx, updateOp(connectorsMcpArea, back, { key: docs.key, name: docs.name, spec }))
+  assert.deepEqual(undo.steps, [{ action: "add", target: "access.members", detail: teammate.email.toLowerCase() }])
+  assert.ok(rowIds(await grants()).includes(teamGrant.id))
+
+  const irreversible = connectorsMcpArea.irreversible?.(updateOp(connectorsMcpArea, docs, { key: docs.key, name: docs.name, spec: { ...spec, url: `${mcpServer.url}/other` } })) ?? []
+  assert.ok(irreversible.some((line) => line.includes("sign-ins") && line.includes("revoked")), JSON.stringify(irreversible))
+  assert.equal(connectorsMcpArea.irreversible?.({ kind: "delete", targetId: docs.id, previous: docs }).length, 2)
+})
+
+test("BYOK: an access change keeps the models and other grants; a model change keeps the access", async () => {
+  const ctx = await ctxFor(orgA)
+  const acme = only(await aiGatewayByokArea.exportItems(ctx), "Acme LLM")
+  const models = () => db.select().from(LlmProviderModelTable).where(eq(LlmProviderModelTable.llmProviderId, acme.id))
+  const access = () => db.select().from(LlmProviderAccessTable).where(eq(LlmProviderAccessTable.llmProviderId, acme.id))
+  const modelsBefore = await models()
+  const accessBefore = await access()
+  const spec = resolvedSpec(acme.spec, sameOrgRefs, keepAll)
+  assert.ok(isObject(spec.access) && Array.isArray(spec.access.members))
+  const withTeammate = { ...spec, access: { ...spec.access, members: [...spec.access.members, { $ref: `people/${teammate.email.toLowerCase()}`, id: teammate.memberId }] } }
+  const op = updateOp(aiGatewayByokArea, acme, { key: acme.key, name: acme.name, spec: withTeammate })
+  assert.deepEqual(op.changes.map((change) => change.path), ["access.members"])
+  const result = await aiGatewayByokArea.apply(ctx, op)
+  assert.deepEqual(result.steps, [{ action: "add", target: "access.members", detail: teammate.email.toLowerCase() }])
+  assert.deepEqual(await models(), modelsBefore, "model rows untouched (same ids and config)")
+  const accessAfter = await access()
+  for (const row of accessBefore) assert.ok(accessAfter.some((entry) => entry.id === row.id), "existing grants keep their rows")
+  assert.equal(accessAfter.length, accessBefore.length + 1)
+
+  const now = (await aiGatewayByokArea.readItems?.(ctx, [acme.id]))?.[0]
+  assert.ok(now)
+  const nowSpec = resolvedSpec(now.spec, sameOrgRefs, keepAll)
+  const currentModels = Array.isArray(nowSpec.models) ? nowSpec.models : []
+  const added = await aiGatewayByokArea.apply(ctx, updateOp(aiGatewayByokArea, now, { key: now.key, name: now.name, spec: { ...nowSpec, models: [...currentModels, { id: "acme-2", name: "Acme Two" }] } }))
+  assert.deepEqual(added.steps, [{ action: "add", target: "models[acme-2]" }])
+  const modelsAfter = await models()
+  assert.ok(modelsBefore.every((row) => modelsAfter.some((entry) => entry.id === row.id)), "existing models keep their rows")
+  assert.deepEqual(rowIds(await access()), rowIds(accessAfter), "access untouched")
+  // Back to how it was.
+  const latest = (await aiGatewayByokArea.readItems?.(ctx, [acme.id]))?.[0]
+  assert.ok(latest)
+  await aiGatewayByokArea.apply(ctx, updateOp(aiGatewayByokArea, latest, { key: acme.key, name: acme.name, spec }))
+  assert.deepEqual(rowIds(await access()), rowIds(accessBefore))
+  assert.deepEqual(rowIds(await models()), rowIds(modelsBefore))
+
+  const deleteEffects = aiGatewayByokArea.irreversible?.({ kind: "delete", targetId: acme.id, previous: acme }) ?? []
+  assert.ok(deleteEffects.some((line) => line.includes("stored API key")), JSON.stringify(deleteEffects))
+  const modeEffects = aiGatewayByokArea.irreversible?.(updateOp(aiGatewayByokArea, acme, { name: acme.name, spec: { ...spec, credentialMode: "per_member", credentials: null } })) ?? []
+  assert.ok(modeEffects.some((line) => line.includes("own keys")), JSON.stringify(modeEffects))
+})
+
+test("desktop policy: a priority change keeps the assignments; a failure reports the step and what was done", async () => {
+  const ctx = await ctxFor(orgA)
+  const engineering = only(await desktopPoliciesArea.exportItems(ctx), "Engineering")
+  const assignments = () => db.select().from(DesktopPolicyMemberTable).where(eq(DesktopPolicyMemberTable.desktopPolicyId, engineering.id))
+  const before = await assignments()
+  const spec = resolvedSpec(engineering.spec, sameOrgRefs, keepAll)
+  const result = await desktopPoliciesArea.apply(ctx, updateOp(desktopPoliciesArea, engineering, { key: engineering.key, name: engineering.name, spec: { ...spec, priority: 7 } }))
+  assert.deepEqual(result.steps, [{ action: "set", target: "priority", detail: "7" }])
+  assert.deepEqual(await assignments(), before, "assignment rows untouched")
+
+  const now = (await desktopPoliciesArea.readItems?.(ctx, [engineering.id]))?.[0]
+  assert.ok(now)
+  const missingTeam = createDenTypeId("team")
+  assert.ok(isObject(spec.assignments))
+  const broken = { ...spec, priority: 5, assignments: { ...spec.assignments, teams: [{ $ref: `members.teams/${missingTeam}`, id: missingTeam }] } }
+  await assert.rejects(desktopPoliciesArea.apply(ctx, updateOp(desktopPoliciesArea, now, { key: engineering.key, name: engineering.name, spec: broken })), (error: unknown) => {
+    assert.ok(error instanceof ConfigApplyItemError, String(error))
+    assert.equal(error.failure.code, "team_not_found")
+    assert.equal(error.failure.field, "assignments")
+    assert.equal(error.failure.step?.target, "assignments.teams")
+    assert.deepEqual(error.stepsDone, [{ action: "set", target: "priority", detail: "5" }])
+    return true
+  })
+  assert.deepEqual(await assignments(), before, "the failed assignment write changed nothing")
+})
+
+test("collections: a description change sends only the description and keeps the grants", async () => {
+  const ctx = await ctxFor(orgA)
+  const collection = only(await settingsCollectionsArea.exportItems(ctx), "Engineering tools")
+  const grants = () => db.select().from(MarketplaceAccessGrantTable).where(and(eq(MarketplaceAccessGrantTable.marketplaceId, collection.id), isNull(MarketplaceAccessGrantTable.removedAt)))
+  const before = await grants()
+  const spec = resolvedSpec(collection.spec, sameOrgRefs, keepAll)
+  const result = await settingsCollectionsArea.apply(ctx, updateOp(settingsCollectionsArea, collection, { key: collection.key, name: collection.name, spec: { ...spec, description: "Tools, for engineers" } }))
+  assert.deepEqual(result.steps, [{ action: "set", target: "description", detail: "Tools, for engineers" }])
+  assert.deepEqual(await grants(), before)
+  assert.equal(settingsCollectionsArea.irreversible?.({ kind: "delete", targetId: collection.id, previous: collection }).length, 1)
 })

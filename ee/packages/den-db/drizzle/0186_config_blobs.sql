@@ -5,6 +5,27 @@ CREATE TABLE `den_instance` (
 	CONSTRAINT `den_instance_singleton` PRIMARY KEY(`singleton`)
 );
 --> statement-breakpoint
+CREATE TABLE `config_apply_run` (
+	`id` varchar(64) NOT NULL,
+	`organization_id` varchar(64) NOT NULL,
+	`change_request_id` varchar(64) NOT NULL,
+	`attempt` int NOT NULL,
+	`status` varchar(16) NOT NULL DEFAULT 'running',
+	`requested_by_member_id` varchar(64),
+	`requested_by_api_key_id` varchar(64),
+	`runs_as_member_id` varchar(64),
+	`report` mediumtext NOT NULL,
+	`failure_area` varchar(64),
+	`failure_ref` varchar(200),
+	`failure_code` varchar(100),
+	`started_at` timestamp(3) NOT NULL,
+	`finished_at` timestamp(3),
+	`created_at` timestamp(3) NOT NULL DEFAULT (now()),
+	`updated_at` timestamp(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3),
+	CONSTRAINT `config_apply_run_id` PRIMARY KEY(`id`),
+	CONSTRAINT `config_apply_run_attempt` UNIQUE(`change_request_id`,`attempt`)
+);
+--> statement-breakpoint
 CREATE TABLE `config_blob_alias` (
 	`id` varchar(64) NOT NULL,
 	`organization_id` varchar(64) NOT NULL,
@@ -54,8 +75,8 @@ CREATE TABLE `config_change_request` (
 	`approved_plan_hash` varchar(80),
 	`apply_requested_by` json,
 	`auto_apply` boolean NOT NULL DEFAULT false,
+	`execution` mediumtext,
 	`before_snapshot` mediumtext,
-	`report` json,
 	`errors` json NOT NULL,
 	`lease_owner` varchar(64),
 	`lease_until` timestamp(3),
@@ -69,6 +90,7 @@ CREATE TABLE `config_change_request` (
 	CONSTRAINT `config_change_request_id` PRIMARY KEY(`id`)
 );
 --> statement-breakpoint
+CREATE INDEX `config_apply_run_org_request` ON `config_apply_run` (`organization_id`,`change_request_id`);--> statement-breakpoint
 CREATE INDEX `config_blob_export_org_base` ON `config_blob_export` (`organization_id`,`base_hash`);--> statement-breakpoint
 CREATE INDEX `config_change_request_org_status` ON `config_change_request` (`organization_id`,`status`);--> statement-breakpoint
 CREATE INDEX `config_change_request_queue` ON `config_change_request` (`status`,`available_at`);

@@ -3,6 +3,8 @@ import { after, test } from "node:test"
 import { createDenTypeId } from "@openwork-ee/utils/typeid"
 import { isConfigRef } from "@openwork/types/den/config-blobs"
 import type { ConfigArea, ConfigAreaContext, ConfigItem } from "../../src/config-blobs/area.js"
+import { ConfigApplyItemError } from "../../src/config-blobs/area.js"
+import { updateOp } from "./config-blobs-area-ops.js"
 import { bootDen, field, summary, type Call, type Member } from "./harness.js"
 
 const den = await bootDen()
@@ -131,14 +133,12 @@ test("export → apply(update, same spec) is a no-op in every area", async () =>
   const before = await exportAll(sourceCtx)
   for (const area of AREAS) {
     for (const item of before.get(area.key) ?? []) {
-      const result = await area.apply(sourceCtx, {
-        kind: "update",
-        targetId: item.id,
-        previous: item,
-        item: { sourceId: item.id, key: item.key ?? null, name: item.name, spec: specWithResolvedRefs(item) },
-      })
+      const op = updateOp(area, item, { sourceId: item.id, key: item.key ?? null, name: item.name, spec: specWithResolvedRefs(item) })
+      assert.deepEqual(op.changes, [], `${area.key} ${item.name}: same spec, no changes`)
+      const result = await area.apply(sourceCtx, op)
       assert.equal(result.localId, item.id, `${area.key} ${item.name}`)
       assert.deepEqual(result.warnings ?? [], [], `${area.key} ${item.name}`)
+      assert.deepEqual(result.steps ?? [], [], `${area.key} ${item.name}: nothing written`)
     }
   }
   assert.deepEqual(Object.fromEntries(await exportAll(sourceCtx)), Object.fromEntries(before))
@@ -180,7 +180,7 @@ test("round trip into a second organization: creates, then the same export", asy
     const builtIn = targetRoles.find((role) => role.key && role.key === item.key)
     const spec = specWithResolvedRefs(item, ids)
     const result = builtIn
-      ? await membersRolesArea.apply(targetCtx, { kind: "update", targetId: builtIn.id, previous: builtIn, item: { sourceId: item.id, key: item.key ?? null, name: item.name, spec } })
+      ? await membersRolesArea.apply(targetCtx, updateOp(membersRolesArea, builtIn, { sourceId: item.id, key: item.key ?? null, name: item.name, spec }))
       : await membersRolesArea.apply(targetCtx, { kind: "create", item: { sourceId: item.id, name: item.name, spec } })
     ids.set(item.id, result.localId)
   }
@@ -189,7 +189,7 @@ test("round trip into a second organization: creates, then the same export", asy
     const existing = targetPeople.find((entry) => entry.spec.email === item.spec.email)
     const spec = specWithResolvedRefs(item, ids)
     const result = existing
-      ? await membersPeopleArea.apply(targetCtx, { kind: "update", targetId: existing.id, previous: existing, item: { sourceId: item.id, name: item.name, spec } })
+      ? await membersPeopleArea.apply(targetCtx, updateOp(membersPeopleArea, existing, { sourceId: item.id, name: item.name, spec }))
       : await membersPeopleArea.apply(targetCtx, { kind: "create", item: { sourceId: item.id, name: item.name, spec } })
     ids.set(item.id, result.localId)
   }
@@ -233,14 +233,14 @@ test("people: update an existing member's role and teams", async () => {
   const item = people.find((entry) => entry.spec.email === person.email.toLowerCase())
   assert.ok(item)
   const spec = { ...specWithResolvedRefs(item), role: "admin", teams: [{ $ref: `members.teams/${adminsTeam}`, id: adminsTeam }] }
-  const result = await membersPeopleArea.apply(sourceCtx, { kind: "update", targetId: item.id, previous: item, item: { sourceId: item.id, name: item.name, spec } })
+  const result = await membersPeopleArea.apply(sourceCtx, updateOp(membersPeopleArea, item, { sourceId: item.id, name: item.name, spec }))
   assert.equal(result.localId, item.id)
   const after = (await membersPeopleArea.exportItems(sourceCtx)).find((entry) => entry.id === item.id)
   assert.equal(after?.spec.role, "admin")
   assert.deepEqual(after?.spec.teams, [{ $ref: `members.teams/${adminsTeam}`, name: "Admins" }])
 
   // Back to how it was.
-  await membersPeopleArea.apply(sourceCtx, { kind: "update", targetId: item.id, previous: after ?? item, item: { sourceId: item.id, name: item.name, spec: specWithResolvedRefs(item) } })
+  await membersPeopleArea.apply(sourceCtx, updateOp(membersPeopleArea, after ?? item, { sourceId: item.id, name: item.name, spec: specWithResolvedRefs(item) }))
 })
 
 test("people: invitations are silent by default and send email only when asked", async () => {
@@ -297,6 +297,132 @@ test("roles: can't grant more than the applier holds", async () => {
   const adminCtx = await contextFor(source.orgId, admin)
   await assert.rejects(
     membersRolesArea.apply(adminCtx, { kind: "create", item: { name: "Too much", spec: { builtIn: null, allow: ["organization.update"], teams: [] } } }),
-    (error: unknown) => error instanceof Error && "status" in error && error.status === 403 && /permission/i.test(error.message),
+    (error: unknown) => error instanceof ConfigApplyItemError && error.failure.status === 403 && /permission/i.test(error.message) && error.stepsDone.length === 0,
   )
+})
+
+// ---------------------------------------------------------------------------
+// Writes follow the plan's changes
+
+const { eq: eqOp } = await import("@openwork-ee/den-db/drizzle")
+const { TeamMemberTable, TeamTable: TeamRows, PermissionSetTeamTable } = await import("@openwork-ee/den-db/schema")
+
+async function teamMemberRows(teamId: string) {
+  return (await db.select().from(TeamMemberTable).where(eqOp(TeamMemberTable.teamId, teamId as typeof TeamMemberTable.$inferSelect.teamId)))
+    .map((row) => `${row.orgMembershipId}:${row.id}`).sort()
+}
+
+test("people: adding one team writes only that person's membership row; steps list the writes", async () => {
+  const other = await den.newMember(owner, source.orgId, "Blob Neighbour")
+  const neighbourTeam = await den.createTeam(owner, source.orgId, "Neighbours", [other.memberId])
+  const beforeRows = await teamMemberRows(neighbourTeam)
+  const item = (await membersPeopleArea.readItems?.(sourceCtx, [person.memberId]))?.[0]
+  assert.ok(item)
+  const spec = { ...specWithResolvedRefs(item), teams: [...specWithResolvedRefs(item).teams as unknown[], { $ref: `members.teams/${neighbourTeam}`, name: "Neighbours", id: neighbourTeam }] }
+  const op = updateOp(membersPeopleArea, item, { name: item.name, spec })
+  assert.deepEqual(op.changes.map((change) => change.path), ["teams"])
+  const result = await membersPeopleArea.apply(sourceCtx, op)
+  assert.deepEqual(result.steps, [{ action: "add", target: "teams", detail: "Neighbours" }])
+  const afterRows = await teamMemberRows(neighbourTeam)
+  assert.equal(afterRows.length, beforeRows.length + 1)
+  for (const row of beforeRows) assert.ok(afterRows.includes(row), "the neighbour keeps their membership row (same id)")
+  // The other team the person is in is not touched by the undo either.
+  const platformRows = await teamMemberRows(platform)
+  const back = (await membersPeopleArea.readItems?.(sourceCtx, [person.memberId]))?.[0]
+  assert.ok(back)
+  const undo = await membersPeopleArea.apply(sourceCtx, updateOp(membersPeopleArea, back, { name: item.name, spec: specWithResolvedRefs(item) }))
+  assert.deepEqual(undo.steps, [{ action: "remove", target: "teams", detail: "Neighbours" }])
+  assert.deepEqual(await teamMemberRows(platform), platformRows)
+  assert.deepEqual(await teamMemberRows(neighbourTeam), beforeRows)
+})
+
+test("people: a failed write names its field and step, and lists the writes already done", async () => {
+  const item = (await membersPeopleArea.readItems?.(sourceCtx, [person.memberId]))?.[0]
+  assert.ok(item)
+  const missingTeam = createDenTypeId("team")
+  const spec = { ...specWithResolvedRefs(item), role: "admin", teams: [...specWithResolvedRefs(item).teams as unknown[], { $ref: `members.teams/${missingTeam}`, id: missingTeam }] }
+  const op = updateOp(membersPeopleArea, item, { name: item.name, spec })
+  await assert.rejects(membersPeopleArea.apply(sourceCtx, op), (error: unknown) => {
+    assert.ok(error instanceof ConfigApplyItemError, String(error))
+    assert.equal(error.failure.field, "teams")
+    assert.deepEqual(error.failure.step, { action: "add", target: "teams", detail: missingTeam })
+    assert.equal(error.failure.status, 404)
+    assert.deepEqual(error.stepsDone, [{ action: "set", target: "role", detail: "admin" }])
+    return true
+  })
+  // Put the role back.
+  const now = (await membersPeopleArea.readItems?.(sourceCtx, [person.memberId]))?.[0]
+  assert.ok(now)
+  await membersPeopleArea.apply(sourceCtx, updateOp(membersPeopleArea, now, { name: item.name, spec: specWithResolvedRefs(item) }))
+})
+
+test("roles: changing the permissions doesn't touch which teams have the role", async () => {
+  const [viewers] = (await membersRolesArea.readItems?.(sourceCtx, [roleId])) ?? []
+  assert.ok(viewers)
+  const teamRowsBefore = await db.select().from(PermissionSetTeamTable).where(eqOp(PermissionSetTeamTable.permissionSetId, roleId as typeof PermissionSetTeamTable.$inferSelect.permissionSetId))
+  const spec = { ...specWithResolvedRefs(viewers), allow: ["teams.view", "web_origins.view"] }
+  const op = updateOp(membersRolesArea, viewers, { name: viewers.name, spec })
+  assert.deepEqual(op.changes.map((change) => change.path), ["allow"])
+  const result = await membersRolesArea.apply(sourceCtx, op)
+  assert.deepEqual(result.steps, [{ action: "update", target: "allow", detail: "+web_origins.view" }])
+  const teamRowsAfter = await db.select().from(PermissionSetTeamTable).where(eqOp(PermissionSetTeamTable.permissionSetId, roleId as typeof PermissionSetTeamTable.$inferSelect.permissionSetId))
+  assert.deepEqual(teamRowsAfter, teamRowsBefore)
+  const back = (await membersRolesArea.readItems?.(sourceCtx, [roleId]))?.[0]
+  assert.ok(back)
+  const undo = await membersRolesArea.apply(sourceCtx, updateOp(membersRolesArea, back, { name: viewers.name, spec: specWithResolvedRefs(viewers) }))
+  assert.deepEqual(undo.steps, [{ action: "update", target: "allow", detail: "-web_origins.view" }])
+})
+
+test("teams: a rename writes the name only; settings: one setting writes only that setting", async () => {
+  const [team] = (await membersTeamsArea.readItems?.(sourceCtx, [platform])) ?? []
+  assert.ok(team)
+  const [adminsBefore] = await db.select().from(TeamRows).where(eqOp(TeamRows.id, adminsTeam as typeof TeamRows.$inferSelect.id))
+  const renamed = await membersTeamsArea.apply(sourceCtx, updateOp(membersTeamsArea, team, { name: "Platform Core", key: team.key ?? null, spec: team.spec }))
+  assert.deepEqual(renamed.steps, [{ action: "set", target: "name", detail: "Platform Core" }])
+  const [adminsAfter] = await db.select().from(TeamRows).where(eqOp(TeamRows.id, adminsTeam as typeof TeamRows.$inferSelect.id))
+  assert.deepEqual(adminsAfter, adminsBefore, "other teams untouched")
+  const back = (await membersTeamsArea.readItems?.(sourceCtx, [platform]))?.[0]
+  assert.ok(back)
+  await membersTeamsArea.apply(sourceCtx, updateOp(membersTeamsArea, back, { name: "Platform", key: team.key ?? null, spec: team.spec }))
+
+  const [general] = (await settingsGeneralArea.readItems?.(sourceCtx, [source.orgId])) ?? []
+  assert.ok(general)
+  const automations = { desktop: true, cloud: true }
+  const op = updateOp(settingsGeneralArea, general, { name: general.name, spec: { ...general.spec, automations } })
+  assert.deepEqual(op.changes.map((change) => change.path), ["automations.desktop"])
+  const result = await settingsGeneralArea.apply(sourceCtx, op)
+  assert.deepEqual(result.steps, [{ action: "set", target: "automations.desktop", detail: "desktop on" }])
+  const restored = (await settingsGeneralArea.readItems?.(sourceCtx, [source.orgId]))?.[0]
+  assert.ok(restored)
+  await settingsGeneralArea.apply(sourceCtx, updateOp(settingsGeneralArea, restored, { name: general.name, spec: general.spec }))
+})
+
+test("readItems returns exactly what exportItems returns for those ids", async () => {
+  const exported = await exportAll(sourceCtx)
+  for (const area of AREAS) {
+    const items = exported.get(area.key) ?? []
+    const pick = items.filter((_, index) => index % 2 === 0)
+    const read = await area.readItems?.(sourceCtx, [...pick.map((item) => item.id), "om_missing0000000000000000000"])
+    assert.deepEqual(read, pick, area.key)
+    assert.deepEqual(await area.readItems?.(sourceCtx, []), [], `${area.key}: no ids`)
+  }
+})
+
+test("irreversible effects are listed in plain words", async () => {
+  const people = await membersPeopleArea.exportItems(sourceCtx)
+  const active = people.find((entry) => entry.spec.email === person.email.toLowerCase())
+  const invited = people.find((entry) => entry.spec.status === "invited")
+  assert.ok(active && invited)
+  const removeActive = membersPeopleArea.irreversible?.({ kind: "delete", targetId: active.id, previous: active }) ?? []
+  assert.ok(removeActive.some((line) => line.includes("can only invite them again")), JSON.stringify(removeActive))
+  assert.ok(removeActive.some((line) => line.includes("revoked")), JSON.stringify(removeActive))
+  assert.deepEqual(membersPeopleArea.irreversible?.({ kind: "delete", targetId: invited.id, previous: invited }), [`The invitation of ${invited.spec.email} is cancelled; a restore sends them a new one.`])
+  const email = "ada@example.test"
+  const spec = { email, role: "member", status: "invited", teams: [], managedBy: "manual" }
+  assert.deepEqual(membersPeopleArea.irreversible?.({ kind: "create", item: { name: email, spec: { ...spec, [SEND_INVITE_EMAIL_FIELD]: true } } }), [`An invitation email is sent to ${email}.`])
+  assert.deepEqual(membersPeopleArea.irreversible?.({ kind: "create", item: { name: email, spec } }), [])
+  const [team] = await membersTeamsArea.exportItems(sourceCtx)
+  assert.ok(team)
+  assert.equal(membersTeamsArea.irreversible?.({ kind: "delete", targetId: team.id, previous: team }).length, 2)
+  assert.deepEqual(membersTeamsArea.irreversible?.(updateOp(membersTeamsArea, team, { name: "x", spec: team.spec })), [])
 })

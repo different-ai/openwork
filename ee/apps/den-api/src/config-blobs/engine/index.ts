@@ -55,3 +55,7 @@ export {
   type ExecutionPlan,
 } from "./plan.js"
 export { executePlan, resolveSpec, secretsNeedingValues, type ExecuteOptions, type ExecuteResult } from "./execute.js"
+export { countApplyItems, emptyApplyCounts, isNoopUpdate, pendingReportItems } from "./execute.js"
+export { checkWrittenItems, readItemsFor, type ApplyRead, type WrittenItemsCheck } from "./apply-check.js"
+export { parseStoredExecution } from "./stored-execution.js"
+export { CONFIG_APPLY_INTERRUPTED_CODE, interruptReport, isInFlight, summarizeReport } from "./report.js"

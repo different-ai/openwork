@@ -8,10 +8,12 @@
 import assert from "node:assert/strict"
 import { after, test } from "node:test"
 import { and, eq, inArray } from "@openwork-ee/den-db/drizzle"
-import { GatewayCredentialSetTable, GatewayProviderCredentialTable, GatewayProviderTable } from "@openwork-ee/den-db/schema"
+import { GatewayCredentialSetTable, GatewayModelGroupTable, GatewayProviderAccessTable, GatewayProviderCredentialTable, GatewayProviderTable } from "@openwork-ee/den-db/schema"
 import { normalizeDenTypeId } from "@openwork-ee/utils/typeid"
 import type { ResolvedConfigSecret } from "@openwork/types/den/config-blobs"
 import type { ConfigAreaContext, ConfigItem } from "../../src/config-blobs/area.js"
+import { ConfigApplyItemError } from "../../src/config-blobs/area.js"
+import { updateOp } from "./config-blobs-area-ops.js"
 import { gatewayFixtureEnv, stubPublicModelCatalog } from "./gateway-fixture.js"
 import { bootDen, field, isRecord, summary, text, type Member } from "./harness.js"
 
@@ -86,6 +88,10 @@ async function orgCredential(setId: string) {
   return row ?? null
 }
 
+async function grantRows(providerId: string) {
+  return (await db.select().from(GatewayProviderAccessTable).where(eq(GatewayProviderAccessTable.gateway_provider_id, normalizeDenTypeId("inferenceProvider", providerId)))).sort((a, b) => a.id.localeCompare(b.id))
+}
+
 /** Specs compared across orgs: team refs point at each org's own team. */
 function withoutTeamIds(spec: unknown): unknown {
   return JSON.parse(JSON.stringify(spec, (key, value: unknown) => key === "$ref" && typeof value === "string" && value.startsWith("members.teams/") ? "members.teams/*" : value))
@@ -126,8 +132,16 @@ test("update: keep preserves the stored key, value replaces it", async () => {
   assert.equal(before?.secret, SECRET)
   const edited = asSpec(resolveSpec(sourceExport.spec, resolve((path) => ({ $secret: path, decision: path.endsWith(".credential") ? "keep" : "unset" }))))
   edited.modelIds = ["gpt-6-luna"]
-  const kept = await area.apply(ctx, { kind: "update", targetId: sourceIds.providerId, previous: sourceExport, item: { sourceId: sourceIds.providerId, name: "Fixture OpenAI (renamed)", spec: edited } })
+  const grantsBefore = await grantRows(sourceIds.providerId)
+  const setsBefore = await db.select().from(GatewayCredentialSetTable).where(eq(GatewayCredentialSetTable.gateway_provider_id, normalizeDenTypeId("inferenceProvider", sourceIds.providerId)))
+  const keptOp = updateOp(area, sourceExport, { sourceId: sourceIds.providerId, name: "Fixture OpenAI (renamed)", spec: edited })
+  assert.deepEqual(keptOp.changes.map((change) => change.path), ["name", "modelIds"])
+  assert.deepEqual(area.irreversible?.(keptOp), [], "a rename and a smaller model policy can be undone")
+  const kept = await area.apply(ctx, keptOp)
   assert.equal(kept.localId, sourceIds.providerId)
+  assert.deepEqual(kept.steps, [{ action: "update", target: "provider", detail: "name, modelIds" }], "only the provider fields are written")
+  assert.deepEqual(await grantRows(sourceIds.providerId), grantsBefore, "grants are not rewritten")
+  assert.deepEqual(await db.select().from(GatewayCredentialSetTable).where(eq(GatewayCredentialSetTable.gateway_provider_id, normalizeDenTypeId("inferenceProvider", sourceIds.providerId))), setsBefore, "credential sets are not rewritten")
   assert.equal((await orgCredential(sourceIds.setId))?.secret, SECRET, "keep leaves the key alone")
   const afterKeep = await exportOne(source, sourceIds.providerId)
   assert.equal(afterKeep.name, "Fixture OpenAI (renamed)")
@@ -135,11 +149,76 @@ test("update: keep preserves the stored key, value replaces it", async () => {
   assert.equal(JSON.stringify(afterKeep.spec.access), JSON.stringify(sourceExport.spec.access), "grants untouched, same ids")
 
   const replaced = asSpec(resolveSpec(sourceExport.spec, resolve((path) => path.endsWith(".credential") ? { $secret: path, decision: "value", value: SECRET_2 } : { $secret: path, decision: "unset" })))
-  await area.apply(ctx, { kind: "update", targetId: sourceIds.providerId, previous: afterKeep, item: { sourceId: sourceIds.providerId, name: sourceExport.name, spec: replaced } })
+  const replaceOp = updateOp(area, afterKeep, { sourceId: sourceIds.providerId, name: sourceExport.name, spec: replaced })
+  assert.deepEqual(replaceOp.secretPaths, [`credentialSets[id=${sourceIds.setId}].credential`])
+  assert.deepEqual(area.irreversible?.(replaceOp), [`The stored key of credential set "Shared key" is replaced; the previous value can't be restored.`])
+  const replacedResult = await area.apply(ctx, replaceOp)
+  assert.deepEqual(replacedResult.steps, [
+    { action: "update", target: "provider", detail: "name, modelIds, models" },
+    // Narrowing the policy took the model out of the default group too; it goes back in.
+    { action: "update", target: "modelGroups[All Allowed Models]", detail: "modelIds" },
+    { action: "update", target: "credentialSets[Shared key]", detail: "credential" },
+  ])
   assert.equal((await orgCredential(sourceIds.setId))?.secret, SECRET_2, "value writes the new key")
   const restored = await exportOne(source, sourceIds.providerId)
   assert.deepEqual(restored.spec, sourceExport.spec, "back to the exported spec")
   assert.ok(!JSON.stringify(restored).includes(SECRET_2))
+})
+
+test("readItems reads just those providers, the same as the export", async () => {
+  const ctx = await context(source.orgId, source.owner)
+  const exported = await area.exportItems(ctx)
+  assert.deepEqual(await area.readItems?.(ctx, [sourceIds.providerId, "ipr_missing"]), exported.filter((item) => item.id === sourceIds.providerId))
+  assert.deepEqual(await area.readItems?.(ctx, []), [])
+})
+
+test("a group edit writes that group only; a failing grant rolls the item back and names the step", async () => {
+  const ctx = await context(source.orgId, source.owner)
+  const current = await exportOne(source, sourceIds.providerId)
+  const resolve: Resolve = { teams: new Map([[source.teamId, source.teamId]]), people: new Map([[source.member.email.toLowerCase(), source.member.memberId]]), secret: (path) => ({ $secret: path, decision: "keep" }) }
+  const spec = asSpec(resolveSpec(current.spec, resolve))
+  const groups = Array.isArray(spec.modelGroups) ? spec.modelGroups.filter(isRecord) : []
+  const edited = { ...spec, modelGroups: groups.map((group) => group.id === sourceIds.groupId ? { ...group, description: "Luna, and only Luna" } : group) }
+  const grantsBefore = await grantRows(sourceIds.providerId)
+  const op = updateOp(area, current, { name: current.name, spec: edited })
+  assert.deepEqual(op.changes.map((change) => change.path), [`modelGroups[id=${sourceIds.groupId}].description`])
+  const result = await area.apply(ctx, op)
+  assert.deepEqual(result.steps, [{ action: "update", target: "modelGroups[Luna only]", detail: "description" }])
+  assert.deepEqual(await grantRows(sourceIds.providerId), grantsBefore, "grants untouched")
+
+  // A group edit and a grant to a team that doesn't exist: the provider write is one transaction.
+  const now = await exportOne(source, sourceIds.providerId)
+  const missingTeam = normalizeDenTypeId("team", "tem_01m0000000000000000000000z")
+  const access = Array.isArray(spec.access) ? spec.access.filter(isRecord) : []
+  const broken = {
+    ...edited,
+    modelGroups: groups.map((group) => group.id === sourceIds.groupId ? { ...group, description: "Should not stick" } : group),
+    access: [...access, { id: "ipa_new", modelGroup: sourceIds.groupId, credentialSet: sourceIds.setId, audience: "team", team: { $ref: `members.teams/${missingTeam}`, id: missingTeam } }],
+  }
+  await assert.rejects(area.apply(ctx, updateOp(area, now, { name: now.name, spec: broken })), (error: unknown) => {
+    assert.ok(error instanceof ConfigApplyItemError, String(error))
+    assert.equal(error.failure.code, "team_not_found")
+    assert.equal(error.failure.status, 404)
+    assert.equal(error.failure.field, "access")
+    assert.equal(error.failure.step?.action, "add")
+    assert.deepEqual(error.stepsDone, [], "rolled back: nothing was written")
+    return true
+  })
+  const [group] = await db.select().from(GatewayModelGroupTable).where(eq(GatewayModelGroupTable.id, normalizeDenTypeId("gatewayModelGroup", sourceIds.groupId)))
+  assert.equal(group?.description, "Luna, and only Luna", "the group edit of the failed item was rolled back")
+  // Back to the export.
+  await area.apply(ctx, updateOp(area, now, { name: now.name, spec: asSpec(resolveSpec(sourceExport.spec, resolve)) }))
+})
+
+test("irreversible: removing a credential set or the provider deletes stored keys", () => {
+  const sets = Array.isArray(sourceExport.spec.credentialSets) ? sourceExport.spec.credentialSets : []
+  const withoutSet = { ...sourceExport.spec, credentialSets: [], access: [] }
+  assert.ok(sets.length > 0)
+  const effects = area.irreversible?.(updateOp(area, sourceExport, { name: sourceExport.name, spec: withoutSet })) ?? []
+  assert.deepEqual(effects, [`Credential set "Shared key": its stored key and members' sign-ins are deleted (and revoked upstream).`])
+  const deleted = area.irreversible?.({ kind: "delete", targetId: sourceExport.id, previous: sourceExport }) ?? []
+  assert.equal(deleted.length, 1)
+  assert.match(deleted[0] ?? "", /stored keys/)
 })
 
 test("create in another org: new ids, team and people refs resolve, unset leaves the set needing a key", async () => {

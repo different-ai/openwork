@@ -242,7 +242,14 @@ export async function createDesktopPolicy(c: ResourceActionContext, payload: Res
   }
 }
 
-export async function updateDesktopPolicy(c: ResourceActionContext, payload: ResourceOrganizationContext, rawId: string, input: z.infer<typeof desktopPolicyWriteSchema>, replace = false) {
+/**
+ * `scope` (config-blob imports) limits the write to the policy row's fields or
+ * to its assignments; routes write both. Assignments are written as a diff:
+ * only assignments that are added or removed touch a row.
+ */
+export async function updateDesktopPolicy(c: ResourceActionContext, payload: ResourceOrganizationContext, rawId: string, input: z.infer<typeof desktopPolicyWriteSchema>, replace = false, scope: { fields?: boolean; assignments?: boolean } = {}) {
+  const writeFields = scope.fields ?? true
+  const writeAssignments = scope.assignments ?? true
   const entitlement = checkEntitlement(payload.organization.metadata, "desktopPolicies")
   if (!entitlement.ok) {
     return c.json(entitlement.response, entitlement.status)
@@ -273,13 +280,13 @@ export async function updateDesktopPolicy(c: ResourceActionContext, payload: Res
   }
 
   try {
-    const memberIds = await resolveMemberIds({ organizationId: payload.organization.id, values: input.memberIds })
-    const teamIds = await resolveTeamIds({ organizationId: payload.organization.id, values: input.teamIds })
+    const memberIds = writeAssignments ? await resolveMemberIds({ organizationId: payload.organization.id, values: input.memberIds }) : []
+    const teamIds = writeAssignments ? await resolveTeamIds({ organizationId: payload.organization.id, values: input.teamIds }) : []
     const roles = resolveRoles(input.roles)
     const updatedAt = new Date()
 
     await db.transaction(async (tx) => {
-      await tx
+      if (writeFields) await tx
         .update(DesktopPolicyTable)
         .set({
           policyName: existing.isDefault === true ? existing.policyName : input.policyName.trim(),
@@ -301,37 +308,34 @@ export async function updateDesktopPolicy(c: ResourceActionContext, payload: Res
         })
         .where(eq(DesktopPolicyTable.id, existing.id))
 
-      if (existing.isDefault !== true) {
-        await tx.delete(DesktopPolicyMemberTable).where(eq(DesktopPolicyMemberTable.desktopPolicyId, existing.id))
-        const assignmentRows = [
-          ...memberIds.map((orgMemberId) => ({
-            id: createDenTypeId("desktopPolicyMember"),
-            organizationId: payload.organization.id,
-            desktopPolicyId: existing.id,
-            orgMemberId,
-            teamId: null,
-            role: null,
-            createdAt: updatedAt,
-          })),
-          ...teamIds.map((teamId) => ({
-            id: createDenTypeId("desktopPolicyMember"),
-            organizationId: payload.organization.id,
-            desktopPolicyId: existing.id,
-            orgMemberId: null,
-            teamId,
-            role: null,
-            createdAt: updatedAt,
-          })),
-          ...roles.map((role) => ({
-            id: createDenTypeId("desktopPolicyMember"),
-            organizationId: payload.organization.id,
-            desktopPolicyId: existing.id,
-            orgMemberId: null,
-            teamId: null,
-            role,
-            createdAt: updatedAt,
-          })),
+      if (existing.isDefault !== true && writeAssignments) {
+        const wanted = [
+          ...memberIds.map((orgMemberId) => ({ key: `member:${orgMemberId}`, orgMemberId, teamId: null, role: null })),
+          ...teamIds.map((teamId) => ({ key: `team:${teamId}`, orgMemberId: null, teamId, role: null })),
+          ...roles.map((role) => ({ key: `role:${role}`, orgMemberId: null, teamId: null, role })),
         ]
+        const stored = await tx
+          .select()
+          .from(DesktopPolicyMemberTable)
+          .where(eq(DesktopPolicyMemberTable.desktopPolicyId, existing.id))
+        const wantedKeys = new Set(wanted.map((row) => row.key))
+        const kept = new Set<string>()
+        const removed = stored.filter((row) => {
+          const key = row.orgMemberId ? `member:${row.orgMemberId}` : row.teamId ? `team:${row.teamId}` : `role:${row.role}`
+          if (!wantedKeys.has(key) || kept.has(key)) return true
+          kept.add(key)
+          return false
+        }).map((row) => row.id)
+        if (removed.length > 0) await tx.delete(DesktopPolicyMemberTable).where(inArray(DesktopPolicyMemberTable.id, removed))
+        const assignmentRows = wanted.filter((row) => !kept.has(row.key)).map((row) => ({
+          id: createDenTypeId("desktopPolicyMember"),
+          organizationId: payload.organization.id,
+          desktopPolicyId: existing.id,
+          orgMemberId: row.orgMemberId,
+          teamId: row.teamId,
+          role: row.role,
+          createdAt: updatedAt,
+        }))
         if (assignmentRows.length > 0) {
           await tx.insert(DesktopPolicyMemberTable).values(assignmentRows)
         }
