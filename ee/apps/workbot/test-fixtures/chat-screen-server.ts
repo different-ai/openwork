@@ -5,6 +5,7 @@ import { fileURLToPath } from "node:url"
 import { createServer } from "vite"
 import { ARTIFACT_BYTES, exaAt, GOOGLE_EVENTS, googleAt, scenarios, type FixtureThread, type FixtureTurn } from "./chat-screen-scenarios.js"
 import { fixtureRemoteJobs, fixtureStaleRemoteJobs } from "./remote-jobs.js"
+import { AUTOMATIONS, fixtureAutomationRuns, fixtureMeetings, fixtureRunRange } from "./calendar-fixture.js"
 
 // Observes real client requests; the fixture never changes browser controls or rendered UI.
 const browserRequests: Array<{ path: string; body: unknown }> = []
@@ -68,6 +69,18 @@ async function answer(request: IncomingMessage, response: ServerResponse) {
   }
   const current = thread(name)
   const path = url.pathname
+  // The Calendar's reads (`?calendar=1`): a week around today with meetings and Workbot's runs.
+  if (path.startsWith("/v1/workbot/calendar/")) {
+    const den = path.slice("/v1/workbot/calendar".length)
+    const range = () => ({ from: Number(url.searchParams.get("from") ?? Date.parse(url.searchParams.get("timeMin") ?? "")), to: Number(url.searchParams.get("to") ?? Date.parse(url.searchParams.get("timeMax") ?? "")) })
+    if (den === "/v1/automations") return json(response, 200, AUTOMATIONS)
+    if (den === "/v1/automation-runs") { const { from, to } = range(); return json(response, 200, fixtureRunRange(from, to)) }
+    const runs = /^\/v1\/automations\/([^/]+)\/runs$/.exec(den)
+    if (runs?.[1]) return json(response, 200, fixtureAutomationRuns(decodeURIComponent(runs[1])))
+    if (den === "/v1/capabilities/google-workspace/calendar-events") { const { from, to } = range(); return json(response, 200, fixtureMeetings(from, to)) }
+    if (/^\/v1\/automations\/[^/]+\/(run|activate|deactivate)$/.test(den)) return json(response, 200, { ok: true })
+    return json(response, 404, { error: "not_found", message: "Not in the fixture." })
+  }
   if (request.method === "GET" && path === "/v1/workbot") return json(response, 200, { available: true, ...current })
   if (path === "/v1/workbot/events") {
     response.writeHead(200, { "Content-Type": "text/event-stream", "Cache-Control": "no-cache" })

@@ -451,6 +451,26 @@
               ],
               "description": "Workbot: remote tasks: Shows recent tasks started on another computer in Workbot's profile and working status, from stored create receipts and member-authorized live status. De-duplicates pure status watchers by explicit task ids; never approves or stops remote work automatically. Renders DEN_FEATURE_WORKBOT_REMOTE_TASKS."
             },
+            "workbotProfileNav": {
+              "enum": [
+                "",
+                "true",
+                "false",
+                true,
+                false
+              ],
+              "description": "Workbot: pages on the left, the rest in its profile: The left navigation lists only full pages (Chats, Documents, Calendar). Files and Apps, which open beside the chat rather than as pages, move into Workbot's profile as tabs; the logo at the top of the navigation opens that profile. Requires the profile sheet. Renders DEN_FEATURE_WORKBOT_PROFILE_NAV."
+            },
+            "workbotQuietCalendar": {
+              "enum": [
+                "",
+                "true",
+                "false",
+                true,
+                false
+              ],
+              "description": "Workbot: quiet calendar: Calendar where meetings own the week and Workbot's automation runs are small dots at their time instead of chips that fight meetings for space. Each day says how many runs it had; a run that needs the person stands out, and what Workbot did this week opens on demand. Narrow windows and phones get an agenda list. Renders DEN_FEATURE_WORKBOT_QUIET_CALENDAR."
+            },
             "workbotProactive": {
               "enum": [
                 "",

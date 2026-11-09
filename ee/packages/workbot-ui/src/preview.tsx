@@ -210,10 +210,12 @@ function ImagePreview({ file }: { file: WorkbotAttachment }) {
   const url = useWorkbotImageUrl(file.id, file.updatedAt);
   if (!url) return <Loading />;
   return (
-    <div className="flex min-h-full items-center justify-center p-6">
+    // A definite height (h-full, not min-h-full): otherwise max-h-full has nothing to resolve against and a tall photo
+    // or phone screenshot renders at its own size, wider and taller than the panel.
+    <div className="flex h-full min-h-0 items-center justify-center p-6" data-workbot-image-preview>
       {/* Blob URL from our own API; next/image cannot optimize it. */}
       {/* eslint-disable-next-line @next/next/no-img-element */}
-      <img src={url} alt={file.name} className="max-h-full max-w-full rounded-lg object-contain outline outline-1 -outline-offset-1 outline-black/10" />
+      <img src={url} alt={file.name} className="block h-auto max-h-full w-auto max-w-full rounded-lg object-contain shadow-[var(--wb-card-shadow)]" />
     </div>
   );
 }

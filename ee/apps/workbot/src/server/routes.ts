@@ -304,6 +304,8 @@ export function registerWorkbotRoutes(app: Hono<AppEnv>, input: { config: Config
       centeredProfile: who.enabled && who.centeredProfile,
       browserPreview: who.enabled && who.browserPreview,
       remoteTasks: who.enabled && who.remoteTasks,
+      profileNav: who.enabled && who.profileSheet && who.profileNav,
+      quietCalendar: who.enabled && who.calendar === true && who.quietCalendar,
       commandPalette: true,
       denUrl: config.denWebUrl ?? (await den.webUrl().catch(() => null)),
     })

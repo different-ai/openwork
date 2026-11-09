@@ -1,3 +1,4 @@
+import { crc32, deflateSync } from "node:zlib"
 import type { RunnerMessage, RunnerSnapshot } from "@openwork-ee/headless-protocol"
 
 /**
@@ -109,6 +110,11 @@ export const scenarios: Record<string, () => FixtureThread> = {
         outputs: [ARTIFACT_FILES.report, ARTIFACT_FILES.shopping],
       }),
     ],
+  }),
+  /** A tall phone screenshot Workbot sends back: its card and preview keep the picture's proportions. */
+  photo: () => ({
+    name: "Workbot", organizationName: "Example Team", status: "idle", hasEarlier: false, filesEnabled: true,
+    turns: [hello(), turn("p1", "Send me the screenshot of the phone app", minutesAgo(1), [said("Here it is, straight from the phone build.")], { outputs: [ARTIFACT_FILES.photo] })],
   }),
   /** An app that tries to reach the network and navigate by itself: its card must do neither until it is opened. */
   "artifact-hostile": () => ({
@@ -252,8 +258,38 @@ const HOSTILE_HTML = `<!doctype html><html><head><title>Inbox summary</title><me
 
 const SHOPPING_CSV = "Item,Where,Price\nWall shelf (120cm),Furniture store,49\nStorage bins x4,Home store,36\nDesk lamp,Lighting shop,29\nPlant stand,Furniture store,19\n"
 
+/**
+ * A tall phone screenshot (390 × 844 at 2x) as a PNG: a status bar, a notification card and rows. Its preview must keep
+ * these proportions inside the panel instead of rendering at its own size.
+ */
+function phoneScreenshot(): Buffer {
+  const width = 390, height = 844
+  const rows: Buffer[] = []
+  for (let y = 0; y < height; y++) {
+    const row = Buffer.alloc(1 + width * 3)
+    for (let x = 0; x < width; x++) {
+      const card = y > 70 && y < 190 && x > 16 && x < width - 16
+      const line = y > 260 && (y - 260) % 80 < 56 && x > 24 && x < width - 24
+      const bar = y < 48
+      const [r, g, b] = bar ? [233, 237, 240] : card ? [255, 255, 255] : line ? [238, 242, 245] : [246, 248, 249]
+      const icon = card && x > 32 && x < 84 && y > 92 && y < 144
+      row.set(icon ? [37, 137, 237] : [r, g, b], 1 + x * 3)
+    }
+    rows.push(row)
+  }
+  const chunk = (type: string, data: Buffer) => {
+    const head = Buffer.alloc(8); head.writeUInt32BE(data.length, 0); head.write(type, 4, "ascii")
+    const crc = Buffer.alloc(4); crc.writeUInt32BE(crc32(Buffer.concat([Buffer.from(type, "ascii"), data])) >>> 0, 0)
+    return Buffer.concat([head, data, crc])
+  }
+  const ihdr = Buffer.alloc(13); ihdr.writeUInt32BE(width, 0); ihdr.writeUInt32BE(height, 4); ihdr[8] = 8; ihdr[9] = 2
+  return Buffer.concat([Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]), chunk("IHDR", ihdr), chunk("IDAT", deflateSync(Buffer.concat(rows))), chunk("IEND", Buffer.alloc(0))])
+}
+const PHONE_PNG = phoneScreenshot()
+
 /** Bytes for the files the "artifacts" scenario made, served at /v1/workbot/files/:id. */
-export const ARTIFACT_BYTES: Record<string, { mediaType: string; bytes: string }> = {
+export const ARTIFACT_BYTES: Record<string, { mediaType: string; bytes: string | Buffer }> = {
+  "out-photo": { mediaType: "image/png", bytes: PHONE_PNG },
   "out-organizer": { mediaType: "text/html", bytes: ORGANIZER_HTML },
   "out-hostile": { mediaType: "text/html", bytes: HOSTILE_HTML },
   "out-report": { mediaType: "application/pdf", bytes: "%PDF-1.4\n% fixture\n" },
@@ -264,4 +300,5 @@ const ARTIFACT_FILES = {
   hostile: { id: "out-hostile", name: "inbox-summary.html", mediaType: "text/html", size: HOSTILE_HTML.length, updatedAt: 1 },
   report: { id: "out-report", name: "Room plan.pdf", mediaType: "application/pdf", size: 48_211, updatedAt: 1 },
   shopping: { id: "out-shopping", name: "Shopping list.csv", mediaType: "text/csv", size: SHOPPING_CSV.length, updatedAt: 1 },
+  photo: { id: "out-photo", name: "IMG_7186.png", mediaType: "image/png", size: PHONE_PNG.length, updatedAt: 1 },
 }

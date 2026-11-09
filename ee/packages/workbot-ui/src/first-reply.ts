@@ -15,8 +15,8 @@ export function firstReply(turn: Pick<WorkbotTurn, "text" | "status" | "greeting
   if (/\b(don['’‘ʼ]?t|do not|not|never|without|stop|cancel|abort|avoid|wait|unless)\b/i.test(request)) return null;
   if (!/^(?:please\s+)?(?:(?:can|could|would|will)\s+you\s+)?(?:use|open|browse|find|search|check|research|investigate|build|create|make|run|take|look|work|start)\b/i.test(request)) return null;
   if (turn.status === "queued") return "I've got your request. I'll pick it up next and reply here.";
-  if (/\b(browser|browse|youtube|website)\b/i.test(request)) return "On it — I'll take a look in my browser and tell you what I find.";
-  if (/\b(computer|desktop|screen)\b/i.test(request)) return "On it — I'll take a look on my computer and reply here with what I find.";
-  if (/\b(build|create|make|research|investigate|background|task|job)\b/i.test(request)) return "On it — I'll work through that and reply here with the result.";
+  if (/\b(browser|browse|youtube|website)\b/i.test(request)) return "Sure! I'll take a look in my browser and let you know what I find.";
+  if (/\b(computer|desktop|screen)\b/i.test(request)) return "Sure, let me take a look on my computer. I'll reply here with what I find.";
+  if (/\b(build|create|make|research|investigate|background|task|job)\b/i.test(request)) return "Happy to. I'll work through that and reply here with the result.";
   return null;
 }
