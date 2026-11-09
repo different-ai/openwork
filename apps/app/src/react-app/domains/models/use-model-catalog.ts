@@ -10,7 +10,7 @@ import { useAutoAccess } from "@/react-app/domains/cloud/auto-access-ui";
 import { useGatewayModelSelection } from "@/react-app/domains/connections/provider-auth/gateway-model-access";
 import { useProviderListQuery } from "@/react-app/infra/provider-list-query";
 import { modelRefKey, useModelCollectionsStore } from "../session/models/model-collections-store";
-import { buildModelCatalog, resolveRetainedSelection, runtimeModelOptions, withAutoActionState, withoutBlockedSelection } from "./catalog";
+import { buildModelCatalog, resolveRetainedSelection, restoringModelOption, runtimeModelOptions, withAutoActionState, withoutBlockedSelection } from "./catalog";
 import { isAutoModel, type ModelCatalogOption, type ModelPickerCatalogState, type RetainedModelSelection } from "./model-catalog";
 
 export type UseModelCatalogInput = {
@@ -47,8 +47,13 @@ export type ModelCatalogView = {
   actionOptions: ModelCatalogOption[];
   catalogState: ModelPickerCatalogState;
   retainedSelection?: RetainedModelSelection;
-  /** The current model's option when it is selectable, else the last one seen in this identity scope. */
+  /**
+   * The current model's option when it is selectable, else the last one seen in this identity scope, else
+   * (while the saved sign-in is still being checked) the one in the last list. Names the model; never offers it.
+   */
   currentOption?: ModelOption;
+  /** The saved sign-in is still being checked, so organization models are not listed yet. */
+  restoring: boolean;
   restrictToCloud: boolean;
   /** Whether Auto is (or would be) offered here, so its access status matters. */
   autoVisible: boolean;
@@ -137,10 +142,15 @@ export function useModelCatalog(input: UseModelCatalogInput): ModelCatalogView {
     || (auto && autoStatus && modelRefKey(autoStatus) === modelRefKey(auto) && autoStatus.state !== "ready"))));
   const actionOptions = useMemo(() => withAutoActionState(options, { blocked: autoBlocked }), [options, autoBlocked]);
   const hiddenByChoice = retainedSelection?.reason === "policy" || retainedSelection?.reason === "disabled";
+  // At launch the saved sign-in is "checking" for a moment. Organization models are held back until it
+  // answers, but the model already chosen is still named, not shown as nothing selected.
+  const restoring = auth.status === "checking" && !signedIn;
+  const restoringOption = restoringModelOption({ current, restoring, runtime, fallback: input.fallbackOptions });
 
   return {
     options, knownOptions: catalog.known, actionOptions, catalogState, retainedSelection, restrictToCloud,
-    currentOption: selectable ?? (current ? catalog.known.find((option) => modelRefKey(option) === modelRefKey(current)) ?? (rememberedOption && modelRefKey(rememberedOption) === modelRefKey(current) ? rememberedOption : undefined) : undefined),
+    currentOption: selectable ?? (current ? catalog.known.find((option) => modelRefKey(option) === modelRefKey(current)) ?? (rememberedOption && modelRefKey(rememberedOption) === modelRefKey(current) ? rememberedOption : undefined) : undefined) ?? restoringOption,
+    restoring,
     autoVisible: !freeAutoSwitchedOff(autoStatus) && !hiddenByChoice && (Boolean(auto) || Boolean(current && isAutoModel(current))),
     error: providers.error,
     refetch,
