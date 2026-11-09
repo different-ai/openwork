@@ -127,3 +127,38 @@ test("unknown ids, other methods and oversized requests are refused", async () =
   })
   assert.equal(huge.status, 413, "oversized requests are refused unread")
 })
+
+test("a friendly name serves the App, is unique across organizations, and a new name retires the old URL", async () => {
+  const app = await createApp("Front desk", { public: true, publicName: "visit-us" })
+  assert.ok(app.raw.includes("/mcp/public/apps/visit-us"), "create_app returns the friendly URL")
+  await available("visit-us", "friendly name")
+  await available(app.appId, "the App id URL still works")
+  const opened = await anonymous("visit-us", "tools/call", { name: "open_app", arguments: {} })
+  assert.equal(field(opened.result, "structuredContent", "app", "serverPath"), "/mcp/public/apps/visit-us")
+
+  const elsewhere = await den.createOrg(await den.signUp("Other Owner"), "Other public workspace")
+  assert.equal((await den.setFeature(elsewhere.orgId, "publicApps", true)).status, 200)
+  const otherMcp = await den.mintMcpToken(elsewhere.owner, elsewhere.orgId)
+  const taken = await den.callMcpTool(otherMcp, "create_app", { ...source("Visit us"), tools: [], public: true, publicName: "visit-us" })
+  assert.equal(taken.isError, true, taken.raw)
+  assert.match(taken.raw, /public_name_taken/)
+
+  const needsPublic = await den.callMcpTool(mcp, "create_app", { ...source("Named only"), tools: [], publicName: "named-only" })
+  assert.match(needsPublic.raw, /public_name_needs_public/)
+  for (const publicName of ["Bad Name", "x", "-leading"]) {
+    const invalid = await den.callMcpTool(mcp, "create_app", { ...source("Bad"), tools: [], public: true, publicName })
+    assert.equal(invalid.isError, true, `${publicName}: ${invalid.raw}`)
+  }
+
+  const renamed = await updateApp(app, "Front desk", { publicName: "front-desk" })
+  assert.equal(renamed.isError, false, renamed.raw)
+  await available("front-desk", "new name")
+  await unavailable("visit-us", "old name retired")
+
+  // The name stays with its App while it is private, and works again once it is public.
+  const hidden = await updateApp({ appId: app.appId, revisionId: renamed.revisionId }, "Front desk", { public: false })
+  assert.equal(hidden.isError, false, hidden.raw)
+  await unavailable("front-desk", "private App")
+  const kept = await den.callMcpTool(otherMcp, "create_app", { ...source("Front desk"), tools: [], public: true, publicName: "front-desk" })
+  assert.match(kept.raw, /public_name_taken/)
+})
