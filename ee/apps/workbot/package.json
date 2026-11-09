@@ -13,7 +13,7 @@
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test:scroll-browser": "node scripts/scroll-browser.mjs",
     "test:navigation-browser": "node scripts/navigation-browser.mjs",
-    "test:auth": "tsx --test scripts/auth.test.ts scripts/static-cache.test.ts",
+    "test:auth": "tsx --test scripts/auth.test.ts scripts/static-cache.test.ts scripts/stale-build.test.ts",
     "test:service-readiness": "tsx --conditions=development --test scripts/service-readiness.test.ts",
     "test:error-reporting": "tsx --test scripts/error-reporting.test.ts",
     "test:model": "tsx --conditions=development --test scripts/model.test.ts",

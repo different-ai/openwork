@@ -44,7 +44,7 @@ import { ArtifactCards } from "./artifact-card";
 import { Welcome } from "./welcome";
 import { ModelRecovery, AccessRecovery } from "./model-recovery";
 import { hasAnsweredTurn, WorkbotSetupChip } from "./activation";
-import { WorkbotCalendar } from "./calendar";
+import { WorkbotCalendar } from "./lazy-surfaces";
 import { WorkbotDocuments } from "./documents";
 import { LastGlimpse, LiveGlimpse, WorkbotComputer } from "./computer";
 import { readBrowserSkillRunPrompt, type BrowserTeachingContext } from "@openwork/types/browser-demonstration";
