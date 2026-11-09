@@ -201,7 +201,7 @@ export const aiGatewayByokArea = defineConfigArea({
     return { score, reasons }
   },
   secretFields: ["credentials.apiKey", "credentials.apiKeys.*"],
-  arrayKeys: { models: "id", "models[]": "id" },
+  arrayKeys: { models: "id" },
   transactional: false,
   externalEffects: false,
 

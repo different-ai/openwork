@@ -123,6 +123,14 @@ export type ConfigArea = {
    */
   orderedArrays?: string[]
   arrayKeys?: Record<string, string>
+  /**
+   * Spec fields exported for people reading the blob that an import never
+   * changes (e.g. a person's `status`: an import can invite, not make someone
+   * join). Left out of diffs and hashes, so they never make an item differ.
+   */
+  informationalFields?: string[]
+  /** The item's name is derived on the target and never set by import (people): a different name is not a change. */
+  informationalName?: boolean
   /** Fields in `spec` that, when they are the only change besides name/key, still count as a rename. Rarely needed. */
   cosmeticFields?: string[]
   /** Unique constraints on the target that a create/rename could break, e.g. team name. */

@@ -274,6 +274,36 @@ export async function markOtherOpenRequestsStale(
   return ids
 }
 
+/** Open statuses a newer upload from the same API key and scope replaces (D5). Never one queued or applying. */
+export const CONFIG_SUPERSEDABLE_STATUSES: readonly ConfigChangeRequestStatus[] = ["uploaded", "analyzing", "needs_review", "approved", "stale"]
+
+/**
+ * D5: a new request from an API key supersedes that key's older open requests
+ * with exactly the same scope. Returns the superseded ids.
+ */
+export async function supersedeOpenRequestsFromApiKey(input: {
+  organizationId: OrganizationId
+  apiKeyId: string
+  areas: readonly ConfigAreaKey[]
+  exceptId: ConfigChangeRequestId
+}, database: ConfigDatabase = db.$primary): Promise<ConfigChangeRequestId[]> {
+  const scope = and(
+    eq(ConfigChangeRequestTable.organizationId, input.organizationId),
+    eq(ConfigChangeRequestTable.apiKeyId, input.apiKeyId),
+    ne(ConfigChangeRequestTable.id, input.exceptId),
+    inArray(ConfigChangeRequestTable.status, [...CONFIG_SUPERSEDABLE_STATUSES]),
+  )
+  const rows = await database.select({ id: ConfigChangeRequestTable.id, areas: ConfigChangeRequestTable.areas }).from(ConfigChangeRequestTable).where(scope)
+  const wanted = [...new Set(input.areas)].sort().join(",")
+  const ids = rows.filter((row) => [...new Set(row.areas)].sort().join(",") === wanted).map((row) => row.id)
+  if (ids.length === 0) return []
+  await database
+    .update(ConfigChangeRequestTable)
+    .set({ status: "superseded", secretInputs: null, leaseOwner: null, leaseUntil: null })
+    .where(and(scope, inArray(ConfigChangeRequestTable.id, ids)))
+  return ids
+}
+
 // ---------------------------------------------------------------------------
 // Summaries
 

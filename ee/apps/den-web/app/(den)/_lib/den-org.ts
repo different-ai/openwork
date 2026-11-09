@@ -249,6 +249,11 @@ export type DenOrgApiKey = {
   expiresAt: string | null;
   createdAt: string | null;
   updatedAt: string | null;
+  /** `config`: a config token (feature `configBlobs`) with scopes and an optional area limit. */
+  type: DenOrgApiKeyType;
+  scopes: DenConfigTokenScope[];
+  /** Config tokens: the areas it may touch; null = every area. */
+  areas: string[] | null;
   owner: {
     userId: string;
     memberId: string;
@@ -257,6 +262,14 @@ export type DenOrgApiKey = {
     image: string | null;
   };
 };
+
+export type DenOrgApiKeyType = "standard" | "config";
+export const DEN_CONFIG_TOKEN_SCOPES = ["config:export", "config:submit", "config:apply"] as const;
+export type DenConfigTokenScope = (typeof DEN_CONFIG_TOKEN_SCOPES)[number];
+
+function isConfigTokenScope(value: unknown): value is DenConfigTokenScope {
+  return typeof value === "string" && (DEN_CONFIG_TOKEN_SCOPES as readonly string[]).includes(value);
+}
 
 export type DenOrgScimConnection = {
   id: string;
@@ -1564,6 +1577,9 @@ export function parseOrgApiKeysPayload(payload: unknown): DenOrgApiKey[] {
         expiresAt: asIsoString(entry.expiresAt),
         createdAt: asIsoString(entry.createdAt),
         updatedAt: asIsoString(entry.updatedAt),
+        type: entry.type === "config" ? "config" : "standard",
+        scopes: Array.isArray(entry.scopes) ? entry.scopes.filter(isConfigTokenScope) : [],
+        areas: Array.isArray(entry.areas) ? entry.areas.filter((area): area is string => typeof area === "string") : null,
         owner: {
           userId: ownerUserId,
           memberId: ownerMemberId,

@@ -23,7 +23,12 @@ const encryptedJsonColumn = <TData>(name: string) => encryptedColumn<TData>(name
   deserialize: JSON.parse,
 })
 
-export type ConfigChangeRequestApproval = { memberId: string; at: string }
+export type ConfigChangeRequestApproval = {
+  memberId: string
+  at: string
+  /** Set when the approval came through a config token (it still counts for its issuing member). */
+  apiKeyId?: string | null
+}
 
 /** One import of a blob into an organization: queued, analyzed, reviewed, applied. */
 export const ConfigChangeRequestTable = mysqlTable(

@@ -387,7 +387,17 @@ export type ConfigChangeRequestSummary = {
 export type ConfigApplyReport = {
   items: Array<{ area: ConfigAreaKey; ref: string; op: ConfigPlanOp; localId: string | null; status: "applied" | "failed" | "skipped"; warnings: string[]; error?: string }>;
   warnings: string[];
+  /** `rev` of every item in scope right after the apply, keyed `<area>/<id>`: the three-way base of a revert. */
+  afterRevs?: Record<string, string>;
 };
+
+/** Organization settings for config change requests (GET/PATCH `/v1/config-blobs/settings`). */
+export type ConfigBlobSettings = {
+  /** Two different approvers; the second must be neither the creator nor the first approver (D5). */
+  requireSecondApprover: boolean;
+};
+export const configBlobSettingsPatchSchema = z.object({ requireSecondApprover: z.boolean() }).strict();
+export type ConfigBlobSettingsResponse = { settings: ConfigBlobSettings };
 
 export type ConfigAreaDescriptor = {
   key: ConfigAreaKey;

@@ -322,6 +322,10 @@ export const membersPeopleArea = defineConfigArea({
   naturalKeys: [{ label: "email", get: emailOf }],
   uniqueFields: [{ label: "email", get: (item) => typeof item.spec.email === "string" ? normalizeEmail(item.spec.email) || null : null }],
   secretFields: [],
+  // An import invites; it never makes someone join, and a person's name is
+  // their account's. Both are exported for readers but are not changes.
+  informationalFields: ["status"],
+  informationalName: true,
   // Invitation, member and team actions open their own transactions on the global db, and may send email.
   transactional: false,
   externalEffects: true,

@@ -16,17 +16,18 @@ import {
   type ArrayLayout,
   arrayElementKey,
   elementSchemaPath,
+  isInformationalField,
   isOrderedArray,
   isPlainObject,
   joinPath,
 } from "./util.js"
 
 /**
- * A field change. `added` / `removed` list set members (ref name hints, or
- * values) for set-valued fields such as `access.teams`. They extend the
- * shared `ConfigFieldChange` and are present in the plan JSON.
+ * A field change: the shared `ConfigFieldChange` (`added` / `removed` list set
+ * members, ref name hints or values, for set-valued fields such as
+ * `access.teams`). Kept as an alias for existing imports.
  */
-export type EngineFieldChange = ConfigFieldChange & { added?: unknown[]; removed?: unknown[] }
+export type EngineFieldChange = ConfigFieldChange
 
 export function diffSpecs(layout: ArrayLayout, before: unknown, after: unknown): EngineFieldChange[] {
   const changes: EngineFieldChange[] = []
@@ -38,7 +39,9 @@ function walk(layout: ArrayLayout, before: unknown, after: unknown, path: string
   if (canonicalJson(layout, before, schemaPath) === canonicalJson(layout, after, schemaPath)) return
   const displayPath = path || "(spec)"
   if (isStructObject(before) && isStructObject(after)) {
-    const keys = [...new Set([...Object.keys(before), ...Object.keys(after)])].sort(compareStrings)
+    const keys = [...new Set([...Object.keys(before), ...Object.keys(after)])]
+      .filter((key) => !isInformationalField(layout, joinPath(schemaPath, key)))
+      .sort(compareStrings)
     for (const key of keys) walk(layout, before[key], after[key], joinPath(path, key), joinPath(schemaPath, key), out)
     return
   }
@@ -109,7 +112,7 @@ export type MatchedClassification = {
 }
 
 export type ClassifyMatchedInput = {
-  area: Pick<ConfigArea, "orderedArrays" | "arrayKeys" | "cosmeticFields">
+  area: Pick<ConfigArea, "orderedArrays" | "arrayKeys" | "informationalFields" | "informationalName" | "cosmeticFields">
   blob: Pick<ConfigBlobItem, "name" | "key" | "rev" | "spec">
   /** The blob spec with refs rewritten to the target's ids (what would be written). */
   localizedSpec: ConfigSpec
@@ -127,7 +130,7 @@ export function classifyMatched(input: ClassifyMatchedInput): MatchedClassificat
   const targetRev = specRev(area, target.spec)
   const oursRev = specRev(area, blob.spec)
   const fields = diffSpecs(area, target.spec, input.localizedSpec)
-  const nameChanged = blob.name !== target.name
+  const nameChanged = !area.informationalName && blob.name !== target.name
   const keyChanged = blob.key !== undefined && (blob.key ?? null) !== (target.key ?? null)
   const flags: ConfigPlanFlag[] = []
   const reasons: string[] = []

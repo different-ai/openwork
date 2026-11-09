@@ -1243,6 +1243,26 @@ This disables SSRF protection for external MCP connection URLs. Enable it only
 on a deployment where Den's network position and the set of people who can add
 MCP connections are both trusted.
 
+### Config import secrets from environment variables
+
+When config import and export (`configBlobs`) is on, an imported config file
+can ask Den API to fill a secret from one of its own environment variables
+(`{ "$secret": "…", "env": "OPENWORK_IMPORT_ANTHROPIC_KEY" }`). Nothing is
+allowed until you list the variables, by exact name or with a trailing `*`
+prefix:
+
+```yaml
+denApi:
+  env:
+    DEN_CONFIG_BLOB_SECRET_ENV_ALLOWLIST: "OPENWORK_IMPORT_*"
+```
+
+Provide the variables themselves to the Den API container as well (from a
+Secret you manage; `denApi.env` writes plain values into the pod spec, so keep
+it for test keys). A bare `*` is refused, so Den's own
+settings (database URL, auth secret) can never be read this way. Cloud
+deployments ignore the allowlist.
+
 ## Migrations
 
 ### Migration TCP configuration

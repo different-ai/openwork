@@ -27,7 +27,17 @@ export {
   type RefResolverInput,
   type ResolvedRefOccurrence,
 } from "./refs.js"
-export { findSecrets, planSecrets, type ExecutionSecret, type PlannedSecrets, type PlanSecretsInput, type SecretOccurrence } from "./secrets.js"
+export {
+  checkSecretFields,
+  findSecrets,
+  matchesSecretField,
+  planSecrets,
+  type ExecutionSecret,
+  type PlannedSecrets,
+  type PlanSecretsInput,
+  type SecretFieldProblems,
+  type SecretOccurrence,
+} from "./secrets.js"
 export {
   buildPlan,
   sortAreas,

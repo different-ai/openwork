@@ -8,10 +8,14 @@
  * checks and side effects exactly as for a dashboard request, and the adapter
  * reads its `Response`.
  *
- * Audit: these handlers are recorded by generic request capture (the route
- * middleware), which does not run here. TODO(config-blobs): the engine records
- * the apply as a `tenant_job` audit operation; per-item request evidence for
- * these areas comes from that operation, not from route capture.
+ * Audit: generic request capture (the route middleware) does not run here.
+ * The service runs the whole apply inside runWithAuditJobChangeCapture
+ * (config-blobs/service.ts → audit/request-capture.ts): `auditChangeCapture(c)`
+ * for this synthetic context, and `currentAuditChangeCapture()`, return the
+ * apply's `tenant_job` operation capture, so every domain change event the
+ * handlers emit joins that one operation (jobRunId = change request id).
+ * Handlers that only record request evidence leave nothing per item; the
+ * apply report and before-snapshot cover them.
  */
 import { randomUUID } from "node:crypto"
 import { and, eq, inArray } from "@openwork-ee/den-db/drizzle"

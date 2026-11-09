@@ -84,6 +84,7 @@ const EnvSchema = z.object({
   OPENWORK_DEV_MODE: z.string().optional(),
   DEN_BOTID_PROTECTION_ENABLED: z.string().optional(),
   DEN_ALLOW_PRIVATE_MCP_URLS: z.string().optional(),
+  DEN_CONFIG_BLOB_SECRET_ENV_ALLOWLIST: z.string().optional(),
   DEN_DIAGNOSTICS_ORIGIN: z.string().optional(),
   DEN_DIAGNOSTICS_BEARER_TOKEN: z.string().optional(),
   DEN_MAINTENANCE_TOKEN: z.string().optional(),
@@ -752,6 +753,12 @@ export const env = {
   devMode,
   botIdProtectionEnabled,
   allowPrivateMcpUrls,
+  configBlobs: {
+    // Environment variables a config-blob import may read for a `$secret`
+    // (`env` decision). Self-hosted only; empty means none. Comma-separated
+    // names, a trailing `*` matches a prefix (`OPENWORK_IMPORT_*`).
+    secretEnvAllowlist: splitCsv(parsed.DEN_CONFIG_BLOB_SECRET_ENV_ALLOWLIST),
+  },
   diagnostics: {
     origin: diagnosticsOrigin,
     bearerToken: diagnosticsBearerToken,

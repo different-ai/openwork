@@ -1,4 +1,5 @@
 import type { MiddlewareHandler } from "hono"
+import type { DenApiKeySession } from "../api-keys.js"
 import type { AuthContextVariables } from "../session.js"
 import type { OrganizationContextVariables } from "./organization-context.js"
 
@@ -21,8 +22,14 @@ export type RefuseMachineSecretsOptions = {
    * Let an organization API key send the secret. Only for routes whose whole
    * purpose is a provisioning script writing keys it minted upstream (the
    * admin per-member credential write). The agent is still always refused.
+   * A predicate allows only the keys it accepts, e.g. `allowConfigTokenSecrets`
+   * (config-blobs/token.ts) for config tokens on the change-request inputs route.
    */
-  allowApiKeys?: boolean
+  allowApiKeys?: boolean | ((apiKey: DenApiKeySession) => boolean)
+}
+
+function apiKeyAllowed(apiKey: DenApiKeySession, allow: RefuseMachineSecretsOptions["allowApiKeys"]): boolean {
+  return typeof allow === "function" ? allow(apiKey) : allow === true
 }
 
 /**
@@ -33,7 +40,8 @@ export type RefuseMachineSecretsOptions = {
 export function refuseMachineSecrets(fields: readonly string[], options: RefuseMachineSecretsOptions = {}): MiddlewareHandler<{ Variables: Partial<AuthContextVariables & OrganizationContextVariables> }> {
   return async (c, next) => {
     const agent = c.get("session")?.id === "mcp_internal"
-    const apiKey = Boolean(c.get("apiKey")) && options.allowApiKeys !== true
+    const key = c.get("apiKey")
+    const apiKey = Boolean(key) && !(key && apiKeyAllowed(key, options.allowApiKeys))
     if (!agent && !apiKey) return next()
     const body: unknown = await c.req.raw.clone().json().catch(() => null)
     if (!bodyCarriesSecret(body, fields)) return next()

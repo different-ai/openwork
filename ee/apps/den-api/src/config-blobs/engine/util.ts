@@ -8,7 +8,12 @@ import type { ConfigArea } from "../area.js"
 export type JsonObject = { [key: string]: unknown }
 
 /** How an area lays out its arrays: which are ordered, which key identifies set elements. */
-export type ArrayLayout = Pick<ConfigArea, "orderedArrays" | "arrayKeys">
+export type ArrayLayout = Pick<ConfigArea, "orderedArrays" | "arrayKeys" | "informationalFields">
+
+/** Whether the spec field at `schemaPath` is informational (never diffed or hashed). */
+export function isInformationalField(layout: ArrayLayout, schemaPath: string): boolean {
+  return (layout.informationalFields ?? []).includes(schemaPath)
+}
 
 export function isPlainObject(value: unknown): value is JsonObject {
   return typeof value === "object" && value !== null && !Array.isArray(value)
@@ -28,18 +33,31 @@ export function elementSchemaPath(schemaPath: string): string {
   return `${schemaPath}[]`
 }
 
+/** "models[]" → "models"; other paths unchanged. */
+export function arraySchemaPath(elementPath: string): string {
+  return elementPath.endsWith("[]") ? elementPath.slice(0, -2) : elementPath
+}
+
+/**
+ * Whether the array at `schemaPath` keeps its order. `orderedArrays` lists
+ * array paths ("pinnedModelIds"); the element form ("pinnedModelIds[]") is
+ * accepted too.
+ */
 export function isOrderedArray(layout: ArrayLayout, schemaPath: string): boolean {
-  return (layout.orderedArrays ?? []).includes(schemaPath)
+  const ordered = layout.orderedArrays ?? []
+  return ordered.includes(schemaPath) || ordered.includes(elementSchemaPath(schemaPath))
 }
 
 /**
  * The identity of a set element: `arrayKeys[path]`, else `id`, else `$ref`.
- * Null for elements with none (scalars, unkeyed objects).
+ * Null for elements with none (scalars, unkeyed objects). `schemaPath` is the
+ * element path ("models[]"); `arrayKeys` is keyed by the array path
+ * ("models", as documented in area.ts), the element form is accepted too.
  */
 export function arrayElementKey(layout: ArrayLayout, schemaPath: string, element: unknown): { field: string; value: string } | null {
   if (isConfigRef(element)) return { field: "$ref", value: element.$ref }
   if (!isPlainObject(element) || isConfigSecret(element)) return null
-  const declared = layout.arrayKeys?.[schemaPath]
+  const declared = layout.arrayKeys?.[arraySchemaPath(schemaPath)] ?? layout.arrayKeys?.[schemaPath]
   if (declared) {
     const value = element[declared]
     if (typeof value === "string" || typeof value === "number") return { field: declared, value: String(value) }

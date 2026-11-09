@@ -31,7 +31,7 @@ import {
   toPlanRef,
   type ResolvedRefOccurrence,
 } from "./refs.js"
-import { planSecrets, type ExecutionSecret } from "./secrets.js"
+import { checkSecretFields, planSecrets, type ExecutionSecret } from "./secrets.js"
 import { sha256 } from "./util.js"
 
 export type BuildPlanInput = {
@@ -103,6 +103,12 @@ export type BuildPlanResult = {
   execution: ExecutionPlan
   /** Validation errors (duplicate ids/keys, invalid specs, unknown areas, newer spec versions). */
   errors: string[]
+  /**
+   * The subset of `errors` that invalidates the whole request (unknown areas,
+   * newer spec versions, duplicate ids/keys). Invalid item specs are not in
+   * it: those items are `blocked` and the admin may skip them.
+   */
+  fatalErrors: string[]
 }
 
 /** Areas in dependency order (dependencies first, otherwise input order). Throws on a cycle. */
@@ -153,8 +159,10 @@ export function buildPlan(input: BuildPlanInput): BuildPlanResult {
   const allowEnv = input.allowEnv ?? (() => false)
   const issues: ConfigPlan["issues"] = []
   const errors: string[] = []
-  const addError = (message: string, area?: ConfigAreaKey) => {
+  const fatalErrors: string[] = []
+  const addError = (message: string, area?: ConfigAreaKey, options: { itemLevel?: boolean } = {}) => {
     errors.push(message)
+    if (!options.itemLevel) fatalErrors.push(message)
     issues.push(area ? { level: "error", message, area } : { level: "error", message })
   }
 
@@ -202,7 +210,7 @@ export function buildPlan(input: BuildPlanInput): BuildPlanResult {
         if (!parsed.success) {
           const message = parsed.error.issues.map((issue) => `${issue.path.join(".") || "spec"}: ${issue.message}`).join("; ")
           state.invalid.set(index, message)
-          addError(`${area.label} "${item.name}": ${message}`, area.key)
+          addError(`${area.label} "${item.name}": ${message}`, area.key, { itemLevel: true })
         }
       })
     }
@@ -384,6 +392,12 @@ export function buildPlan(input: BuildPlanInput): BuildPlanResult {
         item.flags.push("blocked")
         reasons.push(`invalid: ${invalid}`)
       }
+      const secretProblems = checkSecretFields(area.secretFields, blob.spec)
+      if (secretProblems.undeclared.length || secretProblems.raw.length) {
+        item.flags.push("blocked")
+        for (const field of secretProblems.undeclared) reasons.push(`${field}: a secret placeholder is not allowed here`)
+        for (const field of secretProblems.raw) reasons.push(`${field}: secrets are never accepted inside a blob; use a $secret placeholder and enter the value separately`)
+      }
       const secrets = planSecrets({
         layout: area,
         blobSpec: blob.spec,
@@ -471,7 +485,7 @@ export function buildPlan(input: BuildPlanInput): BuildPlanResult {
 
   const plan: ConfigPlan = { planHash, mode: input.mode, summary, areas: planAreas, issues }
   const execution: ExecutionPlan = { planHash, blocking: summary.blocking, ops: [...forward, ...deletes.flat()] }
-  return { plan, execution, errors }
+  return { plan, execution, errors, fatalErrors }
 }
 
 function blobRefFor(blob: ConfigBlobItem, index: number): string {
@@ -495,6 +509,9 @@ function hashView(draft: Draft): unknown {
     matchedBy: item.matchedBy,
     blob: item.blob ?? null,
     targetId: item.target?.id ?? null,
+    // Name and key live outside the spec: a rename on the target is drift too.
+    targetName: item.target?.name ?? null,
+    targetKey: item.target?.key ?? null,
     targetRev: item.targetRev ?? null,
     oursRev: draft.oursRev ?? null,
     flags: item.flags,

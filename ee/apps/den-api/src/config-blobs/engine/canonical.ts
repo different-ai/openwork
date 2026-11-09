@@ -8,13 +8,15 @@
  * - a `$secret` placeholder hashes as `{ $secret: "<schema path>" }`: its
  *   set/keep/env/unset decision and its item-specific path never count;
  * - a `$ref` hashes as `{ $ref }`: the `name` hint (and any resolved `id`)
- *   never count.
+ *   never count;
+ * - `informationalFields` are left out.
  */
 import { isConfigRef, isConfigSecret, type ConfigAreaKey } from "@openwork/types/den/config-blobs"
 import {
   type ArrayLayout,
   arrayElementKey,
   elementSchemaPath,
+  isInformationalField,
   isOrderedArray,
   isPlainObject,
   joinPath,
@@ -42,7 +44,7 @@ export function normalizeSpecValue(layout: ArrayLayout, value: unknown, schemaPa
     const out: { [key: string]: unknown } = {}
     for (const key of Object.keys(value).sort(compareStrings)) {
       const child = value[key]
-      if (child === undefined) continue
+      if (child === undefined || isInformationalField(layout, joinPath(schemaPath, key))) continue
       out[key] = normalizeSpecValue(layout, child, joinPath(schemaPath, key))
     }
     return out

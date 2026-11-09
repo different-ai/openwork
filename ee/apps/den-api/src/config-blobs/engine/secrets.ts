@@ -49,6 +49,64 @@ export function findSecrets(layout: ArrayLayout, spec: unknown): SecretOccurrenc
   return out
 }
 
+/**
+ * Whether a spec location matches a declared secret field. `schemaPath` uses
+ * `[]` for array elements (`requestHeaders[].value`); a `*` segment in the
+ * pattern matches any one object key, for maps keyed by name
+ * (`credentials.apiKeys.*` matches `credentials.apiKeys.OPENAI_API_KEY`).
+ */
+export function matchesSecretField(pattern: string, schemaPath: string): boolean {
+  const want = pattern.split(".")
+  const have = schemaPath.split(".")
+  if (want.length !== have.length) return false
+  return want.every((segment, index) => {
+    const actual = have[index] ?? ""
+    if (segment === actual) return true
+    if (segment === "*") return !actual.endsWith("[]")
+    if (segment === "*[]") return actual.endsWith("[]")
+    return false
+  })
+}
+
+export type SecretFieldProblems = {
+  /** `$secret` placeholders at a location the area does not declare as a secret field. */
+  undeclared: string[]
+  /** Declared secret locations holding something other than a placeholder (a pasted secret, say). */
+  raw: string[]
+}
+
+/**
+ * Checks a blob spec against the area's `secretFields`: placeholders may only
+ * sit at declared fields (wildcard map keys included), and declared fields may
+ * only hold placeholders (or nothing). A raw value at a secret field is never
+ * accepted inside a blob: values go through the inputs endpoint.
+ */
+export function checkSecretFields(secretFields: readonly string[], spec: unknown): SecretFieldProblems {
+  const problems: SecretFieldProblems = { undeclared: [], raw: [] }
+  const declared = (schemaPath: string) => secretFields.some((pattern) => matchesSecretField(pattern, schemaPath))
+  const walk = (value: unknown, field: string, schemaPath: string) => {
+    if (value === undefined || value === null) return
+    const isSecretField = schemaPath !== "" && declared(schemaPath)
+    if (isConfigSecret(value)) {
+      if (!isSecretField) problems.undeclared.push(field || "(spec)")
+      return
+    }
+    if (isSecretField) {
+      problems.raw.push(field)
+      return
+    }
+    if (isConfigRef(value)) return
+    if (Array.isArray(value)) {
+      const childSchema = elementSchemaPath(schemaPath)
+      value.forEach((element, index) => walk(element, `${field}[${index}]`, childSchema))
+      return
+    }
+    if (isPlainObject(value)) for (const [key, child] of Object.entries(value)) walk(child, joinPath(field, key), joinPath(schemaPath, key))
+  }
+  walk(spec, "", "")
+  return problems
+}
+
 export type SecretDecisionKind = "keep" | "env" | "value" | "unset"
 
 /** One placeholder in an execution op: what to put in its place. Never a value. */

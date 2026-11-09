@@ -167,9 +167,7 @@ export const connectorsMcpArea = defineConfigArea({
     get: (item) => typeof item.spec.url === "string" ? normalizeExternalMcpIdentityUrl(item.spec.url) : null,
   }],
   secretFields: ["apiKey", "requestHeaders[].value", "oauth.client.clientSecret"],
-  // The engine looks arrays up by their element path ("requestHeaders[]"); the
-  // contract documents the array path. Both are declared.
-  arrayKeys: { requestHeaders: "name", "requestHeaders[]": "name" },
+  arrayKeys: { requestHeaders: "name" },
   transactional: false,
   externalEffects: true,
 

@@ -119,3 +119,16 @@ Under **Team › Settings › Config** (key `settings.config`, not exported), be
 | `config_blob_export` (`cbe`, optional) | the last N exports per org, keyed by `base_hash`, so the three-way diff has field-level base values |
 
 Delete purge: these tables are added to `delete-organization.ts`.
+
+## As built (den-api `src/config-blobs/service.ts`, `worker.ts`)
+
+- **Worker:** `startConfigBlobWorker` (1 s tick, started in `server.ts`, stopped on shutdown) analyzes up to 10 requests, then applies up to 10. `claimNextApply` keeps one apply per org; a long apply extends its lease every minute. With `configBlobs` off for an org, its requests are put back and retried a minute later.
+- **Invalid vs. blocked:** unknown or newer areas and duplicate ids/keys make a request `invalid`. An item whose spec fails validation is only `blocked` (skip it, or fix the file). Secret placeholders outside an area's `secretFields`, or a raw value in a secret field, also block the item.
+- **Approvals:** `{ memberId, at, apiKeyId? }` against the current plan hash. "Require a second approver" (`GET/PATCH /v1/config-blobs/settings`, organization metadata `configBlobs.requireSecondApprover`) needs two different members, and the second one must be neither the creator nor the first approver. Re-plans that change the hash, and any secret *value* entered, drop approvals.
+- **Who applies:** the last approver (for a config-token approval, its issuing member). At apply time the worker checks that this member is still in the org and holds every written area's manage permission, and that the token is still enabled.
+- **Stale:** right before applying, the worker plans again against the live org. A different plan hash (any target rev, name or key changed) → `stale` → re-analyzed → `needs_review` with approvals dropped.
+- **Transactions:** most adapters go through route handlers that open their own transactions, so an apply is a sequence, not one transaction. It stops at the first failing item (the rest are `skipped` in the report); the before-snapshot is the way back.
+- **Audit:** one `tenant_job` operation per apply (`jobRunId` = change request id): `config_change_request.apply_started`, every domain change event the adapters' services emit (via `runWithAuditJobChangeCapture`, e.g. `invitation.created`), and `config_change_request.apply_completed` with counts. Services that only record request evidence leave no per-item event.
+- **Revert:** a new request (source `revert`) from the before-snapshot, `mirror` mode over the same scope, with the deletes of the items the original created already ticked. Each item's `rev` is set to its state right after the apply (`report.afterRevs`), so untouched items revert cleanly and items changed since show as drift. Old secret values were never stored: placeholders become `keep` (or `unset` when the source had none); an item the apply deleted needs its secrets entered again.
+- **`env` secrets:** only on self-hosted, for names in `DEN_CONFIG_BLOB_SECRET_ENV_ALLOWLIST` (comma-separated, trailing `*` = prefix; a bare `*` is refused). Read at apply time; a missing variable fails the apply before anything is written.
+- **Not built yet:** `?dryRun=true`, `GET /v1/config-blobs/schema/:formatVersion`, expiry of secret inputs on old requests.
