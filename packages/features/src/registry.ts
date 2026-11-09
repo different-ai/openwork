@@ -115,6 +115,17 @@ export const FEATURES = defineFeatures({
     deployments: everywhere,
     default: false,
   },
+  configBlobs: {
+    label: "Config import and export",
+    description: "Admins export all or part of the organization's configuration as JSON and import it again, here or into another OpenWork. Each import is a change request: it is matched against what exists, reviewed, then applied, and can be reverted. Off: no Config page and no config-blob API.",
+    category: "administration",
+    added: "2026-11-09",
+    since: "2026-11",
+    author: "OmarMcAdam",
+    docs: "docs/features/config-blobs/README.md",
+    deployments: everywhere,
+    default: false,
+  },
   webPerMember: {
     label: "OpenWork Web per member",
     description: "Admins choose which members get OpenWork Web from the Members page, and the organization pays for Web only for them. Members without it can't open a Web computer. Off: every member and pending invitation has Web and is billed for it.",

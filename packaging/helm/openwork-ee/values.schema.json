@@ -71,6 +71,16 @@
               ],
               "description": "Claude Code sign-in: Connect Claude through the Claude Code login on this computer, without an Anthropic API key. Renders DEN_FEATURE_CLAUDE_AGENT_PROVIDER."
             },
+            "configBlobs": {
+              "enum": [
+                "",
+                "true",
+                "false",
+                true,
+                false
+              ],
+              "description": "Config import and export: Admins export all or part of the organization's configuration as JSON and import it again, here or into another OpenWork. Each import is a change request: it is matched against what exists, reviewed, then applied, and can be reverted. Off: no Config page and no config-blob API. Renders DEN_FEATURE_CONFIG_BLOBS."
+            },
             "webPerMember": {
               "enum": [
                 "",
