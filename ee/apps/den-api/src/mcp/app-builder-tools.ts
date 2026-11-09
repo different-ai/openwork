@@ -1,6 +1,7 @@
 import type { McpServer } from "@modelcontextprotocol/server"
 import {
   createMcpAppInputSchema,
+  mcpAppPublicPath,
   MCP_APP_LAUNCH_TOOL_NAME,
   mcpAppResourceUri,
   mcpAppSummarySchema,
@@ -50,6 +51,7 @@ const authoringShape = {
   reactSource: createMcpAppInputSchema.shape.reactSource.describe("Complete React source default-exporting a component receiving { app, input, result, hostContext }. React is injected; import only the built-in libraries prepare_app lists, if any. Follow skill:build-an-app's source and tool-call rules."),
   cssSource: createMcpAppInputSchema.shape.cssSource.describe("Complete CSS source using host theme variables and responsive container rules. Omit on creation for empty CSS; omit on update to keep existing CSS."),
   textFallback: createMcpAppInputSchema.shape.textFallback.describe("Readable plain-text alternative describing what the App shows, for hosts that cannot render it; usually one or two sentences."),
+  public: createMcpAppInputSchema.shape.public.describe("true to serve the App to anyone at its public MCP URL with no OpenWork sign-in; only when the person asks for a public App. Needs the Public Apps feature and an App with no tools. Omit on update to keep the current choice, or pass false to make it private again."),
   tools: documentedTools.optional().describe("Complete set of tools the App may call. Omit or use [] for a self-contained new App; omit on update to keep existing tools, or use [] to remove them."),
 }
 const prepareAppInputSchema = prepareMcpAppInputSchema.extend({
@@ -189,6 +191,10 @@ export function registerAppBuilderTools(input: {
       return errorResult(error)
     }
   })
+  /** Tells the agent what a public choice in this call did, with the URL to hand out. */
+  const publicNote = (choice: boolean | undefined, appId: string) => choice === true
+    ? ` It is public: anyone can add ${mcpUrl(input.publicOrigin, mcpAppPublicPath(appId))} to an MCP client without signing in.`
+    : choice === false ? " It is not public." : ""
   input.server.registerTool("create_app", {
     title: "Create an App",
     description: [
@@ -209,7 +215,7 @@ export function registerAppBuilderTools(input: {
         app,
         built: true,
         publicOrigin: input.publicOrigin,
-        message: `Created ${app.title} as its own MCP server with ${app.tools.length} ${app.tools.length === 1 ? "tool" : "tools"} plus ${MCP_APP_LAUNCH_TOOL_NAME}. MCP URL: ${mcpUrl(input.publicOrigin, app.serverPath)}`,
+        message: `Created ${app.title} as its own MCP server with ${app.tools.length} ${app.tools.length === 1 ? "tool" : "tools"} plus ${MCP_APP_LAUNCH_TOOL_NAME}. MCP URL: ${mcpUrl(input.publicOrigin, app.serverPath)}${publicNote(request.public, app.appId)}`,
         canOpen: await input.canOpen?.(app.appId) ?? true,
       })
     } catch (error) {
@@ -232,7 +238,7 @@ export function registerAppBuilderTools(input: {
       requireScope(DEN_MCP_WRITE_SCOPE)
       const app = await input.service.update(request)
       input.notifyCatalogChanged()
-      return mcpAppLaunchResult({ app, built: true, publicOrigin: input.publicOrigin, message: `Updated ${app.title} to a new revision.`, canOpen: await input.canOpen?.(app.appId) ?? true })
+      return mcpAppLaunchResult({ app, built: true, publicOrigin: input.publicOrigin, message: `Updated ${app.title} to a new revision.${publicNote(request.public, app.appId)}`, canOpen: await input.canOpen?.(app.appId) ?? true })
     } catch (error) {
       return errorResult(error)
     }

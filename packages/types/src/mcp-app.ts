@@ -80,6 +80,8 @@ export const mcpAppAuthoringSchema = mcpAppSourceSchema.extend({
   cssSource: mcpAppSourceSchema.shape.cssSource.optional(),
   textFallback: textFallbackSchema,
   tools: toolDeclarationsSchema.optional(),
+  /** Serve the App at its public MCP URL, with no sign-in. Only an App without tools can be public. */
+  public: z.boolean().optional(),
 })
 
 /** Correlates preparation and publication in chat; it grants no access or validation. */
@@ -130,6 +132,8 @@ export const mcpAppCompiledRevisionSchema = z.object({
   reactVersion: z.string().min(1).max(64),
   /** The App reads initial results from its launch, so opening it loads them. */
   loadsWithLaunch: z.literal(true).optional(),
+  /** Marked public by an editor: served without sign-in at mcpAppPublicPath while it has no tools. */
+  public: z.literal(true).optional(),
 }).strict().refine((value) => byteLength(JSON.stringify(value)) <= MCP_APP_MAX_STORAGE_BYTES)
 
 export const mcpAppToolSummarySchema = z.object({
@@ -186,6 +190,11 @@ export type ReadMcpAppOutput = z.infer<typeof readMcpAppOutputSchema>
  */
 export function mcpAppServerPath(appId: string): string {
   return `/mcp/agent/connections/${mcpAppIdSchema.parse(appId)}`
+}
+
+/** Where an App marked public is served to anyone, outside the /mcp/agent OAuth resource. */
+export function mcpAppPublicPath(appId: string): string {
+  return `/mcp/public/apps/${mcpAppIdSchema.parse(appId)}`
 }
 
 export function mcpAppResourceUri(appId: string, revisionId: string): string {

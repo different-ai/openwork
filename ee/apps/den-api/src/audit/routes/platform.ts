@@ -70,6 +70,7 @@ export const platformAuditRoutes: readonly AuditRouteDeclaration[] = [
   mcp("ALL", "/mcp/agent/connections/:connectionId", "mcp_agent.connection.proxy"),
   mcp("ALL", "/mcp/agent/servers/:connectionId", "mcp_agent.connection.server"),
   mcp("ALL", "/mcp/admin", "mcp_admin.transport"),
+  mcp("ALL", "/mcp/public/apps/:appId", "mcp_public.app.server"),
   mcp("GET", "/mcp/.well-known/oauth-protected-resource", "mcp.protected_resource.read"),
   mcp("GET", "/mcp/agent/.well-known/oauth-protected-resource", "mcp_agent.protected_resource.read"),
   mcp("GET", "/mcp/admin/.well-known/oauth-protected-resource", "mcp_admin.protected_resource.read"),

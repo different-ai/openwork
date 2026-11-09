@@ -177,6 +177,8 @@ export function createMcpAppServer(input: {
   canKeep?: (binding: McpAppToolBinding) => boolean
   /** Where a launch read past its budget waits for this caller's own call. */
   launchReads?: LaunchReadHandoff
+  /** Replaces the default instructions, which describe tools that run as the caller. */
+  instructions?: string
 }) {
   const { app, tools } = input.definition
   const server = new McpServer({ name: app.title, version: "1.0.0" }, {
@@ -185,7 +187,7 @@ export function createMcpAppServer(input: {
       resources: { listChanged: false, subscribe: false },
       extensions: { [EXTENSION_ID]: { mimeTypes: [RESOURCE_MIME_TYPE] } },
     },
-    instructions: `This is the ${app.title} App from OpenWork. Call ${MCP_APP_LAUNCH_TOOL_NAME} to open it. Its other tools run as you, with your own OpenWork access and connections.`,
+    instructions: input.instructions ?? `This is the ${app.title} App from OpenWork. Call ${MCP_APP_LAUNCH_TOOL_NAME} to open it. Its other tools run as you, with your own OpenWork access and connections.`,
   })
 
   server.server.setRequestHandler(ListToolsRequestSchema, async () => ({
