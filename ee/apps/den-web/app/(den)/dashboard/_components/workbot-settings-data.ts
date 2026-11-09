@@ -1,6 +1,6 @@
 "use client";
 
-import { workbotModelTestSchema, workbotSettingsSchema, type WorkbotModelTest, type WorkbotSettings } from "@openwork/types/den/workbot-settings";
+import { workbotModelTestSchema, workbotSettingsSchema, type WorkbotModelTest, type WorkbotSettings, type WorkbotSettingsInput } from "@openwork/types/den/workbot-settings";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { getErrorMessage, getRequestError, requestJson } from "../../_lib/den-flow";
 import { ORG_SCOPE_HEADER } from "../../_lib/org-scope";
@@ -55,22 +55,23 @@ export function useTestWorkbotDefaultModel(orgId: string) {
   });
 }
 
-export function useSaveWorkbotModel(orgId: string) {
+/** One PUT of Workbot settings; a field left out of the body is unchanged. */
+function useSaveWorkbotSettings<Value>(orgId: string, save: { key: string; action: string; body: (value: Value) => WorkbotSettingsInput; what: string }) {
   const queryClient = useQueryClient();
   const { runReauthableAction } = useOrgDashboard();
 
   return useMutation({
-    mutationKey: [...workbotSettingsQueryKey(orgId), "save"],
+    mutationKey: [...workbotSettingsQueryKey(orgId), save.key],
     retry: false,
-    mutationFn: async (model: string | null): Promise<WorkbotSettings | null> => {
+    mutationFn: async (value: Value): Promise<WorkbotSettings | null> => {
       const result: { saved: WorkbotSettings | null } = { saved: null };
-      await runReauthableAction("save-workbot-model", async () => {
+      await runReauthableAction(save.action, async () => {
         const { response, payload } = await requestJson(
           workbotSettingsPath,
-          { method: "PUT", headers: { [ORG_SCOPE_HEADER]: orgId }, body: JSON.stringify({ model }) },
+          { method: "PUT", headers: { [ORG_SCOPE_HEADER]: orgId }, body: JSON.stringify(save.body(value)) },
           15000,
         );
-        if (!response.ok) throw getRequestError(payload, response, `Couldn't save the default model (${response.status}).`);
+        if (!response.ok) throw getRequestError(payload, response, `Couldn't save ${save.what} (${response.status}).`);
         const parsed = workbotSettingsSchema.safeParse(payload);
         result.saved = parsed.success ? parsed.data : null;
       });
@@ -81,4 +82,13 @@ export function useSaveWorkbotModel(orgId: string) {
     },
     onSettled: () => queryClient.invalidateQueries({ queryKey: workbotSettingsQueryKey(orgId) }),
   });
+}
+
+export function useSaveWorkbotModel(orgId: string) {
+  return useSaveWorkbotSettings(orgId, { key: "save", action: "save-workbot-model", body: (model: string | null) => ({ model }), what: "the default model" });
+}
+
+/** How many steps Workbot may take on one request: null for the default, 0 for no limit. */
+export function useSaveWorkbotStepLimit(orgId: string) {
+  return useSaveWorkbotSettings(orgId, { key: "save-step-limit", action: "save-workbot-step-limit", body: (maxSteps: number | null) => ({ maxSteps }), what: "the step limit" });
 }

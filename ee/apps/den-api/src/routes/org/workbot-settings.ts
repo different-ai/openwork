@@ -1,4 +1,4 @@
-import { readWorkbotModel, withWorkbotModel, isWorkbotManagedLuna, workbotModelTestSchema, workbotSettingsInputSchema, workbotSettingsSchema } from "@openwork/types/den/workbot-settings"
+import { readWorkbotMaxSteps, readWorkbotModel, withWorkbotMaxSteps, withWorkbotModel, isWorkbotManagedLuna, workbotModelTestSchema, workbotSettingsInputSchema, workbotSettingsSchema } from "@openwork/types/den/workbot-settings"
 import {
   mergeAgentTemplate,
   mergeWorkbotProactiveSettings,
@@ -19,7 +19,7 @@ import {
 import type { Hono } from "hono"
 import { describeRoute } from "hono-openapi"
 import { z } from "zod"
-import { requireFeature } from "../../features.js"
+import { organizationFeatureEnabled, requireFeature } from "../../features.js"
 import { jsonValidator, orgMemberRoute, paramValidator, requireOrgPermission, userSessionRoute } from "../../middleware/index.js"
 import { agentBriefAllowed, proactiveRunnerReady, readProactiveSettings } from "../../workbot-proactive/access.js"
 import { AGENT_RHYTHM_COUNTER } from "../../workbot-proactive/repository.js"
@@ -303,7 +303,7 @@ export function registerOrgWorkbotSettingsRoutes<T extends { Variables: OrgRoute
       tags: ["Organizations"],
       summary: "Get Workbot settings",
       description:
-        "Returns the organization's default model for Workbot, the Slack assistant and cloud Automations set to the cloud default (null means the caller's AI Gateway default), and the caller's credential-ready, supported Gateway assignments. defaultModel identifies that default and defaultReadiness reports whether it is available; an organization default never grants inference access. Workbot’s default is free Auto or paid Models Luna using this member’s entitlement; no custom provider is needed. Requires View OpenWork Models settings or Manage OpenWork Models.",
+        "Returns the organization's default model for Workbot, the Slack assistant and cloud Automations set to the cloud default (null means the caller's AI Gateway default), and the caller's credential-ready, supported Gateway assignments. defaultModel identifies that default and defaultReadiness reports whether it is available; an organization default never grants inference access. Workbot’s default is free Auto or paid Models Luna using this member’s entitlement; no custom provider is needed. With Workbot's step limit on (workbotStepLimit), `maxSteps` is how many model calls Workbot may make on one request before it stops: null is the deployment's default, 0 is no limit. Requires View OpenWork Models settings or Manage OpenWork Models.",
       responses: {
         200: jsonResponse("Workbot settings returned.", workbotSettingsDocumentSchema),
         401: jsonResponse("Authentication required.", unauthorizedSchema),
@@ -320,7 +320,8 @@ export function registerOrgWorkbotSettingsRoutes<T extends { Variables: OrgRoute
       const chosen = await readOrganizationDefaultModel(actor.organizationId)
       // Gateway projections are live and actor-scoped; never put them in the deployment catalog cache.
       const catalog = await workbotModelCatalog(actor).catch(() => null)
-      return c.json(workbotSettingsView(chosen, catalog))
+      const stepLimitOn = await organizationFeatureEnabled(actor.organizationId, "workbotStepLimit", { userId: actor.userId })
+      return c.json({ ...workbotSettingsView(chosen, catalog), ...(stepLimitOn ? { maxSteps: readWorkbotMaxSteps(context.organization.metadata) } : {}) })
     },
   )
 
@@ -328,12 +329,12 @@ export function registerOrgWorkbotSettingsRoutes<T extends { Variables: OrgRoute
     "/v1/org/workbot-settings",
     describeRoute({
       tags: ["Organizations"],
-      summary: "Set Workbot's default model",
+      summary: "Change Workbot settings",
       description:
-        "Sets the organization's default model for Workbot, the Slack assistant and cloud Automations set to the cloud default, from their next message or run; null uses the AI Gateway default. Automations with their own model keep it. Only the caller's supported, credential-ready Gateway aliases are accepted. Each executing member still needs their own assignment and credentials. Selecting the managed Luna starter keeps the shared saved choice null; other cloud agents retain their existing default policy. Requires the Manage OpenWork Models permission and a recent sign-in.",
+        "Sets the organization's default model for Workbot, the Slack assistant and cloud Automations set to the cloud default, from their next message or run; null uses the AI Gateway default. Automations with their own model keep it. Only the caller's supported, credential-ready Gateway aliases are accepted. Each executing member still needs their own assignment and credentials. Selecting the managed Luna starter keeps the shared saved choice null; other cloud agents retain their existing default policy. With Workbot's step limit on (workbotStepLimit), `maxSteps` sets how many model calls Workbot may make on one request before it stops and asks for a smaller piece (1–100,000), from each chat's next message; null uses the deployment's default and 0 means no limit. Without it `maxSteps` answers 400. Send `model`, `maxSteps` or both; one left out is unchanged. Requires the Manage OpenWork Models permission and a recent sign-in.",
       responses: {
         200: jsonResponse("Workbot settings saved.", workbotSettingsDocumentSchema),
-        400: jsonResponse("The model is not one the runner serves, or the request was invalid.", z.union([unknownModelSchema, invalidRequestSchema])),
+        400: jsonResponse("The model is not one the runner serves, the step limit isn't on for this organization, or the request was invalid.", z.union([unknownModelSchema, invalidRequestSchema])),
         401: jsonResponse("Authentication required.", unauthorizedSchema),
         403: jsonResponse("The caller lacks the Manage OpenWork Models permission or needs to sign in again.", forbiddenSchema),
         404: notFound,
@@ -348,15 +349,23 @@ export function registerOrgWorkbotSettingsRoutes<T extends { Variables: OrgRoute
       const context = c.get("organizationContext")
       const organizationId = context.organization.id
       const actor = { organizationId, userId: context.currentMember.userId }
-      const { model: requestedModel } = c.req.valid("json")
+      const { model: requestedModel, maxSteps } = c.req.valid("json")
+      const stepLimitOn = await organizationFeatureEnabled(organizationId, "workbotStepLimit", { userId: actor.userId })
+      if (maxSteps !== undefined && !stepLimitOn) return c.json({ error: "invalid_request" as const, message: "Workbot's step limit isn't on for this organization.", details: [] }, 400)
       const catalog = await workbotModelCatalog(actor).catch(() => null)
       // Selecting the managed starter means Default. Do not save a Workbot-only route as Slack/Automation policy.
       const model = isWorkbotManagedLuna(requestedModel) && requestedModel === catalog?.defaultModel ? null : requestedModel
-      const choice = checkWorkbotModelChoice(model, catalog)
-      if (choice === "runner_unavailable") return c.json({ error: "workbot_runner_unavailable" as const, message: RUNNER_UNAVAILABLE_MESSAGE }, 503)
-      if (choice === "unknown_model") return c.json({ error: "unknown_model" as const, message: UNKNOWN_MODEL_MESSAGE }, 400)
-      const metadata = await updateOrganizationMetadata(organizationId, (current) => withWorkbotModel(current, model))
-      return c.json(workbotSettingsView(readWorkbotModel(metadata), catalog))
+      if (model !== undefined) {
+        const choice = checkWorkbotModelChoice(model, catalog)
+        if (choice === "runner_unavailable") return c.json({ error: "workbot_runner_unavailable" as const, message: RUNNER_UNAVAILABLE_MESSAGE }, 503)
+        if (choice === "unknown_model") return c.json({ error: "unknown_model" as const, message: UNKNOWN_MODEL_MESSAGE }, 400)
+      }
+      // One locked update, so a model and a step limit sent together are saved together.
+      const metadata = await updateOrganizationMetadata(organizationId, (current) => {
+        const withModel = model !== undefined ? withWorkbotModel(current, model) : current
+        return maxSteps !== undefined ? withWorkbotMaxSteps(withModel, maxSteps) : withModel
+      })
+      return c.json({ ...workbotSettingsView(readWorkbotModel(metadata), catalog), ...(stepLimitOn ? { maxSteps: readWorkbotMaxSteps(metadata) } : {}) })
     },
   )
 }

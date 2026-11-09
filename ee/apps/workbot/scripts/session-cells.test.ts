@@ -81,14 +81,14 @@ function fakeRunner(options: { split?: number } = {}) {
   return { calls, fetch, sessions, state }
 }
 
-function workbotWith(runner: ReturnType<typeof fakeRunner>, compat: { sessionCells?: boolean; indexCapability?: string; sandboxGateway?: boolean; browserRecovery?: boolean } = {}) {
+function workbotWith(runner: ReturnType<typeof fakeRunner>, compat: { sessionCells?: boolean; indexCapability?: string; sandboxGateway?: boolean; browserRecovery?: boolean; maxSteps?: number | null } = {}) {
   const client = createHeadlessRunnerClient({
     config: { url: "http://runner.test", token: "x".repeat(32), owner },
     fetch: runner.fetch,
     mintToken: async () => ({ token: "turn-token", ...(compat.indexCapability ? { indexCapability: compat.indexCapability } : {}) }),
     maxTokenTtlMs: 3_600_000,
   })
-  return createWorkbot({ client, canSchedule: async () => false, ...(compat.sessionCells ? { sessionCells: true } : {}), ...(compat.sandboxGateway !== undefined ? { sandboxGateway: compat.sandboxGateway } : {}), ...(compat.browserRecovery !== undefined ? { browserRecovery: compat.browserRecovery } : {}) })
+  return createWorkbot({ client, canSchedule: async () => false, ...(compat.sessionCells ? { sessionCells: true } : {}), ...(compat.sandboxGateway !== undefined ? { sandboxGateway: compat.sandboxGateway } : {}), ...(compat.browserRecovery !== undefined ? { browserRecovery: compat.browserRecovery } : {}), ...(compat.maxSteps !== undefined ? { maxSteps: compat.maxSteps } : {}) })
 }
 
 const puts = (calls: Call[]) => calls.filter((call) => call.method === "PUT")
@@ -119,6 +119,26 @@ test("Den's sandbox gateway flag reaches every chat's runner settings, and older
   const older = fakeRunner()
   await workbotWith(older).send(actor, { id: "message_0001", text: "Hello" })
   for (const call of puts(older.calls)) assert.equal(call.body?.sandboxGateway, undefined)
+})
+
+test("Den's step limit reaches every chat's runner settings only when Den sends one, and null clears an earlier limit", async () => {
+  const base = { user: { id: "u", name: null, email: "a@example.test" }, organization: { id: "o", name: "O", brandAppName: null }, memberId: "m", enabled: true, canSchedule: false }
+  // A Den from before the setting, or with it off, doesn't say: Workbot then sends the runner nothing about it.
+  assert.equal(denSessionSchema.parse(base).maxSteps, undefined)
+  for (const maxSteps of [null, 0, 250]) assert.equal(denSessionSchema.parse({ ...base, maxSteps }).maxSteps, maxSteps)
+  for (const maxSteps of [-1, 2.5, 100_001]) assert.equal(denSessionSchema.safeParse({ ...base, maxSteps }).success, false)
+  const runner = fakeRunner()
+  for (const [index, maxSteps] of [undefined, 250, 0, null].entries()) {
+    runner.calls.length = 0
+    restart()
+    await workbotWith(runner, { maxSteps }).send(actor, { id: `message_000${index + 1}`, text: "Side", chat: SIDE })
+    const updates = puts(runner.calls)
+    assert.ok(updates.length >= 2, "main and side chat")
+    for (const call of updates) {
+      assert.equal(call.body !== undefined && "maxSteps" in call.body, maxSteps !== undefined, String(maxSteps))
+      assert.equal(call.body?.maxSteps, maxSteps, String(maxSteps))
+    }
+  }
 })
 
 test("Den browser recovery defaults off and trusted Workbot settings update both main and side chats", async () => {

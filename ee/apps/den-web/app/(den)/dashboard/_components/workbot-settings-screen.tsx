@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { Lock } from "lucide-react";
 import { useEffect, useId, useState } from "react";
-import { WORKBOT_DEFAULT_MODEL_NAME, type WorkbotModelTest, type WorkbotSettings } from "@openwork/types/den/workbot-settings";
+import { WORKBOT_DEFAULT_MODEL_NAME, WORKBOT_MAX_STEPS_CHOICES, type WorkbotModelTest, type WorkbotSettings } from "@openwork/types/den/workbot-settings";
 import {
   getBrandAppearanceRoute,
   getMcpConnectionsRoute,
@@ -18,10 +18,11 @@ import { DashboardPageTemplate } from "../../_components/ui/dashboard-page-templ
 import { DenNotice } from "../../_components/ui/notice";
 import { DenBrandMark } from "../../_components/ui/brand-mark";
 import { DenCombobox, type DenComboboxOption } from "../../_components/ui/combobox";
+import { DenSelect } from "../../_components/ui/select";
 import { DenSkeleton } from "../../_components/ui/skeleton";
 import { useOrgDashboard } from "../_providers/org-dashboard-provider";
 import { providerIconSlug } from "./library-models";
-import { useSaveWorkbotModel, useTestWorkbotDefaultModel, useWorkbotSettings } from "./workbot-settings-data";
+import { useSaveWorkbotModel, useSaveWorkbotStepLimit, useTestWorkbotDefaultModel, useWorkbotSettings } from "./workbot-settings-data";
 import { WorkbotProactiveSection } from "./workbot-proactive-section";
 import { WorkbotProactiveHealthSection } from "./workbot-proactive-health";
 import { FeatureIntroGate, useFeatureIntroRuntime } from "../_features/feature-intros";
@@ -101,6 +102,26 @@ function modelTestLabel(result: WorkbotModelTest | null | undefined): string {
   return messages[result.errorCode];
 }
 
+const STEP_LIMIT_HELP = "How many steps Workbot can take on one request before it stops and asks for a smaller piece.";
+
+/** A step limit as the select's value and its label: null is the deployment's default, 0 is no limit. */
+function stepLimitValue(maxSteps: number | null): string {
+  return maxSteps === null ? "default" : String(maxSteps);
+}
+
+function stepLimitLabel(maxSteps: number | null): string {
+  if (maxSteps === null) return "Default";
+  if (maxSteps === 0) return "No limit";
+  return `${maxSteps.toLocaleString("en-US")} ${maxSteps === 1 ? "step" : "steps"}`;
+}
+
+/** The limits offered, plus the saved one when it isn't among them (set through the API), so the select never hides it. */
+function stepLimitChoices(saved: number | null): (number | null)[] {
+  const numbers: number[] = [...WORKBOT_MAX_STEPS_CHOICES];
+  if (saved !== null && saved !== 0 && !numbers.includes(saved)) numbers.push(saved);
+  return [null, ...numbers.sort((left, right) => left - right), 0];
+}
+
 function errorMessage(error: unknown, fallback: string): string {
   return error instanceof Error && error.message.trim() ? error.message : fallback;
 }
@@ -125,9 +146,11 @@ export function WorkbotSettingsScreen() {
   const canManage = access.canManageModelsSettings;
   const query = useWorkbotSettings(orgId, Boolean(orgId));
   const save = useSaveWorkbotModel(orgId);
+  const saveStepLimit = useSaveWorkbotStepLimit(orgId);
   const modelTest = useTestWorkbotDefaultModel(orgId);
   const resetTest = modelTest.reset;
   const labelId = useId();
+  const stepLimitLabelId = useId();
   const [draft, setDraft] = useState("");
   const [saveError, setSaveError] = useState<string | null>(null);
   const [saved, setSaved] = useState<{ previous: string | null } | null>(null);
@@ -158,6 +181,20 @@ export function WorkbotSettingsScreen() {
       setSaved({ previous });
     } catch (error) {
       setSaveError(errorMessage(error, "Couldn't save the default model. Try again."));
+    }
+  }
+
+  // Saved on pick; the select shows the pick while it saves and goes back to the saved limit if that fails.
+  const savedStepLimit = settings?.maxSteps;
+  const stepLimit = saveStepLimit.isPending && saveStepLimit.variables !== undefined ? saveStepLimit.variables : savedStepLimit;
+
+  async function storeStepLimit(maxSteps: number | null) {
+    setSaveError(null);
+    setSaved(null);
+    try {
+      await saveStepLimit.mutateAsync(maxSteps);
+    } catch (error) {
+      setSaveError(errorMessage(error, "Couldn't save the step limit. Try again."));
     }
   }
 
@@ -264,6 +301,26 @@ export function WorkbotSettingsScreen() {
                     <div><dt className="font-medium">Provider-reported model</dt><dd className="font-mono">{modelTest.data.reportedModel ?? "Not reported"}</dd></div>
                   </dl>
                 </details>
+              ) : null}
+              {stepLimit !== undefined && savedStepLimit !== undefined ? (
+                <SettingsRow label="Step limit" labelId={stepLimitLabelId}>
+                  <div className="w-40" title={STEP_LIMIT_HELP} data-testid="workbot-step-limit">
+                    <DenSelect
+                      aria-labelledby={stepLimitLabelId}
+                      menuWidth="trigger"
+                      value={stepLimitValue(stepLimit)}
+                      disabled={!canManage || saveStepLimit.isPending}
+                      onChange={(event) => {
+                        const choice = stepLimitChoices(savedStepLimit).find((entry) => stepLimitValue(entry) === event.target.value);
+                        if (choice !== undefined && choice !== savedStepLimit) void storeStepLimit(choice);
+                      }}
+                    >
+                      {stepLimitChoices(savedStepLimit).map((choice) => (
+                        <option key={stepLimitValue(choice)} value={stepLimitValue(choice)}>{stepLimitLabel(choice)}</option>
+                      ))}
+                    </DenSelect>
+                  </div>
+                </SettingsRow>
               ) : null}
               <SettingsRow label="Name">
                 <span className="text-[13px] text-gray-900" data-testid="workbot-name">{name}</span>

@@ -25,7 +25,7 @@ import { getOrganizationContextForUser, listTeamsForMember } from "../orgs.js"
 import { listMemberUsableConnectionFacts } from "../routes/org/mcp-connections.js"
 import { memberPermissionsForOrganizationContext } from "../middleware/member-permissions.js"
 import { workbotAppSchema, workbotApps } from "./apps.js"
-import { readWorkbotModel, WORKBOT_DEFAULT_MODEL_ID, workbotModelRecoverySchema, workbotAccessFailureSchema } from "@openwork/types/den/workbot-settings"
+import { readWorkbotMaxSteps, readWorkbotModel, WORKBOT_DEFAULT_MODEL_ID, workbotMaxStepsSchema, workbotModelRecoverySchema, workbotAccessFailureSchema } from "@openwork/types/den/workbot-settings"
 import { getMemberInferenceAccess, organizationAllowsManagedModels } from "../inference.js"
 import { organizationHasOngoingInferenceSubscription } from "../stripe-billing.js"
 import { cloudAgentModelCatalog } from "./model.js"
@@ -118,6 +118,12 @@ const sessionSchema = z.object({
    * omitted by older Dens, means the headless runner's default.
    */
   model: z.string().nullable().optional(),
+  /**
+   * Model calls Workbot may make on one request (`workbotStepLimit`): a number, 0 for no limit, or null for the
+   * runner's own limit, which also clears a limit the person's chats were given earlier. Omitted, as by older Dens,
+   * Workbot sends the runner nothing about it.
+   */
+  maxSteps: workbotMaxStepsSchema.nullable().optional(),
   /** Require an authenticated runner catalog before new turns; older Dens omit this. Reads remain available. */
   verifyModel: z.boolean().optional(),
   /** Den authorizes the member’s scoped model access for every turn; no deployment catalog precheck. */
@@ -428,6 +434,7 @@ export function registerWorkbotRoutes<T extends { Variables: object }>(app: Hono
       const canSchedule = (await cloudAutomationRuntime(organization.id).catch(() => "web")) === "headless"
       const features = await getOrganizationFeatures(organization.id, { userId: user.id })
       const chosen = readWorkbotModel(organization.metadata)
+      const savedMaxSteps = readWorkbotMaxSteps(organization.metadata)
       const managed = workbotUsesManagedDefault(chosen) ? await workbotIncludedDefaultModel({ organizationId: organization.id, userId: user.id }, chosen) : null
       // Keep history readable during access failures. Starting a turn reauthorizes the exact model in Den.
       const model = managed
@@ -473,6 +480,8 @@ export function registerWorkbotRoutes<T extends { Variables: object }>(app: Hono
         quietCalendar: features.workbotQuietCalendar,
         commandPalette: true,
         model,
+        // Off with a limit still saved: null, so chats that were given the limit go back to the runner's own.
+        ...(features.workbotStepLimit ? { maxSteps: savedMaxSteps } : savedMaxSteps !== null ? { maxSteps: null } : {}),
         gatewayModels: true,
         stepTurns: true,
         sessionCells: true,
