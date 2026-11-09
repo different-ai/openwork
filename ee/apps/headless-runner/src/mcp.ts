@@ -115,6 +115,8 @@ const toolList = z.object({
         name: z.string(),
         description: z.string().optional(),
         inputSchema: z.record(z.string(), z.unknown()),
+        // Only a hint: anything else there is ignored, and a tool that doesn't say it only reads may change things.
+        annotations: z.object({ readOnlyHint: z.boolean().optional() }).loose().optional().catch(undefined),
       })
       .loose(),
   ),
@@ -136,25 +138,35 @@ export function remoteMcpConnector(options: {
       requestInit: { headers: { authorization: `Bearer ${token}` } },
     })
     const connectSignal = AbortSignal.any([signal, AbortSignal.timeout(CONNECT_TIMEOUT_MS)])
-    await client.connect(transport, { signal: connectSignal, timeout: CONNECT_TIMEOUT_MS })
-
     const tools: ToolSpec[] = []
     const byModelName = new Map<string, string>()
     const taken = new Set(options.reservedNames)
-    let cursor: string | undefined
-    do {
-      const page = toolList.parse(
-        await client.listTools(cursor ? { cursor } : undefined, { signal: connectSignal, timeout: CONNECT_TIMEOUT_MS }),
-      )
-      for (const tool of page.tools) {
-        if (options.allowlist.length && !options.allowlist.includes(tool.name)) continue
-        const name = modelToolName(tool.name, taken)
-        taken.add(name)
-        byModelName.set(name, tool.name)
-        tools.push({ name, description: tool.description ?? tool.name, inputSchema: tool.inputSchema })
-      }
-      cursor = page.nextCursor
-    } while (cursor)
+    try {
+      await client.connect(transport, { signal: connectSignal, timeout: CONNECT_TIMEOUT_MS })
+      let cursor: string | undefined
+      do {
+        const page = toolList.parse(
+          await client.listTools(cursor ? { cursor } : undefined, { signal: connectSignal, timeout: CONNECT_TIMEOUT_MS }),
+        )
+        for (const tool of page.tools) {
+          if (options.allowlist.length && !options.allowlist.includes(tool.name)) continue
+          const name = modelToolName(tool.name, taken)
+          taken.add(name)
+          byModelName.set(name, tool.name)
+          tools.push({
+            name,
+            description: tool.description ?? tool.name,
+            inputSchema: tool.inputSchema,
+            ...(tool.annotations?.readOnlyHint === true ? { readOnly: true } : {}),
+          })
+        }
+        cursor = page.nextCursor
+      } while (cursor)
+    } catch (error) {
+      // The caller may connect again (the runner retries): a connection that never listed its tools isn't left open.
+      await client.close().catch(() => undefined)
+      throw error
+    }
 
     return {
       tools,
