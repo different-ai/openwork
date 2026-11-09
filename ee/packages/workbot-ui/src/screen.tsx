@@ -1,7 +1,7 @@
 "use client";
 
 import { ArrowUp, Check, ChevronDown, CircleAlert, Copy, FileText, Globe, Lock, MessageCircle, Monitor, Pencil, Presentation, X } from "lucide-react";
-import { createContext, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type ClipboardEvent, type KeyboardEvent, type ReactNode } from "react";
+import { createContext, memo, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type ClipboardEvent, type KeyboardEvent, type ReactNode } from "react";
 import { computerTabLabel, computerViews, setWorkbotHost, workbotHost, type WorkbotHost } from "./host";
 import { OpenWorkMark } from "./mark";
 import { clearThreadSnapshots } from "./thread-cache";
@@ -18,6 +18,8 @@ import {
   useWorkbotChats,
   useWorkbotConnections,
   useWorkbotLive,
+  useWorkbotLiveStatus,
+  useWorkbotLiveText,
   useWorkbotThread,
   WorkbotChatProvider,
   WorkbotSendError,
@@ -26,6 +28,7 @@ import {
   uploadWorkbotFile,
   type LiveText,
   type WorkbotAttachment,
+  type WorkbotLiveStore,
   type WorkbotPart,
   type WorkbotStep,
   type WorkbotTask,
@@ -55,7 +58,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { useNativeDictation } from "@openwork/ui/react";
 import { WorkbotDictation } from "./native-dictation";
 import { WorkbotCommandPalette, type WorkbotPaletteTab } from "./command-palette";
-import { workbotActivity, type WorkbotActivity } from "./activity";
+import { nextTaskQuietAt, workbotActivity, type WorkbotActivity } from "./activity";
 import { ProfileBadge, WorkingName } from "./working-status";
 import { firstReply } from "./first-reply";
 import { remoteJobActivity, remoteWatcherTaskIds, useWorkbotRemoteJobs } from "./remote-jobs";
@@ -153,8 +156,10 @@ function ChatScreen({ host, composerState, position, navigation, onDraftsChange 
   const { user } = host;
   const side = navigation?.chat != null;
   const queryClient = useQueryClient();
-  const draft = useSyncExternalStore(composerState.subscribe, composerState.getSnapshot, composerState.getSnapshot);
-  const { pending } = draft;
+  // Only the messages being sent: the draft's text and upload progress change with every key and tick, and belong to
+  // the message box alone (DraftComposer).
+  const readPending = () => composerState.getSnapshot().pending;
+  const pending = useSyncExternalStore(composerState.subscribe, readPending, readPending);
   const [turnWindow, setTurnWindowState] = useState(position.turnWindow);
   const setTurnWindow = useCallback((next: number | ((current: number) => number)) => {
     const value = typeof next === "function" ? next(position.turnWindow) : next;
@@ -263,7 +268,6 @@ function ChatScreen({ host, composerState, position, navigation, onDraftsChange 
   const retry = useRetryWorkbotMessage();
   const stop = useStopWorkbot();
   const editMessage = useEditWorkbotMessage();
-  const uploads = { uploads: draft.uploads, add: composerState.add, remove: composerState.removeUpload, retry: composerState.retryUpload };
   const data = thread.data?.available ? thread.data : null;
   // Once the newest messages are on screen, the rest of the first page is read behind them.
   const earlierToRead = data?.hasEarlier === true && !thread.isPlaceholderData;
@@ -317,21 +321,25 @@ function ChatScreen({ host, composerState, position, navigation, onDraftsChange 
   }, [data, openFile]);
   const filesEnabled = data?.filesEnabled ?? false;
   // Age unfinished jobs even when the event stream has gone quiet. The profile also opens before the first read.
-  const activityNow = useNow();
-  const remote = useWorkbotRemoteJobs(data !== null);
-  const watcherIds = remoteWatcherTaskIds(remote.data?.jobs ?? []);
+  const activityNow = useTaskClock(data?.turns);
+  // What the status line reads of the stream; the words themselves reach only the turn they belong to.
+  const liveStatus = useWorkbotLiveStatus(stream.live);
+  const remote = useWorkbotRemoteJobs(data !== null, { follow: true });
+  // The same set while its ids are the same, so a refresh that brings nothing new re-renders no message.
+  const watcherKey = [...remoteWatcherTaskIds(remote.data?.jobs ?? [])].join("\n");
+  const watcherIds = useMemo(() => new Set(watcherKey ? watcherKey.split("\n") : []), [watcherKey]);
   const activity = useMemo(() => {
     const jobs = remote.data?.jobs ?? [];
     const watchers = remoteWatcherTaskIds(jobs);
     const turns = (data?.turns ?? []).map((turn) => ({ ...turn, tasks: turn.tasks.filter((task) => !watchers.has(task.id)) }));
-    const local = { ...workbotActivity(turns, stream.live, activityNow), connected: data !== null };
+    const local = { ...workbotActivity(turns, liveStatus, activityNow), connected: data !== null };
     const away = remoteJobActivity(jobs);
     const localTask = local.tasks.find((task) => !task.quiet && (task.status === "queued" || task.status === "working" || task.status === "paused"));
     // A foreground answer wins; otherwise name the newest genuinely active job, local or remote.
     if (!local.main && away && (!localTask || (away.since ?? 0) >= (localTask.startedAt ?? 0))) return { ...local, working: true, label: away.label, icon: "computer" as const, since: away.since, watch: null };
     return local;
-  }, [host.browser, host.workingStatus, host.profileSheet, host.remoteTasks, data, stream.live, activityNow, remote.data]);
-  const addFiles = uploads.add;
+  }, [host.browser, host.workingStatus, host.profileSheet, host.remoteTasks, data, liveStatus, activityNow, remote.data]);
+  const addFiles = composerState.add;
   const openFiles = filesEnabled ? () => { if (!workspaceShell && tab !== "home") setTab("home"); setFilesOpen(true); } : undefined;
   const chatListEnabled = navigation !== null;
   const paletteChats = useWorkbotChats(chatListEnabled);
@@ -434,7 +442,7 @@ function ChatScreen({ host, composerState, position, navigation, onDraftsChange 
   const submit = (text: string, retry?: Pending, runSkill = false, plain = false) => {
     if (retry) { sendPending(retry.id, true); return; }
     const trimmed = text.trim();
-    if (!trimmed && (plain || draft.uploads.length === 0)) return;
+    if (!trimmed && (plain || composerState.getSnapshot().uploads.length === 0)) return;
     // A teaching note or skill run carries its own browser snapshot.
     const parsed = workbotViewContextSchema.safeParse((browserPreview?.visible ? browserPreview.includeContext : includeContext) && !plain && !runSkill && !teaching ? currentContext : undefined);
     const context = parsed.success && shares(parsed.data) ? parsed.data : undefined;
@@ -494,8 +502,7 @@ function ChatScreen({ host, composerState, position, navigation, onDraftsChange 
       requestAnimationFrame(() => requestAnimationFrame(focusComposer));
     } : null;
     const attached = askContext && !browserPreview?.visible ? <AttachedContext context={askContext} onRemove={() => setAskContext(null)} /> : null;
-    const composer = <WorkbotComposer teaching={teaching} text={draft.text} onText={composerState.setText} name={name} busy={busy} stopping={stop.isPending} filesEnabled={filesEnabled} nativeDictation={host.nativeDictation}
-      uploads={uploads.uploads} onFiles={addFiles} onRemoveUpload={uploads.remove} onRetryUpload={uploads.retry}
+    const composer = <DraftComposer state={composerState} teaching={teaching} name={name} busy={busy} stopping={stop.isPending} filesEnabled={filesEnabled} nativeDictation={host.nativeDictation}
       onSend={text => submit(text)} onStop={() => stop.mutate()} autoFocus={false} disabled={!data && !loading} />;
     const firstName = user?.name?.trim().split(/\s+/)[0] ?? null;
     const home = !data && !loading ? <div className="flex flex-1 flex-col items-center justify-center gap-3 px-5 text-center text-[13px] text-[var(--wb-muted)]" role="status"><p>Couldn't load your conversation.</p><button type="button" className="rounded-lg px-3 py-2 underline focus-visible:shadow-[var(--wb-focus)]" onClick={() => void thread.refetch()}>Try again</button></div>
@@ -609,18 +616,13 @@ function ChatScreen({ host, composerState, position, navigation, onDraftsChange 
   // Right after the welcome: the conversation, with Workbot typing its hello. If that can't start, the drawn greeting.
   const starting = empty && (start.isPending || (greetingAwaited && start.data?.started === true));
   const composer = (
-    <WorkbotComposer
+    <DraftComposer
+      state={composerState}
       nativeDictation={host.nativeDictation}
-      text={draft.text}
-      onText={composerState.setText}
       name={shown.name}
       busy={busy}
       stopping={stop.isPending}
       filesEnabled={filesEnabled}
-      uploads={uploads.uploads}
-      onFiles={addFiles}
-      onRemoveUpload={uploads.remove}
-      onRetryUpload={uploads.retry}
       onSend={(text) => submit(text)}
       onStop={() => stop.mutate()}
     />
@@ -1059,7 +1061,7 @@ function Conversation(props: {
   /** The conversation hasn't been read yet: a placeholder stands where it will be, above anything just sent. */
   loading?: boolean;
   pending: Pending[];
-  live: Record<string, LiveText>;
+  live: WorkbotLiveStore;
   hasEarlier: boolean;
   earlierLimit: boolean;
   loadingEarlier: boolean;
@@ -1081,13 +1083,22 @@ function Conversation(props: {
   editErrors: Readonly<Record<string, Error | string>>;
 }) {
   const { scroller, content, far, latest, readEarlier } = useConversationScroll(props.position, props.pending);
-  const known = new Set(props.turns.map((turn) => turn.id));
+  const known = useMemo(() => new Set(props.turns.map((turn) => turn.id)), [props.turns]);
   // A pending message and its turn share a key and both show as a TurnView, so neither the bubble nor the dots under it
-  // re-mount when the turn arrives.
-  const rows: Row[] = [
+  // re-mount when the turn arrives. Kept while the turns and pending messages are the same ones, so a pending message
+  // stays the same turn object for its row.
+  const rows: Row[] = useMemo(() => [
     ...props.turns.map((turn) => ({ key: turn.id, at: turn.sentAt ?? 0, turn, pending: null })),
     ...props.pending.filter((entry) => !known.has(entry.id)).map((entry) => ({ key: entry.id, at: entry.sentAt, turn: pendingTurn(entry), pending: entry })),
-  ];
+  ], [props.turns, props.pending, known]);
+  // A row re-renders only when what it is given changes, so it gets the same handlers for the conversation's life;
+  // each one runs the newest handler this conversation was given.
+  const handlers = useRef(props);
+  handlers.current = props;
+  const onEdit = useCallback((turn: WorkbotTurn, text: string) => handlers.current.onEdit(turn, text), []);
+  const onRetry = useCallback((turn: WorkbotTurn, pending: Pending | null) => (pending ? handlers.current.onRetry(pending) : handlers.current.onRetryTurn(turn)), []);
+  const onSuggestion = useCallback((text: string) => handlers.current.onSuggestion(text), []);
+  const onSwitch = useCallback((text: string) => handlers.current.onSwitch(text), []);
   const lastTurnId = props.turns.at(-1)?.id;
   // One indicator, at the end of the thread, says a reply is on its way and none of it shows yet. Background tasks
   // show their progress on their own cards, and streamed text or a running step already shows Workbot at work, so
@@ -1099,7 +1110,9 @@ function Conversation(props: {
   const unsent = props.pending.filter((entry) => !known.has(entry.id) && !entry.failed);
   const lastPending = unsent.at(-1)?.id ?? null;
   // Only the newest of Workbot's words may still be revealing, so two messages are never being written at once.
-  const newestText = [...props.turns].reverse().find((turn) => turn.parts.some((part) => part.kind === "text") || Boolean(props.live[turn.id]?.text))?.id ?? null;
+  // Read from the stream as that one id: it changes when a turn writes its first word, not with every word after.
+  const readNewestText = () => [...props.turns].reverse().find((turn) => turn.parts.some((part) => part.kind === "text") || Boolean(props.live.get()[turn.id]?.text))?.id ?? null;
+  const newestText = useSyncExternalStore(props.live.subscribe, readNewestText, readNewestText);
   // Local previews keep a just-sent image on screen while its kept copy loads.
   const localUrls = useMemo(() => {
     const urls: Record<string, string | null> = {};
@@ -1141,20 +1154,20 @@ function Conversation(props: {
               return (
                 <li key={row.key} data-workbot-row={row.key} className={`flex flex-col gap-1 ${index > 0 ? (stamp ? "pt-9" : "pt-8") : stamp && props.intro ? "pt-1" : ""}`}>
                   {stamp ? <Timestamp at={row.at} /> : null}
-                  <TurnView watcherIds={props.watcherIds}
+                  <TurnView host={workbotHost()} watcherIds={props.watcherIds}
                     canChange={props.canChange}
-                    onEdit={props.onEdit}
+                    onEdit={onEdit}
                     editError={row.pending ? null : (props.editErrors[row.turn.id] ?? null)}
                     turn={row.turn}
                     pending={row.pending}
-                    live={row.pending ? null : (props.live[row.turn.id] ?? null)}
+                    live={props.live}
                     // A message still sending is answered next when it is the newest one waiting.
                     latest={row.pending ? row.pending.id === lastPending : row.turn.id === lastTurnId && props.pending.every((entry) => known.has(entry.id))}
                     newestText={row.turn.id === newestText}
                     previews={previews.current}
-                    onRetry={() => (row.pending ? props.onRetry(row.pending) : props.onRetryTurn(row.turn))}
-                    onSuggestion={props.onSuggestion}
-                    onSwitch={props.onSwitch}
+                    onRetry={onRetry}
+                    onSuggestion={onSuggestion}
+                    onSwitch={onSwitch}
                   />
                 </li>
               );
@@ -1483,12 +1496,46 @@ function pendingTurn(entry: Pending): WorkbotTurn {
   };
 }
 
-/** Ticks once a second while mounted. */
-function useNow() {
+/**
+ * The time, ticking once a second only while `on` (something shows a running time) and the page is showing. The rest
+ * of the time it stands still, and nothing re-renders for it.
+ */
+function useNow(on: boolean) {
   const [now, setNow] = useState(() => Date.now());
   useEffect(() => {
-    const timer = setInterval(() => setNow(Date.now()), 1_000);
-    return () => clearInterval(timer);
+    if (!on) return;
+    let timer: ReturnType<typeof setInterval> | undefined;
+    const tick = () => setNow(Date.now());
+    const run = () => {
+      clearInterval(timer);
+      timer = document.visibilityState === "visible" ? setInterval(tick, 1_000) : undefined;
+    };
+    // Back on a page that was hidden: the time stood still, so catch up before the next tick.
+    const shown = () => { if (document.visibilityState === "visible") tick(); run(); };
+    run();
+    document.addEventListener("visibilitychange", shown);
+    return () => { clearInterval(timer); document.removeEventListener("visibilitychange", shown); };
+  }, [on]);
+  return now;
+}
+
+/**
+ * The time the status line ages background tasks by. It only decides when an unfinished task has gone quiet
+ * (activity.ts), so it moves at that moment instead of every second; with no such task ahead it stands still.
+ */
+function useTaskClock(turns: WorkbotTurn[] | undefined) {
+  const [now, setNow] = useState(() => Date.now());
+  const next = useMemo(() => (turns ? nextTaskQuietAt(turns, now) : null), [turns, now]);
+  useEffect(() => {
+    if (next === null) return;
+    const timer = window.setTimeout(() => setNow(Math.max(Date.now(), next)), Math.max(0, next - Date.now()));
+    return () => window.clearTimeout(timer);
+  }, [next]);
+  useEffect(() => {
+    // Back on a page that was hidden: its timers may have slept, and the times it shows ("5m", "Today") have moved on.
+    const shown = () => { if (document.visibilityState === "visible") setNow(Date.now()); };
+    document.addEventListener("visibilitychange", shown);
+    return () => document.removeEventListener("visibilitychange", shown);
   }, []);
   return now;
 }
@@ -1823,7 +1870,13 @@ function useSettled(flag: boolean, ms: number) {
 type TurnItem = { kind: "text"; key: string; text: string }
   | { kind: "card"; key: string; surface: ComputerSurface; steps: WorkbotStep[]; live: boolean; showing: boolean; others: UsedApp[]; switchTo: SwitchTo | null; update: string | null };
 
-function TurnView(props: {
+/**
+ * Re-rendered only when what it is given changes: a word streamed into one turn, a keystroke or a re-read that brings
+ * nothing new leaves every other turn as it is. So everything given here stays the same object while it means the same.
+ */
+const TurnView = memo(function TurnView(props: {
+  /** The host these rows read their switches from (`workbotHost()`): a changed host re-renders them. */
+  host: WorkbotHost;
   watcherIds: ReadonlySet<string>;
   canChange: boolean;
   onEdit: (turn: WorkbotTurn, text: string) => void;
@@ -1831,17 +1884,20 @@ function TurnView(props: {
   turn: WorkbotTurn;
   /** The message as sent from this page, until the conversation has it (`turn` is then pendingTurn's). */
   pending?: Pending | null;
-  live: LiveText | null;
+  /** The stream; this turn reads only its own text from it. */
+  live: WorkbotLiveStore;
   latest: boolean;
   /** This turn holds the newest of Workbot's words in the conversation: the only ones still revealing. */
   newestText: boolean;
   previews: Record<string, string | null>;
-  onRetry: () => void;
+  onRetry: (turn: WorkbotTurn, pending: Pending | null) => void;
   onSuggestion: (text: string) => void;
   onSwitch: (text: string) => void;
 }) {
   const { turn, pending = null } = props;
-  const { working, liveText, starting, lastIsLive } = replyProgress(turn, props.live);
+  const streamed = useWorkbotLiveText(props.live, pending ? null : turn.id);
+  const onRetry = () => props.onRetry(turn, pending);
+  const { working, liveText, starting, lastIsLive } = replyProgress(turn, streamed);
   // Browser tasks use one persistent card, never the parallel computer/background cards.
   const browserWork = starting?.surface === "browser" || turn.parts.some(part => part.kind === "steps" && part.steps.some(step => step.surface === "browser"));
   const quiet = browserWork || workbotHost().workingStatus === true;
@@ -1853,7 +1909,7 @@ function TurnView(props: {
   const watched = useRef(working);
   if (working) watched.current = true;
   const parts = turn.parts;
-  const live = working && props.live && props.live.step >= turn.modelSteps ? props.live : null;
+  const live = working && streamed && streamed.step >= turn.modelSteps ? streamed : null;
   // One bubble per model call, keyed by that call from its first streamed word to its stored copy, so a bubble never
   // swaps, jumps to its full length or starts over when the conversation is read again (DESIGN P11). Words streamed for
   // an earlier call stay until the stored copy arrives.
@@ -1889,8 +1945,8 @@ function TurnView(props: {
       if (!browserWork && keepsCard(item, { quiet, preview: workbotHost().browserPreview === true })) items.push(item);
     });
   });
-  if (working && props.live) {
-    for (const entry of props.live.earlier ?? []) {
+  if (working && streamed) {
+    for (const entry of streamed.earlier ?? []) {
       const text = withoutNextLine(entry.text.trim());
       if (entry.step >= turn.modelSteps && text) items.push({ kind: "text", key: `text-${entry.step}`, text });
     }
@@ -1906,7 +1962,7 @@ function TurnView(props: {
   if (acknowledgement) items.splice(browserWork ? 1 : 0, 0, { kind: "text", key: "accepted", text: acknowledgement });
   // The connected apps as a quiet logo stack under the answer. The header reads the same summary for its status,
   // so it names the same current connector; names and tool details in the chat are disclosed only on hover/tap.
-  const connector = connectorSummary(turn, props.live);
+  const connector = connectorSummary(turn, streamed);
   // The place Workbot's next words will take, one message line tall: the typing dots, or its work in an app right now,
   // then the words themselves, each replacing the last without moving the conversation. Once it has shown, it keeps
   // its place until the words arrive; the app line then settles under them.
@@ -1920,10 +1976,12 @@ function TurnView(props: {
   const atWork = parts.some((part) => part.kind === "steps") || Boolean(live?.working);
   const dots = !acknowledgement && (quiet ? waiting && items.length === 0 && !atWork : waiting && (fresh || settled));
   const [held, setHeld] = useState(false);
+  // Whether there are words yet, not the words: this runs when they start, not again for every word streamed.
+  const writing = liveText !== "";
   useEffect(() => {
     if (dots || connectorWaiting) setHeld(true);
-    else if (!answering || liveText) setHeld(false);
-  }, [dots, connectorWaiting, answering, liveText]);
+    else if (!answering || writing) setHeld(false);
+  }, [dots, connectorWaiting, answering, writing]);
   const slot = uploading || (answering && !liveText && (dots || held || connectorWaiting));
   const copyText = parts.flatMap((part) => (part.kind === "text" ? [part.text] : [])).join("\n\n");
   const offers = useMemo(() => (turn.status === "done" ? documentLinks(copyText) : []), [turn.status, copyText]);
@@ -1940,7 +1998,7 @@ function TurnView(props: {
         <UserBubble text={turn.text} reaction={turn.reaction} />
       )}
       {pending?.failed ? (
-        pending.accessIssue ? <AccessRecovery reason={pending.accessIssue} onRetry={props.onRetry} /> : <ErrorLine align="end" action={{ label: "Send again", onClick: props.onRetry }}>{pending.failed}</ErrorLine>
+        pending.accessIssue ? <AccessRecovery reason={pending.accessIssue} onRetry={onRetry} /> : <ErrorLine align="end" action={{ label: "Send again", onClick: onRetry }}>{pending.failed}</ErrorLine>
       ) : null}
       {items.length > 0 || slot || connector ? <Gap /> : null}
       {/* What it said and what it did, in the order it happened: "On it." · the computer card · the answer. */}
@@ -1984,16 +2042,16 @@ function TurnView(props: {
         </ul>
       ) : null}
       {turn.status === "failed" && props.editError instanceof WorkbotSendError && props.editError.accessReason ? (
-        <AccessRecovery reason={props.editError.accessReason} onRetry={props.latest ? props.onRetry : undefined} />
+        <AccessRecovery reason={props.editError.accessReason} onRetry={props.latest ? onRetry : undefined} />
       ) : turn.status === "failed" && turn.modelIssue && workbotHost().usageRecovery ? (
-        <ModelRecovery issue={turn.modelIssue} onRetry={props.latest ? props.onRetry : undefined} />
+        <ModelRecovery issue={turn.modelIssue} onRetry={props.latest ? onRetry : undefined} />
       ) : turn.status === "failed" ? (
-        <ErrorLine action={props.latest && (turn.greeting || turn.retryable) ? { label: "Try again", onClick: props.onRetry } : null}>{turn.greeting ? HELLO_FAILED : turn.error}</ErrorLine>
+        <ErrorLine action={props.latest && (turn.greeting || turn.retryable) ? { label: "Try again", onClick: onRetry } : null}>{turn.greeting ? HELLO_FAILED : turn.error}</ErrorLine>
       ) : null}
       {/* Natural replies: an answer cut short by a follow-up or by Stop just ends where it was. */}
     </>
   );
-}
+});
 
 
 function duration(ms: number) {
@@ -2024,7 +2082,8 @@ function WorkCard(props: {
   /** Shown under the card's row: a live view, links. */
   footer?: ReactNode;
 }) {
-  const now = useNow();
+  // Only a card still running shows the time passing.
+  const now = useNow(props.running && Boolean(props.startedAt) && props.finishedAt === null);
   const [open, setOpen] = useState(false);
   const elapsed = props.startedAt ? (props.finishedAt ?? (props.running ? now : null)) : null;
   const expandable = !props.running && props.updates.length > 1;
@@ -2126,6 +2185,12 @@ function TaskCards({ tasks, onRetry, canRetry }: { tasks: WorkbotTask[]; onRetry
       {tasks.map((task) => <div key={task.id} data-workbot-task={task.id}><TaskCard task={task} canRetry={canRetry} onRetry={() => onRetry(task)} /></div>)}
     </div>
   );
+}
+
+/** The message box with the draft it edits. Only it follows each keystroke and upload tick; the page around it doesn't. */
+function DraftComposer({ state, ...props }: { state: ComposerState } & Omit<Parameters<typeof WorkbotComposer>[0], "text" | "onText" | "uploads" | "onFiles" | "onRemoveUpload" | "onRetryUpload">) {
+  const draft = useSyncExternalStore(state.subscribe, state.getSnapshot, state.getSnapshot);
+  return <WorkbotComposer {...props} text={draft.text} onText={state.setText} uploads={draft.uploads} onFiles={state.add} onRemoveUpload={state.removeUpload} onRetryUpload={state.retryUpload} />;
 }
 
 export function WorkbotComposer(props: {
