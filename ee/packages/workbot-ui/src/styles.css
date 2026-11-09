@@ -26,6 +26,10 @@
   --wb-type-sheet: #1d7044;
   --wb-type-slides: #c55a11;
   --wb-danger: #c4302b;
+  --wb-browser-success: #2b9a47;
+  --wb-browser-success-bg: #e7f7e9;
+  --wb-browser-working: #2589ed;
+  --wb-browser-working-bg: #e5f4fc;
   --wb-type-image: #6e56cf;
   --wb-card-shadow: 0 0 0 1px #0116270f, 0 1px 2px #0116270a;
   --wb-panel-shadow: 0 0 0 1px #0116270d, 0 12px 32px -12px #01162724, 0 2px 6px -2px #0116270f;
@@ -40,6 +44,130 @@
   --wb-computer-line: #5eb1ef;
   --wb-computer-line-live: #0090ff;
 }
+
+/*
+ * One viewport owner: iOS's keyboard changes visualViewport, not 100dvh. Safe areas belong to the page, not the arrow.
+ * The shell is absolute in the document, never `position: fixed`: Safari 26 on iPhone samples the edges of fixed
+ * elements and paints that colour as a solid bar behind its status bar and floating toolbar (any colour at 75% opacity
+ * or more counts as solid). A fixed, full-screen shell made both bars opaque, so nothing ever showed through them.
+ * viewport.ts places it at the visual viewport (pageTop) instead; the root keeps an explicit background as Safari's
+ * fallback and does not bounce.
+ */
+.workbot-viewport { --wb-safe-bottom: env(safe-area-inset-bottom); position: absolute; left: 0; right: 0; top: var(--wb-viewport-top, 0px); height: var(--wb-viewport-height, 100dvh); overflow: hidden; }
+/* With the keyboard open the message box sits on the keyboard, not above a home indicator it covers. */
+.workbot-viewport[data-workbot-keyboard] { --wb-safe-bottom: 0px; }
+.workbot-viewport > .workbot { height: 100%; padding-top: env(safe-area-inset-top); padding-bottom: var(--wb-safe-bottom, env(safe-area-inset-bottom)); }
+/* Preview changes the layout, not the viewer: a dark, full-screen phone sheet around the same browser. */
+.workbot-browser-sheet {
+  --wb-bg: #171a19;
+  --wb-surface: #272b2c;
+  --wb-chip: #303536;
+  --wb-bubble: #24292b;
+  --wb-text: #f2f4f5;
+  --wb-muted: #a8afb3;
+  --wb-ring: #ffffff24;
+  --wb-hairline: #ffffff17;
+  --wb-ink: #2589ed;
+  --wb-on-ink: #f2f4f5;
+  --wb-focus: 0 0 0 2px #68b7ff;
+}
+[data-workbot-browser-layout] > div > .workbot { height: 100%; }
+/* One responsive shell; the conversation and composer share an 800px column within the remaining desktop space. */
+.workbot-layout { height: 100%; padding-top: env(safe-area-inset-top); padding-bottom: var(--wb-safe-bottom, env(safe-area-inset-bottom)); }
+.workbot-layout-main { overflow: hidden; }
+
+/*
+ * The chat's header and message box float over the conversation, like a messaging app: translucent and blurred, so
+ * messages scroll underneath them and stay faintly readable. The chat column reaches into the safe areas (the floating
+ * parts pad themselves instead), and the conversation pads its ends by their measured heights (floating-chrome.ts).
+ */
+.workbot {
+  /* Glass for the small floating parts: what scrolls under them stays faintly there. */
+  --wb-float-control: color-mix(in srgb, var(--wb-surface) 58%, transparent);
+  --wb-float-control-hover: color-mix(in srgb, var(--wb-surface) 86%, transparent);
+  --wb-float-blur: blur(24px) saturate(180%);
+  /* A light top edge and a soft drop: glass without refraction. */
+  --wb-glass-shadow: inset 0 1px 0 0 #ffffffc7, inset 0 0 0 1px #ffffff4d, 0 0 0 0.5px #0116271f, 0 1px 2px #0116270d, 0 8px 24px -12px #01162738;
+  --wb-glass-composer-shadow: inset 0 1px 0 0 #ffffffd9, inset 0 0 0 1px #ffffff59, 0 0 0 0.5px #01162724, 0 2px 6px -2px #01162714, 0 14px 32px -16px #01162747;
+  /* The tint behind the header and the message box, strongest at the screen's edge. */
+  --wb-float-edge: color-mix(in srgb, var(--wb-bg) 78%, transparent);
+  --wb-float-mid: color-mix(in srgb, var(--wb-bg) 46%, transparent);
+}
+.workbot-layout.is-floating-chrome > .workbot-layout-main {
+  margin-top: calc(-1 * env(safe-area-inset-top));
+  margin-bottom: calc(-1 * var(--wb-safe-bottom, env(safe-area-inset-bottom)));
+}
+.workbot-chrome-top { padding-top: calc(env(safe-area-inset-top) + 8px); padding-bottom: 18px; }
+.workbot-chrome-bottom { padding-top: 20px; padding-bottom: max(16px, calc(var(--wb-safe-bottom, env(safe-area-inset-bottom)) + 4px)); }
+.workbot-chrome-top, .workbot-chrome-bottom { isolation: isolate; }
+
+/*
+ * Progressive blur (floating-glass.tsx): stacked layers, each blurring more and masked to a shorter band at the
+ * screen's edge, so text sharpens gradually as it leaves the header or approaches the message box, with no hard line.
+ * The first layer only tints. Every layer is an absolute child, which Safari's toolbar tint ignores.
+ */
+.workbot-glass { position: absolute; inset: 0; z-index: -1; pointer-events: none; }
+.workbot-glass > i { position: absolute; inset: 0; display: block; }
+.workbot-glass > i:not(:first-child) { -webkit-backdrop-filter: blur(var(--wb-glass-blur)); backdrop-filter: blur(var(--wb-glass-blur)); }
+.workbot-glass > i:nth-child(2) { --wb-glass-blur: 1px; --wb-glass-from: 0%; --wb-glass-to: 32%; }
+.workbot-glass > i:nth-child(3) { --wb-glass-blur: 3px; --wb-glass-from: 18%; --wb-glass-to: 52%; }
+.workbot-glass > i:nth-child(4) { --wb-glass-blur: 7px; --wb-glass-from: 36%; --wb-glass-to: 72%; }
+.workbot-glass > i:nth-child(5) { --wb-glass-blur: 14px; --wb-glass-from: 54%; --wb-glass-to: 92%; }
+/* Header: strongest at the top of the screen, gone at its bottom edge. */
+.workbot-glass[data-edge="top"] > i:first-child { background: linear-gradient(to bottom, var(--wb-float-edge) 0%, var(--wb-float-mid) 58%, transparent 100%); }
+.workbot-glass[data-edge="top"] > i:not(:first-child) {
+  -webkit-mask-image: linear-gradient(to top, transparent var(--wb-glass-from), #000 var(--wb-glass-to));
+  mask-image: linear-gradient(to top, transparent var(--wb-glass-from), #000 var(--wb-glass-to));
+}
+/* Message box: strongest at the bottom of the screen (under Safari's toolbar), gone at its top edge. */
+.workbot-glass[data-edge="bottom"] > i:first-child { background: linear-gradient(to top, var(--wb-float-edge) 0%, var(--wb-float-mid) 55%, transparent 100%); }
+.workbot-glass[data-edge="bottom"] > i:not(:first-child) {
+  -webkit-mask-image: linear-gradient(to bottom, transparent var(--wb-glass-from), #000 var(--wb-glass-to));
+  mask-image: linear-gradient(to bottom, transparent var(--wb-glass-from), #000 var(--wb-glass-to));
+}
+
+/* The header's buttons become small floating glass circles over the conversation. */
+.workbot-chrome-top [data-workbot-header-side] button {
+  border-radius: 9999px;
+  background: var(--wb-float-control);
+  -webkit-backdrop-filter: var(--wb-float-blur);
+  backdrop-filter: var(--wb-float-blur);
+  box-shadow: var(--wb-glass-shadow);
+}
+.workbot-chrome-top [data-workbot-header-side] button:hover { background: var(--wb-float-control-hover); }
+.workbot-chrome-top [data-workbot-header-side] button:focus-visible { box-shadow: var(--wb-glass-shadow), var(--wb-focus); }
+/* On a phone the name and what Workbot is doing sit on a small floating pill. */
+.workbot-chrome-top [data-workbot-working-name] {
+  border-radius: 9999px;
+  padding: 4px 14px;
+  box-shadow: var(--wb-glass-shadow);
+}
+.workbot-chrome-top [data-workbot-working-name]:focus-visible { box-shadow: var(--wb-glass-shadow), var(--wb-focus); }
+/* The name pill and the message box are glass too. */
+.workbot-chrome-top [data-workbot-working-name]:not(:hover),
+.workbot-chrome-top [data-workbot-profile-badge] > span,
+.workbot-chrome-bottom [data-workbot-composer] {
+  background: var(--wb-float-control);
+  -webkit-backdrop-filter: var(--wb-float-blur);
+  backdrop-filter: var(--wb-float-blur);
+}
+.workbot-chrome-top [data-workbot-working-name]:hover { background: var(--wb-float-control-hover); }
+.workbot-chrome-bottom [data-workbot-composer] { --wb-float-control: color-mix(in srgb, var(--wb-surface) 62%, transparent); box-shadow: var(--wb-glass-composer-shadow); }
+/* Under a floating header the conversation needs no fade of its own. */
+.is-floating-chrome .workbot-scroll { -webkit-mask-image: none; mask-image: none; }
+/* Its first and last message can still scroll fully clear of the floating parts (and a focused row stays clear). */
+.workbot-scroll { scroll-padding-top: var(--wb-chrome-top, 0px); scroll-padding-bottom: var(--wb-chrome-bottom, 0px); }
+.workbot-scroll-content { padding-top: calc(var(--wb-chrome-top, 0px) + 24px); padding-bottom: calc(var(--wb-chrome-bottom, 0px) + 8px); }
+
+/*
+ * The arrow floats over the conversation, centred 12px above the message box. It never takes a row of its own and
+ * never changes the conversation's size or padding. The 44px touch target holds a 34px circle, 5px from its bottom;
+ * the floating message box starts 20px below the top of its glass (.workbot-chrome-bottom), so 20 - 12 + 5 = 13px.
+ */
+.workbot-scroll-latest { bottom: max(4px, calc(var(--wb-chrome-bottom, 0px) - 13px)); }
+.workbot-scroll-latest { opacity: 0; visibility: hidden; pointer-events: none; transition: opacity 150ms ease-out, visibility 0s 150ms; }
+.workbot-scroll-latest.is-visible { opacity: 1; visibility: visible; pointer-events: auto; transition-delay: 0s; }
+@media (prefers-reduced-motion: reduce) { .workbot-scroll-latest { transition: none; } }
 
 /* Workbot: shimmer on the one running step line, and a caret while the reply is being written. */
 .workbot-shimmer {
@@ -174,4 +302,27 @@
   .workbot-row-enter, .workbot-reaction, .workbot-subtitle-enter, .workbot-panel-enter, .workbot-fade-in,
   .workbot-welcome-rise, .workbot-welcome-leave, .workbot-app-enter { animation: none; }
   .workbot-typing-dot { animation: none; opacity: .55; }
+}
+
+/* Connector avatar group: a soft inset ring, never scale/position motion that would disturb the message rail. */
+.workbot-connector-pulse { animation: workbot-connector-pulse 2.8s ease-in-out infinite; }
+@keyframes workbot-connector-pulse {
+  0%, 100% { outline: 1px solid transparent; outline-offset: -1px; }
+  50% { outline: 1px solid var(--wb-disabled); outline-offset: -1px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .workbot-connector-pulse { animation: none; outline: 1px solid var(--wb-disabled); outline-offset: -1px; }
+}
+
+/*
+ * Motion. Sheets and drawers open on iOS's sheet curve (quick start, long soft settle, no overshoot) and close faster;
+ * switching chats cross-fades through the View Transitions API where the browser has it (motion.ts). Both stand still
+ * with reduced motion.
+ */
+.workbot-sheet-motion { transition-duration: 360ms; transition-timing-function: cubic-bezier(0.32, 0.72, 0, 1); }
+.workbot-sheet-motion[data-ending-style] { transition-duration: 220ms; transition-timing-function: cubic-bezier(0.4, 0, 1, 1); }
+::view-transition-old(root), ::view-transition-new(root) { animation-duration: 200ms; animation-timing-function: cubic-bezier(0.2, 0, 0, 1); }
+@media (prefers-reduced-motion: reduce) {
+  .workbot-sheet-motion { transition: none; }
+  ::view-transition-group(*), ::view-transition-old(*), ::view-transition-new(*) { animation: none !important; }
 }

@@ -4,7 +4,7 @@ import { denTypeIdColumn } from "../columns"
 import { MemberTable, OrganizationTable } from "./org"
 import { TeamTable } from "./teams"
 
-export const permissionSetDefaultKeyValues = ["member", "admin"] as const
+export const permissionSetDefaultKeyValues = ["member", "admin", "super-admin"] as const
 export type PermissionSetDefaultKey = (typeof permissionSetDefaultKeyValues)[number]
 
 export const permissionStatusValues = ["allow", "deny"] as const
@@ -14,8 +14,8 @@ export const permissionChangeSourceValues = ["user", "seed", "reconcile", "migra
 export type PermissionChangeSource = (typeof permissionChangeSourceValues)[number]
 
 /**
- * A named bundle of permissions. `defaultKey` marks the organization's Member
- * and Admin default sets; NULL means a team set. MySQL allows many NULLs in
+ * A named bundle of permissions. `defaultKey` marks the organization's Member,
+ * Admin and Super admin default sets; NULL means a team set. MySQL allows many NULLs in
  * the unique index, so an org has at most one set per default key and any
  * number of team sets. Sets are archived, never deleted.
  */

@@ -67,6 +67,15 @@ test("a Workbot grant connects only its own organization; scope, grants and perm
   assert.equal(tokenRequests, 1)
   const own = await den.request(token, "GET", "/v1/workbot/connections")
   assert.ok(list(field(own.body, "connections")).some(connection => connection.ready === true))
+  // Every usable connection is named for Workbot's steps: id, name and a bare website host, never its URL.
+  const connectors = list(field(own.body, "connectors"))
+  assert.ok(connectors.length > 0)
+  for (const connector of connectors) {
+    assert.equal(typeof connector.id, "string")
+    assert.equal(typeof connector.name, "string")
+    assert.ok(connector.site === null || (typeof connector.site === "string" && !connector.site.includes("/")))
+    assert.equal("url" in connector, false)
+  }
   const ownerToken = await den.mintMcpToken(owner, orgId)
   const ownerList = await den.request(ownerToken, "GET", "/v1/workbot/connections")
   assert.equal(list(field(ownerList.body, "connections")).some(connection => connection.ready === true), false)

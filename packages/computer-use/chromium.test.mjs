@@ -6,15 +6,21 @@ import { join } from "node:path";
 import test from "node:test";
 import { createCloudBrowser, publicDestination } from "./chromium.mjs";
 
-async function fixture({ rejectInterception = false, holdInterception = false, existing = true, missingEgress = false, pages = existing ? ["tab"] : [], owned = pages } = {}) {
+async function fixture({ rejectInterception = false, holdInterception = false, existing = true, missingEgress = false, pages = existing ? ["tab"] : [], owned = pages, onCommand = () => undefined } = {}) {
   const directory = await mkdtemp(join(tmpdir(), "openwork-browser-network-"));
   const commands = [], sockets = [], held = [];
-  let origin;
+  let origin, nextTab = 0;
   const target = (url = "https://8.8.8.8/resource", id = "tab") => ({ type: "page", id, url, title: "Test page",
     webSocketDebuggerUrl: origin.replace("http:", "ws:") + `/devtools/page/${id}` });
   const server = createServer((request, response) => {
     response.setHeader("content-type", "application/json");
-    response.end(JSON.stringify(request.url.startsWith("/json/new") ? target("about:blank") : pages.map(id => target(undefined, id))));
+    if (request.url.startsWith("/json/new")) {
+      const id = `opened-${++nextTab}`;
+      pages.push(id);
+      response.end(JSON.stringify(target("about:blank", id)));
+    } else {
+      response.end(JSON.stringify(pages.map(id => target(undefined, id))));
+    }
   });
   await new Promise(resolve => server.listen(0, "127.0.0.1", resolve));
   origin = `http://127.0.0.1:${server.address().port}`;
@@ -25,11 +31,17 @@ async function fixture({ rejectInterception = false, holdInterception = false, e
     send(bytes) {
       const command = JSON.parse(bytes);
       commands.push(command);
-      const reply = () => this.message({ id: command.id,
-        ...(rejectInterception && command.method === "Fetch.enable" ? { error: { message: "Interception unavailable" } }
+      const reply = () => {
+        const supplied = onCommand(command, this);
+        if (supplied === false) return; // A missing CDP receipt, for deadline tests.
+        this.message({ id: command.id,
+        ...(supplied ?? (rejectInterception && command.method === "Fetch.enable" ? { error: { message: "Interception unavailable" } }
           : { result: command.method === "Page.getFrameTree" ? { frameTree: { frame: { id: "main", loaderId: "loader" } } }
             : command.method === "Page.navigate" ? { frameId: "main", loaderId: "loader" }
-            : command.method === "Runtime.evaluate" ? { result: { value: "complete" } } : {} }) });
+            : command.method === "Page.createIsolatedWorld" ? { executionContextId: 11 }
+            : command.method === "Runtime.evaluate" ? { result: { value: command.params.expression === "document.readyState" ? "complete"
+              : { ok: true, value: { quietMs: 10_000, readyState: "complete", busy: false, textChars: 50 } } } } : {} })) });
+      };
       if (holdInterception && command.method === "Fetch.enable") held.push(reply);
       else queueMicrotask(reply);
     }
@@ -119,6 +131,24 @@ test("a conversation's active tab is the one of its tabs most recently in front"
   } finally { await f.close(); }
 });
 
+test("cloud browser opens beyond twelve tabs without evicting another conversation's pages", async () => {
+  const original = Array.from({ length: 12 }, (_, index) => `existing-${index}`);
+  const f = await fixture({ pages: [...original] });
+  try {
+    const opened = [];
+    for (let index = 0; index < 4; index++) {
+      const result = await f.browser.request({ sessionId: "side", operation: "open", args: { url: `https://8.8.8.8/page-${index}` } });
+      assert.equal(result.ok, true, JSON.stringify(result));
+      opened.push(result.tabId);
+    }
+    assert.equal(new Set(opened).size, 4);
+    assert.deepEqual((await f.browser.request({ sessionId: "chat", operation: "tabs" })).tabs.map(tab => tab.tabId), original);
+    assert.deepEqual((await f.browser.request({ sessionId: "side", operation: "tabs" })).tabs.map(tab => tab.tabId), opened);
+    assert.equal(f.sockets.length, 16);
+    assert.equal((await f.browser.request({ sessionId: "side", operation: "pause", args: { tabId: original[0] } })).code, "wrong_conversation");
+  } finally { await f.close(); }
+});
+
 test("cloud destination checks reject private IPv4, IPv6 and translated addresses", async () => {
   for (const url of ["http://localhost/", "http://127.0.0.1/", "http://10.0.0.1/", "http://100.100.100.200/",
     "http://169.254.169.254/", "http://[::1]/", "http://[fd00::1]/", "http://[::ffff:7f00:1]/", "http://[::7f00:1]/",
@@ -170,4 +200,185 @@ test("native kernel readiness requires complete UID-bound IPv4 and IPv6 rejectio
     change(incomplete);
     assert.equal(nativeBrowserEgress(incomplete, 1001), false);
   }
+});
+
+const pageValue = (value) => ({ result: { result: { value: { ok: true, value } } } });
+const isObservation = (command) => command.method === "Runtime.evaluate" && command.params.expression.includes("function observePage");
+const isBlockers = (command) => command.method === "Runtime.evaluate" && command.params.expression.includes("function readBlockers");
+const observedPage = () => ({ elements: [], title: "Test page", viewport: { width: 1280, height: 800 }, scroll: { x: 0, y: 0 }, hasPaymentField: false, hasCredentialField: false });
+
+test("a self-reload replaces the original navigation loader (YouTube first visit)", async () => {
+  const f = await fixture({ existing: false, onCommand(command, socket) {
+    if (command.method === "Page.navigate") {
+      socket.message({ method: "Page.frameNavigated", params: { frame: { id: "main", url: "https://8.8.8.8/" } } });
+      socket.message({ method: "Page.frameNavigated", params: { frame: { id: "main", url: "https://8.8.8.8/?themeRefresh=1" } } });
+      return { result: { frameId: "main", loaderId: "original-loader" } };
+    }
+    if (command.method === "Page.getFrameTree") return { result: { frameTree: { frame: { id: "main", loaderId: "new-loader" } } } };
+  } });
+  try {
+    const result = await f.browser.request({ sessionId: "chat", operation: "open", args: { url: "https://8.8.8.8/" } });
+    assert.equal(result.ok, true, JSON.stringify(result));
+    assert.equal(result.page, "settled");
+    assert.equal(f.commands.filter(c => c.method === "Page.navigate").length, 1, "never repeats navigation");
+    assert.equal(f.commands.filter(c => c.params?.expression === "document.readyState").length, 1, "does not wait for the old loader");
+  } finally { await f.close(); }
+});
+
+test("embed navigations and unrelated world destruction do not invalidate a top-document observation", async () => {
+  const f = await fixture({ onCommand(command, socket) {
+    if (isObservation(command)) {
+      socket.message({ method: "Page.frameNavigated", params: { frame: { id: "ad-frame", parentId: "main", url: "about:blank" } } });
+      socket.message({ method: "Runtime.executionContextDestroyed", params: { executionContextId: 42 } });
+      return pageValue(observedPage());
+    }
+  } });
+  try {
+    const result = await f.browser.request({ sessionId: "chat", operation: "observe", args: { tabId: "tab", mode: "interactive" } });
+    assert.equal(result.ok, true, JSON.stringify(result));
+    assert.ok(result.observationId);
+  } finally { await f.close(); }
+});
+
+test("read recovery is default-off, retries a changed document once when on, never loops", async () => {
+  for (const recovery of [undefined, false, true]) for (const alwaysChanges of [false, true]) {
+    let reads = 0;
+    const f = await fixture({ onCommand(command, socket) {
+      if (isObservation(command)) {
+        if (++reads === 1 || alwaysChanges) socket.message({ method: "Page.frameNavigated", params: { frame: { id: "main", url: "https://8.8.8.8/resource" } } });
+        return pageValue(observedPage());
+      }
+    } });
+    try {
+      const result = await f.browser.request({ sessionId: "chat", operation: "observe", args: { tabId: "tab" } }, { recovery });
+      assert.equal(result.ok, recovery === true && !alwaysChanges, JSON.stringify(result));
+      assert.equal(reads, recovery ? 2 : 1);
+      if (!result.ok) assert.equal(result.code, "page_changed");
+      const state = (await f.browser.request({ sessionId: "chat", operation: "tabs" })).tabs[0];
+      assert.equal(state.status, "idle", "a transient page change is not a stuck needs_attention");
+      assert.equal(f.commands.some(c => c.method.startsWith("Input.")), false);
+    } finally { await f.close(); }
+  }
+});
+
+test("a destroyed observation world is retried once as page_changed, not an opaque failure", async () => {
+  let reads = 0;
+  const f = await fixture({ onCommand(command) {
+    if (isObservation(command)) return ++reads === 1 ? { error: { message: "Cannot find context with specified id" } } : pageValue(observedPage());
+  } });
+  try {
+    const result = await f.browser.request({ sessionId: "chat", operation: "observe", args: { tabId: "tab" } }, { recovery: true });
+    assert.equal(result.ok, true, JSON.stringify(result));
+    assert.equal(reads, 2);
+    assert.equal(f.commands.filter(c => c.method === "Page.createIsolatedWorld").length, 2);
+  } finally { await f.close(); }
+});
+
+test("empty extraction gets a bounded second read, not a false no-match answer", async () => {
+  let reads = 0;
+  const f = await fixture({ onCommand(command) {
+    if (isObservation(command)) return pageValue({ title: "Test page", text: ++reads === 1 ? "" : "Recommended videos\nRelaxing music" });
+  } });
+  try {
+    const result = await f.browser.request({ sessionId: "chat", operation: "extract", args: { tabId: "tab", question: "recommended videos" } });
+    assert.equal(result.ok, true, JSON.stringify(result));
+    assert.equal(reads, 2);
+    assert.ok(result.pageChars > 0);
+    assert.ok(result.passages[0].includes("Recommended videos"));
+  } finally { await f.close(); }
+});
+
+test("consent and human-check guidance is flag-gated and does not click anything", async () => {
+  for (const recovery of [false, true]) for (const blocker of ["consent", "bot_check"]) {
+    const f = await fixture({ onCommand(command) {
+      if (isBlockers(command)) return pageValue({ blocker, textChars: 25 });
+      if (isObservation(command)) return pageValue({ title: "Test page", text: "" });
+    } });
+    try {
+      const result = await f.browser.request({ sessionId: "chat", operation: "extract", args: { tabId: "tab", question: "recommended videos" } }, { recovery });
+      assert.equal(result.ok, true, JSON.stringify(result));
+      assert.equal(result.blocker, recovery ? blocker : undefined);
+      if (recovery) assert.match(result.next, blocker === "consent" ? /cookie or consent/ : /must not solve/);
+      else assert.match(result.next, /no readable text/);
+      assert.equal(f.commands.some(c => c.method.startsWith("Input.")), false);
+    } finally { await f.close(); }
+  }
+});
+
+test("lost tab connections reconnect only with recovery on and never replay uncertain navigation", async () => {
+  for (const recovery of [false, true]) {
+    const f = await fixture();
+    try {
+      await f.browser.request({ sessionId: "chat", operation: "tabs" });
+      f.sockets[0].close();
+      const result = await f.browser.request({ sessionId: "chat", operation: "navigate", args: { tabId: "tab", url: "https://8.8.8.8/" } }, { recovery });
+      assert.equal(result.ok, recovery, JSON.stringify(result));
+      assert.equal(f.sockets.length, recovery ? 2 : 1);
+      assert.equal(f.commands.filter(c => c.method === "Page.navigate").length, recovery ? 1 : 0);
+    } finally { await f.close(); }
+  }
+  const f = await fixture({ onCommand(command) {
+    if (command.method === "Page.navigate") return { error: { message: "Browser disconnected" } };
+  } });
+  try {
+    const result = await f.browser.request({ sessionId: "chat", operation: "navigate", args: { tabId: "tab", url: "https://8.8.8.8/" } }, { recovery: true });
+    assert.equal(result.dispatched, true);
+    assert.equal(result.retrySafe, false);
+    assert.equal(f.commands.filter(c => c.method === "Page.navigate").length, 1);
+    assert.match(result.next, /never repeat input/);
+    assert.equal(result.detail, "connection_lost");
+  } finally { await f.close(); }
+});
+
+test("navigation net errors are actionable, not anonymous browser_operation_failed", async () => {
+  const f = await fixture({ onCommand(command) {
+    if (command.method === "Page.navigate") return { result: { errorText: "net::ERR_NAME_NOT_RESOLVED" } };
+  } });
+  try {
+    const result = await f.browser.request({ sessionId: "chat", operation: "navigate", args: { tabId: "tab", url: "https://8.8.8.8/" } });
+    assert.equal(result.code, "navigation_failed");
+    assert.match(result.error, /address could not be found/);
+    assert.equal(f.commands.filter(c => c.method === "Page.navigate").length, 1);
+  } finally { await f.close(); }
+});
+
+test("a page replaced during isolated-world creation gets the same one-read recovery", async () => {
+  let worlds = 0;
+  const f = await fixture({ onCommand(command) {
+    if (command.method === "Page.createIsolatedWorld" && ++worlds === 1) return { error: { message: "No frame for given id found" } };
+    if (isObservation(command)) return pageValue(observedPage());
+  } });
+  try {
+    const result = await f.browser.request({ sessionId: "chat", operation: "observe", args: { tabId: "tab" } }, { recovery: true });
+    assert.equal(result.ok, true, JSON.stringify(result));
+    assert.equal(worlds, 2);
+  } finally { await f.close(); }
+});
+
+test("missing document-ready receipts respect the shared ten-second budget, without replaying navigation", async () => {
+  let trees = 0;
+  const f = await fixture({ onCommand(command) {
+    if (command.method === "Page.getFrameTree" && ++trees === 1) return false;
+  } });
+  try {
+    const at = Date.now();
+    const result = await f.browser.request({ sessionId: "chat", operation: "navigate", args: { tabId: "tab", url: "https://8.8.8.8/" } });
+    const ms = Date.now() - at;
+    assert.equal(result.ok, true, JSON.stringify(result));
+    assert.ok(ms >= 9900 && ms < 13_000, `readiness budget was ${ms}ms, not the default 15s per command`);
+    assert.equal(f.commands.filter(c => c.method === "Page.navigate").length, 1);
+  } finally { await f.close(); }
+});
+
+test("failed opens retain the created tab identity so recovery inspects it instead of opening another", async () => {
+  const f = await fixture({ existing: false, rejectInterception: true });
+  try {
+    const result = await f.browser.request({ sessionId: "chat", operation: "open", args: { url: "https://8.8.8.8/" } });
+    assert.equal(result.ok, false);
+    assert.equal(result.tabId, "opened-1");
+    const tabs = await f.browser.request({ sessionId: "chat", operation: "tabs" });
+    assert.equal(tabs.tabs[0].status, "needs_attention");
+    assert.notEqual(tabs.tabs[0].operation, "Check browser");
+    assert.equal(f.commands.some(c => c.method === "Page.navigate"), false);
+  } finally { await f.close(); }
 });

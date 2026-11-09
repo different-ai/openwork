@@ -4,7 +4,6 @@ import { GlobalRegistrator } from "@happy-dom/global-registrator";
 
 import type { MenuAction } from "../src/components/ui/action-menu-model";
 import type { WorkbenchSnapshot } from "../src/react-app/domains/session/chat/workbench-store";
-import type { SessionSettleState } from "../src/react-app/domains/session/sidebar/session-settle";
 
 const ownedDom = typeof window === "undefined";
 if (ownedDom) GlobalRegistrator.register({ url: "http://localhost/" });
@@ -19,7 +18,6 @@ const { setWorkbenchSplit } = await import("../src/react-app/domains/session/cha
 function actions(overrides: Partial<Parameters<typeof buildSessionMenuActions>[0]> = {}) {
   return buildSessionMenuActions({
     isPinned: false, isArchived: false,
-    settle: { available: true, settled: false, canSettle: true, toggle: () => {} },
     groups: [{ id: "review", label: "Review" }], assignedGroupId: null,
     onAssignGroup: () => {}, onTogglePin: () => {}, onRename: () => {}, onArchive: () => {}, onDelete: () => {},
     onCreateGroup: () => {}, ...overrides,
@@ -37,7 +35,7 @@ describe("human session actions share one menu/palette definition", () => {
     const menu = actions({ isArchived, isPinned: true });
     const palette = sessionMenuActionsToPalette(menu, "Main conversation", () => {});
     expect(palette.map((entry) => entry.id)).toEqual([
-      "session.pin.toggle", ...(!isArchived ? ["session.settle.toggle"] : []), "session.rename", "session.archive", "session.delete",
+      "session.pin.toggle", "session.rename", "session.archive", "session.delete",
     ]);
     for (const [menuId, paletteId] of [["pin", "session.pin.toggle"], ["rename", "session.rename"], ["archive", "session.archive"], ["delete", "session.delete"]]) {
       expect(palette.find((entry) => entry.id === paletteId)?.title).toBe(item(menu, menuId).label);
@@ -48,28 +46,25 @@ describe("human session actions share one menu/palette definition", () => {
     expect(palette.every((entry) => entry.detail?.includes("Main conversation"))).toBe(true);
   });
 
-  test("busy Settle remains discoverable with the same reason and cannot dispatch from either adapter", async () => {
-    const toggle = mock(() => {});
-    const close = mock(() => {});
-    const menu = actions({ settle: { available: true, settled: false, canSettle: false, toggle } });
-    const palette = sessionMenuActionsToPalette(menu, "Busy main", close);
-    const settle = palette.find((entry) => entry.id === "session.settle.toggle");
-    expect(settle?.disabled).toBe(true);
-    expect(settle?.detail).toContain(item(menu, "settle").disabledReason);
-    expect(settle?.detail).toContain("after it finishes");
-    expect(serializeMenuActions(menu).find((entry) => entry.type === "item" && entry.id === "settle")).toMatchObject({ enabled: false });
+  test("retired Settle is absent from native menus and palette", async () => {
+    const menu = actions();
+    expect(serializeMenuActions(menu).some((entry) => entry.type === "item" && entry.id === "settle")).toBe(false);
+    expect(sessionMenuActionsToPalette(menu, "Main", () => {}).some((entry) => entry.id === "session.settle.toggle")).toBe(false);
     expect(await dispatchMenuAction(menu, "settle")).toBe(false);
-    settle?.action();
-    expect(toggle).not.toHaveBeenCalled();
-    expect(close).not.toHaveBeenCalled();
   });
 
-  test("unsupported/flag-off/child Settle stays hidden, but Unsettle remains enabled", () => {
-    const unavailable: SessionSettleState = { available: false, settled: false, canSettle: false, toggle: () => {} };
-    expect(sessionMenuActionsToPalette(actions({ settle: unavailable }), "Main", () => {}).some((entry) => entry.id === "session.settle.toggle")).toBe(false);
-    const menu = actions({ settle: { ...unavailable, available: true, settled: true } });
-    expect(item(menu, "settle").disabled).toBe(false);
-    expect(item(menu, "settle").label).toBe("Un-settle session");
+  test("unavailable Archive is absent from both adapters; supplied disabled actions cannot dispatch", async () => {
+    const menu = actions({ onArchive: undefined });
+    expect(sessionMenuActionsToPalette(menu, "Main", () => {}).some((entry) => entry.id === "session.archive")).toBe(false);
+    expect(await dispatchMenuAction(menu, "archive")).toBe(false);
+    const callback = mock(() => {});
+    const close = mock(() => {});
+    const disabled: MenuAction[] = [{ type: "item", id: "archive", label: "Archive session", disabled: true, disabledReason: "Workspace is offline", onSelect: callback }];
+    const palette = sessionMenuActionsToPalette(disabled, "Main", close);
+    expect(palette[0]).toMatchObject({ disabled: true, detail: "Main — Workspace is offline" });
+    palette[0]?.action();
+    expect(callback).not.toHaveBeenCalled();
+    expect(close).not.toHaveBeenCalled();
   });
 
   test("Delete dispatch is a named dialog intent after palette close, not a deletion", () => {

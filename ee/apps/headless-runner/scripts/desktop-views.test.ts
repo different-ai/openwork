@@ -28,6 +28,29 @@ test("a conversation keeps the desktop views it may use, and every view is the d
   }
 })
 
+test("browser recovery defaults off and persists on, unrelated updates, and an explicit reset", () => {
+  const directory = mkdtempSync(join(tmpdir(), "headless-recovery-"))
+  const path = join(directory, "runner.sqlite")
+  try {
+    const store = new Store(nodeSqlite(path), () => 1_000)
+    const legacy = store.createSession({ owner: "owner", computer: true, desktop: true })
+    assert.equal(store.getSession(legacy.id)?.browserRecovery, false)
+    const enabled = store.createSession({ owner: "owner", computer: true, desktop: true, browserRecovery: true })
+    assert.equal(store.getSession(enabled.id)?.browserRecovery, true)
+    store.putSession(legacy.id, { browserRecovery: true })
+    store.putSession(legacy.id, { title: "Renamed", desktopViews: ["browser"] })
+    const restarted = new Store(nodeSqlite(path), () => 2_000)
+    assert.equal(restarted.getSession(legacy.id)?.browserRecovery, true)
+    assert.equal(restarted.getSession(enabled.id)?.browserRecovery, true)
+    restarted.putSession(legacy.id, { browserRecovery: false })
+    restarted.putSession(legacy.id, { title: "Still off" })
+    assert.equal(new Store(nodeSqlite(path), () => 3_000).getSession(legacy.id)?.browserRecovery, false)
+    assert.deepEqual(restarted.getSession(legacy.id)?.desktopViews, ["browser"], "reset keeps unrelated policy")
+  } finally {
+    rmSync(directory, { recursive: true, force: true })
+  }
+})
+
 test("the desktop tool offers only the views a conversation may use", () => {
   assert.deepEqual(desktopToolsFor([DESKTOP_TOOL], null), [DESKTOP_TOOL])
   assert.deepEqual(desktopToolsFor([DESKTOP_TOOL], ["browser", "computer"]), [DESKTOP_TOOL])

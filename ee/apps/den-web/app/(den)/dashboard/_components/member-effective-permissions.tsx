@@ -54,19 +54,22 @@ export function MemberEffectivePermissions({ memberId, memberName }: { memberId:
   const data = query.data;
   const byKey = new Map(data.permissions.flatMap((entry) => isPermissionKey(entry.key) ? [[entry.key, entry] satisfies [string, Entry]] : []));
   const areas = permissionAreas(new Set(byKey.keys()));
+  // Without superAdminPermissionSet the super-admin role itself grants every permission (source "super_admin"),
+  // so there is nothing per permission to explain. With it, their permissions come from roles like anyone's.
+  const roleGrantsEverything = data.isOwner || (data.isSuperAdmin && data.permissions.some((entry) => entry.sources.some((source) => source.kind === "super_admin")));
 
   return (
     <div className="flex flex-col gap-4" data-testid="member-effective-permissions" aria-label={`Effective permissions for ${memberName}`}>
       <p className="text-[13px] text-gray-600">
         {data.isOwner
           ? `${memberName} is the owner and can always do everything.`
-          : data.isSuperAdmin
+          : roleGrantsEverything
             ? `${memberName} is a super admin and can do everything the owner can, except delete the organization or transfer ownership.`
           : byKey.size === 0
             ? `${memberName} has no organization permissions.`
-            : `${memberName} has ${byKey.size} ${byKey.size === 1 ? "permission" : "permissions"}.`}
+            : `${memberName}${data.isSuperAdmin ? " is a super admin and" : ""} has ${byKey.size} ${byKey.size === 1 ? "permission" : "permissions"}.`}
       </p>
-      {data.isOwner || data.isSuperAdmin ? null : areas.map((area) => (
+      {roleGrantsEverything ? null : areas.map((area) => (
         <PermissionAreaSection key={area.key} label={area.label}>
           {area.keys.map((key) => {
             const entry = byKey.get(key);

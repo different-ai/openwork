@@ -154,3 +154,13 @@ test("only the owner and super-admins can pick Super admin", () => {
   assert.equal(noRoles.find((option) => option.value === "super-admin")?.lockReason, "Needs Change member roles");
   assert.equal(permissionSourceRoleLabel({ kind: "super_admin", label: "Super admin role" }), "Super admin");
 });
+
+test("the Super admin permission set reads as the Super admin built-in role", () => {
+  assert.equal(roleName({ kind: "super_admin_default", name: "Super admin permissions", team: null }), "Super admin");
+  assert.equal(roleKindLabel({ kind: "super_admin_default" }), "Built-in role");
+  assert.equal(
+    permissionSourceRoleLabel({ kind: "super_admin_default", label: "Super admin permissions (super admin role)", setName: "Super admin permissions" }),
+    "Super admin",
+  );
+  assert.equal(permissionSourceRoleLabel({ kind: "code_default", label: "Super admin permissions (default)", set: "super-admin" }), "Super admin");
+});

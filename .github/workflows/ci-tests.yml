@@ -153,6 +153,7 @@ jobs:
           node --test ee/packages/headless-computer/src/viewer-tickets.test.mjs
           node --test apps/desktop/electron/computer-control.test.mjs apps/desktop/electron/computer-helper-install.test.mjs apps/desktop/electron/computer-agent-permissions.test.mjs apps/desktop/electron/computer-remote.test.mjs apps/desktop/electron/computer-windows.test.mjs packages/computer-use/cloud.test.mjs packages/computer-use/program-standard-code-mode.test.mjs packages/computer-use/browser-task-privacy.test.mjs packages/computer-use/browser-task-viewport.test.mjs packages/computer-use/browser-task-attach.test.mjs packages/computer-use/browser-task-site-tools.test.mjs packages/browser-tabs/index.test.mjs packages/computer-use/chromium.test.mjs apps/desktop/electron/computer-program.test.mjs apps/desktop/electron/floating-view-window.test.mjs apps/desktop/electron/window-state.test.mjs apps/desktop/electron/keep-awake.test.mjs apps/desktop/electron/sentry.test.mjs
           node --test apps/desktop/electron/browser-upload-permissions.test.mjs apps/desktop/electron/browser-upload-permissions-races.test.mjs apps/desktop/electron/browser-upload-chooser.test.mjs
+          node --test packages/computer-use/browser-task-cancellation.test.mjs packages/computer-use/browser-task-takeover.test.mjs apps/desktop/electron/browser-panel.test.mjs apps/desktop/electron/browser-panel-navigation.test.mjs
           bun test apps/server/test/browser-upload-policy.test.ts apps/server/test/agent-permission-browser-uploads.test.ts apps/server/test/managed-desktop-policy-standard-code-mode.test.ts
           pnpm --filter @openwork/app exec bun test --isolate ./tests/browser-file-consent.test.tsx
           python3 ee/packages/headless-computer/scripts/desktop-bridge.test.py
@@ -167,11 +168,11 @@ jobs:
           bun test apps/server/test/opencode-plugin-deps.test.ts
           node --test apps/desktop/test/engine-diagnosis.test.mjs apps/server/scripts/build-opencode-plugin-deps.test.mjs apps/desktop/scripts/electron-after-sign.test.cjs apps/server/test/inference-node-export.test.mjs
           pnpm --dir evals exec vitest run --config vitest.config.ts --project pr packages/hosts/src/local-surface-log.test.ts
-      - name: Test that a desktop starts announced remote tasks right away
+      - name: Test that a desktop starts announced remote tasks right away and reports them done
         run: |
           pnpm --filter @openwork/remote-sessions build
           pnpm --filter @openwork/headless-threads build
-          node --test apps/desktop/test/remote-session-push.test.mjs
+          node --test apps/desktop/test/remote-session-push.test.mjs apps/desktop/test/session-runner.test.mjs
       - name: Test the OpenCode engine new installs start on
         run: |
           node --test apps/desktop/test/fresh-install-engine.test.mjs
@@ -229,7 +230,11 @@ jobs:
           pnpm --filter @openwork-ee/headless-computer build
           pnpm --filter @openwork-ee/headless-computer test
           pnpm --filter @openwork-ee/headless-runner test:computer-config
-          pnpm --filter @openwork-ee/workbot exec tsx --conditions=development --test scripts/computer.test.ts scripts/browser-teaching.test.ts
+          pnpm --filter @openwork-ee/workbot exec tsx --conditions=development --test scripts/computer.test.ts scripts/browser-teaching.test.ts scripts/uploads.test.ts scripts/working-status.test.ts scripts/profile.test.ts scripts/round-two.test.ts scripts/browser-card.test.ts scripts/connector-steps.test.ts scripts/steps.test.ts
+          pnpm --filter @openwork-ee/workbot test:remote-jobs
+          pnpm --filter @openwork-ee/workbot test:profile-apps
+          pnpm --filter @openwork-ee/workbot test:connector-ui
+          pnpm --filter @openwork-ee/workbot test:artifact-ui
       - name: Test headless conversations (follow-ups, read-only lookups, waiting messages, bounded reads, moving to Node)
         run: |
           pnpm --filter @openwork-ee/headless-runner test:conversation

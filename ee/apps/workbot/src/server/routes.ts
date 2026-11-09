@@ -6,8 +6,10 @@ import {
   WORKBOT_CHAT_ID,
   WorkbotFilesUnavailableError,
   WorkbotUnavailableError,
+  WorkbotRemoteJobError,
   type WorkbotActor,
   type WorkbotChat,
+  type WorkbotConnectors,
   type WorkbotEventsUnavailable,
 } from "@openwork-ee/workbot-server"
 import type { Context, Hono, MiddlewareHandler } from "hono"
@@ -104,6 +106,36 @@ function actorOf(member: Member): WorkbotActor {
   }
 }
 
+/** How long a person's connected app names are reused: connections change rarely, and a new one shows within this. */
+const CONNECTORS_TTL_MS = 5 * 60_000
+/** A failed read is retried this soon, so a passing Den hiccup doesn't leave apps unnamed for long. */
+const CONNECTORS_RETRY_MS = 30_000
+const CONNECTORS_KEPT = 2_000
+
+/**
+ * Each person's connected apps by connection id (name, website), read from Den once per CONNECTORS_TTL_MS and shared
+ * by every read of their chats in that time. Keyed by organization and member, never shared between people.
+ */
+export function createConnectorCache(read: (accessToken: string) => Promise<Array<{ id: string; name: string; site: string | null }>>, now = () => Date.now()) {
+  const kept = new Map<string, { at: number; ttl: number; value: Promise<WorkbotConnectors> }>()
+  return (key: string, accessToken: string): Promise<WorkbotConnectors> => {
+    const entry = kept.get(key)
+    if (entry && now() - entry.at < entry.ttl) return entry.value
+    const value = read(accessToken).then(
+      (list) => new Map(list.map((connector) => [connector.id, { name: connector.name, site: connector.site }])),
+      () => {
+        const failed = kept.get(key)
+        if (failed) failed.ttl = CONNECTORS_RETRY_MS
+        return new Map()
+      },
+    )
+    kept.delete(key)
+    kept.set(key, { at: now(), ttl: CONNECTORS_TTL_MS, value })
+    if (kept.size > CONNECTORS_KEPT) kept.delete(kept.keys().next().value ?? "")
+    return value
+  }
+}
+
 export function workbotConnectionUrl(denWeb: string, organizationId: string, connectionId: string) {
   return `${denWeb}/dashboard/your-connections?${new URLSearchParams({ connectionId, workbotOrganizationId: organizationId })}`
 }
@@ -111,6 +143,7 @@ export function workbotConnectionUrl(denWeb: string, organizationId: string, con
 export function registerWorkbotRoutes(app: Hono<AppEnv>, input: { config: Config; den: Den; member: MiddlewareHandler<AppEnv>; sameOrigin: MiddlewareHandler }) {
   const { config, den } = input
   const sent = new Map<string, number[]>()
+  const connectors = createConnectorCache((accessToken) => den.connectors(accessToken))
   const runnerFetch = observedRunnerFetch()
 
   /**
@@ -136,6 +169,10 @@ export function registerWorkbotRoutes(app: Hono<AppEnv>, input: { config: Config
   const workbotFor = (member: Member, desktopViews = desktopViewsOf(member.den)) =>
     createWorkbot({
       client: runnerClientFor(member),
+      remoteTasks: member.den.remoteTasks,
+      remoteStatus: input => den.remoteStatus(member.accessToken, input),
+      remoteRead: input => den.remoteRead(member.accessToken, input),
+      remoteStop: input => den.remoteStop(member.accessToken, input),
       desktopViews,
       canSchedule: async () => member.den.canSchedule,
       model: async () => member.den.model,
@@ -145,7 +182,11 @@ export function registerWorkbotRoutes(app: Hono<AppEnv>, input: { config: Config
       // Opening a document on request needs Documents too; Den still checks the member's Drive access on open.
       guidedNavigation: async () => member.den.guidedNavigation && member.den.documents === true,
       driveFiles: async () => member.den.driveFiles,
+      workingStatus: async () => member.den.workingStatus,
+      quickReply: async () => member.den.quickReply,
+      connectors: () => connectors(`${member.den.organization.id}:${member.den.memberId}`, member.accessToken),
       sandboxGateway: member.den.sandboxGateway,
+      browserRecovery: member.den.browserRecovery,
       // Saved steps are GA; older Dens may omit stepTurns, so preserve their continuous-turn protocol.
       stepTurns: member.den.stepTurns,
       // Per-chat cells are GA; older Dens may omit sessionCells, so preserve their legacy placement.
@@ -254,6 +295,15 @@ export function registerWorkbotRoutes(app: Hono<AppEnv>, input: { config: Config
       sideChats: who.enabled && who.sideChats,
       // Signing out and switching workspace don't depend on Workbot being on for this workspace.
       accountMenu: who.accountMenu,
+      workingStatus: who.enabled && who.workingStatus,
+      quickReply: who.enabled && who.quickReply,
+      browserChat: who.enabled && who.browser && who.browserChat,
+      instantOpen: who.enabled && who.instantOpen,
+      scrollToBottom: who.enabled && who.scrollToBottom,
+      profileSheet: who.enabled && who.profileSheet,
+      centeredProfile: who.enabled && who.centeredProfile,
+      browserPreview: who.enabled && who.browserPreview,
+      remoteTasks: who.enabled && who.remoteTasks,
       commandPalette: true,
       denUrl: config.denWebUrl ?? (await den.webUrl().catch(() => null)),
     })
@@ -488,20 +538,97 @@ export function registerWorkbotRoutes(app: Hono<AppEnv>, input: { config: Config
     return new Response(JSON.stringify(payload), { status, headers: { "content-type": "application/json", "cache-control": "no-store" } })
   })
 
-  /** The everyday apps to connect on the welcome screen and workspace recovery actions. */
+  /**
+   * The everyday apps to connect on the welcome screen and workspace recovery actions; with the profile, every app the
+   * person can use for its Apps list (`apps`, names and status only).
+   */
   app.get("/v1/workbot/connections", async (c) => {
     if (!enabled(c)) return c.json({ error: "workbot_not_enabled" }, 409)
     const member = c.get("member")
-    const connections = await den.connections(member.accessToken).catch(() => null)
-    if (!connections) return c.json({ error: "connections_unavailable", message: "Couldn't verify your connections. Try again." }, 502)
+    const listed = await den.connections(member.accessToken).catch(() => null)
+    if (!listed) return c.json({ error: "connections_unavailable", message: "Couldn't verify your connections. Try again." }, 502)
     const denWeb = config.denWebUrl ?? (await den.webUrl().catch(() => null))
+    // Den's own link, at the Den web origin this Workbot is configured with.
+    const linked = <T extends { id: string; connectUrl: string | null }>(connection: T): T => ({
+      ...connection,
+      connectUrl: !connection.connectUrl || !denWeb ? connection.connectUrl : workbotConnectionUrl(denWeb, member.den.organization.id, connection.id),
+    })
     return c.json({
-      connections: connections.map((connection) => ({
+      connections: listed.connections.map((connection) => ({
         ...connection,
-        // Den's own link, at the Den web origin this Workbot is configured with.
         connectUrl: connection.ready || !denWeb ? connection.connectUrl : workbotConnectionUrl(denWeb, member.den.organization.id, connection.id),
       })),
+      ...(listed.apps && member.den.profileSheet ? { apps: listed.apps.map((app) => ({
+        ...linked(app),
+        // Bundled Den assets live on Den, not on the standalone Workbot origin.
+        iconCandidates: app.iconCandidates?.map((src) => src.startsWith("/integrations/") || src === "/openwork-mark.svg" ? (denWeb ? new URL(src, denWeb).href : null) : src).filter((src): src is string => src !== null),
+      })) } : {}),
     })
+  })
+
+  /** Remote jobs proved by this chat's persisted receipts, never ids supplied by the browser. */
+  app.get("/v1/workbot/remote-jobs", async (c) => {
+    c.header("Cache-Control", "no-store")
+    const member = c.get("member")
+    if (!enabled(c)) return c.json({ error: "workbot_not_enabled" }, 409)
+    if (!member.den.remoteTasks) return c.json({ error: "feature_disabled" }, 404)
+    const scope = chatOf(c)
+    if (scope.refused) return scope.refused
+    try {
+      return c.json(await workbotFor(member).readRemoteJobs(actorOf(member), { chat: scope.chat }))
+    } catch (error) {
+      if (error instanceof WorkbotUnavailableError) return c.json({ error: error.code }, 503)
+      throw error
+    }
+  })
+
+  app.get("/v1/workbot/remote-jobs/:key", async (c) => {
+    c.header("Cache-Control", "no-store")
+    const member = c.get("member")
+    if (!enabled(c)) return c.json({ error: "workbot_not_enabled" }, 409)
+    if (!member.den.remoteTasks) return c.json({ error: "feature_disabled" }, 404)
+    const scope = chatOf(c)
+    if (scope.refused) return scope.refused
+    const key = c.req.param("key")
+    if (key.length > 260) return c.json({ error: "invalid_request" }, 400)
+    try {
+      return c.json(await workbotFor(member).readRemoteJob(actorOf(member), { key, chat: scope.chat }))
+    } catch (error) {
+      if (error instanceof WorkbotRemoteJobError) return c.json({ error: error.code }, error.status)
+      return c.json({ error: "remote_job_unavailable" }, 503)
+    }
+  })
+
+  app.post("/v1/workbot/remote-jobs/:key/stop", bodyLimit({ maxSize: 1024 }), async (c) => {
+    c.header("Cache-Control", "no-store")
+    const member = c.get("member")
+    if (!enabled(c)) return c.json({ error: "workbot_not_enabled" }, 409)
+    if (!member.den.remoteTasks) return c.json({ error: "feature_disabled" }, 404)
+    const scope = chatOf(c)
+    if (scope.refused) return scope.refused
+    const body = z.object({ messageId: z.string().trim().min(1).max(240) }).strict().safeParse(await c.req.json().catch(() => null))
+    const key = c.req.param("key")
+    if (!body.success || key.length > 260) return c.json({ error: "invalid_request" }, 400)
+    try {
+      return c.json(await workbotFor(member).stopRemoteJob(actorOf(member), { key, messageId: body.data.messageId, chat: scope.chat }))
+    } catch (error) {
+      if (error instanceof WorkbotRemoteJobError) return c.json({ error: error.code }, error.status)
+      // A dropped stop response is uncertain, never a successful stop or an invitation to replay it automatically.
+      return c.json({ error: "remote_stop_unconfirmed" }, 503)
+    }
+  })
+
+  /** What Workbot remembers about the person, read-only, for its profile (`workbotProfileSheet`). */
+  app.get("/v1/workbot/memory", async (c) => {
+    const member = c.get("member")
+    if (!enabled(c)) return c.json({ error: "workbot_not_enabled" }, 409)
+    if (!member.den.profileSheet) return c.json({ error: "feature_disabled" }, 404)
+    try {
+      return c.json({ files: await workbotFor(member).readMemory(actorOf(member)) })
+    } catch (error) {
+      if (error instanceof WorkbotUnavailableError) return c.json({ error: error.code }, 503)
+      throw error
+    }
   })
 
   app.get("/v1/workbot", async (c) => {
@@ -512,7 +639,11 @@ export function registerWorkbotRoutes(app: Hono<AppEnv>, input: { config: Config
     if (scope.refused) return scope.refused
     const member = c.get("member")
     try {
-      return c.json({ available: true as const, ...(await workbotFor(member).readThread(actorOf(member), { turns: query.data.turns, chat: scope.chat })) })
+      const started = performance.now()
+      const thread = await workbotFor(member).readThread(actorOf(member), { turns: query.data.turns, chat: scope.chat })
+      // How long reading the conversation took here, apart from the network, as browsers' developer tools show it.
+      c.header("Server-Timing", `thread;dur=${Math.round(performance.now() - started)}`)
+      return c.json({ available: true as const, ...thread })
     } catch (error) {
       if (error instanceof WorkbotUnavailableError) return c.json({ available: false as const, reason: error.code })
       throw error

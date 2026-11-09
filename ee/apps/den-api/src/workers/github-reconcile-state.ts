@@ -1,27 +1,30 @@
 import { GithubConnectorRequestError } from "../routes/org/plugin-system/github-app.js"
 
 /**
- * Reconcile probe state for one GitHub connector target. It lives in the
- * target's config beside githubDiscoveryCache, so every den-api replica reads
- * the same state and a deploy or scale-up does not forget it.
+ * Reconcile probe state for one GitHub connector target, stored as one row of
+ * connector_target_reconcile so a run reads due targets from an index in pages.
  *
  * - ok: probed on the normal cadence.
  * - retrying: the last probes failed; the next one waits twice as long each time.
  * - paused: the failure needs a person (the repository or branch is gone, the
  *   metadata is incomplete, the connector's creator left). Not probed again
- *   until the connector, its instance or its account changes.
+ *   until the connector, its instance or its account changes after
+ *   pausedRevisionAt.
  */
 export type GithubReconcileState = {
   status: "ok" | "retrying" | "paused"
-  lastProbedAt: string
-  nextProbeAt: string
+  lastProbedAt: Date | null
+  /** Null while paused. */
+  nextProbeAt: Date | null
   failureCount: number
   error: string | null
-  pausedRevision: string | null
+  pausedRevisionAt: Date | null
 }
 
-export const GITHUB_RECONCILE_STATE_KEY = "githubReconcile"
+/** Where earlier releases kept the state, inside connector_target.target_config_json. */
+export const LEGACY_GITHUB_RECONCILE_STATE_KEY = "githubReconcile"
 export const GITHUB_RECONCILE_MAX_BACKOFF_MS = 7 * 24 * 60 * 60_000
+export const GITHUB_RECONCILE_ERROR_MAX_LENGTH = 1024
 
 export class GithubReconcilePermanentError extends Error {
   constructor(message: string) {
@@ -34,25 +37,53 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value)
 }
 
-export function readGithubReconcileState(targetConfig: unknown): GithubReconcileState | null {
-  const state = isRecord(targetConfig) ? targetConfig[GITHUB_RECONCILE_STATE_KEY] : null
+function parseDate(value: unknown): Date | null {
+  if (typeof value !== "string") return null
+  const ms = Date.parse(value)
+  return Number.isFinite(ms) ? new Date(ms) : null
+}
+
+/**
+ * The latest edit to the connector: its target, instance or account. A paused
+ * target resumes once any of them changes after the revision it paused at.
+ */
+export function githubReconcileRevisionAt(input: { accountUpdatedAt: Date; instanceUpdatedAt: Date; targetUpdatedAt: Date }) {
+  return new Date(Math.max(input.targetUpdatedAt.getTime(), input.instanceUpdatedAt.getTime(), input.accountUpdatedAt.getTime()))
+}
+
+/**
+ * Reads the state earlier releases stored in the target's JSON config, so the
+ * first run after the move keeps every target's backoff and pause. Their
+ * pausedRevision was "<target ms>:<instance ms>:<account ms>".
+ */
+export function readLegacyGithubReconcileState(value: unknown): GithubReconcileState | null {
+  const state = typeof value === "string" ? safeJsonParse(value) : value
   if (!isRecord(state)) return null
-  const { status, lastProbedAt, nextProbeAt, failureCount, error, pausedRevision } = state
+  const { status, failureCount, error, pausedRevision } = state
   if (status !== "ok" && status !== "retrying" && status !== "paused") return null
-  if (typeof lastProbedAt !== "string" || typeof nextProbeAt !== "string") return null
+  const lastProbedAt = parseDate(state.lastProbedAt)
+  const nextProbeAt = parseDate(state.nextProbeAt)
+  if (!lastProbedAt || !nextProbeAt) return null
+  const revisionParts = typeof pausedRevision === "string"
+    ? pausedRevision.split(":").map(Number).filter((part) => Number.isFinite(part))
+    : []
+  const pausedRevisionAt = status === "paused" && revisionParts.length > 0 ? new Date(Math.max(...revisionParts)) : null
   return {
     status,
     lastProbedAt,
-    nextProbeAt,
+    nextProbeAt: status === "paused" ? null : nextProbeAt,
     failureCount: typeof failureCount === "number" && Number.isSafeInteger(failureCount) && failureCount > 0 ? failureCount : 0,
-    error: typeof error === "string" ? error : null,
-    pausedRevision: typeof pausedRevision === "string" ? pausedRevision : null,
+    error: typeof error === "string" ? error.slice(0, GITHUB_RECONCILE_ERROR_MAX_LENGTH) : null,
+    pausedRevisionAt,
   }
 }
 
-/** Changes whenever someone edits or reconnects the connector. */
-export function githubReconcileRevision(input: { accountUpdatedAt: Date; instanceUpdatedAt: Date; targetUpdatedAt: Date }) {
-  return [input.targetUpdatedAt, input.instanceUpdatedAt, input.accountUpdatedAt].map((date) => date.getTime()).join(":")
+function safeJsonParse(value: string): unknown {
+  try {
+    return JSON.parse(value)
+  } catch {
+    return null
+  }
 }
 
 /** 400 is an invalid stored name, 404 a repository or installation that is gone, 422 a branch with no commit. */
@@ -61,78 +92,38 @@ export function isPermanentGithubReconcileError(error: unknown) {
   return error instanceof GithubConnectorRequestError && (error.status === 400 || error.status === 404 || error.status === 422)
 }
 
-/** When the target is next due, or null while it is paused for this revision. */
-export function githubReconcileDueAtMs(state: GithubReconcileState | null, revision: string): number | null {
-  if (!state) return 0
-  if (state.status === "paused") return state.pausedRevision === revision ? null : 0
-  const nextProbeAtMs = Date.parse(state.nextProbeAt)
-  return Number.isFinite(nextProbeAtMs) ? nextProbeAtMs : 0
-}
-
-/** Due targets, never-probed and longest-overdue first. */
-export function selectGithubReconcileCandidates(input: {
-  batchSize: number
-  now: Date
-  targets: Array<{ targetId: string; createdAtMs: number; dueAtMs: number | null }>
-}): string[] {
-  const nowMs = input.now.getTime()
-  return input.targets
-    .filter((target): target is typeof target & { dueAtMs: number } => target.dueAtMs !== null && target.dueAtMs <= nowMs)
-    .sort((left, right) => left.dueAtMs - right.dueAtMs
-      || left.createdAtMs - right.createdAtMs
-      || left.targetId.localeCompare(right.targetId))
-    .slice(0, Math.max(0, Math.floor(input.batchSize)))
-    .map((target) => target.targetId)
-}
-
-/** Written before probing, so a replica that reads the target afterwards skips it. */
-export function claimGithubReconcileState(input: {
-  previous: GithubReconcileState | null
-  now: Date
-  minAgeMs: number
-}): GithubReconcileState {
-  return {
-    error: null,
-    failureCount: 0,
-    pausedRevision: null,
-    status: "ok",
-    ...input.previous,
-    lastProbedAt: input.now.toISOString(),
-    nextProbeAt: new Date(input.now.getTime() + input.minAgeMs).toISOString(),
-  }
-}
-
 export function nextGithubReconcileState(input: {
-  previous: GithubReconcileState | null
+  previous: Pick<GithubReconcileState, "failureCount"> | null
   now: Date
   minAgeMs: number
-  revision: string
+  revisionAt: Date
   failure?: { error: unknown }
 }): GithubReconcileState {
-  const lastProbedAt = input.now.toISOString()
+  const lastProbedAt = input.now
   if (!input.failure) {
     return {
       error: null,
       failureCount: 0,
       lastProbedAt,
-      nextProbeAt: new Date(input.now.getTime() + input.minAgeMs).toISOString(),
-      pausedRevision: null,
+      nextProbeAt: new Date(input.now.getTime() + input.minAgeMs),
+      pausedRevisionAt: null,
       status: "ok",
     }
   }
 
   const failureCount = (input.previous?.failureCount ?? 0) + 1
-  const error = input.failure.error instanceof Error ? input.failure.error.message : String(input.failure.error)
+  const message = input.failure.error instanceof Error ? input.failure.error.message : String(input.failure.error)
+  const error = message.slice(0, GITHUB_RECONCILE_ERROR_MAX_LENGTH)
   if (isPermanentGithubReconcileError(input.failure.error)) {
-    return { error, failureCount, lastProbedAt, nextProbeAt: lastProbedAt, pausedRevision: input.revision, status: "paused" }
+    return { error, failureCount, lastProbedAt, nextProbeAt: null, pausedRevisionAt: input.revisionAt, status: "paused" }
   }
   const backoffMs = Math.min(GITHUB_RECONCILE_MAX_BACKOFF_MS, input.minAgeMs * 2 ** (failureCount - 1))
   return {
     error,
     failureCount,
     lastProbedAt,
-    nextProbeAt: new Date(input.now.getTime() + backoffMs).toISOString(),
-    pausedRevision: null,
+    nextProbeAt: new Date(input.now.getTime() + backoffMs),
+    pausedRevisionAt: null,
     status: "retrying",
   }
 }

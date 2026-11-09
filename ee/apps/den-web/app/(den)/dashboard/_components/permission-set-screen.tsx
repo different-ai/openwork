@@ -5,7 +5,7 @@ import { useRouter } from "next/navigation";
 import { useRef, useState } from "react";
 import { AlertDialog } from "@base-ui/react/alert-dialog";
 import { ChevronRight, History, LockKeyhole, ShieldCheck, Users } from "lucide-react";
-import { PERMISSION_KEYS, getPermissionDefinition, isPermissionKey, type PermissionKey } from "@openwork/types/den/permissions";
+import { PERMISSION_KEYS, getPermissionDefinition, isPermissionDefaultOn, isPermissionKey, type PermissionDefaultSetKey, type PermissionKey } from "@openwork/types/den/permissions";
 import { DenButton, buttonVariants } from "../../_components/ui/button";
 import { DenNotice } from "../../_components/ui/notice";
 import { DenStickyActionBar } from "../../_components/ui/sticky-action-bar";
@@ -124,6 +124,11 @@ function PermissionSetContent({ ready, permissionSetId }: { ready: ReadyAccess; 
   );
 }
 
+/** The disclosure arrow of an "Applies to" summary. */
+function AppliesToChevron() {
+  return <ChevronRight className="size-3.5 text-gray-400 transition-transform duration-150 group-open:rotate-90 motion-reduce:transition-none" aria-hidden="true" />;
+}
+
 function AppliesTo({ ready, set }: { ready: ReadyAccess; set: PermissionSetDetail; }) {
   // Admin comes from a person's own role or from a team with the Admin role.
   const adminTeamsLabel = (count: number) => plural(count, "team with the Admin role", "teams with the Admin role");
@@ -142,7 +147,7 @@ function AppliesTo({ ready, set }: { ready: ReadyAccess; set: PermissionSetDetai
     return (
       <details className="group text-[13px] text-gray-600" data-testid="permission-set-applies-to">
         <summary className="inline-flex cursor-pointer list-none items-center gap-1.5 rounded focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-gray-400">
-          <ChevronRight className="size-3.5 text-gray-400 transition-transform duration-150 group-open:rotate-90 motion-reduce:transition-none" aria-hidden="true" />
+          <AppliesToChevron />
           Applies to {plural(appliesTo.directAdminCount, "admin")} and {adminTeamsLabel(appliesTo.adminTeams.length)}
         </summary>
         <ul className="mt-2 flex flex-col gap-1 pl-5">
@@ -156,6 +161,23 @@ function AppliesTo({ ready, set }: { ready: ReadyAccess; set: PermissionSetDetai
       </details>
     );
   }
+  if (appliesTo.kind === "super_admins") {
+    const people = appliesTo.superAdmins;
+    if (!people || people.length === 0) {
+      return <p className="text-[13px] text-gray-600" data-testid="permission-set-applies-to">Applies to {plural(appliesTo.superAdminCount, "super admin")}.</p>;
+    }
+    return (
+      <details className="group text-[13px] text-gray-600" data-testid="permission-set-applies-to">
+        <summary className="inline-flex cursor-pointer list-none items-center gap-1.5 rounded focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-gray-400">
+          <AppliesToChevron />
+          Applies to {plural(appliesTo.superAdminCount, "super admin")}
+        </summary>
+        <ul className="mt-2 flex flex-col gap-1 pl-5">
+          {people.map((person) => <li key={person.memberId}>{person.name} <span className="text-gray-500">{person.email}</span></li>)}
+        </ul>
+      </details>
+    );
+  }
   const team = appliesTo.team;
   const teamName = team?.name ?? "A deleted team";
   const members = appliesTo.members;
@@ -165,7 +187,7 @@ function AppliesTo({ ready, set }: { ready: ReadyAccess; set: PermissionSetDetai
   return (
     <details className="group text-[13px] text-gray-600" data-testid="permission-set-applies-to">
       <summary className="inline-flex cursor-pointer list-none items-center gap-1.5 rounded focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-gray-400">
-        <ChevronRight className="size-3.5 text-gray-400 transition-transform duration-150 group-open:rotate-90 motion-reduce:transition-none" aria-hidden="true" />
+        <AppliesToChevron />
         Applies to the {teamName} team, {plural(appliesTo.memberCount, "member")}
       </summary>
       <ul className="mt-2 flex flex-col gap-1 pl-5">
@@ -177,13 +199,26 @@ function AppliesTo({ ready, set }: { ready: ReadyAccess; set: PermissionSetDetai
   );
 }
 
+function setDefaultKey(set: Pick<PermissionSetDetail, "kind">): PermissionDefaultSetKey | null {
+  switch (set.kind) {
+    case "member_default":
+      return "member";
+    case "admin_default":
+      return "admin";
+    case "super_admin_default":
+      return "super-admin";
+    default:
+      return null;
+  }
+}
+
 /** Why a key can't be changed in this set by this person, or null. */
 function keyLockReason(ready: ReadyAccess, set: PermissionSetDetail, key: PermissionKey, saved: PermissionStatus, locked: boolean): string | null {
   if (locked) return "Always on for admins";
   if (saved === "allow" || ready.held.has(key)) return null;
-  const defaultKey = set.kind === "member_default" ? "member" : set.kind === "admin_default" ? "admin" : null;
+  const defaultKey = setDefaultKey(set);
   // Re-allowing a key that is on by default in this default set is always allowed.
-  if (defaultKey && getPermissionDefinition(key).defaultOn.includes(defaultKey)) return null;
+  if (defaultKey && isPermissionDefaultOn(getPermissionDefinition(key), defaultKey)) return null;
   return "You don't have this permission";
 }
 
@@ -191,6 +226,7 @@ function setReadOnlyReason(ready: ReadyAccess, set: PermissionSetDetail): string
   if (set.archivedAt) return "These permissions were removed and can't be changed.";
   if (!ready.access.canManagePermissions) return `Read only. ${permissionLockReason("permissions.manage")}`;
   if (set.kind === "admin_default" && !ready.access.isAdmin) return "Read only. Only the owner and admins can change Admin permissions.";
+  if (set.kind === "super_admin_default" && !ready.access.isOwner && !ready.access.isSuperAdmin) return "Read only. Only the owner and super admins can change Super admin permissions.";
   return null;
 }
 

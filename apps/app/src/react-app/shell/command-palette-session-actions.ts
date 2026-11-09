@@ -2,14 +2,13 @@ import { dispatchMenuAction, type MenuAction } from "@/components/ui/action-menu
 import type { PaletteItem } from "./command-palette-search";
 
 const SESSION_ACTION_IDS: Record<string, string> = {
-  pin: "session.pin.toggle", settle: "session.settle.toggle", rename: "session.rename",
+  pin: "session.pin.toggle", rename: "session.rename",
   archive: "session.archive", delete: "session.delete",
 };
 const SESSION_ACTION_KEYWORDS: Record<string, string[]> = {
   pin: ["pin", "unpin", "favorite", "star", "keep on top", "sidebar"],
-  settle: ["settle", "un-settle", "unsettle", "done", "finished", "clear", "tidy", "sidebar"],
   rename: ["rename", "title", "name", "edit title"],
-  archive: ["archive", "restore", "unarchive"],
+  archive: ["archive", "restore", "unarchive", "done", "finished", "clear", "tidy", "sidebar"],
   delete: ["delete", "remove"],
 };
 

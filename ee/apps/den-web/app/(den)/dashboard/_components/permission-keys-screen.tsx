@@ -52,9 +52,9 @@ export function PermissionKeysScreen() {
   );
 }
 
-const SET_KIND_ORDER = { member_default: 0, admin_default: 1, team: 2 } as const;
+const SET_KIND_ORDER = { member_default: 0, admin_default: 1, super_admin_default: 2, team: 3 } as const;
 
-/** One permission's status in Member, Admin and every team's permissions. */
+/** One permission's status in Member, Admin, Super admin and every team's permissions. */
 export function PermissionKeyScreen({ permissionKey }: { permissionKey: string }) {
   const permissions = usePermissionsAccess();
 

@@ -117,6 +117,7 @@ jobs:
           .github/scripts/build-boundaries-codeql.test.mjs
           scripts/ci/codeql-config.test.mjs
           scripts/ci/check-codeql-results.test.mjs
+          scripts/den-db-migrate-target.test.mjs
       - name: Check outbound access manifest
         run: node scripts/check-outbound-access.mjs
       - name: Setup pnpm

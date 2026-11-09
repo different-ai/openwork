@@ -8,8 +8,8 @@ import { startMockIdpLab, type StartedMockIdpLab } from "../../../../../evals/pa
 import { bootDen, field, summary, text, type Session } from "./harness.js"
 
 // ssoPerOrganization: one browser keeps the SSO sign-ins it earned for several
-// organizations, each organization can ask for SSO again after a time, and the
-// rollout keeps today's SSO enforcement for organizations that have SSO.
+// organizations, and the rollout keeps today's SSO enforcement for
+// organizations that have SSO.
 
 const domain = `proofs-${Date.now()}.example`
 const idpA = await startMockIdpLab({ domain, defaultSubject: { email: `owner@${domain}` } })
@@ -104,38 +104,15 @@ test("a password session carries nothing, and another person's session is never 
   assert.equal(await opens(crossed, orgA), 403, "proofs only move between sessions of the same person")
 })
 
-test("\"Ask for SSO again\" sends the person through SSO once the time has passed, and a carried proof keeps its age", async () => {
-  const admin = await oidcSignIn(providerA)
-  assert.equal((await den.as(admin, orgA)("PATCH", "/v1/org", { ssoSessionMaxAgeHours: 8 })).status, 200)
-  const org = await den.as(admin, orgA)("GET", "/v1/org")
-  assert.match(String(field(org.body, "organization", "metadata")), /"ssoSessionMaxAgeHours":8/)
+test("\"Ask for SSO again\" is gone: an SSO sign-in opens the organization for as long as the session lasts", async () => {
+  // An organization that saved a limit before it was removed: the stored value no longer applies.
+  await client.execute("UPDATE organization SET metadata = JSON_SET(COALESCE(metadata, '{}'), '$.ssoSessionMaxAgeHours', 8) WHERE id = ?", [orgA])
+  const signedIn = await oidcSignIn(providerA)
+  await client.execute("UPDATE session_sso_proof SET authenticated_at = DATE_SUB(NOW(3), INTERVAL 9 HOUR) WHERE session_id = ? AND organization_id = ?", [await sessionId(signedIn), orgA])
+  assert.equal(await opens(signedIn, orgA), 200)
 
-  const both = await oidcSignIn(providerB, await oidcSignIn(providerA))
-  assert.equal(await opens(both, orgA), 200)
-  const id = await sessionId(both)
-  await client.execute("UPDATE session_sso_proof SET authenticated_at = DATE_SUB(NOW(3), INTERVAL 9 HOUR) WHERE session_id = ? AND organization_id = ?", [id, orgA])
-  const expired = await den.as(both, orgA)("GET", "/v1/org")
-  assert.equal(expired.status, 403, summary(expired))
-  assert.equal(field(expired.body, "error"), "sso_required")
-  assert.equal(await opens(both, orgB), 200, "Organization B asks for SSO only when the session ends")
-
-  // Signing in through B again carries the old proof for A with its real age: still expired.
-  const again = await oidcSignIn(providerB, both)
-  assert.equal(await opens(again, orgA), 403)
-  const refreshed = await oidcSignIn(providerA, again)
-  assert.equal(await opens(refreshed, orgA), 200)
-  assert.equal(await opens(refreshed, orgB), 200)
-
-  assert.equal((await den.as(admin, orgA)("PATCH", "/v1/org", { ssoSessionMaxAgeHours: null })).status, 200)
-})
-
-test("\"Ask for SSO again\" can only be set while ssoPerOrganization is on", async () => {
-  const { orgId } = await den.createOrg(owner, "Flag off organization")
-  const refused = await den.as(owner, orgId)("PATCH", "/v1/org", { ssoSessionMaxAgeHours: 24 })
-  assert.equal(refused.status, 404, summary(refused))
-  assert.equal(field(refused.body, "error"), "feature_disabled")
-  const invalid = await den.as(await oidcSignIn(providerA), orgA)("PATCH", "/v1/org", { ssoSessionMaxAgeHours: 5 })
-  assert.equal(invalid.status, 400, summary(invalid))
+  const refused = await den.as(signedIn, orgA)("PATCH", "/v1/org", { ssoSessionMaxAgeHours: 24 })
+  assert.equal(refused.status, 400, summary(refused))
 })
 
 test("the rollout migration keeps SSO required for organizations that have it today", async () => {

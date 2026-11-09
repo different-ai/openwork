@@ -56,6 +56,7 @@ function RolesTabContent({ orgId, orgSlug, canViewSets, action, showIntro }: {
   const sets = setsQuery.data ?? [];
   const memberSet = sets.find((set) => set.kind === "member_default");
   const adminSet = sets.find((set) => set.kind === "admin_default");
+  const superAdminSet = sets.find((set) => set.kind === "super_admin_default");
   const teamSets = sets.filter((set) => set.kind === "team" && matches(set.name));
   // Known, unfiltered count of custom roles for the intro; null while loading, filtering or not allowed.
   const customRoleCount = canViewSets && setsQuery.data && !filter.trim() ? sets.filter((set) => set.kind === "team").length : null;
@@ -102,6 +103,7 @@ function RolesTabContent({ orgId, orgSlug, canViewSets, action, showIntro }: {
             title={SUPER_ADMIN_ROLE_LABEL}
             description={SUPER_ADMIN_ROLE_SUMMARY}
             status={superAdmins > 0 ? peopleLabel(superAdmins) : "Nobody yet"}
+            href={superAdminSet ? getPermissionSetRoute(orgSlug, superAdminSet.id) : undefined}
             testId="role-row-super-admin"
           />
           ) : null}

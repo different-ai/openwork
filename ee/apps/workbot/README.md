@@ -19,6 +19,40 @@ browser ── chat.openworklabs.com (this app: page + API) ──┬── Den 
 - **Each turn** gets a fresh member-scoped token from `POST /v1/workbot/run-token` (at most an hour). Den refuses it
   when membership or the required access grant is no longer valid.
 
+## Navigation
+
+Workbot uses the same chat-first navigation on every screen, without a layout rollout flag.
+At 1024px and wider, a 64px icon rail sits beside a 260px searchable chat list: Main chat stays first,
+then side chats ordered by latest activity. On smaller screens, the navigation button opens a drawer
+with the destinations, side chats, and a bottom search/new-chat row. Files, Documents, Calendar and Apps
+open their existing destinations; capability availability and document-draft guards still apply. Tasks are
+not a destination: what Workbot is doing shows under its name, and tapping the name opens the task sheet.
+Apps opens a plain sheet titled Apps. On phones (under 1024px) there is no profile: no avatar badge, no
+"Set up by" card and no profile tabs, only Workbot's name with its status where it says who is replying.
+No empty channel or space sections are invented. Computer is not a navigation destination; browser
+work is opened from its inline preview card, and files Workbot made open from their cards in the same
+panel (a full-screen sheet on phones; see `docs/features/workbot-artifact-panel`). While the desktop panel
+is open, navigation folds into the same drawer so the conversation keeps its width; closing the panel
+restores the direct sidebar.
+
+The conversation and composer share a centered column capped at 800px. Changing screen size or
+switching chats preserves the existing per-chat draft and scroll owners.
+
+`pnpm --filter @openwork-ee/workbot test:navigation-browser` checks the real React screen against the
+local in-memory fixture, including 1440px/1920px desktop, 390px phone, switching, filtering, empty/error
+recovery, keyboard focus and unsent drafts. Start `test-fixtures/chat-screen-server.ts 3098` first;
+`PLAYWRIGHT_MODULE` can point to a separate Playwright installation. These are deterministic UI
+checks, not evidence of live Den, runner or model integration.
+
+## On a phone
+
+The page runs edge to edge in iPhone Safari and as a Home Screen app (`manifest.webmanifest`, `display: standalone`,
+black-translucent status bar). The header and message box float over the conversation on a progressive blur
+(`floating-glass.tsx`); Workbot's replies flow on the page without a box, the person's messages stay grey bubbles.
+The page shell is deliberately not `position: fixed`: Safari 26 paints the colour at a fixed element's edge as a solid
+bar behind its status bar and floating toolbar, which hid everything under them. `/` and the manifest are served with
+`Cache-Control: no-cache`, so a phone picks up a deploy on its next load.
+
 ## Sessions
 
 Workbot keeps nothing on disk, so it runs as any number of instances. The person's Den tokens live in an HttpOnly,
@@ -128,12 +162,16 @@ permission requirements and concurrency boundaries.
 ## Workspace assistant
 
 `workbotWorkspaceAssistant` is off by default on cloud and self-hosted installs.
-With Workbot on, it adds the compact navigation drawer and floating composer to
-Documents and Calendar. Documents also requires `workbotDocuments`; Calendar
-retains its existing feature checks. The drawer reads recent files through the
-same authenticated Drive provider as Documents.
+With Workbot on, it adds the compact navigation drawer and an Ask Workbot action
+on an open document. The chat (conversation, composer, context chips) appears
+only in the chat view: Documents, Calendar and other views show their own title
+and full width, never a floating chat. Ask Workbot switches to the chat with the
+open document attached to the next message; the person can remove it before
+sending. Documents also requires `workbotDocuments`; Calendar retains its
+existing feature checks. The drawer reads recent files through the same
+authenticated Drive provider as Documents.
 
-At Send, the user can include or exclude the current view. The bounded snapshot
+The attached view is sent with one message only. The bounded snapshot
 contains the open Drive file's ID and unsaved status, or the calendar
 range, time zone and selected event/automation ID. Display titles, MIME labels and search text never enter the model prompt. It contains no document bytes or
 unsaved text. Contextual turns, retries and interrupted-turn resumes use read-only MCP credentials and disable write-capable runner tools. Changes require a separate explicit request from Home without view context. Workbot reads saved content using the member's existing connected

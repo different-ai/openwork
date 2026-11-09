@@ -21,6 +21,8 @@ import { openworkYourConnectionsUrl } from "../mcp/connection-navigation.js"
 import { createInternalMcpPrincipalHeader } from "../session.js"
 import { getOrganizationContextForUser, listTeamsForMember } from "../orgs.js"
 import { listMemberUsableConnectionFacts } from "../routes/org/mcp-connections.js"
+import { memberPermissionsForOrganizationContext } from "../middleware/member-permissions.js"
+import { workbotAppSchema, workbotApps } from "./apps.js"
 import { readWorkbotModel, WORKBOT_DEFAULT_MODEL_ID, workbotModelRecoverySchema, workbotAccessFailureSchema } from "@openwork/types/den/workbot-settings"
 import { getMemberInferenceAccess, organizationAllowsManagedModels } from "../inference.js"
 import { organizationHasOngoingInferenceSubscription } from "../stripe-billing.js"
@@ -61,6 +63,8 @@ const sessionSchema = z.object({
   /** Workbot may use the browser on its cloud computer; off on older Dens, which gave the browser with `computer`. */
   browser: z.boolean().optional(),
   browserDemonstrations: z.boolean().optional(),
+  /** Read-only browser recovery and blocker guidance; default off. */
+  browserRecovery: z.boolean().optional(),
   /** Compatibility for older clients: equals browser access. Remove when those clients are unsupported. */
   browserLiveView: z.boolean().optional(),
   /** Workbot's computers run through the runner's sandbox gateway instead of its own provider; off on older Dens. */
@@ -83,6 +87,24 @@ const sessionSchema = z.object({
   sideChats: z.boolean(),
   /** The header avatar opens the account menu with Sign out (`workbotAccountMenu`); older Dens omit it: off. */
   accountMenu: z.boolean().optional(),
+  /** Work in progress shows in the header and task sheet, not the chat (`workbotWorkingStatus`); older Dens omit it: off. */
+  workingStatus: z.boolean().optional(),
+  /** Brief acknowledgment before tools (`workbotQuickReply`); older Dens omit it: off. */
+  quickReply: z.boolean().optional(),
+  /** The conversation stays docked beside the Browser and Computer views (`workbotBrowserChat`); older Dens omit it: off. */
+  browserChat: z.boolean().optional(),
+  /** Chats open on the newest page kept on the device (`workbotInstantOpen`); older Dens omit it: off. */
+  instantOpen: z.boolean().optional(),
+  /** Reading earlier messages keeps its place, with a return-to-latest button (`workbotScrollToBottom`); older Dens omit it: off. */
+  scrollToBottom: z.boolean().optional(),
+  /** Tapping Workbot's name opens its profile: tasks, permissions, memory (`workbotProfileSheet`); older Dens omit it: off. */
+  profileSheet: z.boolean().optional(),
+  /** Centre avatar and expanded profile, separately reversible from the original sheet. */
+  centeredProfile: z.boolean().optional(),
+  /** Inline live thumbnail; never automatically opens the full browser. */
+  browserPreview: z.boolean().optional(),
+  /** Read-only remote task status (`workbotRemoteTasks`); older Dens omit it: off. */
+  remoteTasks: z.boolean().optional(),
   /** Always true for older Workbot clients; the command palette is available by default. */
   commandPalette: z.boolean().optional(),
   /**
@@ -177,7 +199,27 @@ const workbotConnectionsSchema = z.object({
     nativeProviderKey: z.string().nullable().optional(),
     connectMode: z.enum(["inline", "external", "admin"]).optional(),
   })),
+  /**
+   * Every connector this member can use, connected or not, for the Apps list on Workbot's profile: Connected first,
+   * then Needs sign-in, Not connected and Needs attention. Names, status, sign-in type and who manages it only.
+   */
+  apps: z.array(workbotAppSchema).optional(),
+  /**
+   * Every connection this member may use, everyday app or not: its id, the name admins gave it and its website (host
+   * name only, never the URL), so Workbot can say "Searching Exa" with Exa's logo instead of a capability id.
+   */
+  connectors: z.array(z.object({ id: z.string(), name: z.string(), site: z.string().nullable() })),
 })
+
+/** A connection's website for its logo: the MCP server's host without "mcp." or "api.", never its path or query. */
+export function connectorSite(url: string): string | null {
+  try {
+    const host = new URL(url).hostname.toLowerCase().replace(/^(mcp|api|www|server)\./, "")
+    return /^[a-z0-9.-]{3,80}$/.test(host) && host.includes(".") ? host : null
+  } catch {
+    return null
+  }
+}
 
 /** Which everyday app a connection is, for Workbot's welcome: Gmail (or Google Workspace), Slack, or Microsoft 365. */
 function everydayApp(fact: { name: string; url: string; nativeProviderKey: string | null }): "gmail" | "googleCalendar" | "slack" | "microsoft" | null {
@@ -392,6 +434,7 @@ export function registerWorkbotRoutes<T extends { Variables: object }>(app: Hono
         // Workbot's browser and its other desktop apps share one cloud computer but are rolled out separately.
         computer: features.computerUse && features.remoteComputers,
         browser: features.browserUse && features.remoteComputers,
+        browserRecovery: features.workbotBrowserRecovery,
         browserDemonstrations: features.browserDemonstrations && features.browserUse && features.remoteComputers,
         // Compatibility for older Workbot clients: the page stream now follows browser access.
         browserLiveView: features.browserUse && features.remoteComputers,
@@ -409,6 +452,16 @@ export function registerWorkbotRoutes<T extends { Variables: object }>(app: Hono
         activationChecklist: true,
         sideChats: true,
         accountMenu: features.workbotAccountMenu,
+        workingStatus: features.workbotWorkingStatus,
+        quickReply: features.workbotQuickReply,
+        browserChat: features.workbotBrowserChat && features.browserUse && features.remoteComputers,
+        instantOpen: features.workbotInstantOpen,
+        scrollToBottom: features.workbotScrollToBottom,
+        // The profile opens from the name's status line, so it needs the working status.
+        profileSheet: features.workbotProfileSheet && features.workbotWorkingStatus,
+        centeredProfile: features.workbotCenteredProfile && features.workbotProfileSheet && features.workbotWorkingStatus,
+        browserPreview: features.workbotBrowserPreview && features.remoteComputers && (features.browserUse || features.computerUse),
+        remoteTasks: features.workbotRemoteTasks,
         commandPalette: true,
         model,
         gatewayModels: true,
@@ -477,7 +530,7 @@ export function registerWorkbotRoutes<T extends { Variables: object }>(app: Hono
       "x-mcp": false,
       summary: "The everyday apps the person can connect for Workbot",
       description:
-        "For the Workbot app only. The Gmail or Google Workspace, Slack and Microsoft 365 connections the organization's admins set up and this member may use, with whether each is ready for them, and where in Den they connect their own account.",
+        "For the Workbot app only. `connections`: the Gmail or Google Workspace, Slack and Microsoft 365 connections the organization's admins set up and this member may use, with whether each is ready for them, and where in Den they connect their own account. `apps`: every connector this member can use (shared with them org-wide, by team or directly, brought by a plugin they can use, native providers and their own sign-ins), connected or not, with a status from Den's stored credential health and readiness checks; never URLs, headers, keys or tokens. `connectors`: every connection the member may use (id, name and website host only), so Workbot can name its work in each.",
       responses: {
         200: jsonResponse("The connections.", workbotConnectionsSchema),
         401: jsonResponse("The token is missing, expired or revoked, or the membership ended.", unauthorizedSchema),
@@ -489,9 +542,13 @@ export function registerWorkbotRoutes<T extends { Variables: object }>(app: Hono
       const resolved = await resolve(c.req.raw.headers)
       if (resolved instanceof Response) return resolved
       const organizationContext = await getOrganizationContextForUser({ userId: normalizeDenTypeId("user", resolved.principal.userId), organizationId: resolved.organization.id })
-      if (!organizationContext) return c.json({ connections: [] })
+      if (!organizationContext) return c.json({ connections: [], connectors: [] })
       const memberTeams = await listTeamsForMember({ organizationId: resolved.organization.id, memberId: normalizeDenTypeId("member", resolved.memberId) })
-      const facts = await listMemberUsableConnectionFacts({ context: { organizationContext, memberTeams, session: null } })
+      const [facts, permissions, features] = await Promise.all([
+        listMemberUsableConnectionFacts({ context: { organizationContext, memberTeams, session: null } }),
+        memberPermissionsForOrganizationContext(organizationContext, memberTeams),
+        getOrganizationFeatures(resolved.organization.id, { userId: resolved.user.id }),
+      ])
       const inline = Boolean(workbotOrigin())
       const connections = facts.flatMap((fact) => {
         const app = everydayApp(fact)
@@ -502,7 +559,12 @@ export function registerWorkbotRoutes<T extends { Variables: object }>(app: Hono
         const connectMode: "admin" | "inline" | "external" = fact.setupRequired === true ? "admin" : inline ? "inline" : "external"
         return [{ id: fact.id, name: fact.name, app, ready, connectUrl: ready ? null : openworkYourConnectionsUrl(fact.id), nativeProviderKey: fact.nativeProviderKey, connectMode }]
       })
-      return c.json({ connections })
+      // What Workbot's steps in each connection are called ("Searching Exa"), for everyone.
+      const connectors = facts.map((fact) => ({ id: fact.id, name: fact.name, site: connectorSite(fact.url) }))
+      // Only the profile's Apps list reads these (`workbotProfileSheet`); without it the answer is as before.
+      if (!features.workbotProfileSheet) return c.json({ connections, connectors })
+      const apps = workbotApps(facts, { inline, canManage: permissions.has("connections.manage"), connectUrl: openworkYourConnectionsUrl })
+      return c.json({ connections, apps, connectors })
     },
   )
 

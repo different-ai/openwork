@@ -13,6 +13,8 @@ import {
 } from "./automation-runner.mjs"
 
 const NATIVE_OPERATION_TIMEOUT_MS = 15_000
+/** The bounded tail each progress observation reads. */
+const OBSERVE_MESSAGE_LIMIT = 200
 
 function latestUserId(snapshot) {
   return [...(snapshot.messages ?? [])].reverse().find((message) => message?.role === "user")?.id ?? null
@@ -78,7 +80,10 @@ export function createDesktopSessionAdapter(options) {
       const client = createWorkspaceSessionClient(local, receipt.workspaceId, fetchImpl, false, selectedEngine)
       const snapshot = await client.getThreadSnapshot(receipt.sessionId, { signal, ...(limit ? { limit } : {}) })
       identities.set(key(receipt), { ...known, engine: selectedEngine })
-      return { local, client, snapshot, engine: selectedEngine, model: known?.model, messageId: known?.messageId }
+      return {
+        local, client, snapshot, engine: selectedEngine, model: known?.model, messageId: known?.messageId,
+        turnSeen: Boolean(known?.messageId) && known?.seenMessageId === known?.messageId,
+      }
     }
     try {
       return await read(selected)
@@ -234,10 +239,23 @@ export function createDesktopSessionAdapter(options) {
     async observe(receipt, signal) {
       const operationSignal = bounded(signal)
       try {
-        const native = await snapshotFor(receipt, operationSignal, 200)
+        let native = await snapshotFor(receipt, operationSignal, OBSERVE_MESSAGE_LIMIT)
         // Status and messages are separate native reads. Until the accepted
         // stable user message appears, even an idle old reply is not this turn.
-        const visible = !native.messageId || remoteSessionTurnVisible(native.snapshot, { messageId: native.messageId })
+        let visible = !native.messageId || native.turnSeen || remoteSessionTurnVisible(native.snapshot, { messageId: native.messageId })
+        if (!visible && native.snapshot.messages.length > 0) {
+          // A long turn pushes its own user message out of the bounded tail. Missing from
+          // the tail is not "not sent yet": look at the whole session once before deciding.
+          const full = await snapshotFor(receipt, operationSignal)
+          if (remoteSessionTurnVisible(full.snapshot, { messageId: native.messageId })) {
+            native = full
+            visible = true
+          }
+        }
+        if (visible && native.messageId && !native.turnSeen) {
+          // Once seen, a turn's message stays sent; later tails need not contain it.
+          identities.set(key(receipt), { ...identities.get(key(receipt)), seenMessageId: native.messageId })
+        }
         const pending = visible ? await pendingFor(native, receipt, operationSignal) : null
         const observation = visible
           ? remoteSessionObservation(native.snapshot, pending === undefined ? undefined : pending?.kind ?? null)

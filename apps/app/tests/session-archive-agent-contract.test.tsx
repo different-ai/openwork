@@ -578,7 +578,7 @@ describe("archiving a working session: the warning goes back through the request
     expect(result).toMatchObject({ ok: false, code: stage === "patch" ? "archive_outcome_unknown" : "verification_failed" });
   });
 
-  test("explicit human owner and Undo never pick the first workspace with the same session id", async () => {
+  test.each([true, false])("explicit human owner and Undo never pick the first workspace with the same session id (archive=%s)", async (archived) => {
     const first = startEngine();
     const owner = startEngine();
     const changes: { workspaceId: string; sessionId: string; archived: boolean }[] = [];
@@ -592,18 +592,18 @@ describe("archiving a working session: the warning goes back through the request
       onArchivedChange: (workspaceId, sessionId, archived) => { changes.push({ workspaceId, sessionId, archived }); },
     });
     let result: ArchiveSessionOutcome | undefined;
-    void archive.inWorkspace("other", "same", true).then(value => { result = value; });
-    await until(() => result !== undefined, "explicit-owner archive");
+    void archive.inWorkspace("other", "same", archived).then(value => { result = value; });
+    await until(() => result !== undefined, "explicit-owner archive/restore");
     expect(result).toEqual({ kind: "done" });
     expect(first.requests).toEqual([]);
-    expect(changes).toEqual([{ workspaceId: "other", sessionId: "same", archived: true }]);
+    expect(changes).toEqual([{ workspaceId: "other", sessionId: "same", archived }]);
     expect(useSessionManagementStore.getState().pinnedIds).toEqual(["same"]);
-    expect(undo.mock.calls[0]?.[0]).toMatchObject({ props: { title: expect.stringContaining("Captured owner") } });
+    if (archived) expect(undo.mock.calls[0]?.[0]).toMatchObject({ props: { title: expect.stringContaining("Captured owner") } });
     const undoAction = undo.mock.calls[0]?.[1].undo.onClick;
     if (!undoAction) throw new Error("Archive did not offer Undo");
     await act(async () => { undoAction(); });
     await until(() => changes.length === 2, "Undo restores the captured owner");
-    expect(changes[1]).toEqual({ workspaceId: "other", sessionId: "same", archived: false });
+    expect(changes[1]).toEqual({ workspaceId: "other", sessionId: "same", archived: !archived });
     expect(first.requests).toEqual([]);
     expect(await archive.inWorkspace("missing", "same", true)).toMatchObject({ kind: "verification_failed" });
     expect(await archive.inWorkspace("", "same", true)).toMatchObject({ kind: "verification_failed" });

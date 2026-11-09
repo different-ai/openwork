@@ -13,7 +13,7 @@ import {
   splitOrganizationRoles,
 } from "../../organization-role-hierarchy.js"
 import type { AuthContextVariables } from "../../session.js"
-import { ensureFreshPrivilegedSession } from "../../privileged-session.js"
+import { ensureFreshPrivilegedSession, organizationPrivilegedSessionMaxAgeMs } from "../../privileged-session.js"
 
 export type OrgRouteVariables =
   & AuthContextVariables
@@ -77,7 +77,10 @@ export async function requirePermission(
 ): Promise<PermissionCheckResult> {
   const permissions = await memberPermissionsForRequest(c)
   if (!permissions) return { ok: false, response: { error: "organization_not_found" } }
-  return checkMemberPermission({ apiKey: c.get("apiKey"), session: c.get("session") }, permissions, key, options)
+  return checkMemberPermission({ apiKey: c.get("apiKey"), session: c.get("session") }, permissions, key, {
+    maxAgeMs: organizationPrivilegedSessionMaxAgeMs(c.get("organizationContext")),
+    ...options,
+  })
 }
 
 /** Whether the caller holds `key`. No recent sign-in check: use for visibility and filtering, not for sensitive writes. */

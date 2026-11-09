@@ -259,6 +259,8 @@ export type RunnerCapabilities = {
   documentNavigation?: boolean
   /** The computer runs through the runner's sandbox gateway (its SANDBOX_GATEWAY) instead of the runner's own provider. */
   sandboxGateway?: boolean
+  /** Trusted host rollout, not a model argument. */
+  browserRecovery?: boolean
 }
 export const RUNNER_DESKTOP_VIEWS = ["browser", "computer"] as const
 export type RunnerDesktopView = (typeof RUNNER_DESKTOP_VIEWS)[number]
@@ -280,6 +282,7 @@ const capabilityFields = (input: RunnerCapabilities & RunnerSessionSettings) => 
   ...(input.tasks !== undefined ? { tasks: input.tasks } : {}),
   ...(input.documentNavigation !== undefined ? { documentNavigation: input.documentNavigation } : {}),
   ...(input.sandboxGateway !== undefined ? { sandboxGateway: input.sandboxGateway } : {}),
+  ...(input.browserRecovery !== undefined ? { browserRecovery: input.browserRecovery } : {}),
   ...(input.owner ? { owner: input.owner } : {}),
   ...(input.ref ? { ref: input.ref } : {}),
   ...(input.timeZone ? { timeZone: input.timeZone } : {}),
@@ -370,7 +373,13 @@ export function createHeadlessRunnerClient(deps: HeadlessRunnerDeps) {
       const extras = { ...(input.repeats ? { repeats: input.repeats } : {}), ...capabilityFields(input) }
       let { status, payload } = await request(deps, "PUT", sessionPath(id), { ...base, ...extras })
       let compatible: Record<string, unknown> = extras
-      // The newest setting first. An older runner has no sandbox gateway: the computer stays on the runner's own provider.
+      // Older runners keep all other settings, without the new read-only recovery behavior.
+      if (unknownSetting(status, payload) && input.browserRecovery !== undefined) {
+        const { browserRecovery: _recovery, ...rest } = compatible
+        compatible = rest
+        ;({ status, payload } = await request(deps, "PUT", sessionPath(id), { ...base, ...compatible }))
+      }
+      // An older runner has no sandbox gateway: the computer stays on the runner's own provider.
       if (unknownSetting(status, payload) && input.sandboxGateway !== undefined) {
         const { sandboxGateway: _gateway, ...rest } = compatible
         compatible = rest
@@ -430,6 +439,14 @@ export function createHeadlessRunnerClient(deps: HeadlessRunnerDeps) {
       const { status, payload } = await request(deps, "DELETE", sessionPath(id))
       if (status !== 204) return { ok: false, status, error: errorCode(payload, `headless_delete_${status}`) }
       return { ok: true, value: { deleted: true } }
+    },
+
+    /** The scratch files the agent wrote in the session (memory/ included, wherever it is kept): paths and sizes only. */
+    async listScratchFiles(sessionId: string): Promise<RunnerResult<Array<{ path: string; size: number; updatedAt: number }>>> {
+      const { status, payload } = await request(deps, "GET", `${sessionPath(sessionId)}/files`)
+      const parsed = z.object({ files: z.array(z.object({ path: z.string(), size: z.number(), updatedAt: z.number() })) }).safeParse(payload)
+      if (status !== 200 || !parsed.success) return { ok: false, status, error: errorCode(payload, `headless_scratch_${status}`) }
+      return { ok: true, value: parsed.data.files }
     },
 
     /** Reads one scratch file the agent wrote in the session. */

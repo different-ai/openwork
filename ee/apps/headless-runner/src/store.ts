@@ -57,6 +57,7 @@ const sessionOptions = z.object({
   tasks: z.boolean().optional(),
   documentNavigation: z.boolean().optional(),
   sandboxGateway: z.boolean().optional(),
+  browserRecovery: z.boolean().optional(),
   timeZone: z.string().optional(),
   autoTitle: z.boolean().optional(),
   memoryOf: z.string().optional(),
@@ -111,6 +112,7 @@ export type Session = {
   documentNavigation: boolean
   /** Whether this conversation's computer runs through the runner's sandbox gateway (SANDBOX_GATEWAY) instead of its own provider. */
   sandboxGateway: boolean
+  browserRecovery: boolean
   /**
    * Who the conversation belongs to, in the caller's own terms (for example one person in one organization), and
    * the caller's id for it. A caller with several conversations per person lists them by owner (GET /v1/sessions).
@@ -141,6 +143,7 @@ export type SessionInput = {
   tasks?: boolean
   documentNavigation?: boolean
   sandboxGateway?: boolean
+  browserRecovery?: boolean
   owner?: string
   ref?: string
   timeZone?: string
@@ -160,6 +163,7 @@ function optionsOf(input: {
   tasks?: boolean
   documentNavigation?: boolean
   sandboxGateway?: boolean
+  browserRecovery?: boolean
   timeZone?: string | null
   autoTitle?: boolean
   memoryOf?: string | null
@@ -175,6 +179,7 @@ function optionsOf(input: {
     ...(input.tasks !== undefined ? { tasks: input.tasks } : {}),
     ...(input.documentNavigation !== undefined ? { documentNavigation: input.documentNavigation } : {}),
     ...(input.sandboxGateway !== undefined ? { sandboxGateway: input.sandboxGateway } : {}),
+    ...(input.browserRecovery !== undefined ? { browserRecovery: input.browserRecovery } : {}),
     ...(input.timeZone ? { timeZone: input.timeZone } : {}),
     ...(input.autoTitle !== undefined ? { autoTitle: input.autoTitle } : {}),
     ...(input.memoryOf ? { memoryOf: input.memoryOf } : {}),
@@ -198,6 +203,7 @@ function serializeOptions(options: SessionOptions) {
     ...(options.tasks ? { tasks: true } : {}),
     ...(options.documentNavigation ? { documentNavigation: true } : {}),
     ...(options.sandboxGateway ? { sandboxGateway: true } : {}),
+    ...(options.browserRecovery ? { browserRecovery: true } : {}),
     ...(options.timeZone ? { timeZone: options.timeZone } : {}),
     ...(options.autoTitle ? { autoTitle: true } : {}),
     // Owner-scoped memory replaces another conversation's: never both.
@@ -582,6 +588,7 @@ export class Store {
       tasks: options.tasks ?? false,
       documentNavigation: options.documentNavigation ?? false,
       sandboxGateway: options.sandboxGateway ?? false,
+      browserRecovery: options.browserRecovery ?? false,
       owner: value.owner ?? null,
       ref: value.ref ?? null,
       timeZone: options.timeZone ?? null,

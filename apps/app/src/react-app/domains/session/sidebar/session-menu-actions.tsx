@@ -1,9 +1,8 @@
-import { Archive, ArchiveRestore, CheckCheck, Columns2, FolderPlus, Pencil, Pin, PinOff, Tag, Trash2, Undo2 } from "lucide-react";
+import { Archive, ArchiveRestore, Columns2, FolderPlus, Pencil, Pin, PinOff, Tag, Trash2 } from "lucide-react";
 
 import type { MenuAction } from "@/components/ui/action-menu-model";
 import { getDisplaySessionTitle } from "@/app/lib/session-title";
 import { t } from "@/i18n";
-import type { SessionSettleState } from "./session-settle";
 
 export type SessionActionTarget = { workspaceId: string; sessionId: string; title: string };
 
@@ -43,7 +42,6 @@ export function buildSessionGroupActions(options: GroupActionsOptions): MenuActi
 export function buildSessionMenuActions(options: GroupActionsOptions & {
   isPinned: boolean;
   isArchived: boolean;
-  settle?: SessionSettleState;
   onTogglePin: () => void;
   onOpenSplit?: () => void;
   onCloseSplit?: () => void;
@@ -51,18 +49,10 @@ export function buildSessionMenuActions(options: GroupActionsOptions & {
   onArchive?: () => void;
   onDelete?: () => void;
 }): MenuAction[] {
-  const { settle } = options;
   const actions: MenuAction[] = [{
     type: "item", id: "pin", label: options.isPinned ? t("session_management.unpin_session") : t("session_management.pin_session"),
     icon: options.isPinned ? <PinOff className="size-4" /> : <Pin className="size-4" />, onSelect: options.onTogglePin,
   }];
-  if (settle?.available && !options.isArchived) actions.push({
-    type: "item", id: "settle", label: settle.settled ? t("session_management.unsettle_session") : t("session_management.settle_session"),
-    icon: settle.settled ? <Undo2 className="size-4" /> : <CheckCheck className="size-4" />,
-    disabled: !settle.settled && !settle.canSettle,
-    disabledReason: !settle.settled && !settle.canSettle ? t("session_management.settle_after_finish") : undefined,
-    dataAttributes: { "data-session-menu-settle": true }, onSelect: settle.toggle,
-  });
   if (options.onOpenSplit) actions.push({
     type: "item", id: "open-split", label: t("session_management.open_in_split_view"), icon: <Columns2 className="size-4" />,
     dataAttributes: { "data-session-menu-open-split": true }, onSelect: options.onOpenSplit,

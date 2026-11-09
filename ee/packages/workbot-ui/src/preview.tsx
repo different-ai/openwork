@@ -1,38 +1,23 @@
 "use client";
 
-import { extractOfficeText, openXlsxWorkbook, sheetGridRows, type XlsxWorkbook } from "@openwork/workbook";
-import { Download, X } from "lucide-react";
+import type { XlsxWorkbook } from "@openwork/workbook";
+import { Menu } from "@base-ui/react/menu";
+import { Check, Download, Ellipsis, ExternalLink, Link, Maximize2, Minimize2, Share, X } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
-import { downloadWorkbotFile, useWorkbotChat, useWorkbotFileBytes, useWorkbotFileUrl, useWorkbotImageUrl, useWorkbotPreview, useWorkbotPreviewPage, type WorkbotAttachment, type WorkbotPreview } from "./data";
-import { FileBadge, formatSize, isImage, kindLabel } from "./files";
+import { artifactKind, artifactLink, extensionOf, tabType, type ArtifactKind } from "./artifact";
+import { ArtifactIcon, useArtifactTitle } from "./artifact-card";
+import { downloadWorkbotFile, fetchWorkbotFileUrl, useWorkbotChat, useWorkbotFileBytes, useWorkbotFileUrl, useWorkbotImageUrl, useWorkbotPreview, useWorkbotPreviewPage, type WorkbotAttachment, type WorkbotPreview } from "./data";
+import { FileBadge } from "./files";
 import { WorkbotMarkdown } from "./markdown";
+
+/** The Office reader (and its XML parser) loads only when an Office file is previewed, not with every page. */
+const officeReader = () => import("@openwork/workbook");
 
 /**
  * A file opened beside the conversation: it shows the file itself, read in the browser, never a list of
  * properties. Slides and documents show the PDF Workbot's computer rendered from them, or their text when
  * there is none. Opened only by the person (DESIGN S5); docked on wide screens, a sheet on small ones.
  */
-
-type Kind = "image" | "pdf" | "video" | "audio" | "markdown" | "text" | "csv" | "sheet" | "slides" | "document" | "html" | "other";
-
-const extensionOf = (name: string) => (name.includes(".") ? (name.split(".").pop() ?? "").toLowerCase() : "");
-
-function kindOf(file: WorkbotAttachment): Kind {
-  const extension = extensionOf(file.name);
-  const type = file.mediaType.toLowerCase();
-  if (isImage(type) || ["png", "jpg", "jpeg", "gif", "webp"].includes(extension)) return "image";
-  if (type === "application/pdf" || extension === "pdf") return "pdf";
-  if (type.startsWith("video/") || ["mp4", "mov", "webm", "m4v"].includes(extension)) return "video";
-  if (type.startsWith("audio/") || ["mp3", "wav", "m4a", "ogg"].includes(extension)) return "audio";
-  if (["md", "markdown"].includes(extension)) return "markdown";
-  if (["csv", "tsv"].includes(extension)) return "csv";
-  if (extension === "xlsx") return "sheet";
-  if (extension === "pptx") return "slides";
-  if (extension === "docx") return "document";
-  if (["html", "htm"].includes(extension)) return "html";
-  if (type.startsWith("text/") || ["txt", "json", "yaml", "yml", "xml", "log", "py", "js", "ts", "sql"].includes(extension)) return "text";
-  return "other";
-}
 
 /** True for a few seconds after the open file gets a new version, to say so in the header. */
 function useJustUpdated(version: number | undefined) {
@@ -47,55 +32,146 @@ function useJustUpdated(version: number | undefined) {
   return updated;
 }
 
-export function PreviewPanel({ file, onClose }: { file: WorkbotAttachment; onClose: () => void }) {
+const iconButton = "grid size-8 shrink-0 place-items-center rounded-full text-[var(--wb-muted)] transition-colors duration-150 hover:bg-[var(--wb-chip)] hover:text-[var(--wb-text)] focus-visible:outline-none focus-visible:shadow-[var(--wb-focus)] data-[popup-open]:bg-[var(--wb-chip)] data-[popup-open]:text-[var(--wb-text)]";
+const itemClass = "flex h-9 w-full cursor-default items-center gap-2.5 rounded-lg px-2.5 text-[13px] leading-[18px] text-[var(--wb-text)] outline-none select-none data-[highlighted]:bg-[var(--wb-chip)]";
+
+/**
+ * The open file, in the panel beside the chat or the phone sheet (both from BrowserExperience): a minimal header with
+ * its icon and title, More (…) and Close, then the file itself edge to edge. Everything else lives in More.
+ */
+export function ArtifactView({ file, onClose, expanded = false, onExpand }: { file: WorkbotAttachment; onClose: () => void; expanded?: boolean; onExpand?: () => void }) {
   const justUpdated = useJustUpdated(file.updatedAt);
-  const chat = useWorkbotChat();
-  useEffect(() => {
-    const onKey = (event: KeyboardEvent) => {
-      if (event.key === "Escape") onClose();
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [onClose]);
+  const kind = artifactKind(file);
+  const title = useArtifactTitle(file);
   return (
-    <aside
-      aria-label={file.name}
-      className="workbot-panel-enter fixed inset-0 z-50 flex flex-col overflow-hidden bg-[var(--wb-surface)] lg:static lg:z-auto lg:mb-3 lg:mr-3 lg:w-[min(50vw,800px)] lg:shrink-0 lg:rounded-[18px] lg:shadow-[var(--wb-panel-shadow)]"
-    >
-      <header className="flex h-14 shrink-0 items-center gap-3 border-b border-[var(--wb-hairline)] pl-4 pr-2.5">
-        <FileBadge name={file.name} mediaType={file.mediaType} />
-        <span className="flex min-w-0 flex-1 flex-col">
-          <span className="truncate text-[14px] font-semibold leading-5 tracking-[-0.01em] text-[var(--wb-text)]">{file.name}</span>
-          <span className="text-[12px] leading-4 text-[var(--wb-muted)]" aria-live="polite">
-            {justUpdated ? <span className="workbot-subtitle-enter inline-block text-[var(--wb-text)]">Updated just now</span> : `${kindLabel(file.name, file.mediaType)}, ${formatSize(file.size)}`}
-          </span>
+    <div className="flex min-h-0 min-w-0 flex-1 flex-col bg-[var(--wb-bg)]" data-workbot-artifact={file.id}>
+      <header className="flex h-14 shrink-0 items-center gap-2.5 pl-4 pr-2.5" data-workbot-artifact-header>
+        <ArtifactIcon kind={kind} size={24} />
+        <h2 className="min-w-0 truncate text-[15px] font-semibold leading-5 tracking-[-0.01em] text-[var(--wb-text)]" title={file.name}>{title}</h2>
+        <span className="min-w-0 flex-1" aria-live="polite">
+          {justUpdated ? <span className="workbot-subtitle-enter inline-block whitespace-nowrap text-[12px] leading-4 text-[var(--wb-muted)]">Updated just now</span> : null}
         </span>
-        <button
-          type="button"
-          onClick={() => void downloadWorkbotFile(file, chat)}
-          className="flex h-8 items-center gap-1.5 rounded-full px-3 text-[13px] font-medium text-[var(--wb-text)] transition-colors duration-150 hover:bg-[var(--wb-chip)] focus-visible:outline-none focus-visible:shadow-[var(--wb-focus)]"
-        >
-          <Download size={14} strokeWidth={1.75} aria-hidden />
-          Download
-        </button>
-        <button
-          type="button"
-          onClick={onClose}
-          aria-label="Close preview"
-          className="grid size-8 place-items-center rounded-full text-[var(--wb-muted)] transition-colors duration-150 hover:bg-[var(--wb-chip)] hover:text-[var(--wb-text)] focus-visible:outline-none focus-visible:shadow-[var(--wb-focus)]"
-        >
-          <X size={15} strokeWidth={1.75} aria-hidden />
+        <ArtifactMenu file={file} title={title} expanded={expanded} onExpand={onExpand} />
+        <button type="button" onClick={onClose} aria-label="Close" title="Close" className={iconButton}>
+          <X size={16} strokeWidth={1.75} aria-hidden />
         </button>
       </header>
-      <div className="min-h-0 flex-1 overflow-y-auto bg-[var(--wb-tray)]">
+      <div className={`min-h-0 flex-1 bg-[var(--wb-tray)] ${kind === "html" ? "flex flex-col overflow-hidden" : "overflow-y-auto"}`}>
         <FilePreview key={file.id} file={file} />
       </div>
-    </aside>
+    </div>
+  );
+}
+
+/** Kinds a new tab shows by itself; the rest would only download, which Download already does. */
+const TAB_KINDS: ReadonlySet<ArtifactKind> = new Set(["html", "pdf", "image", "video", "audio"]);
+
+/**
+ * A file in its own tab. The tab opens at once (a popup blocker allows it only now), then fills in. An app still runs
+ * in an opaque-origin frame there, never with this page's origin.
+ */
+async function openInNewTab(file: WorkbotAttachment, title: string, chat: string | null) {
+  const tab = window.open("", "_blank");
+  if (!tab) return;
+  tab.document.title = title;
+  try {
+    const kind = artifactKind(file);
+    if (kind !== "html") {
+      // The tab shows the file under a type chosen here from a short list that never runs code (no SVG, no
+      // HTML/XML): a stored or uploaded type could otherwise run as a page with this site's origin.
+      const type = tabType(file.name);
+      if (!type) throw new Error("No safe way to show this file in a tab.");
+      const url = await fetchWorkbotFileUrl(file.id, chat, false, type);
+      tab.opener = null;
+      tab.location.replace(url);
+      setTimeout(() => URL.revokeObjectURL(url), 60_000);
+      return;
+    }
+    const url = await fetchWorkbotFileUrl(file.id, chat);
+    const html = await (await fetch(url)).text();
+    URL.revokeObjectURL(url);
+    const doc = tab.document;
+    doc.body.style.margin = "0";
+    const frame = doc.createElement("iframe");
+    frame.setAttribute("sandbox", "allow-scripts");
+    frame.title = title;
+    frame.style.cssText = "border:0;display:block;width:100vw;height:100vh";
+    frame.srcdoc = html;
+    doc.body.append(frame);
+    tab.opener = null;
+  } catch {
+    tab.close();
+  }
+}
+
+function ArtifactMenu({ file, title, expanded, onExpand }: { file: WorkbotAttachment; title: string; expanded: boolean; onExpand?: () => void }) {
+  const chat = useWorkbotChat();
+  const kind = artifactKind(file);
+  const [copied, setCopied] = useState(false);
+  const [open, setOpen] = useState(false);
+  const canShare = typeof navigator !== "undefined" && typeof navigator.share === "function";
+  const copy = () => {
+    void navigator.clipboard?.writeText(artifactLink(file.id)).then(() => {
+      setCopied(true);
+      setTimeout(() => { setOpen(false); setCopied(false); }, 900);
+    });
+  };
+  const share = async () => {
+    try {
+      const response = await fetch(await fetchWorkbotFileUrl(file.id, chat));
+      const shared = new File([await response.blob()], file.name, { type: file.mediaType });
+      if (navigator.canShare?.({ files: [shared] })) await navigator.share({ files: [shared], title });
+      else await navigator.share({ title, url: artifactLink(file.id) });
+    } catch {
+      // Dismissed, or nothing to share with: nothing changed.
+    }
+  };
+  return (
+    <Menu.Root open={open} onOpenChange={(next) => { setOpen(next); if (!next) setCopied(false); }}>
+      <Menu.Trigger aria-label="More" title="More" className={iconButton}>
+        <Ellipsis size={16} strokeWidth={1.75} aria-hidden />
+      </Menu.Trigger>
+      <Menu.Portal>
+        <Menu.Positioner side="bottom" align="end" sideOffset={6} collisionPadding={12} className="z-[60]">
+          <Menu.Popup className="workbot flex max-h-[var(--available-height)] w-[min(15rem,calc(100vw-24px))] flex-col overflow-y-auto rounded-xl bg-[var(--wb-surface)] p-1.5 text-[var(--wb-text)] shadow-[var(--wb-panel-shadow)] focus-visible:outline-none">
+            {onExpand ? (
+              <>
+                <Menu.Item className={itemClass} onClick={onExpand}>
+                  {expanded ? <Minimize2 size={16} strokeWidth={1.5} aria-hidden className="text-[var(--wb-muted)]" /> : <Maximize2 size={16} strokeWidth={1.5} aria-hidden className="text-[var(--wb-muted)]" />}
+                  {expanded ? "Show the chat" : "Expand"}
+                </Menu.Item>
+                <Menu.Separator className="mx-1 my-1 h-px bg-[var(--wb-hairline)]" />
+              </>
+            ) : null}
+            {kind === "html" || (TAB_KINDS.has(kind) && tabType(file.name)) ? (
+              <Menu.Item className={itemClass} onClick={() => void openInNewTab(file, title, chat)}>
+                <ExternalLink size={16} strokeWidth={1.5} aria-hidden className="text-[var(--wb-muted)]" />
+                Open in new tab
+              </Menu.Item>
+            ) : null}
+            <Menu.Item className={itemClass} onClick={() => void downloadWorkbotFile(file, chat)}>
+              <Download size={16} strokeWidth={1.5} aria-hidden className="text-[var(--wb-muted)]" />
+              Download
+            </Menu.Item>
+            <Menu.Item className={itemClass} closeOnClick={false} onClick={copy}>
+              {copied ? <Check size={16} strokeWidth={1.5} aria-hidden className="text-[var(--wb-muted)]" /> : <Link size={16} strokeWidth={1.5} aria-hidden className="text-[var(--wb-muted)]" />}
+              {copied ? "Link copied" : "Copy link"}
+            </Menu.Item>
+            {canShare ? (
+              <Menu.Item className={itemClass} onClick={() => void share()}>
+                <Share size={16} strokeWidth={1.5} aria-hidden className="text-[var(--wb-muted)]" />
+                Share
+              </Menu.Item>
+            ) : null}
+          </Menu.Popup>
+        </Menu.Positioner>
+      </Menu.Portal>
+    </Menu.Root>
   );
 }
 
 function FilePreview({ file }: { file: WorkbotAttachment }) {
-  const kind = kindOf(file);
+  const kind = artifactKind(file);
   if (kind === "image") return <ImagePreview file={file} />;
   if (kind === "pdf") return <PdfPreview file={file} />;
   if (kind === "video" || kind === "audio") return <MediaPreview file={file} kind={kind} />;
@@ -150,7 +226,8 @@ function PdfFrame({ url, title }: { url: string; title: string }) {
 /** PDFs show as pages like slides; without a rendering, the browser's own viewer. */
 function PdfPreview({ file }: { file: WorkbotAttachment }) {
   const preview = useWorkbotPreview(file.id, file.updatedAt);
-  const url = useWorkbotFileUrl(preview.isSuccess && !preview.data ? file.id : null, file.updatedAt);
+  // Shown in a frame on this page: always as a PDF, whatever type the file was stored with.
+  const url = useWorkbotFileUrl(preview.isSuccess && !preview.data ? file.id : null, file.updatedAt, "application/pdf");
   if (preview.data) return <Pages file={file} preview={preview.data} kind="document" />;
   if (url.isError) return <NoPreview file={file} reason="This file couldn't load." />;
   if (!url.data) return <Loading />;
@@ -177,7 +254,9 @@ function OfficePreview({ file, kind }: { file: WorkbotAttachment; kind: "slides"
   useEffect(() => {
     if (!bytes.data) return;
     let cancelled = false;
-    extractOfficeText(kind === "slides" ? "pptx" : "docx", bytes.data)
+    const data = bytes.data;
+    officeReader()
+      .then(({ extractOfficeText }) => extractOfficeText(kind === "slides" ? "pptx" : "docx", data))
       .then((value) => !cancelled && setText(value))
       .catch(() => !cancelled && setFailed(true));
     return () => {
@@ -262,7 +341,7 @@ function DocumentText({ text }: { text: string }) {
 }
 
 /** Files read straight from their bytes: text, markdown, CSV, Excel and HTML. */
-function BytesPreview({ file, kind }: { file: WorkbotAttachment; kind: Exclude<Kind, "image" | "pdf" | "video" | "audio" | "slides" | "document" | "other"> }) {
+function BytesPreview({ file, kind }: { file: WorkbotAttachment; kind: Exclude<ArtifactKind, "image" | "pdf" | "video" | "audio" | "slides" | "document" | "other"> }) {
   const bytes = useWorkbotFileBytes(file.id, file.updatedAt);
   if (bytes.isError) return <NoPreview file={file} reason="This file couldn't load." />;
   if (!bytes.data) return <Loading />;
@@ -277,7 +356,7 @@ function BytesPreview({ file, kind }: { file: WorkbotAttachment; kind: Exclude<K
   }
   if (kind === "csv") return <Grid rows={parseDelimited(text, extensionOf(file.name) === "tsv" ? "\t" : ",")} />;
   // Untrusted HTML runs only in an opaque-origin frame: scripts, but no access to this page (never allow-same-origin).
-  if (kind === "html") return <iframe srcDoc={text} sandbox="allow-scripts" title={file.name} className="block h-full min-h-[70vh] w-full border-0 bg-white" />;
+  if (kind === "html") return <iframe srcDoc={text} sandbox="allow-scripts" title={file.name} className="block min-h-0 w-full flex-1 border-0 bg-white" />;
   return <pre className="whitespace-pre-wrap break-words p-6 font-mono text-[12px] leading-5 text-[var(--wb-text)]">{text}</pre>;
 }
 
@@ -288,7 +367,8 @@ function SheetPreview({ file, bytes }: { file: WorkbotAttachment; bytes: Uint8Ar
   const [failed, setFailed] = useState(false);
   useEffect(() => {
     let cancelled = false;
-    openXlsxWorkbook(bytes)
+    officeReader()
+      .then(({ openXlsxWorkbook }) => openXlsxWorkbook(bytes))
       .then((value) => !cancelled && setWorkbook(value))
       .catch(() => !cancelled && setFailed(true));
     return () => {
@@ -301,9 +381,8 @@ function SheetPreview({ file, bytes }: { file: WorkbotAttachment; bytes: Uint8Ar
     if (!workbook || !sheet) return;
     let cancelled = false;
     setRows(null);
-    workbook
-      .readSheet(sheet)
-      .then((data) => !cancelled && setRows(sheetGridRows(data)))
+    Promise.all([workbook.readSheet(sheet), officeReader()])
+      .then(([data, { sheetGridRows }]) => !cancelled && setRows(sheetGridRows(data)))
       .catch(() => !cancelled && setFailed(true));
     return () => {
       cancelled = true;

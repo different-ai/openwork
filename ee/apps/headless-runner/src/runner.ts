@@ -38,6 +38,7 @@ import {
   taskInstructions,
   taskPrompt,
   taskMessageId,
+  taskProgress,
   tasksSection,
 } from "./tasks.js"
 import { formatBytes, withoutAttachments } from "./tool-files.js"
@@ -45,6 +46,7 @@ import {
   ACTIVE,
   RESUMABLE,
   type Attachment,
+  type DesktopView,
   type Execution,
   type HeadlessModelAccess,
   type Message,
@@ -948,7 +950,9 @@ export class Runner {
     const history = await this.withFiles(sessionId, setup, expanded, context.messages)
     const recentTasks = kind !== "task" && session?.tasks ? store.recentTasks(sessionId, 8) : []
     // Task state changes while the conversation goes on, so it comes last: everything before it stays cached.
-    const state: Message[] = recentTasks.length ? [{ role: "user", text: tasksSection(recentTasks, Date.now()) }] : []
+    // Unfinished tasks (at most MAX_OPEN_TASKS) add how far they've got, read from their own rows.
+    const progress = new Map(recentTasks.filter((task) => ["queued", "running", "interrupted"].includes(task.status)).map((task) => [task.messageId, taskProgress(store.turnMessages(sessionId, task.messageId))] as const))
+    const state: Message[] = recentTasks.length ? [{ role: "user", text: tasksSection(recentTasks, Date.now(), progress) }] : []
     const { messages, repairs } = normalizeTranscript([...history, ...state])
     if (repairs) console.warn(`[headless-runner] context repaired ${JSON.stringify({ sessionId, messageId, repairs })}`)
     // Cached up to the two newest earlier turns (so the next turn starts from the cache) and the newest message.
@@ -987,7 +991,7 @@ export class Runner {
           ? this.runTaskTool(turn, call.name, call.input, context.held)
         : call.name === "desktop" && store.getSession(sessionId)?.desktop && computer?.desktopRun
           ? desktopViewRefused(store.getSession(sessionId)?.desktopViews ?? null, call.input)
-            ?? await computer.desktopRun(sessionId, call.input, signal).catch((error: unknown) => ({ output: error instanceof Error ? error.message : "Desktop unavailable", isError: true }))
+            ?? await computer.desktopRun(sessionId, call.input, signal, { browserRecovery: store.getSession(sessionId)?.browserRecovery === true }).catch((error: unknown) => ({ output: error instanceof Error ? error.message : "Desktop unavailable", isError: true }))
         : computer?.toolNames.has(call.name)
           ? await computer.run(sessionId, call.name, call.input).catch((error: unknown) => ({
               output: `The computer didn't respond: ${error instanceof Error ? error.message : "unknown error"}. Its outcome is unknown; check before repeating it.`,
@@ -1159,9 +1163,9 @@ export class Runner {
                     written = ""
                     events.emit(sessionId, { type: "text", messageId, step: streamStep, delta: "", reset: true })
                   },
-                  onTool: (tool: string, description?: string) => {
+                  onTool: (tool: string, description?: string, view?: DesktopView) => {
                     timing.output()
-                    events.emit(sessionId, { type: "tool", messageId, step: streamStep, tool, ...(description ? { description } : {}) })
+                    events.emit(sessionId, { type: "tool", messageId, step: streamStep, tool, ...(description ? { description } : {}), ...(view ? { view } : {}) })
                   },
                 }
               : {}),
@@ -1789,9 +1793,9 @@ export class Runner {
               checkpoints.note(written)
               restartText()
             },
-            onTool: (tool: string, description?: string) => {
+            onTool: (tool: string, description?: string, view?: DesktopView) => {
               lane.timing.output()
-              events?.emit(sessionId, { type: "tool", messageId, step: modelStep, tool, ...(description ? { description } : {}) })
+              events?.emit(sessionId, { type: "tool", messageId, step: modelStep, tool, ...(description ? { description } : {}), ...(view ? { view } : {}) })
             },
           })
         } catch (error) {

@@ -115,7 +115,7 @@ export function teamRoleSteps(current: TeamRoleState, next: TeamRole, adminKeys:
  * the screen.
  */
 export type RoleSetLike = {
-  kind: "member_default" | "admin_default" | "team";
+  kind: "member_default" | "admin_default" | "super_admin_default" | "team";
   name: string;
   team: { id: string; name: string | null } | null;
 };
@@ -128,6 +128,7 @@ export type RoleSetLike = {
 export function roleName(set: RoleSetLike): string {
   if (set.kind === "member_default") return TEAM_ROLE_LABELS.member;
   if (set.kind === "admin_default") return TEAM_ROLE_LABELS.admin;
+  if (set.kind === "super_admin_default") return SUPER_ADMIN_ROLE_LABEL;
   return set.name;
 }
 
@@ -150,7 +151,9 @@ export function permissionSourceRoleLabel(source: PermissionSourceLike): string 
   switch (source.kind) {
     case "owner":
       return "Owner";
+    // "super_admin" is what servers sent before Super admin became a permission set.
     case "super_admin":
+    case "super_admin_default":
       return SUPER_ADMIN_ROLE_LABEL;
     case "member_default":
       return TEAM_ROLE_LABELS.member;
@@ -160,6 +163,7 @@ export function permissionSourceRoleLabel(source: PermissionSourceLike): string 
       if (source.setName) return source.teamName ? `${source.setName} via ${source.teamName}` : source.setName;
       return source.teamName ?? source.label;
     case "code_default":
+      if (source.set === "super-admin") return SUPER_ADMIN_ROLE_LABEL;
       return source.set === "admin" ? TEAM_ROLE_LABELS.admin : TEAM_ROLE_LABELS.member;
     default:
       return source.label;

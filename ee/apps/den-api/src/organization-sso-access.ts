@@ -18,10 +18,8 @@ import {
   blocksNonSsoSignIn,
   organizationRequiresSsoSession,
   readOrganizationSsoPolicy,
-  ssoProofIsCurrent,
   type DomainSsoRequirement,
   type SignInSsoCandidate,
-  type SsoSessionMaxAgeHours,
 } from "./sso-routing.js"
 
 /**
@@ -200,15 +198,13 @@ export async function findNonSsoSignInBlock(input: { email: string | null; userI
   return null
 }
 
-type SsoRequiredOrganization = SsoAccessBlock & { maxAgeHours: SsoSessionMaxAgeHours | null }
-
 /**
  * Organizations among `organizationIds` that only a session signed in through
  * their own SSO may open: `ssoPerOrganization` on, SSO enabled on a verified
  * domain, and "Require SSO" (or a restricted domain) set.
  */
-async function readSsoRequiredOrganizations(organizationIds: readonly string[]): Promise<Map<string, SsoRequiredOrganization>> {
-  const result = new Map<string, SsoRequiredOrganization>()
+async function readSsoRequiredOrganizations(organizationIds: readonly string[]): Promise<Map<string, SsoAccessBlock>> {
+  const result = new Map<string, SsoAccessBlock>()
   const ids = [...new Set(organizationIds.map((id) => normalizeDenTypeId("organization", id)))]
   if (ids.length === 0 || env.orgMode === "single_org") return result
   // The flag first (cached), so organizations without it cost no extra query.
@@ -224,7 +220,6 @@ async function readSsoRequiredOrganizations(organizationIds: readonly string[]):
       organizationSlug: row.organizationSlug,
       organizationName: row.organizationName,
       signInPath: row.signInPath || defaultSignInPath(row.organizationSlug),
-      maxAgeHours: policy.ssoSessionMaxAgeHours,
     })
   }
   return result
@@ -242,19 +237,16 @@ async function readSessionSsoProofs(sessionId: string): Promise<Map<string, Date
 
 /**
  * Organizations among `organizationIds` this session may not open until it
- * signs in through their SSO: it never did, or the organization asks for SSO
- * again and that time has passed. A request without a session (an API key,
+ * signs in through their SSO. A request without a session (an API key,
  * an MCP token) is checked where that credential was issued instead.
  */
-export async function findSsoBlockedOrganizations(input: { sessionId: string | null; organizationIds: readonly string[]; now?: Date }): Promise<Map<string, SsoAccessBlock>> {
+export async function findSsoBlockedOrganizations(input: { sessionId: string | null; organizationIds: readonly string[] }): Promise<Map<string, SsoAccessBlock>> {
   const required = await readSsoRequiredOrganizations(input.organizationIds)
   const result = new Map<string, SsoAccessBlock>()
   if (required.size === 0) return result
   const proofs = input.sessionId ? await readSessionSsoProofs(input.sessionId) : new Map<string, Date>()
-  const now = input.now ?? new Date()
-  for (const [organizationId, { maxAgeHours, ...block }] of required) {
-    const authenticatedAt = proofs.get(organizationId)
-    if (authenticatedAt && ssoProofIsCurrent({ authenticatedAt, maxAgeHours, now })) continue
+  for (const [organizationId, block] of required) {
+    if (proofs.has(organizationId)) continue
     result.set(organizationId, block)
   }
   return result
@@ -264,7 +256,7 @@ export async function findSsoBlockedOrganizations(input: { sessionId: string | n
  * Whether this session may turn on "Require SSO" (or restrict the domain) for
  * the organization without losing access to it: the organization has no
  * enabled SSO on a verified domain yet (nothing is enforced), or the session
- * has a current sign-in through it.
+ * has signed in through it.
  */
 export async function sessionCanRequireOrganizationSso(input: { sessionId: string | null; organizationId: string }) {
   const organizationId = normalizeDenTypeId("organization", input.organizationId)
@@ -273,9 +265,7 @@ export async function sessionCanRequireOrganizationSso(input: { sessionId: strin
   const row = rows[0]
   if (!row) return true
   if (!input.sessionId) return false
-  const authenticatedAt = (await readSessionSsoProofs(input.sessionId)).get(organizationId)
-  if (!authenticatedAt) return false
-  return ssoProofIsCurrent({ authenticatedAt, maxAgeHours: readOrganizationSsoPolicy(row.metadata).ssoSessionMaxAgeHours, now: new Date() })
+  return (await readSessionSsoProofs(input.sessionId)).has(organizationId)
 }
 
 export async function findSsoAccessBlock(input: { sessionId: string | null; organizationId: string | null | undefined }): Promise<SsoAccessBlock | null> {

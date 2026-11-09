@@ -19,7 +19,7 @@ import { SsoRequirementFields, ssoRequirementDescription } from "./sso-requireme
 /** SSO › Authentication: whether members must sign in with this organization's SSO. */
 export function SsoRequirementSection() {
   const { orgContext, mutationBusy, updateOrganizationSettings } = useOrgDashboard();
-  const [draft, setDraft] = useState<SsoSettings>({ requireSso: false, restrictDomainToSso: false, ssoSessionMaxAgeHours: null });
+  const [draft, setDraft] = useState<SsoSettings>({ requireSso: false, restrictDomainToSso: false });
   const [error, setError] = useState<string | null>(null);
   const [ssoRecoveryPath, setSsoRecoveryPath] = useState<string | null>(null);
   const [saved, setSaved] = useState(false);

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict"
 import test from "node:test"
-import { CUT_OFF_CALL, ModelError, openAIResponsesModel, streamedDescription, toResponsesInput } from "../src/model.js"
+import { anthropicModel, CUT_OFF_CALL, ModelError, openAIModel, openAIResponsesModel, streamedDescription, streamedView, toResponsesInput } from "../src/model.js"
 import type { Message } from "../src/types.js"
 
 const tool = { name: "mail_search", description: "Search mail", inputSchema: { type: "object", properties: { query: { type: "string" } } } }
@@ -94,10 +94,50 @@ test("a streamed call says what it is doing once its description is written, bef
       { type: "function_call", call_id: "call_1", name: "desktop", arguments: "{\"view\":\"computer\",\"description\":\"Drawing the \\\"ground\\\" and trunk\",\"args\":{\"code\":\"bpy.ops\"}}" },
     ], usage: { input_tokens: 10, output_tokens: 5 } } },
   ]))
-  const tools: Array<[string, string | undefined]> = []
+  const tools: Array<[string, string | undefined, string | undefined]> = []
   await openAIResponsesModel({ baseUrl: "https://gateway.test/v1", maxOutputTokens: 100, fetch })
-    .complete(request({ onText: () => undefined, onTool: (name, description) => tools.push([name, description]) }))
-  assert.deepEqual(tools, [["desktop", undefined], ["desktop", 'Drawing the "ground" and trunk']])
+    .complete(request({ onText: () => undefined, onTool: (name, description, view) => tools.push([name, description, view]) }))
+  // The view it works in as soon as that is written, then its description with the view still on it.
+  assert.deepEqual(tools, [["desktop", undefined, undefined], ["desktop", undefined, "computer"], ["desktop", 'Drawing the "ground" and trunk', "computer"]])
+})
+
+/** One browser call streamed in pieces, as Ben's "go on google.com" was. */
+const googleArgs = ['{"view":"bro', 'wser","description":"Opening goo', 'gle.com","operation":"open","args":{"url":"https://www.google.com/"}}']
+const googleSeen = [["desktop", undefined, undefined], ["desktop", undefined, "browser"], ["desktop", "Opening google.com", "browser"]]
+
+test("a streamed Anthropic call says it is the browser as soon as its view is written", async () => {
+  const { fetch } = recorder(() => sse([
+    { type: "message_start", message: { model: "claude", usage: { input_tokens: 1, output_tokens: 1 } } },
+    { type: "content_block_start", index: 0, content_block: { type: "tool_use", id: "toolu_1", name: "desktop" } },
+    ...googleArgs.map((partial_json) => ({ type: "content_block_delta", index: 0, delta: { type: "input_json_delta", partial_json } })),
+    { type: "content_block_stop", index: 0 },
+    { type: "message_delta", delta: { stop_reason: "tool_use" }, usage: { output_tokens: 5 } },
+    { type: "message_stop" },
+  ]))
+  const seen: unknown[] = []
+  const step = await anthropicModel({ baseUrl: "https://gateway.test", maxOutputTokens: 100, fetch })
+    .complete(request({ onText: () => undefined, onTool: (name, description, view) => seen.push([name, description, view]) }))
+  assert.deepEqual(seen, googleSeen)
+  assert.equal(step.toolCalls[0]?.input.view, "browser")
+})
+
+test("a streamed Chat Completions call says it is the browser as soon as its view is written", async () => {
+  const { fetch } = recorder(() => sse([
+    { choices: [{ delta: { tool_calls: [{ index: 0, id: "call_1", function: { name: "desktop", arguments: "" } }] } }] },
+    ...googleArgs.map((args) => ({ choices: [{ delta: { tool_calls: [{ index: 0, function: { arguments: args } }] } }] })),
+    { choices: [{ delta: {}, finish_reason: "tool_calls" }], usage: { prompt_tokens: 1, completion_tokens: 1 } },
+  ]))
+  const seen: unknown[] = []
+  await openAIModel({ baseUrl: "https://gateway.test/v1", maxOutputTokens: 100, fetch })
+    .complete(request({ onText: () => undefined, onTool: (name, description, view) => seen.push([name, description, view]) }))
+  assert.deepEqual(seen, googleSeen)
+})
+
+test("only a call's own top-level view counts, and only a desktop view", () => {
+  assert.equal(streamedView('{"view":"browser"'), "browser")
+  assert.equal(streamedView('{"view":"brow'), null)
+  assert.equal(streamedView('{"args":{"view":"browser"},"operation":"open"'), null)
+  assert.equal(streamedView('{"view":"sidebar"}'), null)
 })
 
 test("only a call's own top-level description counts, once it is complete", () => {

@@ -2,6 +2,7 @@
 
 import { ShieldCheck, X } from "lucide-react";
 import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
+import { createPortal } from "react-dom";
 import { DenButton, buttonVariants } from "./ui/button";
 import { DenInput } from "./ui/input";
 import { DenNotice } from "./ui/notice";
@@ -338,12 +339,15 @@ export function ReauthDialog({
     }
   }
 
-  if (!open) {
+  if (!open || typeof document === "undefined") {
     return null;
   }
 
-  return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/35 px-4 py-6 backdrop-blur-[2px]">
+  // Portal to <body> above every other overlay: the action that needs a fresh
+  // sign-in usually comes from a confirm dialog (z-50, portaled) or the profile
+  // dialog / command palette (z-[80]), and this check has to sit on top of them.
+  return createPortal(
+    <div className="fixed inset-0 z-[90] flex items-center justify-center bg-slate-950/35 px-4 py-6 backdrop-blur-[2px]">
       <div
         role="dialog"
         aria-modal="true"
@@ -462,6 +466,7 @@ export function ReauthDialog({
           </button>
         </div>
       </div>
-    </div>
+    </div>,
+    document.body,
   );
 }

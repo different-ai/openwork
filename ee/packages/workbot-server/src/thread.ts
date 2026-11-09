@@ -55,6 +55,11 @@ export type WorkbotStep = {
   /** What the leading slot shows: the connected app's logo, or Workbot's computer. */
   icon: "app" | "computer"
   status: "running" | "done"
+  /**
+   * A safe plain-language failure, never a tool's raw output. Additive on purpose: already-open clients validate
+   * status as running|done, so done means the call ended, not that it succeeded. New browser task cards read reason.
+   */
+  reason?: string
   /** The connected app it used, when known (for its logo). */
   app: string | null
   startedAt: number | null
@@ -72,6 +77,20 @@ export type WorkbotStep = {
   shown?: boolean
   /** The web pages it opened in the browser, oldest first, so the person can open them too. */
   pages?: WorkbotPage[]
+  /**
+   * Work in a connected app: which of its tools ran, in plain words ("Web search"), for the footnote under the answer
+   * that lists what was used. Never a capability or connection id. Absent for computer work and from older servers.
+   */
+  detail?: string
+  /** The connected app's website ("exa.ai"), for its logo when the name alone doesn't find one. */
+  site?: string
+  /** Work on one of the person's other computers (a remote task), not in an app. */
+  remote?: true
+  /**
+   * Work in OpenWork itself rather than another connector: remote tasks, workflows, skills, Automations, Apps, admin
+   * tools, background tasks. The page shows one OpenWork logo for all of it. Absent from older servers.
+   */
+  openwork?: true
 }
 /** A web page Workbot opened in its browser. `id` is short and stable, for the page's own link (/browser/<id>). */
 export type WorkbotPage = { id: string; url: string; title: string }
@@ -95,6 +114,49 @@ export type WorkbotTask = {
   update: string | null
   /** Everything it said it did on its computer, oldest first, kept after it is over. */
   updates: string[]
+  /**
+   * Its steps so far in plain words, oldest first (the newest 12): work in connected apps ("Searching Slack") and on
+   * its computer, each done once its call has returned. For the task sheet; never a tool's output.
+   */
+  steps: WorkbotTaskStep[]
+  /** Calls it has finished. */
+  stepsDone: number
+  /** The latest thing it wrote, on one line, while it works. */
+  note: string | null
+}
+
+export type WorkbotTaskStep = { label: string; done: boolean; at: number | null }
+
+/** How many of a task's steps the page gets: enough for the sheet, never a whole transcript. */
+const TASK_STEPS = 12
+
+/** A task's steps and progress from its own transcript: what it did in apps and on its computer, in plain words. */
+function taskSteps(messages: RunnerMessage[], connectors: WorkbotConnectors) {
+  const finished = new Set(messages.flatMap((message) => (message.role === "tool" ? [message.callId] : [])))
+  const steps: WorkbotTaskStep[] = []
+  let stepsDone = 0
+  let note: string | null = null
+  for (const message of messages) {
+    if (message.role !== "assistant") continue
+    const text = message.text.replace(/\s+/g, " ").trim()
+    if (text) note = text.length > 160 ? `${text.slice(0, 159)}…` : text
+    for (const call of message.toolCalls) {
+      const done = finished.has(call.id)
+      if (done) stepsDone += 1
+      const app = connectorStep(call.name, call.input, connectors)
+      const said = typeof call.input.description === "string" && call.input.description.trim() ? call.input.description.trim() : null
+      const label = app ? app.label
+        : COMPUTER_TOOLS.has(call.name) ? (said ?? (call.name === "desktop" ? desktopUpdate(call.input) : null) ?? "Working on my computer")
+        : null
+      if (!label) continue
+      const short = label.slice(0, 80)
+      const previous = steps.at(-1)
+      // The same thing again (a retry, the next page of a search) is one step.
+      if (previous?.label === short) { previous.done = done; continue }
+      steps.push({ label: short, done, at: message.createdAt ?? null })
+    }
+  }
+  return { steps: steps.slice(-TASK_STEPS), stepsDone, note }
 }
 
 export type WorkbotTurn = {
@@ -134,20 +196,30 @@ export type WorkbotTurn = {
 
 const ACTIVE = new Set(["queued", "running"])
 
-const TASK_STATUS: Record<string, WorkbotTask["status"]> = {
-  queued: "queued",
-  running: "working",
-  interrupted: "paused",
-  completed: "done",
-  failed: "failed",
-  aborted: "stopped",
+/** Older runner lifecycle markers can survive beside a nonterminal status. Never advertise abandoned work as live. */
+const ABANDONED = new Set(["runner_restart", "abandoned", "turn_abandoned", "runner_abandoned"])
+const STOPPED = new Set(["aborted", "stopped", "cancelled", "canceled", "abandoned"])
+
+function abandoned(turn: RunnerTurn) {
+  return STOPPED.has(turn.status) || (turn.error !== null && ABANDONED.has(turn.error))
 }
 
-function tasksOf(snapshot: RunnerSnapshot, parent: string, byTurn: Map<string, RunnerMessage[]>): WorkbotTask[] {
+function taskStatus(turn: RunnerTurn): WorkbotTask["status"] {
+  if (turn.status === "completed") return "done"
+  if (turn.status === "failed") return "failed"
+  if (abandoned(turn)) return "stopped"
+  if (turn.status === "queued") return "queued"
+  if (turn.status === "running") return "working"
+  if (turn.status === "interrupted") return "paused"
+  // The protocol is intentionally open to new statuses. An unknown status is not proof of a running job.
+  return "failed"
+}
+
+function tasksOf(snapshot: RunnerSnapshot, parent: string, byTurn: Map<string, RunnerMessage[]>, connectors: WorkbotConnectors): WorkbotTask[] {
   return snapshot.turns
     .filter((entry) => entry.kind === "task" && entry.parent === parent)
     .map((entry) => {
-      const status = TASK_STATUS[entry.status] ?? "working"
+      const status = taskStatus(entry)
       const open = status === "queued" || status === "working" || status === "paused"
       // Its plain-language updates: the description it gave each command on its computer.
       const updates = (byTurn.get(entry.messageId) ?? [])
@@ -159,6 +231,7 @@ function tasksOf(snapshot: RunnerSnapshot, parent: string, byTurn: Map<string, R
         })
         .filter((update, index, all) => update !== all[index - 1])
       const update = open ? (updates.at(-1) ?? null) : null
+      const progress = taskSteps(byTurn.get(entry.messageId) ?? [], connectors)
       return {
         id: entry.messageId.slice(WORKBOT_MESSAGE_PREFIX.length),
         title: entry.title ?? "Background task",
@@ -167,6 +240,9 @@ function tasksOf(snapshot: RunnerSnapshot, parent: string, byTurn: Map<string, R
         finishedAt: open ? null : (entry.updatedAt ?? null),
         update,
         updates,
+        steps: progress.steps,
+        stepsDone: progress.stepsDone,
+        note: open ? progress.note : null,
       }
     })
 }
@@ -221,12 +297,16 @@ const APPS: Array<[RegExp, string]> = [
   [/gmail|mail/i, "Gmail"],
   [/calendar|gcal/i, "Google Calendar"],
   [/drive|docs|sheets/i, "Google Drive"],
+  [/google.*(document|spreadsheet|sheet|slide|file|folder)/i, "Google Drive"],
+  [/google.*chat/i, "Google Chat"],
   [/notion/i, "Notion"],
   [/linear/i, "Linear"],
   [/github/i, "GitHub"],
   [/hubspot/i, "HubSpot"],
   [/salesforce/i, "Salesforce"],
   [/jira|confluence|atlassian/i, "Atlassian"],
+  // Den's built-in Google tools ("native:google-workspace:…") that no pattern above names more precisely.
+  [/google/i, "Google Workspace"],
 ]
 
 /** What it is doing in a connected app, as a colleague would say it (DESIGN C4). */
@@ -261,9 +341,172 @@ function reactionOf(input: Record<string, unknown>): string | null {
   return /\p{Extended_Pictographic}|\p{Regional_Indicator}/u.test(emoji) ? emoji : null
 }
 
-function appOf(name: string, input: Record<string, unknown>): string | null {
-  const target = name === "execute_capability" && typeof input.name === "string" ? input.name : name
-  return APPS.find(([pattern]) => pattern.test(target))?.[1] ?? null
+/**
+ * The person's connected apps by connection id, as their admins named them, with each one's website for its logo.
+ * Read from Den by the host; without it (an older Den, or Den slow to answer) a well-known app is still named from
+ * its tools, and any other is "a connected app". Connection and capability ids never reach the page.
+ */
+export type WorkbotConnectors = ReadonlyMap<string, { name: string; site: string | null }>
+
+/** Connectors whose tools say which app they are ("web_search_exa"), by a word in the tool's name. */
+const KNOWN_CONNECTORS: Record<string, { name: string; site: string }> = {
+  exa: { name: "Exa", site: "exa.ai" },
+  planetscale: { name: "PlanetScale", site: "planetscale.com" },
+  pscale: { name: "PlanetScale", site: "planetscale.com" },
+  sentry: { name: "Sentry", site: "sentry.io" },
+  stripe: { name: "Stripe", site: "stripe.com" },
+  figma: { name: "Figma", site: "figma.com" },
+  granola: { name: "Granola", site: "granola.ai" },
+  asana: { name: "Asana", site: "asana.com" },
+  zendesk: { name: "Zendesk", site: "zendesk.com" },
+  posthog: { name: "PostHog", site: "posthog.com" },
+  vercel: { name: "Vercel", site: "vercel.com" },
+  render: { name: "Render", site: "render.com" },
+  intercom: { name: "Intercom", site: "intercom.com" },
+  airtable: { name: "Airtable", site: "airtable.com" },
+  supabase: { name: "Supabase", site: "supabase.com" },
+  cloudflare: { name: "Cloudflare", site: "cloudflare.com" },
+  deepwiki: { name: "DeepWiki", site: "deepwiki.com" },
+}
+
+/** "web_search_exa", "searchMessages" → ["web", "search", "exa"], ["search", "messages"]. */
+function words(name: string) {
+  return name.replace(/([a-z0-9])([A-Z])/g, "$1 $2").split(/[^a-zA-Z0-9]+/).map((word) => word.toLowerCase()).filter(Boolean)
+}
+
+/** What a tool does, in plain words, without the app's brand: "web_search_exa" in Exa (or "Exa Search") → "Web search". */
+function toolDetail(tool: string, app: string | null) {
+  const brand = app ? words(app)[0] : undefined
+  const plain = words(tool).filter((word) => word !== brand && !KNOWN_CONNECTORS[word] && !/^(mcp|tool|v\d+)$/.test(word)).join(" ")
+  if (!plain) return null
+  const text = `${plain[0]!.toUpperCase()}${plain.slice(1)}`
+  return text.length > 48 ? `${text.slice(0, 47)}…` : text
+}
+
+/** A site taken from what the host gives: a bare host name only ("exa.ai"), never a path or query. */
+function plainSite(site: string | null | undefined) {
+  return site && /^[a-z0-9.-]{3,80}$/i.test(site) ? site.toLowerCase() : undefined
+}
+
+const REMOTE_ACTIONS: Record<string, string> = {
+  create: "Starting a remote task",
+  send: "Messaging the remote task",
+  read: "Checking the remote task",
+  status: "Checking the remote task",
+  stop: "Stopping the remote task",
+  answer: "Answering the remote task",
+  targets: "Checking your computers",
+  list: "Checking remote tasks",
+}
+
+export type ConnectorStep = { app: string | null; label: string; detail: string | null; site?: string; remote?: true; openwork?: true }
+
+/** OpenWork's own features share one name and logo, so an answer shows a single OpenWork mark however many ran. */
+const OPENWORK = { app: "OpenWork", site: "openworklabs.com", openwork: true } as const
+
+const openworkStep = (label: string, detail: string | null, extra: { remote?: true } = {}): ConnectorStep => ({ ...OPENWORK, label, detail, ...extra })
+
+/** A person-readable name from a slug ("plan-my-day" → "Plan my day"); null for anything that looks like an id. */
+function plainName(value: unknown) {
+  if (typeof value !== "string") return null
+  const slug = value.trim().replace(/^skill:/, "")
+  if (!/^[a-z0-9][a-z0-9 _-]{0,58}$/i.test(slug)) return null
+  const parts = slug.split(/[-_ ]+/).filter(Boolean)
+  // A trailing random suffix ("…-ksdx8c7f") is an id, not part of the name.
+  if (parts.length > 1 && /^(?=.*\d)[a-z0-9]{6,}$/i.test(parts.at(-1) ?? "")) parts.pop()
+  const text = parts.join(" ")
+  return text ? `${text[0]!.toUpperCase()}${text.slice(1)}` : null
+}
+
+/** A short title the person gave (a background task's), on one line. */
+function shortTitle(value: unknown) {
+  if (typeof value !== "string") return null
+  const text = value.replace(/\s+/g, " ").trim()
+  if (!text) return null
+  return text.length > 48 ? `${text.slice(0, 47)}…` : text
+}
+
+/** Workbot's direct tools from OpenWork: skills, Apps, Your agent's checks and its own background tasks. */
+function openworkTool(name: string, input: Record<string, unknown>): ConnectorStep | null {
+  switch (name) {
+    case "start_task": return openworkStep("Starting a background task", shortTitle(input.title) ?? "Background task")
+    case "stop_task": return openworkStep("Stopping a background task", "Background task")
+    case "list_skills": return openworkStep("Checking skills", "Skills")
+    case "get_skill": return openworkStep("Reading a skill", plainName(input.name) ?? "Skill")
+    case "create_skill":
+    case "update_skill": return openworkStep("Saving a skill", plainName(input.name) ?? "Skill")
+    case "prepare_app":
+    case "create_app": return openworkStep("Building an app", "App")
+    case "update_app": return openworkStep("Updating an app", "App")
+    case "read_app": return openworkStep("Opening an app", "App")
+    case "render_workflow_artifact": return openworkStep("Showing a workflow's results", "Workflow")
+    case "request_check": return openworkStep("Asking your agent to check", "Your agent")
+    default: return null
+  }
+}
+
+/** What an OpenWork capability does, by area: Den's own operations ("createCloudAutomation", "putMeAgent"). */
+const OPENWORK_AREAS: Array<[RegExp, string]> = [
+  [/automation/i, "Automations"],
+  [/workflow/i, "Workflows"],
+  [/skill/i, "Skills"],
+  [/(^|[a-z])(app|apps|artifact)([A-Z]|$)/, "Apps"],
+  [/agent/i, "Your agent"],
+  [/member|organi[sz]ation|team|invit|role/i, "Organization"],
+  [/connection|connector|mcp/i, "Connections"],
+]
+
+function openworkCapability(capability: string): ConnectorStep | null {
+  if (capability.startsWith("remote-session:")) {
+    const action = capability.slice("remote-session:".length)
+    const label = REMOTE_ACTIONS[action] ?? "Checking the remote task"
+    return openworkStep(label, "Remote task", { remote: true })
+  }
+  if (capability.startsWith("admin:")) return openworkStep("Using OpenWork admin tools", toolDetail(capability.slice("admin:".length), null) ?? "Admin tools")
+  if (capability.startsWith("skill:")) return openworkStep("Using a skill", plainName(capability) ?? "Skill")
+  // A plugin's skill or Workflow, by ids only: say what kind of thing ran, never which ids.
+  if (capability.startsWith("plugin:")) return openworkStep("Using OpenWork", "Workflow or skill")
+  // Den's own operations are bare camelCase names; anything with a prefix is some other source.
+  if (!/^[a-z][a-zA-Z0-9]*$/.test(capability)) return null
+  const area = OPENWORK_AREAS.find(([pattern]) => pattern.test(capability))?.[1] ?? "OpenWork"
+  if (area === "Automations") {
+    const verb = capability.match(/^[a-z]+/)?.[0] ?? ""
+    const label = /create|post|put|update|patch|activate|deactivate/.test(verb) ? "Setting up an automation"
+      : /run|trigger/.test(verb) ? "Running an automation"
+      : /delete|archive|cancel/.test(verb) ? "Changing an automation"
+      : "Checking automations"
+    return openworkStep(label, area)
+  }
+  if (area === "Workflows") return openworkStep(/^(run|execute|post|trigger)/.test(capability) ? "Running a workflow" : "Checking workflows", area)
+  return openworkStep(appActionLabel("OpenWork", capability), area)
+}
+
+/**
+ * Work in a connected app, said the way a colleague would ("Searching Exa"), with which tool ran ("Web search") and
+ * the app's website for its logo; or work in OpenWork itself (a remote task on another of the person's computers, a
+ * workflow, skill, Automation, App, admin tool or background task), which the page shows as one OpenWork logo. Null
+ * for everything else Workbot calls (finding tools, its own notes and files), which stays out of sight.
+ */
+export function connectorStep(name: string, input: Record<string, unknown>, connectors: WorkbotConnectors = new Map()): ConnectorStep | null {
+  if (name !== "execute_capability") return openworkTool(name, input)
+  if (typeof input.name !== "string") return null
+  const capability = input.name.trim()
+  // A connection's own tool: mcp:<connectionId>:<tool>. The id names the connection; the tool says what it did.
+  const external = /^mcp:([^:]+):(.+)$/.exec(capability)
+  if (external) {
+    const [, connectionId = "", tool = ""] = external
+    const known = connectors.get(connectionId)
+    const guessed = words(tool).map((word) => KNOWN_CONNECTORS[word]).find(Boolean)
+    const app = known?.name.trim() || guessed?.name || APPS.find(([pattern]) => pattern.test(tool))?.[1] || null
+    const site = plainSite(known?.site ?? guessed?.site)
+    return { app, label: app ? appActionLabel(app, tool) : "Using a connected app", detail: toolDetail(tool, app), ...(site ? { site } : {}) }
+  }
+  const own = /^(remote-session|admin|skill|plugin):/.test(capability) ? openworkCapability(capability) : null
+  if (own) return own
+  const app = APPS.find(([pattern]) => pattern.test(capability))?.[1] ?? null
+  if (!app) return openworkCapability(capability)
+  const tool = capability.split(/[:/]/).pop() ?? ""
+  return { app, label: appActionLabel(app, capability), detail: toolDetail(tool, app) }
 }
 
 /** The conversation's kept files, so the ones Workbot made show under the answer that made them. */
@@ -333,7 +576,8 @@ function desktopUpdate(input: Record<string, unknown>): string | null {
 
 /**
  * Work on Workbot's computer reads as one step, however many commands it took: the person sees that it is using
- * its computer, never commands, retries or failures it recovered from (DESIGN C3, T2). Work in its browser is its own
+ * its computer, never commands or raw failure details (DESIGN C3, T2). Failures retain a safe reason rather than
+ * silently becoming successful when later calls are merged. Work in its browser is its own
  * step ("Using the browser"), with the pages it opened, and so is work on its screen apart from commands run in the
  * background ("Working on my computer"), which has nothing to watch. What it is doing, in its own words, travels in `updates`; the
  * page shows the newest one under the step.
@@ -371,6 +615,8 @@ function addComputerStep(parts: WorkbotPart[], name: string, input: Record<strin
   const took = at !== null && ended !== null ? Math.max(0, ended - at) : 0
   const worked = before + (took <= LONGEST_COMMAND_MS ? took : 0)
   workedMs.set(step, worked)
+  const failed = result?.role === "tool" && result.isError
+  if (failed) step.reason = browser ? "The browser action couldn't finish." : "The computer action couldn't finish."
   step.status = running ? "running" : "done"
   // Duration is shown as finishedAt − startedAt, and a running step counts up from startedAt.
   if (running) {
@@ -393,12 +639,14 @@ const workedMs = new WeakMap<WorkbotStep, number>()
  */
 const LONGEST_COMMAND_MS = 6 * 60_000
 
-function statusOf(turn: RunnerTurn): WorkbotTurnStatus {
-  if (turn.status === "queued") return "queued"
-  // An interrupted turn is resumed by the next read, so the person sees it still working.
-  if (turn.status === "running" || turn.status === "interrupted") return "working"
+function statusOf(turn: RunnerTurn, resumable: ReadonlySet<string>): WorkbotTurnStatus {
   if (turn.status === "completed") return "done"
-  if (turn.status === "aborted") return "stopped"
+  if (turn.status === "failed") return "failed"
+  if (abandoned(turn)) return "stopped"
+  if (turn.status === "queued") return "queued"
+  if (turn.status === "running") return "working"
+  // Only the newest foreground interruption is resumed. Older interrupted messages aren't still working.
+  if (turn.status === "interrupted") return resumable.has(turn.messageId) ? "working" : "stopped"
   return "failed"
 }
 
@@ -417,7 +665,7 @@ function outputsOf(files: FileNames, startedAt: number | null, finishedAt: numbe
   return [...latest.values()]
 }
 
-export function buildWorkbotTurns(snapshot: RunnerSnapshot, files: FileNames = new Map()): WorkbotTurn[] {
+export function buildWorkbotTurns(snapshot: RunnerSnapshot, files: FileNames = new Map(), connectors: WorkbotConnectors = new Map()): WorkbotTurn[] {
   const byTurn = new Map<string, RunnerMessage[]>()
   for (const message of snapshot.messages) {
     if (!message.messageId) continue
@@ -426,6 +674,7 @@ export function buildWorkbotTurns(snapshot: RunnerSnapshot, files: FileNames = n
     byTurn.set(message.messageId, list)
   }
 
+  const resumable = new Set(interruptedTurnIds(snapshot))
   const turns: WorkbotTurn[] = []
   for (const turn of snapshot.turns) {
     // A background task's own work stays out of the conversation; its report shows instead.
@@ -469,19 +718,23 @@ export function buildWorkbotTurns(snapshot: RunnerSnapshot, files: FileNames = n
           addComputerStep(parts, call.name, call.input, results.get(call.id), message.createdAt ?? null)
           continue
         }
-        // Only work in a connected app is worth a line ("Searching Slack"); lookups, notes to self and files stay
-        // out of sight: files it made show as cards under the answer.
-        const app = call.name === "execute_capability" ? appOf(call.name, call.input) : null
-        if (!app) continue
+        // Only work in a connected app or in OpenWork itself is worth a logo under the answer ("Searching Exa");
+        // lookups, notes to self and files stay out of sight: files it made show as cards under the answer.
+        const used = connectorStep(call.name, call.input, connectors)
+        if (!used) continue
         const result = results.get(call.id)
         const step: WorkbotStep = {
-          label: appActionLabel(app, String(call.input.name ?? "")),
+          label: used.label,
           icon: "app",
           status: result === undefined ? "running" : "done",
-          app,
+          app: used.app,
           startedAt: message.createdAt ?? null,
           finishedAt: result?.createdAt ?? null,
           updates: [],
+          ...(used.detail ? { detail: used.detail } : {}),
+          ...(used.site ? { site: used.site } : {}),
+          ...(used.remote ? { remote: true as const } : {}),
+          ...(used.openwork ? { openwork: true as const } : {}),
         }
         const last = parts.at(-1)
         if (last?.kind === "steps") last.steps.push(step)
@@ -489,8 +742,20 @@ export function buildWorkbotTurns(snapshot: RunnerSnapshot, files: FileNames = n
       }
     }
 
-    const status = statusOf(turn)
+    const status = statusOf(turn, resumable)
     const working = status === "working" || status === "queued"
+    // A cut-off call has no tool result, but a stopped/failed turn cannot have a running step or elapsed timer.
+    if (!working) {
+      for (const part of parts) {
+        if (part.kind !== "steps") continue
+        for (const step of part.steps) {
+          if (step.status !== "running") continue
+          step.status = "done"
+          step.reason ??= status === "stopped" ? "Stopped before the action finished." : "The action ended without a result."
+          step.finishedAt = turn.updatedAt ?? step.startedAt
+        }
+      }
+    }
     // A closing "Next: a | b | c" line becomes buttons: the hello asks for one, and later answers sometimes follow suit.
     let suggestions: string[] = []
     if (!working) {
@@ -523,7 +788,7 @@ export function buildWorkbotTurns(snapshot: RunnerSnapshot, files: FileNames = n
       error: status === "failed" ? friendlyError(turn.error) : null,
       ...(status === "failed" && modelIssue(turn.error) ? { modelIssue: modelIssue(turn.error) } : {}),
       retryable: status === "failed" && retryableError(turn.error),
-      tasks: turn.kind === undefined ? tasksOf(snapshot, turn.messageId, byTurn) : [],
+      tasks: turn.kind === undefined ? tasksOf(snapshot, turn.messageId, byTurn, connectors) : [],
       greeting,
       suggestions,
     })
@@ -538,12 +803,15 @@ export function buildWorkbotTurns(snapshot: RunnerSnapshot, files: FileNames = n
 export function interruptedTurnIds(snapshot: RunnerSnapshot): string[] {
   const ours = snapshot.turns.filter((entry) => entry.messageId.startsWith(WORKBOT_MESSAGE_PREFIX))
   const newest = ours.filter((entry) => entry.kind === undefined).at(-1)
-  const background = ours.filter((entry) => entry.kind !== undefined && entry.status === "interrupted").map((entry) => entry.messageId)
-  return newest?.status === "interrupted" ? [newest.messageId, ...background] : background
+  const canResume = (entry: RunnerTurn) => entry.status === "interrupted" && !abandoned(entry)
+  const background = ours.filter((entry) => entry.kind !== undefined && canResume(entry)).map((entry) => entry.messageId)
+  return newest && canResume(newest) ? [newest.messageId, ...background] : background
 }
 
 /** Whether Workbot is answering; background tasks working alongside don't hold up the conversation. */
 export function threadBusy(snapshot: RunnerSnapshot) {
-  if (snapshot.status === "busy") return true
-  return snapshot.turns.some((turn) => turn.kind !== "task" && (ACTIVE.has(turn.status) || turn.status === "interrupted"))
+  // A session's aggregate flag may lag its turns after Stop or a restart. Explicit lifecycle state wins.
+  if (snapshot.turns.length === 0) return snapshot.status === "busy"
+  const resumable = new Set(interruptedTurnIds(snapshot))
+  return snapshot.turns.some((turn) => turn.kind !== "task" && !abandoned(turn) && (ACTIVE.has(turn.status) || resumable.has(turn.messageId)))
 }

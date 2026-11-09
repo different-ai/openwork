@@ -16,7 +16,6 @@ import { filterEntitledModelOptions } from "../../connections/provider-auth/prov
 import { filterCloudManagedModelOptions } from "../../connections/provider-auth/assigned-model-options";
 import { getDisplaySessionTitle } from "../../../../app/lib/session-title";
 import { useSessionManagementStore } from "../sidebar/session-management-store";
-import { readSessionSettled, sessionActivityAt, settleSession, unsettleSession } from "../sidebar/session-settle";
 import { isActiveWorkSessionStatus, isNeedsAttentionSessionStatus } from "../sidebar/utils";
 import { useSessionModelStore } from "../surface/session-model-store";
 import type { ArchiveSessionOptions, ArchiveSessionOutcome } from "../sidebar/use-session-archive";
@@ -39,8 +38,6 @@ type UseSessionControlActionsInput = {
   openworkClient: OpenworkServerClient | null;
   opencodeClient: ReturnType<typeof createClient> | null;
   archiveDisabledReason?: string;
-  /** Workspaces where the sidebar offers Settle (the rollout flag and OpenCode v2). */
-  settleWorkspaceIds?: ReadonlySet<string>;
   /** The sidebar's session status, including background work and pending requests. */
   sessionStatusById?: Readonly<Record<string, string>>;
   endpointForWorkspace: (workspace: SessionControlWorkspace | null | undefined) => ResolvedWorkspaceEndpoint | null;
@@ -55,8 +52,6 @@ type UseSessionControlActionsInput = {
 
 const ARCHIVE_TARGET_WORKING_HINT = "This session is still working. If the user wants it closed, ask them to stop it in the app (or wait until session.list_sessions reports working=false), then archive. If not, leave it running.";
 const SELF_ARCHIVE_WHILE_WORKING_HINT = "A working session cannot archive itself. Finish the turn so your conclusions can be reviewed; the reviewer archives.";
-const SETTLE_TARGET_WORKING_HINT = "Working sessions stay in view. Settle it once session.list_sessions reports working=false, or leave it.";
-const SETTLE_TARGET_WAITING_HINT = "The session is waiting on the person. Answer its pending request (session.question.list / session.question.answer) only with the person's own answer, or ask them; then settle it.";
 
 function findSessionWorkspace(
   workspaces: SessionControlWorkspace[],
@@ -92,7 +87,6 @@ export function useSessionControlActions(input: UseSessionControlActionsInput) {
     openworkClient,
     opencodeClient,
     archiveDisabledReason,
-    settleWorkspaceIds,
     sessionStatusById,
     refreshRouteState,
     reloadWorkspaceSessions,
@@ -158,7 +152,7 @@ export function useSessionControlActions(input: UseSessionControlActionsInput) {
   const listSessionsControlAction = useMemo<OpenworkControlAction>(() => ({
     id: "session.list_sessions",
     label: "List available sessions",
-    description: "Return every loaded session across workspaces (pinned first, then newest). Entries include `pinned`, `settled` (on the sidebar's Settled row; see session.settle), `status` (idle, thinking, responding, waiting, compacting, error), `working` (own work or known busy/waiting descendants), `descendantActivity` ({ busy, waiting, unknown } counts), `inventoryComplete` (false when referenced descendant activity is unreadable; unknown alone does not imply working) and `model` ({ providerId, modelId, variant, displayName?, providerName? }: the model and reasoning effort the session is bound to, null before any model is bound). Check `working` before session.archive. Pass `limit` to cap the count or `workspaceId` to narrow to one workspace.",
+    description: "Return every loaded session across workspaces (pinned first, then newest). Entries include `pinned`, `status` (idle, thinking, responding, waiting, compacting, error), `working` (own work or known busy/waiting descendants), `descendantActivity` ({ busy, waiting, unknown } counts), `inventoryComplete` (false when referenced descendant activity is unreadable; unknown alone does not imply working) and `model` ({ providerId, modelId, variant, displayName?, providerName? }: the model and reasoning effort the session is bound to, null before any model is bound). Check `working` before session.archive. Pass `limit` to cap the count or `workspaceId` to narrow to one workspace.",
     kind: "query",
     effects: { data: "read", ui: "none", external: false },
     sideEffect: "none",
@@ -181,8 +175,6 @@ export function useSessionControlActions(input: UseSessionControlActionsInput) {
         pinnedIds,
         modelCatalogByWorkspaceId,
         statusFor: activity.getStatus,
-        settledFor: (workspaceId, session) => Boolean(settleWorkspaceIds?.has(workspaceId))
-          && readSessionSettled(session, sessionStatusById?.[session.id] ?? activity.getStatus(workspaceId, session.id)),
         attentionFor: (workspaceId, sessionId) => {
           let attention = attentionByWorkspaceId.get(workspaceId);
           if (!attention) {
@@ -200,7 +192,7 @@ export function useSessionControlActions(input: UseSessionControlActionsInput) {
         },
       });
     },
-  }), [endpointForWorkspace, pinnedIds, sessionStatusById, sessionsByWorkspaceId, settleWorkspaceIds, workspaceModels, workspaces]);
+  }), [endpointForWorkspace, pinnedIds, sessionStatusById, sessionsByWorkspaceId, workspaceModels, workspaces]);
   useControlAction(listSessionsControlAction);
 
   const openSessionControlAction = useMemo<OpenworkControlAction>(() => ({
@@ -445,49 +437,6 @@ export function useSessionControlActions(input: UseSessionControlActionsInput) {
     },
   }), [sessionsByWorkspaceId, workspaces]);
   useControlAction(pinControlAction);
-
-  const settleControlAction = useMemo<OpenworkControlAction>(() => ({
-    id: "session.settle",
-    label: "Settle or un-settle a session",
-    description: "Settle a finished session: it leaves the active sidebar list for its workspace's collapsed Settled row and comes back on its own with any new activity. Pass settled=false to bring it back now. Only idle top-level sessions in OpenCode v2 workspaces settle; a session that is working (code target_working) or waiting on the person (code target_waiting) is not settled. Settling also unpins it and clears unread. Settled state is kept on this device only. Read `settled` in session.list_sessions.",
-    sideEffect: "mutation",
-    requiresArgs: true,
-    args: [
-      { name: "sessionId", type: "string", required: true, description: "Session ID from session.list_sessions." },
-      { name: "settled", type: "boolean", required: true, description: "true to settle, false to bring it back." },
-    ],
-    disabled: !settleWorkspaceIds?.size,
-    execute: (args) => {
-      const sessionId = stringArg(args, "sessionId");
-      const settled = objectArgs(args).settled;
-      if (!sessionId) return { ok: false, error: "sessionId is required" };
-      if (typeof settled !== "boolean") return { ok: false, error: "settled must be true or false" };
-      const workspace = findSessionWorkspace(workspaces, sessionsByWorkspaceId, sessionId);
-      const found = workspace && sessionsByWorkspaceId[workspace.id]?.find((session) => session.id === sessionId);
-      if (!workspace || !found) return { ok: false, error: "Session was not found in the current session list" };
-      if (!settleWorkspaceIds?.has(workspace.id)) return { ok: false, code: "unavailable", sessionId, error: "Settle is available only in OpenCode v2 workspaces." };
-      if ((found.time?.archived ?? 0) > 0) return { ok: false, sessionId, error: "Archived sessions cannot be settled. Unarchive the session first." };
-      if (found.parentID?.trim()) return { ok: false, sessionId, error: "Sub-agent sessions are not listed on their own; settle the parent session." };
-      const session = { ...found, id: sessionId };
-      const title = getDisplaySessionTitle(session.title ?? "");
-      const status = sessionStatusById?.[sessionId] ?? useSessionActivityStore.getState().getStatus(workspace.id, sessionId);
-      const current = readSessionSettled(session, status);
-      if (current === settled) return { ok: true, sessionId, settled, unchanged: true };
-      if (settled) {
-        if (isActiveWorkSessionStatus(status)) {
-          return { ok: false, code: "target_working", sessionId, title, error: `"${title}" is still working; it was not settled.`, hint: SETTLE_TARGET_WORKING_HINT };
-        }
-        if (isNeedsAttentionSessionStatus(status)) {
-          return { ok: false, code: "target_waiting", sessionId, title, error: `"${title}" is waiting on the person; it was not settled.`, hint: SETTLE_TARGET_WAITING_HINT };
-        }
-        settleSession(sessionId, title, sessionActivityAt(session));
-      } else {
-        unsettleSession(sessionId, title);
-      }
-      return { ok: true, sessionId, settled: readSessionSettled(session, status) };
-    },
-  }), [sessionStatusById, sessionsByWorkspaceId, settleWorkspaceIds, workspaces]);
-  useControlAction(settleControlAction);
 
   const archiveControlAction = useMemo<OpenworkControlAction>(() => ({
     id: "session.archive",

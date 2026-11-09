@@ -46,15 +46,21 @@ export function verifySlackSignature(
 export function scopeKey(...parts: string[]) {
   return createHash("sha256").update(JSON.stringify(parts)).digest("hex")
 }
+/**
+ * Message subtypes that are still a person writing to the assistant. Slack sends a message with an attached file or
+ * image as `file_share`; dropping it ignored the request silently. Edits, deletions, joins and bot posts stay out.
+ */
+const INVOCATION_SUBTYPES = new Set(["file_share"])
+
 export function isInvocation(event: SlackEvent) {
   return Boolean(
     event.user &&
     event.channel &&
     event.ts &&
-    event.text?.trim() &&
+    (event.text?.trim() || event.files?.length) &&
     !event.bot_id &&
     !event.app_id &&
-    !event.subtype &&
+    (!event.subtype || INVOCATION_SUBTYPES.has(event.subtype)) &&
     (event.type === "app_mention" || (event.type === "message" && event.channel_type === "im")),
   )
 }

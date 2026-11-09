@@ -1,6 +1,6 @@
 import { expect } from "vitest";
 import { spec, type Probe, type User } from "@openwork/testkit";
-import { cmdkSessionActionParity, cmdkSessionActionParityWithSettle } from "../worlds/cmdk-session-action-parity.ts";
+import { cmdkSessionActionParity } from "../worlds/cmdk-session-action-parity.ts";
 
 const test = spec.world(cmdkSessionActionParity, {
   timeout: 600_000,
@@ -307,13 +307,7 @@ test("a member organizes and safely removes the main conversation from Cmd+K eve
   });
 });
 
-const settleTest = spec.world(cmdkSessionActionParityWithSettle, {
-  timeout: 600_000,
-  resources: { surfaces: ["appWeb"], services: ["den", "mock"] },
-  needs: { commands: ["bun"] },
-});
-
-settleTest("a member sees why Settle is unavailable and can cancel archiving a conversation that still needs an answer", async ({ world, user, probe, step, evidence }) => {
+test("a member can cancel archiving a conversation that still needs an answer", async ({ world, user, probe, step, evidence }) => {
   const keys = keyboard(user, probe);
   await user.resizeViewport({ width: 1280, height: 900, deviceScaleFactor: 1 });
 
@@ -326,28 +320,11 @@ settleTest("a member sees why Settle is unavailable and can cancel archiving a c
     const question = (await probe.text()).includes(world.question.text);
     expect(question).toBe(true);
     await preserved(probe, world);
-    evidence.recordAssertionEvidence("The unavailable action is exercised during a real native question", `question=${world.question.text}; main=${world.main.title}; two unrelated conversations unchanged`, question);
+    evidence.recordAssertionEvidence("The archive safeguard is exercised during a real native question", `question=${world.question.text}; main=${world.main.title}; two unrelated conversations unchanged`, question);
     await user.screenshot();
   });
 
-  await step("after: Settle remains visible with its reason and Enter cannot settle the waiting conversation", async () => {
-    await keys.search("Settle session");
-    await user.see({ role: "option", label: /^Settle session/ });
-    const disabled = (await probe.dom(`${paletteRows}[aria-disabled="true"], ${paletteRows}[data-disabled]`)).elements.find(element => element.text.startsWith("Settle session"));
-    expect(disabled?.text).toContain("after it finishes");
-    expect(disabled?.text).toContain(world.main.title);
-    await user.press("Enter");
-    await user.see(paletteTarget);
-    expect((await probe.dom('[data-workspace-settled-sessions] [data-session-tab-id="' + world.main.sessionId + '"]')).elements).toHaveLength(0);
-    expect((await readSession(probe, world.workspace.workspaceId, world.main.sessionId)).archived).toBe(false);
-    evidence.recordAssertionEvidence("Blocked is visible, explained and cannot dispatch", `disabled row=${disabled?.text}; Enter leaves search open; waiting conversation is not settled or archived`, Boolean(disabled?.text.includes("after it finishes")));
-    await user.screenshot();
-    await user.press("Escape");
-    await keys.closed();
-    await user.see({ text: world.question.text });
-  });
-
-  await step("cancelling Stop and archive preserves the pending question and every other conversation", async () => {
+  await step("after: Archive asks before stopping a conversation that still needs an answer", async () => {
     await keys.search("Archive session");
     await user.see({ role: "option", label: /^Archive session/ });
     await user.press("Enter");
@@ -355,7 +332,14 @@ settleTest("a member sees why Settle is unavailable and can cancel archiving a c
     await user.see({ role: "button", label: "Stop and archive" });
     const dialog = (await probe.dom('[role="dialog"], [role="alertdialog"]')).elements.find(element => element.text.includes("Stop and archive"));
     expect(dialog?.text).toContain(world.main.title);
+    const main = await readSession(probe, world.workspace.workspaceId, world.main.sessionId);
+    expect(main.archived).toBe(false);
+    await preserved(probe, world);
+    evidence.recordAssertionEvidence("Archive waits for a separate decision before stopping work", `confirmation names=${world.main.title}; main archived=${main.archived}; other conversations unchanged`, Boolean(dialog?.text.includes(world.main.title)) && !main.archived);
     await user.screenshot();
+  });
+
+  await step("cancelling Stop and archive preserves the pending question and every other conversation", async () => {
     await user.click({ role: "button", label: "Keep session open" });
     await user.notSee({ role: "button", label: "Stop and archive" });
     await user.see({ text: world.question.text });

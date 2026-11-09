@@ -6,8 +6,36 @@ import assert from "node:assert/strict"
 import { test } from "node:test"
 import { LIVE_REOPEN_MS, LIVE_RETRY_MAX_MS, liveRetryDelay, liveStreamOff, retryAfterMs } from "../../../packages/workbot-ui/src/live-retry.js"
 
+import { createLiveReadiness } from "../../../packages/workbot-ui/src/live-readiness.js"
+
 const shortest = () => 0
 const longest = () => 1
+
+test("quick reply stream wait resolves on readiness, isolates chats, and never waits indefinitely", async () => {
+  const live = createLiveReadiness()
+  const main = live.subscribe(null)
+  let resolved = false
+  const waiting = live.wait(null, 1000).then(() => { resolved = true })
+  await Promise.resolve()
+  assert.equal(resolved, false)
+  main.ready()
+  await waiting
+  assert.equal(resolved, true)
+  await live.wait(null, 1000) // An existing connection doesn't add a timer.
+  let sideResolved = false
+  const side = live.wait("side", 5).then(() => { sideResolved = true })
+  await Promise.resolve()
+  assert.equal(sideResolved, false)
+  await side
+  assert.equal(sideResolved, true)
+  main.disconnect()
+  let reconnected = false
+  const afterDisconnect = live.wait(null, 5).then(() => { reconnected = true })
+  await Promise.resolve()
+  assert.equal(reconnected, false)
+  await afterDisconnect
+  assert.equal(reconnected, true)
+})
 
 test("a stream that was open comes back at once; refusals in a row wait twice as long each time, up to a minute", () => {
   assert.equal(liveRetryDelay(0, null, longest), LIVE_REOPEN_MS)

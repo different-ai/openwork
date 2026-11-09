@@ -17,8 +17,8 @@ export type WorkbotHost = {
   user: { name: string | null } | null
   /** The apps the person has connected, for the header. A hook: called once on every render of the header. */
   useConnectedApps: () => Array<{ id: string; name: string }>
-  /** Logo URLs to try in order for an app, by its display name. */
-  appIcons: (name: string) => string[]
+  /** Logo URLs to try in order for an app, by its display name, then by its website ("exa.ai") when it has one. */
+  appIcons: (name: string, site?: string) => string[]
   /** Where the avatar in the header leads. */
   homeHref: string
   /** Workbot's Calendar tab is on for this person (on while Workbot is on). */
@@ -29,6 +29,8 @@ export type WorkbotHost = {
   computer?: boolean
   /** The Browser view of Workbot's computer (`browserUse`), rolled out separately from `computer`. Omitted means off. */
   browser?: boolean
+  /** The conversation stays docked beside the Browser and Computer views on wide screens (`workbotBrowserChat`). Needs `browser`. */
+  browserChat?: boolean
   /** Teach browser tasks and save private Cloud skills; omitted means off. */
   browserDemonstrations?: boolean
   /** Explicit document editing is enabled; omitted means preview only. */
@@ -53,6 +55,31 @@ export type WorkbotHost = {
   verifyDocumentIdentity?(): Promise<boolean>
   /** The retained owner remains mounted, but this host authorization fact masks it. */
   documentAuthorization?: "signin" | "blocked" | "disabled"
+  /**
+   * Quiet non-browser work under its name/task sheet rather than computer/task cards (`workbotWorkingStatus`).
+   * Off when unset. Browser turns always use their own persistent task card and header status.
+   */
+  workingStatus?: boolean
+  /** Non-browser first human acknowledgment (`workbotQuickReply`). Off when unset; browser tasks acknowledge by default. */
+  quickReply?: boolean
+  /**
+   * A chat opens on the newest page this device kept from the last visit while it is read again
+   * (`workbotInstantOpen`). Off when unset; the kept pages are cleared then.
+   */
+  instantOpen?: boolean
+  /** Reading earlier messages keeps its place, with a return-to-latest button (`workbotScrollToBottom`). Off when unset. */
+  scrollToBottom?: boolean
+  /**
+   * Tapping Workbot's name opens its profile: what it is working on, what it can use, and what it remembers about the
+   * person, read-only (`workbotProfileSheet`). Off when unset.
+   */
+  profileSheet?: boolean
+  /** Rich five-tab profile (`workbotCenteredProfile`), off when unset. Browser access independently gets the centered header pill. */
+  centeredProfile?: boolean
+  /** Passive native-computer preview (`workbotBrowserPreview`), off when unset. Browser task cards/previews are default. */
+  browserPreview?: boolean
+  /** Read-only remote tasks in profile and header (`workbotRemoteTasks`). Off when unset. */
+  remoteTasks?: boolean
   /** The person can start side chats next to their main chat (on while Workbot is on). Off when unset. */
   sideChats?: boolean
   /**
@@ -86,6 +113,15 @@ export function setWorkbotHost(host: WorkbotHost) {
 /** The views of Workbot's computer this person has, Browser first; the Computer tab shows while there is one. */
 export function computerViews(host: WorkbotHost): Array<"browser" | "computer"> {
   return [...(host.browser === true ? ["browser" as const] : []), ...(host.computer === true ? ["computer" as const] : [])];
+}
+
+/**
+ * What the tab for Workbot's computer is called everywhere it is offered (header, navigation drawer, command palette,
+ * the Open action under a reply): "Browser" when the browser is the only view this person has, "Computer" otherwise.
+ */
+export function computerTabLabel(host: WorkbotHost): "Browser" | "Computer" {
+  const views = computerViews(host);
+  return views.length === 1 && views[0] === "browser" ? "Browser" : "Computer";
 }
 
 export function workbotHost(): WorkbotHost {

@@ -332,8 +332,27 @@ test("a desktop call's description and show are for the person and never reach t
   Object.assign(computers as unknown as Record<string, unknown>, { desktop: { start: async () => {}, call: async (_box: unknown, path: string, body: unknown) => { sent.push({ path, body }); return { ok: true } } } })
   const result = await computers.desktopRun("narrated", { view: "browser", operation: "open", args: { url: "https://example.test" }, description: "Checking listings", show: true })
   assert.equal(result.isError, false)
-  assert.deepEqual(sent, [{ path: "/browser/task", body: { sessionId: "narrated", operation: "open", args: { url: "https://example.test" } } }])
+  assert.deepEqual(sent, [{ path: "/browser/task", body: { sessionId: "narrated", browserRecovery: false, operation: "open", args: { url: "https://example.test" } } }])
   await computers.delete("narrated")
+})
+
+test("browser recovery comes only from the trusted caller policy, for tasks and programs", async t => {
+  const f = fixture()
+  const computers = new Computers({ provider: f.provider, idlePauseMs: 1000, keepDays: 1, desktop: true }, { readFile: async () => ({ text: "" }) })
+  t.after(() => computers.delete("recovery"))
+  const sent: Array<{ path: string; body: Record<string, unknown> }> = []
+  Object.assign(computers as unknown as Record<string, unknown>, { desktop: { start: async () => {}, call: async (_box: unknown, path: string, body: Record<string, unknown>) => { sent.push({ path, body }); return { ok: true } } } })
+  const input = { view: "browser", operation: "observe", args: { browserRecovery: true } }
+  await computers.desktopRun("recovery", input)
+  await computers.desktopRun("recovery", input, undefined, { browserRecovery: true })
+  await computers.desktopRun("recovery", input, undefined, { browserRecovery: false })
+  assert.deepEqual(sent.map(call => call.body.browserRecovery), [false, true, false])
+  assert.ok(sent.every(call => call.path === "/browser/task"))
+  assert.deepEqual(sent[0]?.body.args, { browserRecovery: true }, "model arguments never promote themselves to host policy")
+  await assert.rejects(computers.desktopRun("recovery", { ...input, browserRecovery: true }), /Unrecognized key/)
+  assert.equal(sent.length, 3, "a top-level model policy argument is refused before dispatch")
+  await computers.desktopRun("recovery", { view: "browser", operation: "computer_run", args: { code: "return 1" } }, undefined, { browserRecovery: true })
+  assert.deepEqual(sent.at(-1), { path: "/computer/program", body: { code: "return 1", sessionId: "recovery", browserRecovery: true, surface: "browser" } })
 })
 
 /**

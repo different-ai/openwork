@@ -7,6 +7,8 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { cn } from "@/lib/utils";
+import { desktopBridge } from "@/app/lib/desktop";
+import { isElectronRuntime } from "@/app/lib/runtime-env";
 import { useOpenTargets } from "@/lib/target-provider";
 import { useSessionReferencesMaybe } from "@/components/chat/session-reference-context";
 import { useUntrustedMarkdown } from "./untrusted-markdown";
@@ -70,6 +72,7 @@ function MarkdownBlockInner({
 }: MarkdownBlockInnerProps) {
   const rootRef = useRef<HTMLDivElement>(null);
   const videoCleanups = useRef(new Map<HTMLVideoElement, () => void>());
+  const localImageUrls = useRef(new Map<string, Promise<string | null>>());
   const codeCopyResetTimers = useRef(new Map<HTMLButtonElement, number>());
   const codeWrapStates = useRef(new Map<number, boolean>());
   const { openTargets, sessionFileEvidence, onOpenTarget, client, workspaceId, workspaceRoot, sessionId } = useOpenTargets();
@@ -84,6 +87,8 @@ function MarkdownBlockInner({
   useEffect(() => () => {
     videoCleanups.current.forEach((cleanup) => cleanup());
     videoCleanups.current.clear();
+    for (const pending of localImageUrls.current.values()) void pending.then((url) => { if (url) URL.revokeObjectURL(url); });
+    localImageUrls.current.clear();
   }, [client, workspaceId, workspaceRoot, sessionId]);
   const [linkMenu, setLinkMenu] = useState<{ target: OpenTarget; anchor: HTMLElement } | null>(null);
   useEffect(() => setLinkMenu(null), [client, workspaceId, workspaceRoot]);
@@ -275,6 +280,55 @@ function MarkdownBlockInner({
       })().catch(() => { if (!cancelled) showError(); });
     }
   }, [client, workspaceId, workspaceRoot, sessionId, sessionFileEvidence, targetAt, rendered]);
+
+  // A local image in a reply: one this chat's computer use saved on this Mac, or a
+  // workspace file. Until it loads (or when it cannot) the reply shows its file reference.
+  const loadLocalImage = useCallback(async (href: string, node: Element, decode: boolean) => {
+    const literal = openTargetFromLocalPath(href, { decode })?.value;
+    if (literal && sessionId && isElectronRuntime()) {
+      const saved = await desktopBridge.computerChatImage({ sessionId, path: literal }).catch(() => null);
+      if (saved) return URL.createObjectURL(new Blob([saved.data], { type: saved.contentType }));
+    }
+    const target = targetAt(href, node, decode);
+    if (!client || !workspaceId || !target) return null;
+    const plan = await planFileOpen(target, {
+      origin: "remote", workspaceRoot, canOpenLocally: false, sessionTargets: sessionFileEvidence,
+      findInWorkspace: (lookup, options) => resolveCollectibleOpenTarget(client, workspaceId, lookup, sessionId, options),
+    });
+    if (plan.kind !== "workspace") return null;
+    const result = await client.downloadWorkspaceFile(workspaceId, plan.target.value, { sessionId, fileScope: plan.target.fileScope });
+    const type = result.contentType && result.contentType !== "application/octet-stream" ? result.contentType : "";
+    return URL.createObjectURL(new Blob([result.data], { type }));
+  }, [client, workspaceId, workspaceRoot, sessionId, sessionFileEvidence, targetAt]);
+
+  useEffect(() => {
+    const root = rootRef.current;
+    if (!root) return;
+    for (const image of root.querySelectorAll("img[data-openwork-image-path]")) {
+      if (!(image instanceof HTMLImageElement) || image.dataset.openworkImageState) continue;
+      image.dataset.openworkImageState = "loading";
+      const href = image.dataset.openworkImagePath ?? "";
+      const decode = image.dataset.openworkPathDecode === "true";
+      const key = `${decode}:${href}`;
+      let pending = localImageUrls.current.get(key);
+      if (!pending) {
+        pending = loadLocalImage(href, image, decode).catch(() => null);
+        localImageUrls.current.set(key, pending);
+      }
+      const cache = localImageUrls.current;
+      void pending.then((url) => {
+        // A file that is not there yet (still saving) is tried again on the next render.
+        if (!url) { if (cache.get(key) === pending) cache.delete(key); return; }
+        if (!image.isConnected) return;
+        image.addEventListener("load", () => {
+          const box = image.closest("[data-openwork-image]");
+          const preview = image.closest("[data-openwork-image-preview]");
+          if (box && preview) box.replaceWith(preview);
+        }, { once: true });
+        image.src = url;
+      });
+    }
+  }, [loadLocalImage, rendered]);
 
   useEffect(() => {
     const root = rootRef.current;

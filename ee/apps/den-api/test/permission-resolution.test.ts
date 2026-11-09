@@ -2,7 +2,10 @@ import assert from "node:assert/strict"
 import { test } from "node:test"
 import {
   PERMISSIONS,
+  PERMISSION_DEFAULT_SET_KEYS,
   PERMISSION_KEYS,
+  isPermissionDefaultOn,
+  isPermissionOwnerOnlyByDefault,
   permissionDefaultKeys,
   type PermissionKey,
 } from "@openwork/types/den/permissions"
@@ -151,16 +154,83 @@ test("the owner holds every catalog key", () => {
   assert.deepEqual(allPermissionKeys(), [...PERMISSION_KEYS].sort())
 })
 
-test("a super-admin holds every catalog key, like the owner, and is an admin", () => {
+test("super admin is a default permission set that starts with every catalog key", () => {
+  assert.deepEqual([...PERMISSION_DEFAULT_SET_KEYS], ["member", "admin", "super-admin"])
+  assert.deepEqual([...permissionDefaultKeys("super-admin")].sort(), [...PERMISSION_KEYS].sort())
+  for (const key of PERMISSION_KEYS) {
+    assert.equal(isPermissionDefaultOn(PERMISSIONS[key], "super-admin"), true, key)
+    // At least everything Admin and Member start with.
+    if (isPermissionDefaultOn(PERMISSIONS[key], "admin")) assert.ok(permissionDefaultKeys("super-admin").includes(key), key)
+  }
+  // Owner-only by default still means "not in Member or Admin"; Super admin holds them.
+  assert.equal(isPermissionOwnerOnlyByDefault("permissions.manage"), true)
+  assert.ok(permissionDefaultKeys("super-admin").includes("permissions.manage"))
+})
+
+test("superAdminPermissionSet off: a super-admin holds every catalog key through the role, and is an admin", () => {
   const permissions = memberPermissionsFromGrants({ isOwner: false, isSuperAdmin: true, isAdmin: false, grants: superAdminPermissionGrants() })
+  assert.equal(permissions.isSuperAdmin, true)
+  assert.equal(permissions.isAdmin, true)
+  assert.equal(permissions.keys.size, PERMISSION_KEYS.length)
+  assert.deepEqual(explainPermissionGrants(superAdminPermissionGrants())[0]?.sources, [{ kind: "super_admin" }])
+})
+
+test("a super-admin holds the keys of their Super admin set, and is an admin", () => {
+  const superAdminSet = { source: { kind: "super_admin_default" as const, setId: "pms_s", setName: "Super admin permissions" }, keys: new Set<PermissionKey>(PERMISSION_KEYS) }
+  const permissions = memberPermissionsFromGrants({ isOwner: false, isSuperAdmin: true, isAdmin: false, grants: [superAdminSet] })
   assert.equal(permissions.isOwner, false)
   assert.equal(permissions.isSuperAdmin, true)
   assert.equal(permissions.isAdmin, true)
   assert.equal(permissions.keys.size, PERMISSION_KEYS.length)
-  for (const key of PERMISSION_KEYS) assert.ok(permissions.has(key))
+  assert.deepEqual(explainPermissionGrants([superAdminSet])[0]?.sources, [superAdminSet.source])
+})
+
+test("a trimmed Super admin set is not widened back to every key", () => {
+  const trimmed = new Set<PermissionKey>(PERMISSION_KEYS.filter((key) => key !== "billing_portal.use"))
+  const permissions = memberPermissionsFromGrants({
+    isOwner: false,
+    isSuperAdmin: true,
+    isAdmin: true,
+    grants: [{ source: { kind: "super_admin_default", setId: "pms_s", setName: "Super admin permissions" }, keys: trimmed }],
+  })
+  assert.equal(permissions.has("billing_portal.use"), false)
+  assert.equal(permissions.keys.size, PERMISSION_KEYS.length - 1)
   const empty = memberPermissionsFromGrants({ isOwner: false, isSuperAdmin: true, isAdmin: true, grants: [] })
-  assert.equal(empty.keys.size, PERMISSION_KEYS.length)
-  assert.deepEqual(explainPermissionGrants(superAdminPermissionGrants())[0]?.sources, [{ kind: "super_admin" }])
+  assert.equal(empty.keys.size, 0)
+})
+
+test("database fallback: super-admins get Member, Admin and Super admin code defaults (every key)", () => {
+  const grants = codeDefaultPermissionGrants({ isAdmin: true, isSuperAdmin: true })
+  assert.deepEqual(grants.map((grant) => grant.source), [
+    { kind: "code_default", set: "member" },
+    { kind: "code_default", set: "admin" },
+    { kind: "code_default", set: "super-admin" },
+  ])
+  const permissions = memberPermissionsFromGrants({ isOwner: false, isSuperAdmin: true, isAdmin: true, grants })
+  assert.equal(permissions.keys.size, PERMISSION_KEYS.length)
+  assert.equal(codeDefaultPermissionGrants({ isAdmin: true }).some((grant) => grant.source.kind === "code_default" && grant.source.set === "super-admin"), false)
+})
+
+test("reconciliation adds every new catalog key to Super admin, including owner-only ones", () => {
+  const catalog: Record<string, PermissionCatalogEntry> = {
+    "x.owner_only": { defaultOn: [] },
+    "x.admin": { defaultOn: ["admin"] },
+    "x.member": { defaultOn: ["member", "admin"] },
+  }
+  const decisions = reconcileDecisions({ setDefaultKey: "super-admin", existingKeysEverSeen: new Set(), currentStates: new Map(), catalog })
+  assert.deepEqual(decisions, [
+    { key: "x.owner_only", status: "allow" },
+    { key: "x.admin", status: "allow" },
+    { key: "x.member", status: "allow" },
+  ])
+  // An explicit choice (a deny) is never overwritten.
+  const kept = reconcileDecisions({ setDefaultKey: "super-admin", existingKeysEverSeen: new Set(["x.admin"]), currentStates: new Map([["x.admin", "deny"]]), catalog })
+  assert.deepEqual(kept.map((decision) => decision.key), ["x.owner_only", "x.member"])
+  // Admin still only gets its own defaults.
+  assert.deepEqual(
+    reconcileDecisions({ setDefaultKey: "admin", existingKeysEverSeen: new Set(), currentStates: new Map(), catalog }).map((decision) => decision.key),
+    ["x.admin", "x.member"],
+  )
 })
 
 test("an owner is never also reported as a super-admin", () => {

@@ -4,6 +4,22 @@
   "private": true,
   "type": "module",
   "exports": {
+    "./connector-brand": {
+      "types": {
+        "openwork-build": "./dist/types/src/connector-brand.d.ts",
+        "default": "./src/connector-brand.ts"
+      },
+      "development": "./src/connector-brand.ts",
+      "default": "./src/connector-brand.ts"
+    },
+    "./workbot-remote-jobs": {
+      "types": {
+        "openwork-build": "./dist/types/src/workbot-remote-jobs.d.ts",
+        "default": "./src/workbot-remote-jobs.ts"
+      },
+      "development": "./src/workbot-remote-jobs.ts",
+      "default": "./src/workbot-remote-jobs.ts"
+    },
     "./workbot-context": {
       "types": {
         "openwork-build": "./dist/types/src/workbot-context.d.ts",

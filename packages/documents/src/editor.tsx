@@ -8,10 +8,10 @@ import { useEffect, useMemo, useRef, useState, type ReactNode } from "react"
 import { OfficeEditorTab } from "./office-editor"
 import { UnsavedChangesDialog } from "./unsaved-dialog"
 import { googleAppNames, officeMimeTypes } from "./office-engine"
-import { columnLetters } from "@openwork/workbook"
 import { DocumentsError, type DocumentItem } from "./index"
 import type { DocumentSave, DocumentsEditor, EditorDocument, SpreadsheetDocument, TextDocument } from "./model"
 import type { DocumentTabControlsChange } from "./document-tabs"
+import { documentEditorKey } from "./queries"
 
 export function DocumentEditorTab(props: Parameters<typeof BasicDocumentEditorTab>[0]) {
   const [editing, setEditing] = useState(false)
@@ -54,7 +54,7 @@ function BasicDocumentEditorTab({ toolbarHost, item, editor, enabled, editingEna
   useEffect(() => { onSavingChange?.(item.id, saving); return () => onSavingChange?.(item.id, false) }, [item.id, saving, onSavingChange])
   useEffect(() => { onDirtyChange?.(item.id, dirty); return () => onDirtyChange?.(item.id, false) }, [dirty, item.id, onDirtyChange])
   const query = useQuery({
-    queryKey: ["documents", ...scope, "editor", item.id, sheetId, startRow, editingEnabled],
+    queryKey: documentEditorKey(scope, item.id, sheetId, startRow, editingEnabled),
     queryFn: async ({ signal }) => {
       const document = await editor.open(item.id, { sheetId, startRow, connectionId: connection.current }, signal)
       connection.current ??= document.connectionId
@@ -64,6 +64,8 @@ function BasicDocumentEditorTab({ toolbarHost, item, editor, enabled, editingEna
     retry: false, gcTime: 0, staleTime: Infinity, refetchOnWindowFocus: false,
   })
   const data = query.data
+  // A read made ahead of the click (on hover) pins the account the same way as the tab's own first read.
+  if (data) connection.current ??= data.connectionId
   useEffect(() => {
     if (!dirty) return
     const warn = (event: BeforeUnloadEvent) => { event.preventDefault(); event.returnValue = "" }
@@ -97,9 +99,9 @@ function BasicDocumentEditorTab({ toolbarHost, item, editor, enabled, editingEna
   const reconnectLabel = `Reconnect ${item.source?.label ?? "Google Drive"}`
   const information = editing && editingEnabled ? [data?.notice, data && !data.canEdit && data.kind !== "preview" ? "Editing requires write access to this file and the connector's enabled write permission." : null].filter(Boolean).join(" ") : ""
   return <section className="ow-document-editor" hidden={!active} aria-label={item.name}>
-    <EditorActions active={active && showActions} host={toolbarHost}><span role="status">{saving ? `Saving to ${storage}…` : dirty ? "Unsaved changes" : saved ? `Saved to ${storage}` : !editing ? "Preview" : data?.canEdit ? `Saved in ${storage}` : "Read-only"}</span>{information && <DocumentInformation>{information}</DocumentInformation>}{item.openUrl && (googleApp
+    <EditorActions active={active && showActions} host={toolbarHost}><span role="status">{saving ? `Saving to ${storage}…` : dirty ? "Unsaved changes" : saved ? `Saved to ${storage}` : !editing ? "" : data?.canEdit ? `Saved in ${storage}` : "Read-only"}</span>{information && <DocumentInformation>{information}</DocumentInformation>}{editingEnabled && !editing && data?.canEdit && <button type="button" disabled={!enabled} onClick={onEdit}>Edit</button>}{item.openUrl && (googleApp
       ? <a className="ow-editor-open-google" href={item.openUrl} target="_blank" rel="noopener noreferrer"><ExternalLink size={15} aria-hidden />Open in {googleApp}</a>
-      : <a href={item.openUrl} target="_blank" rel="noopener noreferrer" aria-label={`Open original in ${storage}`}><ExternalLink size={16} /></a>)}{editingEnabled && !editing && data?.canEdit && <button type="button" disabled={!enabled} onClick={onEdit}>Edit</button>}{editing && <button type="button" disabled={!dirty || readonly} onClick={() => void save()}><Save size={15} aria-hidden />Save to {storage}</button>}{!onControlsChange && <button type="button" aria-label={`Close ${item.name}`} disabled={saving} onClick={() => closeAction.current()}><X size={16} /></button>}</EditorActions>
+      : <a className="ow-editor-open-original" href={item.openUrl} target="_blank" rel="noopener noreferrer" aria-label={`Open original in ${storage}`} title={`Open in ${storage}`}><ExternalLink size={16} aria-hidden /></a>)}{editing && <button type="button" disabled={!dirty || readonly} onClick={() => void save()}><Save size={15} aria-hidden />Save to {storage}</button>}{!onControlsChange && <button type="button" aria-label={`Close ${item.name}`} disabled={saving} onClick={() => closeAction.current()}><X size={16} /></button>}</EditorActions>
     {editing && !editingEnabled && <div className="ow-editor-message" role="status">Editing is off for this workspace. Your draft is kept in this tab.</div>}
     {closing && <UnsavedChangesDialog name={item.name} saveLabel={`Save to ${storage}`} saving={saving} canSave={!readonly} error={error} onSave={() => void save()} onDiscard={onClose} onCancel={() => setClosing(false)} />}
     {!enabled ? <div className="ow-editor-message">Documents is off for this workspace. Your draft remains in this tab.</div>
@@ -112,6 +114,17 @@ function BasicDocumentEditorTab({ toolbarHost, item, editor, enabled, editingEna
           : <DocumentPreview data={data} editor={editor} item={item} />}
       </>}
   </section>
+}
+/** A1-style column name (1 → A, 27 → AA). Local, so the editor doesn't load the Office reader with the page. */
+function columnLetters(column: number) {
+  let value = column
+  let letters = ""
+  while (value > 0) {
+    const remainder = (value - 1) % 26
+    letters = String.fromCharCode(65 + remainder) + letters
+    value = Math.floor((value - 1) / 26)
+  }
+  return letters
 }
 function Spreadsheet({ data, draft, formulas, setFormulas, readonly, change, onSheet, onPage, dirty }: { data: SpreadsheetDocument; draft: Record<string, string>; formulas: Set<string>; setFormulas(value: Set<string>): void; readonly: boolean; change(key: string, value: string, base: string): void; onSheet(id: string): void; onPage(row: number): void; dirty: boolean }) {
   const [selected, setSelected] = useState("1:1")

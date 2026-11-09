@@ -10,6 +10,7 @@ import {
   CircleAlert,
   CircleDashed,
   FileText,
+  Globe,
   House,
   LayoutDashboard,
   ListChecks,
@@ -17,6 +18,7 @@ import {
   MessageCircle,
   MessagesSquare,
   Monitor,
+  Paperclip,
   PenLine,
   Plug,
   Plus,
@@ -71,6 +73,8 @@ export type WorkbotCommandPaletteProps = {
   name: string;
   tab: WorkbotPaletteTab;
   tabs: readonly WorkbotPaletteTab[];
+  /** What the computer page is called for this person: "Browser" when that is its only view. */
+  computerLabel?: "Browser" | "Computer";
   onTab: (tab: WorkbotPaletteTab) => void;
   /** Side chats, where they are on. */
   chats: {
@@ -104,8 +108,10 @@ const TAB_KEYWORDS: Record<WorkbotPaletteTab, string> = {
   home: "chat conversation main start",
   calendar: "week meetings schedule automations",
   documents: "drive files docs sheets",
-  computer: "browser desktop screen",
+  computer: "browser desktop screen web page",
 };
+/** The computer page's icon where it goes by "Browser" (the browser is its only view); "computer" stays a keyword. */
+const BROWSER_ICON = <Globe size={16} strokeWidth={1.5} aria-hidden />;
 
 function isMac() {
   return typeof navigator !== "undefined" && /mac|iphone|ipad|ipod/i.test(navigator.platform);
@@ -167,6 +173,9 @@ const NO_CHATS: WorkbotChats["side"] = [];
 
 const ICON_BUTTON =
   "grid h-8 w-8 shrink-0 place-items-center rounded-full text-[var(--wb-muted)] transition-colors duration-150 hover:bg-[var(--wb-chip)] hover:text-[var(--wb-text)] focus-visible:outline-none focus-visible:shadow-[var(--wb-focus)]";
+/** The trigger sits in the rail and the phone header, beside the navigation's 40px controls: same size and shape. */
+const TRIGGER_BUTTON =
+  "grid size-10 shrink-0 place-items-center rounded-lg text-[var(--wb-muted)] transition-colors duration-150 hover:bg-[var(--wb-chip)] hover:text-[var(--wb-text)] focus-visible:outline-none focus-visible:shadow-[var(--wb-focus)]";
 
 export function WorkbotCommandPalette(props: WorkbotCommandPaletteProps) {
   const mac = useMemo(isMac, []);
@@ -285,9 +294,10 @@ export function WorkbotCommandPalette(props: WorkbotCommandPaletteProps) {
       if (chats.failed && !chats.list) entries.push({ id: "action:retry-chats", group: "chats", title: "Couldn't load your chats", detail: "Try again", keywords: "retry reload", icon: <RotateCw size={16} strokeWidth={1.5} aria-hidden />, verb: "Try again", run: chats.retry, stayOpen: true });
     }
     if (tasks.length > 0) entries.push({ id: "action:tasks", group: "actions", title: "Show background tasks", detail: runningTasks.length > 0 ? `${runningTasks.length.toLocaleString()} running` : `${tasks.length.toLocaleString()} finished`, keywords: "jobs work progress", icon: <ListChecks size={16} strokeWidth={1.5} aria-hidden />, page: "tasks", verb: "Open" });
-    if (props.onOpenFiles) entries.push({ id: "action:files", group: "actions", title: "Show files", keywords: "uploads attachments documents outputs", icon: <FileText size={16} strokeWidth={1.5} aria-hidden />, verb: "Show", run: props.onOpenFiles });
+    if (props.onOpenFiles) entries.push({ id: "action:files", group: "actions", title: "Show files", detail: "Uploads and files from this chat", keywords: "uploads attachments documents outputs", icon: <Paperclip size={16} strokeWidth={1.5} aria-hidden />, verb: "Show", run: props.onOpenFiles });
     for (const tab of props.tabs) {
-      entries.push({ id: `nav:${tab}`, group: "navigation", title: TAB_LABEL[tab], detail: props.tab === tab ? "Open now" : undefined, keywords: TAB_KEYWORDS[tab], icon: TAB_ICON[tab], locked: props.tab === tab ? "Open now" : undefined, verb: "Go", run: () => props.onTab(tab) });
+      const browser = tab === "computer" && props.computerLabel === "Browser";
+      entries.push({ id: `nav:${tab}`, group: "navigation", title: browser ? "Browser" : TAB_LABEL[tab], detail: props.tab === tab ? "Open now" : undefined, keywords: browser ? `${TAB_KEYWORDS[tab]} computer` : TAB_KEYWORDS[tab], icon: browser ? BROWSER_ICON : TAB_ICON[tab], locked: props.tab === tab ? "Open now" : undefined, verb: "Go", run: () => props.onTab(tab) });
     }
     entries.push({ id: "settings:dashboard", group: "settings", title: "Your dashboard", detail: "OpenWork", keywords: "account profile organization workspace admin", icon: <LayoutDashboard size={16} strokeWidth={1.5} aria-hidden />, verb: "Open", run: () => window.location.assign(props.homeHref), alt: { verb: "New tab", run: () => openInNewTab(props.homeHref) } });
     const connections = props.connectionsHref;
@@ -395,7 +405,7 @@ export function WorkbotCommandPalette(props: WorkbotCommandPaletteProps) {
       onOpenChangeComplete={(next) => { if (!next) flushFocus(); }}
     >
       <Dialog.Trigger
-        className={ICON_BUTTON}
+        className={TRIGGER_BUTTON}
         aria-label="Search and actions"
         aria-keyshortcuts={mac ? "Meta+K" : "Control+K"}
         title={`Search and actions (${mod}${mac ? "" : "+"}K)`}

@@ -1,4 +1,4 @@
-import type { WorkbotHost } from "@openwork-ee/workbot-ui"
+import { clearThreadSnapshots, type WorkbotHost } from "@openwork-ee/workbot-ui"
 import { z } from "zod"
 import { appIconCandidates } from "./app-icons"
 
@@ -29,7 +29,22 @@ export const meSchema = z.object({
   sideChats: z.boolean().default(false),
   /** The header avatar opens the account menu with Sign out (`workbotAccountMenu`); older servers omit it. */
   accountMenu: z.boolean().default(false),
-  /** The Cmd+K / Ctrl+K command palette; older servers omit it. */
+  /** Work in progress in the header and task sheet (`workbotWorkingStatus`); older servers omit it. */
+  workingStatus: z.boolean().default(false),
+  /** Brief acknowledgment before tools (`workbotQuickReply`); older servers omit it. */
+  quickReply: z.boolean().default(false),
+  /** The conversation docked beside the Browser and Computer views (`workbotBrowserChat`); older servers omit it. */
+  browserChat: z.boolean().default(false),
+  /** Chats open on the newest page kept on this device (`workbotInstantOpen`); older servers omit it. */
+  instantOpen: z.boolean().default(false),
+  /** Reading earlier messages keeps its place (`workbotScrollToBottom`); older servers omit it. */
+  scrollToBottom: z.boolean().default(false),
+  /** Workbot's profile behind its name (`workbotProfileSheet`); older servers omit it. */
+  profileSheet: z.boolean().default(false),
+  centeredProfile: z.boolean().default(false),
+  browserPreview: z.boolean().default(false),
+  /** Read-only remote tasks (`workbotRemoteTasks`); absent means off. */
+  remoteTasks: z.boolean().default(false),
   denUrl: z.string().nullable(),
 })
 export type Me = z.infer<typeof meSchema>
@@ -45,6 +60,8 @@ export async function signOut() {
   const response = await fetch("/auth/logout", { method: "POST", credentials: "same-origin", signal: AbortSignal.timeout(15_000) }).catch(() => null)
   // Never say signed out while the sign-in cookie may still be there.
   if (!response?.ok) throw new Error("Workbot couldn't sign you out. Check your connection and try again.")
+  // Chats kept on this device for instant opening leave with the person.
+  clearThreadSnapshots()
   window.location.assign("/auth/signed-out")
 }
 
@@ -116,6 +133,8 @@ export function createHost(me: Me, recovery: { authorization?: WorkbotHost["docu
       // The parent owns auth recovery, including when Documents is retained
       // behind another workspace page. Never navigate that owner away on 401.
       if (response.status === 401) {
+        // Signed out elsewhere or expired: nothing kept on this device outlives the sign-in.
+        clearThreadSnapshots()
         if (recovery.refreshIdentity) { if (!recovery.authorization) void recovery.refreshIdentity().catch(() => {}) }
         else if (window.location.pathname !== "/documents") signIn()
       }
@@ -128,13 +147,16 @@ export function createHost(me: Me, recovery: { authorization?: WorkbotHost["docu
     errorMessage: messageOf,
     user: { name: me.name },
     useConnectedApps: () => noApps,
-    appIcons: (name) => appIconCandidates(name, me.denUrl),
+    appIcons: (name, site) => appIconCandidates(name, me.denUrl, site),
     homeHref: me.denUrl ? `${me.denUrl}/dashboard` : "/",
     calendar: me.calendar,
     documents: me.documents,
     computer: me.computer,
     browser: me.browser,
     browserDemonstrations: me.browserDemonstrations,
+    browserChat: me.browser && me.browserChat,
+    instantOpen: me.instantOpen,
+    scrollToBottom: me.scrollToBottom,
     documentEditing: me.documents && me.documentEditing,
     nativeDictation: me.nativeDictation,
     workspaceAssistant: me.workspaceAssistant,
@@ -151,6 +173,12 @@ export function createHost(me: Me, recovery: { authorization?: WorkbotHost["docu
         && current.userId === me.userId && current.organizationId === me.organizationId
     },
     sideChats: me.sideChats,
+    workingStatus: me.workingStatus,
+    quickReply: me.quickReply,
+    profileSheet: me.profileSheet,
+    centeredProfile: me.centeredProfile,
+    browserPreview: me.browserPreview,
+    remoteTasks: me.remoteTasks,
     account: me.accountMenu ? { email: me.email, organizationName: me.organizationName, signOut, switchWorkspace } : undefined,
     identity: me.userId && me.organizationId ? { principalId: me.userId, organizationId: me.organizationId } : undefined,
   }

@@ -146,6 +146,7 @@ export const platformAuditRoutes: readonly AuditRouteDeclaration[] = [
 
   // Scheduled maintenance (bearer DEN_MAINTENANCE_TOKEN; 404 when unset)
   platform("POST", "/internal/audit/usage/refresh", "audit.usage.refresh", "platform.maintenance", "audit_usage", null, "Called by the den-audit-usage cron (Helm CronJob, Render cron job). Recomputes every organization's audit_state totals from stored rows; no organization activity, so platform evidence only."),
+  platform("POST", "/internal/github/reconcile/run", "connector.github.reconcile.run", "platform.maintenance", "github_reconcile", null, "Called by the den-github-reconcile cron (Helm CronJob, Render cron job). Checks due GitHub connector targets for new commits across organizations and queues resyncs; each resulting sync records its own connector_sync.completed job outcome, so platform evidence only."),
 
   // Global platform admin
   platform("GET", "/v1/admin/services", "platform.service_readiness.read", "platform.admin", "service_readiness", null, `${ADMIN} Cached diagnostics; stale-while-revalidate schedules read-only outbound probes through bounded durable admission (not a pure metadata read). No credentials or upstream error bodies.`),
