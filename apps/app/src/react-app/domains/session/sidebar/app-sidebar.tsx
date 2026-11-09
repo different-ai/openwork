@@ -143,7 +143,6 @@ import {
   FEED_SORT_BY_OPTIONS,
   useSessionManagementStore,
   usePinnedSessionIds,
-  useUnreadSessionIds,
   useSessionOrder,
   useWorkspaceGroups,
   type FeedGroupBy,
@@ -168,6 +167,7 @@ import { isSameWorkbenchSession, useWorkbenchStore } from "../chat/workbench-sto
 import { shouldHideAttachedSideChat } from "./side-chat-status";
 import { SidebarDestination } from "./sidebar-destination";
 import { SessionTitle } from "./session-title";
+import { VirtualFeedRows } from "./virtual-feed-rows";
 import { isKeyboardFocus } from "./session-title-marquee";
 import { getSessionOrder } from "./session-order";
 import { SESSION_DRAG_TYPE, SessionDragScope, SessionReorderList, useDraggedSession, useSessionReorderTarget, type SessionReorderMove } from "./session-reorder";
@@ -1246,13 +1246,21 @@ function SessionFeedList({ feed }: { feed: SessionFeed }) {
             <SidebarMenuSub>
               {feed.reorderable ? (
                 <SessionReorderList sessionIds={orderIds} orderIds={orderIds} onReorder={onReorder}>
-                  {entries.map((entry) => (
-                    <FeedSessionRow key={`${entry.group.workspace.id}:${entry.session.id}`} entry={entry} subtitleFor={subtitleFor} draggable />
-                  ))}
+                  <VirtualFeedRows ids={entries.map((entry) => entry.session.id)}>
+                    {(index) => {
+                      const entry = entries[index];
+                      return entry ? <FeedSessionRow entry={entry} subtitleFor={subtitleFor} draggable /> : null;
+                    }}
+                  </VirtualFeedRows>
                 </SessionReorderList>
-              ) : entries.map((entry) => (
-                <FeedSessionRow key={`${entry.group.workspace.id}:${entry.session.id}`} entry={entry} subtitleFor={subtitleFor} />
-              ))}
+              ) : (
+                <VirtualFeedRows ids={entries.map((entry) => entry.session.id)}>
+                  {(index) => {
+                    const entry = entries[index];
+                    return entry ? <FeedSessionRow entry={entry} subtitleFor={subtitleFor} /> : null;
+                  }}
+                </VirtualFeedRows>
+              )}
             </SidebarMenuSub>
           </SidebarMenuItem>
         </SidebarMenu>
@@ -2417,7 +2425,7 @@ export function SessionMenuItem({
     isSameWorkbenchSession(chat, { workspaceId, sessionId: session.id })));
   const [isTitleHovered, setIsTitleHovered] = React.useState(false);
   const [isTitleFocused, setIsTitleFocused] = React.useState(false);
-  const unreadIds = useUnreadSessionIds();
+  const unread = useSessionManagementStore((state) => state.unreadIds.includes(session.id));
   const isSelected = ctx.selectedSessionId === session.id;
   const displayTitle = getDisplaySessionTitle(session.title);
   const itemTitle = workspaceName ? `${displayTitle} — ${workspaceName}` : displayTitle;
@@ -2425,7 +2433,7 @@ export function SessionMenuItem({
   const sessionAttentionLabel = ctx.sessionAttentionLabelById?.[session.id];
   const resolvedActiveWork = isActiveWorkSessionStatus(sessionActivityStatus);
   const isStarting = useSessionStarting(workspaceId, session.id, sessionActivityStatus);
-  const isUnread = unreadIds.has(session.id) && !isSelected;
+  const isUnread = unread && !isSelected;
   const isArchived = isSessionArchived(session);
   const workedAt = useSessionManagementStore((state) => state.workedAtById[session.id]);
   const relativeTime = formatSessionRelativeTime(sessionLastActivityAt(session, workedAt));
