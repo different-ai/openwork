@@ -14,11 +14,11 @@ export type CommandPaletteSessionRef = {
 export function buildCommandPaletteSplitSessions(
   sessions: SessionOption[],
   current: CommandPaletteSessionRef | null | undefined,
+  secondary?: CommandPaletteSessionRef | null,
 ) {
   if (!current) return [];
-  return sessions.filter((session) => (
-    session.workspaceId !== current.workspaceId || session.sessionId !== current.sessionId
-  ));
+  return sessions.filter((session) => ![current, secondary].some((visible) => visible
+    && session.workspaceId === visible.workspaceId && session.sessionId === visible.sessionId));
 }
 
 export function buildCommandPaletteSessions(
