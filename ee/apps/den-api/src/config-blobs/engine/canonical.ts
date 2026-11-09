@@ -10,6 +10,8 @@
  * - a `$ref` hashes as `{ $ref }`: the `name` hint (and any resolved `id`)
  *   never count;
  * - `informationalFields` are left out.
+ *
+ * `specRev` hashes a spec alone; an item's `rev` is `itemRev` (spec, name, key).
  */
 import { isConfigRef, isConfigSecret, type ConfigAreaKey } from "@openwork/types/den/config-blobs"
 import {
@@ -19,9 +21,11 @@ import {
   isInformationalField,
   isOrderedArray,
   isPlainObject,
+  isUnsafeKey,
   joinPath,
   sha256,
 } from "./util.js"
+import type { ConfigArea } from "../area.js"
 
 const NO_LAYOUT: ArrayLayout = {}
 
@@ -44,7 +48,7 @@ export function normalizeSpecValue(layout: ArrayLayout, value: unknown, schemaPa
     const out: { [key: string]: unknown } = {}
     for (const key of Object.keys(value).sort(compareStrings)) {
       const child = value[key]
-      if (child === undefined || isInformationalField(layout, joinPath(schemaPath, key))) continue
+      if (child === undefined || isUnsafeKey(key) || isInformationalField(layout, joinPath(schemaPath, key))) continue
       out[key] = normalizeSpecValue(layout, child, joinPath(schemaPath, key))
     }
     return out
@@ -61,7 +65,7 @@ export function stringifyCanonical(value: unknown): string {
     const parts: string[] = []
     for (const key of Object.keys(value).sort(compareStrings)) {
       const child = value[key]
-      if (child === undefined) continue
+      if (child === undefined || isUnsafeKey(key)) continue
       parts.push(`${JSON.stringify(key)}:${stringifyCanonical(child)}`)
     }
     return `{${parts.join(",")}}`
@@ -84,6 +88,23 @@ export function canonicalJsonPlain(value: unknown): string {
 /** `rev` of a spec: `sha256:<hex>` of its canonical JSON. */
 export function specRev(area: ArrayLayout, spec: unknown): string {
   return sha256(canonicalJson(area, spec))
+}
+
+/** What `itemRev` reads of an area: its array layout and whether names are informational. */
+export type RevLayout = ArrayLayout & Pick<ConfigArea, "informationalName">
+
+/**
+ * `rev` of an item: `sha256:<hex>` over its normalized spec, its name and its
+ * key, so a rename on either side after export counts as a change in the
+ * three-way diff. Areas whose names are informational (people) leave the
+ * name out. This is the `rev` every export writes.
+ */
+export function itemRev(area: RevLayout, item: { name: string; key?: string | null; spec: unknown }): string {
+  return sha256(stringifyCanonical({
+    spec: normalizeSpecValue(area, item.spec),
+    name: area.informationalName ? null : item.name,
+    key: item.key ?? null,
+  }))
 }
 
 /** `baseHash`: hash over the sorted `(area, id, rev)` of everything in scope. */

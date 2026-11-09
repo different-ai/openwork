@@ -169,13 +169,21 @@ background.
 - **Approvals** are tied to `planHash`. Any change to the plan or a secret value
   drops them. An organization can require a second approver (Settings › Config),
   who must differ from the uploader and the first approver.
+- **Approving and applying** in the dashboard ask you to sign in again when your
+  sign-in is older than your organization's fresh-session window. A config token
+  with `config:apply` approves without that. A change is applied within 24 hours
+  of its last approval; after that it goes back to review and needs approving again.
 - **Apply** runs as the last approver: they (or the config token's member) must
   still hold every written area's permission. Right before writing, the server
   plans again; any difference makes the request `stale`. When a request is
   applied, the organization's other open requests go `stale`.
-- **IDs:** a created item reuses its source ID when that ID is free on the whole
-  server, so cloud → self-hosted → cloud keeps the same IDs. Otherwise it gets a new
-  ID and an alias, so the next import of the same file matches it.
+- **IDs:** a created item from another server reuses its source ID when that ID is
+  free on the whole server and was never used in this organization before, so
+  cloud → self-hosted → cloud keeps the same IDs. Otherwise, and always for a file
+  exported from this same server, it gets a new ID and an alias, so the next import
+  of the same file matches it ("matched via an earlier import").
+- **Interrupted applies** are never retried: the request fails, and you can revert
+  it from its before-snapshot.
 - **Revert** creates a new change request from the before-snapshot, reviewed and
   applied like any other. Changes made since show up as conflicts.
 
@@ -203,6 +211,9 @@ curl -sS -X POST "$DEN_API_URL/v1/api-keys" \
 - Scopes are independent: `config:apply` does not include `config:submit`.
 - `areas` (optional) limits the token to area keys or prefixes such as
   `ai-gateway.*`. A limited token can't export, upload or read other areas.
+- A config token only works with the Config API (`/v1/config-blobs/*`). Every
+  other route, including the MCP endpoints, answers `403 config_token_scope`; use
+  a standard API key for those.
 - A config token acts as the member who created it and can never do more than that
   member could in the dashboard.
 - Only config tokens with `config:submit` may send secret values. Standard API keys

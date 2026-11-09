@@ -13,7 +13,7 @@
  */
 import { and, asc, eq } from "@openwork-ee/den-db/drizzle"
 import { TeamTable } from "@openwork-ee/den-db/schema"
-import { normalizeDenTypeId } from "@openwork-ee/utils/typeid"
+import { denTypeIdPrefixes, normalizeDenTypeId } from "@openwork-ee/utils/typeid"
 import { configItemKeySchema } from "@openwork/types/den/config-blobs"
 import { z } from "zod"
 import { createTeam, deleteTeam, updateTeam } from "../../routes/org/teams.js"
@@ -25,8 +25,8 @@ const AREA = "members.teams"
 
 const teamSpecSchema = z.object({
   grantsOrganizationAdmin: z.boolean(),
-  /** `scim`: the identity provider owns the team's name and membership on the source. */
-  managedBy: z.enum(["manual", "scim"]),
+  /** `scim`: the identity provider owns the team's name and membership on the source. Hand-written blobs may leave it out. */
+  managedBy: z.enum(["manual", "scim"]).default("manual"),
 }).strict()
 
 const teamSpecFieldsSchema = teamSpecSchema.partial({ managedBy: true })
@@ -48,6 +48,7 @@ export const membersTeamsArea = defineConfigArea({
   key: AREA,
   label: "Teams",
   path: ["Members", "Teams"],
+  idPrefix: denTypeIdPrefixes.team,
   specVersion: 1,
   specSchema: teamSpecSchema,
   dependsOn: [],

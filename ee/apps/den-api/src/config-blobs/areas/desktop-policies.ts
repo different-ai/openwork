@@ -16,7 +16,7 @@
  */
 import { and, eq, inArray, isNull } from "@openwork-ee/den-db/drizzle"
 import { DesktopPolicyMemberTable, DesktopPolicyTable } from "@openwork-ee/den-db/schema"
-import { normalizeDenTypeId } from "@openwork-ee/utils/typeid"
+import { denTypeIdPrefixes, normalizeDenTypeId } from "@openwork-ee/utils/typeid"
 import {
   desktopPolicyDocumentWriteSchema,
   normalizeDefaultDesktopPolicyDocument,
@@ -73,6 +73,7 @@ export const desktopPoliciesArea = defineConfigArea({
   key: AREA,
   label: "Desktop policies",
   path: ["Desktop policies"],
+  idPrefix: denTypeIdPrefixes.desktopPolicy,
   specVersion: 1,
   specSchema,
   dependsOn: ["members.teams", "members.people"],

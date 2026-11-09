@@ -60,6 +60,7 @@ import { sessionMiddleware } from "./session.js"
 import { inventoryRevisionMiddleware } from "./middleware/inventory-revision.js"
 import { preclaimScopeMiddleware } from "./middleware/preclaim-scope.js"
 import { auditRequestMiddleware } from "./audit/request-capture.js"
+import { confineConfigTokens } from "./config-blobs/token.js"
 import { isOperationalErrorPath, normalizeOperationalErrorResponse, operationalErrorResponse } from "./operational-errors.js"
 import { sanitizePublicResponseHeaders } from "./public-response-headers.js"
 import { isDraining } from "./drain-state.js"
@@ -213,6 +214,8 @@ app.use("*", sessionMiddleware)
 // Registered before preclaimScopeMiddleware so its 403 denials are recorded
 // (platform store) against the endpoint they refused.
 app.use("*", auditRequestMiddleware)
+// Config tokens (API keys of type `config`) only reach /v1/config-blobs/*.
+app.use("*", confineConfigTokens)
 app.use("/v1/*", preclaimScopeMiddleware)
 
 app.get(

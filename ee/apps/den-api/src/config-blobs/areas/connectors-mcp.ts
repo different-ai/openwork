@@ -25,7 +25,7 @@
  */
 import { and, eq, inArray, isNull } from "@openwork-ee/den-db/drizzle"
 import { ExternalMcpConnectionAccessGrantTable, ExternalMcpConnectionTable, OrgOAuthClientTable } from "@openwork-ee/den-db/schema"
-import { normalizeDenTypeId } from "@openwork-ee/utils/typeid"
+import { denTypeIdPrefixes, normalizeDenTypeId } from "@openwork-ee/utils/typeid"
 import { z } from "zod"
 import {
   getExternalMcpConnection,
@@ -155,6 +155,7 @@ export const connectorsMcpArea = defineConfigArea({
   key: AREA,
   label: "MCP connections",
   path: ["Connectors", "MCP"],
+  idPrefix: denTypeIdPrefixes.externalMcpConnection,
   specVersion: 1,
   specSchema,
   dependsOn: ["members.teams", "members.people"],

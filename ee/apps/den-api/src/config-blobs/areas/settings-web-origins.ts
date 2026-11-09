@@ -9,7 +9,7 @@
  */
 import { asc, eq } from "@openwork-ee/den-db/drizzle"
 import { OrganizationWebOriginTable } from "@openwork-ee/den-db/schema"
-import { normalizeDenTypeId } from "@openwork-ee/utils/typeid"
+import { denTypeIdPrefixes, normalizeDenTypeId } from "@openwork-ee/utils/typeid"
 import { ORGANIZATION_WEB_ORIGIN_LIMIT, normalizeExactHttpsOrigin } from "@openwork/types/den/organization-web-origins"
 import type { PermissionKey } from "@openwork/types/den/permissions"
 import { z } from "zod"
@@ -92,6 +92,7 @@ export const settingsWebOriginsArea = defineConfigArea({
   key: AREA,
   label: "Web origins",
   path: ["Settings", "Web origins"],
+  idPrefix: denTypeIdPrefixes.organizationWebOrigin,
   specVersion: 1,
   specSchema: webOriginSpecSchema,
   dependsOn: [],

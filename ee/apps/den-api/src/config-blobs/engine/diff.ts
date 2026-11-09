@@ -11,7 +11,7 @@
 import type { ConfigBlobItem, ConfigFieldChange, ConfigPlanFlag, ConfigSpec } from "@openwork/types/den/config-blobs"
 import { isConfigRef, isConfigSecret } from "@openwork/types/den/config-blobs"
 import type { ConfigArea, ConfigItem } from "../area.js"
-import { canonicalJson, compareStrings, specRev } from "./canonical.js"
+import { canonicalJson, compareStrings, itemRev } from "./canonical.js"
 import {
   type ArrayLayout,
   arrayElementKey,
@@ -105,9 +105,9 @@ export type MatchedClassification = {
   fields: EngineFieldChange[]
   flags: ConfigPlanFlag[]
   reasons: string[]
-  /** Hash of the target's current spec. */
+  /** `itemRev` of the target as it is now (spec, name, key). */
   targetRev: string
-  /** Hash of the blob's spec as uploaded (refs as written). */
+  /** `itemRev` of the blob item as uploaded (refs as written). */
   oursRev: string
 }
 
@@ -127,8 +127,10 @@ export type ClassifyMatchedInput = {
 
 export function classifyMatched(input: ClassifyMatchedInput): MatchedClassification {
   const { area, blob, target } = input
-  const targetRev = specRev(area, target.spec)
-  const oursRev = specRev(area, blob.spec)
+  // Revs cover name and key as well as the spec (`itemRev`): a rename on the
+  // target after export is a change there, a rename only in the blob is an edit.
+  const targetRev = itemRev(area, target)
+  const oursRev = itemRev(area, blob)
   const fields = diffSpecs(area, target.spec, input.localizedSpec)
   const nameChanged = !area.informationalName && blob.name !== target.name
   const keyChanged = blob.key !== undefined && (blob.key ?? null) !== (target.key ?? null)

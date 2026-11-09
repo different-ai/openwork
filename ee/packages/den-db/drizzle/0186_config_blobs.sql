@@ -52,6 +52,7 @@ CREATE TABLE `config_change_request` (
 	`secret_inputs` mediumtext,
 	`approvals` json NOT NULL,
 	`approved_plan_hash` varchar(80),
+	`apply_requested_by` json,
 	`auto_apply` boolean NOT NULL DEFAULT false,
 	`before_snapshot` mediumtext,
 	`report` json,

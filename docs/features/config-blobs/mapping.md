@@ -53,6 +53,7 @@ The UI shows, for each unmatched blob item, Drizzle-style:
    ( ) ~ "Anthropic (staging)"    61%  same base URL
 ```
 
+- When there are more than 50,000 (unmatched blob item × unmatched target item) pairs in an area, no scores are computed: every unmatched blob item is `needs_mapping` with "too many items to suggest matches; choose manually".
 - Suggestions are sorted by score; the best one is preselected **only** if it's clearly ahead (e.g. at least 0.85 and 0.15 ahead of the next). Otherwise "create" is preselected, plus a warning.
 - Confirmed choices are saved on the change request. When it's applied, they become alias rows, so the next import of the same lineage matches at tier 2 or 3.
 
@@ -117,7 +118,8 @@ To show field values from **base**, we need the base spec, not only its hash. Wh
 
 - `$ref` targets that are planned creates in the same plan are resolved by ordering: the creator runs first, and the reference is rewritten to the new local ID during apply.
 - Cross-area references to areas outside the blob are resolved read-only. They never become writes.
-- People (`people/<email>`) resolve to members of the target org, or to planned creates/invitations from `members.people` in the same plan. If neither, the flag is `ref_unresolved` with two fixes: invite (creates a pending invitation) or drop from the grant.
+- People (`people/<email>`) resolve to members of the target org, or to planned creates/invitations from `members.people` in the same plan. If neither, the flag is `ref_unresolved` with two fixes: invite or drop from the grant. Invite adds a planned `members.people` create (pending invitation, role `member`, no teams) that runs first; the reference resolves to it.
+- A chosen target for a reference must be one of the referenced area's current items; references into an area that can't be read here can't take a chosen target.
 
 ## Delete modes
 

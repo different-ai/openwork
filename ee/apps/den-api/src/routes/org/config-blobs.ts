@@ -56,6 +56,7 @@ import { allowConfigTokenSecrets, apiKeyHasConfigScope, getConfigTokenAreas, req
 import { requireFeature } from "../../features.js"
 import { jsonValidator, orgMemberRoute, paramValidator, publicRoute, queryValidator, requireOrgPermission } from "../../middleware/index.js"
 import { refuseMachineSecrets } from "../../middleware/refuse-machine-secrets.js"
+import { checkFreshPrivilegedSession, organizationPrivilegedSessionMaxAgeMs } from "../../privileged-session.js"
 import { forbiddenSchema, invalidRequestSchema, jsonResponse, unauthorizedSchema } from "../../openapi.js"
 import type { AuthContextVariables } from "../../session.js"
 import {
@@ -226,9 +227,28 @@ async function configCaller(c: PermissionRouteContext, tokenAreas: string[] | nu
           if (!check.ok) throw new ConfigBlobError(orgAccessFailureStatus(check.response), check.response, permissionFailureHeaders(check.response))
         }
       },
+      requireApprovalStepUp: () => requireApprovalStepUp(c),
     },
   }
 }
+
+/**
+ * Approving and applying: a config token (D3: no session to step up), or a
+ * person who signed in recently (the organization's "Enforce fresh admin
+ * sessions" window, whatever the areas' permissions). Never an agent: the MCP
+ * re-entry session is synthesized at request time, so it would always look fresh.
+ */
+function requireApprovalStepUp(c: PermissionRouteContext): void {
+  if (c.get("apiKey")) return
+  const session = c.get("session")
+  if (!session || session.id === MCP_INTERNAL_SESSION_ID) {
+    throw new ConfigBlobError(403, { error: "forbidden", message: "Config changes are approved by a signed-in person or a config token." })
+  }
+  const fresh = checkFreshPrivilegedSession({ apiKey: null, session }, organizationPrivilegedSessionMaxAgeMs(c.get("organizationContext")))
+  if (!fresh.ok) throw new ConfigBlobError(403, fresh.response)
+}
+
+const MCP_INTERNAL_SESSION_ID = "mcp_internal"
 
 /** Sends a service refusal; anything else is a real error for the app's handler. */
 function refusal(error: unknown): Response {

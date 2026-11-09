@@ -8,8 +8,9 @@
  * - every `$ref` gets `id`: the local target id (existing item, or the id a
  *   planned create in this run produced);
  * - refs with a `drop` decision are removed (from arrays: the element);
- * - people refs with an `invite` decision get `invite: true` and no `id`:
- *   the people/teams adapter creates the pending invitation;
+ * - people refs with an `invite` decision get the `id` of the
+ *   `members.people` create the plan added for them (it runs first), so an
+ *   adapter never sees a reference without an id;
  * - every `$secret` becomes a `ResolvedConfigSecret` (keep / value / unset).
  *   `env` decisions must be resolved by the caller into `value` secrets.
  */
@@ -22,12 +23,15 @@ import type {
 import { isConfigSecret } from "@openwork/types/den/config-blobs"
 import type { ConfigApplyOp, ConfigArea, ConfigAreaContext, ResolvedConfigItem } from "../area.js"
 import type { ExecutionOp, ExecutionPlan } from "./plan.js"
-import { DROP_REF, rewriteRefs } from "./refs.js"
-import { isPlainObject } from "./util.js"
+import { DROP_REF, PEOPLE_AREA, inviteRef, rewriteRefs } from "./refs.js"
+import { isPlainObject, isUnsafeKey } from "./util.js"
 
 export type ExecuteOptions = {
-  /** Whether an id is unused on the whole instance; creates reuse the source id when it is (D4). Without it, no id is reused. */
-  isIdFree?: (id: string) => Promise<boolean>
+  /**
+   * Whether `id` is unused on the whole instance for a create in `area`;
+   * creates reuse the source id when it is (D4). Without it, no id is reused.
+   */
+  isIdFree?: (id: string, area: ConfigAreaKey) => Promise<boolean>
 }
 
 export type ExecuteResult = ConfigApplyReport & {
@@ -103,7 +107,7 @@ async function toApplyOp(
     if (!op.targetId || !op.previous) throw new Error("update without a target")
     return { kind: "update", targetId: op.targetId, item, previous: op.previous }
   }
-  if (op.preferredId && opts.isIdFree && await opts.isIdFree(op.preferredId)) return { kind: "create", item, preferredId: op.preferredId }
+  if (op.preferredId && opts.isIdFree && await opts.isIdFree(op.preferredId, op.area)) return { kind: "create", item, preferredId: op.preferredId }
   return { kind: "create", item }
 }
 
@@ -129,8 +133,11 @@ export function resolveSpec(
       }
       case "drop":
         return DROP_REF
-      case "invite":
-        return { ...ref, invite: true }
+      case "invite": {
+        const localId = planned.get(`${PEOPLE_AREA}\u0000${inviteRef(resolution.email)}`)
+        if (!localId) throw new Error(`${path}: ${resolution.email} was to be invited earlier in this import, but was not`)
+        return { ...ref, id: localId }
+      }
       case "unresolved":
         throw new Error(`${path}: ${resolution.reason}`)
     }
@@ -156,7 +163,7 @@ function replaceSecrets(value: unknown, replace: (path: string) => ResolvedConfi
   if (Array.isArray(value)) return value.map((element) => replaceSecrets(element, replace))
   if (isPlainObject(value)) {
     const out: { [key: string]: unknown } = {}
-    for (const [key, child] of Object.entries(value)) out[key] = replaceSecrets(child, replace)
+    for (const [key, child] of Object.entries(value)) if (!isUnsafeKey(key)) out[key] = replaceSecrets(child, replace)
     return out
   }
   return value

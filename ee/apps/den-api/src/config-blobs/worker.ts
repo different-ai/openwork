@@ -38,18 +38,39 @@ export async function runConfigBlobWorkerOnce(options: { now?: Date } = {}): Pro
       captureException(error, { component: "config_blob_worker" })
     }
   }
+  // A failing claim query (deadlock, lost connection) ends that loop for this tick; applies still get their turn.
   for (let index = 0; index < MAX_PER_TICK; index += 1) {
-    const claim = await claimNextAnalysis()
+    let claim: Awaited<ReturnType<typeof claimNextAnalysis>>
+    try {
+      claim = await claimNextAnalysis()
+    } catch (error) {
+      logger.error("config change request analysis claim failed", { error })
+      captureException(error, { component: "config_blob_worker" })
+      break
+    }
     if (!claim) break
-    if (await analyzeClaimedChangeRequest(claim)) tick.analyzed += 1
+    try {
+      if (await analyzeClaimedChangeRequest(claim)) tick.analyzed += 1
+    } catch (error) {
+      // The analysis lease expires and the request is analyzed again.
+      logger.error("config change request analysis crashed", { change_request_id: claim.id, organization_id: claim.organizationId, error })
+      captureException(error, { component: "config_blob_worker" })
+    }
   }
   for (let index = 0; index < MAX_PER_TICK; index += 1) {
-    const claim = await claimNextApply()
+    let claim: Awaited<ReturnType<typeof claimNextApply>>
+    try {
+      claim = await claimNextApply()
+    } catch (error) {
+      logger.error("config change request apply claim failed", { error })
+      captureException(error, { component: "config_blob_worker" })
+      break
+    }
     if (!claim) break
     try {
       if (await applyClaimedChangeRequest(claim)) tick.applied += 1
     } catch (error) {
-      // The lease expires and the request is claimed again; nothing else to do here.
+      // The lease expires; the next claim marks the request failed (apply interrupted), never applies it twice.
       logger.error("config change request apply crashed", { change_request_id: claim.id, organization_id: claim.organizationId, error })
       captureException(error, { component: "config_blob_worker" })
     }

@@ -63,10 +63,16 @@ export type ConfigRouteContext = {
 
 /**
  * A Hono context for the applying member. The session counts as freshly
- * signed in: approving a change request is the step-up (the engine requires a
- * recent sign-in, or a config token, to approve).
- * TODO(config-blobs): if approval stops requiring a fresh session, give this
- * session the approver's real sign-in time instead.
+ * signed in, because approving was the step-up:
+ * - approving or applying from the dashboard needs a recent sign-in
+ *   (routes/org/config-blobs.ts → `requireApprovalStepUp`), whatever the
+ *   areas; a config token approves without one (D3: it has no session);
+ * - the worker only applies while the last approval is under 24 hours old
+ *   (service.ts → `CONFIG_APPROVAL_MAX_AGE_MS`); older, the request goes
+ *   back to review with its approvals dropped ("approval expired").
+ * Using the approver's real sign-in time instead would make every apply
+ * queued a few minutes after approval fail the handlers' own fresh-session
+ * checks.
  */
 export async function configRouteContext(ctx: ConfigAreaContext): Promise<ConfigRouteContext> {
   const userId = normalizeDenTypeId("user", ctx.actor.userId)

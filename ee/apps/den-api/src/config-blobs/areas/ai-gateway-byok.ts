@@ -21,8 +21,9 @@
  */
 import { and, eq, inArray, ne } from "@openwork-ee/den-db/drizzle"
 import { LlmProviderAccessTable, LlmProviderModelTable, LlmProviderTable } from "@openwork-ee/den-db/schema"
-import { normalizeDenTypeId } from "@openwork-ee/utils/typeid"
+import { denTypeIdPrefixes, normalizeDenTypeId } from "@openwork-ee/utils/typeid"
 import { z } from "zod"
+import { sameCustomOrigin } from "../../llm/gateway-custom-provider.js"
 import { decodeProviderCredential, readProviderEnvNames } from "../../llm/provider-credentials.js"
 import { createLlmProvider, deleteLlmProvider, updateLlmProvider, type LlmProviderWriteInput } from "../../routes/org/llm-providers.js"
 import { defineConfigArea, type ConfigApplyResult, type ConfigItem } from "../area.js"
@@ -136,6 +137,49 @@ function mergeConfig(stored: JsonObject | null, written: JsonObject, fields: rea
   return out
 }
 
+/** Where a custom provider sends its key: `api` and `options.baseURL`. */
+function providerEndpoints(config: JsonObject): Array<string | null> {
+  const options = isJsonObject(config.options) ? config.options : {}
+  return [config.api, options.baseURL].map((value) => (typeof value === "string" && value.trim() ? value.trim() : null))
+}
+
+/** Whether every endpoint stays on its origin (as `sameCustomOrigin` for Gateway custom providers). */
+function sameProviderOrigins(stored: JsonObject, next: JsonObject): boolean {
+  const before = providerEndpoints(stored)
+  const after = providerEndpoints(next)
+  return before.every((value, index) => {
+    const other = after[index] ?? null
+    if (value === null || other === null) return value === other
+    return sameCustomOrigin(value, other)
+  })
+}
+
+/** Inline credentials a custom config may hold outside the exported allowlist. */
+const INLINE_SECRET_OPTION = /key|token|secret|auth|password|header|cookie/i
+
+/** Stored config without inline credentials: kept fields must never follow the provider to another host. */
+function withoutInlineSecrets(config: JsonObject): JsonObject {
+  const out = omit(config, ["headers"])
+  if (isJsonObject(out.options)) {
+    out.options = Object.fromEntries(Object.entries(out.options).filter(([key]) => !INLINE_SECRET_OPTION.test(key)))
+  }
+  return out
+}
+
+/** Secret decisions under `credentials` that keep the stored value (or have no decision). */
+function keptCredentials(value: unknown): string[] {
+  if (!isJsonObject(value)) return []
+  if (value.apiKey !== undefined) {
+    const secret = resolvedSecret(value.apiKey, "credentials.apiKey")
+    return !secret || secret.decision === "keep" ? ["credentials.apiKey"] : []
+  }
+  if (!isJsonObject(value.apiKeys)) return []
+  return Object.entries(value.apiKeys).flatMap(([name, entry]) => {
+    const secret = resolvedSecret(entry, `credentials.apiKeys.${name}`)
+    return !secret || secret.decision === "keep" ? [`credentials.apiKeys.${name}`] : []
+  })
+}
+
 function credentialsSpec(row: typeof LlmProviderTable.$inferSelect) {
   if (row.credentialMode !== "shared") return null
   const envNames = readProviderEnvNames(row.providerConfig ?? {})
@@ -189,6 +233,7 @@ export const aiGatewayByokArea = defineConfigArea({
   viewPermission: "llm_providers.view",
   managePermission: "llm_providers.update",
   tables: ["llm_provider", "llm_provider_model", "llm_provider_access"],
+  idPrefix: denTypeIdPrefixes.llmProvider,
   naturalKeys: [],
   similarity: (blob, target) => {
     const reasons: string[] = []
@@ -282,6 +327,22 @@ export const aiGatewayByokArea = defineConfigArea({
       const modelRows = await ctx.db.select().from(LlmProviderModelTable).where(eq(LlmProviderModelTable.llmProviderId, row.id))
       stored = { providerConfig: row.providerConfig ?? {}, models: new Map(modelRows.map((model) => [model.modelId, model.modelConfig ?? {}])) }
       if ((op.item.key ?? null) !== (row.externalKey ?? null)) warnings.push("A provider's key can't change; the existing key was kept.")
+    }
+
+    // A custom provider moving to another host: its saved key (and inline credentials) must not follow it there.
+    if (stored && spec.source === "custom" && !sameProviderOrigins(stored.providerConfig, mergeConfig(stored.providerConfig, spec.provider ?? {}, PROVIDER_FIELDS, PROVIDER_OPTION_FIELDS))) {
+      const kept = spec.credentialMode === "shared" ? keptCredentials(raw.credentials) : []
+      if (kept.length > 0) {
+        throw new ConfigApplyError("needs_input", `"${op.item.name}" moves to another address; enter its API key again for that address (${kept.join(", ")}) instead of keeping the saved one.`)
+      }
+      const cleaned = {
+        providerConfig: withoutInlineSecrets(stored.providerConfig),
+        models: new Map([...stored.models].map(([id, config]) => [id, withoutInlineSecrets(config)])),
+      }
+      const dropped = JSON.stringify(cleaned.providerConfig) !== JSON.stringify(stored.providerConfig)
+        || [...stored.models].some(([id, config]) => JSON.stringify(cleaned.models.get(id)) !== JSON.stringify(config))
+      if (dropped) warnings.push("The provider moved to another address: inline credentials saved in its config were removed.")
+      stored = cleaned
     }
 
     const credentials = spec.credentialMode === "shared" ? credentialWrite(raw.credentials) : {}

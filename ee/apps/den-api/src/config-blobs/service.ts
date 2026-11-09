@@ -32,8 +32,8 @@
  */
 import { and, eq, getTableConfig, MySqlTable, sql } from "@openwork-ee/den-db/drizzle"
 import * as denSchema from "@openwork-ee/den-db/schema"
-import { AuthApiKeyTable, AuthUserTable, InvitationTable, MemberTable, OrganizationTable } from "@openwork-ee/den-db/schema"
-import type { ConfigChangeRequestApproval } from "@openwork-ee/den-db/schema"
+import { AuditEventResourceTable, AuthApiKeyTable, AuthUserTable, InvitationTable, MemberTable, OrganizationTable } from "@openwork-ee/den-db/schema"
+import type { ConfigChangeRequestApplyRequest, ConfigChangeRequestApproval } from "@openwork-ee/den-db/schema"
 import { normalizeDenTypeId, type DenTypeId } from "@openwork-ee/utils/typeid"
 import type { AuditActor, AuditEventInput, AuditOrigin } from "@openwork-ee/den-db/audit-log"
 import {
@@ -69,6 +69,7 @@ import {
 } from "@openwork/types/den/config-blobs"
 import { readOrganizationMetadata } from "@openwork/types/den/managed-models-policy"
 import type { PermissionKey } from "@openwork/types/den/permissions"
+import { auditText } from "../audit/domain/snapshot.js"
 import { recordAuditJobOutcome } from "../audit/job-capture.js"
 import { CONFIG_BLOB_APPLY_JOB_KIND } from "../audit/job-outcomes.js"
 import {
@@ -77,6 +78,7 @@ import {
   runWithAuditJobChangeCapture,
   type AuditChangeCapture,
 } from "../audit/request-capture.js"
+import { getApiKeySessionById } from "../api-keys.js"
 import { db } from "../db.js"
 import { env } from "../env.js"
 import { getOrganizationFeatures, organizationFeatureEnabled, type FeatureMap } from "../features.js"
@@ -91,7 +93,7 @@ import {
   executePlan,
   findSecrets,
   secretsNeedingValues,
-  specRev,
+  itemRev,
   unsupportedReason,
   type ExecutionPlan,
 } from "./engine/index.js"
@@ -100,12 +102,14 @@ import { getConfigInstanceId } from "./instance.js"
 import { configBlobSchemaUrl } from "./json-schema.js"
 import { CONFIG_AREAS, getConfigArea } from "./registry.js"
 import {
+  CONFIG_APPLY_INTERRUPTED_ERROR,
   createChangeRequest,
   extendClaim,
   findExportByBaseHash,
   getChangeRequest,
+  deleteAliasesForLocalIds,
   insertAliases,
-  listAliases,
+  listAliasRows,
   listChangeRequests,
   loadMemberNames,
   markOtherOpenRequestsStale,
@@ -116,6 +120,7 @@ import {
   toChangeRequestSummary,
   updateChangeRequest,
   type ChangeRequestPatch,
+  type ConfigAliasEntry,
   type ClaimedChangeRequest,
   type ConfigChangeRequestId,
   type ConfigChangeRequestRow,
@@ -159,6 +164,12 @@ export type ConfigCaller = ConfigActor & {
    * sensitive keys. Throws ConfigBlobError (the route's permission response).
    */
   authorize: (keys: readonly PermissionKey[]) => Promise<void>
+  /**
+   * Approving and applying: passes for a config token (D3) and for a person
+   * who signed in recently (the organization's fresh-session window); throws
+   * ConfigBlobError (`reauth`) otherwise, whatever the areas.
+   */
+  requireApprovalStepUp: () => void
 }
 
 export type ConfigOrganization = { id: OrganizationId; slug: string; name: string; features: FeatureMap }
@@ -190,6 +201,24 @@ function configAllowEnv(): (name: string) => boolean {
 
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error)
+}
+
+const STORED_ERROR_MAX = 500
+
+/**
+ * An error as stored on the request (`errors`, report items): those columns
+ * are not encrypted, and messages can quote blob or provider text. One line,
+ * at most 500 characters, and withheld entirely when it looks like a
+ * credential (the audit log's redaction, audit/domain/snapshot.ts).
+ */
+export function storedError(message: string): string {
+  const line = message.replace(/[\u0000-\u001f\u007f]+/g, " ").trim()
+  const bounded = line.length > STORED_ERROR_MAX ? `${line.slice(0, STORED_ERROR_MAX - 1)}…` : line
+  return auditText(bounded, STORED_ERROR_MAX) ?? ""
+}
+
+function storedErrors(messages: readonly string[]): string[] {
+  return messages.map(storedError)
 }
 
 // ---------------------------------------------------------------------------
@@ -237,7 +266,7 @@ function areaContext(organizationId: string, actor: ConfigActor, features: Featu
 type ExportedArea = { area: ConfigArea; items: ConfigItem[] }
 
 function blobItemFor(area: ConfigArea, item: ConfigItem): ConfigBlobItem {
-  const out: ConfigBlobItem = { id: item.id, name: item.name, rev: specRev(area, item.spec), spec: item.spec }
+  const out: ConfigBlobItem = { id: item.id, name: item.name, rev: itemRev(area, item), spec: item.spec }
   if (item.key !== undefined) out.key = item.key
   return out
 }
@@ -267,7 +296,7 @@ async function exportAreas(ctx: ConfigAreaContext, keys: readonly ConfigAreaKey[
 async function assembleBlob(org: Pick<ConfigOrganization, "id" | "slug" | "name">, exported: readonly ExportedArea[], omitted: Array<{ area: ConfigAreaKey; reason: string }>): Promise<ConfigBlob> {
   const flat: Partial<Record<ConfigAreaKey, ConfigBlobArea>> = {}
   for (const { area, items } of exported) flat[area.key] = { specVersion: area.specVersion, items: items.map((item) => blobItemFor(area, item)) }
-  const entries = exported.flatMap(({ area, items }) => items.map((item) => ({ area: area.key, id: item.id, rev: specRev(area, item.spec) })))
+  const entries = exported.flatMap(({ area, items }) => items.map((item) => ({ area: area.key, id: item.id, rev: itemRev(area, item) })))
   const schemaUrl = configBlobSchemaUrl(CONFIG_BLOB_FORMAT_VERSION)
   const blob: ConfigBlob = {
     ...(schemaUrl ? { $schema: schemaUrl } : {}),
@@ -474,8 +503,9 @@ function blobBytes(blob: unknown): number {
  * caller can't import. D5: a newer upload from the same API key and scope
  * supersedes that key's older open ones.
  */
-function checkSubmission(caller: ConfigCaller, raw: unknown): { blob: ConfigBlob; scope: ConfigAreaKey[] } {
-  if (blobBytes(raw) > CONFIG_BLOB_MAX_BYTES) {
+function checkSubmission(caller: ConfigCaller, raw: unknown, options: { internal?: boolean } = {}): { blob: ConfigBlob; scope: ConfigAreaKey[] } {
+  // The size limit is for uploads. A revert's blob is this server's own before-snapshot, which a large organization can push past it.
+  if (!options.internal && blobBytes(raw) > CONFIG_BLOB_MAX_BYTES) {
     throw new ConfigBlobError(413, { error: "blob_too_large", message: `Config files are limited to ${CONFIG_BLOB_MAX_BYTES / (1024 * 1024)} MB.` })
   }
   const envelope = parseEnvelope(raw)
@@ -513,14 +543,15 @@ export async function dryRunChangeRequest(org: ConfigOrganization, caller: Confi
     approvals: [],
     decisions: null,
     secretInputs: null,
+    apiKeyId: caller.apiKeyId,
   })
   if ("invalid" in planned) return { plan: null, errors: planned.invalid }
   return { plan: planned.plan, errors: planned.fatal }
 }
 
 export async function submitChangeRequest(org: ConfigOrganization, caller: ConfigCaller, input: SubmitInput, options: { source?: "ui" | "api" | "revert"; revertsChangeRequestId?: ConfigChangeRequestId; decisions?: ConfigDecisions } = {}): Promise<ConfigChangeRequestSummary> {
-  const { blob, scope } = checkSubmission(caller, input.blob)
   const source = options.source ?? (caller.apiKeyId ? "api" : "ui")
+  const { blob, scope } = checkSubmission(caller, input.blob, { internal: source === "revert" })
   const row = await createChangeRequest({
     organizationId: org.id,
     status: "uploaded",
@@ -587,19 +618,50 @@ function neededAreas(scope: readonly ConfigAreaKey[], areas: Partial<Record<Conf
   return needed
 }
 
-function groupAliases(flat: Map<string, string>): Map<ConfigAreaKey, Map<string, string>> {
-  const out = new Map<ConfigAreaKey, Map<string, string>>()
-  for (const [key, localId] of flat) {
-    const separator = key.indexOf(":")
-    const area = key.slice(0, separator)
-    if (!(CONFIG_AREA_KEYS as readonly string[]).includes(area)) continue
-    const areaKey = CONFIG_AREA_KEYS.find((entry) => entry === area)
+type GroupedAliases = {
+  /** area → source id → local id (the engine's alias tier). */
+  aliases: Map<ConfigAreaKey, Map<string, string>>
+  /** area → source id → the change request that wrote the alias (provenance shown in the plan). */
+  provenance: Map<ConfigAreaKey, Map<string, string>>
+}
+
+function groupAliases(rows: readonly ConfigAliasEntry[]): GroupedAliases {
+  const aliases = new Map<ConfigAreaKey, Map<string, string>>()
+  const provenance = new Map<ConfigAreaKey, Map<string, string>>()
+  for (const row of rows) {
+    const areaKey = CONFIG_AREA_KEYS.find((entry) => entry === row.area)
     if (!areaKey) continue
-    const byArea = out.get(areaKey) ?? new Map<string, string>()
-    byArea.set(key.slice(separator + 1), localId)
-    out.set(areaKey, byArea)
+    const byArea = aliases.get(areaKey) ?? new Map<string, string>()
+    byArea.set(row.sourceId, row.localId)
+    aliases.set(areaKey, byArea)
+    if (row.createdByChangeRequestId) {
+      const sources = provenance.get(areaKey) ?? new Map<string, string>()
+      sources.set(row.sourceId, row.createdByChangeRequestId)
+      provenance.set(areaKey, sources)
+    }
   }
-  return out
+  return { aliases, provenance }
+}
+
+/** M8: an alias match says which earlier import created it, so a reviewer can tell it from an id match. */
+function addAliasProvenance(plan: ConfigPlan, provenance: GroupedAliases["provenance"]): void {
+  for (const area of plan.areas) {
+    for (const item of area.items) {
+      if (item.matchedBy !== "alias" || !item.blob?.id) continue
+      const changeRequestId = provenance.get(item.area)?.get(item.blob.id)
+      const reason = changeRequestId ? `matched via an earlier import (${changeRequestId})` : "matched via an earlier import"
+      item.reasons = [...(item.reasons ?? []), reason]
+    }
+  }
+}
+
+/** Areas the planning member (and its config token's area limit) may view: references elsewhere lose their names in the plan. */
+async function visibleAreasFor(organizationId: OrganizationId, actor: ConfigActor, apiKeyId: string | null): Promise<Set<ConfigAreaKey>> {
+  const permissions = await resolvePermissionsForMember({ organizationId, memberId: normalizeDenTypeId("member", actor.memberId) })
+  const token = apiKeyId ? await getApiKeySessionById(apiKeyId) : null
+  // A token that is gone sees nothing; an unrestricted one (null) sees what its member sees.
+  const tokenAreas = apiKeyId ? (token ? token.configAreas : []) : null
+  return new Set(CONFIG_AREA_KEYS.filter((key) => permissions.has(getConfigArea(key).viewPermission) && tokenAllows(tokenAreas, key)))
 }
 
 async function baseSpecsFor(organizationId: OrganizationId, hash: string | null): Promise<Map<string, ConfigSpec> | undefined> {
@@ -616,7 +678,7 @@ async function baseSpecsFor(organizationId: OrganizationId, hash: string | null)
 }
 
 /** What planning reads from a request: a stored row, or an unsaved dry run. */
-type PlanSource = Pick<ConfigChangeRequestRow, "organizationId" | "blob" | "mode" | "baseHash" | "createdByMemberId" | "approvals" | "decisions" | "secretInputs">
+type PlanSource = Pick<ConfigChangeRequestRow, "organizationId" | "blob" | "mode" | "baseHash" | "createdByMemberId" | "approvals" | "decisions" | "secretInputs" | "apiKeyId">
 
 /** The member a plan is computed for: the creator, else the last approver. Stable, so re-plans hash the same. */
 async function planningActor(row: PlanSource): Promise<ConfigActor | null> {
@@ -647,13 +709,15 @@ async function planChangeRequest(row: PlanSource, overrides: { decisions?: Confi
   const sameOrganization = blob.source?.organization.id === row.organizationId && sourceInstanceId === instanceId
   const decisions = overrides.decisions ?? row.decisions ?? EMPTY_CONFIG_DECISIONS
   const secretInputs = overrides.secretInputs ?? row.secretInputs ?? []
+  const grouped = sourceInstanceId ? groupAliases(await listAliasRows(row.organizationId, sourceInstanceId, db.$primary)) : null
   const result = buildPlan({
     areas: CONFIG_AREAS,
     blobAreas: areas,
     scope,
     mode: row.mode,
     targetItems,
-    aliases: sourceInstanceId ? groupAliases(await listAliases(row.organizationId, sourceInstanceId, db.$primary)) : undefined,
+    aliases: grouped?.aliases,
+    visibleAreas: await visibleAreasFor(row.organizationId, actor, row.apiKeyId),
     decisions,
     secretInputs,
     people: await loadPeople(row.organizationId),
@@ -665,6 +729,7 @@ async function planChangeRequest(row: PlanSource, overrides: { decisions?: Confi
     baseSpecs: sameOrganization ? await baseSpecsFor(row.organizationId, row.baseHash) : undefined,
     ctx,
   })
+  if (grouped) addAliasProvenance(result.plan, grouped.provenance)
   for (const entry of blob.omitted ?? []) {
     result.plan.issues.push({ level: "warning", message: `${getConfigArea(entry.area).label} was left out of the export: ${entry.reason}`, area: entry.area })
   }
@@ -683,9 +748,9 @@ function approvalsSatisfied(approvals: readonly ConfigChangeRequestApproval[], s
 /** The patch a fresh plan implies: status, plan, errors, and approvals dropped when the plan hash moved. */
 async function planPatch(row: ConfigChangeRequestRow, planned: Planned | { invalid: string[] }, options: { dropApprovals?: boolean } = {}): Promise<ChangeRequestPatch> {
   // `invalid` is terminal: its secret inputs are deleted at once.
-  if ("invalid" in planned) return { status: "invalid", errors: planned.invalid, approvals: [], approvedPlanHash: null, secretInputs: null }
+  if ("invalid" in planned) return { status: "invalid", errors: storedErrors(planned.invalid), approvals: [], approvedPlanHash: null, secretInputs: null }
   if (planned.fatal.length > 0) {
-    return { status: "invalid", plan: planned.plan, planHash: planned.plan.planHash, errors: planned.fatal, approvals: [], approvedPlanHash: null, secretInputs: null }
+    return { status: "invalid", plan: planned.plan, planHash: planned.plan.planHash, errors: storedErrors(planned.fatal), approvals: [], approvedPlanHash: null, secretInputs: null }
   }
   const keep = !options.dropApprovals && row.approvedPlanHash === planned.plan.planHash
   const approvals = keep ? row.approvals : []
@@ -699,7 +764,11 @@ async function planPatch(row: ConfigChangeRequestRow, planned: Planned | { inval
   }
   if (keep && planned.plan.summary.blocking === 0 && approvalsSatisfied(approvals, await getConfigBlobSettings(row.organizationId))) {
     patch.status = row.autoApply ? "queued" : "approved"
-    if (row.autoApply) patch.availableAt = new Date()
+    if (row.autoApply) {
+      patch.availableAt = new Date()
+      const last = approvals[approvals.length - 1]
+      if (last) patch.applyRequestedBy = { memberId: last.memberId, at: new Date().toISOString(), ...(last.apiKeyId ? { apiKeyId: last.apiKeyId } : {}) }
+    }
   }
   return patch
 }
@@ -720,7 +789,7 @@ export async function analyzeClaimedChangeRequest(claim: ClaimedChangeRequest): 
       await releaseClaim(claim, { status: "uploaded", availableAt: new Date(Date.now() + 5_000 * claim.attempts) })
       return "uploaded"
     }
-    await releaseClaim(claim, { status: "invalid", errors: [`The change couldn't be analyzed: ${errorMessage(error)}`], secretInputs: null })
+    await releaseClaim(claim, { status: "invalid", errors: [storedError(`The change couldn't be analyzed: ${errorMessage(error)}`)], approvals: [], approvedPlanHash: null, secretInputs: null })
     return "invalid"
   }
 }
@@ -791,6 +860,11 @@ function writeAreas(plan: ConfigPlan | null): ConfigAreaKey[] {
   return plan.areas.filter((area) => area.items.some((item) => item.op === "create" || item.op === "update" || item.op === "rename" || item.op === "delete")).map((area) => area.area)
 }
 
+/** L6: who queued the apply, kept for the apply's audit (it runs later, as the last approver). */
+function applyRequest(caller: Pick<ConfigCaller, "memberId" | "apiKeyId">): ConfigChangeRequestApplyRequest {
+  return { memberId: caller.memberId, at: new Date().toISOString(), ...(caller.apiKeyId ? { apiKeyId: caller.apiKeyId } : {}) }
+}
+
 async function approveRow(row: ConfigChangeRequestRow, caller: ConfigCaller, planHash: string): Promise<ConfigChangeRequestRow> {
   if (row.status !== "needs_review" && row.status !== "approved") {
     throw new ConfigBlobError(409, { error: "change_request_not_approvable", message: "Only a change waiting for review can be approved.", status: row.status })
@@ -801,6 +875,7 @@ async function approveRow(row: ConfigChangeRequestRow, caller: ConfigCaller, pla
   if (row.plan.summary.blocking > 0) {
     throw new ConfigBlobError(409, { error: "plan_blocked", message: `${row.plan.summary.blocking} item(s) still need a decision.`, blocking: row.plan.summary.blocking })
   }
+  caller.requireApprovalStepUp()
   await caller.authorize(managePermissions(writeAreas(row.plan)))
   const approvals = currentApprovals(row)
   if (approvals.some((approval) => approval.memberId === caller.memberId)) {
@@ -816,8 +891,9 @@ async function approveRow(row: ConfigChangeRequestRow, caller: ConfigCaller, pla
   const updated = await updateChangeRequest(row.organizationId, row.id, [row.status], {
     approvals: next,
     approvedPlanHash: planHash,
+    errors: [],
     status,
-    ...(status === "queued" ? { availableAt: new Date() } : {}),
+    ...(status === "queued" ? { availableAt: new Date(), applyRequestedBy: applyRequest(caller) } : {}),
   })
   if (!updated) throw new ConfigBlobError(409, { error: "change_request_moved_on", message: "This change moved on. Reload and try again." })
   return updated
@@ -837,12 +913,18 @@ export async function requestApply(organizationId: OrganizationId, id: string, c
   if (row.status !== "approved") {
     throw new ConfigBlobError(409, { error: "change_request_not_approved", message: row.status === "needs_review" ? "This change needs approval first." : "This change can't be applied now.", status: row.status })
   }
+  caller.requireApprovalStepUp()
   await caller.authorize(managePermissions(writeAreas(row.plan)))
+  const lastApproval = applyingApproval(row)
+  if (lastApproval && approvalExpired(lastApproval)) {
+    await updateChangeRequest(organizationId, row.id, ["approved"], { status: "needs_review", approvals: [], approvedPlanHash: null, errors: [APPROVAL_EXPIRED_ERROR] })
+    throw new ConfigBlobError(409, { error: "approval_expired", message: APPROVAL_EXPIRED_ERROR, status: "needs_review" })
+  }
   const settings = await getConfigBlobSettings(organizationId)
   if (!approvalsSatisfied(currentApprovals(row), settings)) {
     throw new ConfigBlobError(409, { error: "change_request_not_approved", message: "This change needs another approval.", status: row.status })
   }
-  const updated = await updateChangeRequest(organizationId, row.id, ["approved"], { status: "queued", availableAt: new Date() })
+  const updated = await updateChangeRequest(organizationId, row.id, ["approved"], { status: "queued", availableAt: new Date(), applyRequestedBy: applyRequest(caller) })
   if (!updated) throw new ConfigBlobError(409, { error: "change_request_moved_on", message: "This change moved on. Reload and try again." })
   return summaryOf(updated)
 }
@@ -956,18 +1038,43 @@ function tablesWithId(): Map<string, TableWithId> {
   return out
 }
 
-/** D4: an id may be reused only when no row of the area's tables holds it, in any organization. */
-async function isConfigIdFree(area: ConfigAreaKey, id: string): Promise<boolean> {
+/**
+ * D4 (M6): an id may be reused only when
+ * - no row of the area's tables holds it, in any organization, and
+ * - it never appeared in this organization's audit history (a deleted item's
+ *   id must not come back as a different item under the same audit trail).
+ *   Audit history is per organization, so this is one lookup on
+ *   `audit_resource_lookup` (organization prefix, resource id; the resource
+ *   type is skipped), as the audit log's own resource filter does.
+ * Callers only ask for blobs from another instance (see `reusesSourceIds`).
+ */
+async function isConfigIdFree(organizationId: OrganizationId, area: ConfigAreaKey, id: string): Promise<boolean> {
   for (const name of getConfigArea(area).tables) {
     const entry = tablesWithId().get(name)
     if (!entry) continue
     const rows = await db.$primary.select({ one: sql<number>`1` }).from(entry.table).where(eq(entry.column, id)).limit(1)
     if (rows.length > 0) return false
   }
-  return true
+  const audited = await db.$primary
+    .select({ one: sql<number>`1` })
+    .from(AuditEventResourceTable)
+    // Plain `=` (not `binary`) so the index applies; a case-insensitive hit only means one id fewer reused.
+    .where(and(eq(AuditEventResourceTable.organization_id, organizationId), eq(AuditEventResourceTable.resource_id, id)))
+    .limit(1)
+  return audited.length === 0
 }
 
-async function jobCapture(input: { organizationId: OrganizationId; changeRequestId: string; actor: AuditActor; principalKey: string }): Promise<AuditChangeCapture | null> {
+/**
+ * Source ids are reused only for a blob from ANOTHER instance (cloud →
+ * self-hosted → cloud). A blob from this instance (a clone into another
+ * organization, a re-import after a delete) or with no source always gets new
+ * ids plus aliases: its ids are, or were, this instance's own rows.
+ */
+function reusesSourceIds(sourceInstanceId: string | null, instanceId: string): boolean {
+  return sourceInstanceId !== null && sourceInstanceId !== instanceId
+}
+
+async function jobCapture(input: { organizationId: OrganizationId; changeRequestId: string; actor: AuditActor; initiatingActor: AuditActor; principalKey: string }): Promise<AuditChangeCapture | null> {
   if (!env.auditCaptureEnabled) return null
   try {
     const policy = await readEffectiveAuditPolicyWithRetry(input.organizationId)
@@ -975,7 +1082,7 @@ async function jobCapture(input: { organizationId: OrganizationId; changeRequest
     return {
       policy,
       context: {
-        organizationId: input.organizationId, actor: input.actor, principalKey: input.principalKey, initiatingActor: input.actor,
+        organizationId: input.organizationId, actor: input.actor, principalKey: input.principalKey, initiatingActor: input.initiatingActor,
         origin: "api", originTrust: "authenticated", requestId: null,
         kind: CONFIG_BLOB_APPLY_JOB_KIND, scope: input.changeRequestId, jobRunId: input.changeRequestId,
       },
@@ -1017,8 +1124,30 @@ function resolveSecretValues(execution: ExecutionPlan, inputs: readonly ConfigSe
 
 async function afterRevsOf(ctx: ConfigAreaContext, areas: readonly ConfigAreaKey[]): Promise<Record<string, string>> {
   const out: Record<string, string> = {}
-  for (const { area, items } of await exportAreas(ctx, areas)) for (const item of items) out[`${area.key}/${item.id}`] = specRev(area, item.spec)
+  for (const { area, items } of await exportAreas(ctx, areas)) for (const item of items) out[`${area.key}/${item.id}`] = itemRev(area, item)
   return out
+}
+
+/** An apply runs this long after its last approval at most; later, approvals are dropped and it needs review again (M5). */
+export const CONFIG_APPROVAL_MAX_AGE_MS = 24 * 60 * 60 * 1000
+const APPROVAL_EXPIRED_ERROR = "Approval expired: changes are applied within 24 hours of their last approval. Review and approve it again."
+const LEASE_LOST_ERROR = "lease lost: another worker took over this apply, so it stopped before its next change; check the before-snapshot and revert if needed"
+
+function approvalExpired(approval: ConfigChangeRequestApproval, now = Date.now()): boolean {
+  const at = Date.parse(approval.at)
+  return !Number.isFinite(at) || now - at > CONFIG_APPROVAL_MAX_AGE_MS
+}
+
+/** Whether `(source org, baseHash)` is an export this instance recorded (and still keeps). */
+async function isRecordedExport(sourceOrgId: string | null, hash: string | null): Promise<boolean> {
+  if (!sourceOrgId || !hash) return false
+  let organizationId: OrganizationId
+  try {
+    organizationId = normalizeDenTypeId("organization", sourceOrgId)
+  } catch {
+    return false
+  }
+  return (await findExportByBaseHash(organizationId, hash)) !== null
 }
 
 /** The member an apply runs as: the last approver (for a config token approval, its issuing member). */
@@ -1040,11 +1169,18 @@ export async function applyClaimedChangeRequest(claim: ClaimedChangeRequest): Pr
     await releaseClaim(claim, { status: "needs_review", approvals: [], approvedPlanHash: null, errors: ["The approval no longer matches this plan."] })
     return "needs_review"
   }
+  // M5: the apply runs as the last approver with a session counted as freshly signed in
+  // (areas/route-support.ts). That only holds while the approval itself is recent.
+  if (approvalExpired(approval)) {
+    await releaseClaim(claim, { status: "needs_review", approvals: [], approvedPlanHash: null, applyRequestedBy: null, errors: [APPROVAL_EXPIRED_ERROR] })
+    return "needs_review"
+  }
 
   // The applying member must still be a member holding every area's manage permission (and a config token still usable).
   const actor = await loadActor(organizationId, approval.memberId)
   const refusal = async (message: string): Promise<ConfigChangeRequestStatus> => {
-    await releaseClaim(claim, { status: "failed", errors: [message], secretInputs: null, report: { items: [], warnings: [message] } })
+    const error = storedError(message)
+    await releaseClaim(claim, { status: "failed", errors: [error], secretInputs: null, report: { items: [], warnings: [error] } })
     return "failed"
   }
   if (!actor) return refusal("The person who approved this change is no longer a member of the organization.")
@@ -1071,65 +1207,115 @@ export async function applyClaimedChangeRequest(claim: ClaimedChangeRequest): Pr
   const target = org[0]
   if (!target) return refusal("The organization no longer exists.")
 
-  // Before-snapshot of the whole scope (the revert source), not kept as an export.
-  const beforeSnapshot = await assembleBlob(target, await exportAreas(ctx, claim.areas), [])
-  if (!await releaseClaimKeepLease(claim, { beforeSnapshot })) return null
+  // Before-snapshot of the whole scope (the revert source), not kept as an export. Never overwritten.
+  if (claim.beforeSnapshot === null || claim.beforeSnapshot === undefined) {
+    const beforeSnapshot = await assembleBlob(target, await exportAreas(ctx, claim.areas), [])
+    if (!await releaseClaimKeepLease(claim, { beforeSnapshot })) return null
+  }
 
+  // L6: who runs it (the last approver) and who queued it (explicit apply, or the approval that auto-applied).
   const auditActor: AuditActor = { type: "user", id: actor.userId, memberId: actor.memberId, ...(approval.apiKeyId ? { credentialId: approval.apiKeyId } : {}) }
+  const requestedBy = claim.applyRequestedBy ?? { memberId: approval.memberId, at: approval.at, ...(approval.apiKeyId ? { apiKeyId: approval.apiKeyId } : {}) }
+  const requester = requestedBy.memberId === actor.memberId ? actor : await loadActor(organizationId, requestedBy.memberId)
+  const initiatingActor: AuditActor = requester
+    ? { type: "user", id: requester.userId, memberId: requester.memberId, ...(requestedBy.apiKeyId ? { credentialId: requestedBy.apiKeyId } : {}) }
+    : auditActor
   const principalKey = auditUserPrincipalKey({ userId: actor.userId, memberId: actor.memberId, credentialId: approval.apiKeyId ?? null })
-  const capture = await jobCapture({ organizationId, changeRequestId: claim.id, actor: auditActor, principalKey })
+  const capture = await jobCapture({ organizationId, changeRequestId: claim.id, actor: auditActor, initiatingActor, principalKey })
   const resources: AuditEventInput["resources"] = [
     { type: "config_change_request", id: claim.id, relationship: "target" },
     { type: "organization", id: organizationId, relationship: "parent" },
   ]
   const origin: AuditOrigin = "api"
-  const jobBase = { organizationId, jobRunId: claim.id, kind: CONFIG_BLOB_APPLY_JOB_KIND, actor: auditActor, initiatingActor: auditActor, principalKey, origin, resources }
-  await recordAuditJobOutcome({ ...jobBase, action: "config_change_request.apply_started", outcome: "unknown", reasonCode: "applying", idempotencyKey: `config_change_request:${claim.id}:apply:${claim.attempts}:started` })
+  const jobBase = { organizationId, jobRunId: claim.id, kind: CONFIG_BLOB_APPLY_JOB_KIND, actor: auditActor, initiatingActor, principalKey, origin, resources }
+  const who = {
+    requestedBy: { memberId: requestedBy.memberId, apiKeyId: requestedBy.apiKeyId ?? null, at: requestedBy.at },
+    runsAs: { memberId: actor.memberId, apiKeyId: approval.apiKeyId ?? null, approvedAt: approval.at },
+  }
+  await recordAuditJobOutcome({
+    ...jobBase,
+    action: "config_change_request.apply_started",
+    outcome: "unknown",
+    reasonCode: "applying",
+    changes: { before: { status: "queued" }, after: { status: "applying", ...who }, changedFields: ["status"] },
+    idempotencyKey: `config_change_request:${claim.id}:apply:${claim.attempts}:started`,
+  })
 
-  const keepAlive = setInterval(() => {
-    void extendClaim(claim, APPLY_LEASE_MS).catch((error: unknown) => logger.warn("config apply lease extension failed", { change_request_id: claim.id, error_name: error instanceof Error ? error.name : typeof error }))
-  }, APPLY_LEASE_EXTEND_EVERY_MS)
+  // M10: the claim is the org's apply lock. Lost (expired and taken over) → stop before the next write.
+  let leaseLost = false
+  const holdLease = async (): Promise<boolean> => {
+    if (leaseLost) return false
+    try {
+      if (!await extendClaim(claim, APPLY_LEASE_MS)) leaseLost = true
+    } catch (error) {
+      logger.warn("config apply lease extension failed", { change_request_id: claim.id, error_name: error instanceof Error ? error.name : typeof error })
+    }
+    return !leaseLost
+  }
+  const keepAlive = setInterval(() => { void holdLease() }, APPLY_LEASE_EXTEND_EVERY_MS)
   keepAlive.unref()
+  const leasedAreas: ConfigArea[] = CONFIG_AREAS.map((area) => ({
+    ...area,
+    apply: async (applyCtx, op) => {
+      if (!await holdLease()) throw new Error(LEASE_LOST_ERROR)
+      return area.apply(applyCtx, op)
+    },
+  }))
+  const instanceId = await getConfigInstanceId()
+  const reuseIds = reusesSourceIds(claim.sourceInstanceId, instanceId)
   let result: Awaited<ReturnType<typeof executePlan>>
   try {
-    result = await runWithAuditJobChangeCapture(capture, () => executePlan(execution, CONFIG_AREAS, ctx, secrets, { isIdFree: async (id) => {
-      const op = execution.ops.find((entry) => entry.preferredId === id)
-      return op ? isConfigIdFree(op.area, id) : false
-    } }))
+    result = await runWithAuditJobChangeCapture(capture, () => executePlan(execution, leasedAreas, ctx, secrets, {
+      isIdFree: (id, area) => (reuseIds ? isConfigIdFree(organizationId, area, id) : Promise.resolve(false)),
+    }))
   } finally {
     clearInterval(keepAlive)
   }
 
+  // Aliases. Creates under a new id always get one. A confirmed match ("decision") only when the
+  // blob is from another instance or is an export this instance recorded: a hand-made blob claiming
+  // to be from here could otherwise pin any source id to any local item (M8).
   if (claim.sourceInstanceId && result.aliases.length > 0) {
-    await insertAliases(organizationId, result.aliases.map((alias) => ({ ...alias, sourceInstanceId: claim.sourceInstanceId ?? "", createdByChangeRequestId: claim.id })))
+    const created = new Set(result.created.map((entry) => `${entry.area}\u0000${entry.sourceId ?? ""}\u0000${entry.localId}`))
+    const trusted = claim.sourceInstanceId !== instanceId || await isRecordedExport(claim.sourceOrgId, claim.baseHash)
+    const aliases = result.aliases.filter((alias) => trusted || created.has(`${alias.area}\u0000${alias.sourceId}\u0000${alias.localId}`))
+    if (aliases.length > 0) {
+      await insertAliases(organizationId, aliases.map((alias) => ({ ...alias, sourceInstanceId: claim.sourceInstanceId ?? "", createdByChangeRequestId: claim.id })))
+    }
   }
+  const deleted = result.items.flatMap((item) => (item.op === "delete" && item.status === "applied" && item.localId ? [{ area: item.area, localId: item.localId }] : []))
+  if (deleted.length > 0) await deleteAliasesForLocalIds(organizationId, deleted)
+
   let afterRevs: Record<string, string> = {}
   try {
     afterRevs = await afterRevsOf(ctx, claim.areas)
   } catch (error) {
-    result.warnings.push(`The state after the apply couldn't be read, so a revert will treat every difference as intended: ${errorMessage(error)}`)
+    result.warnings.push(storedError(`The state after the apply couldn't be read, so a revert will treat every difference as intended: ${errorMessage(error)}`))
   }
-  const report: ConfigApplyReport = { items: result.items, warnings: result.warnings, afterRevs }
-  const status: ConfigChangeRequestStatus = result.ok ? "applied" : "failed"
-  const failures = result.items.filter((item) => item.status === "failed")
-  await releaseClaim(claim, {
-    status,
-    report,
-    secretInputs: null,
-    appliedAt: new Date(),
-    errors: failures.map((item) => `${getConfigArea(item.area).label}: ${item.error ?? "failed"}`),
-  })
-  if (result.items.some((item) => item.status === "applied")) await markOtherOpenRequestsStale(organizationId, claim.id)
+  if (leaseLost) result.warnings.push(LEASE_LOST_ERROR)
+  const items = result.items.map((item) => (item.error === undefined ? item : { ...item, error: storedError(item.error) }))
+  const report: ConfigApplyReport = { items, warnings: result.warnings, afterRevs }
+  const ok = result.ok && !leaseLost
+  const status: ConfigChangeRequestStatus = ok ? "applied" : "failed"
+  const failures = items.filter((item) => item.status === "failed")
+  const errors = failures.map((item) => storedError(`${getConfigArea(item.area).label}: ${item.error ?? "failed"}`))
+  if (leaseLost && !errors.includes(LEASE_LOST_ERROR)) errors.push(LEASE_LOST_ERROR)
+  const released = await releaseClaim(claim, { status, report, secretInputs: null, appliedAt: new Date(), errors })
+  if (!released) {
+    // Taken over: the new holder marked it failed (CONFIG_APPLY_INTERRUPTED_ERROR); record what this run did on top.
+    await updateChangeRequest(organizationId, claim.id, ["failed"], { report, secretInputs: null, errors: [...errors, CONFIG_APPLY_INTERRUPTED_ERROR] })
+  }
+  if (items.some((item) => item.status === "applied")) await markOtherOpenRequestsStale(organizationId, claim.id)
 
-  const count = (op: string) => result.items.filter((item) => item.status === "applied" && item.op === op).length
+  const count = (op: string) => items.filter((item) => item.status === "applied" && item.op === op).length
   await recordAuditJobOutcome({
     ...jobBase,
     action: "config_change_request.apply_completed",
-    outcome: result.ok ? "succeeded" : "failed",
-    reasonCode: result.ok ? "applied" : "failed",
+    outcome: ok ? "succeeded" : "failed",
+    reasonCode: ok ? "applied" : leaseLost ? "lease_lost" : "failed",
     changes: {
       before: { status: "applying" },
-      after: { status, created: count("create"), updated: count("update") + count("rename"), deleted: count("delete"), failed: failures.length },
+      after: { status, created: count("create"), updated: count("update") + count("rename"), deleted: count("delete"), failed: failures.length, ...who },
       changedFields: ["status"],
     },
     idempotencyKey: `config_change_request:${claim.id}:apply:${claim.attempts}:completed`,

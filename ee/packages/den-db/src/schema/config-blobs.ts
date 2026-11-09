@@ -30,6 +30,13 @@ export type ConfigChangeRequestApproval = {
   apiKeyId?: string | null
 }
 
+/** Who queued a request for apply (explicit apply, or the approval that auto-applied it). Recorded in the apply's audit. */
+export type ConfigChangeRequestApplyRequest = {
+  memberId: string
+  at: string
+  apiKeyId?: string | null
+}
+
 /** One import of a blob into an organization: queued, analyzed, reviewed, applied. */
 export const ConfigChangeRequestTable = mysqlTable(
   "config_change_request",
@@ -59,6 +66,7 @@ export const ConfigChangeRequestTable = mysqlTable(
     secretInputs: encryptedJsonColumn<ConfigSecretInput[]>("secret_inputs"),
     approvals: compatJsonColumn<ConfigChangeRequestApproval[]>("approvals").notNull(),
     approvedPlanHash: varchar("approved_plan_hash", { length: 80 }),
+    applyRequestedBy: compatJsonColumn<ConfigChangeRequestApplyRequest>("apply_requested_by"),
     autoApply: boolean("auto_apply").notNull().default(false),
     /** Export of the plan's scope taken just before apply: the revert source. */
     beforeSnapshot: encryptedJsonColumn<unknown>("before_snapshot"),

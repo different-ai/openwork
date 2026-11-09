@@ -16,8 +16,12 @@ import {
   arrayElementKey,
   elementSchemaPath,
   isPlainObject,
+  isUnsafeKey,
   joinPath,
 } from "./util.js"
+
+/** What a value pasted into a declared secret field is replaced with, everywhere the plan shows it. */
+export const REDACTED_SECRET = "[redacted]"
 
 export type SecretOccurrence = {
   /** The placeholder's own `$secret` path (what inputs are keyed by). */
@@ -105,6 +109,55 @@ export function checkSecretFields(secretFields: readonly string[], spec: unknown
   }
   walk(spec, "", "")
   return problems
+}
+
+/**
+ * A copy of `spec` with every non-placeholder value at a declared secret
+ * field replaced by `REDACTED_SECRET`, and the positional paths replaced.
+ * Run before anything diffs, hashes or stores the spec, so a secret pasted
+ * into a blob never reaches a plan, an error or a log.
+ */
+export function redactRawSecrets(secretFields: readonly string[], spec: ConfigSpec): { spec: ConfigSpec; redacted: string[] } {
+  if (secretFields.length === 0) return { spec, redacted: [] }
+  const redacted: string[] = []
+  const declared = (schemaPath: string) => secretFields.some((pattern) => matchesSecretField(pattern, schemaPath))
+  const walk = (value: unknown, field: string, schemaPath: string): unknown => {
+    if (value === undefined || value === null) return value
+    if (isConfigSecret(value)) return value
+    if (schemaPath !== "" && declared(schemaPath)) {
+      redacted.push(field)
+      return REDACTED_SECRET
+    }
+    if (isConfigRef(value)) return value
+    if (Array.isArray(value)) {
+      const childSchema = elementSchemaPath(schemaPath)
+      return value.map((element, index) => walk(element, `${field}[${index}]`, childSchema))
+    }
+    if (isPlainObject(value)) {
+      const out: { [key: string]: unknown } = {}
+      for (const [key, child] of Object.entries(value)) {
+        if (isUnsafeKey(key)) continue
+        out[key] = walk(child, joinPath(field, key), joinPath(schemaPath, key))
+      }
+      return out
+    }
+    return value
+  }
+  const out = walk(spec, "", "")
+  if (redacted.length === 0) return { spec, redacted }
+  return { spec: isPlainObject(out) ? out : {}, redacted }
+}
+
+/**
+ * Whether any placeholder in `spec` has an explicit `value` or `env`
+ * decision: the item must be written so the new credential is stored, even
+ * when nothing else about it changed.
+ */
+export function replacesSecretValue(layout: ArrayLayout, spec: ConfigSpec, inputs: ReadonlyMap<string, ConfigSecretInput>): boolean {
+  return findSecrets(layout, spec).some((occurrence) => {
+    const chosen = decisionFor(occurrence.placeholder, inputs.get(occurrence.path))
+    return chosen?.decision === "value" || chosen?.decision === "env"
+  })
 }
 
 export type SecretDecisionKind = "keep" | "env" | "value" | "unset"

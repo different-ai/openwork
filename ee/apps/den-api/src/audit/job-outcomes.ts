@@ -76,21 +76,21 @@ export const auditJobOutcomeDeclarations = [
   },
   {
     eventType: "config_change_request.apply_started", kind: CONFIG_BLOB_APPLY_JOB_KIND, target: "config_change_request", parents: ["organization"],
-    actor: "the applying member: the last approver, or a config token's issuing member (credentialId = the API key id)", origins: ["api"],
+    actor: "the applying member: the last approver, or a config token's issuing member (credentialId = the API key id); initiating actor = whoever queued the apply (POST …/apply, or the approval that auto-applied)", origins: ["api"],
     idempotencyKey: "config_change_request:<id>:apply:<attempt>:started",
     emitters: ["src/config-blobs/service.ts:applyClaimedChangeRequest"],
     startedBy: ["POST /v1/config-blobs/change-requests/:changeRequestId/apply", "POST /v1/config-blobs/change-requests/:changeRequestId/approve (auto-apply)"],
-    evidence: "Outcome unknown at start; reasonCode applying. The per-item changes the domain services make during the apply (teams, members, invitations, permission sets, providers, connectors…) are appended to the same job operation by their own emitters (src/audit/request-capture.ts:runWithAuditJobChangeCapture). Never blob content, secret inputs or values.",
+    evidence: "Outcome unknown at start; reasonCode applying; change snapshot status queued → applying with requestedBy (member id, API key id, time) and runsAs (member id, API key id, approval time). The per-item changes the domain services make during the apply (teams, members, invitations, permission sets, providers, connectors…) are appended to the same job operation by their own emitters (src/audit/request-capture.ts:runWithAuditJobChangeCapture). Never blob content, secret inputs or values.",
     limitations: "Recorded only once the request passed the approval, permission and stale checks and its before-snapshot was written. A request that went stale (re-analyzed) or was refused before writing anything (approver no longer a member or without the permission, token revoked, secret value missing) records no job events; its status and errors stay on the change request.",
   },
   {
     eventType: "config_change_request.apply_completed", kind: CONFIG_BLOB_APPLY_JOB_KIND, target: "config_change_request", parents: ["organization"],
-    actor: "the applying member: the last approver, or a config token's issuing member (credentialId = the API key id)", origins: ["api"],
+    actor: "the applying member: the last approver, or a config token's issuing member (credentialId = the API key id); initiating actor = whoever queued the apply", origins: ["api"],
     idempotencyKey: "config_change_request:<id>:apply:<attempt>:completed",
     emitters: ["src/config-blobs/service.ts:applyClaimedChangeRequest"],
     startedBy: ["POST /v1/config-blobs/change-requests/:changeRequestId/apply", "POST /v1/config-blobs/change-requests/:changeRequestId/approve (auto-apply)"],
-    evidence: "Outcome succeeded | failed; reasonCode applied | failed; change snapshot status applying → applied/failed with created/updated/deleted/failed item counts only. Never item names, specs, secrets or error messages (the apply report on the change request keeps those for admins).",
-    limitations: "Domain services that write without an emitter (provider and connector writers that only record request evidence) leave per-item evidence on the apply report and the before-snapshot only.",
+    evidence: "Outcome succeeded | failed; reasonCode applied | failed | lease_lost (the apply lost its lease and stopped before its next write); change snapshot status applying → applied/failed with created/updated/deleted/failed item counts and the requestedBy / runsAs member and API key ids only. Never item names, specs, secrets or error messages (the apply report on the change request keeps those for admins).",
+    limitations: "Domain services that write without an emitter (provider and connector writers that only record request evidence) leave per-item evidence on the apply report and the before-snapshot only. An apply whose worker died records no completion: the next claim marks the request failed (apply interrupted) and it is never run again.",
   },
 ] as const satisfies readonly AuditJobOutcomeDeclaration[]
 

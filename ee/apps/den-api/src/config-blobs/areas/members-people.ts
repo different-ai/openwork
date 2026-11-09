@@ -43,7 +43,7 @@ import {
   TeamMemberTable,
   TeamTable,
 } from "@openwork-ee/den-db/schema"
-import { normalizeDenTypeId } from "@openwork-ee/utils/typeid"
+import { denTypeIdPrefixes, normalizeDenTypeId } from "@openwork-ee/utils/typeid"
 import { z } from "zod"
 import { currentAuditChangeCapture } from "../../audit/request-capture.js"
 import { roleIncludesOwner } from "../../organization-member-guards.js"
@@ -74,10 +74,11 @@ const personSpecSchema = z.object({
   email: z.string().email().max(255),
   /** The member's direct role (`member`, `admin`, `super-admin`, `owner`). Admin through an Admin team comes from `teams`. */
   role: z.string().min(1).max(255),
-  status: z.enum(["active", "invited"]),
-  teams: z.array(specRefSchema).max(500),
-  /** Informational: who owns this person on the source. */
-  managedBy: z.enum(["manual", "sso", "scim"]),
+  /** Informational (an import only ever invites). Hand-written blobs may leave it out. */
+  status: z.enum(["active", "invited"]).default("invited"),
+  teams: z.array(specRefSchema).max(500).default([]),
+  /** Informational: who owns this person on the source. Hand-written blobs may leave it out. */
+  managedBy: z.enum(["manual", "sso", "scim"]).default("manual"),
 }).strict()
 
 const personApplyFieldsSchema = z.object({
@@ -312,6 +313,8 @@ export const membersPeopleArea = defineConfigArea({
   key: AREA,
   label: "People",
   path: ["Members", "People"],
+  // Item ids are member ids (`om_…`); an invitation-only row's `inv_…` id is never reused.
+  idPrefix: denTypeIdPrefixes.member,
   specVersion: 1,
   specSchema: personSpecSchema,
   dependsOn: ["members.teams"],

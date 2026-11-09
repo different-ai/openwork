@@ -411,3 +411,232 @@ test("require a second approver: two different members, the second not the creat
   const turnedOff = await apiA("PATCH", "/v1/config-blobs/settings", { requireSecondApprover: false })
   assert.equal(field(turnedOff.body, "settings", "requireSecondApprover"), false)
 })
+
+// ---------------------------------------------------------------------------
+// Security review fixes (M4–M11, L5, L6)
+
+const { createDenTypeId } = await import("@openwork-ee/utils/typeid")
+const { eq } = await import("@openwork-ee/den-db/drizzle")
+const { AuthSessionTable } = await import("@openwork-ee/den-db/schema")
+const { db } = await import("../../src/db.js")
+const { getConfigInstanceId } = await import("../../src/config-blobs/instance.js")
+const { storedError, CONFIG_APPROVAL_MAX_AGE_MS } = await import("../../src/config-blobs/service.js")
+
+/** A members.teams-only upload of `items`, analyzed to needs_review. */
+async function uploadTeams(call: ReturnType<typeof den.as>, from: ConfigBlob, items: unknown[], extra: Record<string, unknown> = {}): Promise<{ id: string; plan: ConfigPlan }> {
+  const blob = asBlob(from)
+  setAreaItems(blob, "members.teams", items)
+  const created = await call("POST", "/v1/config-blobs/change-requests", { blob, mode: "merge", ...extra })
+  assert.equal(created.status, 202, summary(created))
+  const id = asSummary(created).id
+  const analyzed = await drive(call, id)
+  assert.equal(analyzed.status, "needs_review", JSON.stringify(analyzed.errors))
+  const current = await plan(call, id)
+  // Items a name only proposes a match for: confirm them as new.
+  const proposed = planItems(current).filter((item) => item.flags.includes("needs_mapping") && item.matchedBy === "proposed")
+  if (proposed.length === 0) return { id, plan: current }
+  const decided = await call("PUT", `/v1/config-blobs/change-requests/${id}/decisions`, { matches: proposed.map((item) => ({ area: item.area, ref: item.ref, targetId: "create" })) })
+  assert.equal(decided.status, 200, summary(decided))
+  return { id, plan: asPlan(field(decided.body, "plan")) }
+}
+
+async function teamsExport(call: ReturnType<typeof den.as>): Promise<ConfigBlob> {
+  return asBlob((await call("GET", "/v1/config-blobs/export?areas=members.teams")).body)
+}
+
+const TEAM_SPEC = { grantsOrganizationAdmin: false, managedBy: "manual" }
+
+test("approving and applying need a recent sign-in from a person (M5)", async () => {
+  const admin = await den.newMember(owner, orgA.orgId, "Flow Stale Admin", "admin")
+  const apiAdmin = den.as(admin, orgA.orgId)
+  const { id, plan: current } = await uploadTeams(apiA, await teamsExport(apiA), [{ name: "Step Up Team", spec: TEAM_SPEC }])
+  await db.update(AuthSessionTable).set({ createdAt: new Date(Date.now() - 3 * 60 * 60_000) }).where(eq(AuthSessionTable.userId, admin.userId))
+  for (const [path, body] of [["approve", { planHash: current.planHash }], ["apply", { planHash: current.planHash }]] as const) {
+    const refused = await apiAdmin("POST", `/v1/config-blobs/change-requests/${id}/${path}`, body)
+    assert.equal(refused.status, 403, `${path}: ${summary(refused)}`)
+    assert.equal(field(refused.body, "reason"), "fresh_auth_required")
+  }
+  // The uploader's session is fresh: approve works; the stale admin still can't queue it.
+  assert.equal(asSummary(await apiA("POST", `/v1/config-blobs/change-requests/${id}/approve`, { planHash: current.planHash })).status, "approved")
+  const queue = await apiAdmin("POST", `/v1/config-blobs/change-requests/${id}/apply`, {})
+  assert.equal(queue.status, 403, summary(queue))
+  await apiA("POST", `/v1/config-blobs/change-requests/${id}/cancel`, {})
+})
+
+test("an approval older than 24 hours is not applied: back to review, approvals dropped (M5)", async () => {
+  const { id, plan: current } = await uploadTeams(apiA, await teamsExport(apiA), [{ name: "Expiring Team", spec: TEAM_SPEC }])
+  assert.equal(asSummary(await apiA("POST", `/v1/config-blobs/change-requests/${id}/approve`, { planHash: current.planHash })).status, "approved")
+  const requestId = normalizeId(id)
+  const old = new Date(Date.now() - CONFIG_APPROVAL_MAX_AGE_MS - 60_000).toISOString()
+  const row = await repository.getChangeRequest(normalizeOrg(orgA.orgId), requestId, db.$primary)
+  assert.ok(row)
+  await repository.updateChangeRequest(row.organizationId, requestId, ["approved"], { approvals: row.approvals.map((approval) => ({ ...approval, at: old })) })
+
+  // Explicit apply: refused at once.
+  const refused = await apiA("POST", `/v1/config-blobs/change-requests/${id}/apply`, {})
+  assert.equal(refused.status, 409, summary(refused))
+  assert.equal(field(refused.body, "error"), "approval_expired")
+  let after = asSummary(await apiA("GET", `/v1/config-blobs/change-requests/${id}`))
+  assert.equal(after.status, "needs_review")
+  assert.deepEqual(after.approvals, [])
+
+  // Already queued (auto-apply, or queued earlier): the worker sends it back instead of applying.
+  assert.equal(asSummary(await apiA("POST", `/v1/config-blobs/change-requests/${id}/apply`, { planHash: current.planHash })).status, "queued")
+  const queued = await repository.getChangeRequest(normalizeOrg(orgA.orgId), requestId, db.$primary)
+  assert.ok(queued)
+  await repository.updateChangeRequest(queued.organizationId, requestId, ["queued"], { approvals: queued.approvals.map((approval) => ({ ...approval, at: old })) })
+  const claim = await repository.claimNextApply()
+  assert.equal(claim?.id, id)
+  assert.ok(claim)
+  assert.equal(await applyClaimedChangeRequest(claim), "needs_review")
+  after = asSummary(await apiA("GET", `/v1/config-blobs/change-requests/${id}`))
+  assert.equal(after.status, "needs_review")
+  assert.deepEqual(after.approvals, [])
+  assert.match(after.errors.join(" "), /Approval expired/)
+  const [team] = await rows("SELECT id FROM team WHERE organization_id = ? AND name = ?", [orgA.orgId, "Expiring Team"])
+  assert.equal(team, undefined, "nothing was applied")
+  await apiA("POST", `/v1/config-blobs/change-requests/${id}/cancel`, {})
+})
+
+test("invalid requests drop their secret inputs; stored errors are bounded and redacted (M4, errors)", async () => {
+  const blob = await teamsExport(apiA)
+  const duplicate = { id: teamA, name: "Twin", spec: TEAM_SPEC }
+  setAreaItems(blob, "members.teams", [duplicate, { ...duplicate, name: "Twin again" }])
+  const row = await repository.createChangeRequest({
+    organizationId: normalizeOrg(orgA.orgId), status: "uploaded", sourceKind: "ui", mode: "merge", blob, areas: ["members.teams"],
+    createdByMemberId: normalizeMember(orgA.owner.memberId), secretInputs: [{ path: "members.teams/x/y", decision: "value", value: "sk-flow-invalid-SECRET-1" }],
+  })
+  const settled = await drive(apiA, row.id)
+  assert.equal(settled.status, "invalid", JSON.stringify(settled))
+  const [stored] = await rows("SELECT secret_inputs, approvals FROM config_change_request WHERE id = ?", [row.id])
+  assert.equal(stored?.secret_inputs, null)
+
+  assert.equal(storedError("upstream said: Bearer abcdef0123456789"), "[withheld]")
+  assert.equal(storedError(`bad ${"x".repeat(2000)}`).length, 500)
+  assert.equal(storedError("line one\nline two"), "line one line two")
+})
+
+test("a blob from this instance never reuses ids: a deleted item comes back under a new id with an alias and its provenance (M6, M8)", async () => {
+  const ephemeral = await den.createTeam(owner, orgA.orgId, "Ephemeral", [])
+  const exportedWithTeam = await teamsExport(apiA)
+  const item = areaItems(exportedWithTeam, "members.teams").find((entry) => entry.id === ephemeral)
+  assert.ok(item)
+  const removed = await apiA("DELETE", `/v1/teams/${ephemeral}`)
+  assert.ok(removed.status < 300, summary(removed))
+
+  const first = await uploadTeams(apiA, exportedWithTeam, [item])
+  assert.equal(first.plan.summary.create, 1, describePlan(first.plan))
+  assert.equal(asSummary(await apiA("POST", `/v1/config-blobs/change-requests/${first.id}/apply`, { planHash: first.plan.planHash })).status, "queued")
+  assert.equal((await drive(apiA, first.id)).status, "applied")
+  const [team] = await rows("SELECT id FROM team WHERE organization_id = ? AND name = ?", [orgA.orgId, "Ephemeral"])
+  assert.ok(team && team.id !== ephemeral, "the old id of a deleted item is not reused for a blob from this instance")
+  const aliases = await rows("SELECT local_id, created_by_change_request_id FROM config_blob_alias WHERE organization_id = ? AND area = 'members.teams' AND source_id = ?", [orgA.orgId, ephemeral])
+  assert.deepEqual(aliases.map((alias) => [alias.local_id, alias.created_by_change_request_id]), [[team.id, first.id]])
+
+  const again = await uploadTeams(apiA, exportedWithTeam, [item])
+  const matched = planItems(again.plan).find((entry) => entry.ref === ephemeral)
+  assert.equal(matched?.matchedBy, "alias", describePlan(again.plan))
+  assert.ok(matched?.reasons?.includes(`matched via an earlier import (${first.id})`), JSON.stringify(matched?.reasons))
+  await apiA("POST", `/v1/config-blobs/change-requests/${again.id}/cancel`, {})
+})
+
+test("ids from another instance are reused only when free and never in this organization's audit history (M6)", async () => {
+  const ghost = await den.createTeam(owner, orgA.orgId, "Ghost", [])
+  const removed = await apiA("DELETE", `/v1/teams/${ghost}`)
+  assert.ok(removed.status < 300, summary(removed))
+  const audited = await rows("SELECT 1 AS hit FROM audit_event_resource WHERE organization_id = ? AND resource_id = ?", [orgA.orgId, ghost])
+  assert.ok(audited.length > 0, "the deleted team is in the audit history")
+
+  const blob = await teamsExport(apiA)
+  assert.ok(blob.source)
+  blob.source = { ...blob.source, instanceId: "dni_flow_elsewhere" }
+  delete blob.baseHash
+  const fresh = createDenTypeId("team")
+  const { id, plan: current } = await uploadTeams(apiA, blob, [{ id: ghost, name: "Ghost Imported", spec: TEAM_SPEC }, { id: fresh, name: "Fresh Imported", spec: TEAM_SPEC }])
+  assert.equal(current.summary.create, 2, describePlan(current))
+  assert.equal(current.summary.blocking, 0, describePlan(current))
+  assert.equal(asSummary(await apiA("POST", `/v1/config-blobs/change-requests/${id}/apply`, { planHash: current.planHash })).status, "queued")
+  assert.equal((await drive(apiA, id)).status, "applied")
+  const [ghostTeam] = await rows("SELECT id FROM team WHERE organization_id = ? AND name = ?", [orgA.orgId, "Ghost Imported"])
+  const [freshTeam] = await rows("SELECT id FROM team WHERE organization_id = ? AND name = ?", [orgA.orgId, "Fresh Imported"])
+  assert.ok(ghostTeam && ghostTeam.id !== ghost, "an id from this org's audit history is not reused")
+  assert.equal(freshTeam?.id, fresh, "a free id from another instance is reused")
+})
+
+test("a hand-made blob claiming to come from this instance can't pin aliases through decisions (M8)", async () => {
+  const blob = await teamsExport(apiA)
+  blob.baseHash = `sha256:${"0".repeat(64)}`
+  assert.equal(blob.source?.instanceId, await getConfigInstanceId())
+  const sourceId = createDenTypeId("team")
+  const target = await den.createTeam(owner, orgA.orgId, "Decision Target", [])
+  const request = (await uploadTeams(apiA, blob, [{ id: sourceId, name: "Decided Elsewhere", spec: TEAM_SPEC }])).id
+  const decided = await apiA("PUT", `/v1/config-blobs/change-requests/${request}/decisions`, { matches: [{ area: "members.teams", ref: sourceId, targetId: target }] })
+  assert.equal(decided.status, 200, summary(decided))
+  const decidedPlan = asPlan(field(decided.body, "plan"))
+  assert.equal(planItems(decidedPlan).find((item) => item.ref === sourceId)?.matchedBy, "decision", describePlan(decidedPlan))
+  assert.equal(asSummary(await apiA("POST", `/v1/config-blobs/change-requests/${request}/apply`, { planHash: decidedPlan.planHash })).status, "queued")
+  assert.equal((await drive(apiA, request)).status, "applied")
+  const aliases = await rows("SELECT id FROM config_blob_alias WHERE organization_id = ? AND source_id = ?", [orgA.orgId, sourceId])
+  assert.deepEqual(aliases, [], "no alias from an unverified same-instance blob")
+})
+
+test("deleting an item through an apply removes the aliases pointing at it (M8)", async () => {
+  const [platformB] = await rows("SELECT id FROM team WHERE organization_id = ? AND name = ?", [orgB.orgId, "Platform"])
+  assert.ok(platformB)
+  const before = await rows("SELECT id FROM config_blob_alias WHERE organization_id = ? AND local_id = ?", [orgB.orgId, String(platformB.id)])
+  assert.ok(before.length > 0, "the clone's Platform team has an alias")
+  const blob = await teamsExport(apiB)
+  setAreaItems(blob, "members.teams", areaItems(blob, "members.teams").filter((item) => item.id !== platformB.id))
+  const created = await apiB("POST", "/v1/config-blobs/change-requests", { blob, mode: "mirror" })
+  assert.equal(created.status, 202, summary(created))
+  const id = asSummary(created).id
+  assert.equal((await drive(apiB, id)).status, "needs_review")
+  const decided = await apiB("PUT", `/v1/config-blobs/change-requests/${id}/decisions`, { deletes: [{ area: "members.teams", targetId: platformB.id }] })
+  assert.equal(decided.status, 200, summary(decided))
+  const current = asPlan(field(decided.body, "plan"))
+  assert.equal(current.summary.delete, 1, describePlan(current))
+  assert.equal(asSummary(await apiB("POST", `/v1/config-blobs/change-requests/${id}/apply`, { planHash: current.planHash })).status, "queued")
+  assert.equal((await drive(apiB, id)).status, "applied")
+  const after = await rows("SELECT id FROM config_blob_alias WHERE organization_id = ? AND local_id = ?", [orgB.orgId, String(platformB.id)])
+  assert.deepEqual(after, [])
+})
+
+test("an apply that lost its lease stops before its next write (M10)", async () => {
+  const { id, plan: current } = await uploadTeams(apiA, await teamsExport(apiA), [{ name: "Lease One", spec: TEAM_SPEC }, { name: "Lease Two", spec: TEAM_SPEC }])
+  assert.equal(current.summary.blocking, 0, describePlan(current))
+  assert.equal(asSummary(await apiA("POST", `/v1/config-blobs/change-requests/${id}/apply`, { planHash: current.planHash })).status, "queued")
+  const claim = await repository.claimNextApply()
+  assert.equal(claim?.id, id)
+  assert.ok(claim)
+  // Another worker took the request over after a snapshot was written.
+  claim.beforeSnapshot = { taken: true }
+  await rows("UPDATE config_change_request SET lease_owner = 'another-worker' WHERE id = ?", [id])
+  assert.equal(await applyClaimedChangeRequest(claim), "failed")
+  const written = await rows("SELECT id FROM team WHERE organization_id = ? AND name IN ('Lease One', 'Lease Two')", [orgA.orgId])
+  assert.deepEqual(written, [], "nothing was written once the lease was gone")
+  await rows("UPDATE config_change_request SET status = 'failed', lease_owner = NULL, lease_until = NULL WHERE id = ?", [id])
+})
+
+test("the apply's audit names who queued it and who it ran as (L6)", async () => {
+  const admin = await den.newMember(owner, orgA.orgId, "Flow Approver", "admin")
+  const { id, plan: current } = await uploadTeams(apiA, await teamsExport(apiA), [{ name: "Audited Team", spec: TEAM_SPEC }])
+  assert.equal(asSummary(await den.as(admin, orgA.orgId)("POST", `/v1/config-blobs/change-requests/${id}/approve`, { planHash: current.planHash })).status, "approved")
+  assert.equal(asSummary(await apiA("POST", `/v1/config-blobs/change-requests/${id}/apply`, {})).status, "queued")
+  assert.equal((await drive(apiA, id)).status, "applied")
+  const [operation] = await rows("SELECT principal_key, initiating_actor FROM audit_operation WHERE kind = 'config_blobs.apply' AND scope = ?", [id])
+  assert.ok(operation, "the apply's job operation")
+  const initiating: unknown = typeof operation.initiating_actor === "string" ? JSON.parse(operation.initiating_actor) : operation.initiating_actor
+  assert.equal(field(initiating, "id"), owner.userId, "initiated by the member who queued it")
+  assert.ok(String(operation.principal_key).includes(admin.userId), "runs as the last approver")
+})
+
+function normalizeId(id: string) {
+  return normalizeTypeId("configChangeRequest", id)
+}
+function normalizeOrg(id: string) {
+  return normalizeTypeId("organization", id)
+}
+function normalizeMember(id: string) {
+  return normalizeTypeId("member", id)
+}
+const { normalizeDenTypeId: normalizeTypeId } = await import("@openwork-ee/utils/typeid")

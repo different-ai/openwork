@@ -22820,6 +22820,13 @@
           "notNull": false,
           "autoincrement": false
         },
+        "apply_requested_by": {
+          "name": "apply_requested_by",
+          "type": "json",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
         "auto_apply": {
           "name": "auto_apply",
           "type": "boolean",

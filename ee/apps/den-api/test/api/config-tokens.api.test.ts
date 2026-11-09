@@ -127,9 +127,15 @@ test("with configBlobs on, a config token stores scopes in permissions and type 
   assert.equal(standard?.areas, null)
 })
 
-test("a config token authenticates as its member like any API key", async () => {
-  const listed = await den.request(null, "GET", "/v1/api-keys", { headers: { "x-api-key": configKey } })
-  assert.equal(listed.status, 200, summary(listed))
+test("a config token is refused outside /v1/config-blobs (REST and MCP); a standard key still works", async () => {
+  for (const [method, path] of [["GET", "/v1/api-keys"], ["GET", "/v1/me"], ["POST", "/v1/teams"], ["POST", "/mcp/agent"], ["GET", "/v1/config-blobsx"]] as const) {
+    const refused = await den.request(null, method, path, { headers: { "x-api-key": configKey }, ...(method === "POST" ? { body: {} } : {}) })
+    assert.equal(refused.status, 403, `${method} ${path}: ${summary(refused)}`)
+    assert.equal(field(refused.body, "error"), "config_token_scope")
+    assert.match(text(field(refused.body, "message"), "message"), /Config API/)
+  }
+  const areas = await den.request(null, "GET", "/v1/config-blobs/areas", { headers: { "x-api-key": configKey } })
+  assert.equal(areas.status, 200, summary(areas))
   const viaStandard = await den.request(null, "GET", "/v1/api-keys", { headers: { "x-api-key": standardKey } })
   assert.equal(viaStandard.status, 200, summary(viaStandard))
 })

@@ -108,7 +108,7 @@ export function ConfigTokenFields({
                             </label>
                         ))}
                         <p className="text-[12px] text-gray-500">
-                            The token can never do more than you can.
+                            It only works with the Config API, and can never do more than you can.
                         </p>
                     </fieldset>
 

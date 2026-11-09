@@ -27,6 +27,13 @@ export const SUGGEST_MIN_SCORE = 0.85
 /** …and this far ahead of the next one. */
 export const SUGGEST_MIN_LEAD = 0.15
 const MAX_CANDIDATES = 5
+/** Above this many (unmatched blob item × unmatched target item) pairs, no proposals are scored. */
+export const MAX_PROPOSAL_PAIRS = 50_000
+export const TOO_MANY_TO_SUGGEST = "too many items to suggest matches; choose manually"
+/** Names longer than this are compared on their first characters only (edit distance is quadratic). */
+const MAX_NAME_COMPARE = 64
+/** Leaves past this many per item are left out of the overlap score. */
+const MAX_LEAVES = 256
 
 export type ItemMatch = {
   index: number
@@ -97,6 +104,8 @@ export function matchArea(input: AreaMatchInput): AreaMatchResult {
   const { area, blobItems, targetItems } = input
   const errors = validateBlobItems(area.key, blobItems)
   const targetsById = new Map(targetItems.map((item) => [item.id, item]))
+  const targetsByKey = new Map<string, ConfigItem[]>()
+  for (const item of targetItems) if (item.key) pushTo(targetsByKey, item.key, item)
   const taken = new Set<string>()
   const matches: ItemMatch[] = blobItems.map((blob, index) => ({
     index,
@@ -156,7 +165,7 @@ export function matchArea(input: AreaMatchInput): AreaMatchResult {
   // Identity conflict: id/alias says A, key says B.
   for (const match of matches) {
     if (!match.target || decided.has(match.index) || (match.matchedBy !== "id" && match.matchedBy !== "alias") || !match.blob.key) continue
-    const byKey = targetItems.find((item) => item.key === match.blob.key)
+    const byKey = targetsByKey.get(match.blob.key)?.[0]
     if (byKey && byKey.id !== match.target.id) {
       match.flags.push("conflict.identity")
       match.reasons.push(`${match.matchedBy} matches "${match.target.name}" but key "${match.blob.key}" matches "${byKey.name}"`)
@@ -170,7 +179,7 @@ export function matchArea(input: AreaMatchInput): AreaMatchResult {
   // Tier 4: key.
   for (const match of matches) {
     if (!isOpen(match) || !match.blob.key) continue
-    const target = targetItems.find((item) => !taken.has(item.id) && item.key === match.blob.key)
+    const target = targetsByKey.get(match.blob.key)?.find((item) => !taken.has(item.id))
     if (target) claim(match, target, "key")
   }
 
@@ -181,14 +190,14 @@ export function matchArea(input: AreaMatchInput): AreaMatchResult {
       if (!isOpen(match)) continue
       const value = naturalKey.get(blobItemAsConfigItem(match.blob, match.index))
       if (value === null) continue
-      blobByValue.set(value, [...(blobByValue.get(value) ?? []), match])
+      pushTo(blobByValue, value, match)
     }
     const targetByValue = new Map<string, ConfigItem[]>()
     for (const item of targetItems) {
       if (taken.has(item.id)) continue
       const value = naturalKey.get(item)
       if (value === null) continue
-      targetByValue.set(value, [...(targetByValue.get(value) ?? []), item])
+      pushTo(targetByValue, value, item)
     }
     for (const [value, blobs] of blobByValue) {
       const targets = targetByValue.get(value)
@@ -197,29 +206,44 @@ export function matchArea(input: AreaMatchInput): AreaMatchResult {
     }
   }
 
-  // Tier 6: proposals, never applied.
-  for (const match of matches) {
-    if (!isOpen(match)) continue
-    const blobItem = blobItemAsConfigItem(match.blob, match.index)
-    const candidates: ConfigMatchCandidate[] = []
-    for (const target of targetItems) {
-      if (taken.has(target.id)) continue
-      const scored = area.similarity ? area.similarity(blobItem, target) : defaultSimilarity(blobItem, target, area.naturalKeys)
-      if (scored.score >= PROPOSE_THRESHOLD) {
-        candidates.push({ id: target.id, name: target.name, score: round(scored.score), reasons: scored.reasons })
-      }
+  // Tier 6: proposals, never applied. Scoring is per pair, so it is skipped
+  // when there are too many pairs to score: the admin chooses by hand.
+  const openMatches = matches.filter(isOpen)
+  const openTargets = targetItems.filter((item) => !taken.has(item.id))
+  if (openMatches.length > 0 && openTargets.length > 0 && openMatches.length * openTargets.length > MAX_PROPOSAL_PAIRS) {
+    for (const match of openMatches) {
+      match.matchedBy = "proposed"
+      match.flags.push("needs_mapping")
+      match.reasons.push(TOO_MANY_TO_SUGGEST)
     }
-    if (candidates.length === 0) continue
-    candidates.sort((a, b) => b.score - a.score || a.name.localeCompare(b.name))
-    match.candidates = candidates.slice(0, MAX_CANDIDATES)
-    match.matchedBy = "proposed"
-    match.flags.push("needs_mapping")
-    const [best, next] = match.candidates
-    if (best && best.score >= SUGGEST_MIN_SCORE && best.score - (next?.score ?? 0) >= SUGGEST_MIN_LEAD) {
-      match.suggestedTargetId = best.id
-      match.reasons.push(`is this the same as "${best.name}"? Suggested (${Math.round(best.score * 100)}%)`)
-    } else {
-      match.reasons.push("is this new, or the same as an existing item? Confirm to continue")
+  } else if (openMatches.length > 0 && openTargets.length > 0) {
+    // Leaves and normalised names are computed once per item, not once per pair.
+    const preparedTargets = area.similarity ? [] : openTargets.map(prepareForSimilarity)
+    for (const match of openMatches) {
+      const blobItem = blobItemAsConfigItem(match.blob, match.index)
+      const preparedBlob = area.similarity ? null : prepareForSimilarity(blobItem)
+      const candidates: ConfigMatchCandidate[] = []
+      openTargets.forEach((target, index) => {
+        const preparedTarget = preparedTargets[index]
+        const scored = area.similarity
+          ? area.similarity(blobItem, target)
+          : preparedBlob && preparedTarget ? scorePrepared(preparedBlob, preparedTarget, area.naturalKeys) : { score: 0, reasons: [] }
+        if (scored.score >= PROPOSE_THRESHOLD) {
+          candidates.push({ id: target.id, name: target.name, score: round(scored.score), reasons: scored.reasons })
+        }
+      })
+      if (candidates.length === 0) continue
+      candidates.sort((a, b) => b.score - a.score || a.name.localeCompare(b.name))
+      match.candidates = candidates.slice(0, MAX_CANDIDATES)
+      match.matchedBy = "proposed"
+      match.flags.push("needs_mapping")
+      const [best, next] = match.candidates
+      if (best && best.score >= SUGGEST_MIN_SCORE && best.score - (next?.score ?? 0) >= SUGGEST_MIN_LEAD) {
+        match.suggestedTargetId = best.id
+        match.reasons.push(`is this the same as "${best.name}"? Suggested (${Math.round(best.score * 100)}%)`)
+      } else {
+        match.reasons.push("is this new, or the same as an existing item? Confirm to continue")
+      }
     }
   }
 
@@ -251,67 +275,91 @@ export function levenshtein(a: string, b: string): number {
 
 /** 0..1: half token Jaccard, half normalized edit distance, on normalized names. */
 export function nameSimilarity(a: string, b: string): number {
-  const left = normalizeName(a)
-  const right = normalizeName(b)
-  if (!left && !right) return 1
-  const leftTokens = new Set(left.split(" ").filter(Boolean))
-  const rightTokens = new Set(right.split(" ").filter(Boolean))
-  const union = new Set([...leftTokens, ...rightTokens])
+  return preparedNameSimilarity(prepareName(a), prepareName(b))
+}
+
+type PreparedName = { normalized: string; tokens: Set<string> }
+
+function prepareName(name: string): PreparedName {
+  const normalized = normalizeName(name)
+  return { normalized, tokens: new Set(normalized.split(" ").filter(Boolean)) }
+}
+
+function preparedNameSimilarity(left: PreparedName, right: PreparedName): number {
+  if (!left.normalized && !right.normalized) return 1
   let shared = 0
-  for (const token of leftTokens) if (rightTokens.has(token)) shared += 1
-  const jaccard = union.size ? shared / union.size : 0
-  const longest = Math.max(left.length, right.length)
-  const edit = longest ? 1 - levenshtein(left, right) / longest : 1
+  for (const token of left.tokens) if (right.tokens.has(token)) shared += 1
+  const unionSize = left.tokens.size + right.tokens.size - shared
+  const jaccard = unionSize ? shared / unionSize : 0
+  const a = left.normalized.slice(0, MAX_NAME_COMPARE)
+  const b = right.normalized.slice(0, MAX_NAME_COMPARE)
+  const longest = Math.max(a.length, b.length)
+  const edit = longest ? 1 - levenshtein(a, b) / longest : 1
   return (jaccard + edit) / 2
 }
 
-/** Leaf fields of a spec as `path → canonical value`. Secrets and ref name hints are ignored. */
-export function specLeaves(spec: unknown, path = "", out = new Map<string, string>()): Map<string, string> {
-  if (isConfigSecret(spec)) return out
+/**
+ * Leaf fields of a spec as `path → canonical value`. Secrets and ref name
+ * hints are ignored. Stops after `limit` leaves.
+ */
+export function specLeaves(spec: unknown, path = "", out = new Map<string, string>(), limit = Number.POSITIVE_INFINITY): Map<string, string> {
+  if (out.size >= limit || isConfigSecret(spec)) return out
   if (isConfigRef(spec)) {
     out.set(path, spec.$ref)
     return out
   }
   if (Array.isArray(spec)) {
     for (const element of spec) {
+      if (out.size >= limit) break
       const id = isPlainObject(element) && typeof element.id === "string" ? element.id : null
-      specLeaves(element, `${path}[${id ?? (isConfigRef(element) ? element.$ref : stringifyCanonical(element))}]`, out)
+      specLeaves(element, `${path}[${id ?? (isConfigRef(element) ? element.$ref : stringifyCanonical(element))}]`, out, limit)
     }
     return out
   }
   if (isPlainObject(spec)) {
-    for (const [key, value] of Object.entries(spec)) specLeaves(value, joinPath(path, key), out)
+    for (const [key, value] of Object.entries(spec)) {
+      if (out.size >= limit) break
+      specLeaves(value, joinPath(path, key), out, limit)
+    }
     return out
   }
   out.set(path, stringifyCanonical(spec))
   return out
 }
 
-/** Share of equal leaf fields over the union of leaf paths. */
-export function specOverlap(a: unknown, b: unknown): { score: number; equal: number; total: number } {
-  const left = specLeaves(a)
-  const right = specLeaves(b)
-  const paths = new Set([...left.keys(), ...right.keys()])
+function overlapOf(left: ReadonlyMap<string, string>, right: ReadonlyMap<string, string>): { score: number; equal: number; total: number } {
+  const [small, large] = left.size <= right.size ? [left, right] : [right, left]
   let equal = 0
-  for (const path of paths) if (left.has(path) && left.get(path) === right.get(path)) equal += 1
-  return { score: paths.size ? equal / paths.size : 0, equal, total: paths.size }
+  for (const [path, value] of small) if (large.get(path) === value) equal += 1
+  let shared = 0
+  for (const path of small.keys()) if (large.has(path)) shared += 1
+  const total = left.size + right.size - shared
+  return { score: total ? equal / total : 0, equal, total }
 }
 
-export function defaultSimilarity(
-  blob: ConfigItem,
-  target: ConfigItem,
-  naturalKeys: ConfigArea["naturalKeys"] = [],
-): { score: number; reasons: string[] } {
+/** Share of equal leaf fields over the union of leaf paths. */
+export function specOverlap(a: unknown, b: unknown): { score: number; equal: number; total: number } {
+  return overlapOf(specLeaves(a), specLeaves(b))
+}
+
+/** An item with what the default similarity needs, computed once. */
+export type PreparedItem = { item: ConfigItem; name: PreparedName; leaves: Map<string, string> }
+
+export function prepareForSimilarity(item: ConfigItem): PreparedItem {
+  return { item, name: prepareName(item.name), leaves: specLeaves(item.spec, "", new Map(), MAX_LEAVES) }
+}
+
+function scorePrepared(blob: PreparedItem, target: PreparedItem, naturalKeys: ConfigArea["naturalKeys"]): { score: number; reasons: string[] } {
   const reasons: string[] = []
-  const name = nameSimilarity(blob.name, target.name)
-  if (normalizeName(blob.name) === normalizeName(target.name)) reasons.push("same name")
+  const name = preparedNameSimilarity(blob.name, target.name)
+  if (blob.name.normalized === target.name.normalized) reasons.push("same name")
   else if (name >= 0.6) reasons.push("similar name")
-  const overlap = specOverlap(blob.spec, target.spec)
+  const overlap = overlapOf(blob.leaves, target.leaves)
   if (overlap.total > 0 && overlap.equal > 0) reasons.push(`${overlap.equal}/${overlap.total} fields equal`)
   let bonus = 0
   for (const naturalKey of naturalKeys) {
-    const value = naturalKey.get(blob)
-    if (value !== null && value === naturalKey.get(target)) {
+    const value = naturalKey.get(blob.item)
+    if (value !== null && value === naturalKey.get(target.item)) {
       bonus = 0.15
       reasons.push(`same ${naturalKey.label}`)
     }
@@ -319,6 +367,20 @@ export function defaultSimilarity(
   // A couple of equal empty-ish fields say little: overlap counts fully from 3 equal leaves.
   const confidence = Math.min(1, overlap.equal / 3)
   return { score: Math.min(1, 0.55 * name + 0.45 * overlap.score * confidence + bonus), reasons }
+}
+
+export function defaultSimilarity(
+  blob: ConfigItem,
+  target: ConfigItem,
+  naturalKeys: ConfigArea["naturalKeys"] = [],
+): { score: number; reasons: string[] } {
+  return scorePrepared(prepareForSimilarity(blob), prepareForSimilarity(target), naturalKeys)
+}
+
+function pushTo<T>(map: Map<string, T[]>, key: string, value: T): void {
+  const list = map.get(key)
+  if (list) list.push(value)
+  else map.set(key, [value])
 }
 
 function round(score: number): number {

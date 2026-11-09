@@ -15,24 +15,37 @@ import type {
   ConfigPlan,
   ConfigPlanItem,
   ConfigPlanOp,
+  ConfigPlanRef,
   ConfigSecretInput,
   ConfigSpec,
 } from "@openwork/types/den/config-blobs"
-import { CONFIG_BLOCKING_FLAGS, EMPTY_CONFIG_DECISIONS, parseConfigRef } from "@openwork/types/den/config-blobs"
+import {
+  CONFIG_BLOB_MAX_ITEMS,
+  CONFIG_BLOB_MAX_ITEMS_PER_AREA,
+  CONFIG_BLOCKING_FLAGS,
+  EMPTY_CONFIG_DECISIONS,
+  findConfigShapeProblem,
+  parseConfigRef,
+} from "@openwork/types/den/config-blobs"
 import type { ConfigArea, ConfigAreaContext, ConfigItem } from "../area.js"
-import { canonicalJsonPlain, specRev } from "./canonical.js"
+import { canonicalJsonPlain, itemRev } from "./canonical.js"
 import { classifyMatched, diffSpecs, type EngineFieldChange } from "./diff.js"
 import { blobItemAsConfigItem, matchArea, type ItemMatch } from "./match.js"
 import {
+  PEOPLE_AREA,
   createRefResolver,
   findRefs,
+  inviteRef,
   localizeSpec,
+  refArea,
+  rewriteRefs,
   skippedKey,
   toPlanRef,
   type ResolvedRefOccurrence,
 } from "./refs.js"
-import { checkSecretFields, planSecrets, type ExecutionSecret } from "./secrets.js"
-import { sha256 } from "./util.js"
+import { checkSecretFields, planSecrets, redactRawSecrets, replacesSecretValue, type ExecutionSecret } from "./secrets.js"
+import { isPlainObject, sha256, typeIdPrefix } from "./util.js"
+
 
 export type BuildPlanInput = {
   /** Area definitions: every area in scope plus every area references may point to. */
@@ -64,6 +77,13 @@ export type BuildPlanInput = {
   baseSpecs?: ReadonlyMap<string, ConfigSpec>
   /** Needed to run `protectedFromDelete`; without it, ticked deletes on areas that declare it are not planned. */
   ctx?: ConfigAreaContext
+  /**
+   * Areas the caller may view. References into any other area keep their
+   * resolved id (execution needs it) but lose name hints in fields and refs,
+   * and their resolution reasons are replaced by a generic one. Omitted:
+   * every area is visible.
+   */
+  visibleAreas?: ReadonlySet<ConfigAreaKey>
 }
 
 export type ExecutionItem = {
@@ -105,8 +125,10 @@ export type BuildPlanResult = {
   errors: string[]
   /**
    * The subset of `errors` that invalidates the whole request (unknown areas,
-   * newer spec versions, duplicate ids/keys). Invalid item specs are not in
-   * it: those items are `blocked` and the admin may skip them.
+   * newer spec versions, duplicate ids/keys, too many items, forbidden keys or
+   * too deep nesting, secret values pasted into the blob). Invalid item specs
+   * are not in it: those items are `blocked` and the admin may skip them.
+   * Never holds a secret value.
    */
   fatalErrors: string[]
 }
@@ -175,6 +197,13 @@ export function buildPlan(input: BuildPlanInput): BuildPlanResult {
   }
   if (input.mode === "merge" && decisions.deletes.length > 0) issues.push({ level: "warning", message: "deletes are ignored in merge mode" })
 
+  // Size caps: matching and diffing are at least linear per item, and
+  // proposals per pair; a blob past these is refused outright.
+  let totalItems = 0
+  for (const blobArea of Object.values(input.blobAreas)) totalItems += blobArea?.items.length ?? 0
+  const tooManyItems = totalItems > CONFIG_BLOB_MAX_ITEMS
+  if (tooManyItems) addError(`the blob holds ${totalItems.toLocaleString("en-US")} items, more than the ${CONFIG_BLOB_MAX_ITEMS.toLocaleString("en-US")} allowed`)
+
   // 1–3. Validate, upgrade and match each area in scope.
   const states: AreaState[] = []
   for (const area of ordered) {
@@ -186,6 +215,24 @@ export function buildPlan(input: BuildPlanInput): BuildPlanResult {
       issues.push({ level: "info", message: `${area.label}: in scope but not in the blob, treated as empty`, area: area.key })
       if (state.unsupported) continue
     } else {
+      if (tooManyItems) {
+        state.unsupported = "the blob holds too many items"
+        continue
+      }
+      if (blobArea.items.length > CONFIG_BLOB_MAX_ITEMS_PER_AREA) {
+        addError(`${area.label}: ${blobArea.items.length.toLocaleString("en-US")} items is more than the ${CONFIG_BLOB_MAX_ITEMS_PER_AREA.toLocaleString("en-US")} allowed in one area`, area.key)
+        state.unsupported = "too many items in this area"
+        continue
+      }
+      const shapeProblems = blobArea.items.flatMap((item, index) => {
+        const problem = findConfigShapeProblem(item.spec, `${area.key}[${index}].spec`)
+        return problem ? [`${area.label} "${item.name}": ${problem}`] : []
+      })
+      for (const problem of shapeProblems) addError(problem, area.key)
+      if (shapeProblems.length > 0) {
+        state.unsupported = "has a forbidden key or is nested too deeply"
+        continue
+      }
       if (blobArea.specVersion > area.specVersion) {
         addError(`${area.label}: spec version ${blobArea.specVersion} is newer than this server supports (${area.specVersion})`, area.key)
         state.unsupported = `spec version ${blobArea.specVersion} is newer than this server supports`
@@ -204,6 +251,13 @@ export function buildPlan(input: BuildPlanInput): BuildPlanResult {
         return { ...item, spec }
       })
       if (state.unsupported) continue
+      // A value pasted into a secret field never goes further than this: it is
+      // replaced before validation, diffing and hashing, and the request is invalid.
+      state.items = state.items.map((item) => {
+        const redaction = redactRawSecrets(area.secretFields, item.spec)
+        for (const field of redaction.redacted) addError(`${area.label} "${item.name}": a secret value was pasted into ${field}; use the inputs step instead`, area.key)
+        return redaction.redacted.length > 0 ? { ...item, spec: redaction.spec } : item
+      })
       state.items.forEach((item, index) => {
         if (state.invalid.has(index)) return
         const parsed = area.specSchema.safeParse(item.spec)
@@ -211,7 +265,10 @@ export function buildPlan(input: BuildPlanInput): BuildPlanResult {
           const message = parsed.error.issues.map((issue) => `${issue.path.join(".") || "spec"}: ${issue.message}`).join("; ")
           state.invalid.set(index, message)
           addError(`${area.label} "${item.name}": ${message}`, area.key, { itemLevel: true })
+          return
         }
+        // The parsed spec: defaults the schema fills in (fields a hand-written blob may leave out) count as written.
+        state.items[index] = { ...item, spec: parsed.data }
       })
     }
     if (state.unsupported) continue
@@ -255,7 +312,7 @@ export function buildPlan(input: BuildPlanInput): BuildPlanResult {
         matchedBy: null,
         flags: [],
         fields: [],
-        targetRev: specRev(state.area, target.spec),
+        targetRev: itemRev(state.area, target),
       }
       const draft: Draft = { item }
       if (input.mode === "merge") item.reasons = ["not in the blob"]
@@ -282,6 +339,7 @@ export function buildPlan(input: BuildPlanInput): BuildPlanResult {
   }
 
   // 4–6. Resolve refs, diff, secrets.
+  const peopleArea = areaByKey.get(PEOPLE_AREA)
   const resolveRef = createRefResolver({
     scope: writable,
     blobMatches,
@@ -291,10 +349,24 @@ export function buildPlan(input: BuildPlanInput): BuildPlanResult {
     aliases: input.aliases,
     people: input.people,
     decisions: decisions.refs,
+    canInvite: peopleArea !== undefined && unsupportedReason(peopleArea, input.deployment, input.features) === null,
   })
   const inputsByPath = new Map((input.secretInputs ?? []).map((secretInput) => [secretInput.path, secretInput]))
   const overrides = new Set(decisions.overrides.map((entry) => skippedKey(entry.area, entry.ref)))
   const renames = new Map(decisions.renames.map((entry) => [skippedKey(entry.area, entry.ref), entry.name]))
+
+  // References into areas the caller can't view: ids stay, names and reasons go.
+  const visibleAreas = input.visibleAreas
+  const hiddenRef = (ref: string): boolean => {
+    if (!visibleAreas) return false
+    const area = refArea(ref)
+    return area !== null && !visibleAreas.has(area)
+  }
+  const hideNames = (spec: ConfigSpec): ConfigSpec => {
+    if (!visibleAreas) return spec
+    const out = rewriteRefs(spec, (_path, ref) => (hiddenRef(ref.$ref) ? { $ref: ref.$ref } : ref))
+    return isPlainObject(out) ? out : {}
+  }
 
   const blobDrafts = new Map<ConfigAreaKey, Draft[]>()
   for (const state of states) {
@@ -318,6 +390,8 @@ export function buildPlan(input: BuildPlanInput): BuildPlanResult {
       })
       continue
     }
+    // A create reuses its source id only when it looks like this area's ids (D4).
+    const idPrefix = area.idPrefix ?? sharedTypeIdPrefix(input.targetItems.get(area.key) ?? [])
     for (const match of state.match.matches) {
       const key = skippedKey(area.key, match.ref)
       const renamed = renames.get(key)
@@ -336,9 +410,9 @@ export function buildPlan(input: BuildPlanInput): BuildPlanResult {
       if (match.candidates) item.candidates = match.candidates
       if (match.target) {
         item.target = { id: match.target.id, key: match.target.key ?? null, name: match.target.name }
-        item.targetRev = specRev(area, match.target.spec)
+        item.targetRev = itemRev(area, match.target)
       }
-      const draft: Draft = { item, oursRev: specRev(area, blob.spec) }
+      const draft: Draft = { item, oursRev: itemRev(area, blob) }
       drafts.push(draft)
 
       if (skipped.has(key)) {
@@ -358,33 +432,43 @@ export function buildPlan(input: BuildPlanInput): BuildPlanResult {
         return resolved
       })
       const localized = localizeSpec(blob.spec, refs)
+      const localizedView = hideNames(localized)
       let fields: EngineFieldChange[]
       if (match.target) {
+        const baseSpec = blob.id ? input.baseSpecs?.get(`${area.key}/${blob.id}`) : undefined
         const classification = classifyMatched({
           area,
           blob,
-          localizedSpec: localized,
-          target: match.target,
+          localizedSpec: localizedView,
+          target: visibleAreas ? { ...match.target, spec: hideNames(match.target.spec) } : match.target,
           threeWay: input.sameOrganization === true,
           override: overrides.has(key),
-          baseSpec: blob.id ? input.baseSpecs?.get(`${area.key}/${blob.id}`) : undefined,
+          baseSpec: baseSpec ? hideNames(baseSpec) : undefined,
         })
         item.op = classification.op
         fields = classification.fields
         item.flags.push(...classification.flags)
         reasons.push(...classification.reasons)
+        // A new credential is only stored by writing the item.
+        if (item.op === "unchanged" && replacesSecretValue(area, blob.spec, inputsByPath)) {
+          item.op = "update"
+          reasons.push("credential will be replaced")
+        }
       } else {
-        fields = diffSpecs(area, {}, localized)
+        fields = diffSpecs(area, {}, localizedView)
       }
       item.fields = fields
 
       const writes = item.op === "create" || item.op === "update" || item.op === "rename"
-      if (refs.length) item.refs = refs.map(toPlanRef)
+      if (refs.length) item.refs = refs.map((ref) => planRefView(toPlanRef(ref), hiddenRef(ref.ref)))
       if (writes) {
         const unresolved = refs.filter((ref) => ref.resolution.kind === "unresolved")
         if (unresolved.length) {
           item.flags.push("ref_unresolved")
-          for (const ref of unresolved) if (ref.resolution.kind === "unresolved") reasons.push(`${ref.path}: ${ref.resolution.reason}`)
+          for (const ref of unresolved) {
+            if (ref.resolution.kind !== "unresolved") continue
+            reasons.push(hiddenRef(ref.ref) ? `${ref.path}: the reference could not be resolved` : `${ref.path}: ${ref.resolution.reason}`)
+          }
         }
       }
       const invalid = state.invalid.get(match.index)
@@ -396,7 +480,7 @@ export function buildPlan(input: BuildPlanInput): BuildPlanResult {
       if (secretProblems.undeclared.length || secretProblems.raw.length) {
         item.flags.push("blocked")
         for (const field of secretProblems.undeclared) reasons.push(`${field}: a secret placeholder is not allowed here`)
-        for (const field of secretProblems.raw) reasons.push(`${field}: secrets are never accepted inside a blob; use a $secret placeholder and enter the value separately`)
+        for (const field of secretProblems.raw) reasons.push(`${field}: a secret value was pasted here; use a $secret placeholder and enter the value in the inputs step`)
       }
       const secrets = planSecrets({
         layout: area,
@@ -416,11 +500,49 @@ export function buildPlan(input: BuildPlanInput): BuildPlanResult {
         const execItem: ExecutionItem = { name: blob.name, spec: blob.spec }
         if (blob.id) execItem.sourceId = blob.id
         if (blob.key !== undefined) execItem.key = blob.key
+        const preferredId = blob.id && idPrefix !== null && typeIdPrefix(blob.id) === idPrefix ? blob.id : undefined
         draft.exec = match.target
           ? { area: area.key, ref: match.ref, kind: "update", op: item.op, matchedBy: match.matchedBy, targetId: match.target.id, item: execItem, refs, secrets: secrets.execution, previous: match.target }
-          : { area: area.key, ref: match.ref, kind: "create", op: "create", matchedBy: match.matchedBy, item: execItem, refs, secrets: secrets.execution, ...(blob.id ? { preferredId: blob.id } : {}) }
+          : { area: area.key, ref: match.ref, kind: "create", op: "create", matchedBy: match.matchedBy, item: execItem, refs, secrets: secrets.execution, ...(preferredId ? { preferredId } : {}) }
         draft.uniqueProbe = { id: match.target?.id ?? blobItemAsConfigItem(blob, match.index).id, key: blob.key ?? match.target?.key ?? null, name: blob.name, spec: localized }
       }
+    }
+  }
+
+  // Invite decisions for people who are neither members nor in the blob: one
+  // planned `members.people` create each (pending invitation, role member, no
+  // teams), run before everything else so references resolve to it.
+  const inviteDrafts: Draft[] = []
+  const invited = new Set<string>()
+  for (const drafts of blobDrafts.values()) {
+    for (const draft of drafts) {
+      for (const ref of draft.exec?.refs ?? []) {
+        if (ref.resolution.kind === "invite") invited.add(ref.resolution.email)
+      }
+    }
+  }
+  if (peopleArea) {
+    for (const email of invited) {
+      const spec: ConfigSpec = { email, role: "member", status: "invited", teams: [], managedBy: "manual" }
+      const ref = inviteRef(email)
+      const item: ConfigPlanItem = {
+        area: PEOPLE_AREA,
+        ref,
+        op: "create",
+        blob: { name: email },
+        matchedBy: null,
+        flags: peopleArea.externalEffects ? ["external_effect"] : [],
+        reasons: ["invited because a reference chose to invite this person"],
+        fields: diffSpecs(peopleArea, {}, spec),
+      }
+      const draft: Draft = { item, oursRev: itemRev(peopleArea, { name: email, spec }) }
+      if (!peopleArea.specSchema.safeParse(spec).success) {
+        item.flags.push("blocked")
+        item.reasons = [`${email} is not a valid email address, so they can't be invited`]
+      } else {
+        draft.exec = { area: PEOPLE_AREA, ref, kind: "create", op: "create", matchedBy: null, item: { name: email, spec }, refs: [], secrets: [] }
+      }
+      inviteDrafts.push(draft)
     }
   }
 
@@ -453,7 +575,16 @@ export function buildPlan(input: BuildPlanInput): BuildPlanResult {
   const forward: ExecutionOp[] = []
   const deletes: ExecutionOp[][] = []
   const hashItems: unknown[] = []
+  for (const draft of inviteDrafts) {
+    if (draft.exec) forward.push(draft.exec)
+    hashItems.push(hashView(draft))
+  }
+  const peopleInScope = states.some((state) => state.area.key === PEOPLE_AREA)
+  if (inviteDrafts.length > 0 && !peopleInScope && peopleArea) {
+    planAreas.push({ area: PEOPLE_AREA, label: peopleArea.label, items: inviteDrafts.map((draft) => draft.item) })
+  }
   for (const state of states) {
+    const invites = state.area.key === PEOPLE_AREA ? inviteDrafts : []
     const drafts = [...(blobDrafts.get(state.area.key) ?? []), ...(targetOnly.get(state.area.key) ?? [])]
     const areaDeletes: ExecutionOp[] = []
     for (const draft of drafts) {
@@ -463,7 +594,7 @@ export function buildPlan(input: BuildPlanInput): BuildPlanResult {
       hashItems.push(hashView(draft))
     }
     deletes.unshift(areaDeletes)
-    planAreas.push({ area: state.area.key, label: state.area.label, items: drafts.map((draft) => draft.item) })
+    planAreas.push({ area: state.area.key, label: state.area.label, items: [...invites, ...drafts].map((draft) => draft.item) })
   }
 
   const summary: ConfigPlan["summary"] = { create: 0, update: 0, rename: 0, unchanged: 0, delete: 0, untouched: 0, skip: 0, blocking: 0 }
@@ -486,6 +617,25 @@ export function buildPlan(input: BuildPlanInput): BuildPlanResult {
   const plan: ConfigPlan = { planHash, mode: input.mode, summary, areas: planAreas, issues }
   const execution: ExecutionPlan = { planHash, blocking: summary.blocking, ops: [...forward, ...deletes.flat()] }
   return { plan, execution, errors, fatalErrors }
+}
+
+/** The TypeID prefix every item shares, or null when they have none in common (or there are none). */
+function sharedTypeIdPrefix(items: readonly ConfigItem[]): string | null {
+  let shared: string | null = null
+  for (const item of items) {
+    const prefix = typeIdPrefix(item.id)
+    if (prefix === null || (shared !== null && prefix !== shared)) return null
+    shared = prefix
+  }
+  return shared
+}
+
+/** A plan ref as the caller sees it: for areas they can't view, no name hint. */
+function planRefView(ref: ConfigPlanRef, hidden: boolean): ConfigPlanRef {
+  if (!hidden || ref.name === undefined) return ref
+  const out: ConfigPlanRef = { path: ref.path, ref: ref.ref, resolvedId: ref.resolvedId, via: ref.via }
+  if (ref.decision !== undefined) out.decision = ref.decision
+  return out
 }
 
 function blobRefFor(blob: ConfigBlobItem, index: number): string {

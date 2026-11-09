@@ -37,8 +37,13 @@ export type ConfigDatabase = typeof db.$primary | ConfigTx
 
 /** Statuses the analysis worker picks up. `analyzing` only once its lease expired (a crashed worker). */
 export const CONFIG_ANALYSIS_CLAIMABLE_STATUSES: readonly ConfigChangeRequestStatus[] = ["uploaded", "stale", "analyzing"]
-/** Statuses the apply worker picks up. `applying` only once its lease expired. */
+/**
+ * Statuses the apply worker looks at. `applying` only once its lease expired,
+ * and never to apply again: it is marked `failed` (CONFIG_APPLY_INTERRUPTED_ERROR),
+ * keeping its before-snapshot for a revert.
+ */
 export const CONFIG_APPLY_CLAIMABLE_STATUSES: readonly ConfigChangeRequestStatus[] = ["queued", "applying"]
+export const CONFIG_APPLY_INTERRUPTED_ERROR = "apply interrupted; check the before-snapshot and revert if needed"
 /** Open statuses that go `stale` when another request of the org is applied. */
 export const CONFIG_STALEABLE_STATUSES: readonly ConfigChangeRequestStatus[] = ["needs_review", "approved", "queued"]
 export const CONFIG_CLOSED_STATUSES: readonly ConfigChangeRequestStatus[] = ["invalid", "applied", "failed", "superseded", "cancelled"]
@@ -221,6 +226,18 @@ export async function claimNextApply(options: { leaseMs?: number } = {}): Promis
       .for("update", { skipLocked: true })
     const triedOrgs = new Set<string>()
     for (const row of candidates) {
+      if (row.status === "applying") {
+        // A worker died (or lost its lease) mid-apply: some items may be written. Never run it again.
+        await tx.update(ConfigChangeRequestTable).set({
+          status: "failed",
+          errors: [CONFIG_APPLY_INTERRUPTED_ERROR],
+          secretInputs: null,
+          leaseOwner: null,
+          leaseUntil: null,
+        }).where(and(eq(ConfigChangeRequestTable.id, row.id), eq(ConfigChangeRequestTable.status, "applying")))
+        await markOtherOpenRequestsStale(row.organizationId, row.id, tx)
+        continue
+      }
       if (triedOrgs.has(row.organizationId)) continue
       triedOrgs.add(row.organizationId)
       const [org] = await tx
@@ -404,11 +421,37 @@ export function aliasKey(area: ConfigAreaKey, sourceId: string): string {
 
 /** `${area}:${sourceId}` → local id, for one source instance. */
 export async function listAliases(organizationId: OrganizationId, sourceInstanceId: string, database: ConfigDatabase = db): Promise<Map<string, string>> {
-  const rows = await database
-    .select({ area: ConfigBlobAliasTable.area, sourceId: ConfigBlobAliasTable.sourceId, localId: ConfigBlobAliasTable.localId })
+  const rows = await listAliasRows(organizationId, sourceInstanceId, database)
+  return new Map(rows.map((row) => [aliasKey(row.area, row.sourceId), row.localId]))
+}
+
+export type ConfigAliasEntry = Pick<ConfigBlobAliasRow, "area" | "sourceId" | "localId" | "createdByChangeRequestId">
+
+/** The org's alias rows for one source instance, with the change request that wrote each (provenance). */
+export async function listAliasRows(organizationId: OrganizationId, sourceInstanceId: string, database: ConfigDatabase = db): Promise<ConfigAliasEntry[]> {
+  return database
+    .select({ area: ConfigBlobAliasTable.area, sourceId: ConfigBlobAliasTable.sourceId, localId: ConfigBlobAliasTable.localId, createdByChangeRequestId: ConfigBlobAliasTable.createdByChangeRequestId })
     .from(ConfigBlobAliasTable)
     .where(and(eq(ConfigBlobAliasTable.organizationId, organizationId), eq(ConfigBlobAliasTable.sourceInstanceId, sourceInstanceId)))
-  return new Map(rows.map((row) => [aliasKey(row.area, row.sourceId), row.localId]))
+}
+
+/** Removes the aliases pointing at local items an apply deleted (any source instance). Returns how many went. */
+export async function deleteAliasesForLocalIds(
+  organizationId: OrganizationId,
+  deleted: ReadonlyArray<{ area: ConfigAreaKey; localId: string }>,
+  database: ConfigDatabase = db.$primary,
+): Promise<number> {
+  let removed = 0
+  const byArea = new Map<ConfigAreaKey, string[]>()
+  for (const entry of deleted) byArea.set(entry.area, [...(byArea.get(entry.area) ?? []), entry.localId])
+  for (const [area, localIds] of byArea) {
+    removed += affectedRows(await database.delete(ConfigBlobAliasTable).where(and(
+      eq(ConfigBlobAliasTable.organizationId, organizationId),
+      eq(ConfigBlobAliasTable.area, area),
+      inArray(ConfigBlobAliasTable.localId, localIds),
+    )))
+  }
+  return removed
 }
 
 export type AliasInput = {

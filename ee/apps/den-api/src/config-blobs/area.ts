@@ -96,6 +96,12 @@ export type ConfigSimilarity = (blob: ConfigItem, target: ConfigItem) => { score
 export type ConfigArea = {
   key: ConfigAreaKey
   label: string
+  /**
+   * TypeID prefix of this area's item ids (`ipr`, `tem`…). A create only
+   * reuses a source id with this prefix (D4). Without it, the prefix the
+   * target's items share is used; with neither, no source id is reused.
+   */
+  idPrefix?: string
   /** Sidebar breadcrumb, e.g. ["AI Gateway", "AI Providers"]. */
   path: string[]
   specVersion: number

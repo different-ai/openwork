@@ -51,6 +51,25 @@ export function requireConfigScope(scope: ConfigScope): MiddlewareHandler {
   return handler
 }
 
+/** The only paths a config token may call: the config-blob routes. */
+export const CONFIG_TOKEN_PATH_PREFIX = "/v1/config-blobs"
+
+export function isConfigTokenPath(path: string): boolean {
+  return path === CONFIG_TOKEN_PATH_PREFIX || path.startsWith(`${CONFIG_TOKEN_PATH_PREFIX}/`)
+}
+
+/**
+ * Global middleware (app.ts, after the session and audit middleware): a config
+ * token is confined to `/v1/config-blobs/*`. Everywhere else, REST and MCP
+ * alike, it gets 403 `config_token_scope`, so a leaked CI token can't act as
+ * its member on the rest of the API. Standard API keys and sessions pass.
+ */
+export const confineConfigTokens: MiddlewareHandler = async (c, next) => {
+  const apiKey = requestApiKey(c)
+  if (apiKey?.type !== "config" || isConfigTokenPath(c.req.path)) return next()
+  return c.json({ error: "config_token_scope", message: "Config tokens only work with the Config API (/v1/config-blobs). Use a standard API key for other requests." }, 403)
+}
+
 /**
  * Area limit for this request: null = every area (UI sessions and unrestricted
  * config tokens). A standard API key gets [] (nothing): it never passes

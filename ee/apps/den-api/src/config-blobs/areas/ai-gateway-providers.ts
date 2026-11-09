@@ -31,7 +31,7 @@ import { lockUsageOrganization } from "@openwork-ee/den-db/gateway-usage-limits"
 import { AuthUserTable, GatewayCredentialSetTable, GatewayModelGroupModelTable, GatewayModelGroupTable, GatewayProviderAccessTable, GatewayProviderCredentialTable, GatewayProviderModelTable, GatewayProviderOauthStateTable, GatewayProviderTable, MemberTable, TeamTable } from "@openwork-ee/den-db/schema"
 import { gatewayAudienceKey } from "@openwork-ee/utils/gateway-routing"
 import { isLiteLlmProviderId } from "@openwork-ee/utils/litellm-catalog"
-import { createDenTypeId, normalizeDenTypeId, type DenTypeId, type DenTypeIdName } from "@openwork-ee/utils/typeid"
+import { createDenTypeId, denTypeIdPrefixes, normalizeDenTypeId, type DenTypeId, type DenTypeIdName } from "@openwork-ee/utils/typeid"
 import { configRefSchema, configSecretSchema } from "@openwork/types/den/config-blobs"
 import { GATEWAY_PROVIDER_CREDENTIAL_KINDS, GATEWAY_PROVIDER_CREDENTIAL_MODES, GATEWAY_PROVIDER_STATUSES, gatewayAwsSsoSettingsSchema, type GatewayAccessGrantWrite, type GatewayCredentialSetPatch } from "@openwork/types/den/gateway"
 import { GATEWAY_CUSTOM_PROVIDER_ID, gatewayCustomModelSchema, isGatewayCustomProviderId, type GatewayCustomProviderSettings } from "@openwork/types/den/gateway-custom-providers"
@@ -586,6 +586,7 @@ export const aiGatewayProvidersArea = defineConfigArea({
   key: AREA,
   label: "AI Providers",
   path: ["AI Gateway", "AI Providers"],
+  idPrefix: denTypeIdPrefixes.inferenceProvider,
   specVersion: 1,
   specSchema: exportSpecSchema,
   dependsOn: ["members.teams", "members.people"],

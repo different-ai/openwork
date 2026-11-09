@@ -10,6 +10,41 @@ export const CONFIG_BLOB_FORMAT = "openwork.config-blob" as const;
 export const CONFIG_BLOB_FORMAT_VERSION = 1 as const;
 /** Largest blob accepted inline, in bytes of JSON. */
 export const CONFIG_BLOB_MAX_BYTES = 5 * 1024 * 1024;
+/** Most items one area of a blob may hold. */
+export const CONFIG_BLOB_MAX_ITEMS_PER_AREA = 2_000;
+/** Most items a whole blob may hold. */
+export const CONFIG_BLOB_MAX_ITEMS = 20_000;
+/** Deepest nesting of objects and arrays inside an item's spec. */
+export const CONFIG_BLOB_MAX_SPEC_DEPTH = 32;
+/** Object keys never accepted anywhere in a blob's areas (prototype pollution). */
+export const CONFIG_BLOB_FORBIDDEN_KEYS: readonly string[] = ["__proto__", "constructor", "prototype"];
+
+export function isForbiddenConfigKey(key: string): boolean {
+  return CONFIG_BLOB_FORBIDDEN_KEYS.includes(key);
+}
+
+/**
+ * Checks a value from a blob for keys that could pollute prototypes and for
+ * nesting deeper than `maxDepth` containers. Returns the first problem found,
+ * or null. Iterative, so a hostile nesting depth cannot overflow the stack.
+ */
+export function findConfigShapeProblem(value: unknown, path: string, maxDepth: number = CONFIG_BLOB_MAX_SPEC_DEPTH): string | null {
+  const stack: Array<{ value: unknown; path: string; depth: number }> = [{ value, path, depth: 0 }];
+  while (stack.length > 0) {
+    const next = stack.pop();
+    if (!next || typeof next.value !== "object" || next.value === null) continue;
+    if (next.depth >= maxDepth) return `${next.path}: nested more than ${maxDepth} levels deep`;
+    if (Array.isArray(next.value)) {
+      next.value.forEach((element, index) => stack.push({ value: element, path: `${next.path}[${index}]`, depth: next.depth + 1 }));
+      continue;
+    }
+    for (const [key, child] of Object.entries(next.value)) {
+      if (isForbiddenConfigKey(key)) return `${next.path}: the key "${key}" is not allowed`;
+      stack.push({ value: child, path: `${next.path}.${key}`, depth: next.depth + 1 });
+    }
+  }
+  return null;
+}
 
 /**
  * Area keys. Dotted paths that follow the Den sidebar (page.sub-page), fixed
@@ -174,15 +209,39 @@ export function nestConfigAreas(flat: Partial<Record<ConfigAreaKey, ConfigBlobAr
 export function flattenConfigAreas(tree: unknown): { areas: Partial<Record<ConfigAreaKey, ConfigBlobArea>>; errors: string[] } {
   const areas: Partial<Record<ConfigAreaKey, ConfigBlobArea>> = {};
   const errors: string[] = [];
+  let total = 0;
   const walk = (node: unknown, path: string[]) => {
     if (typeof node !== "object" || node === null || Array.isArray(node)) {
       errors.push(`areas.${path.join(".")} must be an object`);
+      return;
+    }
+    // Area keys are at most three segments deep ("settings.advanced.collections").
+    if (path.length > 3) {
+      errors.push(`unknown area "${path.join(".")}"`);
       return;
     }
     if ("items" in node) {
       const key = path.join(".");
       if (!isConfigAreaKey(key)) {
         errors.push(`unknown area "${key}"`);
+        return;
+      }
+      const rawItems = node.items;
+      if (Array.isArray(rawItems)) {
+        if (rawItems.length > CONFIG_BLOB_MAX_ITEMS_PER_AREA) {
+          errors.push(`areas.${key}: ${rawItems.length} items is more than the ${CONFIG_BLOB_MAX_ITEMS_PER_AREA.toLocaleString("en-US")} allowed in one area`);
+          return;
+        }
+        total += rawItems.length;
+        if (total > CONFIG_BLOB_MAX_ITEMS) {
+          errors.push(`the blob has more than the ${CONFIG_BLOB_MAX_ITEMS.toLocaleString("en-US")} items allowed in one file`);
+          return;
+        }
+      }
+      // Checked on the raw input: schema parsing may silently drop a `__proto__` key.
+      const shape = findConfigShapeProblem(rawItems, `areas.${key}.items`, CONFIG_BLOB_MAX_SPEC_DEPTH + 2);
+      if (shape) {
+        errors.push(shape);
         return;
       }
       const parsed = configBlobAreaSchema.safeParse(node);

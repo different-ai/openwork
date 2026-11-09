@@ -229,6 +229,8 @@ export async function approveOrganizationWebOrigin(input: {
     })
   } catch (error) {
     if (!isDuplicateEntry(error)) throw error
+    // A reused id (config-blob import) taken in the meantime is not "already approved": try once more with a new id.
+    if (input.id) return approveOrganizationWebOrigin({ organizationId: input.organizationId, origin: input.origin, createdByOrgMemberId: input.createdByOrgMemberId }, capture)
     outcome = "already_approved"
   }
 

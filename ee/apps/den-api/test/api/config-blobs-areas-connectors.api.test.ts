@@ -26,7 +26,7 @@ const { aiGatewayByokArea } = await import("../../src/config-blobs/areas/ai-gate
 const { desktopPoliciesArea } = await import("../../src/config-blobs/areas/desktop-policies.js")
 const { settingsCollectionsArea } = await import("../../src/config-blobs/areas/settings-collections.js")
 const { eq } = await import("@openwork-ee/den-db/drizzle")
-const { ExternalMcpConnectionTable, LlmProviderTable, OrgOAuthClientTable } = await import("@openwork-ee/den-db/schema")
+const { ExternalMcpConnectionTable, LlmProviderModelTable, LlmProviderTable, OrgOAuthClientTable } = await import("@openwork-ee/den-db/schema")
 
 type Area = typeof connectorsMcpArea
 type Item = Awaited<ReturnType<Area["exportItems"]>>[number]
@@ -394,4 +394,31 @@ test("the default desktop policy is matched, not duplicated, and deletes go thro
   const collection = only(collections, "Engineering tools")
   await settingsCollectionsArea.apply(ctx, { kind: "delete", targetId: collection.id, previous: collection })
   assert.equal((await settingsCollectionsArea.exportItems(ctx)).some((item) => item.id === collection.id), false)
+})
+
+test("a BYOK provider moving to another address can't keep its key, and loses its inline credentials (M11)", async () => {
+  const ctx = await ctxFor(orgA)
+  const acme = only((await exportAll(orgA)).get("ai-gateway.byok"), "Acme LLM")
+  const moved = (secret: () => SecretDecision) => {
+    const spec = resolvedSpec(acme.spec, sameOrgRefs, secret)
+    assert.ok(isObject(spec.provider))
+    return { ...spec, provider: { ...spec.provider, api: "https://elsewhere.example.test/v1", options: { baseURL: "https://elsewhere.example.test/v1" } } }
+  }
+  await assert.rejects(
+    aiGatewayByokArea.apply(ctx, { kind: "update", targetId: acme.id, previous: acme, item: { key: acme.key, name: acme.name, spec: moved(keepAll) } }),
+    (error: unknown) => error instanceof Error && "code" in error && error.code === "needs_input" && /another address/.test(error.message),
+  )
+  const [unchanged] = await db.select().from(LlmProviderTable).where(eq(LlmProviderTable.id, acme.id))
+  assert.equal(field(unchanged?.providerConfig, "api"), "https://llm.example.test/v1", "nothing was written")
+
+  const result = await aiGatewayByokArea.apply(ctx, { kind: "update", targetId: acme.id, previous: acme, item: { key: acme.key, name: acme.name, spec: moved(() => ({ decision: "value", value: "byok-for-elsewhere" })) } })
+  assert.ok(result.warnings?.some((warning) => /inline credentials/.test(warning)), JSON.stringify(result.warnings))
+  const [provider] = await db.select().from(LlmProviderTable).where(eq(LlmProviderTable.id, acme.id))
+  assert.equal(provider?.apiKey, "byok-for-elsewhere")
+  assert.equal(field(provider?.providerConfig, "api"), "https://elsewhere.example.test/v1")
+  const stored = JSON.stringify(provider?.providerConfig)
+  assert.ok(!stored.includes(SECRETS.byokInline) && !stored.includes(SECRETS.byokHeader), "inline credentials don't follow the provider to another host")
+  const models = await db.select().from(LlmProviderModelTable).where(eq(LlmProviderModelTable.llmProviderId, acme.id))
+  assert.ok(models.length > 0)
+  assert.ok(!JSON.stringify(models.map((model) => model.modelConfig)).includes(SECRETS.byokHeader), "model headers dropped too")
 })

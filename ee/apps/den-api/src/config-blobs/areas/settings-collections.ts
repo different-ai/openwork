@@ -18,7 +18,7 @@
  */
 import { and, eq, inArray, isNull } from "@openwork-ee/den-db/drizzle"
 import { MarketplaceAccessGrantTable, MarketplaceTable } from "@openwork-ee/den-db/schema"
-import { normalizeDenTypeId } from "@openwork-ee/utils/typeid"
+import { denTypeIdPrefixes, normalizeDenTypeId } from "@openwork-ee/utils/typeid"
 import { z } from "zod"
 import { listTeamsForMember } from "../../member-teams.js"
 import { PluginArchAuthorizationError, requirePluginArchCapability, type PluginArchActorContext } from "../../routes/org/plugin-system/access.js"
@@ -128,6 +128,7 @@ export const settingsCollectionsArea = defineConfigArea({
   key: AREA,
   label: "Collections",
   path: ["Settings", "Advanced", "Collections"],
+  idPrefix: denTypeIdPrefixes.marketplace,
   specVersion: 1,
   specSchema,
   dependsOn: ["members.teams", "members.people"],

@@ -13,7 +13,7 @@ import type {
 import { isConfigRef, isConfigSecret, parseConfigRef } from "@openwork/types/den/config-blobs"
 import type { ConfigArea, ConfigItem } from "../area.js"
 import type { ItemMatch } from "./match.js"
-import { isPlainObject, joinPath, normalizeEmail } from "./util.js"
+import { isPlainObject, isUnsafeKey, joinPath, normalizeEmail } from "./util.js"
 
 export type RefOccurrence = { path: string; ref: string; name?: string }
 
@@ -51,6 +51,7 @@ export function rewriteRefs(spec: unknown, replace: (path: string, ref: ConfigRe
   if (isPlainObject(spec)) {
     const out: { [key: string]: unknown } = {}
     for (const [key, value] of Object.entries(spec)) {
+      if (isUnsafeKey(key)) continue
       const next = rewriteRefs(value, replace, joinPath(path, key))
       if (next !== DROP_REF) out[key] = next
     }
@@ -64,6 +65,11 @@ export type RefResolution =
   | { kind: "target"; id: string; via: "target" | "decision" }
   | { kind: "planned"; area: ConfigAreaKey; ref: string }
   | { kind: "drop" }
+  /**
+   * The admin chose to invite someone who is neither a member nor a person in
+   * the blob: the plan adds a `members.people` create (`inviteRef(email)`)
+   * and the reference resolves to it at execute time.
+   */
   | { kind: "invite"; email: string }
   | { kind: "unresolved"; reason: string }
 
@@ -84,9 +90,23 @@ export type RefResolverInput = {
   /** Target org members by normalized email → member id. */
   people?: ReadonlyMap<string, string>
   decisions?: ConfigDecisions["refs"]
+  /** Whether an `invite` decision can be planned (the `members.people` area is available). Default false. */
+  canInvite?: boolean
 }
 
 export const PEOPLE_AREA: ConfigAreaKey = "members.people"
+
+/** Plan ref of the `members.people` create an invite decision adds. */
+export function inviteRef(email: string): string {
+  return `invite:${normalizeEmail(email)}`
+}
+
+/** The area a reference points into (`people/…` → `members.people`), or null when it is not a valid reference. */
+export function refArea(ref: string): ConfigAreaKey | null {
+  const parsed = parseConfigRef(ref)
+  if (!parsed) return null
+  return parsed.area === "people" ? PEOPLE_AREA : parsed.area
+}
 
 export function skippedKey(area: ConfigAreaKey, ref: string): string {
   return `${area}\u0000${ref}`
@@ -104,14 +124,72 @@ export function createRefResolver(input: RefResolverInput): (itemArea: ConfigAre
     return { kind: "planned", area, ref: match.ref }
   }
 
-  const lookupTarget = (area: ConfigAreaKey, handle: string, hint: string | undefined): RefResolution => {
+  // Indexes, built once per area on first use, so resolving a reference is a
+  // few map lookups rather than a scan of every item.
+  type TargetIndex = { ids: Map<string, ConfigItem>; keys: Map<string, ConfigItem>; natural: Map<string, Map<string, ConfigItem[]>> }
+  const targetIndexes = new Map<ConfigAreaKey, TargetIndex>()
+  const targetIndex = (area: ConfigAreaKey): TargetIndex => {
+    const cached = targetIndexes.get(area)
+    if (cached) return cached
     const items = input.targetItems.get(area) ?? []
-    const byId = items.find((item) => item.id === handle)
+    const index: TargetIndex = { ids: new Map(), keys: new Map(), natural: new Map() }
+    for (const item of items) {
+      if (!index.ids.has(item.id)) index.ids.set(item.id, item)
+      if (item.key && !index.keys.has(item.key)) index.keys.set(item.key, item)
+    }
+    targetIndexes.set(area, index)
+    return index
+  }
+  const naturalIndex = (area: ConfigAreaKey, naturalKey: Pick<ConfigArea, "naturalKeys">["naturalKeys"][number]): Map<string, ConfigItem[]> => {
+    const index = targetIndex(area)
+    const cached = index.natural.get(naturalKey.label)
+    if (cached) return cached
+    const byValue = new Map<string, ConfigItem[]>()
+    for (const item of input.targetItems.get(area) ?? []) {
+      const value = naturalKey.get(item)
+      if (value === null) continue
+      const list = byValue.get(value)
+      if (list) list.push(item)
+      else byValue.set(value, [item])
+    }
+    index.natural.set(naturalKey.label, byValue)
+    return byValue
+  }
+  const blobIndexes = new Map<ConfigAreaKey, Map<string, ItemMatch>>()
+  const blobIndex = (area: ConfigAreaKey): Map<string, ItemMatch> => {
+    const cached = blobIndexes.get(area)
+    if (cached) return cached
+    const index = new Map<string, ItemMatch>()
+    // Same precedence as before: the first item whose id, key or ref equals the handle.
+    for (const match of input.blobMatches.get(area) ?? []) {
+      for (const handle of [match.blob.id, match.blob.key, match.ref]) if (handle && !index.has(handle)) index.set(handle, match)
+    }
+    blobIndexes.set(area, index)
+    return index
+  }
+  let peopleIndex: Map<string, ItemMatch> | null = null
+  const blobPerson = (email: string): ItemMatch | undefined => {
+    if (!input.scope.has(PEOPLE_AREA)) return undefined
+    if (!peopleIndex) {
+      peopleIndex = new Map()
+      for (const candidate of input.blobMatches.get(PEOPLE_AREA) ?? []) {
+        const value = candidate.blob.spec.email
+        if (typeof value !== "string") continue
+        const normalized = normalizeEmail(value)
+        if (!peopleIndex.has(normalized)) peopleIndex.set(normalized, candidate)
+      }
+    }
+    return peopleIndex.get(email)
+  }
+
+  const lookupTarget = (area: ConfigAreaKey, handle: string, hint: string | undefined): RefResolution => {
+    const index = targetIndex(area)
+    const byId = index.ids.get(handle)
     if (byId) return { kind: "target", id: byId.id, via: "target" }
     const aliased = input.aliases?.get(area)?.get(handle)
-    const byAlias = aliased ? items.find((item) => item.id === aliased) : undefined
+    const byAlias = aliased ? index.ids.get(aliased) : undefined
     if (byAlias) return { kind: "target", id: byAlias.id, via: "target" }
-    const byKey = items.find((item) => item.key && item.key === handle)
+    const byKey = index.keys.get(handle)
     if (byKey) return { kind: "target", id: byKey.id, via: "target" }
     const naturalKeys = input.areas.get(area)?.naturalKeys ?? []
     if (hint !== undefined) {
@@ -119,7 +197,7 @@ export function createRefResolver(input: RefResolverInput): (itemArea: ConfigAre
       for (const naturalKey of naturalKeys) {
         const value = naturalKey.get(probe)
         if (value === null) continue
-        const hits = items.filter((item) => naturalKey.get(item) === value)
+        const hits = naturalIndex(area, naturalKey).get(value) ?? []
         if (hits.length === 1) return { kind: "target", id: hits[0]!.id, via: "target" }
         if (hits.length > 1) return { kind: "unresolved", reason: `${hits.length} ${area} items share ${naturalKey.label} "${hint}": choose one` }
       }
@@ -132,22 +210,30 @@ export function createRefResolver(input: RefResolverInput): (itemArea: ConfigAre
       const email = normalizeEmail(handle)
       const memberId = input.people?.get(email)
       if (memberId) return { kind: "target", id: memberId, via: "target" }
-      if (input.scope.has(PEOPLE_AREA)) {
-        const match = (input.blobMatches.get(PEOPLE_AREA) ?? []).find((candidate) => {
-          const value = candidate.blob.spec.email
-          return typeof value === "string" && normalizeEmail(value) === email
-        })
-        if (match) return fromBlobMatch(PEOPLE_AREA, match)
-      }
+      const match = blobPerson(email)
+      if (match) return fromBlobMatch(PEOPLE_AREA, match)
       return { kind: "unresolved", reason: `${handle} is not a member of this organization: invite them or drop them` }
     }
     if (input.scope.has(area)) {
-      const match = (input.blobMatches.get(area) ?? []).find((candidate) =>
-        candidate.blob.id === handle || (candidate.blob.key && candidate.blob.key === handle) || candidate.ref === handle,
-      )
+      const match = blobIndex(area).get(handle)
       if (match) return fromBlobMatch(area, match)
     }
     return lookupTarget(area, handle, hint)
+  }
+
+  /**
+   * An invite decision. Someone already a member, or a person this blob
+   * creates, resolves as usual (the invite is moot); anyone else becomes a
+   * planned `members.people` create, never a bare `invite` handed to an adapter.
+   */
+  const resolveInvite = (parsed: { area: ConfigAreaKey | "people"; target: string }, hint: string | undefined): RefResolution => {
+    if (parsed.area !== "people") return { kind: "unresolved", reason: "only people can be invited" }
+    const email = normalizeEmail(parsed.target)
+    const auto = resolveAuto("people", parsed.target, hint)
+    // A person in the blob that was skipped stays unresolved: inviting them anyway would undo the skip.
+    if (auto.kind !== "unresolved" || blobPerson(email)) return auto
+    if (!input.canInvite) return { kind: "unresolved", reason: `${email} can't be invited here: choose a member or drop them` }
+    return { kind: "invite", email }
   }
 
   return (itemArea, itemRef, occurrence) => {
@@ -156,17 +242,17 @@ export function createRefResolver(input: RefResolverInput): (itemArea: ConfigAre
     let resolution: RefResolution
     if (!parsed) resolution = { kind: "unresolved", reason: `"${occurrence.ref}" is not a valid reference` }
     else if (decision && "drop" in decision) resolution = { kind: "drop" }
-    else if (decision && "invite" in decision) {
-      resolution = parsed.area === "people"
-        ? { kind: "invite", email: normalizeEmail(parsed.target) }
-        : { kind: "unresolved", reason: "only people can be invited" }
-    } else if (decision && "targetId" in decision) {
+    else if (decision && "invite" in decision) resolution = resolveInvite(parsed, occurrence.name)
+    else if (decision && "targetId" in decision) {
+      const loaded = parsed.area === "people" ? input.people !== undefined : input.targetItems.has(parsed.area)
       const known = parsed.area === "people"
         ? memberIds.has(decision.targetId)
-        : !input.targetItems.has(parsed.area) || (input.targetItems.get(parsed.area) ?? []).some((item) => item.id === decision.targetId)
-      resolution = known
-        ? { kind: "target", id: decision.targetId, via: "decision" }
-        : { kind: "unresolved", reason: `chosen target ${decision.targetId} does not exist` }
+        : (input.targetItems.get(parsed.area) ?? []).some((item) => item.id === decision.targetId)
+      resolution = !loaded
+        ? { kind: "unresolved", reason: `${parsed.area} can't be checked here, so a chosen item can't be used` }
+        : known
+          ? { kind: "target", id: decision.targetId, via: "decision" }
+          : { kind: "unresolved", reason: `chosen target ${decision.targetId} does not exist` }
     } else resolution = resolveAuto(parsed.area, parsed.target, occurrence.name)
     return { ...occurrence, resolution }
   }
@@ -184,7 +270,7 @@ export function toPlanRef(occurrence: ResolvedRefOccurrence): ConfigPlanRef {
     case "drop":
       return { ...base, via: "decision", decision: "drop" }
     case "invite":
-      return { ...base, via: "decision", decision: "invite" }
+      return { ...base, via: "planned", decision: "invite" }
     case "unresolved":
       return base
   }

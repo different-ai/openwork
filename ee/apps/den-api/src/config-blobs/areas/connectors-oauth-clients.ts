@@ -21,7 +21,7 @@
  */
 import { and, eq } from "@openwork-ee/den-db/drizzle"
 import { OrgOAuthClientTable } from "@openwork-ee/den-db/schema"
-import { normalizeDenTypeId } from "@openwork-ee/utils/typeid"
+import { denTypeIdPrefixes, normalizeDenTypeId } from "@openwork-ee/utils/typeid"
 import { z } from "zod"
 import { normalizeOAuthClientExtra } from "../../capability-sources/oauth-credentials.js"
 import { readProviderTenantId } from "../../capability-sources/oauth-tenant.js"
@@ -46,9 +46,9 @@ const specSchema = z.object({
   providerId: z.string().trim().min(1).max(255),
   clientId: z.string().trim().min(1).max(512),
   /** Optional permission features the members are asked for. null leaves the stored selection as it is. */
-  features: z.array(z.string().trim().min(1).max(128)).nullable(),
+  features: z.array(z.string().trim().min(1).max(128)).nullable().default(null),
   /** Microsoft Entra tenant, for providers bound to one tenant. */
-  tenantId: z.string().trim().min(1).max(253).nullable(),
+  tenantId: z.string().trim().min(1).max(253).nullable().default(null),
   clientSecret: specSecretSchema,
 }).strict()
 
@@ -62,6 +62,7 @@ export const connectorsOAuthClientsArea = defineConfigArea({
   key: AREA,
   label: "OAuth apps",
   path: ["Connectors", "OAuth apps"],
+  idPrefix: denTypeIdPrefixes.orgOAuthClient,
   specVersion: 1,
   specSchema,
   dependsOn: [],

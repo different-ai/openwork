@@ -48,7 +48,7 @@ A blob is one JSON file. It may hold the whole org or any set of area keys. The 
   "id": "ipr_01h8x…",                    // source TypeID. Matching tier 1; reused on create if free
   "key": "anthropic-prod",               // optional. externalKey where the resource has one
   "name": "Anthropic (prod)",            // display name. Never an identity on its own
-  "rev": "sha256:…",                     // hash of the normalized spec at export time (three-way base)
+  "rev": "sha256:…",                     // hash of the normalized spec, name and key at export time (three-way base)
 
   "spec": {                              // the portable, editable part. One schema per area, versioned
     "providerId": "anthropic",
@@ -122,7 +122,7 @@ There are three ways to identify an item, used in this order (details in [mappin
 
 ## Hashes
 
-- `rev` = `sha256(canonicalJson(spec without $secret values))`. Canonical JSON: sorted keys; arrays in a defined order per field (ordered lists stay ordered, sets are sorted by id).
+- `rev` = `sha256(canonicalJson({ spec without $secret values, name, key }))` (`itemRev`); areas whose names are derived (people) leave the name out. A rename on the target after export is therefore a change there, and a rename only in the blob is an edit. Canonical JSON: sorted keys; arrays in a defined order per field (ordered lists stay ordered, sets are sorted by id).
 - `baseHash` = hash over the sorted `(area, id, rev)` of everything in `scope` at export.
 - On the target we compute the same values from the current state. That lets us run the three-way diff and detect drift (see [mapping.md](./mapping.md#three-way-diff)).
 
@@ -134,5 +134,5 @@ There are three ways to identify an item, used in this order (details in [mappin
 
 ## Size and storage
 
-- Inline JSON in the request (limit about 5 MB). Large content later (brand asset bytes, big skill payloads) may move to a `.zip` holding `blob.json` + `assets/`.
+- Inline JSON in the request (limit about 5 MB), at most 2,000 items per area and 20,000 in all. Specs may nest at most 32 levels, and the keys `__proto__`, `constructor` and `prototype` are refused anywhere in `areas`. Large content later (brand asset bytes, big skill payloads) may move to a `.zip` holding `blob.json` + `assets/`.
 - On the server, uploaded blobs are stored **encrypted** (`encryptedMediumTextColumn`). They are org configuration, even without secrets.

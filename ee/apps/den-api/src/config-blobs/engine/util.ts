@@ -2,7 +2,7 @@
  * Small helpers shared by the config-blob engine. Pure: no I/O, no db.
  */
 import { createHash } from "node:crypto"
-import { isConfigRef, isConfigSecret } from "@openwork/types/den/config-blobs"
+import { isConfigRef, isConfigSecret, isForbiddenConfigKey } from "@openwork/types/den/config-blobs"
 import type { ConfigArea } from "../area.js"
 
 export type JsonObject = { [key: string]: unknown }
@@ -69,6 +69,21 @@ export function arrayElementKey(layout: ArrayLayout, schemaPath: string, element
 
 export function normalizeEmail(email: string): string {
   return email.trim().toLowerCase()
+}
+
+/**
+ * Whether a key must never be copied onto a new object: `__proto__`,
+ * `constructor`, `prototype`. Validation rejects blobs holding them; copies
+ * skip them too, so nothing built from a spec can reach a prototype.
+ */
+export function isUnsafeKey(key: string): boolean {
+  return isForbiddenConfigKey(key)
+}
+
+/** The TypeID prefix of an id (`ipr_01h…` → `ipr`), or null when it has none. */
+export function typeIdPrefix(id: string): string | null {
+  const underscore = id.lastIndexOf("_")
+  return underscore > 0 ? id.slice(0, underscore) : null
 }
 
 export function deepClone<T>(value: T): T {

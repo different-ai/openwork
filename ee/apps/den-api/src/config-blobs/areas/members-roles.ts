@@ -18,7 +18,7 @@
 import { allowedKeys, readPermissionSetStates } from "@openwork-ee/den-db/permissions"
 import { and, asc, eq, inArray, isNull } from "@openwork-ee/den-db/drizzle"
 import { PermissionSetTable, PermissionSetTeamTable, TeamTable } from "@openwork-ee/den-db/schema"
-import { normalizeDenTypeId } from "@openwork-ee/utils/typeid"
+import { denTypeIdPrefixes, normalizeDenTypeId } from "@openwork-ee/utils/typeid"
 import {
   PERMISSION_DEFAULT_SET_KEYS,
   PERMISSION_DEFAULT_SET_LABELS,
@@ -43,11 +43,11 @@ const AREA = "members.roles"
 
 const roleSpecSchema = z.object({
   /** Which built-in set this is; null for a custom role. */
-  builtIn: z.enum(PERMISSION_DEFAULT_SET_KEYS).nullable(),
+  builtIn: z.enum(PERMISSION_DEFAULT_SET_KEYS).nullable().default(null),
   /** Permission keys the set allows; every other catalog key is denied. Sorted. */
   allow: z.array(z.string().min(1).max(128)).max(1000),
   /** Teams that have this custom role. Always empty for built-in sets. */
-  teams: z.array(specRefSchema).max(500),
+  teams: z.array(specRefSchema).max(500).default([]),
 }).strict()
 
 /** Plain fields at apply time (`teams` holds resolved refs, read with resolvedRefIds). */
@@ -109,6 +109,7 @@ export const membersRolesArea = defineConfigArea({
   key: AREA,
   label: "Roles",
   path: ["Members", "Roles"],
+  idPrefix: denTypeIdPrefixes.permissionSet,
   specVersion: 1,
   specSchema: roleSpecSchema,
   dependsOn: ["members.teams"],

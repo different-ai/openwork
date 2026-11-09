@@ -3,13 +3,15 @@
  * and secret resolution, planning and execution. Pure apart from the adapter
  * calls `executePlan` makes; no db access of its own.
  */
-export { baseHash, canonicalJson, canonicalJsonPlain, normalizeSpecValue, specRev, stringifyCanonical } from "./canonical.js"
+export { baseHash, canonicalJson, canonicalJsonPlain, itemRev, normalizeSpecValue, specRev, stringifyCanonical, type RevLayout } from "./canonical.js"
 export {
   blobItemAsConfigItem,
   blobItemRef,
   defaultSimilarity,
+  MAX_PROPOSAL_PAIRS,
   matchArea,
   nameSimilarity,
+  TOO_MANY_TO_SUGGEST,
   validateBlobItems,
   type AreaMatchInput,
   type AreaMatchResult,
@@ -19,6 +21,7 @@ export { classifyMatched, diffSpecs, isDestructiveChange, type ClassifyMatchedIn
 export {
   createRefResolver,
   findRefs,
+  inviteRef,
   localizeSpec,
   rewriteRefs,
   toPlanRef,
@@ -32,6 +35,9 @@ export {
   findSecrets,
   matchesSecretField,
   planSecrets,
+  REDACTED_SECRET,
+  redactRawSecrets,
+  replacesSecretValue,
   type ExecutionSecret,
   type PlannedSecrets,
   type PlanSecretsInput,

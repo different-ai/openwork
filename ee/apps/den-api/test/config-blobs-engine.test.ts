@@ -16,7 +16,7 @@ import type {
   ConfigSpec,
   ResolvedConfigSecret,
 } from "@openwork/types/den/config-blobs"
-import { EMPTY_CONFIG_DECISIONS } from "@openwork/types/den/config-blobs"
+import { CONFIG_AREA_KEYS, EMPTY_CONFIG_DECISIONS, flattenConfigAreas } from "@openwork/types/den/config-blobs"
 import type { ConfigApplyOp, ConfigArea, ConfigAreaContext, ConfigItem } from "../src/config-blobs/area.js"
 import {
   baseHash,
@@ -24,7 +24,9 @@ import {
   canonicalJson,
   executePlan,
   matchArea,
+  rewriteRefs,
   secretsNeedingValues,
+  itemRev,
   sortAreas,
   specRev,
   type BuildPlanInput,
@@ -91,6 +93,19 @@ function makeAreas(store: Store, calls: Call[], overrides: Partial<Record<Config
       uniqueFields: [{ label: "name", get: normalizedName }],
     }),
     base("connectors.mcp", "mcp", { deployments: ["cloud"] }),
+    base("members.people", "om", {
+      dependsOn: ["members.teams"],
+      naturalKeys: [{ label: "email", get: (person) => (typeof person.spec.email === "string" ? person.spec.email : null) }],
+      informationalName: true,
+      informationalFields: ["status"],
+      specSchema: z.object({
+        email: z.string().email(),
+        role: z.string(),
+        status: z.enum(["active", "invited"]).default("invited"),
+        teams: z.array(z.object({ $ref: z.string(), name: z.string().optional() }).strict()).default([]),
+        managedBy: z.enum(["manual", "sso", "scim"]).default("manual"),
+      }).strict(),
+    }),
   ]
 }
 
@@ -130,7 +145,7 @@ function exportBlob(store: Store, areas: ConfigArea[], keys: ConfigAreaKey[]): P
     const area = areas.find((candidate) => candidate.key === key)!
     out[key] = {
       specVersion: 1,
-      items: structuredClone(store.get(key) ?? []).map((item) => ({ id: item.id, key: item.key ?? null, name: item.name, rev: specRev(area, item.spec), spec: item.spec })),
+      items: structuredClone(store.get(key) ?? []).map((item) => ({ id: item.id, key: item.key ?? null, name: item.name, rev: itemRev(area, item), spec: item.spec })),
     }
   }
   return out
@@ -508,6 +523,37 @@ describe("plan", () => {
     const decidedEntry = item(decided.plan, "members.teams", "tem_A")
     assert.equal(decided.plan.summary.blocking, 0)
     assert.deepEqual(decidedEntry.refs?.map((ref) => ref.decision ?? null), [null, "invite", "drop"])
+    assert.equal(decidedEntry.refs?.[1]?.via, "planned")
+    // The invite is a real planned create in members.people, run first.
+    const invite = item(decided.plan, "members.people", "invite:bob@example.com")
+    assert.equal(invite.op, "create")
+    assert.deepEqual(decided.execution.ops.map((op) => `${op.kind} ${op.area} ${op.ref}`), ["create members.people invite:bob@example.com", "update members.teams tem_A"])
+    assert.deepEqual(decided.execution.ops[0]?.item?.spec, { email: "bob@example.com", role: "member", status: "invited", teams: [], managedBy: "manual" })
+
+    // Without a people area to plan into, an invite decision stays unresolved.
+    const noPeople = makeAreas(store, []).filter((area) => area.key !== "members.people")
+    const refused = buildPlan(planInput(store, noPeople, blob, { decisions: decisions({ refs: [
+      { area: "members.teams", ref: "tem_A", path: "members[1]", resolution: { invite: true } },
+      { area: "members.teams", ref: "tem_A", path: "members[2]", resolution: { drop: true } },
+    ] }) }))
+    assert.ok(item(refused.plan, "members.teams", "tem_A").flags.includes("ref_unresolved"))
+    assert.ok(refused.execution.ops.every((op) => op.area !== "members.people"))
+  })
+
+  test("an invite for a person the blob already creates resolves to that create", () => {
+    const store = seed()
+    const areas = makeAreas(store, [])
+    const blob: Partial<Record<ConfigAreaKey, ConfigBlobArea>> = {
+      "members.teams": { specVersion: 1, items: [{ id: "tem_A", key: "platform", name: "Platform", spec: { description: "core", members: [ada, { $ref: "people/bob@example.com" }] } }] },
+      "members.people": { specVersion: 1, items: [{ id: "om_BOB", name: "Bob", spec: { email: "bob@example.com", role: "admin" } }] },
+    }
+    const { plan, execution } = buildPlan(planInput(store, areas, blob, { decisions: decisions({ refs: [
+      { area: "members.teams", ref: "tem_A", path: "members[1]", resolution: { invite: true } },
+    ] }) }))
+    assert.equal(plan.summary.blocking, 0)
+    assert.equal(item(plan, "members.teams", "tem_A").refs?.[1]?.via, "planned")
+    assert.deepEqual(items(plan, "members.people").map((entry) => entry.ref), ["om_BOB"])
+    assert.deepEqual(execution.ops.map((op) => `${op.kind} ${op.area} ${op.ref}`), ["update members.teams tem_A", "create members.people om_BOB"])
   })
 })
 
@@ -541,26 +587,36 @@ describe("execute", () => {
     const provider = item(plan, "ai-gateway.providers", "ipr_NEW")
     assert.deepEqual(provider.refs?.map((ref) => [ref.via, ref.resolvedId]), [["planned", null], ["target", "tem_A"]])
     assert.deepEqual(execution.ops.map((op) => `${op.kind} ${op.area} ${op.ref}`), [
+      "create members.people invite:new@example.com",
       "create members.teams tem_SRC_ML",
       "create members.teams tem_FREE",
       "create ai-gateway.providers ipr_NEW",
     ])
 
     const secrets = new Map<string, ResolvedConfigSecret>([[secretPath, { $secret: secretPath, decision: "value", value: "sk-live" }]])
-    const result = await executePlan(execution, areas, ctx, secrets, { isIdFree: async (id) => id === "tem_FREE" || id === "ipr_NEW" })
+    const asked: string[] = []
+    const result = await executePlan(execution, areas, ctx, secrets, { isIdFree: async (id, area) => {
+      asked.push(`${area} ${id}`)
+      return id === "tem_FREE" || id === "ipr_NEW"
+    } })
     assert.equal(result.ok, true)
-    assert.deepEqual(result.items.map((entry) => entry.status), ["applied", "applied", "applied"])
+    assert.deepEqual(result.items.map((entry) => entry.status), ["applied", "applied", "applied", "applied"])
+    // Only ids that look like the area's ids are offered: "tem_SRC_ML" has the TypeID prefix "tem_SRC", not "tem".
+    assert.deepEqual(asked, ["members.teams tem_FREE", "ai-gateway.providers ipr_NEW"])
+    const invitedId = result.created.find((entry) => entry.ref === "invite:new@example.com")?.localId
+    assert.ok(invitedId)
     const mlId = result.created.find((entry) => entry.ref === "tem_SRC_ML")?.localId
     assert.ok(mlId && mlId !== "tem_SRC_ML")
     assert.deepEqual(result.aliases, [{ area: "members.teams", sourceId: "tem_SRC_ML", localId: mlId }])
     assert.equal(result.created.find((entry) => entry.ref === "tem_FREE")?.localId, "tem_FREE")
 
-    const teamCreate = calls[0]!.op
+    const teamCreate = calls[1]!.op
     assert.equal(teamCreate.kind, "create")
     if (teamCreate.kind !== "create") return
     assert.equal(teamCreate.preferredId, undefined)
-    assert.deepEqual(teamCreate.item.spec.members, [{ $ref: "people/ada@example.com", id: "om_ada" }, { $ref: "people/new@example.com", invite: true }])
-    const providerCreate = calls[2]!.op
+    // Never `{ invite: true }` without an id: the reference points at the person just invited.
+    assert.deepEqual(teamCreate.item.spec.members, [{ $ref: "people/ada@example.com", id: "om_ada" }, { $ref: "people/new@example.com", id: invitedId }])
+    const providerCreate = calls[3]!.op
     assert.equal(providerCreate.kind, "create")
     if (providerCreate.kind !== "create") return
     assert.equal(providerCreate.preferredId, "ipr_NEW")
@@ -596,6 +652,169 @@ describe("execute", () => {
     if (update?.kind !== "update") return
     assert.deepEqual(update.item.spec.credentials, { apiKey: { $secret: keepKey.path, decision: "keep" } })
     assert.equal(update.previous.id, "ipr_A")
+  })
+})
+
+describe("security limits", () => {
+  const team = (index: number) => ({ id: `tem_${String(index).padStart(6, "0")}`, name: `Team ${index}`, spec: { description: "", members: [] } })
+
+  test("more than 2,000 items in one area, or 20,000 in all, is invalid", () => {
+    const store = seed()
+    const areas = makeAreas(store, [])
+    const big = buildPlan(planInput(store, areas, { "members.teams": { specVersion: 1, items: Array.from({ length: 2001 }, (_, index) => team(index)) } }))
+    assert.ok(big.fatalErrors.some((error) => error.includes("2,001 items is more than the 2,000 allowed in one area")))
+    assert.equal(items(big.plan, "members.teams").filter((entry) => entry.ref.startsWith("tem_")).length, 0)
+
+    const huge: Partial<Record<ConfigAreaKey, ConfigBlobArea>> = {}
+    for (const key of CONFIG_AREA_KEYS) huge[key] = { specVersion: 1, items: Array.from({ length: 1900 }, (_, index) => team(index)) }
+    const tooMany = buildPlan(planInput(store, areas, huge))
+    assert.ok(tooMany.fatalErrors.some((error) => error.includes("more than the 20,000 allowed")))
+    assert.equal(tooMany.execution.ops.length, 0)
+
+    const tree = { members: { teams: { specVersion: 1, items: Array.from({ length: 2001 }, (_, index) => team(index)) } } }
+    assert.ok(flattenConfigAreas(tree).errors.some((error) => error.includes("more than the 2,000 allowed")))
+  })
+
+  test("too many pairs to score: no proposals, every unmatched item needs a manual choice", () => {
+    const store = seed()
+    store.set("connectors.mcp", Array.from({ length: 200 }, (_, index) => ({ id: `mcp_T${index}`, key: null, name: `Target ${index}`, spec: { url: `https://t${index}.example.com` } })))
+    const areas = makeAreas(store, [])
+    const blob: Partial<Record<ConfigAreaKey, ConfigBlobArea>> = {
+      "connectors.mcp": { specVersion: 1, items: Array.from({ length: 300 }, (_, index) => ({ name: `Blob ${index}`, spec: { url: `https://b${index}.example.com` } })) },
+    }
+    const started = Date.now()
+    const { plan } = buildPlan(planInput(store, areas, blob))
+    assert.ok(Date.now() - started < 5000)
+    const blobItems = items(plan, "connectors.mcp").filter((entry) => entry.blob)
+    assert.equal(blobItems.length, 300)
+    assert.ok(blobItems.every((entry) => entry.flags.includes("needs_mapping") && !entry.candidates && entry.reasons?.includes("too many items to suggest matches; choose manually")))
+  })
+
+  test("forbidden keys and deep nesting are rejected; copies never touch a prototype", () => {
+    const store = seed()
+    const areas = makeAreas(store, [])
+    const polluted: ConfigSpec = JSON.parse('{"description":"","members":[],"extra":{"__proto__":{"polluted":true}}}')
+    const withProto = buildPlan(planInput(store, areas, { "members.teams": { specVersion: 1, items: [{ name: "Bad", spec: polluted }] } }))
+    assert.ok(withProto.fatalErrors.some((error) => error.includes('the key "__proto__" is not allowed')))
+    const withConstructor = buildPlan(planInput(store, areas, { "members.teams": { specVersion: 1, items: [{ name: "Bad", spec: { description: "", members: [], constructor: { prototype: {} } } }] } }))
+    assert.ok(withConstructor.fatalErrors.some((error) => error.includes('"constructor"')))
+
+    let deep: ConfigSpec = { leaf: true }
+    for (let depth = 0; depth < 40; depth += 1) deep = { next: deep }
+    const tooDeep = buildPlan(planInput(store, areas, { "members.teams": { specVersion: 1, items: [{ name: "Deep", spec: deep }] } }))
+    assert.ok(tooDeep.fatalErrors.some((error) => error.includes("nested more than 32 levels deep")))
+
+    // The envelope parser checks the raw input, before schema parsing can drop a `__proto__` key.
+    const raw: unknown = JSON.parse('{"members":{"teams":{"specVersion":1,"items":[{"name":"Bad","spec":{"__proto__":{"polluted":true}}}]}}}')
+    assert.ok(flattenConfigAreas(raw).errors.some((error) => error.includes('"__proto__"')))
+
+    const copy = rewriteRefs(JSON.parse('{"a":{"__proto__":{"polluted":true}},"b":{"$ref":"members.teams/tem_A"}}'), (_path, ref) => ({ ...ref, id: "x" }))
+    assert.equal(Object.hasOwn(Object.prototype, "polluted"), false)
+    assert.deepEqual(copy, { a: {}, b: { $ref: "members.teams/tem_A", id: "x" } })
+  })
+
+  test("a secret pasted into a secret field is redacted everywhere and makes the request invalid", () => {
+    const store = seed()
+    const areas = makeAreas(store, [])
+    const blob = exportBlob(store, areas, ["ai-gateway.providers"])
+    blob["ai-gateway.providers"]!.items[0]!.spec.credentials = { apiKey: "sk-pasted-secret-value" }
+    const result = buildPlan(planInput(store, areas, blob))
+    assert.ok(result.fatalErrors.includes('ai-gateway.providers "Anthropic (prod)": a secret value was pasted into credentials.apiKey; use the inputs step instead'))
+    assert.ok(!JSON.stringify(result).includes("sk-pasted-secret-value"))
+    const entry = item(result.plan, "ai-gateway.providers", "ipr_A")
+    assert.ok(entry.flags.includes("blocked"))
+    assert.equal(entry.fields.find((field) => field.path === "credentials.apiKey")?.to, "[redacted]")
+  })
+})
+
+describe("security fixes in planning", () => {
+  test("an explicit value or env decision writes an otherwise unchanged item", () => {
+    const store = seed()
+    const areas = makeAreas(store, [])
+    const blob = exportBlob(store, areas, ["ai-gateway.providers"])
+    assert.equal(item(buildPlan(planInput(store, areas, blob, { secretInputs: [keepKey] })).plan, "ai-gateway.providers", "ipr_A").op, "unchanged")
+    const replaced = buildPlan(planInput(store, areas, blob, { secretInputs: [{ path: keepKey.path, decision: "value", value: "sk-new" }] }))
+    const entry = item(replaced.plan, "ai-gateway.providers", "ipr_A")
+    assert.equal(entry.op, "update")
+    assert.ok(entry.reasons?.includes("credential will be replaced"))
+    assert.deepEqual(replaced.execution.ops.map((op) => `${op.kind} ${op.targetId}`), ["update ipr_A"])
+    assert.deepEqual(secretsNeedingValues(replaced.execution).map((secret) => secret.path), [keepKey.path])
+    const env = buildPlan(planInput(store, areas, blob, { secretInputs: [{ path: keepKey.path, decision: "env", env: "KEY" }], allowEnv: () => true }))
+    assert.equal(item(env.plan, "ai-gateway.providers", "ipr_A").op, "update")
+  })
+
+  test("revs cover name and key: a target rename after export is left alone, a blob-only rename applies", () => {
+    const store = seed()
+    const areas = makeAreas(store, [])
+    const teamsArea = areas.find((area) => area.key === "members.teams")!
+    const platform = store.get("members.teams")![0]!
+    assert.notEqual(itemRev(teamsArea, platform), itemRev(teamsArea, { ...platform, name: "Platform team" }))
+    assert.notEqual(itemRev(teamsArea, platform), itemRev(teamsArea, { ...platform, key: "other" }))
+
+    const blob = exportBlob(store, areas, ["members.teams"])
+    const renamedOnTarget = seed()
+    renamedOnTarget.get("members.teams")![0]!.name = "Platform team"
+    const targetRename = item(buildPlan(planInput(renamedOnTarget, areas, blob, { sameOrganization: true })).plan, "members.teams", "tem_A")
+    assert.equal(targetRename.op, "untouched")
+
+    const edited = structuredClone(blob)
+    edited["members.teams"]!.items[0]!.name = "Platform crew"
+    const blobRename = item(buildPlan(planInput(store, areas, edited, { sameOrganization: true })).plan, "members.teams", "tem_A")
+    assert.equal(blobRename.op, "rename")
+    assert.deepEqual(blobRename.fields, [{ path: "name", from: "Platform", to: "Platform crew" }])
+
+    const both = item(buildPlan(planInput(renamedOnTarget, areas, edited, { sameOrganization: true })).plan, "members.teams", "tem_A")
+    assert.ok(both.flags.includes("drift"))
+  })
+
+  test("a chosen ref target must exist among the referenced area's loaded items", () => {
+    const store = seed()
+    const areas = makeAreas(store, [])
+    const blob: Partial<Record<ConfigAreaKey, ConfigBlobArea>> = {
+      "ai-gateway.providers": { specVersion: 1, items: [{ id: "ipr_NEW", name: "OpenAI", spec: {
+        access: { orgWide: false, teams: [{ $ref: "members.teams/tem_GONE", name: "Gone" }] },
+        connector: { $ref: "connectors.mcp/mcp_X" },
+      } }] },
+    }
+    const choose = (targetId: string, path: string) => ({ area: "ai-gateway.providers" as const, ref: "ipr_NEW", path, resolution: { targetId } })
+    const resolved = (decided: ReturnType<typeof choose>[], targetItems?: BuildPlanInput["targetItems"]) =>
+      item(buildPlan(planInput(store, areas, blob, { decisions: decisions({ refs: decided }), ...(targetItems ? { targetItems } : {}) })).plan, "ai-gateway.providers", "ipr_NEW").refs ?? []
+    assert.equal(resolved([choose("tem_B", "access.teams[0]")])[0]?.resolvedId, "tem_B")
+    assert.equal(resolved([choose("tem_ELSEWHERE", "access.teams[0]")])[0]?.resolvedId, null)
+    // connectors.mcp is not loaded: a chosen id can't be checked, so it is not accepted.
+    const withoutMcp = new Map([...structuredClone([...store.entries()])].filter(([key]) => key !== "connectors.mcp"))
+    assert.equal(resolved([choose("mcp_X", "connector")], withoutMcp)[1]?.resolvedId, null)
+  })
+
+  test("schema defaults fill fields a hand-written item leaves out", () => {
+    const store = seed()
+    store.set("members.people", [{ id: "om_ada", key: null, name: "Ada", spec: { email: "ada@example.com", role: "member", status: "active", teams: [], managedBy: "manual" } }])
+    const areas = makeAreas(store, [])
+    const blob: Partial<Record<ConfigAreaKey, ConfigBlobArea>> = {
+      "members.people": { specVersion: 1, items: [{ name: "ada@example.com", spec: { email: "ada@example.com", role: "member" } }] },
+    }
+    const { plan, errors } = buildPlan(planInput(store, areas, blob))
+    assert.deepEqual(errors, [])
+    const entry = item(plan, "members.people", "#0")
+    assert.equal(entry.matchedBy, "natural")
+    assert.equal(entry.op, "unchanged")
+  })
+
+  test("references into areas the caller can't view keep their id but lose names", () => {
+    const store = seed()
+    const areas = makeAreas(store, [])
+    const blob = exportBlob(store, areas, ["ai-gateway.providers"])
+    const provider = blob["ai-gateway.providers"]!.items[0]!
+    provider.spec = { ...provider.spec, access: { orgWide: false, teams: [{ $ref: "members.teams/tem_B", name: "Design" }] } }
+    const visible = buildPlan(planInput(store, areas, blob, { secretInputs: [keepKey] }))
+    assert.deepEqual(item(visible.plan, "ai-gateway.providers", "ipr_A").fields.find((field) => field.path === "access.teams"), { path: "access.teams", added: ["Design"], removed: ["Platform"] })
+
+    const hidden = buildPlan(planInput(store, areas, blob, { secretInputs: [keepKey], visibleAreas: new Set<ConfigAreaKey>(["ai-gateway.providers"]) }))
+    const entry = item(hidden.plan, "ai-gateway.providers", "ipr_A")
+    assert.deepEqual(entry.fields.find((field) => field.path === "access.teams"), { path: "access.teams", added: ["members.teams/tem_B"], removed: ["members.teams/tem_A"] })
+    assert.deepEqual(entry.refs, [{ path: "access.teams[0]", ref: "members.teams/tem_B", resolvedId: "tem_B", via: "target" }])
+    assert.ok(!JSON.stringify(hidden.plan).includes("Platform"))
+    assert.equal(hidden.execution.ops[0]?.refs[0]?.resolution.kind, "target")
   })
 })
 

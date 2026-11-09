@@ -9,7 +9,7 @@ const den = await bootDen()
 after(async () => { await den.close() })
 const repo = await import("../../src/config-blobs/repository.js")
 const { getConfigInstanceId } = await import("../../src/config-blobs/instance.js")
-const { client } = await import("../../src/db.js")
+const { client, db } = await import("../../src/db.js")
 
 async function rawRows(sql: string, params: string[]): Promise<Record<string, unknown>[]> {
   if (!("getConnection" in client)) throw new Error("needs MySQL mode")
@@ -139,17 +139,27 @@ test("apply claims hold one apply per org at a time", async () => {
   const next = await repo.claimNextApply()
   assert.equal(next?.id, a2.id)
 
-  // An expired apply lease no longer holds the org.
+  // An expired apply lease no longer holds the org, and the interrupted apply is never run again:
+  // it fails (keeping its before-snapshot), other open requests go stale, the next one may apply.
   const orgC = await newOrg("Config Apply C")
   const c1 = await repo.createChangeRequest(request(orgC.orgId, { status: "queued" }))
   const c2 = await repo.createChangeRequest(request(orgC.orgId, { status: "queued" }))
+  const c3 = await repo.createChangeRequest(request(orgC.orgId, { status: "needs_review" }))
   const crashed = await repo.claimNextApply({ leaseMs: 1 })
   assert.equal(crashed?.id, c1.id)
+  assert.ok(crashed)
+  await repo.updateChangeRequest(orgC.orgId, c1.id, ["applying"], { beforeSnapshot: { snapshot: true }, secretInputs: [{ path: "a/b/c", decision: "unset" }] })
   await new Promise((resolve) => setTimeout(resolve, 20))
   const recovered = await repo.claimNextApply()
-  assert.equal(recovered?.id, c1.id, "the crashed apply is retried first")
-  assert.equal(recovered?.attempts, 2)
-  assert.equal(await repo.claimNextApply(), null, `${c2.id} waits for ${c1.id}`)
+  assert.equal(recovered?.id, c2.id, "the crashed apply is not retried; the next queued request applies")
+  const interrupted = await repo.getChangeRequest(orgC.orgId, c1.id, db.$primary)
+  assert.equal(interrupted?.status, "failed")
+  assert.deepEqual(interrupted?.errors, [repo.CONFIG_APPLY_INTERRUPTED_ERROR])
+  assert.deepEqual(interrupted?.beforeSnapshot, { snapshot: true }, "before-snapshot kept for a revert")
+  assert.equal(interrupted?.secretInputs, null)
+  assert.equal(interrupted?.leaseOwner, null)
+  assert.equal((await repo.getChangeRequest(orgC.orgId, c3.id, db.$primary))?.status, "stale")
+  assert.equal(await repo.releaseClaim(crashed, { status: "applied" }), false, "the crashed worker can't overwrite the outcome")
   void b1
 })
 
@@ -166,6 +176,15 @@ test("aliases map source items to local ids per source instance", async () => {
   const aliases = await repo.listAliases(org.orgId, "dni_a")
   assert.deepEqual(Object.fromEntries(aliases), { "members.teams:tem_1": "tem_local2", "members.roles:pms_1": "pms_local1" })
   assert.equal((await repo.listAliases(org.orgId, "dni_b")).get(repo.aliasKey("members.teams", "tem_1")), "tem_other")
+
+  // Provenance rows, and deleting the aliases of local items an apply deleted (every source instance).
+  const provenance = await repo.createChangeRequest(request(org.orgId))
+  await repo.insertAliases(org.orgId, [{ area: "members.roles", sourceInstanceId: "dni_a", sourceId: "pms_2", localId: "pms_local2", createdByChangeRequestId: provenance.id }])
+  const rows = await repo.listAliasRows(org.orgId, "dni_a")
+  assert.equal(rows.find((row) => row.sourceId === "pms_2")?.createdByChangeRequestId, provenance.id)
+  assert.equal(await repo.deleteAliasesForLocalIds(org.orgId, [{ area: "members.teams", localId: "tem_local2" }, { area: "members.teams", localId: "tem_other" }, { area: "members.roles", localId: "tem_local2" }]), 2)
+  assert.deepEqual(Object.fromEntries(await repo.listAliases(org.orgId, "dni_a")), { "members.roles:pms_1": "pms_local1", "members.roles:pms_2": "pms_local2" })
+  assert.equal((await repo.listAliases(org.orgId, "dni_b")).size, 0)
 })
 
 test("exports are kept per base hash, encrypted, and pruned to the newest ones", async () => {
