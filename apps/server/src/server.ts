@@ -110,6 +110,7 @@ import {
 } from "./workspace-export-safety.js";
 import { serve, type ServeResult } from "./serve-node.js";
 import { serveStaticUi } from "./static-ui.js";
+import { withSseHeartbeat } from "./sse-heartbeat.js";
 import { isAllowedHost } from "./allowed-hosts.js";
 import { externalFetch, loopbackFetch, transferResponseBody } from "./server-fetch.js";
 import { registerCoreRoutes } from "./routes/core.js";
@@ -1718,7 +1719,10 @@ async function forwardOpencodeV2Request(input: {
     const responseHeaders = new Headers(response.headers);
     responseHeaders.delete("content-length");
     responseHeaders.delete("content-encoding");
-    return sanitizeProxyResponse(new Response(scopedBody, { status: response.status, headers: responseHeaders }));
+    // Only this home's events pass the filter, so an idle workspace sends
+    // nothing, and the app reopens a stream that stays silent for 30 seconds.
+    const liveBody = withSseHeartbeat(scopedBody, engineEventStreamHeartbeatIntervalMs());
+    return sanitizeProxyResponse(new Response(liveBody, { status: response.status, headers: responseHeaders }));
   }
   const pendingKind = /^\/api\/form\/?$/.test(forwardedPath) ? "form"
     : /^\/api\/permission\/request\/?$/.test(forwardedPath) ? "permission" : undefined;
