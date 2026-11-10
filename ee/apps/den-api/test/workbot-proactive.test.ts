@@ -204,6 +204,26 @@ describe("waking a member's agent", () => {
     assert.equal(h.state.row.nextWakeAt.getTime(), NOW + 5 * 60_000, "the calendar is looked at again in five minutes")
   })
 
+  test("a team with its own policy decides for its members: woken while Everyone's is off, not woken while the team's is off", async () => {
+    const template = { ...DEFAULT_AGENT_TEMPLATE, instructions: "Research only.", versionId: createDenTypeId("configObjectVersion"), version: 2 }
+    const never = async (): Promise<never> => { throw new Error("Everyone's must not be read") }
+    // Everyone's is off, the member's team turned agents on: the pass runs on the team's policy and template alone.
+    const on = harness({ settings: { enabled: false } })
+    const asked: string[] = []
+    const teamOn = { ...on.deps, settings: never, template: never, teamPolicy: async (member: { memberId: string }) => { asked.push(member.memberId); return { settings: { ...settingsOn, leadMinutes: 30 }, template } } }
+    assert.deepEqual(await wakeAgent(on.state.row, teamOn), { status: "ran", reasons: ["scheduled"], reply: "quiet", delivered: null })
+    assert.deepEqual(asked, [memberId], "asked for this member only")
+    assert.match(on.state.turns[0]?.prompt ?? "", /Research only\./, "the team's instructions")
+    assert.equal(on.state.settles.at(-1)?.templateVersionId, template.versionId, "the team's template version is recorded")
+    // Everyone's is on, the member's team turned agents off: no wake, no turn, no message.
+    const off = harness({})
+    assert.deepEqual(await wakeAgent(off.state.row, { ...off.deps, teamPolicy: async () => ({ settings: { ...settingsOn, enabled: false }, template }) }), { status: "skipped", reason: "off" })
+    assert.equal(off.state.turns.length, 0)
+    // No team policy for the member (the feature off, no team with its own, or teams that differ): Everyone's, as before.
+    const everyone = harness({})
+    assert.deepEqual(await wakeAgent(everyone.state.row, { ...everyone.deps, teamPolicy: async () => null }), { status: "ran", reasons: ["scheduled"], reply: "quiet", delivered: null })
+  })
+
   test("a message is delivered once; the same item is never delivered again", async () => {
     const reply = message("Northwind is waiting on the renewal proposal (since 9:10 AM).", [{ responsibility: "waiting_on_you", ref: "thread-abc" }])
     const h = harness({ replies: [reply, reply] })

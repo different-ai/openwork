@@ -6,13 +6,17 @@ import { EVERYONE_SCOPE, scopeChipState, scopeConflictLine, teamScopeName, teamS
 import { workbotDisplayName, workbotModelName, workbotModelOptions } from "./workbot-model-options";
 import { stepLimitChoices, stepLimitLabel, stepLimitValue } from "./workbot-step-limit-options";
 import {
+  WORKBOT_AGENTS_LABEL,
   WORKBOT_CONFLICT_SETTING,
+  workbotAgentsShown,
   workbotEveryoneSavedMessage,
   workbotModelPickerChoice,
   workbotModelPickerOptions,
   workbotModelPickerValue,
   workbotOffLine,
   workbotOnOffLabel,
+  workbotTeamAgentsChanged,
+  workbotTeamAgentsSavedMessage,
   workbotTeamEnabled,
   workbotTeamModel,
   workbotTeamNameToSave,
@@ -214,4 +218,42 @@ test("a team counts as having its own settings with any of them, and an unlisted
   assert.deepEqual(workbotTeamRow(view, { teamId: "team_new", teamName: "New" }), {
     teamId: "team_new", teamName: "New", memberCount: 0, enabled: { inherit: true }, model: { inherit: true }, name: { inherit: true }, conflictingMemberCount: 0,
   });
+});
+
+/** The same view with members' agents available: off for Everyone, Design with its own settings and agents on, the rest following Everyone. */
+const withAgents: WorkbotTeamSettingsView = {
+  ...view,
+  organization: { ...view.organization, agentEnabled: false },
+  teams: view.teams.map((team) => ({ ...team, agent: team.teamName === "Design" ? { inherit: false, enabled: true } : { inherit: true, enabled: false } })),
+};
+
+test("the Members' agents section is there only while the view carries it", () => {
+  assert.equal(WORKBOT_AGENTS_LABEL, "Members' agents");
+  assert.equal(workbotAgentsShown(view), false);
+  assert.equal(workbotAgentsShown(withAgents), true);
+});
+
+test("a team's chip for members' agents follows its loaded settings, and the list until they load", () => {
+  const design = workbotTeamRow(withAgents, { teamId: "team_c", teamName: "Design" });
+  assert.equal(workbotTeamAgentsChanged(design, undefined), true);
+  assert.equal(workbotTeamAgentsChanged(workbotTeamRow(withAgents, support), undefined), false);
+  // A control was just saved: the team has its own settings before the list is read again.
+  assert.equal(workbotTeamAgentsChanged(workbotTeamRow(withAgents, support), { inherit: false }), true);
+  assert.equal(workbotTeamAgentsChanged(design, { inherit: true }), false);
+  // A team the list doesn't carry yet follows Everyone.
+  assert.equal(workbotTeamAgentsChanged(workbotTeamRow(withAgents, { teamId: "team_new", teamName: "New" }), undefined), false);
+});
+
+test("Everyone's chip and the count of teams with their own settings include members' agents", () => {
+  assert.deepEqual(workbotTeamsChanged(view, "agent"), []);
+  assert.deepEqual(workbotTeamsChanged(withAgents, "agent"), ["Design"]);
+  assert.deepEqual(scopeChipState(EVERYONE_SCOPE, { changed: false, changedTeams: workbotTeamsChanged(withAgents, "agent") }), { label: "Changed for Design", tone: "info" });
+  // Design has only its members' agents of its own.
+  assert.equal(workbotTeamsOverridingCount(withAgents), 4);
+});
+
+test("the line after Use Everyone's for members' agents, and after its Undo, says what is now true", () => {
+  assert.equal(workbotTeamSavedMessage({ agent: { inherit: true } }, settings), "Saved. This team uses Everyone's settings for members' agents.");
+  assert.equal(workbotTeamAgentsSavedMessage("everyone"), "Saved. This team uses Everyone's settings for members' agents.");
+  assert.equal(workbotTeamAgentsSavedMessage("own"), "Saved. This team has its own settings for members' agents again.");
 });

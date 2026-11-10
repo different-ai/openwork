@@ -29,6 +29,7 @@ import { DenSelect } from "../../_components/ui/select";
 import { DenSwitch } from "../../_components/ui/switch";
 import { ConnectorLogo } from "./item-logo";
 import { SourceIcon } from "./source-icon";
+import type { AgentPolicyScope } from "./workbot-agent-scope";
 import { AgentConnectionTools } from "./workbot-agent-tools";
 
 /**
@@ -232,8 +233,8 @@ export function WorkbotProactiveSources({ view, canManage, saving, onChange, too
   canManage: boolean;
   saving: boolean;
   onChange: (change: WorkbotProactiveSettingsInput) => void;
-  /** With the brief on: where to list each connection's tools and connect one. */
-  tools?: { orgId: string; connectorHref: (connectionId: string) => string };
+  /** With the brief on: where to list each connection's tools (under Everyone's policy, or `scope`'s) and connect one. */
+  tools?: { orgId: string; scope?: AgentPolicyScope; connectorHref: (connectionId: string) => string };
 }) {
   const headingId = useId();
   const locked = !canManage || saving;
@@ -244,7 +245,7 @@ export function WorkbotProactiveSources({ view, canManage, saving, onChange, too
 
   const save = (change: AgentSourcesPolicyInput) => onChange({ sources: change });
   const toolsOf = (option: { id: string; name: string }) => tools && anyConnector ? (
-    <AgentConnectionTools orgId={tools.orgId} connectionId={option.id} name={option.name} connectHref={tools.connectorHref(option.id)} disabled={locked} onChange={save} />
+    <AgentConnectionTools orgId={tools.orgId} scope={tools.scope} connectionId={option.id} name={option.name} connectHref={tools.connectorHref(option.id)} disabled={locked} onChange={save} />
   ) : null;
 
   const coreRows = (kind: AgentCoreSource) => (

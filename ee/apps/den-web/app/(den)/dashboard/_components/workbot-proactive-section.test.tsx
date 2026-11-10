@@ -1,7 +1,25 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { renderToStaticMarkup } from "react-dom/server";
-import { DEFAULT_AGENT_BRIEF, DEFAULT_AGENT_TEMPLATE, DEFAULT_WORKBOT_PROACTIVE_SETTINGS, type AgentResponsibility, type WorkbotProactiveView } from "@openwork/types/den/workbot-proactive";
+import {
+  DEFAULT_AGENT_BRIEF,
+  DEFAULT_AGENT_TEMPLATE,
+  DEFAULT_WORKBOT_PROACTIVE_SETTINGS,
+  mergeAgentTemplate,
+  mergeWorkbotProactiveSettings,
+  type AgentResponsibility,
+  type WorkbotProactiveView,
+} from "@openwork/types/den/workbot-proactive";
+import {
+  agentPolicyPath,
+  agentPolicyQueryKey,
+  agentPolicyRestoreChange,
+  agentsSwitchLabel,
+  agentToolsPath,
+  agentToolsQueryKey,
+  agentToolsRootQueryKey,
+  type AgentPolicyScope,
+} from "./workbot-agent-scope";
 import { WorkbotProactivePanel } from "./workbot-proactive-section";
 import { previewTime } from "./workbot-proactive-preview";
 import { WorkbotProactiveHealthTable } from "./workbot-proactive-health";
@@ -257,4 +275,112 @@ test("with the brief, health is one row of checks on the rhythm", () => {
   const html = renderToStaticMarkup(<WorkbotProactiveHealthTable health={{ days: 7, members: 5, responsibilities: [], rhythm: { checks: 120, quiet: 96, sent: 31 } }} />);
   assert.match(text(html), /All members 120 80% 31/);
   assert.doesNotMatch(text(html), /Muted by/);
+});
+
+// ---- Everyone's policy, or one team's (workbotTeamSettings) ---------------------------------------------------------
+
+const everyoneScope: AgentPolicyScope = { kind: "everyone" };
+const supportScope: AgentPolicyScope = { kind: "team", teamId: "team/a" };
+
+test("Everyone's policy keeps the organization's routes and keys; a team's has its own under them", () => {
+  assert.equal(agentPolicyPath(everyoneScope), "/v1/org/workbot-settings/proactive");
+  assert.equal(agentToolsPath(everyoneScope, "emc notes"), "/v1/org/workbot-settings/proactive/sources/emc%20notes/tools");
+  assert.deepEqual(agentPolicyQueryKey("org_1", everyoneScope), ["org-workbot-proactive", "org_1"]);
+  assert.deepEqual(agentToolsQueryKey("org_1", "emc_notes", everyoneScope), ["org-workbot-agent-tools", "org_1", "emc_notes"]);
+
+  assert.equal(agentPolicyPath(supportScope), "/v1/org/workbot-settings/teams/team%2Fa/agent");
+  assert.equal(agentToolsPath(supportScope, "emc notes"), "/v1/org/workbot-settings/teams/team%2Fa/agent/sources/emc%20notes/tools");
+  const teamKey = agentPolicyQueryKey("org_1", supportScope);
+  const teamToolsKey = agentToolsQueryKey("org_1", "emc_notes", supportScope);
+  assert.deepEqual(teamKey, ["org-workbot-proactive", "org_1", "teams", "team/a"]);
+  assert.deepEqual(teamToolsKey, ["org-workbot-agent-tools", "org_1", "emc_notes", "teams", "team/a"]);
+  // A change to Everyone's policy refreshes everything under its key: the teams that follow it too.
+  assert.deepEqual(teamKey.slice(0, 2), agentPolicyQueryKey("org_1", everyoneScope));
+  assert.deepEqual(teamToolsKey.slice(0, 3), agentToolsQueryKey("org_1", "emc_notes", everyoneScope));
+  assert.deepEqual(teamToolsKey.slice(0, 2), agentToolsRootQueryKey("org_1"));
+  assert.notDeepEqual(agentPolicyQueryKey("org_1", { kind: "team", teamId: "team_b" }), teamKey);
+});
+
+test("a team's panel has the same rows, and its switch is for the team", () => {
+  assert.equal(agentsSwitchLabel(everyoneScope), "Agents for everyone");
+  assert.equal(agentsSwitchLabel(supportScope), "Agents for this team");
+  for (const view of [ready, briefOn]) {
+    const html = renderToStaticMarkup(
+      <WorkbotProactivePanel view={view} canManage saving={false} onChange={() => undefined} connectorsHref="/dashboard/mcp-connections" scope={supportScope} />,
+    );
+    assert.match(switchFor(html, "Agents for this team") ?? "", /aria-checked="true"/);
+    assert.ok(!text(html).includes("Agents for everyone"));
+    assert.equal(text(html).replace("Agents for this team", "Agents for everyone"), text(render(view)));
+  }
+});
+
+test("Undo for Use Everyone's saves the team's policy back as a change to Everyone's", () => {
+  const everyone: WorkbotProactiveView = {
+    ...briefOn,
+    settings: {
+      ...ready.settings,
+      enabled: false,
+      sources: {
+        calendar: "everyone",
+        email: "everyone",
+        chat: "everyone",
+        coreConnections: { chat: ["emc_slack"] },
+        coreDefaults: { calendar: "google-workspace" },
+        otherConnections: ["emc_notes"],
+        connections: { emc_notes: "everyone", emc_tracker: "off" },
+        toolOverrides: { emc_notes: { search: "allow", remove: "deny" }, emc_tracker: { list: "allow" } },
+      },
+      brief: { dailyCap: 6 },
+    },
+    brief: { ...briefSettings, dailyCap: 6, carriedOver: ["checkEveryHours", "extraChecksPerDay", "text"] },
+  };
+  const team: WorkbotProactiveView = {
+    ...briefOn,
+    settings: {
+      ...ready.settings,
+      enabled: true,
+      workingDays: "everyday",
+      startHour: 9,
+      endHour: 17,
+      dailyCap: 5,
+      membersStart: "opted_out",
+      sources: {
+        calendar: "members",
+        email: "off",
+        chat: "everyone",
+        coreConnections: { calendar: ["google-workspace"] },
+        otherConnections: ["emc_notes", "emc_tracker"],
+        connections: { emc_notes: "off" },
+        toolOverrides: { emc_notes: { search: "deny", read: "allow" } },
+      },
+      brief: { checkEveryHours: 3, text: "Only tell people about customers." },
+    },
+    template: { ...ready.template, responsibilities: { ...ready.template.responsibilities, meeting_prep: false }, instructions: "Ignore newsletters.", version: 4, versionId: "cov_team" },
+    brief: { ...briefSettings, checkEveryHours: 3, dailyCap: 5, text: "Only tell people about customers.", carriedOver: ["dailyCap", "extraChecksPerDay"] },
+  };
+
+  const change = agentPolicyRestoreChange(team, everyone);
+  // Only what differs is sent for sources: null takes away what Everyone has and the team didn't.
+  assert.deepEqual(change.sources, {
+    calendar: "members",
+    email: "off",
+    chat: "everyone",
+    coreConnections: { calendar: ["google-workspace"], chat: null },
+    coreDefaults: { calendar: null },
+    otherConnections: ["emc_notes", "emc_tracker"],
+    connections: { emc_notes: "off", emc_tracker: null },
+    toolOverrides: { emc_notes: { search: "deny", remove: null, read: "allow" }, emc_tracker: null },
+  });
+  // The team's first save starts from Everyone's policy: the change on top of it is the team's policy again.
+  const restored = mergeWorkbotProactiveSettings(everyone.settings, change);
+  assert.deepEqual(restored, { ...team.settings, brief: { checkEveryHours: 3, dailyCap: 5, text: "Only tell people about customers." } });
+  assert.deepEqual(mergeAgentTemplate(everyone.template, change), { responsibilities: team.template.responsibilities, instructions: "Ignore newsletters." });
+
+  // The same policy as Everyone's still makes it the team's own, and sends nothing the server could refuse.
+  const same = agentPolicyRestoreChange(everyone, everyone);
+  assert.deepEqual(same.sources, { calendar: "everyone", email: "everyone", chat: "everyone" });
+  assert.equal(same.enabled, false);
+  // With the brief off the server refuses `brief`, so it is left out.
+  assert.equal(agentPolicyRestoreChange(ready, ready).brief, undefined);
+  assert.deepEqual(agentPolicyRestoreChange(everyone, everyone).brief, { dailyCap: 6 });
 });

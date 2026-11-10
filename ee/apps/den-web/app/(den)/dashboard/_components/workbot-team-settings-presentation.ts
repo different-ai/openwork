@@ -20,10 +20,34 @@ import { stepLimitLabel } from "./workbot-step-limit-options";
 /** The picker value for the built-in default while its model isn't known (Workbot's models can't be reached). */
 const BUILT_IN_DEFAULT_VALUE = "::default";
 
-/** What differs for a member on two teams that disagree, for the conflict line: any of the rows, the step limit too. */
+/** What differs for a member on two teams that disagree, for the conflict line: any of the rows, the step limit and the settings for members' agents too. */
 export const WORKBOT_CONFLICT_SETTING = "Workbot setting";
 
-type WorkbotTeamSettingKey = "enabled" | "model" | "name" | "maxSteps";
+type WorkbotTeamSettingKey = "enabled" | "model" | "name" | "maxSteps" | "agent";
+
+/** The heading of the section for members' agents, and what its "Use Everyone's" names. */
+export const WORKBOT_AGENTS_LABEL = "Members' agents";
+
+/** The section for members' agents shows only while the view carries it: members' agents are available here. */
+export function workbotAgentsShown(view: Pick<WorkbotTeamSettingsView, "organization">): boolean {
+  return view.organization.agentEnabled !== undefined;
+}
+
+/**
+ * Whether a team has its own settings for members' agents: the policy's own answer once it has loaded (it changes
+ * as soon as a control is saved), else the list's.
+ */
+export function workbotTeamAgentsChanged(row: Pick<WorkbotTeamSettingsTeam, "agent">, policy: { inherit?: boolean } | undefined): boolean {
+  if (policy?.inherit !== undefined) return !policy.inherit;
+  return row.agent?.inherit === false;
+}
+
+/** The line next to Undo after a team went back to Everyone's settings for members' agents, or got its own back. */
+export function workbotTeamAgentsSavedMessage(now: "everyone" | "own"): string {
+  return now === "everyone"
+    ? "Saved. This team uses Everyone's settings for members' agents."
+    : "Saved. This team has its own settings for members' agents again.";
+}
 
 /** A team the view doesn't list yet (just created) follows Everyone for everything. */
 export function workbotTeamRow(view: WorkbotTeamSettingsView, team: { teamId: string; teamName: string }): WorkbotTeamSettingsTeam {
@@ -129,6 +153,7 @@ export function workbotTeamSavedMessage(change: WorkbotTeamSettingsWrite, settin
   if (change.maxSteps) {
     return change.maxSteps.inherit ? "Saved. This team uses Everyone's step limit." : savedStepLimitMessage(change.maxSteps.value, "This team's requests");
   }
+  if (change.agent) return workbotTeamAgentsSavedMessage("everyone");
   return "Saved.";
 }
 
@@ -154,7 +179,7 @@ export function workbotTeamsOnCount(view: Pick<WorkbotTeamSettingsView, "teams">
 
 /** Teams with any Workbot setting of their own. */
 export function workbotTeamsOverridingCount(view: Pick<WorkbotTeamSettingsView, "teams">): number {
-  return view.teams.filter((team) => !team.enabled.inherit || !team.model.inherit || !team.name.inherit || team.maxSteps?.inherit === false).length;
+  return view.teams.filter((team) => !team.enabled.inherit || !team.model.inherit || !team.name.inherit || team.maxSteps?.inherit === false || team.agent?.inherit === false).length;
 }
 
 export function workbotTeamsOverridingLabel(count: number): string {

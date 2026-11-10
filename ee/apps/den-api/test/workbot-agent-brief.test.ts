@@ -373,6 +373,21 @@ describe("Your agent's brief: a check, then maybe a message (workbotAgentBrief)"
     assert.match(written.h.checks[0]?.instructions ?? "", /Sam's own lines:\nAlso watch our Render bill\.\n"""$/)
   })
 
+  test("a team with its own policy decides for its members: its brief and limits while Everyone's is off, nothing while the team's is off", async () => {
+    const never = async (): Promise<never> => { throw new Error("Everyone's must not be read") }
+    const template = { ...DEFAULT_AGENT_TEMPLATE, versionId: null, version: 1 }
+    const team = { settings: { ...settingsOn, brief: { text: "Only tell me about research deadlines.", checkEveryHours: 4 as const } }, template }
+    // Everyone's is off; the member's team has its own policy: the check runs on the team's brief alone.
+    const on = harness({ settings: { enabled: false } })
+    assert.deepEqual(await wakeAgentBrief(on.h.row, { ...on.deps, settings: never, template: never, teamPolicy: async () => team }), { status: "ran", reasons: ["scheduled"], reply: "quiet", delivered: null })
+    assert.match(on.h.checks[0]?.instructions ?? "", /Only tell me about research deadlines\./)
+    assert.equal(on.h.settles.at(-1)?.nextWakeAt.getTime(), MORNING + 4 * 3_600_000, "the team's rhythm sets the next check")
+    // Everyone's is on; the member's team turned agents off: no check and no message.
+    const off = harness({})
+    assert.deepEqual(await wakeAgentBrief(off.h.row, { ...off.deps, teamPolicy: async () => ({ ...team, settings: { ...settingsOn, enabled: false } }) }), { status: "skipped", reason: "off" })
+    assert.equal(off.h.checks.length, 0)
+  })
+
   test("with the feature off for the member, today's agent wakes, unchanged", async () => {
     const legacyTurns: string[] = []
     const { deps } = harness({})

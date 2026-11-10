@@ -10,6 +10,7 @@ import { useMutation, useQuery, useQueryClient, type QueryClient } from "@tansta
 import { getErrorMessage, getRequestError, requestJson } from "../../_lib/den-flow";
 import { ORG_SCOPE_HEADER } from "../../_lib/org-scope";
 import { useOrgDashboard } from "../_providers/org-dashboard-provider";
+import { agentPolicyQueryKey, agentToolsRootQueryKey } from "./workbot-agent-scope";
 import { workbotReadinessQueryKey } from "./workbot-readiness-data";
 import { workbotSettingsQueryKey } from "./workbot-settings-data";
 
@@ -21,7 +22,7 @@ export function workbotTeamSettingsQueryKey(orgId: string): string[] {
   return [...workbotSettingsQueryKey(orgId), "teams"];
 }
 
-/** Everyone's Workbot settings (on or off, model, name, and the step limit while it is on) and what each team changed (the `workbotTeamSettings` feature). */
+/** Everyone's Workbot settings (on or off, model, name, the step limit while it is on, and whether members' agents are on while they are available) and what each team changed (the `workbotTeamSettings` feature). */
 export function useWorkbotTeamSettings(orgId: string, enabled = true) {
   return useQuery({
     queryKey: workbotTeamSettingsQueryKey(orgId),
@@ -61,6 +62,7 @@ export type SaveWorkbotTeamSettingsInput = { teamId: string; change: WorkbotTeam
 export function useSaveWorkbotTeamSettings(orgId: string) {
   const queryClient = useQueryClient();
   const { runReauthableAction } = useOrgDashboard();
+  const settle = settleSave(queryClient, orgId);
 
   return useMutation({
     mutationKey: [...workbotTeamSettingsQueryKey(orgId), "save"],
@@ -79,7 +81,15 @@ export function useSaveWorkbotTeamSettings(orgId: string) {
       });
       return result.saved;
     },
-    ...settleSave(queryClient, orgId),
+    onSuccess: settle.onSuccess,
+    onSettled: (_saved, _error, input) => Promise.all([
+      settle.onSettled(),
+      // Back to Everyone's policy for members' agents: read the team's policy and its tools again before the save settles.
+      ...(input.change.agent ? [
+        queryClient.invalidateQueries({ queryKey: agentPolicyQueryKey(orgId, { kind: "team", teamId: input.teamId }) }),
+        queryClient.invalidateQueries({ queryKey: agentToolsRootQueryKey(orgId) }),
+      ] : []),
+    ]),
   });
 }
 

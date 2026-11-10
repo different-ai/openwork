@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useId, useState, type FormEvent } from "react";
 import type { WorkbotSettings } from "@openwork/types/den/workbot-settings";
-import { WORKBOT_TEAM_NAME_MAX_LENGTH, type WorkbotTeamSettingsWrite } from "@openwork/types/den/workbot-team-settings";
+import { WORKBOT_TEAM_NAME_MAX_LENGTH, type WorkbotTeamSettingsTeam, type WorkbotTeamSettingsWrite } from "@openwork/types/den/workbot-team-settings";
 import { DenButton } from "../../_components/ui/button";
 import { DenCard } from "../../_components/ui/card";
 import { DenCombobox } from "../../_components/ui/combobox";
@@ -12,22 +12,36 @@ import { DenNotice } from "../../_components/ui/notice";
 import { DenSelect } from "../../_components/ui/select";
 import { DenSkeleton } from "../../_components/ui/skeleton";
 import { DenSwitch } from "../../_components/ui/switch";
-import { getBrandAppearanceRoute, getOrgAccessFlags, orgFeatureEnabled, type DenOrgContext } from "../../_lib/den-org";
+import {
+  getBrandAppearanceRoute,
+  getMcpConnectionsRoute,
+  getOrgAccessFlags,
+  getWorkbotSettingsRoute,
+  orgFeatureEnabled,
+  type DenOrgContext,
+} from "../../_lib/den-org";
 import { useOrgDashboard } from "../_providers/org-dashboard-provider";
 import { ConflictLine, ReadOnlyNotice, SavedUndoLine, ScopeChip, SettingRow, UseEveryonesButton } from "./scoped-setting";
 import type { TeamScope } from "./team-scope";
+import { AGENT_HEALTH_ANCHOR, agentPolicyRestoreChange } from "./workbot-agent-scope";
 import { workbotDisplayName } from "./workbot-model-options";
+import { useSaveWorkbotProactive, useWorkbotProactive, type AgentPolicyView } from "./workbot-proactive-data";
+import { WorkbotProactiveSection } from "./workbot-proactive-section";
 import { useSaveWorkbotModel, useSaveWorkbotStepLimit, useWorkbotSettings } from "./workbot-settings-data";
 import { STEP_LIMIT_HELP, stepLimitChoices, stepLimitLabel, stepLimitValue } from "./workbot-step-limit-options";
 import { useSaveWorkbotEveryoneSettings, useSaveWorkbotTeamSettings, useWorkbotTeamSettings } from "./workbot-team-settings-data";
 import {
+  WORKBOT_AGENTS_LABEL,
   WORKBOT_CONFLICT_SETTING,
+  workbotAgentsShown,
   workbotEveryoneSavedMessage,
   workbotModelPickerChoice,
   workbotModelPickerOptions,
   workbotModelPickerValue,
   workbotOffLine,
   workbotOnOffLabel,
+  workbotTeamAgentsChanged,
+  workbotTeamAgentsSavedMessage,
   workbotTeamEnabled,
   workbotTeamModel,
   workbotTeamNameToSave,
@@ -41,7 +55,8 @@ import {
 
 type TeamSettingsQuery = ReturnType<typeof useWorkbotTeamSettings>;
 type ModelsQuery = ReturnType<typeof useWorkbotSettings>;
-type RowsProps = { orgId: string; view: TeamSettingsQuery; models: ModelsQuery; canEdit: boolean };
+type RowsProps = { orgId: string; orgSlug: string | null; view: TeamSettingsQuery; models: ModelsQuery; canEdit: boolean };
+type TeamOnlyScope = Extract<TeamScope, { kind: "team" }>;
 
 /** The Workbot tab shows with settings per team on, for people who can view Workbot's settings. */
 export function workbotTabVisible(orgContext: DenOrgContext | null): boolean {
@@ -56,9 +71,10 @@ function errorMessage(error: unknown, fallback: string): string {
 
 /**
  * Members › Teams › Everyone (or a team) › Workbot: whether Workbot is on, the
- * model it starts on, its step limit (while the step limit is on) and the name
- * it goes by. Everyone's page holds the values every team follows until it
- * changes one for its own members.
+ * model it starts on, its step limit (while the step limit is on), the name
+ * it goes by and, while members' agents are available, how they work.
+ * Everyone's page holds the values every team follows until it changes one
+ * for its own members.
  */
 export function WorkbotPanel({ scope }: { scope: TeamScope }) {
   const { orgContext, orgId: scopedOrgId, orgSlug } = useOrgDashboard();
@@ -96,7 +112,7 @@ export function WorkbotPanel({ scope }: { scope: TeamScope }) {
         />
       ) : null}
       {scope.kind === "team"
-        ? <TeamWorkbotSettings key={scope.teamId} scope={scope} orgId={orgId} view={view} models={models} canEdit={canEdit} />
+        ? <TeamWorkbotSettings key={scope.teamId} scope={scope} orgId={orgId} orgSlug={orgSlug} view={view} models={models} canEdit={canEdit} />
         : <EveryoneWorkbotSettings scope={scope} orgId={orgId} orgSlug={orgSlug} view={view} models={models} canEdit={canEdit} />}
     </div>
   );
@@ -179,7 +195,7 @@ function WorkbotStepLimitSelect({ labelId, saved, disabled, onPick }: {
 }
 
 /** Everyone: Workbot on or off, its default model and its step limit, saved on change. The name is the organization's brand name. */
-function EveryoneWorkbotSettings({ scope, orgId, orgSlug, view, models, canEdit }: RowsProps & { scope: TeamScope; orgSlug: string | null }) {
+function EveryoneWorkbotSettings({ scope, orgId, orgSlug, view, models, canEdit }: RowsProps & { scope: TeamScope }) {
   const ids = { enabled: useId(), model: useId(), maxSteps: useId(), name: useId() };
   const saveEveryone = useSaveWorkbotEveryoneSettings(orgId);
   const saveModel = useSaveWorkbotModel(orgId);
@@ -270,12 +286,127 @@ function EveryoneWorkbotSettings({ scope, orgId, orgSlug, view, models, canEdit 
       {saved ? (
         <SavedUndoLine message={workbotEveryoneSavedMessage(saved.change, settings)} pending={pending} onUndo={() => void store(saved.undo, saved.change)} />
       ) : null}
+      {data && workbotAgentsShown(data) ? (
+        <EveryoneMembersAgents scope={scope} orgId={orgId} orgSlug={orgSlug} changedTeams={workbotTeamsChanged(data, "agent")} canEdit={canEdit} />
+      ) : null}
     </>
   );
 }
 
+const quietLinkClass = "shrink-0 rounded text-[12px] text-gray-500 underline-offset-2 hover:text-gray-900 hover:underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-gray-900";
+
+/** Everyone's members' agents: the same controls, value and save as Manage › Workbot, so the two pages never disagree. */
+function EveryoneMembersAgents({ scope, orgId, orgSlug, changedTeams, canEdit }: {
+  scope: TeamScope;
+  orgId: string;
+  orgSlug: string | null;
+  changedTeams: readonly string[];
+  canEdit: boolean;
+}) {
+  return (
+    <div className="mt-3" data-testid="team-workbot-agents">
+      <WorkbotProactiveSection
+        orgId={orgId}
+        scope={scope}
+        canManage={canEdit}
+        connectorsHref={getMcpConnectionsRoute(orgSlug)}
+        headerAside={(
+          <>
+            <ScopeChip scope={scope} changed={false} changedTeams={changedTeams} />
+            {/* The counts cover every member whatever their team, so they stay on Manage › Workbot. */}
+            <Link href={`${getWorkbotSettingsRoute(orgSlug)}#${AGENT_HEALTH_ANCHOR}`} className={quietLinkClass}>See the last 7 days</Link>
+          </>
+        )}
+      />
+    </div>
+  );
+}
+
+/**
+ * A team's members' agents: Everyone's settings until the team changes a control, which gives the team its own
+ * copy of all of them. "Use Everyone's" removes that copy; Undo saves it back.
+ */
+function TeamMembersAgents({ scope, orgId, orgSlug, row, canEdit }: {
+  scope: TeamOnlyScope;
+  orgId: string;
+  orgSlug: string | null;
+  row: Pick<WorkbotTeamSettingsTeam, "agent">;
+  canEdit: boolean;
+}) {
+  const policy = useWorkbotProactive(orgId, Boolean(orgId), scope);
+  const savePolicy = useSaveWorkbotProactive(orgId, scope);
+  const saveTeam = useSaveWorkbotTeamSettings(orgId);
+  const [saveError, setSaveError] = useState<string | null>(null);
+  // After "Use Everyone's": the team's settings as they were, for Undo. After that Undo: the way back is "Use Everyone's" again.
+  const [saved, setSaved] = useState<{ now: "everyone"; previous: AgentPolicyView } | { now: "own" } | null>(null);
+  const pending = saveTeam.isPending || savePolicy.isPending;
+  const changed = workbotTeamAgentsChanged(row, policy.data);
+
+  async function followEveryone() {
+    const previous = policy.data;
+    if (!previous) return;
+    setSaveError(null);
+    setSaved(null);
+    try {
+      await saveTeam.mutateAsync({ teamId: scope.teamId, change: { agent: { inherit: true } } });
+      setSaved({ now: "everyone", previous });
+    } catch (error) {
+      setSaveError(errorMessage(error, "Couldn't save this team's Workbot settings. Try again."));
+    }
+  }
+
+  async function restore(previous: AgentPolicyView) {
+    setSaveError(null);
+    try {
+      // What the save starts from: Everyone's settings as they are now.
+      const current = await policy.refetch();
+      if (current.isError || !current.data) throw new Error("Couldn't load Everyone's settings. Try again.");
+      await savePolicy.mutateAsync(agentPolicyRestoreChange(previous, current.data));
+      setSaved({ now: "own" });
+    } catch (error) {
+      setSaveError(errorMessage(error, "Couldn't save this team's Workbot settings. Try again."));
+    }
+  }
+
+  return (
+    <div className="mt-3" data-testid="team-workbot-agents">
+      <WorkbotProactiveSection
+        orgId={orgId}
+        scope={scope}
+        canManage={canEdit}
+        connectorsHref={getMcpConnectionsRoute(orgSlug)}
+        busy={pending}
+        onEdit={() => {
+          setSaveError(null);
+          setSaved(null);
+        }}
+        headerAside={(
+          <>
+            <ScopeChip scope={scope} changed={changed} />
+            {canEdit && changed ? (
+              <UseEveryonesButton settingLabel={WORKBOT_AGENTS_LABEL} disabled={pending || !policy.data} onClick={() => void followEveryone()} />
+            ) : null}
+          </>
+        )}
+        belowHeader={saveError || saved ? (
+          <>
+            {saveError ? <p role="alert" className="px-1 text-[13px] text-red-700">{saveError}</p> : null}
+            {saved ? (
+              <SavedUndoLine
+                message={workbotTeamAgentsSavedMessage(saved.now)}
+                pending={pending}
+                onUndo={() => void (saved.now === "everyone" ? restore(saved.previous) : followEveryone())}
+              />
+            ) : null}
+          </>
+        ) : null}
+      />
+    </div>
+  );
+}
+
 /** A team: each row shows Everyone's value until the team changes it, and "Use Everyone's" takes it back. */
-function TeamWorkbotSettings({ scope, orgId, view, models, canEdit }: RowsProps & { scope: Extract<TeamScope, { kind: "team" }> }) {
+function TeamWorkbotSettings({ scope, orgId, orgSlug, view, models, canEdit }: RowsProps & { scope: TeamOnlyScope }) {
   const ids = { enabled: useId(), model: useId(), maxSteps: useId(), name: useId() };
   const save = useSaveWorkbotTeamSettings(orgId);
   const [saveError, setSaveError] = useState<string | null>(null);
@@ -410,6 +541,9 @@ function TeamWorkbotSettings({ scope, orgId, view, models, canEdit }: RowsProps 
       {saveError ? <p role="alert" className="px-1 text-[13px] text-red-700">{saveError}</p> : null}
       {saved ? (
         <SavedUndoLine message={workbotTeamSavedMessage(saved.change, settings)} pending={save.isPending} onUndo={() => void store(saved.undo, saved.change)} />
+      ) : null}
+      {data && row && workbotAgentsShown(data) ? (
+        <TeamMembersAgents scope={scope} orgId={orgId} orgSlug={orgSlug} row={row} canEdit={canEdit} />
       ) : null}
     </>
   );

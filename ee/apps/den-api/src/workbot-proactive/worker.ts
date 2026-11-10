@@ -3,6 +3,7 @@ import { markFeaturesUsed, type MarkFeaturesUsed } from "../feature-usage.js"
 import { appLogger } from "../observability/logger.js"
 import { readMemberGoogleCalendar } from "../routes/org/google-workspace.js"
 import { organizationCloudModel } from "../workbot/model.js"
+import { resolveMemberTeamAgent, teamAgentPolicy } from "../workbot/team-settings.js"
 import { readWorkbotDirectMessages } from "../slack-assistant/direct-message.js"
 import { activeMemberUser, agentBriefAllowed, listAgentCandidates, memberFirstName, proactiveAllowed, readProactiveSettings } from "./access.js"
 import { deliverAgentMessage, destinationBlock } from "./deliver.js"
@@ -47,6 +48,9 @@ export function defaultAgentWakeDeps(): AgentBriefWakeDeps {
     allowed: (organizationId, userId) => proactiveAllowed(organizationId, userId),
     settings: readProactiveSettings,
     template: readAgentTemplate,
+    // The team half of resolveMemberAgentPolicy: with workbotTeamSettings off it reads nothing, and the
+    // organization's policy and template are read above exactly as before.
+    teamPolicy: async (member) => teamAgentPolicy(await resolveMemberTeamAgent(member)),
     user: activeMemberUser,
     calendar: readMemberGoogleCalendar,
     model: (actor) => organizationCloudModel(actor),
@@ -102,7 +106,7 @@ export async function wakeAndMarkUse(
   return outcome
 }
 
-/** Gives every active member of an organization that turned its agent on an agent row. */
+/** Gives every active member of an organization where agents are on, for everyone or for a team, an agent row. */
 export async function discoverAgents() {
   for (const candidate of await listAgentCandidates()) await ensureAgentInstances(candidate.organizationId, candidate.memberIds)
 }

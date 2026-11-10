@@ -36,7 +36,6 @@ import { z } from "zod"
 import { organizationFeatureEnabled } from "../../features.js"
 import { RUNNER_UNAVAILABLE_MESSAGE, UNKNOWN_MODEL_MESSAGE } from "../../routes/org/workbot-settings.js"
 import { checkWorkbotTeamModel, saveWorkbotTeamSettingsChange } from "../../routes/org/workbot-team-settings.js"
-import { deleteTeamWorkbotSettings } from "../../workbot/team-settings.js"
 import { defineConfigArea, type ConfigApplyOp, type ConfigAreaContext, type ConfigItem } from "../area.js"
 import {
   applyFailure,
@@ -232,7 +231,14 @@ export const workbotTeamSettingsArea = defineConfigArea({
         const current = await currentRow(ctx, scope.teamId)
         if (!current) return { localId: op.targetId, steps }
         const step: ConfigApplyStep = { action: "delete", target: scope.teamName, detail: "uses the organization's Workbot settings" }
-        await deleteTeamWorkbotSettings(ctx.db, normalizeDenTypeId("team", scope.teamId))
+        // Only what this area carries goes back to the organization's. A team's own members'-agents policy is not
+        // part of it and stays; a row left with nothing is removed by the save.
+        await saveWorkbotTeamSettingsChange({
+          organizationId: normalizeDenTypeId("organization", ctx.organizationId),
+          teamId: normalizeDenTypeId("team", scope.teamId),
+          change: { model: { inherit: true }, name: { inherit: true }, enabled: { inherit: true }, maxSteps: { inherit: true } },
+          updatedByOrgMemberId: normalizeDenTypeId("member", ctx.actor.memberId),
+        })
           .catch((error: unknown) => applyFailure({ code: "write_failed", message: errorMessage(error), step }))
         steps.push(step)
         return { localId: op.targetId, steps }

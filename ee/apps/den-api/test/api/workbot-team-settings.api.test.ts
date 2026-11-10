@@ -9,13 +9,17 @@
  * their agent's checks; admins keep their settings routes.
  * A team's step limit (`maxSteps`) needs workbotStepLimit as well: without it the write is refused, the view omits
  * it, and the session clears a limit a team gave the member.
+ * A team's own policy for its members' agents (GET / PUT /v1/org/workbot-settings/teams/:teamId/agent) needs
+ * workbotProactive as well: a team follows Everyone's until its first save copies it, its members' agents then
+ * follow the team's (My agent, discovery and each wake), and `agent: { inherit: true }` removes it.
  */
 import assert from "node:assert/strict"
 import { after, test } from "node:test"
 import { eq } from "@openwork-ee/den-db/drizzle"
 import { OrganizationTable, WorkbotTeamSettingTable } from "@openwork-ee/den-db/schema"
 import { createDenTypeId, normalizeDenTypeId } from "@openwork-ee/utils/typeid"
-import { bootDen, field, list, summary, type Call, type Member } from "./harness.js"
+import { DEFAULT_AGENT_TEMPLATE, DEFAULT_WORKBOT_PROACTIVE_SETTINGS } from "@openwork/types/den/workbot-proactive"
+import { bootDen, field, isRecord, list, startFakeMcpServer, summary, text, type Call, type Member } from "./harness.js"
 import { gatewayFixtureEnv, grantGatewayModels, stubPublicModelCatalog } from "./gateway-fixture.js"
 
 // Workbot's models are each caller's own AI Gateway assignments; only the public model catalog is synthetic.
@@ -476,4 +480,332 @@ test("a team turns Workbot on or off for its members; two teams that differ give
   assert.equal(await proactiveAllowed(orgId, ben.userId), true)
   assert.equal((await mine(ben)).status, 200)
   assert.deepEqual(await workbotAccess(ben, orgId), on)
+})
+
+// ---- Members' agents per team -------------------------------------------------------------------------------------
+
+const proactive = "/v1/org/workbot-settings/proactive"
+const agentOf = (teamId: string) => `${path}/${teamId}/agent`
+
+/** An organization with members' agents available; team settings are turned on by each test. */
+async function agentWorkspace(label: string) {
+  const { orgId, owner } = await den.createOrg(await den.signUp(`${label} Owner`), `${label} workspace`)
+  assert.equal((await den.setFeature(orgId, "workbotProactive", true)).status, 200)
+  return { orgId, owner, call: den.as(owner, orgId) }
+}
+
+async function storedSettings(teamId: string) {
+  const { db } = await import("../../src/db.js")
+  const [row] = await db.$primary.select({ settings: WorkbotTeamSettingTable.settings }).from(WorkbotTeamSettingTable).where(eq(WorkbotTeamSettingTable.teamId, normalizeDenTypeId("team", teamId)))
+  return row?.settings ?? null
+}
+
+test("a team's agent settings need both features; off, they are refused and the list says nothing about agents", { timeout: 120_000 }, async () => {
+  const { orgId, owner, call } = await agentWorkspace("Agent gates")
+  const research = await den.createTeam(owner, orgId, "Research", [])
+
+  // Team settings off: the routes are not there, whatever members' agents are.
+  for (const refused of [await call("GET", agentOf(research)), await call("PUT", agentOf(research), { enabled: true }), await call("GET", `${agentOf(research)}/sources/emc_01k0000000000000000000000/tools`)]) {
+    assert.equal(refused.status, 404, summary(refused))
+    assert.deepEqual(refused.body, { error: "feature_disabled", feature })
+  }
+  await setFeature(orgId, true)
+  const shown = await call("GET", path)
+  assert.equal(field(shown.body, "organization", "agentEnabled"), false)
+  assert.deepEqual(team(shown, research).agent, { inherit: true, enabled: false })
+
+  // Members' agents off: refused like the organization's own routes, nothing saved, and the list omits the group.
+  assert.equal((await den.setFeature(orgId, "workbotProactive", false)).status, 200)
+  for (const refused of [await call("GET", agentOf(research)), await call("PUT", agentOf(research), { enabled: true }), await call("GET", proactive)]) {
+    assert.equal(refused.status, 404, summary(refused))
+    assert.deepEqual(refused.body, { error: "feature_disabled", feature: "workbotProactive" })
+  }
+  const inheritRefused = await call("PUT", `${path}/${research}`, { agent: inherit })
+  assert.equal(inheritRefused.status, 400, summary(inheritRefused))
+  assert.deepEqual(inheritRefused.body, { error: "invalid_request", message: "Members' agents aren't on for this organization.", details: [] })
+  const hidden = await call("GET", path)
+  assert.equal(field(hidden.body, "organization", "agentEnabled"), undefined)
+  assert.equal(team(hidden, research).agent, undefined)
+  assert.deepEqual(await storedRows(research), [])
+
+  // Workbot not on this deployment: the same answer as the organization's routes.
+  assert.equal((await den.setFeature(orgId, "workbotProactive", true)).status, 200)
+  const previous = process.env.DEN_WORKBOT_URL
+  delete process.env.DEN_WORKBOT_URL
+  try {
+    const withoutWorkbot = await call("GET", agentOf(research))
+    assert.equal(withoutWorkbot.status, 404, summary(withoutWorkbot))
+    assert.deepEqual(withoutWorkbot.body, { error: "feature_disabled", feature: "workbot" })
+    assert.equal(team(await call("GET", path), research).agent, undefined)
+  } finally {
+    process.env.DEN_WORKBOT_URL = previous
+  }
+  // The team's tools need Your agent's brief, as the organization's do.
+  const tools = await call("GET", `${agentOf(research)}/sources/emc_01k0000000000000000000000/tools`)
+  assert.equal(tools.status, 404, summary(tools))
+  assert.deepEqual(tools.body, { error: "feature_disabled", feature: "workbotAgentBrief" })
+  assert.equal((await den.setFeature(orgId, "workbotAgentBrief", true)).status, 200)
+  const unknown = await call("GET", `${agentOf(research)}/sources/emc_01k0000000000000000000000/tools`)
+  assert.equal(unknown.status, 404, summary(unknown))
+  assert.equal(field(unknown.body, "error"), "connection_not_found")
+})
+
+test("a team follows Everyone's agent settings until its first save copies them; inherit removes its own", { timeout: 180_000 }, async () => {
+  const { orgId, owner, call } = await agentWorkspace("Agent team")
+  await setFeature(orgId, true)
+  const research = await den.createTeam(owner, orgId, "Research", [])
+  const design = await den.createTeam(owner, orgId, "Design", [])
+  const everyones = await call("PUT", proactive, { enabled: true, dailyCap: 5, instructions: "Ignore newsletters." })
+  assert.equal(everyones.status, 200, summary(everyones))
+
+  // Following Everyone: the same view as the organization's, marked inherit, so the controls can show its values.
+  const following = await call("GET", agentOf(research))
+  assert.equal(following.status, 200, summary(following))
+  assert.equal(following.headers.get("cache-control"), "no-store")
+  assert.equal(field(following.body, "inherit"), true)
+  const everyonesView = (await call("GET", proactive)).body
+  assert.ok(isRecord(everyonesView))
+  assert.deepEqual(following.body, { ...everyonesView, inherit: true })
+  assert.deepEqual(await storedRows(research), [])
+
+  // The first save is the override: Everyone's policy and template as they are now, with the change on top.
+  const saved = await call("PUT", agentOf(research), { startHour: 10, sources: { chat: "off" } })
+  assert.equal(saved.status, 200, summary(saved))
+  assert.equal(saved.headers.get("cache-control"), "no-store")
+  assert.equal(field(saved.body, "inherit"), false)
+  const expected = { ...DEFAULT_WORKBOT_PROACTIVE_SETTINGS, enabled: true, dailyCap: 5, startHour: 10, sources: { ...DEFAULT_WORKBOT_PROACTIVE_SETTINGS.sources, chat: "off" } }
+  assert.deepEqual(field(saved.body, "settings"), expected)
+  assert.equal(field(saved.body, "template", "instructions"), "Ignore newsletters.", "Everyone's template is copied with the policy")
+  assert.deepEqual(field(saved.body, "template", "responsibilities"), DEFAULT_AGENT_TEMPLATE.responsibilities)
+  assert.equal(field(saved.body, "template", "version"), 1, "the team's own first version")
+  const firstVersion = field(saved.body, "template", "versionId")
+  assert.equal(typeof firstVersion, "string")
+  assert.deepEqual(field(await storedSettings(research), "agent", "settings"), expected, "kept in the team's row")
+  const read = await call("GET", agentOf(research))
+  assert.deepEqual(read.body, saved.body)
+
+  // From then on the team no longer follows Everyone's changes, and Everyone's is untouched by the team's.
+  assert.equal((await call("PUT", proactive, { dailyCap: 2, instructions: "Everyone only." })).status, 200)
+  assert.equal(field((await call("GET", agentOf(research))).body, "settings", "dailyCap"), 5)
+  assert.equal(field((await call("GET", agentOf(research))).body, "template", "instructions"), "Ignore newsletters.")
+  assert.equal(field((await call("GET", proactive)).body, "settings", "startHour"), DEFAULT_WORKBOT_PROACTIVE_SETTINGS.startHour)
+  assert.equal(field((await call("GET", agentOf(design))).body, "settings", "dailyCap"), 2, "a team without its own shows Everyone's now")
+
+  // A partial change merges onto the team's own; a policy change keeps the template version, a template change adds one.
+  const off = await call("PUT", agentOf(research), { enabled: false })
+  assert.deepEqual(field(off.body, "settings"), { ...expected, enabled: false })
+  assert.deepEqual([field(off.body, "template", "version"), field(off.body, "template", "versionId")], [1, firstVersion])
+  const edited = await call("PUT", agentOf(research), { responsibilities: { meeting_prep: false } })
+  assert.equal(field(edited.body, "template", "version"), 2)
+  assert.notEqual(field(edited.body, "template", "versionId"), firstVersion)
+  assert.equal(field(edited.body, "template", "responsibilities", "meeting_prep"), false)
+  assert.equal(field(edited.body, "template", "instructions"), "Ignore newsletters.")
+  const { db } = await import("../../src/db.js")
+  const { ConfigObjectTable } = await import("@openwork-ee/den-db/schema")
+  const objects = await db.$primary.select({ id: ConfigObjectTable.id }).from(ConfigObjectTable).where(eq(ConfigObjectTable.organizationId, normalizeDenTypeId("organization", orgId)))
+  assert.equal(objects.length, 1, "only Everyone's Your agent config object; a team's template lives in its row")
+
+  // The list says which teams have their own and whether agents are on under the policy each has now.
+  const listed = await call("GET", path)
+  assert.equal(field(listed.body, "organization", "agentEnabled"), true)
+  assert.deepEqual(team(listed, research).agent, { inherit: false, enabled: false })
+  assert.deepEqual(team(listed, design).agent, { inherit: true, enabled: true })
+
+  // The team's other settings and its agent policy are saved apart and kept apart.
+  assert.equal((await call("PUT", `${path}/${research}`, { name: own("Scout") })).status, 200)
+  assert.equal(field((await call("GET", agentOf(research))).body, "inherit"), false)
+  const value = await call("PUT", `${path}/${research}`, { agent: { inherit: false, value: { settings: expected } } })
+  assert.equal(value.status, 400, `the policy itself is saved through the agent route: ${summary(value)}`)
+
+  // Back to Everyone's: the policy goes, the name stays; with nothing left the row goes too.
+  const back = await call("PUT", `${path}/${research}`, { agent: inherit })
+  assert.deepEqual(team(back, research).agent, { inherit: true, enabled: true })
+  assert.deepEqual(team(back, research).name, own("Scout"))
+  assert.equal(field(await storedSettings(research), "agent"), undefined)
+  const again = await call("GET", agentOf(research))
+  assert.deepEqual([field(again.body, "inherit"), field(again.body, "settings", "dailyCap"), field(again.body, "template", "instructions")], [true, 2, "Everyone only."])
+  assert.equal((await call("PUT", `${path}/${research}`, { name: inherit })).status, 200)
+  assert.deepEqual(await storedRows(research), [])
+  // A new override starts from Everyone's as it is now, at version 1 again.
+  const restarted = await call("PUT", agentOf(research), { leadMinutes: 30 })
+  assert.deepEqual([field(restarted.body, "settings", "dailyCap"), field(restarted.body, "settings", "leadMinutes"), field(restarted.body, "template", "version")], [2, 30, 1])
+
+  // Deleting the team removes its policy with its row.
+  assert.ok((await call("DELETE", `/v1/teams/${research}`)).status < 300)
+  assert.deepEqual(await storedRows(research), [])
+})
+
+test("a team's agent change is checked exactly like the organization's, and only admins of this organization reach it", { timeout: 180_000 }, async () => {
+  const { orgId, owner, call } = await agentWorkspace("Agent checks")
+  const elsewhere = await agentWorkspace("Agent checks elsewhere")
+  await setFeature(orgId, true)
+  await setFeature(elsewhere.orgId, true)
+  const viewer = await den.newMember(owner, orgId, "Agent Viewer")
+  const plain = await den.newMember(owner, orgId, "Agent Plain")
+  const research = await den.createTeam(owner, orgId, "Research", [plain.memberId])
+  const viewers = await den.createTeam(owner, orgId, "Viewers", [viewer.memberId])
+  assert.equal((await call("POST", "/v1/permissions/sets", { teamId: viewers, permissions: [{ key: "inference.view", status: "allow" }] })).status, 201)
+  const elsewhereTeam = await den.createTeam(elsewhere.owner, elsewhere.orgId, "Elsewhere team", [])
+  // A connection of another organization: never a source here, for the organization or for a team.
+  const service = await startFakeMcpServer({ tools: [{ name: "list_tickets", description: "List open tickets", text: "none" }] })
+  const foreign = await elsewhere.call("POST", "/v1/mcp-connections", { name: "Support desk", url: `${service.url}/mcp`, authType: "none", credentialMode: "shared", access: { orgWide: true, memberIds: [], teamIds: [] } })
+  await service.close()
+  assert.equal(foreign.status, 200, summary(foreign))
+  const foreignId = text(field(foreign.body, "id"), "connection id")
+
+  // The same refusal, word for word, from both routes; nothing is saved by either.
+  for (const body of [
+    { sources: { connections: { [foreignId]: "everyone" } } },
+    { sources: { connections: { emc_01k0000000000000000000000: "off" } } },
+    { sources: { coreConnections: { calendar: [foreignId] } } },
+    { sources: { otherConnections: [foreignId] } },
+    { sources: { coreDefaults: { email: foreignId } } },
+    { sources: { toolOverrides: { [foreignId]: { list_issues: "allow" } } } },
+    { brief: { text: "Only deadlines." } },
+    { startHour: 18, endHour: 9 },
+    { leadMinutes: 7 },
+    { dailyCap: 50 },
+    { sources: { email: "sometimes" } },
+    { unknown: true },
+    { instructions: "x".repeat(601) },
+    { destination: { kind: "slack_channel", connectionId: "emc_01k0000000000000000000000", channel: "C0SHARED" } },
+  ]) {
+    const [forEveryone, forTeam] = [await call("PUT", proactive, body), await call("PUT", agentOf(research), body)]
+    assert.equal(forEveryone.status, 400, `${JSON.stringify(body)}: ${summary(forEveryone)}`)
+    assert.equal(forTeam.status, 400, `${JSON.stringify(body)}: ${summary(forTeam)}`)
+    assert.deepEqual(forTeam.body, forEveryone.body, JSON.stringify(body))
+  }
+  assert.deepEqual(await storedRows(research), [], "a refused first save creates no override")
+  assert.equal(field((await call("GET", agentOf(research))).body, "inherit"), true)
+  // A refused change to a team that has its own keeps what it had.
+  assert.equal((await call("PUT", agentOf(research), { dailyCap: 5 })).status, 200)
+  assert.equal((await call("PUT", agentOf(research), { dailyCap: 4, startHour: 18, endHour: 9 })).status, 400)
+  assert.equal(field((await call("GET", agentOf(research))).body, "settings", "dailyCap"), 5)
+
+  // The team must be one of this organization's, for every route.
+  for (const teamId of [createDenTypeId("team"), elsewhereTeam]) {
+    for (const missing of [await call("GET", agentOf(teamId)), await call("PUT", agentOf(teamId), { enabled: true })]) {
+      assert.equal(missing.status, 404, summary(missing))
+      assert.deepEqual(missing.body, { error: "team_not_found" })
+    }
+  }
+  assert.deepEqual(await storedRows(elsewhereTeam), [])
+  assert.equal(field((await elsewhere.call("GET", agentOf(elsewhereTeam))).body, "inherit"), true)
+
+  // View OpenWork Models settings reads; only Manage OpenWork Models writes; other members and organizations get nothing.
+  const asViewer = den.as(viewer, orgId)
+  const viewed = await asViewer("GET", agentOf(research))
+  assert.equal(viewed.status, 200, summary(viewed))
+  assert.deepEqual([field(viewed.body, "inherit"), field(viewed.body, "settings", "dailyCap")], [false, 5])
+  assert.equal(field(viewed.body, "sourceConnections"), null, "connection names only with View connections, as for the organization")
+  for (const refused of [
+    await asViewer("PUT", agentOf(research), { dailyCap: 1 }),
+    await asViewer("PUT", `${path}/${research}`, { agent: inherit }),
+    await den.as(plain, orgId)("GET", agentOf(research)),
+    await den.as(plain, orgId)("PUT", agentOf(research), { dailyCap: 1 }),
+    await den.as(plain, orgId)("GET", `${agentOf(research)}/sources/${foreignId}/tools`),
+  ]) assert.equal(refused.status, 403, summary(refused))
+  for (const refused of [await den.as(elsewhere.owner, orgId)("GET", agentOf(research)), await den.as(elsewhere.owner, orgId)("PUT", agentOf(research), { dailyCap: 1 })]) {
+    assert.equal(refused.status, 404, summary(refused))
+  }
+  assert.equal((await den.request(null, "GET", agentOf(research), { orgId })).status, 401)
+  assert.equal((await den.request(null, "PUT", agentOf(research), { orgId, body: { dailyCap: 1 } })).status, 401)
+  assert.equal(field((await call("GET", agentOf(research))).body, "settings", "dailyCap"), 5)
+})
+
+test("a member's agent follows their team's policy; two teams that differ give Everyone's; discovery and the wake follow each member's own", { timeout: 180_000 }, async () => {
+  const { orgId, owner, call } = await agentWorkspace("Agent members")
+  await setFeature(orgId, true)
+  const ada = await den.newMember(owner, orgId, "Agent Ada")
+  const ben = await den.newMember(owner, orgId, "Agent Ben")
+  const cal = await den.newMember(owner, orgId, "Agent Cal")
+  const research = await den.createTeam(owner, orgId, "Research", [ada.memberId, ben.memberId])
+  const design = await den.createTeam(owner, orgId, "Design", [ben.memberId])
+  const organizationId = normalizeDenTypeId("organization", orgId)
+  const { listAgentCandidates } = await import("../../src/workbot-proactive/access.js")
+  const { defaultAgentWakeDeps, wakeMemberAgent } = await import("../../src/workbot-proactive/worker.js")
+  const { ensureAgentInstances, readAgentInstance } = await import("../../src/workbot-proactive/repository.js")
+  const { requestAgentCheck } = await import("../../src/mcp/agent-check-request.js")
+  const discovered = async () => (await listAgentCandidates()).find((candidate) => candidate.organizationId === organizationId)?.memberIds ?? null
+  /** What My agent tells one member about the policy they are under: on at all, and the limits it follows. */
+  const mine = async (member: Member) => {
+    const view = await den.as(member, orgId)("GET", "/v1/me/agent")
+    assert.equal(view.status, 200, summary(view))
+    const hours = field(view.body, "workingHours")
+    return { available: field(view.body, "available"), ...(isRecord(hours) ? hours : {}) }
+  }
+  /** One wake of one member's agent with the worker's own wiring; nothing is settled or recorded. */
+  const wake = async (member: Member) => {
+    const memberId = normalizeDenTypeId("member", member.memberId)
+    await ensureAgentInstances(organizationId, [memberId])
+    const row = await readAgentInstance(memberId)
+    assert.ok(row, "the member has an agent")
+    const outcome = await wakeMemberAgent(row, { ...defaultAgentWakeDeps(), settle: async () => true, recordCheck: async () => {} })
+    return outcome.status === "skipped" ? outcome.reason : outcome.status
+  }
+  const everyone = { workingDays: "weekdays", startHour: 8, endHour: 19, dailyCap: 3 }
+
+  // Agents are off for everyone and no team has its own: nobody is a candidate and nobody is woken.
+  assert.equal(await discovered(), null)
+  assert.deepEqual(await mine(ada), { available: false, ...everyone })
+  assert.equal(await wake(ada), "off")
+
+  // Research turns agents on for its members only, with its own hours and limit.
+  assert.equal((await call("PUT", agentOf(research), { enabled: true, startHour: 10, dailyCap: 5 })).status, 200)
+  const teams = { workingDays: "weekdays", startHour: 10, endHour: 19, dailyCap: 5 }
+  assert.deepEqual(await mine(ada), { available: true, ...teams })
+  assert.deepEqual(await mine(ben), { available: true, ...teams }, "Ben's other team follows Everyone, so Research's applies")
+  assert.deepEqual(await mine(cal), { available: false, ...everyone }, "a member outside the team never gets its policy")
+  // Discovery finds the organization through the team's row, though Everyone's is off; every active member is a
+  // candidate and each one's own policy decides the wake.
+  const candidates = await discovered()
+  assert.ok(candidates)
+  for (const member of [ada, ben, cal]) assert.ok(candidates.includes(normalizeDenTypeId("member", member.memberId)), member.name)
+  // Past "off", the next gate in this workspace is the missing Slack app: the wake got as far as delivery.
+  assert.equal(await wake(ada), "slack_app_not_installed")
+  assert.equal(await wake(cal), "off")
+
+  // Ben's teams differ: he is back on Everyone's (off); the list counts him in both teams.
+  const differing = await call("PUT", agentOf(design), { enabled: true, dailyCap: 1 })
+  assert.equal(differing.status, 200, summary(differing))
+  const listed = await call("GET", path)
+  assert.deepEqual([team(listed, research).conflictingMemberCount, team(listed, design).conflictingMemberCount], [1, 1])
+  assert.deepEqual(await mine(ben), { available: false, ...everyone })
+  assert.equal(await wake(ben), "off")
+  assert.deepEqual(await mine(ada), { available: true, ...teams })
+  // Teams that hold the same policy agree, however each got there.
+  assert.equal((await call("PUT", agentOf(design), { startHour: 10, dailyCap: 5 })).status, 200)
+  assert.equal(team(await call("GET", path), research).conflictingMemberCount, 0)
+  assert.deepEqual(await mine(ben), { available: true, ...teams })
+  assert.equal((await call("PUT", `${path}/${design}`, { agent: inherit })).status, 200)
+
+  // Everyone's on, the team's off: the team's members get no wake, everyone else does.
+  assert.equal((await call("PUT", proactive, { enabled: true })).status, 200)
+  assert.equal((await call("PUT", agentOf(research), { enabled: false })).status, 200)
+  assert.deepEqual(await mine(ada), { available: false, ...teams })
+  assert.equal(await wake(ada), "off")
+  assert.equal(await wake(cal), "slack_app_not_installed")
+  assert.deepEqual(await mine(cal), { available: true, ...everyone })
+
+  // The agent's extra checks follow the member's own policy too: the team's brief allows none.
+  assert.equal((await den.setFeature(orgId, "workbotAgentBrief", true)).status, 200)
+  assert.equal((await call("PUT", agentOf(research), { enabled: true, brief: { extraChecksPerDay: 0 } })).status, 200)
+  // Tuesday 2026-10-20, 14:05 UTC (a new agent's zone), inside both policies' hours and between two checks.
+  const ask = (member: Member) => requestAgentCheck({ organizationId, memberId: normalizeDenTypeId("member", member.memberId), userId: normalizeDenTypeId("user", member.userId), at: "2026-10-20T14:45:00Z", why: "before the 3 PM", now: Date.parse("2026-10-20T14:05:00Z") })
+  assert.deepEqual(await ask(ada), { ok: false, text: "No extra checks left for that day (0 a day). The scheduled checks still run." })
+  const asked = await ask(cal)
+  assert.deepEqual([asked.ok, asked.text.startsWith("Extra check set for")], [true, true], asked.text)
+  assert.equal((await den.setFeature(orgId, "workbotAgentBrief", false)).status, 200)
+
+  // The feature off: team policies are kept but ignored, and discovery no longer counts them.
+  assert.equal((await call("PUT", proactive, { enabled: false })).status, 200)
+  assert.equal(await wake(ada), "slack_app_not_installed", "still the team's while the feature is on")
+  await setFeature(orgId, false)
+  assert.equal(await discovered(), null)
+  assert.deepEqual(await mine(ada), { available: false, ...everyone })
+  assert.equal(await wake(ada), "off")
+  assert.equal(field(await storedSettings(research), "agent", "settings", "enabled"), true, "kept for when the feature is back")
+  await setFeature(orgId, true)
+  assert.deepEqual(await mine(ada), { available: true, ...teams })
+  assert.ok((await discovered())?.includes(normalizeDenTypeId("member", ada.memberId)))
 })

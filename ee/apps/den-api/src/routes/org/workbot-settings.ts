@@ -12,6 +12,8 @@ import {
   agentConnectionToolsViewSchema,
   agentToolOverrides,
   resolveAgentBrief,
+  type AgentConnectionToolsView,
+  type AgentSourcesPolicy,
   type WorkbotProactiveHealth,
   type WorkbotProactiveSettings,
   type WorkbotProactiveSettingsInput,
@@ -50,7 +52,7 @@ import { memberPermissionsForRequest, type OrgRouteVariables } from "./shared.js
 
 const workbotSettingsDocumentSchema = workbotSettingsSchema.meta({ ref: "WorkbotSettings" })
 const workbotSettingsInputDocumentSchema = workbotSettingsInputSchema.meta({ ref: "WorkbotSettingsInput" })
-const featureDisabledSchema = z.object({ error: z.literal("feature_disabled"), feature: z.string() })
+export const featureDisabledSchema = z.object({ error: z.literal("feature_disabled"), feature: z.string() })
 export const unknownModelSchema = z.object({ error: z.literal("unknown_model"), message: z.string() }).meta({ ref: "WorkbotUnknownModelError" })
 export const runnerUnavailableSchema = z
   .object({ error: z.literal("workbot_runner_unavailable"), message: z.string() })
@@ -67,21 +69,23 @@ export const requireWorkbotSettingsRead: ReturnType<typeof requireOrgPermission>
 }
 
 /** Your agent needs Workbot on this deployment, the same capability that gates Workbot itself. */
-const requireWorkbotDeployed: ReturnType<typeof requireOrgPermission> = async (c, next) => {
+export const requireWorkbotDeployed: ReturnType<typeof requireOrgPermission> = async (c, next) => {
   if (workbotOrigin() === null) return c.json({ error: "feature_disabled" as const, feature: "workbot" }, 404)
   return next()
 }
 
 const workbotProactiveViewDocumentSchema = workbotProactiveViewSchema.meta({ ref: "WorkbotProactiveSettings" })
 const workbotProactiveHealthDocumentSchema = workbotProactiveHealthSchema.meta({ ref: "WorkbotProactiveHealth" })
-const workbotProactiveInputDocumentSchema = workbotProactiveSettingsInputSchema.meta({ ref: "WorkbotProactiveSettingsInput" })
-const agentConnectionToolsDocumentSchema = agentConnectionToolsViewSchema.meta({ ref: "WorkbotAgentConnectionTools" })
-const connectionToolsParamsSchema = z.object({ connectionId: z.string().trim().min(1).max(64) })
-const connectionNotFoundSchema = z.object({ error: z.literal("connection_not_found"), message: z.string() }).meta({ ref: "WorkbotAgentConnectionNotFound" })
-const invalidHoursSchema = z.object({ error: z.literal("invalid_working_hours"), message: z.string() }).meta({ ref: "WorkbotProactiveInvalidHoursError" })
+export const workbotProactiveInputDocumentSchema = workbotProactiveSettingsInputSchema.meta({ ref: "WorkbotProactiveSettingsInput" })
+export const agentConnectionToolsDocumentSchema = agentConnectionToolsViewSchema.meta({ ref: "WorkbotAgentConnectionTools" })
+export const connectionToolsParamsSchema = z.object({ connectionId: z.string().trim().min(1).max(64) })
+export const connectionNotFoundSchema = z.object({ error: z.literal("connection_not_found"), message: z.string() }).meta({ ref: "WorkbotAgentConnectionNotFound" })
+export const invalidHoursSchema = z.object({ error: z.literal("invalid_working_hours"), message: z.string() }).meta({ ref: "WorkbotProactiveInvalidHoursError" })
 export const INVALID_WORKING_HOURS_MESSAGE = "The workday must end after it starts."
+export const CONNECTION_NOT_FOUND_MESSAGE = "No such connection in this organization."
 
-async function proactiveView(organizationId: DenTypeId<"organization">, settings: WorkbotProactiveSettings, template: AgentTemplateVersion, canViewConnections: boolean, briefOn: boolean): Promise<WorkbotProactiveView> {
+/** A members'-agents policy as admins see it: the organization's, or one team's own (workbot-team-settings.ts). */
+export async function proactiveView(organizationId: DenTypeId<"organization">, settings: WorkbotProactiveSettings, template: AgentTemplateVersion, canViewConnections: boolean, briefOn: boolean): Promise<WorkbotProactiveView> {
   const { versionId, version, responsibilities, instructions } = template
   // What admins saved under `brief` is shown resolved (`brief` below), never raw.
   const { brief: _saved, ...policy } = settings
@@ -161,6 +165,55 @@ export async function saveWorkbotDefaultModel(input: { organizationId: DenTypeId
     return maxSteps !== undefined ? withWorkbotMaxSteps(withModel, maxSteps) : withModel
   })
   return { choice: "ok" as const, model: readWorkbotModel(metadata), maxSteps: readWorkbotMaxSteps(metadata), catalog }
+}
+
+/**
+ * What refuses an admin's change to a members'-agents policy before it is merged, with the answer to give (400):
+ * the brief while its feature is off, or a sources change the organization's connections don't allow (every id is
+ * one of the organization's connections, put where it can serve; an MCP only with reviewed read tools; each core
+ * source's default stays one of its allowed connections). The same checks for the organization's policy and a
+ * team's own; `currentSources` is the saved policy the change applies to. Null when nothing refuses it.
+ */
+export async function refusedProactiveChange(input: {
+  organizationId: DenTypeId<"organization">
+  requested: WorkbotProactiveSettingsInput
+  briefOn: boolean
+  currentSources: () => Promise<AgentSourcesPolicy>
+}): Promise<{ error: "invalid_request"; message: string; details: never[] } | { error: "invalid_request"; message: string } | null> {
+  if (input.requested.brief && !input.briefOn) return { error: "invalid_request", message: "Your agent's brief isn't on for this organization.", details: [] }
+  const invalid = checkSourcesChange({
+    change: input.requested.sources,
+    connections: await listOrganizationSourceConnections(input.organizationId),
+    current: await input.currentSources(),
+    mode: input.briefOn ? "any" : "reviewed",
+  })
+  return invalid ? { error: "invalid_request", message: invalid } : null
+}
+
+/**
+ * One of the organization's connections with its tools as members' agents see them under `sources` (the
+ * organization's policy, or a team's own); null when the connection isn't the organization's.
+ */
+export async function agentConnectionTools<T extends { Variables: OrgRouteVariables }>(app: Hono<T>, env: unknown, input: {
+  organizationId: DenTypeId<"organization">
+  memberId: DenTypeId<"member">
+  connectionId: string
+  sources: () => Promise<AgentSourcesPolicy>
+}): Promise<AgentConnectionToolsView | null> {
+  const { organizationId, memberId } = input
+  const connection = (await listOrganizationSourceConnections(organizationId)).find((entry) => entry.id === input.connectionId)
+  if (!connection) return null
+  const overrides = agentToolOverrides(await input.sources(), connection.id)
+  if (connection.native !== null) {
+    const catalog = await getCatalog(app as unknown as Hono, env)
+    const operations = nativeOperations(catalog, connection.native).map((operation) => ({ name: operation.name, method: operation.method, path: operation.path, summary: operation.operation.summary ?? null }))
+    return nativeConnectionToolsView({ connectionId: connection.id, operations, overrides })
+  }
+  const tools = await listConnectionToolsForMember({ organizationId, memberId, connectionId: connection.id })
+  if (tools) return mcpConnectionToolsView({ connectionId: connection.id, url: connection.url, tools, overrides })
+  const member = { orgMembershipId: memberId, teamIds: (await listTeamsForMember({ organizationId, memberId })).map((team) => team.id) }
+  const probe = await probeExternalConnectionStatus({ organizationId, member, connectionId: connection.id }).catch(() => null)
+  return unlistedConnectionToolsView(connection.id, probe?.ok && probe.connected ? "unavailable" : "needs_connection")
 }
 
 /**
@@ -259,19 +312,14 @@ export function registerOrgWorkbotSettingsRoutes<T extends { Variables: OrgRoute
       const { organization, currentMember } = c.get("organizationContext")
       if (!(await agentBriefAllowed(organization.id, currentMember.userId))) return c.json({ error: "feature_disabled" as const, feature: "workbotAgentBrief" }, 404)
       const { connectionId } = c.req.valid("param")
-      const connection = (await listOrganizationSourceConnections(organization.id)).find((entry) => entry.id === connectionId)
-      if (!connection) return c.json({ error: "connection_not_found" as const, message: "No such connection in this organization." }, 404)
-      const overrides = agentToolOverrides((await readProactiveSettings(organization.id)).sources, connection.id)
-      if (connection.native !== null) {
-        const catalog = await getCatalog(app as unknown as Hono, c.env)
-        const operations = nativeOperations(catalog, connection.native).map((operation) => ({ name: operation.name, method: operation.method, path: operation.path, summary: operation.operation.summary ?? null }))
-        return c.json(nativeConnectionToolsView({ connectionId: connection.id, operations, overrides }))
-      }
-      const tools = await listConnectionToolsForMember({ organizationId: organization.id, memberId: currentMember.id, connectionId: connection.id })
-      if (tools) return c.json(mcpConnectionToolsView({ connectionId: connection.id, url: connection.url, tools, overrides }))
-      const member = { orgMembershipId: currentMember.id, teamIds: (await listTeamsForMember({ organizationId: organization.id, memberId: currentMember.id })).map((team) => team.id) }
-      const probe = await probeExternalConnectionStatus({ organizationId: organization.id, member, connectionId: connection.id }).catch(() => null)
-      return c.json(unlistedConnectionToolsView(connection.id, probe?.ok && probe.connected ? "unavailable" : "needs_connection"))
+      const view = await agentConnectionTools(app, c.env, {
+        organizationId: organization.id,
+        memberId: currentMember.id,
+        connectionId,
+        sources: async () => (await readProactiveSettings(organization.id)).sources,
+      })
+      if (!view) return c.json({ error: "connection_not_found" as const, message: CONNECTION_NOT_FOUND_MESSAGE }, 404)
+      return c.json(view)
     },
   )
 
