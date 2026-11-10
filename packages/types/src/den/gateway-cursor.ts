@@ -116,3 +116,14 @@ export function claudeCodeModelName(input: { name: string; modelId: string; cont
 export function parseClaudeCodeModelName(value: unknown): ParsedCursorModelName | null {
   return typeof value === "string" ? parseCursorModelName(value.replace(/\[[^\]]*\]\s*$/, "")) : null;
 }
+
+/**
+ * The Codex CLI through the AI Gateway (feature `gatewayMemberApiKeys`) uses the same names with no
+ * thinking level: Codex sends its own (`model_reasoning_effort`). A level in the name still wins.
+ */
+export const CODEX_BASE_URL_PATH = "/codex";
+
+/** `https://gateway.example/api/v1` becomes `https://gateway.example/api/v1/codex` (a Codex provider's base_url). */
+export function codexBaseUrl(gatewayApiBaseUrl: string): string {
+  return `${gatewayApiBaseUrl.replace(/\/+$/, "")}${CODEX_BASE_URL_PATH}`;
+}
