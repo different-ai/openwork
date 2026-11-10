@@ -29,6 +29,9 @@ import {
 import type { SessionStatus } from "@opencode-ai/sdk/v2/client"
 import { openDesktopUrl } from "@/app/lib/desktop"
 import { isElectronRuntime } from "@/app/lib/runtime-env"
+import { markFeatureUsed } from "@/app/lib/den"
+import { useDesktopFeature } from "@/react-app/domains/session/status/use-desktop-feature"
+import { AssistantProse } from "@/components/markdown/assistant-prose"
 import { SYNTHETIC_SESSION_ERROR_MESSAGE_PREFIX } from "@/app/types"
 import { t } from "@/i18n"
 import { useOpenTargets } from "@/lib/target-provider"
@@ -672,6 +675,7 @@ const AssistantMessage = React.memo(
   ({ message, isStreaming, hideReasoning }: AssistantMessageProps) => {
     const { showThinking, highlightQuery } = useMessageList()
     const computerHistory = React.useContext(ComputerHistoryContext)
+    const portableCopy = useDesktopFeature("assistantProseClipboard")
     const assistantRenderGroups = React.useMemo(
       () => {
         const groups = getAssistantRenderGroups(withoutComputerHistory(message.parts, computerHistory), showThinking)
@@ -694,7 +698,7 @@ const AssistantMessage = React.memo(
               // the reply's text starts where their labels do instead of 28px
               // to the rail's left (DESIGN.md T1 — one quiet rail).
               return (
-                <div key={`text-${index}`} className="flex min-w-0 items-start gap-2">
+                <AssistantProse key={`text-${index}`} className="flex min-w-0 items-start gap-2" enabled={portableCopy} onCopied={() => markFeatureUsed("assistantProseClipboard")}>
                   <MessageContent
                     className="text-foreground prose w-full min-w-0 flex-1 rounded-lg bg-transparent p-0"
                     markdown
@@ -705,7 +709,7 @@ const AssistantMessage = React.memo(
                   >
                     {group.text}
                   </MessageContent>
-                </div>
+                </AssistantProse>
               )
             }
 
