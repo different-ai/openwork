@@ -17,7 +17,7 @@ import { DenSelect } from "../../_components/ui/select";
 import { DenSwitch } from "../../_components/ui/switch";
 import { DenTextarea } from "../../_components/ui/textarea";
 import { HelpTip } from "./help-tip";
-import { BriefPreview, everyLabel, hourLabel } from "./workbot-agent-brief-panel";
+import { BriefPreview, everyLabel, hourLabel, SEND_CHECK_ROW } from "./workbot-agent-brief-panel";
 import { agentsSwitchLabel, type AgentPolicyScope } from "./workbot-agent-scope";
 
 /**
@@ -172,6 +172,12 @@ export function WorkbotAgentSettingsGroups({ view, brief, canManage, saving, onC
             </DenSelect>
           </div>
         </Row>
+        {view.sendCheck ? (
+          <Row label={SEND_CHECK_ROW.label} help={SEND_CHECK_ROW.help} testId="workbot-agent-send-check" note={view.sendCheck.ready ? null : SEND_CHECK_ROW.notReady}>
+            <DenSwitch aria-label={SEND_CHECK_ROW.label} checked={settings.sendCheck === true} disabled={locked || (!view.sendCheck.ready && settings.sendCheck !== true)}
+              onChange={(sendCheck) => onChange({ sendCheck })} />
+          </Row>
+        ) : null}
       </Group>
 
       <Group title="Schedule">

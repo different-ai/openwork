@@ -3,6 +3,7 @@ import { AuthUserTable, MemberTable, OrganizationTable } from "@openwork-ee/den-
 import type { DenTypeId } from "@openwork-ee/utils/typeid"
 import { readWorkbotProactiveSettings, type WorkbotProactiveSettings } from "@openwork/types/den/workbot-proactive"
 import { db } from "../db.js"
+import { env } from "../env.js"
 import { getOrganizationFeatures, organizationFeatureEnabled } from "../features.js"
 import { headlessRunnerConfig } from "../headless-runner/client.js"
 import { workbotOrigin } from "../workbot/config.js"
@@ -35,6 +36,19 @@ export async function proactiveAllowed(organizationId: string, userId?: string) 
  */
 export async function agentBriefAllowed(organizationId: string, userId?: string) {
   return organizationFeatureEnabled(organizationId, "workbotAgentBrief", userId ? { userId } : {})
+}
+
+/**
+ * Your agent's send check (`workbotAgentSendCheck`) for this member: on top of the brief, never instead. The policy's
+ * own switch (`settings.sendCheck`) and the deployment's key (`agentSendCheckReady`) are checked where it runs.
+ */
+export async function agentSendCheckAllowed(organizationId: string, userId?: string) {
+  return organizationFeatureEnabled(organizationId, "workbotAgentSendCheck", userId ? { userId } : {})
+}
+
+/** Whether this deployment can run the send check: it has the key for the check model. */
+export function agentSendCheckReady() {
+  return Boolean(env.agentSendCheckApiKey)
 }
 
 export async function readProactiveSettings(organizationId: DenTypeId<"organization">): Promise<WorkbotProactiveSettings> {

@@ -14,6 +14,7 @@ import {
   agentMessageInstructions,
   agentMessagePrompt,
   agentMessageRetryPrompt,
+  agentToldToday,
   decideBriefDelivery,
   extraChecksLeft,
   isFirstCheckOfDay,
@@ -52,6 +53,7 @@ import {
 } from "./sources.js"
 import type { AgentReadToolInput } from "@openwork/automations/agent-read-tools"
 import { planAgentTools, sourceUsable, unusableWhy } from "./agent-tools.js"
+import type { AgentSendCheck } from "./send-check.js"
 import type { MemberConnection } from "./sources.js"
 import type { AgentRawTurnResult } from "./turn.js"
 import type { AgentWakeDeps, AgentWakeOutcome } from "./wake.js"
@@ -94,6 +96,11 @@ export type AgentBriefWakeDeps = AgentWakeDeps & {
    * the check may call; null when its server didn't answer.
    */
   readTools: (input: { organizationId: DenTypeId<"organization">; memberId: DenTypeId<"member">; connection: MemberConnection }) => Promise<readonly AgentReadToolInput[] | null>
+  /**
+   * `workbotAgentSendCheck`: the check for this member, or null while the feature is off for them or the deployment
+   * has no key for the check model. Asked only when the member's policy turned the check on.
+   */
+  sendCheck?: (input: { organizationId: DenTypeId<"organization">; memberId: DenTypeId<"member">; userId: DenTypeId<"user"> }) => Promise<AgentSendCheck | null>
 }
 
 type Skip = "off" | "not_allowed" | "opted_out" | "snoozed" | "outside_hours" | "quiet_hours" | "no_destination" | "slack_app_not_installed" | "member_not_linked" | "no_sources" | "nothing_due"
@@ -254,10 +261,11 @@ export async function wakeAgentBrief(row: AgentInstanceRow, deps: AgentBriefWake
   // Step 1: the check. The brief is text people in OpenWork wrote; the sources are data from other people.
   const name = (await deps.person(organizationId, memberId).catch(() => null))?.trim() || "the member"
   const nextAfter = nextScheduledCheck({ rhythm, lastCheckAt: now, now, timeZone, snoozedUntil: null })
+  const briefText = agentBriefForCheck({ name, organization: brief.text, member: memberBriefLines(stored, row.overrides).lines })
   const check = await deps.check({
     actor,
     sessionId: deps.sessionId(organizationId, memberId),
-    instructions: agentCheckInstructions({ name, brief: agentBriefForCheck({ name, organization: brief.text, member: memberBriefLines(stored, row.overrides).lines }) }),
+    instructions: agentCheckInstructions({ name, brief: briefText }),
     model,
     prompt: agentCheckPrompt({
       occasion,
@@ -327,10 +335,31 @@ export async function wakeAgentBrief(row: AgentInstanceRow, deps: AgentBriefWake
       } else if (reply.kind === "quiet") {
         outcome = { reason: "findings_held" }
       } else {
+        // The send check, when this policy turned it on: each message is read once more against the brief and what
+        // the member was told today. Only a confident answer holds one; no answer sends it, as without the check.
+        const sendCheck = settings.sendCheck === true && deps.sendCheck ? await deps.sendCheck({ organizationId, memberId, userId }).catch(() => null) : null
+        let messages = reply.messages
+        let heldForBrief = 0
+        if (sendCheck) {
+          const toldToday = agentToldToday({ conversation: conversation ?? [], sent: state.sent, since: zonedDayStart(now, timeZone) })
+          const checked = await Promise.all(reply.messages.map((message) => sendCheck({ brief: briefText, message: message.text, update: message.update, toldToday })))
+          messages = reply.messages.filter((_, index) => checked[index]?.verdict.kind !== "hold")
+          heldForBrief = checked.filter((result) => result.verdict.kind === "hold" && result.verdict.reason === "brief").length
+          // Counts and timings only: never the message, the brief or the model's answer.
+          appLogger.info("workbot_agent_send_check", {
+            member_id: memberId,
+            messages: reply.messages.length,
+            held_brief: heldForBrief,
+            held_repeat: reply.messages.length - messages.length - heldForBrief,
+            unavailable: checked.filter((result) => result.status === "unavailable").length,
+            duration_ms: Math.max(0, ...checked.map((result) => result.durationMs)),
+            input_tokens: checked.reduce((sum, result) => sum + (result.inputTokens ?? 0), 0),
+          })
+        }
         const resolveSource = (source: string) => findSource(sources, source)?.id ?? null
-        const about = reply.messages.flatMap((message) => message.about.flatMap((entry) => parseAboutId(entry, resolveSource) ?? []))
+        const about = messages.flatMap((message) => message.about.flatMap((entry) => parseAboutId(entry, resolveSource) ?? []))
         const decision = decideBriefDelivery({
-          messages: reply.messages,
+          messages,
           sources: new Set(readIds),
           resolveSource,
           told: await deps.told(memberId, about),
@@ -380,7 +409,9 @@ export async function wakeAgentBrief(row: AgentInstanceRow, deps: AgentBriefWake
           delivered = sent ? "sent" : failed ? "failed" : capped ? "daily_limit" : "nothing_new"
           outcome = sent
             ? { reason: "sent", sources: checkSources(drew, sources), message: first, messages: sent }
-            : lost ? null : failed ? { reason: "send_failed" } : capped ? { reason: "daily_limit" } : unreadable ? { reason: "unreadable_reply" } : { reason: "already_told" }
+            : lost ? null : failed ? { reason: "send_failed" } : capped ? { reason: "daily_limit" } : unreadable ? { reason: "unreadable_reply" }
+              // Everything the messenger wrote was held because the brief says to leave it out: quiet, not a repeat.
+              : !messages.length && heldForBrief ? { reason: "findings_held" } : { reason: "already_told" }
         }
       }
     }

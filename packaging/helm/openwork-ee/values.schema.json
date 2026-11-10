@@ -561,6 +561,16 @@
               ],
               "description": "Workbot: Your agent's brief and check rhythm: With Your agent on, it checks on one rhythm (every 2 hours in working hours by default, plus up to 3 extra checks it asks for) instead of four fixed message types, and follows a plain-text brief: the organization's default plus each member's own lines, set in Manage › Workbot, My bot or chat. Each check researches first and then writes at most a few short messages, each one finding with a lock-screen first sentence. Messages per day and hours stay hard limits. Renders DEN_FEATURE_WORKBOT_AGENT_BRIEF."
             },
+            "workbotAgentSendCheck": {
+              "enum": [
+                "",
+                "true",
+                "false",
+                true,
+                false
+              ],
+              "description": "Workbot: Your agent checks each message before sending: With Your agent's brief on, admins can turn on Check each message before sending in Manage › Workbot. A fast second model then reads each message Your agent wrote against the brief and what the member was already told today, and holds a message the brief says to skip or that repeats one from today. It never writes, changes or adds a message, and when it can't answer the message is sent as before. Renders DEN_FEATURE_WORKBOT_AGENT_SEND_CHECK."
+            },
             "workbotSlackAnswerReply": {
               "enum": [
                 "",
