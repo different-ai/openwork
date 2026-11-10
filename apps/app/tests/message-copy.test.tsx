@@ -71,7 +71,13 @@ describe('message Copy', () => {
     expect(write).toHaveBeenCalledTimes(1); expect(write.mock.calls[0]?.[0]).toHaveLength(1);
     expect(writeText).not.toHaveBeenCalled();
     expect(writes[0]?.['text/html'].type).toBe('text/html'); expect(writes[0]?.['text/plain'].type).toBe('text/plain');
-    expect(await payload()).toEqual({ html: '<p style="margin:0">Hello <em>world</em></p><p style="margin:0"><br></p><ul style="margin:0"><li style="margin:0">One</li></ul><p style="margin:0"><br></p><p style="margin:0"><br></p><p style="margin:0">Expected: gap</p>', text: 'Hello world\n\n• One\n\nExpected: gap' });
+    expect(await payload()).toEqual({ html: '<p>Hello <em>world</em></p><ul><li>One</li></ul><p>Expected: gap</p>', text: 'Hello world\n\n• One\n\nExpected: gap' });
+  });
+  test('rich button route preserves semantic headings, quotes and rules without presentation padding', async () => {
+    const r = request('<h3>Heading</h3><blockquote><p>Quote <em>word</em></p></blockquote><hr><p>After</p>');
+    expect(await copyMessage(r)).toBe('rich');
+    expect(await payload()).toEqual({html:'<h3>Heading</h3><blockquote><p>Quote <em>word</em></p></blockquote><hr><p>After</p>',text:'Heading\n\n> Quote word\n\n---\n\nAfter'});
+    expect((await payload()).html).not.toMatch(/style=|class=|<p><br><\/p>/);
   });
   test('flag off writes exact legacy Markdown without reading DOM or rich APIs', async () => {
     const r = request(); r.enabled = false; r.markdown = '  **exact**\n\n[source](file:///tmp/a)\n'; r.getProse = () => { throw Error('must not inspect'); };

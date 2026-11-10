@@ -14,6 +14,14 @@ The clipboard contains clean semantic HTML plus readable plain text. There are *
 
 Only assistant prose contributes. Tool/reasoning UI, inputs, user messages and the composer retain native selection-copy behavior. Trusted React-owned prose boundaries prevent nested/raw HTML from declaring activity to be prose. Missing/unreachable feature state is off. The flag can be turned off using existing feature controls; conversations and already-copied data are not migrated or rewritten.
 
+## Message actions
+
+The stacked message-action change uses the same serializer and semantic fragment assembly for the existing Copy button and Copy menu item. React-owned refs register the committed rendered source, so missing/virtualized or selection-stale DOM cannot silently become a partial reply copy. Reply-level Cmd/Ctrl+C also spans physical messages and expanded steps/answer halves without including activity UI.
+
+With the flag on, one `ClipboardItem` writes HTML and plain text together. Missing/unsupported/stale DOM, unavailable APIs, constructor errors or rejected rich writes fall back to the exact previous Markdown `writeText` behavior. Flag off never reads prose or uses rich-write APIs. User-message Copy remains Markdown; code Copy buttons are unchanged. There is no extra source-only menu action.
+
+The enabled menu action waits for dismissal before reading the background reply: modal menus temporarily mark it aria-hidden. This scheduling does not weaken hidden-content rejection or delay the flag-off path. Native clipboard/source-route checks do not count as destination-matrix passes.
+
 ## HTML and plain text
 
 Supported HTML includes paragraphs, `h1`–`h6`, ordered/unordered lists, emphasis/strike, links, blockquotes, rules, literal code/pre and simple tables. The serializer reconstructs supported selected DOM; it does not export computed page markup. Search highlighting retains its text; decorative favicons, GitHub glyphs and renderer copy/open controls are omitted.
