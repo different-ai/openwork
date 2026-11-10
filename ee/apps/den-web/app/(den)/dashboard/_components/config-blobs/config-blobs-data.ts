@@ -15,9 +15,9 @@ import type {
   ConfigBlobSettingsResponse,
 } from "@openwork/types/den/config-blobs";
 import { type QueryClient, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { getErrorMessage, getRequestError, requestJson, requestResponse } from "../../../_lib/den-flow";
+import { getErrorMessage, getRequestError, requestJson, requestResponse, WORKSPACE_REAUTH_SECURITY_MESSAGE } from "../../../_lib/den-flow";
 import { ORG_SCOPE_HEADER } from "../../../_lib/org-scope";
-import { useOrgDashboard } from "../../_providers/org-dashboard-provider";
+import { type ReauthPrompt, useOrgDashboard } from "../../_providers/org-dashboard-provider";
 import { isTransientStatus } from "./config-blobs-model";
 
 const BASE = "/v1/config-blobs";
@@ -224,14 +224,18 @@ export function useConfigRequestAction(orgId: string | null, id: string) {
   });
 }
 
-/** Fetches a blob from the API and saves it as a file in the browser. */
+/**
+ * Fetches a blob from the API and saves it as a file in the browser. A
+ * session that isn't recent enough gets the re-sign-in error, so callers run
+ * it through `useConfigDownload`.
+ */
 export async function downloadConfigFile(orgId: string, path: string, fileName: string, fallback: string): Promise<void> {
   const response = await requestResponse(path, { method: "GET", headers: { [ORG_SCOPE_HEADER]: orgId }, cache: "no-store" }, 60000);
   const text = await response.text();
   if (!response.ok) {
     let payload: unknown = text;
     try { payload = JSON.parse(text); } catch { /* keep text */ }
-    throw new Error(getErrorMessage(payload, fallback));
+    throw getRequestError(payload, response, fallback);
   }
   const url = URL.createObjectURL(new Blob([text], { type: "application/json" }));
   const anchor = document.createElement("a");
@@ -241,6 +245,31 @@ export async function downloadConfigFile(orgId: string, path: string, fileName: 
   anchor.click();
   anchor.remove();
   setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
+const DOWNLOAD_REAUTH_PROMPT: ReauthPrompt = {
+  title: "Confirm your identity to download",
+  description: "Config files can hold prompts, skills and other content. The download starts after you confirm.",
+};
+
+/**
+ * Downloads a config file behind the workspace re-sign-in prompt (den-api
+ * asks for a recent sign-in on exports). Cancelling the prompt rejects with
+ * a plain "not downloaded" message.
+ */
+export function useConfigDownload(orgId: string | null) {
+  const { runReauthableAction } = useOrgDashboard();
+  return async function download(path: string, fileName: string, fallback: string): Promise<void> {
+    if (!orgId) throw new Error(fallback);
+    try {
+      await runReauthableAction("Download config", () => downloadConfigFile(orgId, path, fileName, fallback), DOWNLOAD_REAUTH_PROMPT);
+    } catch (cause) {
+      if (cause instanceof Error && cause.message === WORKSPACE_REAUTH_SECURITY_MESSAGE) {
+        throw new Error("Not downloaded. Confirm it's you to download the file.");
+      }
+      throw cause;
+    }
+  };
 }
 
 export const configBlobPaths = {

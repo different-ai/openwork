@@ -8,15 +8,8 @@ import { DenNotice } from "../../../_components/ui/notice";
 import { getConfigChangeRequestRoute } from "../../../_lib/den-org";
 import { useOrgDashboard } from "../../_providers/org-dashboard-provider";
 import { useConfigChangeRequests } from "./config-blobs-data";
-import { formatRelativeTime } from "./config-blobs-model";
+import { changeRequestTitle, formatRelativeTime } from "./config-blobs-model";
 import { ConfigCounts, ConfigRowSkeleton, ConfigStatusChip } from "./config-blobs-parts";
-
-export function changeRequestTitle(request: Pick<ConfigChangeRequestSummary, "title" | "source" | "revertsChangeRequestId" | "sourceOrganization">): string {
-  if (request.title) return request.title;
-  if (request.source === "revert") return "Restore previous config";
-  if (request.sourceOrganization) return `Import from ${request.sourceOrganization.name}`;
-  return request.source === "api" ? "Import from the API" : "Import";
-}
 
 export function changeRequestByline(request: ConfigChangeRequestSummary): string {
   const who = request.createdBy.apiKeyName
@@ -24,7 +17,7 @@ export function changeRequestByline(request: ConfigChangeRequestSummary): string
     : request.createdBy.name ?? "Someone";
   const from = request.sourceOrganization ? ` from ${request.sourceOrganization.name}${request.sourceDeployment === "self_hosted" ? " (self-hosted)" : ""}` : "";
   const areas = `${request.areas.length} ${request.areas.length === 1 ? "area" : "areas"}`;
-  return `${who}${from}, ${formatRelativeTime(request.createdAt)}. ${areas}, ${request.mode === "mirror" ? "mirror" : "merge"}`;
+  return `${who}${from}, ${formatRelativeTime(request.createdAt)}. ${areas}, ${request.mode === "mirror" ? "missing items reviewed manually" : "existing items kept"}`;
 }
 
 export function ConfigChangeList({ state, emptyMessage }: { state: "open" | "closed"; emptyMessage: string }) {

@@ -14,7 +14,7 @@ import { useOrgDashboard } from "../../_providers/org-dashboard-provider";
 import { ItemMenu, type ItemMenuEntry } from "../item-list";
 import {
   configBlobPaths,
-  downloadConfigFile,
+  useConfigDownload,
   useConfigAreas,
   useConfigBlobSettings,
   useConfigChangeRequest,
@@ -28,6 +28,7 @@ import {
   RESTORE_ACTION_LABEL,
   approvalState,
   canRestoreRequest,
+  changeRequestTitle,
   type ConfigStep,
   configExportFileName,
   formatRelativeTime,
@@ -38,7 +39,7 @@ import {
   splitRestoreIssues,
 } from "./config-blobs-model";
 import { ConfigCounts, ConfigStatusChip, useConfigBlobsFeature } from "./config-blobs-parts";
-import { changeRequestByline, changeRequestTitle } from "./config-change-list";
+import { changeRequestByline } from "./config-change-list";
 import {
   MatchStep,
   PeopleStep,
@@ -117,6 +118,7 @@ function ChangeRequestBody({ request, runs, plan, decisions, planLoading, planEr
   const areas = useConfigAreas(orgId);
   const settings = useConfigBlobSettings(orgId);
   const action = useConfigRequestAction(orgId, request.id);
+  const downloadConfig = useConfigDownload(orgId);
   const saveDecisions = useSaveConfigDecisions(orgId, request.id);
   const saveInputs = useSaveConfigInputs(orgId, request.id);
   // The chosen step belongs to the status it was chosen in: once a request moves on (applied, say), it opens on its default step again.
@@ -178,7 +180,7 @@ function ChangeRequestBody({ request, runs, plan, decisions, planLoading, planEr
     if (!orgId) return;
     setError(null);
     try {
-      await downloadConfigFile(orgId, configBlobPaths.beforeSnapshot(request.id), configExportFileName(activeOrg?.slug, new Date(request.appliedAt ?? request.updatedAt), "before"), "Couldn't download what this change replaced.");
+      await downloadConfig(configBlobPaths.beforeSnapshot(request.id), configExportFileName(activeOrg?.slug, new Date(request.appliedAt ?? request.updatedAt), "before"), "Couldn't download what this change replaced.");
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "Couldn't download what this change replaced.");
     }

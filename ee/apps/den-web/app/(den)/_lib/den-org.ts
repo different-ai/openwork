@@ -1057,9 +1057,15 @@ export function getAuthSecurityRoute(orgSlug?: string | null, tab?: AuthSecurity
 }
 
 
-export type ConfigTab = "overview" | "changes" | "history";
+export const CONFIG_TABS = ["overview", "import", "export", "changes", "history"] as const;
+export type ConfigTab = (typeof CONFIG_TABS)[number];
 
-/** Settings › Config (feature `configBlobs`): export and import the organization's configuration. */
+/** The tab named by `?tab=`; an unknown or retired value opens Overview. */
+export function readConfigTab(value: string | null | undefined): ConfigTab {
+  return CONFIG_TABS.find((tab) => tab === value) ?? "overview";
+}
+
+/** Settings › Config (feature `configBlobs`): overview, import, export, open changes and history. */
 export function getConfigRoute(orgSlug?: string | null, tab?: ConfigTab): string {
   const base = `${getOrgDashboardRoute(orgSlug)}/config`;
   return tab && tab !== "overview" ? `${base}?tab=${tab}` : base;

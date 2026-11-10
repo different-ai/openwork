@@ -91,7 +91,7 @@ async function exportItems(ctx: ConfigAreaContext): Promise<ConfigItem[]> {
 export const workbotSettingsArea = defineConfigArea({
   key: AREA,
   label: "Workbot",
-  path: ["Manage", "Workbot"],
+  path: ["Manage", "Workbot", "Settings"],
   specVersion: 1,
   specSchema: workbotSettingsSpecSchema,
   dependsOn: [PROVIDERS_AREA],

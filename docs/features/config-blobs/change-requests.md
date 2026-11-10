@@ -88,12 +88,13 @@ All routes are under the `configBlobs` flag (`requireFeature`). Each is declared
 |---|---|---|
 | `GET /v1/config-blobs/areas` | the area registry: keys, labels, specVersion, supported on this deployment, required permission | member |
 | `GET /v1/config-blobs/schema/:formatVersion` | JSON Schema for editors and CI | public |
-| `GET /v1/config-blobs/export?areas=ai-gateway.providers,members.teams` | download a blob (whole org when `areas` is left out). Areas the caller can't view are left out and listed in `omitted` | UI session or `config:export` |
+| `GET /v1/config-blobs/export?areas=ai-gateway.providers,members.teams` | download a blob (whole org when `areas` is left out). Areas the caller can't view are left out and listed in `omitted` | UI session with a recent sign-in (otherwise `403 { error: "reauth", reason: "fresh_auth_required" }`, which den-web turns into its re-sign-in prompt), or `config:export` |
 | `POST /v1/config-blobs/change-requests` | body `{ blob, mode: "merge" \| "mirror", title?, autoApply? }` → `202 { id, status: "uploaded" }` | UI or `config:submit` |
 | `GET /v1/config-blobs/change-requests?status=` | the queue | UI or `config:submit` |
 | `GET /v1/config-blobs/change-requests/:id` | status, summary, `report` (latest run) and `runs` (every attempt, newest first) | same |
 | `GET /v1/config-blobs/change-requests/:id/runs/:runId` | one apply run: `{ run: ConfigApplyReport }` | same |
 | `GET /v1/config-blobs/change-requests/:id/plan` | the full plan (see [mapping.md](./mapping.md#example-plan-api-shape)) | same |
+| `GET /v1/config-blobs/change-requests/:id/before-snapshot` | the items an apply wrote, as they were before it (the source of a restore) | like export: UI session with a recent sign-in, or `config:export` |
 | `PUT /v1/config-blobs/change-requests/:id/decisions` | `{ matches: [{ area, blobId, targetId \| "create" }], refs: [...], deletes: [...], overrides: [...] }` → new `planHash` | same |
 | `PUT /v1/config-blobs/change-requests/:id/inputs` | secret decisions and values (write-only; never returned) | UI, or a config token with machine secrets allowed |
 | `POST /v1/config-blobs/change-requests/:id/approve` | body `{ planHash }`; refused if blocking flags remain or the hash is old | UI or `config:apply` |
@@ -120,15 +121,15 @@ A config token's area limit binds every area a change writes, not only the blob'
 
 Callers who may not read people (see format.md › People) also get change-request summaries and apply reports without the creator's, approvers', requester's and runner's names; member ids stay.
 
-## UI (Den › Settings › Config, proposed)
+## UI (Den › Settings › Config)
 
-Under **Team › Settings › Config** (key `settings.config`, not exported), behind `configBlobs`. Uses the existing Den shell and components (see `DESIGN.md`).
+Under **Team › Settings › Config** (key `settings.config`, not exported), behind `configBlobs`. Uses the existing Den shell and components (see `DESIGN.md`). Five tabs, chosen with `?tab=` (`overview`, `import`, `export`, `changes`, `history`); an unknown or retired value opens Overview, so old links keep working.
 
-1. **Overview tab**
-   - **Export**: a tree of area keys with checkboxes taken from `/areas` (the whole org, or e.g. `AI Gateway › AI Providers`), then Download. A note lists what's never exported (secrets, billing, runtime data) and warns when the selection contains confidential content (skills, prompts).
-   - **Import**: drop a `.json`, choose Merge or Mirror, add a title (optional), Upload.
-2. **Changes tab**: the queue. One row per request: title, source (UI / API token name / revert), source org and deployment, areas, counts (`+3 ~5 −0`), status chip, blocking flag count, author, age.
-3. **Change request page**, in steps:
+1. **Overview**: one row per tab, each with where it stands and a button into it. Import: what importing does, **Import a file**. Export: how many areas this person can export. Changes: how many are open, how many need a decision or are ready to approve, and the most recent one. History: the last applied or failed change with its date.
+2. **Import**: drop a `.json`. The line under the file name says where it came from: `Exported from "Acme Source" (OpenWork Cloud) on Nov 9, 2026. 11 areas.`, or `Exported from this organization on …`; parts the file doesn't carry are left out. **Missing items** (items that exist here but not in the file): **Keep existing** (`merge`, default) or **Review manually** (`mirror`: each removal is ticked on Review). **Enter a title for this import** is required in the UI (the API keeps `title` optional); Upload for review stays disabled, with the reason beside it, until a valid file and a title are there.
+3. **Export**: **Whole organization** is a switch, on by default, with what it is for (a backup, or a move to another OpenWork), that the file is large and can hold sensitive content such as prompts and skills, and that credentials are never included. On: one **Prepare download** button. Off: **Select data to download**, the area tree grouped by sidebar section, with **Prepare download** above and below it (disabled, with the reason, while nothing is selected) and a warning when the selection holds confidential content. Prepare download goes through the workspace re-sign-in prompt when the session isn't recent (the export answers `403 reauth`), then saves `openwork-config-<slug>-<date>.json`. Cancelling the prompt says the file was not downloaded.
+4. **Changes**: **Require a second approver** at the top, then the queue. One row per request: title, source (UI / API token name / revert), source org and deployment, areas, how missing items are handled, counts (`+3 ~5 −0`), status chip, blocking flag count, author, age.
+5. **Change request page**, in steps:
    - **Match**: only the items that need a decision. Drizzle-style choices, with candidates and scores.
    - **References**: unresolved teams and people, and so on. Map, drop, create from the blob, or invite (people).
    - **People**: invites to create, with the choice to send emails now or create them silently.
@@ -136,7 +137,7 @@ Under **Team › Settings › Config** (key `settings.config`, not exported), be
    - **Review**: per area, items grouped by `create` / `update` / `rename` / `delete` / `untouched`. Field diffs; three-way view for conflicts; destructive items highlighted with confirmation boxes.
    - **Review** also marks items whose write can't be undone by a restore ("Can't be undone", with the effects listed).
    - **Approve & apply** (or **Approve** only, when gated). Live status while applying. Then **Apply runs**: one row per attempt (status, counts, who requested it, who it ran as, when, how long), opening per item what was written; a failed item gets a box saying what failed, where (area › item › field), what was already written for it, what was not reached, and the next steps (fix and upload again, or **Restore previous config**).
-4. **History**: applied, failed, cancelled and reverted requests, each with its before-snapshot downloadable.
+6. **History**: applied, failed, cancelled and reverted requests, each with its before-snapshot downloadable (behind the same re-sign-in prompt as Export).
 
 **In other screens:** a pending change request touching an item could show a small "pending config change" note on that item's page (later).
 

@@ -116,11 +116,11 @@ test("an owner moves their organization from OpenWork Cloud to a self-hosted Den
     return { blob: asBlob(result.body), text: result.text };
   };
   const uploadFile = async (title: string) => {
-    await owner.navigate(world.url("/dashboard/config"));
+    await owner.navigate(world.url("/dashboard/config?tab=import"));
     await owner.see({ testId: "config-import-drop" }, { timeoutMs: 60_000 });
     await owner.attachFiles('[data-testid="config-import-input"]', [world.exportPath]);
-    await owner.see({ testId: "config-import-file" }, { text: /from Acme Robotics/, timeoutMs: 30_000 });
-    await owner.type({ label: "Title (optional)" }, title);
+    await owner.see({ testId: "config-import-file" }, { text: /Exported from "Acme Robotics" \(OpenWork Cloud\)/, timeoutMs: 30_000 });
+    await owner.type({ label: "Enter a title for this import" }, title);
     await owner.click({ testId: "config-import-upload" });
     await owner.see({ testId: "config-change-request-screen" }, { timeoutMs: 60_000 });
     const list = await ownerProbe.api(shOwner, "/v1/config-blobs/change-requests");
@@ -132,7 +132,7 @@ test("an owner moves their organization from OpenWork Cloud to a self-hosted Den
 
   await step("before: the self-hosted organization has its owner and one member, and none of the cloud's teams, providers, connectors or plugins", async () => {
     await owner.see({ testId: "config-screen" }, { timeoutMs: 120_000 });
-    await owner.see({ testId: "config-export" });
+    await owner.see({ testId: "config-overview" });
     const { blob } = await exportOf("selfHosted");
     const of = (key: ConfigAreaKey) => areaItems(blob, key).length;
     const empty = ["members.teams", "ai-gateway.byok", "connectors.mcp", "settings.web-origins", "plugins.plugins", "plugins.skills"] as const;
@@ -166,7 +166,7 @@ test("an owner moves their organization from OpenWork Cloud to a self-hosted Den
       `${cloudBlob.scope.length} areas in scope, ${filled.length} with items, ${items} items, ${exported.text.length} bytes; "${BYOK_API_KEY}" found 0 times; API key exported as a $secret placeholder; source instance ${cloudBlob.source?.instanceId} ≠ self-hosted ${shInstance}`,
       !exported.text.includes(BYOK_API_KEY) && providerSpec.includes("$secret"),
     );
-    await owner.navigate(world.url("/dashboard/config"));
+    await owner.navigate(world.url("/dashboard/config?tab=import"));
     await owner.see({ testId: "config-import" }, { timeoutMs: 60_000 });
   });
 
