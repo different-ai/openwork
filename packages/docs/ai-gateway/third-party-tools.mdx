@@ -13,14 +13,18 @@ owner is allowed, and its usage counts toward that person's limit.
 
 An admin has to allow it first:
 
-1. In OpenWork Cloud, open **Settings › General**.
-2. Under **AI Gateway**, turn on **Allow 3rd party tools & harnesses**.
+1. In OpenWork Cloud, open **AI Gateway** and select the **API Keys** tab.
+2. At the top, turn on **Allow 3rd party tools & harnesses**.
 
 Changing it needs the **Edit organization settings** permission. Owners and
 admins have it by default.
 
-Turning it off stops every member's key right away. The keys are kept, and work
-again when it's turned back on.
+Members then create keys for themselves; admins don't create keys for other
+people. Until someone has a key, the tab explains this and offers **Create your
+own key now**, which opens **My Library › Models** with the new key form ready.
+
+Turning it off stops every member's key right away. The keys stay listed on the
+tab, marked as not valid, and work again when it's turned back on.
 
 ## Create a key
 
@@ -55,16 +59,16 @@ Each person can have up to 20 keys that haven't expired.
 
 ## For admins
 
-**AI Gateway › API Keys** lists every key in the organization: its name, the
-member it belongs to, when it was created, when it expires and when it was last
-used.
+**AI Gateway › API Keys** has the **Allow 3rd party tools & harnesses** switch
+at the top, then every key in the organization: its name, the member it belongs
+to, when it was created, when it expires and when it was last used.
 
 - Seeing the tab needs the **View Gateway providers** permission.
 - Revoking someone else's key needs **Manage Gateway providers**.
 - When someone leaves the organization, their keys are revoked with the rest of
   their access.
-- While **Allow 3rd party tools & harnesses** is off, the tab says so and none
-  of the keys work.
+- While the switch is off, the keys are still listed with a notice that they
+  are currently not valid.
 
 ## When a key stops working
 
