@@ -2,7 +2,7 @@ import { PerformanceObserver } from "node:perf_hooks";
 import { timeMcpApp } from "@openwork/types/mcp-app-timing";
 import { createHash } from "node:crypto"
 import { and, desc, eq, inArray, isNull } from "@openwork-ee/den-db/drizzle"
-import { ConfigObjectTable, ConfigObjectVersionTable, PluginConfigObjectTable, PluginTable } from "@openwork-ee/den-db/schema"
+import { ConfigObjectTable, ConfigObjectVersionTable, PluginConfigObjectTable, PluginTable, PublicMcpAppNameTable } from "@openwork-ee/den-db/schema"
 import { createDenTypeId, normalizeDenTypeId, type DenTypeId } from "@openwork-ee/utils/typeid"
 import {
   createMcpAppInputSchema,
@@ -12,6 +12,7 @@ import {
   MCP_APP_PAYLOAD_KIND,
   mcpAppCompiledRevisionSchema,
   mcpAppIdSchema,
+  mcpAppPublicNameSchema,
   mcpAppServerPath,
   mcpAppSourceSchema,
   summarizeMcpAppRevision,
@@ -27,6 +28,8 @@ import {
   type UpdateMcpAppInput,
 } from "@openwork/types/mcp-app"
 import { db } from "./db.js"
+import { env } from "./env.js"
+import { organizationFeatureEnabled } from "./features.js"
 import { withPrimaryReads } from "./read-routing.js"
 import { buildGeneratedMcpApp, type GeneratedArtifactViewBuildResult } from "./generated-artifact-view-builder.js"
 import type { McpMemberIdentity } from "./mcp/external-capabilities.js"
@@ -236,6 +239,59 @@ async function addWorkflows(context: PluginArchActorContext, pluginId: DenTypeId
   for (const configObjectId of workflowIds) await attachConfigObjectToPlugin({ context, configObjectId, pluginId })
 }
 
+/**
+ * An App may be marked public only where the feature is on and it has no
+ * tools: a visitor is not signed in, so there is nobody for a tool to run as.
+ */
+async function requirePublishable(organizationId: string, tools: McpAppToolBinding[]) {
+  if (!await organizationFeatureEnabled(organizationId, "publicApps")) {
+    throw new McpAppError(409, "public_apps_off", "Public Apps are not turned on for this organization. Omit public, or ask an admin to turn the feature on. No revision was published.")
+  }
+  if (tools.length > 0) {
+    throw new McpAppError(409, "public_app_has_tools", "A public App cannot have tools, because visitors are not signed in. Remove its tools (tools: []) or pass public: false. No revision was published.")
+  }
+}
+
+function publicNameTaken(name: string, saved: boolean): McpAppError {
+  return new McpAppError(409, "public_name_taken", saved
+    ? `The App was saved and is public at its App id URL, but the public name "${name}" was just taken. Choose another publicName with update_app.`
+    : `The public name "${name}" is already used by another App. Choose another publicName. No revision was published.`)
+}
+
+/**
+ * Checked before anything is written: a name needs a public App, and a name
+ * another App holds is refused, never moved, even while that App is private.
+ */
+async function requirePublicNameFree(input: { name: string; isPublic: boolean; appId: DenTypeId<"configObject"> | null }) {
+  if (!input.isPublic) {
+    throw new McpAppError(409, "public_name_needs_public", "publicName names a public App's URL. Pass public: true with it, or omit publicName. No revision was published.")
+  }
+  const [row] = await db.select({ appId: PublicMcpAppNameTable.configObjectId }).from(PublicMcpAppNameTable)
+    .where(eq(PublicMcpAppNameTable.name, input.name)).limit(1)
+  if (row && row.appId !== input.appId) throw publicNameTaken(input.name, false)
+}
+
+/** Gives the App this name, replacing its earlier one, whose URL stops answering. */
+async function savePublicName(organizationId: DenTypeId<"organization">, id: DenTypeId<"configObject">, name: string) {
+  try {
+    const [current] = await db.select({ name: PublicMcpAppNameTable.name }).from(PublicMcpAppNameTable)
+      .where(eq(PublicMcpAppNameTable.configObjectId, id)).limit(1)
+    if (current?.name === name) return
+    if (current) await db.update(PublicMcpAppNameTable).set({ name }).where(eq(PublicMcpAppNameTable.configObjectId, id))
+    else await db.insert(PublicMcpAppNameTable).values({ name, organizationId, configObjectId: id })
+  } catch (error) {
+    if (isDuplicateEntry(error)) throw publicNameTaken(name, true)
+    throw error
+  }
+}
+
+function isDuplicateEntry(error: unknown): boolean {
+  if (typeof error !== "object" || error === null) return false
+  if ("code" in error && error.code === "ER_DUP_ENTRY") return true
+  if ("errno" in error && error.errno === 1062) return true
+  return "cause" in error && error.cause !== error && isDuplicateEntry(error.cause)
+}
+
 async function compile(input: CreateMcpAppInput, pluginId: string, tools: McpAppToolBinding[]) {
   const reactSource = input.reactSource.trim()
   const cssSource = input.cssSource?.trim() ?? ""
@@ -266,6 +322,7 @@ async function compile(input: CreateMcpAppInput, pluginId: string, tools: McpApp
     // Only an App written to read them gets initial results, so Apps built
     // before them never pay for reads they would make again themselves.
     ...(reactSource.includes(MCP_APP_INITIAL_RESULTS_META) ? { loadsWithLaunch: true } : {}),
+    ...(input.public ? { public: true } : {}),
   })
   if (!parsed.success) throw new McpAppError(422, "mcp_app_invalid_build", "The compiler did not produce a valid bounded MCP App revision. No revision was published.")
   const payload = parsed.data
@@ -300,6 +357,8 @@ async function createMcpAppOnPrimary({ context, resolveTools, ...source }: McpAp
   const input = parsed.data
   let pluginId = input.pluginId ? await editablePlugin(context, input.pluginId) : null
   const resolved = await resolveTools(input.tools ?? [])
+  if (input.public) await requirePublishable(context.organizationContext.organization.id, resolved)
+  if (input.publicName) await requirePublicNameFree({ name: input.publicName, isPublic: input.public === true, appId: null })
   const workflows = await workflowsToAdd(context, pluginId, workflowTools(resolved))
   const compiled = await compile(input, pluginId ?? createDenTypeId("plugin"), resolved)
   let createdPluginId: DenTypeId<"plugin"> | null = null
@@ -345,6 +404,7 @@ async function createMcpAppOnPrimary({ context, resolveTools, ...source }: McpAp
     throw error
   })
   if (!saved.latestVersion) throw new McpAppError(422, "mcp_app_save_failed", "The MCP App revision could not be retrieved.")
+  if (input.publicName) await savePublicName(context.organizationContext.organization.id, saved.id, input.publicName)
   return summarizeMcpAppRevision({ appId: saved.id, revisionId: saved.latestVersion.id, payload })
 }
 
@@ -360,9 +420,14 @@ async function updateMcpAppOnPrimary({ context, resolveTools, ...source }: McpAp
   // Omitted CSS, description, and tools keep the App's current ones; stored
   // tools stay as published instead of being resolved again.
   const resolved = input.tools ? await resolveTools(input.tools) : current.payload.tools
+  // An omitted public keeps the App's current choice, like its tools.
+  const isPublic = input.public ?? current.payload.public === true
+  if (isPublic) await requirePublishable(context.organizationContext.organization.id, resolved)
+  if (input.publicName) await requirePublicNameFree({ name: input.publicName, isPublic, appId: id })
   const workflows = input.tools ? await workflowsToAdd(context, pluginId, workflowTools(resolved)) : []
   const compiled = await compile({
     ...input,
+    public: isPublic,
     cssSource: input.cssSource ?? storedSource(current.version, current.payload).cssSource,
     description: input.description ?? current.payload.description ?? undefined,
   }, pluginId, throughPlugin(resolved, pluginId))
@@ -371,7 +436,7 @@ async function updateMcpAppOnPrimary({ context, resolveTools, ...source }: McpAp
   await requireEditor(context, id)
   await addWorkflows(context, pluginId, workflows)
   const organizationId = context.organizationContext.organization.id
-  return db.transaction(async (tx) => {
+  const updated = await db.transaction(async (tx) => {
     const [locked] = await tx.select().from(ConfigObjectTable).where(and(
       eq(ConfigObjectTable.organizationId, organizationId),
       eq(ConfigObjectTable.id, id),
@@ -405,6 +470,8 @@ async function updateMcpAppOnPrimary({ context, resolveTools, ...source }: McpAp
     }).where(and(eq(ConfigObjectTable.organizationId, organizationId), eq(ConfigObjectTable.id, id)))
     return summarizeMcpAppRevision({ appId: id, revisionId: newRevisionId, payload: compiled.payload })
   })
+  if (input.publicName) await savePublicName(organizationId, id, input.publicName)
+  return updated
 }
 
 export async function readMcpApp(input: { context: PluginArchActorContext; appId: string }): Promise<ReadMcpAppOutput> {
@@ -619,6 +686,48 @@ export async function loadMcpAppResource(input: McpAppAccessInput & { appId: str
   }
   return {
     app: summarizeMcpAppRevision({ appId: id, revisionId: versionId, pluginId, payload }),
+    html: payload.html,
+    csp: payload.csp,
+    resourceDigest: payload.resourceDigest,
+  }
+}
+
+/**
+ * The current revision of an App marked public, found by its App id or its
+ * friendly name, for a visitor who is not signed in. Checked on every request, with no member or Plugin access: the
+ * App is active, its newest revision is marked public and has no tools, and
+ * the feature is on for its organization. Anything else is not found, so
+ * unmarking it, adding a tool or turning the feature off stops it at once.
+ */
+export async function loadPublicMcpApp(input: { appIdOrName: string }): Promise<McpAppResource | null> {
+  if (!env.appMcpServersEnabled) return null
+  let parsedId = mcpAppIdSchema.safeParse(input.appIdOrName)
+  if (!parsedId.success) {
+    const name = mcpAppPublicNameSchema.safeParse(input.appIdOrName)
+    if (!name.success) return null
+    const [named] = await db.select({ appId: PublicMcpAppNameTable.configObjectId }).from(PublicMcpAppNameTable)
+      .where(eq(PublicMcpAppNameTable.name, name.data)).limit(1)
+    parsedId = mcpAppIdSchema.safeParse(named?.appId)
+    if (!parsedId.success) return null
+  }
+  const id = appId(parsedId.data)
+  const [app] = await db.select({ organizationId: ConfigObjectTable.organizationId }).from(ConfigObjectTable).where(and(
+    eq(ConfigObjectTable.id, id),
+    eq(ConfigObjectTable.objectType, "app"),
+    eq(ConfigObjectTable.status, "active"),
+    isNull(ConfigObjectTable.deletedAt),
+  )).limit(1)
+  if (!app) return null
+  const head = await latestRevisionHead(app.organizationId, id)
+  const content = head ? await revisionContent(app.organizationId, id, head) : null
+  if (!head || !content) return null
+  const { payload } = content
+  if (payload.public !== true || payload.tools.length > 0) return null
+  if (!await organizationFeatureEnabled(app.organizationId, "publicApps")) return null
+  content.intact ??= digest(payload.html) === payload.resourceDigest && Buffer.byteLength(payload.html) === payload.htmlBytes
+  if (!content.intact) return null
+  return {
+    app: summarizeMcpAppRevision({ appId: id, revisionId: head.id, payload }),
     html: payload.html,
     csp: payload.csp,
     resourceDigest: payload.resourceDigest,

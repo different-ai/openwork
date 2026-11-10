@@ -1296,6 +1296,13 @@
       "when": 1794003256221,
       "tag": "0185_connector_target_reconcile",
       "breakpoints": true
+    },
+    {
+      "idx": 186,
+      "version": "5",
+      "when": 1794267959453,
+      "tag": "0186_public_mcp_app_names",
+      "breakpoints": true
     }
   ]
 }
