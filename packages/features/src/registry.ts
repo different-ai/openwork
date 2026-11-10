@@ -104,6 +104,17 @@ function defineFeatures<const T extends Record<string, FeatureDefinition>>(featu
 const everywhere = ["cloud", "self_hosted"] as const
 
 export const FEATURES = defineFeatures({
+  assistantProseClipboard: {
+    label: "Portable reply copying",
+    description: "Copy selected reply text with readable lists, links and paragraph spacing for other apps. Off: keep the browser's native copy.",
+    category: "experience",
+    added: "2026-11-09",
+    since: "2026-11",
+    author: "yomgui",
+    docs: "docs/features/assistant-prose-clipboard/README.md",
+    deployments: everywhere,
+    default: false,
+  },
   claudeAgentProvider: {
     label: "Claude Code sign-in",
     description: "Connect Claude through the Claude Code login on this computer, without an Anthropic API key.",

@@ -29,6 +29,9 @@ import {
 import type { SessionStatus } from "@opencode-ai/sdk/v2/client"
 import { openDesktopUrl } from "@/app/lib/desktop"
 import { isElectronRuntime } from "@/app/lib/runtime-env"
+import { markFeatureUsed } from "@/app/lib/den"
+import { useDesktopFeature } from "@/react-app/domains/session/status/use-desktop-feature"
+import { AssistantProse } from "@/components/markdown/assistant-prose"
 import { SYNTHETIC_SESSION_ERROR_MESSAGE_PREFIX } from "@/app/types"
 import { t } from "@/i18n"
 import { useOpenTargets } from "@/lib/target-provider"
@@ -672,6 +675,7 @@ const AssistantMessage = React.memo(
   ({ message, isStreaming, hideReasoning }: AssistantMessageProps) => {
     const { showThinking, highlightQuery } = useMessageList()
     const computerHistory = React.useContext(ComputerHistoryContext)
+    const portableCopy = useDesktopFeature("assistantProseClipboard")
     const assistantRenderGroups = React.useMemo(
       () => {
         const groups = getAssistantRenderGroups(withoutComputerHistory(message.parts, computerHistory), showThinking)
@@ -686,7 +690,7 @@ const AssistantMessage = React.memo(
         data-message-id={message.id}
         data-message-role={message.role}
       >
-        <div className="group flex w-full flex-col gap-0 space-y-2">
+        <AssistantProse grouped enabled={portableCopy} onCopied={() => markFeatureUsed("assistantProseClipboard")} className="group flex w-full flex-col gap-0 space-y-2">
           {assistantRenderGroups.map((group, index) => {
             if (group.kind === "text") {
               // The answer lines up with the activity rail: the same leading
@@ -694,7 +698,7 @@ const AssistantMessage = React.memo(
               // the reply's text starts where their labels do instead of 28px
               // to the rail's left (DESIGN.md T1 — one quiet rail).
               return (
-                <div key={`text-${index}`} className="flex min-w-0 items-start gap-2">
+                <div key={`text-${index}`} data-assistant-reply-prose="" className="flex min-w-0 items-start gap-2">
                   <MessageContent
                     className="text-foreground prose w-full min-w-0 flex-1 rounded-lg bg-transparent p-0"
                     markdown
@@ -743,7 +747,7 @@ const AssistantMessage = React.memo(
               </div>
             )
           })}
-        </div>
+        </AssistantProse>
       </Message>
     )
   }

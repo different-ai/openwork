@@ -26,6 +26,7 @@ config:
   #   "false" off for everyone; /admin shows "Set by deployment config"
   # The /admin kill switch still turns a feature off, even when locked on.
   features:
+    assistantProseClipboard: ""   # default off · Copy selected reply text with readable lists, links and paragraph spacing for other apps. Off: keep the browser's native copy.
     claudeAgentProvider: ""       # default off · Connect Claude through the Claude Code login on this computer, without an Anthropic API key.
     configBlobs: ""               # default off · Admins export all or part of the organization's configuration as JSON and import it again, here or into another OpenWork. Each import is a change request: it is matched against what exists, reviewed, then applied, and can be reverted. Off: no Config page and no config-blob API.
     webPerMember: ""              # default off · Admins choose which members get OpenWork Web from the Members page, and the organization pays for Web only for them. Members without it can't open a Web computer. Off: every member and pending invitation has Web and is billed for it.

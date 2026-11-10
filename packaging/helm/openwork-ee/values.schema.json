@@ -61,6 +61,16 @@
           "type": "object",
           "additionalProperties": false,
           "properties": {
+            "assistantProseClipboard": {
+              "enum": [
+                "",
+                "true",
+                "false",
+                true,
+                false
+              ],
+              "description": "Portable reply copying: Copy selected reply text with readable lists, links and paragraph spacing for other apps. Off: keep the browser's native copy. Renders DEN_FEATURE_ASSISTANT_PROSE_CLIPBOARD."
+            },
             "claudeAgentProvider": {
               "enum": [
                 "",
