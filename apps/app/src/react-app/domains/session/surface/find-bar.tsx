@@ -4,6 +4,8 @@ import { ChevronDown, ChevronUp, Search, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
+import { markFeatureUsed } from "@/app/lib/den";
+import { useDesktopFeature } from "../status/use-desktop-feature";
 import { useSessionFindStore } from "./find-store";
 import { SEARCH_HIGHLIGHT_SELECTOR } from "./text-highlights";
 import { SESSION_SCROLL_NAVIGATION_EVENT } from "./scroll-controller";
@@ -75,6 +77,7 @@ export function SessionFindBar({
   historyComplete = true,
   onBeforeJump,
 }: SessionFindBarProps) {
+  const latestFirst = useDesktopFeature("conversationFindLatestFirst");
   const open = useSessionFindStore((state) => state.open);
   const ownerSessionId = useSessionFindStore((state) => state.sessionId);
   const query = useSessionFindStore((state) => state.query);
@@ -109,7 +112,8 @@ export function SessionFindBar({
     pendingQueryRef.current = null;
     onBeforeJump?.();
     element.scrollIntoView({ block: "center" });
-  }, [onBeforeJump]);
+    if (latestFirst) markFeatureUsed("conversationFindLatestFirst");
+  }, [latestFirst, onBeforeJump]);
 
   const activateMatchAtIndex = useCallback((index: number, scroll: boolean) => {
     const currentMatches = matchesRef.current;
@@ -154,7 +158,7 @@ export function SessionFindBar({
     let nextIndex = retainedMatchIndex(nextMatches, previousActive, activeIndexRef.current);
     let shouldScroll = false;
     if (pendingQueryRef.current === activeQuery && nextMatches.length > 0) {
-      nextIndex = 0;
+      nextIndex = latestFirst ? nextMatches.length - 1 : 0;
       shouldScroll = true;
     }
 
@@ -284,7 +288,7 @@ export function SessionFindBar({
           onKeyDown={(event) => {
             if (event.key === "Enter") {
               event.preventDefault();
-              if (event.shiftKey) {
+              if (event.shiftKey !== latestFirst) {
                 jumpToPrevious();
               } else {
                 jumpToNext();
@@ -323,7 +327,7 @@ export function SessionFindBar({
               </Button>
             }
           />
-          <TooltipContent>Previous match (⇧↵)</TooltipContent>
+          <TooltipContent>{latestFirst ? "Previous match (↵)" : "Previous match (⇧↵)"}</TooltipContent>
         </Tooltip>
         <Tooltip>
           <TooltipTrigger
@@ -341,7 +345,7 @@ export function SessionFindBar({
               </Button>
             }
           />
-          <TooltipContent>Next match (↵)</TooltipContent>
+          <TooltipContent>{latestFirst ? "Next match (⇧↵)" : "Next match (↵)"}</TooltipContent>
         </Tooltip>
         <Tooltip>
           <TooltipTrigger

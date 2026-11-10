@@ -269,6 +269,17 @@ export const FEATURES = defineFeatures({
     deployments: everywhere,
     default: false,
   },
+  conversationFindLatestFirst: {
+    label: "Conversation find: latest first",
+    description: "Find starts at the latest match in a conversation. Enter searches older matches and Shift+Enter searches newer matches; the arrows keep their spatial direction.",
+    category: "experience",
+    added: "2026-11-09",
+    since: "2026-11",
+    author: "yomgui",
+    docs: "docs/features/conversation-find-latest-first/README.md",
+    deployments: everywhere,
+    default: false,
+  },
   steadyLiveTurn: {
     label: "Desktop: steady chat while a reply runs",
     description: "While a reply runs, its steps and messages stay in the order they arrive and the chat keeps its place: nothing jumps and no empty gap opens between steps. The steps fold into “Worked for…” once the reply finishes. Turning this off restores the previous live layout.",

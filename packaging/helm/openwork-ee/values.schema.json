@@ -211,6 +211,16 @@
               ],
               "description": "Desktop: agents ask and keep working: Agents ask in chat instead of ending a turn to wait for your reply. A question that the rest of the work does not depend on stays open while the agent keeps going, and your answer reaches it even after its turn has ended. Renders DEN_FEATURE_AGENT_QUESTIONS."
             },
+            "conversationFindLatestFirst": {
+              "enum": [
+                "",
+                "true",
+                "false",
+                true,
+                false
+              ],
+              "description": "Conversation find: latest first: Find starts at the latest match in a conversation. Enter searches older matches and Shift+Enter searches newer matches; the arrows keep their spatial direction. Renders DEN_FEATURE_CONVERSATION_FIND_LATEST_FIRST."
+            },
             "steadyLiveTurn": {
               "enum": [
                 "",
