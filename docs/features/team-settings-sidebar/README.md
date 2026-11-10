@@ -28,8 +28,20 @@ left, in groups:
   had under the tabs.
 - Narrow screens (under 768px) keep the row of tabs.
 
-Nothing else changes: the sections' contents, the `?tab=` address of each
-section, and what each person can see or edit are the same.
+## Sections that explain themselves
+
+- **Role**: a "Role for {team}" heading with an "i" that says what a role is
+  (Member adds nothing, Admin makes everyone in the team an admin, a custom
+  role adds the permissions you choose). When the role adds nothing, the
+  page says so under "{team} can also" and what to do next, instead of
+  showing one row on its own.
+- **Agents and Browser**: the sentence beside the actions ("What agents can
+  do on the computers of people in {team}. Rows you don't change follow
+  Everyone.") moves into an "i" beside an "Agent permissions" (or
+  "Websites") heading, and "Open Everyone" reads "View Everyone's settings".
+
+The `?tab=` address of each section, what each control saves, and what each
+person can see or edit are the same.
 
 ## Try it
 
