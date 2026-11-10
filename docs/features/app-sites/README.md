@@ -46,6 +46,15 @@ public URL the page is served only for an App that is public and a site.
 
 An App can open web links (http and https only) in a new tab.
 
+## Search engines
+
+App pages are for the people given the link. Every site page, and every
+answer at a public App URL, is sent with `X-Robots-Tag: noindex, nofollow,
+noarchive`, and the page carries the same `robots` meta tag, so search engines
+do not list it, follow its links or keep a copy. The URLs are not disallowed
+in `robots.txt`, because a crawler that cannot fetch a URL never sees
+`noindex` and can still list the bare link.
+
 ## Limits
 
 - The signed-in page needs the session cookie to reach the Den API origin.

@@ -7,7 +7,7 @@ import type { RequestIdVariables } from "hono/request-id"
 import { loadPublicMcpApp } from "../mcp-apps.js"
 import { publicRoute } from "../middleware/index.js"
 import { createMcpAppServer } from "./app-server.js"
-import { appSiteResponse, wantsAppSite } from "./app-site.js"
+import { appSiteResponse, NO_INDEX, wantsAppSite } from "./app-site.js"
 import { preflightMcpJsonRpcRequest } from "./json-rpc-preflight.js"
 import { DEN_MCP_READ_SCOPE } from "./scopes.js"
 
@@ -47,6 +47,11 @@ export function registerPublicMcpAppRoutes<T extends { Variables: RequestIdVaria
   app.all(
     PUBLIC_MCP_APP_ROUTE,
     publicRoute,
+    // Every answer at a public App's URL, page or not, stays out of search results.
+    async (c, next) => {
+      await next()
+      c.header("x-robots-tag", NO_INDEX)
+    },
     bodyLimit({
       maxSize: MAX_REQUEST_BYTES,
       onError: () => jsonRpcError(null, "The request is too large.", "request_too_large", 413),
