@@ -157,6 +157,12 @@
             "pages": [
               "model-context-protocol/opencode-plugin"
             ]
+          },
+          {
+            "group": "Native integrations",
+            "pages": [
+              "integrations/native-integrations"
+            ]
           }
         ]
       },
