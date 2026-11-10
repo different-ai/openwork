@@ -384,3 +384,44 @@ test("Undo for Use Everyone's saves the team's policy back as a change to Everyo
   assert.equal(agentPolicyRestoreChange(ready, ready).brief, undefined);
   assert.deepEqual(agentPolicyRestoreChange(everyone, everyone).brief, { dailyCap: 6 });
 });
+
+// ---- Grouped rows (workbotSettingsTabs) ---------------------------------------------------------------------------
+
+function renderGrouped(view: WorkbotProactiveView) {
+  return renderToStaticMarkup(
+    <WorkbotProactivePanel view={view} canManage saving={false} onChange={() => undefined} connectorsHref="/dashboard/mcp-connections" grouped />,
+  );
+}
+
+test("grouped: yes or no settings are switches, the schedule is one row per setting, and each row has help", () => {
+  const html = renderGrouped(briefOn);
+  const view = text(html);
+  for (const label of ["Agents for everyone", "On for members by default", "Messages", "Send messages in Slack", "Daily message limit", "Schedule", "Check for updates", "Working hours", "Working days", "Extra checks", "What to tell people", "Preview"]) assert.ok(view.includes(label), label);
+  for (const gone of ["Send messages to", "Nowhere yet", "Members start", "Must opt in", "Messages per person per day", "Extra checks agents may ask for"]) assert.ok(!view.includes(gone), gone);
+  assert.match(switchFor(html, "Send messages in Slack") ?? "", /aria-checked="true"/);
+  assert.match(switchFor(html, "On for members by default") ?? "", /aria-checked="true"/);
+  for (const about of ["On for members by default", "Send messages in Slack", "Daily message limit", "Check for updates", "Working hours", "Working days", "Extra checks"]) assert.ok(html.includes(`aria-label="About ${about}"`), about);
+});
+
+test("grouped: with messages going nowhere and members opting in themselves, both switches are off", () => {
+  const html = renderGrouped({ ...briefOn, settings: { ...briefOn.settings, enabled: false, destination: null, membersStart: "opted_out" } });
+  assert.match(switchFor(html, "Send messages in Slack") ?? "", /aria-checked="false"/);
+  assert.match(switchFor(html, "On for members by default") ?? "", /aria-checked="false"/);
+  assert.ok(text(html).includes("Turn on Send messages in Slack first."));
+});
+
+test("grouped rows need the brief: without it the message types stay as they are", () => {
+  assert.ok(text(renderGrouped(ready)).includes("Send messages to"));
+});
+
+test("what agents read, with help: each heading explains itself and each app says whether it is allowed", () => {
+  const props = { view: briefOn, canManage: true, saving: false, onChange: () => undefined };
+  const html = renderToStaticMarkup(<WorkbotProactiveSources {...props} help />);
+  for (const about of ["Calendar", "Email", "Team chat", "Other context"]) assert.ok(html.includes(`aria-label="About ${about}"`), about);
+  const view = text(html);
+  assert.ok(view.includes("4 members connected"));
+  assert.ok(view.includes("Allowed"));
+  const before = renderToStaticMarkup(<WorkbotProactiveSources {...props} />);
+  assert.ok(!before.includes('aria-label="About'));
+  assert.ok(text(before).includes("4 connected"));
+});
