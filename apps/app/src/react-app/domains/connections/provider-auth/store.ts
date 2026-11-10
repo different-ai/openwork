@@ -2,7 +2,7 @@ import { useSyncExternalStore } from "react";
 import { providerCredentialScope, useProviderCredentialHealth } from "./credential-health";
 import { liveProviderSyncStatusQueryKey, usesLiveProviderSync, type LiveProviderSyncStatus } from "./live-provider-sync";
 import { createClientV2, isOpencodeV2BaseUrl } from "@/app/lib/opencode-v2-adapter";
-import { CLAUDE_AGENT_HOST_PROVIDER_ID, CLAUDE_AGENT_PROVIDER_ID, CLAUDE_CODE_CHECK_TIMEOUT_MESSAGE, CLAUDE_CODE_CHECK_TIMEOUT_MS, CLAUDE_CODE_NAME, CLAUDE_CODE_SIGN_IN_POLL_MS, plainClaudeMessage, type ClaudeAgentSetupState, type ClaudeAgentIntegration } from "@/app/lib/claude-agent";
+import { CLAUDE_AGENT_HOST_PROVIDER_ID, CLAUDE_AGENT_PROVIDER_ID, CLAUDE_CODE_CHECK_TIMEOUT_MESSAGE, CLAUDE_CODE_CHECK_TIMEOUT_MS, CLAUDE_CODE_NAME, CLAUDE_CODE_SIGN_IN_POLL_MS, claudeCodeMissing, plainClaudeMessage, type ClaudeAgentSetupState, type ClaudeAgentIntegration } from "@/app/lib/claude-agent";
 import type { OpenworkServerClient } from "@/app/lib/openwork-server";
 import { fetchProviderCatalog, providerListQueryKey, refreshProviderListQueries } from "../../../infra/provider-list-query";
 import { CLOUD_MODEL_CONFIG_VERSION } from "@openwork/types/cloud-model-fast";
@@ -433,6 +433,9 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
   // "checking": asking whether Claude Code is already signed in. "browser": its sign-in is open and unfinished.
   let claudeSignIn: "idle" | "checking" | "browser" = "idle";
   let claudeSignInRun = 0;
+  // Whether Claude Code is on this computer, as the OpenWork server last saw it for `claudeInstalledContext`.
+  let claudeInstalled: boolean | null = null;
+  let claudeInstalledContext = "";
   const nativeTarget = () => ({
     client: options.nativeOpenworkClient ? options.nativeOpenworkClient() : options.openworkServer.getSnapshot().openworkServerClient,
     workspaceId: (options.nativeWorkspaceId ? options.nativeWorkspaceId() : options.runtimeWorkspaceId())?.trim() || null,
@@ -468,6 +471,7 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
       error: current ? claudeError : null,
       canSignIn: claudeCanSignIn(),
       signingIn: current && claudeSignIn === "browser",
+      ...(claudeInstalled !== null && claudeInstalledContext === nativeContext() ? { installed: claudeInstalled } : {}),
     };
   };
 
@@ -1927,6 +1931,28 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
     }
   }
 
+  const noteClaudeInstalled = (context: string, installed: boolean | undefined) => {
+    if (installed === undefined || disposed || context !== nativeContext()) return;
+    // Installed since it was reported missing: that reason no longer holds.
+    const stale = installed && claudeContext === context && claudeCodeMissing(claudeError);
+    if (!stale && claudeInstalled === installed && claudeInstalledContext === context) return;
+    if (stale) claudeError = null;
+    claudeInstalled = installed;
+    claudeInstalledContext = context;
+    refreshSnapshot(); emitChange();
+  };
+
+  /** Looks for Claude Code on this computer: when its step opens, and again when the person comes back from installing it. */
+  async function checkClaudeInstalled() {
+    if (!claudeAvailable() || !claudeCanSignIn() || claudeBusy || claudeSignIn !== "idle") return;
+    const { client } = nativeTarget();
+    if (!client) return;
+    const context = nativeContext();
+    // A server too old to say leaves it unknown; Connect then finds out.
+    const signIn = await client.claudeCodeSignIn("status").catch(() => null);
+    noteClaudeInstalled(context, signIn?.installed);
+  }
+
   /**
    * Has the OpenWork server on this computer make sure Claude Code is signed
    * in (opening Claude Code's own browser sign-in, `claude auth login`, when it
@@ -1943,7 +1969,9 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
     if (claudeContext !== context) { claudeIntegration = null; claudeVerified = false; claudeError = null; }
     claudeContext = context;
     // After a check that failed, the login Claude Code holds is the problem: ask for a fresh one.
-    const force = Boolean(claudeError) || claudeIntegration?.connections[0]?.status?.status === "needs_auth";
+    // A Claude Code that was missing has no login to replace: ask whether the new install is signed in first.
+    const problem = claudeIntegration?.connections[0]?.status;
+    const force = claudeError ? !claudeCodeMissing(claudeError) : problem?.status === "needs_auth" && !claudeCodeMissing(problem.message);
     claudeSignIn = force ? "browser" : "checking";
     claudeError = null;
     refreshSnapshot(); emitChange();
@@ -1951,6 +1979,7 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
     let signedIn = false;
     try {
       let signIn = await client.claudeCodeSignIn("start", { force });
+      noteClaudeInstalled(context, signIn.installed);
       while (signIn.status === "waiting") {
         await claudeWait(options.claudeCheckTiming?.signInPollMs ?? CLAUDE_CODE_SIGN_IN_POLL_MS);
         if (!current()) break;
@@ -1968,6 +1997,7 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
       signedIn = signIn.status === "signed_in";
     } catch (error) {
       if (!current()) return;
+      if (error instanceof OpenworkServerError && error.code === "claude_code_not_installed") noteClaudeInstalled(context, false);
       claudeError = error instanceof OpenworkServerError && error.status === 404
         ? "This OpenWork server cannot open the Claude Code sign-in. Run claude auth login in a terminal, then connect."
         : error instanceof Error ? error.message : "Could not sign in to Claude Code. Sign in again.";
@@ -3473,6 +3503,7 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
     connectClaudeAgent: () => runClaudeAction("connect"),
     signInClaudeAgent: () => signInWithClaudeCode(),
     cancelClaudeAgentSignIn: () => cancelClaudeSignIn(),
+    checkClaudeAgentInstalled: () => checkClaudeInstalled(),
     refreshProviders,
     completeProviderAuthOAuth,
     submitProviderApiKey,

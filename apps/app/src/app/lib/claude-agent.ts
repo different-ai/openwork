@@ -27,11 +27,12 @@ export function parseClaudeAgentIntegrationList(value: unknown) {
 export type ClaudeAgentIntegration = z.infer<typeof claudeAgentIntegrationSchema>["data"];
 
 /** How far Claude Code's own browser sign-in, run by the OpenWork server on this computer, has got. */
+const claudeCodeInstalled = { installed: z.boolean().optional() };
 export const claudeCodeSignInSchema = z.discriminatedUnion("status", [
-  z.object({ status: z.literal("idle") }),
-  z.object({ status: z.literal("waiting") }),
-  z.object({ status: z.literal("signed_in") }),
-  z.object({ status: z.literal("failed"), message: z.string() }),
+  z.object({ status: z.literal("idle"), ...claudeCodeInstalled }),
+  z.object({ status: z.literal("waiting"), ...claudeCodeInstalled }),
+  z.object({ status: z.literal("signed_in"), ...claudeCodeInstalled }),
+  z.object({ status: z.literal("failed"), message: z.string(), ...claudeCodeInstalled }),
 ]);
 export type ClaudeCodeSignIn = z.infer<typeof claudeCodeSignInSchema>;
 
@@ -53,6 +54,8 @@ export type ClaudeAgentSetupState = {
   canSignIn?: boolean;
   /** Claude Code's sign-in is open in the browser and has not finished. */
   signingIn?: boolean;
+  /** Whether Claude Code is on this computer, where OpenWork can look. Absent until it has looked. */
+  installed?: boolean;
 };
 
 /** The engine's provider id. People see it as "Claude Code", a way to connect Anthropic. */
@@ -65,6 +68,8 @@ export const CLAUDE_CODE_SIGN_IN_COMMAND = "claude auth login";
 export const CLAUDE_CODE_CHECK_TIMEOUT_MS = 65_000;
 // Claude Code gives its own sign-in ten minutes; ask a little more often than a person would notice.
 export const CLAUDE_CODE_SIGN_IN_POLL_MS = 1_000;
+// While the step waits for Claude Code to be installed: a few file lookups on this computer.
+export const CLAUDE_CODE_INSTALL_POLL_MS = 3_000;
 export const CLAUDE_CODE_CHECK_TIMEOUT_MESSAGE = "Couldn't confirm that Claude Code is ready. Make sure it's installed and signed in, then check again.";
 
 /** The engine writes its reasons for a terminal, with commands in backticks; people read them as plain sentences. */

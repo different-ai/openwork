@@ -40,16 +40,23 @@ In the desktop app, a Claude Code that is already signed in connects straight
 away. A signed-out one opens Claude's sign-in in the browser; the step reads
 "Continue in your browser" with Cancel until it finishes (ten minutes at most),
 then connects by itself. After a failure the button reads Sign in again, which
-always opens a fresh sign-in (Check again when Claude Code is not installed).
-The desktop step shows no command to run. In the browser, run
-`claude auth login` in a terminal first.
+always opens a fresh sign-in. The desktop step shows no command to run. In the
+browser, run `claude auth login` in a terminal first.
+
+The desktop step also looks for Claude Code when it opens. When it is not
+installed the step reads "Claude Code is not on this computer yet" and its one
+action is Get Claude Code, which opens Anthropic's install guide. OpenWork
+looks again every few seconds and whenever its window is focused, so once the
+install finishes the step reads "Claude Code is installed" and offers Connect,
+with no restart. `~/.local/bin`, where Claude's installer puts `claude`, is on
+the engine's PATH even before that folder exists.
 
 Connect then waits for the engine's own check of `claude` and ends one of two ways:
 
 - the sheet closes with "Claude Code connected" and AI Providers lists a
   Claude Code row marked Ready to use, or
-- the step stays open with the reason (not installed, not logged in, too old,
-  sign-in not finished) and the button reads Sign in again or Check again.
+- the step stays open with the reason (not logged in, too old, sign-in not
+  finished) and the button reads Sign in again or Check again.
 
 A row whose login later breaks reads "Needs your sign-in" with Sign in again,
 which reopens the same step. After a restart, before the engine has checked

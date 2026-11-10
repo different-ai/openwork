@@ -95,6 +95,11 @@ export function createClaudeCodeLogin(options: ClaudeCodeLoginOptions = {}) {
 
   return {
     state: (): ClaudeCodeLoginState => state,
+    /** Whether the engine would find a `claude` to run right now. Asked again whenever the person comes back from installing it. */
+    installed(): boolean {
+      const file = findClaudeExecutable(options.env ?? process.env, options.platform, options.isFile);
+      return file !== undefined && (options.isFile ?? isFile)(file);
+    },
     /**
      * Starts the sign-in, or answers for the one already under way. A Claude
      * Code that is already signed in is done without opening the browser,

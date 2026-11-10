@@ -39,7 +39,7 @@ To give a whole team Claude models, an admin adds Anthropic with an API key inst
 ## Before you start
 
 - A paid Claude plan that includes Claude Code, such as Pro or Max.
-- Claude Code version 2.1.248 or later, installed on the computer where you use OpenWork. Follow [Anthropic's setup guide](https://code.claude.com/docs/en/setup). To check your version, run `claude --version` in a terminal.
+- Claude Code version 2.1.248 or later, installed on the computer where you use OpenWork. Follow [Anthropic's setup guide](https://code.claude.com/docs/en/setup). If it is not installed yet, OpenWork tells you in the steps below and links to that guide. To check your version, run `claude --version` in a terminal.
 - The latest OpenWork desktop app.
 
 ## Sign in to Claude Code
@@ -78,6 +78,8 @@ OpenWork never sees this sign-in. Claude Code runs it, and OpenWork does not ask
 
 4. Click **Connect**. If Claude Code is not signed in yet, its sign-in opens in your browser and the step reads "Continue in your browser" until you finish.
 
+   If the step reads "Claude Code is not on this computer yet", click **Get Claude Code** and follow Anthropic's guide. You do not need to restart OpenWork: when the install finishes, the step reads "Claude Code is installed" and offers **Connect**.
+
 <Frame>
   ![The Claude Code step with the claude auth login command and the Connect button](/images/claude-code-sign-in-step.png)
 </Frame>
@@ -107,7 +109,7 @@ The dialog stays open and says why.
 </Frame>
 
 - **"Claude Code is not logged in."** Click **Sign in again** and finish the sign-in in your browser. You can also run `claude auth login` in a terminal first.
-- **"Claude Code is not installed."** Click **Install Claude Code**, follow Anthropic's guide, then click **Check again**.
+- **"Claude Code is not on this computer yet."** Click **Get Claude Code** and follow Anthropic's guide. OpenWork finds Claude Code by itself once it is installed, then offers **Connect**.
 - **"Claude Code could not finish signing in."** The browser sign-in was closed or did not complete. Click **Sign in again**.
 - **"Couldn't confirm that Claude Code is ready."** Claude Code did not answer in time. Make sure it opens in a terminal on this computer, then click **Sign in again**.
 

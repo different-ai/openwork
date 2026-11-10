@@ -2,6 +2,7 @@
 import {
   CLAUDE_AGENT_HOST_PROVIDER_ID,
   CLAUDE_AGENT_PROVIDER_ID,
+  CLAUDE_CODE_INSTALL_POLL_MS,
   CLAUDE_CODE_NAME,
   CLAUDE_CODE_SETUP_URL,
   CLAUDE_CODE_SIGN_IN_COMMAND,
@@ -12,6 +13,7 @@ import {
 } from "@/app/lib/claude-agent";
 import {
   ArrowUpRight,
+  Check,
   ChevronLeft,
   Loader2,
   Search,
@@ -90,6 +92,8 @@ export type ProviderAuthModalProps = {
   onSignInClaudeAgent?: () => Promise<unknown>;
   /** Stops waiting on a Claude Code sign-in the person gave up on. */
   onCancelClaudeAgentSignIn?: () => unknown;
+  /** Looks again for Claude Code on this computer; the answer arrives as `claudeAgent.installed`. */
+  onCheckClaudeAgentInstalled?: () => unknown;
   open: boolean;
   loading: boolean;
   submitting: boolean;
@@ -135,6 +139,11 @@ export default function ProviderAuthModal(props: ProviderAuthModalProps) {
   const [oauthCodeCopied, setOauthCodeCopied] = useState(false);
   const [oauthBrowserOpened, setOauthBrowserOpened] = useState(false);
   const [claudeCommandCopied, setClaudeCommandCopied] = useState(false);
+  // Claude Code turned up while this step was waiting for it to be installed.
+  const [claudeFound, setClaudeFound] = useState(false);
+  const claudeWasMissing = useRef(false);
+  const checkClaudeInstalled = useRef(props.onCheckClaudeAgentInstalled);
+  checkClaudeInstalled.current = props.onCheckClaudeAgentInstalled;
 
   const searchInputRef = useRef<HTMLInputElement | null>(null);
   const isMobile = useIsMobile();
@@ -251,7 +260,13 @@ export default function ProviderAuthModal(props: ProviderAuthModalProps) {
   const claudeCanSignIn = Boolean(props.claudeAgent?.canSignIn && props.onSignInClaudeAgent);
   // The engine's provider list can fail independently of Claude Code, whose
   // step shows only its own result: the last check's reason, or none while checking.
-  const claudeError = claudeChecking || claudeSigningIn ? null : props.claudeAgent?.error ?? claudeAgentProblem(props.claudeAgent)?.message ?? null;
+  const claudeReason = claudeChecking || claudeSigningIn ? null : props.claudeAgent?.error ?? claudeAgentProblem(props.claudeAgent)?.message ?? null;
+  const claudeInstalled = props.claudeAgent?.installed;
+  // Where OpenWork can look, a missing Claude Code is its own state with the way to get it, not an error to read.
+  const claudeMissing = claudeCanSignIn && !claudeChecking && !claudeSigningIn
+    && (claudeInstalled === false || (claudeInstalled === undefined && claudeCodeMissing(claudeReason)));
+  // "Not installed" is either that state or, once Claude Code is found, out of date.
+  const claudeError = claudeCanSignIn && claudeCodeMissing(claudeReason) ? null : claudeReason;
   const errorMessage = localError ?? (resolvedView === "external" ? claudeError : props.error);
 
   // Connected providers lead the list so the two groups render as one flat
@@ -317,6 +332,8 @@ export default function ProviderAuthModal(props: ProviderAuthModalProps) {
     setOauthCodeCopied(false);
     setOauthBrowserOpened(false);
     setClaudeCommandCopied(false);
+    setClaudeFound(false);
+    claudeWasMissing.current = false;
   };
 
   const stopProviderPolling = () => {
@@ -396,6 +413,32 @@ export default function ProviderAuthModal(props: ProviderAuthModalProps) {
     props.preferredProviderId,
     resolvedView,
   ]);
+
+  // Look for Claude Code when its step opens and whenever the person comes back to this window; while it is
+  // missing, keep looking, since installing takes a minute or two and can finish with this window in view.
+  const claudeStepOpen = props.open && resolvedView === "external" && claudeCanSignIn;
+  useEffect(() => {
+    if (!claudeStepOpen) return;
+    const check = () => {
+      if (document.visibilityState === "visible") void checkClaudeInstalled.current?.();
+    };
+    check();
+    window.addEventListener("focus", check);
+    document.addEventListener("visibilitychange", check);
+    const timer = claudeMissing ? window.setInterval(check, CLAUDE_CODE_INSTALL_POLL_MS) : null;
+    return () => {
+      window.removeEventListener("focus", check);
+      document.removeEventListener("visibilitychange", check);
+      if (timer !== null) window.clearInterval(timer);
+    };
+  }, [claudeMissing, claudeStepOpen]);
+
+  useEffect(() => {
+    if (claudeMissing) { claudeWasMissing.current = true; setClaudeFound(false); return; }
+    if (!claudeWasMissing.current || claudeInstalled !== true) return;
+    claudeWasMissing.current = false;
+    setClaudeFound(true);
+  }, [claudeInstalled, claudeMissing]);
 
   useEffect(() => {
     return () => {
@@ -633,6 +676,8 @@ export default function ProviderAuthModal(props: ProviderAuthModalProps) {
       setLocalError(`Could not copy the command. Run ${CLAUDE_CODE_SIGN_IN_COMMAND} in your terminal.`);
     }
   };
+
+  const openClaudeInstall = () => openExternalUrl(claudeAgentProblem(props.claudeAgent)?.url ?? CLAUDE_CODE_SETUP_URL);
 
   const handleClaudeConnect = async () => {
     const connect = claudeCanSignIn ? props.onSignInClaudeAgent : props.onConnectClaudeAgent;
@@ -956,7 +1001,17 @@ export default function ProviderAuthModal(props: ProviderAuthModalProps) {
                         Cancel
                       </Button>
                     </div>
-                  ) : claudeCanSignIn ? null : (
+                  ) : claudeMissing ? (
+                    <div className="rounded-xl border border-gray-6/70 bg-gray-2/40 p-3" role="status" data-testid="claude-code-missing">
+                      <div className="text-sm text-gray-12">Claude Code is not on this computer yet</div>
+                      <div className="text-xs text-gray-10 text-pretty">Install it from Anthropic. OpenWork finds it by itself once it's installed.</div>
+                    </div>
+                  ) : claudeCanSignIn ? (claudeFound && !claudeChecking ? (
+                    <div className="flex items-center gap-2 text-xs text-gray-10" role="status" data-testid="claude-code-found">
+                      <Check className="size-3.5 text-green-11" aria-hidden />
+                      Claude Code is installed
+                    </div>
+                  ) : null) : (
                     <div className="rounded-xl border border-gray-6/70 bg-gray-2/40 p-3 flex items-center gap-3">
                       <div className="flex-1 min-w-0">
                         <div className="text-xs text-gray-9">Sign-in command</div>
@@ -967,10 +1022,13 @@ export default function ProviderAuthModal(props: ProviderAuthModalProps) {
                       </Button>
                     </div>
                   )}
-                  <Button variant="link" className="h-auto gap-1 p-0 text-xs" onClick={() => void openExternalUrl(claudeAgentProblem(props.claudeAgent)?.url ?? CLAUDE_CODE_SETUP_URL)}>
-                    Install Claude Code
-                    <ArrowUpRight className="size-3.5" aria-hidden />
-                  </Button>
+                  {/* The install card's action covers a missing Claude Code; one that was found needs no link. */}
+                  {claudeMissing || (claudeCanSignIn && claudeInstalled === true) ? null : (
+                    <Button variant="link" className="h-auto gap-1 p-0 text-xs" onClick={() => void openClaudeInstall()}>
+                      Install Claude Code
+                      <ArrowUpRight className="size-3.5" aria-hidden />
+                    </Button>
+                  )}
                 </div>
               ) : null}
 
@@ -1204,14 +1262,19 @@ export default function ProviderAuthModal(props: ProviderAuthModalProps) {
                 )}
               </Button>
             ) : null}
-            {resolvedView === "external" && selectedEntry && props.claudeAgent ? (
+            {resolvedView === "external" && selectedEntry && props.claudeAgent && claudeMissing ? (
+              <Button data-testid="claude-code-install" onClick={() => void openClaudeInstall()}>
+                Get Claude Code
+                <ArrowUpRight className="size-4" aria-hidden />
+              </Button>
+            ) : resolvedView === "external" && selectedEntry && props.claudeAgent ? (
               <Button data-testid="claude-code-connect" onClick={() => void handleClaudeConnect()} disabled={actionDisabled || claudeBusy || !(claudeCanSignIn || props.onConnectClaudeAgent)} aria-busy={claudeChecking || claudeSigningIn}>
                 {claudeSigningIn ? "Waiting for sign-in…" : claudeChecking ? (
                   <>
                     <Loader2 className="size-4 animate-spin" />
                     Checking Claude Code…
                   </>
-                ) : claudeCanSignIn && claudeError ? (claudeCodeMissing(claudeError) ? "Check again" : "Sign in again") : claudeAgentConnected(props.claudeAgent) ? "Check again" : "Connect"}
+                ) : claudeCanSignIn && claudeError ? "Sign in again" : claudeAgentConnected(props.claudeAgent) ? "Check again" : "Connect"}
               </Button>
             ) : null}
           </div>

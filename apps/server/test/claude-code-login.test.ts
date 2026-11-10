@@ -107,3 +107,13 @@ test("a computer without Claude Code is told to install it", () => {
   assert.throws(() => instance.start(), (error) => error instanceof ApiError && error.code === "claude_code_not_installed");
   assert.deepEqual(instance.state(), { status: "idle" });
 });
+
+test("installed is asked fresh each time, so a Claude Code installed later is found without a restart", () => {
+  let present = false;
+  const instance = createClaudeCodeLogin({ env: { PATH: "/home/person/.local/bin" }, platform: "linux", isFile: (path) => present && path === "/home/person/.local/bin/claude" });
+  assert.equal(instance.installed(), false);
+  present = true;
+  assert.equal(instance.installed(), true);
+  // A configured path that points at nothing is not an install.
+  assert.equal(createClaudeCodeLogin({ env: { OPENCODE_CLAUDE_PATH: "/gone/claude" }, platform: "linux", isFile: () => false }).installed(), false);
+});

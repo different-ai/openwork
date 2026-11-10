@@ -3407,7 +3407,7 @@ function createRoutes(
   // Host only: Claude Code opens its browser sign-in on the computer this
   // server runs on, so a remote viewer can never start one here.
   const claudeCodeLoginStatus = (state: ReturnType<typeof claudeCodeLogin.state>) => {
-    const response = jsonResponse(state);
+    const response = jsonResponse({ ...state, installed: claudeCodeLogin.installed() });
     response.headers.set("Cache-Control", "no-store");
     return response;
   };

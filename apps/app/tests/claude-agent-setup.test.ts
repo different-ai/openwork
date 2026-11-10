@@ -11,7 +11,7 @@ afterEach(async () => { getReactQueryClient().clear(); await GlobalRegistrator.u
 
 type Login = "ok" | "signed-out" | "missing";
 /** What the server's sign-in route answers, one per request; the last answer repeats. */
-type SignIn = { status: "idle" | "waiting" | "signed_in" } | { status: "failed"; message: string } | { error: number; code: string; message: string };
+type SignIn = { status: "idle" | "waiting" | "signed_in"; installed?: boolean } | { status: "failed"; message: string } | { error: number; code: string; message: string };
 const PROBLEMS: Record<Exclude<Login, "ok">, { status: "needs_auth"; message: string; url?: string }> = {
   "signed-out": { status: "needs_auth", message: "Claude Code is not logged in. Run `claude auth login` in a terminal." },
   missing: { status: "needs_auth", message: "Claude Code is not installed. Install it, then run `claude auth login`.", url: "https://code.claude.com/docs/en/setup" },
@@ -487,4 +487,50 @@ test("a server too old to run the sign-in says to use the terminal", async () =>
     await expect(f.store.signInClaudeAgent()).rejects.toThrow();
     expect(f.store.getSnapshot().claudeAgent?.error).toContain("Run claude auth login in a terminal");
   } finally { f.cleanup(); }
+});
+
+test("the step learns whether Claude Code is installed, and finds it once the person has installed it", async () => {
+  const f = fixture({ signIn: [{ status: "idle", installed: false }, { status: "idle", installed: false }, { status: "idle", installed: true }] });
+  try {
+    expect(f.store.getSnapshot().claudeAgent?.installed).toBeUndefined();
+    await f.store.checkClaudeAgentInstalled();
+    expect(f.store.getSnapshot().claudeAgent?.installed).toBe(false);
+    expect(signInRequests(f).map((request) => request.method)).toEqual(["GET"]);
+    expect(signInRequests(f)[0]?.headers.get("x-openwork-host-token")).toBe("fixture-host");
+    await f.store.checkClaudeAgentInstalled();
+    await f.store.checkClaudeAgentInstalled();
+    expect(f.store.getSnapshot().claudeAgent?.installed).toBe(true);
+    // Looking never starts a sign-in or connects anything.
+    expect(posts(f)).toHaveLength(0);
+  } finally { f.cleanup(); }
+});
+
+test("a missing Claude Code is remembered as not installed, and installing it clears that reason", async () => {
+  const f = fixture({ signIn: [{ error: 409, code: "claude_code_not_installed", message: "Claude Code is not installed. Install it, then sign in." }, { status: "idle", installed: true }, { status: "signed_in", installed: true }] });
+  try {
+    await expect(f.store.signInClaudeAgent()).rejects.toThrow("not installed");
+    expect(f.store.getSnapshot().claudeAgent).toMatchObject({ installed: false, error: "Claude Code is not installed. Install it, then sign in." });
+    await f.store.checkClaudeAgentInstalled();
+    expect(f.store.getSnapshot().claudeAgent).toMatchObject({ installed: true, error: null });
+    // The new install has no login to replace: ask whether it is signed in before opening the browser.
+    expect(await f.store.signInClaudeAgent()).toBe("Claude Code connected");
+    expect(await signInRequests(f).at(-1)?.json()).toEqual({ force: false });
+  } finally { f.cleanup(); }
+});
+
+test("where OpenWork cannot look, or the server is too old to say, installed stays unknown", async () => {
+  const web = fixture();
+  try {
+    await web.store.checkClaudeAgentInstalled();
+    expect(signInRequests(web)).toHaveLength(0);
+    expect(web.store.getSnapshot().claudeAgent?.installed).toBeUndefined();
+  } finally { web.cleanup(); }
+  for (const signIn of [[], [{ status: "idle" }]] satisfies SignIn[][]) {
+    const f = fixture({ signIn });
+    try {
+      await f.store.checkClaudeAgentInstalled();
+      expect(f.store.getSnapshot().claudeAgent?.installed).toBeUndefined();
+      expect(f.store.getSnapshot().claudeAgent?.error).toBeNull();
+    } finally { f.cleanup(); }
+  }
 });
