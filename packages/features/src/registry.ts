@@ -104,6 +104,17 @@ function defineFeatures<const T extends Record<string, FeatureDefinition>>(featu
 const everywhere = ["cloud", "self_hosted"] as const
 
 export const FEATURES = defineFeatures({
+  remoteDesktopDeviceLogin: {
+    label: "Remote desktop device sign-in",
+    description: "Sign a remote OpenWork desktop into an organization by approving a code on another computer.",
+    category: "experience",
+    added: "2026-11-09",
+    since: "2026-11",
+    author: "yomgui",
+    docs: "docs/features/remote-desktop-device-login/README.md",
+    deployments: everywhere,
+    default: false,
+  },
   claudeAgentProvider: {
     label: "Claude Code sign-in",
     description: "Connect Claude through the Claude Code login on this computer, without an Anthropic API key.",

@@ -89,6 +89,18 @@ test("mapFeatures and the key schema cover exactly the registry", () => {
   assert.deepEqual(Object.keys(resolveFeatures(base)).sort(), [...FEATURE_KEYS].sort())
 })
 
+test("remote desktop device sign-in is off on both deployments and cannot bypass a kill switch", () => {
+  const key = "remoteDesktopDeviceLogin"
+  for (const deployment of ["cloud", "self_hosted"] satisfies FeatureContext["deployment"][]) {
+    assert.equal(resolveFeature(key, { ...base, deployment }).enabled, false)
+    assert.equal(resolveFeature(key, { ...base, deployment, locks: { [key]: true } }).enabled, true)
+    assert.equal(resolveFeature(key, {
+      ...base, deployment, locks: { [key]: true }, overrides: { [key]: true },
+      memberOverrides: { [key]: true }, rollouts: { [key]: { enabled: true, killed: true } },
+    }).enabled, false)
+  }
+})
+
 test("managed deployments stays opt-in and cloud-only after folding GCP and agent tools", () => {
   assert.equal(resolveFeature("managedDeployments", base).enabled, false)
   const selfHosted = resolveFeature("managedDeployments", {

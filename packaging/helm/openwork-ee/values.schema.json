@@ -61,6 +61,16 @@
           "type": "object",
           "additionalProperties": false,
           "properties": {
+            "remoteDesktopDeviceLogin": {
+              "enum": [
+                "",
+                "true",
+                "false",
+                true,
+                false
+              ],
+              "description": "Remote desktop device sign-in: Sign a remote OpenWork desktop into an organization by approving a code on another computer. Renders DEN_FEATURE_REMOTE_DESKTOP_DEVICE_LOGIN."
+            },
             "claudeAgentProvider": {
               "enum": [
                 "",
